@@ -7,7 +7,7 @@
  * JSON-serializable data so events can cross the IPC boundary or a socket
  * untouched.
  *
- * @see docs/plans/2026-06-28-anathema-coder.md (Task 11.1)
+ * @see docs/plans/2026-06-28-zelari-code.md (Task 11.1)
  */
 
 /** Discriminator for every {@link BrainEvent} variant. */

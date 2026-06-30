@@ -9,7 +9,7 @@
  * for jsdom tests. The main-process caller passes `<userData>/sessions` as
  * `baseDir`; tests pass a temp dir.
  *
- * @see docs/plans/2026-06-28-anathema-coder.md (Task 12.3)
+ * @see docs/plans/2026-06-28-zelari-code.md (Task 12.3)
  */
 
 import { promises as fs } from 'node:fs';
@@ -106,5 +106,5 @@ function defaultBaseDir(): string {
   // We can't import 'electron' here (this module is browser-importable for tests).
   // The caller must pass baseDir explicitly OR we use a sensible fallback.
   // In main process, the AgentHarness caller will pass `<userData>/sessions`.
-  return path.join(os.tmpdir(), 'anathema-coder', 'sessions');
+  return path.join(os.tmpdir(), 'zelari-code', 'sessions');
 }

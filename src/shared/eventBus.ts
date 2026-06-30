@@ -16,7 +16,7 @@
  *  - Async subscribers are fire-and-forget: the bus invokes the handler
  *    synchronously and does NOT await its returned Promise.
  *
- * @see docs/plans/2026-06-28-anathema-coder.md (Task 11.2)
+ * @see docs/plans/2026-06-28-zelari-code.md (Task 11.2)
  */
 
 import type { BrainEvent, BrainEventType } from './events.js';

@@ -20,7 +20,7 @@ export function Header({ model, provider, skillCount, sessionActive, sessionId, 
   const tokStr = formatTokens(totalTokens ?? 0);
   return (
     <Box borderStyle="round" borderColor="cyan" paddingX={1} flexDirection="row">
-      <Text bold color="cyan">anathema-coder</Text>
+      <Text bold color="cyan">zelari-code</Text>
       <Text dimColor> · </Text>
       <Text>{model}</Text>
       <Text dimColor> · </Text>

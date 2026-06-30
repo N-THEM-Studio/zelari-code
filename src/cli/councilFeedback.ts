@@ -60,7 +60,7 @@ export class FeedbackStore {
   constructor(options: FeedbackStoreOptions = {}) {
     this.file = options.file
       ?? (process.env.ANATHEMA_COUNCIL_FEEDBACK_FILE
-        ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'council-feedback.json'));
+        ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'council-feedback.json'));
     this.now = options.now ?? Date.now;
     this.load();
   }

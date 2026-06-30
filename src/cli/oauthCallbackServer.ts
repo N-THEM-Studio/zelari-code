@@ -30,11 +30,25 @@ export interface OAuthCallbackServerOptions {
   successHtml?: string;
 }
 
+/**
+ * Captured OAuth callback query params (everything the provider sent back).
+ * Most OAuth providers return at least `code` and `state`; some also include
+ * `error` + `error_description` on authorization failure.
+ */
+export interface OAuthCallbackParams {
+  code?: string;
+  state?: string;
+  error?: string;
+  errorDescription?: string;
+  /** Any additional raw params the provider returned (e.g. `iss`, `session_state`). */
+  extras: Record<string, string>;
+}
+
 export interface OAuthCallbackServerHandle {
   /** Port the server is listening on (useful when port=0). */
   port: number;
-  /** Resolves with the captured code, or rejects on timeout / close. */
-  waitForCode: () => Promise<string>;
+  /** Resolves with the captured params (code + state + error), or rejects on timeout / close. */
+  waitForCode: () => Promise<OAuthCallbackParams>;
   /** Close the server immediately (rejects any pending waitForCode). */
   close: () => void;
 }
@@ -44,11 +58,11 @@ const DEFAULT_SUCCESS_HTML = `
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>anathema-coder OAuth</title>
+  <title>zelari-code OAuth</title>
 </head>
 <body style="font-family: -apple-system, BlinkMacSystemFont, sans-serif; padding: 40px; text-align: center; color: #1a1a1a;">
   <h1 style="color: #00aa33;">✓ Authentication complete</h1>
-  <p>You can close this tab and return to anathema-coder.</p>
+  <p>You can close this tab and return to zelari-code.</p>
 </body>
 </html>
 `.trim();
@@ -91,7 +105,7 @@ export function startOAuthCallbackServer(
 
   return new Promise((resolveStart, rejectStart) => {
     let resolved = false;
-    let resolveCode: ((code: string) => void) | null = null;
+    let resolveCode: ((params: OAuthCallbackParams) => void) | null = null;
     let rejectCode: ((err: Error) => void) | null = null;
     let timeoutHandle: NodeJS.Timeout | null = null;
 
@@ -110,7 +124,23 @@ export function startOAuthCallbackServer(
           return;
         }
         const code = url.searchParams.get('code');
+        const state = url.searchParams.get('state');
         const errorParam = url.searchParams.get('error');
+        const errorDescription = url.searchParams.get('error_description');
+        // Capture any extra params for diagnostics / future use.
+        const extras: Record<string, string> = {};
+        for (const [key, value] of url.searchParams.entries()) {
+          if (key !== 'code' && key !== 'state' && key !== 'error' && key !== 'error_description') {
+            extras[key] = value;
+          }
+        }
+        const params: OAuthCallbackParams = {
+          ...(code ? { code } : {}),
+          ...(state ? { state } : {}),
+          ...(errorParam ? { error: errorParam } : {}),
+          ...(errorDescription ? { errorDescription } : {}),
+          extras,
+        };
         if (errorParam) {
           // OAuth provider returned an error (e.g. user denied).
           res.writeHead(400, { 'Content-Type': 'text/html; charset=utf-8' });
@@ -133,7 +163,7 @@ export function startOAuthCallbackServer(
         if (resolveCode && !resolved) {
           resolved = true;
           if (timeoutHandle) clearTimeout(timeoutHandle);
-          resolveCode(code);
+          resolveCode(params);
         }
         // Give the response a moment to flush before closing.
         setTimeout(() => {
@@ -173,7 +203,7 @@ export function startOAuthCallbackServer(
       const addr = server.address() as AddressInfo | null;
       const actualPort = addr ? addr.port : preferredPort;
 
-      const waitForCode = (): Promise<string> => {
+      const waitForCode = (): Promise<OAuthCallbackParams> => {
         return new Promise((res, rej) => {
           if (resolved) {
             // Server already resolved (timeout fired, etc.) — reject.

@@ -15,7 +15,7 @@
  * harness only emits `tool_execution_start` (legacy behavior, useful for
  * streaming-only consumers).
  *
- * @see docs/plans/2026-06-28-anathema-coder.md (Task 12.1 + 14.8)
+ * @see docs/plans/2026-06-28-zelari-code.md (Task 12.1 + 14.8)
  */
 
 import { EventBus } from '../../shared/eventBus.js';

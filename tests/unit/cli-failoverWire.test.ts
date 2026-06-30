@@ -20,7 +20,7 @@ import { providerFailover } from '../../src/cli/providerFailover.js';
 import { AgentHarness } from '../../src/main/core/AgentHarness.js';
 import type { ProviderStreamFn, ProviderDelta } from '../../src/main/core/AgentHarness.js';
 
-const APP_TSX_PATH = path.resolve(__dirname, '..', '..', 'electron', 'cli', 'app.tsx');
+const APP_TSX_PATH = path.resolve(__dirname, '..', '..', 'src', 'cli', 'app.tsx');
 
 describe('app.tsx wiring of providerFailover (Task G.1.2)', () => {
   it('imports providerFailover from ./providerFailover.js', () => {

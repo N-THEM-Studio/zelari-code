@@ -13,7 +13,7 @@
  *
  * Pure node:fs — no Electron deps, browser-importable for jsdom tests.
  *
- * @see docs/plans/2026-06-28-anathema-coder.md (Task 14.10)
+ * @see docs/plans/2026-06-28-zelari-code.md (Task 14.10)
  */
 
 import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, statSync } from 'node:fs';
@@ -41,13 +41,13 @@ export interface SessionInfo {
 /** Resolve the base directory where session JSONL files live. */
 export function getSessionBaseDir(): string {
   return process.env.ANATHEMA_SESSIONS_DIR
-    ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'sessions');
+    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'sessions');
 }
 
 /** Resolve the file used to track the current session id. */
 export function getCurrentSessionFile(): string {
   return process.env.ANATHEMA_CURRENT_SESSION_FILE
-    ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'current.txt');
+    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'current.txt');
 }
 
 /** Ensure the base directory exists. Creates parent dirs as needed. */

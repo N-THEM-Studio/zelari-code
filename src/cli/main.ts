@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * anathema-coder — CLI coding agent on top of AnathemaBrain.
+ * zelari-code — CLI coding agent on top of AnathemaBrain.
  * Phase 14 Task 14.3 + 14.4: multi-panel TUI + slash command wiring.
  */
 
@@ -19,11 +19,11 @@ export const VERSION = '0.1.0';
  * one-line hint to stderr (so it doesn't pollute the TUI). Failures
  * are swallowed silently — registry outages must NEVER block the CLI.
  *
- * Disabled in dev mode (`ZELARI_DEV=1`) to avoid noise during local
+ * Disabled in dev mode (`ANATHEMA_DEV=1`) to avoid noise during local
  * development where the bundled version is the source repo.
  */
 async function backgroundUpdateCheck(): Promise<void> {
-  if (process.env.ZELARI_DEV === '1') return;
+  if (process.env.ANATHEMA_DEV === '1') return;
   await new Promise((resolve) => setTimeout(resolve, 3000));
   try {
     const { checkForUpdate } = await import('./updater.js');

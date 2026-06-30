@@ -13,7 +13,7 @@
  *
  * Phase 14.7: multi-agent council invocation from the Ink CLI.
  *
- * @see docs/plans/2026-06-28-anathema-coder.md (Task 14.7)
+ * @see docs/plans/2026-06-28-zelari-code.md (Task 14.7)
  */
 
 import {

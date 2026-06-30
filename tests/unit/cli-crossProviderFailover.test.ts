@@ -31,7 +31,7 @@ const APP_TSX_PATH = path.resolve(
   __dirname,
   '..',
   '..',
-  'electron',
+  'src',
   'cli',
   'app.tsx',
 );

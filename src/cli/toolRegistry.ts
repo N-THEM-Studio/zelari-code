@@ -1,5 +1,5 @@
 /**
- * toolRegistry — default ToolRegistry for the anathema-coder CLI.
+ * toolRegistry — default ToolRegistry for the zelari-code CLI.
  *
  * Wires the 5 built-in tools (filesystem read/write/edit + bash + grep) into a
  * ToolRegistry instance that the AgentHarness can hand to the provider via

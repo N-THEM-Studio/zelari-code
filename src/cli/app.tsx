@@ -48,6 +48,18 @@ const MODEL = process.env.OPENAI_MODEL ?? 'grok-4';
 const PROVIDER = 'openai-compatible';
 
 /**
+ * Default model per provider, used when the user runs `/login <provider>`
+ * without a prior `/model <name>` call. Sourced from each provider's
+ * published default at time of writing.
+ */
+const providerDefaults: Record<string, string> = {
+  'openai-compatible': 'grok-4',
+  'grok': 'grok-4',
+  'minimax': 'MiniMax-chat-latest',
+  'glm': 'glm-4.5',
+};
+
+/**
  * applySteerInterrupt — pure routing for the /steer --interrupt flow (Task C.3.2).
  *
  * Extracted from the App component so it can be unit-tested without React/Ink.
@@ -353,7 +365,7 @@ export function App(): React.ReactElement {
         {
           id: crypto.randomUUID(),
           role: 'system',
-          content: 'OPENAI_API_KEY not set. Export it before running anathema-coder.',
+          content: 'OPENAI_API_KEY not set. Export it before running zelari-code.',
           ts: Date.now(),
         },
       ]);
@@ -572,7 +584,7 @@ export function App(): React.ReactElement {
     }
     if (result.kind === 'resume' && result.targetSessionId) {
       setCurrentSessionId(result.targetSessionId);
-      return `[resume] session ${result.targetSessionId.slice(0, 8)}… set as current — restart anathema-coder to load it`;
+      return `[resume] session ${result.targetSessionId.slice(0, 8)}… set as current — restart zelari-code to load it`;
     }
     if (result.kind === 'new') {
       clearCurrentSessionId();
@@ -996,7 +1008,7 @@ export function App(): React.ReactElement {
       try {
         const { skill, markdown } = promoteMember(result.promoteMemberId);
         const skillDir = process.env.ANATHEMA_SKILL_DIR
-          ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'skills');
+          ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skills');
         await fs.promises.mkdir(skillDir, { recursive: true });
         const filePath = path.join(skillDir, `${skill.id}.md`);
         await fs.promises.writeFile(filePath, markdown, 'utf8');
@@ -1432,7 +1444,7 @@ export function App(): React.ReactElement {
           {
             id: crypto.randomUUID(),
             role: 'system',
-            content: `[checkout] active branch set to "${result.branchName}". Restart anathema-coder to load it.`,
+            content: `[checkout] active branch set to "${result.branchName}". Restart zelari-code to load it.`,
             ts: Date.now(),
           },
         ]);
@@ -1529,19 +1541,35 @@ export function App(): React.ReactElement {
 
     // /steer without text — already handled by slashCommands with a usage hint.
 
-    // Login with key: store it via keyStore (Task 14.9).
+    // Login with key: store it via keyStore AND switch the active
+    // provider to the one just authenticated, so the next dispatch
+    // resolves the key via keyStore without requiring an env var or
+    // restart (Task 14.9 + v3-T persistence fix).
     if (result.kind === 'login' && result.provider && result.loginKey) {
       const spec = getProviderSpec(result.provider);
       const displayName = spec?.displayName ?? result.provider;
       const envVar = spec?.envVar ?? `${result.provider.toUpperCase()}_API_KEY`;
       try {
         setApiKey(result.provider, result.loginKey);
+        // Switch the active provider so subsequent prompts resolve the
+        // key from keyStore (providerFromEnv → resolveActiveProvider → resolveApiKeyWithMeta).
+        persistActiveProvider(result.provider as Parameters<typeof persistActiveProvider>[0]);
+        // Set a sensible default model for the new provider if none is
+        // configured yet, so /login glm → /model picks up something useful.
+        const currentModel = getModelForProvider(result.provider as Parameters<typeof getModelForProvider>[0]);
+        if (!currentModel) {
+          const fallbackModel = providerDefaults[result.provider as keyof typeof providerDefaults];
+          if (fallbackModel) {
+            persistModelForProvider(result.provider as Parameters<typeof persistModelForProvider>[0], fallbackModel);
+          }
+        }
+        setProviderConfig(getProviderConfig());
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
             role: 'system',
-            content: `[login] ${displayName} key stored (${maskKey(result.loginKey)}). Now export ${envVar}=*** or restart anathema-coder to use it.`,
+            content: `[login] ${displayName} key stored (${maskKey(result.loginKey)}). Active provider switched to ${displayName} — try a prompt now.`,
             ts: Date.now(),
           },
         ]);
@@ -1560,35 +1588,22 @@ export function App(): React.ReactElement {
       return;
     }
 
-    // Login with OAuth: launch browser flow (Task 16.3, Grok only for now).
+    // Login with OAuth: launch SuperGrok PKCE flow (Task 16.3 + v3-T).
     if (result.kind === 'login_oauth' && result.provider === 'grok') {
-      const clientId = process.env.GROK_OAUTH_CLIENT_ID;
-      if (!clientId || clientId.trim().length === 0) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'system',
-            content: '[login oauth] GROK_OAUTH_CLIENT_ID env var not set. Register an OAuth client at https://console.x.ai and export the id before running /login grok.',
-            ts: Date.now(),
-          },
-        ]);
-        setInput('');
-        return;
-      }
+      // Override GROK_OAUTH_CLIENT_ID via env if the user wants a custom client.
+      // Default uses xAI's public client (see DEFAULT_GROK_OAUTH_CLIENT_ID).
       setMessages((prev) => [
         ...prev,
         {
           id: crypto.randomUUID(),
           role: 'system',
-          content: '[login oauth] opening browser for Grok authentication...',
+          content: '[login oauth] opening browser for SuperGrok authentication (PKCE)...',
           ts: Date.now(),
         },
       ]);
       setBusy(true);
       try {
         const resultOAuth = await runGrokOAuthFlow({
-          clientId,
           callbackTimeoutMs: 120_000,
         });
         // Persist full OAuth token (apiKey + expiresAt + refreshToken) so
@@ -1598,6 +1613,12 @@ export function App(): React.ReactElement {
           ...(resultOAuth.expiresAt !== undefined ? { expiresAt: resultOAuth.expiresAt } : {}),
           ...(resultOAuth.refreshToken ? { refreshToken: resultOAuth.refreshToken } : {}),
         });
+        // Switch active provider to grok so subsequent prompts pick up the OAuth token.
+        persistActiveProvider('grok');
+        if (!getModelForProvider('grok')) {
+          persistModelForProvider('grok', providerDefaults['grok'] ?? 'grok-4');
+        }
+        setProviderConfig(getProviderConfig());
         const expiresHint = resultOAuth.expiresAt
           ? `, expires ${new Date(resultOAuth.expiresAt).toISOString()}`
           : '';
@@ -1607,7 +1628,7 @@ export function App(): React.ReactElement {
           {
             id: crypto.randomUUID(),
             role: 'system',
-            content: `[login oauth] ✓ Grok authenticated (token ${maskKey(resultOAuth.accessToken)}${expiresHint}${refreshHint})`,
+            content: `[login oauth] ✓ Grok authenticated via SuperGrok (token ${maskKey(resultOAuth.accessToken)}${expiresHint}${refreshHint}). Active provider switched to grok — try a prompt now.`,
             ts: Date.now(),
           },
         ]);
@@ -1660,7 +1681,7 @@ export function App(): React.ReactElement {
     // /skill-stats [name] — aggregate stats from skill-history.jsonl (Task C.2.3).
     if (result.kind === 'skill_stats') {
       const historyFile = process.env.ANATHEMA_SKILL_HISTORY_FILE
-        ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'skill-history.jsonl');
+        ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skill-history.jsonl');
       try {
         const records = await readSkillHistory(historyFile);
         const stats = getSkillStats(records, result.skillStatsSkillId);
@@ -1696,7 +1717,7 @@ export function App(): React.ReactElement {
         return;
       }
       const historyFile = process.env.ANATHEMA_SKILL_HISTORY_FILE
-        ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'skill-history.jsonl');
+        ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skill-history.jsonl');
       try {
         const formatted = await compareSkillsFromFile(ids[0], ids[1], historyFile);
         setMessages((prev) => [

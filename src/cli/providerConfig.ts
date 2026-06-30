@@ -53,7 +53,7 @@ const DEFAULTS: ProviderConfig = {
 
 export function getProviderConfigPath(): string {
   return process.env.ANATHEMA_PROVIDER_CONFIG_FILE
-    ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'provider.json');
+    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'provider.json');
 }
 
 /** Return the resolved ProviderConfig (env override > on-disk > defaults). */

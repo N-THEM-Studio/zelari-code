@@ -48,12 +48,12 @@ const SESSIONS_SUBDIR = 'sessions';
 
 export function getBranchesBaseDir(): string {
   return process.env.ANATHEMA_BRANCHES_DIR
-    ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'branches');
+    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'branches');
 }
 
 export function getSessionsBaseDir(): string {
   return process.env.ANATHEMA_SESSIONS_DIR
-    ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'sessions');
+    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'sessions');
 }
 
 function branchPathFor(name: string, baseDir: string): string {
@@ -319,7 +319,7 @@ export function getBranchMtimeMs(name: string, baseDir: string = getBranchesBase
  * (it's a workspace-level concept handled by the store). Provided here
  * so the bundler + tsc emit succeed. Returning null/empty is safe.
  *
- * @see docs/anathema-coder-mission-status.md for the v3-L deferred items.
+ * @see docs/zelari-code-mission-status.md for the v3-L deferred items.
  */
 export function getCurrentBranch(_baseDir?: string): string | null {
   return null;

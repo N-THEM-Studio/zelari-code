@@ -79,7 +79,7 @@ export class SkillCache {
 
   constructor(options: SkillCacheOptions = {}) {
     this.file = options.file ?? process.env.ANATHEMA_SKILL_CACHE_FILE
-      ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'skill-cache.json');
+      ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skill-cache.json');
     this.defaultTtlMs = options.defaultTtlMs ?? SKILL_CACHE_DEFAULT_TTL_MS;
     this.now = options.now ?? (() => Date.now());
     mkdirSync(path.dirname(this.file), { recursive: true });

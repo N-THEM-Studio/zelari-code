@@ -73,7 +73,7 @@ export class SkillHistoryLogger {
 
   constructor(file?: string) {
     this.file = file ?? process.env.ANATHEMA_SKILL_HISTORY_FILE
-      ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'skill-history.jsonl');
+      ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skill-history.jsonl');
     mkdirSync(path.dirname(this.file), { recursive: true });
   }
 

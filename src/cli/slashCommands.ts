@@ -310,7 +310,7 @@ export function handleSlashCommand(
         handled: true,
         kind: 'resume',
         targetSessionId: targetId,
-        message: `[resume] session ${targetId} ready — restart anathema-coder to load`,
+        message: `[resume] session ${targetId} ready — restart zelari-code to load`,
       };
     }
 

@@ -11,7 +11,7 @@
  *   1. process.env[ENV_VAR_NAME] (e.g. OPENAI_API_KEY)
  *   2. Stored key in keys.json
  *
- * @see docs/plans/2026-06-28-anathema-coder.md (Task 14.9)
+ * @see docs/plans/2026-06-28-zelari-code.md (Task 14.9)
  */
 
 import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
@@ -48,7 +48,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
 
 export function getKeyStorePath(): string {
   return process.env.ANATHEMA_KEYSTORE_FILE
-    ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'keys.json');
+    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'keys.json');
 }
 
 export function getProviderSpec(id: string): ProviderSpec | undefined {

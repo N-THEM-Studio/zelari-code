@@ -109,7 +109,7 @@ export class AuditLogger {
 function defaultAuditPath(): string {
   const override = process.env.ANATHEMA_AUDIT_LOG;
   if (override && override.trim().length > 0) return override;
-  return path.join(os.tmpdir(), 'anathema-coder', 'audit.jsonl');
+  return path.join(os.tmpdir(), 'zelari-code', 'audit.jsonl');
 }
 
 /**

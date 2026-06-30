@@ -1,38 +1,56 @@
 /**
- * grokOAuth — complete OAuth flow for xAI Grok provider.
+ * grokOAuth — complete OAuth flow for xAI Grok / SuperGrok provider.
  *
- * 1. Build the authorization URL with client_id, redirect_uri, scope, state.
- * 2. Start the local OAuth callback server.
- * 3. Open the user's browser to the authorization URL (via onBrowserOpen callback).
- * 4. Wait for the redirect callback to deliver the authorization code.
- * 5. Exchange the code for an access token at the token endpoint.
- * 6. Return { accessToken, expiresAt }.
+ * Implements PKCE OAuth2 (RFC 7636) flow with OpenID Connect discovery,
+ * matching the pattern used by the reference `supergrok-oauth` client
+ * (https://github.com/toptoppy/supergrok-oauth).
+ *
+ * 1. Fetch OpenID Connect discovery document from `{issuer}/.well-known/openid-configuration`
+ * 2. Generate PKCE verifier + S256 challenge
+ * 3. Build authorization URL with state, scope, code_challenge
+ * 4. Start local OAuth callback server (port 56121, path /callback)
+ * 5. Open the user's browser to the authorization URL
+ * 6. Wait for the redirect callback to deliver the authorization code
+ * 7. Verify state to prevent CSRF
+ * 8. Exchange code for access token (with code_verifier) at the token endpoint
+ * 9. Return { accessToken, expiresAt, refreshToken }
  *
  * The browser launcher is INJECTED so tests can verify URL construction
  * without spawning a real browser. The fetch implementation is also injected
  * so tests can mock the token exchange.
  *
+ * Default config (override via env GROK_OAUTH_CLIENT_ID):
+ *   - Issuer: https://auth.x.ai
+ *   - Client ID: b1a00492-073a-47ea-816f-4c329264a828 (xAI public OAuth client)
+ *   - Scope: openid profile email offline_access grok-cli:access api:access
+ *   - Redirect: http://127.0.0.1:56121/callback
+ *
  * @see docs/plans/2026-06-29-anathema-coder-v2.md (Task 16.2)
  */
 
 import { startOAuthCallbackServer, type OAuthCallbackServerHandle } from './oauthCallbackServer.js';
+import nodeCrypto from 'node:crypto';
+
+const { getRandomValues, createHash } = nodeCrypto;
 
 export interface GrokOAuthOptions {
-  /** OAuth client id (from env GROK_OAUTH_CLIENT_ID or app settings). */
-  clientId: string;
-  /** OAuth scopes (default: ['chat']). */
+  /** OAuth client id (from env GROK_OAUTH_CLIENT_ID or default xAI public client). */
+  clientId?: string;
+  /** OAuth scopes. Default: xAI full SuperGrok scope. */
   scopes?: readonly string[];
-  /** Callback port (default: 14523). Must match xAI app config. */
+  /** Callback port (default: 56121). Must match xAI registered redirect URI. */
   callbackPort?: number;
-  /** OAuth authorize endpoint (default: 'https://oauth.x.ai/authorize'). */
-  authorizeEndpoint?: string;
-  /** OAuth token exchange endpoint (default: 'https://oauth.x.ai/token'). */
-  tokenEndpoint?: string;
-  /** Time to wait for browser callback (default: 60_000 ms). */
+  /** Callback path (default: /callback). Must match xAI registered redirect URI. */
+  callbackPath?: string;
+  /** OAuth issuer (default: 'https://auth.x.ai'). Discovery URL is `${issuer}/.well-known/openid-configuration`. */
+  issuer?: string;
+  /** Override discovery URL (skips the .well-known fetch). */
+  discoveryUrl?: string;
+  /** Time to wait for browser callback (default: 120_000 ms). */
   callbackTimeoutMs?: number;
   /** Browser opener — opens the URL in the user's default browser. */
   onBrowserOpen?: (url: string) => void | Promise<void>;
-  /** Fetch implementation for token exchange (default: global fetch). */
+  /** Fetch implementation for discovery + token exchange (default: global fetch). */
   fetchImpl?: typeof fetch;
 }
 
@@ -43,6 +61,8 @@ export interface GrokOAuthResult {
   expiresAt?: number;
   /** Refresh token (if provider returned one). */
   refreshToken?: string;
+  /** Refresh token expiration epoch ms (if provider returned refresh_token_expires_in). */
+  refreshExpiresAt?: number;
 }
 
 export class GrokOAuthError extends Error {
@@ -52,39 +72,122 @@ export class GrokOAuthError extends Error {
   }
 }
 
-/** Build the xAI authorization URL with all required params. */
+/**
+ * Default xAI OAuth client ID — public client registered for SuperGrok OAuth
+ * (same as used by the reference supergrok-oauth Python client).
+ */
+export const DEFAULT_GROK_OAUTH_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828';
+
+/** Default OAuth issuer for xAI authentication server. */
+export const DEFAULT_GROK_OAUTH_ISSUER = 'https://auth.x.ai';
+
+/** Default OAuth scopes for full SuperGrok access (matches supergrok-oauth config). */
+export const DEFAULT_GROK_OAUTH_SCOPES = [
+  'openid',
+  'profile',
+  'email',
+  'offline_access',
+  'grok-cli:access',
+  'api:access',
+] as const;
+
+/** Default redirect port (matches supergrok-oauth config). */
+export const DEFAULT_GROK_OAUTH_REDIRECT_PORT = 56121;
+
+/** Default redirect path (matches supergrok-oauth config). */
+export const DEFAULT_GROK_OAUTH_REDIRECT_PATH = '/callback';
+
+/** Fetch the OpenID Connect discovery document. */
+export async function fetchGrokDiscovery(options: {
+  issuer?: string;
+  discoveryUrl?: string;
+  fetchImpl?: typeof fetch;
+} = {}): Promise<{ authorizationEndpoint: string; tokenEndpoint: string }> {
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const discoveryUrl = options.discoveryUrl ?? `${options.issuer ?? DEFAULT_GROK_OAUTH_ISSUER}/.well-known/openid-configuration`;
+  let response: Response;
+  try {
+    response = await fetchImpl(discoveryUrl, { method: 'GET', headers: { Accept: 'application/json' } });
+  } catch (err) {
+    throw new GrokOAuthError(`OAuth discovery network error: ${err instanceof Error ? err.message : String(err)}`, 'discovery_network_error');
+  }
+  if (!response.ok) {
+    const text = await response.text().catch(() => '');
+    throw new GrokOAuthError(
+      `OAuth discovery HTTP ${response.status}: ${text.slice(0, 200)}`,
+      `discovery_http_${response.status}`,
+    );
+  }
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch (err) {
+    throw new GrokOAuthError(`OAuth discovery returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+  }
+  if (!body || typeof body !== 'object') {
+    throw new GrokOAuthError('OAuth discovery returned non-object body');
+  }
+  const obj = body as Record<string, unknown>;
+  if (typeof obj.authorization_endpoint !== 'string' || typeof obj.token_endpoint !== 'string') {
+    throw new GrokOAuthError('OAuth discovery missing authorization_endpoint or token_endpoint');
+  }
+  return {
+    authorizationEndpoint: obj.authorization_endpoint,
+    tokenEndpoint: obj.token_endpoint,
+  };
+}
+
+/**
+ * Generate PKCE verifier (RFC 7636) and S256 challenge.
+ * Returns base64url-encoded strings (no padding).
+ */
+export function generatePkce(): { verifier: string; challenge: string } {
+  // 64 random bytes → base64url → strip padding → take first 128 chars
+  const random = getRandomValues(new Uint8Array(64));
+  const verifier = Buffer.from(random).toString('base64url').slice(0, 128);
+
+  // SHA-256(verifier) → base64url (no padding)
+  const hash = createHash('sha256').update(verifier).digest();
+  const challenge = hash.toString('base64url').replace(/=+$/, '');
+
+  return { verifier, challenge };
+}
+
+/** Build the xAI authorization URL with PKCE. */
 export function buildGrokAuthorizeUrl(options: {
   clientId: string;
   redirectUri: string;
   scopes?: readonly string[];
   state?: string;
-  authorizeEndpoint?: string;
+  codeChallenge: string;
+  authorizeEndpoint: string;
 }): string {
-  const endpoint = options.authorizeEndpoint ?? 'https://oauth.x.ai/authorize';
-  const scopes = options.scopes ?? ['chat'];
+  const scopes = options.scopes ?? DEFAULT_GROK_OAUTH_SCOPES;
   const params = new URLSearchParams({
     client_id: options.clientId,
     redirect_uri: options.redirectUri,
     response_type: 'code',
     scope: scopes.join(' '),
     state: options.state ?? crypto.randomUUID(),
+    code_challenge: options.codeChallenge,
+    code_challenge_method: 'S256',
   });
-  return `${endpoint}?${params.toString()}`;
+  return `${options.authorizeEndpoint}?${params.toString()}`;
 }
 
 /** Exchange the authorization code for an access token. */
 export async function exchangeGrokCode(options: {
   clientId: string;
   code: string;
+  codeVerifier: string;
   redirectUri: string;
-  tokenEndpoint?: string;
+  tokenEndpoint: string;
   fetchImpl?: typeof fetch;
 }): Promise<GrokOAuthResult> {
-  const endpoint = options.tokenEndpoint ?? 'https://oauth.x.ai/token';
   const fetchImpl = options.fetchImpl ?? fetch;
   let response: Response;
   try {
-    response = await fetchImpl(endpoint, {
+    response = await fetchImpl(options.tokenEndpoint, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -95,6 +198,7 @@ export async function exchangeGrokCode(options: {
         client_id: options.clientId,
         code: options.code,
         redirect_uri: options.redirectUri,
+        code_verifier: options.codeVerifier,
       }).toString(),
     });
   } catch (err) {
@@ -147,6 +251,11 @@ function parseTokenResponseBody(
   }
   if (typeof obj.refresh_token === 'string' && obj.refresh_token.length > 0) {
     result.refreshToken = obj.refresh_token;
+  }
+  // xAI SuperGrok OAuth also returns refresh_token_expires_in (refresh token TTL).
+  // Capture it so callers can warn before the refresh token expires.
+  if (typeof obj.refresh_token_expires_in === 'number' && Number.isFinite(obj.refresh_token_expires_in)) {
+    result.refreshExpiresAt = Date.now() + obj.refresh_token_expires_in * 1000;
   }
   // Some providers also return `scope` — we ignore it for now.
   void obj;
@@ -234,33 +343,56 @@ export async function refreshGrokToken(options: {
 /**
  * Run the complete OAuth flow.
  *
+ * Steps:
+ *  1. Fetch OpenID Connect discovery document
+ *  2. Generate PKCE verifier + S256 challenge
+ *  3. Build authorization URL
+ *  4. Start local callback server
+ *  5. Open browser
+ *  6. Wait for callback
+ *  7. Verify state to prevent CSRF
+ *  8. Exchange code for token (with code_verifier)
+ *
  * @throws GrokOAuthError on any failure (network, missing params, provider error).
  */
 export async function runGrokOAuthFlow(options: GrokOAuthOptions): Promise<GrokOAuthResult> {
-  if (!options.clientId || options.clientId.trim().length === 0) {
+  const clientId = options.clientId || process.env.GROK_OAUTH_CLIENT_ID || DEFAULT_GROK_OAUTH_CLIENT_ID;
+  if (!clientId || clientId.trim().length === 0) {
     throw new GrokOAuthError('Missing clientId', 'no_client_id');
   }
 
-  const callbackPort = options.callbackPort ?? 14523;
-  const redirectUri = `http://127.0.0.1:${callbackPort}/oauth/callback`;
+  const callbackPort = options.callbackPort ?? DEFAULT_GROK_OAUTH_REDIRECT_PORT;
+  const callbackPath = options.callbackPath ?? DEFAULT_GROK_OAUTH_REDIRECT_PATH;
+  const redirectUri = `http://127.0.0.1:${callbackPort}${callbackPath}`;
+
+  // Step 1: fetch OpenID Connect discovery document.
+  const discovery = await fetchGrokDiscovery({
+    issuer: options.issuer,
+    discoveryUrl: options.discoveryUrl,
+    fetchImpl: options.fetchImpl,
+  });
+
+  // Step 2: generate PKCE verifier + S256 challenge.
+  const { verifier: codeVerifier, challenge: codeChallenge } = generatePkce();
   const state = crypto.randomUUID();
 
-  // Step 1: build authorize URL.
+  // Step 3: build authorize URL with PKCE.
   const authorizeUrl = buildGrokAuthorizeUrl({
-    clientId: options.clientId,
+    clientId,
     redirectUri,
     scopes: options.scopes,
     state,
-    authorizeEndpoint: options.authorizeEndpoint,
+    codeChallenge,
+    authorizeEndpoint: discovery.authorizationEndpoint,
   });
 
-  // Step 2: start callback server.
+  // Step 4: start callback server.
   let handle: OAuthCallbackServerHandle;
   try {
     handle = await startOAuthCallbackServer({
       port: callbackPort,
-      timeoutMs: options.callbackTimeoutMs ?? 60_000,
-      expectedPath: '/oauth/callback',
+      timeoutMs: options.callbackTimeoutMs ?? 120_000,
+      expectedPath: callbackPath,
     });
   } catch (err) {
     throw new GrokOAuthError(
@@ -270,7 +402,7 @@ export async function runGrokOAuthFlow(options: GrokOAuthOptions): Promise<GrokO
   }
 
   try {
-    // Step 3: open browser (or call injected opener for tests).
+    // Step 5: open browser (or call injected opener for tests).
     if (options.onBrowserOpen) {
       await options.onBrowserOpen(authorizeUrl);
     } else {
@@ -278,19 +410,35 @@ export async function runGrokOAuthFlow(options: GrokOAuthOptions): Promise<GrokO
       await openBrowser(authorizeUrl);
     }
 
-    // Step 4: wait for callback.
-    const code = await handle.waitForCode();
+    // Step 6: wait for callback.
+    const callbackResult = await handle.waitForCode();
 
-    // Step 5: verify state if provider supports it (best-effort: we sent a UUID).
-    // We don't have access to the original URL on the server, so we skip strict state
-    // verification here; if needed, callers can pass a custom callback server.
+    // Step 7: verify state (CSRF protection).
+    if (callbackResult.state !== state) {
+      throw new GrokOAuthError(
+        `OAuth state mismatch — possible CSRF. expected=${state} got=${callbackResult.state ?? '(none)'}`,
+        'state_mismatch',
+      );
+    }
 
-    // Step 6: exchange code for token.
+    if (callbackResult.error) {
+      throw new GrokOAuthError(
+        `OAuth provider returned error: ${callbackResult.error}${callbackResult.errorDescription ? ` — ${callbackResult.errorDescription}` : ''}`,
+        callbackResult.error,
+      );
+    }
+
+    if (!callbackResult.code) {
+      throw new GrokOAuthError('OAuth callback did not include authorization code', 'no_code');
+    }
+
+    // Step 8: exchange code for token (with code_verifier).
     return await exchangeGrokCode({
-      clientId: options.clientId,
-      code,
+      clientId,
+      code: callbackResult.code,
+      codeVerifier,
       redirectUri,
-      tokenEndpoint: options.tokenEndpoint,
+      tokenEndpoint: discovery.tokenEndpoint,
       fetchImpl: options.fetchImpl,
     });
   } finally {

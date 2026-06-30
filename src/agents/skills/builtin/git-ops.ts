@@ -51,7 +51,7 @@ const commitMessage: CodingSkillDefinition = {
 - emit/subscribe/subscribeAll API
 
 Foundation for Phase 12 (AgentHarness extraction).`,
-        footer: 'Refs: docs/plans/2026-06-28-anathema-coder.md',
+        footer: 'Refs: docs/plans/2026-06-28-zelari-code.md',
         type: 'feat',
         scope: 'events',
       },

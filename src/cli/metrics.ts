@@ -59,7 +59,7 @@ export class MetricsLogger {
 
   constructor(file?: string) {
     this.file = file ?? process.env.ANATHEMA_METRICS_FILE
-      ?? path.join(os.homedir(), '.tmp', 'anathema-coder', 'metrics.jsonl');
+      ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'metrics.jsonl');
     mkdirSync(path.dirname(this.file), { recursive: true });
   }
 
