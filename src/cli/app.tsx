@@ -417,13 +417,38 @@ export function App(): React.ReactElement {
             primary: baseProviderStream,
             fallback: failoverResolution.fallback,
           });
+    const cwd = process.cwd();
+    const toolList = toolRegistry.toOpenAITools().map((t) => `- ${t.name}: ${t.description}`).join('\n');
+    const systemPrompt = [
+      'You are Zelari Code, an interactive AI coding agent operating directly in the user\'s terminal.',
+      '',
+      'You ARE connected to this machine and have real tools to read, modify, and explore the codebase.',
+      'Never claim you lack filesystem or shell access — you have it. Use your tools instead of asking the user to paste file contents.',
+      '',
+      `# Working Directory`,
+      `You are running in: ${cwd}`,
+      'All relative file paths are resolved against this directory. Always work with real files here.',
+      '',
+      '# Available Tools',
+      'You can call these tools. Use them to take action and gather information autonomously:',
+      toolList,
+      '',
+      '# Guidelines',
+      '- To understand a project, list files (bash: ls) and read key files (read_file), don\'t ask the user to paste them.',
+      '- Be proactive: explore, read, and act. Prefer doing over asking.',
+      '- When you finish a task, briefly summarize what you did.',
+    ].join('\n');
     const harness = new AgentHarness({
       model: envConfig.model,
       provider: PROVIDER,
-      messages: [{ role: 'user', content: userText }],
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userText },
+      ],
       tools: toolRegistry.toOpenAITools(),
       toolRegistry,
       providerStream,
+      cwd,
     });
     harnessRef.current = harness;
     setQueueCount(harness.queueLength);

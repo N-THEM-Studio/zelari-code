@@ -40,6 +40,13 @@ export interface AgentMessage {
   content: string;
   /** For tool messages: the tool call id this result corresponds to. */
   toolCallId?: string;
+  /**
+   * For assistant messages that requested tool calls: the list of tool
+   * invocations the model emitted in this turn. The provider maps this to
+   * OpenAI `tool_calls` so a subsequent request can continue the conversation
+   * after tool results are appended.
+   */
+  toolCalls?: { id: string; name: string; args: Record<string, unknown> }[];
 }
 
 export interface AgentToolSpec {
@@ -261,6 +268,58 @@ export class AgentHarness {
     this.emit(initialMsgEnd);
     yield initialMsgEnd;
 
+    // === Agentic tool-call loop ===
+    // When the model's finish reason is 'tool_calls', the turn produced tool
+    // invocations whose results are now in the transcript (appended by
+    // runSingleTurn). Re-enter the provider so the model can consume those
+    // results and continue — this is the core agent loop (reason → act →
+    // observe → reason). Bounded by MAX_TOOL_LOOP_ITERATIONS to prevent runaway.
+    const MAX_TOOL_LOOP_ITERATIONS = 12;
+    let toolLoopTurns = 0;
+    while (
+      !this.cancelled &&
+      !hadError &&
+      toolLoopTurns < MAX_TOOL_LOOP_ITERATIONS &&
+      initialFinishRef.value === 'tool_calls'
+    ) {
+      toolLoopTurns++;
+
+      const turnMessageId = crypto.randomUUID();
+      const msgStart: BrainMessageStartEvent = createBrainEvent(
+        'message_start',
+        this.sessionId,
+        { messageId: turnMessageId, role: 'assistant' },
+      );
+      this.emit(msgStart);
+      yield msgStart;
+
+      let turnLength = 0;
+      const turnFinishRef = { value: 'stop' };
+      const turnUsageRef = { value: null as UsageBreakdown | null };
+      for await (const ev of this.runSingleTurn(turnMessageId, turnFinishRef, turnUsageRef)) {
+        if (ev.type === 'message_delta') {
+          turnLength += (ev as BrainMessageDeltaEvent).delta.length;
+        } else if (ev.type === 'error') {
+          if (ev.severity !== 'cancelled') hadError = true;
+        }
+        yield ev;
+      }
+      totalLength += turnLength;
+
+      const msgEnd: BrainMessageEndEvent = createBrainEvent('message_end', this.sessionId, {
+        messageId: turnMessageId,
+        totalLength: turnLength,
+        finishReason: turnFinishRef.value,
+        ...(turnUsageRef.value ? { usage: turnUsageRef.value } : {}),
+      });
+      this.emit(msgEnd);
+      yield msgEnd;
+
+      // Drive the loop: keep going only if this turn again requested tool calls.
+      initialFinishRef.value = turnFinishRef.value;
+      if (hadError || this.cancelled) break;
+    }
+
     // === Queue drain (Task 18.1) ===
     // After the initial turn, drain queued user prompts up to
     // maxQueuedIterations. Each iteration appends the next dequeued
@@ -355,6 +414,13 @@ export class AgentHarness {
       let toolCallsThisTurn = 0;
       const maxToolCalls = this.config.maxToolCallsPerTurn;
 
+      // Accumulate this turn's text + tool calls so we can append an assistant
+      // message (with tool_calls) to the transcript before re-entering the
+      // provider. Without this, tool results would arrive at the API with no
+      // preceding assistant tool_calls message → HTTP 400.
+      let turnText = '';
+      const turnToolCalls: { id: string; name: string; args: Record<string, unknown> }[] = [];
+
       for await (const delta of stream) {
         if (this.cancelled) {
           // Emit a cancellation error event so consumers (CLI, tests) can
@@ -370,6 +436,7 @@ export class AgentHarness {
         }
 
         if (delta.kind === 'text') {
+          turnText += delta.delta;
           const deltaEvent: BrainMessageDeltaEvent = createBrainEvent(
             'message_delta',
             this.sessionId,
@@ -386,6 +453,9 @@ export class AgentHarness {
           yield thinkEvent;
         } else if (delta.kind === 'tool_call') {
           toolCallsThisTurn++;
+          // Record this tool call so the assistant message (appended after the
+          // turn) carries the full tool_calls list the model emitted.
+          turnToolCalls.push({ id: delta.toolCallId, name: delta.toolName, args: delta.args });
           const toolStartEvent = createBrainEvent('tool_execution_start', this.sessionId, {
             toolCallId: delta.toolCallId,
             toolName: delta.toolName,
@@ -413,18 +483,26 @@ export class AgentHarness {
                 signal: this.activeController?.signal,
               },
             );
+            const resultStr = result.ok ? String(result.value) : result.error;
             const endEvent: BrainToolExecutionEndEvent = createBrainEvent(
               'tool_execution_end',
               this.sessionId,
               {
                 toolCallId: delta.toolCallId,
-                result: result.ok ? String(result.value) : result.error,
+                result: resultStr,
                 isError: !result.ok,
                 durationMs: Date.now() - startMs,
               },
             );
             this.emit(endEvent);
             yield endEvent;
+            // Append the tool result to the transcript so the next provider
+            // turn can see what the tool returned (OpenAI role:'tool' message).
+            this.config.messages.push({
+              role: 'tool',
+              toolCallId: delta.toolCallId,
+              content: resultStr,
+            });
           } else if (skipped) {
             // Synthetic end event — no registry call, just close out the
             // tool_execution_start with an explicit skip reason. The LLM
@@ -441,11 +519,28 @@ export class AgentHarness {
             );
             this.emit(endEvent);
             yield endEvent;
+            this.config.messages.push({
+              role: 'tool',
+              toolCallId: delta.toolCallId,
+              content: `[skipped] maxToolCallsPerTurn reached (limit=${maxToolCalls})`,
+            });
           }
         } else if (delta.kind === 'finish') {
           // Capture the finish reason via the shared ref so the caller
           // can synthesize the matching `message_end`.
           finishRef.value = delta.reason;
+          // Append the assistant turn (text + any tool_calls) to the transcript.
+          // This MUST happen before the loop re-enters the provider (either via
+          // queue drain or a follow-up tool-result turn) so the conversation
+          // history stays valid: every role:'tool' message needs a preceding
+          // assistant message that declared the matching tool_calls.
+          if (turnToolCalls.length > 0 || turnText.length > 0) {
+            this.config.messages.push({
+              role: 'assistant',
+              content: turnText,
+              ...(turnToolCalls.length > 0 ? { toolCalls: turnToolCalls } : {}),
+            });
+          }
           break;
         } else if (delta.kind === 'error') {
           const errEvent = createBrainEvent('error', this.sessionId, {

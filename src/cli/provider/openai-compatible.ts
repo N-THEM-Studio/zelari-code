@@ -61,11 +61,41 @@ export function resolveBaseUrl(providerId: ProviderName): string {
 
 export function openaiCompatibleProvider(config: OpenAICompatibleConfig): ProviderStreamFn {
   return async function* (params): AsyncIterable<ProviderDelta> {
-    const body = {
+    // Map the provider-neutral AgentMessage[] into the OpenAI chat format.
+    // The harness keeps tool results as { role: 'tool', toolCallId, content }
+    // and assistant tool-call turns as { role: 'assistant', content,
+    // toolCalls: [{id,name,args}] } (see AgentHarness accumulation). Here we
+    // translate both into the shape OpenAI expects:
+    //   - assistant with tool_calls: { role:'assistant', content, tool_calls:[{id,type:'function',function:{name,arguments}}] }
+    //   - tool result: { role:'tool', tool_call_id, content }
+    const messages = params.messages.map((m) => {
+      if (m.role === 'tool') {
+        return {
+          role: 'tool' as const,
+          tool_call_id: m.toolCallId,
+          content: m.content,
+        };
+      }
+      if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+        return {
+          role: 'assistant' as const,
+          content: m.content ?? '',
+          tool_calls: m.toolCalls.map((tc) => ({
+            id: tc.id,
+            type: 'function' as const,
+            function: {
+              name: tc.name,
+              arguments: JSON.stringify(tc.args ?? {}),
+            },
+          })),
+        };
+      }
+      return { role: m.role, content: m.content };
+    });
+
+    const body: Record<string, unknown> = {
       model: config.model,
-      messages: params.messages
-        .filter((m) => m.role !== 'tool') // skip tool messages for simplicity
-        .map((m) => ({ role: m.role, content: m.content })),
+      messages,
       stream: true,
       temperature: 0.7,
       // Task G.4.2 — request the provider to send real token usage in
@@ -75,6 +105,20 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       // the harness will fall back to the ~4-char/token approximation.
       stream_options: { include_usage: true },
     };
+
+    // Only advertise tools when at least one is available. Many providers
+    // reject an empty `tools: []` with HTTP 400, so we omit the key entirely.
+    if (params.tools && params.tools.length > 0) {
+      body.tools = params.tools.map((t) => ({
+        type: 'function',
+        function: {
+          name: t.name,
+          description: t.description,
+          parameters: t.parameters,
+        },
+      }));
+      body.tool_choice = 'auto';
+    }
 
     let response: Response;
     try {
@@ -209,6 +253,12 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
                   }
                 }
               }
+            }
+            // Final chunk: if the provider includes a finish_reason, surface it
+            // (especially 'tool_calls', which the harness uses to decide whether
+            // to re-enter the provider after tool results are appended).
+            if (choice?.finish_reason) {
+              yield { kind: 'finish', reason: choice.finish_reason };
             }
           } catch {
             // Skip malformed lines

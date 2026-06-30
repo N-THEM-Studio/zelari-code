@@ -49,9 +49,22 @@ function buildMixedRegistry(): {
   return { registry, echoCalls, failCount };
 }
 
+/**
+ * Build a provider stream that emits the given events ONCE, then yields a
+ * plain stop on every subsequent call (e.g. agentic re-entries after tool
+ * results). Without this, a stateless mock would re-emit tool_calls forever
+ * and trip the harness MAX_TOOL_LOOP_ITERATIONS guard.
+ */
 function streamEmitting(events: Array<{ kind: string; [k: string]: unknown }>): ProviderStreamFn {
+  let consumed = false;
   return async function* () {
-    for (const e of events) yield e as never;
+    if (!consumed) {
+      consumed = true;
+      for (const e of events) yield e as never;
+      return;
+    }
+    // Subsequent turns (after tool results): just stop.
+    yield { kind: 'finish', reason: 'stop' } as never;
   };
 }
 

@@ -19,6 +19,7 @@ import {
 } from '../main/core/tools/builtin/filesystem.js';
 import { bashTool } from '../main/core/tools/builtin/shell.js';
 import { grepContentTool } from '../main/core/tools/builtin/search.js';
+import { listFilesTool } from '../main/core/tools/builtin/listFiles.js';
 import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPath.js';
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
@@ -66,6 +67,7 @@ export function createBuiltinToolRegistry(
   const safeWriteFile = wrapWithSandbox(writeFileTool, ['path'], root, audit, sessionId);
   const safeEditFile = wrapWithSandbox(editFileTool, ['path'], root, audit, sessionId);
   const safeGrepContent = wrapWithSandbox(grepContentTool, ['path'], root, audit, sessionId);
+  const safeListFiles = wrapWithSandbox(listFilesTool, ['path'], root, audit, sessionId);
 
   // Wrap bash: shell blocklist + audit.
   const safeBash = wrapWithShellSafety(bashTool, audit, sessionId);
@@ -76,6 +78,7 @@ export function createBuiltinToolRegistry(
   registry.register(safeEditFile);
   registry.register(safeBash);
   registry.register(safeGrepContent);
+  registry.register(safeListFiles);
 
   const tools: BuiltinToolSummary[] = [
     safeReadFile,
@@ -83,6 +86,7 @@ export function createBuiltinToolRegistry(
     safeEditFile,
     safeBash,
     safeGrepContent,
+    safeListFiles,
   ].map((t) => ({
     name: t.name,
     description: t.description,
