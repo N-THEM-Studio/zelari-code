@@ -30,6 +30,7 @@ import { dispatchCouncil } from './councilDispatcher.js';
 import { FeedbackStore } from './councilFeedback.js';
 import { setApiKey, setOAuthToken, getProviderSpec, maskKey, PROVIDERS, resolveApiKeyWithMeta, getOAuthToken, type ProviderName } from './keyStore.js';
 import { getProviderConfig, getActiveProvider as getActiveProviderSpec, setActiveProviderId as persistActiveProvider, setModelForProvider as persistModelForProvider, getModelForProvider, setCustomEndpoint, clearCustomEndpoint, getCustomEndpoint } from './providerConfig.js';
+import { discoverModelsInBackground, discoverModelsForProvider, getCachedModels, getDiscoveredModelIds, type ProviderId as DiscoveryProviderId } from './modelDiscovery.js';
 import { runGrokOAuthFlow } from './grokOAuth.js';
 import { validateApiKey } from './keyValidator.js';
 import { listRefreshImpls, getRefreshImpl } from './refreshRegistry.js';
@@ -1346,6 +1347,78 @@ export function App(): React.ReactElement {
       return;
     }
 
+    // v3-U: /models — list discovered models for the active provider.
+    if (result.kind === 'models_list') {
+      const discId = activeProviderSpec.id as DiscoveryProviderId;
+      const cached = getCachedModels(discId);
+      if (!cached || cached.models.length === 0) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `[models] no cache for ${activeProviderSpec.displayName}. Run /models refresh or /login ${discId} <key> to discover.`,
+            ts: Date.now(),
+          },
+        ]);
+      } else {
+        const ageMin = Math.round((Date.now() - cached.fetchedAt) / 60_000);
+        const list = cached.models.map((m) => `  - ${m.id}${m.ownedBy ? ` (${m.ownedBy})` : ''}`).join('\n');
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `[models] ${activeProviderSpec.displayName} — ${cached.models.length} models (fetched ${ageMin}m ago from ${cached.baseUrl}):\n${list}`,
+            ts: Date.now(),
+          },
+        ]);
+      }
+      setInput('');
+      return;
+    }
+
+    // v3-U: /models refresh — force re-discovery for the active provider.
+    if (result.kind === 'models_refresh' || result.kind === 'model_refresh') {
+      const discId = activeProviderSpec.id as DiscoveryProviderId;
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `[models] refreshing model list for ${activeProviderSpec.displayName}...`,
+          ts: Date.now(),
+        },
+      ]);
+      setInput('');
+      // Fire discovery (await to surface errors inline).
+      (async () => {
+        try {
+          const entry = await discoverModelsForProvider(discId);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: `[models] ✓ ${entry.models.length} models discovered for ${activeProviderSpec.displayName}. Use /model <name> to switch.`,
+              ts: Date.now(),
+            },
+          ]);
+        } catch (err) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: `[models] ✗ discovery failed: ${err instanceof Error ? err.message : String(err)}`,
+              ts: Date.now(),
+            },
+          ]);
+        }
+      })();
+      return;
+    }
+
     // Branch commands (Task 17.2).
     if (result.kind === 'branch_create' && result.branchName) {
       if (!sessionId) {
@@ -1573,6 +1646,25 @@ export function App(): React.ReactElement {
             ts: Date.now(),
           },
         ]);
+        // v3-U: kick off model discovery in the background so /model can
+        // suggest the provider's actual current list. Fire-and-forget: a
+        // failed discovery call should not break the /login UX.
+        const discoveryProvider = result.provider as DiscoveryProviderId;
+        if (['grok', 'glm', 'minimax', 'openai-compatible'].includes(discoveryProvider)) {
+          discoverModelsInBackground(discoveryProvider, {
+            onError: (err) => {
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  role: 'system',
+                  content: `[models] discovery failed for ${discoveryProvider}: ${err.message} (using static defaults)`,
+                  ts: Date.now(),
+                },
+              ]);
+            },
+          });
+        }
       } catch (err) {
         setMessages((prev) => [
           ...prev,
@@ -1632,6 +1724,20 @@ export function App(): React.ReactElement {
             ts: Date.now(),
           },
         ]);
+        // v3-U: kick off Grok model discovery (OAuth token as Bearer).
+        discoverModelsInBackground('grok', {
+          onError: (err) => {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: 'system',
+                content: `[models] discovery failed for grok: ${err.message} (using static defaults)`,
+                ts: Date.now(),
+              },
+            ]);
+          },
+        });
       } catch (err) {
         setMessages((prev) => [
           ...prev,

@@ -1,13 +1,13 @@
 import type { CodingSkillDefinition } from '../agents/skills';
 
 export type SlashCommand =
-  | 'login' | 'model' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'promote-member' | 'update';
+  | 'login' | 'model' | 'model_refresh' | 'models' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'promote-member' | 'update';
 
 export interface SlashCommandResult {
   /** Whether the command was recognized. */
   handled: boolean;
   /** Discriminated kind for what the caller should do. */
-  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'provider' | 'provider_set' | 'provider_list' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage';
+  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'models_list' | 'models_refresh' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'provider' | 'provider_set' | 'provider_list' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage';
   /** Optional human-readable message (e.g. for `clear` or `help`). */
   message?: string;
   /** For `model`: the new model name. */
@@ -154,7 +154,7 @@ export function handleSlashCommand(
       return {
         handled: true,
         kind: 'help',
-        message: `Available commands:\n  /login <provider> — authenticate with provider (grok, minimax, glm, custom)\n  /model <name> — switch the active model\n  /provider <name> — switch the active provider\n  /provider custom <baseUrl> — point the active provider at a self-hosted endpoint (Ollama, LM Studio, vLLM, ...)\n  /provider custom clear — clear the custom endpoint override\n  /skill <name> [input] — invoke a skill (autocomplete with /skill <TAB>)\n  /skill-stats [name] — show invocation stats (success rate, avg duration, total tokens)\n  /council <input> — invoke the multi-agent council on input\n  /council-feedback <memberId> <1-5> [note] — rate a council member for future ranking (Task I.2)
+        message: `Available commands:\n  /login <provider> — authenticate with provider (grok, minimax, glm, custom)\n  /model <name> — switch the active model\n  /model refresh — re-discover models for the active provider (v3-U)\n  /models — list discovered models for the active provider (v3-U)\n  /models refresh — re-discover models for the active provider (v3-U)\n  /provider <name> — switch the active provider\n  /provider custom <baseUrl> — point the active provider at a self-hosted endpoint (Ollama, LM Studio, vLLM, ...)\n  /provider custom clear — clear the custom endpoint override\n  /skill <name> [input] — invoke a skill (autocomplete with /skill <TAB>)\n  /skill-stats [name] — show invocation stats (success rate, avg duration, total tokens)\n  /council <input> — invoke the multi-agent council on input\n  /council-feedback <memberId> <1-5> [note] — rate a council member for future ranking (Task I.2)
   /promote-member <memberId> — promote a council member to a standalone skill (v3-K)
   /update [--yes|-y] — check for zelari-coder updates; --yes performs the update (v3-N)\n  /steer <text> — enqueue a follow-up prompt on the active run (Task 18.2)\n  /steer --interrupt <text> — cancel current run + enqueue <text> for next dispatch (Task C.3.2)\n  /compact — compact the session transcript\n  /clear — clear the visible transcript (session is preserved)\n  /sessions — list past sessions\n  /resume <id> — load a past session\n  /branch <name> — snapshot the current session into a new branch\n  /branches — list branches\n  /checkout <name> — switch the active branch\n  /new — start a fresh session\n  /diff [--staged] — show uncommitted changes (or staged with --staged)\n  /undo [--yes] — revert working-tree changes (destructive! requires --yes)\n  /help — show this help\n  /exit — exit the CLI\n\n${formatSkillList(availableSkills)}`,
       };
@@ -196,7 +196,18 @@ export function handleSlashCommand(
           message: 'Usage: /model <name> to change, /model to show current',
         };
       }
+      if (model === 'refresh') {
+        return { handled: true, kind: 'model_refresh' };
+      }
       return { handled: true, kind: 'model_set', model };
+    }
+
+    case 'models': {
+      const sub = args[0];
+      if (sub === 'refresh') {
+        return { handled: true, kind: 'models_refresh' };
+      }
+      return { handled: true, kind: 'models_list' };
     }
 
     case 'provider': {
