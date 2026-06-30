@@ -41,9 +41,10 @@ Verify the fix: `where zelari-code` (CMD) or `which zelari-code` (Bash) should p
 # Set your OpenAI-compatible API key (OpenAI, Together, Groq, custom endpoint, etc.)
 export OPENAI_API_KEY=sk-...
 
-# Or use Grok via OAuth
+# Or use Grok via OAuth (Device Authorization Grant — RFC 8628)
 zelari-code
-# Inside the TUI: /login grok (then follow the OAuth flow)
+# Inside the TUI: /login grok
+# → A code + verification URL appears; open the URL, enter the code, authorize.
 
 # Or use GLM/Z.AI
 export GLM_API_KEY=...
@@ -64,7 +65,7 @@ zelari-code
 | `/skill-compare <id1> <id2>` | Compare two skills' stats |
 | `/provider` | Show/set active LLM provider |
 | `/model <model>` | Set model for current provider |
-| `/key <provider>` | Set API key (or start OAuth flow for Grok) |
+| `/key <provider>` | Set API key (or start device OAuth flow for Grok) |
 | `/cost` | Show session cost breakdown |
 | `/compact` | Compact the chat transcript |
 | `/session` | Show session info |

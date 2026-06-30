@@ -101,7 +101,7 @@ describe('refreshGrokToken (Task D.2.1)', () => {
       });
       expect(fetchSpy).toHaveBeenCalledOnce();
       const [url, init] = fetchSpy.mock.calls[0] as [string, RequestInit];
-      expect(url).toBe('https://oauth.x.ai/token');
+      expect(url).toBe('https://auth.x.ai/oauth2/token');
       expect(init.method).toBe('POST');
       const body = init.body as string;
       expect(body).toContain('grant_type=refresh_token');

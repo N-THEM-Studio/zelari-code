@@ -1680,7 +1680,9 @@ export function App(): React.ReactElement {
       return;
     }
 
-    // Login with OAuth: launch SuperGrok PKCE flow (Task 16.3 + v3-T).
+    // Login with OAuth: launch SuperGrok Device Authorization Grant flow
+    // (RFC 8628). xAI does not support the browser-redirect Authorization
+    // Code Grant — the user is shown a code to enter at a verification URL.
     if (result.kind === 'login_oauth' && result.provider === 'grok') {
       // Override GROK_OAUTH_CLIENT_ID via env if the user wants a custom client.
       // Default uses xAI's public client (see DEFAULT_GROK_OAUTH_CLIENT_ID).
@@ -1689,14 +1691,28 @@ export function App(): React.ReactElement {
         {
           id: crypto.randomUUID(),
           role: 'system',
-          content: '[login oauth] opening browser for SuperGrok authentication (PKCE)...',
+          content: '[login oauth] requesting device code from xAI...',
           ts: Date.now(),
         },
       ]);
       setBusy(true);
       try {
         const resultOAuth = await runGrokOAuthFlow({
-          callbackTimeoutMs: 120_000,
+          // Show the user_code + verification_uri as soon as xAI returns them.
+          onUserCode: (info) => {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: 'system',
+                content:
+                  `[login oauth] Open ${info.verificationUri} in your browser and enter the code:\n` +
+                  `  ${info.userCode}\n` +
+                  `(Opening your browser automatically...)`,
+                ts: Date.now(),
+              },
+            ]);
+          },
         });
         // Persist full OAuth token (apiKey + expiresAt + refreshToken) so
         // the auto-refresh path (Task D.3.1) can use the refresh_token later.
