@@ -12,13 +12,16 @@ describe('sandboxPath (Task A2)', () => {
   it('resolves a relative path against the root', () => {
     const root = '/tmp/sandbox-root';
     const resolved = resolveSandboxedPath('foo/bar.txt', { root });
-    expect(resolved).toBe(path.join(root, 'foo/bar.txt'));
+    // Use path.resolve for comparison — on Windows, path.join returns a
+    // drive-relative path (e.g. \tmp\...) while resolveSandboxedPath uses
+    // path.resolve, which normalises to a full absolute path.
+    expect(resolved).toBe(path.resolve(root, 'foo/bar.txt'));
   });
 
   it('accepts an absolute path that is inside the root', () => {
     const root = '/tmp/sandbox-root';
     const inner = path.join(root, 'inside.txt');
-    expect(resolveSandboxedPath(inner, { root })).toBe(inner);
+    expect(resolveSandboxedPath(inner, { root })).toBe(path.resolve(inner));
   });
 
   it('throws SandboxViolationError for a path that escapes via ..', () => {

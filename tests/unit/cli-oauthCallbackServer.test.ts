@@ -54,16 +54,17 @@ describe('oauthCallbackServer (v3-T)', () => {
       expectedPath: '/callback',
     });
     const paramsPromise = handle.waitForCode();
+    // Attach a catch handler BEFORE triggering the callback, so the
+    // handler is in place when the server rejects — avoids an unhandled
+    // promise rejection on Node.js. The catch transforms the rejection
+    // into a resolved promise carrying the error.
+    const errorPromise = paramsPromise.catch((e) => e);
     await new Promise((r) => setTimeout(r, 50));
     const response = await sendCallback(handle.port, '/callback?error=access_denied&error_description=user+denied');
     expect(response.status).toBe(400);
-    await expect(paramsPromise).rejects.toBeInstanceOf(OAuthCallbackError);
-    // Error message includes the OAuth error code
-    try {
-      await paramsPromise;
-    } catch (e) {
-      expect((e as Error).message).toMatch(/access_denied/);
-    }
+    const error = await errorPromise;
+    expect(error).toBeInstanceOf(OAuthCallbackError);
+    expect(error.message).toMatch(/access_denied/);
     handle.close();
   });
 

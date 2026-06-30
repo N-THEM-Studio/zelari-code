@@ -32,6 +32,9 @@ describe('Task A4 — gitOps + /diff + /undo', () => {
     await git(repoDir, ['init', '-q']);
     await git(repoDir, ['config', 'user.email', 'test@example.com']);
     await git(repoDir, ['config', 'user.name', 'Test User']);
+    // Disable line-ending conversion so content comparisons are deterministic
+    // across platforms (Windows `git checkout` would otherwise convert LF to CRLF).
+    await git(repoDir, ['config', 'core.autocrlf', 'false']);
     // Seed an initial commit so HEAD exists.
     await fs.writeFile(path.join(repoDir, 'README.md'), '# test\n', 'utf-8');
     await git(repoDir, ['add', '.']);

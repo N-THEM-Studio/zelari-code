@@ -16,11 +16,14 @@
 
 import { createRequire } from 'node:module';
 import { existsSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// Helper: convert Windows absolute path to file:// URL for dynamic import()
+const toImportURL = (p) => pathToFileURL(p).href;
 
 // Resolve the package root (this file lives at <pkg>/bin/zelari-code.js)
 const pkgRoot = path.resolve(__dirname, '..');
@@ -32,15 +35,15 @@ const tsSource = path.join(pkgRoot, 'src', 'cli', 'main.ts');
 
 if (existsSync(compiledBundled)) {
   // Production path: esbuild-bundled self-contained ESM (includes .tsx)
-  await import(compiledBundled);
+  await import(toImportURL(compiledBundled));
 } else if (existsSync(compiledMain) && existsSync(compiledApp)) {
   // Production path (legacy): tsc-only emit (only .ts, requires .tsx to be absent)
-  await import(compiledMain);
+  await import(toImportURL(compiledMain));
 } else if (existsSync(tsSource)) {
   // Dev/source install path: use tsx
   try {
     require('tsx/esm/api');
-    await import(tsSource);
+    await import(toImportURL(tsSource));
   } catch {
     console.error(
       '[zelari-code] Neither compiled dist nor tsx runtime found.\n' +

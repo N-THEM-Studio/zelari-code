@@ -3,7 +3,7 @@
 > AI Council coding agent CLI — multi-agent orchestration with slash commands, provider-agnostic LLM streaming, and self-update.
 
 ![Version](https://img.shields.io/npm/v/zelari-code)
-![License](https://img.shields.io/npm/l/zelari-code)
+![License](https://img.shields.io/badge/license-Proprietary-red)
 ![Node](https://img.shields.io/node/v/zelari-code)
 
 **Zelari Code** is a standalone CLI extracted from [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain). It brings the multi-agent council (Sisyphus, Prometheus, Hephaestus, Atlas, Oracle, Chairman) directly into your terminal with a rich TUI (Ink + React), slash command system, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok with OAuth, GLM/Z.AI).
@@ -153,4 +153,4 @@ npm run typecheck
 
 ## License
 
-MIT © 2026 [N-THEM Studio](https://github.com/N-THEM-Studio)
+Proprietary © 2026 [N-THEM Studio](https://github.com/N-THEM-Studio). See [LICENSE](./LICENSE).
