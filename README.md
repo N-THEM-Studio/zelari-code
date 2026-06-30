@@ -17,6 +17,24 @@ zelari-code
 
 Requires **Node.js ≥ 20**.
 
+### `zelari-code: command not found` (Windows)
+
+After `npm install -g`, the `zelari-code` command may not be on your `PATH`. Fix:
+
+**PowerShell** (run as admin, then restart your terminal):
+```powershell
+$npmPrefix = npm config get prefix
+[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$npmPrefix", "User")
+```
+
+**Git Bash / WSL:**
+```bash
+echo 'export PATH="$(npm config get prefix):$PATH"' >> ~/.bashrc
+source ~/.bashrc
+```
+
+Verify the fix: `where zelari-code` (CMD) or `which zelari-code` (Bash) should print a path.
+
 ## Quick Start
 
 ```bash
@@ -25,7 +43,7 @@ export OPENAI_API_KEY=sk-...
 
 # Or use Grok via OAuth
 zelari-code
-# Inside the TUI: /key grok (then follow the OAuth flow)
+# Inside the TUI: /login grok (then follow the OAuth flow)
 
 # Or use GLM/Z.AI
 export GLM_API_KEY=...

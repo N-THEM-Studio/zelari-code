@@ -156,7 +156,7 @@ export function handleSlashCommand(
         kind: 'help',
         message: `Available commands:\n  /login <provider> — authenticate with provider (grok, minimax, glm, custom)\n  /model <name> — switch the active model\n  /model refresh — re-discover models for the active provider (v3-U)\n  /models — list discovered models for the active provider (v3-U)\n  /models refresh — re-discover models for the active provider (v3-U)\n  /provider <name> — switch the active provider\n  /provider custom <baseUrl> — point the active provider at a self-hosted endpoint (Ollama, LM Studio, vLLM, ...)\n  /provider custom clear — clear the custom endpoint override\n  /skill <name> [input] — invoke a skill (autocomplete with /skill <TAB>)\n  /skill-stats [name] — show invocation stats (success rate, avg duration, total tokens)\n  /council <input> — invoke the multi-agent council on input\n  /council-feedback <memberId> <1-5> [note] — rate a council member for future ranking (Task I.2)
   /promote-member <memberId> — promote a council member to a standalone skill (v3-K)
-  /update [--yes|-y] — check for zelari-coder updates; --yes performs the update (v3-N)\n  /steer <text> — enqueue a follow-up prompt on the active run (Task 18.2)\n  /steer --interrupt <text> — cancel current run + enqueue <text> for next dispatch (Task C.3.2)\n  /compact — compact the session transcript\n  /clear — clear the visible transcript (session is preserved)\n  /sessions — list past sessions\n  /resume <id> — load a past session\n  /branch <name> — snapshot the current session into a new branch\n  /branches — list branches\n  /checkout <name> — switch the active branch\n  /new — start a fresh session\n  /diff [--staged] — show uncommitted changes (or staged with --staged)\n  /undo [--yes] — revert working-tree changes (destructive! requires --yes)\n  /help — show this help\n  /exit — exit the CLI\n\n${formatSkillList(availableSkills)}`,
+  /update [--yes|-y] — check for zelari-code updates; --yes performs the update (v3-N)\n  /steer <text> — enqueue a follow-up prompt on the active run (Task 18.2)\n  /steer --interrupt <text> — cancel current run + enqueue <text> for next dispatch (Task C.3.2)\n  /compact — compact the session transcript\n  /clear — clear the visible transcript (session is preserved)\n  /sessions — list past sessions\n  /resume <id> — load a past session\n  /branch <name> — snapshot the current session into a new branch\n  /branches — list branches\n  /checkout <name> — switch the active branch\n  /new — start a fresh session\n  /diff [--staged] — show uncommitted changes (or staged with --staged)\n  /undo [--yes] — revert working-tree changes (destructive! requires --yes)\n  /help — show this help\n  /exit — exit the CLI\n\n${formatSkillList(availableSkills)}`,
       };
 
     case 'exit':
@@ -498,7 +498,7 @@ export function handleSlashCommand(
           handled: true,
           kind: 'update_usage',
           message:
-            'Usage: /update — check for the latest zelari-coder version\n' +
+            'Usage: /update — check for the latest zelari-code version\n' +
             '       /update --yes (or -y) — install the latest version (will ask you to restart manually)',
         };
       }

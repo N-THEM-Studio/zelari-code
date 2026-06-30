@@ -1,11 +1,11 @@
 /**
- * updater — npm registry self-update mechanism for zelari-coder.
+ * updater — npm registry self-update mechanism for zelari-code.
  *
  * Functions:
  *   - getCurrentVersion(): reads bundled package.json
- *   - checkForUpdate(): fetches https://registry.npmjs.org/zelari-coder/latest,
+ *   - checkForUpdate(): fetches https://registry.npmjs.org/zelari-code/latest,
  *     compares semver, returns { currentVersion, latestVersion, updateAvailable }
- *   - performUpdate(): spawns `npm install -g zelari-coder@latest`,
+ *   - performUpdate(): spawns `npm install -g zelari-code@latest`,
  *     captures stdout/stderr, returns { ok, output, error? }
  *
  * All network + spawn operations are injectable for testing (see tests).
@@ -86,7 +86,7 @@ export function compareSemver(a: string, b: string): -1 | 0 | 1 {
 }
 
 /** Public URL for the package on the npm registry. */
-export const REGISTRY_URL = 'https://registry.npmjs.org/zelari-coder/latest';
+export const REGISTRY_URL = 'https://registry.npmjs.org/zelari-code/latest';
 
 /**
  * Fetch the latest version from the npm registry.
@@ -148,9 +148,12 @@ export async function checkForUpdate(
 /**
  * Spawn `npm install -g <package>@latest` and stream output.
  * Injectable `executor` for tests.
+ *
+ * On Windows, `spawn('npm', ...)` fails with ENOENT because npm is a .cmd
+ * shim — `shell: true` lets the shell resolve the extension.
  */
 export async function performUpdate(
-  packageName = 'zelari-coder',
+  packageName = 'zelari-code',
   executor: typeof spawn = spawn,
 ): Promise<UpdatePerformResult> {
   return new Promise((resolve) => {
@@ -158,7 +161,10 @@ export async function performUpdate(
     let stdout = '';
     let stderr = '';
 
-    const child = executor('npm', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = executor('npm', args, {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      shell: process.platform === 'win32',
+    });
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();

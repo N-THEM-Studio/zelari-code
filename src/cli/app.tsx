@@ -1058,7 +1058,7 @@ export function App(): React.ReactElement {
       return;
     }
 
-    // /update — check or perform zelari-coder self-update (Task N.5, v3-N).
+    // /update — check or perform zelari-code self-update (Task N.5, v3-N).
     if (result.kind === 'update_check') {
       try {
         const { checkForUpdate } = await import('./updater.js');
@@ -1080,7 +1080,7 @@ export function App(): React.ReactElement {
               id: crypto.randomUUID(),
               role: 'system',
               content:
-                `[update] 🆕 zelari-coder ${info.latestVersion} available (current: ${info.currentVersion})\n` +
+                `[update] 🆕 zelari-code ${info.latestVersion} available (current: ${info.currentVersion})\n` +
                 `       Run \`/update --yes\` to install. You'll need to restart manually after.`,
               ts: Date.now(),
             },
@@ -1119,7 +1119,7 @@ export function App(): React.ReactElement {
           {
             id: crypto.randomUUID(),
             role: 'system',
-            content: `[update] running \`npm install -g zelari-coder@latest\`...`,
+            content: `[update] running \`npm install -g zelari-code@latest\`...`,
             ts: Date.now(),
           },
         ]);
@@ -1133,8 +1133,8 @@ export function App(): React.ReactElement {
               role: 'system',
               content:
                 `[update] ✅ installed successfully\n\n` +
-                `Please restart zelari-coder manually to use the new version.\n` +
-                `(exit with /exit or Ctrl+C, then run \`zelari-coder\` again)`,
+                `Please restart zelari-code manually to use the new version.\n` +
+                `(exit with /exit or Ctrl+C, then run \`zelari-code\` again)`,
               ts: Date.now(),
             },
           ]);

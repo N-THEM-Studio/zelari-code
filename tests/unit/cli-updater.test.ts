@@ -103,7 +103,7 @@ describe('fetchLatestVersion', () => {
   });
 
   it('uses default REGISTRY_URL when not overridden', () => {
-    expect(REGISTRY_URL).toBe('https://registry.npmjs.org/zelari-coder/latest');
+    expect(REGISTRY_URL).toBe('https://registry.npmjs.org/zelari-code/latest');
   });
 });
 
@@ -146,12 +146,12 @@ describe('checkForUpdate', () => {
 });
 
 describe('performUpdate', () => {
-  it('spawns npm install -g zelari-coder@latest and captures exit code 0', async () => {
+  it('spawns npm install -g zelari-code@latest and captures exit code 0', async () => {
     // Fake spawn: emits a stdout chunk + exits 0
     const fakeSpawn = ((cmd: string, args: string[]) => {
       // Verify the command
       expect(cmd).toBe('npm');
-      expect(args).toEqual(['install', '-g', 'zelari-coder@latest']);
+      expect(args).toEqual(['install', '-g', 'zelari-code@latest']);
 
       const fake = new EventEmitter() as unknown as ReturnType<typeof SpawnType> & {
         stdout: EventEmitter;
@@ -167,7 +167,7 @@ describe('performUpdate', () => {
       return fake;
     }) as unknown as typeof SpawnType;
 
-    const result = await performUpdate('zelari-coder', fakeSpawn);
+    const result = await performUpdate('zelari-code', fakeSpawn);
     expect(result.ok).toBe(true);
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain('added 1 package');
@@ -188,7 +188,7 @@ describe('performUpdate', () => {
       return fake;
     }) as unknown as typeof SpawnType;
 
-    const result = await performUpdate('zelari-coder', fakeSpawn);
+    const result = await performUpdate('zelari-code', fakeSpawn);
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(1);
     expect(result.error).toContain('exited with code 1');

@@ -88,7 +88,7 @@ const PROVIDER_BASE_URLS: Record<ProviderId, string> = {
 
 function defaultModelsFilePath(): string {
   return process.env.ANATHEMA_MODELS_FILE
-    ?? path.join(homedir(), '.tmp', 'anathema-coder', 'models.json');
+    ?? path.join(homedir(), '.tmp', 'zelari-code', 'models.json');
 }
 
 export function getModelsFilePath(): string {

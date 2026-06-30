@@ -31,8 +31,8 @@ async function backgroundUpdateCheck(): Promise<void> {
     if (info.updateAvailable && !info.error) {
       // eslint-disable-next-line no-console
       console.error(
-        `[zelari-coder] 🆕 v${info.latestVersion} available (current: v${info.currentVersion}). ` +
-          `Run \`zelari-coder\` then \`/update --yes\` to upgrade.`,
+        `[zelari-code] 🆕 v${info.latestVersion} available (current: v${info.currentVersion}). ` +
+          `Run \`zelari-code\` then \`/update --yes\` to upgrade.`,
       );
     }
   } catch {
