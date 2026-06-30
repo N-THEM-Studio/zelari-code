@@ -1,6 +1,6 @@
 {
   "name": "zelari-code",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Zelari Code — AI Council coding agent CLI. Multi-agent orchestration (Sisyphus, Prometheus, Hephaestus, Atlas, Oracle, Chairman) with slash commands, provider-agnostic LLM streaming, and self-update.",
   "author": "N-THEM Studio",
   "license": "SEE LICENSE IN LICENSE",
