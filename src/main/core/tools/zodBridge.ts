@@ -4,6 +4,14 @@ import type { ZodSchema, ZodTypeAny } from 'zod';
  *  function-calling definitions. Best-effort: handles primitives, objects,
  *  arrays, unions, optionals. Does not handle refinements beyond type. */
 export function zodToJsonSchema(schema: ZodSchema): Record<string, unknown> {
+  if (typeof (schema as any).toJSONSchema === 'function') {
+    const res = (schema as any).toJSONSchema();
+    if (res && typeof res === 'object') {
+      const copy = { ...res };
+      delete copy['$schema'];
+      return copy;
+    }
+  }
   return _convert(schema as ZodTypeAny);
 }
 

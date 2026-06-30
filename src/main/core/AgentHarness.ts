@@ -483,7 +483,18 @@ export class AgentHarness {
                 signal: this.activeController?.signal,
               },
             );
-            const resultStr = result.ok ? String(result.value) : result.error;
+            let resultStr = '';
+            if (result.ok) {
+              if (typeof result.value === 'string') {
+                resultStr = result.value;
+              } else if (typeof result.value === 'object' && result.value !== null) {
+                resultStr = JSON.stringify(result.value, null, 2);
+              } else {
+                resultStr = String(result.value);
+              }
+            } else {
+              resultStr = result.error;
+            }
             const endEvent: BrainToolExecutionEndEvent = createBrainEvent(
               'tool_execution_end',
               this.sessionId,

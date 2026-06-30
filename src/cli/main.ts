@@ -10,7 +10,7 @@ import { render } from 'ink';
 import { App } from './app.js';
 import { getMetricsLogger } from './metrics.js';
 
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.2';
 
 /**
  * Silent background update check (Task N.6, v3-N).

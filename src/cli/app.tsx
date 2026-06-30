@@ -4,13 +4,20 @@
 // refactor will split this file into typed hooks (useChatTurn,
 // useSlashDispatch, etc). See packages/cli/docs/SPLIT_PLAN.md.
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Box } from 'ink';
+import { Box, useStdout } from 'ink';
 import { Header } from './components/Header.js';
 import { ChatStream, type ChatMessage } from './components/ChatStream.js';
 import { InputBar } from './components/InputBar.js';
 import { Sidebar } from './components/Sidebar.js';
 import { handleSlashCommand, formatSkillList, type SlashCommandResult } from './slashCommands.js';
 import { listCodingSkills } from '../agents/skills.js';
+import '../agents/skills/builtin/debugging.js';
+import '../agents/skills/builtin/docs.js';
+import '../agents/skills/builtin/git-ops.js';
+import '../agents/skills/builtin/planning.js';
+import '../agents/skills/builtin/refactoring.js';
+import '../agents/skills/builtin/review.js';
+import '../agents/skills/builtin/testing.js';
 import { promoteMember } from '../agents/promoteMember.js';
 import { AgentHarness } from '../main/core/AgentHarness.js';
 import { SessionJsonlWriter } from '../main/core/sessionJsonl.js';
@@ -306,6 +313,28 @@ export function App(): React.ReactElement {
   // Queue counter for sidebar display (Task 18.2).
   const [queueCount, setQueueCount] = useState<number>(0);
 
+  const { stdout } = useStdout();
+  const [size, setSize] = useState({
+    columns: stdout?.columns ?? 80,
+    rows: stdout?.rows ?? 24,
+  });
+
+  useEffect(() => {
+    if (!stdout) return;
+    const handleResize = () => {
+      setSize({
+        columns: stdout.columns ?? 80,
+        rows: stdout.rows ?? 24,
+      });
+    };
+    stdout.on('resize', handleResize);
+    return () => {
+      stdout.off('resize', handleResize);
+    };
+  }, [stdout]);
+
+  const chatWidth = Math.max(20, size.columns - 44);
+
   const skills = useMemo(() => listCodingSkills(), []);
   const skillList = useMemo(() => formatSkillList(skills), [skills]);
   const isSlashMode = input.startsWith('/');
@@ -418,7 +447,7 @@ export function App(): React.ReactElement {
             fallback: failoverResolution.fallback,
           });
     const cwd = process.cwd();
-    const toolList = toolRegistry.toOpenAITools().map((t) => `- ${t.name}: ${t.description}`).join('\n');
+    const toolList = toolRegistry.toOpenAITools().map((t) => `- ${t.function.name}: ${t.function.description}`).join('\n');
     const systemPrompt = [
       'You are Zelari Code, an interactive AI coding agent operating directly in the user\'s terminal.',
       '',
@@ -434,8 +463,8 @@ export function App(): React.ReactElement {
       toolList,
       '',
       '# Guidelines',
-      '- To understand a project, list files (bash: ls) and read key files (read_file), don\'t ask the user to paste them.',
-      '- Be proactive: explore, read, and act. Prefer doing over asking.',
+      '- When the user asks you to write code, debug, or explore, be proactive: list files (bash: ls, list_files) and read key files (read_file) to understand the project instead of asking the user to paste file contents.',
+      '- Only invoke tools when they are necessary to answer the user\'s prompt. If the user is just saying hello or greeting you (e.g., "ciao", "hello"), simply greet them back and ask how you can help, without running any commands or tools.',
       '- When you finish a task, briefly summarize what you did.',
     ].join('\n');
     const harness = new AgentHarness({
@@ -445,7 +474,11 @@ export function App(): React.ReactElement {
         { role: 'system', content: systemPrompt },
         { role: 'user', content: userText },
       ],
-      tools: toolRegistry.toOpenAITools(),
+      tools: toolRegistry.toOpenAITools().map((t) => ({
+        name: t.function.name,
+        description: t.function.description,
+        parameters: t.function.parameters,
+      })),
       toolRegistry,
       providerStream,
       cwd,
@@ -1893,7 +1926,7 @@ export function App(): React.ReactElement {
   };
 
   return (
-    <Box flexDirection="column">
+    <Box flexDirection="column" width={size.columns} height={size.rows}>
       <Header
         model={activeModel}
         provider={activeProviderSpec.id}
@@ -1903,12 +1936,13 @@ export function App(): React.ReactElement {
         totalTokens={sessionStats.totalTokens}
         totalCostUsd={sessionStats.totalCostUsd}
       />
-      <Box flexDirection="row">
-        <ChatStream messages={messages} />
+      <Box flexDirection="row" height={size.rows - 6}>
+        <ChatStream messages={messages} height={size.rows - 6} width={chatWidth} />
         <Sidebar
           skillList={skillList}
           sessionCount={messages.length}
           isSlashMode={isSlashMode}
+          height={size.rows - 6}
         />
       </Box>
       <InputBar
