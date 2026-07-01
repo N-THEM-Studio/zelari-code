@@ -1,15 +1,17 @@
 /**
  * toolRegistry — default ToolRegistry for the zelari-code CLI.
  *
- * Wires the 5 built-in tools (filesystem read/write/edit + bash + grep) into a
- * ToolRegistry instance that the AgentHarness can hand to the provider via
- * `tools: registry.toOpenAITools()` + `toolRegistry: registry`.
+ * Wires the 8 built-in tools (filesystem read/write/edit + bash + grep/list +
+ * show_diff/apply_diff) into a ToolRegistry instance that the AgentHarness can
+ * hand to the provider via `tools: registry.toOpenAITools()` + `toolRegistry: registry`.
  *
  * Task A1 of AnathemaCoder v3-A: enable the existing tool pipeline.
  * Task A2 of v3-A: wrap each tool with the safety layer (sandbox path,
  * shell blocklist, audit log).
+ * v0.4.0: added show_diff + apply_diff + recursive grep_content.
  *
  * @see docs/plans/2026-06-29-anathema-coder-v3.md (Tasks A1 + A2)
+ * @see docs/plans/2026-07-01-v0-4-0-fix-audit.md (v0.4.0 scope)
  */
 import { ToolRegistry } from '../main/core/tools/registry.js';
 import {
@@ -20,6 +22,7 @@ import {
 import { bashTool } from '../main/core/tools/builtin/shell.js';
 import { grepContentTool } from '../main/core/tools/builtin/search.js';
 import { listFilesTool } from '../main/core/tools/builtin/listFiles.js';
+import { showDiffTool, applyDiffTool } from '../main/core/tools/builtin/diff.js';
 import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPath.js';
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
@@ -68,6 +71,8 @@ export function createBuiltinToolRegistry(
   const safeEditFile = wrapWithSandbox(editFileTool, ['path'], root, audit, sessionId);
   const safeGrepContent = wrapWithSandbox(grepContentTool, ['path'], root, audit, sessionId);
   const safeListFiles = wrapWithSandbox(listFilesTool, ['path'], root, audit, sessionId);
+  const safeShowDiff = wrapWithSandbox(showDiffTool, ['path'], root, audit, sessionId);
+  const safeApplyDiff = wrapWithSandbox(applyDiffTool, ['path'], root, audit, sessionId);
 
   // Wrap bash: shell blocklist + audit.
   const safeBash = wrapWithShellSafety(bashTool, audit, sessionId);
@@ -79,6 +84,8 @@ export function createBuiltinToolRegistry(
   registry.register(safeBash);
   registry.register(safeGrepContent);
   registry.register(safeListFiles);
+  registry.register(safeShowDiff);
+  registry.register(safeApplyDiff);
 
   const tools: BuiltinToolSummary[] = [
     safeReadFile,
@@ -87,6 +94,8 @@ export function createBuiltinToolRegistry(
     safeBash,
     safeGrepContent,
     safeListFiles,
+    safeShowDiff,
+    safeApplyDiff,
   ].map((t) => ({
     name: t.name,
     description: t.description,
