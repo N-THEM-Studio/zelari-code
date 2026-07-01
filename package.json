@@ -5,6 +5,9 @@
   "author": "N-THEM Studio",
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
   "main": "dist/cli/main.js",
   "bin": {
     "zelari-code": "./bin/zelari-code.js"
@@ -30,6 +33,7 @@
     "prepublishOnly": "node scripts/prepublish.mjs"
   },
   "dependencies": {
+    "@zelari/core": "*",
     "ink": "^6.8.0",
     "ink-text-input": "^6.0.0",
     "react": "^19.2.7",

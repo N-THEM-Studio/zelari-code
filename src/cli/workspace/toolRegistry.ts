@@ -18,9 +18,9 @@
  */
 
 import { z } from 'zod';
-import { ToolRegistry } from '../../main/core/tools/registry.js';
-import { typedOk, typedErr, type TypedResult } from '../../main/core/tools/toolTypes.js';
-import type { EnhancedToolDefinition } from '../../types/systemTypes.js';
+import { ToolRegistry } from '@zelari/core/harness/tools/registry';
+import { typedOk, typedErr, type TypedResult } from '@zelari/core/harness/tools/toolTypes';
+import type { EnhancedToolDefinition } from '@zelari/core/types';
 import type { WorkspaceContext } from './types.js';
 import { createWorkspaceStubs } from './stubs.js';
 

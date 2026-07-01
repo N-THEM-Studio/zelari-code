@@ -2,9 +2,9 @@
 // from app.tsx. Runtime is correct; tighten signatures in a follow-up.
 import { useCallback } from 'react';
 import { handleSlashCommand, type SlashCommandResult } from '../slashCommands.js';
-import type { CodingSkillDefinition } from '../../agents/skills.js';
+import type { CodingSkillDefinition } from '@zelari/core/skills';
 import type { ChatMessage } from '../components/ChatStream.js';
-import type { AgentHarness } from '../../main/core/AgentHarness.js';
+import type { AgentHarness } from '@zelari/core/harness';
 import type { ProviderSpec } from '../keyStore.js';
 import { appendSystem, appendUser } from './messageHelpers.js';
 import { sessionKindRouter } from '../sessionManager.js';

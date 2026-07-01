@@ -5,6 +5,10 @@ dist/
 coverage/
 .vitest/
 *.tsbuildinfo
+packages/*/dist/
+
+# Hermes local agent state (plans, audit reports, session logs)
+.hermes/
 
 # Council workspace (v3-W): project-local, per-project, NOT committed
 .zelari/

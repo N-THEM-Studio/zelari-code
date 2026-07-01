@@ -1,0 +1,139 @@
+{
+  "name": "@zelari/core",
+  "version": "0.5.0-dev.0",
+  "description": "Zelari Code core library — provider-neutral agent loop (AgentHarness), multi-agent council orchestration, and built-in skills. Used by the zelari-code CLI; consumable by other agent frontends.",
+  "author": "N-THEM Studio",
+  "license": "SEE LICENSE IN LICENSE",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./harness": {
+      "types": "./dist/harness/index.d.ts",
+      "default": "./dist/harness/index.js"
+    },
+    "./harness/tools": {
+      "types": "./dist/harness/tools/index.d.ts",
+      "default": "./dist/harness/tools/index.js"
+    },
+    "./harness/tools/registry": {
+      "types": "./dist/core/tools/registry.d.ts",
+      "default": "./dist/core/tools/registry.js"
+    },
+    "./harness/tools/toolTypes": {
+      "types": "./dist/core/tools/toolTypes.d.ts",
+      "default": "./dist/core/tools/toolTypes.js"
+    },
+    "./harness/tools/builtin/filesystem": {
+      "types": "./dist/core/tools/builtin/filesystem.d.ts",
+      "default": "./dist/core/tools/builtin/filesystem.js"
+    },
+    "./harness/tools/builtin/shell": {
+      "types": "./dist/core/tools/builtin/shell.d.ts",
+      "default": "./dist/core/tools/builtin/shell.js"
+    },
+    "./harness/tools/builtin/search": {
+      "types": "./dist/core/tools/builtin/search.d.ts",
+      "default": "./dist/core/tools/builtin/search.js"
+    },
+    "./harness/tools/builtin/listFiles": {
+      "types": "./dist/core/tools/builtin/listFiles.d.ts",
+      "default": "./dist/core/tools/builtin/listFiles.js"
+    },
+    "./harness/tools/builtin/diff": {
+      "types": "./dist/core/tools/builtin/diff.d.ts",
+      "default": "./dist/core/tools/builtin/diff.js"
+    },
+    "./harness/tools/builtin/_walk": {
+      "types": "./dist/core/tools/builtin/_walk.d.ts",
+      "default": "./dist/core/tools/builtin/_walk.js"
+    },
+    "./council": {
+      "types": "./dist/council/index.d.ts",
+      "default": "./dist/council/index.js"
+    },
+    "./skills": {
+      "types": "./dist/skills/index.d.ts",
+      "default": "./dist/skills/index.js"
+    },
+    "./skills/builtin/debugging": {
+      "types": "./dist/agents/skills/builtin/debugging.d.ts",
+      "default": "./dist/agents/skills/builtin/debugging.js"
+    },
+    "./skills/builtin/docs": {
+      "types": "./dist/agents/skills/builtin/docs.d.ts",
+      "default": "./dist/agents/skills/builtin/docs.js"
+    },
+    "./skills/builtin/git-ops": {
+      "types": "./dist/agents/skills/builtin/git-ops.d.ts",
+      "default": "./dist/agents/skills/builtin/git-ops.js"
+    },
+    "./skills/builtin/planning": {
+      "types": "./dist/agents/skills/builtin/planning.d.ts",
+      "default": "./dist/agents/skills/builtin/planning.js"
+    },
+    "./skills/builtin/refactoring": {
+      "types": "./dist/agents/skills/builtin/refactoring.d.ts",
+      "default": "./dist/agents/skills/builtin/refactoring.js"
+    },
+    "./skills/builtin/review": {
+      "types": "./dist/agents/skills/builtin/review.d.ts",
+      "default": "./dist/agents/skills/builtin/review.js"
+    },
+    "./skills/builtin/testing": {
+      "types": "./dist/agents/skills/builtin/testing.d.ts",
+      "default": "./dist/agents/skills/builtin/testing.js"
+    },
+    "./events": {
+      "types": "./dist/events/index.d.ts",
+      "default": "./dist/events/index.js"
+    },
+    "./types": {
+      "types": "./dist/types/index.d.ts",
+      "default": "./dist/types/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "package.json"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "build:watch": "tsc -p tsconfig.json --watch",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --root ../..",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "zod": "^4.4.3"
+  },
+  "peerDependencies": {
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "typescript": "~5.7.2"
+  },
+  "keywords": [
+    "agent",
+    "ai",
+    "council",
+    "coding",
+    "llm",
+    "zelari",
+    "anathema"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/N-THEM-Studio/zelari-code.git",
+    "directory": "packages/core"
+  }
+}

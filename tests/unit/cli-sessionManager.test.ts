@@ -13,8 +13,8 @@ import {
   listSessions,
   loadSessionEvents,
 } from '../../src/cli/sessionManager.js';
-import { SessionJsonlWriter } from '../../src/main/core/sessionJsonl.js';
-import { createBrainEvent } from '../../src/shared/events.js';
+import { SessionJsonlWriter } from '@zelari/core/harness';
+import { createBrainEvent } from '@zelari/core/events';
 
 describe('sessionManager', () => {
   let testSessionsDir: string;

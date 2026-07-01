@@ -1,4 +1,6 @@
-import type { FileTreeNode } from './index';
+// Note: FileTreeNode is defined in this file (see bottom of file). The
+// pre-monorepo monolithic types file imported it from './index' which
+// created a circular reference; we declare it locally now.
 
 /**
  * Supported document formats in the Knowledge Vault.
@@ -77,7 +79,11 @@ export interface BacklinkEntry {
 }
 
 /**
- * A FileTreeNode that can be converted into a KnowledgeDocument.
- * Re-exported here for convenience in the file manager.
+ * A node in a project file tree (used by the workspace file manager).
+ * Minimal shape — extend with `children`, `size`, `mtime`, etc. as needed.
  */
-export type { FileTreeNode };
+export interface FileTreeNode {
+  name: string;
+  path: string;
+  isDirectory: boolean;
+}

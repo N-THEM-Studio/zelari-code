@@ -13,20 +13,20 @@
  * @see docs/plans/2026-06-29-anathema-coder-v3.md (Tasks A1 + A2)
  * @see docs/plans/2026-07-01-v0-4-0-fix-audit.md (v0.4.0 scope)
  */
-import { ToolRegistry } from '../main/core/tools/registry.js';
+import { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import {
   readFileTool,
   writeFileTool,
   editFileTool,
-} from '../main/core/tools/builtin/filesystem.js';
-import { bashTool } from '../main/core/tools/builtin/shell.js';
-import { grepContentTool } from '../main/core/tools/builtin/search.js';
-import { listFilesTool } from '../main/core/tools/builtin/listFiles.js';
-import { showDiffTool, applyDiffTool } from '../main/core/tools/builtin/diff.js';
+} from '@zelari/core/harness/tools/builtin/filesystem';
+import { bashTool } from '@zelari/core/harness/tools/builtin/shell';
+import { grepContentTool } from '@zelari/core/harness/tools/builtin/search';
+import { listFilesTool } from '@zelari/core/harness/tools/builtin/listFiles';
+import { showDiffTool, applyDiffTool } from '@zelari/core/harness/tools/builtin/diff';
 import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPath.js';
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
-import type { ToolDefinition, TypedResult, ToolContext } from '../main/core/tools/toolTypes.js';
+import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
 export interface BuiltinToolSummary {
   /** Tool name as registered. */

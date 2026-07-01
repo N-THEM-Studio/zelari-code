@@ -15,7 +15,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import type { BrainEvent } from '../../shared/events.js';
+import type { BrainEvent } from '../shared/events.js';
 
 export interface SessionJsonlOptions {
   /** Base directory for session files. Defaults to `<userData>/sessions/`

@@ -10,7 +10,7 @@ import {
   listSessions,
   loadSessionEvents,
 } from '../sessionManager.js';
-import { SessionJsonlWriter } from '../../main/core/sessionJsonl.js';
+import { SessionJsonlWriter } from '@zelari/core/harness';
 import type { ChatMessage } from '../components/ChatStream.js';
 import { eventsToMessages } from './eventsToMessages.js';
 import { useBatchedMessages } from './useBatchedMessages.js';

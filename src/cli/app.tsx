@@ -9,19 +9,19 @@ import { ChatStream } from './components/ChatStream.js';
 import { InputBar } from './components/InputBar.js';
 import { Sidebar } from './components/Sidebar.js';
 import { formatSkillList } from './slashCommands.js';
-import { listCodingSkills } from '../agents/skills.js';
-import '../agents/skills/builtin/debugging.js';
-import '../agents/skills/builtin/docs.js';
-import '../agents/skills/builtin/git-ops.js';
-import '../agents/skills/builtin/planning.js';
-import '../agents/skills/builtin/refactoring.js';
-import '../agents/skills/builtin/review.js';
-import '../agents/skills/builtin/testing.js';
+import { listCodingSkills } from '@zelari/core/skills';
+import '@zelari/core/skills/builtin/debugging';
+import '@zelari/core/skills/builtin/docs';
+import '@zelari/core/skills/builtin/git-ops';
+import '@zelari/core/skills/builtin/planning';
+import '@zelari/core/skills/builtin/refactoring';
+import '@zelari/core/skills/builtin/review';
+import '@zelari/core/skills/builtin/testing';
 import {
   getProviderConfig,
   getActiveProvider as getActiveProviderSpec,
 } from './providerConfig.js';
-import { SessionJsonlWriter } from '../main/core/sessionJsonl.js';
+import { SessionJsonlWriter } from '@zelari/core/harness';
 import { useTerminalSize } from './hooks/useTerminalSize.js';
 import { useSession } from './hooks/useSession.js';
 import { useChatTurn } from './hooks/useChatTurn.js';

@@ -1,11 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
 import { dispatchCouncil } from '../../src/cli/councilDispatcher.js';
-import { runCouncilPure } from '../../src/agents/councilApi.js';
-import { ToolRegistry } from '../../src/main/core/tools/registry.js';
-import { typedOk, typedErr, type ToolDefinition } from '../../src/main/core/tools/toolTypes.js';
-import type { ProviderStreamFn } from '../../src/main/core/AgentHarness.js';
-import type { BrainEvent } from '../../src/shared/events.js';
+import { runCouncilPure } from '@zelari/core/council';
+import { ToolRegistry } from '@zelari/core/harness/tools/registry';
+import { typedOk, typedErr, type ToolDefinition } from '@zelari/core/harness/tools/toolTypes';
+import type { ProviderStreamFn } from '@zelari/core/harness';
+import type { BrainEvent } from '@zelari/core/events';
 
 /** Drain an async iterable into an array. */
 async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {

@@ -7,8 +7,8 @@ import {
   applyDiffTool,
   ShowDiffArgsSchema,
   ApplyDiffArgsSchema,
-} from '../../src/main/core/tools/builtin/diff.js';
-import type { ToolContext } from '../../src/main/core/tools/toolTypes.js';
+} from '@zelari/core/harness/tools/builtin/diff';
+import type { ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
 let tmpRoot: string;
 let ctx: ToolContext;

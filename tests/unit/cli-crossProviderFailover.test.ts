@@ -25,7 +25,7 @@ import { resolveFailoverStream } from '../../src/cli/crossProviderFailover.js';
 import type {
   ProviderDelta,
   ProviderStreamFn,
-} from '../../src/main/core/AgentHarness.js';
+} from '@zelari/core/harness';
 
 const APP_TSX_PATH = path.resolve(
   __dirname,

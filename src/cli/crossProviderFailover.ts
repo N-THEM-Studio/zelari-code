@@ -22,7 +22,7 @@
  * @see docs/plans/2026-06-29-anathema-coder-v3-J.md
  */
 
-import type { ProviderStreamFn } from '../main/core/AgentHarness.js';
+import type { ProviderStreamFn } from '@zelari/core/harness';
 
 export interface ResolveOptions {
   /** Master kill-switch (v3-G). When false, return primary unchanged. */

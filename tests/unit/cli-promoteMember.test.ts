@@ -10,8 +10,8 @@ import {
   renderSkillMarkdown,
   slugify,
   stripClarificationProtocol,
-} from '../../src/agents/promoteMember';
-import { UnknownMemberError, AGENT_ROLES } from '../../src/agents/roles';
+} from '@zelari/core/council';
+import { UnknownMemberError, AGENT_ROLES } from '@zelari/core/council';
 
 describe('promoteMember', () => {
   it('valid member produces a complete skill definition', () => {

@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { grepContentTool } from '../../src/main/core/tools/builtin/search.js';
-import { GrepContentArgsSchema } from '../../src/main/core/tools/builtin/search.js';
-import type { ToolContext } from '../../src/main/core/tools/toolTypes.js';
+import { grepContentTool } from '@zelari/core/harness/tools/builtin/search';
+import { GrepContentArgsSchema } from '@zelari/core/harness/tools/builtin/search';
+import type { ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
 let tmpRoot: string;
 let ctx: ToolContext;

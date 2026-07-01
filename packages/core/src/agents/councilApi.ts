@@ -10,9 +10,9 @@ import type {
   AgentMessage,
   AgentToolSpec,
   ProviderStreamFn,
-} from '../main/core/AgentHarness';
-import { AgentHarness } from '../main/core/AgentHarness';
-import { ToolRegistry } from '../main/core/tools/registry';
+} from '../core/AgentHarness';
+import { AgentHarness } from '../core/AgentHarness';
+import { ToolRegistry } from '../core/tools/registry';
 
 export type { BrainEvent } from '../shared/events';
 export type {
@@ -20,7 +20,7 @@ export type {
   AgentToolSpec,
   ProviderStreamFn,
   ProviderDelta,
-} from '../main/core/AgentHarness';
+} from '../core/AgentHarness';
 
 /**
  * Minimal structural interface for a feedback store — matches the

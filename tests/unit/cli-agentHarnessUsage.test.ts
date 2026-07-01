@@ -13,9 +13,9 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { AgentHarness } from '../../src/main/core/AgentHarness.js';
-import type { ProviderStreamFn, ProviderDelta } from '../../src/main/core/AgentHarness.js';
-import type { BrainEvent } from '../../src/shared/events.js';
+import { AgentHarness } from '@zelari/core/harness';
+import type { ProviderStreamFn, ProviderDelta } from '@zelari/core/harness';
+import type { BrainEvent } from '@zelari/core/events';
 
 function asyncGen(deltas: ProviderDelta[]): ProviderStreamFn {
   return async function* () {

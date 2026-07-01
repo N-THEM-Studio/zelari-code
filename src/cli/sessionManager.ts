@@ -20,8 +20,8 @@ import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync, unl
 import path from 'node:path';
 import os from 'node:os';
 import { randomUUID } from 'node:crypto';
-import type { BrainEvent } from '../shared/events.js';
-import { readSession } from '../main/core/sessionJsonl.js';
+import type { BrainEvent } from '@zelari/core/events';
+import { readSession } from '@zelari/core/harness';
 
 export interface SessionInfo {
   /** Session UUID. */

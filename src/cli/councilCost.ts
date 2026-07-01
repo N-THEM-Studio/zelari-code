@@ -16,7 +16,7 @@
  * @see docs/plans/2026-06-29-anathema-coder-v3-I.md (I.1)
  */
 
-import type { UsageBreakdown } from '../shared/events.js';
+import type { UsageBreakdown } from '@zelari/core/events';
 
 export interface MemberCost {
   /** Member id (e.g. 'charont', 'nettun', 'minos', 'lucifer'). */

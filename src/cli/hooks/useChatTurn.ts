@@ -2,8 +2,8 @@
 // from app.tsx. Runtime is correct; tighten signatures in a follow-up.
 import { useState, useRef, useCallback } from 'react';
 import type { ChatMessage } from '../components/ChatStream.js';
-import { AgentHarness } from '../../main/core/AgentHarness.js';
-import { SessionJsonlWriter } from '../../main/core/sessionJsonl.js';
+import { AgentHarness } from '@zelari/core/harness';
+import { SessionJsonlWriter } from '@zelari/core/harness';
 import { MetricsLogger, getMetricsLogger } from '../metrics.js';
 import { calculateCost } from '../modelPricing.js';
 import { openaiCompatibleProvider, providerFromEnv, providerConfigFor } from '../provider/openai-compatible.js';
@@ -100,7 +100,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         if (failoverResolution.warning) {
           console.warn(failoverResolution.warning);
         }
-        const providerStream: import('../../main/core/AgentHarness.js').ProviderStreamFn =
+        const providerStream: import('@zelari/core/harness').ProviderStreamFn =
           failoverResolution.fallbackLabel
             ? providerFailover({
                 primary: baseProviderStream,
@@ -298,7 +298,7 @@ async function dispatchCouncilPromptImpl(
   const { dispatchCouncil } = await import('../councilDispatcher.js');
   const { createWorkspaceContext, createWorkspaceStubs } = await import('../workspace/stubs.js');
   const { createWorkspaceToolRegistry } = await import('../workspace/toolRegistry.js');
-  const { setWorkspaceStubs } = await import('../../agents/tools.js');
+  const { setWorkspaceStubs } = await import('@zelari/core/skills');
   const { runPostCouncilHook } = await import('../workspace/postCouncilHook.js');
   const { FeedbackStore } = await import('../councilFeedback.js');
 

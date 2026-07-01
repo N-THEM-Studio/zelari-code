@@ -18,21 +18,32 @@ import type { ReactNode } from 'react';
 
 // ─── Mocks ─────────────────────────────────────────────────────────────
 
-// Mock AgentHarness so dispatchPrompt can run without an LLM.
-vi.mock('../../src/main/core/AgentHarness.js', () => {
-  return {
-    AgentHarness: class {
-      run = async function* () {
-        yield { type: 'message_delta', delta: 'hello', ts: Date.now() };
-        yield { type: 'agent_end', reason: 'stop', durationMs: 100, ts: Date.now() };
-      };
-      queueLength = 0;
-      enqueue = vi.fn();
-      cancel = vi.fn();
-      constructor(_opts: unknown) {}
-    },
-  };
-});
+// Mock AgentHarness + SessionJsonlWriter in a SINGLE vi.mock call (vitest uses
+// the last one declared per module, so splitting them would drop the
+// AgentHarness mock and the test would never receive any message_delta events).
+// `FakeWriter` is hoisted via vi.hoisted so it's available inside the mock
+// factory (which runs before any module-level statements).
+const { FakeWriter } = vi.hoisted(() => ({
+  FakeWriter: class FakeWriter {
+    append = (..._args: unknown[]) => Promise.resolve();
+    close = (..._args: unknown[]) => Promise.resolve();
+  },
+}));
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+const _FakeWriter_marker = FakeWriter; // keep reference alive for the mock below
+vi.mock('@zelari/core/harness', () => ({
+  AgentHarness: class {
+    run = async function* () {
+      yield { type: 'message_delta', delta: 'hello', ts: Date.now() };
+      yield { type: 'agent_end', reason: 'stop', durationMs: 100, ts: Date.now() };
+    };
+    queueLength = 0;
+    enqueue = vi.fn();
+    cancel = vi.fn();
+    constructor(_opts: unknown) {}
+  },
+  SessionJsonlWriter: FakeWriter,
+}));
 
 // Mock provider/env so dispatchPrompt doesn't try to read OPENAI_API_KEY.
 vi.mock('../../src/cli/provider/openai-compatible.js', () => ({
@@ -96,7 +107,7 @@ vi.mock('../../src/cli/workspace/toolRegistry.js', () => ({
   })),
 }));
 
-vi.mock('../../src/agents/tools.js', () => ({
+vi.mock('@zelari/core/skills', () => ({
   setWorkspaceStubs: vi.fn(),
 }));
 
@@ -110,14 +121,10 @@ vi.mock('../../src/cli/councilFeedback.js', () => ({
   },
 }));
 
-// Mock the session writer so we don't touch real files.
-class FakeWriter {
-  append = vi.fn(async () => {});
-  close = vi.fn(async () => {});
-}
-vi.mock('../../src/main/core/sessionJsonl.js', () => ({
-  SessionJsonlWriter: FakeWriter,
-}));
+// NOTE: the second vi.mock for '@zelari/core/harness' (originally here to
+// add the SessionJsonlWriter mock) was removed — see the consolidated mock
+// at the top of this file. vitest uses the last mock declared per module,
+// so splitting them silently dropped the AgentHarness mock.
 
 import { useChatTurn } from '../../src/cli/hooks/useChatTurn.js';
 import type { ChatMessage } from '../../src/cli/components/ChatStream.js';

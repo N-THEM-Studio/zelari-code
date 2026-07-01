@@ -19,11 +19,11 @@
 import {
   runCouncilPure,
   type PureCouncilConfig,
-} from '../agents/councilApi.js';
-import type { BrainEvent } from '../shared/events.js';
-import type { EventBus } from '../shared/eventBus.js';
-import type { ProviderStreamFn } from '../main/core/AgentHarness.js';
-import type { ToolRegistry } from '../main/core/tools/registry.js';
+} from '@zelari/core/council';
+import type { BrainEvent } from '@zelari/core/events';
+import type { EventBus } from '@zelari/core/events';
+import type { ProviderStreamFn } from '@zelari/core/harness';
+import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import type { FeedbackStore } from './councilFeedback.js';
 import { createWorkspaceContext } from './workspace/stubs.js';
 import { createWorkspaceToolRegistry } from './workspace/toolRegistry.js';

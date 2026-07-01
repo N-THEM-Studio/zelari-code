@@ -1,7 +1,7 @@
 // @ts-nocheck — pre-existing strict-mode type narrowing issues carried over
 // from app.tsx. Runtime is correct; tighten signatures in a follow-up.
 import type { ChatMessage } from '../components/ChatStream.js';
-import type { BrainEvent } from '../../shared/events.js';
+import type { BrainEvent } from '@zelari/core/events';
 import { newSessionId } from '../sessionManager.js';
 
 /**

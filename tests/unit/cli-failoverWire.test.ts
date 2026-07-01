@@ -18,8 +18,8 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { providerFailover } from '../../src/cli/providerFailover.js';
-import { AgentHarness } from '../../src/main/core/AgentHarness.js';
-import type { ProviderStreamFn, ProviderDelta } from '../../src/main/core/AgentHarness.js';
+import { AgentHarness } from '@zelari/core/harness';
+import type { ProviderStreamFn, ProviderDelta } from '@zelari/core/harness';
 
 const APP_TSX_PATH = path.resolve(__dirname, '..', '..', 'src', 'cli', 'app.tsx');
 const USE_CHAT_TURN_PATH = path.resolve(__dirname, '..', '..', 'src', 'cli', 'hooks', 'useChatTurn.ts');

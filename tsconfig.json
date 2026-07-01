@@ -21,18 +21,21 @@
     "allowSyntheticDefaultImports": true,
     "declaration": false,
     "sourceMap": true,
+    "baseUrl": ".",
+    "paths": {
+      "@zelari/core": ["./packages/core/dist/index.d.ts"],
+      "@zelari/core/*": ["./packages/core/dist/*"]
+    },
     "types": ["node"]
   },
   "include": [
     "src/cli/**/*.ts",
-    "src/agents/**/*.ts",
-    "src/main/core/**/*.ts",
-    "src/shared/**/*.ts",
-    "src/types/**/*.ts"
+    "src/cli/**/*.tsx"
   ],
   "exclude": [
     "node_modules",
     "dist",
-    "tests"
+    "tests",
+    "packages"
   ]
 }

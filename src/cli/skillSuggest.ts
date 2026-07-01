@@ -19,7 +19,7 @@
  * @see docs/plans/2026-06-29-anathema-coder-v3-H.md (Task H.2)
  */
 
-import { listSkills, type SkillMetadata } from '../agents/skills.js';
+import { listSkills, type SkillMetadata } from '@zelari/core/skills';
 import { readSkillHistory, getSkillStats, type SkillStats } from './skillHistory.js';
 
 export interface SuggestionEntry {

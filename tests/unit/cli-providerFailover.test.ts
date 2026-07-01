@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { providerFailover, collectDeltas } from '../../src/cli/providerFailover.js';
-import type { ProviderDelta } from '../../src/main/core/AgentHarness.js';
+import type { ProviderDelta } from '@zelari/core/harness';
 
-const PARAMS = { messages: [] } as unknown as Parameters<import('../../src/main/core/AgentHarness.js').ProviderStreamFn>[0];
+const PARAMS = { messages: [] } as unknown as Parameters<import('@zelari/core/harness').ProviderStreamFn>[0];
 
 function okProvider(events: ProviderDelta[]) {
   return (async function* () {
     for (const e of events) yield e;
-  }) as import('../../src/main/core/AgentHarness.js').ProviderStreamFn;
+  }) as import('@zelari/core/harness').ProviderStreamFn;
 }
 
 describe('providerFailover (Task B.4.3)', () => {
@@ -50,7 +50,7 @@ describe('providerFailover (Task B.4.3)', () => {
   });
 
   it('switches to fallback on thrown fetch error', async () => {
-    const primary: import('../../src/main/core/AgentHarness.js').ProviderStreamFn =
+    const primary: import('@zelari/core/harness').ProviderStreamFn =
       (async function* () {
         yield { kind: 'text', delta: 'before ' };
         throw new Error('ECONNRESET');
@@ -107,11 +107,11 @@ describe('providerFailover (Task B.4.3)', () => {
   });
 
   it('emits error when fallback itself throws', async () => {
-    const primary: import('../../src/main/core/AgentHarness.js').ProviderStreamFn =
+    const primary: import('@zelari/core/harness').ProviderStreamFn =
       (async function* () {
         throw new Error('primary down');
       }) as never;
-    const fallback: import('../../src/main/core/AgentHarness.js').ProviderStreamFn =
+    const fallback: import('@zelari/core/harness').ProviderStreamFn =
       (async function* () {
         yield { kind: 'text', delta: 'before throw' };
         throw new Error('fallback down');

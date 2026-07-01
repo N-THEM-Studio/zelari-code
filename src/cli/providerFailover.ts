@@ -17,7 +17,7 @@
  * @see docs/plans/2026-06-29-anathema-coder-v3-B.md
  */
 
-import type { ProviderDelta, ProviderStreamFn } from '../main/core/AgentHarness.js';
+import type { ProviderDelta, ProviderStreamFn } from '@zelari/core/harness';
 
 export interface FailoverOptions {
   /** Primary provider — tried first. */

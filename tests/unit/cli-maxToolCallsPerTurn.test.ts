@@ -24,11 +24,11 @@
 
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
-import { AgentHarness } from '../../src/main/core/AgentHarness.js';
-import { ToolRegistry } from '../../src/main/core/tools/registry.js';
-import { runCouncilPure } from '../../src/agents/councilApi.js';
-import type { ProviderStreamFn, ProviderDelta } from '../../src/main/core/AgentHarness.js';
-import type { BrainEvent } from '../../src/shared/events.js';
+import { AgentHarness } from '@zelari/core/harness';
+import { ToolRegistry } from '@zelari/core/harness/tools/registry';
+import { runCouncilPure } from '@zelari/core/council';
+import type { ProviderStreamFn, ProviderDelta } from '@zelari/core/harness';
+import type { BrainEvent } from '@zelari/core/events';
 
 function toolCall(id: string, name: string): ProviderDelta {
   return { kind: 'tool_call', toolCallId: id, toolName: name, args: {} };

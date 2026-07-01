@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { AgentHarness } from '../../src/main/core/AgentHarness.js';
+import { AgentHarness } from '@zelari/core/harness';
 import { handleSlashCommand } from '../../src/cli/slashCommands.js';
-import type { ProviderStreamFn, ProviderDelta } from '../../src/main/core/AgentHarness.js';
-import type { BrainEvent, BrainErrorEvent, BrainAgentEndEvent } from '../../src/shared/events.js';
+import type { ProviderStreamFn, ProviderDelta } from '@zelari/core/harness';
+import type { BrainEvent, BrainErrorEvent, BrainAgentEndEvent } from '@zelari/core/events';
 
 /** Drain an async iterable into an array. */
 async function collect<T>(it: AsyncIterable<T>): Promise<T[]> {

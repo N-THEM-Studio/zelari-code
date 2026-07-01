@@ -17,7 +17,7 @@ import {
   formatSuggestions,
   computeSuggestionScore,
 } from '../../src/cli/skillSuggest.js';
-import type { SkillMetadata } from '../../src/agents/skills.js';
+import type { SkillMetadata } from '@zelari/core/skills';
 import type { SkillHistoryRecord } from '../../src/cli/skillHistory.js';
 
 const NOW = 1_700_000_000_000;

@@ -14,7 +14,7 @@
 
 import { existsSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
-import type { EnhancedToolDefinition } from '../../types/systemTypes.js';
+import type { EnhancedToolDefinition } from '@zelari/core/types';
 import { workspaceMutex } from './storage.js';
 import {
   resolveWorkspaceRoot,

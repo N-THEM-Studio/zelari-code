@@ -21,7 +21,7 @@ import {
   swapMembers,
   UnknownMemberError,
   getCouncilAgents,
-} from '../../src/agents/roles';
+} from '@zelari/core/council';
 
 describe('swapMembers', () => {
   it('empty swap → returns a fresh slice (no mutation) (Task I.4.1)', () => {

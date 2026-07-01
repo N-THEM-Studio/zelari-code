@@ -14,8 +14,8 @@ import {
   BranchNotFoundError,
   SessionNotFoundError,
 } from '../../src/cli/branchManager.js';
-import { SessionJsonlWriter } from '../../src/main/core/sessionJsonl.js';
-import { createBrainEvent } from '../../src/shared/events.js';
+import { SessionJsonlWriter } from '@zelari/core/harness';
+import { createBrainEvent } from '@zelari/core/events';
 
 describe('branchManager (Task 17.1)', () => {
   let branchesDir: string;

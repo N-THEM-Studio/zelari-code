@@ -6,7 +6,7 @@ import { compareSkillsFromFile } from '../hooks/skillCompare.js';
 import { appendSystem } from '../hooks/messageHelpers.js';
 import { applySteerInterrupt } from '../hooks/steer.js';
 import type { ChatMessage } from '../components/ChatStream.js';
-import type { AgentHarness } from '../../main/core/AgentHarness.js';
+import type { AgentHarness } from '@zelari/core/harness';
 
 /**
  * Slash command handlers — skill invocation, stats, compare, council feedback,

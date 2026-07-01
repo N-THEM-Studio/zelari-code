@@ -18,7 +18,7 @@
  * @see docs/plans/2026-06-28-zelari-code.md (Task 12.1 + 14.8)
  */
 
-import { EventBus } from '../../shared/eventBus.js';
+import { EventBus } from '../shared/eventBus.js';
 import {
   createBrainEvent,
   type BrainEvent,
@@ -30,7 +30,7 @@ import {
   type BrainQueueUpdateEvent,
   type BrainToolExecutionEndEvent,
   type UsageBreakdown,
-} from '../../shared/events.js';
+} from '../shared/events.js';
 import { ToolRegistry } from './tools/registry.js';
 
 // --- Public types -----------------------------------------------------------

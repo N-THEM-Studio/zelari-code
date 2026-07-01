@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { handleSlashCommand } from '../../src/cli/slashCommands';
-import type { CodingSkillDefinition } from '../../src/agents/skills';
+import type { CodingSkillDefinition } from '@zelari/core/skills';
 
 const emptySkills: CodingSkillDefinition[] = [];
 

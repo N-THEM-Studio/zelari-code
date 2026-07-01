@@ -11,7 +11,7 @@
 import { describe, it, expect } from 'vitest';
 import { openaiCompatibleProvider } from '../../src/cli/provider/openai-compatible.js';
 import { collectDeltas } from '../../src/cli/providerFailover.js';
-import type { ProviderDelta } from '../../src/main/core/AgentHarness.js';
+import type { ProviderDelta } from '@zelari/core/harness';
 
 interface FetchCall {
   url: string;

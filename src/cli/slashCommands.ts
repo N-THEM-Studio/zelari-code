@@ -1,4 +1,4 @@
-import type { CodingSkillDefinition } from '../agents/skills';
+import type { CodingSkillDefinition } from '@zelari/core/skills';
 
 export type SlashCommand =
   | 'login' | 'model' | 'model_refresh' | 'models' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'promote-member' | 'update' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset';

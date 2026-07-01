@@ -1,8 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import { handleSlashCommand, type SlashCommandResult } from '../../src/cli/slashCommands.js';
 import { dispatchCouncil, CouncilDispatchError } from '../../src/cli/councilDispatcher.js';
-import type { ProviderStreamFn } from '../../src/main/core/AgentHarness.js';
-import type { BrainEvent } from '../../src/shared/events.js';
+import type { ProviderStreamFn } from '@zelari/core/harness';
+import type { BrainEvent } from '@zelari/core/events';
 
 describe('slashCommands /council', () => {
   it('/council without args returns usage message', () => {

@@ -18,7 +18,7 @@ export interface PromoteMemberSlashContext {
 
 export async function handlePromoteMember(ctx: PromoteMemberSlashContext, memberId: string): Promise<void> {
   try {
-    const { promoteMember } = await import('../../agents/promoteMember.js');
+    const { promoteMember } = await import('@zelari/core/council');
     const { skill, markdown } = promoteMember(memberId);
     const skillDir = process.env.ANATHEMA_SKILL_DIR
       ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skills');
