@@ -71,6 +71,8 @@ export function App(): React.ReactElement {
     sessionId: session.sessionId,
     writerRef: session.writerRef,
     setMessages: session.setMessages,
+    commitStreaming: session.commitStreaming,
+    flushStreaming: session.flushStreaming,
     setBusy,
     setSessionActive: session.setSessionActive,
     setSessionStats,

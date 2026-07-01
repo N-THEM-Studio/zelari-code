@@ -41,6 +41,14 @@ export interface UseChatTurnParams {
   sessionId: string;
   writerRef: React.MutableRefObject<SessionJsonlWriter | null>;
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  /**
+   * Throttled setter for the streaming hot-path (per-token deltas). Coalesces
+   * ~50-200/sec `setMessages` calls into ≤60/sec renders to prevent flicker.
+   * Non-streaming calls continue to use `setMessages`.
+   */
+  commitStreaming: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  /** Drain pending streamed updates synchronously. Called on stream/turn end. */
+  flushStreaming: () => void;
   setBusy: (v: boolean) => void;
   setSessionActive: (v: boolean) => void;
   setSessionStats: React.Dispatch<React.SetStateAction<{ totalTokens: number; totalCostUsd: number }>>;
@@ -55,7 +63,7 @@ export interface UseChatTurnResult {
 }
 
 export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
-  const { sessionId, writerRef, setMessages, setBusy, setSessionActive, setSessionStats } = params;
+  const { sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setSessionActive, setSessionStats } = params;
   const harnessRef = useRef<AgentHarness | null>(null);
   const [queueCount, setQueueCount] = useState<number>(0);
 
@@ -188,7 +196,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           }
           if (event.type === 'message_delta') {
             assistantContent += event.delta;
-            appendOrExtendStreamingAssistant(setMessages, assistantContent, Date.now());
+            // Route through the throttled setter so per-token deltas (50-200/sec)
+            // coalesce into ≤60 renders/sec instead of flickering the TUI.
+            appendOrExtendStreamingAssistant(commitStreaming, assistantContent, Date.now());
           } else if (event.type === 'error') {
             appendSystem(setMessages, `[error] ${event.message}`, Date.now());
           } else if (event.type === 'tool_call') {
@@ -210,6 +220,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           }
         }
       } finally {
+        // Drain any buffered streaming deltas so the final assistant message
+        // is committed before busy flips to false (and the input re-enables).
+        flushStreaming();
         harnessRef.current = null;
         setQueueCount(0);
         setBusy(false);
@@ -228,6 +241,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // resolveFailoverStream / AgentHarness construction that were
         // previously escaping the function unhandled. Surfaces the error
         // to the chat instead of hanging silently.
+        // Flush first so any partial assistant content streamed before the
+        // throw is committed before the error message renders.
+        flushStreaming();
         appendSystem(
           setMessages,
           `[dispatch error] ${err instanceof Error ? err.message : String(err)}`,
@@ -235,7 +251,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         setBusy(false);
       }
     },
-    [sessionId, writerRef, setMessages, setBusy, setSessionActive, setSessionStats],
+    [sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setSessionActive, setSessionStats],
   );
 
   const dispatchCouncilPrompt = useCallback(
@@ -244,11 +260,13 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         sessionId,
         writerRef,
         setMessages,
+        commitStreaming,
+        flushStreaming,
         setBusy,
         setQueueCount,
       });
     },
-    [sessionId, writerRef, setMessages, setBusy, setQueueCount],
+    [sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setQueueCount],
   );
 
   return { dispatchPrompt, dispatchCouncilPrompt, harnessRef, queueCount, setQueueCount };
@@ -269,7 +287,7 @@ async function dispatchCouncilPromptImpl(
   text: string,
   deps: UseChatTurnParams & { setQueueCount: (n: number) => void },
 ): Promise<void> {
-  const { sessionId, writerRef, setMessages, setBusy } = deps;
+  const { sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy } = deps;
   const envConfig = await providerFromEnv();
   if (!envConfig) {
     appendSystem(setMessages, 'OPENAI_API_KEY not set. Export it before invoking /council.');
@@ -307,8 +325,9 @@ async function dispatchCouncilPromptImpl(
         await writerRef.current.append(event);
       }
       if (event.type === 'message_delta') {
-        // Coalesce streaming assistant content
-        setMessages((prev) => {
+        // Coalesce streaming assistant content through the throttled setter so
+        // per-token deltas don't flicker the TUI (same as dispatchPrompt).
+        commitStreaming((prev) => {
           const last = prev[prev.length - 1];
           if (last && last.role === 'assistant' && last.id.startsWith('streaming-')) {
             return [...prev.slice(0, -1), { ...last, content: last.content + event.delta }];
@@ -342,12 +361,17 @@ async function dispatchCouncilPromptImpl(
       }
     }
   } catch (err) {
+    // Flush any partial streamed content before the error message renders.
+    flushStreaming();
     appendSystem(
       setMessages,
       `[council error] ${err instanceof Error ? err.message : String(err)}`,
       Date.now(),
     );
   } finally {
+    // Drain any buffered streaming deltas before status messages / busy flip,
+    // so the final council output is committed to the chat.
+    flushStreaming();
     try {
       const hook = await runPostCouncilHook(workspaceCtx);
       if (hook.ran && hook.changed) {

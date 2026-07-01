@@ -13,6 +13,7 @@ import {
 import { SessionJsonlWriter } from '../../main/core/sessionJsonl.js';
 import type { ChatMessage } from '../components/ChatStream.js';
 import { eventsToMessages } from './eventsToMessages.js';
+import { useBatchedMessages } from './useBatchedMessages.js';
 
 /**
  * useSession — owns session lifecycle (bootstrap, restore, /sessions, /resume, /new).
@@ -34,6 +35,14 @@ export interface UseSessionResult {
   setSessionId: (id: string) => void;
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  /**
+   * Throttled setter for the streaming hot-path only. Coalesces per-token
+   * `setMessages` calls (~50-200/sec) into at most one render per ~16ms so
+   * the TUI doesn't flicker. Non-streaming calls use `setMessages` directly.
+   */
+  commitStreaming: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  /** Drain any pending streamed update synchronously. Call on stream/turn end. */
+  flushStreaming: () => void;
   sessionActive: boolean;
   setSessionActive: (v: boolean) => void;
   writerRef: React.MutableRefObject<SessionJsonlWriter | null>;
@@ -45,6 +54,13 @@ export function useSession(): UseSessionResult {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [sessionActive, setSessionActive] = useState(false);
   const writerRef = useRef<SessionJsonlWriter | null>(null);
+
+  // Throttle layer over `messages`/`setMessages`. `commitStreaming` coalesces
+  // the per-token streaming deltas (the LLM emits ~50-200/sec) into at most
+  // one render per ~16ms, which lets `React.memo(ChatStream)` finally take
+  // effect. `setMessages` is the passthrough — non-streaming calls (bootstrap
+  // restore, /new reset, system/error messages) apply instantly.
+  const { commit: commitStreaming, flush: flushStreaming } = useBatchedMessages(messages, setMessages);
 
   // Bootstrap on mount: resume current session or create new one.
   useEffect(() => {
@@ -136,6 +152,8 @@ export function useSession(): UseSessionResult {
     setSessionId,
     messages,
     setMessages,
+    commitStreaming,
+    flushStreaming,
     sessionActive,
     setSessionActive,
     writerRef,

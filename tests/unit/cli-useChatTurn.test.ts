@@ -134,11 +134,16 @@ function makeWrapper() {
       messages.push(...updater);
     }
   };
+  // Streaming path is throttled in production; in this test we apply it
+  // synchronously (same as setMessages) so we can assert on final content
+  // without fake timers. The throttle is covered in cli-useBatchedMessages.test.
+  const commitStreaming = setMessages;
+  const flushStreaming = () => {};
   const setSessionStats = vi.fn();
   const setBusy = vi.fn();
   const setSessionActive = vi.fn();
   const writerRef = { current: new FakeWriter() } as React.MutableRefObject<any>;
-  return { messages, setMessages, setSessionStats, setBusy, setSessionActive, writerRef };
+  return { messages, setMessages, commitStreaming, flushStreaming, setSessionStats, setBusy, setSessionActive, writerRef };
 }
 
 beforeEach(() => {
@@ -153,6 +158,8 @@ describe('useChatTurn (v0.4.3 audit coverage)', () => {
         sessionId: 'test-session',
         writerRef: w.writerRef,
         setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
         setBusy: w.setBusy,
         setSessionActive: w.setSessionActive,
         setSessionStats: w.setSessionStats,
@@ -184,6 +191,8 @@ describe('useChatTurn (v0.4.3 audit coverage)', () => {
         sessionId: 'council-session',
         writerRef: w.writerRef,
         setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
         setBusy: w.setBusy,
         setSessionActive: w.setSessionActive,
         setSessionStats: w.setSessionStats,
@@ -208,6 +217,8 @@ describe('useChatTurn (v0.4.3 audit coverage)', () => {
         sessionId: 's',
         writerRef: w.writerRef,
         setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
         setBusy: w.setBusy,
         setSessionActive: w.setSessionActive,
         setSessionStats: w.setSessionStats,
@@ -234,6 +245,8 @@ describe('useChatTurn (v0.4.3 audit coverage)', () => {
         sessionId: 's',
         writerRef: w.writerRef,
         setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
         setBusy: w.setBusy,
         setSessionActive: w.setSessionActive,
         setSessionStats: w.setSessionStats,
