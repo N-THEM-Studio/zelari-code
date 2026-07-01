@@ -5,3 +5,6 @@ dist/
 coverage/
 .vitest/
 *.tsbuildinfo
+
+# Council workspace (v3-W): project-local, per-project, NOT committed
+.zelari/

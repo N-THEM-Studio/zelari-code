@@ -34,6 +34,10 @@ import {
   loadSessionEvents,
 } from './sessionManager.js';
 import { dispatchCouncil } from './councilDispatcher.js';
+import { createWorkspaceContext, createWorkspaceStubs } from './workspace/stubs.js';
+import { createWorkspaceToolRegistry } from './workspace/toolRegistry.js';
+import { runPostCouncilHook } from './workspace/postCouncilHook.js';
+import { setWorkspaceStubs } from '../agents/tools.js';
 import { FeedbackStore } from './councilFeedback.js';
 import { setApiKey, setOAuthToken, getProviderSpec, maskKey, PROVIDERS, resolveApiKeyWithMeta, getOAuthToken, type ProviderName } from './keyStore.js';
 import { getProviderConfig, getActiveProvider as getActiveProviderSpec, setActiveProviderId as persistActiveProvider, setModelForProvider as persistModelForProvider, getModelForProvider, setCustomEndpoint, clearCustomEndpoint, getCustomEndpoint } from './providerConfig.js';
@@ -680,6 +684,23 @@ export function App(): React.ReactElement {
     // tool_execution_start/end events which we surface as 'tool' role
     // messages (ChatStream renders them via CollapsibleToolOutput).
     const { registry: councilToolRegistry } = createBuiltinToolRegistry();
+    // Phase 4 wiring: also register the workspace stubs (createPhase,
+    // createTask, addIdea → ADR, createMilestone, createDocument,
+    // searchDocuments, linkDocuments, getDocumentBacklinks). They
+    // persist council output to `.zelari/` at the project root.
+    const workspaceCtx = createWorkspaceContext();
+    const workspaceReg = createWorkspaceToolRegistry(workspaceCtx);
+    // Mirror workspace tools into the council registry so they're
+    // available via the same execution path. ToolRegistry has a private
+    // `tools` map; we re-register each adapted ToolDefinition.
+    for (const name of workspaceReg.list()) {
+      const td = workspaceReg.get(name);
+      if (td) councilToolRegistry.register(td);
+    }
+    // Also push them into the LLM-visible tool catalog so the model
+    // knows they exist (runCouncilPure reads `getAllTools()` for the
+    // prompt; without this, the stubs are callable but not advertised).
+    setWorkspaceStubs(createWorkspaceStubs(workspaceCtx));
     // Feedback store for specialist ordering (Task I.2 close-out).
     // Fresh instance per /council invocation: cheap (lazy JSON load) and
     // ensures the latest user feedback is visible after /council-feedback.
@@ -760,6 +781,37 @@ export function App(): React.ReactElement {
         },
       ]);
     } finally {
+      // Phase 4 wiring: run AGENTS.MD auto-maintenance after every council
+      // run. Idempotent + opt-out via `ZELARI_AGENTS_MD=0`.
+      try {
+        const hook = await runPostCouncilHook(workspaceCtx);
+        if (hook.ran && hook.changed) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: 'system',
+              content: `[agents.md] updated: ${hook.sections.length} section(s) changed (${hook.sections.join(', ')})`,
+              ts: Date.now(),
+            },
+          ]);
+        } else if (hook.ran && hook.reason) {
+          // No-op or fail-safe — show the reason only if there's something to say.
+          if (!hook.reason.includes('disabled')) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: 'system',
+                content: `[agents.md] ${hook.reason}`,
+                ts: Date.now(),
+              },
+            ]);
+          }
+        }
+      } catch {
+        // Best-effort — never block on AGENTS.MD errors.
+      }
       setBusy(false);
     }
   };
@@ -1235,6 +1287,188 @@ export function App(): React.ReactElement {
           ts: Date.now(),
         },
       ]);
+      setInput('');
+      return;
+    }
+
+    // /workspace — v3-W: CLI surface for the council workspace artifacts.
+    // The .zelari/ directory + AGENTS.MD auto-maintenance are produced by the
+    // workspace tool stubs (createPhase/addIdea/...). This command just
+    // surfaces their current state, re-runs the AGENTS.MD curation, or
+    // resets the whole workspace (destructive).
+    if (result.kind === 'workspace') {
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: 'system',
+          content:
+            result.message ??
+            'Usage: /workspace (see /workspace --help or docs/plans/2026-07-01-council-workspace-cli-stubs.md)',
+          ts: Date.now(),
+        },
+      ]);
+      setInput('');
+      return;
+    }
+
+    if (result.kind === 'workspace_show' && result.workspaceWhat) {
+      try {
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const zelari = path.join(process.cwd(), '.zelari');
+        let content: string;
+        switch (result.workspaceWhat) {
+          case 'plan': {
+            const planPath = path.join(zelari, 'plan.md');
+            try {
+              content = await fs.readFile(planPath, 'utf-8');
+            } catch {
+              content = '(no plan.md yet — run a council session first)';
+            }
+            break;
+          }
+          case 'decisions': {
+            const decisionsDir = path.join(zelari, 'decisions');
+            try {
+              const files = (await fs.readdir(decisionsDir))
+                .filter((f) => f.endsWith('.md'))
+                .sort();
+              if (files.length === 0) {
+                content = '(no ADRs yet — invoke /council to generate some)';
+              } else {
+                const lines: string[] = [`# Decisions (${files.length})\n`];
+                const { parseFrontmatter } = await import('../cli/workspace/storage.js');
+                for (const f of files) {
+                  const raw = await fs.readFile(path.join(decisionsDir, f), 'utf-8');
+                  const { meta, body } = parseFrontmatter<{ title?: string; status?: string }>(raw);
+                  const title =
+                    meta.title ?? body.split('\n')[0]?.replace(/^#\s*/, '').trim() ?? f;
+                  lines.push(`- **${f.replace(/\.md$/, '')}** [${meta.status ?? 'unknown'}] ${title}`);
+                }
+                content = lines.join('\n');
+              }
+            } catch {
+              content = '(no .zelari/decisions/ yet)';
+            }
+            break;
+          }
+          case 'risks': {
+            const risksPath = path.join(zelari, 'risks.md');
+            try {
+              content = await fs.readFile(risksPath, 'utf-8');
+            } catch {
+              content = '(no risks.md yet)';
+            }
+            break;
+          }
+          case 'agents': {
+            const agentsPath = path.join(process.cwd(), 'AGENTS.MD');
+            try {
+              content = await fs.readFile(agentsPath, 'utf-8');
+            } catch {
+              content = '(no AGENTS.MD yet at project root — run `/workspace sync` after a council session)';
+            }
+            break;
+          }
+          case 'docs': {
+            const docsDir = path.join(zelari, 'docs');
+            try {
+              const files = (await fs.readdir(docsDir)).filter((f) => f.endsWith('.md')).sort();
+              content = files.length
+                ? `# Docs (${files.length})\n\n` + files.map((f) => `- ${f}`).join('\n')
+                : '(no docs drafts yet)';
+            } catch {
+              content = '(no .zelari/docs/ yet)';
+            }
+            break;
+          }
+          default:
+            content = result.message ?? `Unknown artifact: ${result.workspaceWhat}`;
+        }
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `[workspace: ${result.workspaceWhat}]\n\n${content}`,
+            ts: Date.now(),
+          },
+        ]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'system', content: `[workspace error] ${msg}`, ts: Date.now() },
+        ]);
+      }
+      setInput('');
+      return;
+    }
+
+    if (result.kind === 'workspace_sync') {
+      try {
+        const { createWorkspaceContext } = await import('../cli/workspace/stubs.js');
+        const { updateAgentsMd } = await import('../cli/workspace/agentsMd.js');
+        const ctx = createWorkspaceContext(process.cwd());
+        const out = await updateAgentsMd(ctx, process.cwd());
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: out.changed
+              ? `[workspace] AGENTS.MD updated (${out.sections.join(', ') || 'no auto-sections changed'})`
+              : out.reason
+                ? `[workspace] AGENTS.MD not modified — ${out.reason}`
+                : '[workspace] AGENTS.MD already up to date (no changes)',
+            ts: Date.now(),
+          },
+        ]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'system', content: `[workspace sync error] ${msg}`, ts: Date.now() },
+        ]);
+      }
+      setInput('');
+      return;
+    }
+
+    if (result.kind === 'workspace_reset') {
+      if (!result.workspaceForce) {
+        // Surface the destructive warning — caller hasn't confirmed yet.
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content:
+              result.message ??
+              '⚠ /workspace reset is DESTRUCTIVE. Use /workspace reset --yes to confirm.',
+            ts: Date.now(),
+          },
+        ]);
+        setInput('');
+        return;
+      }
+      try {
+        const fs = await import('fs/promises');
+        const path = await import('path');
+        const target = path.join(process.cwd(), '.zelari');
+        await fs.rm(target, { recursive: true, force: true });
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'system', content: '[workspace] .zelari/ removed', ts: Date.now() },
+        ]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setMessages((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), role: 'system', content: `[workspace reset error] ${msg}`, ts: Date.now() },
+        ]);
+      }
       setInput('');
       return;
     }

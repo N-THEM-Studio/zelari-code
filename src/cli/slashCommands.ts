@@ -1,13 +1,13 @@
 import type { CodingSkillDefinition } from '../agents/skills';
 
 export type SlashCommand =
-  | 'login' | 'model' | 'model_refresh' | 'models' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'promote-member' | 'update';
+  | 'login' | 'model' | 'model_refresh' | 'models' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'promote-member' | 'update' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset';
 
 export interface SlashCommandResult {
   /** Whether the command was recognized. */
   handled: boolean;
   /** Discriminated kind for what the caller should do. */
-  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'models_list' | 'models_refresh' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'provider' | 'provider_set' | 'provider_list' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage';
+  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'models_list' | 'models_refresh' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'provider' | 'provider_set' | 'provider_list' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset';
   /** Optional human-readable message (e.g. for `clear` or `help`). */
   message?: string;
   /** For `model`: the new model name. */
@@ -58,6 +58,10 @@ export interface SlashCommandResult {
   promoteMemberError?: string;
   /** For `update`: true if `--yes` / `-y` was passed (perform the update). */
   updateForce?: boolean;
+  /** For `workspace_show`: which artifact to render (`plan`|`decisions`|`risks`|`agents`|`docs`). */
+  workspaceWhat?: string;
+  /** For `workspace_reset`: true if `--yes` was passed (skip confirmation). */
+  workspaceForce?: boolean;
 }
 
 export interface ExpandedSkill {
@@ -524,6 +528,77 @@ export function handleSlashCommand(
         message:
           '⚠ /undo is DESTRUCTIVE — it reverts all unstaged modifications ' +
           'and unstages everything.\nUse `/undo --yes` (or `/undo -y`) to confirm.',
+      };
+    }
+
+    case 'workspace': {
+      // Usage:
+      //   /workspace                      → list artifacts + sizes
+      //   /workspace show <name>          → render plan | decisions | risks | agents | docs
+      //   /workspace sync                 → re-run AGENTS.MD auto-maintenance
+      //   /workspace reset                → clear .zelari/ (destructive)
+      //   /workspace --help               → usage hint
+      const sub = args[0];
+      if (!sub || sub === '--help' || sub === 'help') {
+        return {
+          handled: true,
+          kind: 'workspace',
+          message:
+            'Workspace commands (`.zelari/` + `AGENTS.MD`):\n' +
+            '  /workspace              — list artifacts (plan, decisions, risks, reviews, docs)\n' +
+            '  /workspace show plan    — render plan.md\n' +
+            '  /workspace show decisions — list ADRs (Architecture Decision Records)\n' +
+            '  /workspace show risks    — render risks.md\n' +
+            '  /workspace show agents   — render AGENTS.MD\n' +
+            '  /workspace show docs     — list docs drafts\n' +
+            '  /workspace sync          — re-run AGENTS.MD auto-curation now\n' +
+            '  /workspace reset         — delete .zelari/ (destructive — confirmation required)\n' +
+            '\nSee `docs/plans/2026-07-01-council-workspace-cli-stubs.md` for schema.',
+        };
+      }
+      if (sub === 'show') {
+        const what = args[1];
+        if (!what) {
+          return {
+            handled: true,
+            kind: 'workspace_show',
+            workspaceWhat: '',
+            message: 'Usage: /workspace show <plan|decisions|risks|agents|docs>',
+          };
+        }
+        if (!['plan', 'decisions', 'risks', 'agents', 'docs'].includes(what)) {
+          return {
+            handled: true,
+            kind: 'workspace_show',
+            workspaceWhat: '',
+            message: `Unknown artifact "${what}". Available: plan | decisions | risks | agents | docs`,
+          };
+        }
+        return {
+          handled: true,
+          kind: 'workspace_show',
+          workspaceWhat: what,
+        };
+      }
+      if (sub === 'sync') {
+        return { handled: true, kind: 'workspace_sync' };
+      }
+      if (sub === 'reset') {
+        const force = args.includes('--yes') || args.includes('-y');
+        if (force) {
+          return { handled: true, kind: 'workspace_reset', workspaceForce: true };
+        }
+        return {
+          handled: true,
+          kind: 'workspace_reset',
+          message: '⚠ /workspace reset is DESTRUCTIVE — deletes the entire `.zelari/` directory.\n'
+            + 'Use `/workspace reset --yes` to confirm.',
+        };
+      }
+      return {
+        handled: true,
+        kind: 'workspace',
+        message: `Unknown /workspace subcommand: "${sub}". Type /workspace for usage.`,
       };
     }
 

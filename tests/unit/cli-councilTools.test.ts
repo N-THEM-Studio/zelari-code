@@ -257,7 +257,12 @@ describe('dispatchCouncil + tools (Task C.1.2 wiring)', () => {
     expect(start).toBeDefined();
   });
 
-  it('omitting tools → no tool execution END events (legacy text-only behavior; tool_execution_start may still fire)', async () => {
+  it('omitting tools AND opting out of workspace defaults → no tool execution END events', async () => {
+    // Phase 4 wiring: by default dispatchCouncil now wires workspace
+    // stubs, so even with no explicit `tools` the registry contains
+    // 9 workspace tool definitions. To verify the legacy text-only
+    // path, pass `disableWorkspaceTools: true` (an internal flag the
+    // CLI itself never sets — only tests use it).
     const stream = streamEmitting([
       { kind: 'tool_call', toolCallId: 'tc-noop', toolName: 'echo', args: { text: 'ignored' } },
       { kind: 'finish', reason: 'tool_calls' },
@@ -269,7 +274,8 @@ describe('dispatchCouncil + tools (Task C.1.2 wiring)', () => {
       councilSize: 1,
       debateMode: false,
       providerStream: stream,
-    }));
+      disableWorkspaceTools: true,
+    } as Parameters<typeof dispatchCouncil>[1]));
     const types = events.map((e) => e.type);
     expect(types).not.toContain('tool_execution_end');
   });

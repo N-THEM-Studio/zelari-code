@@ -142,6 +142,59 @@ zelari-code (CLI)
 | `ZELARI_DEV=1` | Disable silent update check on startup |
 | `ANATHEMA_FAILOVER=0` | Disable cross-provider failover |
 
+## Council Workspace
+
+The CLI persists council output (decisions, risks, docs, plan, reviews) into a **project-local** `.zelari/` directory and auto-curates an `AGENTS.MD` at the project root.
+
+### Layout
+
+```
+.zelari/                      # auto-gitignored, per-project
+├── plan.md                   # phases / tasks / milestones (Markdown + YAML frontmatter)
+├── risks.md                  # risk register (live, ordered by severity)
+├── decisions/                # ADRs (Architecture Decision Records) — 001-<slug>.md
+├── reviews/                  # Oracle verdict per council run
+└── docs/                     # doc drafts produced by the council
+AGENTS.MD                     # committed at project root, auto-curated from .zelari/
+```
+
+### Slash commands
+
+| Command | Effect |
+| --- | --- |
+| `/workspace` | List all artifacts + usage hint |
+| `/workspace show plan` | Render `.zelari/plan.md` |
+| `/workspace show decisions` | List all ADRs (id, status, title) |
+| `/workspace show risks` | Render `.zelari/risks.md` |
+| `/workspace show agents` | Render `AGENTS.MD` (project root) |
+| `/workspace show docs` | List `.zelari/docs/` drafts |
+| `/workspace sync` | Re-run AGENTS.MD auto-curation (idempotent — no-op if unchanged) |
+| `/workspace reset --yes` | Delete `.zelari/` (destructive — requires confirmation) |
+
+### AGENTS.MD format
+
+`AGENTS.MD` is partitioned into:
+
+1. **Manual blocks** (free-form, preserved verbatim across updates) — write anything you want here.
+2. **Auto-managed sections** delimited by `<!-- zelari:auto:start section="..." -->` / `<!-- zelari:auto:end -->` markers — overwritten each sync.
+
+Auto-managed sections:
+- `tech-stack` — languages, frameworks, build tools (derived from `package.json`)
+- `decisions` — accepted ADRs (newest first, capped)
+- `conventions` — code conventions observed in source tree
+- `build` — build/test/lint commands
+- `open-questions` — info-level risks + unsolved questions
+
+Set `ZELARI_AGENTS_MD=0` to disable AGENTS.MD auto-curation.
+
+### Storage layout internals
+
+- Frontmatter: subset YAML (scalars, flow/sequence/block-sequence arrays, flow/block maps) — no external deps.
+- Concurrency: per-key mutex (filesystem writes are serialized per artifact).
+- Idempotency: hash comparison — AGENTS.MD write is skipped when no section changed (clean git diff).
+
+See [`docs/plans/2026-07-01-council-workspace-cli-stubs.md`](./docs/plans/2026-07-01-council-workspace-cli-stubs.md) for the full schema.
+
 ## Development
 
 ```bash

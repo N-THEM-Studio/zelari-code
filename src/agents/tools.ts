@@ -174,14 +174,23 @@ let _allTools: EnhancedToolDefinition[] = buildBuiltinRegistry();
 let _toolByName: Map<string, EnhancedToolDefinition> = new Map(_allTools.map((t) => [t.name, t]));
 let _validToolNames: Set<string> = new Set(_toolByName.keys());
 
+/** Workspace stubs registered by the CLI (Phase 4 wiring). */
+let _workspaceStubs: EnhancedToolDefinition[] = [];
+
 function rebuildIndex() {
-  _toolByName = new Map(_allTools.map((t) => [t.name, t]));
+  _toolByName = new Map([..._allTools, ..._workspaceStubs].map((t) => [t.name, t]));
   _validToolNames = new Set(_toolByName.keys());
+}
+
+/** Register workspace stubs (CLI-only). Replaces any previous set. */
+export function setWorkspaceStubs(stubs: EnhancedToolDefinition[]): void {
+  _workspaceStubs = stubs;
+  rebuildIndex();
 }
 
 /** Read-only snapshot of the current registry (always a fresh array). */
 export function getAllTools(): EnhancedToolDefinition[] {
-  return [..._allTools];
+  return [..._allTools, ..._workspaceStubs];
 }
 
 /** Register a custom tool (user-defined or MCP-discovered). If a tool with

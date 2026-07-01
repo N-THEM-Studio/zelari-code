@@ -25,6 +25,8 @@ import type { EventBus } from '../shared/eventBus.js';
 import type { ProviderStreamFn } from '../main/core/AgentHarness.js';
 import type { ToolRegistry } from '../main/core/tools/registry.js';
 import type { FeedbackStore } from './councilFeedback.js';
+import { createWorkspaceContext } from './workspace/stubs.js';
+import { createWorkspaceToolRegistry } from './workspace/toolRegistry.js';
 
 export interface CouncilDispatchOptions {
   /** API key for the provider (e.g. OPENAI_API_KEY). */
@@ -67,6 +69,13 @@ export interface CouncilDispatchOptions {
    * Forwarded to runCouncilPure as `feedbackStore`.
    */
   feedbackStore?: FeedbackStore;
+  /**
+   * Phase 4 wiring test hook: opt out of the default workspace tool
+   * registry. The CLI itself never sets this — only tests do, to
+   * verify legacy text-only behavior without workspace stubs.
+   * @internal
+   */
+  disableWorkspaceTools?: boolean;
 }
 
 export class CouncilDispatchError extends Error {
@@ -107,7 +116,13 @@ export async function* dispatchCouncil(
     providerStream: options.providerStream,
     eventBus: options.eventBus,
     sessionId: options.sessionId,
-    tools: options.tools,
+    // Default to the workspace tool registry (CLI standalone has no
+    // AnathemaBrain Electron ctx). Pass `tools: undefined` via options
+    // to skip workspace wiring (e.g. in tests).
+    tools: options.tools
+      ?? (options.disableWorkspaceTools
+        ? undefined
+        : createWorkspaceToolRegistry(createWorkspaceContext())),
     maxToolCallsPerTurn: options.maxToolCallsPerTurn,
     feedbackStore: options.feedbackStore,
   };
