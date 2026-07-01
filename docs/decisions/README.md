@@ -7,13 +7,13 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 
 ## Indice
 
-| #    | Titolo                                              | Stato       | Data       |
-|------|-----------------------------------------------------|-------------|------------|
-| 0001 | Monorepo con npm workspaces per `@zelari/core`       | ✅ Accettato | 2026-07-01 |
-| 0002 | Pubblicazione di `@zelari/core` su npm               | Proposto    | 2026-07-02 |
-| 0003 | Schema di versionamento per monorepo zelari-code     | Proposto    | 2026-07-02 |
-| 0004 | Policy di stabilità API pubblica di `@zelari/core`   | Proposto    | 2026-07-02 |
-| 0005 | Deprecation dei path sorgente legacy                | Proposto    | 2026-07-02 |
+| #    | Titolo                                              | Stato        | Data proposta | Data accettazione |
+|------|-----------------------------------------------------|--------------|---------------|-------------------|
+| 0001 | Monorepo con npm workspaces per `@zelari/core`       | ✅ Accettato | 2026-07-01    | 2026-07-01 (retro su commit `6ec90be`) |
+| 0002 | Pubblicazione di `@zelari/core` su npm (MIT)         | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
+| 0003 | Schema di versionamento per monorepo zelari-code     | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
+| 0004 | Policy di stabilità API pubblica di `@zelari/core`   | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
+| 0005 | Deprecation dei path sorgente legacy                | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
 
 ## Formato
 
@@ -31,7 +31,12 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 
 1. MiniMax (o contributor) propone un'ADR quando vede una decisione
    non ovvia che vincola il codice futuro.
-2. Andrea approva/rigetta/rename.
-3. Se accettata: si implementa nei commit successivi, linkando
-   l'ADR nel commit message (`Refs ADR-000X`).
-4. ADR chiuse hanno tutti i TODO spuntati.
+2. **Default:** ADR scritti da MiniMax sono **auto-accettati alla
+   creazione**, salvo obiezione esplicita di Andrea. Questo perché
+   le proposte partono già da un'analisi di coerenza col codice
+   esistente. Se Andrea dissente, l'ADR viene:
+   - Rivisto (cambio di decisione, append "Rescindito").
+   - Sostituito da un nuovo ADR che marca il vecchio come
+     `Sostituito`.
+3. ADR accettati hanno tutti i TODO spuntati o spostati in issue
+   tracker.

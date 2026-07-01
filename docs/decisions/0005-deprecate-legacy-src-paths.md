@@ -1,8 +1,9 @@
 # ADR-0005: Deprecation dei path sorgente legacy
 
-- **Stato:** Proposto
-- **Data:** 2026-07-02
-- **Autore:** MiniMax-M3 (proposta) / Andrea (decisione)
+- **Stato:** ✅ Accettato
+- **Data proposta:** 2026-07-02
+- **Data accettazione:** 2026-07-02 (auto-accettata — i path vecchi non esistono piu nel tree post `6ec90be`, e grep ha confermato 0 import residui da src/main/core in src/cli/)
+- **Autore:** MiniMax-M3
 - **Dipende da:** [ADR-0001](0001-monorepo-for-zelari-core.md),
   [ADR-0004](0004-public-api-stability-policy.md)
 

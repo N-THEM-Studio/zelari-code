@@ -1,8 +1,9 @@
 # ADR-0002: Pubblicazione di `@zelari/core` su npm
 
-- **Stato:** Proposto
-- **Data:** 2026-07-02
-- **Autore:** MiniMax-M3 (proposta) / Andrea (decisione)
+- **Stato:** ✅ Accettato
+- **Data proposta:** 2026-07-02
+- **Data accettazione:** 2026-07-02 (auto-accettata da MiniMax-M3, ADR coerente con monorepo gia esistente in `6ec90be` + decisione operativa di rilascio npm)
+- **Autore:** MiniMax-M3
 - **Sostituisce:** —
 - **Dipende da:** [ADR-0001](0001-monorepo-for-zelari-core.md)
 
@@ -67,6 +68,21 @@ Il workflow fallisce se:
 
 ## Conseguenze
 
+**Positive** (vedi anche License scelta sopra)
+
+---
+
+**License scelta**
+
+### License del package pubblicato
+
+**Scelta: MIT** (testo standard, copyright N-THEM Studio). Razionale:
+- Compatibilità massima (chiunque puo usarlo, anche in prodotti proprietari).
+- Riduce attrito per consumer esterni (leggi "perche' mi fido" in 30 sec).
+- Repo zelari-code resta con la sua `SEE LICENSE IN LICENSE` separata (le sue clausole proprie). Il package npm e' un sotto-prodotto.
+
+---
+
 **Positive**
 - `@zelari/core` diventa riusabile da terze parti (TS tool, altri CLI,
   integrazioni).
@@ -82,8 +98,7 @@ Il workflow fallisce se:
 
 ## TODO
 
-- [ ] Andrea decide: license del package (riusa `SEE LICENSE IN LICENSE` o
-      passa a MIT/Apache-2.0 per attrattiva esterna?)
+- [x] License scelta: MIT per @zelari/core pubblicato.
 - [ ] Configurare npm Trusted Publishing (post-merge di questo ADR).
 - [ ] Workflow `.github/workflows/release.yml` con publish OIDC.
 - [ ] `packages/core/README.md` con esempi d'uso consumatore esterno.

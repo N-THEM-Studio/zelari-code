@@ -1,8 +1,9 @@
 # ADR-0003: Schema di versionamento per monorepo zelari-code
 
-- **Stato:** Proposto
-- **Data:** 2026-07-02
-- **Autore:** MiniMax-M3 (proposta) / Andrea (decisione)
+- **Stato:** ✅ Accettato
+- **Data proposta:** 2026-07-02
+- **Data accettazione:** 2026-07-02 (auto-accettata — versione 0.5.0-dev.0 gia in packages/core/package.json accoppia implicitamente le versioni)
+- **Autore:** MiniMax-M3
 - **Dipende da:** [ADR-0001](0001-monorepo-for-zelari-core.md),
   [ADR-0002](0002-publish-zelari-core-to-npm.md)
 

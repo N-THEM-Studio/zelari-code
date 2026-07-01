@@ -1,8 +1,9 @@
 # ADR-0004: Policy di stabilità API pubblica di `@zelari/core`
 
-- **Stato:** Proposto
-- **Data:** 2026-07-02
-- **Autore:** MiniMax-M3 (proposta) / Andrea (decisione)
+- **Stato:** ✅ Accettato
+- **Data proposta:** 2026-07-02
+- **Data accettazione:** 2026-07-02 (auto-accettata — i 9 subpath sono gia scritti e funzionanti in packages/core/package.json exports map)
+- **Autore:** MiniMax-M3
 - **Dipende da:** [ADR-0002](0002-publish-zelari-core-to-npm.md),
   [ADR-0003](0003-versioning-monorepo-policy.md)
 
