@@ -10,11 +10,11 @@ import type { CodingSkillDefinition } from '../../src/agents/skills';
 const emptySkills: CodingSkillDefinition[] = [];
 
 describe('/promote-member', () => {
-  it('handles "/promote-member hephaestus" with kind promote_member + memberId', () => {
-    const result = handleSlashCommand('/promote-member hephaestus', emptySkills);
+  it('handles "/promote-member geryon" with kind promote_member + memberId', () => {
+    const result = handleSlashCommand('/promote-member geryon', emptySkills);
     expect(result.handled).toBe(true);
     expect(result.kind).toBe('promote_member');
-    expect(result.promoteMemberId).toBe('hephaestus');
+    expect(result.promoteMemberId).toBe('geryon');
     expect(result.promoteMemberError).toBeUndefined();
   });
 
@@ -24,7 +24,7 @@ describe('/promote-member', () => {
     expect(result.kind).toBe('promote_member_error');
     expect(result.promoteMemberId).toBeUndefined();
     expect(result.promoteMemberError).toContain('Usage:');
-    expect(result.promoteMemberError).toContain('hephaestus');
+    expect(result.promoteMemberError).toContain('geryon');
   });
 
   it('echoes the id verbatim — dispatcher does full validation (UnknownMemberError)', () => {

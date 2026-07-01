@@ -19,9 +19,9 @@
 import type { UsageBreakdown } from '../shared/events.js';
 
 export interface MemberCost {
-  /** Member id (e.g. 'sisyphus', 'prometheus', 'oracle', 'chairman'). */
+  /** Member id (e.g. 'charont', 'nettun', 'minos', 'lucifer'). */
   memberId: string;
-  /** Human-readable name (e.g. 'Sisyphus'). */
+  /** Human-readable name (e.g. 'Caronte'). */
   name: string;
   /** Tokens in the prompt. Default 0 when the provider does not report usage. */
   promptTokens: number;

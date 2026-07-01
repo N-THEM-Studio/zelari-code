@@ -24,16 +24,16 @@ describe('MemberCostTracker', () => {
   it('records cost with usage (Task I.4.1)', () => {
     const t = new MemberCostTracker();
     const cost = t.record({
-      memberId: 'sisyphus',
-      name: 'Sisyphus',
+      memberId: 'charont',
+      name: 'Caronte',
       usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
       durationMs: 1234,
       toolCalls: 2,
       errored: false,
     });
     expect(cost).toEqual({
-      memberId: 'sisyphus',
-      name: 'Sisyphus',
+      memberId: 'charont',
+      name: 'Caronte',
       promptTokens: 100,
       completionTokens: 50,
       totalTokens: 150,
@@ -46,8 +46,8 @@ describe('MemberCostTracker', () => {
   it('records cost without usage → tokens default to 0 (Task I.4.2)', () => {
     const t = new MemberCostTracker();
     const cost = t.record({
-      memberId: 'prometheus',
-      name: 'Prometheus',
+      memberId: 'nettun',
+      name: 'Nettuno',
       usage: null,
       durationMs: 500,
     });
@@ -60,21 +60,21 @@ describe('MemberCostTracker', () => {
 
   it('records multiple members in insertion order (Task I.4.3)', () => {
     const t = new MemberCostTracker();
-    t.record({ memberId: 'sisyphus', name: 'S', usage: null, durationMs: 100 });
-    t.record({ memberId: 'prometheus', name: 'P', usage: null, durationMs: 200 });
-    t.record({ memberId: 'hephaestus', name: 'H', usage: null, durationMs: 300 });
+    t.record({ memberId: 'charont', name: 'S', usage: null, durationMs: 100 });
+    t.record({ memberId: 'nettun', name: 'P', usage: null, durationMs: 200 });
+    t.record({ memberId: 'geryon', name: 'H', usage: null, durationMs: 300 });
     const costs = t.finalize();
     expect(costs.map((c) => c.memberId)).toEqual([
-      'sisyphus',
-      'prometheus',
-      'hephaestus',
+      'charont',
+      'nettun',
+      'geryon',
     ]);
   });
 
   it('records same memberId twice → second call REPLACES first (Task I.4.4)', () => {
     const t = new MemberCostTracker();
-    t.record({ memberId: 'oracle', name: 'O', usage: null, durationMs: 100, toolCalls: 1 });
-    t.record({ memberId: 'oracle', name: 'O', usage: null, durationMs: 200, toolCalls: 5 });
+    t.record({ memberId: 'minos', name: 'O', usage: null, durationMs: 100, toolCalls: 1 });
+    t.record({ memberId: 'minos', name: 'O', usage: null, durationMs: 200, toolCalls: 5 });
     const costs = t.finalize();
     expect(costs).toHaveLength(1);
     expect(costs[0].durationMs).toBe(200);
@@ -84,7 +84,7 @@ describe('MemberCostTracker', () => {
   it('clamps durationMs to non-negative integer (Task I.4.5)', () => {
     const t = new MemberCostTracker();
     const cost = t.record({
-      memberId: 'chairman',
+      memberId: 'lucifer',
       name: 'C',
       usage: null,
       durationMs: -42.7,
@@ -96,7 +96,7 @@ describe('MemberCostTracker', () => {
   it('totalTokens falls back to prompt+completion when usage omits it (Task I.4.6)', () => {
     const t = new MemberCostTracker();
     const cost = t.record({
-      memberId: 'atlas',
+      memberId: 'pluton',
       name: 'A',
       usage: { promptTokens: 80, completionTokens: 20, totalTokens: 0 },
       durationMs: 100,

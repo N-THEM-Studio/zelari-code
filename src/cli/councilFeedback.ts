@@ -25,7 +25,7 @@ import os from 'node:os';
 export interface FeedbackEntry {
   /** When the feedback was recorded (epoch ms). */
   ts: number;
-  /** Member id (e.g. 'sisyphus'). */
+  /** Member id (e.g. 'charont'). */
   memberId: string;
   /** Score, 1-5 inclusive. */
   score: number;

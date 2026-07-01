@@ -134,7 +134,7 @@ async function genDecisions(ctx: WorkspaceContext): Promise<string> {
 /**
  * Generate the conventions section.
  * v1: extract from existing CLAUDE.MD / README.md if present; otherwise generic.
- * Future: infer from code patterns via Sisyphus + Prometheus observations.
+ * Future: infer from code patterns via Caronte + Nettuno observations.
  */
 async function genConventions(ctx: WorkspaceContext): Promise<string> {
   const lines: string[] = [];

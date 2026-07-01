@@ -293,14 +293,14 @@ export async function* runCouncilPure(
   // callback dispatch to keep call sites short.
 
   // Apply optional feedback-driven specialist ordering (Task I.2 close-out).
-  // Oracle and chairman are extracted BEFORE ranking so their positions are
+  // Minosse and chairman are extracted BEFORE ranking so their positions are
   // fixed (debate review + final synthesis roles are not reorderable).
-  const allSpecialists = agents.filter((a) => a.id !== 'chairman' && a.id !== 'oracle');
+  const allSpecialists = agents.filter((a) => a.id !== 'lucifer' && a.id !== 'minos');
   const specialists = config.feedbackStore
     ? config.feedbackStore.ranked(allSpecialists)
     : allSpecialists;
-  const oracle = agents.find((a) => a.id === 'oracle');
-  const chairman = agents.find((a) => a.id === 'chairman');
+  const oracle = agents.find((a) => a.id === 'minos');
+  const chairman = agents.find((a) => a.id === 'lucifer');
 
   for (const agent of specialists) {
     if (completedIds.has(agent.id)) continue;
@@ -413,7 +413,7 @@ export async function* runCouncilPure(
     }
   }
 
-  // Oracle (debate mode)
+  // Minosse (debate mode)
   if (config.debateMode && oracle && !completedIds.has(oracle.id)) {
     callbacks.onAgentStart?.(oracle);
 
@@ -515,11 +515,11 @@ export async function* runCouncilPure(
     agentOutputs.push({ name: oracle.name, role: oracle.role, content: cleaned });
   }
 
-  // Chairman synthesis (Phase 13 will add full chairman integration)
+  // Lucifero synthesis (Phase 13 will add full chairman integration)
   if (chairman && !completedIds.has(chairman.id)) {
     callbacks.onSynthesisStart?.();
     // For now, chairman just observes — full synthesis is deferred to 13.3+
-    callbacks.onSynthesisDone?.('Chairman synthesis: see agent outputs above.');
+    callbacks.onSynthesisDone?.('Lucifero synthesis: see agent outputs above.');
     // Task I.1 — emit a member_cost for the chairman too. The chairman
     // path is currently stub (no harness.run), so durationMs=0 and no
     // usage. Future full-chairman integration can wire the same

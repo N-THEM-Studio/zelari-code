@@ -11,7 +11,7 @@ import { createBuiltinToolRegistry } from '../src/cli/toolRegistry.ts';
 import { readFileSync } from 'node:fs';
 
 const task = process.argv.slice(2).join(' ') ||
-  `Review the v3-W "Council Workspace" implementation. Use addIdea for ADRs, addRisk for risks, createDocument for docs. End with Chairman synthesis.`;
+  `Review the v3-W "Council Workspace" implementation. Use addIdea for ADRs, addRisk for risks, createDocument for docs. End with Lucifero synthesis.`;
 
 const providerCfg = await providerConfigFor('grok');
 if (!providerCfg) {

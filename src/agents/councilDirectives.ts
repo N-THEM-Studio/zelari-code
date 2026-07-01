@@ -49,7 +49,7 @@ When to ACT (call a tool):
 
 When to DESCRIBE only (no tool):
 - The request is a question, an explanation, a critique, a comparison, or a one-off analysis.
-- The Oracle role: evaluate, never create.
+- The Minosse role: evaluate, never create.
 
 Rules:
 - Scale tool calls to the task: one call for a single item; several calls for a plan with multiple phases/tasks.
@@ -89,10 +89,10 @@ export const COLLABORATION_DIRECTIVE: SystemPromptModule = {
 You are one member of a council. Earlier agents' outputs appear in your context as shared work.
 
 - Treat prior agents' outputs as authoritative unless they contain an error you must flag. Do not re-derive what they already established.
-- Build on, extend, or critique prior work by name (e.g. "Prometheus proposed X; I add Y").
+- Build on, extend, or critique prior work by name (e.g. "Nettuno proposed X; I add Y").
 - If you spot a gap, risk, or contradiction in a prior agent's output, name it explicitly and propose a concrete fix.
 - Keep the shared context lean: summarise rather than quote verbatim when content is long.
-- Hand off cleanly: end with a crisp statement of what you produced and what remains for downstream agents or the Chairman.`,
+- Hand off cleanly: end with a crisp statement of what you produced and what remains for downstream agents or the Lucifero.`,
 };
 
 /** All council directives, sorted by priority ascending. */

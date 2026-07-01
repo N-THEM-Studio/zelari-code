@@ -34,41 +34,41 @@ describe('swapMembers', () => {
 
   it('single swap → target replaces source (Task I.4.2)', () => {
     const roster = getCouncilAgents(3);
-    const out = swapMembers(roster, { sisyphus: 'prometheus' });
+    const out = swapMembers(roster, { charont: 'nettun' });
     expect(out).toHaveLength(3);
-    expect(out[0].id).toBe('prometheus');
-    expect(out[1].id).toBe('prometheus'); // prometheus was second
-    expect(out[2].id).toBe('hephaestus');
+    expect(out[0].id).toBe('nettun');
+    expect(out[1].id).toBe('nettun'); // prometheus was second
+    expect(out[2].id).toBe('geryon');
   });
 
   it('multiple swaps → all applied (Task I.4.3)', () => {
     const roster = getCouncilAgents(3);
     const out = swapMembers(roster, {
-      sisyphus: 'hephaestus',
-      hephaestus: 'sisyphus',
+      charont: 'geryon',
+      geryon: 'charont',
     });
-    expect(out.map((r) => r.id)).toEqual(['hephaestus', 'prometheus', 'sisyphus']);
+    expect(out.map((r) => r.id)).toEqual(['geryon', 'nettun', 'charont']);
   });
 
   it('self-mapping is a no-op (same AgentRole object) (Task I.4.4)', () => {
     const roster = getCouncilAgents(3);
-    const out = swapMembers(roster, { sisyphus: 'sisyphus' });
+    const out = swapMembers(roster, { charont: 'charont' });
     expect(out[0]).toBe(roster[0]);
   });
 
   it('unknown target id throws UnknownMemberError (Task I.4.5)', () => {
     const roster = getCouncilAgents(3);
-    expect(() => swapMembers(roster, { sisyphus: 'unknown-agent' })).toThrow(
+    expect(() => swapMembers(roster, { charont: 'unknown-agent' })).toThrow(
       UnknownMemberError,
     );
     try {
-      swapMembers(roster, { sisyphus: 'unknown-agent' });
+      swapMembers(roster, { charont: 'unknown-agent' });
     } catch (err) {
       expect(err).toBeInstanceOf(UnknownMemberError);
       const e = err as UnknownMemberError;
       expect(e.unknownId).toBe('unknown-agent');
-      expect(e.availableIds).toContain('sisyphus');
-      expect(e.availableIds).toContain('prometheus');
+      expect(e.availableIds).toContain('charont');
+      expect(e.availableIds).toContain('nettun');
       expect(e.message).toContain('"unknown-agent"');
     }
   });
@@ -76,29 +76,29 @@ describe('swapMembers', () => {
   it('unknown source id (in swap map) throws UnknownMemberError (Task I.4.6)', () => {
     const roster = getCouncilAgents(3);
     expect(() =>
-      swapMembers(roster, { 'not-in-roster': 'prometheus' }),
+      swapMembers(roster, { 'not-in-roster': 'nettun' }),
     ).toThrow(UnknownMemberError);
   });
 
   it('members without a mapping pass through unchanged (Task I.4.7)', () => {
     const roster = getCouncilAgents(4);
-    const out = swapMembers(roster, { sisyphus: 'hephaestus' });
-    expect(out[0].id).toBe('hephaestus');
-    expect(out[1].id).toBe('prometheus');
-    expect(out[2].id).toBe('hephaestus'); // was hephaestus
-    expect(out[3].id).toBe('atlas');
+    const out = swapMembers(roster, { charont: 'geryon' });
+    expect(out[0].id).toBe('geryon');
+    expect(out[1].id).toBe('nettun');
+    expect(out[2].id).toBe('geryon'); // was hephaestus
+    expect(out[3].id).toBe('pluton');
   });
 
   it('order is preserved (Task I.4.8)', () => {
     const roster = getCouncilAgents(6);
-    const out = swapMembers(roster, { sisyphus: 'oracle', prometheus: 'chairman' });
+    const out = swapMembers(roster, { charont: 'minos', nettun: 'lucifer' });
     expect(out.map((r) => r.id)).toEqual([
-      'oracle',         // sisyphus → oracle
-      'chairman',       // prometheus → chairman
-      'hephaestus',
-      'atlas',
-      'oracle',         // was oracle
-      'chairman',       // was chairman
+      'minos',         // sisyphus → oracle
+      'lucifer',       // prometheus → chairman
+      'geryon',
+      'pluton',
+      'minos',         // was oracle
+      'lucifer',       // was chairman
     ]);
   });
 

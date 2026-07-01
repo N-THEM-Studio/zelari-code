@@ -105,7 +105,7 @@ export interface RiskBody {
   mitigation: string;
 }
 
-/** Code review artifact (produced by Oracle). */
+/** Code review artifact (produced by Minosse). */
 export interface ReviewFrontmatter {
   kind: 'review';
   id: string;

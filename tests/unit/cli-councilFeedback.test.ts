@@ -43,8 +43,8 @@ describe('FeedbackStore', () => {
 
   it('record() accepts valid input (Task I.4.1)', () => {
     const s = new FeedbackStore({ file, now });
-    const entry = s.record({ memberId: 'sisyphus', score: 4, note: 'good' });
-    expect(entry.memberId).toBe('sisyphus');
+    const entry = s.record({ memberId: 'charont', score: 4, note: 'good' });
+    expect(entry.memberId).toBe('charont');
     expect(entry.score).toBe(4);
     expect(entry.note).toBe('good');
     expect(entry.ts).toBeGreaterThan(0);
@@ -72,10 +72,10 @@ describe('FeedbackStore', () => {
 
   it('getStats() computes avg + count + lastTs correctly (Task I.4.5)', () => {
     const s = new FeedbackStore({ file, now });
-    s.record({ memberId: 'sisyphus', score: 4, ts: 1 });
-    s.record({ memberId: 'sisyphus', score: 5, ts: 2 });
-    s.record({ memberId: 'sisyphus', score: 3, ts: 5 });
-    const stats = s.getStats('sisyphus');
+    s.record({ memberId: 'charont', score: 4, ts: 1 });
+    s.record({ memberId: 'charont', score: 5, ts: 2 });
+    s.record({ memberId: 'charont', score: 3, ts: 5 });
+    const stats = s.getStats('charont');
     expect(stats.count).toBe(3);
     expect(stats.avg).toBeCloseTo(4.0);
     expect(stats.lastTs).toBe(5);

@@ -3,12 +3,12 @@
  * dev-council-task — End-to-end multi-agent council task via runCouncilPure.
  *
  * Runs a single council dispatch with multiple specialists in sequence:
- *   1. Sisyphus  (Orchestrator) — analyzes + delegates
- *   2. Prometheus (Planner)      — turns intent into buildable plan
- *   3. Hephaestus (Ideator)     — diverges + converges ideas
- *   4. Atlas (Knowledge Mapper) — maps relevant concepts/dependencies
- *   5. Oracle (Reviewer)        — quality + risk assessment
- *   6. Chairman (Synthesizer)   — final integrated answer
+ *   1. Caronte  (Orchestrator) — analyzes + delegates
+ *   2. Nettuno (Planner)      — turns intent into buildable plan
+ *   3. Gerione (Ideator)     — diverges + converges ideas
+ *   4. Plutone (Knowledge Mapper) — maps relevant concepts/dependencies
+ *   5. Minosse (Reviewer)        — quality + risk assessment
+ *   6. Lucifero (Synthesizer)   — final integrated answer
  *
  * Streams BrainEvents for each member so you can see who does what.
  */

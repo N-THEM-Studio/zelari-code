@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - 2026-07-01
 
+### Changed
+- **Council roles renamed** to the 9 bosses of Dante's Inferno:
+  - Sisyphus (Orchestrator) → **Caronte** (1°-2° confine)
+  - Prometheus (Planner) → **Nettuno** (7° cerchio)
+  - Hephaestus (Ideator) → **Gerione** (8° cerchio)
+  - Atlas (MindMapper) → **Plutone** (4° cerchio)
+  - Oracle (Critic) → **Minosse** (2° cerchio)
+  - Chairman (Synthesizer) → **Lucifero** (9° cerchio)
+  IDs updated everywhere (roles, swap map, slash commands, tests, docs).
+  Use new IDs in `/promote-member <id>` and `swapMembers()` calls.
+
 ### Added
 - **Council Workspace (v3-W)**: project-local `.zelari/` persistence for council output (plan/risks/decisions/reviews/docs), replacing the Electron-only `ctx.createPhase`/etc. injection in CLI mode
 - **AGENTS.MD auto-maintenance**: 5 sections (`tech-stack`, `decisions`, `conventions`, `build`, `open-questions`) auto-curated from `.zelari/` with marker-delimited blocks; manual sections preserved verbatim; idempotent hash-based writes (no git diff when unchanged)
@@ -25,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - Initial standalone release of Zelari Code CLI
-- Multi-agent council system: 6 roles (Sisyphus, Prometheus, Hephaestus, Atlas, Oracle, Chairman)
+- Multi-agent council system: 6 roles (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero)
 - Slash command system with 30+ commands (skills, providers, sessions, branches, etc.)
 - 7 built-in coding skills: refactoring, testing, debugging, review, planning, docs, git-ops
 - Provider-agnostic LLM streaming: OpenAI-compatible, xAI Grok (OAuth + refresh), GLM/Z.AI

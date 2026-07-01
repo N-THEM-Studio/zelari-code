@@ -21,13 +21,13 @@ Rules for clarifications:
 
 export const AGENT_ROLES: AgentRole[] = [
   {
-    id: 'sisyphus',
-    name: 'Sisyphus',
+    id: 'charont',
+    name: 'Caronte',
     codename: 'Orchestrator',
     role: 'Council Director',
     color: '#3b82f6',
-    avatar: 'S',
-    systemPrompt: `You are Sisyphus, the Council Director and Orchestrator — the strategic mind that frames the problem for the rest of the council.
+    avatar: 'L',
+    systemPrompt: `You are Caronte, the Council Director and Orchestrator — the strategic mind that frames the problem for the rest of the council.
 
 ## Methodology (work in this order)
 1. Parse the request into its irreducible goal and its implicit constraints.
@@ -48,16 +48,16 @@ A short "Analysis" section (the goal + constraints), then a "Delegation Plan" wi
     skills: ['project-planner', 'research-analyst'],
   },
   {
-    id: 'prometheus',
-    name: 'Prometheus',
+    id: 'nettun',
+    name: 'Nettuno',
     codename: 'Planner',
     role: 'Project Planner',
     color: '#10b981',
-    avatar: 'P',
-    systemPrompt: `You are Prometheus, the Project Planner — you turn intent into a buildable, sequenced plan.
+    avatar: 'N',
+    systemPrompt: `You are Nettuno, the Project Planner — you turn intent into a buildable, sequenced plan.
 
 ## Methodology (work in this order)
-1. Read shared context from prior agents (especially Sisyphus) before deciding what's missing.
+1. Read shared context from prior agents (especially Caronte) before deciding what's missing.
 2. Decompose the goal into ordered PHASES (milestones), each with a clear exit criterion.
 3. Within each phase, define concrete TASKS with dependencies, priority, and acceptance criteria.
 4. Assign realistic file references and QA scenarios so a developer can execute without ambiguity.
@@ -84,13 +84,13 @@ Keep plans hierarchical and practical. Stay under 250 words.${CLARIFICATION_PROT
     skills: ['project-planner', 'vault-manager'],
   },
   {
-    id: 'hephaestus',
-    name: 'Hephaestus',
+    id: 'geryon',
+    name: 'Gerione',
     codename: 'Ideator',
     role: 'Creative Ideator',
     color: '#f59e0b',
-    avatar: 'H',
-    systemPrompt: `You are Hephaestus, the Creative Ideator — you generate breadth and then collapse it into the strongest concepts.
+    avatar: 'G',
+    systemPrompt: `You are Gerione, the Creative Ideator — you generate breadth and then collapse it into the strongest concepts.
 
 ## Methodology (work in this order)
 1. Produce a divergent set of 5-8 distinct ideas/approaches (vary the axis: technical, UX, business, unconventional).
@@ -114,13 +114,13 @@ Stay under 200 words.${CLARIFICATION_PROTOCOL}`,
     skills: ['idea-synthesizer', 'mind-mapper', 'document-writer'],
   },
   {
-    id: 'atlas',
-    name: 'Atlas',
+    id: 'pluton',
+    name: 'Plutone',
     codename: 'MindMapper',
     role: 'Knowledge Architect',
     color: '#06b6d4',
-    avatar: 'A',
-    systemPrompt: `You are Atlas, the Knowledge Architect and Mind Mapper — you structure information into navigable graphs.
+    avatar: 'P',
+    systemPrompt: `You are Plutone, the Knowledge Architect and Mind Mapper — you structure information into navigable graphs.
 
 ## Methodology (work in this order)
 1. Extract key concepts from the user request, shared context, and RAG knowledge.
@@ -141,19 +141,19 @@ Describe the proposed structure (root → branches → leaves) in text and, when
     skills: ['mind-mapper', 'research-analyst'],
   },
   {
-    id: 'oracle',
-    name: 'Oracle',
+    id: 'minos',
+    name: 'Minosse',
     codename: 'Critic',
     role: 'Quality Critic',
     color: '#ef4444',
-    avatar: 'O',
-    systemPrompt: `You are Oracle, the Quality Critic — you review the council's proposals (presented anonymously) and expose weaknesses before synthesis.
+    avatar: 'M',
+    systemPrompt: `You are Minosse, the Quality Critic — you review the council's proposals (presented anonymously) and expose weaknesses before synthesis.
 
 ## Methodology (work in this order)
 1. Score each proposal on five dimensions (1-10): Accuracy, Novelty, Coherence, Completeness, Actionability.
 2. Identify the single biggest gap or risk across all proposals.
 3. Flag any contradictions between proposals (e.g., conflicting assumptions).
-4. Recommend the 1-3 highest-value improvements the Chairman should apply.
+4. Recommend the 1-3 highest-value improvements the Lucifero should apply.
 5. Note anything that should be cut or descoped.
 
 ## Operating principles
@@ -172,16 +172,16 @@ Stay under 200 words. (You do not create workspace artifacts, so you do not emit
     skills: ['research-analyst'],
   },
   {
-    id: 'chairman',
-    name: 'Chairman',
+    id: 'lucifer',
+    name: 'Lucifero',
     codename: 'Synthesizer',
     role: 'Final Synthesizer',
     color: '#8b5cf6',
-    avatar: 'C',
-    systemPrompt: `You are the Chairman, the Final Synthesizer — you produce the definitive, actionable output that resolves the council's work.
+    avatar: 'L',
+    systemPrompt: `You are the Lucifero, the Final Synthesizer — you produce the definitive, actionable output that resolves the council's work.
 
 ## Methodology (work in this order)
-1. Reconcile the specialists' outputs and Oracle's critique into a single coherent position.
+1. Reconcile the specialists' outputs and Minosse's critique into a single coherent position.
 2. Resolve conflicts explicitly (state which proposal won and why).
 3. Deliver the finished product the user asked for — complete, not summarized.
 4. If concrete artifacts are warranted (tasks, ideas, phases, mind-map, documents), commit them via the tools block.
@@ -189,7 +189,7 @@ Stay under 200 words. (You do not create workspace artifacts, so you do not emit
 ## Output expectations
 - If the user requested a document, article, code, or report, write the COMPLETE, FULL-LENGTH content in your message body. Do not summarize or list — produce the actual finished artifact.
 - Lead with a one-line summary, then the full detail.
-- Apply Oracle's highest-value improvements; drop descoped items.
+- Apply Minosse's highest-value improvements; drop descoped items.
 
 ## Tool execution (only when actions are warranted)
 Append EXACTLY this block at the very end of your message when you must create workspace artifacts:
@@ -212,7 +212,7 @@ export function getAgent(id: string): AgentRole | undefined {
 }
 
 export function getCouncilAgents(size: number): AgentRole[] {
-  const core = ['sisyphus', 'prometheus', 'hephaestus', 'atlas', 'oracle', 'chairman'];
+  const core = ['charont', 'nettun', 'geryon', 'pluton', 'minos', 'lucifer'];
   return core.slice(0, Math.min(size, 6)).map((id) => getAgent(id)!);
 }
 
@@ -239,10 +239,10 @@ export class UnknownMemberError extends Error {
  * Pure helper: remap members in a roster by id.
  *
  *   swapMembers(
- *     [{id: 'sisyphus', ...}, {id: 'oracle', ...}],
- *     { sisyphus: 'prometheus' }  // or just { sisyphus: 'prometheus' }
+ *     [{id: 'charont', ...}, {id: 'minos', ...}],
+ *     { sisyphus: 'nettun' }  // or just { sisyphus: 'nettun' }
  *   )
- *   // => [{id: 'prometheus', ...}, {id: 'oracle', ...}]
+ *   // => [{id: 'nettun', ...}, {id: 'minos', ...}]
  *
  * Behavior (Task I.3, v3-I):
  *   - For each member in `roles`, if `swap[member.id]` is defined, replace

@@ -74,8 +74,8 @@ export interface PromotionResult {
  * not a known agent.
  *
  * Examples:
- *   promoteMember('hephaestus')
- *     → { skill: { id: 'hephaestus', name: 'Hephaestus', ... }, markdown: '---\n...---\n...' }
+ *   promoteMember('geryon')
+ *     → { skill: { id: 'geryon', name: 'Gerione', ... }, markdown: '---\n...---\n...' }
  *   promoteMember('zaphod')  // throws UnknownMemberError
  */
 export function promoteMember(

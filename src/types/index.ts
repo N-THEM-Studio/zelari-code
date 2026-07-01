@@ -255,7 +255,7 @@ export interface AppSettings {
    */
   providers?: ProviderConfig[];
   /**
-   * Per-agent model override. Key is agent id (e.g. 'sisyphus', 'chairman').
+   * Per-agent model override. Key is agent id (e.g. 'charont', 'lucifer').
    * Value is a { providerId, model } pair, where providerId can be a built-in
    * or a custom provider id. Falls back to the global `provider` + `model`.
    */

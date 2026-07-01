@@ -6,7 +6,7 @@
 ![License](https://img.shields.io/badge/license-Proprietary-red)
 ![Node](https://img.shields.io/node/v/zelari-code)
 
-**Zelari Code** is a standalone CLI extracted from [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain). It brings the multi-agent council (Sisyphus, Prometheus, Hephaestus, Atlas, Oracle, Chairman) directly into your terminal with a rich TUI (Ink + React), slash command system, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok with OAuth, GLM/Z.AI).
+**Zelari Code** is a standalone CLI extracted from [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain). It brings the multi-agent council (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) directly into your terminal with a rich TUI (Ink + React), slash command system, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok with OAuth, GLM/Z.AI).
 
 ## Install
 
@@ -100,7 +100,7 @@ Disable auto-check: `ZELARI_DEV=1 zelari-code`
 
 ## Features
 
-- 🤖 **Multi-agent council** — 6 roles (Sisyphus, Prometheus, Hephaestus, Atlas, Oracle, Chairman) with feedback loops and member promotion
+- 🤖 **Multi-agent council** — 6 roles (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with feedback loops and member promotion
 - 🎨 **Rich TUI** — Ink + React multi-panel interface (header, chat stream, sidebar, input bar)
 - 🧠 **Provider-agnostic** — OpenAI-compatible APIs (OpenAI, Together, Groq, custom), xAI Grok with OAuth refresh, GLM/Z.AI
 - 🛠️ **Built-in tools** — filesystem (read/write/edit), shell (bash), search (grep), git operations
@@ -153,7 +153,7 @@ The CLI persists council output (decisions, risks, docs, plan, reviews) into a *
 ├── plan.md                   # phases / tasks / milestones (Markdown + YAML frontmatter)
 ├── risks.md                  # risk register (live, ordered by severity)
 ├── decisions/                # ADRs (Architecture Decision Records) — 001-<slug>.md
-├── reviews/                  # Oracle verdict per council run
+├── reviews/                  # Minosse verdict per council run
 └── docs/                     # doc drafts produced by the council
 AGENTS.MD                     # committed at project root, auto-curated from .zelari/
 ```

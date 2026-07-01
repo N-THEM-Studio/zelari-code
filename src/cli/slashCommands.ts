@@ -28,7 +28,7 @@ export interface SlashCommandResult {
   targetSessionId?: string;
   /** For `council`: the user prompt to dispatch to the council. */
   councilInput?: string;
-  /** For `council_feedback`: the target member id (e.g. 'sisyphus'). */
+  /** For `council_feedback`: the target member id (e.g. 'charont'). */
   feedbackMemberId?: string;
   /** For `council_feedback`: the score 1-5. */
   feedbackScore?: number;
@@ -52,7 +52,7 @@ export interface SlashCommandResult {
   compactKeepRecent?: number;
   /** For `compact`: messages-count threshold to trigger compaction. */
   compactThreshold?: number;
-  /** For `promote_member`: the target member id (e.g. 'hephaestus'). */
+  /** For `promote_member`: the target member id (e.g. 'geryon'). */
   promoteMemberId?: string;
   /** For `promote_member_error`: error message (e.g. unknown member). */
   promoteMemberError?: string;
@@ -478,7 +478,7 @@ export function handleSlashCommand(
           handled: true,
           kind: 'promote_member_error',
           promoteMemberError:
-            'Usage: /promote-member <memberId> — e.g. /promote-member hephaestus',
+            'Usage: /promote-member <memberId> — e.g. /promote-member geryon',
         };
       }
       // Quick sanity check — the dispatcher will do the full UnknownMemberError
