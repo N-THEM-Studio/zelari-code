@@ -40,42 +40,80 @@ export interface BrainEventBase {
 
 // --- Agent lifecycle --------------------------------------------------------
 
-/** The agent loop has started; carries the resolved model + provider. */
+/**
+ * The agent loop has started; carries the resolved model + provider.
+ *
+ * @since 0.5.0 `memberId` is included when the agent run belongs to a
+ *          council member (i.e. the run was launched by the council
+ *          pipeline, not by a direct user prompt). `memberName` is
+ *          the human-readable label (e.g. "Caronte") for UI display
+ *          without a second lookup into the roles table.
+ */
 export interface BrainAgentStartEvent extends BrainEventBase {
   type: 'agent_start';
   model: string;
   provider: string;
+  memberId?: string;
+  memberName?: string;
 }
 
-/** The agent loop has finished, was cancelled, or errored out. */
+/**
+ * The agent loop has finished, was cancelled, or errored out.
+ *
+ * @since 0.5.0 `memberId` + `memberName` mirror the corresponding
+ *          `agent_start` (see above).
+ */
 export interface BrainAgentEndEvent extends BrainEventBase {
   type: 'agent_end';
   reason: 'completed' | 'cancelled' | 'error';
   durationMs: number;
+  memberId?: string;
+  memberName?: string;
 }
 
 // --- Message streaming ------------------------------------------------------
 
-/** An assistant message has begun streaming. */
+/**
+ * An assistant message has begun streaming.
+ *
+ * @since 0.5.0 `memberId` + `memberName` identify the council member
+ *          producing this message (omitted for direct user prompts).
+ */
 export interface BrainMessageStartEvent extends BrainEventBase {
   type: 'message_start';
   messageId: string;
   role: 'assistant';
+  memberId?: string;
+  memberName?: string;
 }
 
-/** An incremental chunk of assistant message text. */
+/**
+ * An incremental chunk of assistant message text.
+ *
+ * @since 0.5.0 `memberId` + `memberName` mirror `message_start` so
+ *          consumers can stream-attribute text to a council member
+ *          without buffering until `message_end`.
+ */
 export interface BrainMessageDeltaEvent extends BrainEventBase {
   type: 'message_delta';
   messageId: string;
   delta: string;
+  memberId?: string;
+  memberName?: string;
 }
 
-/** An assistant message has finished streaming. */
+/**
+ * An assistant message has finished streaming.
+ *
+ * @since 0.5.0 `memberId` + `memberName` mirror `message_start`.
+ */
 export interface BrainMessageEndEvent extends BrainEventBase {
   type: 'message_end';
   messageId: string;
   totalLength: number;
   finishReason: string;
+  memberId?: string;
+  memberName?: string;
   /**
    * Real token usage reported by the provider (Task G.4). When the
    * provider sends an OpenAI-shaped `usage` chunk (gated by

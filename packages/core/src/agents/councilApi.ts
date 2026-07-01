@@ -331,6 +331,11 @@ export async function* runCouncilPure(
       // Council members can otherwise fire N tool calls in one turn and blow
       // the message context. Default to 5 if not set by caller.
       maxToolCallsPerTurn: config.maxToolCallsPerTurn ?? 5,
+      // Visible-reasoning wiring (v0.5.0): stamp every event the
+      // harness emits with the council-member identity so the UI can
+      // render "Caronte: …" headers above the streamed text.
+      memberId: agent.id,
+      memberName: agent.name,
       providerStream: (params) => config.providerStream({
         ...params,
       } as never),
@@ -444,6 +449,11 @@ export async function* runCouncilPure(
       toolRegistry: config.tools,
       // Task G.2 — same per-turn limit applies to oracle.
       maxToolCallsPerTurn: config.maxToolCallsPerTurn ?? 5,
+      // Visible-reasoning (v0.5.0): same member-stamping as the
+      // specialist loop above. Minosse's events are marked as
+      // belonging to the oracle / debate round.
+      memberId: oracle.id,
+      memberName: oracle.name,
       providerStream: (params) => config.providerStream({
         ...params,
       } as never),

@@ -13,6 +13,23 @@ export interface ChatMessage {
   toolCallId?: string;
   toolOk?: boolean;
   toolDurationMs?: number;
+  /**
+   * Council member name that produced this message (e.g. "Caronte",
+   * "Nettuno", "Minosse"). Populated only for council-sourced
+   * assistant messages so the visible-reasoning UI can render
+   * `🜂 Caronte: …` headers above the streamed text. Omitted for
+   * direct user prompts.
+   *
+   * @since 0.5.0
+   */
+  memberName?: string;
+  /**
+   * Stable council member id (e.g. 'charont', 'nettun'). Useful for
+   * tests + accessibility (machine-readable, not for display).
+   *
+   * @since 0.5.0
+   */
+  memberId?: string;
 }
 
 interface ChatStreamProps {
@@ -127,6 +144,9 @@ function ChatStreamImpl({ messages, height, width }: ChatStreamProps): React.Rea
             <Box key={m.id} flexDirection="column" marginBottom={1}>
               <Text color={m.role === 'user' ? 'cyan' : m.role === 'assistant' ? 'green' : 'yellow'} bold>
                 {m.role === 'user' ? '❯' : m.role === 'assistant' ? '◆' : 'ℹ'} {m.role}
+                {m.role === 'assistant' && m.memberName ? (
+                  <Text color="magenta"> · {m.memberName}</Text>
+                ) : null}
               </Text>
               <Box marginLeft={2}>
                 <Text>{m.content}</Text>

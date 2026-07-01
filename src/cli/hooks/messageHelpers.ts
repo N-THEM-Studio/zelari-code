@@ -42,11 +42,16 @@ export function appendUser(
  * Append or extend the streaming assistant message. If the last message is
  * already a streaming assistant message, append `delta` to its content;
  * otherwise create a new one with a stable streaming id.
+ *
+ * When `memberName` is set (council-sourced messages), it's stamped on
+ * the message so the visible-reasoning UI can render `🜂 Caronte: …`
+ * headers above the streamed text.
  */
 export function appendOrExtendStreamingAssistant(
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
   fullContent: string,
   ts: number,
+  memberContext?: { memberId?: string; memberName?: string },
 ): void {
   setMessages((prev) => {
     const last = prev[prev.length - 1];
@@ -55,7 +60,14 @@ export function appendOrExtendStreamingAssistant(
     }
     return [
       ...prev,
-      { id: `streaming-${crypto.randomUUID()}`, role: 'assistant', content: fullContent, ts },
+      {
+        id: `streaming-${crypto.randomUUID()}`,
+        role: 'assistant',
+        content: fullContent,
+        ts,
+        ...(memberContext?.memberId ? { memberId: memberContext.memberId } : {}),
+        ...(memberContext?.memberName ? { memberName: memberContext.memberName } : {}),
+      },
     ];
   });
 }

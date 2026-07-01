@@ -198,7 +198,12 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             assistantContent += event.delta;
             // Route through the throttled setter so per-token deltas (50-200/sec)
             // coalesce into ≤60 renders/sec instead of flickering the TUI.
-            appendOrExtendStreamingAssistant(commitStreaming, assistantContent, Date.now());
+            // v0.5.0: forward the council member identity when present so
+            // the UI can render `🜂 Caronte: …` headers.
+            appendOrExtendStreamingAssistant(commitStreaming, assistantContent, Date.now(), {
+              ...(event.memberId ? { memberId: event.memberId } : {}),
+              ...(event.memberName ? { memberName: event.memberName } : {}),
+            });
           } else if (event.type === 'error') {
             appendSystem(setMessages, `[error] ${event.message}`, Date.now());
           } else if (event.type === 'tool_call') {
@@ -327,6 +332,11 @@ async function dispatchCouncilPromptImpl(
       if (event.type === 'message_delta') {
         // Coalesce streaming assistant content through the throttled setter so
         // per-token deltas don't flicker the TUI (same as dispatchPrompt).
+        // v0.5.0: forward the council member identity when present so
+        // the UI can render `🜂 Caronte: …` headers above the streamed
+        // text. When two specialists share the same messageId (rare, but
+        // possible across tool-call loops), the next streaming id keeps
+        // the previous member stamp so a single message stays attributed.
         commitStreaming((prev) => {
           const last = prev[prev.length - 1];
           if (last && last.role === 'assistant' && last.id.startsWith('streaming-')) {
@@ -334,7 +344,14 @@ async function dispatchCouncilPromptImpl(
           }
           return [
             ...prev,
-            { id: `streaming-${crypto.randomUUID()}`, role: 'assistant', content: event.delta, ts: event.ts },
+            {
+              id: `streaming-${crypto.randomUUID()}`,
+              role: 'assistant',
+              content: event.delta,
+              ts: event.ts,
+              ...(event.memberId ? { memberId: event.memberId } : {}),
+              ...(event.memberName ? { memberName: event.memberName } : {}),
+            },
           ];
         });
       } else if (event.type === 'tool_execution_start') {

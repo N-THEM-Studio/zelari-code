@@ -108,6 +108,19 @@ export interface AgentHarnessConfig {
    * agent_end. Default 3. Set to 0 to disable queue draining.
    */
   maxQueuedIterations?: number;
+  /**
+   * Optional council-member identity, propagated to every event the
+   * harness emits (`agent_start`, `agent_end`, `message_start`,
+   * `message_delta`, `message_end`). When set, the event stream
+   * becomes self-describing for visible-reasoning UIs.
+   *
+   * Direct user prompts (non-council) leave this undefined.
+   *
+   * @since 0.5.0
+   */
+  memberId?: string;
+  /** Human-readable member label (e.g. "Caronte"). See `memberId`. */
+  memberName?: string;
 }
 
 export type ProviderStreamFn = (params: {
@@ -146,6 +159,21 @@ export class AgentHarness {
     this.eventBus = config.eventBus;
     this.sessionId = config.sessionId ?? crypto.randomUUID();
     this.maxQueuedIterations = config.maxQueuedIterations ?? 3;
+  }
+
+  /**
+   * Member identity fields (memberId + memberName) to merge into every
+   * event payload. Returns an empty object when the run is a direct
+   * user prompt (no member context), so call sites can spread it
+   * unconditionally.
+   *
+   * @since 0.5.0
+   */
+  private memberFields(): { memberId?: string; memberName?: string } {
+    return {
+      ...(this.config.memberId ? { memberId: this.config.memberId } : {}),
+      ...(this.config.memberName ? { memberName: this.config.memberName } : {}),
+    };
   }
 
   /**
@@ -219,6 +247,7 @@ export class AgentHarness {
     const startEvent: BrainAgentStartEvent = createBrainEvent('agent_start', this.sessionId, {
       model: this.config.model,
       provider: this.config.provider,
+      ...this.memberFields(),
     });
     this.emit(startEvent);
     yield startEvent;
@@ -234,7 +263,7 @@ export class AgentHarness {
     const initialMsgStart: BrainMessageStartEvent = createBrainEvent(
       'message_start',
       this.sessionId,
-      { messageId: initialMessageId, role: 'assistant' },
+      { messageId: initialMessageId, role: 'assistant', ...this.memberFields() },
     );
     this.emit(initialMsgStart);
     yield initialMsgStart;
@@ -263,6 +292,7 @@ export class AgentHarness {
       messageId: initialMessageId,
       totalLength: initialTurnLength,
       finishReason: initialFinishRef.value,
+      ...this.memberFields(),
       ...(initialUsageRef.value ? { usage: initialUsageRef.value } : {}),
     });
     this.emit(initialMsgEnd);
@@ -288,7 +318,7 @@ export class AgentHarness {
       const msgStart: BrainMessageStartEvent = createBrainEvent(
         'message_start',
         this.sessionId,
-        { messageId: turnMessageId, role: 'assistant' },
+        { messageId: turnMessageId, role: 'assistant', ...this.memberFields() },
       );
       this.emit(msgStart);
       yield msgStart;
@@ -310,6 +340,7 @@ export class AgentHarness {
         messageId: turnMessageId,
         totalLength: turnLength,
         finishReason: turnFinishRef.value,
+        ...this.memberFields(),
         ...(turnUsageRef.value ? { usage: turnUsageRef.value } : {}),
       });
       this.emit(msgEnd);
@@ -340,6 +371,7 @@ export class AgentHarness {
       const msgStart: BrainMessageStartEvent = createBrainEvent('message_start', this.sessionId, {
         messageId: turnMessageId,
         role: 'assistant',
+        ...this.memberFields(),
       });
       this.emit(msgStart);
       yield msgStart;
@@ -361,6 +393,7 @@ export class AgentHarness {
         messageId: turnMessageId,
         totalLength: turnLength,
         finishReason: turnFinishRef.value,
+        ...this.memberFields(),
         ...(turnUsageRef.value ? { usage: turnUsageRef.value } : {}),
       });
       this.emit(msgEnd);
@@ -373,6 +406,7 @@ export class AgentHarness {
     const agentEnd: BrainAgentEndEvent = createBrainEvent('agent_end', this.sessionId, {
       reason: hadError ? 'error' : this.cancelled ? 'cancelled' : 'completed',
       durationMs: Date.now() - startTime,
+      ...this.memberFields(),
     });
     this.emit(agentEnd);
     yield agentEnd;
@@ -440,7 +474,7 @@ export class AgentHarness {
           const deltaEvent: BrainMessageDeltaEvent = createBrainEvent(
             'message_delta',
             this.sessionId,
-            { messageId, delta: delta.delta },
+            { messageId, delta: delta.delta, ...this.memberFields() },
           );
           this.emit(deltaEvent);
           yield deltaEvent;
