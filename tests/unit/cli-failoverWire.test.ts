@@ -1,13 +1,14 @@
 /**
  * cli-failoverWire.test.ts — Task G.1.2 + G.1.3
  *
- * Verifies that `app.tsx` correctly wires `providerFailover()` in the
- * `dispatchPrompt` path (carryover B.4.2 from v3-B). Two angles:
+ * Verifies that the dispatch path correctly wires `providerFailover()`.
+ * After the v0.4.2 app-split, this lives in `src/cli/hooks/useChatTurn.ts`
+ * (was previously inline in app.tsx). The static-wiring regex now checks
+ * the hook file; we additionally verify app.tsx imports the hook so the
+ * wiring is reachable from the UI.
  *
- *  1. **Static wiring**: regex check that the file imports providerFailover
- *     and uses it inside dispatchPrompt. Catches "someone removed the
- *     wrapper" regressions.
- *
+ *  1. **Static wiring**: regex check that useChatTurn.ts imports
+ *     providerFailover and uses it in the dispatch path.
  *  2. **Behavior**: integration test that drives a real AgentHarness with
  *     a failing-primary + succeeding-fallback ProviderStreamFn pair, and
  *     asserts the failover flow shows up in the events stream.
@@ -21,25 +22,27 @@ import { AgentHarness } from '../../src/main/core/AgentHarness.js';
 import type { ProviderStreamFn, ProviderDelta } from '../../src/main/core/AgentHarness.js';
 
 const APP_TSX_PATH = path.resolve(__dirname, '..', '..', 'src', 'cli', 'app.tsx');
+const USE_CHAT_TURN_PATH = path.resolve(__dirname, '..', '..', 'src', 'cli', 'hooks', 'useChatTurn.ts');
 
-describe('app.tsx wiring of providerFailover (Task G.1.2)', () => {
-  it('imports providerFailover from ./providerFailover.js', () => {
-    const src = readFileSync(APP_TSX_PATH, 'utf-8');
-    expect(src).toMatch(/import\s*\{[^}]*\bproviderFailover\b[^}]*\}\s*from\s*['"]\.\/providerFailover\.js['"]/);
+describe('useChatTurn.ts wiring of providerFailover (Task G.1.2)', () => {
+  it('imports providerFailover from ../providerFailover.js', () => {
+    const src = readFileSync(USE_CHAT_TURN_PATH, 'utf-8');
+    expect(src).toMatch(/import\s*\{[^}]*\bproviderFailover\b[^}]*\}\s*from\s*['"][^'"]*providerFailover\.js['"]/);
   });
 
   it('wraps providerStream with providerFailover() inside dispatchPrompt', () => {
-    const src = readFileSync(APP_TSX_PATH, 'utf-8');
+    const src = readFileSync(USE_CHAT_TURN_PATH, 'utf-8');
     // dispatchPrompt must reference providerFailover and the env knob.
-    // We assert file-level presence + a coarse keyword check on the
-    // dispatchPrompt body via `dispatchPrompt` substring window.
     const idx = src.indexOf('const dispatchPrompt');
     expect(idx).toBeGreaterThan(0);
-    // Take a window from dispatchPrompt declaration through ~3000 chars
-    // (dispatchPrompt body is ~100 lines in current app.tsx).
-    const window = src.slice(idx, idx + 3000);
+    const window = src.slice(idx, idx + 5000);
     expect(window).toMatch(/providerFailover\s*\(\s*\{/);
     expect(window).toMatch(/ANATHEMA_FAILOVER/);
+  });
+
+  it('app.tsx imports useChatTurn so the wiring is reachable', () => {
+    const src = readFileSync(APP_TSX_PATH, 'utf-8');
+    expect(src).toMatch(/import\s*\{[^}]*\buseChatTurn\b[^}]*\}\s*from\s*['"][^'"]*hooks\/useChatTurn\.js['"]/);
   });
 });
 

@@ -157,6 +157,45 @@ export async function listSessions(): Promise<SessionInfo[]> {
   return results;
 }
 
+/**
+ * sessionKindRouter — pure helper extracted from app.tsx handleSessionKind
+ * (Task v0.4.2 audit split). Routes /sessions, /resume <id>, /new to the
+ * appropriate sessionManager action and returns the system message to show.
+ *
+ * The caller (useSlashDispatch) is responsible for any state-side effects
+ * (writerRef reset, setMessages([]), setSessionActive(false), setSessionId
+ * for /new) because those setters live in the App component.
+ */
+export async function sessionKindRouter(
+  kind: 'session' | 'resume' | 'new',
+  targetSessionId?: string,
+): Promise<string> {
+  if (kind === 'session') {
+    try {
+      const sessions = await listSessions();
+      if (sessions.length === 0) return '[sessions] no past sessions';
+      const lines = sessions.slice(0, 10).map((s) => {
+        const dt = new Date(s.mtimeMs).toISOString().replace('T', ' ').slice(0, 16);
+        return `  ${s.id.slice(0, 8)}…  ${s.eventCount} events  ${dt}`;
+      });
+      return `[sessions] showing ${Math.min(sessions.length, 10)} of ${sessions.length}:\n${lines.join('\n')}`;
+    } catch (err) {
+      return `[sessions] error: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  }
+  if (kind === 'resume' && targetSessionId) {
+    setCurrentSessionId(targetSessionId);
+    return `[resume] session ${targetSessionId.slice(0, 8)}… set as current — restart zelari-code to load it`;
+  }
+  if (kind === 'new') {
+    clearCurrentSessionId();
+    const id = newSessionId();
+    setCurrentSessionId(id);
+    return `[new] fresh session ${id.slice(0, 8)}… started`;
+  }
+  return `[${kind}] handled`;
+}
+
 /** Load all events from a session's JSONL file by id. */
 export async function loadSessionEvents(id: string): Promise<BrainEvent[]> {
   const filePath = path.join(getSessionBaseDir(), `${id}.jsonl`);

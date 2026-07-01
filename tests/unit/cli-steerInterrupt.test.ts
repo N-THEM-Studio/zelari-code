@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { applySteerInterrupt } from '../../src/cli/app.js';
+import { applySteerInterrupt } from '../../src/cli/hooks/steer.js';
 
 describe('applySteerInterrupt (Task C.3.4 — app.tsx steer flow)', () => {
   it('with active harness: enqueues + cancels in the correct order, then notifies', async () => {

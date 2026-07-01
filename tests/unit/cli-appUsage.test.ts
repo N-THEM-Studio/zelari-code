@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { computeSessionStatsDelta } from '../../src/cli/app.js';
+import { computeSessionStatsDelta } from '../../src/cli/hooks/chatStats.js';
 
 describe('computeSessionStatsDelta (Task G.4.5)', () => {
   it('uses real provider usage when present — no approximation', () => {

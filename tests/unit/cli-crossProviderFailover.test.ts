@@ -35,6 +35,15 @@ const APP_TSX_PATH = path.resolve(
   'cli',
   'app.tsx',
 );
+const USE_CHAT_TURN_PATH = path.resolve(
+  __dirname,
+  '..',
+  '..',
+  'src',
+  'cli',
+  'hooks',
+  'useChatTurn.ts',
+);
 
 const PARAMS = { messages: [] } as unknown as Parameters<ProviderStreamFn>[0];
 
@@ -152,19 +161,19 @@ describe('providerFailover backward-compat without fallbackLabel (Task J.3.2)', 
   });
 });
 
-describe('app.tsx wiring of cross-provider failover (Task J.3.3)', () => {
-  it('imports resolveFailoverStream from ./crossProviderFailover.js', () => {
-    const src = readFileSync(APP_TSX_PATH, 'utf-8');
+describe('useChatTurn.ts wiring of cross-provider failover (Task J.3.3)', () => {
+  it('imports resolveFailoverStream from ../crossProviderFailover.js', () => {
+    const src = readFileSync(USE_CHAT_TURN_PATH, 'utf-8');
     expect(src).toMatch(
-      /import\s*\{[^}]*\bresolveFailoverStream\b[^}]*\}\s*from\s*['"]\.\/crossProviderFailover\.js['"]/,
+      /import\s*\{[^}]*\bresolveFailoverStream\b[^}]*\}\s*from\s*['"][^'"]*crossProviderFailover\.js['"]/,
     );
   });
 
   it('reads ANATHEMA_FAILOVER_PROVIDER env var in dispatchPrompt', () => {
-    const src = readFileSync(APP_TSX_PATH, 'utf-8');
+    const src = readFileSync(USE_CHAT_TURN_PATH, 'utf-8');
     const idx = src.indexOf('const dispatchPrompt');
     expect(idx).toBeGreaterThan(-1);
-    const window = src.slice(idx, idx + 3000);
+    const window = src.slice(idx, idx + 5000);
     expect(window).toMatch(/ANATHEMA_FAILOVER_PROVIDER/);
     expect(window).toMatch(/resolveFailoverStream\s*\(\s*\{/);
   });

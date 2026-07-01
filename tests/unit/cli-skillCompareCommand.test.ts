@@ -14,7 +14,7 @@ import {
   formatSkillCompare,
   pickCompareWinner,
   compareSkillsFromFile,
-} from '../../src/cli/app.js';
+} from '../../src/cli/hooks/skillCompare.js';
 import type { SkillHistoryRecord } from '../../src/cli/skillHistory.js';
 
 const NOW = 1_700_000_000_000;

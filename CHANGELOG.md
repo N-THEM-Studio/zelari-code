@@ -5,6 +5,35 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.2] - 2026-07-01
+
+### Changed
+- **app.tsx split (v0.4.2 audit)**: the 2200-line monolithic `app.tsx` is now a 175-line shell that composes 4 focused hooks. Logic moved to:
+  - `src/cli/hooks/useTerminalSize.ts` — reactive stdout dimensions with resize coalescing
+  - `src/cli/hooks/useSession.ts` — session bootstrap + `/sessions` `/resume` `/new` lifecycle
+  - `src/cli/hooks/useChatTurn.ts` — `dispatchPrompt` (single LLM) + `dispatchCouncilPrompt` (multi-agent)
+  - `src/cli/hooks/useSlashDispatch.ts` — router for every `/command` (1340-line `handleSubmit` if/else chain)
+  - `src/cli/hooks/chatStats.ts` — `computeSessionStatsDelta`
+  - `src/cli/hooks/eventsToMessages.ts` — BrainEvent → ChatMessage replay
+  - `src/cli/hooks/steer.ts` — `applySteerInterrupt`
+  - `src/cli/hooks/skillCompare.ts` — `formatSkillCompare` family
+  - `src/cli/hooks/messageHelpers.ts` — `appendSystem` / `appendUser` / `appendOrExtendStreamingAssistant` / `appendToolStart` / `appendToolEnd` / `updateToolMessageEnd` (eliminates 50+ inline `setMessages` boilerplates)
+  - `src/cli/utils/duration.ts` — `formatDuration`
+  - `src/cli/slashHandlers/git.ts` — `/diff` `/undo` `/compact` `/update` `/promote-member`
+  - `src/cli/slashHandlers/branch.ts` — `/branch` `/branches` `/checkout`
+  - `src/cli/slashHandlers/workspace.ts` — `/workspace` `/workspace_show` `/workspace_sync` `/workspace_reset`
+  - `src/cli/slashHandlers/provider.ts` — `/provider*` `/login` `/login oauth` `/model*` `/models`
+  - `src/cli/slashHandlers/skills.ts` — `/skill-stats` `/skill-compare` `/council-feedback` `/steer`
+- App.tsx now re-exports the legacy helpers so existing imports keep working. New code should import directly from the hook modules.
+
+### Refactor
+- **app.tsx**: 2200 LOC → 175 LOC. Single-responsibility per file (50-300 LOC each).
+- **handlers**: each slash-command handler is now a 30-80 LOC pure-ish function. Independently unit-testable without booting Ink/React.
+- **message helpers**: 50+ inline `setMessages(prev => [...prev, { id: crypto.randomUUID(), role: 'system', content, ts }])` patterns collapsed into reusable `appendSystem` / `appendUser` / `appendOrExtendStreamingAssistant`.
+
+### Fixed
+- **Test mock fragility**: replaced `vi.spyOn(sessionManager, 'setCurrentSessionId')` (didn't intercept — the spy was on the module namespace but the function inside `sessionKindRouter` had already captured the top-level binding) with **observable-state tests** that redirect `ANATHEMA_CURRENT_SESSION_FILE` env var and read back the marker file.
+
 ## [0.4.1] - 2026-07-01
 
 ### Fixed
