@@ -35,6 +35,44 @@ source ~/.bashrc
 
 Verify the fix: `where zelari-code` (CMD) or `which zelari-code` (Bash) should print a path.
 
+## First Run
+
+The first time you run `zelari-code` (or whenever your provider config
+is missing), the CLI launches a 5-step onboarding wizard instead of
+the regular TUI:
+
+```
+╭─────────────────────────────────────────────────╮
+│ zelari-code v0.5.0-dev.0 — first-time setup    │
+│ 1/welcome  2/provider  3/model  4/apikey  5/...│
+│                                                 │
+│ Welcome! Let's get you coding in under 2 min.   │
+│ Press [Enter] to continue, [Q] to quit.         │
+╰─────────────────────────────────────────────────╯
+```
+
+The wizard walks you through:
+
+1. **Welcome** — overview + how to quit.
+2. **Provider** — pick from `grok`, `minimax`, `glm`, `openai-compatible` (↑/↓ + Enter).
+3. **Model** — type a model name or accept the default (Enter).
+4. **API key** — choose `env` (use `GROK_API_KEY` etc.), `keystore` (save locally), or `skip` (set later via `/login`).
+5. **Confirm** — review + Enter to commit.
+
+When you press Enter on confirm, the wizard writes `~/.tmp/zelari-code/provider.json` (and `keys.json` if you chose keystore), shows a brief "✓ Setup complete!" banner, **then transparently transitions into the regular TUI** — no need to re-launch.
+
+### Skipping / re-running
+
+```bash
+zelari-code --no-wizard            # skip wizard even on first run
+zelari-code --reset-config         # force re-run wizard (clears provider.json)
+ZELARI_NO_WIZARD=1 zelari-code     # env equivalent of --no-wizard
+zelari-code --version              # print version + exit (no TUI)
+zelari-code --help                 # print help + exit (no TUI)
+```
+
+The wizard re-runs automatically if `provider.json` is missing on the next launch.
+
 ## Quick Start
 
 ```bash

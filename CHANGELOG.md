@@ -7,8 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.5.0-dev.0] - 2026-07-02
 
-Fase 1 + first slice of Fase 2 of the v0.5.0 roadmap: monorepo
-extraction of `@zelari/core` + first-run onboarding wizard.
+Fase 1 + Fase 2 of the v0.5.0 roadmap: monorepo extraction of
+`@zelari/core` + first-run onboarding wizard (complete slice).
 
 ### Added
 - **Monorepo via npm workspaces** (`packages/core/` as `@zelari/core`).
@@ -19,8 +19,11 @@ extraction of `@zelari/core` + first-run onboarding wizard.
 - **First-run wizard** (`src/cli/wizard/`): when `provider.json` is
   missing on disk, the CLI renders an Ink wizard instead of `<App>`.
   Steps: welcome → provider → model → apikey → confirm. The wizard
-  uses the existing `setActiveProviderId` / `setModelForProvider`
-  setters to persist the chosen config on commit.
+  uses the existing `setActiveProviderId` / `setModelForProvider` /
+  `keyStore.setApiKey` setters to persist the chosen config + API key
+  on commit. The wizard transitions transparently into the regular
+  TUI 1.2s after commit() runs (no `process.exit`, no need to
+  re-launch).
   - CLI flags: `--no-wizard` (skip), `--reset-config` (force re-run).
   - Env override: `ZELARI_NO_WIZARD=1`.
   - Decision is pure: `shouldRunWizard(input)` is fully unit-tested
@@ -39,8 +42,21 @@ extraction of `@zelari/core` + first-run onboarding wizard.
     (auto-accepted).
   - 0005 — Deprecate legacy src/main/core, src/agents, src/shared,
     src/types paths (auto-accepted).
+- **README "First Run" section**: visual guide to the wizard, the
+  5-step flow, the transition behaviour, and the skip/reset flags.
 
 ### Changed
+- `src/cli/wizard/runWizard.tsx`: replaced the old `process.exit(0)`
+  after commit() with a `PostCommitBridge` component that renders a
+  brief "✓ Setup complete!" banner and then mounts `<App>` in the
+  same Ink tree. No CLI restart needed.
+- `src/cli/wizard/useWizardState.ts`: distinguishes
+  `apiKeyValue === undefined` (no value provided) from
+  `apiKeyValue === ''` (whitespace-only). Commit guard treats empty
+  as "skip persist" without changing user-visible behaviour.
+- `src/cli/wizard/runWizard.tsx`: 'q' now quits from any step (was
+  welcome-only). Enter on the model step with empty input
+  auto-seeds the default and advances — no more "stuck on model".
 - `src/cli/main.ts`: now branches on `shouldRunWizard()` and renders
   either `<RunWizard>` or `<App>`. Also intercepts `--version` /
   `--help` to avoid mounting Ink.
@@ -53,24 +69,36 @@ extraction of `@zelari/core` + first-run onboarding wizard.
   `packages/` from the root source include.
 
 ### Fixed
-- `src/cli/wizard/firstRun.ts`: documented in JSDoc that wizard
-  decisions are pure-function so future tests can swap `existsSync`
-  with a mock. (None of the 3 paths in priority order are stateful
-  in a way that would surprise a maintainer.)
+- Audit-driven fixes to the wizard UX:
+  - **MEDIUM**: pressing Enter on the model step with empty input
+    was a silent no-op (riga 73-78 di `runWizard.tsx`). Now re-seeds
+    the default model and advances to the apikey step.
+  - **MEDIUM**: 'q' only quit the wizard from the welcome step. Now
+    quits from any step.
+  - **LOW (caught by tests)**: `selectApiKey('keystore', undefined)`
+    silently coerced undefined to '' via `value ?? ''`, hiding the
+    difference between "no value provided" and "empty value". Now
+    keeps `undefined` semantically distinct; commit guard still
+    short-circuits on either.
 
 ### Tests
-- 723/723 passing (was 692). New tests:
+- 735/735 passing (was 692, +43 over 4 new test files). New tests:
   - `wizard-firstRun.test.ts` — 14 tests covering all priority
     combinations of `--reset-config`, `--no-wizard`,
     `ZELARI_NO_WIZARD`, and config-file presence.
-  - `wizard-useWizardState.test.ts` — 13 tests covering the wizard
+  - `wizard-useWizardState.test.ts` — 17 tests covering the wizard
     state machine end-to-end (step transitions, cursor wrapping,
-    model override, commit idempotency, back-navigation).
+    model override, commit idempotency, back-navigation, API key
+    persistence with env/keystore/skip/empty/undefined).
   - `cli-main-wizard.test.ts` — 4 integration tests verifying that
     `main.ts` branches correctly on the combined flag+env+file
     inputs.
+  - `wizard-postCommit.test.ts` — 8 tests covering the post-commit
+    state shape (committed flips, model + provider carried forward)
+    plus audit-driven edge cases (whitespace, undefined, fire-and-
+    forget after key persist error).
 - TypeScript clean (`npm run typecheck`).
-- Bundle 1010.4 KB (was 996.7 KB; +13 KB for wizard UI).
+- Bundle 1011.8 KB (was 996.7 KB; +15 KB for wizard UI + bridge).
 
 ### Known issues
 - Smoke test (`npm run smoke`) revealed a pre-existing

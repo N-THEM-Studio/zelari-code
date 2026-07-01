@@ -20,6 +20,7 @@ import {
   setActiveProviderId,
   setModelForProvider,
 } from '../providerConfig.js';
+import { setApiKey as setKeyStoreApiKey } from '../keyStore.js';
 
 /** Step identifier — used as the discriminator for `state.step`. */
 export type WizardStep = 'welcome' | 'provider' | 'model' | 'apikey' | 'confirm';
@@ -53,6 +54,12 @@ export interface UseWizardStateOptions {
   /** Optional persistence callbacks — defaults write to provider.json. */
   persistActiveProvider?: (id: ProviderName) => void;
   persistModel?: (id: ProviderName, model: string) => void;
+  /**
+   * Optional persistence callback for the API key (only invoked when
+   * `apiKeyChoice === 'keystore'` and `apiKeyValue` is set). Defaults
+   * to `keyStore.setApiKey`. Override in tests to avoid touching disk.
+   */
+  persistApiKey?: (providerId: ProviderName, key: string) => void;
 }
 
 export interface UseWizardStateApi {
@@ -97,6 +104,7 @@ function prev(s: WizardStep): WizardStep | null {
 export function createWizardState(opts: UseWizardStateOptions): UseWizardStateApi {
   const persistActive = opts.persistActiveProvider ?? ((id) => setActiveProviderId(id));
   const persistModel = opts.persistModel ?? ((id, m) => setModelForProvider(id, m));
+  const persistKey = opts.persistApiKey ?? ((id, k) => setKeyStoreApiKey(id, k));
 
   let s: WizardState = {
     step: 'welcome',
@@ -147,10 +155,19 @@ export function createWizardState(opts: UseWizardStateOptions): UseWizardStateAp
       notify();
     },
     selectApiKey(choice: ApiKeyChoice, value?: string) {
+      // 'keystore' stores the (trimmed) value; 'env' and 'skip' clear it.
+      // Distinguish `value === undefined` (no value provided) from
+      // `value === ''` or whitespace-only (empty after trim) — both
+      // are guarded at commit time, but the type signature is clearer
+      // if we keep `undefined` for "not provided".
+      let apiKeyValue: string | undefined;
+      if (choice === 'keystore') {
+        apiKeyValue = value === undefined ? undefined : value.trim();
+      }
       s = {
         ...s,
         apiKeyChoice: choice,
-        apiKeyValue: choice === 'keystore' ? (value ?? '').trim() : undefined,
+        apiKeyValue,
         step: 'confirm',
       };
       notify();
@@ -165,6 +182,23 @@ export function createWizardState(opts: UseWizardStateOptions): UseWizardStateAp
       if (s.committed || !s.providerId || !s.model) return;
       persistActive(s.providerId);
       persistModel(s.providerId, s.model);
+      // Persist API key only if user chose 'keystore' AND provided a
+      // non-empty value. 'env' means "use env var, don't save" and
+      // 'skip' means "no key yet, user will set it later via /login".
+      if (s.apiKeyChoice === 'keystore' && s.apiKeyValue && s.apiKeyValue.length > 0) {
+        try {
+          persistKey(s.providerId, s.apiKeyValue);
+        } catch (err) {
+          // Key persistence failure shouldn't block config commit —
+          // the user can re-add the key later via /login. Log to
+          // stderr for debuggability, then proceed.
+          // eslint-disable-next-line no-console
+          console.error(
+            `[zelari-code wizard] failed to persist API key for ${s.providerId}: ` +
+              (err instanceof Error ? err.message : String(err)),
+          );
+        }
+      }
       s = { ...s, committed: true };
       notify();
     },

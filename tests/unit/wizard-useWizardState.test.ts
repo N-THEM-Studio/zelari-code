@@ -155,4 +155,87 @@ describe('wizard state machine', () => {
     expect(persistActive).not.toHaveBeenCalled();
     expect(persistModel).not.toHaveBeenCalled();
   });
+
+  it('commit() persists API key when apiKeyChoice=keystore and value is set', () => {
+    const persistActive = vi.fn();
+    const persistModel = vi.fn();
+    const persistKey = vi.fn();
+    const w = createWizardState({
+      providers: FAKE_PROVIDERS,
+      defaultModelFor: (id) => `default-${id}`,
+      persistActiveProvider: persistActive,
+      persistModel,
+      persistApiKey: persistKey,
+    });
+    (w as unknown as { jumpToProvider(): void }).jumpToProvider();
+    w.selectProvider();
+    (w as unknown as { advanceToApikey(): void }).advanceToApikey();
+    w.selectApiKey('keystore', 'sk-test-1234');
+    w.commit();
+
+    expect(w.state.committed).toBe(true);
+    expect(persistKey).toHaveBeenCalledWith('grok', 'sk-test-1234');
+  });
+
+  it('commit() does NOT call persistKey when apiKeyChoice=env', () => {
+    const persistActive = vi.fn();
+    const persistModel = vi.fn();
+    const persistKey = vi.fn();
+    const w = createWizardState({
+      providers: FAKE_PROVIDERS,
+      defaultModelFor: (id) => `default-${id}`,
+      persistActiveProvider: persistActive,
+      persistModel,
+      persistApiKey: persistKey,
+    });
+    (w as unknown as { jumpToProvider(): void }).jumpToProvider();
+    w.selectProvider();
+    (w as unknown as { advanceToApikey(): void }).advanceToApikey();
+    w.selectApiKey('env');
+    w.commit();
+
+    expect(persistKey).not.toHaveBeenCalled();
+    expect(w.state.committed).toBe(true);
+  });
+
+  it('commit() does NOT call persistKey when apiKeyChoice=keystore but value is empty', () => {
+    const persistKey = vi.fn();
+    const w = createWizardState({
+      providers: FAKE_PROVIDERS,
+      defaultModelFor: (id) => `default-${id}`,
+      persistApiKey: persistKey,
+    });
+    (w as unknown as { jumpToProvider(): void }).jumpToProvider();
+    w.selectProvider();
+    (w as unknown as { advanceToApikey(): void }).advanceToApikey();
+    w.selectApiKey('keystore', '   '); // whitespace-only → trimmed to ''
+    w.commit();
+
+    expect(persistKey).not.toHaveBeenCalled();
+    expect(w.state.committed).toBe(true);
+  });
+
+  it('commit() logs + proceeds when persistKey throws (config still committed)', () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const persistKey = vi.fn(() => {
+      throw new Error('disk full');
+    });
+    const w = createWizardState({
+      providers: FAKE_PROVIDERS,
+      defaultModelFor: (id) => `default-${id}`,
+      persistApiKey: persistKey,
+    });
+    (w as unknown as { jumpToProvider(): void }).jumpToProvider();
+    w.selectProvider();
+    (w as unknown as { advanceToApikey(): void }).advanceToApikey();
+    w.selectApiKey('keystore', 'sk-x');
+    w.commit();
+
+    // Config should still commit even if key save fails.
+    expect(w.state.committed).toBe(true);
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      expect.stringMatching(/failed to persist API key/),
+    );
+    consoleErrorSpy.mockRestore();
+  });
 });
