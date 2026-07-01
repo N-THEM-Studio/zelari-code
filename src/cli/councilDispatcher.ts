@@ -55,8 +55,8 @@ export interface CouncilDispatchOptions {
    * registered tools and emit tool_execution_end events.
    *
    * Typically created via `createBuiltinToolRegistry()` from
-   * `electron/cli/toolRegistry.ts` which pre-wires the 5 built-in
-   * tools (read/write/edit/bash/grep) wrapped with the safety layer.
+   * `src/cli/toolRegistry.ts` which pre-wires the 6 built-in
+   * tools (read/write/edit/bash/grep/list_files) wrapped with the safety layer.
    */
   tools?: ToolRegistry;
   /**

@@ -230,37 +230,27 @@ const writeChangelog: CodingSkillDefinition = {
   tags: ['docs', 'changelog', 'release-notes', 'keep-a-changelog'],
   examples: [
     {
-      input: 'Generate changelog for v0.2.0 from commits since v0.1.0 (last 30 commits)',
+      input: 'Generate changelog for v0.3.1 from commits since v0.3.0 (last 30 commits)',
       output: {
         changelog: `# Changelog
 
-All notable changes to AnathemaBrain are documented in this file.
+All notable changes to zelari-code are documented in this file.
 
-## [0.2.0] - 2026-06-28
+## [0.3.1] - 2026-07-01
 
 ### Added
-- **BrainEvent provider-neutral types** (Phase 11): 12 discriminated union events for agent lifecycle, message streaming, tool execution, errors
-- **EventBus**: typed in-memory pub/sub with error isolation
-- **AgentHarness**: pure agent loop yielding AsyncIterable<BrainEvent>
-- **runCouncilPure()**: council orchestration without window.electronAPI dependency
-- **5 built-in coding tools**: read_file, write_file, edit_file, bash, grep_content
-- **14 senior-grade coding skills** across 4 categories (Planning, Refactoring, Debugging, Review)
+- **Council roles renamed to Dante's Inferno bosses**: Sisyphus→Caronte, Prometheus→Nettuno, Hephaestus→Gerione, Atlas→Plutone, Oracle→Minosse, Chairman→Lucifero.
 
 ### Changed
-- LLM streaming now emits BrainEvents alongside the IPC bridge (renderer unchanged)
-- Agent system refactored to use AgentHarness as the loop driver
+- Versioning aligned across main.ts, package.json, package-lock.json
+- Stale Electron path references removed from CLI dispatcher comments
 
 ### Fixed
-- Council event timing: agent_start/agent_end now emit at correct boundaries
-- Tool execution start events fire when provider yields tool_call deltas
+- Background update check now compares correct version against npm registry
 
-### Security
-- Grok OAuth token refresh now respects rate limits (fixed race condition)
-
-[0.1.0] - 2026-06-01
-... (previous entries)
-`,
-        sectionsUsed: ['Added', 'Changed', 'Fixed', 'Security'],
+[0.3.0] - 2026-07-01
+... (previous entries)`,
+        sectionsUsed: ['Added', 'Changed', 'Fixed'],
         commitsProcessed: 30,
       },
     },
