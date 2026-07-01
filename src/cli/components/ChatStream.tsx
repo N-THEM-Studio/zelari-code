@@ -21,6 +21,7 @@ interface ChatStreamProps {
   width: number;
 }
 
+/** Estimate the rendered row count for a single message. */
 function estimateMessageHeight(m: ChatMessage, width: number): number {
   if (m.role === 'tool') {
     // Collapsed tool output takes 1 line of summary
@@ -35,12 +36,15 @@ function estimateMessageHeight(m: ChatMessage, width: number): number {
 }
 
 /**
- * Stateless rendering of the chat transcript. Tool messages (role === 'tool')
- * are rendered via CollapsibleToolOutput so each invocation can be expanded
- * to inspect its body (Task B.2.2).
+ * Pure helper: pick which messages fit in `height`, applying a top-truncation
+ * to the first message that overflows. Extracted so it's unit-testable and
+ * memoizable in the component.
  */
-export function ChatStream({ messages, height, width }: ChatStreamProps): React.ReactElement {
-  // Let's compute the visible messages that fit in the height
+export function pickVisibleMessages(
+  messages: readonly ChatMessage[],
+  height: number,
+  width: number,
+): ChatMessage[] {
   const visibleMessages: ChatMessage[] = [];
   let remainingHeight = height - 1; // 1 row buffer for safety
 
@@ -76,6 +80,29 @@ export function ChatStream({ messages, height, width }: ChatStreamProps): React.
       break;
     }
   }
+  return visibleMessages;
+}
+
+/**
+ * Stateless rendering of the chat transcript. Tool messages (role === 'tool')
+ * are rendered via CollapsibleToolOutput so each invocation can be expanded
+ * to inspect its body (Task B.2.2).
+ *
+ * Performance: `visibleMessages` is computed via `React.useMemo` keyed on
+ * [messages, height, width]. Without this, every streaming token delta from
+ * the LLM (≈20-50/sec) would trigger:
+ *   - O(N) `estimateMessageHeight` calls per render
+ *   - O(N) `m.content.split('\n')` calls inside the truncation branch
+ *   - A new `visibleMessages` array, which causes every child to re-render
+ *
+ * Wrapped in React.memo so the component re-renders only when its props
+ * actually change (messages array identity, height, width).
+ */
+function ChatStreamImpl({ messages, height, width }: ChatStreamProps): React.ReactElement {
+  const visibleMessages = React.useMemo(
+    () => pickVisibleMessages(messages, height, width),
+    [messages, height, width],
+  );
 
   return (
     <Box flexDirection="column" flexGrow={1} paddingX={1} height={height}>
@@ -111,3 +138,5 @@ export function ChatStream({ messages, height, width }: ChatStreamProps): React.
     </Box>
   );
 }
+
+export const ChatStream = React.memo(ChatStreamImpl);

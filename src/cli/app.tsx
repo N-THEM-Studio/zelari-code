@@ -325,15 +325,26 @@ export function App(): React.ReactElement {
 
   useEffect(() => {
     if (!stdout) return;
+    let rafId: ReturnType<typeof setTimeout> | null = null;
     const handleResize = () => {
-      setSize({
-        columns: stdout.columns ?? 80,
-        rows: stdout.rows ?? 24,
-      });
+      // Coalesce rapid resize events (e.g. user drags tmux pane border) into a
+      // single state update per animation frame. Without this, a fast drag
+      // fires 100+ resize events → 100+ setSize → 100+ full TUI redraws,
+      // which shows up as flicker on the Header border and the InputBar
+      // bottom edge.
+      if (rafId !== null) clearTimeout(rafId);
+      rafId = setTimeout(() => {
+        setSize({
+          columns: stdout.columns ?? 80,
+          rows: stdout.rows ?? 24,
+        });
+        rafId = null;
+      }, 16); // ~1 frame at 60Hz
     };
     stdout.on('resize', handleResize);
     return () => {
       stdout.off('resize', handleResize);
+      if (rafId !== null) clearTimeout(rafId);
     };
   }, [stdout]);
 
