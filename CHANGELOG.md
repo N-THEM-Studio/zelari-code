@@ -5,6 +5,25 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added (Fase 3 — council reliability)
+- **Visible reasoning**: every `agent_start`, `agent_end`, `message_start`,
+  `message_delta`, `message_end` event now carries optional `memberId` +
+  `memberName` so the UI can label which council member is speaking.
+  `dispatchCouncil` (packages/core) threads `agent.id` / `agent.name`
+  into the AgentHarness config; `useChatTurn` propagates them to the
+  `ChatMessage`; `ChatStream` renders the member name in the assistant
+  message header (e.g. `· Caronte` in magenta).
+- **Headless mode** (`zelari-code --headless --task X [--output json|plain]
+  [--council] [--provider <id>] [--model <name>]`): runs a single task
+  without mounting the TUI. Two execution paths:
+  - `--task X` (default): single `AgentHarness` run.
+  - `--task X --council`: the same 6-member council pipeline the TUI
+    uses (event shape identical, including memberId/memberName).
+  Output: NDJSON (one JSON object per line) or plain text (streamed
+  message deltas). Exit codes: 0=ok, 1=user error, 2=runtime, 3=agent error.
+
 ## [0.5.0-dev.0] - 2026-07-02
 
 Fase 1 + Fase 2 of the v0.5.0 roadmap: monorepo extraction of
