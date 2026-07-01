@@ -5,6 +5,82 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0-dev.0] - 2026-07-02
+
+Fase 1 + first slice of Fase 2 of the v0.5.0 roadmap: monorepo
+extraction of `@zelari/core` + first-run onboarding wizard.
+
+### Added
+- **Monorepo via npm workspaces** (`packages/core/` as `@zelari/core`).
+  The provider-neutral agent loop (AgentHarness), ToolRegistry, council
+  orchestration, built-in skills, shared events, and types now live in
+  a standalone workspace package. The CLI in `src/cli/` is a thin
+  consumer of `@zelari/core/...`. See [docs/decisions/0001-monorepo-for-zelari-core.md](docs/decisions/0001-monorepo-for-zelari-core.md).
+- **First-run wizard** (`src/cli/wizard/`): when `provider.json` is
+  missing on disk, the CLI renders an Ink wizard instead of `<App>`.
+  Steps: welcome → provider → model → apikey → confirm. The wizard
+  uses the existing `setActiveProviderId` / `setModelForProvider`
+  setters to persist the chosen config on commit.
+  - CLI flags: `--no-wizard` (skip), `--reset-config` (force re-run).
+  - Env override: `ZELARI_NO_WIZARD=1`.
+  - Decision is pure: `shouldRunWizard(input)` is fully unit-tested
+    and order-of-precedence verified.
+- **CLI meta-flags** (`--version`, `--help`, `-v`, `-h`): previously
+  the CLI mounted Ink on every invocation, which produced React
+  warnings on `--version` and polluted pipes. Now they print + exit
+  cleanly without touching the TTY.
+- **Architecture Decision Records (ADRs)** in
+  `docs/decisions/0001-0005`:
+  - 0001 — Monorepo for @zelari/core (accepted retroactively on
+    commit `6ec90be`).
+  - 0002 — Publish @zelari/core to npm under MIT (auto-accepted).
+  - 0003 — Versioning coupled 0.5.x, splits at 0.6.0 (auto-accepted).
+  - 0004 — Public API surface limited to 9 barrel subpaths
+    (auto-accepted).
+  - 0005 — Deprecate legacy src/main/core, src/agents, src/shared,
+    src/types paths (auto-accepted).
+
+### Changed
+- `src/cli/main.ts`: now branches on `shouldRunWizard()` and renders
+  either `<RunWizard>` or `<App>`. Also intercepts `--version` /
+  `--help` to avoid mounting Ink.
+- 39 source files re-imported from `@zelari/core/...` subpaths
+  (zero `src/main/core/`, `src/agents/`, `src/shared/`, `src/types/`
+  imports remain in `src/cli/`).
+- `package.json` (root) now declares `workspaces: ["packages/*"]` and
+  depends on `@zelari/core: "*"`.
+- `tsconfig.json` (root) adds `paths` for `@zelari/core/*` and excludes
+  `packages/` from the root source include.
+
+### Fixed
+- `src/cli/wizard/firstRun.ts`: documented in JSDoc that wizard
+  decisions are pure-function so future tests can swap `existsSync`
+  with a mock. (None of the 3 paths in priority order are stateful
+  in a way that would surprise a maintainer.)
+
+### Tests
+- 723/723 passing (was 692). New tests:
+  - `wizard-firstRun.test.ts` — 14 tests covering all priority
+    combinations of `--reset-config`, `--no-wizard`,
+    `ZELARI_NO_WIZARD`, and config-file presence.
+  - `wizard-useWizardState.test.ts` — 13 tests covering the wizard
+    state machine end-to-end (step transitions, cursor wrapping,
+    model override, commit idempotency, back-navigation).
+  - `cli-main-wizard.test.ts` — 4 integration tests verifying that
+    `main.ts` branches correctly on the combined flag+env+file
+    inputs.
+- TypeScript clean (`npm run typecheck`).
+- Bundle 1010.4 KB (was 996.7 KB; +13 KB for wizard UI).
+
+### Known issues
+- Smoke test (`npm run smoke`) revealed a pre-existing
+  `Encountered two children with the same key` warning from
+  React-reconciler, originating in the App's `Sidebar` / `ChatStream`
+  components (not introduced by this release). Workaround for the
+  smoke test: the new `--version` / `--help` handlers exit before
+  mounting Ink, so the warning no longer appears when the user
+  passes those flags. Tracked for v0.5.0 stable cleanup.
+
 ## [0.4.4] - 2026-07-01
 
 Fase 0 of v0.5.0 roadmap: address the two LOW-severity findings left over from the v0.4.3 audit, complete the streaming flicker fix that was only half-implemented in commit 5e0f698.

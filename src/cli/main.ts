@@ -9,8 +9,14 @@ import { render } from 'ink';
 // @ts-ignore
 import { App } from './app.js';
 import { getMetricsLogger } from './metrics.js';
+import { getProviderConfigPath } from './providerConfig.js';
+import {
+  parseWizardFlags,
+  shouldRunWizard,
+} from './wizard/firstRun.js';
+import { RunWizard } from './wizard/runWizard.js';
 
-export const VERSION = '0.4.3';
+export const VERSION = '0.5.0-dev.0';
 
 /**
  * Silent background update check (Task N.6, v3-N).
@@ -56,8 +62,62 @@ async function shutdown(): Promise<void> {
   process.exit(0);
 }
 
+/**
+ * Decide what to render: Wizard (first run / forced) or App.
+ *
+ * v0.5.0: replaced "always render App" with a conditional branch on
+ * `shouldRunWizard()`. Resolved at startup, before any Ink render.
+ *
+ * Also handles meta-flags that should NOT mount Ink (--version, --help):
+ * these print to stdout and exit, leaving the TTY untouched.
+ */
+function pickRootComponent(): React.ReactElement | null {
+  const argv = process.argv.slice(2);
+
+  if (argv.includes('--version') || argv.includes('-v')) {
+    // eslint-disable-next-line no-console
+    console.log(`zelari-code v${VERSION}`);
+    process.exit(0);
+  }
+  if (argv.includes('--help') || argv.includes('-h')) {
+    // eslint-disable-next-line no-console
+    console.log(
+      'zelari-code — AI Council coding agent CLI.\n' +
+        '\n' +
+        'Usage: zelari-code [options]\n' +
+        '\n' +
+        'Options:\n' +
+        '  --version, -v       Print version and exit\n' +
+        '  --help, -h          Print this help and exit\n' +
+        '  --no-wizard         Skip the first-run wizard\n' +
+        '  --reset-config      Re-run the wizard (clears provider.json on commit)\n' +
+        '\n' +
+        'Environment:\n' +
+        '  ZELARI_NO_WIZARD=1  Skip the first-run wizard\n' +
+        '  ANATHEMA_DEV=1      Disable background update check\n',
+    );
+    process.exit(0);
+  }
+
+  const flags = parseWizardFlags(argv);
+  const decision = shouldRunWizard({
+    configPath: getProviderConfigPath(),
+    hasResetConfigFlag: flags.resetConfig,
+    hasNoWizardFlag: flags.noWizard,
+    noWizardEnv: process.env.ZELARI_NO_WIZARD,
+  });
+  if (decision.shouldRun) {
+    // eslint-disable-next-line no-console
+    console.error(`[zelari-code] starting wizard: ${decision.reason}`);
+    return React.createElement(RunWizard);
+  }
+  return React.createElement(App);
+}
+
 function main() {
-  const { waitUntilExit, unmount } = render(React.createElement(App));
+  const root = pickRootComponent();
+  if (root === null) return; // --version or --help printed + exited
+  const { waitUntilExit, unmount } = render(root);
 
   process.on('SIGINT', () => {
     unmount();
