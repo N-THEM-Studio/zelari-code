@@ -13,6 +13,10 @@ export interface PlanFrontmatter {
   kind: 'phase' | 'task' | 'milestone';
   /** Stable id (uuid or slug). */
   id: string;
+  /** Human-readable title (phases, tasks, milestones). */
+  name?: string;
+  /** Short description / context. */
+  description?: string;
   /** Phase id (tasks only). */
   phaseId?: string;
   /** Order within its container. */
@@ -25,6 +29,8 @@ export interface PlanFrontmatter {
   priority?: 'low' | 'medium' | 'high' | 'critical';
   /** Target version (milestones only). */
   targetVersion?: string;
+  /** Due date (milestones only, ISO 8601). */
+  dueDate?: string;
   /** Tags for filtering. */
   tags?: string[];
 }

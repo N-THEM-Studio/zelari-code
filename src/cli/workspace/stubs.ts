@@ -230,6 +230,8 @@ function createPhaseStub(ctx: WorkspaceContext): EnhancedToolDefinition {
         summary.phases.push({
           kind: 'phase',
           id,
+          name,
+          description,
           order,
           color,
         });
@@ -392,6 +394,9 @@ function createMilestoneStub(ctx: WorkspaceContext): EnhancedToolDefinition {
         summary.milestones.push({
           kind: 'milestone',
           id,
+          name: title,
+          description,
+          dueDate,
           targetVersion: version,
         });
         writePlan(ctx, summary);
@@ -400,6 +405,9 @@ function createMilestoneStub(ctx: WorkspaceContext): EnhancedToolDefinition {
         const meta: PlanFrontmatter = {
           kind: 'milestone',
           id,
+          name: title,
+          description,
+          dueDate,
           targetVersion: version,
         };
         const body = [

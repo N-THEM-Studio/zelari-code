@@ -5,12 +5,16 @@
  *
  * The ToolRegistry expects:
  *  - Zod-based `inputSchema`
- *  - `execute(input, ctx) => Promise<TypedResult<O>>`
+ *  - `execute(input, ctx) => Promise<TypedResult<O>>` where ctx is a `ToolContext`
  *  - `permissions: ToolPermission[]`
  *
- * Our workspace stubs use `execute(args, ctx) => string` with no Zod schema.
- * This adapter bridges them with `z.any()` (since the LLM is the one
- * shaping args via tool calling) and `permissions: []`.
+ * Our workspace stubs use `execute(args, ctx) => string` reading
+ * `ctx.storage` and `ctx.rootDir` (a WorkspaceContext shape). This
+ * adapter bridges them by combining the `WorkspaceContext` (closed-over
+ * at registry creation) with the runtime `ToolContext` (passed per
+ * invocation), so the stub sees both: filesystem operations go through
+ * the closed-over workspace ctx, while `audit`/`cwd`/`sessionId` come
+ * from the per-call ToolContext.
  */
 
 import { z } from 'zod';
@@ -43,15 +47,18 @@ function adaptStubToToolDefinition(
     // The LLM shapes the args via tool calling; we trust the JSON shape.
     // Validating strictly here would block legitimate council output.
     inputSchema: z.any(),
-    execute: async (input: unknown): Promise<TypedResult<string>> => {
+    execute: async (input: unknown, runtimeCtx?: unknown): Promise<TypedResult<string>> => {
       try {
         const args = (input as Record<string, unknown>) ?? {};
-        // Execute the stub. The stub's execute may be sync or async.
-        // EnhancedToolDefinition expects a ToolContext; we cast through
-        // `unknown` because our WorkspaceContext is a structural subset
-        // (the stub only reads `storage` + `rootDir`).
+        // The harness passes a ToolContext ({ cwd, audit, sessionId, signal }).
+        // The workspace stubs need a WorkspaceContext ({ rootDir, projectRoot, storage }).
+        // We merge: closed-over workspace ctx for filesystem ops, runtime ctx
+        // surfaced via a `runtime` property for stubs that want to log/audit.
+        const mergedCtx = Object.assign(Object.create(workspaceCtx), {
+          runtime: runtimeCtx,
+        });
         const result = await Promise.resolve(
-          stub.execute(args, workspaceCtx as unknown as Parameters<typeof stub.execute>[1]),
+          stub.execute(args, mergedCtx as unknown as Parameters<typeof stub.execute>[1]),
         );
         return typedOk(result);
       } catch (err) {

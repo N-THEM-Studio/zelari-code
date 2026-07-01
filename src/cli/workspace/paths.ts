@@ -8,7 +8,7 @@
  * directories (Docker containers, system dirs, etc.).
  */
 
-import { mkdirSync, existsSync, accessSync, constants, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, existsSync, accessSync, constants, realpathSync } from 'node:fs';
 import { join, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -61,7 +61,6 @@ function ensureWorkspaceDir(workspaceDir: string): void {
   if (workspaceDir.endsWith('/.zelari') && existsSync(join(workspaceDir, '..', '.git'))) {
     const gitignorePath = join(workspaceDir, '.gitignore');
     if (!existsSync(gitignorePath)) {
-      const { writeFileSync } = require('node:fs');
       writeFileSync(gitignorePath, '*\n!.gitignore\n');
     }
   }
