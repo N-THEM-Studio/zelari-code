@@ -9,14 +9,10 @@ import type { ProviderSpec } from '../keyStore.js';
 import { appendSystem, appendUser } from './messageHelpers.js';
 import { sessionKindRouter } from '../sessionManager.js';
 import { newSessionId } from '../sessionManager.js';
-import {
-  handleDiff,
-  handleUndo,
-  handleCompact,
-  handleUpdateCheck,
-  handleUpdatePerform,
-  handlePromoteMember,
-} from '../slashHandlers/git.js';
+import { handleDiff, handleUndo } from '../slashHandlers/git.js';
+import { handleCompact } from '../slashHandlers/transcript.js';
+import { handleUpdateCheck, handleUpdatePerform } from '../slashHandlers/updater.js';
+import { handlePromoteMember } from '../slashHandlers/promoteMember.js';
 import {
   handleBranchCreate,
   handleBranchList,

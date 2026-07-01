@@ -2,9 +2,13 @@ import {
   createBranch,
   listBranches,
   branchExists as checkBranchExists,
-  setCurrentBranch,
-  getCurrentBranch,
 } from '../branchManager.js';
+// v0.4.4 (agy audit): the previous import of setCurrentBranch / getCurrentBranch
+// from `branchManager.js` resolved to no-op STUBS (see branchManager.ts:324-332
+// "no-op stub — see comment above"). The real implementations live in
+// `sessionManager.ts` (file-based currentBranch.txt persistence). Without this
+// fix, /checkout silently did nothing on disk and /branches would show stale data.
+import { setCurrentBranch, getCurrentBranch } from '../sessionManager.js';
 import { appendSystem } from '../hooks/messageHelpers.js';
 import type { ChatMessage } from '../components/ChatStream.js';
 
@@ -62,7 +66,10 @@ export async function handleBranchCheckout(ctx: BranchSlashContext, branchName: 
     setCurrentBranch(branchName);
     appendSystem(
       ctx.setMessages,
-      `[checkout] active branch set to "${branchName}". Restart zelari-code to load it.`,
+      `[checkout] active branch set to "${branchName}".\n` +
+        `         ⚠ This only takes effect on the next zelari-code launch —\n` +
+        `           your current session still belongs to the previous branch.\n` +
+        `         Run /exit (or Ctrl+C) and start zelari-code again to load it.`,
     );
   } catch (err) {
     appendSystem(ctx.setMessages, `[checkout error] ${err instanceof Error ? err.message : String(err)}`);

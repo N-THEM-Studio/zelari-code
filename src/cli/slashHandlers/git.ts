@@ -1,22 +1,25 @@
-import { promises as fs } from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import { getWorkingDiff, undoWorkingChanges, isGitRepo, defaultProjectRoot } from '../gitOps.js';
-import { compactTranscript, formatCompactionSummary } from '../compaction.js';
 import { appendSystem } from '../hooks/messageHelpers.js';
 import type { ChatMessage } from '../components/ChatStream.js';
 
 /**
- * Slash command handlers — git ops (/diff, /undo) and transcript ops (/compact).
- * Extracted from app.tsx (Task v0.4.2 audit split).
+ * Slash command handlers — git ops (/diff, /undo).
+ *
+ * After v0.4.4 SRP cleanup, this file owns ONLY git working-tree concerns.
+ * /compact, /update, /promote-member live in their own files (transcript.ts,
+ * updater.ts, promoteMember.ts respectively).
+ *
+ * v0.4.4 (agy audit HIGH-2 fix): `messages` was inherited from the original
+ * fat `SlashContext` but is not used by either /diff or /undo. Removed to
+ * keep the type tight and stop callers from wiring up state the handlers
+ * never read. `setInput` was likewise inherited but never used here
+ * (input clearing is centralized in `useSlashDispatch`).
  */
-export interface SlashContext {
+export interface GitSlashContext {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  setInput: (v: string) => void;
-  messages: ChatMessage[];
 }
 
-export async function handleDiff(ctx: SlashContext, diffStaged: boolean): Promise<void> {
+export async function handleDiff(ctx: GitSlashContext, diffStaged: boolean): Promise<void> {
   try {
     const repoRoot = defaultProjectRoot();
     if (!(await isGitRepo(repoRoot))) {
@@ -35,7 +38,7 @@ export async function handleDiff(ctx: SlashContext, diffStaged: boolean): Promis
 }
 
 export async function handleUndo(
-  ctx: SlashContext,
+  ctx: GitSlashContext,
   warningMessage: string | undefined,
   doConfirm: boolean,
 ): Promise<void> {
@@ -56,88 +59,5 @@ export async function handleUndo(
     );
   } catch (err) {
     appendSystem(ctx.setMessages, `[undo error] ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-export function handleCompact(
-  ctx: SlashContext,
-  threshold: number | undefined,
-  keepRecent: number | undefined,
-): void {
-  const opts: { threshold?: number; keepRecent?: number } = {};
-  if (threshold !== undefined) opts.threshold = threshold;
-  if (keepRecent !== undefined) opts.keepRecent = keepRecent;
-  const r = compactTranscript(ctx.messages, opts);
-  ctx.setMessages([...r.messages]);
-  appendSystem(ctx.setMessages, formatCompactionSummary(r));
-}
-
-export async function handleUpdateCheck(ctx: SlashContext): Promise<void> {
-  try {
-    const { checkForUpdate } = await import('../updater.js');
-    const info = await checkForUpdate();
-    if (info.error) {
-      appendSystem(ctx.setMessages, `[update] check failed: ${info.error}`);
-    } else if (info.updateAvailable) {
-      appendSystem(
-        ctx.setMessages,
-        `[update] 🆕 zelari-code ${info.latestVersion} available (current: ${info.currentVersion})\n` +
-          `       Run \`/update --yes\` to install. You'll need to restart manually after.`,
-      );
-    } else {
-      appendSystem(ctx.setMessages, `[update] up to date (${info.currentVersion})`);
-    }
-  } catch (err) {
-    appendSystem(ctx.setMessages, `[update error] ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-export async function handleUpdatePerform(ctx: SlashContext): Promise<void> {
-  appendSystem(ctx.setMessages, '[update] running `npm install -g zelari-code@latest`...');
-  try {
-    const { performUpdate } = await import('../updater.js');
-    const res = await performUpdate();
-    if (res.ok) {
-      appendSystem(
-        ctx.setMessages,
-        `[update] ✅ installed successfully\n\n` +
-          `Please restart zelari-code manually to use the new version.\n` +
-          `(exit with /exit or Ctrl+C, then run \`zelari-code\` again)`,
-      );
-    } else {
-      appendSystem(
-        ctx.setMessages,
-        `[update] ❌ failed: ${res.error ?? 'unknown error'}\n\n` +
-          `npm output:\n${res.output || '(empty)'}`,
-      );
-    }
-  } catch (err) {
-    appendSystem(ctx.setMessages, `[update error] ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
-
-/**
- * Promote a council member to a standalone skill (v3-K).
- */
-export async function handlePromoteMember(ctx: SlashContext, memberId: string): Promise<void> {
-  try {
-    const { promoteMember } = await import('../../agents/promoteMember.js');
-    const { skill, markdown } = promoteMember(memberId);
-    const skillDir = process.env.ANATHEMA_SKILL_DIR
-      ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skills');
-    await fs.mkdir(skillDir, { recursive: true });
-    const filePath = path.join(skillDir, `${skill.id}.md`);
-    await fs.writeFile(filePath, markdown, 'utf8');
-    appendSystem(
-      ctx.setMessages,
-      `[promote-member] ${skill.name} (${memberId}) → ${filePath}\n` +
-        `  category:    ${skill.category}\n` +
-        `  cost:        ${skill.estimatedCost}\n` +
-        `  required:    ${skill.requiredRoles.join(', ') || '—'}\n` +
-        `  tools:       ${skill.requiredTools.join(', ') || '—'}\n` +
-        `  tags:        ${skill.tags.join(', ')}`,
-    );
-  } catch (err) {
-    appendSystem(ctx.setMessages, `[promote-member error] ${err instanceof Error ? err.message : String(err)}`);
   }
 }
