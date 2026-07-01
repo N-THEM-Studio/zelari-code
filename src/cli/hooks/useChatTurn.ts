@@ -61,39 +61,48 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
 
   const dispatchPrompt = useCallback(
     async (userText: string) => {
-      const envConfig = await providerFromEnv();
-      if (!envConfig) {
-        appendSystem(setMessages, 'OPENAI_API_KEY not set. Export it before running zelari-code.');
-        return;
-      }
-
-      setBusy(true);
-      const { registry: toolRegistry } = createBuiltinToolRegistry();
-      const baseProviderStream = openaiCompatibleProvider(envConfig);
-      const failoverResolution = await resolveFailoverStream({
-        failoverEnabled: process.env.ANATHEMA_FAILOVER !== '0',
-        envValue: process.env.ANATHEMA_FAILOVER_PROVIDER,
-        primaryProviderId: envConfig.providerId,
-        primary: baseProviderStream,
-        validProviderIds: PROVIDERS.map((p) => p.id),
-        lookupFallbackConfig: async (id) => providerConfigFor(id as ProviderName),
-        buildStream: (config) =>
-          openaiCompatibleProvider(config as Parameters<typeof openaiCompatibleProvider>[0]),
-      });
-      if (failoverResolution.warning) {
-        console.warn(failoverResolution.warning);
-      }
-      const providerStream: import('../../main/core/AgentHarness.js').ProviderStreamFn =
-        failoverResolution.fallbackLabel
-          ? providerFailover({
-              primary: baseProviderStream,
-              fallback: failoverResolution.fallback,
-              fallbackLabel: failoverResolution.fallbackLabel,
-            })
-          : providerFailover({
-              primary: baseProviderStream,
-              fallback: failoverResolution.fallback,
-            });
+      // v0.4.3 audit fix: provider resolution + harness construction now
+      // live INSIDE the try block. Previously, throws from providerFromEnv,
+      // resolveFailoverStream, or createBuiltinToolRegistry happened
+      // BEFORE the try (which only wrapped the stream loop), so the
+      // rejected promise escaped unhandled (useSlashDispatch doesn't
+      // try/catch its await either). The user saw a hang with no
+      // feedback instead of an actionable error message.
+      let envConfig: Awaited<ReturnType<typeof providerFromEnv>>;
+      let harness: AgentHarness;
+      try {
+        envConfig = await providerFromEnv();
+        if (!envConfig) {
+          appendSystem(setMessages, 'OPENAI_API_KEY not set. Export it before running zelari-code.');
+          return;
+        }
+        setBusy(true);
+        const { registry: toolRegistry } = createBuiltinToolRegistry();
+        const baseProviderStream = openaiCompatibleProvider(envConfig);
+        const failoverResolution = await resolveFailoverStream({
+          failoverEnabled: process.env.ANATHEMA_FAILOVER !== '0',
+          envValue: process.env.ANATHEMA_FAILOVER_PROVIDER,
+          primaryProviderId: envConfig.providerId,
+          primary: baseProviderStream,
+          validProviderIds: PROVIDERS.map((p) => p.id),
+          lookupFallbackConfig: async (id) => providerConfigFor(id as ProviderName),
+          buildStream: (config) =>
+            openaiCompatibleProvider(config as Parameters<typeof openaiCompatibleProvider>[0]),
+        });
+        if (failoverResolution.warning) {
+          console.warn(failoverResolution.warning);
+        }
+        const providerStream: import('../../main/core/AgentHarness.js').ProviderStreamFn =
+          failoverResolution.fallbackLabel
+            ? providerFailover({
+                primary: baseProviderStream,
+                fallback: failoverResolution.fallback,
+                fallbackLabel: failoverResolution.fallbackLabel,
+              })
+            : providerFailover({
+                primary: baseProviderStream,
+                fallback: failoverResolution.fallback,
+              });
       const cwd = process.cwd();
       const toolList = toolRegistry.toOpenAITools().map((t) => `- ${t.function.name}: ${t.function.description}`).join('\n');
       const systemPrompt = [
@@ -214,11 +223,35 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           ),
         );
       }
+      } catch (err) {
+        // v0.4.3 audit fix: catches throws from providerFromEnv /
+        // resolveFailoverStream / AgentHarness construction that were
+        // previously escaping the function unhandled. Surfaces the error
+        // to the chat instead of hanging silently.
+        appendSystem(
+          setMessages,
+          `[dispatch error] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        setBusy(false);
+      }
     },
     [sessionId, writerRef, setMessages, setBusy, setSessionActive, setSessionStats],
   );
 
-  return { dispatchPrompt, dispatchCouncilPrompt: dispatchCouncilPromptImpl, harnessRef, queueCount, setQueueCount };
+  const dispatchCouncilPrompt = useCallback(
+    async (text: string) => {
+      await dispatchCouncilPromptImpl(text, {
+        sessionId,
+        writerRef,
+        setMessages,
+        setBusy,
+        setQueueCount,
+      });
+    },
+    [sessionId, writerRef, setMessages, setBusy, setQueueCount],
+  );
+
+  return { dispatchPrompt, dispatchCouncilPrompt, harnessRef, queueCount, setQueueCount };
 }
 
 /**

@@ -128,16 +128,20 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       // to the helpers exported from sessionManager and apply the writerRef
       // + messages reset ourselves.
       if (result.kind === 'session') {
-        const sysMsg = await sessionKindRouter('session');
+        const { message: sysMsg } = await sessionKindRouter('session');
         appendSystem(setMessages, sysMsg);
       } else if (result.kind === 'resume' && result.targetSessionId) {
-        const sysMsg = await sessionKindRouter('resume', result.targetSessionId);
+        const { message: sysMsg } = await sessionKindRouter('resume', result.targetSessionId);
         appendSystem(setMessages, sysMsg);
       } else if (result.kind === 'new') {
-        const sysMsg = await sessionKindRouter('new');
-        appendSystem(setMessages, sysMsg);
-        // Apply state reset here (useSession can't reach these setters).
+        // Generate the id HERE (not inside sessionKindRouter) so the in-memory
+        // state, the on-disk current-session marker, and the writerRef ALL
+        // share the same id. The previous split-brain bug fired both
+        // sessionKindRouter's internal newSessionId() AND a second
+        // newSessionId() here, leaving idA on disk and idB in memory.
         const id = newSessionId();
+        const { message: sysMsg } = await sessionKindRouter('new', undefined, id);
+        appendSystem(setMessages, sysMsg);
         setSessionId(id);
         setMessages([]);
         setSessionActive(false);

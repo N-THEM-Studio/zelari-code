@@ -162,6 +162,13 @@ export async function listSessions(): Promise<SessionInfo[]> {
  * (Task v0.4.2 audit split). Routes /sessions, /resume <id>, /new to the
  * appropriate sessionManager action and returns the system message to show.
  *
+ * For `/new`, callers may pass `forcedNewId` so the in-memory state, the
+ * writerRef, and the on-disk current-session marker all share the same id.
+ * Without it, the router mints its own id and returns it via `generatedId`
+ * so the caller can reconcile state. This avoids the v0.4.2 split-brain
+ * bug where the router wrote idA to disk while the hook wrote idB to
+ * memory + writer.
+ *
  * The caller (useSlashDispatch) is responsible for any state-side effects
  * (writerRef reset, setMessages([]), setSessionActive(false), setSessionId
  * for /new) because those setters live in the App component.
@@ -169,31 +176,34 @@ export async function listSessions(): Promise<SessionInfo[]> {
 export async function sessionKindRouter(
   kind: 'session' | 'resume' | 'new',
   targetSessionId?: string,
-): Promise<string> {
+  forcedNewId?: string,
+): Promise<{ message: string; generatedId?: string }> {
   if (kind === 'session') {
     try {
       const sessions = await listSessions();
-      if (sessions.length === 0) return '[sessions] no past sessions';
+      if (sessions.length === 0) return { message: '[sessions] no past sessions' };
       const lines = sessions.slice(0, 10).map((s) => {
         const dt = new Date(s.mtimeMs).toISOString().replace('T', ' ').slice(0, 16);
         return `  ${s.id.slice(0, 8)}…  ${s.eventCount} events  ${dt}`;
       });
-      return `[sessions] showing ${Math.min(sessions.length, 10)} of ${sessions.length}:\n${lines.join('\n')}`;
+      return {
+        message: `[sessions] showing ${Math.min(sessions.length, 10)} of ${sessions.length}:\n${lines.join('\n')}`,
+      };
     } catch (err) {
-      return `[sessions] error: ${err instanceof Error ? err.message : String(err)}`;
+      return { message: `[sessions] error: ${err instanceof Error ? err.message : String(err)}` };
     }
   }
   if (kind === 'resume' && targetSessionId) {
     setCurrentSessionId(targetSessionId);
-    return `[resume] session ${targetSessionId.slice(0, 8)}… set as current — restart zelari-code to load it`;
+    return { message: `[resume] session ${targetSessionId.slice(0, 8)}… set as current — restart zelari-code to load it` };
   }
   if (kind === 'new') {
     clearCurrentSessionId();
-    const id = newSessionId();
+    const id = forcedNewId ?? newSessionId();
     setCurrentSessionId(id);
-    return `[new] fresh session ${id.slice(0, 8)}… started`;
+    return { message: `[new] fresh session ${id.slice(0, 8)}… started`, generatedId: id };
   }
-  return `[${kind}] handled`;
+  return { message: `[${kind}] handled` };
 }
 
 /** Load all events from a session's JSONL file by id. */

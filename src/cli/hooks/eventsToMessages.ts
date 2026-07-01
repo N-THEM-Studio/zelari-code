@@ -28,20 +28,26 @@ export function eventsToMessages(events: readonly BrainEvent[]): ChatMessage[] {
       } else {
         out.push({ id: assistantId, role: 'assistant', content: assistantBuffer, ts: e.ts });
       }
-    } else if (e.type === 'tool_call') {
+    } else if (e.type === 'tool_execution_start') {
+      // v0.4.3 audit fix: the v3-W event schema renamed `tool_call` →
+      // `tool_execution_start` and added the `args` field. The old branches
+      // here silently dropped every tool invocation during session resume.
       assistantBuffer = '';
       assistantId = '';
+      const argsPreview = JSON.stringify((e as { args: unknown }).args).slice(0, 80);
       out.push({
         id: crypto.randomUUID(),
         role: 'system',
-        content: `[tool_call] ${e.toolName}(${JSON.stringify(e.arguments).slice(0, 80)})`,
+        content: `[tool_call] ${e.toolName}(${argsPreview})`,
         ts: e.ts,
       });
-    } else if (e.type === 'tool_result') {
+    } else if (e.type === 'tool_execution_end') {
+      // v0.4.3 audit fix: same — `tool_result` → `tool_execution_end` with
+      // `isError` / `durationMs` instead of `ok`.
       out.push({
         id: crypto.randomUUID(),
         role: 'system',
-        content: `[tool_result] ${e.toolName} → ${e.ok ? 'ok' : 'error'}`,
+        content: `[tool_result] ${e.toolName} → ${(e as { isError: boolean }).isError ? 'error' : 'ok'}`,
         ts: e.ts,
       });
     } else if (e.type === 'agent_start') {

@@ -21,13 +21,27 @@ interface InputBarProps {
  * row of the terminal).
  */
 function InputBarImpl({ value, onChange, onSubmit, disabled }: InputBarProps): React.ReactElement {
+  // The App-level React.memo comparator intentionally ignores onChange/onSubmit
+  // identity changes (those are fresh closures every App render). To still
+  // pick up the latest closures inside the (sometimes-skipped) memo'd
+  // render, mirror them through refs that are always read at call-time.
+  // v0.4.3 audit fix: without this, typing a long prompt while the parent
+  // re-renders (e.g. on streaming tokens) would route /submit through a
+  // stale closure capturing pre-stream values of messages/sessionId/etc.
+  const onSubmitRef = React.useRef(onSubmit);
+  const onChangeRef = React.useRef(onChange);
+  onSubmitRef.current = onSubmit;
+  onChangeRef.current = onChange;
+  const stableSubmit = React.useCallback((v: string) => onSubmitRef.current(v), []);
+  const stableChange = React.useCallback((v: string) => onChangeRef.current(v), []);
+
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1}>
       <Text color="cyan" bold>❯ </Text>
       <TextInput
         value={value}
-        onChange={onChange}
-        onSubmit={onSubmit}
+        onChange={stableChange}
+        onSubmit={stableSubmit}
         placeholder={disabled ? '...' : 'Type a prompt or /skill <name>'}
       />
     </Box>

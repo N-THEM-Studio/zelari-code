@@ -39,6 +39,14 @@ export function useTerminalSize(options: TerminalSizeOptions = {}): TerminalSize
 
   useEffect(() => {
     if (!stdout) return;
+    // v0.4.3 audit fix: if stdout resolves AFTER the initial render (e.g.
+    // test bootstrap or some terminal wrappers), the size would stay at
+    // the default 80x24 until the user manually resized. Pull the current
+    // dimensions immediately when stdout becomes available.
+    setSize({
+      columns: stdout.columns ?? defaults.columns,
+      rows: stdout.rows ?? defaults.rows,
+    });
     let rafId: ReturnType<typeof setTimeout> | null = null;
     const handleResize = () => {
       if (coalesceMs <= 0) {

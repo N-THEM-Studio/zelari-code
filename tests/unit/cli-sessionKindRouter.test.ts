@@ -1,5 +1,5 @@
 /**
- * cli-sessionKindRouter.test.ts — Task v0.4.2 split
+ * cli-sessionKindRouter.test.ts — Task v0.4.2 split + v0.4.3 fix
  *
  * Verifies the `sessionKindRouter` pure helper extracted from app.tsx.
  * Uses env-var redirection (ANATHEMA_CURRENT_SESSION_FILE) to point all
@@ -41,36 +41,51 @@ async function readMarker(): Promise<string | null> {
   }
 }
 
-describe('sessionKindRouter (v0.4.2 split)', () => {
+describe('sessionKindRouter (v0.4.2 split + v0.4.3 split-brain fix)', () => {
   it('/sessions: returns "no past sessions" when store is empty', async () => {
     const { sessionKindRouter } = await import('../../src/cli/sessionManager.js');
-    const msg = await sessionKindRouter('session');
-    expect(msg).toBe('[sessions] no past sessions');
+    const { message, generatedId } = await sessionKindRouter('session');
+    expect(message).toBe('[sessions] no past sessions');
+    expect(generatedId).toBeUndefined();
   });
 
   it('/resume <id>: writes the target id to the current-session marker', async () => {
     const { sessionKindRouter } = await import('../../src/cli/sessionManager.js');
-    const msg = await sessionKindRouter('resume', 'target-session-1234');
+    const { message, generatedId } = await sessionKindRouter('resume', 'target-session-1234');
     expect(await readMarker()).toBe('target-session-1234');
-    expect(msg).toContain('[resume] session target-s…');
-    expect(msg).toContain('restart zelari-code');
+    expect(message).toContain('[resume] session target-s…');
+    expect(message).toContain('restart zelari-code');
+    expect(generatedId).toBeUndefined();
   });
 
-  it('/new: removes old marker + writes a fresh session id', async () => {
+  it('/new without forcedNewId: removes old marker + writes a fresh session id', async () => {
     const { sessionKindRouter } = await import('../../src/cli/sessionManager.js');
     await fs.writeFile(markerFile, 'old-session-id', 'utf-8');
     expect(await readMarker()).toBe('old-session-id');
-    const msg = await sessionKindRouter('new');
+    const { message, generatedId } = await sessionKindRouter('new');
     const newId = await readMarker();
     expect(newId).not.toBe('old-session-id');
-    expect(newId).toMatch(/^[a-z0-9-]+$/); // session ids are uuid-like
-    expect(msg).toMatch(/\[new\] fresh session [a-z0-9]{8}…/);
+    expect(newId).toMatch(/^[a-z0-9-]+$/);
+    expect(message).toMatch(/\[new\] fresh session [a-z0-9]{8}…/);
+    // generatedId matches what's on disk
+    expect(generatedId).toBe(newId);
+  });
+
+  it('/new WITH forcedNewId: writes the forced id (no split-brain)', async () => {
+    // v0.4.3 fix: caller passes the id so in-memory state, on-disk marker,
+    // and the writerRef all share the same id.
+    const { sessionKindRouter } = await import('../../src/cli/sessionManager.js');
+    await fs.writeFile(markerFile, 'old-session-id', 'utf-8');
+    const { message, generatedId } = await sessionKindRouter('new', undefined, 'forced-id-12345');
+    expect(await readMarker()).toBe('forced-id-12345');
+    expect(generatedId).toBe('forced-id-12345');
+    expect(message).toContain('forced-i…');
   });
 
   it('unknown kind: returns generic handled message', async () => {
     const { sessionKindRouter } = await import('../../src/cli/sessionManager.js');
     // @ts-expect-error - testing runtime behavior with invalid input
-    const msg = await sessionKindRouter('bogus');
-    expect(msg).toBe('[bogus] handled');
+    const { message } = await sessionKindRouter('bogus');
+    expect(message).toBe('[bogus] handled');
   });
 });
