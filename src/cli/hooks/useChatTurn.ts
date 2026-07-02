@@ -357,8 +357,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
 /**
  * dispatchCouncilPrompt — multi-agent council dispatch.
  *
- * Surfaces tool_execution_start/end as 'tool' role messages so ChatStream
- * renders CollapsibleToolOutput. Runs AGENTS.MD auto-maintenance after the
+ * Surfaces tool_execution_start/end as 'tool' role messages so the live
+ * region renders them. Runs AGENTS.MD auto-maintenance after the
  * council finishes (controlled by ZELARI_AGENTS_MD env var).
  *
  * Implementation lives outside the hook closure so it doesn't depend on the

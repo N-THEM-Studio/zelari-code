@@ -81,7 +81,7 @@ export const TOOL_ARGS_PREVIEW_CHARS = 120;
 
 /**
  * Append a tool invocation as a `role: 'tool'` message so ChatStream renders
- * it via CollapsibleToolOutput (one status line per invocation, updated in
+ * it via the live region's tool rendering (one status line per invocation, updated in
  * place by {@link updateToolMessageEnd}) instead of loose system lines.
  */
 export function appendToolStart(

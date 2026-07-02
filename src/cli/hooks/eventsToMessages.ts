@@ -38,7 +38,7 @@ export function eventsToMessages(events: readonly BrainEvent[]): ChatMessage[] {
       // `tool_execution_start` and added the `args` field. The old branches
       // here silently dropped every tool invocation during session resume.
       // v0.6.2: restored as a `role: 'tool'` message so the resumed
-      // transcript renders CollapsibleToolOutput, same as the live UI.
+      // transcript renders the tool box, same as the live UI.
       assistantBuffer = '';
       assistantId = '';
       const argsPreview = JSON.stringify((e as { args: unknown }).args)?.slice(0, 120) ?? '';

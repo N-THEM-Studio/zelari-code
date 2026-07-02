@@ -48,7 +48,7 @@ export interface CompactMessage {
   toolCallId?: string;
   toolOk?: boolean;
   toolDurationMs?: number;
-  /** Truncated tool result body, shown in CollapsibleToolOutput when expanded. @since 0.6.2 */
+  /** Truncated tool result body, shown in the tool box when finalized. @since 0.6.2 */
   toolResult?: string;
   /** Council member name (e.g. "Caronte", "Lucifero") that produced this message. @since 0.5.0 */
   memberName?: string;
