@@ -206,4 +206,120 @@ describe('council chairman (Lucifero synthesis) — v0.6.0', () => {
     expect(luciferCost).toBeDefined();
     expect((luciferCost as { cost: { errored: boolean } }).cost.errored).toBe(true);
   });
+
+  it('Regression HIGH-1: chairman catch() must NOT overwrite fullText (fallback message must render)', async () => {
+    // Before the fix, the chairman's catch block assigned
+    // `fullText = "Error: ..."`, which made the fallback
+    // `[Chairman synthesis failed: ...]` string impossible to render
+    // (because `fullText.length > 0`). Now the catch stores the error
+    // in `lastErrorMessage` and leaves `fullText` intact, so on a
+    // throw with no partial deltas, the fallback string IS emitted.
+    //
+    // The fallback is delivered via the `onSynthesisDone` callback
+    // (not via a message_delta event), so we assert on the callback
+    // argument instead of scanning event stream.
+    let callCount = 0;
+    const stream: ProviderStreamFn = async function* () {
+      const idx = callCount++;
+      if (idx === 4) {
+        // Throw immediately, no deltas yielded before.
+        throw new Error('chairman LLM blew up at start');
+      }
+      yield { kind: 'text', delta: `agent-${idx}` } as never;
+      yield { kind: 'finish', reason: 'stop' } as never;
+    };
+
+    const synthesisDone: Array<{ content: string }> = [];
+    // Drain the council — this also drives the chairman.
+    for await (const _ of dispatchCouncil('hello', {
+      apiKey: TEST_API_KEY,
+      model: 'grok-4',
+      councilSize: 6,
+      debateMode: false,
+      providerStream: stream,
+      disableWorkspaceTools: true,
+    })) {
+      // intentionally empty — we don't care about the event stream here
+    }
+
+    // The onSynthesisDone callback is called from inside runCouncilPure,
+    // not from dispatchCouncil's wrapper. To assert on the fallback
+    // string we have to call runCouncilPure directly with a callback.
+    callCount = 0;
+    const { runCouncilPure } = await import('@zelari/core/council');
+    for await (const _ of runCouncilPure('hello', {
+      apiKey: TEST_API_KEY,
+      model: 'grok-4',
+      councilSize: 6,
+      debateMode: false,
+      providerStream: (() => {
+        const inner: ProviderStreamFn = async function* () {
+          const idx = callCount++;
+          if (idx === 4) {
+            throw new Error('chairman LLM blew up at start');
+          }
+          yield { kind: 'text', delta: `agent-${idx}` } as never;
+          yield { kind: 'finish', reason: 'stop' } as never;
+        };
+        return inner;
+      })(),
+      sessionId: 'test',
+    }, {
+      onSynthesisDone: (content) => synthesisDone.push({ content }),
+    })) {
+      // drain
+    }
+
+    expect(synthesisDone).toHaveLength(1);
+    expect(synthesisDone[0]?.content).toContain('[Chairman synthesis failed:');
+    expect(synthesisDone[0]?.content).not.toMatch(/^Error: /);
+  });
+
+  it('Regression HIGH-4: specialist marks errored=true when AgentHarness emits an error event', async () => {
+    // Before the fix, the specialist loop did not check for
+    // `event.type === 'error'`, so a stream failure that the harness
+    // converted into a BrainErrorEvent would pass through silently
+    // and `errored` would stay false.
+    //
+    // We assert on the `onMemberCost` callback (delivers the cost
+    // object directly from the orchestrator) rather than scanning
+    // events, because the `errored` flag is only exposed via the
+    // member_cost payload in events OR via this callback.
+    let callCount = 0;
+    const stream: ProviderStreamFn = async function* () {
+      const idx = callCount++;
+      if (idx === 0) {
+        // Charont is the first specialist (orchestrator order).
+        // Yield a text delta then an error event. AgentHarness
+        // converts this into a BrainErrorEvent which the orchestrator
+        // MUST detect.
+        yield { kind: 'text', delta: 'partial-specialist' } as never;
+        yield { kind: 'error', message: 'network reset mid-stream' } as never;
+        return;
+      }
+      yield { kind: 'text', delta: `agent-${idx}` } as never;
+      yield { kind: 'finish', reason: 'stop' } as never;
+    };
+
+    const costs: Array<{ memberId: string; errored: boolean }> = [];
+    const { runCouncilPure } = await import('@zelari/core/council');
+    for await (const _ of runCouncilPure('hello', {
+      apiKey: TEST_API_KEY,
+      model: 'grok-4',
+      councilSize: 6,
+      debateMode: false,
+      ragContext: '',
+      workspaceContext: '',
+      providerStream: stream,
+      sessionId: 'test',
+    }, {
+      onMemberCost: (cost) => costs.push({ memberId: cost.memberId, errored: cost.errored }),
+    })) {
+      // drain
+    }
+
+    const charonCost = costs.find((c) => c.memberId === 'charont');
+    expect(charonCost).toBeDefined();
+    expect(charonCost?.errored).toBe(true);
+  });
 });

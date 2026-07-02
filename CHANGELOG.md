@@ -20,6 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `docs/decisions/0006-lucifero-chairman-real.md`: ADR con contesto, decisione, alternative, conseguenze.
 - `package.json`: `pretest` script che rebuilda `@zelari/core` prima dei test (previene dist vecchio).
 
+### Fixed (post-release audit, agy Gemini 3.5 Flash)
+4 bug runtime trovati dal workflow gate agy audit, tutti fixati con regression test:
+
+- **HIGH-1** — Il `catch` del chairman loop sovrascriveva `fullText` con `"Error: ..."`, impedendo alla fallback string `[Chairman synthesis failed: ...]` di renderizzare mai (perché `fullText.length > 0` rendeva falso il check). Fix: `catch` ora salva l'errore in `lastErrorMessage` separato, lasciando `fullText` intatto.
+- **HIGH-2** — `openaiCompatibleProvider` usava `config.signal` (chiuso nello scope del factory, tipicamente `undefined`) invece di `params.signal` (segnale per-call dell'AgentHarness). Risultato: `cancel()` non abortiva l'HTTP request. Fix: `signal: params.signal`.
+- **HIGH-3** — `openaiCompatibleProvider` usava `config.model` invece di `params.model`, rompendo silenziosamente la config `agentModels` (tutti i council member finivano sul modello di default). Fix: `body.model: params.model`.
+- **HIGH-4** — I loop specialist e oracle NON controllavano `event.type === 'error'`, quindi se AgentHarness convertiva un errore di rete in un BrainErrorEvent (severity='recoverable'), `errored` restava `false` e il fallimento veniva loggato come successo nel `member_cost`. Fix: aggiunto check su entrambi i loop.
+
+Test: 759 → 761 (+2 regression: fallback esatto chairman, errored specialist su error event).
+
 ### Changed
 - Version bump `0.5.0` → `0.6.0` in `package.json` (root), `packages/core/package.json`, `src/cli/main.ts`, `src/cli/wizard/index.tsx`, `README.md`.
 

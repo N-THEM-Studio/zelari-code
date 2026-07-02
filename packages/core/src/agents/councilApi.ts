@@ -359,6 +359,13 @@ export async function* runCouncilPure(
           fullText += event.delta;
           callbacks.onAgentChunk?.(agent, event.delta);
         }
+        // AgentHarness catches provider errors internally and re-emits
+        // them as BrainErrorEvent. Without this check, a streaming
+        // failure would silently leave `errored=false` and the partial
+        // output would be reported as a success. v0.6.0 audit HIGH-4.
+        if (event.type === 'error' && event.severity !== 'cancelled') {
+          errored = true;
+        }
       }
     } catch (err) {
       // eslint-disable-next-line no-console
@@ -476,6 +483,11 @@ export async function* runCouncilPure(
         if (event.type === 'message_delta') {
           fullText += event.delta;
           callbacks.onAgentChunk?.(oracle, event.delta);
+        }
+        // v0.6.0 audit HIGH-4 — detect AgentHarness-emitted error
+        // events so the oracle's `member_cost.errored` reflects reality.
+        if (event.type === 'error' && event.severity !== 'cancelled') {
+          errored = true;
         }
       }
     } catch (err) {
@@ -621,10 +633,14 @@ export async function* runCouncilPure(
     } catch (err) {
       // Defensive: any escape from the harness (e.g. an AbortError that
       // AgentHarness did not wrap) is also marked as errored.
+      // IMPORTANT: do NOT overwrite `fullText` here — the partial
+      // synthesis is more useful than the error string, and overwriting
+      // it would also break the `errored && fullText.length === 0` check
+      // that selects the fallback message below. (v0.6.0 audit HIGH-1)
       // eslint-disable-next-line no-console
       console.error(`[council] chairman "${chairman.id}" failed:`, err);
-      fullText = `Error: ${err instanceof Error ? err.message : 'Unknown'}`;
       errored = true;
+      lastErrorMessage = err instanceof Error ? err.message : String(err);
     }
     const memberDuration = Date.now() - memberStart;
     // If the chairman errored mid-flight but produced some text, keep it

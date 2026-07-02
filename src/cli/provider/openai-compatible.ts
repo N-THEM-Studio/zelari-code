@@ -94,7 +94,10 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     });
 
     const body: Record<string, unknown> = {
-      model: config.model,
+      // Use `params.model` (per-call override from AgentHarness, e.g. for
+      // `agentModels` config) rather than the closed-over `config.model`
+      // default. v0.6.0 audit HIGH-3.
+      model: params.model,
       messages,
       stream: true,
       temperature: 0.7,
@@ -129,7 +132,11 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
           Authorization: `Bearer ${config.apiKey}`,
         },
         body: JSON.stringify(body),
-        signal: config.signal,
+        // Use `params.signal` (per-call AbortSignal from AgentHarness
+        // controller) so `.cancel()` actually aborts the HTTP request.
+        // `config.signal` is the factory-level signal, typically undefined.
+        // v0.6.0 audit HIGH-2.
+        signal: params.signal,
       });
     } catch (err) {
       yield { kind: 'error', message: `Network error: ${err instanceof Error ? err.message : String(err)}` };
