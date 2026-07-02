@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Tool/agent rendering come CollapsibleToolOutput**: ogni tool invocation ora è un singolo messaggio `role: 'tool'` aggiornato in place (status glyph `⋯`/`✓`/`✗`, summary + expandable body), non più 2-4 loose system lines.
 - **Cross-message text duplication fix**: `streamContent` separato da `assistantContent`, bubble finalizzato su `message_end` / `tool start`. Prima il bubble post-tool ridisegnava l'intero turn text.
 - **Session resume replay tool come `role: 'tool'`**: non più `[tool_result] undefined → ok`, `tool_execution_end` aggiorna in place via `toolCallId`.
+- **CI publish workflow hardened** (v0.6.2 audit): build order, `npm publish` from root, tag/package.json match check, sequential core→CLI publish, smoke test post-bundle, OIDC-only.
+- **`@zelari/core` publishability fix** (v0.6.2 audit CRITICAL-1): `moduleResolution: Bundler` → `NodeNext`, 26 import relativi estesi con `.js` (più 2 inline `import()`). Risolto conflitto `ToolContext` re-export tra `agents/tools.ts` e `core/tools/toolTypes.ts`. Senza questo, il package npm pubblicato avrebbe rotto ogni consumer Node.js ESM con `ERR_MODULE_NOT_FOUND`.
 - **+9 nuovi test** in `tests/unit/cli-toolDisplay.test.ts` (270 LOC): messageHelpers, dispatchPrompt dup, eventsToMessages replay, pickVisibleMessages wrap.
 
 ### Added
@@ -19,18 +21,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `src/cli/components/CollapsibleToolOutput.tsx`: status glyph `⋯`/`✓`/`✗` nella summary.
 - `src/cli/app.tsx`: `overflow="hidden"` su root/row.
 - `tests/unit/cli-toolDisplay.test.ts`: 9 test unit per il nuovo rendering.
-- `package-lock.json`: version sync 0.5.0 → 0.6.1.
+- `package-lock.json`: version sync 0.5.0 → 0.6.2.
 
 ### Fixed (post-release audit, agy Gemini 3.5 Flash)
-4 finding agy (1 HIGH, 0 MEDIUM, 3 LOW) tutti verificati e fixati con regression test:
+7 finding agy (1 CRITICAL, 3 HIGH, 2 MEDIUM, 1 LOW) tutti verificati e fixati:
 
-- **HIGH-1** — Tool message più alto della altezza disponibile → `pickVisibleMessages` usciva dal loop con array vuoto, transcript BLANK. Fix: collassa il body al summary se non c'è spazio per il bordered body espanso, mostra almeno 1 row del summary.
-- **LOW-3** — `CompactMessage` interface non estesa con `toolResult`/`toolCallId`/`memberName`/`memberId` aggiunti in v0.5.0 e v0.6.2. Fix: aggiunti come optional fields.
-- **LOW-4** — Status glyph `ok === undefined && durationMs === undefined ? '⋯' : ok === false ? '✗' : '✓'` sbagliato: con `ok=undefined && durationMs=defined` restituiva `✓` (success) invece di `⋯` (pending). Fix: check diretto `ok === true ? '✓' : ok === false ? '✗' : '⋯'`.
-- **LOW-5** — Session resume `tool_execution_end` troncava a 600 char senza aggiungere `…` (asimmetria con live path). Fix: append `…` su truncation, no update se result vuoto.
-- **MEDIUM-2** (false positive scartato): agy segnalava rimozione backward compat di `toolCall`/`toolResult` event in `eventsToMessages.ts`. Verificato: `BrainEvent` type include solo `tool_execution_start`/`tool_execution_end`, non i nomi legacy, quindi non c'è perdita di dati nei session JSONL.
+- **CRITICAL-1** — `@zelari/core` import relativi SENZA estensione `.js` + `moduleResolution: Bundler` → package npm pubblicato non funzionante per consumer Node.js ESM (`ERR_MODULE_NOT_FOUND`). Fix: switch a `NodeNext`, 26 import `.js`-estesi, risolto conflitto re-export `ToolContext` (rinominato explicit `export type` in `harness/tools/index.ts`).
+- **HIGH-2** — `workflow_dispatch` ignorava `tag` input, faceva checkout di `main`. Fix: `ref: ${{ github.event.inputs.tag || github.ref }}` su entrambi i job.
+- **HIGH-3** — `publish-cli` e `publish-core` paralleli → CLI pubblicato prima di core. Fix: `needs: publish-core` su `publish-cli`.
+- **HIGH-4** — `@zelari/core: "^0.6.2"` permissivo (accetta 0.6.x futuri) per coupled release. Fix: pin esatto `"0.6.2"`.
+- **MEDIUM-5** (defer): test suite duplicati (`prepublish` rifà typecheck+build+test). Fuori scope fix attuale.
+- **MEDIUM-6** — `package.json` version non validata contro tag. Fix: step `Verify tag matches package.json version` su entrambi i job.
+- **LOW-7** — Smoke test post-bundle mancante. Fix: `npm run smoke` step su `publish-cli`.
+- **LOW-3 (v0.6.2 tool fix)** — `CompactMessage` interface non estesa con `toolResult`/`toolCallId`/`memberName`/`memberId`. Fix: aggiunti.
+- **LOW-4 (v0.6.2 tool fix)** — Status glyph `ok=undefined && durationMs=defined` → `✓` invece di `⋯`. Fix: check diretto.
+- **LOW-5 (v0.6.2 tool fix)** — Session resume `tool_execution_end` troncava a 600 char senza `…`. Fix: append `…`.
+- **MEDIUM-2 (v0.6.2 tool, false positive scartato)**: agy segnalava rimozione backward compat `toolCall`/`toolResult` event. Verificato: `BrainEvent` type include solo `tool_execution_start`/`tool_execution_end`, non i nomi legacy.
 
-Test: 770 → 771 (+1 regression per HIGH-1 transcript blank).
+### Changed
+- `packages/core/tsconfig.json`: `module: ESNext + moduleResolution: Bundler` → `module: NodeNext + moduleResolution: NodeNext`.
+- `packages/core/src/**`: 26 import relativi `.js`-estesi (script automatico).
+- `packages/core/src/harness/tools/index.ts`: `export *` rimosso per `toolTypes.js` (conflitto `ToolContext` re-export); ora `export type` esplicito.
+- `package.json`: `@zelari/core: "*"` → `"0.6.2"` (pin esatto per coupled release).
+- `.github/workflows/publish.yml`: build order, sequential core→CLI, version check, smoke test, dispatch tag handling.
+
+Test: 771 → 771 (0 nuovi, ma 1 regression per HIGH-1 transcript blank in toolDisplay.test.ts).
 
 ## [0.6.0] - 2026-07-02
 

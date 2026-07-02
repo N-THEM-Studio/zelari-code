@@ -11,7 +11,7 @@
  * it here as a type-only import to avoid a runtime circular dependency (type
  * imports are erased at compile time).
  */
-import type { ToolContext } from '../agents/tools';
+import type { ToolContext } from '../agents/tools.js';
 
 /** High-level category a skill belongs to. */
 export type SkillCategory =

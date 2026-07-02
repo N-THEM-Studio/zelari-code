@@ -1,4 +1,4 @@
-import type { SystemPromptModule } from '../types/systemTypes';
+import type { SystemPromptModule } from '../types/systemTypes.js';
 
 /**
  * Council Directives — distilled and adapted from System.md.

@@ -462,4 +462,4 @@ export type {
   WikiLink,
   KnowledgeTag,
   BacklinkEntry,
-} from './knowledge';
+} from './knowledge.js';

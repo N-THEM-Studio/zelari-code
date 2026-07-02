@@ -1,5 +1,5 @@
-import type { EnhancedToolDefinition, ToolParameter } from '../types/systemTypes';
-import type { Task } from '../types';
+import type { EnhancedToolDefinition, ToolParameter } from '../types/systemTypes.js';
+import type { Task } from '../types/index.js';
 
 /** Helper to build a ToolParameter concisely. */
 function p(

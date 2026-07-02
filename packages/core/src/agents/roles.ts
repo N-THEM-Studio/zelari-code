@@ -1,4 +1,4 @@
-import type { AgentRole } from '../types';
+import type { AgentRole } from '../types/index.js';
 
 /**
  * Shared block documenting the clarifying-question protocol. Appended to every

@@ -1,5 +1,5 @@
-import type { EnhancedToolDefinition, ToolParameter } from '../types/systemTypes';
-import type { KnowledgeDocument } from '../types';
+import type { EnhancedToolDefinition, ToolParameter } from '../types/systemTypes.js';
+import type { KnowledgeDocument } from '../types/index.js';
 
 /** Helper to build a ToolParameter concisely. */
 function p(

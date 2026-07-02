@@ -186,7 +186,7 @@ const regressionTest: CodingSkillDefinition = {
       output: {
         testFile: 'tests/regression/duplicate-user-message.test.ts',
         test: `import { describe, it, expect } from 'vitest';
-import { runCouncilPure } from '../agents/councilApi';
+import { runCouncilPure } from '../agents/councilApi.js';
 
 describe('regression: duplicate user message at session resume', () => {
   it('does not render duplicate user message when session resumes with duplicate input', async () => {

@@ -34,7 +34,7 @@
     "prepublishOnly": "node scripts/prepublish.mjs"
   },
   "dependencies": {
-    "@zelari/core": "*",
+    "@zelari/core": "0.6.2",
     "ink": "^6.8.0",
     "ink-text-input": "^6.0.0",
     "react": "^19.2.7",

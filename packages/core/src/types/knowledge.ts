@@ -1,5 +1,5 @@
 // Note: FileTreeNode is defined in this file (see bottom of file). The
-// pre-monorepo monolithic types file imported it from './index' which
+// pre-monorepo monolithic types file imported it from './index.js' which
 // created a circular reference; we declare it locally now.
 
 /**

@@ -1,26 +1,26 @@
-import type { CouncilMessage, AgentRole } from '../types';
-import { getCouncilAgents, swapMembers } from './roles';
-import { getProviderTools, type ParsedToolCall } from './toolSchemas';
-import { buildSystemPrompt, computeAgentTools } from './systemPromptBuilder';
-import { getAllTools } from './tools';
-import type { SystemPromptConfig } from '../types/systemTypes';
-import type { BrainEvent, UsageBreakdown } from '../shared/events';
-import { createBrainEvent } from '../shared/events';
+import type { CouncilMessage, AgentRole } from '../types/index.js';
+import { getCouncilAgents, swapMembers } from './roles.js';
+import { getProviderTools, type ParsedToolCall } from './toolSchemas.js';
+import { buildSystemPrompt, computeAgentTools } from './systemPromptBuilder.js';
+import { getAllTools } from './tools.js';
+import type { SystemPromptConfig } from '../types/systemTypes.js';
+import type { BrainEvent, UsageBreakdown } from '../shared/events.js';
+import { createBrainEvent } from '../shared/events.js';
 import type {
   AgentMessage,
   AgentToolSpec,
   ProviderStreamFn,
-} from '../core/AgentHarness';
-import { AgentHarness } from '../core/AgentHarness';
-import { ToolRegistry } from '../core/tools/registry';
+} from '../core/AgentHarness.js';
+import { AgentHarness } from '../core/AgentHarness.js';
+import { ToolRegistry } from '../core/tools/registry.js';
 
-export type { BrainEvent } from '../shared/events';
+export type { BrainEvent } from '../shared/events.js';
 export type {
   AgentMessage,
   AgentToolSpec,
   ProviderStreamFn,
   ProviderDelta,
-} from '../core/AgentHarness';
+} from '../core/AgentHarness.js';
 
 /**
  * Minimal structural interface for a feedback store — matches the
@@ -87,7 +87,7 @@ export interface PureCouncilConfig {
   /** Provider stream function (injected for testability). MUST yield ProviderDelta. */
   providerStream: ProviderStreamFn;
   /** Optional event bus for emitting BrainEvents alongside the returned iterable. */
-  eventBus?: import('../shared/eventBus').EventBus;
+  eventBus?: import('../shared/eventBus.js').EventBus;
   /** Optional session id. Defaults to a UUID. */
   sessionId?: string;
   /**

@@ -1,4 +1,4 @@
-import type { SkillDefinition, SkillCategory } from '../types/systemTypes';
+import type { SkillDefinition, SkillCategory } from '../types/systemTypes.js';
 
 /** Extended skill definition with optional metadata for the new registry. */
 export interface SkillMetadata extends SkillDefinition {

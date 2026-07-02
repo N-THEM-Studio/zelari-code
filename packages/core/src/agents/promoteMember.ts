@@ -24,9 +24,9 @@
  * @see docs/plans/2026-06-30-anathema-coder-v3-K.md
  */
 
-import type { AgentRole } from '../types';
-import type { CodingCategory, CodingSkillDefinition } from './skills';
-import { AGENT_ROLES, UnknownMemberError, getAgent } from './roles';
+import type { AgentRole } from '../types/index.js';
+import type { CodingCategory, CodingSkillDefinition } from './skills.js';
+import { AGENT_ROLES, UnknownMemberError, getAgent } from './roles.js';
 
 /**
  * Map an AgentRole.role (free string) to a CodingCategory (closed union).

@@ -30,37 +30,13 @@ on:
 # No NPM_TOKEN secret is referenced in this workflow. The `id-token: write`
 # permission below is what enables OIDC; `actions/setup-node` exchanges
 # the OIDC token for a short-lived npm token at publish time.
+#
+# v0.6.2 audit (agy): publish-cli and publish-core run sequentially
+# (needs: publish-core) to prevent the CLI from being published before
+# its matching @zelari/core version. Tag version is checked against
+# package.json to fail fast on mismatches. Smoke test runs the bundled
+# CLI to catch ESM/load-time errors before publish.
 jobs:
-  publish-cli:
-    name: Publish zelari-code (CLI)
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          registry-url: 'https://registry.npmjs.org'
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Build CLI
-        run: npm run build:cli
-
-      - name: Run tests
-        run: npm test
-
-      - name: Publish zelari-code
-        run: npm publish --workspace=zelari-code --access public
-
   publish-core:
     name: Publish @zelari/core
     runs-on: ubuntu-latest
@@ -69,6 +45,10 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          # v0.6.2 audit HIGH-2: workflow_dispatch tag input was being
+          # ignored. Fall back to the pushed ref when not dispatched.
+          ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -78,6 +58,18 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify tag matches package.json version
+        # v0.6.2 audit MEDIUM-6: fail fast on tag/package.json mismatch
+        # instead of letting npm registry reject the publish at the end.
+        run: |
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          PKG_VERSION=$(node -e "console.log(require('./packages/core/package.json').version)")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match packages/core/package.json ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "✓ Tag $TAG_VERSION matches package.json"
 
       - name: Typecheck (core)
         run: npm run typecheck --workspace=@zelari/core
@@ -90,3 +82,62 @@ jobs:
 
       - name: Publish @zelari/core
         run: npm publish --workspace=@zelari/core --access public
+
+  publish-cli:
+    name: Publish zelari-code (CLI)
+    # v0.6.2 audit HIGH-3: must wait for core so the CLI's pinned
+    # @zelari/core dep resolves to a published version on install.
+    needs: publish-core
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          PKG_VERSION=$(node -e "console.log(require('./package.json').version)")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "Tag version ($TAG_VERSION) does not match package.json ($PKG_VERSION)"
+            exit 1
+          fi
+          echo "✓ Tag $TAG_VERSION matches package.json"
+
+      # The root typecheck imports @zelari/core's emitted .d.ts files
+      # (packages/core/dist). On a fresh checkout they don't exist, so core
+      # must be built FIRST or tsc fails with TS2307 on every
+      # '@zelari/core/*' import. (Locally this is masked by `pretest`.)
+      - name: Build @zelari/core
+        run: npm run build --workspace=@zelari/core
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build CLI
+        run: npm run build:cli
+
+      - name: Run tests
+        run: npm test
+
+      # v0.6.2 audit LOW-7: smoke test the bundled CLI to catch load-time
+      # errors (broken ESM, missing exports) before pushing to npm.
+      - name: Smoke test bundled CLI
+        run: npm run smoke
+
+      # `zelari-code` is the ROOT package, not a workspace member —
+      # `npm publish --workspace=zelari-code` fails with "No workspaces found".
+      - name: Publish zelari-code
+        run: npm publish --access public

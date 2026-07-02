@@ -3,10 +3,10 @@ import type {
   SkillDefinition,
   SystemPromptModule,
   SystemPromptConfig,
-} from '../types/systemTypes';
-import type { AgentRole as CoreAgentRole } from '../types';
-import { getBasePromptModules } from './promptModules';
-import { resolveAgentSkills, getSkillById } from './skills';
+} from '../types/systemTypes.js';
+import type { AgentRole as CoreAgentRole } from '../types/index.js';
+import { getBasePromptModules } from './promptModules.js';
+import { resolveAgentSkills, getSkillById } from './skills.js';
 
 /**
  * System Prompt Builder.
@@ -29,7 +29,7 @@ import { resolveAgentSkills, getSkillById } from './skills';
 export function computeAgentSkills(
   agent: CoreAgentRole & { skills?: string[] },
   aiConfig?: SystemPromptConfig,
-  customSkills?: import('../types').CustomSkill[]
+  customSkills?: import('../types/index.js').CustomSkill[]
 ): SkillDefinition[] {
   const declared = agent.skills ?? resolveAgentSkills(agent.id).map((s) => s.id);
 

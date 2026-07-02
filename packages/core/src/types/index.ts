@@ -10,7 +10,7 @@ export * from './context.js';
 export * from './systemTypes.js';
 export * from './knowledge.js';
 // Legacy types (pre-monorepo monolithic types file). Kept here so that
-// downstream code that imported `from '../types'` still resolves.
+// downstream code that imported `from '../types/index.js'` still resolves.
 // Note: we re-export selectively because some types (FileTreeNode,
 // SkillCategory) collide with types already in the focused files above.
 export type {

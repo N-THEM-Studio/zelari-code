@@ -1,7 +1,7 @@
-import type { Task, Idea, Phase, SubTask, KnowledgeDocument, Milestone } from '../types';
-import type { EnhancedToolDefinition } from '../types/systemTypes';
-import { VAULT_TOOL_DEFINITIONS } from './vaultTools';
-import { ADVANCED_TOOL_DEFINITIONS } from './advancedTools';
+import type { Task, Idea, Phase, SubTask, KnowledgeDocument, Milestone } from '../types/index.js';
+import type { EnhancedToolDefinition } from '../types/systemTypes.js';
+import { VAULT_TOOL_DEFINITIONS } from './vaultTools.js';
+import { ADVANCED_TOOL_DEFINITIONS } from './advancedTools.js';
 
 export interface ToolDefinition {
   name: string;

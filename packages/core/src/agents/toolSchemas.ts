@@ -11,7 +11,7 @@
  * `getProviderTools` will throw at build time (defensive).
  */
 
-import { getAllTools, registerCustomTool } from './tools';
+import { getAllTools, registerCustomTool } from './tools.js';
 
 /** OpenAI-style tool descriptor accepted by both GLM and MiniMax. */
 export interface ProviderTool {

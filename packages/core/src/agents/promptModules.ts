@@ -1,10 +1,10 @@
-import type { SystemPromptModule } from '../types/systemTypes';
+import type { SystemPromptModule } from '../types/systemTypes.js';
 import {
   STRUCTURED_REASONING_DIRECTIVE,
   TOOL_USE_PROTOCOL_DIRECTIVE,
   OUTPUT_QUALITY_DIRECTIVE,
   COLLABORATION_DIRECTIVE,
-} from './councilDirectives';
+} from './councilDirectives.js';
 
 /**
  * Base system prompt modules for AnathemaBrain.

@@ -47,7 +47,7 @@ const reproduceBug: CodingSkillDefinition = {
       input: 'Bug report: "Council sometimes shows duplicate messages at the start of a session"',
       output: {
         minimalRepro: `// tests/regression/duplicate-messages.test.ts
-import { runCouncilPure } from '../agents/councilApi';
+import { runCouncilPure } from '../agents/councilApi.js';
 
 describe('council duplicate message bug', () => {
   it('does not emit duplicate user message when session resumes', async () => {
