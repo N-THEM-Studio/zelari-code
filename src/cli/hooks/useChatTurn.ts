@@ -167,6 +167,16 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         "- Only invoke tools when they are necessary to answer the user's prompt. If the user is just saying hello or greeting them (e.g., \"ciao\", \"hello\"), simply greet them back and ask how you can help, without running any commands or tools.",
         '- When you finish a task, briefly summarize what you did.',
       ].join('\n');
+      // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
+      // The council sets 5; the single-prompt path previously set NONE, so a
+      // flailing model could loop for the full MAX_TOOL_LOOP_ITERATIONS (12)
+      // of junk calls (e.g. read_file same path ×3 then silence). Default 25,
+      // overridable via ZELARI_MAX_TOOL_CALLS.
+      const maxToolCallsPerTurn = (() => {
+        const raw = process.env.ZELARI_MAX_TOOL_CALLS;
+        const n = raw ? Number.parseInt(raw, 10) : 25;
+        return Number.isFinite(n) && n > 0 ? n : 25;
+      })();
       const harness = new AgentHarness({
         model: envConfig.model,
         provider: 'openai-compatible',
@@ -182,6 +192,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         toolRegistry,
         providerStream,
         cwd,
+        maxToolCallsPerTurn,
       });
       harnessRef.current = harness;
       setQueueCount(harness.queueLength);
@@ -388,6 +399,16 @@ async function dispatchCouncilPromptImpl(
   }
   setWorkspaceStubs(createWorkspaceStubs(workspaceCtx));
   const councilFeedbackStore = new FeedbackStore();
+  // v0.7.1 (A3): track member completion so the AGENTS.MD hook only runs when
+  // the council actually produced output. v0.7.1 (A4): track repeated provider
+  // errors to abort the remaining members instead of grinding through every
+  // specialist after the API is clearly broken.
+  let membersCompleted = 0;
+  let chairmanProducedOutput = false;
+  let consecutiveProviderErrors = 0;
+  let lastErrorMessage = '';
+  let councilAborted = false;
+  const PROVIDER_ERROR_ABORT_THRESHOLD = 2;
   try {
     for await (const event of dispatchCouncil(text, {
       apiKey: envConfig.apiKey,
@@ -398,6 +419,11 @@ async function dispatchCouncilPromptImpl(
       tools: councilToolRegistry,
       feedbackStore: councilFeedbackStore,
     })) {
+      if (councilAborted) {
+        // Drain remaining events silently after the abort decision.
+        if (writerRef.current) await writerRef.current.append(event);
+        continue;
+      }
       if (writerRef.current) {
         await writerRef.current.append(event);
       }
@@ -449,6 +475,11 @@ async function dispatchCouncilPromptImpl(
         flushStreaming();
         if (useLiveModel) finalizeStreaming(setMessages, setLive!);
         else finalizeStreamingAssistant(setMessages);
+        membersCompleted++;
+        // Chairman is the last member; any assistant content from it counts.
+        if (event.memberId === 'lucifer' || event.memberName === 'Lucifero') {
+          chairmanProducedOutput = true;
+        }
       } else if (event.type === 'tool_execution_start') {
         // Drain buffered deltas first so ordering matches reality, and seal
         // the pre-tool bubble (complete once the member starts calling tools).
@@ -468,7 +499,26 @@ async function dispatchCouncilPromptImpl(
         }
       } else if (event.type === 'error') {
         flushStreaming();
-        appendSystem(setMessages, `[error] ${event.message}`, event.ts);
+        // v0.7.1 (A4): attribute the error to the member when known, so the
+        // user sees `[error · Caronte] …` instead of three anonymous lines.
+        const memberTag = event.memberName ? ` · ${event.memberName}` : '';
+        appendSystem(setMessages, `[error${memberTag}] ${event.message}`, event.ts);
+        // v0.7.1 (A4): detect repeated identical provider errors and abort the
+        // remaining members instead of grinding through every specialist.
+        if (event.message === lastErrorMessage) {
+          consecutiveProviderErrors++;
+        } else {
+          consecutiveProviderErrors = 1;
+          lastErrorMessage = event.message;
+        }
+        if (consecutiveProviderErrors >= PROVIDER_ERROR_ABORT_THRESHOLD) {
+          councilAborted = true;
+          appendSystem(
+            setMessages,
+            `[council aborted: repeated provider error — ${consecutiveProviderErrors}× "${event.message.slice(0, 80)}"]`,
+            Date.now(),
+          );
+        }
       }
     }
   } catch (err) {
@@ -485,21 +535,33 @@ async function dispatchCouncilPromptImpl(
     flushStreaming();
     if (useLiveModel) finalizeStreaming(setMessages, setLive!);
     else finalizeStreamingAssistant(setMessages);
-    try {
-      const hook = await runPostCouncilHook(workspaceCtx);
-      if (hook.ran && hook.changed) {
-        appendSystem(
-          setMessages,
-          `[agents.md] updated: ${hook.sections.length} section(s) changed (${hook.sections.join(', ')})`,
-          Date.now(),
-        );
-      } else if (hook.ran && hook.reason) {
-        if (!hook.reason.includes('disabled')) {
-          appendSystem(setMessages, `[agents.md] ${hook.reason}`, Date.now());
+    // v0.7.1 (A3): only auto-write AGENTS.MD when the council actually produced
+    // output. Running the hook after an all-error run (e.g. the HTTP 400 from
+    // A1) dirtied the working tree with sections rewritten from nothing.
+    const hookShouldRun = membersCompleted > 0 || chairmanProducedOutput;
+    if (hookShouldRun) {
+      try {
+        const hook = await runPostCouncilHook(workspaceCtx);
+        if (hook.ran && hook.changed) {
+          appendSystem(
+            setMessages,
+            `[agents.md] updated: ${hook.sections.length} section(s) changed (${hook.sections.join(', ')})`,
+            Date.now(),
+          );
+        } else if (hook.ran && hook.reason) {
+          if (!hook.reason.includes('disabled')) {
+            appendSystem(setMessages, `[agents.md] ${hook.reason}`, Date.now());
+          }
         }
+      } catch {
+        // Best-effort — never block on AGENTS.MD errors.
       }
-    } catch {
-      // Best-effort — never block on AGENTS.MD errors.
+    } else if (!councilAborted) {
+      appendSystem(
+        setMessages,
+        '[agents.md] skipped — council produced no output',
+        Date.now(),
+      );
     }
     setBusy(false);
   }

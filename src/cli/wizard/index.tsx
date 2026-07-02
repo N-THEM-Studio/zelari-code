@@ -31,7 +31,7 @@ export interface WizardProps {
   providers: readonly ProviderSpec[];
 }
 
-const VERSION = '0.7.0';
+const VERSION = '0.7.1';
 
 function Frame({ children }: { children: React.ReactNode }): React.ReactElement {
   return (

@@ -1,6 +1,7 @@
 // @ts-nocheck — shares the pre-existing strict-mode type narrowing carried
 // over from useSession/useChatTurn. Runtime is correct.
 import type { ChatMessage } from '../components/ChatStream.js';
+import { formatToolSummary } from '../components/toolFormat.js';
 
 /**
  * chatState — finalized/live split for the static-scrollback TUI (v0.7.0).
@@ -155,7 +156,8 @@ export function startTool(
   args: unknown,
   ts: number,
 ): void {
-  const argsPreview = JSON.stringify(args)?.slice(0, TOOL_ARGS_PREVIEW_CHARS) ?? '';
+  // v0.7.1 (B2): human-readable summary instead of raw-JSON args.
+  const argsPreview = formatToolSummary(toolName, args);
   setLive((prev) => ({
     ...prev,
     runningTools: [

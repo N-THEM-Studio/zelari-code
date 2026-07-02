@@ -1,4 +1,5 @@
 import type { ChatMessage } from '../components/ChatStream.js';
+import { formatToolSummary } from '../components/toolFormat.js';
 
 /**
  * Helpers for building ChatMessage instances in the most common shapes.
@@ -90,7 +91,9 @@ export function appendToolStart(
   args: unknown,
   ts: number,
 ): void {
-  const argsPreview = JSON.stringify(args)?.slice(0, TOOL_ARGS_PREVIEW_CHARS) ?? '';
+  // v0.7.1 (B2): human-readable summary instead of raw-JSON args (which cut
+  // mid-string like {"path":"…","content":"Scrivi una spiegazione estrema…").
+  const argsPreview = formatToolSummary(toolName, args);
   setMessages((prev) => [
     ...prev,
     {

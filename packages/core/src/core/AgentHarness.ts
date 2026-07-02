@@ -153,6 +153,15 @@ export class AgentHarness {
   private cancelled = false;
   private activeController: AbortController | null = null;
   private queue: string[] = [];
+  /**
+   * Per-run cache of executed tool calls keyed by `hash(toolName + canonical
+   * args)`. v0.7.1 (A2): when the model re-issues an identical call (a
+   * observed failure mode where read_file hit the same path ×3 / cat the
+   * same file ×3), the cached result is replayed with a "duplicate call"
+   * prefix instead of re-executing — preserving the iteration budget for
+   * real progress. Reset on every `run()` so it does not leak across turns.
+   */
+  private toolCallCache: Map<string, string> = new Map();
 
   constructor(config: AgentHarnessConfig) {
     this.config = config;
@@ -242,6 +251,8 @@ export class AgentHarness {
   async *run(): AsyncIterable<BrainEvent> {
     const startTime = Date.now();
     this.activeController = new AbortController();
+    // Reset the per-run duplicate-call cache (v0.7.1 A2).
+    this.toolCallCache = new Map();
 
     // Emit agent_start
     const startEvent: BrainAgentStartEvent = createBrainEvent('agent_start', this.sessionId, {
@@ -349,6 +360,25 @@ export class AgentHarness {
       // Drive the loop: keep going only if this turn again requested tool calls.
       initialFinishRef.value = turnFinishRef.value;
       if (hadError || this.cancelled) break;
+    }
+
+    // === Final-answer guarantee (v0.7.1 A2) ===
+    // When the tool-call loop exits because it hit the iteration cap (or the
+    // per-turn tool-call limit keeps producing tool_calls finish reasons) the
+    // run would otherwise end with tool noise and NO assistant answer — the
+    // user sees silence after the last tool box. Detect that terminal state
+    // and make ONE more provider call with tools OMITTED + a synthetic system
+    // nudge so the turn always ends with assistant text answering with what
+    // the model has gathered. Skipped on cancel/error (the loop already set
+    // hadError or this.cancelled) and when the loop ended on a non-tool finish.
+    const hitIterationCap = toolLoopTurns >= MAX_TOOL_LOOP_ITERATIONS;
+    if (
+      !this.cancelled &&
+      !hadError &&
+      initialFinishRef.value === 'tool_calls' &&
+      hitIterationCap
+    ) {
+      yield* this.runFinalAnswerTurn();
     }
 
     // === Queue drain (Task 18.1) ===
@@ -507,6 +537,34 @@ export class AgentHarness {
           const skipped = typeof maxToolCalls === 'number' && toolCallsThisTurn > maxToolCalls;
 
           if (this.config.toolRegistry && !skipped) {
+            // v0.7.1 (A2): duplicate-call short-circuit. If the model re-issues
+            // an identical tool call (same name + same args) within this run,
+            // replay the cached result instead of re-executing. Feed it back
+            // with a prefix so the model learns not to repeat the call. This
+            // preserves the iteration budget for real progress instead of
+            // burning it on read_file(same path) ×3.
+            const callKey = hashToolCall(delta.toolName, delta.args);
+            const cached = this.toolCallCache.get(callKey);
+            if (cached !== undefined) {
+              const dupResult = `[duplicate call — result repeated; do not call this tool again with the same arguments]\n${cached}`;
+              const endEvent: BrainToolExecutionEndEvent = createBrainEvent(
+                'tool_execution_end',
+                this.sessionId,
+                {
+                  toolCallId: delta.toolCallId,
+                  result: dupResult,
+                  isError: false,
+                  durationMs: 0,
+                },
+              );
+              this.emit(endEvent);
+              yield endEvent;
+              this.config.messages.push({
+                role: 'tool',
+                toolCallId: delta.toolCallId,
+                content: dupResult,
+              });
+            } else {
             const startMs = Date.now();
             const result = await this.config.toolRegistry.invoke<unknown>(
               delta.toolName,
@@ -548,6 +606,10 @@ export class AgentHarness {
               toolCallId: delta.toolCallId,
               content: resultStr,
             });
+            // v0.7.1 (A2): cache the result so an identical re-issue is
+            // short-circuited above instead of re-executed.
+            this.toolCallCache.set(callKey, resultStr);
+            }
           } else if (skipped) {
             // Synthetic end event — no registry call, just close out the
             // tool_execution_start with an explicit skip reason. The LLM
@@ -624,4 +686,111 @@ export class AgentHarness {
       }
     }
   }
+
+  /**
+   * Final-answer turn (v0.7.1 A2). Called when the tool-call loop hit its
+   * iteration cap without the model producing a non-tool finish. Makes ONE
+   * provider call with `tools` OMITTED and a synthetic system nudge appended,
+   * so the run always ends with assistant text answering the user with what
+   * has been gathered — instead of trailing off after the last tool box.
+   *
+   * Yields the full message lifecycle (start/deltas/end) so the UI renders
+   * the closing answer like any other assistant turn. Errors are swallowed
+   * into a recoverable error event (best-effort: the guarantee must never
+   * turn a near-success into a hard failure).
+   */
+  private async *runFinalAnswerTurn(): AsyncIterable<BrainEvent> {
+    const messageId = crypto.randomUUID();
+    const msgStart: BrainMessageStartEvent = createBrainEvent('message_start', this.sessionId, {
+      messageId,
+      role: 'assistant',
+      ...this.memberFields(),
+    });
+    this.emit(msgStart);
+    yield msgStart;
+
+    // Append a synthetic system nudge telling the model to answer now, and
+    // run with NO tools so it cannot start another tool chain.
+    this.config.messages.push({
+      role: 'user',
+      content:
+        '[system] Tool iteration budget exhausted. Stop calling tools and answer the original request now using the information you have already gathered. Do not apologize for the tools.',
+    });
+
+    let totalLength = 0;
+    const finishRef = { value: 'stop' };
+    const usageRef = { value: null as UsageBreakdown | null };
+    // Temporarily drop tools for this call by building a no-tools provider
+    // invocation. We re-enter runSingleTurn but with an empty tools list via
+    // a throwaway config override is not possible (config is readonly), so we
+    // call the providerStream directly with tools: [].
+    try {
+      const stream = this.config.providerStream({
+        messages: this.config.messages,
+        model: this.config.model,
+        provider: this.config.provider,
+        tools: [],
+        signal: this.activeController?.signal,
+      });
+      for await (const delta of stream) {
+        if (this.cancelled) break;
+        if (delta.kind === 'text') {
+          totalLength += delta.delta.length;
+          const deltaEvent: BrainMessageDeltaEvent = createBrainEvent(
+            'message_delta',
+            this.sessionId,
+            { messageId, delta: delta.delta, ...this.memberFields() },
+          );
+          this.emit(deltaEvent);
+          yield deltaEvent;
+        } else if (delta.kind === 'usage') {
+          usageRef.value = delta.usage;
+        } else if (delta.kind === 'finish') {
+          finishRef.value = delta.reason;
+        }
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      const errEvent = createBrainEvent('error', this.sessionId, {
+        severity: 'recoverable',
+        message: `final-answer turn failed: ${errorMessage}`,
+      });
+      this.emit(errEvent);
+      yield errEvent;
+    }
+
+    const msgEnd: BrainMessageEndEvent = createBrainEvent('message_end', this.sessionId, {
+      messageId,
+      totalLength: totalLength,
+      finishReason: finishRef.value,
+      ...this.memberFields(),
+      ...(usageRef.value ? { usage: usageRef.value } : {}),
+    });
+    this.emit(msgEnd);
+    yield msgEnd;
+  }
+}
+
+/**
+ * Stable hash key for a tool call (v0.7.1 A2). Canonicalizes args via a sorted
+ * JSON.stringify so `{a:1,b:2}` and `{b:2,a:1}` collide (same logical call).
+ * Exported for unit tests.
+ */
+export function hashToolCall(toolName: string, args: unknown): string {
+  const canonical = stableStringify(args);
+  return `${toolName}::${canonical}`;
+}
+
+/** Deterministic JSON stringify (object keys sorted ascending). */
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_k, v) => {
+    if (v && typeof v === 'object' && !Array.isArray(v)) {
+      const sorted: Record<string, unknown> = {};
+      for (const key of Object.keys(v as Record<string, unknown>).sort()) {
+        sorted[key] = (v as Record<string, unknown>)[key];
+      }
+      return sorted;
+    }
+    return v;
+  });
 }

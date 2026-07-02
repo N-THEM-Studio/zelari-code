@@ -1,5 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
+import { useStdout } from 'ink';
+import { formatToolResult } from './toolFormat.js';
 
 /**
  * ToolOutput — stateless, policy-driven tool invocation renderer (v0.7.0).
@@ -10,34 +12,30 @@ import { Box, Text } from 'ink';
  * scrollback it is immutable. So this component is pure — no `useState`, no
  * memo comparator on an `expanded` prop.
  *
+ * v0.7.1 (plan B1+B3): the body is formatted via `formatToolResult` (no more
+ * raw JSON envelope with escaped `\n`), and one-line results (write_file /
+ * edit_file success) print inline with NO bordered box. Bordered boxes use a
+ * clamped `width = min(terminalWidth - 6, 100)` so the wall of mixed-width
+ * boxes is gone.
+ *
  * Two render modes:
  *
  *   - `live` (pending, in the dynamic region): a single `⋯ [name] summary`
  *     line. No body, no duration — the invocation hasn't ended. This keeps
  *     the dynamic region exactly one line per in-flight tool.
  *
- *   - finalized (printed into scrollback): the form is decided ONCE here:
- *       - error → summary + full body (bordered, as the v0.6.2 auto-expand).
- *       - success → summary + first `ZELARI_TOOL_OUTPUT_LINES` lines
- *         (default 5) of the result + `… (+K lines)` tail marker. The full
- *         body remains available in the session JSONL.
- *
- * `ZELARI_TOOL_OUTPUT_LINES` overrides the success cap (env, parsed once).
+ *   - finalized (printed into scrollback): the form is decided ONCE here via
+ *     formatToolResult, which keys off the tool name to render the right
+ *     shape (stdout lines for bash, content for read_file, etc.).
  *
  * Color coding by tool name prefix mirrors the v0.6.2 CollapsibleToolOutput.
  */
 
-const TOOL_OUTPUT_LINES = (() => {
-  const raw = process.env.ZELARI_TOOL_OUTPUT_LINES;
-  const n = raw ? Number.parseInt(raw, 10) : 5;
-  return Number.isFinite(n) && n >= 0 ? n : 5;
-})();
-
 export type ToolOutputProps = {
   toolName: string;
-  /** Short summary (e.g. "cat package.json" or first arg / args preview). */
+  /** Short summary (e.g. "cat package.json" or the formatted args line). */
   summary: string;
-  /** Full output body (shown when finalized + per the policy below). */
+  /** Full output body (shown when finalized, formatted per tool policy). */
   body: string;
   /** ok=true, error=false, undefined=pending (only meaningful with live). */
   ok?: boolean;
@@ -56,22 +54,14 @@ function borderColor(toolName: string, ok?: boolean): string {
   return 'cyan';
 }
 
-/**
- * Apply the success finalize policy to a body: keep the first
- * `ZELARI_TOOL_OUTPUT_LINES` lines, append a `… (+K lines)` marker when
- * truncated. Errors keep the full body (the v0.6.2 auto-expand behavior).
- */
-function finalizeBody(body: string, isError: boolean): string {
-  if (isError) return body;
-  const lines = body.split('\n');
-  if (lines.length <= TOOL_OUTPUT_LINES) return body;
-  const head = lines.slice(0, TOOL_OUTPUT_LINES).join('\n');
-  return `${head}\n… (+${lines.length - TOOL_OUTPUT_LINES} lines)`;
-}
-
 function ToolOutputImpl(props: ToolOutputProps): React.ReactElement {
   const { toolName, summary, body, ok, durationMs, live = false } = props;
   const color = borderColor(toolName, ok);
+  const { stdout } = useStdout();
+  // B3: clamp bordered box width so boxes don't stretch to full terminal and
+  // produce the mixed-width wall seen in v0.7.0.
+  const termWidth = stdout?.columns ?? 80;
+  const boxWidth = Math.min(Math.max(40, termWidth - 6), 100);
 
   // Pending (live region): single line, no body, no duration.
   if (live || ok === undefined) {
@@ -85,9 +75,9 @@ function ToolOutputImpl(props: ToolOutputProps): React.ReactElement {
     );
   }
 
-  // Finalized.
+  // Finalized — format the body per tool policy (B1).
   const isError = ok === false;
-  const printedBody = finalizeBody(body, isError);
+  const formatted = formatToolResult(toolName, body);
   const status = ok ? '✓' : '✗';
   const summaryLine = [
     status,
@@ -96,15 +86,40 @@ function ToolOutputImpl(props: ToolOutputProps): React.ReactElement {
     durationMs !== undefined ? `(${durationMs}ms)` : '',
   ].filter(Boolean).join(' ');
 
+  // B3: one-line results (write_file/edit_file success) print inline — no box.
+  if (formatted.oneLine && !isError) {
+    const inline = formatted.lines[0] ?? '';
+    return (
+      <Box flexDirection="column" marginLeft={2}>
+        <Box>
+          <Text color={color}>{summaryLine}</Text>
+        </Box>
+        <Box marginLeft={2}>
+          <Text dimColor>{inline}</Text>
+        </Box>
+      </Box>
+    );
+  }
+
+  const bodyText = formatted.lines.join('\n');
+  const metaSuffix = formatted.meta ? `\n${formatted.meta}` : '';
+
   return (
     <Box flexDirection="column" marginLeft={2}>
       <Box>
         <Text color={color}>{summaryLine}</Text>
       </Box>
-      <Box flexDirection="column" marginLeft={2} borderStyle="single" borderColor={color} paddingX={1}>
+      <Box
+        flexDirection="column"
+        marginLeft={2}
+        width={boxWidth}
+        borderStyle="single"
+        borderColor={color}
+        paddingX={1}
+      >
         {/* Single <Text> with embedded \n — Ink draws this as one cohesive
             block, avoiding the N-draw-call cost of mapping each line. */}
-        <Text dimColor={isError}>{printedBody}</Text>
+        <Text dimColor={isError}>{bodyText}{metaSuffix}</Text>
       </Box>
     </Box>
   );

@@ -188,9 +188,21 @@ export function setWorkspaceStubs(stubs: EnhancedToolDefinition[]): void {
   rebuildIndex();
 }
 
-/** Read-only snapshot of the current registry (always a fresh array). */
+/**
+ * Read-only snapshot of the current registry (always a fresh array).
+ *
+ * v0.7.1 fix (CRITICAL): dedupe by name so workspace stubs shadow builtins
+ * of the same name — consistent with {@link rebuildIndex}, which already lets
+ * stubs win via the `Map`. Without this, the CLI council path registered
+ * stubs (`createPhase`, `createTask`, …) alongside the core builtin tools
+ * with identical names, so `getProviderTools()` emitted two function entries
+ * per name and xAI rejected the request with HTTP 400
+ * "Duplicate function definition provided". The duplicate is silent in the
+ * in-memory `Map` (later entry wins) but fatal on the wire.
+ */
 export function getAllTools(): EnhancedToolDefinition[] {
-  return [..._allTools, ..._workspaceStubs];
+  const map = new Map([..._allTools, ..._workspaceStubs].map((t) => [t.name, t]));
+  return [...map.values()];
 }
 
 /** Register a custom tool (user-defined or MCP-discovered). If a tool with

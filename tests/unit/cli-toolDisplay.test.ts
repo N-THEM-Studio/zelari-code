@@ -117,7 +117,7 @@ beforeEach(() => {
 });
 
 describe('messageHelpers — tool messages (v0.6.2)', () => {
-  it('appendToolStart emits a role:tool message with toolCallId + args preview', () => {
+  it('appendToolStart emits a role:tool message with toolCallId + human-readable summary', () => {
     const { messages, setMessages } = makeStore();
     appendToolStart(setMessages, 'read_file', 'tc-9', { path: '/tmp/x' }, 123);
     expect(messages).toHaveLength(1);
@@ -125,7 +125,8 @@ describe('messageHelpers — tool messages (v0.6.2)', () => {
     expect(m.role).toBe('tool');
     expect(m.toolName).toBe('read_file');
     expect(m.toolCallId).toBe('tc-9');
-    expect(m.content).toBe('{"path":"/tmp/x"}');
+    // v0.7.1 (B2): summary is human-readable (the path), not raw JSON args.
+    expect(m.content).toBe('/tmp/x');
     expect(m.toolOk).toBeUndefined();
   });
 
@@ -137,7 +138,8 @@ describe('messageHelpers — tool messages (v0.6.2)', () => {
     const m = messages[0];
     expect(m.toolOk).toBe(true);
     expect(m.toolDurationMs).toBe(42);
-    expect(m.content).toBe('{"command":"ls"}'); // summary preserved
+    // v0.7.1 (B2): summary is the command string, not raw JSON.
+    expect(m.content).toBe('ls');
     expect(m.toolResult).toHaveLength(TOOL_RESULT_PREVIEW_CHARS + 1); // + ellipsis
     expect(m.toolResult!.endsWith('…')).toBe(true);
   });

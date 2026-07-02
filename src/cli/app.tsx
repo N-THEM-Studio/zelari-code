@@ -150,7 +150,7 @@ export function App(): React.ReactElement {
       role: 'system',
       ts: 0,
       content:
-        `zelari-code v0.7.0 — ${activeProviderSpec.id}/${activeModel}\n` +
+        `zelari-code v0.7.1 — ${activeProviderSpec.id}/${activeModel}\n` +
         `${skills.length} skills available. Type /help for the list, or /skill <name>.\n` +
         `── skills ──\n${skillList}`,
     };

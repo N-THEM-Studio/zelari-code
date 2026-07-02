@@ -30,8 +30,8 @@ import { runCouncilPure } from '@zelari/core/council';
 import type { ProviderStreamFn, ProviderDelta } from '@zelari/core/harness';
 import type { BrainEvent } from '@zelari/core/events';
 
-function toolCall(id: string, name: string): ProviderDelta {
-  return { kind: 'tool_call', toolCallId: id, toolName: name, args: {} };
+function toolCall(id: string, name: string, args: Record<string, unknown> = {}): ProviderDelta {
+  return { kind: 'tool_call', toolCallId: id, toolName: name, args };
 }
 
 function text(s: string): ProviderDelta {
@@ -71,10 +71,12 @@ describe('AgentHarness maxToolCallsPerTurn enforcement (Task G.2.4)', () => {
 
     const provider = asyncGen([
       text('starting'),
-      toolCall('tc-1', 'noop'),
-      toolCall('tc-2', 'noop'),
-      toolCall('tc-3', 'noop'),
-      toolCall('tc-4', 'noop'),
+      // v0.7.1: distinct args per call so the A2 duplicate-call cache does
+      // not short-circuit them — this test isolates the per-turn limit.
+      toolCall('tc-1', 'noop', { n: 1 }),
+      toolCall('tc-2', 'noop', { n: 2 }),
+      toolCall('tc-3', 'noop', { n: 3 }),
+      toolCall('tc-4', 'noop', { n: 4 }),
       text('done'),
       finish('stop'),
     ]);
@@ -132,13 +134,15 @@ describe('AgentHarness maxToolCallsPerTurn enforcement (Task G.2.4)', () => {
     // Factory provider — each call to the ProviderStreamFn returns a
     // fresh generator. The first turn yields one tool call, the second
     // (queue-drained) yields another. Counter must reset between turns.
+    // v0.7.1: distinct args per turn so the A2 dup-call cache (which is
+    // per-run, not per-turn) does not short-circuit the second execution.
     let turnIdx = 0;
     const provider: ProviderStreamFn = (async function* () {
       turnIdx++;
       if (turnIdx === 1) {
-        yield toolCall('tc-1', 'noop');
+        yield toolCall('tc-1', 'noop', { turn: 1 });
       } else {
-        yield toolCall('tc-2', 'noop');
+        yield toolCall('tc-2', 'noop', { turn: 2 });
       }
       yield finish('stop');
     }) as ProviderStreamFn;
@@ -182,9 +186,10 @@ describe('AgentHarness maxToolCallsPerTurn enforcement (Task G.2.4)', () => {
     });
 
     const provider = asyncGen([
-      toolCall('tc-1', 'noop'),
-      toolCall('tc-2', 'noop'),
-      toolCall('tc-3', 'noop'),
+      // v0.7.1: distinct args so the A2 dup-call cache doesn't short-circuit.
+      toolCall('tc-1', 'noop', { n: 1 }),
+      toolCall('tc-2', 'noop', { n: 2 }),
+      toolCall('tc-3', 'noop', { n: 3 }),
       finish('stop'),
     ]);
 
