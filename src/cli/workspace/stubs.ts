@@ -283,6 +283,9 @@ function createTaskStub(ctx: WorkspaceContext): EnhancedToolDefinition {
         summary.tasks.push({
           kind: 'task',
           id,
+          // v0.7.3: keep the human-readable title in plan.json so
+          // buildPlanSummary can render it in the system prompt.
+          name: title,
           phaseId,
           status: 'pending',
           priority: priority as 'low' | 'medium' | 'high' | 'critical',

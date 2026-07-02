@@ -149,6 +149,17 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               });
       const cwd = process.cwd();
       const toolList = toolRegistry.toOpenAITools().map((t) => `- ${t.function.name}: ${t.function.description}`).join('\n');
+      // v0.7.3: surface the council plan (if any) to the single agent too.
+      // The plan lives in .zelari/plan.json but the agent had no idea it
+      // existed — users had to paste task-file paths by hand. Best-effort:
+      // no plan → null → zero prompt-token cost.
+      let planSummary: string | null = null;
+      try {
+        const { buildPlanSummary } = await import('../workspace/workspaceSummary.js');
+        planSummary = buildPlanSummary(cwd);
+      } catch {
+        // Plan summary is a nice-to-have — never block a prompt on it.
+      }
       // v0.7.2 (C3): platform-aware shell guidance. The model must know which
       // shell the `bash` tool actually runs in so it writes the right commands
       // (POSIX for Git Bash, Windows-native for cmd.exe fallback).
@@ -177,6 +188,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         '# Available Tools',
         'You can call these tools. Use them to take action and gather information autonomously:',
         toolList,
+        ...(planSummary ? ['', planSummary] : []),
         '',
         '# Guidelines',
         '- When the user asks you to write code, debug, or explore, be proactive: list files (list_files, or bash: ls/dir) and read key files (read_file) to understand the project instead of asking the user to paste file contents.',
@@ -408,7 +420,7 @@ async function dispatchCouncilPromptImpl(
   const { createWorkspaceToolRegistry } = await import('../workspace/toolRegistry.js');
   const { setWorkspaceStubs } = await import('@zelari/core/skills');
   const { runPostCouncilHook } = await import('../workspace/postCouncilHook.js');
-  const { buildWorkspaceSummary } = await import('../workspace/workspaceSummary.js');
+  const { buildWorkspaceSummary, buildPlanSummary } = await import('../workspace/workspaceSummary.js');
   const { FeedbackStore } = await import('../councilFeedback.js');
 
   const { registry: councilToolRegistry } = createBuiltinToolRegistry();
@@ -462,7 +474,11 @@ async function dispatchCouncilPromptImpl(
       // single-prompt path has — cwd, tech stack, file layout, build scripts.
       // Without this, members had no idea which project they were operating
       // on and projected their identity onto the task.
-      workspaceContext: buildWorkspaceSummary(process.cwd()),
+      // v0.7.3: append the existing plan (if any) so a follow-up /council
+      // continues it instead of re-planning from scratch.
+      workspaceContext: [buildWorkspaceSummary(process.cwd()), buildPlanSummary(process.cwd())]
+        .filter(Boolean)
+        .join('\n\n'),
       maxToolCallsPerTurn: councilMaxToolCalls,
     })) {
       if (councilAborted) {
