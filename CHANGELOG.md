@@ -5,6 +5,68 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-07-02
+
+Fase 4 of the v0.5.0 roadmap: stable release. The CLI, the
+`@zelari/core` monorepo package, the first-run wizard, the
+visible-reasoning council, and the headless mode are all in.
+
+This is the **first release where `@zelari/core` is a standalone,
+publishable package** (MIT-licensed, 9 subpath exports, 752/752
+tests green). If you have code that imported from pre-0.5.0 internal
+paths, see [MIGRATION.md](MIGRATION.md).
+
+### Highlights
+
+- **First standalone release of `@zelari/core`** (MIT). 9 curated
+  subpath exports; see `packages/core/package.json` for the full
+  list. The `src/main/core/`, `src/agents/`, `src/shared/`,
+  `src/types/` paths are gone — no shim, by design (see
+  [ADR-0005](docs/decisions/0005-deprecate-legacy-src-paths.md)).
+- **First-run wizard** with keyStore wiring and a no-`process.exit`
+  bridge into the regular TUI. `--no-wizard`, `--reset-config`, and
+  `ZELARI_NO_WIZARD=1` for skipping.
+- **Visible reasoning**: council member identity (`memberId` /
+  `memberName`) now propagates from the 6-member debate through the
+  event stream into the chat header. Caronte, Minosse, etc. are no
+  longer anonymous in the TUI.
+- **Headless mode** (`--headless --task X [--council] [--output json|plain]`):
+  runs without Ink, for CI/CD and scripting. Reuses the same
+  AgentHarness and dispatchCouncil code paths as the TUI, so event
+  shape is identical (including the new memberId/memberName).
+- **5 ADRs** in `docs/decisions/` documenting the monorepo, MIT
+  license for `@zelari/core`, versioning policy, public API surface,
+  and the no-shim policy.
+
+### Bundle / size
+
+- CLI bundle: ~1015 KB (was ~1011.8 KB at v0.5.0-dev.0; +~3 KB for
+  `headless.ts` and `runHeadless.ts`).
+- `@zelari/core` tarball: 147.9 KB, unpacked 571.3 KB, 181 files.
+
+### Verification
+
+- 752 unit tests passing (12 added in `headless-flags.test.ts`, 5 in
+  `headless-run.test.ts`).
+- `npm run typecheck` clean.
+- `npm pack --dry-run` clean: LICENSE + subpath exports + dist match.
+
+### Changed
+
+- `src/cli/main.ts` no longer mounts Ink unconditionally. The new
+  `pickRootComponent()` returns a `{kind: 'wizard' | 'app' | 'headless' | 'done'}`
+  discriminator. The wizard runs on first launch (or when
+  `provider.json` is missing); headless mode short-circuits the TUI
+  on `--headless --task X`.
+- All `VERSION` constants bumped from `0.5.0-dev.0` to `0.5.0` in
+  `package.json`, `packages/core/package.json`,
+  `src/cli/main.ts`, `src/cli/wizard/index.tsx`, `README.md`.
+
+### Migration
+
+See [MIGRATION.md](MIGRATION.md). Summary: import paths changed, the
+tool itself is wire-compatible for the CLI use case.
+
 ## [Unreleased]
 
 ### Added (Fase 3 — council reliability)

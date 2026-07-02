@@ -8,6 +8,10 @@
 
 **Zelari Code** is a standalone CLI extracted from [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain). It brings the multi-agent council (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) directly into your terminal with a rich TUI (Ink + React), slash command system, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok with OAuth, GLM/Z.AI).
 
+> **Upgrading from ≤ 0.4.x?** See [MIGRATION.md](./MIGRATION.md) — the internal
+> `src/main/core/`, `src/agents/`, `src/shared/`, `src/types/` paths no longer
+> exist. The published core package is `@zelari/core` (MIT). 9 subpath exports.
+
 ## Install
 
 ```bash
@@ -43,7 +47,7 @@ the regular TUI:
 
 ```
 ╭─────────────────────────────────────────────────╮
-│ zelari-code v0.5.0-dev.0 — first-time setup    │
+│ zelari-code v0.5.0 — first-time setup    │
 │ 1/welcome  2/provider  3/model  4/apikey  5/...│
 │                                                 │
 │ Welcome! Let's get you coding in under 2 min.   │

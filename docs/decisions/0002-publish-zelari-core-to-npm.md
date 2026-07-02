@@ -99,7 +99,19 @@ Il workflow fallisce se:
 ## TODO
 
 - [x] License scelta: MIT per @zelari/core pubblicato.
-- [ ] Configurare npm Trusted Publishing (post-merge di questo ADR).
-- [ ] Workflow `.github/workflows/release.yml` con publish OIDC.
-- [ ] `packages/core/README.md` con esempi d'uso consumatore esterno.
-- [ ] `packages/core/CHANGELOG.md` con storia releases (a partire da v0.5.0).
+- [x] Configurare npm Trusted Publishing: workflow aggiornato in
+      `.github/workflows/publish.yml` per usare OIDC
+      (`id-token: write`, niente `NPM_TOKEN` long-lived). Resta da
+      configurare il lato npmjs.com (Andrea: andare su
+      https://www.npmjs.com/package/@zelari/core/access, aggiungere
+      Trusted Publisher con repo `N-THEM-Studio/zelari-code`,
+      workflow file `publish.yml`).
+- [x] Workflow `.github/workflows/release.yml` con publish OIDC:
+      stesso `publish.yml` ora pubblica ENTRAMBI i workspace
+      (`zelari-code` CLI + `@zelari/core`) in job paralleli.
+- [ ] `packages/core/README.md` con esempi d'uso consumatore esterno:
+      non bloccante per v0.5.0; gli esempi sono in MIGRATION.md.
+- [x] `packages/core/CHANGELOG.md` con storia releases (a partire da
+      v0.5.0): in v0.5.0 il CHANGELOG del package core coincide con
+      il CHANGELOG root; non serve file separato finché i release
+      notes divergono.

@@ -1,9 +1,9 @@
 {
   "name": "@zelari/core",
-  "version": "0.5.0-dev.0",
+  "version": "0.5.0",
   "description": "Zelari Code core library — provider-neutral agent loop (AgentHarness), multi-agent council orchestration, and built-in skills. Used by the zelari-code CLI; consumable by other agent frontends.",
   "author": "N-THEM Studio",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -135,5 +135,9 @@
     "type": "git",
     "url": "git+https://github.com/N-THEM-Studio/zelari-code.git",
     "directory": "packages/core"
+  },
+  "homepage": "https://github.com/N-THEM-Studio/zelari-code#readme",
+  "bugs": {
+    "url": "https://github.com/N-THEM-Studio/zelari-code/issues"
   }
 }

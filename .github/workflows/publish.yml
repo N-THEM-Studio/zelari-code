@@ -7,11 +7,32 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag to publish (e.g. v0.1.0)'
+        description: 'Version tag to publish (e.g. v0.5.0)'
         required: true
 
+# Publishes BOTH the CLI (`zelari-code`) and the core library
+# (`@zelari/core`) to the npm registry.
+#
+# Authentication: Trusted Publishing (OIDC). Requires the matching
+# "Trusted Publisher" entry to be configured on each package's npmjs.com
+# settings page:
+#   - https://www.npmjs.com/package/zelari-code/access  (or org page)
+#   - https://www.npmjs.com/package/@zelari/core/access
+# Settings:
+#   - Provider: GitHub Actions
+#   - Repository: N-THEM-Studio/zelari-code
+#   - Workflow file: .github/workflows/publish.yml
+#   - Environment: (none — leave empty unless you also use GitHub envs)
+#
+# Once OIDC is configured, the long-lived NPM_TOKEN secret becomes
+# unnecessary and can be removed from the repo.
+#
+# No NPM_TOKEN secret is referenced in this workflow. The `id-token: write`
+# permission below is what enables OIDC; `actions/setup-node` exchanges
+# the OIDC token for a short-lived npm token at publish time.
 jobs:
-  publish:
+  publish-cli:
+    name: Publish zelari-code (CLI)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -37,7 +58,35 @@ jobs:
       - name: Run tests
         run: npm test
 
-      - name: Publish to npm
-        run: npm publish --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      - name: Publish zelari-code
+        run: npm publish --workspace=zelari-code --access public
+
+  publish-core:
+    name: Publish @zelari/core
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck (core)
+        run: npm run typecheck --workspace=@zelari/core
+
+      - name: Build @zelari/core
+        run: npm run build --workspace=@zelari/core
+
+      - name: Run tests (core)
+        run: npm test --workspace=@zelari/core
+
+      - name: Publish @zelari/core
+        run: npm publish --workspace=@zelari/core --access public

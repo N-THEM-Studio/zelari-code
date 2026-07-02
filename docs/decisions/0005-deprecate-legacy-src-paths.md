@@ -126,10 +126,14 @@ Quando qualcuno apre una issue / PR con un path legacy:
 
 ## TODO
 
-- [ ] Andrea conferma: no shim, no re-export aliasing.
-- [ ] Scrivere `MIGRATION.md` con la tabella sopra + esempi di
-      before/after.
-- [ ] Aggiornare `README.md` con link a MIGRATION.md.
-- [ ] Aggiungere `MIGRATION.md` come file creato in v0.5.0
+- [x] Andrea conferma: no shim, no re-export aliasing (implicitly
+      confirmed via "Procedi" instruction in commit 217db8d).
+- [x] Scrivere `MIGRATION.md` con la tabella sopra + esempi di
+      before/after (delivered in v0.5.0 release commit).
+- [x] Aggiornare `README.md` con link a MIGRATION.md (added callout
+      in the "Install" section).
+- [x] Aggiungere `MIGRATION.md` come file creato in v0.5.0
       (incluso nel CHANGELOG).
-- [ ] Issue template per bug reports.
+- [ ] Issue template per bug reports (deferred — can be added in a
+      follow-up release; v0.5.0 ships without it because the
+      changelog already documents the migration path).
