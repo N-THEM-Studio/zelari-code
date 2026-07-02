@@ -170,6 +170,14 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         : isWindows
           ? `The bash tool runs commands via cmd.exe (Git Bash not found). Write Windows-native commands: use dir (not ls), %VAR% (not $VAR), avoid POSIX-only syntax.`
           : `The bash tool runs commands via /bin/sh.`;
+      // v0.7.3: the shell has NO interactive stdin. Without this warning the
+      // model retried `npm create vite` four times against the interactive
+      // prompt ("Operation cancelled") and then gave up asking the user.
+      const nonInteractiveGuidance =
+        'The shell is NON-INTERACTIVE (stdin closed): commands that prompt for input fail immediately. ' +
+        'Always pass non-interactive flags (--yes, -y, --template, --force). ' +
+        'If a scaffolder still insists on prompting (e.g. `npm create vite` in a non-empty directory), do NOT retry it — ' +
+        'scaffold into a fresh empty subdirectory and move the files, or write package.json/configs/sources yourself with write_file, then run `npm install`.';
       const systemPrompt = [
         "You are Zelari Code, an interactive AI coding agent operating directly in the user's terminal.",
         '',
@@ -180,6 +188,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         `platform: ${process.platform}`,
         `shell: ${resolvedShell.via}`,
         shellGuidance,
+        nonInteractiveGuidance,
         '',
         '# Working Directory',
         `You are running in: ${cwd}`,

@@ -480,13 +480,30 @@ function createDocumentStub(ctx: WorkspaceContext): EnhancedToolDefinition {
   };
 }
 
+/**
+ * After this many searchDocuments calls in one council run, every further
+ * result carries a nudge to stop searching and act. Live test 2026-07-02:
+ * one member burned ~25 near-identical searches (each phrased slightly
+ * differently, so the duplicate-call cache never tripped) before doing any
+ * actual work.
+ */
+const SEARCH_NUDGE_THRESHOLD = 5;
+
 function searchDocumentsStub(ctx: WorkspaceContext): EnhancedToolDefinition {
+  let callCount = 0;
   return {
     name: 'searchDocuments',
-    description: 'Search all workspace documents (`.zelari/**`) for a keyword. Returns matching files with snippets.',
+    description:
+      'Search all workspace documents (`.zelari/**`) for a keyword. Returns matching files with snippets. ' +
+      'Search AT MOST 2-3 times, then act on the results: read the matched files with read_file instead of rephrasing the same search.',
     category: 'analysis',
     parameters: [],
     execute: async (args) => {
+      callCount++;
+      const nudge =
+        callCount > SEARCH_NUDGE_THRESHOLD
+          ? `[note] This is searchDocuments call #${callCount} in this run — STOP searching. Read the files you already found with read_file and act on them.\n\n`
+          : '';
       const rawQuery = ((args['query'] as string) ?? '').trim();
       const limit = (args['limit'] as number) ?? 5;
       if (!rawQuery) return 'searchDocuments requires a query.';
@@ -538,8 +555,8 @@ function searchDocumentsStub(ctx: WorkspaceContext): EnhancedToolDefinition {
         results.push({ path: relative(ctx.rootDir, file) || basename(file), snippet });
         if (results.length >= limit) break;
       }
-      if (results.length === 0) return `No matches for "${rawQuery}" in workspace.`;
-      return results.map((r) => `[${r.path}]\n${r.snippet}`).join('\n\n');
+      if (results.length === 0) return `${nudge}No matches for "${rawQuery}" in workspace.`;
+      return nudge + results.map((r) => `[${r.path}]\n${r.snippet}`).join('\n\n');
     },
   };
 }

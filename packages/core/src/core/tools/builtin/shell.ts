@@ -23,7 +23,8 @@ interface BashResult {
 export const bashTool: ToolDefinition<BashArgs, BashResult> = {
   name: 'bash',
   description:
-    'Run a shell command. On Windows uses Git Bash when available (POSIX semantics: ls, $VAR, && work); falls back to cmd.exe otherwise. Streams stdout/stderr. Respects timeout and cancellation. Returns exit code.',
+    'Run a shell command. On Windows uses Git Bash when available (POSIX semantics: ls, $VAR, && work); falls back to cmd.exe otherwise. Streams stdout/stderr. Respects timeout and cancellation. Returns exit code. ' +
+    'stdin is CLOSED (non-interactive): any command that prompts for input will fail or be cancelled — always pass non-interactive flags (--yes, -y, --template), and if a scaffolder insists on prompting (e.g. create-vite in a non-empty directory), create the files manually with write_file instead.',
   permissions: ['execute'],
   timeoutMs: 60000,
   inputSchema: BashArgsSchema,
@@ -39,18 +40,30 @@ export const bashTool: ToolDefinition<BashArgs, BashResult> = {
       // POSIX / fallback: keep the historical `shell: true` (Node picks /bin/sh
       // on posix, cmd.exe on win32-fallback — already warned by the resolver).
       let child: ReturnType<typeof spawn>;
+      // v0.7.3: CI=1 pushes well-behaved CLIs (npm, scaffolders, test runners)
+      // into non-interactive mode; stdin 'ignore' makes the rest fail FAST
+      // with EOF instead of hanging on a prompt until the timeout (live test:
+      // `npm create vite` in a non-empty dir prompted → "Operation cancelled").
+      const baseEnv = { ...process.env, CI: process.env.CI ?? '1' };
       const env = resolved.isBash
-        ? { ...process.env, MSYSTEM: process.env.MSYSTEM ?? 'MINGW64' }
-        : process.env;
+        ? { ...baseEnv, MSYSTEM: process.env.MSYSTEM ?? 'MINGW64' }
+        : baseEnv;
       if (resolved.isBash) {
         child = spawn(resolved.shell as string, ['-c', args.command], {
           cwd,
           signal: ctx.signal,
           shell: false,
           env,
+          stdio: ['ignore', 'pipe', 'pipe'],
         });
       } else {
-        child = spawn(args.command, { shell: resolved.shell, cwd, signal: ctx.signal, env });
+        child = spawn(args.command, {
+          shell: resolved.shell,
+          cwd,
+          signal: ctx.signal,
+          env,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
       }
 
       let stdout = '';

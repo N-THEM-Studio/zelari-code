@@ -269,6 +269,31 @@ describe('searchDocuments OR queries (v0.7.3)', () => {
   });
 });
 
+describe('searchDocuments anti-spam nudge (v0.7.3)', () => {
+  it('appends a stop-searching note after the 5th call in the same run', async () => {
+    const addIdea = findStub('addIdea');
+    await addIdea.execute({ title: 'JWT Strategy', context: 'Using JWT tokens for auth' }, ctx);
+    const search = findStub('searchDocuments');
+    for (let i = 0; i < 5; i++) {
+      const r = await search.execute({ query: `jwt variant ${i}` }, ctx);
+      expect(r).not.toContain('STOP searching');
+    }
+    const sixth = await search.execute({ query: 'jwt again' }, ctx);
+    expect(sixth).toContain('STOP searching');
+    expect(sixth).toContain('#6');
+  });
+
+  it('the counter is per council run (fresh stubs start clean)', async () => {
+    const search = findStub('searchDocuments');
+    for (let i = 0; i < 7; i++) await search.execute({ query: `q${i}` }, ctx);
+    // A new run creates fresh stubs → no nudge on the first call.
+    const freshStubs = createWorkspaceStubs(ctx);
+    const freshSearch = freshStubs.find((t) => t.name === 'searchDocuments')!;
+    const r = await freshSearch.execute({ query: 'anything' }, ctx);
+    expect(r).not.toContain('STOP searching');
+  });
+});
+
 describe('updateTask status aliases (v0.7.3)', () => {
   it('maps "todo" → pending and "completed" → done', async () => {
     const createPhase = findStub('createPhase');
