@@ -14,6 +14,7 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 | 0003 | Schema di versionamento per monorepo zelari-code     | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
 | 0004 | Policy di stabilità API pubblica di `@zelari/core`   | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
 | 0005 | Deprecation dei path sorgente legacy                | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
+| 0006 | Lucifero chairman synthesis reale (v0.6.0)           | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
 
 ## Formato
 

@@ -5,6 +5,28 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-07-02
+
+### Highlights
+- **Lucifero chairman reale**: il chairman della council (Lucifero) ora genera una sintesi effettiva basata sugli output dei 5 specialisti + Minosse, con streaming typewriter, tool calls abilitate e fallback robusto in caso di errore LLM. Sostituisce lo stub che produceva solo `[Chairman synthesis for: ...]`. **No more 5 loose threads — the council now has a single, reasoned final answer.**
+- **Visible reasoning per Lucifero**: gratis via il pattern `memberId`/`memberName` propagato in v0.5.0. La CLI mostra `· Lucifero` (in viola) nell'header del messaggio chairman, allineato agli altri 5 specialisti.
+- **7 nuovi test E2E** in `tests/unit/council-chairman.test.ts` che coprono: presenza di `memberId="lucifer"`, almeno 1 `message_delta` con chairman ID, `member_cost.errored=false` su successo, backward compat con `councilSize: 3` (no chairman), gestione errore LLM chairman.
+- **ADR-0006** documenta la decisione di rendere Lucifero reale in v0.6.0 invece di v0.5.0 (scope creep evitato) e le alternative valutate (graceful fallback vs hard fail).
+
+### Added
+- `packages/core/src/agents/councilApi.ts`: loop chairman reale (~110 righe) basato su `AgentHarness`, con `buildAgentMessages(chairman, userMessage, agentOutputs, ...)`, streaming `message_delta` via `onSynthesisChunk`, error detection su `event.severity !== 'cancelled'`, fallback stringa `[Chairman synthesis failed: <reason>]` se LLM chairman fallisce.
+- `tests/unit/council-chairman.test.ts`: 7 test E2E con mock provider.
+- `docs/plans/2026-07-02-v0-6-0-roadmap.md`: piano v0.6.0 (Fase 0 = chairman reale, Fase 1+ = slice future).
+- `docs/decisions/0006-lucifero-chairman-real.md`: ADR con contesto, decisione, alternative, conseguenze.
+- `package.json`: `pretest` script che rebuilda `@zelari/core` prima dei test (previene dist vecchio).
+
+### Changed
+- Version bump `0.5.0` → `0.6.0` in `package.json` (root), `packages/core/package.json`, `src/cli/main.ts`, `src/cli/wizard/index.tsx`, `README.md`.
+
+### Deferred to v0.6.1
+- **Grounding helper**: aggiungerebbe 1 chiamata LLM extra + scoring fonti. Rimandato per non bloware lo scope di v0.6.0 (rilascio atomico chairman).
+- Flag `--no-chairman` per opt-out: non necessario finché utenti non lo chiedono.
+
 ## [0.5.0] - 2026-07-02
 
 Fase 4 of the v0.5.0 roadmap: stable release. The CLI, the

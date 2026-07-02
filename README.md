@@ -47,7 +47,7 @@ the regular TUI:
 
 ```
 ╭─────────────────────────────────────────────────╮
-│ zelari-code v0.5.0 — first-time setup    │
+│ zelari-code v0.6.0 — first-time setup    │
 │ 1/welcome  2/provider  3/model  4/apikey  5/...│
 │                                                 │
 │ Welcome! Let's get you coding in under 2 min.   │

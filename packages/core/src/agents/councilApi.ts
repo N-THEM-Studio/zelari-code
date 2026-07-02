@@ -525,33 +525,132 @@ export async function* runCouncilPure(
     agentOutputs.push({ name: oracle.name, role: oracle.role, content: cleaned });
   }
 
-  // Lucifero synthesis (Phase 13 will add full chairman integration)
+  // Lucifero synthesis — v0.6.0: real chairman integration.
+  // Previously this was a stub ("Phase 13 will add full chairman
+  // integration"). v0.6.0 promotes Lucifero to a real AgentHarness
+  // run that streams message_delta events just like the 5
+  // specialists and Minosse. The chairman:
+  //   1. Receives the same systemPrompt defined in roles.ts (via
+  //      buildAgentMessages with priorOutputs = all agent outputs).
+  //   2. Runs the same AgentHarness pipeline (tool calls allowed,
+  //      per-turn cap honoured).
+  //   3. Emits agent_start / message_start / message_delta /
+  //      message_end / agent_end / member_cost with memberId='lucifer'
+  //      and memberName='Lucifero', so the TUI renders
+  //      `· Lucifero` (purple #8b5cf6) just like the other roles.
+  //   4. Streams deltas through callbacks.onSynthesisChunk so the
+  //      chat panel can do typewriter effect during synthesis.
+  // Robustness: if the chairman's LLM call fails, the council run
+  // does NOT abort — the 5 specialist outputs remain available,
+  // and we surface the error reason in agent_end.
   if (chairman && !completedIds.has(chairman.id)) {
     callbacks.onSynthesisStart?.();
-    // For now, chairman just observes — full synthesis is deferred to 13.3+
-    callbacks.onSynthesisDone?.('Lucifero synthesis: see agent outputs above.');
-    // Task I.1 — emit a member_cost for the chairman too. The chairman
-    // path is currently stub (no harness.run), so durationMs=0 and no
-    // usage. Future full-chairman integration can wire the same
-    // per-member tracking by extending this block.
+    callbacks.onAgentStart?.(chairman);
+
+    const override = config.agentModels?.[chairman.id];
+    const effectiveProvider = override?.providerId ?? config.provider ?? 'minimax';
+    const effectiveModel = override?.model ?? config.model;
+
+    const chairmanToolNames = computeAgentTools(chairman, config.aiConfig);
+    const chairmanTools: AgentToolSpec[] = chairmanToolNames.length > 0
+      ? getProviderTools(chairmanToolNames).map((t) => ({
+          name: t.function.name,
+          description: t.function.description,
+          parameters: t.function.parameters as Record<string, unknown>,
+        }))
+      : [];
+
+    const chairmanHarness = new AgentHarness({
+      model: effectiveModel,
+      provider: effectiveProvider,
+      sessionId,
+      messages: buildAgentMessages(
+        chairman,
+        userMessage,
+        config.ragContext,
+        config.workspaceContext,
+        agentOutputs,
+        config.aiConfig,
+      ),
+      tools: chairmanTools,
+      eventBus: config.eventBus,
+      toolRegistry: config.tools,
+      maxToolCallsPerTurn: config.maxToolCallsPerTurn ?? 5,
+      // v0.5.0 visible-reasoning wiring: stamp every event with
+      // the chairman identity so the UI renders `· Lucifero` in
+      // purple. Same pattern as the specialist loop above.
+      memberId: chairman.id,
+      memberName: chairman.name,
+      providerStream: (params) => config.providerStream({
+        ...params,
+      } as never),
+    });
+
+    let fullText = '';
+    let toolCalls = 0;
+    let usage: UsageBreakdown | null = null;
+    let errored = false;
+    let lastErrorMessage = '';
+    const memberStart = Date.now();
+    try {
+      for await (const event of chairmanHarness.run()) {
+        yield event;
+        if (event.type === 'tool_execution_start') {
+          toolCalls += 1;
+        }
+        if (event.type === 'message_end' && event.usage) {
+          usage = event.usage;
+        }
+        if (event.type === 'message_delta') {
+          fullText += event.delta;
+          callbacks.onSynthesisChunk?.(event.delta);
+          callbacks.onAgentChunk?.(chairman, event.delta);
+        }
+        if (event.type === 'error') {
+          // AgentHarness catches provider-level errors and re-emits them
+          // as BrainErrorEvent (severity 'recoverable' | 'fatal' | 'cancelled').
+          // We must detect this and mark the chairman as errored so the
+          // member_cost reflects reality, otherwise the synthesis appears
+          // successful when in fact the model never produced text.
+          if (event.severity !== 'cancelled') {
+            errored = true;
+            lastErrorMessage = event.message;
+          }
+        }
+      }
+    } catch (err) {
+      // Defensive: any escape from the harness (e.g. an AbortError that
+      // AgentHarness did not wrap) is also marked as errored.
+      // eslint-disable-next-line no-console
+      console.error(`[council] chairman "${chairman.id}" failed:`, err);
+      fullText = `Error: ${err instanceof Error ? err.message : 'Unknown'}`;
+      errored = true;
+    }
+    const memberDuration = Date.now() - memberStart;
+    // If the chairman errored mid-flight but produced some text, keep it
+    // (don't lose partial synthesis) but mark the run as errored.
+    const finalSynthesis = errored && fullText.length === 0
+      ? `[Chairman synthesis failed: ${lastErrorMessage || 'unknown error'}]`
+      : fullText;
+    callbacks.onSynthesisDone?.(finalSynthesis, undefined, undefined);
     emitMemberCost({
       memberId: chairman.id,
       name: chairman.name,
-      usage: null,
-      durationMs: 0,
-      toolCalls: 0,
-      errored: false,
+      usage,
+      durationMs: memberDuration,
+      toolCalls,
+      errored,
     });
     yield createBrainEvent('member_cost', sessionId, {
       cost: {
         memberId: chairman.id,
         name: chairman.name,
-        promptTokens: 0,
-        completionTokens: 0,
-        totalTokens: 0,
-        durationMs: 0,
-        toolCalls: 0,
-        errored: false,
+        promptTokens: usage?.promptTokens ?? 0,
+        completionTokens: usage?.completionTokens ?? 0,
+        totalTokens: usage?.totalTokens ?? (usage?.promptTokens ?? 0) + (usage?.completionTokens ?? 0),
+        durationMs: memberDuration,
+        toolCalls,
+        errored,
       },
     });
   }
