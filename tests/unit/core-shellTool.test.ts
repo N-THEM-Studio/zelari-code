@@ -7,6 +7,7 @@
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { resolveShell, _resetShellResolverForTests } from '@zelari/core/harness/tools/builtin/shellResolver';
+import { bashTool } from '@zelari/core/harness/tools/builtin/shell';
 
 describe('resolveShell — platform branching (v0.7.2)', () => {
   const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
@@ -87,5 +88,49 @@ describe('resolveShell — platform branching (v0.7.2)', () => {
     const a = resolveShell(true);
     const b = resolveShell(); // not forced
     expect(b).toBe(a);
+  });
+});
+
+describe('bashTool — interactive-prompt detection (v0.7.3)', () => {
+  // Live test 2026-07-02: `npm create vite` in a non-empty dir prompts, dies
+  // on the closed stdin printing "Operation cancelled" — and exits 0, so the
+  // model saw a "success" that did nothing and retried 6 command variants.
+  // The tool now recognizes the signature and injects an actionable hint.
+  const ctx = { cwd: process.cwd() } as never;
+
+  beforeEach(() => {
+    // The resolveShell tests above stub ZELARI_SHELL/SHELL and memoize the
+    // resolver — clear both so these tests use the REAL shell of this host.
+    vi.unstubAllEnvs();
+    _resetShellResolverForTests();
+  });
+  afterEach(() => {
+    _resetShellResolverForTests();
+  });
+
+  it('injects the hint when output matches "Operation cancelled"', async () => {
+    const result = await bashTool.execute(
+      { command: 'echo "-  Operation cancelled"', timeoutMs: 15_000 } as never,
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const value = result.value as { hint?: string; exitCode: number };
+    expect(value.exitCode).toBe(0);
+    expect(value.hint).toBeDefined();
+    expect(value.hint).toContain('stdin is closed');
+    expect(value.hint).toContain('Do NOT retry');
+  });
+
+  it('does not inject the hint on normal output', async () => {
+    const result = await bashTool.execute(
+      { command: 'echo hello-world', timeoutMs: 15_000 } as never,
+      ctx,
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const value = result.value as { hint?: string; stdout: string };
+    expect(value.stdout).toContain('hello-world');
+    expect(value.hint).toBeUndefined();
   });
 });

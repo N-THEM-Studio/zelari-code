@@ -201,6 +201,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         '',
         '# Guidelines',
         '- When the user asks you to write code, debug, or explore, be proactive: list files (list_files, or bash: ls/dir) and read key files (read_file) to understand the project instead of asking the user to paste file contents.',
+        '- If a command fails or is cancelled, do NOT retry variants of the same command: diagnose why (read the hint in the result if present) and take a DIFFERENT approach (e.g. create the files yourself with write_file).',
+        '- After a tool result, CONTINUE your answer from where you left off. NEVER restate or re-print text you already wrote earlier in this turn.',
         "- Only invoke tools when they are necessary to answer the user's prompt. If the user is just saying hello or greeting them (e.g., \"ciao\", \"hello\"), simply greet them back and ask how you can help, without running any commands or tools.",
         '- When you finish a task, briefly summarize what you did.',
       ].join('\n');

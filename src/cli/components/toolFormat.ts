@@ -78,9 +78,9 @@ function formatBytes(n: number): string {
 export function formatToolResult(toolName: string, resultStr: string): FormattedToolResult {
   const lower = toolName.toLowerCase();
 
-  // bash / shell — envelope: { stdout, stderr, exitCode }
+  // bash / shell — envelope: { stdout, stderr, exitCode, hint? }
   if (lower === 'bash' || lower === 'shell' || lower === 'exec') {
-    const parsed = tryParseJson<{ stdout?: string; stderr?: string; exitCode?: number }>(resultStr);
+    const parsed = tryParseJson<{ stdout?: string; stderr?: string; exitCode?: number; hint?: string }>(resultStr);
     if (parsed && typeof parsed === 'object') {
       const stdout = parsed.stdout ?? '';
       const lines = stdout.length > 0 ? stdout.replace(/\r\n/g, '\n').split('\n') : [];
@@ -90,6 +90,10 @@ export function formatToolResult(toolName: string, resultStr: string): Formatted
       }
       if (typeof parsed.exitCode === 'number' && parsed.exitCode !== 0) {
         metaParts.push(`exit ${parsed.exitCode}`);
+      }
+      // v0.7.3: interactive-prompt detection (see shell.ts INTERACTIVE_HINT).
+      if (typeof parsed.hint === 'string' && parsed.hint.length > 0) {
+        metaParts.push('⚠ interactive prompt cancelled — needs non-interactive flags or manual file creation');
       }
       return {
         lines: truncateLines(lines),

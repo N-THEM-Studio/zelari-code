@@ -18,7 +18,25 @@ interface BashResult {
   durationMs: number;
   /** Which shell executed the command (v0.7.2), e.g. "bash (D:\\Git\\bin\\bash.exe)" or "cmd.exe". */
   shellVia: string;
+  /**
+   * Actionable hint injected when the output matches an interactive-prompt
+   * cancellation (v0.7.3). Scaffolders built on prompts/@clack print
+   * "Operation cancelled" and often exit 0, so the model sees a "success"
+   * that did nothing and retries variants of the same command forever
+   * (live test 2026-07-02: 6× `npm create vite` in a non-empty dir).
+   */
+  hint?: string;
 }
+
+/** Output signatures of an interactive prompt dying on our closed stdin. */
+const INTERACTIVE_CANCEL_RE = /operation cancell?ed|stdin is not a tty|the input device is not a tty/i;
+
+const INTERACTIVE_HINT =
+  'This command tried to PROMPT for input, but stdin is closed (non-interactive shell). ' +
+  'Do NOT retry it — every variant will be cancelled the same way. Instead: ' +
+  'scaffold into a fresh EMPTY subdirectory (e.g. `npm create vite@latest scaffold-tmp -- --template react-ts`, ' +
+  'then move its contents here with `mv`/`cp`), or write package.json, configs and sources directly ' +
+  'with write_file and then run `npm install`.';
 
 export const bashTool: ToolDefinition<BashArgs, BashResult> = {
   name: 'bash',
@@ -77,17 +95,24 @@ export const bashTool: ToolDefinition<BashArgs, BashResult> = {
       });
       const timer = setTimeout(() => {
         child.kill('SIGTERM');
-        resolve(typedErr(`Bash command timed out after ${args.timeoutMs}ms`));
+        resolve(typedErr(
+          `Bash command timed out after ${args.timeoutMs}ms. ` +
+          'If it was waiting for interactive input: stdin is closed — pass non-interactive flags or create the files directly instead of retrying.',
+        ));
       }, args.timeoutMs);
       child.on('close', (code) => {
         clearTimeout(timer);
+        const cappedStdout = stdout.slice(0, maxBuffer);
+        const cappedStderr = stderr.slice(0, maxBuffer);
+        const interactive = INTERACTIVE_CANCEL_RE.test(cappedStdout) || INTERACTIVE_CANCEL_RE.test(cappedStderr);
         resolve(
           typedOk({
-            stdout: stdout.slice(0, maxBuffer),
-            stderr: stderr.slice(0, maxBuffer),
+            stdout: cappedStdout,
+            stderr: cappedStderr,
             exitCode: code ?? -1,
             durationMs: Date.now() - start,
             shellVia: resolved.via,
+            ...(interactive ? { hint: INTERACTIVE_HINT } : {}),
           }),
         );
       });
