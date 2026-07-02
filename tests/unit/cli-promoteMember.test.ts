@@ -61,16 +61,16 @@ describe('promoteMember', () => {
     expect(skill.requiredRoles).toEqual(['pluton']);
   });
 
-  it('requiredTools mirrors AgentRole.tools exactly', () => {
+  it('requiredTools mirrors AgentRole.tools exactly (v0.7.2 coding tools)', () => {
     const { skill } = promoteMember('lucifer');
+    // v0.7.2: roles declare coding tools (read/write/edit/bash/list) instead
+    // of the former planner/vault tools (createTask/createPhase/buildMindMap...).
     expect(skill.requiredTools).toEqual([
-      'createTask',
-      'addIdea',
-      'createPhase',
-      'buildMindMap',
-      'addNode',
-      'linkNodes',
-      'createDocument',
+      'read_file',
+      'write_file',
+      'edit_file',
+      'bash',
+      'list_files',
     ]);
   });
 

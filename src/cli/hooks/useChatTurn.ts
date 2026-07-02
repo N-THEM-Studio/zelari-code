@@ -9,6 +9,7 @@ import { calculateCost } from '../modelPricing.js';
 import { openaiCompatibleProvider, providerFromEnv, providerConfigFor, resolveActiveProvider } from '../provider/openai-compatible.js';
 import { providerFailover } from '../providerFailover.js';
 import { resolveFailoverStream } from '../crossProviderFailover.js';
+import { resolveShell } from '@zelari/core/harness/tools/builtin/shellResolver';
 import { PROVIDERS } from '../keyStore.js';
 import { createBuiltinToolRegistry } from '../toolRegistry.js';
 import {
@@ -148,11 +149,26 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               });
       const cwd = process.cwd();
       const toolList = toolRegistry.toOpenAITools().map((t) => `- ${t.function.name}: ${t.function.description}`).join('\n');
+      // v0.7.2 (C3): platform-aware shell guidance. The model must know which
+      // shell the `bash` tool actually runs in so it writes the right commands
+      // (POSIX for Git Bash, Windows-native for cmd.exe fallback).
+      const resolvedShell = resolveShell();
+      const isWindows = process.platform === 'win32';
+      const shellGuidance = resolvedShell.isBash
+        ? `The bash tool runs commands via Git Bash / MSYS2 (${resolvedShell.shell}). Write POSIX commands: ls, grep, $VAR, &&, /c/Users/... all work.`
+        : isWindows
+          ? `The bash tool runs commands via cmd.exe (Git Bash not found). Write Windows-native commands: use dir (not ls), %VAR% (not $VAR), avoid POSIX-only syntax.`
+          : `The bash tool runs commands via /bin/sh.`;
       const systemPrompt = [
         "You are Zelari Code, an interactive AI coding agent operating directly in the user's terminal.",
         '',
         'You ARE connected to this machine and have real tools to read, modify, and explore the codebase.',
         "Never claim you lack filesystem or shell access — you have it. Use your tools instead of asking the user to paste file contents.",
+        '',
+        '# Platform & Shell',
+        `platform: ${process.platform}`,
+        `shell: ${resolvedShell.via}`,
+        shellGuidance,
         '',
         '# Working Directory',
         `You are running in: ${cwd}`,
@@ -163,7 +179,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         toolList,
         '',
         '# Guidelines',
-        '- When the user asks you to write code, debug, or explore, be proactive: list files (bash: ls, list_files) and read key files (read_file) to understand the project instead of asking the user to paste file contents.',
+        '- When the user asks you to write code, debug, or explore, be proactive: list files (list_files, or bash: ls/dir) and read key files (read_file) to understand the project instead of asking the user to paste file contents.',
         "- Only invoke tools when they are necessary to answer the user's prompt. If the user is just saying hello or greeting them (e.g., \"ciao\", \"hello\"), simply greet them back and ask how you can help, without running any commands or tools.",
         '- When you finish a task, briefly summarize what you did.',
       ].join('\n');
@@ -388,6 +404,7 @@ async function dispatchCouncilPromptImpl(
   const { createWorkspaceToolRegistry } = await import('../workspace/toolRegistry.js');
   const { setWorkspaceStubs } = await import('@zelari/core/skills');
   const { runPostCouncilHook } = await import('../workspace/postCouncilHook.js');
+  const { buildWorkspaceSummary } = await import('../workspace/workspaceSummary.js');
   const { FeedbackStore } = await import('../councilFeedback.js');
 
   const { registry: councilToolRegistry } = createBuiltinToolRegistry();
@@ -418,6 +435,11 @@ async function dispatchCouncilPromptImpl(
       sessionId,
       tools: councilToolRegistry,
       feedbackStore: councilFeedbackStore,
+      // v0.7.2 (B2): give the council the same project awareness the
+      // single-prompt path has — cwd, tech stack, file layout, build scripts.
+      // Without this, members had no idea which project they were operating
+      // on and projected their identity onto the task.
+      workspaceContext: buildWorkspaceSummary(process.cwd()),
     })) {
       if (councilAborted) {
         // Drain remaining events silently after the abort decision.

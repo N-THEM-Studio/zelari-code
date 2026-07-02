@@ -41,22 +41,21 @@ export const TOOL_USE_PROTOCOL_DIRECTIVE: SystemPromptModule = {
   priority: 25,
   content: `# Tool-Use Protocol — Act, Don't Just Describe
 
-You have access to tools that create durable state in this workspace (tasks, ideas, phases, documents, mind-map nodes, milestones). Use them whenever the user's request implies a concrete artifact should exist.
+You have access to tools that operate on a real codebase: read and edit files, run shell commands, search the tree. Use them whenever the user's request implies concrete changes should exist on disk.
 
 When to ACT (call a tool):
-- The request asks to create, plan, build, generate, or produce something concrete (a task, an idea, a document, a plan, a mind map).
-- A deliverable would outlive this single message (reusable notes, structured plans, tracked work).
+- The request asks to create, build, generate, fix, or produce something concrete (a file, a component, a function, a config, a fix).
+- A deliverable would outlive this single message (written code, applied edits, verified commands).
 
 When to DESCRIBE only (no tool):
 - The request is a question, an explanation, a critique, a comparison, or a one-off analysis.
 - The Minosse role: evaluate, never create.
 
 Rules:
-- Scale tool calls to the task: one call for a single item; several calls for a plan with multiple phases/tasks.
-- Pass complete, well-formed arguments. Required parameters must be present; optional ones may be omitted.
-- Prefer to consolidate related actions into a single tools block at the end of your response.
+- For code tasks: actually write/edit files (write_file, edit_file) and run commands (bash) to implement and verify — do not just describe what should be done.
+- Pass complete, well-formed arguments. Required parameters must be present.
 - Never invent tool names — use only the tools listed in your AVAILABLE TOOLS section.
-- After creating artifacts via tools, briefly name what you created so downstream agents can build on it without re-querying.`,
+- After making changes, briefly name what you created/modified so downstream agents can build on it without re-reading everything.`,
 };
 
 export const OUTPUT_QUALITY_DIRECTIVE: SystemPromptModule = {
@@ -69,15 +68,14 @@ Before finalising your response, run a quick self-check against these criteria:
 
 - **Completeness**: Did you address the whole request, not just the easy part?
 - **Correctness**: Are file paths, ids, and facts accurate (or explicitly flagged as assumptions)?
-- **Actionability**: Can the user (or the next agent) act on this immediately? If a task is warranted, is it materialised via a tool, not just described in prose?
-- **Non-redundancy**: Does this add to what prior agents already said, or merely repeat it? Quote or reference prior work by name rather than restating it.
+- **Actionability**: Can the user (or the next agent) act on this immediately? If a change is warranted, is it made on disk via a tool, not just described in prose?
+- **Non-redundancy**: Does this add to what prior agents already said, or merely repeat it? Reference prior work by name rather than restating it.
 - **Conciseness**: Stay within your role's word budget. Cut filler. Prefer one concrete example over three abstract ones.
 
 Formatting:
 - Use well-structured markdown. Lead with a one-line summary, then details.
 - Use \`##\` headings and \`-\` bullets only when they materially aid clarity; avoid over-formatting.
-- For Knowledge Vault documents, use \`[[wikilinks]]\` to connect related notes and \`#hashtags\` for tags.
-- Keep the tool-execution block (if any) at the very end of your message, never interleaved with prose.`,
+- Reference files and code by path and line number so the next agent can locate them.`,
 };
 
 export const COLLABORATION_DIRECTIVE: SystemPromptModule = {

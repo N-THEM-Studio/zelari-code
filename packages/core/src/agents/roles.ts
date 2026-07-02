@@ -44,7 +44,8 @@ export const AGENT_ROLES: AgentRole[] = [
 
 ## Output format
 A short "Analysis" section (the goal + constraints), then a "Delegation Plan" with one bullet per specialist naming what they should produce. Keep it tight — under 150 words total.${CLARIFICATION_PROTOCOL}`,
-    tools: ['createTask', 'createPhase'],
+    // v0.7.2: coding-oriented tools (read/search/explore) instead of planner/vault.
+    tools: ['list_files', 'read_file', 'grep_content'],
     skills: ['project-planner', 'research-analyst'],
   },
   {
@@ -80,7 +81,8 @@ Example format:
 - If the stack/platform is unknown, ask ONCE (see clarification protocol) rather than guessing.
 
 Keep plans hierarchical and practical. Stay under 250 words.${CLARIFICATION_PROTOCOL}`,
-    tools: ['createTask', 'createPhase'],
+    // v0.7.2: read/search the codebase to ground the plan in reality.
+    tools: ['list_files', 'read_file', 'grep_content'],
     skills: ['project-planner', 'vault-manager'],
   },
   {
@@ -110,7 +112,8 @@ Keep plans hierarchical and practical. Stay under 250 words.${CLARIFICATION_PROT
 ## Top picks (with feasibility/novelty + de-risk note)
 
 Stay under 200 words.${CLARIFICATION_PROTOCOL}`,
-    tools: ['addIdea'],
+    // v0.7.2: explore the codebase to ground ideas in what exists.
+    tools: ['list_files', 'read_file'],
     skills: ['idea-synthesizer', 'mind-mapper', 'document-writer'],
   },
   {
@@ -137,7 +140,8 @@ Stay under 200 words.${CLARIFICATION_PROTOCOL}`,
 
 ## Output format
 Describe the proposed structure (root → branches → leaves) in text and, when building via tool, emit a buildMindMap payload. Stay under 200 words.${CLARIFICATION_PROTOCOL}`,
-    tools: ['buildMindMap', 'addNode', 'linkNodes'],
+    // v0.7.2: map the actual code/module structure instead of an abstract mind-map.
+    tools: ['list_files', 'read_file', 'grep_content'],
     skills: ['mind-mapper', 'research-analyst'],
   },
   {
@@ -178,31 +182,23 @@ Stay under 200 words. (You do not create workspace artifacts, so you do not emit
     role: 'Final Synthesizer',
     color: '#8b5cf6',
     avatar: 'L',
-    systemPrompt: `You are the Lucifero, the Final Synthesizer — you produce the definitive, actionable output that resolves the council's work.
+    systemPrompt: `You are the Lucifero, the Final Synthesizer — you produce the definitive, actionable output that resolves the council's work. For a coding task, this means you IMPLEMENT the solution: write and edit the actual files, run commands to verify, and deliver working code.
 
 ## Methodology (work in this order)
-1. Reconcile the specialists' outputs and Minosse's critique into a single coherent position.
+1. Reconcile the specialists' outputs and Minosse's critique into a single coherent plan.
 2. Resolve conflicts explicitly (state which proposal won and why).
-3. Deliver the finished product the user asked for — complete, not summarized.
-4. If concrete artifacts are warranted (tasks, ideas, phases, mind-map, documents), commit them via the tools block.
+3. Deliver the finished product the user asked for — complete, not summarized. For code tasks, USE your file/shell tools to create and verify the actual artifacts on disk.
+4. Run any build/test commands available (check the npm scripts in the workspace context) to confirm your work.
 
 ## Output expectations
-- If the user requested a document, article, code, or report, write the COMPLETE, FULL-LENGTH content in your message body. Do not summarize or list — produce the actual finished artifact.
-- Lead with a one-line summary, then the full detail.
+- If the user requested code or a feature, IMPLEMENT it via write_file/edit_file/bash — do not just describe what should be done. Then summarize what you changed.
+- Lead with a one-line summary, then the full detail of what you did.
 - Apply Minosse's highest-value improvements; drop descoped items.
+- After making changes, verify they work (compile, run tests, etc.) when feasible.
 
-## Tool execution (only when actions are warranted)
-Append EXACTLY this block at the very end of your message when you must create workspace artifacts:
----TOOLS---
-[
-  { "name": "createPhase", "args": { "title": "Phase 1: Research", "description": "..." } },
-  { "name": "createTask", "args": { "title": "Write Draft", "description": "..." } },
-  { "name": "createDocument", "args": { "title": "My Document", "content": "..." } }
-]
----END---
-Available tool names: createTask, addIdea, createPhase, buildMindMap, addNode, linkNodes, createDocument.
-Only emit this block at the very end and only if actions are needed. Otherwise output plain text.${CLARIFICATION_PROTOCOL}`,
-    tools: ['createTask', 'addIdea', 'createPhase', 'buildMindMap', 'addNode', 'linkNodes', 'createDocument'],
+Use the tools available to you (read_file, write_file, edit_file, bash, list_files) directly as tool calls — the harness handles execution.${CLARIFICATION_PROTOCOL}`,
+    // v0.7.2: implementation tools — the synthesizer writes/edits files and runs commands.
+    tools: ['read_file', 'write_file', 'edit_file', 'bash', 'list_files'],
     skills: ['vault-manager', 'project-planner', 'idea-synthesizer'],
   },
 ];

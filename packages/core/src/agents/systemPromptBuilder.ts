@@ -153,13 +153,21 @@ export function buildSystemPrompt(
     (m) => !m.conditional || m.conditional(skills)
   );
 
-  // 2. Custom user modules (always last, after base)
-  const customModules: SystemPromptModule[] = (aiConfig?.customPromptModules ?? []).map((m) => ({
+  // 2. Custom user modules. v0.7.2: a custom module with the SAME `type` as a
+  // base module REPLACES it (override semantics), rather than being appended.
+  // This makes the council identity configurable — a caller can ship a custom
+  // 'base-identity' module via aiConfig.customPromptModules and it wins over
+  // the builtin. Backward-compatible: today no caller ships a duplicate type,
+  // so existing append behavior is preserved for non-colliding types.
+  const customModulesRaw = aiConfig?.customPromptModules ?? [];
+  const customTypes = new Set(customModulesRaw.map((m) => m.type));
+  const baseNotOverridden = baseModules.filter((m) => !customTypes.has(m.type));
+  const customModules: SystemPromptModule[] = customModulesRaw.map((m) => ({
     ...m,
     priority: 1000 + m.priority,
   }));
 
-  const allModules = [...baseModules, ...customModules].sort((a, b) => a.priority - b.priority);
+  const allModules = [...baseNotOverridden, ...customModules].sort((a, b) => a.priority - b.priority);
 
   const parts: string[] = [];
   for (const mod of allModules) {
