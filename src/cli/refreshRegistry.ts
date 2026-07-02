@@ -24,7 +24,7 @@
  * @see docs/plans/2026-06-29-anathema-coder-v3-F.md
  */
 
-import { refreshGrokToken } from './grokOAuth.js';
+import { refreshGrokToken, DEFAULT_GROK_OAUTH_CLIENT_ID } from './grokOAuth.js';
 import type { ProviderName } from './keyStore.js';
 
 /**
@@ -80,16 +80,19 @@ export function clearRefreshRegistry(): void {
 /**
  * Adapter from `refreshGrokToken({clientId, refreshToken})` to the generic
  * `RefreshImpl(providerId, refreshToken)` shape. Reads GROK_OAUTH_CLIENT_ID
- * from env at call time so tests can override.
+ * from env at call time so tests can override, falling back to the same
+ * built-in public client id the `/login grok` OAuth flow uses — the refresh
+ * MUST use the client the token was issued to, and users who logged in with
+ * the default client have no env var set.
  */
 export const grokRefreshAdapter: RefreshImpl = async (
   _providerId,
   refreshToken,
 ) => {
-  const clientId = process.env.GROK_OAUTH_CLIENT_ID;
-  if (!clientId || clientId.trim().length === 0) {
-    throw new Error('Missing GROK_OAUTH_CLIENT_ID env var');
-  }
+  const envClientId = process.env.GROK_OAUTH_CLIENT_ID;
+  const clientId = envClientId && envClientId.trim().length > 0
+    ? envClientId
+    : DEFAULT_GROK_OAUTH_CLIENT_ID;
   return refreshGrokToken({ clientId, refreshToken });
 };
 

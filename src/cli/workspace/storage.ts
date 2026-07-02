@@ -383,14 +383,18 @@ class KeyedMutex {
     const prev = this.chains.get(key) ?? Promise.resolve();
     let release: () => void = () => {};
     const next = new Promise<void>((resolve) => { release = resolve; });
-    this.chains.set(key, prev.then(() => next));
+    // v0.7.3: keep the chained promise in a variable — the old cleanup
+    // compared against a FRESH `prev.then(...)` promise, so it never matched
+    // and entries leaked forever.
+    const chained = prev.then(() => next);
+    this.chains.set(key, chained);
     await prev;
     try {
       return await fn();
     } finally {
       release();
-      // Cleanup if this was the last in chain
-      if (this.chains.get(key) === prev.then(() => next)) {
+      // Cleanup if this was the last in chain.
+      if (this.chains.get(key) === chained) {
         this.chains.delete(key);
       }
     }

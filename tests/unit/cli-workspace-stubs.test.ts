@@ -202,3 +202,84 @@ describe('context factory', () => {
     expect(ctx2.projectRoot).toBe(tmpDir);
   });
 });
+
+// ── v0.7.3 live-test regressions ─────────────────────────────────────
+
+describe('plan round-trip with free text (v0.7.3 — plan.json source of truth)', () => {
+  it('createTask finds a phase whose name/description contain colons, commas, apostrophes', async () => {
+    // Live-test failure: 'Phase "…" not found. Create it first' immediately
+    // after createPhase reported success — the YAML flow-map round-trip of
+    // plan.md corrupted on punctuation-heavy free text.
+    const createPhase = findStub('createPhase');
+    const createTask = findStub('createTask');
+    const result = await createPhase.execute({
+      name: 'Phase 1: E-commerce MVP - Product List + Cart + Basic UI',
+      description: "Replace the default page. Update index.html, don't touch node_modules: {it's big}, [really].",
+      order: 1,
+    }, ctx);
+    expect(result).toContain('created');
+    const id = result.match(/id: ([\w-]+)/)?.[1];
+    expect(id).toBeTruthy();
+    const taskResult = await createTask.execute({ phaseId: id, title: 'Setup entry points' }, ctx);
+    expect(taskResult).toContain('Task "Setup entry points" created');
+  });
+
+  it('persists the plan as plan.json and keeps plan.md as human-readable rendering', async () => {
+    const createPhase = findStub('createPhase');
+    await createPhase.execute({ name: 'Discovery', order: 1 }, ctx);
+    expect(existsSync(join(ctx.rootDir, 'plan.json'))).toBe(true);
+    const parsed = JSON.parse(readFileSync(join(ctx.rootDir, 'plan.json'), 'utf8'));
+    expect(parsed.phases).toHaveLength(1);
+    expect(parsed.phases[0].id).toBe('discovery');
+    // plan.md still exists for humans but carries no machine-parsed arrays.
+    const md = readFileSync(join(ctx.rootDir, 'plan.md'), 'utf8');
+    expect(md).toContain('discovery');
+    expect(md).not.toContain('phases: [{');
+  });
+});
+
+describe('searchDocuments OR queries (v0.7.3)', () => {
+  it('matches any OR-phrase instead of the literal full string', async () => {
+    // Live-test failure: every `x OR y OR z` query returned "No matches",
+    // even for documents created seconds earlier.
+    const addIdea = findStub('addIdea');
+    await addIdea.execute({ title: 'JWT Strategy', context: 'Using JWT tokens for auth' }, ctx);
+    const search = findStub('searchDocuments');
+    const result = await search.execute({ query: 'nonexistent-zzz OR jwt OR whatever' }, ctx);
+    expect(result.toLowerCase()).toContain('jwt');
+    expect(result).not.toContain('No matches');
+  });
+
+  it('falls back to any-word matching for multi-word queries', async () => {
+    const addIdea = findStub('addIdea');
+    await addIdea.execute({ title: 'Cart Drawer', context: 'Slide-in cart with quantity controls' }, ctx);
+    const search = findStub('searchDocuments');
+    const result = await search.execute({ query: 'ecommerce cart implementation' }, ctx);
+    expect(result.toLowerCase()).toContain('cart');
+  });
+
+  it('searches plan-tasks and milestones directories too', async () => {
+    const createPhase = findStub('createPhase');
+    const createTask = findStub('createTask');
+    await createPhase.execute({ name: 'P1', order: 1 }, ctx);
+    await createTask.execute({ phaseId: 'p1', title: 'Wire the ProductGrid component' }, ctx);
+    const search = findStub('searchDocuments');
+    const result = await search.execute({ query: 'productgrid' }, ctx);
+    expect(result.toLowerCase()).toContain('productgrid');
+  });
+});
+
+describe('updateTask status aliases (v0.7.3)', () => {
+  it('maps "todo" → pending and "completed" → done', async () => {
+    const createPhase = findStub('createPhase');
+    const createTask = findStub('createTask');
+    const updateTask = findStub('updateTask');
+    await createPhase.execute({ name: 'P1', order: 1 }, ctx);
+    const taskResult = await createTask.execute({ phaseId: 'p1', title: 'T1' }, ctx);
+    const taskId = taskResult.match(/id: ([\w-]+)/)?.[1];
+    const todo = await updateTask.execute({ taskId, status: 'todo' }, ctx);
+    expect(todo).toContain('status="pending"');
+    const completed = await updateTask.execute({ taskId, status: 'completed' }, ctx);
+    expect(completed).toContain('status="done"');
+  });
+});

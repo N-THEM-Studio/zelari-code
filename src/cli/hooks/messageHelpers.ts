@@ -73,8 +73,12 @@ export function appendOrExtendStreamingAssistant(
   });
 }
 
-/** Max chars of tool result kept for the expandable body. */
-export const TOOL_RESULT_PREVIEW_CHARS = 600;
+/**
+ * Max chars of tool result kept for the body. v0.7.3: raised 600 → 8000 to
+ * match chatState.ts — the 600-char cut chopped the JSON envelope before
+ * formatToolResult could parse it, forcing the raw-escaped fallback.
+ */
+export const TOOL_RESULT_PREVIEW_CHARS = 8000;
 
 /** Max chars of the JSON args preview shown on the tool summary line. */
 export const TOOL_ARGS_PREVIEW_CHARS = 120;

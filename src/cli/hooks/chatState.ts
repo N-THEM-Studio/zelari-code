@@ -138,8 +138,17 @@ export function finalizeStreaming(
   });
 }
 
-/** Max chars of tool result kept for the printed body (Phase 3 policy). */
-export const TOOL_RESULT_PREVIEW_CHARS = 600;
+/**
+ * Max chars of tool result kept in memory for the printed body.
+ *
+ * v0.7.3: raised from 600 to 8000. The 600-char cut happened BEFORE
+ * formatToolResult could parse the JSON envelope — truncated JSON no longer
+ * parses, so every long bash/read_file result fell back to the raw escaped
+ * envelope (the ugly boxes in the 2026-07-02 live test). Display truncation
+ * is line-based in the formatter (ZELARI_TOOL_OUTPUT_LINES); this constant is
+ * only a memory bound.
+ */
+export const TOOL_RESULT_PREVIEW_CHARS = 8000;
 
 /** Max chars of the JSON args preview shown on the tool summary line. */
 export const TOOL_ARGS_PREVIEW_CHARS = 120;
@@ -181,15 +190,17 @@ export function startTool(
  * `live.runningTools` (by `toolCallId`) and appends the completed message —
  * with its result body — to `finalized`.
  *
- * The caller passes the CURRENT `live` snapshot (the value the next render
- * would see) so we can compute the completed tool deterministically without
- * relying on functional-updater timing. The two setters are invoked with
- * functional updaters that read from that snapshot.
+ * v0.7.3: the previous signature took a `live` snapshot (from `liveRef`) and
+ * removed by INDEX inside the functional updater. `liveRef` only updates on
+ * render, so for fast tools (start+end within one frame) the snapshot missed
+ * the just-started tool (end event dropped → tool stuck in the live region)
+ * or, with two ends in one frame, removed the WRONG element. The lookup now
+ * happens inside the `setLive` updater against the CURRENT state, keyed by
+ * toolCallId — same cross-setter pattern as {@link finalizeStreaming}.
  *
  * No-op if the toolCallId is unknown (defensive against duplicate end events).
  */
 export function completeTool(
-  live: LiveState,
   setFinalized: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
   setLive: React.Dispatch<React.SetStateAction<LiveState>>,
   toolCallId: string,
@@ -197,27 +208,28 @@ export function completeTool(
   durationMs: number,
   result?: string,
 ): void {
-  const idx = live.runningTools.findIndex(
-    (t) => t.toolCallId === toolCallId && t.toolDurationMs === undefined,
-  );
-  if (idx === -1) return;
-  const tool = live.runningTools[idx]!;
-  const completed: ChatMessage = {
-    ...tool,
-    toolOk: !isError,
-    toolDurationMs: durationMs,
-    ...(result !== undefined
-      ? {
-          toolResult:
-            result.length > TOOL_RESULT_PREVIEW_CHARS
-              ? `${result.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`
-              : result,
-        }
-      : {}),
-  };
-  setFinalized((fin) => [...fin, completed]);
-  setLive((prev) => ({
-    ...prev,
-    runningTools: prev.runningTools.filter((_, i) => i !== idx),
-  }));
+  setLive((prev) => {
+    const tool = prev.runningTools.find(
+      (t) => t.toolCallId === toolCallId && t.toolDurationMs === undefined,
+    );
+    if (!tool) return prev;
+    const completed: ChatMessage = {
+      ...tool,
+      toolOk: !isError,
+      toolDurationMs: durationMs,
+      ...(result !== undefined
+        ? {
+            toolResult:
+              result.length > TOOL_RESULT_PREVIEW_CHARS
+                ? `${result.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`
+                : result,
+          }
+        : {}),
+    };
+    setFinalized((fin) => [...fin, completed]);
+    return {
+      ...prev,
+      runningTools: prev.runningTools.filter((t) => t !== tool),
+    };
+  });
 }

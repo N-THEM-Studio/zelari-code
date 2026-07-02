@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   registerRefreshImpl,
   unregisterRefreshImpl,
@@ -8,6 +8,7 @@ import {
   grokRefreshAdapter,
   type RefreshImpl,
 } from '../../src/cli/refreshRegistry.js';
+import { DEFAULT_GROK_OAUTH_CLIENT_ID } from '../../src/cli/grokOAuth.js';
 
 /**
  * Tests for the v3-F refresh registry (Task F.1).
@@ -64,15 +65,56 @@ describe('refreshRegistry (Task F.1)', () => {
     expect(getRefreshImpl('minimax')).toBeNull();
   });
 
-  it('grokRefreshAdapter throws when GROK_OAUTH_CLIENT_ID is missing', async () => {
-      const prev = process.env.GROK_OAUTH_CLIENT_ID;
-      delete process.env.GROK_OAUTH_CLIENT_ID;
-      try {
-        await expect(grokRefreshAdapter('grok', 'rt')).rejects.toThrow(/GROK_OAUTH_CLIENT_ID/);
-      } finally {
-        if (prev !== undefined) process.env.GROK_OAUTH_CLIENT_ID = prev;
-      }
+  it('grokRefreshAdapter falls back to the default client id when GROK_OAUTH_CLIENT_ID is missing', async () => {
+    // Regression: the adapter used to THROW when the env var was unset, which
+    // silently broke auto-refresh for every user who logged in via the default
+    // `/login grok` OAuth flow (the login uses DEFAULT_GROK_OAUTH_CLIENT_ID,
+    // so no env var is ever set). resolveApiKeyWithMeta swallowed the throw
+    // and returned the stale/expired token → upstream 401 → "login not saved".
+    const prev = process.env.GROK_OAUTH_CLIENT_ID;
+    delete process.env.GROK_OAUTH_CLIENT_ID;
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = new URLSearchParams(String(init?.body ?? ''));
+      expect(body.get('client_id')).toBe(DEFAULT_GROK_OAUTH_CLIENT_ID);
+      expect(body.get('grant_type')).toBe('refresh_token');
+      expect(body.get('refresh_token')).toBe('rt');
+      return new Response(JSON.stringify({ access_token: 'fresh-tok', expires_in: 3600 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
     });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const result = await grokRefreshAdapter('grok', 'rt');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(result.accessToken).toBe('fresh-tok');
+    } finally {
+      vi.unstubAllGlobals();
+      if (prev !== undefined) process.env.GROK_OAUTH_CLIENT_ID = prev;
+    }
+  });
+
+  it('grokRefreshAdapter prefers GROK_OAUTH_CLIENT_ID env when set', async () => {
+    const prev = process.env.GROK_OAUTH_CLIENT_ID;
+    process.env.GROK_OAUTH_CLIENT_ID = 'env-client-id';
+    const fetchMock = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const body = new URLSearchParams(String(init?.body ?? ''));
+      expect(body.get('client_id')).toBe('env-client-id');
+      return new Response(JSON.stringify({ access_token: 'fresh-tok' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      const result = await grokRefreshAdapter('grok', 'rt');
+      expect(result.accessToken).toBe('fresh-tok');
+    } finally {
+      vi.unstubAllGlobals();
+      if (prev !== undefined) process.env.GROK_OAUTH_CLIENT_ID = prev;
+      else delete process.env.GROK_OAUTH_CLIENT_ID;
+    }
+  });
 
   it('grokRefreshAdapter calls refreshGrokToken with the right shape (fetch mocked)', async () => {
     // We mock by registering a fake impl that asserts the shape — avoids

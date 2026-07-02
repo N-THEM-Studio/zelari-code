@@ -305,9 +305,13 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               finalizeStreamingAssistant(setMessages);
               appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
             }
+            // The pre-tool bubble is sealed: reset the display buffer so the
+            // next delta starts a fresh bubble instead of re-showing (and
+            // duplicating) the text already printed above the tool line.
+            streamContent = '';
           } else if (event.type === 'tool_execution_end') {
             if (useLiveModel) {
-              completeTool(liveRef!.current, setMessages, setLive!, event.toolCallId, event.isError, event.durationMs, event.result);
+              completeTool(setMessages, setLive!, event.toolCallId, event.isError, event.durationMs, event.result);
             } else {
               updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
             }
@@ -416,6 +420,25 @@ async function dispatchCouncilPromptImpl(
   }
   setWorkspaceStubs(createWorkspaceStubs(workspaceCtx));
   const councilFeedbackStore = new FeedbackStore();
+  // v0.7.3: per-member display accumulator for the streaming bubble.
+  // The previous code accumulated by reading `liveRef.current.streaming` —
+  // but that ref only updates on render (useEffect) and the delta commits go
+  // through a 16ms throttle window, so every delta inside a window computed
+  // staleContent+delta and the LAST write won: most tokens were silently
+  // dropped (the mangled member text from the 2026-07-02 live test).
+  // The accumulator lives here, in the event loop, exactly like
+  // `streamContent` in dispatchPrompt.
+  let streamContent = '';
+  let streamMemberId: string | null = null;
+  // v0.7.3: council members legitimately need more than the core default of
+  // 5 tool calls per turn (a planner creating 8 tasks got 3 of them skipped
+  // with "[skipped] maxToolCallsPerTurn reached"). Same env override as the
+  // single-prompt path.
+  const councilMaxToolCalls = (() => {
+    const raw = process.env.ZELARI_MAX_TOOL_CALLS;
+    const n = raw ? Number.parseInt(raw, 10) : 15;
+    return Number.isFinite(n) && n > 0 ? n : 15;
+  })();
   // v0.7.1 (A3): track member completion so the AGENTS.MD hook only runs when
   // the council actually produced output. v0.7.1 (A4): track repeated provider
   // errors to abort the remaining members instead of grinding through every
@@ -440,6 +463,7 @@ async function dispatchCouncilPromptImpl(
       // Without this, members had no idea which project they were operating
       // on and projected their identity onto the task.
       workspaceContext: buildWorkspaceSummary(process.cwd()),
+      maxToolCallsPerTurn: councilMaxToolCalls,
     })) {
       if (councilAborted) {
         // Drain remaining events silently after the abort decision.
@@ -453,14 +477,21 @@ async function dispatchCouncilPromptImpl(
         // Coalesce streaming assistant content through the throttled setter so
         // per-token deltas don't flicker the TUI (same as dispatchPrompt).
         if (useLiveModel) {
-          // v0.7.0: read the always-current streaming snapshot from liveRef
-          // to accumulate full content per-member, then push through the
-          // throttle in ONE call. setStreaming handles same-member extension
-          // vs new-bubble creation via the member identity in memberContext.
-          const cur = liveRef!.current.streaming;
-          const sameMember = cur && (cur.memberId ?? null) === (event.memberId ?? null);
-          const fullContent = sameMember ? cur!.content + event.delta : event.delta;
-          setStreaming(commitStreaming, fullContent, event.ts, {
+          // v0.7.3: accumulate in the local `streamContent` (NOT via liveRef —
+          // stale under the throttle, see the accumulator comment above) and
+          // always push the FULL content: dropped intermediate commits are
+          // then harmless because the last one supersedes them.
+          const memberId = event.memberId ?? null;
+          if (memberId !== streamMemberId) {
+            // Member boundary without a message_end (defensive): seal the
+            // previous member's bubble before starting the new one.
+            flushStreaming();
+            finalizeStreaming(setMessages, setLive!);
+            streamContent = '';
+            streamMemberId = memberId;
+          }
+          streamContent += event.delta;
+          setStreaming(commitStreaming, streamContent, event.ts, {
             ...(event.memberId ? { memberId: event.memberId } : {}),
             ...(event.memberName ? { memberName: event.memberName } : {}),
           });
@@ -497,6 +528,8 @@ async function dispatchCouncilPromptImpl(
         flushStreaming();
         if (useLiveModel) finalizeStreaming(setMessages, setLive!);
         else finalizeStreamingAssistant(setMessages);
+        streamContent = '';
+        streamMemberId = null;
         membersCompleted++;
         // Chairman is the last member; any assistant content from it counts.
         if (event.memberId === 'lucifer' || event.memberName === 'Lucifero') {
@@ -513,9 +546,11 @@ async function dispatchCouncilPromptImpl(
           finalizeStreamingAssistant(setMessages);
           appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
         }
+        // The pre-tool bubble is sealed: the next delta starts a fresh one.
+        streamContent = '';
       } else if (event.type === 'tool_execution_end') {
         if (useLiveModel) {
-          completeTool(liveRef!.current, setMessages, setLive!, event.toolCallId, event.isError, event.durationMs, event.result);
+          completeTool(setMessages, setLive!, event.toolCallId, event.isError, event.durationMs, event.result);
         } else {
           updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
         }

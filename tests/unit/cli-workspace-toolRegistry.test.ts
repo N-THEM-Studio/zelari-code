@@ -62,13 +62,17 @@ describe('workspace/toolRegistry — runtime ToolContext merging (v3-W)', () => 
     if (!result.ok) return;
     expect(result.value).toMatch(/Phase "Test phase" created/);
 
-    // Verify the file landed on disk via the closed-over workspace ctx.
-    const planPath = join(projectRoot, '.zelari', 'plan.md');
-    expect(existsSync(planPath)).toBe(true);
-    const content = readFileSync(planPath, 'utf-8');
-    // The phase is persisted in YAML frontmatter under `phases: [...]`,
-    // not as plain markdown body. Match the YAML-encoded form.
-    expect(content).toMatch(/name:\s*['"]?Test phase['"]?/);
+    // Verify the files landed on disk via the closed-over workspace ctx.
+    // v0.7.3: the machine-readable source of truth is plan.json (lossless
+    // JSON round-trip); plan.md is the human-readable rendering only.
+    const planJsonPath = join(projectRoot, '.zelari', 'plan.json');
+    expect(existsSync(planJsonPath)).toBe(true);
+    const plan = JSON.parse(readFileSync(planJsonPath, 'utf-8'));
+    expect(plan.phases).toHaveLength(1);
+    expect(plan.phases[0].name).toBe('Test phase');
+    const planMdPath = join(projectRoot, '.zelari', 'plan.md');
+    expect(existsSync(planMdPath)).toBe(true);
+    expect(readFileSync(planMdPath, 'utf-8')).toContain('test-phase');
   });
 
   it('addIdea persists ADR through closed-over workspace ctx', async () => {

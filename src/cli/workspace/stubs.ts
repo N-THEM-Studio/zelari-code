@@ -12,8 +12,8 @@
  * @see docs/plans/2026-07-01-council-workspace-cli-stubs.md
  */
 
-import { existsSync, readdirSync, writeFileSync, readFileSync } from 'node:fs';
-import { join, basename } from 'node:path';
+import { existsSync, readdirSync, writeFileSync, readFileSync, mkdirSync, renameSync } from 'node:fs';
+import { join, basename, dirname, relative } from 'node:path';
 import type { EnhancedToolDefinition } from '@zelari/core/types';
 import { workspaceMutex } from './storage.js';
 import {
@@ -55,55 +55,72 @@ interface PlanSummary {
   milestones: PlanFrontmatter[];
 }
 
+/** Path of the machine-readable plan store (source of truth since v0.7.3). */
+function planJsonPath(ctx: WorkspaceContext): string {
+  return join(ctx.rootDir, 'plan.json');
+}
+
 function readPlan(ctx: WorkspaceContext): PlanSummary {
+  // v0.7.3: the plan's source of truth is plan.json. The previous
+  // implementation round-tripped the whole summary through the handwritten
+  // YAML-subset frontmatter of plan.md; free-text names/descriptions with
+  // colons, commas, and apostrophes corrupted the flow-map parse, so a phase
+  // written by createPhase could be unreadable one call later ("Phase not
+  // found" right after "Phase created", live test 2026-07-02). plan.md is
+  // now only the human-readable rendering.
+  const jsonPath = planJsonPath(ctx);
+  if (existsSync(jsonPath)) {
+    try {
+      const parsed = JSON.parse(readFileSync(jsonPath, 'utf8')) as Partial<PlanSummary>;
+      return {
+        phases: Array.isArray(parsed.phases) ? parsed.phases : [],
+        tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
+        milestones: Array.isArray(parsed.milestones) ? parsed.milestones : [],
+      };
+    } catch {
+      // Corrupt plan.json — fall through to the legacy migration read.
+    }
+  }
+  // Legacy migration: one best-effort parse of the old plan.md frontmatter
+  // (pre-v0.7.3 files). The next writePlan persists it as plan.json.
   const path = workspaceFile(ctx.rootDir, 'plan');
   const doc = ctx.storage.readIfExists<PlanFrontmatter>(path);
   if (!doc) return { phases: [], tasks: [], milestones: [] };
-  // The plan.md body is markdown; the frontmatter is a single "summary" object.
-  // We treat the file as a single doc with `kind: plan` and a body listing items.
-  // For our needs we just persist individual items to disk separately.
-  // But for v1 we serialize the entire plan as one doc with a list of phases/tasks/milestones in the body.
-  // Simpler: we store ONE phase/task/milestone per file under `.zelari/plan/<id>.md`.
-  // TODO: refactor for v2 if plan gets large.
-  const items: PlanFrontmatter[] = [];
-  // For now, parse the doc.meta as the entire plan state (kind=plan, has children fields).
   const meta = doc.meta as PlanFrontmatter & {
     phases?: PlanFrontmatter[];
     tasks?: PlanFrontmatter[];
     milestones?: PlanFrontmatter[];
   };
-  if (meta.phases) items.push(...meta.phases);
-  return { phases: meta.phases ?? [], tasks: meta.tasks ?? [], milestones: meta.milestones ?? [] };
+  return {
+    phases: Array.isArray(meta.phases) ? meta.phases : [],
+    tasks: Array.isArray(meta.tasks) ? meta.tasks : [],
+    milestones: Array.isArray(meta.milestones) ? meta.milestones : [],
+  };
 }
 
 /**
- * Write the entire plan (phases + tasks + milestones) as one file.
- * Simpler than per-item files for v1.
+ * Write the entire plan (phases + tasks + milestones):
+ *   - plan.json — lossless machine-readable source of truth (atomic write).
+ *   - plan.md   — human-readable rendering only (no machine-parsed arrays in
+ *                 the frontmatter, so the fragile YAML round-trip is gone).
  */
 function writePlan(
   ctx: WorkspaceContext,
   summary: PlanSummary,
 ): void {
-  const path = workspaceFile(ctx.rootDir, 'plan');
-  const meta: PlanFrontmatter = {
-    kind: 'phase',
-    id: '_plan_summary',
-    order: -1,
-    tags: ['plan-summary'],
-  };
-  // We pack phases/tasks/milestones in a synthetic frontmatter using flow-style.
-  // Easier: just store each item's key fields inline as comments? No — keep them
-  // parseable. We use a special frontmatter shape with arrays.
+  const jsonPath = planJsonPath(ctx);
+  mkdirSync(dirname(jsonPath), { recursive: true });
+  const tmp = jsonPath + '.tmp-' + process.pid;
+  writeFileSync(tmp, JSON.stringify(summary, null, 2), 'utf8');
+  renameSync(tmp, jsonPath);
+
+  const mdPath = workspaceFile(ctx.rootDir, 'plan');
   const summaryMeta = {
     kind: 'plan-summary',
     id: '_plan',
     updatedAt: new Date().toISOString(),
-    phases: summary.phases,
-    tasks: summary.tasks,
-    milestones: summary.milestones,
   };
-  const body = renderPlanBody(summary);
-  ctx.storage.write(path, summaryMeta, body);
+  ctx.storage.write(mdPath, summaryMeta, renderPlanBody(summary));
 }
 
 /** Render the plan.md body in human-readable Markdown. */
@@ -313,10 +330,19 @@ function updateTaskStub(ctx: WorkspaceContext): EnhancedToolDefinition {
     execute: async (args) => {
       return workspaceMutex.run(`${ctx.rootDir}:plan`, () => {
         const taskId = args['taskId'] as string;
-        const status = args['status'] as string;
-        if (!taskId || !status) return 'updateTask requires taskId and status.';
+        const rawStatus = args['status'] as string;
+        if (!taskId || !rawStatus) return 'updateTask requires taskId and status.';
         const valid = ['pending', 'in_progress', 'done', 'blocked'];
-        if (!valid.includes(status)) return `Invalid status: ${status}. Must be one of: ${valid.join(', ')}.`;
+        // v0.7.3: models routinely use kanban vocabulary ("todo", "completed")
+        // — map the common synonyms instead of erroring on each attempt.
+        const aliases: Record<string, string> = {
+          'todo': 'pending', 'to-do': 'pending', 'open': 'pending', 'backlog': 'pending',
+          'in-progress': 'in_progress', 'in progress': 'in_progress', 'doing': 'in_progress', 'started': 'in_progress', 'active': 'in_progress',
+          'complete': 'done', 'completed': 'done', 'finished': 'done', 'closed': 'done', 'resolved': 'done',
+          'stuck': 'blocked', 'waiting': 'blocked', 'on-hold': 'blocked', 'on hold': 'blocked',
+        };
+        const status = valid.includes(rawStatus) ? rawStatus : aliases[rawStatus.toLowerCase()];
+        if (!status) return `Invalid status: ${rawStatus}. Must be one of: ${valid.join(', ')}.`;
         const summary = readPlan(ctx);
         const task = summary.tasks.find((t) => t.id === taskId);
         if (!task) return `Task "${taskId}" not found.`;
@@ -458,29 +484,58 @@ function searchDocumentsStub(ctx: WorkspaceContext): EnhancedToolDefinition {
     category: 'analysis',
     parameters: [],
     execute: async (args) => {
-      const query = ((args['query'] as string) ?? '').toLowerCase();
+      const rawQuery = ((args['query'] as string) ?? '').trim();
       const limit = (args['limit'] as number) ?? 5;
-      if (!query) return 'searchDocuments requires a query.';
+      if (!rawQuery) return 'searchDocuments requires a query.';
+      // v0.7.3: models routinely write boolean-ish queries ("plan OR phase OR
+      // milestone"). The previous implementation substring-matched the WHOLE
+      // query string, so every OR query — and any multi-word query that didn't
+      // appear verbatim — returned "No matches" even for documents created
+      // seconds earlier. Match any OR-phrase first, then fall back to
+      // any-word matching per file.
+      const phrases = rawQuery
+        .toLowerCase()
+        .split(/\s+or\s+/i)
+        .map((p) => p.trim())
+        .filter((p) => p.length > 0);
+      const words = rawQuery
+        .toLowerCase()
+        .split(/[^a-z0-9_-]+/)
+        .filter((w) => w.length >= 3 && w !== 'or' && w !== 'and' && w !== 'the');
       const files = [
         ...ctx.storage.listMarkdown(join(ctx.rootDir, 'decisions')),
         ...ctx.storage.listMarkdown(join(ctx.rootDir, 'docs')),
         ...ctx.storage.listMarkdown(join(ctx.rootDir, 'reviews')),
+        ...ctx.storage.listMarkdown(join(ctx.rootDir, 'plan-tasks')),
+        ...ctx.storage.listMarkdown(join(ctx.rootDir, 'milestones')),
         workspaceFile(ctx.rootDir, 'plan'),
         workspaceFile(ctx.rootDir, 'risks'),
       ];
       const results: { path: string; snippet: string }[] = [];
       for (const file of files) {
         if (!existsSync(file)) continue;
-        const content = readFileSync(file, 'utf8').toLowerCase();
-        const idx = content.indexOf(query);
+        const raw = readFileSync(file, 'utf8');
+        const content = raw.toLowerCase();
+        let idx = -1;
+        let matchLen = 0;
+        for (const p of phrases) {
+          const i = content.indexOf(p);
+          if (i >= 0) { idx = i; matchLen = p.length; break; }
+        }
+        if (idx < 0) {
+          for (const w of words) {
+            const i = content.indexOf(w);
+            if (i >= 0) { idx = i; matchLen = w.length; break; }
+          }
+        }
         if (idx < 0) continue;
         const start = Math.max(0, idx - 40);
-        const end = Math.min(content.length, idx + query.length + 40);
-        const snippet = '…' + readFileSync(file, 'utf8').slice(start, end).replace(/\n/g, ' ').trim() + '…';
-        results.push({ path: file, snippet });
+        const end = Math.min(raw.length, idx + matchLen + 40);
+        const snippet = '…' + raw.slice(start, end).replace(/\n/g, ' ').trim() + '…';
+        results.push({ path: relative(ctx.rootDir, file) || basename(file), snippet });
         if (results.length >= limit) break;
       }
-      if (results.length === 0) return `No matches for "${query}" in workspace.`;
+      if (results.length === 0) return `No matches for "${rawQuery}" in workspace.`;
       return results.map((r) => `[${r.path}]\n${r.snippet}`).join('\n\n');
     },
   };

@@ -109,7 +109,6 @@ describe('chatState — finalized/live split (v0.7.0)', () => {
     });
     act(() => {
       completeTool(
-        result.current.live,
         result.current.setFinalized,
         result.current.setLive,
         'call-1',
@@ -132,7 +131,6 @@ describe('chatState — finalized/live split (v0.7.0)', () => {
     const { result } = renderHook(() => useTestState());
     act(() => {
       completeTool(
-        result.current.live,
         result.current.setFinalized,
         result.current.setLive,
         'never-started',
@@ -145,6 +143,22 @@ describe('chatState — finalized/live split (v0.7.0)', () => {
     expect(result.current.live.runningTools).toHaveLength(0);
   });
 
+  it('completeTool works when start+end land in the same frame (fast tools, v0.7.3 regression)', () => {
+    // The pre-v0.7.3 signature read a `live` snapshot from liveRef, which only
+    // updates on render: a tool that started and ended within one frame (all
+    // the 0-9ms workspace stubs) was invisible to the snapshot, so the end
+    // event was dropped and the tool stayed stuck in the live region.
+    const { result } = renderHook(() => useTestState());
+    act(() => {
+      startTool(result.current.setLive, 'searchDocuments', 'fast-1', { query: 'x' }, 1);
+      completeTool(result.current.setFinalized, result.current.setLive, 'fast-1', false, 3, 'No matches');
+    });
+    expect(result.current.finalized).toHaveLength(1);
+    expect(result.current.finalized[0].toolCallId).toBe('fast-1');
+    expect(result.current.finalized[0].toolOk).toBe(true);
+    expect(result.current.live.runningTools).toHaveLength(0);
+  });
+
   it('multiple pending tools coexist in live and finalize independently', () => {
     const { result } = renderHook(() => useTestState());
     act(() => {
@@ -154,7 +168,7 @@ describe('chatState — finalized/live split (v0.7.0)', () => {
     expect(result.current.live.runningTools).toHaveLength(2);
     // Finalize the second one first (out of order).
     act(() => {
-      completeTool(result.current.live, result.current.setFinalized, result.current.setLive, 'c2', false, 5, 'match');
+      completeTool(result.current.setFinalized, result.current.setLive, 'c2', false, 5, 'match');
     });
     expect(result.current.finalized).toHaveLength(1);
     expect(result.current.finalized[0].toolCallId).toBe('c2');

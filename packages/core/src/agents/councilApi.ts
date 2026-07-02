@@ -292,6 +292,16 @@ export async function* runCouncilPure(
   // specialist / oracle / chairman loops). The helper only owns the
   // callback dispatch to keep call sites short.
 
+  // v0.7.3: only advertise tools the executor registry can actually run.
+  // computeAgentTools unions role tools + skill requiredTools, which still
+  // include Electron-era tools (searchRAG, buildMindMap, addNode, …) the CLI
+  // registry does not implement. Advertising them makes the model call tools
+  // that fail with `Tool "searchRAG" not found` (live-test 2026-07-02) and
+  // burns its per-turn tool budget on guaranteed failures.
+  const executableNames = config.tools ? new Set(config.tools.list()) : null;
+  const filterExecutable = (names: string[]): string[] =>
+    executableNames ? names.filter((n) => executableNames.has(n)) : names;
+
   // Apply optional feedback-driven specialist ordering (Task I.2 close-out).
   // Minosse and chairman are extracted BEFORE ranking so their positions are
   // fixed (debate review + final synthesis roles are not reorderable).
@@ -310,7 +320,7 @@ export async function* runCouncilPure(
     const effectiveProvider = override?.providerId ?? config.provider ?? 'minimax';
     const effectiveModel = override?.model ?? config.model;
 
-    const agentToolNames = computeAgentTools(agent, config.aiConfig);
+    const agentToolNames = filterExecutable(computeAgentTools(agent, config.aiConfig));
     const agentTools: AgentToolSpec[] = agentToolNames.length > 0
       ? getProviderTools(agentToolNames).map((t) => ({
           name: t.function.name,
@@ -563,7 +573,7 @@ export async function* runCouncilPure(
     const effectiveProvider = override?.providerId ?? config.provider ?? 'minimax';
     const effectiveModel = override?.model ?? config.model;
 
-    const chairmanToolNames = computeAgentTools(chairman, config.aiConfig);
+    const chairmanToolNames = filterExecutable(computeAgentTools(chairman, config.aiConfig));
     const chairmanTools: AgentToolSpec[] = chairmanToolNames.length > 0
       ? getProviderTools(chairmanToolNames).map((t) => ({
           name: t.function.name,
