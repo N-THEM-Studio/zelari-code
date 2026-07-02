@@ -28,28 +28,58 @@ export function eventsToMessages(events: readonly BrainEvent[]): ChatMessage[] {
       } else {
         out.push({ id: assistantId, role: 'assistant', content: assistantBuffer, ts: e.ts });
       }
+    } else if (e.type === 'message_end') {
+      // Message boundary: the next streamed message gets its own bubble,
+      // matching the live UI (which finalizes on message_end).
+      assistantBuffer = '';
+      assistantId = '';
     } else if (e.type === 'tool_execution_start') {
       // v0.4.3 audit fix: the v3-W event schema renamed `tool_call` →
       // `tool_execution_start` and added the `args` field. The old branches
       // here silently dropped every tool invocation during session resume.
+      // v0.6.2: restored as a `role: 'tool'` message so the resumed
+      // transcript renders CollapsibleToolOutput, same as the live UI.
       assistantBuffer = '';
       assistantId = '';
-      const argsPreview = JSON.stringify((e as { args: unknown }).args).slice(0, 80);
+      const argsPreview = JSON.stringify((e as { args: unknown }).args)?.slice(0, 120) ?? '';
       out.push({
         id: crypto.randomUUID(),
-        role: 'system',
-        content: `[tool_call] ${e.toolName}(${argsPreview})`,
+        role: 'tool',
+        content: argsPreview,
         ts: e.ts,
+        toolName: e.toolName,
+        toolCallId: e.toolCallId,
       });
     } else if (e.type === 'tool_execution_end') {
-      // v0.4.3 audit fix: same — `tool_result` → `tool_execution_end` with
-      // `isError` / `durationMs` instead of `ok`.
-      out.push({
-        id: crypto.randomUUID(),
-        role: 'system',
-        content: `[tool_result] ${e.toolName} → ${(e as { isError: boolean }).isError ? 'error' : 'ok'}`,
-        ts: e.ts,
-      });
+      // v0.6.2: update the matching start message in place (the event does
+      // NOT carry toolName — the old code rendered "[tool_result] undefined").
+      const end = e as { toolCallId: string; isError: boolean; durationMs: number; result?: string };
+      let matched = false;
+      for (let i = out.length - 1; i >= 0; i--) {
+        const m = out[i];
+        if (m.role === 'tool' && m.toolCallId === end.toolCallId && m.toolDurationMs === undefined) {
+          // v0.6.2 audit LOW-5: append `…` on truncation to match the
+          // live path (messageHelpers.appendToolEnd behavior).
+          const raw = typeof end.result === 'string' ? end.result : '';
+          const truncated = raw.length > 600 ? `${raw.slice(0, 600)}…` : raw;
+          out[i] = {
+            ...m,
+            toolOk: !end.isError,
+            toolDurationMs: end.durationMs,
+            ...(raw.length > 0 ? { toolResult: truncated } : {}),
+          };
+          matched = true;
+          break;
+        }
+      }
+      if (!matched) {
+        out.push({
+          id: crypto.randomUUID(),
+          role: 'system',
+          content: `[tool_result] ${end.toolCallId} → ${end.isError ? 'error' : 'ok'}`,
+          ts: e.ts,
+        });
+      }
     } else if (e.type === 'agent_start') {
       out.push({
         id: crypto.randomUUID(),

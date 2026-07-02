@@ -115,10 +115,13 @@ export function App(): React.ReactElement {
   const skills = useMemo(() => listCodingSkills(), []);
   const skillList = useMemo(() => formatSkillList(skills), [skills]);
   const isSlashMode = input.startsWith('/');
-  const chatWidth = Math.max(20, size.columns - 44);
+  // ChatStream's real box width: total minus the 40-col Sidebar. The message
+  // height estimator subtracts its own padding/margins from this, so pass the
+  // actual box width (the old -44 double-counted the padding).
+  const chatWidth = Math.max(20, size.columns - 40);
 
   return (
-    <Box flexDirection="column" width={size.columns} height={size.rows}>
+    <Box flexDirection="column" width={size.columns} height={size.rows} overflow="hidden">
       <Header
         model={activeModel}
         provider={activeProviderSpec.id}
@@ -128,7 +131,7 @@ export function App(): React.ReactElement {
         totalTokens={sessionStats.totalTokens}
         totalCostUsd={sessionStats.totalCostUsd}
       />
-      <Box flexDirection="row" height={size.rows - 6}>
+      <Box flexDirection="row" height={size.rows - 6} overflow="hidden">
         <ChatStream messages={session.messages} height={size.rows - 6} width={chatWidth} />
         <Sidebar
           skillList={skillList}

@@ -72,40 +72,51 @@ export function appendOrExtendStreamingAssistant(
   });
 }
 
-/** Append a tool invocation indicator (▶ name(args) or ✓/✗ result). */
+/** Max chars of tool result kept for the expandable body. */
+export const TOOL_RESULT_PREVIEW_CHARS = 600;
+
+/** Max chars of the JSON args preview shown on the tool summary line. */
+export const TOOL_ARGS_PREVIEW_CHARS = 120;
+
+/**
+ * Append a tool invocation as a `role: 'tool'` message so ChatStream renders
+ * it via CollapsibleToolOutput (one status line per invocation, updated in
+ * place by {@link updateToolMessageEnd}) instead of loose system lines.
+ */
 export function appendToolStart(
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
   toolName: string,
+  toolCallId: string,
   args: unknown,
   ts: number,
 ): void {
-  const argsPreview = JSON.stringify(args).slice(0, 120);
-  appendSystem(setMessages, `▶ ${toolName}(${argsPreview})`, ts);
+  const argsPreview = JSON.stringify(args)?.slice(0, TOOL_ARGS_PREVIEW_CHARS) ?? '';
+  setMessages((prev) => [
+    ...prev,
+    {
+      id: crypto.randomUUID(),
+      role: 'tool',
+      content: argsPreview,
+      ts,
+      toolName,
+      toolCallId,
+      toolOk: undefined,
+      toolDurationMs: undefined,
+    },
+  ]);
 }
 
-/** Append a tool result indicator. */
-export function appendToolEnd(
-  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
-  result: string,
-  isError: boolean,
-  durationMs: number,
-  ts: number,
-): void {
-  const preview = result.slice(0, 200);
-  const icon = isError ? '✗' : '✓';
-  appendSystem(
-    setMessages,
-    `${icon} ${preview}${result.length > 200 ? '…' : ''} (${durationMs}ms)`,
-    ts,
-  );
-}
-
-/** Update the matching `tool_execution_start` message with its end status. */
+/**
+ * Update the matching `tool_execution_start` message with its end status.
+ * The summary (args preview) is kept; the result is stored separately as the
+ * expandable body. Failed invocations auto-expand in ChatStream.
+ */
 export function updateToolMessageEnd(
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
   toolCallId: string,
   isError: boolean,
   durationMs: number,
+  result?: string,
 ): void {
   setMessages((prev) => {
     for (let i = prev.length - 1; i >= 0; i--) {
@@ -116,10 +127,35 @@ export function updateToolMessageEnd(
           ...m,
           toolOk: !isError,
           toolDurationMs: durationMs,
-          content: `${m.toolName ?? 'tool'}${isError ? ' → error' : ' → ok'} (${durationMs}ms)`,
+          ...(result !== undefined
+            ? {
+                toolResult:
+                  result.length > TOOL_RESULT_PREVIEW_CHARS
+                    ? `${result.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`
+                    : result,
+              }
+            : {}),
         };
         return updated;
       }
+    }
+    return prev;
+  });
+}
+
+/**
+ * Seal the trailing streaming assistant message (if any) by dropping its
+ * `streaming-` id prefix. Called on `message_end` so the NEXT assistant
+ * message in the same turn (e.g. after a tool call) starts a fresh bubble
+ * instead of being merged into — or duplicated over — the previous one.
+ */
+export function finalizeStreamingAssistant(
+  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+): void {
+  setMessages((prev) => {
+    const last = prev[prev.length - 1];
+    if (last && last.role === 'assistant' && last.id.startsWith('streaming-')) {
+      return [...prev.slice(0, -1), { ...last, id: last.id.slice('streaming-'.length) }];
     }
     return prev;
   });

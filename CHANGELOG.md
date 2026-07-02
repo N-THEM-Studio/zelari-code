@@ -5,6 +5,33 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-07-02
+
+### Highlights
+- **TUI flicker eliminato**: stima dell'altezza delle chat messages corretta per il wrap reale (Box paddingX + message marginLeft = `width-4`), `chatWidth` ricalcolato (`columns - 40` invece di `- 44`), `overflow="hidden"` aggiunto su root/row. `pickVisibleMessages` non lascia più che il transcript cresca oltre il terminale, causa del full-screen repaint che provocava flicker visibile.
+- **Tool/agent rendering come CollapsibleToolOutput**: ogni tool invocation ora è un singolo messaggio `role: 'tool'` aggiornato in place (status glyph `⋯`/`✓`/`✗`, summary + expandable body), non più 2-4 loose system lines.
+- **Cross-message text duplication fix**: `streamContent` separato da `assistantContent`, bubble finalizzato su `message_end` / `tool start`. Prima il bubble post-tool ridisegnava l'intero turn text.
+- **Session resume replay tool come `role: 'tool'`**: non più `[tool_result] undefined → ok`, `tool_execution_end` aggiorna in place via `toolCallId`.
+- **+9 nuovi test** in `tests/unit/cli-toolDisplay.test.ts` (270 LOC): messageHelpers, dispatchPrompt dup, eventsToMessages replay, pickVisibleMessages wrap.
+
+### Added
+- `src/cli/hooks/messageHelpers.ts`: `finalizeStreamingAssistant()` per sigillare il trailing streaming bubble; `TOOL_RESULT_PREVIEW_CHARS=600` + `TOOL_ARGS_PREVIEW_CHARS=120` costanti; `appendToolStart`/`updateToolMessageEnd` con `toolCallId` + result separato.
+- `src/cli/components/CollapsibleToolOutput.tsx`: status glyph `⋯`/`✓`/`✗` nella summary.
+- `src/cli/app.tsx`: `overflow="hidden"` su root/row.
+- `tests/unit/cli-toolDisplay.test.ts`: 9 test unit per il nuovo rendering.
+- `package-lock.json`: version sync 0.5.0 → 0.6.1.
+
+### Fixed (post-release audit, agy Gemini 3.5 Flash)
+4 finding agy (1 HIGH, 0 MEDIUM, 3 LOW) tutti verificati e fixati con regression test:
+
+- **HIGH-1** — Tool message più alto della altezza disponibile → `pickVisibleMessages` usciva dal loop con array vuoto, transcript BLANK. Fix: collassa il body al summary se non c'è spazio per il bordered body espanso, mostra almeno 1 row del summary.
+- **LOW-3** — `CompactMessage` interface non estesa con `toolResult`/`toolCallId`/`memberName`/`memberId` aggiunti in v0.5.0 e v0.6.2. Fix: aggiunti come optional fields.
+- **LOW-4** — Status glyph `ok === undefined && durationMs === undefined ? '⋯' : ok === false ? '✗' : '✓'` sbagliato: con `ok=undefined && durationMs=defined` restituiva `✓` (success) invece di `⋯` (pending). Fix: check diretto `ok === true ? '✓' : ok === false ? '✗' : '⋯'`.
+- **LOW-5** — Session resume `tool_execution_end` troncava a 600 char senza aggiungere `…` (asimmetria con live path). Fix: append `…` su truncation, no update se result vuoto.
+- **MEDIUM-2** (false positive scartato): agy segnalava rimozione backward compat di `toolCall`/`toolResult` event in `eventsToMessages.ts`. Verificato: `BrainEvent` type include solo `tool_execution_start`/`tool_execution_end`, non i nomi legacy, quindi non c'è perdita di dati nei session JSONL.
+
+Test: 770 → 771 (+1 regression per HIGH-1 transcript blank).
+
 ## [0.6.0] - 2026-07-02
 
 ### Highlights

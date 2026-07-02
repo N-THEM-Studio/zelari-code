@@ -14,8 +14,8 @@ import { createBuiltinToolRegistry } from '../toolRegistry.js';
 import {
   appendOrExtendStreamingAssistant,
   appendSystem,
-  appendToolEnd,
   appendToolStart,
+  finalizeStreamingAssistant,
   updateToolMessageEnd,
 } from './messageHelpers.js';
 import type { ProviderName } from '../keyStore.js';
@@ -98,7 +98,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             openaiCompatibleProvider(config as Parameters<typeof openaiCompatibleProvider>[0]),
         });
         if (failoverResolution.warning) {
-          console.warn(failoverResolution.warning);
+          // Surface in the chat instead of console.warn: writes that bypass
+          // Ink force a full repaint of the TUI frame (visible flicker).
+          appendSystem(setMessages, `[failover] ${failoverResolution.warning}`);
         }
         const providerStream: import('@zelari/core/harness').ProviderStreamFn =
           failoverResolution.fallbackLabel
@@ -151,13 +153,28 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       harnessRef.current = harness;
       setQueueCount(harness.queueLength);
 
+      // Total assistant output across the whole turn — feeds the token/cost
+      // estimate fallback in computeSessionStatsDelta.
       let assistantContent = '';
+      // Display buffer for the CURRENT streamed message only. Reset on every
+      // message_end: without this, the post-tool-call message re-rendered the
+      // full accumulated turn text, duplicating everything said before the
+      // tool ran.
+      let streamContent = '';
+      // tool_execution_end doesn't carry toolName — remember it from the
+      // matching start event (keyed by toolCallId) for metrics.
+      const toolNameById = new Map<string, string>();
       const metrics: MetricsLogger = getMetricsLogger();
       let realUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | null = null;
       try {
         for await (const event of harness.run()) {
-          if (event.type === 'message_end' && event.usage) {
-            realUsage = event.usage;
+          if (event.type === 'message_end') {
+            if (event.usage) realUsage = event.usage;
+            // Message boundary: drain buffered deltas, then seal the streamed
+            // bubble so the next message starts fresh instead of merging.
+            flushStreaming();
+            finalizeStreamingAssistant(setMessages);
+            streamContent = '';
           }
           if (event.type === 'queue_update') {
             setQueueCount(harness.queueLength);
@@ -188,7 +205,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               sessionId,
               provider: envConfig.providerId,
               model: envConfig.model,
-              toolName: event.toolName,
+              toolName: toolNameById.get(event.toolCallId) ?? 'unknown',
               toolCallId: event.toolCallId,
               durationMs: event.durationMs,
               ok: !event.isError,
@@ -196,38 +213,35 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           }
           if (event.type === 'message_delta') {
             assistantContent += event.delta;
+            streamContent += event.delta;
             // Route through the throttled setter so per-token deltas (50-200/sec)
             // coalesce into ≤60 renders/sec instead of flickering the TUI.
             // v0.5.0: forward the council member identity when present so
             // the UI can render `🜂 Caronte: …` headers.
-            appendOrExtendStreamingAssistant(commitStreaming, assistantContent, Date.now(), {
+            appendOrExtendStreamingAssistant(commitStreaming, streamContent, Date.now(), {
               ...(event.memberId ? { memberId: event.memberId } : {}),
               ...(event.memberName ? { memberName: event.memberName } : {}),
             });
           } else if (event.type === 'error') {
+            flushStreaming();
             appendSystem(setMessages, `[error] ${event.message}`, Date.now());
-          } else if (event.type === 'tool_call') {
-            appendSystem(
-              setMessages,
-              `[tool_call] ${event.toolName}(${JSON.stringify(event.arguments).slice(0, 80)})`,
-              event.ts,
-            );
-          } else if (event.type === 'tool_result') {
-            appendSystem(
-              setMessages,
-              `[tool_result] ${event.toolName} → ${event.ok ? 'ok' : 'error'}`,
-              event.ts,
-            );
           } else if (event.type === 'tool_execution_start') {
-            appendToolStart(setMessages, event.toolName, event.args, event.ts);
+            toolNameById.set(event.toolCallId, event.toolName);
+            // Drain buffered deltas FIRST so the text streamed before the
+            // call renders above the tool line, not below it — then seal
+            // that bubble: it's complete once the model starts calling tools.
+            flushStreaming();
+            finalizeStreamingAssistant(setMessages);
+            appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
           } else if (event.type === 'tool_execution_end') {
-            appendToolEnd(setMessages, event.result, event.isError, event.durationMs, event.ts);
+            updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
           }
         }
       } finally {
         // Drain any buffered streaming deltas so the final assistant message
         // is committed before busy flips to false (and the input re-enables).
         flushStreaming();
+        finalizeStreamingAssistant(setMessages);
         harnessRef.current = null;
         setQueueCount(0);
         setBusy(false);
@@ -334,12 +348,17 @@ async function dispatchCouncilPromptImpl(
         // per-token deltas don't flicker the TUI (same as dispatchPrompt).
         // v0.5.0: forward the council member identity when present so
         // the UI can render `🜂 Caronte: …` headers above the streamed
-        // text. When two specialists share the same messageId (rare, but
-        // possible across tool-call loops), the next streaming id keeps
-        // the previous member stamp so a single message stays attributed.
+        // text. Extend the trailing streaming bubble only when it belongs
+        // to the SAME member — otherwise one specialist's text would be
+        // appended to (and attributed to) the previous one.
         commitStreaming((prev) => {
           const last = prev[prev.length - 1];
-          if (last && last.role === 'assistant' && last.id.startsWith('streaming-')) {
+          if (
+            last &&
+            last.role === 'assistant' &&
+            last.id.startsWith('streaming-') &&
+            (last.memberId ?? null) === (event.memberId ?? null)
+          ) {
             return [...prev.slice(0, -1), { ...last, content: last.content + event.delta }];
           }
           return [
@@ -354,26 +373,23 @@ async function dispatchCouncilPromptImpl(
             },
           ];
         });
+      } else if (event.type === 'message_end') {
+        // Member/turn boundary: drain buffered deltas and seal the bubble so
+        // the next streamed message starts fresh.
+        flushStreaming();
+        finalizeStreamingAssistant(setMessages);
       } else if (event.type === 'tool_execution_start') {
-        const argsPreview = JSON.stringify(event.args).slice(0, 120);
-        appendSystem(setMessages, `▶ ${event.toolName}(${argsPreview})`, event.ts);
-        // Also surface as 'tool' role for CollapsibleToolOutput rendering.
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: 'tool',
-            content: `${event.toolName}(${argsPreview})`,
-            ts: event.ts,
-            toolName: event.toolName,
-            toolCallId: event.toolCallId,
-            toolOk: undefined,
-            toolDurationMs: undefined,
-          },
-        ]);
+        // Single 'tool' role message per invocation (CollapsibleToolOutput);
+        // the previous extra `▶ name(args)` system line duplicated it.
+        // Drain buffered deltas first so ordering matches reality, and seal
+        // the pre-tool bubble (complete once the member starts calling tools).
+        flushStreaming();
+        finalizeStreamingAssistant(setMessages);
+        appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
       } else if (event.type === 'tool_execution_end') {
-        updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs);
+        updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
       } else if (event.type === 'error') {
+        flushStreaming();
         appendSystem(setMessages, `[error] ${event.message}`, event.ts);
       }
     }
@@ -389,6 +405,7 @@ async function dispatchCouncilPromptImpl(
     // Drain any buffered streaming deltas before status messages / busy flip,
     // so the final council output is committed to the chat.
     flushStreaming();
+    finalizeStreamingAssistant(setMessages);
     try {
       const hook = await runPostCouncilHook(workspaceCtx);
       if (hook.ran && hook.changed) {

@@ -69,7 +69,12 @@ function CollapsibleToolOutputImpl(props: CollapsibleToolOutputProps): React.Rea
   const expanded = isControlled ? (props.expanded as boolean) : localExpanded;
   const color = borderColor(toolName, ok);
 
+  // Status glyph: pending (no verdict yet) / ok / error. Check `ok` first
+  // so undefined-with-defined-duration (rare but possible) shows ⋯ not ✓.
+  // v0.6.2 audit LOW-4.
+  const status = ok === true ? '✓' : ok === false ? '✗' : '⋯';
   const summaryLine = [
+    status,
     `[${toolName}]`,
     summary,
     durationMs !== undefined ? `(${durationMs}ms)` : '',

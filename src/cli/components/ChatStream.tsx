@@ -14,6 +14,14 @@ export interface ChatMessage {
   toolOk?: boolean;
   toolDurationMs?: number;
   /**
+   * Tool result body (truncated), shown by CollapsibleToolOutput when the
+   * invocation is expanded (errors auto-expand). Kept separate from
+   * `content` so the collapsed summary stays a stable one-liner.
+   *
+   * @since 0.6.2
+   */
+  toolResult?: string;
+  /**
    * Council member name that produced this message (e.g. "Caronte",
    * "Nettuno", "Minosse"). Populated only for council-sourced
    * assistant messages so the visible-reasoning UI can render
@@ -38,16 +46,38 @@ interface ChatStreamProps {
   width: number;
 }
 
-/** Estimate the rendered row count for a single message. */
+/**
+ * Estimate the rendered row count for a single message.
+ *
+ * Width accounting matters here: under-estimating heights lets the transcript
+ * grow taller than the terminal, at which point Ink falls back to clearing
+ * and repainting the whole screen on every frame — the main source of
+ * visible flicker during streaming. The ChatStream Box has paddingX={1}
+ * (2 cols) and each message body an extra marginLeft={2}, so text wraps at
+ * `width - 4`, not `width`.
+ */
 function estimateMessageHeight(m: ChatMessage, width: number): number {
+  const textWidth = Math.max(1, width - 4);
   if (m.role === 'tool') {
-    // Collapsed tool output takes 1 line of summary
-    return 1;
+    // Collapsed tool output: one summary line ("[name] args (ms) ▼"),
+    // which can wrap on narrow terminals / long arg previews.
+    const summaryLen = m.content.length + (m.toolName?.length ?? 4) + 13;
+    let rows = Math.max(1, Math.ceil(summaryLen / textWidth));
+    if (m.toolOk === false && m.toolResult) {
+      // Failed tools auto-expand: bordered body (2 border rows) + wrapped
+      // body lines at textWidth - 6 (extra marginLeft 2 + border 2 + padding 2).
+      const bodyWidth = Math.max(1, textWidth - 6);
+      rows += 2;
+      for (const line of m.toolResult.split('\n')) {
+        rows += Math.max(1, Math.ceil(line.length / bodyWidth));
+      }
+    }
+    return rows;
   }
   const lines = m.content.split('\n');
   let textRows = 0;
   for (const line of lines) {
-    textRows += Math.max(1, Math.ceil(line.length / width));
+    textRows += Math.max(1, Math.ceil(line.length / textWidth));
   }
   return 1 + textRows + 1; // header + textRows + margin-bottom
 }
@@ -72,15 +102,36 @@ export function pickVisibleMessages(
       visibleMessages.unshift(m);
       remainingHeight -= mHeight;
     } else {
-      // Truncate the top-most visible message if we have some space
-      if (remainingHeight > 2) {
+      // Truncate the top-most visible message if we have some space.
+      // Tool messages: collapse the body to just the summary when
+      // there is not enough height for the (possibly auto-expanded)
+      // bordered body — silently dropping the tool would blank the
+      // whole transcript. Regression HIGH-1 (v0.6.2 audit).
+      if (m.role === 'tool') {
+        // Tools: minimum 1 row for the summary line. Skip the
+        // `remainingHeight > 2` guard (which was tuned for assistant
+        // messages that need header + body + margin-bottom).
+        const textWidth = Math.max(1, width - 4);
+        const summaryLen = m.content.length + (m.toolName?.length ?? 4) + 13;
+        const summaryRows = Math.max(1, Math.ceil(summaryLen / textWidth));
+        if (summaryRows <= remainingHeight) {
+          // Show the collapsed summary (drop the auto-expanded body
+          // if it would push us past the available height).
+          const { toolResult: _omit, ...collapsed } = m;
+          void _omit;
+          visibleMessages.unshift(collapsed as ChatMessage);
+        }
+        // else: even the summary doesn't fit — fall through to break
+        // and leave earlier visible messages in place.
+      } else if (remainingHeight > 2) {
+        const textWidth = Math.max(1, width - 4);
         const maxTextRows = remainingHeight - 2; // header + margin-bottom
         const lines = m.content.split('\n');
         const truncatedLines: string[] = [];
         let currentRows = 0;
         for (let j = lines.length - 1; j >= 0; j--) {
           const line = lines[j];
-          const lineRows = Math.max(1, Math.ceil(line.length / width));
+          const lineRows = Math.max(1, Math.ceil(line.length / textWidth));
           if (currentRows + lineRows <= maxTextRows) {
             truncatedLines.unshift(line);
             currentRows += lineRows;
@@ -122,7 +173,7 @@ function ChatStreamImpl({ messages, height, width }: ChatStreamProps): React.Rea
   );
 
   return (
-    <Box flexDirection="column" flexGrow={1} paddingX={1} height={height}>
+    <Box flexDirection="column" flexGrow={1} paddingX={1} height={height} overflow="hidden">
       {visibleMessages.length === 0 ? (
         <Text dimColor>Ready. Type a prompt or /skill &lt;name&gt; to invoke a skill.</Text>
       ) : (
@@ -133,10 +184,10 @@ function ChatStreamImpl({ messages, height, width }: ChatStreamProps): React.Rea
                 key={m.id}
                 toolName={m.toolName ?? 'tool'}
                 summary={m.content}
-                body={m.content}
+                body={m.toolResult ?? m.content}
                 ok={m.toolOk}
                 durationMs={m.toolDurationMs}
-                defaultExpanded={false}
+                defaultExpanded={m.toolOk === false && !!m.toolResult}
               />
             );
           }
