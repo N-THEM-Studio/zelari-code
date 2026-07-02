@@ -121,6 +121,21 @@ export function handleClearChat(
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
   setSessionActive: (v: boolean) => void,
 ): void {
+  // v0.7.0 static-scrollback: <Static> can't retro-erase the lines it already
+  // printed to real stdout (they are in the terminal's native scrollback).
+  // Emit ANSI clear-screen + scrollback-wipe + cursor-home so the visible
+  // pane and the scrollback are cleared together. Windows Terminal honors all
+  // three; legacy conhost ignores `3J` (scrollback wipe) — acceptable
+  // degradation, the visible pane still clears.
+  //
+  //   \x1b[2J  — clear visible screen
+  //   \x1b[3J  — clear scrollback history
+  //   \x1b[H   — cursor home
+  try {
+    process.stdout.write('\x1b[2J\x1b[3J\x1b[H');
+  } catch {
+    // Best-effort — never block a /clear on a stdout write error.
+  }
   setMessages([]);
   setSessionActive(false);
 }

@@ -141,7 +141,7 @@ describe('useBatchedMessages', () => {
     expect(result.current.messages[0]?.content).toBe('hello');
   });
 
-  it('non-streaming setMessages passthrough bypasses the throttle entirely', () => {
+  it('non-streaming setState passthrough bypasses the throttle entirely', () => {
     const { result } = renderHook(() => useHarness(16));
 
     // Direct passthrough applies instantly, even during a throttle window.
@@ -149,7 +149,7 @@ describe('useBatchedMessages', () => {
       result.current.commit(() => [msg('a', 'streaming')]); // opens a window
     });
     act(() => {
-      result.current.setMessages(() => [msg('sys', 'system msg')]); // bypasses
+      result.current.setState(() => [msg('sys', 'system msg')]); // bypasses
     });
 
     expect(result.current.messages[0]?.content).toBe('system msg');

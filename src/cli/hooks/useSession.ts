@@ -13,36 +13,35 @@ import {
 import { SessionJsonlWriter } from '@zelari/core/harness';
 import type { ChatMessage } from '../components/ChatStream.js';
 import { eventsToMessages } from './eventsToMessages.js';
-import { useBatchedMessages } from './useBatchedMessages.js';
+import { EMPTY_LIVE, type LiveState } from './chatState.js';
 
 /**
  * useSession — owns session lifecycle (bootstrap, restore, /sessions, /resume, /new).
  *
- * Extracted from app.tsx (Task v0.4.2 audit split). The component is purely
- * state + side effects — no rendering. Callers receive:
- *   - sessionId: current session id (or '' pre-bootstrap)
- *   - messages: restored + appended chat messages
- *   - sessionActive: true once at least one prompt has been dispatched
- *   - writerRef: SessionJsonlWriter for streaming event persistence
- *   - setMessages / setSessionId / setSessionActive: setters
- *   - handleSessionKind: dispatcher for /sessions, /resume, /new
+ * v0.7.0 static-scrollback refactor: the single `messages` array is now the
+ * `finalized` region (append-only, feeds `<Static>`), with a new `live`
+ * region holding the streaming bubble + pending tool invocations that Ink
+ * repaints. See `src/cli/hooks/chatState.ts` for the invariant.
  *
- * The hook is intentionally render-free so it can be unit-tested with
- * @testing-library/react-hooks or similar without booting Ink.
+ * Backward compatibility: `messages` / `setMessages` still expose the
+ * finalized array, so `useSlashDispatch` and the slash handlers (which all
+ * append system/user/sealed messages via `appendSystem(setMessages, ...)`)
+ * keep working unchanged. Only the streaming hot-path in `useChatTurn` and
+ * the tool start/end events are rerouted to `live`.
  */
 export interface UseSessionResult {
   sessionId: string;
   setSessionId: (id: string) => void;
+  /** The finalized transcript — append-only, feeds `<Static>`. */
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  /**
-   * Throttled setter for the streaming hot-path only. Coalesces per-token
-   * `setMessages` calls (~50-200/sec) into at most one render per ~16ms so
-   * the TUI doesn't flicker. Non-streaming calls use `setMessages` directly.
-   */
-  commitStreaming: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
-  /** Drain any pending streamed update synchronously. Call on stream/turn end. */
-  flushStreaming: () => void;
+  /** The dynamic region (streaming bubble + pending tools) Ink repaints. */
+  live: LiveState;
+  setLive: React.Dispatch<React.SetStateAction<LiveState>>;
+  /** Always-current `live` snapshot for non-reactive callbacks (event loop). */
+  liveRef: React.MutableRefObject<LiveState>;
+  /** Reset both regions (used by /clear, /new). */
+  resetTranscript: () => void;
   sessionActive: boolean;
   setSessionActive: (v: boolean) => void;
   writerRef: React.MutableRefObject<SessionJsonlWriter | null>;
@@ -52,15 +51,23 @@ export interface UseSessionResult {
 export function useSession(): UseSessionResult {
   const [sessionId, setSessionId] = useState<string>('');
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [live, setLive] = useState<LiveState>(EMPTY_LIVE);
   const [sessionActive, setSessionActive] = useState(false);
   const writerRef = useRef<SessionJsonlWriter | null>(null);
 
-  // Throttle layer over `messages`/`setMessages`. `commitStreaming` coalesces
-  // the per-token streaming deltas (the LLM emits ~50-200/sec) into at most
-  // one render per ~16ms, which lets `React.memo(ChatStream)` finally take
-  // effect. `setMessages` is the passthrough — non-streaming calls (bootstrap
-  // restore, /new reset, system/error messages) apply instantly.
-  const { commit: commitStreaming, flush: flushStreaming } = useBatchedMessages(messages, setMessages);
+  // Mirror `live` into a ref so non-reactive callbacks (the AgentHarness event
+  // loop in useChatTurn) can read the current pending-tools snapshot without
+  // depending on `live` in their dependency array (which would recreate the
+  // callback every token and break the throttle layer).
+  const liveRef = useRef<LiveState>(EMPTY_LIVE);
+  useEffect(() => {
+    liveRef.current = live;
+  }, [live]);
+
+  const resetTranscript = useCallback(() => {
+    setMessages([]);
+    setLive(EMPTY_LIVE);
+  }, []);
 
   // Bootstrap on mount: resume current session or create new one.
   useEffect(() => {
@@ -87,6 +94,9 @@ export function useSession(): UseSessionResult {
       if (cancelled) return;
       writerRef.current = new SessionJsonlWriter(id);
       setSessionId(id);
+      // Restored messages are historical (immutable) → go straight into
+      // finalized, printed once into native scrollback on resume. Same
+      // behavior as Claude Code on session resume.
       setMessages(restoredMessages);
       if (restoredMessages.length > 0) {
         setMessages((prev) => [
@@ -138,13 +148,13 @@ export function useSession(): UseSessionResult {
         writerRef.current?.close();
         writerRef.current = new SessionJsonlWriter(id);
         setSessionId(id);
-        setMessages([]);
+        resetTranscript();
         setSessionActive(false);
         return `[new] fresh session ${id.slice(0, 8)}… started`;
       }
       return `[${kind}] handled`;
     },
-    [],
+    [resetTranscript],
   );
 
   return {
@@ -152,8 +162,10 @@ export function useSession(): UseSessionResult {
     setSessionId,
     messages,
     setMessages,
-    commitStreaming,
-    flushStreaming,
+    live,
+    setLive,
+    liveRef,
+    resetTranscript,
     sessionActive,
     setSessionActive,
     writerRef,

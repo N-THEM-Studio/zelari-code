@@ -6,7 +6,7 @@ import { AgentHarness } from '@zelari/core/harness';
 import { SessionJsonlWriter } from '@zelari/core/harness';
 import { MetricsLogger, getMetricsLogger } from '../metrics.js';
 import { calculateCost } from '../modelPricing.js';
-import { openaiCompatibleProvider, providerFromEnv, providerConfigFor } from '../provider/openai-compatible.js';
+import { openaiCompatibleProvider, providerFromEnv, providerConfigFor, resolveActiveProvider } from '../provider/openai-compatible.js';
 import { providerFailover } from '../providerFailover.js';
 import { resolveFailoverStream } from '../crossProviderFailover.js';
 import { PROVIDERS } from '../keyStore.js';
@@ -18,12 +18,27 @@ import {
   finalizeStreamingAssistant,
   updateToolMessageEnd,
 } from './messageHelpers.js';
+import {
+  setStreaming,
+  finalizeStreaming,
+  startTool,
+  completeTool,
+  type LiveState,
+} from './chatState.js';
 import type { ProviderName } from '../keyStore.js';
 import { computeSessionStatsDelta } from './chatStats.js';
 
 /**
  * useChatTurn — owns the chat-turn lifecycle (single prompt dispatch +
  * council dispatch + queue management).
+ *
+ * v0.7.0 static-scrollback refactor: streaming + tool-start/end now route
+ * through the `live` region (`setStreaming`/`startTool`/`completeTool`/
+ * `finalizeStreaming` from chatState.ts). System/user/sealed-assistant
+ * messages still go to `setMessages` (= finalized). When `live`-related
+ * params are omitted (legacy tests, single-array model), the hook falls
+ * back to the v0.6 streaming-into-`messages` behavior so existing tests
+ * keep passing unchanged.
  *
  * Extracted from app.tsx (Task v0.4.2 audit split). The hook is purely
  * state + side effects: callers pass the shared chat state setters and
@@ -35,23 +50,28 @@ import { computeSessionStatsDelta } from './chatStats.js';
  *     normal user prompts and /skill invocations.
  *   - dispatchCouncilPrompt(text) — multi-agent council dispatch via
  *     dispatchCouncil. Surfaces tool_execution_start/end as 'tool' role
- *     messages so ChatStream renders CollapsibleToolOutput.
+ *     messages so the LiveRegion renders them.
  */
 export interface UseChatTurnParams {
   sessionId: string;
   writerRef: React.MutableRefObject<SessionJsonlWriter | null>;
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   /**
-   * Throttled setter for the streaming hot-path (per-token deltas). Coalesces
-   * ~50-200/sec `setMessages` calls into ≤60/sec renders to prevent flicker.
-   * Non-streaming calls continue to use `setMessages`.
+   * Throttled setter for the streaming hot-path. In the v0.7.0 live-region
+   * model this throttles `live`; in the legacy single-array model it
+   * throttles `messages`. Coalesces ~50-200/sec calls into ≤60/sec renders.
    */
-  commitStreaming: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  commitStreaming: React.Dispatch<React.SetStateAction<any>>;
   /** Drain pending streamed updates synchronously. Called on stream/turn end. */
   flushStreaming: () => void;
   setBusy: (v: boolean) => void;
   setSessionActive: (v: boolean) => void;
   setSessionStats: React.Dispatch<React.SetStateAction<{ totalTokens: number; totalCostUsd: number }>>;
+  // ── v0.7.0 live-region wiring (optional; legacy fallback when omitted) ──
+  /** The live region setter (streaming bubble + pending tools). */
+  setLive?: React.Dispatch<React.SetStateAction<LiveState>>;
+  /** Always-current live snapshot for non-reactive event-loop reads. */
+  liveRef?: React.MutableRefObject<LiveState>;
 }
 
 export interface UseChatTurnResult {
@@ -63,9 +83,15 @@ export interface UseChatTurnResult {
 }
 
 export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
-  const { sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setSessionActive, setSessionStats } = params;
+  const { sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setSessionActive, setSessionStats, setLive, liveRef } = params;
   const harnessRef = useRef<AgentHarness | null>(null);
   const [queueCount, setQueueCount] = useState<number>(0);
+
+  // v0.7.0: when the live region is wired, streaming + tool events route
+  // there; otherwise we fall back to the v0.6 single-array behavior so the
+  // existing unit tests (which pass only setMessages/commitStreaming) keep
+  // asserting on `messages` directly.
+  const useLiveModel = !!(setLive && liveRef);
 
   const dispatchPrompt = useCallback(
     async (userText: string) => {
@@ -81,7 +107,14 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       try {
         envConfig = await providerFromEnv();
         if (!envConfig) {
-          appendSystem(setMessages, 'OPENAI_API_KEY not set. Export it before running zelari-code.');
+          // Name the ACTIVE provider — the old hardcoded "OPENAI_API_KEY not
+          // set" message told grok/glm/minimax users to export the wrong var.
+          const active = resolveActiveProvider();
+          const spec = PROVIDERS.find((p) => p.id === active);
+          appendSystem(
+            setMessages,
+            `No API key for the active provider "${active}". Set ${spec?.envVar ?? 'the provider API key env var'} or run /login ${active}.`,
+          );
           return;
         }
         setBusy(true);
@@ -173,7 +206,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             // Message boundary: drain buffered deltas, then seal the streamed
             // bubble so the next message starts fresh instead of merging.
             flushStreaming();
-            finalizeStreamingAssistant(setMessages);
+            if (useLiveModel) finalizeStreaming(setMessages, setLive!);
+            else finalizeStreamingAssistant(setMessages);
             streamContent = '';
           }
           if (event.type === 'queue_update') {
@@ -216,12 +250,18 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             streamContent += event.delta;
             // Route through the throttled setter so per-token deltas (50-200/sec)
             // coalesce into ≤60 renders/sec instead of flickering the TUI.
-            // v0.5.0: forward the council member identity when present so
-            // the UI can render `🜂 Caronte: …` headers.
-            appendOrExtendStreamingAssistant(commitStreaming, streamContent, Date.now(), {
-              ...(event.memberId ? { memberId: event.memberId } : {}),
-              ...(event.memberName ? { memberName: event.memberName } : {}),
-            });
+            if (useLiveModel) {
+              setStreaming(commitStreaming, streamContent, Date.now(), {
+                ...(event.memberId ? { memberId: event.memberId } : {}),
+                ...(event.memberName ? { memberName: event.memberName } : {}),
+              });
+            } else {
+              // Legacy single-array fallback (existing tests).
+              appendOrExtendStreamingAssistant(commitStreaming, streamContent, Date.now(), {
+                ...(event.memberId ? { memberId: event.memberId } : {}),
+                ...(event.memberName ? { memberName: event.memberName } : {}),
+              });
+            }
           } else if (event.type === 'error') {
             flushStreaming();
             appendSystem(setMessages, `[error] ${event.message}`, Date.now());
@@ -231,17 +271,27 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             // call renders above the tool line, not below it — then seal
             // that bubble: it's complete once the model starts calling tools.
             flushStreaming();
-            finalizeStreamingAssistant(setMessages);
-            appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
+            if (useLiveModel) {
+              finalizeStreaming(setMessages, setLive!);
+              startTool(setLive!, event.toolName, event.toolCallId, event.args, event.ts);
+            } else {
+              finalizeStreamingAssistant(setMessages);
+              appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
+            }
           } else if (event.type === 'tool_execution_end') {
-            updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
+            if (useLiveModel) {
+              completeTool(liveRef!.current, setMessages, setLive!, event.toolCallId, event.isError, event.durationMs, event.result);
+            } else {
+              updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
+            }
           }
         }
       } finally {
         // Drain any buffered streaming deltas so the final assistant message
         // is committed before busy flips to false (and the input re-enables).
         flushStreaming();
-        finalizeStreamingAssistant(setMessages);
+        if (useLiveModel) finalizeStreaming(setMessages, setLive!);
+        else finalizeStreamingAssistant(setMessages);
         harnessRef.current = null;
         setQueueCount(0);
         setBusy(false);
@@ -270,7 +320,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         setBusy(false);
       }
     },
-    [sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setSessionActive, setSessionStats],
+    [sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setSessionActive, setSessionStats, useLiveModel, setLive, liveRef],
   );
 
   const dispatchCouncilPrompt = useCallback(
@@ -283,9 +333,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         flushStreaming,
         setBusy,
         setQueueCount,
+        setLive,
+        liveRef,
       });
     },
-    [sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setQueueCount],
+    [sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setQueueCount, setLive, liveRef],
   );
 
   return { dispatchPrompt, dispatchCouncilPrompt, harnessRef, queueCount, setQueueCount };
@@ -306,10 +358,16 @@ async function dispatchCouncilPromptImpl(
   text: string,
   deps: UseChatTurnParams & { setQueueCount: (n: number) => void },
 ): Promise<void> {
-  const { sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy } = deps;
+  const { sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setLive, liveRef } = deps;
+  const useLiveModel = !!(setLive && liveRef);
   const envConfig = await providerFromEnv();
   if (!envConfig) {
-    appendSystem(setMessages, 'OPENAI_API_KEY not set. Export it before invoking /council.');
+    const active = resolveActiveProvider();
+    const spec = PROVIDERS.find((p) => p.id === active);
+    appendSystem(
+      setMessages,
+      `No API key for the active provider "${active}". Set ${spec?.envVar ?? 'the provider API key env var'} or run /login ${active} before invoking /council.`,
+    );
     return;
   }
   setBusy(true);
@@ -346,48 +404,68 @@ async function dispatchCouncilPromptImpl(
       if (event.type === 'message_delta') {
         // Coalesce streaming assistant content through the throttled setter so
         // per-token deltas don't flicker the TUI (same as dispatchPrompt).
-        // v0.5.0: forward the council member identity when present so
-        // the UI can render `🜂 Caronte: …` headers above the streamed
-        // text. Extend the trailing streaming bubble only when it belongs
-        // to the SAME member — otherwise one specialist's text would be
-        // appended to (and attributed to) the previous one.
-        commitStreaming((prev) => {
-          const last = prev[prev.length - 1];
-          if (
-            last &&
-            last.role === 'assistant' &&
-            last.id.startsWith('streaming-') &&
-            (last.memberId ?? null) === (event.memberId ?? null)
-          ) {
-            return [...prev.slice(0, -1), { ...last, content: last.content + event.delta }];
-          }
-          return [
-            ...prev,
-            {
-              id: `streaming-${crypto.randomUUID()}`,
-              role: 'assistant',
-              content: event.delta,
-              ts: event.ts,
-              ...(event.memberId ? { memberId: event.memberId } : {}),
-              ...(event.memberName ? { memberName: event.memberName } : {}),
-            },
-          ];
-        });
+        if (useLiveModel) {
+          // v0.7.0: read the always-current streaming snapshot from liveRef
+          // to accumulate full content per-member, then push through the
+          // throttle in ONE call. setStreaming handles same-member extension
+          // vs new-bubble creation via the member identity in memberContext.
+          const cur = liveRef!.current.streaming;
+          const sameMember = cur && (cur.memberId ?? null) === (event.memberId ?? null);
+          const fullContent = sameMember ? cur!.content + event.delta : event.delta;
+          setStreaming(commitStreaming, fullContent, event.ts, {
+            ...(event.memberId ? { memberId: event.memberId } : {}),
+            ...(event.memberName ? { memberName: event.memberName } : {}),
+          });
+        } else {
+          // Legacy single-array fallback. Extend the trailing streaming bubble
+          // only when it belongs to the SAME member — otherwise one specialist's
+          // text would be appended to (and attributed to) the previous one.
+          commitStreaming((prev) => {
+            const last = prev[prev.length - 1];
+            if (
+              last &&
+              last.role === 'assistant' &&
+              last.id.startsWith('streaming-') &&
+              (last.memberId ?? null) === (event.memberId ?? null)
+            ) {
+              return [...prev.slice(0, -1), { ...last, content: last.content + event.delta }];
+            }
+            return [
+              ...prev,
+              {
+                id: `streaming-${crypto.randomUUID()}`,
+                role: 'assistant',
+                content: event.delta,
+                ts: event.ts,
+                ...(event.memberId ? { memberId: event.memberId } : {}),
+                ...(event.memberName ? { memberName: event.memberName } : {}),
+              },
+            ];
+          });
+        }
       } else if (event.type === 'message_end') {
         // Member/turn boundary: drain buffered deltas and seal the bubble so
         // the next streamed message starts fresh.
         flushStreaming();
-        finalizeStreamingAssistant(setMessages);
+        if (useLiveModel) finalizeStreaming(setMessages, setLive!);
+        else finalizeStreamingAssistant(setMessages);
       } else if (event.type === 'tool_execution_start') {
-        // Single 'tool' role message per invocation (CollapsibleToolOutput);
-        // the previous extra `▶ name(args)` system line duplicated it.
         // Drain buffered deltas first so ordering matches reality, and seal
         // the pre-tool bubble (complete once the member starts calling tools).
         flushStreaming();
-        finalizeStreamingAssistant(setMessages);
-        appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
+        if (useLiveModel) {
+          finalizeStreaming(setMessages, setLive!);
+          startTool(setLive!, event.toolName, event.toolCallId, event.args, event.ts);
+        } else {
+          finalizeStreamingAssistant(setMessages);
+          appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
+        }
       } else if (event.type === 'tool_execution_end') {
-        updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
+        if (useLiveModel) {
+          completeTool(liveRef!.current, setMessages, setLive!, event.toolCallId, event.isError, event.durationMs, event.result);
+        } else {
+          updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
+        }
       } else if (event.type === 'error') {
         flushStreaming();
         appendSystem(setMessages, `[error] ${event.message}`, event.ts);
@@ -405,7 +483,8 @@ async function dispatchCouncilPromptImpl(
     // Drain any buffered streaming deltas before status messages / busy flip,
     // so the final council output is committed to the chat.
     flushStreaming();
-    finalizeStreamingAssistant(setMessages);
+    if (useLiveModel) finalizeStreaming(setMessages, setLive!);
+    else finalizeStreamingAssistant(setMessages);
     try {
       const hook = await runPostCouncilHook(workspaceCtx);
       if (hook.ran && hook.changed) {

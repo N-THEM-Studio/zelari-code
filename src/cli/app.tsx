@@ -2,12 +2,12 @@
 // the v3-N monolithic app. Behavior is correct; a future pass will tighten the
 // hook signatures and remove this annotation. The split is documented in
 // `docs/plans/2026-07-01-app-split.md`.
-import React, { useState, useMemo, useCallback } from 'react';
-import { Box } from 'ink';
-import { Header } from './components/Header.js';
-import { ChatStream } from './components/ChatStream.js';
+import React, { useState, useMemo, useCallback, useRef } from 'react';
+import { Box, Text, Static } from 'ink';
 import { InputBar } from './components/InputBar.js';
-import { Sidebar } from './components/Sidebar.js';
+import { LiveRegion } from './components/LiveRegion.js';
+import { StatusBar } from './components/StatusBar.js';
+import { renderMessage, type ChatMessage } from './components/ChatStream.js';
 import { formatSkillList } from './slashCommands.js';
 import { listCodingSkills } from '@zelari/core/skills';
 import '@zelari/core/skills/builtin/debugging';
@@ -22,10 +22,12 @@ import {
   getActiveProvider as getActiveProviderSpec,
 } from './providerConfig.js';
 import { SessionJsonlWriter } from '@zelari/core/harness';
-import { useTerminalSize } from './hooks/useTerminalSize.js';
 import { useSession } from './hooks/useSession.js';
 import { useChatTurn } from './hooks/useChatTurn.js';
 import { useSlashDispatch } from './hooks/useSlashDispatch.js';
+import { useBatchedMessages } from './hooks/useBatchedMessages.js';
+import { useTerminalSize } from './hooks/useTerminalSize.js';
+import type { LiveState } from './hooks/chatState.js';
 
 const MODEL = process.env.OPENAI_MODEL ?? 'grok-4';
 const PROVIDER = 'openai-compatible';
@@ -42,24 +44,29 @@ const providerDefaults: Record<string, string> = {
 };
 
 /**
- * App — Ink UI shell.
+ * App — Ink UI shell (v0.7.0 static-scrollback layout).
  *
- * v0.4.2 split: the previous monolithic 2200-line app.tsx is now a thin
- * composition of focused hooks (see `src/cli/hooks/`):
- *   - useTerminalSize: reactive stdout dimensions with resize coalescing
- *   - useSession: session bootstrap + lifecycle (resume/new)
- *   - useChatTurn: AgentHarness dispatch (single prompt + council)
- *   - useSlashDispatch: router for every /command, delegates to handlers
- *                       in `src/cli/slashHandlers/*.ts`
+ * The fixed-height frame of v0.6 (root `<Box width height overflow=hidden>` +
+ * `pickVisibleMessages`) is gone. Finalized messages feed Ink's `<Static>`,
+ * which prints each item exactly once to real stdout so it becomes part of
+ * the terminal's native scrollback. The dynamic region Ink repaints is now
+ * just: the streaming tail (`<LiveRegion>`), a one-line `<StatusBar>`, and
+ * the `<InputBar>`. Because that region is always a few lines tall, it can
+ * never exceed the terminal height → no full-screen clear/repaint → no
+ * flicker, by construction.
  *
- * The App component itself only holds ephemeral UI state (input, busy,
- * sessionStats, providerConfig) and wires the hooks together.
+ * v0.4.2 split still holds: App is a thin composition of focused hooks
+ * (useSession, useChatTurn, useSlashDispatch).
  */
 export function App(): React.ReactElement {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [providerConfig, setProviderConfig] = useState(() => getProviderConfig());
   const [sessionStats, setSessionStats] = useState({ totalTokens: 0, totalCostUsd: 0 });
+  // v0.7.0: bump on /clear to remount <Static> (resets its internal "already
+  // printed" index so the ANSI-cleared scrollback stays in sync). Also bumped
+  // implicitly by a sessionId change (/new).
+  const [clearEpoch, setClearEpoch] = useState(0);
 
   const activeProviderSpec = getActiveProviderSpec();
   const activeModel = providerConfig.modelByProvider[activeProviderSpec.id];
@@ -67,15 +74,25 @@ export function App(): React.ReactElement {
   const session = useSession();
   const size = useTerminalSize();
 
+  // Throttle layer for the `live` region — coalesces per-token streaming
+  // updates (~50-200/sec) into ≤60 renders/sec. The finalized array uses the
+  // raw setter (its appends are rare and user-facing).
+  const { commit: commitLive, flush: flushLive } = useBatchedMessages<LiveState>(
+    session.live,
+    session.setLive,
+  );
+
   const chatTurn = useChatTurn({
     sessionId: session.sessionId,
     writerRef: session.writerRef,
     setMessages: session.setMessages,
-    commitStreaming: session.commitStreaming,
-    flushStreaming: session.flushStreaming,
+    commitStreaming: commitLive,
+    flushStreaming: flushLive,
     setBusy,
     setSessionActive: session.setSessionActive,
     setSessionStats,
+    setLive: session.setLive,
+    liveRef: session.liveRef,
   });
 
   // /new callback: close the old writer, open a new one for the new id.
@@ -90,6 +107,13 @@ export function App(): React.ReactElement {
     void session.writerRef.current?.close();
     setTimeout(() => process.exit(0), 50);
   }, [session.writerRef]);
+
+  // /clear callback (v0.7.0): reset the live region too (pending tools /
+  // streaming bubble shouldn't survive a clear) and bump the Static epoch.
+  const onClear = useCallback(() => {
+    session.resetTranscript();
+    setClearEpoch((e) => e + 1);
+  }, [session]);
 
   const handleSubmit = useSlashDispatch({
     skills: useMemo(() => listCodingSkills(), []),
@@ -110,43 +134,59 @@ export function App(): React.ReactElement {
     dispatchCouncilPrompt: chatTurn.dispatchCouncilPrompt,
     onNewSession,
     onExit,
+    onClear,
   });
 
   const skills = useMemo(() => listCodingSkills(), []);
-  const skillList = useMemo(() => formatSkillList(skills), [skills]);
-  const isSlashMode = input.startsWith('/');
-  // ChatStream's real box width: total minus the 40-col Sidebar. The message
-  // height estimator subtracts its own padding/margins from this, so pass the
-  // actual box width (the old -44 double-counted the padding).
-  const chatWidth = Math.max(20, size.columns - 40);
+  // The one-shot banner: printed once as the first Static item. Replaces the
+  // persistent Header. Includes the skill list summary so the user can see
+  // what's available without the 40-col Sidebar (which can't coexist with
+  // native scrollback — a fixed right column would be printed into every
+  // scrollback line).
+  const banner = useMemo<ChatMessage>(() => {
+    const skillList = formatSkillList(skills);
+    return {
+      id: 'banner-once',
+      role: 'system',
+      ts: 0,
+      content:
+        `zelari-code v0.7.0 — ${activeProviderSpec.id}/${activeModel}\n` +
+        `${skills.length} skills available. Type /help for the list, or /skill <name>.\n` +
+        `── skills ──\n${skillList}`,
+    };
+  }, [skills, activeProviderSpec.id, activeModel]);
+
+  // The Static feed: banner first, then finalized messages. `key` lets /clear
+  // remount Static so its internal "already printed" index resets. clearEpoch
+  // is composed in so /clear forces a remount even within the same session.
+  const staticKey = `${session.sessionId || 'pre-bootstrap'}-${clearEpoch}`;
+  const staticItems: readonly ChatMessage[] = [banner, ...session.messages];
 
   return (
-    <Box flexDirection="column" width={size.columns} height={size.rows} overflow="hidden">
-      <Header
-        model={activeModel}
-        provider={activeProviderSpec.id}
-        skillCount={skills.length}
-        sessionActive={session.sessionActive}
-        sessionId={session.sessionId ? session.sessionId.slice(0, 8) : '...'}
-        totalTokens={sessionStats.totalTokens}
-        totalCostUsd={sessionStats.totalCostUsd}
-      />
-      <Box flexDirection="row" height={size.rows - 6} overflow="hidden">
-        <ChatStream messages={session.messages} height={size.rows - 6} width={chatWidth} />
-        <Sidebar
-          skillList={skillList}
-          sessionCount={session.messages.length}
-          isSlashMode={isSlashMode}
-          height={size.rows - 6}
+    <>
+      <Static key={staticKey} items={staticItems}>
+        {(item) => renderMessage(item)}
+      </Static>
+      <Box flexDirection="column" borderTop paddingX={1}>
+        <LiveRegion live={session.live} busy={busy} />
+        <StatusBar
+          model={activeModel}
+          provider={activeProviderSpec.id}
+          sessionId={session.sessionId ? session.sessionId.slice(0, 8) : '...'}
+          sessionActive={session.sessionActive}
+          totalTokens={sessionStats.totalTokens}
+          totalCostUsd={sessionStats.totalCostUsd}
+          queueCount={chatTurn.queueCount}
+          busy={busy}
+        />
+        <InputBar
+          value={input}
+          onChange={setInput}
+          onSubmit={handleSubmit}
+          disabled={busy}
         />
       </Box>
-      <InputBar
-        value={input}
-        onChange={setInput}
-        onSubmit={handleSubmit}
-        disabled={busy}
-      />
-    </Box>
+    </>
   );
 }
 

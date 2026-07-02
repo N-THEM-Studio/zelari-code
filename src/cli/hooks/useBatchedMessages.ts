@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useRef } from 'react';
-import type { ChatMessage } from '../components/ChatStream.js';
 
 /**
- * useBatchedMessages — leading+trailing throttle layer over the chat `messages`
- * state, built to kill per-token TUI flicker.
+ * useBatchedMessages — leading+trailing throttle layer over a React state
+ * setter, built to kill per-token TUI flicker.
  *
  * Why this exists: the LLM emits ~50-200 `message_delta` events/sec during
- * streaming. Each used to call `setMessages` directly, producing a fresh
- * array identity on every token. That defeated `React.memo(ChatStream)` (its
- * `useMemo` depends on the `messages` reference) and forced a full repaint of
- * the whole message tree 50-200 times/sec — visible as flicker.
+ * streaming. Each used to call the setter directly, producing a fresh state
+ * identity on every token. That defeated downstream `React.memo` and forced
+ * a full repaint 50-200 times/sec — visible as flicker.
  *
  * Design: a throttle with **leading + trailing** edges, capped at one commit
  * per `cadenceMs` (default 16ms ≈ 60fps):
@@ -21,40 +19,38 @@ import type { ChatMessage } from '../components/ChatStream.js';
  *
  * Functional updaters are composed in arrival order (`f3 ∘ f2 ∘ f1`), so
  * intermediate state transitions are preserved exactly. Because the streaming
- * caller (`appendOrExtendStreamingAssistant`) always passes the *full*
- * accumulated content (not a delta), composing is both correct and lets later
- * commits supersede earlier ones naturally.
+ * caller always passes the *full* accumulated content (not a delta), composing
+ * is both correct and lets later commits supersede earlier ones naturally.
  *
- * Non-streaming calls (`/new` reset, bootstrap restore, system/error messages)
- * use the raw `setMessages` passthrough — they are rare and user-facing, so
- * they apply instantly. Only the streaming hot-path goes through `commit`.
+ * Generic over state type `S` (v0.7.0): the throttle now wraps the `LiveState`
+ * of the static-scrollback TUI as well as the legacy `messages` array.
  *
  * Throttle idiom mirrors `useTerminalSize`'s setTimeout-based coalesce so the
  * codebase stays consistent. No new dependencies.
  */
-export interface UseBatchedMessagesResult {
+export interface UseBatchedMessagesResult<S> {
   /** The committed (rendered) state. Read this for display. */
-  messages: ChatMessage[];
+  state: S;
   /**
    * Throttled setter for the streaming hot-path. Accepts the same signature
    * as a React state setter (functional updater or direct value). Buffered
    * and flushed at most once per `cadenceMs`. Call `flush()` to drain
    * synchronously (e.g. on stream end).
    */
-  commit: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  commit: React.Dispatch<React.SetStateAction<S>>;
   /** Drain any pending buffered update to state immediately. Idempotent. */
   flush: () => void;
   /** Raw React setter — bypasses the throttle entirely. For non-streaming calls. */
-  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  setState: React.Dispatch<React.SetStateAction<S>>;
 }
 
-export function useBatchedMessages(
-  messages: ChatMessage[],
-  setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>,
+export function useBatchedMessages<S>(
+  state: S,
+  setState: React.Dispatch<React.SetStateAction<S>>,
   cadenceMs: number = 16,
-): UseBatchedMessagesResult {
+): UseBatchedMessagesResult<S> {
   // Composed pending updater, or `null` when nothing is buffered.
-  const pendingRef = useRef<React.SetStateAction<ChatMessage[]> | null>(null);
+  const pendingRef = useRef<React.SetStateAction<S> | null>(null);
   // Active throttle-window timer handle, or `null` when not throttling.
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -70,20 +66,25 @@ export function useBatchedMessages(
     const pending = pendingRef.current;
     pendingRef.current = null;
     if (pending !== null) {
-      setMessages(pending);
+      setState(pending);
     }
-  }, [setMessages]);
+  }, [setState]);
 
   const commit = useCallback(
-    (update: React.SetStateAction<ChatMessage[]>) => {
+    (update: React.SetStateAction<S>) => {
+      // Type guard: SetStateAction<S> = S | ((prev: S) => S). Because a generic
+      // S may itself be a function type, `typeof x === 'function'` doesn't
+      // narrow; resolve via a guarded call helper instead.
+      const apply = (action: React.SetStateAction<S>, prev: S): S =>
+        typeof action === 'function' ? (action as (p: S) => S)(prev) : action;
       // Compose this update onto any pending one, preserving arrival order.
       const head = pendingRef.current;
       pendingRef.current =
         head === null
           ? update
-          : (state: ChatMessage[]) => {
-              const intermediate = typeof head === 'function' ? head(state) : head;
-              return typeof update === 'function' ? update(intermediate) : update;
+          : (s: S) => {
+              const intermediate = apply(head, s);
+              return apply(update, intermediate);
             };
 
       if (timerRef.current === null) {
@@ -92,7 +93,7 @@ export function useBatchedMessages(
         const leading = pendingRef.current;
         pendingRef.current = null;
         if (leading !== null) {
-          setMessages(leading);
+          setState(leading);
         }
         timerRef.current = setTimeout(() => {
           timerRef.current = null;
@@ -102,14 +103,14 @@ export function useBatchedMessages(
           const tail = pendingRef.current;
           pendingRef.current = null;
           if (tail !== null) {
-            setMessages(tail);
+            setState(tail);
           }
         }, cadenceMs);
       }
       // else: inside a throttle window — the trailing handler above will
       // catch the buffered update when the window closes.
     },
-    [cadenceMs, setMessages],
+    [cadenceMs, setState],
   );
 
   // On unmount: cancel any pending timer. Do NOT flush — teardown means the
@@ -123,5 +124,5 @@ export function useBatchedMessages(
     };
   }, []);
 
-  return { messages, commit, flush, setMessages };
+  return { state, commit, flush, setState };
 }

@@ -76,6 +76,8 @@ export interface SlashDispatchParams {
   onNewSession?: (id: string) => void;
   /** Called by /exit: caller flushes the writer and exits the process. */
   onExit?: () => void;
+  /** Called by /clear (v0.7.0): caller bumps its Static-remount epoch. */
+  onClear?: () => void;
 }
 
 export function useSlashDispatch(params: SlashDispatchParams): (value: string) => Promise<void> {
@@ -362,6 +364,10 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     // ── Clear / exit ──
     if (result.kind === 'clear') {
       handleClearChat(setMessages, setSessionActive);
+      // v0.7.0: notify the App so it bumps a "clear epoch" counter that
+      // remounts <Static> (its internal "already printed" index must reset
+      // for the ANSI-cleared scrollback to stay in sync).
+      params.onClear?.();
       setInput('');
       return;
     }
