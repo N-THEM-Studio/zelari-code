@@ -45,6 +45,21 @@ function run(label, file, args) {
   console.log(`[prepublish] ✓ ${label} ok`);
 }
 
+// 0. Build @zelari/core FIRST.
+// The root typecheck resolves `@zelari/core/*` subpaths to the emitted
+// .d.ts files under packages/core/dist/ (via tsconfig `paths`). On a
+// clean tree (or after `npm run clean`) dist/ is absent, so tsc fails
+// with TS2307 on every core import — and the unresolved types cascade
+// into TS7006 "implicitly any" errors across the CLI. Mirrors the CI
+// workflow (.github/workflows/publish.yml publish-cli job), which builds
+// core before typecheck for the same reason. Locally `pretest` masks
+// this, but `prepublishOnly` bypasses `pretest`.
+run(
+  'build:core',
+  resolveModuleFile('typescript', 'bin/tsc'),
+  ['-p', 'packages/core/tsconfig.json'],
+);
+
 // 1. Typecheck (tsc --noEmit)
 run(
   'typecheck',

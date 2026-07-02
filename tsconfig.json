@@ -24,6 +24,17 @@
     "baseUrl": ".",
     "paths": {
       "@zelari/core": ["./packages/core/dist/index.d.ts"],
+      // The URL subpath `harness/tools/*` maps on disk to
+      // `core/tools/*` (source lives in src/core/tools/, re-exported via
+      // src/harness/tools/index.ts). The exports map in
+      // packages/core/package.json points to the right dist files, but the
+      // bare `@zelari/core/*` wildcard below assumes URL==disk path and
+      // would resolve these to a non-existent dist/harness/tools/<x>.d.ts.
+      // TS picks the longest matching pattern, so these explicit entries
+      // win over the wildcard. Mirror the package.json exports map.
+      "@zelari/core/harness/tools/registry": ["./packages/core/dist/core/tools/registry.d.ts"],
+      "@zelari/core/harness/tools/toolTypes": ["./packages/core/dist/core/tools/toolTypes.d.ts"],
+      "@zelari/core/harness/tools/builtin/*": ["./packages/core/dist/core/tools/builtin/*"],
       "@zelari/core/*": ["./packages/core/dist/*"]
     },
     "types": ["node"]
