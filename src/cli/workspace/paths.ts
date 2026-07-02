@@ -8,10 +8,17 @@
  * directories (Docker containers, system dirs, etc.).
  */
 
-import { mkdirSync, writeFileSync, existsSync, accessSync, constants, realpathSync } from 'node:fs';
-import { join, basename } from 'node:path';
-import { homedir } from 'node:os';
-import { createHash } from 'node:crypto';
+import {
+  mkdirSync,
+  writeFileSync,
+  existsSync,
+  accessSync,
+  constants,
+  realpathSync,
+} from "node:fs";
+import { join, basename } from "node:path";
+import { homedir } from "node:os";
+import { createHash } from "node:crypto";
 
 /**
  * Resolve the workspace root. Returns the first writable option:
@@ -20,10 +27,12 @@ import { createHash } from 'node:crypto';
  *
  * Side effect: creates the directory + auto-gitignore if missing.
  */
-export function resolveWorkspaceRoot(projectRoot: string = process.cwd()): string {
+export function resolveWorkspaceRoot(
+  projectRoot: string = process.cwd(),
+): string {
   const candidates = [
-    join(projectRoot, '.zelari'),
-    join(homedir(), '.zelari-code', 'workspace', hashProject(projectRoot)),
+    join(projectRoot, ".zelari"),
+    join(homedir(), ".zelari-code", "workspace", hashProject(projectRoot)),
   ];
 
   for (const candidate of candidates) {
@@ -39,7 +48,10 @@ export function resolveWorkspaceRoot(projectRoot: string = process.cwd()): strin
 
 /** Hash a project path to a stable short id (used in global fallback path). */
 function hashProject(projectPath: string): string {
-  return createHash('sha1').update(realpathSync(projectPath)).digest('hex').slice(0, 12);
+  return createHash("sha1")
+    .update(realpathSync(projectPath))
+    .digest("hex")
+    .slice(0, 12);
 }
 
 /** Check if a directory is writable (creates if missing). */
@@ -58,10 +70,13 @@ function ensureWorkspaceDir(workspaceDir: string): void {
   mkdirSync(workspaceDir, { recursive: true });
 
   // Auto-gitignore ONLY if workspace is project-local AND inside a git repo
-  if (workspaceDir.endsWith('/.zelari') && existsSync(join(workspaceDir, '..', '.git'))) {
-    const gitignorePath = join(workspaceDir, '.gitignore');
+  if (
+    workspaceDir.endsWith("/.zelari") &&
+    existsSync(join(workspaceDir, "..", ".git"))
+  ) {
+    const gitignorePath = join(workspaceDir, ".gitignore");
     if (!existsSync(gitignorePath)) {
-      writeFileSync(gitignorePath, '*\n!.gitignore\n');
+      writeFileSync(gitignorePath, "*\n!.gitignore\n");
     }
   }
 }
@@ -77,16 +92,26 @@ export const WORKSPACE_SUBDIRS = [
 ] as const;
 
 /** Get the absolute path to a standard workspace file. */
-export function workspaceFile(rootDir: string, kind: 'plan' | 'risks' | 'index'): string {
+export function workspaceFile(
+  rootDir: string,
+  kind: "plan" | "risks" | "index",
+): string {
   switch (kind) {
-    case 'plan': return join(rootDir, 'plan.md');
-    case 'risks': return join(rootDir, 'risks.md');
-    case 'index': return join(rootDir, 'workspace.json');
+    case "plan":
+      return join(rootDir, "plan.md");
+    case "risks":
+      return join(rootDir, "risks.md");
+    case "index":
+      return join(rootDir, "workspace.json");
   }
 }
 
 /** Get the absolute path to a numbered artifact in a subdir. */
-export function workspaceArtifact(rootDir: string, subdir: 'decisions' | 'reviews' | 'docs', slug: string): string {
+export function workspaceArtifact(
+  rootDir: string,
+  subdir: "decisions" | "reviews" | "docs",
+  slug: string,
+): string {
   return join(rootDir, subdir, `${slug}.md`);
 }
 

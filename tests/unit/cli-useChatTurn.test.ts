@@ -111,6 +111,15 @@ vi.mock('@zelari/core/skills', () => ({
   setWorkspaceStubs: vi.fn(),
 }));
 
+// Mock the workspace summary builders so dispatchPrompt doesn't scan the
+// real repo cwd during tests (and so the plan-driven updateTask registration
+// path below is deterministic).
+vi.mock('../../src/cli/workspace/workspaceSummary.js', () => ({
+  buildWorkspaceSummary: vi.fn(() => 'ws-summary'),
+  buildPlanSummary: vi.fn(() => null),
+  buildZelariReadHint: vi.fn(() => ''),
+}));
+
 vi.mock('../../src/cli/workspace/postCouncilHook.js', () => ({
   runPostCouncilHook: vi.fn(async () => ({ ran: false, changed: false })),
 }));
@@ -269,5 +278,78 @@ describe('useChatTurn (v0.4.3 audit coverage)', () => {
     expect(w.messages.some((m) => m.content.includes('[dispatch error]'))).toBe(true);
     // Busy should have been reset to false.
     expect(w.setBusy).toHaveBeenCalledWith(false);
+  });
+
+  it('dispatchPrompt: registers the workspace updateTask tool when a plan exists (v0.7.4)', async () => {
+    // v0.7.4: the single agent implements the council's tasks and must be
+    // able to advance their status through updateTask (mutex + atomic
+    // plan.json write) instead of hand-editing the JSON.
+    const { buildPlanSummary } = await import('../../src/cli/workspace/workspaceSummary.js');
+    vi.mocked(buildPlanSummary).mockReturnValueOnce('# Project Plan\n- [pending/high] T1');
+    const fakeUpdateTask = {
+      name: 'updateTask',
+      description: 'update a task status',
+      permissions: [],
+      inputSchema: {},
+      execute: vi.fn(),
+    };
+    const { createWorkspaceToolRegistry } = await import('../../src/cli/workspace/toolRegistry.js');
+    vi.mocked(createWorkspaceToolRegistry).mockReturnValueOnce({
+      list: () => ['updateTask'],
+      get: (name: string) => (name === 'updateTask' ? fakeUpdateTask : undefined),
+    } as never);
+    const { createBuiltinToolRegistry } = await import('../../src/cli/toolRegistry.js');
+    const register = vi.fn();
+    vi.mocked(createBuiltinToolRegistry).mockReturnValueOnce({
+      registry: { toOpenAITools: () => [], register },
+    } as never);
+
+    const w = makeWrapper();
+    const { result } = renderHook(() =>
+      useChatTurn({
+        sessionId: 'plan-session',
+        writerRef: w.writerRef,
+        setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
+        setBusy: w.setBusy,
+        setSessionActive: w.setSessionActive,
+        setSessionStats: w.setSessionStats,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.dispatchPrompt('implement the next task');
+    });
+
+    expect(register).toHaveBeenCalledWith(fakeUpdateTask);
+    // No [dispatch error] — the registration path must not break the turn.
+    expect(w.messages.some((m) => m.content.includes('[dispatch error]'))).toBe(false);
+  });
+
+  it('dispatchPrompt: does NOT wire workspace tools when there is no plan', async () => {
+    const { createWorkspaceToolRegistry } = await import('../../src/cli/workspace/toolRegistry.js');
+    vi.mocked(createWorkspaceToolRegistry).mockClear();
+
+    const w = makeWrapper();
+    const { result } = renderHook(() =>
+      useChatTurn({
+        sessionId: 'no-plan-session',
+        writerRef: w.writerRef,
+        setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
+        setBusy: w.setBusy,
+        setSessionActive: w.setSessionActive,
+        setSessionStats: w.setSessionStats,
+      }),
+    );
+
+    await act(async () => {
+      await result.current.dispatchPrompt('just a question');
+    });
+
+    // buildPlanSummary (default mock) returns null → no workspace registry.
+    expect(createWorkspaceToolRegistry).not.toHaveBeenCalled();
   });
 });

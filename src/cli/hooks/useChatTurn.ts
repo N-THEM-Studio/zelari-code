@@ -1,33 +1,38 @@
 // @ts-nocheck — pre-existing strict-mode type narrowing issues carried over
 // from app.tsx. Runtime is correct; tighten signatures in a follow-up.
-import { useState, useRef, useCallback } from 'react';
-import type { ChatMessage } from '../components/ChatStream.js';
-import { AgentHarness } from '@zelari/core/harness';
-import { SessionJsonlWriter } from '@zelari/core/harness';
-import { MetricsLogger, getMetricsLogger } from '../metrics.js';
-import { calculateCost } from '../modelPricing.js';
-import { openaiCompatibleProvider, providerFromEnv, providerConfigFor, resolveActiveProvider } from '../provider/openai-compatible.js';
-import { providerFailover } from '../providerFailover.js';
-import { resolveFailoverStream } from '../crossProviderFailover.js';
-import { resolveShell } from '@zelari/core/harness/tools/builtin/shellResolver';
-import { PROVIDERS } from '../keyStore.js';
-import { createBuiltinToolRegistry } from '../toolRegistry.js';
+import { useState, useRef, useCallback } from "react";
+import type { ChatMessage } from "../components/ChatStream.js";
+import { AgentHarness } from "@zelari/core/harness";
+import { SessionJsonlWriter } from "@zelari/core/harness";
+import { MetricsLogger, getMetricsLogger } from "../metrics.js";
+import { calculateCost } from "../modelPricing.js";
+import {
+  openaiCompatibleProvider,
+  providerFromEnv,
+  providerConfigFor,
+  resolveActiveProvider,
+} from "../provider/openai-compatible.js";
+import { providerFailover } from "../providerFailover.js";
+import { resolveFailoverStream } from "../crossProviderFailover.js";
+import { resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
+import { PROVIDERS } from "../keyStore.js";
+import { createBuiltinToolRegistry } from "../toolRegistry.js";
 import {
   appendOrExtendStreamingAssistant,
   appendSystem,
   appendToolStart,
   finalizeStreamingAssistant,
   updateToolMessageEnd,
-} from './messageHelpers.js';
+} from "./messageHelpers.js";
 import {
   setStreaming,
   finalizeStreaming,
   startTool,
   completeTool,
   type LiveState,
-} from './chatState.js';
-import type { ProviderName } from '../keyStore.js';
-import { computeSessionStatsDelta } from './chatStats.js';
+} from "./chatState.js";
+import type { ProviderName } from "../keyStore.js";
+import { computeSessionStatsDelta } from "./chatStats.js";
 
 /**
  * useChatTurn — owns the chat-turn lifecycle (single prompt dispatch +
@@ -67,7 +72,9 @@ export interface UseChatTurnParams {
   flushStreaming: () => void;
   setBusy: (v: boolean) => void;
   setSessionActive: (v: boolean) => void;
-  setSessionStats: React.Dispatch<React.SetStateAction<{ totalTokens: number; totalCostUsd: number }>>;
+  setSessionStats: React.Dispatch<
+    React.SetStateAction<{ totalTokens: number; totalCostUsd: number }>
+  >;
   // ── v0.7.0 live-region wiring (optional; legacy fallback when omitted) ──
   /** The live region setter (streaming bubble + pending tools). */
   setLive?: React.Dispatch<React.SetStateAction<LiveState>>;
@@ -84,7 +91,18 @@ export interface UseChatTurnResult {
 }
 
 export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
-  const { sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setSessionActive, setSessionStats, setLive, liveRef } = params;
+  const {
+    sessionId,
+    writerRef,
+    setMessages,
+    commitStreaming,
+    flushStreaming,
+    setBusy,
+    setSessionActive,
+    setSessionStats,
+    setLive,
+    liveRef,
+  } = params;
   const harnessRef = useRef<AgentHarness | null>(null);
   const [queueCount, setQueueCount] = useState<number>(0);
 
@@ -114,7 +132,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           const spec = PROVIDERS.find((p) => p.id === active);
           appendSystem(
             setMessages,
-            `No API key for the active provider "${active}". Set ${spec?.envVar ?? 'the provider API key env var'} or run /login ${active}.`,
+            `No API key for the active provider "${active}". Set ${spec?.envVar ?? "the provider API key env var"} or run /login ${active}.`,
           );
           return;
         }
@@ -122,21 +140,24 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         const { registry: toolRegistry } = createBuiltinToolRegistry();
         const baseProviderStream = openaiCompatibleProvider(envConfig);
         const failoverResolution = await resolveFailoverStream({
-          failoverEnabled: process.env.ANATHEMA_FAILOVER !== '0',
+          failoverEnabled: process.env.ANATHEMA_FAILOVER !== "0",
           envValue: process.env.ANATHEMA_FAILOVER_PROVIDER,
           primaryProviderId: envConfig.providerId,
           primary: baseProviderStream,
           validProviderIds: PROVIDERS.map((p) => p.id),
-          lookupFallbackConfig: async (id) => providerConfigFor(id as ProviderName),
+          lookupFallbackConfig: async (id) =>
+            providerConfigFor(id as ProviderName),
           buildStream: (config) =>
-            openaiCompatibleProvider(config as Parameters<typeof openaiCompatibleProvider>[0]),
+            openaiCompatibleProvider(
+              config as Parameters<typeof openaiCompatibleProvider>[0],
+            ),
         });
         if (failoverResolution.warning) {
           // Surface in the chat instead of console.warn: writes that bypass
           // Ink force a full repaint of the TUI frame (visible flicker).
           appendSystem(setMessages, `[failover] ${failoverResolution.warning}`);
         }
-        const providerStream: import('@zelari/core/harness').ProviderStreamFn =
+        const providerStream: import("@zelari/core/harness").ProviderStreamFn =
           failoverResolution.fallbackLabel
             ? providerFailover({
                 primary: baseProviderStream,
@@ -148,18 +169,42 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 fallback: failoverResolution.fallback,
               });
       const cwd = process.cwd();
-      const toolList = toolRegistry.toOpenAITools().map((t) => `- ${t.function.name}: ${t.function.description}`).join('\n');
       // v0.7.3: surface the council plan (if any) to the single agent too.
       // The plan lives in .zelari/plan.json but the agent had no idea it
       // existed — users had to paste task-file paths by hand. Best-effort:
       // no plan → null → zero prompt-token cost.
       let planSummary: string | null = null;
+      // v0.7.4: give the single agent the same project awareness the council
+      // has (tech stack, file layout, scripts) plus a pointer to the council
+      // workspace so it reads .zelari/plan.json with its own tools.
+      let workspaceSummary: string | null = null;
+      let zelariReadHint = '';
       try {
-        const { buildPlanSummary } = await import('../workspace/workspaceSummary.js');
+        const { buildPlanSummary, buildWorkspaceSummary, buildZelariReadHint } =
+          await import('../workspace/workspaceSummary.js');
         planSummary = buildPlanSummary(cwd);
+        workspaceSummary = buildWorkspaceSummary(cwd);
+        zelariReadHint = buildZelariReadHint(cwd);
+        // v0.7.4: close the plan loop. The single agent implements the tasks
+        // the council planned, but had no official way to advance their
+        // status — it would have to hand-edit plan.json with write_file
+        // (racy, no validation). Register the workspace `updateTask` stub so
+        // status changes go through the same mutex + atomic plan.json write
+        // the council uses. Only when a plan exists: fresh projects don't pay
+        // the extra tool-schema prompt tokens.
+        if (planSummary) {
+          const { createWorkspaceContext } = await import('../workspace/stubs.js');
+          const { createWorkspaceToolRegistry } = await import('../workspace/toolRegistry.js');
+          const wsRegistry = createWorkspaceToolRegistry(createWorkspaceContext(cwd));
+          const updateTask = wsRegistry.get('updateTask');
+          if (updateTask) toolRegistry.register(updateTask);
+        }
       } catch {
         // Plan summary is a nice-to-have — never block a prompt on it.
       }
+      // NOTE: computed AFTER the workspace wiring so updateTask (when
+      // registered) is advertised in the # Available Tools section too.
+      const toolList = toolRegistry.toOpenAITools().map((t) => `- ${t.function.name}: ${t.function.description}`).join('\n');
       // v0.7.2 (C3): platform-aware shell guidance. The model must know which
       // shell the `bash` tool actually runs in so it writes the right commands
       // (POSIX for Git Bash, Windows-native for cmd.exe fallback).
@@ -197,6 +242,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         '# Available Tools',
         'You can call these tools. Use them to take action and gather information autonomously:',
         toolList,
+        ...(workspaceSummary ? ['', workspaceSummary] : []),
+        ...(zelariReadHint ? ['', zelariReadHint] : []),
         ...(planSummary ? ['', planSummary] : []),
         '',
         '# Guidelines',
@@ -205,6 +252,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         '- After a tool result, CONTINUE your answer from where you left off. NEVER restate or re-print text you already wrote earlier in this turn.',
         "- Only invoke tools when they are necessary to answer the user's prompt. If the user is just saying hello or greeting them (e.g., \"ciao\", \"hello\"), simply greet them back and ask how you can help, without running any commands or tools.",
         '- When you finish a task, briefly summarize what you did.',
+        ...(planSummary
+          ? [
+              '- Plan tasks: when you START working on a plan task call updateTask {taskId, status: "in_progress"}; when it is complete and verified call updateTask {taskId, status: "done"}. NEVER edit .zelari/plan.json by hand.',
+            ]
+          : []),
       ].join('\n');
       // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
       // The council sets 5; the single-prompt path previously set NONE, so a
@@ -340,25 +392,25 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             }
           }
         }
-      } finally {
-        // Drain any buffered streaming deltas so the final assistant message
-        // is committed before busy flips to false (and the input re-enables).
-        flushStreaming();
-        if (useLiveModel) finalizeStreaming(setMessages, setLive!);
-        else finalizeStreamingAssistant(setMessages);
-        harnessRef.current = null;
-        setQueueCount(0);
-        setBusy(false);
-        setSessionStats((prev) =>
-          computeSessionStatsDelta(
-            realUsage,
-            userText,
-            assistantContent,
-            envConfig.model,
-            prev,
-          ),
-        );
-      }
+        } finally {
+          // Drain any buffered streaming deltas so the final assistant message
+          // is committed before busy flips to false (and the input re-enables).
+          flushStreaming();
+          if (useLiveModel) finalizeStreaming(setMessages, setLive!);
+          else finalizeStreamingAssistant(setMessages);
+          harnessRef.current = null;
+          setQueueCount(0);
+          setBusy(false);
+          setSessionStats((prev) =>
+            computeSessionStatsDelta(
+              realUsage,
+              userText,
+              assistantContent,
+              envConfig.model,
+              prev,
+            ),
+          );
+        }
       } catch (err) {
         // v0.4.3 audit fix: catches throws from providerFromEnv /
         // resolveFailoverStream / AgentHarness construction that were
@@ -374,7 +426,19 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         setBusy(false);
       }
     },
-    [sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setSessionActive, setSessionStats, useLiveModel, setLive, liveRef],
+    [
+      sessionId,
+      writerRef,
+      setMessages,
+      commitStreaming,
+      flushStreaming,
+      setBusy,
+      setSessionActive,
+      setSessionStats,
+      useLiveModel,
+      setLive,
+      liveRef,
+    ],
   );
 
   const dispatchCouncilPrompt = useCallback(
@@ -391,10 +455,26 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         liveRef,
       });
     },
-    [sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setQueueCount, setLive, liveRef],
+    [
+      sessionId,
+      writerRef,
+      setMessages,
+      commitStreaming,
+      flushStreaming,
+      setBusy,
+      setQueueCount,
+      setLive,
+      liveRef,
+    ],
   );
 
-  return { dispatchPrompt, dispatchCouncilPrompt, harnessRef, queueCount, setQueueCount };
+  return {
+    dispatchPrompt,
+    dispatchCouncilPrompt,
+    harnessRef,
+    queueCount,
+    setQueueCount,
+  };
 }
 
 /**
@@ -412,7 +492,16 @@ async function dispatchCouncilPromptImpl(
   text: string,
   deps: UseChatTurnParams & { setQueueCount: (n: number) => void },
 ): Promise<void> {
-  const { sessionId, writerRef, setMessages, commitStreaming, flushStreaming, setBusy, setLive, liveRef } = deps;
+  const {
+    sessionId,
+    writerRef,
+    setMessages,
+    commitStreaming,
+    flushStreaming,
+    setBusy,
+    setLive,
+    liveRef,
+  } = deps;
   const useLiveModel = !!(setLive && liveRef);
   const envConfig = await providerFromEnv();
   if (!envConfig) {
@@ -420,19 +509,23 @@ async function dispatchCouncilPromptImpl(
     const spec = PROVIDERS.find((p) => p.id === active);
     appendSystem(
       setMessages,
-      `No API key for the active provider "${active}". Set ${spec?.envVar ?? 'the provider API key env var'} or run /login ${active} before invoking /council.`,
+      `No API key for the active provider "${active}". Set ${spec?.envVar ?? "the provider API key env var"} or run /login ${active} before invoking /council.`,
     );
     return;
   }
   setBusy(true);
   // Import dynamically to avoid a circular dep at module-load time.
-  const { dispatchCouncil } = await import('../councilDispatcher.js');
-  const { createWorkspaceContext, createWorkspaceStubs } = await import('../workspace/stubs.js');
-  const { createWorkspaceToolRegistry } = await import('../workspace/toolRegistry.js');
-  const { setWorkspaceStubs } = await import('@zelari/core/skills');
-  const { runPostCouncilHook } = await import('../workspace/postCouncilHook.js');
-  const { buildWorkspaceSummary, buildPlanSummary } = await import('../workspace/workspaceSummary.js');
-  const { FeedbackStore } = await import('../councilFeedback.js');
+  const { dispatchCouncil } = await import("../councilDispatcher.js");
+  const { createWorkspaceContext, createWorkspaceStubs } =
+    await import("../workspace/stubs.js");
+  const { createWorkspaceToolRegistry } =
+    await import("../workspace/toolRegistry.js");
+  const { setWorkspaceStubs } = await import("@zelari/core/skills");
+  const { runPostCouncilHook } =
+    await import("../workspace/postCouncilHook.js");
+  const { buildWorkspaceSummary, buildPlanSummary } =
+    await import("../workspace/workspaceSummary.js");
+  const { FeedbackStore } = await import("../councilFeedback.js");
 
   const { registry: councilToolRegistry } = createBuiltinToolRegistry();
   const workspaceCtx = createWorkspaceContext();
@@ -451,7 +544,7 @@ async function dispatchCouncilPromptImpl(
   // dropped (the mangled member text from the 2026-07-02 live test).
   // The accumulator lives here, in the event loop, exactly like
   // `streamContent` in dispatchPrompt.
-  let streamContent = '';
+  let streamContent = "";
   let streamMemberId: string | null = null;
   // v0.7.3: council members legitimately need more than the core default of
   // 5 tool calls per turn (a planner creating 8 tasks got 3 of them skipped
@@ -469,14 +562,14 @@ async function dispatchCouncilPromptImpl(
   let membersCompleted = 0;
   let chairmanProducedOutput = false;
   let consecutiveProviderErrors = 0;
-  let lastErrorMessage = '';
+  let lastErrorMessage = "";
   let councilAborted = false;
   const PROVIDER_ERROR_ABORT_THRESHOLD = 2;
   try {
     for await (const event of dispatchCouncil(text, {
       apiKey: envConfig.apiKey,
       model: envConfig.model,
-      provider: 'openai-compatible',
+      provider: "openai-compatible",
       providerStream: openaiCompatibleProvider(envConfig),
       sessionId,
       tools: councilToolRegistry,
@@ -487,9 +580,12 @@ async function dispatchCouncilPromptImpl(
       // on and projected their identity onto the task.
       // v0.7.3: append the existing plan (if any) so a follow-up /council
       // continues it instead of re-planning from scratch.
-      workspaceContext: [buildWorkspaceSummary(process.cwd()), buildPlanSummary(process.cwd())]
+      workspaceContext: [
+        buildWorkspaceSummary(process.cwd()),
+        buildPlanSummary(process.cwd()),
+      ]
         .filter(Boolean)
-        .join('\n\n'),
+        .join("\n\n"),
       maxToolCallsPerTurn: councilMaxToolCalls,
     })) {
       if (councilAborted) {
@@ -500,7 +596,7 @@ async function dispatchCouncilPromptImpl(
       if (writerRef.current) {
         await writerRef.current.append(event);
       }
-      if (event.type === 'message_delta') {
+      if (event.type === "message_delta") {
         // Coalesce streaming assistant content through the throttled setter so
         // per-token deltas don't flicker the TUI (same as dispatchPrompt).
         if (useLiveModel) {
@@ -514,7 +610,7 @@ async function dispatchCouncilPromptImpl(
             // previous member's bubble before starting the new one.
             flushStreaming();
             finalizeStreaming(setMessages, setLive!);
-            streamContent = '';
+            streamContent = "";
             streamMemberId = memberId;
           }
           streamContent += event.delta;
@@ -530,17 +626,20 @@ async function dispatchCouncilPromptImpl(
             const last = prev[prev.length - 1];
             if (
               last &&
-              last.role === 'assistant' &&
-              last.id.startsWith('streaming-') &&
+              last.role === "assistant" &&
+              last.id.startsWith("streaming-") &&
               (last.memberId ?? null) === (event.memberId ?? null)
             ) {
-              return [...prev.slice(0, -1), { ...last, content: last.content + event.delta }];
+              return [
+                ...prev.slice(0, -1),
+                { ...last, content: last.content + event.delta },
+              ];
             }
             return [
               ...prev,
               {
                 id: `streaming-${crypto.randomUUID()}`,
-                role: 'assistant',
+                role: "assistant",
                 content: event.delta,
                 ts: event.ts,
                 ...(event.memberId ? { memberId: event.memberId } : {}),
@@ -549,44 +648,73 @@ async function dispatchCouncilPromptImpl(
             ];
           });
         }
-      } else if (event.type === 'message_end') {
+      } else if (event.type === "message_end") {
         // Member/turn boundary: drain buffered deltas and seal the bubble so
         // the next streamed message starts fresh.
         flushStreaming();
         if (useLiveModel) finalizeStreaming(setMessages, setLive!);
         else finalizeStreamingAssistant(setMessages);
-        streamContent = '';
+        streamContent = "";
         streamMemberId = null;
         membersCompleted++;
         // Chairman is the last member; any assistant content from it counts.
-        if (event.memberId === 'lucifer' || event.memberName === 'Lucifero') {
+        if (event.memberId === "lucifer" || event.memberName === "Lucifero") {
           chairmanProducedOutput = true;
         }
-      } else if (event.type === 'tool_execution_start') {
+      } else if (event.type === "tool_execution_start") {
         // Drain buffered deltas first so ordering matches reality, and seal
         // the pre-tool bubble (complete once the member starts calling tools).
         flushStreaming();
         if (useLiveModel) {
           finalizeStreaming(setMessages, setLive!);
-          startTool(setLive!, event.toolName, event.toolCallId, event.args, event.ts);
+          startTool(
+            setLive!,
+            event.toolName,
+            event.toolCallId,
+            event.args,
+            event.ts,
+          );
         } else {
           finalizeStreamingAssistant(setMessages);
-          appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
+          appendToolStart(
+            setMessages,
+            event.toolName,
+            event.toolCallId,
+            event.args,
+            event.ts,
+          );
         }
         // The pre-tool bubble is sealed: the next delta starts a fresh one.
-        streamContent = '';
-      } else if (event.type === 'tool_execution_end') {
+        streamContent = "";
+      } else if (event.type === "tool_execution_end") {
         if (useLiveModel) {
-          completeTool(setMessages, setLive!, event.toolCallId, event.isError, event.durationMs, event.result);
+          completeTool(
+            setMessages,
+            setLive!,
+            event.toolCallId,
+            event.isError,
+            event.durationMs,
+            event.result,
+          );
         } else {
-          updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
+          updateToolMessageEnd(
+            setMessages,
+            event.toolCallId,
+            event.isError,
+            event.durationMs,
+            event.result,
+          );
         }
-      } else if (event.type === 'error') {
+      } else if (event.type === "error") {
         flushStreaming();
         // v0.7.1 (A4): attribute the error to the member when known, so the
         // user sees `[error · Caronte] …` instead of three anonymous lines.
-        const memberTag = event.memberName ? ` · ${event.memberName}` : '';
-        appendSystem(setMessages, `[error${memberTag}] ${event.message}`, event.ts);
+        const memberTag = event.memberName ? ` · ${event.memberName}` : "";
+        appendSystem(
+          setMessages,
+          `[error${memberTag}] ${event.message}`,
+          event.ts,
+        );
         // v0.7.1 (A4): detect repeated identical provider errors and abort the
         // remaining members instead of grinding through every specialist.
         if (event.message === lastErrorMessage) {
@@ -629,11 +757,11 @@ async function dispatchCouncilPromptImpl(
         if (hook.ran && hook.changed) {
           appendSystem(
             setMessages,
-            `[agents.md] updated: ${hook.sections.length} section(s) changed (${hook.sections.join(', ')})`,
+            `[agents.md] updated: ${hook.sections.length} section(s) changed (${hook.sections.join(", ")})`,
             Date.now(),
           );
         } else if (hook.ran && hook.reason) {
-          if (!hook.reason.includes('disabled')) {
+          if (!hook.reason.includes("disabled")) {
             appendSystem(setMessages, `[agents.md] ${hook.reason}`, Date.now());
           }
         }
@@ -643,7 +771,7 @@ async function dispatchCouncilPromptImpl(
     } else if (!councilAborted) {
       appendSystem(
         setMessages,
-        '[agents.md] skipped — council produced no output',
+        "[agents.md] skipped — council produced no output",
         Date.now(),
       );
     }

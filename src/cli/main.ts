@@ -18,7 +18,7 @@ import { RunWizard } from './wizard/runWizard.js';
 import { parseHeadlessFlags } from './headless.js';
 import { runHeadless } from './runHeadless.js';
 
-export const VERSION = '0.7.3';
+export const VERSION = '0.7.4';
 
 /**
  * Silent background update check (Task N.6, v3-N).

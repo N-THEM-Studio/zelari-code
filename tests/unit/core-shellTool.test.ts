@@ -108,7 +108,11 @@ describe('bashTool — interactive-prompt detection (v0.7.3)', () => {
     _resetShellResolverForTests();
   });
 
-  it('injects the hint when output matches "Operation cancelled"', async () => {
+  // Spawning the real host shell (Git Bash probe + spawn) can take >10s on
+  // Windows — give these two tests their own generous vitest timeout.
+  const REAL_SHELL_TEST_TIMEOUT = 30_000;
+
+  it('injects the hint when output matches "Operation cancelled"', { timeout: REAL_SHELL_TEST_TIMEOUT }, async () => {
     const result = await bashTool.execute(
       { command: 'echo "-  Operation cancelled"', timeoutMs: 15_000 } as never,
       ctx,
@@ -122,7 +126,7 @@ describe('bashTool — interactive-prompt detection (v0.7.3)', () => {
     expect(value.hint).toContain('Do NOT retry');
   });
 
-  it('does not inject the hint on normal output', async () => {
+  it('does not inject the hint on normal output', { timeout: REAL_SHELL_TEST_TIMEOUT }, async () => {
     const result = await bashTool.execute(
       { command: 'echo hello-world', timeoutMs: 15_000 } as never,
       ctx,

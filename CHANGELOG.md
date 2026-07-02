@@ -5,6 +5,25 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2026-07-03
+
+### Highlights
+- **Loop council→agente chiuso**: l'agente singolo ora registra lo stub workspace `updateTask` quando esiste un piano (`.zelari/plan.json`), così può marcare i task `in_progress`/`done` passando dal mutex e dalla scrittura atomica invece di editare il JSON a mano. Guideline dedicata nel system prompt (solo quando c'è un piano — zero costo su progetti freschi).
+- **`buildZelariReadHint` + "Next task to work on"**: il plan summary ora indica UN task concreto da cui partire (primo `in_progress`, altrimenti per priorità critical>high>medium>low) e il system prompt dell'agente singolo include workspace summary + hint di lettura `.zelari/`.
+- **Fix popup browser durante i test**: `runGrokOAuthFlow` apriva SEMPRE il browser reale (`cmd /c start`) — il test "fully mocked" del device flow apriva una tab su auth.x.ai con lo user_code fittizio a ogni `npm test`. Aggiunta `openBrowserImpl` (stessa DI di `fetchImpl`/`sleepImpl`); produzione invariata.
+- **Riparato edit automatico corrotto in `useChatTurn.ts`**: il blocco "system prompt + harness + event loop" era duplicato (~218 righe, try/catch rotto, variabili indefinite) da un changeset v0.7.4 applicato a metà. Rimosso il duplicato e ricablato l'intento correttamente.
+
+### Added
+- `src/cli/workspace/workspaceSummary.ts`: `buildZelariReadHint()` + blocco "**Next task to work on:**" in `buildPlanSummary()` con `pickNextTask()` (in_progress prima, poi priorità).
+- `src/cli/hooks/useChatTurn.ts`: registrazione best-effort di `updateTask` nel tool registry dell'agente singolo quando `buildPlanSummary` trova un piano; `toolList` calcolato dopo la registrazione così il tool compare in "# Available Tools".
+- `src/cli/grokOAuth.ts`: opzione `GrokOAuthOptions.openBrowserImpl` per iniettare il browser-launcher.
+- `tests/unit/cli-useChatTurn.test.ts`: +2 test (updateTask registrato con piano; workspace registry NON creato senza piano) + mock di `workspaceSummary.js` (i test non scansionano più il cwd reale del repo).
+
+### Fixed
+- `tests/unit/cli-workspaceSummary.test.ts`: `describe` di `buildPlanSummary` chiuso troppo presto — i test v0.7.4 erano fuori scope (errore di sintassi esbuild).
+- `tests/unit/cli-grokOAuth.test.ts`: il device-flow test ora stubba il browser e verifica che venga aperto `verification_uri_complete` (URL con codice pre-compilato).
+- `tests/unit/core-shellTool.test.ts`: timeout vitest dedicato (30s) ai 2 test che spawnano la shell reale — su Windows lo spawn di Git Bash impiega ~12s contro i 5s di default.
+
 ## [0.6.2] - 2026-07-02
 
 ### Highlights

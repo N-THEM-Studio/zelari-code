@@ -49,6 +49,12 @@ export interface GrokOAuthOptions {
   sleepImpl?: (ms: number) => Promise<void>;
   /** Fetch implementation (default: global fetch). */
   fetchImpl?: typeof fetch;
+  /**
+   * Browser-launch implementation (default: {@link openBrowser}). Tests MUST
+   * inject a stub — the default spawns the OS browser, so an unstubbed test
+   * run pops a real auth.x.ai tab with the fake user_code on the host machine.
+   */
+  openBrowserImpl?: (url: string) => Promise<void>;
 }
 
 export interface GrokOAuthResult {
@@ -79,9 +85,12 @@ export interface DeviceAuthorization {
 }
 
 export class GrokOAuthError extends Error {
-  constructor(message: string, public readonly code?: string) {
+  constructor(
+    message: string,
+    public readonly code?: string,
+  ) {
     super(message);
-    this.name = 'GrokOAuthError';
+    this.name = "GrokOAuthError";
   }
 }
 
@@ -89,31 +98,34 @@ export class GrokOAuthError extends Error {
  * Default xAI OAuth client ID — public client registered for SuperGrok OAuth
  * (same as used by the reference supergrok-oauth Python client + Grok-CLI).
  */
-export const DEFAULT_GROK_OAUTH_CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828';
+export const DEFAULT_GROK_OAUTH_CLIENT_ID =
+  "b1a00492-073a-47ea-816f-4c329264a828";
 
 /** Default OAuth scopes for full SuperGrok access. */
 export const DEFAULT_GROK_OAUTH_SCOPES = [
-  'openid',
-  'profile',
-  'email',
-  'offline_access',
-  'grok-cli:access',
-  'api:access',
+  "openid",
+  "profile",
+  "email",
+  "offline_access",
+  "grok-cli:access",
+  "api:access",
 ] as const;
 
 /** Default device-code endpoint. */
-export const DEFAULT_DEVICE_CODE_ENDPOINT = 'https://auth.x.ai/oauth2/device/code';
+export const DEFAULT_DEVICE_CODE_ENDPOINT =
+  "https://auth.x.ai/oauth2/device/code";
 
 /** Default token endpoint (shared by device poll + refresh). */
-export const DEFAULT_TOKEN_ENDPOINT = 'https://auth.x.ai/oauth2/token';
+export const DEFAULT_TOKEN_ENDPOINT = "https://auth.x.ai/oauth2/token";
 
 /** Device-code grant type URN (RFC 8628). */
-export const DEVICE_GRANT_TYPE = 'urn:ietf:params:oauth:grant-type:device_code';
+export const DEVICE_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:device_code";
 
 /** Default overall authorization timeout (5 minutes). */
 export const DEFAULT_OAUTH_TIMEOUT_MS = 300_000;
 
-const defaultSleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+const defaultSleep = (ms: number): Promise<void> =>
+  new Promise((r) => setTimeout(r, ms));
 
 /**
  * Request a device authorization code (RFC 8628 §3.1).
@@ -134,25 +146,25 @@ export async function requestDeviceCode(options: {
   let response: Response;
   try {
     response = await fetchImpl(endpoint, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
       },
       body: new URLSearchParams({
         client_id: options.clientId,
-        scope: scopes.join(' '),
+        scope: scopes.join(" "),
       }).toString(),
     });
   } catch (err) {
     throw new GrokOAuthError(
       `Device code request network error: ${err instanceof Error ? err.message : String(err)}`,
-      'device_code_network_error',
+      "device_code_network_error",
     );
   }
 
   if (!response.ok) {
-    const errText = await response.text().catch(() => '');
+    const errText = await response.text().catch(() => "");
     throw new GrokOAuthError(
       `Device code request HTTP ${response.status}: ${errText.slice(0, 200)}`,
       `device_code_http_${response.status}`,
@@ -168,8 +180,8 @@ export async function requestDeviceCode(options: {
     );
   }
 
-  if (!body || typeof body !== 'object') {
-    throw new GrokOAuthError('Device code response is not an object');
+  if (!body || typeof body !== "object") {
+    throw new GrokOAuthError("Device code response is not an object");
   }
   const obj = body as Record<string, unknown>;
 
@@ -177,25 +189,41 @@ export async function requestDeviceCode(options: {
   const userCode = obj.user_code;
   const verificationUri = obj.verification_uri;
 
-  if (typeof deviceCode !== 'string' || deviceCode.length === 0) {
-    throw new GrokOAuthError('Device code response missing device_code', 'no_device_code');
+  if (typeof deviceCode !== "string" || deviceCode.length === 0) {
+    throw new GrokOAuthError(
+      "Device code response missing device_code",
+      "no_device_code",
+    );
   }
-  if (typeof userCode !== 'string' || userCode.length === 0) {
-    throw new GrokOAuthError('Device code response missing user_code', 'no_user_code');
+  if (typeof userCode !== "string" || userCode.length === 0) {
+    throw new GrokOAuthError(
+      "Device code response missing user_code",
+      "no_user_code",
+    );
   }
-  if (typeof verificationUri !== 'string' || verificationUri.length === 0) {
-    throw new GrokOAuthError('Device code response missing verification_uri', 'no_verification_uri');
+  if (typeof verificationUri !== "string" || verificationUri.length === 0) {
+    throw new GrokOAuthError(
+      "Device code response missing verification_uri",
+      "no_verification_uri",
+    );
   }
 
   return {
     deviceCode,
     userCode,
     verificationUri,
-    ...(typeof obj.verification_uri_complete === 'string' && obj.verification_uri_complete.length > 0
+    ...(typeof obj.verification_uri_complete === "string" &&
+    obj.verification_uri_complete.length > 0
       ? { verificationUriComplete: obj.verification_uri_complete }
       : {}),
-    expiresIn: typeof obj.expires_in === 'number' && Number.isFinite(obj.expires_in) ? obj.expires_in : 1800,
-    interval: typeof obj.interval === 'number' && Number.isFinite(obj.interval) ? obj.interval : 5,
+    expiresIn:
+      typeof obj.expires_in === "number" && Number.isFinite(obj.expires_in)
+        ? obj.expires_in
+        : 1800,
+    interval:
+      typeof obj.interval === "number" && Number.isFinite(obj.interval)
+        ? obj.interval
+        : 5,
   };
 }
 
@@ -203,15 +231,21 @@ export async function requestDeviceCode(options: {
  * Parse the standard OAuth token response body into a GrokOAuthResult.
  * Shared between the device-code poll and `refreshGrokToken`.
  */
-function parseTokenResponseBody(obj: Record<string, unknown>, accessToken: string): GrokOAuthResult {
+function parseTokenResponseBody(
+  obj: Record<string, unknown>,
+  accessToken: string,
+): GrokOAuthResult {
   const result: GrokOAuthResult = { accessToken };
-  if (typeof obj.expires_in === 'number' && Number.isFinite(obj.expires_in)) {
+  if (typeof obj.expires_in === "number" && Number.isFinite(obj.expires_in)) {
     result.expiresAt = Date.now() + obj.expires_in * 1000;
   }
-  if (typeof obj.refresh_token === 'string' && obj.refresh_token.length > 0) {
+  if (typeof obj.refresh_token === "string" && obj.refresh_token.length > 0) {
     result.refreshToken = obj.refresh_token;
   }
-  if (typeof obj.refresh_token_expires_in === 'number' && Number.isFinite(obj.refresh_token_expires_in)) {
+  if (
+    typeof obj.refresh_token_expires_in === "number" &&
+    Number.isFinite(obj.refresh_token_expires_in)
+  ) {
     result.refreshExpiresAt = Date.now() + obj.refresh_token_expires_in * 1000;
   }
   return result;
@@ -246,16 +280,19 @@ export async function pollForDeviceToken(options: {
   // eslint-disable-next-line no-constant-condition
   while (true) {
     if (Date.now() >= deadline) {
-      throw new GrokOAuthError('Device authorization timed out waiting for user approval', 'timeout');
+      throw new GrokOAuthError(
+        "Device authorization timed out waiting for user approval",
+        "timeout",
+      );
     }
 
     let response: Response;
     try {
       response = await fetchImpl(endpoint, {
-        method: 'POST',
+        method: "POST",
         headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-          Accept: 'application/json',
+          "Content-Type": "application/x-www-form-urlencoded",
+          Accept: "application/json",
         },
         body: new URLSearchParams({
           grant_type: DEVICE_GRANT_TYPE,
@@ -266,7 +303,7 @@ export async function pollForDeviceToken(options: {
     } catch (err) {
       throw new GrokOAuthError(
         `Token poll network error: ${err instanceof Error ? err.message : String(err)}`,
-        'poll_network_error',
+        "poll_network_error",
       );
     }
 
@@ -280,13 +317,16 @@ export async function pollForDeviceToken(options: {
           `Token response invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
         );
       }
-      if (!body || typeof body !== 'object') {
-        throw new GrokOAuthError('Token response is not an object');
+      if (!body || typeof body !== "object") {
+        throw new GrokOAuthError("Token response is not an object");
       }
       const obj = body as Record<string, unknown>;
       const accessToken = obj.access_token;
-      if (typeof accessToken !== 'string' || accessToken.length === 0) {
-        throw new GrokOAuthError('Token response missing access_token', 'no_access_token');
+      if (typeof accessToken !== "string" || accessToken.length === 0) {
+        throw new GrokOAuthError(
+          "Token response missing access_token",
+          "no_access_token",
+        );
       }
       return parseTokenResponseBody(obj, accessToken);
     }
@@ -295,33 +335,46 @@ export async function pollForDeviceToken(options: {
     let errBody: Record<string, unknown> = {};
     try {
       const parsed = await response.json();
-      if (parsed && typeof parsed === 'object') errBody = parsed as Record<string, unknown>;
+      if (parsed && typeof parsed === "object")
+        errBody = parsed as Record<string, unknown>;
     } catch {
       // Non-JSON error body — treat as transient and keep polling unless 4xx is definitive.
     }
-    const errorCode = typeof errBody.error === 'string' ? errBody.error : `http_${response.status}`;
+    const errorCode =
+      typeof errBody.error === "string"
+        ? errBody.error
+        : `http_${response.status}`;
 
     switch (errorCode) {
-      case 'authorization_pending':
+      case "authorization_pending":
         await sleep(interval * 1000);
         continue;
-      case 'slow_down':
+      case "slow_down":
         // RFC 8628 §3.5: increase the interval by 5 seconds.
         interval += 5;
         await sleep(interval * 1000);
         continue;
-      case 'expired_token':
-      case 'expired':
-        throw new GrokOAuthError('Device code expired before user authorized', 'expired');
-      case 'access_denied':
-      case 'denied':
-        throw new GrokOAuthError('User denied the authorization request', 'denied');
-      case 'invalid_grant':
-        throw new GrokOAuthError('Device code rejected (invalid_grant)', 'invalid_grant');
+      case "expired_token":
+      case "expired":
+        throw new GrokOAuthError(
+          "Device code expired before user authorized",
+          "expired",
+        );
+      case "access_denied":
+      case "denied":
+        throw new GrokOAuthError(
+          "User denied the authorization request",
+          "denied",
+        );
+      case "invalid_grant":
+        throw new GrokOAuthError(
+          "Device code rejected (invalid_grant)",
+          "invalid_grant",
+        );
       default:
         // Unknown error — surface it rather than polling forever.
         throw new GrokOAuthError(
-          `Token poll error: ${errorCode}${typeof errBody.error_description === 'string' ? ` — ${errBody.error_description}` : ''}`,
+          `Token poll error: ${errorCode}${typeof errBody.error_description === "string" ? ` — ${errBody.error_description}` : ""}`,
           errorCode,
         );
     }
@@ -339,10 +392,15 @@ export async function pollForDeviceToken(options: {
  *
  * @throws GrokOAuthError on any failure (network, denied, expired, timeout).
  */
-export async function runGrokOAuthFlow(options: GrokOAuthOptions = {}): Promise<GrokOAuthResult> {
-  const clientId = options.clientId || process.env.GROK_OAUTH_CLIENT_ID || DEFAULT_GROK_OAUTH_CLIENT_ID;
+export async function runGrokOAuthFlow(
+  options: GrokOAuthOptions = {},
+): Promise<GrokOAuthResult> {
+  const clientId =
+    options.clientId ||
+    process.env.GROK_OAUTH_CLIENT_ID ||
+    DEFAULT_GROK_OAUTH_CLIENT_ID;
   if (!clientId || clientId.trim().length === 0) {
-    throw new GrokOAuthError('Missing clientId', 'no_client_id');
+    throw new GrokOAuthError("Missing clientId", "no_client_id");
   }
 
   // Step 1: request device code.
@@ -361,7 +419,9 @@ export async function runGrokOAuthFlow(options: GrokOAuthOptions = {}): Promise<
   // Step 3: open the browser to the verification URI (best-effort, non-blocking).
   // Prefer verification_uri_complete when provided (pre-fills the user_code).
   try {
-    await openBrowser(deviceAuth.verificationUriComplete ?? deviceAuth.verificationUri);
+    await (options.openBrowserImpl ?? openBrowser)(
+      deviceAuth.verificationUriComplete ?? deviceAuth.verificationUri,
+    );
   } catch {
     // Browser launch is best-effort — the user can still visit the URL manually
     // (the code was already surfaced via onUserCode).
@@ -400,10 +460,10 @@ export async function refreshGrokToken(options: {
   fetchImpl?: typeof fetch;
 }): Promise<GrokOAuthResult> {
   if (!options.clientId || options.clientId.trim().length === 0) {
-    throw new GrokOAuthError('Missing clientId', 'no_client_id');
+    throw new GrokOAuthError("Missing clientId", "no_client_id");
   }
   if (!options.refreshToken || options.refreshToken.trim().length === 0) {
-    throw new GrokOAuthError('Missing refreshToken', 'no_refresh_token');
+    throw new GrokOAuthError("Missing refreshToken", "no_refresh_token");
   }
 
   const endpoint = options.tokenEndpoint ?? DEFAULT_TOKEN_ENDPOINT;
@@ -412,24 +472,29 @@ export async function refreshGrokToken(options: {
   let response: Response;
   try {
     response = await fetchImpl(endpoint, {
-      method: 'POST',
+      method: "POST",
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json",
       },
       body: new URLSearchParams({
-        grant_type: 'refresh_token',
+        grant_type: "refresh_token",
         client_id: options.clientId,
         refresh_token: options.refreshToken,
       }).toString(),
     });
   } catch (err) {
-    throw new GrokOAuthError(`Token refresh network error: ${err instanceof Error ? err.message : String(err)}`);
+    throw new GrokOAuthError(
+      `Token refresh network error: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
   if (!response.ok) {
-    const errText = await response.text().catch(() => '');
-    const code = response.status === 400 || response.status === 401 ? 'invalid_grant' : `http_${response.status}`;
+    const errText = await response.text().catch(() => "");
+    const code =
+      response.status === 400 || response.status === 401
+        ? "invalid_grant"
+        : `http_${response.status}`;
     throw new GrokOAuthError(
       `Token refresh HTTP ${response.status}: ${errText.slice(0, 200)}`,
       code,
@@ -440,17 +505,22 @@ export async function refreshGrokToken(options: {
   try {
     body = await response.json();
   } catch (err) {
-    throw new GrokOAuthError(`Token refresh returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`);
+    throw new GrokOAuthError(
+      `Token refresh returned invalid JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
   }
 
-  if (!body || typeof body !== 'object') {
-    throw new GrokOAuthError('Token refresh returned non-object body');
+  if (!body || typeof body !== "object") {
+    throw new GrokOAuthError("Token refresh returned non-object body");
   }
   const obj = body as Record<string, unknown>;
 
   const accessToken = obj.access_token;
-  if (typeof accessToken !== 'string' || accessToken.length === 0) {
-    throw new GrokOAuthError('Token refresh response missing access_token', 'no_access_token');
+  if (typeof accessToken !== "string" || accessToken.length === 0) {
+    throw new GrokOAuthError(
+      "Token refresh response missing access_token",
+      "no_access_token",
+    );
   }
 
   return parseTokenResponseBody(obj, accessToken);
@@ -462,19 +532,25 @@ export async function refreshGrokToken(options: {
  * spawn with args array).
  */
 export async function openBrowser(url: string): Promise<void> {
-  const { spawn } = await import('node:child_process');
+  const { spawn } = await import("node:child_process");
   const cmd = (() => {
     switch (process.platform) {
-      case 'darwin': return { bin: 'open', args: [url] };
-      case 'win32':  return { bin: 'cmd', args: ['/c', 'start', '""', url] };
-      default:       return { bin: 'xdg-open', args: [url] };
+      case "darwin":
+        return { bin: "open", args: [url] };
+      case "win32":
+        return { bin: "cmd", args: ["/c", "start", '""', url] };
+      default:
+        return { bin: "xdg-open", args: [url] };
     }
   })();
   return new Promise<void>((resolve, reject) => {
     try {
-      const child = spawn(cmd.bin, cmd.args, { stdio: 'ignore', detached: true });
-      child.on('error', (err) => reject(err));
-      child.on('spawn', () => {
+      const child = spawn(cmd.bin, cmd.args, {
+        stdio: "ignore",
+        detached: true,
+      });
+      child.on("error", (err) => reject(err));
+      child.on("spawn", () => {
         child.unref();
         resolve();
       });
