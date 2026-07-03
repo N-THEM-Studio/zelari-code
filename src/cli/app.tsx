@@ -22,6 +22,7 @@ import {
   getActiveProvider as getActiveProviderSpec,
 } from './providerConfig.js';
 import { SessionJsonlWriter } from '@zelari/core/harness';
+import { VERSION } from './main.js';
 import { useSession } from './hooks/useSession.js';
 import { useChatTurn } from './hooks/useChatTurn.js';
 import { useSlashDispatch } from './hooks/useSlashDispatch.js';
@@ -150,7 +151,7 @@ export function App(): React.ReactElement {
       role: 'system',
       ts: 0,
       content:
-        `zelari-code v0.7.3 — ${activeProviderSpec.id}/${activeModel}\n` +
+        `zelari-code v${VERSION} — ${activeProviderSpec.id}/${activeModel}\n` +
         `${skills.length} skills available. Type /help for the list, or /skill <name>.\n` +
         `── skills ──\n${skillList}`,
     };
