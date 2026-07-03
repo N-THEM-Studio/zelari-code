@@ -80,7 +80,26 @@ Example format:
 - Make dependencies explicit (task B depends on task A).
 - If the stack/platform is unknown, ask ONCE (see clarification protocol) rather than guessing.
 
-Keep plans hierarchical and practical. Stay under 250 words.${CLARIFICATION_PROTOCOL}`,
+Keep plans hierarchical and practical. Stay under 250 words.${CLARIFICATION_PROTOCOL}
+
+## Design-phase mandatory tools
+In design-phase mode (TASK mentions design/architecture/spec, no existing codebase to edit), you MUST use these workspace tools to persist the plan:
+
+- \`createPhase\` — call ONCE per phase with { name, description, order, color }. Emit AT LEAST 3 phases.
+- \`createTask\` — call ONCE per concrete task with { phaseId, title, description, fileRefs: ["src/...:Lx-Ly"], acceptance: ["testable assertion"], qaScenario: "step-by-step QA" }. Emit AT LEAST 6 tasks distributed across the phases.
+- \`createMilestone\` — call ONCE for the v0.1.0 design-complete milestone with { title, description, targetVersion: "v0.1.0" }.
+
+Required task shape:
+{
+  phaseId: "<existing phase id>",
+  title: "Concise verb-led title",
+  description: "2-3 sentences of context",
+  fileRefs: ["src/path/file.ts:Lx-Ly"],
+  acceptance: ["Concrete assertion 1", "Concrete assertion 2"],
+  qaScenario: "How to manually verify"
+}
+
+Do NOT output tasks as prose. Each task MUST be a \`createTask\` tool call. The system will refuse any task that does not pass a valid phaseId.`,
     // v0.7.2: read/search the codebase to ground the plan in reality.
     tools: ['list_files', 'read_file', 'grep_content'],
     skills: ['project-planner', 'vault-manager'],
@@ -111,7 +130,18 @@ Keep plans hierarchical and practical. Stay under 250 words.${CLARIFICATION_PROT
 ## Themes
 ## Top picks (with feasibility/novelty + de-risk note)
 
-Stay under 200 words.${CLARIFICATION_PROTOCOL}`,
+Stay under 200 words.${CLARIFICATION_PROTOCOL}
+
+## Design-phase artifact (mandatory when running council in design-phase mode)
+If the council is in design-phase mode (TASK mentions design/architecture/spec, no existing codebase to edit), you MUST also persist your ideation output as workspace documents via the \`createDocument\` tool. Emit AT LEAST 3 separate \`createDocument\` calls, each tagged with one of these categories:
+
+- \`customer-journey-map\` — 2-3 personas (give them names, demographics, goals), journey table (stage → action → touchpoint → emotion), pain points per stage. This is a customer journey deliverable.
+- \`information-architecture\` — site map tree (root → section → page), navigation model (primary nav, breadcrumbs, footer), URL patterns. This is an information architecture deliverable.
+- \`design-tokens\` — color palette (semantic + hex), typography scale, spacing scale, motion principles. This is a design tokens deliverable.
+
+You may optionally add a 4th design system doc if the project warrants it.
+
+Pass the tool call as: \`createDocument({ title: "<category>", content: "<markdown body>" })\`. Do NOT summarize these into prose — they are the deliverable.`,
     // v0.7.2: explore the codebase to ground ideas in what exists.
     tools: ['list_files', 'read_file'],
     skills: ['idea-synthesizer', 'mind-mapper', 'document-writer'],
@@ -171,7 +201,19 @@ Describe the proposed structure (root → branches → leaves) in text and, when
 ## Contradictions
 ## Top improvements
 
-Stay under 200 words. (You do not create workspace artifacts, so you do not emit a tools block — but you MAY ask the user a clarifying question if a core ambiguity blocks judgment.)${CLARIFICATION_PROTOCOL}`,
+Stay under 200 words.${CLARIFICATION_PROTOCOL}
+
+## Design-phase risks artifact (mandatory when running council in design-phase mode)
+When the council is in design-phase mode (TASK mentions design/architecture/spec, no existing codebase to edit), you ALSO write a \`risks\` document via the \`createDocument\` tool. This is your one allowed artifact emission. Pass the tool call as:
+
+\`\`\`
+createDocument({
+  title: "risks",
+  content: \`# Risks\\n\\n## 1. <Risk title>\\n- Impact: <high|medium|low>\\n- Likelihood: <high|medium|low>\\n- Mitigation: <one-line mitigation>\\n\\n## 2. ...\`
+})
+\`\`\`
+
+Include AT LEAST 5 risks, each scored on Impact and Likelihood, with a one-line mitigation. Cover: technical (e.g. stack risk), product (e.g. scope creep), accessibility, performance, security. Do NOT emit other workspace artifacts — your role is to evaluate, not to build.`,
     tools: [],
     skills: ['research-analyst'],
   },
@@ -196,7 +238,19 @@ Stay under 200 words. (You do not create workspace artifacts, so you do not emit
 - Apply Minosse's highest-value improvements; drop descoped items.
 - After making changes, verify they work (compile, run tests, etc.) when feasible.
 
-Use the tools available to you (read_file, write_file, edit_file, bash, list_files) directly as tool calls — the harness handles execution.${CLARIFICATION_PROTOCOL}`,
+Use the tools available to you (read_file, write_file, edit_file, bash, list_files) directly as tool calls — the harness handles execution.${CLARIFICATION_PROTOCOL}
+
+## Design-phase synthesis artifact (mandatory when running council in design-phase mode)
+When the council is in design-phase mode (TASK mentions design/architecture/spec, no existing codebase to edit), your final deliverable is a \`synthesis\` document via the \`createDocument\` tool (NOT \`write_file\` and NOT \`list_files\`):
+
+\`\`\`
+createDocument({
+  title: "synthesis",
+  content: \`# Council Synthesis\\n\\n## Executive summary\\n<2-3 paragraphs>\\n\\n## Stack and key decisions\\n- <ADR-by-ADR summary>\\n\\n## Phases\\n<1-2 line summary per phase>\\n\\n## Top risks\\n<top 3 risks from Minosse>\\n\\n## Green-light checklist\\n- [ ] All ADRs accepted\\n- [ ] Risks have mitigations\\n- [ ] Tasks have acceptance criteria\`
+})
+\`\`\`
+
+DO NOT call \`list_files\` — it is NOT a workspace tool. Use \`searchDocuments\` if you need to look something up (limit 2-3 searches, then act on the results). Your deliverable is the synthesis document; emit it via \`createDocument\`, not via prose.`,
     // v0.7.2: implementation tools — the synthesizer writes/edits files and runs commands.
     tools: ['read_file', 'write_file', 'edit_file', 'bash', 'list_files'],
     skills: ['vault-manager', 'project-planner', 'idea-synthesizer'],
