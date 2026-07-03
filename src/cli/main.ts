@@ -8,6 +8,7 @@ import React from 'react';
 import { render } from 'ink';
 // @ts-ignore
 import { App } from './app.js';
+import { SplashGate } from './components/SplashScreen.js';
 import { getMetricsLogger } from './metrics.js';
 import { getProviderConfigPath } from './providerConfig.js';
 import {
@@ -145,7 +146,13 @@ function pickRootComponent(): { kind: 'wizard' | 'app' | 'headless' | 'done'; el
     console.error(`[zelari-code] starting wizard: ${decision.reason}`);
     return { kind: 'wizard', element: React.createElement(RunWizard) };
   }
-  return { kind: 'app', element: React.createElement(App) };
+  // v0.7.8: one-shot startup splash (ASCII emblem, ~2s or any-key skip),
+  // then the App mounts. Skipped automatically for non-TTY stdout, small
+  // terminals, or ZELARI_NO_SPLASH=1 — see components/SplashScreen.tsx.
+  return {
+    kind: 'app',
+    element: React.createElement(SplashGate, { version: VERSION }, React.createElement(App)),
+  };
 }
 
 /**
