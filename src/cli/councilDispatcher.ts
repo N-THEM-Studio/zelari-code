@@ -76,6 +76,14 @@ export interface CouncilDispatchOptions {
    * @internal
    */
   disableWorkspaceTools?: boolean;
+  /**
+   * Optional workspace root directory. When set, the workspace context
+   * (and the workspace tool stubs) are bound to this directory instead
+   * of `process.cwd()`. Useful for running the council design phase
+   * against a specific project root (e.g. `~/zelari-projects/foo`).
+   * Has no effect when `disableWorkspaceTools: true`.
+   */
+  workspaceRoot?: string;
 }
 
 export class CouncilDispatchError extends Error {
@@ -126,6 +134,27 @@ export async function* dispatchCouncil(
     maxToolCallsPerTurn: options.maxToolCallsPerTurn,
     feedbackStore: options.feedbackStore,
   };
+
+  // Bug A fix (v0.7.5): also register workspace stubs in the global static
+  // (setWorkspaceStubs from @zelari/core/skills) so that getAllTools() —
+  // called by buildSystemPrompt when constructing the AVAILABLE TOOLS block —
+  // exposes them to the model. Without this, the per-call ToolRegistry can
+  // execute workspace tool calls, but the model never sees the names in its
+  // system prompt and either guesses them or skips them.
+  //
+  // Mirrors the pattern in src/cli/runHeadless.ts:141-152 and
+  // src/cli/hooks/useChatTurn.ts:572-586. Dynamic import avoids the load-
+  // order cycle that a static import would create (councilDispatcher is
+  // imported by hooks/runHeadless, and @zelari/core/skills is consumed by
+  // those same modules — see Gotcha #9 of zelari-code-headless-driver).
+  if (!options.disableWorkspaceTools) {
+    const { setWorkspaceStubs } = await import('@zelari/core/skills');
+    const { createWorkspaceContext: buildCtx, createWorkspaceStubs: buildStubs } = await import('./workspace/stubs.js');
+    const wsCtx = options.workspaceRoot
+      ? buildCtx(options.workspaceRoot)
+      : buildCtx();
+    setWorkspaceStubs(buildStubs(wsCtx));
+  }
 
   yield* runCouncilPure(userMessage, config, {});
 }
