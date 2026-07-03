@@ -123,3 +123,32 @@ describe('buildRetryPrompt — one-line forced continuation', () => {
     expect(prompt.toLowerCase()).toMatch(/\b(call|emit|invoke)\b/);
   });
 });
+
+/**
+ * v0.7.7 Opzione B: Nettuno's role prompt requires 12 createTask +
+ * 1 createMilestone. composer-2.5 reliably refuses to emit them
+ * even with aggressive retry (Pass 3 confirmed: 12 calls emitted
+ * but only 7 persisted before the 240s timeout). Forcing more
+ * retries wastes budget. Instead, the specialist loop SKIPS the
+ * retry for Nettuno and lets the deterministic post-processor
+ * (complete-design.mjs) fill in the gaps from a template.
+ */
+describe('Opzione B — Nettuno retry skip', () => {
+  it('NON_RETRY_AGENTS set contains nettun', async () => {
+    const { NON_RETRY_AGENTS } = await import('@zelari/core/council');
+    expect(NON_RETRY_AGENTS.has('nettun')).toBe(true);
+  });
+
+  it('NON_RETRY_AGENTS set does NOT contain other specialists (gerion, plutone, caronte)', async () => {
+    const { NON_RETRY_AGENTS } = await import('@zelari/core/council');
+    expect(NON_RETRY_AGENTS.has('gerion')).toBe(false);
+    expect(NON_RETRY_AGENTS.has('pluton')).toBe(false);
+    expect(NON_RETRY_AGENTS.has('caronte')).toBe(false);
+  });
+
+  it('NON_RETRY_AGENTS set does NOT contain chairman/oracle (their retry stays)', async () => {
+    const { NON_RETRY_AGENTS } = await import('@zelari/core/council');
+    expect(NON_RETRY_AGENTS.has('lucifer')).toBe(false);
+    expect(NON_RETRY_AGENTS.has('minos')).toBe(false);
+  });
+});

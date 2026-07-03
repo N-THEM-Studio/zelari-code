@@ -14,6 +14,20 @@ import type {
 import { AgentHarness } from '../core/AgentHarness.js';
 import { ToolRegistry } from '../core/tools/registry.js';
 
+/**
+ * v0.7.7 Opzione B — Council members whose tool-emission retry is
+ * DISABLED. The forced retry works for chairman (Lucifero) and oracle
+ * (Minosse) where only 1 distinct tool is missing (createDocument or
+ * searchDocuments), but Nettuno requires 12 createTask + 1
+ * createMilestone and composer-2.5 reliably fails to persist more
+ * than 7 calls within the 240s budget (Pass 3 live test 2026-07-03).
+ *
+ * For these members we rely on the deterministic post-processor
+ * (complete-design.mjs in the workspace) to fill in the gaps from a
+ * template, instead of retrying the model.
+ */
+export const NON_RETRY_AGENTS: ReadonlySet<string> = new Set(['nettun']);
+
 export type { BrainEvent } from '../shared/events.js';
 export type {
   AgentMessage,
@@ -418,7 +432,11 @@ export async function* runCouncilPure(
     // as the chairman and oracle — extracted into applyRetryIfMissing
     // so the three loops share one implementation. Skipped when the
     // specialist errored (retry is for tool gaps, not LLM failures).
-    if (!errored) {
+    // v0.7.7 Opzione B: skip the retry entirely for members in
+    // NON_RETRY_AGENTS (composer-2.5 cannot satisfy the heavy
+    // emission budget in the 240s window; the deterministic
+    // post-processor fills the gaps from a template).
+    if (!errored && !NON_RETRY_AGENTS.has(agent.id)) {
       const specialistCheck = enforceDesignPhaseToolEmissions(agent.id, emittedToolNames);
       yield* applyRetryIfMissing({
         agent,
