@@ -123,11 +123,11 @@ describe('council chairman (Lucifero synthesis) — v0.6.0', () => {
     expect(cost.errored).toBe(false);
   });
 
-  it('Lucifero + 4 specialists = 5 agent_start with memberName (debateMode=false skips Minosse)', async () => {
-    // With councilSize=6 + debateMode=false, the orchestrator runs:
-    //   4 specialists (charon, nettuno, gerione, plutone) + Lucifero
-    //   (5 total). Minosse is extracted as the "oracle" and only runs
-    //   when debateMode=true.
+  it('Lucifero + 4 specialists + Minosse = 6 agent_start with memberName (Bug C fix: Minosse always runs)', async () => {
+    // With councilSize=6, the orchestrator now runs all members regardless
+    // of debateMode: 4 specialists (charon, nettuno, gerione, plutone) +
+    // Minosse (critic) + Lucifero (chairman). Before v0.7.5 Bug C fix,
+    // Minosse was skipped when debateMode=false (the default).
     const stream = makeStream([
       { kind: 'text', delta: 'specialist-A' },
       { kind: 'finish', reason: 'stop' },
@@ -145,11 +145,15 @@ describe('council chairman (Lucifero synthesis) — v0.6.0', () => {
     const memberStarts = events.filter(
       (e) => e.type === 'agent_start' && (e as { memberName?: string }).memberName !== undefined,
     );
-    expect(memberStarts.length).toBe(5);
+    expect(memberStarts.length).toBe(6);
     // Last one is the chairman.
     const last = memberStarts[memberStarts.length - 1] as { memberId?: string; memberName?: string };
     expect(last.memberId).toBe('lucifer');
     expect(last.memberName).toBe('Lucifero');
+    // Minosse must run regardless of debateMode (Bug C fix).
+    const minosse = memberStarts.find((e) => (e as { memberId?: string }).memberId === 'minos');
+    expect(minosse).toBeDefined();
+    expect((minosse as { memberName?: string } | undefined)?.memberName).toBe('Minosse');
   });
 
   it('Lucifero does NOT run when councilSize=3 (backward compat)', async () => {
@@ -173,13 +177,14 @@ describe('council chairman (Lucifero synthesis) — v0.6.0', () => {
   });
 
   it('Lucifero error does NOT abort the council run (robustness)', async () => {
-    // Stream that throws on the 5th call (the chairman's call).
-    // Orchestrator order: charon(0) → nettuno(1) → gerione(2) →
-    // plutone(3) → lucifer(4). Minosse is skipped (debateMode=false).
+    // Stream that throws on the 6th call (the chairman's call).
+    // Orchestrator order (v0.7.5 Bug C fix): charon(0) → nettuno(1) →
+    // gerione(2) → plutone(3) → minos(4) → lucifer(5). Before the fix,
+    // Minosse was skipped (debateMode=false) and lucifer was at idx 4.
     let callCount = 0;
     const stream: ProviderStreamFn = async function* () {
       const idx = callCount++;
-      if (idx === 4) {
+      if (idx === 5) {
         throw new Error('chairman LLM blew up');
       }
       yield { kind: 'text', delta: `agent-${idx}` } as never;
@@ -221,7 +226,7 @@ describe('council chairman (Lucifero synthesis) — v0.6.0', () => {
     let callCount = 0;
     const stream: ProviderStreamFn = async function* () {
       const idx = callCount++;
-      if (idx === 4) {
+      if (idx === 5) {
         // Throw immediately, no deltas yielded before.
         throw new Error('chairman LLM blew up at start');
       }
@@ -255,7 +260,7 @@ describe('council chairman (Lucifero synthesis) — v0.6.0', () => {
       providerStream: (() => {
         const inner: ProviderStreamFn = async function* () {
           const idx = callCount++;
-          if (idx === 4) {
+          if (idx === 5) {
             throw new Error('chairman LLM blew up at start');
           }
           yield { kind: 'text', delta: `agent-${idx}` } as never;

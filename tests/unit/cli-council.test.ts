@@ -92,22 +92,55 @@ describe('councilDispatcher', () => {
   });
 
   it('uses provided sessionId when supplied', async () => {
-    const stream: ProviderStreamFn = async function* () {
-      yield { kind: 'text', delta: 'x' };
-      yield { kind: 'finish', reason: 'stop' };
-    };
-    const events: BrainEvent[] = [];
-    for await (const e of dispatchCouncil('hello', {
-      apiKey: 'sk-test',
-      model: 'test-model',
-      sessionId: 'sess-fixed-123',
-      providerStream: stream,
-    })) {
-      events.push(e);
-    }
-    expect(events.length).toBeGreaterThan(0);
-    for (const e of events) {
-      expect(e.sessionId).toBe('sess-fixed-123');
-    }
+      const stream: ProviderStreamFn = async function* () {
+        yield { kind: 'text', delta: 'x' };
+        yield { kind: 'finish', reason: 'stop' };
+      };
+      const events: BrainEvent[] = [];
+      for await (const e of dispatchCouncil('hello', {
+        apiKey: 'k',
+        model: 'test-model',
+        sessionId: 'sess-fixed-123',
+        providerStream: stream,
+      })) {
+        events.push(e);
+      }
+      expect(events.length).toBeGreaterThan(0);
+      for (const e of events) {
+        expect(e.sessionId).toBe('sess-fixed-123');
+      }
+    });
+
+    it('runs Minosse even when debateMode is false (v0.7.5 Bug C fix)', async () => {
+      // Bug C fix: the Minosse (oracle / critic) review block was gated on
+      // config.debateMode. Default debateMode is false, so a 6-member council
+      // (councilSize=6) silently ran only 5 members. Users saw a
+      // member_cost event for Minosse but no actual agent_start/message_end.
+      //
+      // After the fix: Minosse always runs once before Lucifero (the
+      // multi-round debate loop remains debateMode-gated, but a single
+      // review pass is always useful before final synthesis).
+      const seenMembers = new Set<string>();
+      const stream: ProviderStreamFn = async function* () {
+        yield { kind: 'text', delta: 'x' };
+        yield { kind: 'finish', reason: 'stop' };
+      };
+      for await (const e of dispatchCouncil('plan a release', {
+        apiKey: 'k',
+        model: 'm',
+        provider: 'openai-compatible',
+        councilSize: 6,
+        debateMode: false, // ← the critical flag
+        providerStream: stream,
+      })) {
+        if (e.type === 'agent_start') {
+          const memberName = (e as BrainEvent & { memberName?: string }).memberName;
+          if (memberName) seenMembers.add(memberName);
+        }
+      }
+      // 6-member council must include Minosse (the critic) even in non-debate mode.
+      expect(seenMembers.has('Minosse')).toBe(true);
+      // Sanity: the chairman (Lucifero) still runs.
+      expect(seenMembers.has('Lucifero')).toBe(true);
+    });
   });
-});

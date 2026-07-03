@@ -458,8 +458,12 @@ export async function* runCouncilPure(
     }
   }
 
-  // Minosse (debate mode)
-  if (config.debateMode && oracle && !completedIds.has(oracle.id)) {
+  // Minosse (critic) — runs once regardless of debateMode.
+  // Fix v0.7.5 Bug C: previously gated on config.debateMode (default false),
+  // so 6-member councils silently ran only 5 members. A critic pass is
+  // always useful before final synthesis; multi-round debate loops remain
+  // debateMode-gated (TODO: see plan 2026-07-03-council-3-bugs-fix.md).
+  if (oracle && !completedIds.has(oracle.id)) {
     callbacks.onAgentStart?.(oracle);
 
     const override = config.agentModels?.[oracle.id];
