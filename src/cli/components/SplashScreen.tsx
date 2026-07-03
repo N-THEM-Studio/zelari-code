@@ -5,10 +5,11 @@
  * ASCII art) centered in the terminal for ~2 seconds — or until any key is
  * pressed — then unmounts and gives way to the normal App.
  *
- * Sizing: two pre-rendered variants (64 and 44 columns wide) are embedded
- * as constants; `pickSplashArt` chooses the largest one that fits the
- * current terminal, or returns null when even the small one doesn't fit
- * (the splash is then skipped entirely).
+ * Sizing: four pre-rendered variants (64/44/30/22 columns wide) are
+ * embedded as constants; `pickSplashArt` chooses the largest one that fits
+ * the current terminal (dropping the version/hint footer on short panes),
+ * or returns null when even the micro one doesn't fit (the splash is then
+ * skipped entirely).
  *
  * Skipped when stdout is not a TTY (pipes, CI) or `ZELARI_NO_SPLASH=1`.
  */
@@ -87,16 +88,51 @@ const EMBLEM_SMALL = `                    =%%*:
  %@@@@%@@%@@@@@@@@@@@@@@@@@%**%@@@@@@@@@@@@:
 =@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@*`;
 
-/** Rows the footer (wordmark + version + hint + margins) needs below the art. */
-const FOOTER_ROWS = 5;
+const EMBLEM_TINY = `             -%%+
+           .*%%%@#:
+          =%%%%%%%@*
+         +%%%%%%%%%%#.
+        +%%%@@@@@@@%@#.
+      .*%@@@@@@@@@@@@@%-
+     .#%@@@@@@@@@@@@@@@@-
+     *%@@@@@@@@@@@@@@@@@%.
+    :@%%@@@@@@%:+%@@@@@%@=
+     =@%%@@@@@%.=-+%@%%@*
+     .=@@%@@@@%.*@*-+@@*.
+   -*%@@@@@@@@%.*@@@+:#@@#=.
+  *%%%%%%@@@@@@.*#%#=-:+@@@%
+ :@%%%%%%@@@@@@.:=.*:*@@@@@@=
+ *@%%@%%@@@@@@@*%@*:-:%@@@@@%.
+:@@@%@@@@@@@@@@@@@@#%@@@@@@@@=
+*%%%%%%%%%%%%%%%%%%%%%%%%%%%%#`;
+
+const EMBLEM_MICRO = `         -#%=
+        +%%%%#.
+      :#%%%%%%%-
+     :%%@@@@@@@@=
+    -%@@@@@@@@@@@+
+   :%@@@@@@%@@@@@@=
+   -%%@@@@@.+%@@%@+
+    -@@@@@@:%++%@=
+  =*%@@@@@@:@@%=*@#+.
+ =%%%%%@@@@:+++-*%@@*
+.%%%%%@@@@@+%+=:%@@@@:
+*@@@@@@@@@@@@@%@@@@@@*`;
+
+/** Rows the FULL footer (margin + wordmark + version + hint) needs below the art. */
+const FOOTER_ROWS_FULL = 5;
+/** Rows the COMPACT footer (margin + wordmark only) needs — used on short terminals. */
+const FOOTER_ROWS_COMPACT = 2;
 
 export interface SplashArt {
   art: string;
   width: number;
   height: number;
+  /** True when only the compact footer (wordmark, no version/hint) fits. */
+  compact: boolean;
 }
 
-function measure(art: string): SplashArt {
+function measure(art: string): Omit<SplashArt, 'compact'> {
   const lines = art.split('\n');
   return {
     art,
@@ -105,15 +141,27 @@ function measure(art: string): SplashArt {
   };
 }
 
-const VARIANTS: SplashArt[] = [measure(EMBLEM_LARGE), measure(EMBLEM_SMALL)];
+const VARIANTS: Omit<SplashArt, 'compact'>[] = [
+  measure(EMBLEM_LARGE),
+  measure(EMBLEM_SMALL),
+  measure(EMBLEM_TINY),
+  measure(EMBLEM_MICRO),
+];
 
 /**
- * Pure helper: pick the largest emblem variant that fits `columns`×`rows`
- * (leaving room for the wordmark footer), or null when none fits.
+ * Pure helper: pick the largest emblem variant that fits `columns`×`rows`.
+ * Tries the full footer first (wordmark + version + hint); on short
+ * terminals falls back to the compact footer (wordmark only) so the
+ * splash still shows in low panes like VS Code's integrated terminal.
+ * Returns null only when even the micro variant doesn't fit.
  */
 export function pickSplashArt(columns: number, rows: number): SplashArt | null {
+  // Largest art wins: a bigger emblem with the compact footer beats a
+  // smaller emblem with the full footer.
   for (const v of VARIANTS) {
-    if (v.width <= columns - 2 && v.height + FOOTER_ROWS <= rows) return v;
+    if (v.width > columns - 2) continue;
+    if (v.height + FOOTER_ROWS_FULL <= rows) return { ...v, compact: false };
+    if (v.height + FOOTER_ROWS_COMPACT <= rows) return { ...v, compact: true };
   }
   return null;
 }
@@ -169,10 +217,14 @@ function Splash({ onDone, version }: { onDone: () => void; version?: string }): 
           {'Z E L A R I   C O D E'}
         </Text>
       </Box>
-      <Text dimColor>{`${version ? `v${version} — ` : ''}N-THEM Studio`}</Text>
-      <Text dimColor italic>
-        press any key to skip
-      </Text>
+      {!picked.compact && (
+        <Text dimColor>{`${version ? `v${version} — ` : ''}N-THEM Studio`}</Text>
+      )}
+      {!picked.compact && (
+        <Text dimColor italic>
+          press any key to skip
+        </Text>
+      )}
     </Box>
   );
 }

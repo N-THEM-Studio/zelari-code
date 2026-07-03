@@ -26,14 +26,26 @@ describe('pickSplashArt — variant sizing', () => {
     expect(art).not.toBeNull();
     expect(art!.width).toBeLessThanOrEqual(50); // small variant is ~44 cols
     expect(art!.height + 5).toBeLessThanOrEqual(35);
+    expect(art!.compact).toBe(false);
   });
 
-  it('returns null when even the small emblem does not fit (80×20)', () => {
-    expect(pickSplashArt(80, 20)).toBeNull();
+  it('uses the tiny emblem with COMPACT footer in a low pane (80×20, e.g. VS Code terminal)', () => {
+    const art = pickSplashArt(80, 20);
+    expect(art).not.toBeNull();
+    expect(art!.width).toBeLessThanOrEqual(32); // tiny variant is ~30 cols
+    expect(art!.height + 2).toBeLessThanOrEqual(20);
+    expect(art!.compact).toBe(true);
   });
 
-  it('returns null on a very narrow terminal (40 cols)', () => {
-    expect(pickSplashArt(40, 50)).toBeNull();
+  it('uses the micro emblem on a very narrow terminal (30 cols)', () => {
+    const art = pickSplashArt(30, 50);
+    expect(art).not.toBeNull();
+    expect(art!.width).toBeLessThanOrEqual(24); // micro variant is ~22 cols
+  });
+
+  it('returns null only when even the micro emblem does not fit (30×10)', () => {
+    expect(pickSplashArt(30, 10)).toBeNull();
+    expect(pickSplashArt(20, 50)).toBeNull();
   });
 
   it('every variant line fits its declared width', () => {
@@ -59,8 +71,12 @@ describe('shouldShowSplash — gating', () => {
     expect(shouldShowSplash({ ...roomy, env: { ZELARI_NO_SPLASH: '1' } })).toBe(false);
   });
 
-  it('skips when the terminal is too small', () => {
-    expect(shouldShowSplash({ ...roomy, columns: 40, rows: 15 })).toBe(false);
+  it('still shows in a low pane thanks to the tiny/micro variants (80×20)', () => {
+    expect(shouldShowSplash({ ...roomy, columns: 80, rows: 20 })).toBe(true);
+  });
+
+  it('skips when the terminal is truly too small (30×10)', () => {
+    expect(shouldShowSplash({ ...roomy, columns: 30, rows: 10 })).toBe(false);
   });
 });
 
