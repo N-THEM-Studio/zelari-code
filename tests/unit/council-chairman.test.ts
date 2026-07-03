@@ -145,7 +145,12 @@ describe('council chairman (Lucifero synthesis) — v0.6.0', () => {
     const memberStarts = events.filter(
       (e) => e.type === 'agent_start' && (e as { memberName?: string }).memberName !== undefined,
     );
-    expect(memberStarts.length).toBe(6);
+    // 5 specialists + 1 chairman = 6 base member_starts.
+    // v0.7.7 Pass 3: each member may emit one additional agent_start
+    // for the forced retry turn when the post-condition check fails.
+    // Worst case: 5 specialists + 1 oracle + 1 chairman + 7 retries = 14.
+    expect(memberStarts.length).toBeGreaterThanOrEqual(6);
+    expect(memberStarts.length).toBeLessThanOrEqual(14);
     // Last one is the chairman.
     const last = memberStarts[memberStarts.length - 1] as { memberId?: string; memberName?: string };
     expect(last.memberId).toBe('lucifer');
@@ -177,108 +182,113 @@ describe('council chairman (Lucifero synthesis) — v0.6.0', () => {
   });
 
   it('Lucifero error does NOT abort the council run (robustness)', async () => {
-    // Stream that throws on the 6th call (the chairman's call).
-    // Orchestrator order (v0.7.5 Bug C fix): charon(0) → nettuno(1) →
-    // gerione(2) → plutone(3) → minos(4) → lucifer(5). Before the fix,
-    // Minosse was skipped (debateMode=false) and lucifer was at idx 4.
-    let callCount = 0;
-    const stream: ProviderStreamFn = async function* () {
-      const idx = callCount++;
-      if (idx === 5) {
-        throw new Error('chairman LLM blew up');
-      }
-      yield { kind: 'text', delta: `agent-${idx}` } as never;
-      yield { kind: 'finish', reason: 'stop' } as never;
-    };
+      // Stream that throws on the chairman's call (identified by the
+      // "Lucifero" string in the system prompt — robust to retry-induced
+      // shifts in the call index, which used to be hardcoded as idx === 5).
+      let callCount = 0;
+      const stream: ProviderStreamFn = async function* (params) {
+        const idx = callCount++;
+        const isChairman = params.messages.some((m) =>
+          m.role === 'system' && typeof m.content === 'string' && m.content.includes('Lucifero'),
+        );
+        if (isChairman) {
+          throw new Error('chairman LLM blew up');
+        }
+        yield { kind: 'text', delta: `agent-${idx}` } as never;
+        yield { kind: 'finish', reason: 'stop' } as never;
+      };
 
-    const events = await collect(dispatchCouncil('hello', {
-      apiKey: TEST_API_KEY,
-      model: 'grok-4',
-      councilSize: 6,
-      debateMode: false,
-      providerStream: stream,
-      disableWorkspaceTools: true,
-    }));
+      const events = await collect(dispatchCouncil('hello', {
+        apiKey: TEST_API_KEY,
+        model: 'grok-4',
+        councilSize: 6,
+        debateMode: false,
+        providerStream: stream,
+        disableWorkspaceTools: true,
+      }));
 
-    const finalEnd = events.find(
-      (e) => e.type === 'agent_end' && (e as { memberId?: string }).memberId === undefined,
-    );
-    expect(finalEnd).toBeDefined();
+      const finalEnd = events.find(
+        (e) => e.type === 'agent_end' && (e as { memberId?: string }).memberId === undefined,
+      );
+      expect(finalEnd).toBeDefined();
 
-    const luciferCost = events.find(
-      (e) => e.type === 'member_cost' && (e as { cost: { memberId: string } }).cost.memberId === 'lucifer',
-    );
-    expect(luciferCost).toBeDefined();
-    expect((luciferCost as { cost: { errored: boolean } }).cost.errored).toBe(true);
-  });
+      const luciferCost = events.find(
+        (e) => e.type === 'member_cost' && (e as { cost: { memberId: string } }).cost.memberId === 'lucifer',
+      );
+      expect(luciferCost).toBeDefined();
+      // Chairman errored → retry blocked → member_cost.errored=true.
+      // (v0.7.7 Pass 3 added retries but explicitly skips them when the
+      // main turn errored, so the chairman's errored flag survives.)
+      expect((luciferCost as { cost: { errored: boolean } }).cost.errored).toBe(true);
+    });
 
   it('Regression HIGH-1: chairman catch() must NOT overwrite fullText (fallback message must render)', async () => {
-    // Before the fix, the chairman's catch block assigned
-    // `fullText = "Error: ..."`, which made the fallback
-    // `[Chairman synthesis failed: ...]` string impossible to render
-    // (because `fullText.length > 0`). Now the catch stores the error
-    // in `lastErrorMessage` and leaves `fullText` intact, so on a
-    // throw with no partial deltas, the fallback string IS emitted.
-    //
-    // The fallback is delivered via the `onSynthesisDone` callback
-    // (not via a message_delta event), so we assert on the callback
-    // argument instead of scanning event stream.
-    let callCount = 0;
-    const stream: ProviderStreamFn = async function* () {
-      const idx = callCount++;
-      if (idx === 5) {
-        // Throw immediately, no deltas yielded before.
-        throw new Error('chairman LLM blew up at start');
-      }
-      yield { kind: 'text', delta: `agent-${idx}` } as never;
-      yield { kind: 'finish', reason: 'stop' } as never;
-    };
-
-    const synthesisDone: Array<{ content: string }> = [];
-    // Drain the council — this also drives the chairman.
-    for await (const _ of dispatchCouncil('hello', {
-      apiKey: TEST_API_KEY,
-      model: 'grok-4',
-      councilSize: 6,
-      debateMode: false,
-      providerStream: stream,
-      disableWorkspaceTools: true,
-    })) {
-      // intentionally empty — we don't care about the event stream here
-    }
-
-    // The onSynthesisDone callback is called from inside runCouncilPure,
-    // not from dispatchCouncil's wrapper. To assert on the fallback
-    // string we have to call runCouncilPure directly with a callback.
-    callCount = 0;
-    const { runCouncilPure } = await import('@zelari/core/council');
-    for await (const _ of runCouncilPure('hello', {
-      apiKey: TEST_API_KEY,
-      model: 'grok-4',
-      councilSize: 6,
-      debateMode: false,
-      providerStream: (() => {
-        const inner: ProviderStreamFn = async function* () {
+      // Before the fix, the chairman's catch block assigned
+      // `fullText = "Error: ..."`, which made the fallback
+      // `[Chairman synthesis failed: ...]` string impossible to render
+      // (because `fullText.length > 0`). Now the catch stores the error
+      // in `lastErrorMessage` and leaves `fullText` intact, so on a
+      // throw with no partial deltas, the fallback string IS emitted.
+      //
+      // The fallback is delivered via the `onSynthesisDone` callback
+      // (not via a message_delta event), so we assert on the callback
+      // argument instead of scanning event stream.
+      //
+      // v0.7.7 Pass 3 update: the mock stream identifies the chairman
+      // call by inspecting the system prompt ("Lucifero") rather than
+      // by call index, because retry turns have shifted the call count.
+      const makeChairmanThrowingStream = (): ProviderStreamFn => {
+        let callCount = 0;
+        return async function* (params) {
           const idx = callCount++;
-          if (idx === 5) {
+          const isChairman = params.messages.some((m) =>
+            m.role === 'system' && typeof m.content === 'string' && m.content.includes('Lucifero'),
+          );
+          if (isChairman) {
+            // Throw immediately, no deltas yielded before.
             throw new Error('chairman LLM blew up at start');
           }
           yield { kind: 'text', delta: `agent-${idx}` } as never;
           yield { kind: 'finish', reason: 'stop' } as never;
         };
-        return inner;
-      })(),
-      sessionId: 'test',
-    }, {
-      onSynthesisDone: (content) => synthesisDone.push({ content }),
-    })) {
-      // drain
-    }
+      };
 
-    expect(synthesisDone).toHaveLength(1);
-    expect(synthesisDone[0]?.content).toContain('[Chairman synthesis failed:');
-    expect(synthesisDone[0]?.content).not.toMatch(/^Error: /);
-  });
+      // Drain the council — this also drives the chairman.
+      for await (const _ of dispatchCouncil('hello', {
+        apiKey: TEST_API_KEY,
+        model: 'grok-4',
+        councilSize: 6,
+        debateMode: false,
+        providerStream: makeChairmanThrowingStream(),
+        disableWorkspaceTools: true,
+      })) {
+        // intentionally empty — we don't care about the event stream here
+      }
+
+      // The onSynthesisDone callback is called from inside runCouncilPure,
+      // not from dispatchCouncil's wrapper. To assert on the fallback
+      // string we have to call runCouncilPure directly with a callback.
+      const synthesisDone: Array<{ content: string }> = [];
+      const { runCouncilPure } = await import('@zelari/core/council');
+      for await (const _ of runCouncilPure('hello', {
+        apiKey: TEST_API_KEY,
+        model: 'grok-4',
+        councilSize: 6,
+        debateMode: false,
+        providerStream: makeChairmanThrowingStream(),
+        sessionId: 'test',
+      }, {
+        onSynthesisDone: (content) => synthesisDone.push({ content }),
+      })) {
+        // drain
+      }
+
+      expect(synthesisDone).toHaveLength(1);
+      // Chairman main turn errored → retry blocked → fullText stays empty
+      // → fallback "[Chairman synthesis failed: ...]" is emitted.
+      expect(synthesisDone[0]?.content).toContain('[Chairman synthesis failed:');
+      expect(synthesisDone[0]?.content).not.toMatch(/^Error: /);
+    });
 
   it('Regression HIGH-4: specialist marks errored=true when AgentHarness emits an error event', async () => {
     // Before the fix, the specialist loop did not check for
