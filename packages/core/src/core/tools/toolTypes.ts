@@ -23,6 +23,13 @@ export interface ToolDefinition<I = unknown, O = unknown> {
   inputSchema: ZodSchema<I>;
   /** Async executor. Receives validated input + context, returns TypedResult. */
   execute: (input: I, ctx: ToolContext) => Promise<TypedResult<O>>;
+  /**
+   * Optional raw JSON Schema for the tool parameters. When present it is
+   * forwarded to the provider VERBATIM instead of converting inputSchema
+   * (used by MCP tools, whose servers publish JSON Schema directly and
+   * validate their own inputs — the local zod gate stays permissive).
+   */
+  jsonSchema?: Record<string, unknown>;
   /** Optional related tools (for discovery in UI). */
   relatedTools?: string[];
 }

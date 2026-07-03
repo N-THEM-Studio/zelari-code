@@ -301,3 +301,116 @@ describe('dispatchCouncil + tools (Task C.1.2 wiring)', () => {
     expect(events.some((e) => e.type === 'agent_end')).toBe(true);
   });
 });
+
+describe('ToolRegistry — hallucinated tool-name recovery (v0.7.5)', () => {
+  // Live test 2026-07-03: council members called Read / Glob / list_dir /
+  // searchRAG — names from other agent stacks — burning tool-budget slots
+  // on guaranteed failures. The registry now suggests the canonical name.
+  it('suggests the canonical tool for common hallucinated names', async () => {
+    const registry = new ToolRegistry();
+    const mkTool = (name: string): ToolDefinition<{ q?: string }, string> => ({
+      name,
+      description: 'x',
+      inputSchema: z.object({ q: z.string().optional() }),
+      execute: async () => typedOk('ok'),
+    });
+    registry.register(mkTool('read_file'));
+    registry.register(mkTool('list_files'));
+    registry.register(mkTool('searchDocuments'));
+
+    for (const [wrong, right] of [
+      ['Read', 'read_file'],
+      ['Glob', 'list_files'],
+      ['list_dir', 'list_files'],
+      ['searchRAG', 'searchDocuments'],
+    ] as const) {
+      const res = await registry.invoke(wrong, {});
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(res.error).toContain(`Did you mean "${right}"`);
+      }
+    }
+  });
+
+  it('does not suggest when the alias target is not registered', async () => {
+    const registry = new ToolRegistry();
+    const res = await registry.invoke('searchRAG', {});
+    expect(res.ok).toBe(false);
+    if (!res.ok) {
+      expect(res.error).not.toContain('Did you mean');
+      expect(res.error).toContain('not found');
+    }
+  });
+});
+
+describe('council prompts advertise ONLY executable tools (v0.7.5)', () => {
+  // v0.7.3 filtered the tool SCHEMAS but not the AVAILABLE TOOLS prompt
+  // block — members still read "searchRAG: …" in their system prompt and
+  // called it (live test 2026-07-03). The prompt text must match the
+  // executable registry.
+  it('system prompts contain no tool-doc line for non-executable tools', async () => {
+    const { registry } = buildMixedRegistry(); // registers echo + always_fail only
+    const capturedSystemPrompts: string[] = [];
+    const stream: ProviderStreamFn = async function* (params: unknown) {
+      const messages = (params as { messages?: Array<{ role: string; content: string }> })?.messages ?? [];
+      for (const m of messages) {
+        if (m.role === 'system') capturedSystemPrompts.push(m.content);
+      }
+      yield { kind: 'finish', reason: 'stop' } as never;
+    };
+    await collect(runCouncilPure('plan a feature', {
+      apiKey: 'sk-test',
+      model: 'm',
+      provider: 'p',
+      councilSize: 3,
+      debateMode: false,
+      ragContext: '',
+      workspaceContext: '',
+      providerStream: stream,
+      tools: registry,
+    }));
+    expect(capturedSystemPrompts.length).toBeGreaterThan(0);
+    // No AVAILABLE TOOLS doc line may advertise a tool the registry can't run.
+    for (const prompt of capturedSystemPrompts) {
+      expect(prompt).not.toMatch(/^- searchRAG:/m);
+      expect(prompt).not.toMatch(/^- buildMindMap:/m);
+      expect(prompt).not.toMatch(/^- addNode:/m);
+    }
+  });
+
+  it('advertises file tools to members whose role declares them (v0.7.5 harness bridge)', async () => {
+    // Before the harnessToolBridge, roles declared read_file/list_files but
+    // getAllTools() didn't know those names → getToolDescriptions skipped
+    // them → members saw NO file tools and hallucinated Read/Glob/list_dir.
+    const registry = new ToolRegistry();
+    const fileTool: ToolDefinition<{ path: string }, string> = {
+      name: 'read_file',
+      description: 'read a file',
+      inputSchema: z.object({ path: z.string() }),
+      execute: async () => typedOk('content'),
+    };
+    registry.register(fileTool);
+    const capturedSystemPrompts: string[] = [];
+    const stream: ProviderStreamFn = async function* (params: unknown) {
+      const messages = (params as { messages?: Array<{ role: string; content: string }> })?.messages ?? [];
+      for (const m of messages) {
+        if (m.role === 'system') capturedSystemPrompts.push(m.content);
+      }
+      yield { kind: 'finish', reason: 'stop' } as never;
+    };
+    await collect(runCouncilPure('inspect the repo', {
+      apiKey: 'sk-test',
+      model: 'm',
+      provider: 'p',
+      councilSize: 3,
+      debateMode: false,
+      ragContext: '',
+      workspaceContext: '',
+      providerStream: stream,
+      tools: registry,
+    }));
+    // At least one member (roles declare read_file) must see its doc line.
+    const joined = capturedSystemPrompts.join('\n===\n');
+    expect(joined).toMatch(/^- read_file: /m);
+  });
+});

@@ -5,6 +5,16 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-07-03
+
+### Highlights
+- **Fix radice allucinazioni tool nel council**: `getAllTools()` non conteneva NESSUN tool harness (read_file, bash, list_files…) — i membri leggevano "operi su una codebase reale" con zero file tool in AVAILABLE TOOLS e allucinavano `Read`/`Glob`/`list_dir`. Nuovo `harnessToolBridge` nel core: i builtin harness entrano nel catalogo agents con gli schemi JSON derivati dagli zod reali. In più: filtro executable esteso al testo del prompt (v0.7.5 in `buildAgentMessages`), prosa dei prompt module e delle skill resa tool-agnostica, alias "Did you mean" nel ToolRegistry (`Read`→`read_file`, `searchRAG`→`searchDocuments`, ecc.).
+- **Tool web**: `fetch_url` (http(s)-only, HTML→testo, timeout 15s, cap 40k char) e `web_search` (DuckDuckGo HTML senza chiave; `TAVILY_API_KEY` per Tavily). Registrati nella CLI (10 builtin) e richiesti dalla skill `research-analyst`.
+- **Client MCP stdio minimale**: initialize/tools/list/tools/call via JSON-RPC newline-delimited, zero dipendenze. Config Claude-Desktop-compatibile in `.zelari/mcp.json` o `~/.zelari-code/mcp.json`; tool registrati come `mcp_<server>_<tool>` in entrambi i path (schema JSON del server inoltrato al provider via nuovo campo `ToolDefinition.jsonSchema`). Lazy singleton, warning una-tantum per server rotti, `ZELARI_MCP=0` per disattivare.
+- **Loader SKILL.md** (formato condiviso opencode/Hermes/Claude Code): discovery da `.zelari/skills/`, `.claude/skills/`, `.opencode/skills/`, `~/.zelari-code/skills/` — qualunque skill di quegli ecosistemi funziona con `/skill <name>`.
+- **`/skill` requiredTools wiring**: dispatchPrompt registra gli stub workspace che la skill dichiara (con mapping `searchRAG`→`searchDocuments`) — prima le skill di planning chiedevano al modello di usare tool assenti dal registry.
+- Mappa completa tool/skill/MCP in `docs/TOOLS.md`. +38 test (875 totali).
+
 ## [0.7.4] - 2026-07-03
 
 ### Highlights

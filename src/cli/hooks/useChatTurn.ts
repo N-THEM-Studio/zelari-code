@@ -83,7 +83,10 @@ export interface UseChatTurnParams {
 }
 
 export interface UseChatTurnResult {
-  dispatchPrompt: (userText: string) => Promise<void>;
+  dispatchPrompt: (
+    userText: string,
+    opts?: { requiredTools?: readonly string[] },
+  ) => Promise<void>;
   dispatchCouncilPrompt: (input: string) => Promise<void>;
   harnessRef: React.MutableRefObject<AgentHarness | null>;
   queueCount: number;
@@ -113,7 +116,19 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
   const useLiveModel = !!(setLive && liveRef);
 
   const dispatchPrompt = useCallback(
-    async (userText: string) => {
+    async (
+      userText: string,
+      opts?: {
+        /**
+         * v0.7.5: tool names a /skill invocation requires. Workspace stubs
+         * in this list (createTask, createDocument, searchDocuments, …) are
+         * registered for THIS turn so the skill's instructions are actually
+         * executable — previously /skill architect-feature told the model to
+         * create tasks with tools that were not in its registry.
+         */
+        requiredTools?: readonly string[];
+      },
+    ) => {
       // v0.4.3 audit fix: provider resolution + harness construction now
       // live INSIDE the try block. Previously, throws from providerFromEnv,
       // resolveFailoverStream, or createBuiltinToolRegistry happened
@@ -192,12 +207,37 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // status changes go through the same mutex + atomic plan.json write
         // the council uses. Only when a plan exists: fresh projects don't pay
         // the extra tool-schema prompt tokens.
-        if (planSummary) {
+        // v0.7.5: also register any workspace stubs a /skill invocation
+        // requires (opts.requiredTools), mapping the Electron-era `searchRAG`
+        // to the CLI's `searchDocuments`.
+        const wantedWorkspaceTools = new Set<string>();
+        if (planSummary) wantedWorkspaceTools.add('updateTask');
+        const WORKSPACE_STUB_NAMES = new Set([
+          'createPhase', 'createTask', 'updateTask', 'addIdea', 'createMilestone',
+          'createDocument', 'searchDocuments', 'linkDocuments', 'getDocumentBacklinks',
+        ]);
+        for (const raw of opts?.requiredTools ?? []) {
+          const name = raw === 'searchRAG' ? 'searchDocuments' : raw;
+          if (WORKSPACE_STUB_NAMES.has(name)) wantedWorkspaceTools.add(name);
+        }
+        if (wantedWorkspaceTools.size > 0) {
           const { createWorkspaceContext } = await import('../workspace/stubs.js');
           const { createWorkspaceToolRegistry } = await import('../workspace/toolRegistry.js');
           const wsRegistry = createWorkspaceToolRegistry(createWorkspaceContext(cwd));
-          const updateTask = wsRegistry.get('updateTask');
-          if (updateTask) toolRegistry.register(updateTask);
+          for (const name of wantedWorkspaceTools) {
+            const td = wsRegistry.get(name);
+            if (td) toolRegistry.register(td);
+          }
+        }
+        // v0.7.5: MCP tools. Discovery runs once per process (lazy singleton);
+        // per-turn cost after that is just re-registering into the fresh
+        // registry. Disabled with ZELARI_MCP=0. Best-effort like the rest.
+        try {
+          const { registerMcpTools } = await import('../mcp/mcpManager.js');
+          const mcp = await registerMcpTools(toolRegistry, cwd);
+          for (const w of mcp.warnings) appendSystem(setMessages, w);
+        } catch {
+          // MCP is an enhancement — a broken server config must not block prompts.
         }
       } catch {
         // Plan summary is a nice-to-have — never block a prompt on it.
@@ -533,6 +573,15 @@ async function dispatchCouncilPromptImpl(
   for (const name of workspaceReg.list()) {
     const td = workspaceReg.get(name);
     if (td) councilToolRegistry.register(td);
+  }
+  // v0.7.5: MCP tools for the council too (same lazy singleton as the
+  // single-agent path — zero extra spawns).
+  try {
+    const { registerMcpTools } = await import('../mcp/mcpManager.js');
+    const mcp = await registerMcpTools(councilToolRegistry);
+    for (const w of mcp.warnings) appendSystem(setMessages, w);
+  } catch {
+    // Best-effort.
   }
   setWorkspaceStubs(createWorkspaceStubs(workspaceCtx));
   const councilFeedbackStore = new FeedbackStore();

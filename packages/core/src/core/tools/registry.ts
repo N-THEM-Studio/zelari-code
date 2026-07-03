@@ -8,6 +8,39 @@ export interface InvokeOptions {
   sessionId?: string;
 }
 
+/**
+ * Common hallucinated tool names → canonical registry names. Models trained
+ * on other agent stacks routinely call `Read`/`Glob` (Claude Code), `list_dir`
+ * (Cursor), or legacy Electron-era names (`searchRAG`) — each such call burns
+ * a per-turn tool-budget slot on a guaranteed failure (live test 2026-07-03).
+ * The alias map turns the failure into a one-step recovery: the error names
+ * the intended tool explicitly ("Did you mean …").
+ */
+const TOOL_NAME_ALIASES: Record<string, string> = {
+  read: 'read_file',
+  readfile: 'read_file',
+  cat: 'read_file',
+  write: 'write_file',
+  writefile: 'write_file',
+  edit: 'edit_file',
+  editfile: 'edit_file',
+  glob: 'list_files',
+  listdir: 'list_files',
+  listdirectory: 'list_files',
+  ls: 'list_files',
+  dir: 'list_files',
+  find: 'list_files',
+  grep: 'grep_content',
+  search: 'grep_content',
+  searchrag: 'searchDocuments',
+  rag: 'searchDocuments',
+  shell: 'bash',
+  terminal: 'bash',
+  cmd: 'bash',
+  run: 'bash',
+  exec: 'bash',
+};
+
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
 
@@ -23,6 +56,16 @@ export class ToolRegistry {
     return Array.from(this.tools.keys());
   }
 
+  /**
+   * Resolve a hallucinated tool name to a registered one, or null.
+   * Case/underscore-insensitive so `Read`, `list_dir`, `Search_RAG` all map.
+   */
+  private suggestFor(name: string): string | null {
+    const normalized = name.toLowerCase().replace(/[_-]/g, '');
+    const target = TOOL_NAME_ALIASES[normalized];
+    return target && this.tools.has(target) ? target : null;
+  }
+
   /** Invoke a tool with validated input + timeout + audit + permissions check. */
   async invoke<O>(
     name: string,
@@ -31,7 +74,12 @@ export class ToolRegistry {
   ): Promise<TypedResult<O>> {
     const tool = this.tools.get(name);
     if (!tool) {
-      return typedErr(`Tool "${name}" not found. Available: ${this.list().join(', ')}`);
+      const suggestion = this.suggestFor(name);
+      return typedErr(
+        `Tool "${name}" not found.` +
+          (suggestion ? ` Did you mean "${suggestion}"? Retry with that exact name.` : '') +
+          ` Available: ${this.list().join(', ')}`,
+      );
     }
 
     // Zod validation
@@ -76,7 +124,7 @@ export class ToolRegistry {
       function: {
         name: t.name,
         description: t.description,
-        parameters: zodToJsonSchema(t.inputSchema),
+        parameters: t.jsonSchema ?? zodToJsonSchema(t.inputSchema),
       },
     }));
   }

@@ -23,6 +23,7 @@ import { bashTool } from '@zelari/core/harness/tools/builtin/shell';
 import { grepContentTool } from '@zelari/core/harness/tools/builtin/search';
 import { listFilesTool } from '@zelari/core/harness/tools/builtin/listFiles';
 import { showDiffTool, applyDiffTool } from '@zelari/core/harness/tools/builtin/diff';
+import { fetchUrlTool, webSearchTool } from '@zelari/core/harness/tools/builtin/web';
 import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPath.js';
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
@@ -77,6 +78,11 @@ export function createBuiltinToolRegistry(
   // Wrap bash: shell blocklist + audit.
   const safeBash = wrapWithShellSafety(bashTool, audit, sessionId);
 
+  // v0.7.5: network tools — audit-only wrap (no filesystem paths to sandbox;
+  // the tools themselves enforce http(s)-only + timeout + size caps).
+  const safeFetchUrl = wrapWithAudit(fetchUrlTool, audit, sessionId);
+  const safeWebSearch = wrapWithAudit(webSearchTool, audit, sessionId);
+
   const registry = new ToolRegistry();
   registry.register(safeReadFile);
   registry.register(safeWriteFile);
@@ -86,6 +92,8 @@ export function createBuiltinToolRegistry(
   registry.register(safeListFiles);
   registry.register(safeShowDiff);
   registry.register(safeApplyDiff);
+  registry.register(safeFetchUrl);
+  registry.register(safeWebSearch);
 
   const tools: BuiltinToolSummary[] = [
     safeReadFile,
@@ -96,6 +104,8 @@ export function createBuiltinToolRegistry(
     safeListFiles,
     safeShowDiff,
     safeApplyDiff,
+    safeFetchUrl,
+    safeWebSearch,
   ].map((t) => ({
     name: t.name,
     description: t.description,
@@ -154,6 +164,32 @@ function wrapWithSandbox<I extends Record<string, unknown>, O>(
         return await audit.runTool({
           tool: original.name,
           args: redactForAudit(args),
+          sessionId,
+          fn: () => original.execute(rawArgs, ctx),
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        } as TypedResult<O>;
+      }
+    },
+  };
+}
+
+/** Audit-only wrap for tools with no path/shell args (network tools). */
+function wrapWithAudit<I extends Record<string, unknown>, O>(
+  original: ToolDefinition<I, O>,
+  audit: AuditLogger,
+  sessionId: string,
+): ToolDefinition<I, O> {
+  return {
+    ...original,
+    execute: async (rawArgs: I, ctx: ToolContext): Promise<TypedResult<O>> => {
+      try {
+        return await audit.runTool({
+          tool: original.name,
+          args: redactForAudit(rawArgs as Record<string, unknown>),
           sessionId,
           fn: () => original.execute(rawArgs, ctx),
         });

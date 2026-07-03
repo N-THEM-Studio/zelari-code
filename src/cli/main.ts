@@ -17,8 +17,10 @@ import {
 import { RunWizard } from './wizard/runWizard.js';
 import { parseHeadlessFlags } from './headless.js';
 import { runHeadless } from './runHeadless.js';
+import { loadSkillMdSkills } from './skillsMd.js';
+import { listCodingSkills } from '@zelari/core/skills';
 
-export const VERSION = '0.7.4';
+export const VERSION = '0.7.5';
 
 /**
  * Silent background update check (Task N.6, v3-N).
@@ -60,6 +62,13 @@ async function shutdown(): Promise<void> {
     await getMetricsLogger().flush();
   } catch {
     // Best-effort — never block shutdown on a metrics write error.
+  }
+  try {
+    // v0.7.5: kill spawned MCP server processes so they don't outlive the CLI.
+    const { closeMcpClients } = await import('./mcp/mcpManager.js');
+    closeMcpClients();
+  } catch {
+    // Best-effort.
   }
   process.exit(0);
 }
@@ -139,9 +148,34 @@ function pickRootComponent(): { kind: 'wizard' | 'app' | 'headless' | 'done'; el
   return { kind: 'app', element: React.createElement(App) };
 }
 
+/**
+ * v0.7.5: load user SKILL.md skills (opencode/Hermes/Claude-compatible
+ * format) into the coding-skill catalog BEFORE the App mounts, so
+ * `/skill` autocomplete and dispatch see them. Best-effort: a broken
+ * SKILL.md is skipped with a one-line stderr note, never a crash.
+ */
+function loadUserSkills(): void {
+  try {
+    const existing = new Set(listCodingSkills().map((s) => s.id));
+    const summary = loadSkillMdSkills(process.cwd(), { existingIds: existing });
+    if (summary.loaded.length > 0) {
+      // eslint-disable-next-line no-console
+      console.error(`[zelari-code] loaded ${summary.loaded.length} SKILL.md skill(s): ${summary.loaded.join(', ')}`);
+    }
+    for (const s of summary.skipped) {
+      // eslint-disable-next-line no-console
+      console.error(`[zelari-code] skipped SKILL.md at ${s.path}: ${s.reason}`);
+    }
+  } catch {
+    // Skill loading is an enhancement — the CLI must start without it.
+  }
+}
+
 function main() {
   const picked = pickRootComponent();
   if (picked.kind === 'done') return; // --version or --help printed + exited
+
+  loadUserSkills();
 
   if (picked.kind === 'headless') {
     void runHeadless(picked.headlessOpts!).then((code) => {

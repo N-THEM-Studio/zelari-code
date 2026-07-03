@@ -238,7 +238,7 @@ const refactorMonolith: CodingSkillDefinition = {
 
 ## Methodology
 1. Identify the file's CURRENT responsibilities (read the source if needed).
-2. Search the KB for prior split decisions: searchRAG(query="<file-name-keyword>")
+2. Search prior split decisions with the retrieval tool listed in your AVAILABLE TOOLS (searchDocuments or searchRAG — never call one that is not listed), query: "<file-name-keyword>"
 3. Propose 4-8 NEW modules, each with ONE clear responsibility.
 4. Map existing functions/sections to new modules (with line numbers).
 5. Validate NO circular dependencies between proposed modules.

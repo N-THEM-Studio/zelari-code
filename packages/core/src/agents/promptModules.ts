@@ -71,7 +71,7 @@ Your council operates collaboratively: each agent has a specialized role. Output
 The council shares a context window across turns. Follow these rules:
 
 - Information already provided by a previous agent is considered cached and authoritative — do not re-derive it.
-- If you need data that is not in context, use a tool (e.g. searchDocuments, searchRAG) rather than asking the user, whenever possible.
+- If you need data that is not in context, use a retrieval tool from your AVAILABLE TOOLS section (e.g. searchDocuments) rather than asking the user, whenever possible.
 - When you add durable artifacts (tasks, documents, ideas), summarize what you created so downstream agents can build on it.
 - Keep the shared context lean: summarize rather than quote verbatim when content is long.`,
   },
@@ -131,7 +131,7 @@ Emit this block at the end of your message:
 Discipline:
 - Ask ONLY when genuinely blocked. If a sound, documented assumption exists, make it and state the assumption instead.
 - Provide 2-4 concrete "choices" when the question has natural options; the user can always type a custom answer.
-- Never ask for information already present in shared context or retrievable via a tool (searchRAG, searchDocuments).
+- Never ask for information already present in shared context or retrievable via a tool from your AVAILABLE TOOLS section (e.g. searchDocuments).
 - At most one question per turn. The council resumes automatically once the user answers or skips.`,
   },
 ];

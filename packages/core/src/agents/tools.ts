@@ -2,6 +2,7 @@ import type { Task, Idea, Phase, SubTask, KnowledgeDocument, Milestone } from '.
 import type { EnhancedToolDefinition } from '../types/systemTypes.js';
 import { VAULT_TOOL_DEFINITIONS } from './vaultTools.js';
 import { ADVANCED_TOOL_DEFINITIONS } from './advancedTools.js';
+import { getHarnessToolDefinitions } from './harnessToolBridge.js';
 
 export interface ToolDefinition {
   name: string;
@@ -162,7 +163,16 @@ const CORE_TOOL_DEFINITIONS: EnhancedToolDefinition[] = TOOL_DEFINITIONS.map((to
 function buildBuiltinRegistry(): EnhancedToolDefinition[] {
   const seen = new Set<string>();
   const merged: EnhancedToolDefinition[] = [];
-  for (const tool of [...VAULT_TOOL_DEFINITIONS, ...ADVANCED_TOOL_DEFINITIONS, ...CORE_TOOL_DEFINITIONS]) {
+  // v0.7.5: harness builtins (read_file, bash, list_files, web_search, …)
+  // FIRST — council roles declare these names, and before this the catalog
+  // did not know them, so member prompts advertised no file tools at all
+  // and the models hallucinated Read/Glob/list_dir (live test 2026-07-03).
+  for (const tool of [
+    ...getHarnessToolDefinitions(),
+    ...VAULT_TOOL_DEFINITIONS,
+    ...ADVANCED_TOOL_DEFINITIONS,
+    ...CORE_TOOL_DEFINITIONS,
+  ]) {
     if (seen.has(tool.name)) continue;
     seen.add(tool.name);
     merged.push(tool);

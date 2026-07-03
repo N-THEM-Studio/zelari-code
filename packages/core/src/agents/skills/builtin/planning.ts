@@ -83,7 +83,7 @@ const architectFeature: CodingSkillDefinition = {
 
 ## Methodology
 1. Restate the goal in ONE sentence: what user need does this serve?
-2. Search the knowledge base for prior decisions: searchRAG(query="<feature-keyword>")
+2. Search prior decisions with the retrieval tool listed in your AVAILABLE TOOLS (searchDocuments or searchRAG — never call one that is not listed), query: "<feature-keyword>"
 3. Generate 3-5 DISTINCT approaches (vary the axis: library vs custom, sync vs async, desktop vs server, etc.).
 4. Score each approach on three dimensions (1-5 each):
    - Feasibility (F): how easy to implement given the current stack
@@ -312,7 +312,7 @@ const scopeCheck: CodingSkillDefinition = {
 
 ## Methodology
 1. Restate the proposal in ONE sentence.
-2. Search the knowledge base: searchRAG(query="<proposed-keyword>")
+2. Search the knowledge base with the retrieval tool listed in your AVAILABLE TOOLS (searchDocuments or searchRAG — never call one that is not listed), query: "<proposed-keyword>"
 3. Estimate effort realistically (in person-days, with calibration from prior projects).
 4. List HIDDEN costs: auth flows, data migration, third-party APIs, deployment, monitoring.
 5. Propose a REDUCED SCOPE that delivers 80% of the value in 20% of the time.

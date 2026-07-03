@@ -192,8 +192,18 @@ function buildAgentMessages(
   workspaceContext: string,
   priorOutputs: { name: string; role: string; content: string }[],
   aiConfig?: SystemPromptConfig,
+  executableTools?: ReadonlySet<string> | null,
 ): AgentMessage[] {
-  const toolNames = computeAgentTools(agent, aiConfig);
+  // v0.7.5: the AVAILABLE TOOLS prompt block must match the schemas the
+  // harness actually advertises. The v0.7.3 fix filtered the schemas
+  // (filterExecutable) but NOT this prompt text, so members still read
+  // "searchRAG: search the knowledge base…" in their system prompt and
+  // called it — every call a guaranteed "Tool not found" (live test
+  // 2026-07-03, /council in Z:\EasyPeasy\test).
+  const allToolNames = computeAgentTools(agent, aiConfig);
+  const toolNames = executableTools
+    ? allToolNames.filter((n) => executableTools.has(n))
+    : allToolNames;
   const enhancedSystemPrompt = buildSystemPrompt(agent, {
     tools: getAllTools(),
     toolNames,
@@ -333,7 +343,7 @@ export async function* runCouncilPure(
       model: effectiveModel,
       provider: effectiveProvider,
       sessionId,
-      messages: buildAgentMessages(agent, userMessage, config.ragContext, config.workspaceContext, agentOutputs, config.aiConfig),
+      messages: buildAgentMessages(agent, userMessage, config.ragContext, config.workspaceContext, agentOutputs, config.aiConfig, executableNames),
       tools: agentTools,
       eventBus: config.eventBus,
       toolRegistry: config.tools,
@@ -460,6 +470,7 @@ export async function* runCouncilPure(
         '',
         anonymized,
         config.aiConfig,
+        executableNames,
       ),
       tools: [],
       eventBus: config.eventBus,
@@ -593,6 +604,7 @@ export async function* runCouncilPure(
         config.workspaceContext,
         agentOutputs,
         config.aiConfig,
+        executableNames,
       ),
       tools: chairmanTools,
       eventBus: config.eventBus,

@@ -153,7 +153,7 @@ const debugWithRag: CodingSkillDefinition = {
 
 ## Methodology
 1. **Extract key terms** from the error message + stack trace (file names, function names, error type).
-2. **Search the knowledge base**: searchRAG(query="<key terms>")
+2. **Search the knowledge base** with the retrieval tool listed in your AVAILABLE TOOLS (searchDocuments or searchRAG — never call one that is not listed), query: "<key terms>"
 3. **Read the relevant files**: use read_file with line ranges from the stack trace.
 4. **Identify the root cause**: what's the actual logic error? Don't just fix the symptom.
 5. **Propose a minimal fix**: the SMALLEST change that addresses the root cause.

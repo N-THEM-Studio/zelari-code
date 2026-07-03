@@ -167,10 +167,14 @@ export const SKILL_CATALOG: SkillMetadata[] = [
     color: '#a855f7',
     enabledByDefault: true,
     builtin: true,
-    requiredTools: ['searchRAG', 'searchDocuments'],
-    systemPromptFragment: `You research using the retrieval system.
-- Use searchRAG / searchDocuments to find relevant prior knowledge before answering.
-- Cite sources by title when you rely on retrieved content.
+    // v0.7.5: web_search + fetch_url added so research skills surface the
+    // network tools wherever the executor registry provides them (the
+    // executable filter drops them where they don't exist).
+    requiredTools: ['searchRAG', 'searchDocuments', 'web_search', 'fetch_url'],
+    systemPromptFragment: `You research using the retrieval system and the web.
+- Use the retrieval tool listed in your AVAILABLE TOOLS (searchDocuments or searchRAG) to find prior knowledge before answering.
+- For external facts (library docs, APIs, best practices), use web_search, then fetch_url on the best result.
+- Cite sources (document title or URL) when you rely on retrieved content.
 - Structure analyses with clear sections and a conclusion.`,
   },
   {

@@ -70,7 +70,7 @@ export interface SlashDispatchParams {
   providerDefaults: Record<string, string>;
   harnessRef: React.MutableRefObject<AgentHarness | null>;
   setQueueCount: (n: number) => void;
-  dispatchPrompt: (text: string) => Promise<void>;
+  dispatchPrompt: (text: string, opts?: { requiredTools?: readonly string[] }) => Promise<void>;
   dispatchCouncilPrompt: (text: string) => Promise<void>;
   /** Called by /new: caller closes the old SessionJsonlWriter and opens a new one for `id`. */
   onNewSession?: (id: string) => void;
@@ -357,7 +357,11 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
         ?? `[skill] ${result.expandedSkill.skillId} — prompt ready (dispatch lands in Phase 14.7)`;
       appendSystem(setMessages, sysMsg);
       setInput('');
-      await dispatchPrompt(result.expandedSkill.prompt);
+      // v0.7.5: forward the skill's requiredTools so dispatchPrompt registers
+      // the workspace stubs the skill's instructions rely on.
+      await dispatchPrompt(result.expandedSkill.prompt, {
+        requiredTools: result.expandedSkill.requiredTools,
+      });
       return;
     }
 
