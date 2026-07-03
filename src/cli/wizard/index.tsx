@@ -25,13 +25,12 @@ import {
   type ApiKeyChoice,
   type UseWizardStateApi,
 } from './useWizardState.js';
+import { VERSION } from '../main.js';
 
 export interface WizardProps {
   state: UseWizardStateApi;
   providers: readonly ProviderSpec[];
 }
-
-const VERSION = '0.7.2';
 
 function Frame({ children }: { children: React.ReactNode }): React.ReactElement {
   return (
