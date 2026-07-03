@@ -80,7 +80,7 @@ export class McpClient {
       {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: 'zelari-code', version: '0.7.5' },
+        clientInfo: { name: 'zelari-code', version: '0.7.8' },
       },
       INIT_TIMEOUT_MS,
     );
