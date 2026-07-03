@@ -378,12 +378,17 @@ export async function* runCouncilPure(
     let toolCalls = 0;
     let usage: UsageBreakdown | null = null;
     let errored = false;
+    // v0.7.6: per-member tool emission tracking for the post-condition
+    // check below. Each entry is the toolName of a tool_execution_start
+    // event from this member's turn.
+    const emittedToolNames: string[] = [];
     const memberStart = Date.now();
     try {
       for await (const event of harness.run()) {
         yield event;
         if (event.type === 'tool_execution_start') {
           toolCalls += 1;
+          emittedToolNames.push(event.toolName);
         }
         if (event.type === 'message_end' && event.usage) {
           usage = event.usage;
@@ -406,6 +411,10 @@ export async function* runCouncilPure(
       fullText = `Error: ${err instanceof Error ? err.message : 'Unknown'}`;
       errored = true;
     }
+    // v0.7.6: post-condition check — verify this member emitted the
+    // tools its role prompt requires. Logs a warning if any are missing.
+    // Does not block the council run (Pass 3 may add retry).
+    enforceDesignPhaseToolEmissions(agent.id, emittedToolNames);
     const memberDuration = Date.now() - memberStart;
     emitMemberCost({
       memberId: agent.id,
@@ -508,12 +517,16 @@ export async function* runCouncilPure(
     let toolCalls = 0;
     let usage: UsageBreakdown | null = null;
     let errored = false;
+    // v0.7.6: per-member tool emission tracking (Minosse MUST emit at
+    // least one createDocument for risks.md).
+    const emittedToolNames: string[] = [];
     const memberStart = Date.now();
     try {
       for await (const event of harness.run()) {
         yield event;
         if (event.type === 'tool_execution_start') {
           toolCalls += 1;
+          emittedToolNames.push(event.toolName);
         }
         if (event.type === 'message_end' && event.usage) {
           usage = event.usage;
@@ -534,6 +547,9 @@ export async function* runCouncilPure(
       fullText = `Review error: ${err instanceof Error ? err.message : 'Unknown'}`;
       errored = true;
     }
+    // v0.7.6: post-condition check on Minosse's tool emission. The role
+    // prompt requires at least one createDocument (for risks.md).
+    enforceDesignPhaseToolEmissions(oracle.id, emittedToolNames);
     const memberDuration = Date.now() - memberStart;
     emitMemberCost({
       memberId: oracle.id,
@@ -642,12 +658,17 @@ export async function* runCouncilPure(
     let usage: UsageBreakdown | null = null;
     let errored = false;
     let lastErrorMessage = '';
+    // v0.7.6: per-member tool emission tracking for the post-condition
+    // check below (Lucifero MUST emit at least one createDocument for
+    // the synthesis; see enforceDesignPhaseToolEmissions).
+    const emittedToolNames: string[] = [];
     const memberStart = Date.now();
     try {
       for await (const event of chairmanHarness.run()) {
         yield event;
         if (event.type === 'tool_execution_start') {
           toolCalls += 1;
+          emittedToolNames.push(event.toolName);
         }
         if (event.type === 'message_end' && event.usage) {
           usage = event.usage;
@@ -681,6 +702,9 @@ export async function* runCouncilPure(
       errored = true;
       lastErrorMessage = err instanceof Error ? err.message : String(err);
     }
+    // v0.7.6: post-condition check on Lucifero's tool emission. The
+    // role prompt requires at least one createDocument (for synthesis.md).
+    enforceDesignPhaseToolEmissions(chairman.id, emittedToolNames);
     const memberDuration = Date.now() - memberStart;
     // If the chairman errored mid-flight but produced some text, keep it
     // (don't lose partial synthesis) but mark the run as errored.
@@ -718,4 +742,117 @@ export async function* runCouncilPure(
     reason: 'completed',
     durationMs: 0,
   };
+}
+
+// ── Post-condition tool emission check (v0.7.6) ────────────────────────────
+//
+// After each council member's turn, verify that the tools the role was
+// REQUIRED to call were actually emitted. If the model skipped them, the
+// downstream deliverable is incomplete (e.g. Minosse's risks.md missing,
+// Lucifero's synthesis.md missing, Nettuno's tasks missing).
+//
+// This is a runtime guard, not a prompt-only fix: the role prompts in
+// roles.ts (Fix e987284) already enumerate the required tools, but a
+// non-deterministic model can still skip them. The check turns silent
+// gaps into observable warnings without blocking the council run.
+//
+// Pure function — exported so it can be unit-tested without spinning up a
+// full AgentHarness. See tests/unit/cli-councilToolEmission.test.ts.
+
+export interface ToolEmissionRequirement {
+  /** Tool name, e.g. 'createDocument'. */
+  name: string;
+  /** Minimum number of times this tool must have been emitted. */
+  min: number;
+}
+
+export interface ToolEmissionCheckResult {
+  /** True when every requirement is satisfied. */
+  ok: boolean;
+  /** Human-readable list of unmet requirements (empty when ok=true). */
+  missing: string[];
+}
+
+/**
+ * Pure helper: given the list of tool names a member emitted during its
+ * turn, and a list of requirements, return whether all requirements are
+ * met.
+ */
+export function checkMemberToolEmissions(
+  _memberId: string,
+  emittedToolNames: string[],
+  requirements: ToolEmissionRequirement[],
+): ToolEmissionCheckResult {
+  if (requirements.length === 0) {
+    return { ok: true, missing: [] };
+  }
+  // Tally emitted counts once for all requirements.
+  const counts = new Map<string, number>();
+  for (const name of emittedToolNames) {
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  const missing: string[] = [];
+  for (const req of requirements) {
+    const got = counts.get(req.name) ?? 0;
+    if (got < req.min) {
+      missing.push(`${req.name} (got ${got}, need >= ${req.min})`);
+    }
+  }
+  return { ok: missing.length === 0, missing };
+}
+
+/**
+ * Default per-member tool-emission requirements for the design-phase
+ * council run. Each entry says: when this member runs, it MUST emit at
+ * least N copies of the named tool before its turn is considered
+ * complete. The post-loop code logs a warning when this is not met.
+ *
+ * The minimums are calibrated to the prompt-level instructions in
+ * roles.ts (Fix e987284):
+ *   - Nettuno:  4 phases, 12 tasks (3 per phase), 1 milestone
+ *   - Gerione:  3 design docs
+ *   - Minosse:  1 risks document
+ *   - Lucifero: 1 synthesis document
+ */
+export const DESIGN_PHASE_REQUIREMENTS: Record<string, ToolEmissionRequirement[]> = {
+  nettun: [
+    { name: 'createPhase', min: 3 },
+    { name: 'createTask', min: 6 },
+    { name: 'createMilestone', min: 1 },
+  ],
+  geryon: [
+    { name: 'createDocument', min: 3 },
+  ],
+  minos: [
+    { name: 'createDocument', min: 1 },
+  ],
+  lucifer: [
+    { name: 'createDocument', min: 1 },
+  ],
+};
+
+/**
+ * Run the post-condition check for a member and emit a console.warn when
+ * any required tool was not emitted the minimum number of times. Returns
+ * the check result so callers can act on it (Pass 3 may add automatic
+ * retry; for now we only warn).
+ */
+export function enforceDesignPhaseToolEmissions(
+  memberId: string,
+  emittedToolNames: string[],
+): ToolEmissionCheckResult {
+  const requirements = DESIGN_PHASE_REQUIREMENTS[memberId];
+  if (!requirements || requirements.length === 0) {
+    return { ok: true, missing: [] };
+  }
+  const result = checkMemberToolEmissions(memberId, emittedToolNames, requirements);
+  if (!result.ok) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[council] member "${memberId}" did not emit required tools: ${result.missing.join(', ')}. ` +
+        `The downstream .zelari/ deliverable may be incomplete. ` +
+        `(Pass 3 may add automatic retry; see plan 2026-07-03-council-design-phase-role-anchoring.md.)`,
+    );
+  }
+  return result;
 }

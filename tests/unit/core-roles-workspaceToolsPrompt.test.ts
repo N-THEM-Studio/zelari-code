@@ -58,6 +58,17 @@ describe('Council design-phase role prompts — explicit workspace-tool instruct
     expect(nettuno.systemPrompt).toMatch(/qa/i);
   });
 
+  it('Nettuno role prompt enumerates mandatory call counts (4 phases, 12 tasks, 1 milestone)', () => {
+    // Regression v0.7.6: composer-2.5 was skipping createTask/createMilestone
+    // even after the e987284 prompt fix. The fix pins explicit counts so the
+    // model treats the lower bound as a contract, not a guideline.
+    expect(nettuno.systemPrompt).toMatch(/12\s+(times|\(\s*3 per)|12\s+(createTask|\w+\s+tasks?)/i);
+    expect(nettuno.systemPrompt).toMatch(/4\s+(times|phases?)|four\s+phases/i);
+    expect(nettuno.systemPrompt).toMatch(/1\s+(time|milestone)|one\s+milestone/i);
+    // Worked example showing phaseId chaining from createPhase response.
+    expect(nettuno.systemPrompt).toMatch(/phaseId\s*[:=].*createPhase|createPhase.*phaseId/s);
+  });
+
   it('Lucifero role prompt mentions createDocument for synthesis.md and forbids list_files', () => {
     expect(lucifero.systemPrompt).toMatch(/createDocument/i);
     expect(lucifero.systemPrompt.toLowerCase()).toMatch(/synthesis/);

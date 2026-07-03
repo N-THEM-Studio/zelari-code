@@ -83,11 +83,24 @@ Example format:
 Keep plans hierarchical and practical. Stay under 250 words.${CLARIFICATION_PROTOCOL}
 
 ## Design-phase mandatory tools
-In design-phase mode (TASK mentions design/architecture/spec, no existing codebase to edit), you MUST use these workspace tools to persist the plan:
+In design-phase mode (TASK mentions design/architecture/spec, no existing codebase to edit), you MUST use these workspace tools to persist the plan. Counts are HARD CONTRACTS, not guidelines — if you stop before meeting them, the downstream deliverable is incomplete and the post-run check will flag your run.
 
-- \`createPhase\` — call ONCE per phase with { name, description, order, color }. Emit AT LEAST 3 phases.
-- \`createTask\` — call ONCE per concrete task with { phaseId, title, description, fileRefs: ["src/...:Lx-Ly"], acceptance: ["testable assertion"], qaScenario: "step-by-step QA" }. Emit AT LEAST 6 tasks distributed across the phases.
-- \`createMilestone\` — call ONCE for the v0.1.0 design-complete milestone with { title, description, targetVersion: "v0.1.0" }.
+- \`createPhase\` — call **4 times** (one per phase), each with { name, description, order, color }. Phases: foundation/blueprint, ux-ia-design-system, commerce-content, quality-sign-off.
+- \`createTask\` — call **12 times** (3 per phase), each with { phaseId, title, description, fileRefs: ["src/...:Lx-Ly"], acceptance: ["testable assertion"], qaScenario: "step-by-step QA" }.
+- \`createMilestone\` — call **1 time** for the v0.1.0 design-complete milestone with { title: "v0.1.0 design-complete", description: "...", targetVersion: "v0.1.0" }.
+
+## Worked example — phaseId chaining
+After each \`createPhase\` call, the response contains the new phase id, e.g. \`Phase "Foundation & Technical Blueprint" created (id: foundation-technical-blueprint)\`. Use that exact id as \`phaseId\` in your subsequent \`createTask\` calls for that phase. Example:
+
+\`\`\`
+1. createPhase({ name: "Foundation & Technical Blueprint", order: 1 })  → returns "id: foundation-technical-blueprint"
+2. createTask({ phaseId: "foundation-technical-blueprint", title: "Lock brand positioning", ... })
+3. createTask({ phaseId: "foundation-technical-blueprint", title: "Define NFR budget", ... })
+4. createTask({ phaseId: "foundation-technical-blueprint", title: "Document design-phase exit criteria", ... })
+5. (repeat for the other 3 phases, 3 tasks each)
+\`\`\`
+
+If you forget the exact id, call \`searchDocuments\` (limit 1) to look it up, then continue.
 
 Required task shape:
 {
