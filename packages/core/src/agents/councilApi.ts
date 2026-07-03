@@ -308,9 +308,22 @@ export async function* runCouncilPure(
   // registry does not implement. Advertising them makes the model call tools
   // that fail with `Tool "searchRAG" not found` (live-test 2026-07-02) and
   // burns its per-turn tool budget on guaranteed failures.
-  const executableNames = config.tools ? new Set(config.tools.list()) : null;
-  const filterExecutable = (names: string[]): string[] =>
-    executableNames ? names.filter((n) => executableNames.has(n)) : names;
+  //
+  // v0.7.5 Bug B fix: union the role's tool list with the executor's tool
+  // list BEFORE filtering. When the executor is a workspace-only registry
+  // (e.g. createWorkspaceToolRegistry from dispatchCouncil), role.tools like
+  // list_files/read_file/grep_content are NOT in the executor — without the
+  // union, filterExecutable strips everything and the model sees an empty
+  // AVAILABLE TOOLS block. The harness still gates execution via the
+  // ToolRegistry.invoke call (AgentHarness.ts:539), so we never advertise
+  // a tool that the executor can't actually run.
+  const executorToolNames = config.tools ? config.tools.list() : [];
+  const executableNames = config.tools ? new Set(executorToolNames) : null;
+  const filterExecutable = (names: string[]): string[] => {
+    if (!executableNames) return names;
+    const merged = Array.from(new Set([...names, ...executorToolNames]));
+    return merged.filter((n) => executableNames.has(n));
+  };
 
   // Apply optional feedback-driven specialist ordering (Task I.2 close-out).
   // Minosse and chairman are extracted BEFORE ranking so their positions are

@@ -386,6 +386,7 @@ describe('council prompts advertise ONLY executable tools (v0.7.5)', () => {
     const fileTool: ToolDefinition<{ path: string }, string> = {
       name: 'read_file',
       description: 'read a file',
+      permissions: [],
       inputSchema: z.object({ path: z.string() }),
       execute: async () => typedOk('content'),
     };
@@ -412,5 +413,94 @@ describe('council prompts advertise ONLY executable tools (v0.7.5)', () => {
     // At least one member (roles declare read_file) must see its doc line.
     const joined = capturedSystemPrompts.join('\n===\n');
     expect(joined).toMatch(/^- read_file: /m);
+  });
+
+  it('executor-only tools are advertised to specialists (v0.7.5 Bug B fix)', async () => {
+    // Bug B fix: when the executor registry contains tools NOT in role.tools
+    // (e.g. workspace stubs: createPhase, addIdea, createDocument), the
+    // prompt and the harness tool list must still expose them so the LLM
+    // can call them by name. Before the fix, filterExecutable intersected
+    // role.tools with executor names, leaving the LLM with zero tools
+    // visible whenever the two sets were disjoint.
+    //
+    // Strategy: register a custom tool globally via registerCustomTool so
+    // it shows up in getAllTools(). Then build a ToolRegistry containing
+    // only that tool and pass it as `config.tools`. Without the fix, every
+    // council member's agentToolNames list would be empty (because the
+    // role.tools and executor names are disjoint). With the fix, the
+    // union of role.tools + executor names means the custom tool is
+    // visible to at least one member.
+    const { registerCustomTool, getAllTools } = await import('@zelari/core/skills');
+
+    const customName = `bugB_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    registerCustomTool({
+      name: customName,
+      description: 'Bug B regression tool',
+      parameters: {
+        type: 'object',
+        properties: { input: { type: 'string' } },
+        additionalProperties: false,
+      },
+      execute: async () => 'ok',
+      // EnhancedToolDefinition has these; ToolDefinition doesn't have
+      // permissions. Cast through never to satisfy the static type.
+    } as never);
+
+    try {
+      // Sanity: the custom tool must be in getAllTools() now.
+      const allNames = getAllTools().map((t) => t.name);
+      expect(allNames).toContain(customName);
+
+      // Build a registry with ONLY the custom tool — disjoint from any
+      // role.tools, which is the precise condition that triggered the bug.
+      const registry = new ToolRegistry();
+      const customDef: ToolDefinition<{ input?: string }, string> = {
+        name: customName,
+        description: 'Bug B regression tool',
+        permissions: [],
+        inputSchema: z.object({ input: z.string().optional() }),
+        execute: async () => typedOk('ok'),
+        jsonSchema: {
+          type: 'object',
+          properties: { input: { type: 'string' } },
+          additionalProperties: false,
+        },
+      };
+      registry.register(customDef);
+
+      const seenByMember = new Set<string>();
+      const stream: ProviderStreamFn = async function* (params: unknown) {
+        const tools = (params as { tools?: Array<{ name?: string; function?: { name?: string } }> })?.tools ?? [];
+        for (const t of tools) {
+          // AgentToolSpec has `name` at top level; openaiCompatibleProvider
+          // wraps it as `{type:'function', function:{...}}` but the
+          // harness passes AgentToolSpec to providerStream. Try both.
+          const n = t.name ?? t.function?.name;
+          if (n) seenByMember.add(n);
+        }
+        yield { kind: 'finish', reason: 'stop' } as never;
+      };
+      await collect(runCouncilPure('plan the design', {
+        apiKey: 'sk-test',
+        model: 'm',
+        provider: 'p',
+        councilSize: 3,
+        debateMode: false,
+        ragContext: '',
+        workspaceContext: '',
+        providerStream: stream,
+        tools: registry,
+      }));
+
+      // After the fix, the custom tool (which is in the executor registry
+      // AND in getAllTools(), but NOT in any role.tools) must be visible
+      // to at least one council member's harness call.
+      expect(seenByMember.has(customName)).toBe(true);
+    } finally {
+      // Cleanup: unregister so other tests aren't polluted. (vitest runs
+      // tests in the same module instance; getAllTools() is module-global.)
+      const { unregisterCustomTool } = await import('@zelari/core/skills');
+      unregisterCustomTool(customName);
+    }
   });
 });
