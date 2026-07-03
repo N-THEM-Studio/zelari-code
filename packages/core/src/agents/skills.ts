@@ -115,12 +115,13 @@ export const SKILL_CATALOG: SkillMetadata[] = [
     color: '#10b981',
     enabledByDefault: true,
     builtin: true,
-    requiredTools: ['createTask', 'createPhase', 'createMilestone', 'updateTask'],
+    requiredTools: ['createPlan', 'createTask', 'createPhase', 'createMilestone', 'updateTask'],
     systemPromptFragment: `You plan projects hierarchically.
 - Decompose work into phases, then tasks within phases.
 - For each task include: title, description, priority (low|medium|high|critical), and optional tags/subtasks.
 - Define milestones to mark key deliverables.
-- When relevant, reference file paths and acceptance criteria.`,
+- When relevant, reference file paths and acceptance criteria.
+- Prefer ONE createPlan call (phases with nested tasks + milestone) over many itemized createPhase/createTask calls.`,
   },
   {
     id: 'idea-synthesizer',

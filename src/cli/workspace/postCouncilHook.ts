@@ -14,6 +14,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { updateAgentsMd } from './agentsMd.js';
+import { runBuiltinCompleteDesign } from './completeDesign.js';
 import type { WorkspaceContext } from './types.js';
 
 /** Result of the AGENTS.MD maintenance step. */
@@ -43,13 +44,21 @@ export interface PostCouncilHookResult {
 }
 
 /**
- * v0.7.7 Opzione B — Run the deterministic complete-design post-processor
- * if the workspace is in design-phase (`.zelari/plan.json` exists with at
- * least one phase) and the script is present at the project root.
+ * v0.7.7 Opzione B / v0.7.8 — Run the deterministic complete-design
+ * post-processor if the workspace is in design-phase (`.zelari/plan.json`
+ * exists with at least one phase).
  *
- * The script is spawned as a child process (Node) so we don't need to
- * re-implement its logic in TypeScript. Errors are captured, never
- * thrown — the post-processor is a best-effort safety net.
+ * Resolution order:
+ *   1. A workspace-local `complete-design.mjs` at the project root wins
+ *      (curated, domain-specific task templates) and is spawned as a
+ *      child process.
+ *   2. Otherwise (v0.7.8) the built-in TypeScript fallback runs: it
+ *      derives 3 tasks per phase from the REAL phases in plan.json and
+ *      guarantees a milestone — versioned with the codebase, no per-
+ *      workspace setup, immune to phase-ID drift.
+ *
+ * Errors are captured, never thrown — the post-processor is a
+ * best-effort safety net.
  *
  * Disabled by setting `ZELARI_COMPLETE_DESIGN=0` in the environment.
  */
@@ -80,7 +89,24 @@ export async function runCompleteDesignPostProcessor(
   }
 
   if (!existsSync(scriptPath)) {
-    return { ran: false, reason: `complete-design.mjs not found at ${scriptPath}` };
+    // v0.7.8: no workspace script → run the built-in deterministic
+    // fallback instead of skipping. Same guarantees (≥3 tasks per phase,
+    // ≥1 milestone), zero per-workspace setup.
+    try {
+      const builtin = await runBuiltinCompleteDesign(ctx);
+      return {
+        ran: builtin.ran,
+        ...(builtin.ran ? { exitCode: 0 } : {}),
+        output: `builtin complete-design: +${builtin.tasksAdded} tasks, +${builtin.milestonesAdded} milestones`,
+        ...(builtin.reason ? { reason: builtin.reason } : {}),
+      };
+    } catch (err) {
+      return {
+        ran: true,
+        exitCode: -1,
+        reason: `builtin complete-design error: ${err instanceof Error ? err.message : String(err)}`,
+      };
+    }
   }
 
   return await new Promise<CompleteDesignResult>((resolveRun) => {

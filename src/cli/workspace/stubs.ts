@@ -1,10 +1,11 @@
 /**
  * workspace/stubs.ts — CLI workspace tool stubs.
  *
- * Implements the 9 council workspace tools (`createPhase`, `createTask`,
- * `updateTask`, `addIdea`, `createMilestone`, `createDocument`,
- * `searchDocuments`, `linkDocuments`, `getDocumentBacklinks`) as
- * filesystem-backed stubs that persist to `.zelari/` at the project root.
+ * Implements the 10 council workspace tools (`createPlan`, `createPhase`,
+ * `createTask`, `updateTask`, `addIdea`, `createMilestone`,
+ * `createDocument`, `searchDocuments`, `linkDocuments`,
+ * `getDocumentBacklinks`) as filesystem-backed stubs that persist to
+ * `.zelari/` at the project root.
  *
  * Replaces the AnathemaBrain Electron-only ctx (e.g. `ctx.addIdea(...)`)
  * with a `WorkspaceContext` that writes Markdown + YAML frontmatter files.
@@ -202,6 +203,158 @@ function slugify(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60);
 }
 
+// ── Plan record helpers ───────────────────────────────────────────────
+//
+// Shared by the itemized stubs (createPhase / createTask / createMilestone)
+// and the batch createPlan stub (v0.7.8) so both paths produce identical
+// records and per-artifact files. Each helper mutates the in-memory summary
+// only — the caller decides when to persist via writePlan (once per tool
+// call, so the batch path does a single atomic plan.json write).
+
+interface TaskInput {
+  title: string;
+  description: string;
+  fileRefs: string[];
+  acceptance: string[];
+  qaScenario: string;
+  priority: 'low' | 'medium' | 'high' | 'critical';
+}
+
+/** Add a phase record. Returns the phase id and whether it was newly created. */
+function addPhaseRecord(
+  summary: PlanSummary,
+  input: { name: string; description: string; order: number; color: string },
+): { id: string; created: boolean } {
+  const id = slugify(input.name) || `phase-${input.order}`;
+  if (summary.phases.some((p) => p.id === id)) {
+    return { id, created: false };
+  }
+  summary.phases.push({
+    kind: 'phase',
+    id,
+    name: input.name,
+    description: input.description,
+    order: input.order,
+    color: input.color,
+  });
+  return { id, created: true };
+}
+
+/**
+ * Add a task record + its per-task file. With `dedupe: true` a task whose
+ * title already exists in the same phase is treated as the same task and
+ * NOT re-added (protects the createPlan batch path from duplicating tasks
+ * that a partial itemized run already persisted). The itemized createTask
+ * stub keeps `dedupe: false` for backward compatibility.
+ */
+function addTaskRecord(
+  ctx: WorkspaceContext,
+  summary: PlanSummary,
+  phaseId: string,
+  t: TaskInput,
+  options: { dedupe: boolean },
+): { id: string; created: boolean } {
+  const slug = slugify(t.title);
+  if (options.dedupe) {
+    const existing = summary.tasks.find(
+      (k) => k.phaseId === phaseId && k.id.replace(/-\d+$/, '') === `${phaseId}-${slug}`,
+    );
+    if (existing) return { id: existing.id, created: false };
+  }
+  const id = `${phaseId}-${slug}-${summary.tasks.filter((k) => k.phaseId === phaseId).length + 1}`;
+  summary.tasks.push({
+    kind: 'task',
+    id,
+    // v0.7.3: keep the human-readable title in plan.json so
+    // buildPlanSummary can render it in the system prompt.
+    name: t.title,
+    phaseId,
+    status: 'pending',
+    priority: t.priority,
+  });
+  const taskPath = join(ctx.rootDir, 'plan-tasks', `${id}.md`);
+  const meta: PlanFrontmatter = {
+    kind: 'task',
+    id,
+    phaseId,
+    status: 'pending',
+    priority: t.priority,
+    tags: t.fileRefs,
+  };
+  const body = [
+    `# ${t.title}`,
+    '',
+    t.description,
+    '',
+    `## File references`,
+    ...t.fileRefs.map((f) => `- \`${f}\``),
+    '',
+    `## Acceptance criteria`,
+    ...t.acceptance.map((a) => `- ${a}`),
+    '',
+    `## QA scenario`,
+    '',
+    t.qaScenario || '_(not specified)_',
+    '',
+  ].join('\n');
+  ctx.storage.write(taskPath, meta, body);
+  return { id, created: true };
+}
+
+/** Add a milestone record + its file. Returns id and whether newly created. */
+function addMilestoneRecord(
+  ctx: WorkspaceContext,
+  summary: PlanSummary,
+  input: { title: string; description: string; dueDate?: string; targetVersion?: string },
+): { id: string; created: boolean } {
+  const id = `m-${slugify(input.title)}`;
+  if (summary.milestones.some((m) => m.id === id)) {
+    return { id, created: false };
+  }
+  const version = input.targetVersion ?? input.dueDate ?? 'TBD';
+  summary.milestones.push({
+    kind: 'milestone',
+    id,
+    name: input.title,
+    description: input.description,
+    dueDate: input.dueDate,
+    targetVersion: version,
+  });
+  const path = join(ctx.rootDir, 'milestones', `${id}.md`);
+  const meta: PlanFrontmatter = {
+    kind: 'milestone',
+    id,
+    name: input.title,
+    description: input.description,
+    dueDate: input.dueDate,
+    targetVersion: version,
+  };
+  const body = [
+    `# Milestone: ${input.title}`,
+    '',
+    input.description,
+    '',
+    `Target version: ${version}`,
+    '',
+  ].join('\n');
+  ctx.storage.write(path, meta, body);
+  return { id, created: true };
+}
+
+/**
+ * Read-only view of the current plan (phases + tasks + milestones).
+ * Exported for the built-in complete-design fallback (completeDesign.ts)
+ * so it can inspect per-phase task coverage without duplicating the
+ * plan.json / legacy plan.md read logic.
+ */
+export function readPlanSummary(ctx: WorkspaceContext): {
+  phases: PlanFrontmatter[];
+  tasks: PlanFrontmatter[];
+  milestones: PlanFrontmatter[];
+} {
+  return readPlan(ctx);
+}
+
 // ── Stub factory ─────────────────────────────────────────────────────
 
 /**
@@ -212,6 +365,7 @@ function slugify(s: string): string {
  */
 export function createWorkspaceStubs(ctx: WorkspaceContext): EnhancedToolDefinition[] {
   return [
+    createPlanStub(ctx),
     createPhaseStub(ctx),
     createTaskStub(ctx),
     updateTaskStub(ctx),
@@ -226,6 +380,86 @@ export function createWorkspaceStubs(ctx: WorkspaceContext): EnhancedToolDefinit
 
 // ── Individual stubs ──────────────────────────────────────────────────
 
+/**
+ * v0.7.8 — Batch plan creation. One tool call persists the WHOLE plan:
+ * every phase, the tasks nested under each phase, and the milestone.
+ *
+ * Rationale: the itemized contract (4×createPhase + 12×createTask +
+ * 1×createMilestone = 17 sequential tool calls) exceeds what mid-tier
+ * council models reliably emit in one turn (composer-2.5 persisted ≤7 of
+ * 17 in the 2026-07-03 live tests, see HANDOFF.md). A single structured
+ * call collapses the whole contract into one emission, which the same
+ * models satisfy reliably (proven by the 1-call retry paths of Minosse
+ * and Lucifero).
+ */
+function createPlanStub(ctx: WorkspaceContext): EnhancedToolDefinition {
+  return {
+    name: 'createPlan',
+    description:
+      'Create the FULL project plan in one call: all phases, the tasks nested under each phase, and the target milestone. ' +
+      'Preferred over itemized createPhase/createTask/createMilestone calls — one createPlan call persists everything atomically.',
+    category: 'project',
+    parameters: [],
+    execute: async (args) => {
+      return workspaceMutex.run(`${ctx.rootDir}:plan`, () => {
+        const rawPhases = Array.isArray(args['phases'])
+          ? (args['phases'] as Record<string, unknown>[])
+          : [];
+        if (rawPhases.length === 0) {
+          return 'createPlan requires a non-empty "phases" array (each phase: { name, description, order, color, tasks: [{ title, description, fileRefs, acceptance, qaScenario, priority }] }).';
+        }
+        const summary = readPlan(ctx);
+        let phasesCreated = 0;
+        let tasksCreated = 0;
+        const phaseIds: string[] = [];
+        rawPhases.forEach((rawPhase, idx) => {
+          const { id: phaseId, created } = addPhaseRecord(summary, {
+            name: (rawPhase['name'] as string) ?? `Phase ${idx + 1}`,
+            description: (rawPhase['description'] as string) ?? '',
+            order: (rawPhase['order'] as number) ?? idx + 1,
+            color: (rawPhase['color'] as string) ?? '#3b82f6',
+          });
+          if (created) phasesCreated += 1;
+          phaseIds.push(phaseId);
+          const rawTasks = Array.isArray(rawPhase['tasks'])
+            ? (rawPhase['tasks'] as Record<string, unknown>[])
+            : [];
+          for (const rawTask of rawTasks) {
+            const { created: taskCreated } = addTaskRecord(
+              ctx,
+              summary,
+              phaseId,
+              {
+                title: (rawTask['title'] as string) ?? 'New Task',
+                description: (rawTask['description'] as string) ?? '',
+                fileRefs: (rawTask['fileRefs'] as string[]) ?? (rawTask['files'] as string[]) ?? [],
+                acceptance: (rawTask['acceptance'] as string[]) ?? [],
+                qaScenario: (rawTask['qaScenario'] as string) ?? (rawTask['qa'] as string) ?? '',
+                priority: ((rawTask['priority'] as string) ?? 'medium') as TaskInput['priority'],
+              },
+              { dedupe: true },
+            );
+            if (taskCreated) tasksCreated += 1;
+          }
+        });
+        let milestonesCreated = 0;
+        const rawMilestone = args['milestone'] as Record<string, unknown> | undefined;
+        if (rawMilestone && typeof rawMilestone === 'object') {
+          const { created } = addMilestoneRecord(ctx, summary, {
+            title: (rawMilestone['title'] as string) ?? 'v0.1.0 design-complete',
+            description: (rawMilestone['description'] as string) ?? '',
+            dueDate: rawMilestone['dueDate'] as string | undefined,
+            targetVersion: rawMilestone['targetVersion'] as string | undefined,
+          });
+          if (created) milestonesCreated += 1;
+        }
+        writePlan(ctx, summary);
+        return `Plan created: ${phasesCreated} phases, ${tasksCreated} tasks, ${milestonesCreated} milestone(s). Phase ids: ${phaseIds.join(', ')}.`;
+      });
+    },
+  };
+}
+
 function createPhaseStub(ctx: WorkspaceContext): EnhancedToolDefinition {
   return {
     name: 'createPhase',
@@ -235,23 +469,17 @@ function createPhaseStub(ctx: WorkspaceContext): EnhancedToolDefinition {
     execute: async (args) => {
       return workspaceMutex.run(`${ctx.rootDir}:plan`, () => {
         const name = (args['name'] as string) ?? 'New Phase';
-        const description = (args['description'] as string) ?? '';
         const order = (args['order'] as number) ?? 0;
-        const color = (args['color'] as string) ?? '#3b82f6';
-        const id = slugify(name) || `phase-${order}`;
         const summary = readPlan(ctx);
-        // Check uniqueness
-        if (summary.phases.some((p) => p.id === id)) {
+        const { id, created } = addPhaseRecord(summary, {
+          name,
+          description: (args['description'] as string) ?? '',
+          order,
+          color: (args['color'] as string) ?? '#3b82f6',
+        });
+        if (!created) {
           return `Phase "${id}" already exists.`;
         }
-        summary.phases.push({
-          kind: 'phase',
-          id,
-          name,
-          description,
-          order,
-          color,
-        });
         writePlan(ctx, summary);
         return `Phase "${name}" created (id: ${id}, order: ${order}).`;
       });
@@ -269,55 +497,26 @@ function createTaskStub(ctx: WorkspaceContext): EnhancedToolDefinition {
       return workspaceMutex.run(`${ctx.rootDir}:plan`, () => {
         const phaseId = (args['phaseId'] as string) ?? args['phase'] as string;
         const title = (args['title'] as string) ?? 'New Task';
-        const description = (args['description'] as string) ?? '';
-        const fileRefs = (args['fileRefs'] as string[]) ?? (args['files'] as string[]) ?? [];
-        const acceptance = (args['acceptance'] as string[]) ?? [];
-        const qaScenario = (args['qaScenario'] as string) ?? (args['qa'] as string) ?? '';
-        const priority = (args['priority'] as string) ?? 'medium';
         if (!phaseId) return 'Task requires a phaseId.';
         const summary = readPlan(ctx);
         if (!summary.phases.some((p) => p.id === phaseId)) {
           return `Phase "${phaseId}" not found. Create it first via /createPhase.`;
         }
-        const id = `${phaseId}-${slugify(title)}-${summary.tasks.filter((t) => t.phaseId === phaseId).length + 1}`;
-        summary.tasks.push({
-          kind: 'task',
-          id,
-          // v0.7.3: keep the human-readable title in plan.json so
-          // buildPlanSummary can render it in the system prompt.
-          name: title,
+        const { id } = addTaskRecord(
+          ctx,
+          summary,
           phaseId,
-          status: 'pending',
-          priority: priority as 'low' | 'medium' | 'high' | 'critical',
-        });
+          {
+            title,
+            description: (args['description'] as string) ?? '',
+            fileRefs: (args['fileRefs'] as string[]) ?? (args['files'] as string[]) ?? [],
+            acceptance: (args['acceptance'] as string[]) ?? [],
+            qaScenario: (args['qaScenario'] as string) ?? (args['qa'] as string) ?? '',
+            priority: ((args['priority'] as string) ?? 'medium') as TaskInput['priority'],
+          },
+          { dedupe: false },
+        );
         writePlan(ctx, summary);
-        // Also write the task body to a per-task file so it doesn't get lost
-        const taskPath = join(ctx.rootDir, 'plan-tasks', `${id}.md`);
-        const meta: PlanFrontmatter = {
-          kind: 'task',
-          id,
-          phaseId,
-          status: 'pending',
-          priority: priority as 'low' | 'medium' | 'high' | 'critical',
-          tags: fileRefs,
-        };
-        const body = [
-          `# ${title}`,
-          '',
-          description,
-          '',
-          `## File references`,
-          ...fileRefs.map((f) => `- \`${f}\``),
-          '',
-          `## Acceptance criteria`,
-          ...acceptance.map((a) => `- ${a}`),
-          '',
-          `## QA scenario`,
-          '',
-          qaScenario || '_(not specified)_',
-          '',
-        ].join('\n');
-        ctx.storage.write(taskPath, meta, body);
         return `Task "${title}" created (id: ${id}) under phase "${phaseId}".`;
       });
     },
@@ -414,40 +613,16 @@ function createMilestoneStub(ctx: WorkspaceContext): EnhancedToolDefinition {
     execute: async (args) => {
       return workspaceMutex.run(`${ctx.rootDir}:plan`, () => {
         const title = (args['title'] as string) ?? 'New Milestone';
-        const description = (args['description'] as string) ?? '';
-        const dueDate = args['dueDate'] as string | undefined;
-        const id = `m-${slugify(title)}`;
         const summary = readPlan(ctx);
-        if (summary.milestones.some((m) => m.id === id)) return `Milestone "${id}" already exists.`;
-        const version = (args['targetVersion'] as string) ?? dueDate ?? 'TBD';
-        summary.milestones.push({
-          kind: 'milestone',
-          id,
-          name: title,
-          description,
-          dueDate,
-          targetVersion: version,
+        const { id, created } = addMilestoneRecord(ctx, summary, {
+          title,
+          description: (args['description'] as string) ?? '',
+          dueDate: args['dueDate'] as string | undefined,
+          targetVersion: args['targetVersion'] as string | undefined,
         });
+        if (!created) return `Milestone "${id}" already exists.`;
         writePlan(ctx, summary);
-        // Also write the body
-        const path = join(ctx.rootDir, 'milestones', `${id}.md`);
-        const meta: PlanFrontmatter = {
-          kind: 'milestone',
-          id,
-          name: title,
-          description,
-          dueDate,
-          targetVersion: version,
-        };
-        const body = [
-          `# Milestone: ${title}`,
-          '',
-          description,
-          '',
-          `Target version: ${version}`,
-          '',
-        ].join('\n');
-        ctx.storage.write(path, meta, body);
+        const version = summary.milestones.find((m) => m.id === id)?.targetVersion ?? 'TBD';
         return `Milestone "${title}" created (id: ${id}, version: ${version}).`;
       });
     },
@@ -465,7 +640,12 @@ function createDocumentStub(ctx: WorkspaceContext): EnhancedToolDefinition {
         const title = (args['title'] as string) ?? 'New Document';
         const content = (args['content'] as string) ?? '';
         const tags = (args['tags'] as string[]) ?? [];
-        const id = slugify(title) || `doc-${Date.now()}`;
+        // v0.7.8: models routinely pass the FILENAME as title ("risks.md",
+        // "synthesis.md"), which slugified to "risks-md"/"synthesis-md" and
+        // produced duplicated artifacts (docs/risks-md.md next to risks.md,
+        // HANDOFF 2026-07-03 §5.1). Strip the extension before slugifying.
+        const normalizedTitle = title.replace(/\.(md|markdown)\s*$/i, '');
+        const id = slugify(normalizedTitle) || `doc-${Date.now()}`;
         const path = workspaceArtifact(ctx.rootDir, 'docs', id);
         const meta: DocFrontmatter = {
           kind: 'doc',
@@ -569,8 +749,13 @@ function linkDocumentsStub(ctx: WorkspaceContext): EnhancedToolDefinition {
     parameters: [],
     execute: async (args) => {
       return workspaceMutex.run(`${ctx.rootDir}:link`, () => {
-        const fromId = args['fromId'] as string;
-        const toId = args['toId'] as string;
+        // v0.7.8: the provider-facing JSON schema (toolSchemas.ts) advertises
+        // sourceId/targetPathOrTitle — accept those aliases too, otherwise
+        // every schema-conformant call fails with "requires fromId and toId".
+        const fromId = (args['fromId'] as string) ?? (args['sourceId'] as string);
+        const toId = (args['toId'] as string)
+          ?? (args['targetId'] as string)
+          ?? (args['targetPathOrTitle'] as string);
         if (!fromId || !toId) return 'linkDocuments requires fromId and toId.';
         // Find the source file by id
         const allFiles = [
@@ -603,7 +788,8 @@ function getDocumentBacklinksStub(ctx: WorkspaceContext): EnhancedToolDefinition
     category: 'analysis',
     parameters: [],
     execute: async (args) => {
-      const targetId = args['targetId'] as string;
+      // v0.7.8: the provider-facing JSON schema advertises `id` — accept it.
+      const targetId = (args['targetId'] as string) ?? (args['id'] as string);
       if (!targetId) return 'getDocumentBacklinks requires targetId.';
       const allFiles = [
         ...ctx.storage.listMarkdown(join(ctx.rootDir, 'decisions')),

@@ -33,7 +33,7 @@ describe('workspace/toolRegistry — runtime ToolContext merging (v3-W)', () => 
     rmSync(projectRoot, { recursive: true, force: true });
   });
 
-  it('registry contains all 9 workspace stubs', () => {
+  it('registry contains all 10 workspace stubs', () => {
     const registry = createWorkspaceToolRegistry(ctx);
     const tools = registry.list().sort();
     expect(tools).toEqual([
@@ -41,6 +41,7 @@ describe('workspace/toolRegistry — runtime ToolContext merging (v3-W)', () => 
       'createDocument',
       'createMilestone',
       'createPhase',
+      'createPlan',
       'createTask',
       'getDocumentBacklinks',
       'linkDocuments',

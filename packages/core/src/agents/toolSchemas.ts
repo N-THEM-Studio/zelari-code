@@ -42,6 +42,61 @@ export interface ParsedToolCall {
  * ordering and missing entries used to be a build-time throw).
  */
 const PARAM_SCHEMAS: Record<string, object> = {
+  createPlan: {
+    type: 'object',
+    properties: {
+      phases: {
+        type: 'array',
+        description: 'Ordered list of plan phases, each with its tasks nested (aim for 3 tasks per phase)',
+        items: {
+          type: 'object',
+          properties: {
+            name: { type: 'string', description: 'Phase name' },
+            description: { type: 'string', description: 'What this phase delivers and its exit criterion' },
+            order: { type: 'number', description: 'Position of the phase in the plan (1-based)' },
+            color: { type: 'string', description: 'Hex color, e.g. "#3b82f6"' },
+            tasks: {
+              type: 'array',
+              description: 'Concrete tasks for this phase',
+              items: {
+                type: 'object',
+                properties: {
+                  title: { type: 'string', description: 'Concise verb-led task title' },
+                  description: { type: 'string', description: '2-3 sentences of context' },
+                  fileRefs: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'File paths with line ranges, e.g. "src/App.tsx:L10-L40"',
+                  },
+                  acceptance: {
+                    type: 'array',
+                    items: { type: 'string' },
+                    description: 'Concrete, testable acceptance criteria',
+                  },
+                  qaScenario: { type: 'string', description: 'Step-by-step manual QA scenario' },
+                  priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
+                },
+                required: ['title'],
+              },
+            },
+          },
+          required: ['name'],
+        },
+      },
+      milestone: {
+        type: 'object',
+        description: 'The milestone this plan ships (e.g. the design-complete milestone)',
+        properties: {
+          title: { type: 'string', description: 'Milestone title' },
+          description: { type: 'string', description: 'Milestone description' },
+          targetVersion: { type: 'string', description: 'Target version, e.g. "v0.1.0"' },
+          dueDate: { type: 'string', description: 'Due date (ISO string)' },
+        },
+        required: ['title'],
+      },
+    },
+    required: ['phases'],
+  },
   createTask: {
     type: 'object',
     properties: {
@@ -50,6 +105,17 @@ const PARAM_SCHEMAS: Record<string, object> = {
       priority: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] },
       phaseId: { type: 'string', description: 'ID of the phase this task belongs to' },
       parentId: { type: 'string', description: 'ID of the parent task, if nested' },
+      fileRefs: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'File paths with line ranges where the work lands, e.g. "src/App.tsx:L10-L40"',
+      },
+      acceptance: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Concrete, testable acceptance criteria',
+      },
+      qaScenario: { type: 'string', description: 'Step-by-step manual QA scenario' },
       tags: { type: 'array', items: { type: 'string' } },
       subtasks: { type: 'array', items: { type: 'string' }, description: 'Subtask titles' },
     },
@@ -179,6 +245,7 @@ const PARAM_SCHEMAS: Record<string, object> = {
     properties: {
       title: { type: 'string', description: 'Milestone title' },
       description: { type: 'string', description: 'Milestone description' },
+      targetVersion: { type: 'string', description: 'Target version this milestone ships, e.g. "v0.1.0"' },
       dueDate: { type: 'string', description: 'Due date (ISO string)' },
     },
     required: ['title'],

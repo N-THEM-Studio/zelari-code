@@ -1,5 +1,5 @@
 /**
- * cli-workspace-stubs.test.ts — Tests for the 9 council workspace stubs.
+ * cli-workspace-stubs.test.ts — Tests for the 10 council workspace stubs.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -131,6 +131,87 @@ describe('createMilestone stub', () => {
   });
 });
 
+describe('createPlan stub (v0.7.8 batch)', () => {
+  const fullPlanArgs = {
+    phases: [
+      {
+        name: 'Foundation',
+        description: 'Stack baseline',
+        order: 1,
+        tasks: [
+          { title: 'Lock stack', description: 'React 19 + Vite 6', fileRefs: ['src/main.tsx:L1-L20'], acceptance: ['Build green'], qaScenario: 'npm run build', priority: 'high' },
+          { title: 'Define NFR budget', acceptance: ['Targets documented'] },
+          { title: 'Document exit criteria' },
+        ],
+      },
+      {
+        name: 'Quality Sign-off',
+        order: 2,
+        tasks: [
+          { title: 'Run QA pass' },
+        ],
+      },
+    ],
+    milestone: { title: 'v0.1.0 design-complete', description: 'Ship it', targetVersion: 'v0.1.0' },
+  };
+
+  it('persists phases + nested tasks + milestone in ONE call', async () => {
+    const stub = findStub('createPlan');
+    const result = await stub.execute(fullPlanArgs, ctx);
+    expect(result).toContain('2 phases');
+    expect(result).toContain('4 tasks');
+    expect(result).toContain('1 milestone');
+    const plan = JSON.parse(readFileSync(join(ctx.rootDir, 'plan.json'), 'utf8'));
+    expect(plan.phases).toHaveLength(2);
+    expect(plan.tasks).toHaveLength(4);
+    expect(plan.milestones).toHaveLength(1);
+    // Task files written like the itemized createTask path.
+    const taskContent = readFileSync(
+      join(ctx.rootDir, 'plan-tasks', 'foundation-lock-stack-1.md'),
+      'utf8',
+    );
+    expect(taskContent).toContain('src/main.tsx:L1-L20');
+    expect(taskContent).toContain('Build green');
+    // Milestone file written like the itemized createMilestone path.
+    expect(existsSync(join(ctx.rootDir, 'milestones', 'm-v0-1-0-design-complete.md'))).toBe(true);
+  });
+
+  it('rejects an empty phases array with a corrective message', async () => {
+    const stub = findStub('createPlan');
+    const result = await stub.execute({ phases: [] }, ctx);
+    expect(result).toContain('requires a non-empty "phases" array');
+  });
+
+  it('is idempotent: re-running the same plan adds nothing (dedupe by phase+title)', async () => {
+    const stub = findStub('createPlan');
+    await stub.execute(fullPlanArgs, ctx);
+    const second = await stub.execute(fullPlanArgs, ctx);
+    expect(second).toContain('0 phases');
+    expect(second).toContain('0 tasks');
+    expect(second).toContain('0 milestone');
+    const plan = JSON.parse(readFileSync(join(ctx.rootDir, 'plan.json'), 'utf8'));
+    expect(plan.tasks).toHaveLength(4);
+    expect(plan.milestones).toHaveLength(1);
+  });
+
+  it('merges with phases already created via itemized createPhase (partial-run recovery)', async () => {
+    // Simulates the retry scenario: the model created 1 phase + 1 task
+    // itemized, then the forced retry emits the full createPlan.
+    const createPhase = findStub('createPhase');
+    const createTask = findStub('createTask');
+    await createPhase.execute({ name: 'Foundation', order: 1 }, ctx);
+    await createTask.execute({ phaseId: 'foundation', title: 'Lock stack' }, ctx);
+    const stub = findStub('createPlan');
+    const result = await stub.execute(fullPlanArgs, ctx);
+    // Foundation phase and "Lock stack" task already exist → not duplicated.
+    expect(result).toContain('1 phases');
+    expect(result).toContain('3 tasks');
+    const plan = JSON.parse(readFileSync(join(ctx.rootDir, 'plan.json'), 'utf8'));
+    expect(plan.phases).toHaveLength(2);
+    expect(plan.tasks).toHaveLength(4);
+  });
+});
+
 describe('createDocument stub', () => {
   it('creates a doc', async () => {
     const stub = findStub('createDocument');
@@ -141,6 +222,20 @@ describe('createDocument stub', () => {
     }, ctx);
     expect(result).toContain('Document "API Spec" created');
     expect(existsSync(join(ctx.rootDir, 'docs', 'api-spec.md'))).toBe(true);
+  });
+
+  it('strips a trailing .md from the title (v0.7.8 — no more docs/risks-md.md duplicates)', async () => {
+    // HANDOFF 2026-07-03 §5.1: models pass the FILENAME as title
+    // ("risks.md"), which used to slugify to "risks-md" and create
+    // docs/risks-md.md alongside the intended risks doc.
+    const stub = findStub('createDocument');
+    const result = await stub.execute({ title: 'risks.md', content: '# Risks' }, ctx);
+    expect(result).toContain('docs/risks.md');
+    expect(existsSync(join(ctx.rootDir, 'docs', 'risks.md'))).toBe(true);
+    expect(existsSync(join(ctx.rootDir, 'docs', 'risks-md.md'))).toBe(false);
+    const synth = await stub.execute({ title: 'synthesis.MD', content: '# Synthesis' }, ctx);
+    expect(synth).toContain('docs/synthesis.md');
+    expect(existsSync(join(ctx.rootDir, 'docs', 'synthesis.md'))).toBe(true);
   });
 });
 
@@ -192,6 +287,24 @@ describe('linkDocuments + getDocumentBacklinks', () => {
     await addIdea.execute({ title: 'Lonely' }, ctx);
     const result = await backlinks.execute({ targetId: '001-lonely' }, ctx);
     expect(result).toContain('No backlinks');
+  });
+
+  it('accepts the provider-schema arg names (sourceId/targetPathOrTitle, id) — v0.7.8', async () => {
+    // toolSchemas.ts advertises sourceId/targetPathOrTitle for linkDocuments
+    // and id for getDocumentBacklinks; the stubs used to require fromId/toId
+    // and targetId, so every schema-conformant call failed.
+    const addIdea = findStub('addIdea');
+    const link = findStub('linkDocuments');
+    const backlinks = findStub('getDocumentBacklinks');
+
+    await addIdea.execute({ title: 'Alpha' }, ctx);
+    await addIdea.execute({ title: 'Beta' }, ctx);
+
+    const linkResult = await link.execute({ sourceId: '001-alpha', targetPathOrTitle: '002-beta' }, ctx);
+    expect(linkResult).toContain('Linked');
+
+    const backResult = await backlinks.execute({ id: '002-beta' }, ctx);
+    expect(backResult).toContain('001-alpha');
   });
 });
 

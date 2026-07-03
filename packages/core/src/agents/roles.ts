@@ -82,37 +82,38 @@ Example format:
 
 Keep plans hierarchical and practical. Stay under 250 words.${CLARIFICATION_PROTOCOL}
 
-## Design-phase mandatory tools
-In design-phase mode (TASK mentions design/architecture/spec, no existing codebase to edit), you MUST use these workspace tools to persist the plan. Counts are HARD CONTRACTS, not guidelines — if you stop before meeting them, the downstream deliverable is incomplete and the post-run check will flag your run.
+## Design-phase mandatory plan artifact
+In design-phase mode (TASK mentions design/architecture/spec, no existing codebase to edit), you MUST persist the plan through workspace tools. The plan exists ONLY if it was persisted via a tool call — prose does not count, and the post-run check will flag your run if the plan is missing.
 
-- \`createPhase\` — call **4 times** (one per phase), each with { name, description, order, color }. Phases: foundation/blueprint, ux-ia-design-system, commerce-content, quality-sign-off.
-- \`createTask\` — call **12 times** (3 per phase), each with { phaseId, title, description, fileRefs: ["src/...:Lx-Ly"], acceptance: ["testable assertion"], qaScenario: "step-by-step QA" }.
-- \`createMilestone\` — call **1 time** for the v0.1.0 design-complete milestone with { title: "v0.1.0 design-complete", description: "...", targetVersion: "v0.1.0" }.
-
-## Worked example — phaseId chaining
-After each \`createPhase\` call, the response contains the new phase id, e.g. \`Phase "Foundation & Technical Blueprint" created (id: foundation-technical-blueprint)\`. Use that exact id as \`phaseId\` in your subsequent \`createTask\` calls for that phase. Example:
+PREFERRED — emit ONE single \`createPlan\` call containing the whole plan: 4 phases, 12 concrete tasks (3 per phase), and 1 milestone, all in the same call:
 
 \`\`\`
-1. createPhase({ name: "Foundation & Technical Blueprint", order: 1 })  → returns "id: foundation-technical-blueprint"
-2. createTask({ phaseId: "foundation-technical-blueprint", title: "Lock brand positioning", ... })
-3. createTask({ phaseId: "foundation-technical-blueprint", title: "Define NFR budget", ... })
-4. createTask({ phaseId: "foundation-technical-blueprint", title: "Document design-phase exit criteria", ... })
-5. (repeat for the other 3 phases, 3 tasks each)
+createPlan({
+  phases: [
+    {
+      name: "Foundation & Technical Blueprint",
+      description: "Lock the stack and the non-negotiable quality budget. Exit: baseline builds green.",
+      order: 1,
+      color: "#3b82f6",
+      tasks: [
+        { title: "Lock stack baseline", description: "2-3 sentences of context", fileRefs: ["src/main.tsx:L1-L40"], acceptance: ["App boots with strict TS", "CI build green"], qaScenario: "Run npm run build and confirm zero errors", priority: "high" },
+        { title: "Define NFR budget", description: "...", fileRefs: ["docs/nfr.md"], acceptance: ["LCP/WCAG/Lighthouse targets documented"], qaScenario: "...", priority: "high" },
+        { title: "Document design-phase exit criteria", description: "...", fileRefs: ["docs/exit-criteria.md"], acceptance: ["Each phase has a testable exit row"], qaScenario: "...", priority: "medium" }
+      ]
+    },
+    { name: "...", order: 2, tasks: [ /* 3 tasks */ ] },
+    { name: "...", order: 3, tasks: [ /* 3 tasks */ ] },
+    { name: "...", order: 4, tasks: [ /* 3 tasks */ ] }
+  ],
+  milestone: { title: "v0.1.0 design-complete", description: "All design artifacts exist and the green-light checklist passes.", targetVersion: "v0.1.0" }
+})
 \`\`\`
 
-If you forget the exact id, call \`searchDocuments\` (limit 1) to look it up, then continue.
+Every task MUST include fileRefs, acceptance, and qaScenario — the QA scenario proves the task is verifiable.
 
-Required task shape:
-{
-  phaseId: "<existing phase id>",
-  title: "Concise verb-led title",
-  description: "2-3 sentences of context",
-  fileRefs: ["src/path/file.ts:Lx-Ly"],
-  acceptance: ["Concrete assertion 1", "Concrete assertion 2"],
-  qaScenario: "How to manually verify"
-}
+FALLBACK — only if you cannot batch, use the itemized tools: \`createPhase\` once per phase; each createPhase response returns the new phase id — use that exact id as \`phaseId\` in the 3 \`createTask\` calls for that phase; finish with one \`createMilestone\` ({ title, description, targetVersion }). If you forget an id, call \`searchDocuments\` (limit 1) to look it up, then continue.
 
-Do NOT output tasks as prose. Each task MUST be a \`createTask\` tool call. The system will refuse any task that does not pass a valid phaseId.`,
+Do NOT output tasks as prose. The system will refuse any task that does not pass a valid phaseId.`,
     // v0.7.2: read/search the codebase to ground the plan in reality.
     tools: ['list_files', 'read_file', 'grep_content'],
     skills: ['project-planner', 'vault-manager'],

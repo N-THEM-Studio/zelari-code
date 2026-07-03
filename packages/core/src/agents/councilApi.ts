@@ -15,18 +15,19 @@ import { AgentHarness } from '../core/AgentHarness.js';
 import { ToolRegistry } from '../core/tools/registry.js';
 
 /**
- * v0.7.7 Opzione B — Council members whose tool-emission retry is
- * DISABLED. The forced retry works for chairman (Lucifero) and oracle
- * (Minosse) where only 1 distinct tool is missing (createDocument or
- * searchDocuments), but Nettuno requires 12 createTask + 1
- * createMilestone and composer-2.5 reliably fails to persist more
- * than 7 calls within the 240s budget (Pass 3 live test 2026-07-03).
+ * Council members whose tool-emission retry is DISABLED.
  *
- * For these members we rely on the deterministic post-processor
- * (complete-design.mjs in the workspace) to fill in the gaps from a
- * template, instead of retrying the model.
+ * v0.7.7 Opzione B put 'nettun' here because its contract (12 createTask
+ * + 1 createMilestone = 13+ sequential calls) exceeded what composer-2.5
+ * could persist in the 240s budget, making the retry a pure waste.
+ *
+ * v0.7.8 removes 'nettun': the plan contract is now satisfiable with a
+ * SINGLE `createPlan` batch call (phases + nested tasks + milestone in
+ * one emission), so the forced retry has the same 1-call budget that
+ * already works reliably for Minosse and Lucifero. The set stays
+ * exported as the opt-out mechanism for future members.
  */
-export const NON_RETRY_AGENTS: ReadonlySet<string> = new Set(['nettun']);
+export const NON_RETRY_AGENTS: ReadonlySet<string> = new Set([]);
 
 export type { BrainEvent } from '../shared/events.js';
 export type {
@@ -882,34 +883,72 @@ export function checkMemberToolEmissions(
 }
 
 /**
- * Default per-member tool-emission requirements for the design-phase
- * council run. Each entry says: when this member runs, it MUST emit at
- * least N copies of the named tool before its turn is considered
- * complete. The post-loop code logs a warning when this is not met.
+ * v0.7.8 — Per-member tool-emission requirement SETS for the design-phase
+ * council run. The outer array is an OR of alternatives: the member's turn
+ * is complete when ANY one set is fully satisfied. The FIRST set is the
+ * preferred contract — its unmet requirements drive the warning message
+ * and the forced-retry tool list.
  *
- * The minimums are calibrated to the prompt-level instructions in
- * roles.ts (Fix e987284):
- *   - Nettuno:  4 phases, 12 tasks (3 per phase), 1 milestone
- *   - Gerione:  3 design docs
- *   - Minosse:  1 risks document
- *   - Lucifero: 1 synthesis document
+ * Nettuno has two ways to satisfy its contract:
+ *   1. (preferred) ONE `createPlan` batch call — phases + nested tasks +
+ *      milestone in a single emission. Retry budget: 1 call, which
+ *      composer-2.5 handles reliably (same shape as the Minosse/Lucifero
+ *      retries that already work).
+ *   2. (legacy) the itemized trio — kept so stronger models (e.g. Opus)
+ *      that emit createPhase/createTask/createMilestone directly are not
+ *      flagged or retried.
  */
-export const DESIGN_PHASE_REQUIREMENTS: Record<string, ToolEmissionRequirement[]> = {
+export const DESIGN_PHASE_REQUIREMENT_SETS: Record<string, ToolEmissionRequirement[][]> = {
   nettun: [
-    { name: 'createPhase', min: 3 },
-    { name: 'createTask', min: 6 },
-    { name: 'createMilestone', min: 1 },
+    [{ name: 'createPlan', min: 1 }],
+    [
+      { name: 'createPhase', min: 3 },
+      { name: 'createTask', min: 6 },
+      { name: 'createMilestone', min: 1 },
+    ],
   ],
   geryon: [
-    { name: 'createDocument', min: 3 },
+    [{ name: 'createDocument', min: 3 }],
   ],
   minos: [
-    { name: 'createDocument', min: 1 },
+    [{ name: 'createDocument', min: 1 }],
   ],
   lucifer: [
-    { name: 'createDocument', min: 1 },
+    [{ name: 'createDocument', min: 1 }],
   ],
 };
+
+/**
+ * Preferred (first) requirement set per member — kept as the flat map the
+ * council loops pass to `applyRetryIfMissing` for the retry budget. For
+ * Nettuno this is `createPlan min 1`, so the forced retry advertises ONE
+ * tool with a 1-call budget instead of the old 13+-call itemized contract.
+ */
+export const DESIGN_PHASE_REQUIREMENTS: Record<string, ToolEmissionRequirement[]> =
+  Object.fromEntries(
+    Object.entries(DESIGN_PHASE_REQUIREMENT_SETS).map(([id, sets]) => [id, sets[0]!]),
+  );
+
+/**
+ * Pure helper: OR-of-sets variant of {@link checkMemberToolEmissions}.
+ * Returns ok when ANY set is fully satisfied. When none is, the missing
+ * list reflects the FIRST (preferred) set so the warning and the retry
+ * point the model at the cheapest way to comply.
+ */
+export function checkMemberToolEmissionSets(
+  memberId: string,
+  emittedToolNames: string[],
+  sets: ToolEmissionRequirement[][],
+): ToolEmissionCheckResult {
+  if (sets.length === 0) {
+    return { ok: true, missing: [] };
+  }
+  const results = sets.map((set) => checkMemberToolEmissions(memberId, emittedToolNames, set));
+  if (results.some((r) => r.ok)) {
+    return { ok: true, missing: [] };
+  }
+  return results[0]!;
+}
 
 /**
  * Run the post-condition check for a member and emit a console.warn when
@@ -921,17 +960,18 @@ export function enforceDesignPhaseToolEmissions(
   memberId: string,
   emittedToolNames: string[],
 ): ToolEmissionCheckResult {
-  const requirements = DESIGN_PHASE_REQUIREMENTS[memberId];
-  if (!requirements || requirements.length === 0) {
+  const sets = DESIGN_PHASE_REQUIREMENT_SETS[memberId];
+  if (!sets || sets.length === 0) {
     return { ok: true, missing: [] };
   }
-  const result = checkMemberToolEmissions(memberId, emittedToolNames, requirements);
+  const result = checkMemberToolEmissionSets(memberId, emittedToolNames, sets);
   if (!result.ok) {
     // eslint-disable-next-line no-console
     console.warn(
       `[council] member "${memberId}" did not emit required tools: ${result.missing.join(', ')}. ` +
         `The downstream .zelari/ deliverable may be incomplete. ` +
-        `(Pass 3 may add automatic retry; see plan 2026-07-03-council-design-phase-role-anchoring.md.)`,
+        `(A forced retry turn scoped to the missing tools follows; the deterministic ` +
+        `complete-design fallback covers any remaining gap.)`,
     );
   }
   return result;

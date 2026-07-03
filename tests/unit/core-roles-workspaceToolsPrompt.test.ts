@@ -49,6 +49,20 @@ describe('Council design-phase role prompts — explicit workspace-tool instruct
     expect(hasStructured, 'Minosse prompt should include a structured template (list or headings)').toBe(true);
   });
 
+  it('Nettuno role prompt anchors the PREFERRED createPlan batch call (v0.7.8)', () => {
+    // v0.7.8: the plan contract is satisfiable with ONE createPlan call
+    // (phases + nested tasks + milestone). The prompt must present it as
+    // the preferred path and keep the itemized tools as fallback.
+    expect(nettuno.systemPrompt).toMatch(/createPlan/);
+    expect(nettuno.systemPrompt).toMatch(/PREFERRED/i);
+    expect(nettuno.systemPrompt).toMatch(/FALLBACK/i);
+    // The worked example must show the nested shape: phases with tasks
+    // arrays and a milestone in the same call.
+    expect(nettuno.systemPrompt).toMatch(/phases:\s*\[/);
+    expect(nettuno.systemPrompt).toMatch(/tasks:\s*\[/);
+    expect(nettuno.systemPrompt).toMatch(/milestone:\s*\{/);
+  });
+
   it('Nettuno role prompt explicitly mentions createTask and createMilestone with required fields', () => {
     expect(nettuno.systemPrompt).toMatch(/createTask/i);
     expect(nettuno.systemPrompt).toMatch(/createMilestone/i);

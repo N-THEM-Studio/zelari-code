@@ -58,16 +58,52 @@ describe('runCompleteDesignPostProcessor', () => {
     expect(result.reason).toContain('no phases');
   });
 
-  it('returns ran=false when complete-design.mjs is missing in project root', async () => {
-    // plan.json with phases exists, but no complete-design.mjs in root.
+  it('runs the BUILT-IN fallback when complete-design.mjs is missing (v0.7.8)', async () => {
+    // plan.json with phases exists, but no complete-design.mjs in root →
+    // the built-in TypeScript fallback must fill the gaps: 3 tasks for the
+    // phase and 1 milestone.
     writeFileSync(join(ctx.rootDir, 'plan.json'), JSON.stringify({
-      phases: [{ id: 'phase-1', name: 'p1', order: 1 }],
+      phases: [{ id: 'phase-1', name: 'Foundation', order: 1 }],
       tasks: [],
       milestones: [],
     }, null, 2), 'utf8');
     const result = await runCompleteDesignPostProcessor(ctx);
-    expect(result.ran).toBe(false);
-    expect(result.reason).toContain('complete-design.mjs');
+    expect(result.ran).toBe(true);
+    expect(result.exitCode).toBe(0);
+    expect(result.output).toContain('+3 tasks');
+    expect(result.output).toContain('+1 milestones');
+    const plan = JSON.parse(readFileSync(join(ctx.rootDir, 'plan.json'), 'utf8'));
+    expect(plan.tasks).toHaveLength(3);
+    expect(plan.tasks.every((t: { phaseId: string }) => t.phaseId === 'phase-1')).toBe(true);
+    expect(plan.milestones).toHaveLength(1);
+  });
+
+  it('built-in fallback tops up phases that already have some tasks (12 total for 4 phases)', async () => {
+    // The HANDOFF §4 scenario: 4 council phases, model emitted only 1 task
+    // for one phase. The fallback must top up to 3 per phase = 12 total,
+    // regardless of what the phase ids are (no template mapping involved).
+    writeFileSync(join(ctx.rootDir, 'plan.json'), JSON.stringify({
+      phases: [
+        { id: 'foundation-technical-blueprint', name: 'Foundation & Technical Blueprint', order: 1 },
+        { id: 'ux-ia-design-system', name: 'UX, IA & Design System', order: 2 },
+        { id: 'commerce-content', name: 'Commerce & Content', order: 3 },
+        { id: 'quality-sign-off', name: 'Quality Sign-off', order: 4 },
+      ],
+      tasks: [
+        { kind: 'task', id: 'ux-ia-design-system-wireframes-1', name: 'Wireframes', phaseId: 'ux-ia-design-system', status: 'pending', priority: 'high' },
+      ],
+      milestones: [],
+    }, null, 2), 'utf8');
+    const result = await runCompleteDesignPostProcessor(ctx);
+    expect(result.ran).toBe(true);
+    const plan = JSON.parse(readFileSync(join(ctx.rootDir, 'plan.json'), 'utf8'));
+    // 4 phases × 3 tasks = 12 (1 pre-existing + 11 added).
+    expect(plan.tasks).toHaveLength(12);
+    for (const phase of plan.phases) {
+      const count = plan.tasks.filter((t: { phaseId: string }) => t.phaseId === phase.id).length;
+      expect(count, `phase ${phase.id} should have 3 tasks`).toBe(3);
+    }
+    expect(plan.milestones).toHaveLength(1);
   });
 
   it('runs the script and returns ran=true when plan.json + complete-design.mjs exist', async () => {
@@ -135,9 +171,12 @@ describe('runPostCouncilHook (Opzione B integration)', () => {
     }, null, 2), 'utf8');
     // complete-design.mjs records its invocation time.
     const stampPath = join(projectRoot, '.invocation-stamp.json');
+    // JSON.stringify escapes the Windows backslashes — interpolating the
+    // raw path into the generated JS source produced invalid escape
+    // sequences on win32 and the stamp landed at a mangled path.
     writeFileSync(join(projectRoot, 'complete-design.mjs'), [
       'import { writeFileSync } from "node:fs";',
-      `writeFileSync("${stampPath}", JSON.stringify({ ran: true }));`,
+      `writeFileSync(${JSON.stringify(stampPath)}, JSON.stringify({ ran: true }));`,
       'process.exit(0);',
     ].join('\n'), 'utf8');
     // Minimal package.json so AGENTS.MD has content.
