@@ -56,8 +56,8 @@ describe('openai-compatible provider routing (Task 15.2)', () => {
 
   it('PROVIDER_ENDPOINTS has entries for all 5 providers', () => {
     expect(PROVIDER_ENDPOINTS['openai-compatible']).toBeDefined();
-    expect(PROVIDER_ENDPOINTS.minimax).toBe('https://api.MiniMax.chat/v1');
-    expect(PROVIDER_ENDPOINTS.glm).toBe('https://api.z.ai/v1');
+    expect(PROVIDER_ENDPOINTS.minimax).toBe('https://api.minimax.io/v1');
+    expect(PROVIDER_ENDPOINTS.glm).toBe('https://api.z.ai/api/coding/paas/v4');
     expect(PROVIDER_ENDPOINTS.grok).toBe('https://api.x.ai/v1');
     expect(PROVIDER_ENDPOINTS.custom).toBeDefined();
   });
@@ -67,8 +67,8 @@ describe('openai-compatible provider routing (Task 15.2)', () => {
   });
 
   it('resolveBaseUrl() returns the hardcoded endpoint for known providers', () => {
-    expect(resolveBaseUrl('minimax')).toBe('https://api.MiniMax.chat/v1');
-    expect(resolveBaseUrl('glm')).toBe('https://api.z.ai/v1');
+    expect(resolveBaseUrl('minimax')).toBe('https://api.minimax.io/v1');
+    expect(resolveBaseUrl('glm')).toBe('https://api.z.ai/api/coding/paas/v4');
     expect(resolveBaseUrl('grok')).toBe('https://api.x.ai/v1');
   });
 
@@ -106,8 +106,8 @@ describe('openai-compatible provider routing (Task 15.2)', () => {
       setApiKey('minimax', '***');
       setApiKey('glm', 'sk-glm-test');
       setApiKey('grok', 'sk-grok-test');
-      expect((await providerConfigFor('minimax'))?.baseUrl).toBe('https://api.MiniMax.chat/v1');
-      expect((await providerConfigFor('glm'))?.baseUrl).toBe('https://api.z.ai/v1');
+      expect((await providerConfigFor('minimax'))?.baseUrl).toBe('https://api.minimax.io/v1');
+      expect((await providerConfigFor('glm'))?.baseUrl).toBe('https://api.z.ai/api/coding/paas/v4');
       expect((await providerConfigFor('grok'))?.baseUrl).toBe('https://api.x.ai/v1');
     });
   });

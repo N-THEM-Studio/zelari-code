@@ -33,8 +33,10 @@ export interface OpenAICompatibleConfig {
  */
 export const PROVIDER_ENDPOINTS: Record<ProviderName, string> = {
   'openai-compatible': 'https://api.x.ai/v1',
-  'minimax': 'https://api.MiniMax.chat/v1',
-  'glm': 'https://api.z.ai/v1',
+  'minimax': 'https://api.minimax.io/v1',
+  // GLM defaults to the Coding Plan endpoint (flat-rate coding subscription).
+  // Pay-per-token API users can override with `/provider custom https://api.z.ai/api/paas/v4`.
+  'glm': 'https://api.z.ai/api/coding/paas/v4',
   'grok': 'https://api.x.ai/v1',
   'custom': '',
 };

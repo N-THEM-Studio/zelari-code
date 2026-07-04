@@ -41,8 +41,8 @@ export interface ProviderSpec {
 
 export const PROVIDERS: readonly ProviderSpec[] = [
   { id: 'openai-compatible', displayName: 'OpenAI-compatible', envVar: 'OPENAI_API_KEY' },
-  { id: 'minimax', displayName: 'MiniMax', envVar: 'MINIMAX_API_KEY', baseUrl: 'https://api.MiniMax.chat/v1' },
-  { id: 'glm', displayName: 'GLM / Z.AI', envVar: 'GLM_API_KEY', baseUrl: 'https://api.z.ai/v1' },
+  { id: 'minimax', displayName: 'MiniMax', envVar: 'MINIMAX_API_KEY', baseUrl: 'https://api.minimax.io/v1' },
+  { id: 'glm', displayName: 'GLM / Z.AI', envVar: 'GLM_API_KEY', baseUrl: 'https://api.z.ai/api/coding/paas/v4' },
   { id: 'grok', displayName: 'xAI Grok', envVar: 'GROK_API_KEY', baseUrl: 'https://api.x.ai/v1' },
 ] as const;
 

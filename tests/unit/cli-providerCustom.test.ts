@@ -155,8 +155,8 @@ describe('Task A3 — custom base URLs per provider', () => {
     });
 
     it('falls back to PROVIDER_ENDPOINTS default for non-openai providers', () => {
-      expect(resolveBaseUrl('minimax')).toBe('https://api.MiniMax.chat/v1');
-      expect(resolveBaseUrl('glm')).toBe('https://api.z.ai/v1');
+      expect(resolveBaseUrl('minimax')).toBe('https://api.minimax.io/v1');
+      expect(resolveBaseUrl('glm')).toBe('https://api.z.ai/api/coding/paas/v4');
       expect(resolveBaseUrl('grok')).toBe('https://api.x.ai/v1');
     });
 

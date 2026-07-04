@@ -232,7 +232,7 @@ export async function handleLoginKey(
     );
     // Background model discovery (fire-and-forget)
     const discoveryProvider = providerId as DiscoveryProviderId;
-    if (['grok', 'glm', 'minimax', 'openai-compatible'].includes(discoveryProvider)) {
+    if (DISCOVERABLE_PROVIDERS.includes(discoveryProvider)) {
       discoverModelsInBackground(discoveryProvider, {
         onError: (err) =>
           appendSystem(

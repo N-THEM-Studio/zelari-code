@@ -268,7 +268,7 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 |---|---|
 | `/login <provider> [key]` | Autentica un provider; senza key avvia OAuth per `grok` |
 | `/provider` | Picker interattivo dei provider (↑/↓ + invio, esc annulla) |
-| `/provider <id>` | Cambia provider (`openai-compatible`, `grok`, `minimax`, `glm`, `custom`) |
+| `/provider <id>` | Cambia provider (`openai-compatible`, `grok`, `minimax`, `glm`) |
 | `/provider list` | Mostra provider attivo e disponibili (testo) |
 | `/provider custom <url>` | Endpoint custom (Ollama, LM Studio, vLLM, …) |
 | `/provider custom clear` | Rimuove override endpoint |
@@ -361,9 +361,12 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 |---|---|---|---|
 | `openai-compatible` | OpenAI-compatible | `OPENAI_API_KEY` | OpenAI, Together, Groq, endpoint custom |
 | `grok` | xAI Grok | `GROK_API_KEY` | OAuth via `/login grok` (RFC 8628) |
-| `minimax` | MiniMax | `MINIMAX_API_KEY` | — |
-| `glm` | GLM / Z.AI | `GLM_API_KEY` | Base URL: `https://api.z.ai/v1` |
-| `custom` | Custom | dipende | Usa `/provider custom <url>` |
+| `minimax` | MiniMax | `MINIMAX_API_KEY` | Base URL: `https://api.minimax.io/v1` (endpoint internazionale) |
+| `glm` | GLM / Z.AI | `GLM_API_KEY` | Base URL: `https://api.z.ai/api/coding/paas/v4` (GLM Coding Plan). Per l'API pay-per-token: `/provider custom https://api.z.ai/api/paas/v4`. L'id provider è `glm`, non `zai`. |
+
+> Per un endpoint self-hosted/terze parti non serve un provider dedicato: usa
+> `openai-compatible` + `/provider custom <url>` (vedi
+> [Endpoint OpenAI-compatible custom](#endpoint-openai-compatible-custom)).
 
 ### Configurare una API key
 
@@ -384,6 +387,38 @@ zelari-code
 /model grok-4
 /provider grok
 ```
+
+### Endpoint OpenAI-compatible custom
+
+Per puntare a un gateway self-hosted o di terze parti (Ollama, LM Studio, vLLM,
+Together, un proxy aziendale, …) usa il provider `openai-compatible` con un
+endpoint custom. Nella TUI:
+
+```
+/login openai-compatible <la-tua-api-key>
+/provider custom https://forgeai.dotlabstudios.com/v1
+/model refresh          # (o /discover) scopre i modelli DALL'endpoint custom
+/model <nome-modello>   # oppure apri il picker con /model
+```
+
+L'endpoint custom viene salvato in `provider.json` sotto il provider attivo e
+vince sempre sul default. Il model discovery (`/model refresh`, `/discover`, il
+picker `/model` e il refresh automatico all'avvio) interroga `<endpoint>/models`
+usando lo stesso URL della chat, quindi i modelli scoperti provengono davvero
+dal tuo endpoint. Se l'endpoint non espone `/v1/models`, la discovery fallisce
+con un messaggio inline e puoi comunque impostare il modello a mano con
+`/model <nome>`.
+
+In alternativa via env (equivalente, senza persistenza in `provider.json`):
+
+```bash
+export OPENAI_API_KEY=<la-tua-api-key>
+export OPENAI_BASE_URL=https://forgeai.dotlabstudios.com/v1
+```
+
+> Nota: `/provider custom <url>` imposta l'endpoint sul **provider attivo** (di
+> norma `openai-compatible`); non esiste un provider selezionabile chiamato
+> `custom`.
 
 ### OAuth Grok
 

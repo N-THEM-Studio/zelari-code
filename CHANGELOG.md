@@ -5,6 +5,19 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.11] - 2026-07-04
+
+### Fixed
+- **Il model discovery ora rispetta l'endpoint custom.** `discoverModelsForProvider` risolveva il base URL dalla mappa statica `PROVIDER_BASE_URLS`, ignorando l'endpoint impostato con `/provider custom <url>`: dopo aver puntato `openai-compatible` a un gateway di terze parti, `/model refresh`, `/discover`, il picker `/model` e il refresh automatico all'avvio interrogavano comunque l'host di default (di norma con esito 401 → "discovery failed"). Ora la discovery risolve il base URL con la stessa priorità della chat (`resolveBaseUrl`): `options.baseUrl` (test) → endpoint custom persistito (`getCustomEndpoint`) → `OPENAI_BASE_URL` (per `openai-compatible`) → default statico.
+- **Default di discovery per `openai-compatible` allineato alla chat.** La discovery usava `https://api.openai.com/v1` mentre la chat (`PROVIDER_ENDPOINTS`) usa `https://api.x.ai/v1`: discovery e chat sondavano host diversi. Ora entrambi partono da `https://api.x.ai/v1`.
+- **Endpoint MiniMax corretto** → `https://api.minimax.io/v1` (endpoint internazionale, OpenAI-compatible con `/chat/completions` e `/models`). Prima chat e discovery usavano due host diversi ed entrambi sbagliati (`https://api.MiniMax.chat/v1` e `https://api.minimaxi.chat/v1`), da cui il 401 "invalid api key" sui prompt.
+- **Endpoint GLM / Z.AI corretto** → default sul GLM Coding Plan `https://api.z.ai/api/coding/paas/v4` (chat + discovery). Prima la chat puntava a `https://api.z.ai/v1` (404) e la discovery a `https://api.z.ai/api/paas/v4`: host incoerenti. Chi usa l'API pay-per-token può fare `/provider custom https://api.z.ai/api/paas/v4`.
+- **Coerenza chat ↔ discovery ↔ keyStore.** I tre punti che definivano i base URL per provider (`PROVIDER_ENDPOINTS`, `PROVIDER_BASE_URLS`, `PROVIDERS[].baseUrl`) erano andati fuori sync per glm/minimax; ora concordano.
+
+### Changed
+- Test `v3-U-modelDiscovery` isolati anche rispetto a `provider.json` (`ANATHEMA_PROVIDER_CONFIG_FILE`) e `OPENAI_BASE_URL`, dato che la discovery ora legge l'endpoint custom; nuovi casi per endpoint custom persistito, override `OPENAI_BASE_URL` e precedenza di `options.baseUrl`.
+- `docs/GUIDA.md`: nuova sezione "Endpoint OpenAI-compatible custom" con il flusso consigliato; chiarito che non esiste un provider selezionabile `custom` (l'endpoint custom si imposta sul provider attivo).
+
 ## [0.7.10] - 2026-07-04
 
 ### Highlights

@@ -26,17 +26,27 @@ import {
   getModelsFilePath,
 } from '../../src/cli/modelDiscovery.js';
 import { setApiKey, setOAuthToken, clearApiKey } from '../../src/cli/keyStore.js';
+import { setCustomEndpoint, clearCustomEndpoint } from '../../src/cli/providerConfig.js';
 
 // ---------------------------------------------------------------------------
 // Test setup
 // ---------------------------------------------------------------------------
 
 let testFile: string;
+let savedOpenAIBaseUrl: string | undefined;
 
 beforeEach(async () => {
   testFile = path.join(os.tmpdir(), `zelari-discovery-test-${Date.now()}-${Math.random()}`, 'models.json');
   process.env.ANATHEMA_MODELS_FILE = testFile;
   process.env.ANATHEMA_KEYSTORE_FILE = path.join(path.dirname(testFile), 'keys.json');
+  // Isolate providerConfig too: discovery now resolves the base URL via
+  // getCustomEndpoint(), so a stray custom endpoint in the real user's
+  // provider.json would pollute the URL-mapping assertions.
+  process.env.ANATHEMA_PROVIDER_CONFIG_FILE = path.join(path.dirname(testFile), 'provider.json');
+  // OPENAI_BASE_URL is a discovery base-URL override for openai-compatible /
+  // custom — clear it so a dev/CI value doesn't leak into these tests.
+  savedOpenAIBaseUrl = process.env.OPENAI_BASE_URL;
+  delete process.env.OPENAI_BASE_URL;
   // Clear any leftover keys from previous tests
   clearApiKey('grok');
   clearApiKey('glm');
@@ -47,6 +57,8 @@ beforeEach(async () => {
 afterEach(async () => {
   delete process.env.ANATHEMA_MODELS_FILE;
   delete process.env.ANATHEMA_KEYSTORE_FILE;
+  delete process.env.ANATHEMA_PROVIDER_CONFIG_FILE;
+  if (savedOpenAIBaseUrl !== undefined) process.env.OPENAI_BASE_URL = savedOpenAIBaseUrl;
   await fs.rm(path.dirname(testFile), { recursive: true, force: true }).catch(() => {});
 });
 
@@ -77,7 +89,7 @@ describe('modelDiscovery URL mapping (v3-U)', () => {
     expect(capturedUrl).toBe('https://api.x.ai/v1/models');
   });
 
-  it('hits api.z.ai/api/paas/v4/models for glm', async () => {
+  it('hits the GLM coding-plan /models endpoint for glm', async () => {
     let capturedUrl: string | undefined;
     const fetchMock = (async (url: string | URL | Request) => {
       capturedUrl = typeof url === 'string' ? url : url.toString();
@@ -89,10 +101,10 @@ describe('modelDiscovery URL mapping (v3-U)', () => {
       fetchImpl: fetchMock,
     });
 
-    expect(capturedUrl).toBe('https://api.z.ai/api/paas/v4/models');
+    expect(capturedUrl).toBe('https://api.z.ai/api/coding/paas/v4/models');
   });
 
-  it('hits api.minimaxi.chat/v1/models for minimax', async () => {
+  it('hits api.minimax.io/v1/models for minimax', async () => {
     let capturedUrl: string | undefined;
     const fetchMock = (async (url: string | URL | Request) => {
       capturedUrl = typeof url === 'string' ? url : url.toString();
@@ -104,14 +116,14 @@ describe('modelDiscovery URL mapping (v3-U)', () => {
       fetchImpl: fetchMock,
     });
 
-    expect(capturedUrl).toBe('https://api.minimaxi.chat/v1/models');
+    expect(capturedUrl).toBe('https://api.minimax.io/v1/models');
   });
 
-  it('hits api.openai.com/v1/models for openai-compatible', async () => {
+  it('hits api.x.ai/v1/models for openai-compatible (matches chat default)', async () => {
     let capturedUrl: string | undefined;
     const fetchMock = (async (url: string | URL | Request) => {
       capturedUrl = typeof url === 'string' ? url : url.toString();
-      return makeOpenAIMock([{ id: 'gpt-5' }])('x');
+      return makeOpenAIMock([{ id: 'grok-4' }])('x');
     }) as typeof fetch;
 
     await discoverModelsForProvider('openai-compatible', {
@@ -119,7 +131,64 @@ describe('modelDiscovery URL mapping (v3-U)', () => {
       fetchImpl: fetchMock,
     });
 
-    expect(capturedUrl).toBe('https://api.openai.com/v1/models');
+    expect(capturedUrl).toBe('https://api.x.ai/v1/models');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Custom endpoint resolution (regression: discovery ignored /provider custom)
+// ---------------------------------------------------------------------------
+
+describe('modelDiscovery custom endpoint (regression)', () => {
+  it('uses the persisted custom endpoint over the static default', async () => {
+    setCustomEndpoint('openai-compatible', 'https://forgeai.dotlabstudios.com/v1');
+    let capturedUrl: string | undefined;
+    const fetchMock = (async (url: string | URL | Request) => {
+      capturedUrl = typeof url === 'string' ? url : url.toString();
+      return makeOpenAIMock([{ id: 'forge-model' }])('x');
+    }) as typeof fetch;
+
+    await discoverModelsForProvider('openai-compatible', {
+      authToken: 'forge-key',
+      fetchImpl: fetchMock,
+    });
+
+    expect(capturedUrl).toBe('https://forgeai.dotlabstudios.com/v1/models');
+    clearCustomEndpoint('openai-compatible');
+  });
+
+  it('honors OPENAI_BASE_URL env for openai-compatible when no custom endpoint', async () => {
+    process.env.OPENAI_BASE_URL = 'https://gateway.example.com/v1';
+    let capturedUrl: string | undefined;
+    const fetchMock = (async (url: string | URL | Request) => {
+      capturedUrl = typeof url === 'string' ? url : url.toString();
+      return makeOpenAIMock([{ id: 'gw-model' }])('x');
+    }) as typeof fetch;
+
+    await discoverModelsForProvider('openai-compatible', {
+      authToken: 'k',
+      fetchImpl: fetchMock,
+    });
+
+    expect(capturedUrl).toBe('https://gateway.example.com/v1/models');
+  });
+
+  it('explicit options.baseUrl overrides a persisted custom endpoint', async () => {
+    setCustomEndpoint('openai-compatible', 'https://persisted.example.com/v1');
+    let capturedUrl: string | undefined;
+    const fetchMock = (async (url: string | URL | Request) => {
+      capturedUrl = typeof url === 'string' ? url : url.toString();
+      return makeOpenAIMock([{ id: 'm' }])('x');
+    }) as typeof fetch;
+
+    await discoverModelsForProvider('openai-compatible', {
+      authToken: 'k',
+      baseUrl: 'https://explicit.example.com/v1',
+      fetchImpl: fetchMock,
+    });
+
+    expect(capturedUrl).toBe('https://explicit.example.com/v1/models');
+    clearCustomEndpoint('openai-compatible');
   });
 });
 

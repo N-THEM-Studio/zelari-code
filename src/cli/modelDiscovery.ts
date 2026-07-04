@@ -74,13 +74,48 @@ export interface DiscoverOptions {
 // Provider endpoint map
 // ---------------------------------------------------------------------------
 
-/** Default base URL per provider for `/v1/models` discovery. */
+/**
+ * Default base URL per provider for `/v1/models` discovery.
+ *
+ * NOTE: `openai-compatible` defaults to api.x.ai/v1 to match the chat default
+ * in `provider/openai-compatible.ts` (PROVIDER_ENDPOINTS). Discovery and chat
+ * must agree on the base URL, otherwise `/models refresh` would probe a
+ * different host than the one prompts are sent to.
+ */
 const PROVIDER_BASE_URLS: Record<ProviderId, string> = {
   'grok': 'https://api.x.ai/v1',
-  'glm': 'https://api.z.ai/api/paas/v4',
-  'minimax': 'https://api.minimaxi.chat/v1',
-  'openai-compatible': 'https://api.openai.com/v1',
+  // Must match PROVIDER_ENDPOINTS in provider/openai-compatible.ts (chat host).
+  'glm': 'https://api.z.ai/api/coding/paas/v4',
+  'minimax': 'https://api.minimax.io/v1',
+  'openai-compatible': 'https://api.x.ai/v1',
 };
+
+/**
+ * Resolve the base URL for a discovery call, mirroring chat's `resolveBaseUrl`
+ * (provider/openai-compatible.ts) so `/models` is fetched from the same host
+ * that prompts hit. Priority:
+ *   1. Explicit `options.baseUrl` (used by tests)
+ *   2. Custom endpoint persisted via `/provider custom <url>` (wins always)
+ *   3. OPENAI_BASE_URL env override (for openai-compatible)
+ *   4. Static PROVIDER_BASE_URLS default for that provider
+ *
+ * Uses a late import of providerConfig (node:fs only) to keep this module
+ * browser-importable for jsdom tests, matching `resolveAuthToken`.
+ */
+async function resolveDiscoveryBaseUrl(
+  provider: ProviderId,
+  options: { baseUrl?: string }
+): Promise<string> {
+  if (options.baseUrl) return options.baseUrl;
+  const { getCustomEndpoint } = await import('./providerConfig.js');
+  const custom = getCustomEndpoint(provider);
+  if (custom) return custom;
+  if (provider === 'openai-compatible') {
+    const envBase = process.env.OPENAI_BASE_URL;
+    if (envBase && envBase.trim().length > 0) return envBase;
+  }
+  return PROVIDER_BASE_URLS[provider];
+}
 
 // ---------------------------------------------------------------------------
 // Cache file location
@@ -231,7 +266,13 @@ export async function discoverModelsForProvider(
   provider: ProviderId,
   options: DiscoverOptions = {}
 ): Promise<ProviderModelsEntry> {
-  const baseUrl = options.baseUrl ?? PROVIDER_BASE_URLS[provider];
+  const baseUrl = await resolveDiscoveryBaseUrl(provider, options);
+  if (!baseUrl || baseUrl.trim().length === 0) {
+    throw new ModelDiscoveryError(
+      `No base URL for provider "${provider}" — set one with /provider custom <url> before discovering models`,
+      'no_base_url'
+    );
+  }
   const url = `${baseUrl.replace(/\/$/, '')}/models`;
   const authToken = await resolveAuthToken(provider, options);
 
