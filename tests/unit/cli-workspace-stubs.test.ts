@@ -230,8 +230,9 @@ describe('createDocument stub', () => {
     // docs/risks-md.md alongside the intended risks doc.
     const stub = findStub('createDocument');
     const result = await stub.execute({ title: 'risks.md', content: '# Risks' }, ctx);
-    expect(result).toContain('docs/risks.md');
-    expect(existsSync(join(ctx.rootDir, 'docs', 'risks.md'))).toBe(true);
+    expect(result).toContain('risks.md (workspace root)');
+    expect(existsSync(join(ctx.rootDir, 'risks.md'))).toBe(true);
+    expect(existsSync(join(ctx.rootDir, 'docs', 'risks.md'))).toBe(false);
     expect(existsSync(join(ctx.rootDir, 'docs', 'risks-md.md'))).toBe(false);
     const synth = await stub.execute({ title: 'synthesis.MD', content: '# Synthesis' }, ctx);
     expect(synth).toContain('docs/synthesis.md');

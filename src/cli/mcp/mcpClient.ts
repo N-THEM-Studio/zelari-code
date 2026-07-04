@@ -13,6 +13,7 @@
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
+import { buildCmdLine } from '../utils/cmdline.js';
 
 /** JSON-RPC id → pending resolver. */
 interface Pending {
@@ -56,14 +57,23 @@ export class McpClient {
   /** Spawn the server process and run the MCP initialize handshake. */
   async start(): Promise<void> {
     if (this.child) return;
-    const child = spawn(this.config.command, this.config.args ?? [], {
-      stdio: ['pipe', 'pipe', 'pipe'],
+    const spawnOpts = {
+      stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, ...(this.config.env ?? {}) },
-      // On Windows `npx`/`uvx` resolve to .cmd shims which plain spawn
-      // cannot execute; shell:true lets cmd.exe resolve them.
-      shell: process.platform === 'win32',
       windowsHide: true,
-    });
+    };
+    // On Windows `npx`/`uvx` resolve to .cmd shims which plain spawn cannot
+    // execute, so a shell is required — but passing an args ARRAY together
+    // with shell:true is deprecated (DEP0190: args concatenated unescaped).
+    // Build the command line ourselves with explicit quoting instead.
+    const child = (
+      process.platform === 'win32'
+        ? spawn(buildCmdLine(this.config.command, this.config.args ?? []), {
+            ...spawnOpts,
+            shell: true,
+          })
+        : spawn(this.config.command, this.config.args ?? [], spawnOpts)
+    ) as ChildProcessWithoutNullStreams;
     this.child = child;
 
     child.stdout.setEncoding('utf8');
@@ -80,7 +90,7 @@ export class McpClient {
       {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: 'zelari-code', version: '0.7.8' },
+        clientInfo: { name: 'zelari-code', version: '0.7.9' },
       },
       INIT_TIMEOUT_MS,
     );

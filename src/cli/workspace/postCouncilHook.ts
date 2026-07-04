@@ -10,12 +10,12 @@
  * tool calls.
  */
 
-import { spawn } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { updateAgentsMd } from './agentsMd.js';
-import { runBuiltinCompleteDesign } from './completeDesign.js';
-import type { WorkspaceContext } from './types.js';
+import { spawn } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { updateAgentsMd } from "./agentsMd.js";
+import { runBuiltinCompleteDesign } from "./completeDesign.js";
+import type { WorkspaceContext } from "./types.js";
 
 /** Result of the AGENTS.MD maintenance step. */
 export interface HookResult {
@@ -64,28 +64,38 @@ export interface PostCouncilHookResult {
  */
 export async function runCompleteDesignPostProcessor(
   ctx: WorkspaceContext,
+  options?: { runMode?: "implementation" | "design-phase" },
 ): Promise<CompleteDesignResult> {
-  if (process.env['ZELARI_COMPLETE_DESIGN'] === '0') {
-    return { ran: false, reason: 'ZELARI_COMPLETE_DESIGN=0 (disabled)' };
+  if (options?.runMode === "implementation") {
+    return {
+      ran: false,
+      reason: "implementation mode (complete-design skipped)",
+    };
+  }
+  if (process.env["ZELARI_COMPLETE_DESIGN"] === "0") {
+    return { ran: false, reason: "ZELARI_COMPLETE_DESIGN=0 (disabled)" };
   }
 
-  const planJsonPath = join(ctx.rootDir, 'plan.json');
-  const scriptPath = join(ctx.projectRoot, 'complete-design.mjs');
+  const planJsonPath = join(ctx.rootDir, "plan.json");
+  const scriptPath = join(ctx.projectRoot, "complete-design.mjs");
 
   if (!existsSync(planJsonPath)) {
-    return { ran: false, reason: '.zelari/plan.json missing (not design-phase)' };
+    return {
+      ran: false,
+      reason: ".zelari/plan.json missing (not design-phase)",
+    };
   }
   let phaseCount = 0;
   try {
-    const parsed = JSON.parse(readFileSync(planJsonPath, 'utf8')) as {
+    const parsed = JSON.parse(readFileSync(planJsonPath, "utf8")) as {
       phases?: unknown[];
     };
     phaseCount = Array.isArray(parsed.phases) ? parsed.phases.length : 0;
   } catch {
-    return { ran: false, reason: '.zelari/plan.json corrupt' };
+    return { ran: false, reason: ".zelari/plan.json corrupt" };
   }
   if (phaseCount === 0) {
-    return { ran: false, reason: '.zelari/plan.json has no phases' };
+    return { ran: false, reason: ".zelari/plan.json has no phases" };
   }
 
   if (!existsSync(scriptPath)) {
@@ -112,18 +122,18 @@ export async function runCompleteDesignPostProcessor(
   return await new Promise<CompleteDesignResult>((resolveRun) => {
     const child = spawn(process.execPath, [scriptPath], {
       cwd: ctx.projectRoot,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ["ignore", "pipe", "pipe"],
       env: process.env,
     });
-    let stdout = '';
-    let stderr = '';
-    child.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8');
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer) => {
+      stdout += chunk.toString("utf8");
     });
-    child.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8');
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
     });
-    child.on('error', (err) => {
+    child.on("error", (err) => {
       resolveRun({
         ran: true,
         exitCode: -1,
@@ -131,14 +141,16 @@ export async function runCompleteDesignPostProcessor(
         reason: `spawn error: ${err.message}`,
       });
     });
-    child.on('close', (code) => {
+    child.on("close", (code) => {
       const exitCode = code ?? -1;
       const ok = exitCode === 0;
       resolveRun({
         ran: true,
         exitCode,
         output: stdout + stderr,
-        ...(ok ? {} : { reason: `complete-design exited with code ${exitCode}` }),
+        ...(ok
+          ? {}
+          : { reason: `complete-design exited with code ${exitCode}` }),
       });
     });
   });
@@ -159,15 +171,16 @@ export async function runCompleteDesignPostProcessor(
  */
 export async function runPostCouncilHook(
   ctx: WorkspaceContext,
+  options?: { runMode?: "implementation" | "design-phase" },
 ): Promise<PostCouncilHookResult> {
   // ── Step 1: AGENTS.MD maintenance ─────────────────────────────────────
   let agentsMdResult: HookResult;
-  if (process.env['ZELARI_AGENTS_MD'] === '0') {
+  if (process.env["ZELARI_AGENTS_MD"] === "0") {
     agentsMdResult = {
       ran: false,
       changed: false,
       sections: [],
-      reason: 'ZELARI_AGENTS_MD=0 (disabled)',
+      reason: "ZELARI_AGENTS_MD=0 (disabled)",
     };
   } else {
     try {
@@ -189,7 +202,7 @@ export async function runPostCouncilHook(
   }
 
   // ── Step 2: complete-design post-processor ───────────────────────────
-  const completeDesign = await runCompleteDesignPostProcessor(ctx);
+  const completeDesign = await runCompleteDesignPostProcessor(ctx, options);
 
   return {
     ran: agentsMdResult.ran || completeDesign.ran,

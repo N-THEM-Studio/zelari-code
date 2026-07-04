@@ -72,6 +72,12 @@ export interface SlashDispatchParams {
   setQueueCount: (n: number) => void;
   dispatchPrompt: (text: string, opts?: { requiredTools?: readonly string[] }) => Promise<void>;
   dispatchCouncilPrompt: (text: string) => Promise<void>;
+  /**
+   * v0.7.9: dispatch mode for free-form (non-slash) prompts. 'agent' routes
+   * to dispatchPrompt (single LLM turn), 'council' to dispatchCouncilPrompt
+   * (6-member pipeline). Toggled from the App with shift+tab.
+   */
+  mode?: 'agent' | 'council';
   /** Called by /new: caller closes the old SessionJsonlWriter and opens a new one for `id`. */
   onNewSession?: (id: string) => void;
   /** Called by /exit: caller flushes the writer and exits the process. */
@@ -86,6 +92,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     setMessages, setInput, setBusy, setSessionId, setSessionActive, setProviderConfig,
     activeProviderSpec, activeModel, providerDefaults,
     harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt,
+    mode = 'agent',
   } = params;
 
   return useCallback(async (value: string): Promise<void> => {
@@ -111,9 +118,16 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     const { onNewSession, onExit } = params;
 
     // ── Unhandled: free-form prompt → dispatch to LLM ──
+    // v0.7.9: routed by the shift+tab mode — 'council' sends the prompt
+    // through the 6-member pipeline exactly like `/council <text>`.
     if (!result.handled) {
       appendUser(setMessages, value);
       setSessionActive(true);
+      if (mode === 'council') {
+        setInput('');
+        await dispatchCouncilPrompt(value);
+        return;
+      }
       await dispatchPrompt(value);
       setInput('');
       return;
@@ -395,7 +409,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     skills, sessionId, messages,
     setMessages, setInput, setBusy, setSessionId, setSessionActive, setProviderConfig,
     activeProviderSpec, activeModel, providerDefaults,
-    harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt,
+    harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt, mode,
     params,
   ]);
 }

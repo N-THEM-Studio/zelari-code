@@ -112,9 +112,10 @@ function resolveBashWindows(): string | null {
     if (existsSyncSafe(p)) return p;
   }
 
-  // 4. `where bash` — PATH lookup. `where` ships with Windows.
+  // 4. `where bash` — PATH lookup. `where` ships with Windows (a real .exe,
+  // so no shell needed — and shell:true + args array is deprecated, DEP0190).
   try {
-    const result = spawnSync('where', ['bash'], { shell: true, encoding: 'utf-8' });
+    const result = spawnSync('where', ['bash'], { encoding: 'utf-8', windowsHide: true });
     if (result.status === 0 && result.stdout) {
       const first = result.stdout.split(/\r?\n/).find((l) => l.trim().length > 0);
       if (first && existsSyncSafe(first)) return first.trim();

@@ -1,5 +1,28 @@
 # Zelari Code
 
+```
+             -#%=
+           .*%%%@#:
+          =%%%%%%%@*
+         +%%%%%%%%%%#.
+        +%%%@@@@@@@%@#.
+      .*%@@@@@@@@@@@@@%-
+     .#%@@@@@@@@@@@@@@@@-
+     *%@@@@@@@@@@@@@@@@@%.
+    :@%%@@@@@@%:+%@@@@@%@=
+     =@%%@@@@@%.=-+%@%%@*
+     .=@@%@@@@%.*@*-+@@*.
+   -*%@@@@@@@@%.*@@@+:#@@#=.
+  *%%%%%%@@@@@@.*#%#=-:+@@@%
+ :@%%%%%%@@@@@@.:=.*:*@@@@@@=
+ *@%%@%%@@@@@@@*%@*:-:%@@@@@%.
+:@@@%@@@@@@@@@@@@@@#%@@@@@@@@=
+*%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
+
+     Z E L A R I   C O D E
+          N-THEM Studio
+```
+
 > AI Council coding agent CLI — multi-agent orchestration with slash commands, provider-agnostic LLM streaming, and self-update.
 
 ![Version](https://img.shields.io/npm/v/zelari-code)
@@ -143,7 +166,10 @@ Disable auto-check: `ZELARI_DEV=1 zelari-code`
 ## Features
 
 - 🤖 **Multi-agent council** — 6 roles (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with feedback loops and member promotion
-- 🎨 **Rich TUI** — Ink + React multi-panel interface (header, chat stream, sidebar, input bar)
+- ⇧⇥ **Agent/council mode switch** — `shift+tab` toggles free-form prompts between the single agent and the full council pipeline (mode shown in the status line)
+- 🎨 **Rich TUI** — Ink + React: native-scrollback chat stream, input bar with status line below it (mode · provider · model · session · cwd · execution timer)
+- 🗂️ **Live git sidebar** — right-hand panel with the N-THEM emblem and the working-tree changes (`+added`/`-removed` per file, refreshed every 4s; auto-hidden on narrow terminals)
+- ⏱️ **Execution timer** — elapsed time of the in-flight turn in the status line (`⏱ 12s`), frozen as `last 34s` when the run completes
 - 🧠 **Provider-agnostic** — OpenAI-compatible APIs (OpenAI, Together, Groq, custom), xAI Grok with OAuth refresh, GLM/Z.AI
 - 🛠️ **Built-in tools** — filesystem (read/write/edit), shell (bash), search (grep), git operations
 - 📚 **7 coding skills** — refactoring, testing, debugging, review, planning, docs, git-ops

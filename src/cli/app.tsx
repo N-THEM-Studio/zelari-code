@@ -3,13 +3,16 @@
 // hook signatures and remove this annotation. The split is documented in
 // `docs/plans/2026-07-01-app-split.md`.
 import React, { useState, useMemo, useCallback, useRef } from 'react';
-import { Box, Text, Static } from 'ink';
+import { Box, Text, Static, useInput, useStdin } from 'ink';
 import { InputBar } from './components/InputBar.js';
 import { LiveRegion } from './components/LiveRegion.js';
-import { StatusBar } from './components/StatusBar.js';
+import { StatusBar, type ChatMode } from './components/StatusBar.js';
+import { Sidebar, shouldShowSidebar } from './components/Sidebar.js';
 import { renderMessage, type ChatMessage } from './components/ChatStream.js';
-import { formatSkillList } from './slashCommands.js';
 import { listCodingSkills } from '@zelari/core/skills';
+import { useGitChanges } from './hooks/useGitChanges.js';
+import { useExecutionTimer } from './hooks/useExecutionTimer.js';
+import { shortenCwd } from './utils/paths.js';
 import '@zelari/core/skills/builtin/debugging';
 import '@zelari/core/skills/builtin/docs';
 import '@zelari/core/skills/builtin/git-ops';
@@ -68,12 +71,32 @@ export function App(): React.ReactElement {
   // printed" index so the ANSI-cleared scrollback stays in sync). Also bumped
   // implicitly by a sessionId change (/new).
   const [clearEpoch, setClearEpoch] = useState(0);
+  // v0.7.9: dispatch mode for free-form prompts — 'agent' (single harness
+  // turn) or 'council' (6-member pipeline). Toggled with shift+tab.
+  const [mode, setMode] = useState<ChatMode>('agent');
 
   const activeProviderSpec = getActiveProviderSpec();
   const activeModel = providerConfig.modelByProvider[activeProviderSpec.id];
 
   const session = useSession();
   const size = useTerminalSize();
+  const gitChanges = useGitChanges();
+  const cwd = useMemo(() => shortenCwd(process.cwd(), 32), []);
+  // v0.7.9: execution timer — elapsed time of the in-flight turn (shown in
+  // the StatusBar as `⏱ 12s`, then frozen as `last 34s` when the run ends).
+  const timer = useExecutionTimer(busy);
+
+  // shift+tab → toggle agent/council. ink-text-input ignores tab keys, so
+  // this never fights the InputBar. Guarded: useInput needs raw mode.
+  const { isRawModeSupported } = useStdin();
+  useInput(
+    (_input, key) => {
+      if (key.tab && key.shift) {
+        setMode((m) => (m === 'agent' ? 'council' : 'agent'));
+      }
+    },
+    { isActive: isRawModeSupported === true },
+  );
 
   // Throttle layer for the `live` region — coalesces per-token streaming
   // updates (~50-200/sec) into ≤60 renders/sec. The finalized array uses the
@@ -133,59 +156,79 @@ export function App(): React.ReactElement {
     setQueueCount: chatTurn.setQueueCount,
     dispatchPrompt: chatTurn.dispatchPrompt,
     dispatchCouncilPrompt: chatTurn.dispatchCouncilPrompt,
+    mode,
     onNewSession,
     onExit,
     onClear,
   });
 
-  const skills = useMemo(() => listCodingSkills(), []);
-  // The one-shot banner: printed once as the first Static item. Replaces the
-  // persistent Header. Includes the skill list summary so the user can see
-  // what's available without the 40-col Sidebar (which can't coexist with
-  // native scrollback — a fixed right column would be printed into every
-  // scrollback line).
+  // The one-shot banner: printed once as the first Static item. v0.7.9: the
+  // skill list is gone (it doubled the banner height and duplicated /help);
+  // the banner is now just the wordmark line + cwd + a hint.
   const banner = useMemo<ChatMessage>(() => {
-    const skillList = formatSkillList(skills);
     return {
       id: 'banner-once',
       role: 'system',
       ts: 0,
       content:
         `zelari-code v${VERSION} — ${activeProviderSpec.id}/${activeModel}\n` +
-        `${skills.length} skills available. Type /help for the list, or /skill <name>.\n` +
-        `── skills ──\n${skillList}`,
+        `cwd: ${cwd}\n` +
+        `/help for commands · /skill <name> · shift+tab toggles agent/council`,
     };
-  }, [skills, activeProviderSpec.id, activeModel]);
+  }, [activeProviderSpec.id, activeModel, cwd]);
 
   // The Static feed: banner first, then finalized messages. `key` lets /clear
   // remount Static so its internal "already printed" index resets. clearEpoch
   // is composed in so /clear forces a remount even within the same session.
+  //
+  // v0.7.9 duplicate-banner fix: before the session bootstraps, sessionId is
+  // '' — the first Static mount would print the banner, then the bootstrap
+  // sessionId change would remount Static (new key) and print it AGAIN into
+  // scrollback. Feed Static nothing until the session id exists, so the
+  // banner prints exactly once, after bootstrap.
   const staticKey = `${session.sessionId || 'pre-bootstrap'}-${clearEpoch}`;
-  const staticItems: readonly ChatMessage[] = [banner, ...session.messages];
+  const staticItems: readonly ChatMessage[] = session.sessionId
+    ? [banner, ...session.messages]
+    : [];
+
+  // v0.7.9: right Sidebar (logo + git changes). It lives in the dynamic
+  // region — a full-height column can't coexist with the native-scrollback
+  // <Static> model — so it docks beside the live/status/input block. Hidden
+  // on narrow/short terminals to keep the dynamic region under one screen.
+  const showSidebar = shouldShowSidebar(size.columns, size.rows);
 
   return (
     <>
       <Static key={staticKey} items={staticItems}>
         {(item) => renderMessage(item)}
       </Static>
-      <Box flexDirection="column" borderTop paddingX={1}>
-        <LiveRegion live={session.live} busy={busy} />
-        <StatusBar
-          model={activeModel}
-          provider={activeProviderSpec.id}
-          sessionId={session.sessionId ? session.sessionId.slice(0, 8) : '...'}
-          sessionActive={session.sessionActive}
-          totalTokens={sessionStats.totalTokens}
-          totalCostUsd={sessionStats.totalCostUsd}
-          queueCount={chatTurn.queueCount}
-          busy={busy}
-        />
-        <InputBar
-          value={input}
-          onChange={setInput}
-          onSubmit={handleSubmit}
-          disabled={busy}
-        />
+      <Box flexDirection="row">
+        {/* v0.7.9: the status line moved BELOW the input box (no more bar
+            above it) and shows the execution timer instead of tokens/cost. */}
+        <Box flexDirection="column" flexGrow={1} paddingX={1}>
+          <LiveRegion live={session.live} busy={busy} />
+          <InputBar
+            value={input}
+            onChange={setInput}
+            onSubmit={handleSubmit}
+            disabled={busy}
+          />
+          <StatusBar
+            model={activeModel}
+            provider={activeProviderSpec.id}
+            sessionId={session.sessionId ? session.sessionId.slice(0, 8) : '...'}
+            sessionActive={session.sessionActive}
+            queueCount={chatTurn.queueCount}
+            busy={busy}
+            mode={mode}
+            cwd={cwd}
+            elapsedMs={timer.elapsedMs}
+            lastMs={timer.lastMs}
+          />
+        </Box>
+        {showSidebar && (
+          <Sidebar version={VERSION} changes={gitChanges} rows={size.rows} />
+        )}
       </Box>
     </>
   );

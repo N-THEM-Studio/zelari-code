@@ -158,7 +158,7 @@ You may optionally add a 4th design system doc if the project warrants it.
 Pass the tool call as: \`createDocument({ title: "<category>", content: "<markdown body>" })\`. Do NOT summarize these into prose — they are the deliverable.`,
     // v0.7.2: explore the codebase to ground ideas in what exists.
     tools: ['list_files', 'read_file'],
-    skills: ['idea-synthesizer', 'mind-mapper', 'document-writer'],
+    skills: ['document-writer', 'mind-mapper'],
   },
   {
     id: 'pluton',
@@ -183,10 +183,17 @@ Pass the tool call as: \`createDocument({ title: "<category>", content: "<markdo
 - Keep the graph comprehensible: prune redundant or duplicate nodes.
 
 ## Output format
-Describe the proposed structure (root → branches → leaves) in text and, when building via tool, emit a buildMindMap payload. Stay under 200 words.${CLARIFICATION_PROTOCOL}`,
+Describe the proposed structure (root → branches → leaves) in text. Stay under 200 words.${CLARIFICATION_PROTOCOL}
+
+## Design-phase artifact (mandatory when running council in design-phase mode)
+Persist the knowledge map as ONE \`createDocument\` call:
+
+\`createDocument({ title: "knowledge-map", content: "<markdown: root concept, branches, leaf nodes, and cross-links>" })\`
+
+Do NOT rely on buildMindMap — it is not available in the CLI workspace.`,
     // v0.7.2: map the actual code/module structure instead of an abstract mind-map.
     tools: ['list_files', 'read_file', 'grep_content'],
-    skills: ['mind-mapper', 'research-analyst'],
+    skills: ['document-writer', 'research-analyst'],
   },
   {
     id: 'minos',
@@ -227,9 +234,9 @@ createDocument({
 })
 \`\`\`
 
-Include AT LEAST 5 risks, each scored on Impact and Likelihood, with a one-line mitigation. Cover: technical (e.g. stack risk), product (e.g. scope creep), accessibility, performance, security. Do NOT emit other workspace artifacts — your role is to evaluate, not to build.`,
+Include AT LEAST 5 risks, each scored on Impact and Likelihood, with a one-line mitigation. Cover: technical (e.g. stack risk), product (e.g. scope creep), accessibility, performance, security. The artifact is persisted at \`.zelari/risks.md\` (workspace root), NOT under docs/. Do NOT emit other workspace artifacts — your role is to evaluate, not to build.`,
     tools: [],
-    skills: ['research-analyst'],
+    skills: ['document-writer', 'research-analyst'],
   },
   {
     id: 'lucifer',

@@ -147,11 +147,13 @@ describe('checkForUpdate', () => {
 
 describe('performUpdate', () => {
   it('spawns npm install -g zelari-code@latest and captures exit code 0', async () => {
-    // Fake spawn: emits a stdout chunk + exits 0
-    const fakeSpawn = ((cmd: string, args: string[]) => {
-      // Verify the command
-      expect(cmd).toBe('npm');
-      expect(args).toEqual(['install', '-g', 'zelari-code@latest']);
+    // Fake spawn: emits a stdout chunk + exits 0.
+    // v0.7.9 (DEP0190 fix): on win32 performUpdate passes a single
+    // pre-quoted command string + shell:true; on POSIX command + args array.
+    // Normalize both shapes before asserting.
+    const fakeSpawn = ((cmd: string, args: string[] | object) => {
+      const argv = Array.isArray(args) ? [cmd, ...args] : cmd.split(' ');
+      expect(argv).toEqual(['npm', 'install', '-g', 'zelari-code@latest']);
 
       const fake = new EventEmitter() as unknown as ReturnType<typeof SpawnType> & {
         stdout: EventEmitter;

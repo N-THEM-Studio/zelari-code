@@ -5,6 +5,27 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.9] - 2026-07-04
+
+### Highlights
+- **Switch agente/council con `shift+tab`**: i prompt liberi (non-slash) vengono instradati all'agente singolo o alla pipeline council a 6 membri in base alla modalità attiva, mostrata nella status line (`⏵ agent` / `⛬ council`). Stesso percorso di `/council <testo>`.
+- **Sidebar destra**: emblema N-THEM in Braille art (griglia punti 2×4 per cella — ~4× più denso dell'ASCII), wordmark + versione + branch, e i file modificati del working tree con `+aggiunte`/`-rimosse` per file (nuovo hook `useGitChanges`: `git status --porcelain` + `diff --numstat` unstaged+staged, polling 4s, re-render solo su snapshot cambiato). Vive nella regione dinamica accanto al blocco input (una colonna full-height non può coesistere con lo scrollback nativo di `<Static>`); auto-nascosta sotto 96 colonne.
+- **Status line ridisegnata e spostata SOTTO l'input box**: via token e costo, dentro modalità, provider, modello, sessione, cwd (con `~` per la home) e il **timer di esecuzione** (`⏱ 12s` durante il run, `last 34s` a run concluso — nuovo hook `useExecutionTimer`).
+- **Fix banner duplicato**: `<Static>` veniva rimontato quando il `sessionId` arrivava dal bootstrap (key change) e ristampava il banner nello scrollback. Ora la Static non riceve item finché la sessione non esiste → banner stampato esattamente una volta. Rimossa anche la lista skill dal banner (doppione di `/help`).
+- **Fix DEP0190 (Node 24)**: tre call-site usavano `spawn(cmd, argsArray, { shell: true })` (args concatenati SENZA escaping). `mcpClient` (spawn MCP server al primo prompt) e `updater` (`npm install -g`) ora costruiscono la command line win32 con quoting esplicito via nuovo helper `utils/cmdline.ts` e passano una stringa singola; `shellResolver` esegue `where bash` senza shell (è un .exe reale).
+- **Council run-mode detection** (`implementation` vs `design-phase`): euristiche su keyword + presenza piano (`planDetect.hasWorkspacePlan`), override `ZELARI_COUNCIL_MODE`; banner di modalità nei prompt dei membri (emissioni workspace obbligatorie solo in design-phase) e skip del post-processor complete-design nei run di implementazione. Tier council esplicito lite(3)/full(6) via `ZELARI_COUNCIL_TIER`/`ZELARI_COUNCIL_SIZE` (`councilConfig.ts`).
+
+### Added
+- `src/cli/hooks/useGitChanges.ts` (parser numstat/porcelain/rename esportati e testati), `src/cli/hooks/useExecutionTimer.ts`, `src/cli/components/Sidebar.tsx`, `src/cli/utils/paths.ts` (`shortenCwd`), `src/cli/utils/cmdline.ts` (`quoteCmdArg`/`buildCmdLine`), `src/cli/councilConfig.ts`, `src/cli/workspace/planDetect.ts`, `packages/core/src/council/runMode.ts` + `modeBanners.ts`.
+- Test: `cli-git-changes` (16), `cli-useExecutionTimer` (4), `cli-cmdline` (6), `cli-councilConfig`, `core-councilRunMode`.
+- README: logo ASCII + feature v0.7.9.
+
+### Changed
+- `StatusBar`: prop `mode`/`cwd`/`elapsedMs`/`lastMs`; rimossi token e costo dalla UI (il tracking interno resta).
+- Banner di avvio: 3 righe (wordmark+versione+provider/model, cwd, hint comandi + shift+tab).
+- `tests/unit/cli-updater.test.ts`: asserzione spawn platform-agnostica (stringa win32 / array POSIX).
+- `.gitignore`: esclusa `mcps/` (cloni locali di server MCP).
+
 ## [0.7.5] - 2026-07-03
 
 ### Highlights

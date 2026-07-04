@@ -20,6 +20,7 @@ import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildCmdLine } from './utils/cmdline.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -150,7 +151,9 @@ export async function checkForUpdate(
  * Injectable `executor` for tests.
  *
  * On Windows, `spawn('npm', ...)` fails with ENOENT because npm is a .cmd
- * shim — `shell: true` lets the shell resolve the extension.
+ * shim — a shell is required to resolve the extension. v0.7.9: the win32
+ * path passes a single pre-quoted command STRING (args array + shell:true
+ * is deprecated, DEP0190: args concatenated unescaped).
  */
 export async function performUpdate(
   packageName = 'zelari-code',
@@ -161,10 +164,11 @@ export async function performUpdate(
     let stdout = '';
     let stderr = '';
 
-    const child = executor('npm', args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: process.platform === 'win32',
-    });
+    const stdio: ['ignore', 'pipe', 'pipe'] = ['ignore', 'pipe', 'pipe'];
+    const child =
+      process.platform === 'win32'
+        ? executor(buildCmdLine('npm', args), { stdio, shell: true })
+        : executor('npm', args, { stdio });
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();

@@ -24,7 +24,8 @@ export type BrainEventType =
   | 'queue_update'
   | 'session_compacted'
   | 'error'
-  | 'member_cost';
+  | 'member_cost'
+  | 'council_mode';
 
 /** Fields shared by every event. */
 export interface BrainEventBase {
@@ -230,6 +231,14 @@ export interface BrainMemberCostEvent extends BrainEventBase {
   };
 }
 
+/** Emitted once at the start of a council run (tier + mode metadata). */
+export interface BrainCouncilModeEvent extends BrainEventBase {
+  type: 'council_mode';
+  tier: 'lite' | 'full';
+  councilSize: number;
+  runMode: 'implementation' | 'design-phase';
+}
+
 /** Discriminated union of every event the brain can emit. */
 export type BrainEvent =
   | BrainAgentStartEvent
@@ -244,7 +253,8 @@ export type BrainEvent =
   | BrainQueueUpdateEvent
   | BrainSessionCompactedEvent
   | BrainErrorEvent
-  | BrainMemberCostEvent;
+  | BrainMemberCostEvent
+  | BrainCouncilModeEvent;
 
 /**
  * Map from a {@link BrainEventType} discriminator to its concrete event type.
@@ -305,6 +315,10 @@ export function isBrainErrorEvent(e: BrainEvent): e is BrainErrorEvent {
 
 export function isBrainMemberCostEvent(e: BrainEvent): e is BrainMemberCostEvent {
   return e.type === 'member_cost';
+}
+
+export function isBrainCouncilModeEvent(e: BrainEvent): e is BrainCouncilModeEvent {
+  return e.type === 'council_mode';
 }
 
 // --- Constructor ------------------------------------------------------------

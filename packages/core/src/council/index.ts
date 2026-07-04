@@ -4,6 +4,8 @@
  * coordinate via a feedback loop driven by the `runCouncilPure` generator.
  */
 export * from '../agents/councilApi.js';
+export * from './runMode.js';
+export * from './modeBanners.js';
 export * from '../agents/roles.js';
 export * from '../agents/promoteMember.js';
 export * from '../agents/councilDirectives.js';

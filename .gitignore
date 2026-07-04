@@ -12,3 +12,5 @@ packages/*/dist/
 
 # Council workspace (v3-W): project-local, per-project, NOT committed
 .zelari/
+# Local MCP server clones/installs (v0.7.9): per-machine, NOT committed
+/mcps/

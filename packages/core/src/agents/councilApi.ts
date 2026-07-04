@@ -13,6 +13,9 @@ import type {
 } from '../core/AgentHarness.js';
 import { AgentHarness } from '../core/AgentHarness.js';
 import { ToolRegistry } from '../core/tools/registry.js';
+import type { CouncilRunMode } from '../council/runMode.js';
+import { councilModeBanner } from '../council/modeBanners.js';
+import { councilTierFromSize } from '../council/runMode.js';
 
 /**
  * Council members whose tool-emission retry is DISABLED.
@@ -121,6 +124,8 @@ export interface PureCouncilConfig {
    * Default: 5. Set to 0 to disable tools entirely (overrides `tools`).
    */
   maxToolCallsPerTurn?: number;
+  /** Council run mode. Default: `implementation`. */
+  runMode?: CouncilRunMode;
 }
 
 export interface PureCouncilCallbacks {
@@ -208,6 +213,7 @@ function buildAgentMessages(
   priorOutputs: { name: string; role: string; content: string }[],
   aiConfig?: SystemPromptConfig,
   executableTools?: ReadonlySet<string> | null,
+  runMode: CouncilRunMode = 'implementation',
 ): AgentMessage[] {
   // v0.7.5: the AVAILABLE TOOLS prompt block must match the schemas the
   // harness actually advertises. The v0.7.3 fix filtered the schemas
@@ -228,6 +234,7 @@ function buildAgentMessages(
   });
   const messages: AgentMessage[] = [
     { role: 'system', content: enhancedSystemPrompt },
+    { role: 'system', content: councilModeBanner(runMode) },
     { role: 'system', content: 'IMPORTANT: Before making any tool calls or expensive operations, check if the information already exists in the shared context from previous agents. Avoid redundant work.' },
   ];
   if (ragContext) {
@@ -272,6 +279,14 @@ export async function* runCouncilPure(
     ...(config.existingOutputs ?? []),
   ];
   const sessionId = config.sessionId ?? crypto.randomUUID();
+  const runMode: CouncilRunMode = config.runMode ?? 'implementation';
+  const isDesignPhase = runMode === 'design-phase';
+
+  yield createBrainEvent('council_mode', sessionId, {
+    tier: councilTierFromSize(config.councilSize),
+    councilSize: config.councilSize,
+    runMode,
+  });
 
   // Emit council start
   yield {
@@ -371,7 +386,7 @@ export async function* runCouncilPure(
       model: effectiveModel,
       provider: effectiveProvider,
       sessionId,
-      messages: buildAgentMessages(agent, userMessage, config.ragContext, config.workspaceContext, agentOutputs, config.aiConfig, executableNames),
+      messages: buildAgentMessages(agent, userMessage, config.ragContext, config.workspaceContext, agentOutputs, config.aiConfig, executableNames, runMode),
       tools: agentTools,
       eventBus: config.eventBus,
       toolRegistry: config.tools,
@@ -437,7 +452,7 @@ export async function* runCouncilPure(
     // NON_RETRY_AGENTS (composer-2.5 cannot satisfy the heavy
     // emission budget in the 240s window; the deterministic
     // post-processor fills the gaps from a template).
-    if (!errored && !NON_RETRY_AGENTS.has(agent.id)) {
+    if (isDesignPhase && !errored && !NON_RETRY_AGENTS.has(agent.id)) {
       const specialistCheck = enforceDesignPhaseToolEmissions(agent.id, emittedToolNames);
       yield* applyRetryIfMissing({
         agent,
@@ -453,7 +468,7 @@ export async function* runCouncilPure(
         effectiveModel,
         onToolCall: () => { toolCalls += 1; },
       });
-    } else {
+    } else if (isDesignPhase) {
       enforceDesignPhaseToolEmissions(agent.id, emittedToolNames);
     }
     const memberDuration = Date.now() - memberStart;
@@ -537,9 +552,24 @@ export async function* runCouncilPure(
         '',
         anonymized,
         config.aiConfig,
-        executableNames,
+        executableNames, runMode,
       ),
-      tools: [],
+      tools: (() => {
+        const oracleToolNames = filterExecutable(
+          Array.from(new Set([
+            'createDocument',
+            'searchDocuments',
+            ...computeAgentTools(oracle, config.aiConfig),
+          ])),
+        );
+        return oracleToolNames.length > 0
+          ? getProviderTools(oracleToolNames).map((tool) => ({
+              name: tool.function.name,
+              description: tool.function.description,
+              parameters: tool.function.parameters as Record<string, unknown>,
+            }))
+          : [];
+      })(),
       eventBus: config.eventBus,
       toolRegistry: config.tools,
       // Task G.2 — same per-turn limit applies to oracle.
@@ -591,7 +621,7 @@ export async function* runCouncilPure(
     // v0.7.6: post-condition check on Minosse's tool emission. The role
     // prompt requires at least one createDocument (for risks.md).
     // v0.7.7 Pass 3: forced retry if missing. Skipped on error.
-    if (!errored) {
+    if (isDesignPhase && !errored) {
       const oracleCheck = enforceDesignPhaseToolEmissions(oracle.id, emittedToolNames);
       yield* applyRetryIfMissing({
         agent: oracle,
@@ -607,7 +637,7 @@ export async function* runCouncilPure(
         effectiveModel,
         onToolCall: () => { toolCalls += 1; },
       });
-    } else {
+    } else if (isDesignPhase) {
       enforceDesignPhaseToolEmissions(oracle.id, emittedToolNames);
     }
     const memberDuration = Date.now() - memberStart;
@@ -697,7 +727,7 @@ export async function* runCouncilPure(
         config.workspaceContext,
         agentOutputs,
         config.aiConfig,
-        executableNames,
+        executableNames, runMode,
       ),
       tools: chairmanTools,
       eventBus: config.eventBus,
@@ -767,7 +797,7 @@ export async function* runCouncilPure(
     // v0.7.7 Pass 3: forced retry if missing — extracted into the shared
     // helper applyRetryIfMissing. Skipped when the chairman errored (the
     // retry is for tool-emission gaps, not for LLM-level failures).
-    if (!errored) {
+    if (isDesignPhase && !errored) {
       const chairmanCheck = enforceDesignPhaseToolEmissions(chairman.id, emittedToolNames);
       yield* applyRetryIfMissing({
         agent: chairman,
@@ -783,7 +813,7 @@ export async function* runCouncilPure(
         effectiveModel,
         onToolCall: () => { toolCalls += 1; },
       });
-    } else {
+    } else if (isDesignPhase) {
       enforceDesignPhaseToolEmissions(chairman.id, emittedToolNames);
     }
     const memberDuration = Date.now() - memberStart;
@@ -909,6 +939,9 @@ export const DESIGN_PHASE_REQUIREMENT_SETS: Record<string, ToolEmissionRequireme
   ],
   geryon: [
     [{ name: 'createDocument', min: 3 }],
+  ],
+  pluton: [
+    [{ name: 'createDocument', min: 1 }],
   ],
   minos: [
     [{ name: 'createDocument', min: 1 }],
@@ -1069,6 +1102,7 @@ export async function* runRetryTurnForMember(args: {
   eventBus?: BrainEvent['sessionId'] extends string ? unknown : never;
   toolRegistry?: unknown;
   providerStream: ProviderStreamFn;
+  runMode?: CouncilRunMode;
 }): AsyncGenerator<BrainEvent, string[], void> {
   // Filter the missing tools against what's actually executable in this
   // runtime. If a tool is missing from executableTools, the retry can't
@@ -1096,6 +1130,7 @@ export async function* runRetryTurnForMember(args: {
     args.priorOutputs,
     args.aiConfig,
     args.executableTools,
+    args.runMode ?? 'implementation',
   );
   const retryMessages = [
     ...baseMessages,
@@ -1207,6 +1242,7 @@ export async function* applyRetryIfMissing(args: {
       eventBus: args.config.eventBus,
       toolRegistry: args.config.tools,
       providerStream: args.config.providerStream,
+      runMode: args.config.runMode,
     });
     for await (const event of retryGenerator) {
       if (event.type === 'tool_execution_start') {

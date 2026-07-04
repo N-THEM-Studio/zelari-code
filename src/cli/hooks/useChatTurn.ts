@@ -183,255 +183,308 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 primary: baseProviderStream,
                 fallback: failoverResolution.fallback,
               });
-      const cwd = process.cwd();
-      // v0.7.3: surface the council plan (if any) to the single agent too.
-      // The plan lives in .zelari/plan.json but the agent had no idea it
-      // existed — users had to paste task-file paths by hand. Best-effort:
-      // no plan → null → zero prompt-token cost.
-      let planSummary: string | null = null;
-      // v0.7.4: give the single agent the same project awareness the council
-      // has (tech stack, file layout, scripts) plus a pointer to the council
-      // workspace so it reads .zelari/plan.json with its own tools.
-      let workspaceSummary: string | null = null;
-      let zelariReadHint = '';
-      try {
-        const { buildPlanSummary, buildWorkspaceSummary, buildZelariReadHint } =
-          await import('../workspace/workspaceSummary.js');
-        planSummary = buildPlanSummary(cwd);
-        workspaceSummary = buildWorkspaceSummary(cwd);
-        zelariReadHint = buildZelariReadHint(cwd);
-        // v0.7.4: close the plan loop. The single agent implements the tasks
-        // the council planned, but had no official way to advance their
-        // status — it would have to hand-edit plan.json with write_file
-        // (racy, no validation). Register the workspace `updateTask` stub so
-        // status changes go through the same mutex + atomic plan.json write
-        // the council uses. Only when a plan exists: fresh projects don't pay
-        // the extra tool-schema prompt tokens.
-        // v0.7.5: also register any workspace stubs a /skill invocation
-        // requires (opts.requiredTools), mapping the Electron-era `searchRAG`
-        // to the CLI's `searchDocuments`.
-        const wantedWorkspaceTools = new Set<string>();
-        if (planSummary) wantedWorkspaceTools.add('updateTask');
-        const WORKSPACE_STUB_NAMES = new Set([
-          'createPhase', 'createTask', 'updateTask', 'addIdea', 'createMilestone',
-          'createDocument', 'searchDocuments', 'linkDocuments', 'getDocumentBacklinks',
-        ]);
-        for (const raw of opts?.requiredTools ?? []) {
-          const name = raw === 'searchRAG' ? 'searchDocuments' : raw;
-          if (WORKSPACE_STUB_NAMES.has(name)) wantedWorkspaceTools.add(name);
-        }
-        if (wantedWorkspaceTools.size > 0) {
-          const { createWorkspaceContext } = await import('../workspace/stubs.js');
-          const { createWorkspaceToolRegistry } = await import('../workspace/toolRegistry.js');
-          const wsRegistry = createWorkspaceToolRegistry(createWorkspaceContext(cwd));
-          for (const name of wantedWorkspaceTools) {
-            const td = wsRegistry.get(name);
-            if (td) toolRegistry.register(td);
-          }
-        }
-        // v0.7.5: MCP tools. Discovery runs once per process (lazy singleton);
-        // per-turn cost after that is just re-registering into the fresh
-        // registry. Disabled with ZELARI_MCP=0. Best-effort like the rest.
+        const cwd = process.cwd();
+        // v0.7.3: surface the council plan (if any) to the single agent too.
+        // The plan lives in .zelari/plan.json but the agent had no idea it
+        // existed — users had to paste task-file paths by hand. Best-effort:
+        // no plan → null → zero prompt-token cost.
+        let planSummary: string | null = null;
+        // v0.7.4: give the single agent the same project awareness the council
+        // has (tech stack, file layout, scripts) plus a pointer to the council
+        // workspace so it reads .zelari/plan.json with its own tools.
+        let workspaceSummary: string | null = null;
+        let zelariReadHint = "";
         try {
-          const { registerMcpTools } = await import('../mcp/mcpManager.js');
-          const mcp = await registerMcpTools(toolRegistry, cwd);
-          for (const w of mcp.warnings) appendSystem(setMessages, w);
+          const {
+            buildPlanSummary,
+            buildWorkspaceSummary,
+            buildZelariReadHint,
+          } = await import("../workspace/workspaceSummary.js");
+          planSummary = buildPlanSummary(cwd);
+          workspaceSummary = buildWorkspaceSummary(cwd);
+          zelariReadHint = buildZelariReadHint(cwd);
+          // v0.7.4: close the plan loop. The single agent implements the tasks
+          // the council planned, but had no official way to advance their
+          // status — it would have to hand-edit plan.json with write_file
+          // (racy, no validation). Register the workspace `updateTask` stub so
+          // status changes go through the same mutex + atomic plan.json write
+          // the council uses. Only when a plan exists: fresh projects don't pay
+          // the extra tool-schema prompt tokens.
+          // v0.7.5: also register any workspace stubs a /skill invocation
+          // requires (opts.requiredTools), mapping the Electron-era `searchRAG`
+          // to the CLI's `searchDocuments`.
+          const wantedWorkspaceTools = new Set<string>();
+          if (planSummary) wantedWorkspaceTools.add("updateTask");
+          const WORKSPACE_STUB_NAMES = new Set([
+            "createPhase",
+            "createTask",
+            "updateTask",
+            "addIdea",
+            "createMilestone",
+            "createDocument",
+            "searchDocuments",
+            "linkDocuments",
+            "getDocumentBacklinks",
+          ]);
+          for (const raw of opts?.requiredTools ?? []) {
+            const name = raw === "searchRAG" ? "searchDocuments" : raw;
+            if (WORKSPACE_STUB_NAMES.has(name)) wantedWorkspaceTools.add(name);
+          }
+          if (wantedWorkspaceTools.size > 0) {
+            const { createWorkspaceContext } =
+              await import("../workspace/stubs.js");
+            const { createWorkspaceToolRegistry } =
+              await import("../workspace/toolRegistry.js");
+            const wsRegistry = createWorkspaceToolRegistry(
+              createWorkspaceContext(cwd),
+            );
+            for (const name of wantedWorkspaceTools) {
+              const td = wsRegistry.get(name);
+              if (td) toolRegistry.register(td);
+            }
+          }
+          // v0.7.5: MCP tools. Discovery runs once per process (lazy singleton);
+          // per-turn cost after that is just re-registering into the fresh
+          // registry. Disabled with ZELARI_MCP=0. Best-effort like the rest.
+          try {
+            const { registerMcpTools } = await import("../mcp/mcpManager.js");
+            const mcp = await registerMcpTools(toolRegistry, cwd);
+            for (const w of mcp.warnings) appendSystem(setMessages, w);
+          } catch {
+            // MCP is an enhancement — a broken server config must not block prompts.
+          }
         } catch {
-          // MCP is an enhancement — a broken server config must not block prompts.
+          // Plan summary is a nice-to-have — never block a prompt on it.
         }
-      } catch {
-        // Plan summary is a nice-to-have — never block a prompt on it.
-      }
-      // NOTE: computed AFTER the workspace wiring so updateTask (when
-      // registered) is advertised in the # Available Tools section too.
-      const toolList = toolRegistry.toOpenAITools().map((t) => `- ${t.function.name}: ${t.function.description}`).join('\n');
-      // v0.7.2 (C3): platform-aware shell guidance. The model must know which
-      // shell the `bash` tool actually runs in so it writes the right commands
-      // (POSIX for Git Bash, Windows-native for cmd.exe fallback).
-      const resolvedShell = resolveShell();
-      const isWindows = process.platform === 'win32';
-      const shellGuidance = resolvedShell.isBash
-        ? `The bash tool runs commands via Git Bash / MSYS2 (${resolvedShell.shell}). Write POSIX commands: ls, grep, $VAR, &&, /c/Users/... all work.`
-        : isWindows
-          ? `The bash tool runs commands via cmd.exe (Git Bash not found). Write Windows-native commands: use dir (not ls), %VAR% (not $VAR), avoid POSIX-only syntax.`
-          : `The bash tool runs commands via /bin/sh.`;
-      // v0.7.3: the shell has NO interactive stdin. Without this warning the
-      // model retried `npm create vite` four times against the interactive
-      // prompt ("Operation cancelled") and then gave up asking the user.
-      const nonInteractiveGuidance =
-        'The shell is NON-INTERACTIVE (stdin closed): commands that prompt for input fail immediately. ' +
-        'Always pass non-interactive flags (--yes, -y, --template, --force). ' +
-        'If a scaffolder still insists on prompting (e.g. `npm create vite` in a non-empty directory), do NOT retry it — ' +
-        'scaffold into a fresh empty subdirectory and move the files, or write package.json/configs/sources yourself with write_file, then run `npm install`.';
-      const systemPrompt = [
-        "You are Zelari Code, an interactive AI coding agent operating directly in the user's terminal.",
-        '',
-        'You ARE connected to this machine and have real tools to read, modify, and explore the codebase.',
-        "Never claim you lack filesystem or shell access — you have it. Use your tools instead of asking the user to paste file contents.",
-        '',
-        '# Platform & Shell',
-        `platform: ${process.platform}`,
-        `shell: ${resolvedShell.via}`,
-        shellGuidance,
-        nonInteractiveGuidance,
-        '',
-        '# Working Directory',
-        `You are running in: ${cwd}`,
-        'All relative file paths are resolved against this directory. Always work with real files here.',
-        '',
-        '# Available Tools',
-        'You can call these tools. Use them to take action and gather information autonomously:',
-        toolList,
-        ...(workspaceSummary ? ['', workspaceSummary] : []),
-        ...(zelariReadHint ? ['', zelariReadHint] : []),
-        ...(planSummary ? ['', planSummary] : []),
-        '',
-        '# Guidelines',
-        '- When the user asks you to write code, debug, or explore, be proactive: list files (list_files, or bash: ls/dir) and read key files (read_file) to understand the project instead of asking the user to paste file contents.',
-        '- If a command fails or is cancelled, do NOT retry variants of the same command: diagnose why (read the hint in the result if present) and take a DIFFERENT approach (e.g. create the files yourself with write_file).',
-        '- After a tool result, CONTINUE your answer from where you left off. NEVER restate or re-print text you already wrote earlier in this turn.',
-        "- Only invoke tools when they are necessary to answer the user's prompt. If the user is just saying hello or greeting them (e.g., \"ciao\", \"hello\"), simply greet them back and ask how you can help, without running any commands or tools.",
-        '- When you finish a task, briefly summarize what you did.',
-        ...(planSummary
-          ? [
-              '- Plan tasks: when you START working on a plan task call updateTask {taskId, status: "in_progress"}; when it is complete and verified call updateTask {taskId, status: "done"}. NEVER edit .zelari/plan.json by hand.',
-            ]
-          : []),
-      ].join('\n');
-      // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
-      // The council sets 5; the single-prompt path previously set NONE, so a
-      // flailing model could loop for the full MAX_TOOL_LOOP_ITERATIONS (12)
-      // of junk calls (e.g. read_file same path ×3 then silence). Default 25,
-      // overridable via ZELARI_MAX_TOOL_CALLS.
-      const maxToolCallsPerTurn = (() => {
-        const raw = process.env.ZELARI_MAX_TOOL_CALLS;
-        const n = raw ? Number.parseInt(raw, 10) : 25;
-        return Number.isFinite(n) && n > 0 ? n : 25;
-      })();
-      const harness = new AgentHarness({
-        model: envConfig.model,
-        provider: 'openai-compatible',
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userText },
-        ],
-        tools: toolRegistry.toOpenAITools().map((t) => ({
-          name: t.function.name,
-          description: t.function.description,
-          parameters: t.function.parameters,
-        })),
-        toolRegistry,
-        providerStream,
-        cwd,
-        maxToolCallsPerTurn,
-      });
-      harnessRef.current = harness;
-      setQueueCount(harness.queueLength);
+        // NOTE: computed AFTER the workspace wiring so updateTask (when
+        // registered) is advertised in the # Available Tools section too.
+        const toolList = toolRegistry
+          .toOpenAITools()
+          .map((t) => `- ${t.function.name}: ${t.function.description}`)
+          .join("\n");
+        // v0.7.2 (C3): platform-aware shell guidance. The model must know which
+        // shell the `bash` tool actually runs in so it writes the right commands
+        // (POSIX for Git Bash, Windows-native for cmd.exe fallback).
+        const resolvedShell = resolveShell();
+        const isWindows = process.platform === "win32";
+        const shellGuidance = resolvedShell.isBash
+          ? `The bash tool runs commands via Git Bash / MSYS2 (${resolvedShell.shell}). Write POSIX commands: ls, grep, $VAR, &&, /c/Users/... all work.`
+          : isWindows
+            ? `The bash tool runs commands via cmd.exe (Git Bash not found). Write Windows-native commands: use dir (not ls), %VAR% (not $VAR), avoid POSIX-only syntax.`
+            : `The bash tool runs commands via /bin/sh.`;
+        // v0.7.3: the shell has NO interactive stdin. Without this warning the
+        // model retried `npm create vite` four times against the interactive
+        // prompt ("Operation cancelled") and then gave up asking the user.
+        const nonInteractiveGuidance =
+          "The shell is NON-INTERACTIVE (stdin closed): commands that prompt for input fail immediately. " +
+          "Always pass non-interactive flags (--yes, -y, --template, --force). " +
+          "If a scaffolder still insists on prompting (e.g. `npm create vite` in a non-empty directory), do NOT retry it — " +
+          "scaffold into a fresh empty subdirectory and move the files, or write package.json/configs/sources yourself with write_file, then run `npm install`.";
+        const systemPrompt = [
+          "You are Zelari Code, an interactive AI coding agent operating directly in the user's terminal.",
+          "",
+          "You ARE connected to this machine and have real tools to read, modify, and explore the codebase.",
+          "Never claim you lack filesystem or shell access — you have it. Use your tools instead of asking the user to paste file contents.",
+          "",
+          "# Platform & Shell",
+          `platform: ${process.platform}`,
+          `shell: ${resolvedShell.via}`,
+          shellGuidance,
+          nonInteractiveGuidance,
+          "",
+          "# Working Directory",
+          `You are running in: ${cwd}`,
+          "All relative file paths are resolved against this directory. Always work with real files here.",
+          "",
+          "# Available Tools",
+          "You can call these tools. Use them to take action and gather information autonomously:",
+          toolList,
+          ...(workspaceSummary ? ["", workspaceSummary] : []),
+          ...(zelariReadHint ? ["", zelariReadHint] : []),
+          ...(planSummary ? ["", planSummary] : []),
+          "",
+          "# Guidelines",
+          "- When the user asks you to write code, debug, or explore, be proactive: list files (list_files, or bash: ls/dir) and read key files (read_file) to understand the project instead of asking the user to paste file contents.",
+          "- If a command fails or is cancelled, do NOT retry variants of the same command: diagnose why (read the hint in the result if present) and take a DIFFERENT approach (e.g. create the files yourself with write_file).",
+          "- After a tool result, CONTINUE your answer from where you left off. NEVER restate or re-print text you already wrote earlier in this turn.",
+          '- Only invoke tools when they are necessary to answer the user\'s prompt. If the user is just saying hello or greeting them (e.g., "ciao", "hello"), simply greet them back and ask how you can help, without running any commands or tools.',
+          "- When you finish a task, briefly summarize what you did.",
+          ...(planSummary
+            ? [
+                '- Plan tasks: when you START working on a plan task call updateTask {taskId, status: "in_progress"}; when it is complete and verified call updateTask {taskId, status: "done"}. NEVER edit .zelari/plan.json by hand.',
+              ]
+            : []),
+        ].join("\n");
+        // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
+        // The council sets 5; the single-prompt path previously set NONE, so a
+        // flailing model could loop for the full MAX_TOOL_LOOP_ITERATIONS (12)
+        // of junk calls (e.g. read_file same path ×3 then silence). Default 25,
+        // overridable via ZELARI_MAX_TOOL_CALLS.
+        const maxToolCallsPerTurn = (() => {
+          const raw = process.env.ZELARI_MAX_TOOL_CALLS;
+          const n = raw ? Number.parseInt(raw, 10) : 25;
+          return Number.isFinite(n) && n > 0 ? n : 25;
+        })();
+        const harness = new AgentHarness({
+          model: envConfig.model,
+          provider: "openai-compatible",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userText },
+          ],
+          tools: toolRegistry.toOpenAITools().map((t) => ({
+            name: t.function.name,
+            description: t.function.description,
+            parameters: t.function.parameters,
+          })),
+          toolRegistry,
+          providerStream,
+          cwd,
+          maxToolCallsPerTurn,
+        });
+        harnessRef.current = harness;
+        setQueueCount(harness.queueLength);
 
-      // Total assistant output across the whole turn — feeds the token/cost
-      // estimate fallback in computeSessionStatsDelta.
-      let assistantContent = '';
-      // Display buffer for the CURRENT streamed message only. Reset on every
-      // message_end: without this, the post-tool-call message re-rendered the
-      // full accumulated turn text, duplicating everything said before the
-      // tool ran.
-      let streamContent = '';
-      // tool_execution_end doesn't carry toolName — remember it from the
-      // matching start event (keyed by toolCallId) for metrics.
-      const toolNameById = new Map<string, string>();
-      const metrics: MetricsLogger = getMetricsLogger();
-      let realUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | null = null;
-      try {
-        for await (const event of harness.run()) {
-          if (event.type === 'message_end') {
-            if (event.usage) realUsage = event.usage;
-            // Message boundary: drain buffered deltas, then seal the streamed
-            // bubble so the next message starts fresh instead of merging.
-            flushStreaming();
-            if (useLiveModel) finalizeStreaming(setMessages, setLive!);
-            else finalizeStreamingAssistant(setMessages);
-            streamContent = '';
-          }
-          if (event.type === 'queue_update') {
-            setQueueCount(harness.queueLength);
-          }
-          if (writerRef.current) {
-            await writerRef.current.append(event);
-          }
-          if (event.type === 'agent_end') {
-            metrics.record({
-              kind: 'run',
-              sessionId,
-              provider: envConfig.providerId,
-              model: envConfig.model,
-              latencyMs: event.durationMs,
-              ok: event.reason === 'stop',
-            });
-          } else if (event.type === 'error') {
-            metrics.record({
-              kind: 'error',
-              sessionId,
-              provider: envConfig.providerId,
-              model: envConfig.model,
-              error: event.message,
-            });
-          } else if (event.type === 'tool_execution_end') {
-            metrics.record({
-              kind: 'tool',
-              sessionId,
-              provider: envConfig.providerId,
-              model: envConfig.model,
-              toolName: toolNameById.get(event.toolCallId) ?? 'unknown',
-              toolCallId: event.toolCallId,
-              durationMs: event.durationMs,
-              ok: !event.isError,
-            });
-          }
-          if (event.type === 'message_delta') {
-            assistantContent += event.delta;
-            streamContent += event.delta;
-            // Route through the throttled setter so per-token deltas (50-200/sec)
-            // coalesce into ≤60 renders/sec instead of flickering the TUI.
-            if (useLiveModel) {
-              setStreaming(commitStreaming, streamContent, Date.now(), {
-                ...(event.memberId ? { memberId: event.memberId } : {}),
-                ...(event.memberName ? { memberName: event.memberName } : {}),
+        // Total assistant output across the whole turn — feeds the token/cost
+        // estimate fallback in computeSessionStatsDelta.
+        let assistantContent = "";
+        // Display buffer for the CURRENT streamed message only. Reset on every
+        // message_end: without this, the post-tool-call message re-rendered the
+        // full accumulated turn text, duplicating everything said before the
+        // tool ran.
+        let streamContent = "";
+        // tool_execution_end doesn't carry toolName — remember it from the
+        // matching start event (keyed by toolCallId) for metrics.
+        const toolNameById = new Map<string, string>();
+        const metrics: MetricsLogger = getMetricsLogger();
+        let realUsage: {
+          promptTokens: number;
+          completionTokens: number;
+          totalTokens: number;
+        } | null = null;
+        try {
+          for await (const event of harness.run()) {
+            if (event.type === "message_end") {
+              if (event.usage) realUsage = event.usage;
+              // Message boundary: drain buffered deltas, then seal the streamed
+              // bubble so the next message starts fresh instead of merging.
+              flushStreaming();
+              if (useLiveModel) finalizeStreaming(setMessages, setLive!);
+              else finalizeStreamingAssistant(setMessages);
+              streamContent = "";
+            }
+            if (event.type === "queue_update") {
+              setQueueCount(harness.queueLength);
+            }
+            if (writerRef.current) {
+              await writerRef.current.append(event);
+            }
+            if (event.type === "agent_end") {
+              metrics.record({
+                kind: "run",
+                sessionId,
+                provider: envConfig.providerId,
+                model: envConfig.model,
+                latencyMs: event.durationMs,
+                ok: event.reason === "stop",
               });
-            } else {
-              // Legacy single-array fallback (existing tests).
-              appendOrExtendStreamingAssistant(commitStreaming, streamContent, Date.now(), {
-                ...(event.memberId ? { memberId: event.memberId } : {}),
-                ...(event.memberName ? { memberName: event.memberName } : {}),
+            } else if (event.type === "error") {
+              metrics.record({
+                kind: "error",
+                sessionId,
+                provider: envConfig.providerId,
+                model: envConfig.model,
+                error: event.message,
+              });
+            } else if (event.type === "tool_execution_end") {
+              metrics.record({
+                kind: "tool",
+                sessionId,
+                provider: envConfig.providerId,
+                model: envConfig.model,
+                toolName: toolNameById.get(event.toolCallId) ?? "unknown",
+                toolCallId: event.toolCallId,
+                durationMs: event.durationMs,
+                ok: !event.isError,
               });
             }
-          } else if (event.type === 'error') {
-            flushStreaming();
-            appendSystem(setMessages, `[error] ${event.message}`, Date.now());
-          } else if (event.type === 'tool_execution_start') {
-            toolNameById.set(event.toolCallId, event.toolName);
-            // Drain buffered deltas FIRST so the text streamed before the
-            // call renders above the tool line, not below it — then seal
-            // that bubble: it's complete once the model starts calling tools.
-            flushStreaming();
-            if (useLiveModel) {
-              finalizeStreaming(setMessages, setLive!);
-              startTool(setLive!, event.toolName, event.toolCallId, event.args, event.ts);
-            } else {
-              finalizeStreamingAssistant(setMessages);
-              appendToolStart(setMessages, event.toolName, event.toolCallId, event.args, event.ts);
-            }
-            // The pre-tool bubble is sealed: reset the display buffer so the
-            // next delta starts a fresh bubble instead of re-showing (and
-            // duplicating) the text already printed above the tool line.
-            streamContent = '';
-          } else if (event.type === 'tool_execution_end') {
-            if (useLiveModel) {
-              completeTool(setMessages, setLive!, event.toolCallId, event.isError, event.durationMs, event.result);
-            } else {
-              updateToolMessageEnd(setMessages, event.toolCallId, event.isError, event.durationMs, event.result);
+            if (event.type === "message_delta") {
+              assistantContent += event.delta;
+              streamContent += event.delta;
+              // Route through the throttled setter so per-token deltas (50-200/sec)
+              // coalesce into ≤60 renders/sec instead of flickering the TUI.
+              if (useLiveModel) {
+                setStreaming(commitStreaming, streamContent, Date.now(), {
+                  ...(event.memberId ? { memberId: event.memberId } : {}),
+                  ...(event.memberName ? { memberName: event.memberName } : {}),
+                });
+              } else {
+                // Legacy single-array fallback (existing tests).
+                appendOrExtendStreamingAssistant(
+                  commitStreaming,
+                  streamContent,
+                  Date.now(),
+                  {
+                    ...(event.memberId ? { memberId: event.memberId } : {}),
+                    ...(event.memberName
+                      ? { memberName: event.memberName }
+                      : {}),
+                  },
+                );
+              }
+            } else if (event.type === "error") {
+              flushStreaming();
+              appendSystem(setMessages, `[error] ${event.message}`, Date.now());
+            } else if (event.type === "tool_execution_start") {
+              toolNameById.set(event.toolCallId, event.toolName);
+              // Drain buffered deltas FIRST so the text streamed before the
+              // call renders above the tool line, not below it — then seal
+              // that bubble: it's complete once the model starts calling tools.
+              flushStreaming();
+              if (useLiveModel) {
+                finalizeStreaming(setMessages, setLive!);
+                startTool(
+                  setLive!,
+                  event.toolName,
+                  event.toolCallId,
+                  event.args,
+                  event.ts,
+                );
+              } else {
+                finalizeStreamingAssistant(setMessages);
+                appendToolStart(
+                  setMessages,
+                  event.toolName,
+                  event.toolCallId,
+                  event.args,
+                  event.ts,
+                );
+              }
+              // The pre-tool bubble is sealed: reset the display buffer so the
+              // next delta starts a fresh bubble instead of re-showing (and
+              // duplicating) the text already printed above the tool line.
+              streamContent = "";
+            } else if (event.type === "tool_execution_end") {
+              if (useLiveModel) {
+                completeTool(
+                  setMessages,
+                  setLive!,
+                  event.toolCallId,
+                  event.isError,
+                  event.durationMs,
+                  event.result,
+                );
+              } else {
+                updateToolMessageEnd(
+                  setMessages,
+                  event.toolCallId,
+                  event.isError,
+                  event.durationMs,
+                  event.result,
+                );
+              }
             }
           }
-        }
         } finally {
           // Drain any buffered streaming deltas so the final assistant message
           // is committed before busy flips to false (and the input re-enables).
@@ -577,7 +630,7 @@ async function dispatchCouncilPromptImpl(
   // v0.7.5: MCP tools for the council too (same lazy singleton as the
   // single-agent path — zero extra spawns).
   try {
-    const { registerMcpTools } = await import('../mcp/mcpManager.js');
+    const { registerMcpTools } = await import("../mcp/mcpManager.js");
     const mcp = await registerMcpTools(councilToolRegistry);
     for (const w of mcp.warnings) appendSystem(setMessages, w);
   } catch {
@@ -613,6 +666,7 @@ async function dispatchCouncilPromptImpl(
   let consecutiveProviderErrors = 0;
   let lastErrorMessage = "";
   let councilAborted = false;
+  let councilRunMode: "implementation" | "design-phase" = "implementation";
   const PROVIDER_ERROR_ABORT_THRESHOLD = 2;
   try {
     for await (const event of dispatchCouncil(text, {
@@ -645,7 +699,14 @@ async function dispatchCouncilPromptImpl(
       if (writerRef.current) {
         await writerRef.current.append(event);
       }
-      if (event.type === "message_delta") {
+      if (event.type === "council_mode") {
+        councilRunMode = event.runMode;
+        appendSystem(
+          setMessages,
+          `[council] ${event.tier} · ${event.runMode} · ${event.councilSize} members`,
+          event.ts,
+        );
+      } else if (event.type === "message_delta") {
         // Coalesce streaming assistant content through the throttled setter so
         // per-token deltas don't flicker the TUI (same as dispatchPrompt).
         if (useLiveModel) {
@@ -802,7 +863,9 @@ async function dispatchCouncilPromptImpl(
     const hookShouldRun = membersCompleted > 0 || chairmanProducedOutput;
     if (hookShouldRun) {
       try {
-        const hook = await runPostCouncilHook(workspaceCtx);
+        const hook = await runPostCouncilHook(workspaceCtx, {
+          runMode: councilRunMode,
+        });
         if (hook.ran && hook.changed) {
           appendSystem(
             setMessages,
