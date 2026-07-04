@@ -110,11 +110,15 @@ describe('bashTool — interactive-prompt detection (v0.7.3)', () => {
 
   // Spawning the real host shell (Git Bash probe + spawn) can take >10s on
   // Windows — give these two tests their own generous vitest timeout.
-  const REAL_SHELL_TEST_TIMEOUT = 30_000;
+  // v0.7.10: observed 15.5s spawn latency on the dev box, which raced the
+  // tool's own 15s timeoutMs and flaked (ok:false). Tool timeout raised to
+  // 30s with a 45s vitest ceiling so the spawn variance has real headroom.
+  const REAL_SHELL_TEST_TIMEOUT = 45_000;
+  const REAL_SHELL_TOOL_TIMEOUT_MS = 30_000;
 
   it('injects the hint when output matches "Operation cancelled"', { timeout: REAL_SHELL_TEST_TIMEOUT }, async () => {
     const result = await bashTool.execute(
-      { command: 'echo "-  Operation cancelled"', timeoutMs: 15_000 } as never,
+      { command: 'echo "-  Operation cancelled"', timeoutMs: REAL_SHELL_TOOL_TIMEOUT_MS } as never,
       ctx,
     );
     expect(result.ok).toBe(true);
@@ -128,7 +132,7 @@ describe('bashTool — interactive-prompt detection (v0.7.3)', () => {
 
   it('does not inject the hint on normal output', { timeout: REAL_SHELL_TEST_TIMEOUT }, async () => {
     const result = await bashTool.execute(
-      { command: 'echo hello-world', timeoutMs: 15_000 } as never,
+      { command: 'echo hello-world', timeoutMs: REAL_SHELL_TOOL_TIMEOUT_MS } as never,
       ctx,
     );
     expect(result.ok).toBe(true);
