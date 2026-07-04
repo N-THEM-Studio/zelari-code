@@ -5,6 +5,14 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.12] - 2026-07-04
+
+### Fixed
+- **Council/agent tool calls falliscono su MiniMax e GLM (`tool result's tool id ... not found (2013)`, HTTP 400).** L'`AgentHarness` accodava il messaggio `role:'tool'` (risultato) al transcript **durante** il delta `tool_call`, ma il messaggio `role:'assistant'` che dichiara quella `tool_calls` solo al `finish` successivo → ordine invalido `[tool, assistant]`. xAI/grok tolleravano l'ordine invertito (match per id a prescindere dalla posizione); MiniMax e GLM validano in modo stretto e rifiutano la richiesta perché il tool result non ha un assistant tool_calls **precedente**. Ora i risultati dei tool vengono bufferizzati durante il turno e scaricati **dopo** il messaggio assistant, dando l'ordine richiesto dallo schema OpenAI: `assistant(tool_calls)` → `tool(result)`. Vale per il percorso normale, la cache anti-duplicati e lo skip di `maxToolCallsPerTurn`. Il fix sblocca ogni provider OpenAI-compatible con validazione stretta, non solo MiniMax/GLM.
+
+### Added
+- Test di regressione `core-agentHarness-toolResultOrder` — verifica che l'assistant che dichiara le `tool_calls` preceda sempre i relativi `tool` result (caso singolo e multi-tool nello stesso turno).
+
 ## [0.7.11] - 2026-07-04
 
 ### Fixed

@@ -21,7 +21,7 @@ import { runHeadless } from './runHeadless.js';
 import { loadSkillMdSkills } from './skillsMd.js';
 import { listCodingSkills } from '@zelari/core/skills';
 
-export const VERSION = '0.7.11';
+export const VERSION = '0.7.12';
 
 /**
  * Silent background update check (Task N.6, v3-N).

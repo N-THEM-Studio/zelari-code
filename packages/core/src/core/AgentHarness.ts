@@ -484,6 +484,14 @@ export class AgentHarness {
       // preceding assistant tool_calls message → HTTP 400.
       let turnText = '';
       const turnToolCalls: { id: string; name: string; args: Record<string, unknown> }[] = [];
+      // Buffer this turn's tool results and flush them AFTER the assistant
+      // message (with tool_calls) on `finish`. OpenAI ordering requires every
+      // role:'tool' message to follow the assistant message that declared the
+      // matching tool_calls. Pushing results inline (as they execute) put them
+      // BEFORE the assistant message → strict providers reject the next request
+      // (MiniMax: "tool result's tool id ... not found (2013)"). xAI/grok
+      // tolerated the reversed order; MiniMax/GLM do not.
+      const turnToolResults: { toolCallId: string; content: string }[] = [];
 
       for await (const delta of stream) {
         if (this.cancelled) {
@@ -559,8 +567,7 @@ export class AgentHarness {
               );
               this.emit(endEvent);
               yield endEvent;
-              this.config.messages.push({
-                role: 'tool',
+              turnToolResults.push({
                 toolCallId: delta.toolCallId,
                 content: dupResult,
               });
@@ -599,10 +606,9 @@ export class AgentHarness {
             );
             this.emit(endEvent);
             yield endEvent;
-            // Append the tool result to the transcript so the next provider
-            // turn can see what the tool returned (OpenAI role:'tool' message).
-            this.config.messages.push({
-              role: 'tool',
+            // Buffer the tool result; it is appended to the transcript AFTER
+            // the assistant tool_calls message on `finish` (see turnToolResults).
+            turnToolResults.push({
               toolCallId: delta.toolCallId,
               content: resultStr,
             });
@@ -626,8 +632,7 @@ export class AgentHarness {
             );
             this.emit(endEvent);
             yield endEvent;
-            this.config.messages.push({
-              role: 'tool',
+            turnToolResults.push({
               toolCallId: delta.toolCallId,
               content: `[skipped] maxToolCallsPerTurn reached (limit=${maxToolCalls})`,
             });
@@ -646,6 +651,17 @@ export class AgentHarness {
               role: 'assistant',
               content: turnText,
               ...(turnToolCalls.length > 0 ? { toolCalls: turnToolCalls } : {}),
+            });
+          }
+          // Flush buffered tool results AFTER the assistant tool_calls message
+          // so the transcript order is assistant(tool_calls) → tool(results),
+          // as the OpenAI schema requires. Strict providers (MiniMax/GLM) 400
+          // otherwise; grok tolerated the reversed order.
+          for (const tr of turnToolResults) {
+            this.config.messages.push({
+              role: 'tool',
+              toolCallId: tr.toolCallId,
+              content: tr.content,
             });
           }
           break;
