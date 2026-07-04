@@ -32,9 +32,16 @@ function mkStreaming(content: string, overrides: Partial<LiveState['streaming']>
 }
 
 describe('LiveRegion — tail clamp contract (v0.7.0)', () => {
-  it('renders null when no streaming and no pending tools (no dynamic footprint)', () => {
+  it('renders null when no streaming, no pending tools and not busy (no dynamic footprint)', () => {
     const el = LiveRegion({ live: EMPTY_LIVE, busy: false });
     expect(el).toBeNull();
+  });
+
+  it('renders the animated working indicator when busy with an empty live state (v0.7.10)', () => {
+    // Before v0.7.10 the early return dropped `busy`, making the working
+    // fallback dead code — a run showed nothing until the first token.
+    const el = LiveRegion({ live: EMPTY_LIVE, busy: true, elapsedMs: 1500 });
+    expect(React.isValidElement(el)).toBe(true);
   });
 
   it('clamps streaming content to the last LIVE_STREAM_TAIL_LINES lines', () => {

@@ -2,12 +2,15 @@
 // the v3-N monolithic app. Behavior is correct; a future pass will tighten the
 // hook signatures and remove this annotation. The split is documented in
 // `docs/plans/2026-07-01-app-split.md`.
-import React, { useState, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { Box, Text, Static, useInput, useStdin } from 'ink';
 import { InputBar } from './components/InputBar.js';
 import { LiveRegion } from './components/LiveRegion.js';
 import { StatusBar, type ChatMode } from './components/StatusBar.js';
+import { SelectList } from './components/SelectList.js';
 import { Sidebar, shouldShowSidebar } from './components/Sidebar.js';
+import type { PickerRequest } from './slashHandlers/provider.js';
+import { discoverModelsInBackground, isModelsCacheStale, type ProviderId as DiscoveryProviderId } from './modelDiscovery.js';
 import { renderMessage, type ChatMessage } from './components/ChatStream.js';
 import { listCodingSkills } from '@zelari/core/skills';
 import { useGitChanges } from './hooks/useGitChanges.js';
@@ -74,6 +77,9 @@ export function App(): React.ReactElement {
   // v0.7.9: dispatch mode for free-form prompts — 'agent' (single harness
   // turn) or 'council' (6-member pipeline). Toggled with shift+tab.
   const [mode, setMode] = useState<ChatMode>('agent');
+  // v0.7.10: interactive picker (/provider, /model). While open it replaces
+  // the InputBar so ink-text-input never competes for arrow keys.
+  const [picker, setPicker] = useState<PickerRequest | null>(null);
 
   const activeProviderSpec = getActiveProviderSpec();
   const activeModel = providerConfig.modelByProvider[activeProviderSpec.id];
@@ -97,6 +103,18 @@ export function App(): React.ReactElement {
     },
     { isActive: isRawModeSupported === true },
   );
+
+  // v0.7.10: startup model discovery — refresh the /v1/models cache in the
+  // background when it's missing or older than 6h, so the /model picker and
+  // tab-completion show current choices without an explicit /discover.
+  useEffect(() => {
+    const id = activeProviderSpec.id as DiscoveryProviderId;
+    if (!['grok', 'glm', 'minimax', 'openai-compatible'].includes(id)) return;
+    if (!isModelsCacheStale(id)) return;
+    discoverModelsInBackground(id, {});
+    // Run once at mount for the provider active at startup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Throttle layer for the `live` region — coalesces per-token streaming
   // updates (~50-200/sec) into ≤60 renders/sec. The finalized array uses the
@@ -157,10 +175,22 @@ export function App(): React.ReactElement {
     dispatchPrompt: chatTurn.dispatchPrompt,
     dispatchCouncilPrompt: chatTurn.dispatchCouncilPrompt,
     mode,
+    openPicker: setPicker,
     onNewSession,
     onExit,
     onClear,
   });
+
+  // Picker selection re-enters the normal slash pipeline ('/provider <id>' /
+  // '/model <id>') so persistence, config refresh and the system message all
+  // come from the same code path as a typed command.
+  const onPickerSelect = useCallback((value: string) => {
+    if (!picker) return;
+    const cmd = `${picker.commandPrefix} ${value}`;
+    setPicker(null);
+    void handleSubmit(cmd);
+  }, [picker, handleSubmit]);
+  const onPickerCancel = useCallback(() => setPicker(null), []);
 
   // The one-shot banner: printed once as the first Static item. v0.7.9: the
   // skill list is gone (it doubled the banner height and duplicated /help);
@@ -206,13 +236,23 @@ export function App(): React.ReactElement {
         {/* v0.7.9: the status line moved BELOW the input box (no more bar
             above it) and shows the execution timer instead of tokens/cost. */}
         <Box flexDirection="column" flexGrow={1} paddingX={1}>
-          <LiveRegion live={session.live} busy={busy} />
-          <InputBar
-            value={input}
-            onChange={setInput}
-            onSubmit={handleSubmit}
-            disabled={busy}
-          />
+          <LiveRegion live={session.live} busy={busy} elapsedMs={timer.elapsedMs} />
+          {picker ? (
+            <SelectList
+              title={picker.title}
+              items={picker.items}
+              onSelect={onPickerSelect}
+              onCancel={onPickerCancel}
+              maxVisible={Math.max(4, Math.min(10, size.rows - 10))}
+            />
+          ) : (
+            <InputBar
+              value={input}
+              onChange={setInput}
+              onSubmit={handleSubmit}
+              disabled={busy}
+            />
+          )}
           <StatusBar
             model={activeModel}
             provider={activeProviderSpec.id}

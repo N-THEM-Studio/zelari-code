@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { renderMessage } from './ChatStream.js';
+import { WorkingIndicator } from './Spinner.js';
 import type { LiveState } from '../hooks/chatState.js';
 
 /**
@@ -14,6 +15,8 @@ const LIVE_STREAM_TAIL_LINES = 10;
 interface LiveRegionProps {
   live: LiveState;
   busy: boolean;
+  /** Elapsed ms of the in-flight run — shown by the working indicator. */
+  elapsedMs?: number | null;
 }
 
 /**
@@ -29,10 +32,13 @@ interface LiveRegionProps {
  * repaint → no flicker, by construction. Finalized messages live in the
  * terminal's native scrollback via `<Static>` (printed exactly once).
  */
-export function LiveRegion({ live, busy }: LiveRegionProps): React.ReactElement | null {
+export function LiveRegion({ live, busy, elapsedMs = null }: LiveRegionProps): React.ReactElement | null {
   const { streaming, runningTools } = live;
 
-  if (!streaming && runningTools.length === 0) return null;
+  // v0.7.10: `busy` keeps the region alive so the animated WorkingIndicator
+  // shows between dispatch and the first streamed token / tool call. (The
+  // old check dropped `busy`, which made the fallback line dead code.)
+  if (!streaming && runningTools.length === 0 && !busy) return null;
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -51,7 +57,7 @@ export function LiveRegion({ live, busy }: LiveRegionProps): React.ReactElement 
         </Box>
       ))}
       {busy && runningTools.length === 0 && !streaming && (
-        <Text dimColor> ⋯ working…</Text>
+        <WorkingIndicator elapsedMs={elapsedMs} />
       )}
     </Box>
   );

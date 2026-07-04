@@ -24,12 +24,18 @@ describe('slashCommands /provider + /model (Task 15.3)', () => {
   });
 
   describe('/provider', () => {
-    it('/provider without args returns kind=provider_list with usage hint', () => {
+    it('/provider without args returns kind=provider_picker with usage hint (v0.7.10)', () => {
       const result = handleSlashCommand('/provider', []);
       expect(result.handled).toBe(true);
-      expect(result.kind).toBe('provider_list');
+      expect(result.kind).toBe('provider_picker');
       expect(result.message).toMatch(/Usage/i);
       expect(result.provider).toBeUndefined();
+    });
+
+    it('/provider list returns kind=provider_list (text summary path)', () => {
+      const result = handleSlashCommand('/provider list', []);
+      expect(result.handled).toBe(true);
+      expect(result.kind).toBe('provider_list');
     });
 
     it('/provider <name> returns kind=provider_set + provider name', () => {
@@ -54,12 +60,25 @@ describe('slashCommands /provider + /model (Task 15.3)', () => {
   });
 
   describe('/model', () => {
-    it('/model without args returns kind=model_show with usage hint', () => {
+    it('/model without args returns kind=model_picker with usage hint (v0.7.10)', () => {
       const result = handleSlashCommand('/model', []);
       expect(result.handled).toBe(true);
-      expect(result.kind).toBe('model_show');
+      expect(result.kind).toBe('model_picker');
       expect(result.message).toMatch(/Usage/i);
       expect(result.model).toBeUndefined();
+    });
+
+    it('/model show returns kind=model_show (text path)', () => {
+      const result = handleSlashCommand('/model show', []);
+      expect(result.handled).toBe(true);
+      expect(result.kind).toBe('model_show');
+      expect(result.model).toBeUndefined();
+    });
+
+    it('/discover returns kind=models_refresh (alias, v0.7.10)', () => {
+      const result = handleSlashCommand('/discover', []);
+      expect(result.handled).toBe(true);
+      expect(result.kind).toBe('models_refresh');
     });
 
     it('/model <name> returns kind=model_set + model name', () => {

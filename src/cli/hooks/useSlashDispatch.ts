@@ -26,6 +26,7 @@ import {
 import {
   handleProviderList,
   handleProviderSet,
+  handleProviderPicker,
   handleProviderCustom,
   handleProviderRefresh,
   handleProviderStatus,
@@ -33,8 +34,10 @@ import {
   handleLoginOAuthGrok,
   handleModelShow,
   handleModelSet,
+  handleModelPicker,
   handleModelsList,
   handleModelsRefresh,
+  type PickerRequest,
 } from '../slashHandlers/provider.js';
 import {
   handleSkillStats,
@@ -78,6 +81,11 @@ export interface SlashDispatchParams {
    * (6-member pipeline). Toggled from the App with shift+tab.
    */
   mode?: 'agent' | 'council';
+  /**
+   * v0.7.10: opens the interactive SelectList in the App (for /provider and
+   * /model pickers). When absent, the handlers fall back to text summaries.
+   */
+  openPicker?: (req: PickerRequest) => void;
   /** Called by /new: caller closes the old SessionJsonlWriter and opens a new one for `id`. */
   onNewSession?: (id: string) => void;
   /** Called by /exit: caller flushes the writer and exits the process. */
@@ -185,6 +193,11 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       setInput('');
       return;
     }
+    if (result.kind === 'provider_picker') {
+      handleProviderPicker(providerCtx, params.openPicker);
+      setInput('');
+      return;
+    }
     if (result.kind === 'provider_list') {
       handleProviderList(providerCtx);
       setInput('');
@@ -225,6 +238,11 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     // ── Model ──
     if (result.kind === 'model_set' && result.model) {
       handleModelSet(providerCtx, result.model);
+      setInput('');
+      return;
+    }
+    if (result.kind === 'model_picker') {
+      await handleModelPicker(providerCtx, params.openPicker);
       setInput('');
       return;
     }

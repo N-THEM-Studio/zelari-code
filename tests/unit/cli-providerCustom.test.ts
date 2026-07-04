@@ -199,13 +199,12 @@ describe('Task A3 — custom base URLs per provider', () => {
       expect(r.message).toMatch(/Usage/i);
     });
 
-    it('/provider with no args returns provider_list kind (custom-endpoint hint lives in app.tsx)', () => {
-      // Note: handleSlashCommand returns a static usage hint here. The actual
-      // custom-endpoint suffix is composed by app.tsx when it processes
-      // kind === 'provider_list' (calls getCustomEndpoint for display).
+    it('/provider with no args returns provider_picker kind (v0.7.10 interactive picker)', () => {
+      // Note: handleSlashCommand returns a static usage hint here. The picker
+      // items are built by handleProviderPicker in slashHandlers/provider.ts.
       const r = handleSlashCommand('/provider', []);
       expect(r.handled).toBe(true);
-      expect(r.kind).toBe('provider_list');
+      expect(r.kind).toBe('provider_picker');
       expect(r.message).toMatch(/Usage/i);
       // Also verify the hint message mentions the /provider custom subcommand.
       expect(r.message).toContain('/provider custom');

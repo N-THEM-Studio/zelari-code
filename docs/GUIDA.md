@@ -267,17 +267,19 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | Comando | Descrizione |
 |---|---|
 | `/login <provider> [key]` | Autentica un provider; senza key avvia OAuth per `grok` |
-| `/provider` | Mostra provider attivo e usage |
+| `/provider` | Picker interattivo dei provider (↑/↓ + invio, esc annulla) |
 | `/provider <id>` | Cambia provider (`openai-compatible`, `grok`, `minimax`, `glm`, `custom`) |
+| `/provider list` | Mostra provider attivo e disponibili (testo) |
 | `/provider custom <url>` | Endpoint custom (Ollama, LM Studio, vLLM, …) |
 | `/provider custom clear` | Rimuove override endpoint |
 | `/provider <id> refresh` | Forza refresh token OAuth |
 | `/provider <id> status` | Stato chiave, scadenza, sorgente |
-| `/model` | Mostra modello corrente |
+| `/model` | Picker interattivo dei modelli (auto-discovery se cache assente o >6h) |
 | `/model <nome>` | Imposta modello per il provider attivo |
+| `/model show` | Mostra modello corrente |
 | `/model refresh` | Ri-scopre modelli dal provider |
 | `/models` | Elenco modelli scoperti (cache) |
-| `/models refresh` | Aggiorna cache modelli |
+| `/models refresh` (o `/discover`) | Aggiorna cache modelli |
 
 #### Skills
 
