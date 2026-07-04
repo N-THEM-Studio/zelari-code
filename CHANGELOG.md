@@ -5,6 +5,29 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.10] - 2026-07-04
+
+### Highlights
+- **Status bar a tutta larghezza**: due gruppi giustificati agli estremi del terminale — identità a sinistra (modalità, provider, modello, cwd), stato del run a destra (timer, coda, sessione). Entrambi i gruppi troncano invece di andare a capo (`wrap="truncate"` + `flexShrink` differenziato), quindi la barra è sempre esattamente una riga: prima su terminali stretti wrappava schiacciando la regione dinamica.
+- **Indicatore di lavoro animato**: nuovo `<WorkingIndicator>` (spinner Braille + verbi rotanti thinking/working/reasoning/assembling + puntini animati + tempo trascorso, es. `⠹ thinking... (12s)`). Sostituisce lo statico `⋯ working…` che era **codice morto**: l'early-return della LiveRegion ignorava `busy`, quindi tra il dispatch e il primo token non appariva nulla. Lo spinner compare anche nella status bar accanto al timer durante il run.
+- **Picker interattivi per provider e modelli**: `/provider` e `/model` senza argomenti aprono una lista navigabile (`<SelectList>`: ↑/↓ con wrap-around, invio seleziona, esc annulla, ✓ sull'attivo, finestra scorrevole per liste lunghe). La selezione rientra nella pipeline slash normale (`/provider <id>` / `/model <id>`), quindi persistenza e messaggi sono identici al comando digitato. `/model show` e `/provider list` conservano i vecchi output testuali.
+- **Discovery modelli cablata davvero**: refresh in background all'avvio quando la cache ha più di 6h (il trigger era documentato ma mai collegato), auto-discovery all'apertura del picker `/model` (con fallback a cache/default se fallisce), nuovo alias `/discover` per `/models refresh`.
+- **Fix aggiornamento status bar dopo switch**: `handleProviderSet` passava un `ProviderSpec` invece del `ProviderConfig` allo stato dell'App (il modello mostrato non si aggiornava mai) e `handleModelSet` non aggiornava affatto lo stato.
+
+### Added
+- `src/cli/components/Spinner.tsx` (`Spinner` + `WorkingIndicator`, ticker condiviso a 100ms), `src/cli/components/SelectList.tsx` (`windowStart` esportato e testato), `handleProviderPicker`/`handleModelPicker` + `buildModelPickerItems` (pure, testata) in `slashHandlers/provider.ts`.
+- Kind parser `provider_picker`/`model_picker`, comandi `/discover`, `/model show`, `/provider list`; `openPicker` in `useSlashDispatch`.
+- Test: `cli-picker.test.ts` (10 — item builder + windowing), caso busy della LiveRegion, parser picker/discover.
+
+### Changed
+- `StatusBar`: layout space-between a piena larghezza; spinner al posto di `⏱` durante il run; sessione spostata nel gruppo destro.
+- `LiveRegion`: prop `elapsedMs` inoltrata dall'App (timer nell'indicatore di lavoro).
+- `docs/GUIDA.md`: tabella provider/modello aggiornata (picker, `/discover`, `/model show`, `/provider list`).
+
+### Fixed
+- Early-return della `LiveRegion` che rendeva irraggiungibile l'indicatore "working" (ora include `busy`).
+- Refresh del `ProviderConfig` nello stato dell'App dopo `/provider <id>` e `/model <nome>`.
+
 ## [0.7.9] - 2026-07-04
 
 ### Highlights
