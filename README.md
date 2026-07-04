@@ -29,6 +29,8 @@
 ![License](https://img.shields.io/badge/license-Proprietary-red)
 ![Node](https://img.shields.io/node/v/zelari-code)
 
+📖 **[Guida completa all'uso (IT)](./docs/GUIDA.md)** — installazione, TUI, comandi slash, council, skills, workspace, headless, MCP.
+
 **Zelari Code** is a standalone CLI extracted from [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain). It brings the multi-agent council (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) directly into your terminal with a rich TUI (Ink + React), slash command system, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok with OAuth, GLM/Z.AI).
 
 > **Upgrading from ≤ 0.4.x?** See [MIGRATION.md](./MIGRATION.md) — the internal
@@ -120,33 +122,42 @@ zelari-code
 
 ## Slash Commands
 
+Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, examples, skill IDs).
+
 | Command | Description |
 |---|---|
-| `/help` | List all available commands |
-| `/skill <name>` | Invoke a coding skill (refactoring, testing, debugging, review, planning, docs, git-ops) |
-| `/skills` | List available skills |
-| `/skill-suggest <query>` | Get skill suggestions for a coding task |
-| `/skill-history` | Show skill invocation history |
+| `/help` | List all commands + loaded skills |
+| `/exit` | Exit the CLI |
+| `/login <provider> [key]` | Set API key; `/login grok` starts OAuth |
+| `/provider`, `/provider <id>` | Show / switch LLM provider |
+| `/provider custom <url>` | Self-hosted endpoint (Ollama, LM Studio, …) |
+| `/model <name>`, `/models` | Set model / list discovered models |
+| `/skill <id> [input]` | Invoke a coding skill (23 built-in + SKILL.md) |
+| `/skill-stats [id]` | Skill invocation stats |
 | `/skill-compare <id1> <id2>` | Compare two skills' stats |
-| `/provider` | Show/set active LLM provider |
-| `/model <model>` | Set model for current provider |
-| `/key <provider>` | Set API key (or start device OAuth flow for Grok) |
-| `/cost` | Show session cost breakdown |
-| `/compact` | Compact the chat transcript |
-| `/session` | Show session info |
-| `/sessions` | List past sessions |
-| `/resume [id]` | Resume a past session |
-| `/branch [name]` | Create/list/switch git branches |
-| `/diff` | Show working diff |
-| `/undo` | Undo working changes |
-| `/update` | Check for CLI updates |
-| `/update --yes` | Apply update |
-| `/update force` | Reinstall latest version |
-| `/steer <text>` | Queue follow-up prompt during active run |
-| `/steer --interrupt <text>` | Cancel current run + enqueue prompt |
-| `/promote-member <role>` | Promote a council member (role depth system) |
-| `/council` | Dispatch council task |
-| `/quit` / `/exit` | Exit the CLI |
+| `/council <input>` | Run the 6-member council pipeline |
+| `/council-feedback <id> <1-5>` | Rate a council member |
+| `/promote-member <id>` | Promote a council member to a skill |
+| `/sessions`, `/resume <id>`, `/new` | Session management |
+| `/branch <name>`, `/branches`, `/checkout <name>` | Session branches |
+| `/compact`, `/clear` | Compact / clear transcript |
+| `/diff [--staged]`, `/undo --yes` | Git diff / revert (destructive) |
+| `/steer <text>`, `/steer --interrupt <text>` | Queue follow-up during a run |
+| `/workspace …` | `.zelari/` artifacts + `AGENTS.MD` |
+| `/update`, `/update --yes` | Check / install CLI updates |
+
+**TUI:** `shift+tab` toggles **agent** ↔ **council** mode for free-form prompts.
+
+## Headless Mode
+
+Run a single task without the TUI (CI/scripts):
+
+```bash
+zelari-code --headless --task "Explain src/cli/main.ts" --output plain
+zelari-code --headless --task "Design a REST API" --council --output json
+```
+
+See **[docs/GUIDA.md](./docs/GUIDA.md#modalità-headless-ciscript)** for exit codes and all flags.
 
 ## Self-Update
 
@@ -156,12 +167,11 @@ Zelari Code includes a built-in update mechanism:
 # Inside the TUI:
 /update          # check for updates (prints current vs latest)
 /update --yes    # apply update (runs npm install -g zelari-code@latest)
-/update force    # reinstall latest (even if already on latest)
 ```
 
 On startup, the CLI silently checks the npm registry. If a newer version is available, it prints a one-line hint to stderr.
 
-Disable auto-check: `ZELARI_DEV=1 zelari-code`
+Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 
 ## Features
 
@@ -171,32 +181,32 @@ Disable auto-check: `ZELARI_DEV=1 zelari-code`
 - 🗂️ **Live git sidebar** — right-hand panel with the N-THEM emblem and the working-tree changes (`+added`/`-removed` per file, refreshed every 4s; auto-hidden on narrow terminals)
 - ⏱️ **Execution timer** — elapsed time of the in-flight turn in the status line (`⏱ 12s`), frozen as `last 34s` when the run completes
 - 🧠 **Provider-agnostic** — OpenAI-compatible APIs (OpenAI, Together, Groq, custom), xAI Grok with OAuth refresh, GLM/Z.AI
-- 🛠️ **Built-in tools** — filesystem (read/write/edit), shell (bash), search (grep), git operations
-- 📚 **7 coding skills** — refactoring, testing, debugging, review, planning, docs, git-ops
+- 🛠️ **Built-in tools** — filesystem (read/write/edit), shell (bash), search (grep), web fetch/search
+- 📚 **23 coding skills** (+ user `SKILL.md` from `.zelari/skills/`, `.claude/skills/`, …)
 - 🔄 **Cross-provider failover** — automatic retry with provider swap on transient errors
-- 💰 **Cost tracking** — per-turn + cumulative USD cost via model pricing registry
 - 📊 **Metrics + skill history** — fire-and-forget logging to `~/.tmp/zelari-code/`
 - 🗜️ **Session management** — JSONL transcripts, resume across restarts, compaction
-- 🌿 **Branch isolation** — worktree-per-session mode for safe experimentation
-- 🔌 **Slash command system** — 30+ commands for skill invocation, provider config, cost, sessions, etc.
+- 🌿 **Branch isolation** — session snapshots per branch
+- 🔌 **MCP** — external MCP servers via `.zelari/mcp.json`
 - 🆕 **Self-update** — `/update` slash command + silent registry check on startup
 
 ## Architecture
 
 ```
-zelari-code (CLI)
-├── src/cli/                  # Ink UI (app.tsx, slashCommands.ts, updater.ts, …)
-│   ├── components/           # Header, ChatStream, InputBar, Sidebar, …
-│   ├── provider/             # OpenAI-compatible adapter
-│   └── …
-├── src/agents/               # Council (councilApi), skills registry, promoteMember
-├── src/main/core/            # AgentHarness (provider-neutral agent loop)
-│   └── tools/                # Tool registry + filesystem/shell/search builtins
-├── src/shared/               # BrainEvent types (provider-neutral event contract)
-└── src/types/                # Workspace, context, knowledge types
+zelari-code (CLI, proprietary)
+├── src/cli/                  # Ink TUI, provider config, workspace, wizard, MCP
+│   ├── components/           # ChatStream, InputBar, Sidebar, StatusBar, …
+│   ├── slashHandlers/        # /provider, /workspace, /update, …
+│   └── workspace/            # .zelari/ persistence + AGENTS.MD curation
+└── packages/core/            # @zelari/core (MIT, npm)
+    ├── core/                 # AgentHarness — provider-neutral agent loop
+    ├── agents/               # Council API, roles, 23 skills, tool schemas
+    ├── harness/tools/        # Tool registry + filesystem/shell/search/web
+    ├── events/               # BrainEvent contract
+    └── council/              # Run mode, tier banners
 ```
 
-`AgentHarness` is the core: it takes (model, provider, messages, tools) + a streaming function and yields an `AsyncIterable<BrainEvent>`. The CLI subscribes to the event stream and updates the chat transcript via `eventsToMessages()`.
+`AgentHarness` takes (model, provider, messages, tools) + a streaming function and yields `AsyncIterable<BrainEvent>`. The CLI subscribes and renders via `eventsToMessages()`. See [MIGRATION.md](./MIGRATION.md) for the v0.5+ package boundary.
 
 ## Environment Variables
 
@@ -207,8 +217,13 @@ zelari-code (CLI)
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
 | `GLM_API_KEY` | GLM/Z.AI API key |
 | `GROK_API_KEY` | xAI Grok API key (alternative to OAuth) |
-| `ZELARI_DEV=1` | Disable silent update check on startup |
+| `ANATHEMA_DEV=1` | Disable silent update check on startup |
+| `ZELARI_NO_WIZARD=1` | Skip first-run wizard |
+| `ZELARI_COUNCIL_TIER=lite` | Council with 3 members instead of 6 |
+| `ZELARI_MCP=0` | Disable MCP servers |
 | `ANATHEMA_FAILOVER=0` | Disable cross-provider failover |
+
+See **[docs/GUIDA.md](./docs/GUIDA.md#variabili-dambiente)** for the full list.
 
 ## Council Workspace
 
@@ -263,6 +278,15 @@ Set `ZELARI_AGENTS_MD=0` to disable AGENTS.MD auto-curation.
 
 See [`docs/plans/2026-07-01-council-workspace-cli-stubs.md`](./docs/plans/2026-07-01-council-workspace-cli-stubs.md) for the full schema.
 
+## Documentation
+
+| Doc | Description |
+|---|---|
+| [docs/GUIDA.md](./docs/GUIDA.md) | **Guida utente completa** (IT) |
+| [docs/TOOLS.md](./docs/TOOLS.md) | Tool builtin, workspace, MCP |
+| [MIGRATION.md](./MIGRATION.md) | Upgrade from ≤ 0.4.x |
+| [docs/decisions/](./docs/decisions/) | ADRs (monorepo, npm publish, API policy) |
+
 ## Development
 
 ```bash
@@ -290,6 +314,7 @@ npm run typecheck
 
 - [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain) — the Electron desktop GUI that shares the agent runtime + council system with this CLI
 - Zelari Coder originated as the `npm run coder` script inside AnathemaBrain
+- [@zelari/core on npm](https://www.npmjs.com/package/@zelari/core) — reusable agent runtime (MIT)
 
 ## License
 
