@@ -5,6 +5,24 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.0] - 2026-07-05
+
+Primo rilascio stabile. Introduce **Zelari-mode** (missioni autonome multi-run),
+la **memoria di progetto file-based** e il supporto **prompt in italiano** per il
+rilevamento della design-phase.
+
+### Added
+- **Zelari-mode — terza modalità della TUI.** `shift+tab` ora cicla `agent → council → zelari`. In modalità zelari un prompt libero diventa un **mission brief** strutturato (intent, stack, deliverable, assunzioni, out-of-scope, slice MVP) e il council gira in loop — design-phase poi implementation per i greenfield — finché `completion.ok` è verde sullo slice MVP o si esaurisce il budget di iterazioni. Comando equivalente `/zelari <prompt>`. Il brief viene mostrato e richiede conferma (`ok`), salvo auto-start con `ZELARI_MISSION_AUTO=1`. Stato persistito in `.zelari/mission-state.json`.
+- **Memoria di progetto (file-based, zero dipendenze).** Nuova interfaccia `MemoryBackend` in `@zelari/core` (subpath `@zelari/core/memory`) e implementazione `FileMemoryBackend` nella CLI: log JSONL per-progetto in `.zelari/memory/log.jsonl` con ricerca per keyword. Gli esiti di ogni slice vengono persistiti e re-iniettati nel council come `ragContext` tra le iterazioni (mai l'intero JSONL). Opt-out con `ZELARI_MEMORY=0` (degrada a no-op). Nessun binario nativo, nessun vector store — l'interfaccia è un seam per un futuro backend semantico.
+- **Mission classifier + brief** (`classifyMission`, `buildMissionBrief` in `@zelari/core/council`): euristiche pure (IT/EN) per intent `greenfield|extend|fix|redesign`, inferenza stack e slice MVP con budget task.
+- **Budget tool dedicato al chairman.** Nuovo `maxToolCallsChairman` in `PureCouncilConfig`: in zelari-mode Lucifero riceve un budget più alto (default 30, `ZELARI_MODE_MAX_TOOLS_LUCIFER`) mentre specialisti e oracle restano sul default condiviso.
+- Nuove variabili d'ambiente: `ZELARI_MEMORY`, `ZELARI_MISSION_AUTO`, `ZELARI_MISSION_MAX_ITER`, `ZELARI_MODE_MAX_TOOLS_LUCIFER`.
+- ~40 nuovi test unitari (keyword IT, memoria file, mission/brief, loop zelari, parsing `/zelari`).
+
+### Changed
+- **`resolveCouncilRunMode` riconosce l'italiano.** `DESIGN_KEYWORDS` include ora `costruisci|crea|progetta|sviluppa|realizza|vetrina|pannello|gestionale|nuovo progetto|da zero|…`; `IMPLEMENTATION_KEYWORDS` include i verbi di fix IT (`correggi|rifattorizza|implementa|…`) e `PLAN_CONTINUE` i termini IT di continuazione. Il sostantivo `sistema` è **volutamente escluso** dai fix per non declassare i greenfield tipo "costruisci un sistema gestionale".
+- `dispatchCouncilPromptImpl` restituisce l'esito dello slice (`completionOk`/`ran`/`synthesisText`) e accetta override per-slice (`ragContext`, `runMode`, `maxToolCallsChairman`); nessun cambiamento per il percorso `/council` normale.
+
 ## [0.7.12] - 2026-07-04
 
 ### Fixed

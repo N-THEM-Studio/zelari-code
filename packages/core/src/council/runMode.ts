@@ -16,13 +16,16 @@ export interface CouncilRunModeInput {
 }
 
 const DESIGN_KEYWORDS =
-  /\b(design|architect|architecture|spec|blueprint|mockup|wireframe|greenfield|from scratch)\b/i;
+  /\b(design|architect|architecture|spec|blueprint|mockup|wireframe|greenfield|from scratch|costruisci|crea|progetta|progettazione|architettura|nuovo progetto|da zero|sviluppa|realizza|vetrina|pannello|gestionale)\b/i;
 
+// NB: bare Italian "sistema" (the noun "system") is deliberately excluded —
+// it collides with greenfield prompts like "costruisci un sistema gestionale".
+// Only unambiguous fix verbs are listed.
 const IMPLEMENTATION_KEYWORDS =
-  /\b(fix|refactor|bug|implement|patch|migrate|add tests|debug|repair|hotfix)\b/i;
+  /\b(fix|refactor|bug|implement|patch|migrate|add tests|debug|repair|hotfix|correggi|correzione|rifattorizza|refactoring|implementa|aggiungi test|migra)\b/i;
 
 const PLAN_CONTINUE =
-  /\b(continue|extend|update|refine)\b[\s\S]{0,40}\b(plan|phase|milestone)\b/i;
+  /\b(continue|extend|update|refine|continua|estendi|aggiorna|rifinisci)\b[\s\S]{0,40}\b(plan|phase|milestone|piano|fase|milestone)\b/i;
 
 /**
  * Resolve how this council run should behave.

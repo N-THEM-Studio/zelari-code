@@ -186,6 +186,36 @@ Il council rileva automaticamente se il task è di **design** (architettura, spe
 
 Override manuale: `ZELARI_COUNCIL_MODE=design-phase` o `implementation`.
 
+Le keyword sono **bilingue**: `costruisci`, `crea`, `vetrina`, `gestionale`, `da zero` attivano la design-phase; `correggi`, `rifattorizza`, `implementa` restano in implementation.
+
+### Zelari (missioni autonome)
+
+La terza modalità (`⚡ zelari`) trasforma **un prompt libero** in una **missione multi-run**: invece di un singolo giro di council, il sistema itera fino a completare uno *slice MVP*.
+
+**Come funziona:**
+
+1. **Shift+Tab** finché la status bar mostra `⚡ zelari` (oppure `/zelari <prompt>`).
+2. Zelari costruisce un **mission brief** (intent, stack inferito, deliverable, assunzioni, out-of-scope, slice MVP) e lo mostra in chat.
+3. Confermi con `ok` (o imposti `ZELARI_MISSION_AUTO=1` per l'avvio automatico).
+4. Il loop gira: per i progetti greenfield prima **design-phase**, poi **implementation** a ripetizione. Tra un'iterazione e l'altra viene re-iniettato solo un contesto compatto (brief + hit di memoria), mai l'intero transcript.
+5. La missione termina con **successo** quando `completion.ok` è verde sullo slice MVP, oppure si **ferma** al raggiungimento del budget di iterazioni (`ZELARI_MISSION_MAX_ITER`, default 10), salvando lo stato in `.zelari/mission-state.json`.
+
+In zelari-mode il **chairman (Lucifero)** riceve un budget di tool più alto (`ZELARI_MODE_MAX_TOOLS_LUCIFER`, default 30) per reggere i run di implementazione lunghi.
+
+**Variabili:**
+
+| Variabile | Default | Effetto |
+|---|---|---|
+| `ZELARI_MISSION_AUTO` | `0` | `1` = avvia la missione senza chiedere conferma del brief |
+| `ZELARI_MISSION_MAX_ITER` | `10` | numero massimo di iterazioni del loop |
+| `ZELARI_MODE_MAX_TOOLS_LUCIFER` | `30` | budget di tool call per il chairman in zelari-mode |
+
+### Memoria di progetto
+
+Zelari-mode persiste gli esiti di ogni slice in una **memoria file-based** per-progetto: `.zelari/memory/log.jsonl` (una riga per fatto). Alla ricerca (per keyword) i risultati rilevanti vengono passati al council come contesto RAG. Nessuna dipendenza nativa, nessun vector store — è un seam per un eventuale backend semantico futuro.
+
+Disattivala con `ZELARI_MEMORY=0` (degrada a no-op, il resto continua a funzionare). La memoria è **isolata per progetto**: progetti diversi non si mischiano.
+
 ---
 
 ## Comandi da terminale (flags)

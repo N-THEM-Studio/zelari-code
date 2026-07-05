@@ -136,6 +136,7 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 | `/skill-stats [id]` | Skill invocation stats |
 | `/skill-compare <id1> <id2>` | Compare two skills' stats |
 | `/council <input>` | Run the 6-member council pipeline |
+| `/zelari <input>` | Run an autonomous mission — multi-run council until the MVP slice is complete |
 | `/council-feedback <id> <1-5>` | Rate a council member |
 | `/promote-member <id>` | Promote a council member to a skill |
 | `/sessions`, `/resume <id>`, `/new` | Session management |
@@ -146,7 +147,7 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 | `/workspace …` | `.zelari/` artifacts + `AGENTS.MD` |
 | `/update`, `/update --yes` | Check / install CLI updates |
 
-**TUI:** `shift+tab` toggles **agent** ↔ **council** mode for free-form prompts.
+**TUI:** `shift+tab` cycles **agent** → **council** → **zelari** mode for free-form prompts.
 
 ## Headless Mode
 
@@ -176,7 +177,9 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 ## Features
 
 - 🤖 **Multi-agent council** — 6 roles (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with feedback loops and member promotion
-- ⇧⇥ **Agent/council mode switch** — `shift+tab` toggles free-form prompts between the single agent and the full council pipeline (mode shown in the status line)
+- ⚡ **Zelari-mode** — autonomous multi-run missions: a free-form prompt is turned into a structured mission brief, then the council loops (design → implementation) until the MVP slice's `completion.ok` is green or the iteration budget runs out
+- 🧠 **Project memory** — zero-dependency file-based recall (`.zelari/memory/`), fed into the council as RAG context between mission slices (opt-out with `ZELARI_MEMORY=0`)
+- ⇧⇥ **Agent/council/zelari mode switch** — `shift+tab` cycles free-form prompts between the single agent, the full council pipeline, and an autonomous mission (mode shown in the status line)
 - 🎨 **Rich TUI** — Ink + React: native-scrollback chat stream, input bar with status line below it (mode · provider · model · session · cwd · execution timer)
 - 🗂️ **Live git sidebar** — right-hand panel with the N-THEM emblem and the working-tree changes (`+added`/`-removed` per file, refreshed every 4s; auto-hidden on narrow terminals)
 - ⏱️ **Execution timer** — elapsed time of the in-flight turn in the status line (`⏱ 12s`), frozen as `last 34s` when the run completes
@@ -222,6 +225,10 @@ zelari-code (CLI, proprietary)
 | `ZELARI_COUNCIL_TIER=lite` | Council with 3 members instead of 6 |
 | `ZELARI_MCP=0` | Disable MCP servers |
 | `ANATHEMA_FAILOVER=0` | Disable cross-provider failover |
+| `ZELARI_MEMORY=0` | Disable the file-based project memory (`.zelari/memory/`) |
+| `ZELARI_MISSION_AUTO=1` | Auto-start Zelari missions (skip the brief confirmation) |
+| `ZELARI_MISSION_MAX_ITER` | Max Zelari mission iterations (default 10) |
+| `ZELARI_MODE_MAX_TOOLS_LUCIFER` | Chairman (Lucifero) tool budget in zelari-mode (default 30) |
 
 See **[docs/GUIDA.md](./docs/GUIDA.md#variabili-dambiente)** for the full list.
 

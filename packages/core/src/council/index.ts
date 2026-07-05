@@ -5,6 +5,8 @@
  */
 export * from '../agents/councilApi.js';
 export * from './runMode.js';
+export * from './mission.js';
+export * from './missionBrief.js';
 export * from './modeBanners.js';
 export * from './verification/index.js';
 export * from './lessons/index.js';

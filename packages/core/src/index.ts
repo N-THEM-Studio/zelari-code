@@ -20,3 +20,6 @@ export * from './council/index.js';
 
 // Skills (built-in)
 export * from './skills/index.js';
+
+// Memory backend contract (implementation lives in the CLI)
+export * from './memory/types.js';

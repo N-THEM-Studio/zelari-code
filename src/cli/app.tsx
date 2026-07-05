@@ -92,13 +92,15 @@ export function App(): React.ReactElement {
   // the StatusBar as `⏱ 12s`, then frozen as `last 34s` when the run ends).
   const timer = useExecutionTimer(busy);
 
-  // shift+tab → toggle agent/council. ink-text-input ignores tab keys, so
-  // this never fights the InputBar. Guarded: useInput needs raw mode.
+  // shift+tab → cycle agent → council → zelari. ink-text-input ignores tab
+  // keys, so this never fights the InputBar. Guarded: useInput needs raw mode.
   const { isRawModeSupported } = useStdin();
   useInput(
     (_input, key) => {
       if (key.tab && key.shift) {
-        setMode((m) => (m === 'agent' ? 'council' : 'agent'));
+        setMode((m) =>
+          m === 'agent' ? 'council' : m === 'council' ? 'zelari' : 'agent',
+        );
       }
     },
     { isActive: isRawModeSupported === true },
@@ -174,6 +176,7 @@ export function App(): React.ReactElement {
     setQueueCount: chatTurn.setQueueCount,
     dispatchPrompt: chatTurn.dispatchPrompt,
     dispatchCouncilPrompt: chatTurn.dispatchCouncilPrompt,
+    dispatchZelariPrompt: chatTurn.dispatchZelariPrompt,
     mode,
     openPicker: setPicker,
     onNewSession,

@@ -13,6 +13,16 @@ own code), nothing changes for you — just run `zelari-code` as before.
 - There is **no compatibility shim**. Old paths will not work.
 - All 9 subpath exports are listed in the table below.
 
+## v1.0.0 — additive, non-breaking
+
+v1.0.0 adds one new **`@zelari/core/memory`** subpath export that ships the
+`MemoryBackend` interface and its types (`MemoryChunk`, `MemoryResult`,
+`MemorySearchOptions`, `MemoryAddGraph`). The same types are also re-exported
+from the main `@zelari/core` barrel. Nothing was removed or renamed, so no
+migration is required — this is purely additive. The concrete file-based
+implementation lives in the CLI, so `@zelari/core` stays dependency-free
+(only `zod`).
+
 ## Why
 
 Pre-v0.5.0, `@zelari/core` lived at `src/main/core/`, `src/agents/`,

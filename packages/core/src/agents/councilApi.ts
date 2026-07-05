@@ -154,6 +154,13 @@ export interface PureCouncilConfig {
    * Default: 5. Set to 0 to disable tools entirely (overrides `tools`).
    */
   maxToolCallsPerTurn?: number;
+  /**
+   * Override the tool-call budget for the chairman (Lucifero) only. Zelari-mode
+   * raises this for long autonomous implementation runs while leaving the
+   * specialists and oracle on the shared `maxToolCallsPerTurn`. Falls back to
+   * `maxToolCallsPerTurn`, then 5.
+   */
+  maxToolCallsChairman?: number;
   /** Council run mode. Default: `implementation`. */
   runMode?: CouncilRunMode;
 }
@@ -800,7 +807,10 @@ export async function* runCouncilPure(
       tools: chairmanTools,
       eventBus: config.eventBus,
       toolRegistry: config.tools,
-      maxToolCallsPerTurn: config.maxToolCallsPerTurn ?? 5,
+      // Chairman-only budget (zelari-mode raises this); specialists/oracle
+      // keep the shared default.
+      maxToolCallsPerTurn:
+        config.maxToolCallsChairman ?? config.maxToolCallsPerTurn ?? 5,
       // v0.5.0 visible-reasoning wiring: stamp every event with
       // the chairman identity so the UI renders `· Lucifero` in
       // purple. Same pattern as the specialist loop above.

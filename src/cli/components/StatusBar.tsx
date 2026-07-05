@@ -3,7 +3,7 @@ import { Box, Text } from 'ink';
 import { formatDuration } from '../utils/duration.js';
 import { Spinner } from './Spinner.js';
 
-export type ChatMode = 'agent' | 'council';
+export type ChatMode = 'agent' | 'council' | 'zelari';
 
 interface StatusBarProps {
   model: string;
@@ -56,8 +56,11 @@ export function StatusBar({
           {sessionActive ? '●' : '○'}
         </Text>
         <Text dimColor> </Text>
-        <Text bold color={mode === 'council' ? 'magenta' : 'cyan'}>
-          {mode === 'council' ? '⛬ council' : '⏵ agent'}
+        <Text
+          bold
+          color={mode === 'council' ? 'magenta' : mode === 'zelari' ? 'green' : 'cyan'}
+        >
+          {mode === 'council' ? '⛬ council' : mode === 'zelari' ? '⚡ zelari' : '⏵ agent'}
         </Text>
         <Text dimColor> (shift+tab)</Text>
         <Text dimColor> · </Text>

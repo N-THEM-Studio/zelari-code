@@ -75,12 +75,15 @@ export interface SlashDispatchParams {
   setQueueCount: (n: number) => void;
   dispatchPrompt: (text: string, opts?: { requiredTools?: readonly string[] }) => Promise<void>;
   dispatchCouncilPrompt: (text: string) => Promise<void>;
+  /** v1.0: dispatch an autonomous Zelari mission (multi-run council loop). */
+  dispatchZelariPrompt: (text: string) => Promise<void>;
   /**
    * v0.7.9: dispatch mode for free-form (non-slash) prompts. 'agent' routes
    * to dispatchPrompt (single LLM turn), 'council' to dispatchCouncilPrompt
-   * (6-member pipeline). Toggled from the App with shift+tab.
+   * (6-member pipeline), 'zelari' to dispatchZelariPrompt (autonomous mission).
+   * Toggled from the App with shift+tab.
    */
-  mode?: 'agent' | 'council';
+  mode?: 'agent' | 'council' | 'zelari';
   /**
    * v0.7.10: opens the interactive SelectList in the App (for /provider and
    * /model pickers). When absent, the handlers fall back to text summaries.
@@ -99,7 +102,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     skills, sessionId, messages,
     setMessages, setInput, setBusy, setSessionId, setSessionActive, setProviderConfig,
     activeProviderSpec, activeModel, providerDefaults,
-    harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt,
+    harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt, dispatchZelariPrompt,
     mode = 'agent',
   } = params;
 
@@ -131,6 +134,11 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     if (!result.handled) {
       appendUser(setMessages, value);
       setSessionActive(true);
+      if (mode === 'zelari') {
+        setInput('');
+        await dispatchZelariPrompt(value);
+        return;
+      }
       if (mode === 'council') {
         setInput('');
         await dispatchCouncilPrompt(value);
@@ -177,6 +185,15 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       setSessionActive(true);
       setInput('');
       await dispatchCouncilPrompt(result.councilInput);
+      return;
+    }
+
+    // ── Zelari mission ──
+    if (result.kind === 'zelari' && result.zelariInput) {
+      appendUser(setMessages, `/zelari ${result.zelariInput}`);
+      setSessionActive(true);
+      setInput('');
+      await dispatchZelariPrompt(result.zelariInput);
       return;
     }
 
@@ -427,7 +444,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     skills, sessionId, messages,
     setMessages, setInput, setBusy, setSessionId, setSessionActive, setProviderConfig,
     activeProviderSpec, activeModel, providerDefaults,
-    harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt, mode,
+    harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt, dispatchZelariPrompt, mode,
     params,
   ]);
 }

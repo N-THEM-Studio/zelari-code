@@ -55,6 +55,8 @@ export interface CouncilDispatchOptions {
   workspaceContext?: string;
   tools?: ToolRegistry;
   maxToolCallsPerTurn?: number;
+  /** Chairman-only (Lucifero) tool budget — raised in zelari-mode. */
+  maxToolCallsChairman?: number;
   feedbackStore?: FeedbackStore;
   /** @internal */
   disableWorkspaceTools?: boolean;
@@ -115,6 +117,7 @@ export async function* dispatchCouncil(
         ? undefined
         : createWorkspaceToolRegistry(createWorkspaceContext(projectRoot))),
     maxToolCallsPerTurn: options.maxToolCallsPerTurn,
+    maxToolCallsChairman: options.maxToolCallsChairman,
     feedbackStore: options.feedbackStore,
   };
 

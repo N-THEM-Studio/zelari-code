@@ -561,9 +561,42 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
     ],
   );
 
+  const pendingZelariRef = useRef<{ userMessage: string } | null>(null);
+  const dispatchZelariPrompt = useCallback(
+    async (text: string) => {
+      await dispatchZelariPromptImpl(
+        text,
+        {
+          sessionId,
+          writerRef,
+          setMessages,
+          commitStreaming,
+          flushStreaming,
+          setBusy,
+          setQueueCount,
+          setLive,
+          liveRef,
+        },
+        pendingZelariRef,
+      );
+    },
+    [
+      sessionId,
+      writerRef,
+      setMessages,
+      commitStreaming,
+      flushStreaming,
+      setBusy,
+      setQueueCount,
+      setLive,
+      liveRef,
+    ],
+  );
+
   return {
     dispatchPrompt,
     dispatchCouncilPrompt,
+    dispatchZelariPrompt,
     harnessRef,
     queueCount,
     setQueueCount,
@@ -581,10 +614,25 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
  * hook's identity for memoization. Callers receive a stable callback via the
  * useChatTurn wrapper.
  */
+/** One council slice's outcome, consumed by the Zelari mission loop. */
+export interface CouncilSliceResult {
+  completionOk: boolean;
+  ran: boolean;
+  synthesisText?: string;
+}
+
+/** Per-slice overrides injected by the Zelari driver. */
+interface CouncilRunOverrides {
+  ragContext?: string;
+  runMode?: "implementation" | "design-phase";
+  maxToolCallsChairman?: number;
+}
+
 async function dispatchCouncilPromptImpl(
   text: string,
   deps: UseChatTurnParams & { setQueueCount: (n: number) => void },
-): Promise<void> {
+  overrides: CouncilRunOverrides = {},
+): Promise<CouncilSliceResult> {
   const {
     sessionId,
     writerRef,
@@ -604,7 +652,7 @@ async function dispatchCouncilPromptImpl(
       setMessages,
       `No API key for the active provider "${active}". Set ${spec?.envVar ?? "the provider API key env var"} or run /login ${active} before invoking /council.`,
     );
-    return;
+    return { completionOk: false, ran: false };
   }
   setBusy(true);
   // Import dynamically to avoid a circular dep at module-load time.
@@ -672,6 +720,9 @@ async function dispatchCouncilPromptImpl(
   let chairmanErrored = false;
   let luciferWriteCount = 0;
   let councilRunMode: "implementation" | "design-phase" = "implementation";
+  // v1.0: slice outcome reported back to the Zelari mission loop.
+  let sliceCompletionOk = false;
+  let sliceRan = false;
   const PROVIDER_ERROR_ABORT_THRESHOLD = 2;
   try {
     for await (const event of dispatchCouncil(text, {
@@ -696,6 +747,13 @@ async function dispatchCouncilPromptImpl(
         .filter(Boolean)
         .join("\n\n"),
       maxToolCallsPerTurn: councilMaxToolCalls,
+      // v1.0: Zelari-mode per-slice overrides (memory RAG, forced run mode,
+      // raised chairman budget). No-ops for a normal /council run.
+      ...(overrides.ragContext ? { ragContext: overrides.ragContext } : {}),
+      ...(overrides.runMode ? { runMode: overrides.runMode } : {}),
+      ...(overrides.maxToolCallsChairman
+        ? { maxToolCallsChairman: overrides.maxToolCallsChairman }
+        : {}),
       onCouncilStatus: (message) => {
         appendSystem(setMessages, message, Date.now());
       },
@@ -888,6 +946,7 @@ async function dispatchCouncilPromptImpl(
     // output. Running the hook after an all-error run (e.g. the HTTP 400 from
     // A1) dirtied the working tree with sections rewritten from nothing.
     const hookShouldRun = membersCompleted > 0 || chairmanProducedOutput;
+    sliceRan = hookShouldRun;
     if (hookShouldRun) {
       try {
         const { detectDegradedRun } = await import("@zelari/core/council");
@@ -912,6 +971,7 @@ async function dispatchCouncilPromptImpl(
           degradedRun: degraded.degraded,
           degradedReasons: degraded.reasons,
         });
+        sliceCompletionOk = hook.completion?.completion?.ok ?? false;
         if (hook.ran && hook.changed) {
           appendSystem(
             setMessages,
@@ -1010,6 +1070,128 @@ async function dispatchCouncilPromptImpl(
       );
     }
     setBusy(false);
+  }
+
+  return {
+    completionOk: sliceCompletionOk,
+    ran: sliceRan,
+    synthesisText: chairmanSynthesisText || undefined,
+  };
+}
+
+/**
+ * dispatchZelariPromptImpl — Zelari-mode entrypoint.
+ *
+ * Two-step UX: the first prompt builds and shows a mission brief and (unless
+ * ZELARI_MISSION_AUTO=1) waits for an 'ok' confirmation held in `pendingRef`;
+ * the confirmation then runs the autonomous loop. Each mission iteration runs a
+ * full council slice via `dispatchCouncilPromptImpl` with memory-derived RAG and
+ * a raised chairman tool budget.
+ */
+async function dispatchZelariPromptImpl(
+  text: string,
+  deps: UseChatTurnParams & { setQueueCount: (n: number) => void },
+  pendingRef: React.MutableRefObject<{ userMessage: string } | null>,
+): Promise<void> {
+  const { setMessages } = deps;
+  const emit = (m: string) => appendSystem(setMessages, m, Date.now());
+
+  // ── Confirmation step for a pending mission ──
+  if (pendingRef.current) {
+    const pending = pendingRef.current;
+    pendingRef.current = null;
+    const affirmative = /^(ok|okay|s[iì]|yes|y|procedi|vai|conferma|go)\b/i.test(
+      text.trim(),
+    );
+    if (!affirmative) {
+      emit("[zelari] missione annullata.");
+      return;
+    }
+    await runZelariMissionInTui(pending.userMessage, deps, emit);
+    return;
+  }
+
+  // ── Fresh prompt → build + show the brief ──
+  const { buildMissionBrief } = await import("@zelari/core/council");
+  const { hasWorkspacePlan } = await import("../workspace/planDetect.js");
+  const { formatBriefForChat, isMissionAutoStart } = await import(
+    "../zelariMission.js"
+  );
+  const projectRoot = process.cwd();
+  const brief = buildMissionBrief({
+    userMessage: text,
+    hasPlan: hasWorkspacePlan(projectRoot),
+  });
+  emit(formatBriefForChat(brief));
+
+  if (isMissionAutoStart()) {
+    await runZelariMissionInTui(text, deps, emit);
+    return;
+  }
+  pendingRef.current = { userMessage: text };
+  emit(
+    "[zelari] Confermi l'avvio della missione? invia 'ok' per procedere, qualsiasi altra cosa per annullare.",
+  );
+}
+
+/** Wire the Zelari mission driver to the real council dispatch + memory. */
+async function runZelariMissionInTui(
+  userMessage: string,
+  deps: UseChatTurnParams & { setQueueCount: (n: number) => void },
+  emit: (m: string) => void,
+): Promise<void> {
+  const { setMessages } = deps;
+  const envConfig = await providerFromEnv();
+  if (!envConfig) {
+    const active = resolveActiveProvider();
+    const spec = PROVIDERS.find((p) => p.id === active);
+    emit(
+      `No API key for the active provider "${active}". Set ${spec?.envVar ?? "the provider API key env var"} or run /login ${active} before starting a Zelari mission.`,
+    );
+    return;
+  }
+
+  const projectRoot = process.cwd();
+  const { buildMissionBrief } = await import("@zelari/core/council");
+  const { hasWorkspacePlan } = await import("../workspace/planDetect.js");
+  const { getMemoryBackend } = await import("../memory/fileBackend.js");
+  const { runZelariMission } = await import("../zelariMission.js");
+
+  const brief = buildMissionBrief({
+    userMessage,
+    hasPlan: hasWorkspacePlan(projectRoot),
+  });
+  const memory = await getMemoryBackend(projectRoot);
+  const chairmanBudget = (() => {
+    const raw = process.env.ZELARI_MODE_MAX_TOOLS_LUCIFER;
+    const n = raw ? Number.parseInt(raw, 10) : 30;
+    return Number.isFinite(n) && n > 0 ? n : 30;
+  })();
+
+  try {
+    await runZelariMission(userMessage, brief, {
+      projectRoot,
+      memory,
+      emit,
+      runSlice: async ({ userMessage: slicePrompt, runMode, ragContext }) => {
+        const r = await dispatchCouncilPromptImpl(slicePrompt, deps, {
+          ragContext,
+          runMode,
+          maxToolCallsChairman: chairmanBudget,
+        });
+        return {
+          completionOk: r.completionOk,
+          ran: r.ran,
+          synthesisText: r.synthesisText,
+        };
+      },
+    });
+  } catch (err) {
+    emit(
+      `[zelari] errore missione: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  } finally {
+    await memory.close();
   }
 }
 

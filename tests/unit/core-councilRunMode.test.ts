@@ -50,6 +50,52 @@ describe('resolveCouncilRunMode', () => {
       }),
     ).toBe('design-phase');
   });
+
+  // --- Italian language support (v1.0) ---
+
+  it('detects Italian greenfield keywords → design-phase', () => {
+    expect(
+      resolveCouncilRunMode({ userMessage: 'costruisci un gestionale per BnB' }),
+    ).toBe('design-phase');
+    expect(
+      resolveCouncilRunMode({ userMessage: 'crea una vetrina e-commerce da zero' }),
+    ).toBe('design-phase');
+    expect(
+      resolveCouncilRunMode({ userMessage: 'sviluppa un nuovo progetto React' }),
+    ).toBe('design-phase');
+  });
+
+  it('does NOT misclassify "sistema" (the noun) as implementation', () => {
+    // "costruisci ... sistema gestionale" must stay design-phase — the bare
+    // Italian noun "sistema" is intentionally not an implementation keyword.
+    expect(
+      resolveCouncilRunMode({ userMessage: 'costruisci un sistema gestionale' }),
+    ).toBe('design-phase');
+  });
+
+  it('detects Italian fix verbs → implementation', () => {
+    expect(
+      resolveCouncilRunMode({ userMessage: 'correggi il bug nel login' }),
+    ).toBe('implementation');
+    expect(
+      resolveCouncilRunMode({ userMessage: 'rifattorizza il modulo auth' }),
+    ).toBe('implementation');
+  });
+
+  it('Italian implementation keywords win over design keywords', () => {
+    expect(
+      resolveCouncilRunMode({ userMessage: 'crea e implementa il modulo pagamenti' }),
+    ).toBe('implementation');
+  });
+
+  it('continuing an Italian plan → design-phase', () => {
+    expect(
+      resolveCouncilRunMode({
+        userMessage: 'estendi il piano con una fase di sicurezza',
+        hasExistingPlan: true,
+      }),
+    ).toBe('design-phase');
+  });
 });
 
 describe('councilTierFromSize', () => {
