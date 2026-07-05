@@ -23,6 +23,9 @@ rilevamento della design-phase.
 - **`resolveCouncilRunMode` riconosce l'italiano.** `DESIGN_KEYWORDS` include ora `costruisci|crea|progetta|sviluppa|realizza|vetrina|pannello|gestionale|nuovo progetto|da zero|…`; `IMPLEMENTATION_KEYWORDS` include i verbi di fix IT (`correggi|rifattorizza|implementa|…`) e `PLAN_CONTINUE` i termini IT di continuazione. Il sostantivo `sistema` è **volutamente escluso** dai fix per non declassare i greenfield tipo "costruisci un sistema gestionale".
 - `dispatchCouncilPromptImpl` restituisce l'esito dello slice (`completionOk`/`ran`/`synthesisText`) e accetta override per-slice (`ragContext`, `runMode`, `maxToolCallsChairman`); nessun cambiamento per il percorso `/council` normale.
 
+### Security
+- Risolte le 5 vulnerabilità Dependabot (1 critical, 1 high, 3 moderate) nella catena di **devDependencies** di test/build (`vitest`/`vite`/`vite-node`/`@vitest/mocker`/`esbuild`): bump `vitest` `^2.1.9 → ^4.1.9` ed `esbuild` `^0.24.0 → ^0.25.0`. `npm audit` ora riporta 0 vulnerabilità. Nota: queste dipendenze non venivano comunque pubblicate (il campo `files` include solo `bin`/`dist`/docs), quindi non esponevano gli utenti finali; l'aggiornamento pulisce l'ambiente di sviluppo/CI. Suite invariata: 1127 test verdi su vitest 4.
+
 ## [0.7.12] - 2026-07-04
 
 ### Fixed
