@@ -187,6 +187,34 @@ const PARAM_SCHEMAS: Record<string, object> = {
     },
     required: ['title', 'content'],
   },
+  createNfrSpec: {
+    type: 'object',
+    properties: {
+      targets: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Files the NFR constraints apply to, e.g. ["index.html"]',
+      },
+      compositorOnly: {
+        type: 'boolean',
+        description: 'Animations must use only compositor properties (transform/opacity). Default true.',
+      },
+      forbidLayoutProps: {
+        type: 'boolean',
+        description: 'Forbid animating layout properties (width/height/top/left/grid-template-rows). Default true.',
+      },
+      inlineJsMaxBytes: {
+        type: 'number',
+        description: 'Max size in bytes for the first inline <script> block. Default 5120.',
+      },
+      planFeatureKeywords: {
+        type: 'array',
+        items: { type: 'string' },
+        description: 'Feature keywords the target file must contain (plan-vs-reality check).',
+      },
+    },
+    required: [],
+  },
   updateDocument: {
     type: 'object',
     properties: {
@@ -307,9 +335,10 @@ export function getProviderTools(toolNames?: string[]): ProviderTool[] {
     const customParams = (t as { parameters?: unknown }).parameters;
     const parameters =
       builtinSchema ||
-      (customParams ? (customParams as object) : null) ||
-      (Array.isArray((t as { parameters?: unknown[] }).parameters)
-        ? null
+      (customParams &&
+      typeof customParams === "object" &&
+      !Array.isArray(customParams)
+        ? (customParams as object)
         : null);
     if (!parameters) {
       // Custom tool with no schema declared: skip (defensive — never reach LLM

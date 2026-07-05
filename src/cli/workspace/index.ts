@@ -18,8 +18,8 @@ export {
   serializeFrontmatter,
   parseYaml,
   serializeYaml,
-} from './storage.js';
-export type { ParsedDoc } from './storage.js';
+} from "./storage.js";
+export type { ParsedDoc } from "./storage.js";
 
 // Filesystem paths + workspace root resolution.
 export {
@@ -28,7 +28,7 @@ export {
   workspaceArtifact,
   projectName,
   WORKSPACE_SUBDIRS,
-} from './paths.js';
+} from "./paths.js";
 
 // Public types — frontmatter shapes + WorkspaceContext.
 export type {
@@ -38,18 +38,13 @@ export type {
   RiskFrontmatter,
   ReviewFrontmatter,
   DocFrontmatter,
-} from './types.js';
+} from "./types.js";
 
-// Tool stubs — the 9 council workspace tools as filesystem-backed implementations.
-export {
-  createWorkspaceContext,
-  createWorkspaceStubs,
-} from './stubs.js';
+// Tool stubs — council workspace tools as filesystem-backed implementations.
+export { createWorkspaceContext, createWorkspaceStubs } from "./stubs.js";
 
 // Tool registry — wraps stubs as EnhancedToolDefinition[] for the harness.
-export {
-  createWorkspaceToolRegistry,
-} from './toolRegistry.js';
+export { createWorkspaceToolRegistry } from "./toolRegistry.js";
 
 // AGENTS.MD auto-maintenance — marker-delimited sections + idempotent writes.
 export {
@@ -57,11 +52,16 @@ export {
   parseAgentsMd,
   serializeAgentsMd,
   AUTO_SECTIONS,
-} from './agentsMd.js';
-export type { AutoSectionId, UpdateResult, Section } from './agentsMd.js';
+} from "./agentsMd.js";
+export type { AutoSectionId, UpdateResult, Section } from "./agentsMd.js";
 
 // Post-council hook — orchestrates `updateAgentsMd` after every council run.
 export {
   runPostCouncilHook,
-} from './postCouncilHook.js';
-export type { HookResult } from './postCouncilHook.js';
+  runImplementationVerificationHook,
+} from "./postCouncilHook.js";
+export type {
+  HookResult,
+  PostCouncilHookOptions,
+  VerificationHookResult,
+} from "./postCouncilHook.js";

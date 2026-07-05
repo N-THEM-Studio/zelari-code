@@ -163,6 +163,14 @@ export class AgentHarness {
    */
   private toolCallCache: Map<string, string> = new Map();
 
+  /**
+   * How many times this run re-entered the provider because the model emitted
+   * tool calls as a `---TOOLS---` text block (fallback format) instead of native
+   * tool_calls. Capped so a model that keeps re-emitting the same block can't
+   * loop forever. Reset on every `run()`.
+   */
+  private textToolReentries = 0;
+
   constructor(config: AgentHarnessConfig) {
     this.config = config;
     this.eventBus = config.eventBus;
@@ -253,6 +261,7 @@ export class AgentHarness {
     this.activeController = new AbortController();
     // Reset the per-run duplicate-call cache (v0.7.1 A2).
     this.toolCallCache = new Map();
+    this.textToolReentries = 0;
 
     // Emit agent_start
     const startEvent: BrainAgentStartEvent = createBrainEvent('agent_start', this.sessionId, {
@@ -641,6 +650,105 @@ export class AgentHarness {
           // Capture the finish reason via the shared ref so the caller
           // can synthesize the matching `message_end`.
           finishRef.value = delta.reason;
+          // Fallback: some models emit tool calls as a ---TOOLS---[json]---END---
+          // text block instead of native tool_calls. Execute them so edits are not
+          // silently lost. When native read/grep tools ran in the same turn, still
+          // execute write_file/edit_file from the text block (common Lucifero pattern).
+          const textTools = parseTextToolCalls(turnText);
+          const nativeWriteRan = turnToolCalls.some(
+            (t) => t.name === 'write_file' || t.name === 'edit_file',
+          );
+          const textWriteTools = textTools.filter(
+            (t) => t.name === 'write_file' || t.name === 'edit_file',
+          );
+          const toolsToRun =
+            nativeWriteRan
+              ? []
+              : turnToolCalls.length === 0
+                ? textTools
+                : textWriteTools;
+          if (/---TOOLS---/.test(turnText) && textTools.length === 0) {
+            const parseErr = createBrainEvent('error', this.sessionId, {
+              severity: 'recoverable',
+              message:
+                'Found ---TOOLS--- block but JSON parse failed; tool calls were not executed. ' +
+                'Emit valid JSON (escape newlines as \\n inside strings).',
+              code: 'text_tools_parse_failed',
+            });
+            this.emit(parseErr);
+            yield parseErr;
+          }
+          if (
+            toolsToRun.length > 0 &&
+            this.config.toolRegistry &&
+            !this.cancelled &&
+            this.textToolReentries < 4
+          ) {
+            let executedAny = false;
+            for (let ti = 0; ti < toolsToRun.length; ti++) {
+              const tt = toolsToRun[ti]!;
+              if (typeof maxToolCalls === 'number' && toolCallsThisTurn + 1 > maxToolCalls) break;
+              toolCallsThisTurn++;
+              const toolCallId = `text-${crypto.randomUUID().slice(0, 8)}`;
+              turnToolCalls.push({ id: toolCallId, name: tt.name, args: tt.args });
+              const startEv = createBrainEvent('tool_execution_start', this.sessionId, {
+                toolCallId,
+                toolName: tt.name,
+                args: tt.args,
+              });
+              this.emit(startEv);
+              yield startEv;
+              let resultStr = '';
+              let isError = false;
+              const startMs = Date.now();
+              try {
+                const normalizedArgs = normalizeTextToolArgs(tt.name, tt.args);
+                const result = await this.config.toolRegistry.invoke<unknown>(
+                  tt.name,
+                  normalizedArgs,
+                  {
+                  cwd: this.config.cwd,
+                  sessionId: this.sessionId,
+                  signal: this.activeController?.signal,
+                });
+                if (result.ok) {
+                  const val = result.value as { occurrencesReplaced?: number };
+                  if (tt.name === 'edit_file' && (val.occurrencesReplaced ?? 0) === 0) {
+                    resultStr =
+                      'edit_file: oldString not found (0 replacements). read_file the target and retry with exact text.';
+                    isError = true;
+                  } else {
+                    resultStr =
+                      typeof result.value === 'string'
+                        ? result.value
+                        : typeof result.value === 'object' && result.value !== null
+                          ? JSON.stringify(result.value, null, 2)
+                          : String(result.value);
+                  }
+                } else {
+                  resultStr = result.error;
+                  isError = true;
+                }
+              } catch (err) {
+                resultStr = err instanceof Error ? err.message : String(err);
+                isError = true;
+              }
+              const endEv = createBrainEvent('tool_execution_end', this.sessionId, {
+                toolCallId,
+                result: resultStr,
+                isError,
+                durationMs: Date.now() - startMs,
+              });
+              this.emit(endEv);
+              yield endEv;
+              turnToolResults.push({ toolCallId, content: resultStr });
+              executedAny = true;
+            }
+            if (executedAny) {
+              this.textToolReentries += 1;
+              finishRef.value = 'tool_calls';
+            }
+          }
           // Append the assistant turn (text + any tool_calls) to the transcript.
           // This MUST happen before the loop re-enters the provider (either via
           // queue drain or a follow-up tool-result turn) so the conversation
@@ -809,4 +917,63 @@ function stableStringify(value: unknown): string {
     }
     return v;
   });
+}
+
+/**
+ * Parse a `---TOOLS---[json]---END---` block out of assistant text. This is the
+ * fallback tool-call format documented in the agent system prompt
+ * (promptModules.ts). Some models emit tool calls this way instead of native
+ * tool_calls; without parsing, those calls are silently lost (the model
+ * "describes" edits it never made). Returns [] when no valid block is present.
+ * Exported for unit tests.
+ */
+/** Map common snake_case arg aliases for text-format tool calls. */
+export function normalizeTextToolArgs(
+  name: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  if (name !== 'edit_file') return args;
+  const out = { ...args };
+  if (out.oldString === undefined && typeof out.old_string === 'string') {
+    out.oldString = out.old_string;
+  }
+  if (out.newString === undefined && typeof out.new_string === 'string') {
+    out.newString = out.new_string;
+  }
+  if (out.replaceAll === undefined && typeof out.replace_all === 'boolean') {
+    out.replaceAll = out.replace_all;
+  }
+  return out;
+}
+
+export function parseTextToolCalls(
+  text: string,
+): { name: string; args: Record<string, unknown> }[] {
+  const m = /---TOOLS---\s*([\s\S]*?)---END---/.exec(text);
+  if (!m || !m[1]) return [];
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(m[1].trim());
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) return [];
+  const out: { name: string; args: Record<string, unknown> }[] = [];
+  for (const item of parsed) {
+    if (
+      item &&
+      typeof item === 'object' &&
+      typeof (item as { name?: unknown }).name === 'string'
+    ) {
+      const rawArgs = (item as { args?: unknown }).args;
+      out.push({
+        name: (item as { name: string }).name,
+        args:
+          rawArgs && typeof rawArgs === 'object' && !Array.isArray(rawArgs)
+            ? (rawArgs as Record<string, unknown>)
+            : {},
+      });
+    }
+  }
+  return out;
 }

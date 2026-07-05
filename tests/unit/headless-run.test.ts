@@ -38,6 +38,9 @@ vi.mock('@zelari/core/harness', () => ({
 
 vi.mock('../../src/cli/provider/openai-compatible.js', () => ({
   openaiCompatibleProvider: vi.fn(() => async function* () {}),
+  // headless.ts (resolveHeadlessKey) lazily imports resolveBaseUrl to attach
+  // the custom-endpoint base URL to the resolved key metadata.
+  resolveBaseUrl: vi.fn(() => 'https://api.x.ai/v1'),
 }));
 
 vi.mock('../../src/cli/keyStore.js', () => ({

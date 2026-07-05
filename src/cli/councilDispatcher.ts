@@ -17,6 +17,7 @@ import {
   runCouncilPure,
   resolveCouncilRunMode,
   type CouncilRunMode,
+  type PureCouncilCallbacks,
   type PureCouncilConfig,
 } from "@zelari/core/council";
 import type { BrainEvent } from "@zelari/core/events";
@@ -58,6 +59,8 @@ export interface CouncilDispatchOptions {
   /** @internal */
   disableWorkspaceTools?: boolean;
   workspaceRoot?: string;
+  /** Status lines (delivery retries, inline-js autofix) for the TUI. */
+  onCouncilStatus?: PureCouncilCallbacks["onCouncilStatus"];
 }
 
 export class CouncilDispatchError extends Error {
@@ -125,5 +128,9 @@ export async function* dispatchCouncil(
     setWorkspaceStubs(buildStubs(wsCtx));
   }
 
-  yield* runCouncilPure(userMessage, config, {});
+  const callbacks: PureCouncilCallbacks = {};
+  if (options.onCouncilStatus) {
+    callbacks.onCouncilStatus = options.onCouncilStatus;
+  }
+  yield* runCouncilPure(userMessage, config, callbacks);
 }

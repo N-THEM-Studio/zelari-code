@@ -36,9 +36,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   const providerStream = openaiCompatibleProvider({
     providerId: provider as 'minimax' | 'glm' | 'grok' | 'openai-compatible' | 'custom',
     apiKey: key.apiKey,
+    baseUrl: key.baseUrl,
     model,
-    ...(key.baseUrl ? { baseUrl: key.baseUrl } : {}),
-  } as Parameters<typeof openaiCompatibleProvider>[0]);
+  });
 
   if (opts.useCouncil) {
     return runHeadlessCouncil(opts, provider, model, providerStream);

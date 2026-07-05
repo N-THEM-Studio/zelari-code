@@ -146,15 +146,32 @@ describe('runPostCouncilHook', () => {
   });
 
   it('respects ZELARI_AGENTS_MD=0', async () => {
-    const old = process.env['ZELARI_AGENTS_MD'];
+    const oldAgents = process.env['ZELARI_AGENTS_MD'];
+    const oldVerify = process.env['ZELARI_VERIFY'];
+    const oldSmoke = process.env['ZELARI_SMOKE'];
+    const oldLessons = process.env['ZELARI_LESSONS'];
+    const oldCompletion = process.env['ZELARI_COMPLETION'];
     process.env['ZELARI_AGENTS_MD'] = '0';
+    process.env['ZELARI_VERIFY'] = '0';
+    process.env['ZELARI_SMOKE'] = '0';
+    process.env['ZELARI_LESSONS'] = '0';
+    process.env['ZELARI_COMPLETION'] = '0';
     try {
       const result = await runPostCouncilHook(ctx);
       expect(result.ran).toBe(false);
+      expect(result.changed).toBe(false);
       expect(result.reason).toContain('disabled');
     } finally {
-      if (old === undefined) delete process.env['ZELARI_AGENTS_MD'];
-      else process.env['ZELARI_AGENTS_MD'] = old;
+      if (oldAgents === undefined) delete process.env['ZELARI_AGENTS_MD'];
+      else process.env['ZELARI_AGENTS_MD'] = oldAgents;
+      if (oldVerify === undefined) delete process.env['ZELARI_VERIFY'];
+      else process.env['ZELARI_VERIFY'] = oldVerify;
+      if (oldSmoke === undefined) delete process.env['ZELARI_SMOKE'];
+      else process.env['ZELARI_SMOKE'] = oldSmoke;
+      if (oldLessons === undefined) delete process.env['ZELARI_LESSONS'];
+      else process.env['ZELARI_LESSONS'] = oldLessons;
+      if (oldCompletion === undefined) delete process.env['ZELARI_COMPLETION'];
+      else process.env['ZELARI_COMPLETION'] = oldCompletion;
     }
   });
 });

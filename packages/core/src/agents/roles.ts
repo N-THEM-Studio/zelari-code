@@ -113,7 +113,14 @@ Every task MUST include fileRefs, acceptance, and qaScenario — the QA scenario
 
 FALLBACK — only if you cannot batch, use the itemized tools: \`createPhase\` once per phase; each createPhase response returns the new phase id — use that exact id as \`phaseId\` in the 3 \`createTask\` calls for that phase; finish with one \`createMilestone\` ({ title, description, targetVersion }). If you forget an id, call \`searchDocuments\` (limit 1) to look it up, then continue.
 
-Do NOT output tasks as prose. The system will refuse any task that does not pass a valid phaseId.`,
+Do NOT output tasks as prose. The system will refuse any task that does not pass a valid phaseId.
+
+## NFR spec (when plan sets motion/performance/a11y budgets)
+If the plan includes measurable constraints (JS byte budget, compositor-only animation, reduced-motion), emit ONE \`createNfrSpec\` call after \`createPlan\`:
+\`\`\`
+createNfrSpec({ targets: ["index.html"], compositorOnly: true, forbidLayoutProps: true, inlineJsMaxBytes: 5120 })
+\`\`\`
+Prose budgets are not machine-verifiable — the spec file is.`,
     // v0.7.2: read/search the codebase to ground the plan in reality.
     tools: ['list_files', 'read_file', 'grep_content'],
     skills: ['project-planner', 'vault-manager'],
@@ -250,14 +257,15 @@ Include AT LEAST 5 risks, each scored on Impact and Likelihood, with a one-line 
 ## Methodology (work in this order)
 1. Reconcile the specialists' outputs and Minosse's critique into a single coherent plan.
 2. Resolve conflicts explicitly (state which proposal won and why).
-3. Deliver the finished product the user asked for — complete, not summarized. For code tasks, USE your file/shell tools to create and verify the actual artifacts on disk.
+3. Deliver the finished product the user asked for — complete, not summarized. For code tasks, USE your file/shell tools to create and verify the actual artifacts on disk. Prose without a successful write_file/edit_file is a failed run — the pipeline forces a retry until files change on disk.
 4. Run any build/test commands available (check the npm scripts in the workspace context) to confirm your work.
 
 ## Output expectations
-- If the user requested code or a feature, IMPLEMENT it via write_file/edit_file/bash — do not just describe what should be done. Then summarize what you changed.
+- If the user requested code or a feature, IMPLEMENT via native tool_call write_file/edit_file/bash — not prose alone. Prefer native tool_call over ---TOOLS--- JSON; if you use ---TOOLS---, valid JSON with escaped \\n is required. After edits, a delivery loop re-verifies motion/JS budget and forces fix passes until technical blockers clear.
 - Lead with a one-line summary, then the full detail of what you did.
 - Apply Minosse's highest-value improvements; drop descoped items.
 - After making changes, verify they work (compile, run tests, etc.) when feasible.
+- End implementation runs with a mandatory \`## Verification status\` table with columns \`Check | Tier | Status | Evidence\`. Tier is one of: claimed, grep, tool, build, n/a (claimed < grep < tool < build). Status is PASS/FAIL/N/A. Evidence is \`path:Lline\` or command output. Never write "verificato ✓" or "nessuna regressione" without Evidence — a deterministic post-hook will flag dishonest claims and tier inflation.
 
 Use the tools available to you (read_file, write_file, edit_file, bash, list_files) directly as tool calls — the harness handles execution.${CLARIFICATION_PROTOCOL}
 

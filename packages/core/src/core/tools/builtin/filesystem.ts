@@ -123,9 +123,13 @@ export const editFileTool: ToolDefinition<EditFileArgs, EditFileResult> = {
           newContent = text.slice(0, idx) + args.newString + text.slice(idx + args.oldString.length);
         }
       }
-      if (occurrences > 0) {
-        await fs.writeFile(absPath, newContent, { encoding: 'utf-8', signal: ctx.signal } as never);
+      if (occurrences === 0) {
+        return typedErr(
+          `edit_file: no match for oldString in ${args.path}. ` +
+            'Use read_file to copy the exact text (whitespace included) and retry.',
+        );
       }
+      await fs.writeFile(absPath, newContent, { encoding: 'utf-8', signal: ctx.signal } as never);
       return typedOk({ path: absPath, occurrencesReplaced: occurrences });
     } catch (err) {
       return typedErr(err instanceof Error ? err.message : String(err));

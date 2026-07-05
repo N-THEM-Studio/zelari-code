@@ -1,7 +1,10 @@
 // @ts-nocheck — shares the pre-existing strict-mode type narrowing carried
 // over from useSession/useChatTurn. Runtime is correct.
-import type { ChatMessage } from '../components/ChatStream.js';
-import { formatToolSummary } from '../components/toolFormat.js';
+import type { ChatMessage } from "../components/ChatStream.js";
+import {
+  formatToolSummary,
+  toolResultForStorage,
+} from "../components/toolFormat.js";
 
 /**
  * chatState — finalized/live split for the static-scrollback TUI (v0.7.0).
@@ -43,7 +46,7 @@ import { formatToolSummary } from '../components/toolFormat.js';
 
 /** A tool invocation currently in flight (between start and end events). */
 export interface RunningTool extends ChatMessage {
-  role: 'tool';
+  role: "tool";
   /** Resolved on `tool_execution_end`; undefined while pending. */
   toolOk?: boolean;
   toolDurationMs?: number;
@@ -98,7 +101,7 @@ export function setStreaming(
     const cur = prev.streaming;
     if (
       cur &&
-      cur.role === 'assistant' &&
+      cur.role === "assistant" &&
       (cur.memberId ?? null) === (memberContext?.memberId ?? null)
     ) {
       return { ...prev, streaming: { ...cur, content: fullContent, ts } };
@@ -107,11 +110,15 @@ export function setStreaming(
       ...prev,
       streaming: {
         id: `streaming-${crypto.randomUUID()}`,
-        role: 'assistant',
+        role: "assistant",
         content: fullContent,
         ts,
-        ...(memberContext?.memberId ? { memberId: memberContext.memberId } : {}),
-        ...(memberContext?.memberName ? { memberName: memberContext.memberName } : {}),
+        ...(memberContext?.memberId
+          ? { memberId: memberContext.memberId }
+          : {}),
+        ...(memberContext?.memberName
+          ? { memberName: memberContext.memberName }
+          : {}),
       },
     };
   });
@@ -131,8 +138,8 @@ export function finalizeStreaming(
 ): void {
   setLive((prev) => {
     const cur = prev.streaming;
-    if (!cur || !cur.id.startsWith('streaming-')) return prev;
-    const sealed = { ...cur, id: cur.id.slice('streaming-'.length) };
+    if (!cur || !cur.id.startsWith("streaming-")) return prev;
+    const sealed = { ...cur, id: cur.id.slice("streaming-".length) };
     setFinalized((fin) => [...fin, sealed]);
     return { ...prev, streaming: null };
   });
@@ -148,7 +155,7 @@ export function finalizeStreaming(
  * is line-based in the formatter (ZELARI_TOOL_OUTPUT_LINES); this constant is
  * only a memory bound.
  */
-export const TOOL_RESULT_PREVIEW_CHARS = 8000;
+export { TOOL_RESULT_PREVIEW_CHARS } from "../components/toolFormat.js";
 
 /** Max chars of the JSON args preview shown on the tool summary line. */
 export const TOOL_ARGS_PREVIEW_CHARS = 120;
@@ -173,7 +180,7 @@ export function startTool(
       ...prev.runningTools,
       {
         id: crypto.randomUUID(),
-        role: 'tool',
+        role: "tool",
         content: argsPreview,
         ts,
         toolName,
@@ -219,10 +226,11 @@ export function completeTool(
       toolDurationMs: durationMs,
       ...(result !== undefined
         ? {
-            toolResult:
-              result.length > TOOL_RESULT_PREVIEW_CHARS
-                ? `${result.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`
-                : result,
+            toolResult: toolResultForStorage(
+              tool.toolName ?? "",
+              result,
+              isError,
+            ),
           }
         : {}),
     };

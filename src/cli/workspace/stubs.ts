@@ -1,7 +1,7 @@
 /**
  * workspace/stubs.ts — CLI workspace tool stubs.
  *
- * Implements the 10 council workspace tools (`createPlan`, `createPhase`,
+ * Implements the 11 council workspace tools (`createPlan`, `createPhase`,
  * `createTask`, `updateTask`, `addIdea`, `createMilestone`,
  * `createDocument`, `searchDocuments`, `linkDocuments`,
  * `getDocumentBacklinks`) as filesystem-backed stubs that persist to
@@ -397,6 +397,7 @@ export function createWorkspaceStubs(
     addIdeaStub(ctx),
     createMilestoneStub(ctx),
     createDocumentStub(ctx),
+    createNfrSpecStub(ctx),
     searchDocumentsStub(ctx),
     linkDocumentsStub(ctx),
     getDocumentBacklinksStub(ctx),
@@ -688,6 +689,44 @@ function createMilestoneStub(ctx: WorkspaceContext): EnhancedToolDefinition {
         const version =
           summary.milestones.find((m) => m.id === id)?.targetVersion ?? "TBD";
         return `Milestone "${title}" created (id: ${id}, version: ${version}).`;
+      });
+    },
+  };
+}
+
+function createNfrSpecStub(ctx: WorkspaceContext): EnhancedToolDefinition {
+  return {
+    name: "createNfrSpec",
+    description:
+      "Persist machine-readable NFR constraints for post-council verification (.zelari/nfr-spec.json). " +
+      "Emit when the plan sets motion, JS budget, or performance guardrails.",
+    category: "project",
+    parameters: [],
+    execute: async (args) => {
+      return workspaceMutex.run(`${ctx.rootDir}:nfr-spec`, () => {
+        const targets = Array.isArray(args["targets"])
+          ? (args["targets"] as string[])
+          : ["index.html"];
+        const spec = {
+          version: 1 as const,
+          targets,
+          animation: {
+            compositorOnly: args["compositorOnly"] !== false,
+            forbidLayoutProps: args["forbidLayoutProps"] !== false,
+          },
+          inlineJs: {
+            maxBytes:
+              typeof args["inlineJsMaxBytes"] === "number"
+                ? args["inlineJsMaxBytes"]
+                : 5120,
+          },
+          planFeatureKeywords: Array.isArray(args["planFeatureKeywords"])
+            ? (args["planFeatureKeywords"] as string[])
+            : undefined,
+        };
+        const outPath = join(ctx.rootDir, "nfr-spec.json");
+        writeFileSync(outPath, JSON.stringify(spec, null, 2), "utf8");
+        return `NFR spec written to nfr-spec.json (${targets.length} target(s)).`;
       });
     },
   };

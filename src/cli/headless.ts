@@ -115,7 +115,7 @@ export function printHeadlessHelp(): void {
  * instead of failing mid-stream.
  */
 export async function resolveHeadlessKey(providerId: string): Promise<
-  { apiKey: string; baseUrl?: string } | { error: string }
+  { apiKey: string; baseUrl: string } | { error: string }
 > {
   const spec = PROVIDERS.find((p) => p.id === providerId);
   if (!spec) {
@@ -131,11 +131,10 @@ export async function resolveHeadlessKey(providerId: string): Promise<
   }
   // baseUrl lives in providerConfig (customEndpoints) not on StoredKey.
   // Imported lazily to avoid a circular dep at module load.
-  const { getCustomEndpoint } = await import('./providerConfig.js');
-  const customBase = getCustomEndpoint(providerId as never);
+  const { resolveBaseUrl } = await import('./provider/openai-compatible.js');
   return {
     apiKey: resolved.apiKey,
-    ...(customBase ? { baseUrl: customBase } : {}),
+    baseUrl: resolveBaseUrl(providerId as never),
   };
 }
 

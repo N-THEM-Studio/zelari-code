@@ -618,6 +618,8 @@ async function dispatchCouncilPromptImpl(
     await import("../workspace/postCouncilHook.js");
   const { buildWorkspaceSummary, buildPlanSummary } =
     await import("../workspace/workspaceSummary.js");
+  const { buildLessonsSummary } =
+    await import("../workspace/buildLessonsSummary.js");
   const { FeedbackStore } = await import("../councilFeedback.js");
 
   const { registry: councilToolRegistry } = createBuiltinToolRegistry();
@@ -663,9 +665,12 @@ async function dispatchCouncilPromptImpl(
   // specialist after the API is clearly broken.
   let membersCompleted = 0;
   let chairmanProducedOutput = false;
+  let chairmanSynthesisText = "";
   let consecutiveProviderErrors = 0;
   let lastErrorMessage = "";
   let councilAborted = false;
+  let chairmanErrored = false;
+  let luciferWriteCount = 0;
   let councilRunMode: "implementation" | "design-phase" = "implementation";
   const PROVIDER_ERROR_ABORT_THRESHOLD = 2;
   try {
@@ -685,11 +690,15 @@ async function dispatchCouncilPromptImpl(
       // continues it instead of re-planning from scratch.
       workspaceContext: [
         buildWorkspaceSummary(process.cwd()),
-        buildPlanSummary(process.cwd()),
+        buildPlanSummary(process.cwd(), { userMessage: text }),
+        buildLessonsSummary(process.cwd(), text),
       ]
         .filter(Boolean)
         .join("\n\n"),
       maxToolCallsPerTurn: councilMaxToolCalls,
+      onCouncilStatus: (message) => {
+        appendSystem(setMessages, message, Date.now());
+      },
     })) {
       if (councilAborted) {
         // Drain remaining events silently after the abort decision.
@@ -761,17 +770,28 @@ async function dispatchCouncilPromptImpl(
       } else if (event.type === "message_end") {
         // Member/turn boundary: drain buffered deltas and seal the bubble so
         // the next streamed message starts fresh.
+        if (event.memberId === "lucifer" || event.memberName === "Lucifero") {
+          if (streamContent.trim()) {
+            chairmanProducedOutput = true;
+            chairmanSynthesisText = streamContent;
+          }
+        }
         flushStreaming();
         if (useLiveModel) finalizeStreaming(setMessages, setLive!);
         else finalizeStreamingAssistant(setMessages);
         streamContent = "";
         streamMemberId = null;
         membersCompleted++;
-        // Chairman is the last member; any assistant content from it counts.
-        if (event.memberId === "lucifer" || event.memberName === "Lucifero") {
-          chairmanProducedOutput = true;
-        }
       } else if (event.type === "tool_execution_start") {
+        // Count ANY project-file write this run (implementer-agnostic). The
+        // `tool_execution_start` event does NOT carry memberId — only message_*
+        // events do — so gating on `event.memberId === "lucifer"` left this at 0
+        // forever and made DEGRADED_RUN ("wrote no files") a permanent false
+        // positive. Since implementation runs now have a single implementer
+        // (specialists are read-only), "no writes at all" is the right signal.
+        if (event.toolName === "write_file" || event.toolName === "edit_file") {
+          luciferWriteCount++;
+        }
         // Drain buffered deltas first so ordering matches reality, and seal
         // the pre-tool bubble (complete once the member starts calling tools).
         flushStreaming();
@@ -815,7 +835,14 @@ async function dispatchCouncilPromptImpl(
             event.result,
           );
         }
+      } else if (event.type === "member_cost") {
+        if (event.cost.memberId === "lucifer" && event.cost.errored) {
+          chairmanErrored = true;
+        }
       } else if (event.type === "error") {
+        if (event.memberId === "lucifer" || event.memberName === "Lucifero") {
+          chairmanErrored = true;
+        }
         flushStreaming();
         // v0.7.1 (A4): attribute the error to the member when known, so the
         // user sees `[error · Caronte] …` instead of three anonymous lines.
@@ -863,8 +890,27 @@ async function dispatchCouncilPromptImpl(
     const hookShouldRun = membersCompleted > 0 || chairmanProducedOutput;
     if (hookShouldRun) {
       try {
+        const { detectDegradedRun } = await import("@zelari/core/council");
+        const degraded = detectDegradedRun({
+          chairmanErrored,
+          councilAborted,
+          luciferWriteCount,
+          synthesisText: chairmanSynthesisText,
+          runMode: councilRunMode,
+        });
+        if (degraded.degraded) {
+          appendSystem(
+            setMessages,
+            `[council] DEGRADED_RUN — ${degraded.reasons.join("; ")}. Do not treat as verified hand-off.`,
+            Date.now(),
+          );
+        }
         const hook = await runPostCouncilHook(workspaceCtx, {
           runMode: councilRunMode,
+          userMessage: text,
+          synthesisText: chairmanSynthesisText || undefined,
+          degradedRun: degraded.degraded,
+          degradedReasons: degraded.reasons,
         });
         if (hook.ran && hook.changed) {
           appendSystem(
@@ -875,6 +921,82 @@ async function dispatchCouncilPromptImpl(
         } else if (hook.ran && hook.reason) {
           if (!hook.reason.includes("disabled")) {
             appendSystem(setMessages, `[agents.md] ${hook.reason}`, Date.now());
+          }
+        }
+        if (hook.autofix?.ran && hook.autofix.applied) {
+          appendSystem(
+            setMessages,
+            `[verify-autofix] applied to ${hook.autofix.filesChanged?.join(", ") ?? "targets"}`,
+            Date.now(),
+          );
+        }
+        if (hook.verification?.ran) {
+          const v = hook.verification;
+          if (degraded.degraded) {
+            appendSystem(
+              setMessages,
+              `[verify] SKIPPED — degraded run (see DEGRADED_RUN above)`,
+              Date.now(),
+            );
+          } else if (v.ok) {
+            appendSystem(
+              setMessages,
+              `[verify] PASS — ${v.report?.targets.join(", ") ?? "targets"} (see .zelari/verification-report.json)`,
+              Date.now(),
+            );
+          } else {
+            const fails = (v.report?.results ?? []).filter((r) => !r.ok);
+            const lines = fails
+              .slice(0, 8)
+              .map((r) => `  · ${r.id}: ${r.message}`)
+              .join("\n");
+            appendSystem(
+              setMessages,
+              `[verify] FAIL — ${fails.length} issue(s). Do not commit until fixed.\n${lines}${fails.length > 8 ? "\n  · …" : ""}`,
+              Date.now(),
+            );
+          }
+        }
+        if (hook.smoke?.ran) {
+          const s = hook.smoke;
+          if (s.ok) {
+            appendSystem(
+              setMessages,
+              `[smoke] PASS — npm run ${s.script ?? "script"}`,
+              Date.now(),
+            );
+          } else {
+            appendSystem(
+              setMessages,
+              `[smoke] FAIL — npm run ${s.script ?? "script"}: ${s.reason ?? "non-zero exit"}`,
+              Date.now(),
+            );
+          }
+        } else if (
+          hook.smoke?.reason &&
+          !hook.smoke.reason.includes("disabled")
+        ) {
+          appendSystem(
+            setMessages,
+            `[smoke] skipped — ${hook.smoke.reason}`,
+            Date.now(),
+          );
+        }
+        if (hook.completion?.completion) {
+          const c = hook.completion.completion;
+          if (c.readyToCommit) {
+            appendSystem(
+              setMessages,
+              `[completion] readyToCommit=true (see .zelari/completion.json)`,
+              Date.now(),
+            );
+          } else {
+            const n = c.blocking.length || c.openFails.length;
+            appendSystem(
+              setMessages,
+              `[completion] readyToCommit=false — ${n} blocking issue(s)${c.degraded ? " (degraded run)" : ""}`,
+              Date.now(),
+            );
           }
         }
       } catch {

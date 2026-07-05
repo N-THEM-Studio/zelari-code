@@ -13,10 +13,20 @@
  * missing package.json or unreadable dirs degrade gracefully to a shorter
  * summary rather than throwing.
  */
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
-import { projectName, resolveWorkspaceRoot } from './paths.js';
-import type { PlanFrontmatter } from './types.js';
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { join, relative } from "node:path";
+import {
+  classifyTaskScope,
+  extractTaskScope,
+  loadNfrSpec,
+} from "@zelari/core/council";
+import { projectName, resolveWorkspaceRoot } from "./paths.js";
+import type { PlanFrontmatter } from "./types.js";
+
+export interface BuildPlanSummaryOptions {
+  /** Current user request — enables in-scope vs backlog split (v0.9.1). */
+  userMessage?: string;
+}
 
 export interface WorkspaceSummaryOptions {
   /** Max top-level entries to list. Default 30. */
@@ -76,10 +86,16 @@ const PLAN_SUMMARY_MAX_TASKS = 15;
  * Returns `null` when there is no plan (or it is empty) so callers can skip
  * the section entirely — a fresh project pays zero prompt-token cost.
  */
+function formatTaskLine(t: PlanFrontmatter): string {
+  return `- [${t.status ?? "pending"}/${t.priority ?? "medium"}] ${t.name ?? t.id} → .zelari/plan-tasks/${t.id}.md`;
+}
+
 export function buildPlanSummary(
   projectRoot: string = process.cwd(),
+  options?: BuildPlanSummaryOptions,
 ): string | null {
-  const planPath = join(resolveWorkspaceRoot(projectRoot), "plan.json");
+  const zelariRoot = resolveWorkspaceRoot(projectRoot);
+  const planPath = join(zelariRoot, "plan.json");
   if (!existsSync(planPath)) return null;
   let plan: {
     phases?: PlanFrontmatter[];
@@ -105,16 +121,78 @@ export function buildPlanSummary(
   const open = tasks.filter((t) => t.status !== "done");
   const done = tasks.length - open.length;
 
+  const userMessage = options?.userMessage?.trim();
+  let scopedOpen = open;
+  if (userMessage) {
+    const scope = extractTaskScope({
+      userMessage,
+      nfrSpec: loadNfrSpec(zelariRoot),
+      planText: JSON.stringify(plan),
+    });
+    if (scope.targets.length > 0 || scope.keywords.length > 0) {
+      parts.push(
+        "",
+        "## Task scope (this request)",
+        scope.targets.length > 0
+          ? `Targets: ${scope.targets.join(", ")}`
+          : "Targets: _(none detected — use task files)_",
+      );
+      if (scope.keywords.length > 0) {
+        parts.push(`Keywords: ${scope.keywords.join(", ")}`);
+      }
+      if (scope.explicitOut.length > 0) {
+        parts.push(`Out of scope / backlog: ${scope.explicitOut.join("; ")}`);
+      }
+      parts.push(
+        "",
+        "_Deliver only what is in scope for this request. Backlog items are planned but not part of this hand-off._",
+      );
+
+      const inScope: PlanFrontmatter[] = [];
+      const backlog: PlanFrontmatter[] = [];
+      const neutral: PlanFrontmatter[] = [];
+      for (const t of open) {
+        const bucket = classifyTaskScope(t, scope);
+        if (bucket === "in-scope") inScope.push(t);
+        else if (bucket === "backlog") backlog.push(t);
+        else neutral.push(t);
+      }
+
+      if (inScope.length > 0) {
+        parts.push("", "## In scope for this task");
+        for (const t of inScope.slice(0, PLAN_SUMMARY_MAX_TASKS)) {
+          parts.push(formatTaskLine(t));
+        }
+        if (inScope.length > PLAN_SUMMARY_MAX_TASKS) {
+          parts.push(
+            `- … (+${inScope.length - PLAN_SUMMARY_MAX_TASKS} more in-scope)`,
+          );
+        }
+      }
+      if (backlog.length > 0) {
+        parts.push("", "## Planned but not requested (backlog)");
+        for (const t of backlog.slice(0, PLAN_SUMMARY_MAX_TASKS)) {
+          parts.push(formatTaskLine(t));
+        }
+        if (backlog.length > PLAN_SUMMARY_MAX_TASKS) {
+          parts.push(
+            `- … (+${backlog.length - PLAN_SUMMARY_MAX_TASKS} more backlog)`,
+          );
+        }
+      }
+
+      scopedOpen = [...inScope, ...neutral];
+    }
+  }
+
   for (const phase of [...phases].sort(
     (a, b) => (a.order ?? 0) - (b.order ?? 0),
   )) {
-    const phaseTasks = open.filter((t) => t.phaseId === phase.id);
+    const phaseTasks = scopedOpen.filter((t) => t.phaseId === phase.id);
     parts.push("", `## ${phase.order ?? "?"}. ${phase.name ?? phase.id}`);
     if (phase.description) parts.push(phase.description);
     for (const t of phaseTasks.slice(0, PLAN_SUMMARY_MAX_TASKS)) {
-      parts.push(
-        `- [${t.status ?? "pending"}/${t.priority ?? "medium"}] ${t.name ?? t.id} → .zelari/plan-tasks/${t.id}.md`,
-      );
+      parts.push(formatTaskLine(t));
     }
     if (phaseTasks.length > PLAN_SUMMARY_MAX_TASKS) {
       parts.push(
@@ -125,13 +203,13 @@ export function buildPlanSummary(
   }
 
   // Tasks without a matching phase (defensive — plan edited by hand).
-  const orphans = open.filter((t) => !phases.some((p) => p.id === t.phaseId));
+  const orphans = scopedOpen.filter(
+    (t) => !phases.some((p) => p.id === t.phaseId),
+  );
   if (orphans.length > 0) {
     parts.push("", "## (unassigned)");
     for (const t of orphans.slice(0, PLAN_SUMMARY_MAX_TASKS)) {
-      parts.push(
-        `- [${t.status ?? "pending"}/${t.priority ?? "medium"}] ${t.name ?? t.id} → .zelari/plan-tasks/${t.id}.md`,
-      );
+      parts.push(formatTaskLine(t));
     }
   }
 
@@ -147,7 +225,7 @@ export function buildPlanSummary(
   // v0.7.4: point the agent at ONE concrete task so "implement the plan"
   // starts immediately instead of asking the user which task to pick.
   // First in_progress wins (finish what's started); else highest priority.
-  const next = pickNextTask(open);
+  const next = pickNextTask(scopedOpen.length > 0 ? scopedOpen : open);
   if (next) {
     parts.push(
       "",

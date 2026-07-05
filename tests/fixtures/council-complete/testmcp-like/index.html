@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html><head><style>
+@keyframes dot-breathe {
+  0%, 100% { box-shadow: 0 0 8px blue; }
+  50%      { box-shadow: 0 0 14px blue; }
+}
+details.faq > .faq-body {
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 320ms ease;
+}
+.card {
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+</style></head><body>
+<script>
+(() => {
+  document.documentElement.classList.add('rm');
+})();
+</script>
+</body></html>

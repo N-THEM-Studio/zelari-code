@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { CouncilMessage, AgentRole } from '../types/index.js';
 import { getCouncilAgents, swapMembers } from './roles.js';
 import { getProviderTools, type ParsedToolCall } from './toolSchemas.js';
@@ -11,11 +13,39 @@ import type {
   AgentToolSpec,
   ProviderStreamFn,
 } from '../core/AgentHarness.js';
-import { AgentHarness } from '../core/AgentHarness.js';
+import {
+  AgentHarness,
+  normalizeTextToolArgs,
+  parseTextToolCalls,
+} from '../core/AgentHarness.js';
 import { ToolRegistry } from '../core/tools/registry.js';
 import type { CouncilRunMode } from '../council/runMode.js';
 import { councilModeBanner } from '../council/modeBanners.js';
 import { councilTierFromSize } from '../council/runMode.js';
+import {
+  parseProjectRootFromWorkspaceContext,
+  runChairmanMicroGate,
+  type MicroGateWarning,
+} from '../council/verification/microGate.js';
+import {
+  buildImplementationVerifyRetryPrompt,
+  checkImplementationCompletion,
+  resolveVerifyRetryTool,
+} from '../council/verification/completion.js';
+import { warnIfNfrSpecMissing } from '../council/scope/nfrSpecWarn.js';
+import {
+  loadNfrSpec,
+  DEFAULT_NFR_SPEC,
+  runImplementationVerification,
+} from '../council/verification/runChecks.js';
+import {
+  buildDeliveryFixPrompt,
+  buildImplementationWriteRetryPrompt,
+  checkImplementationDelivery,
+  countEmittedWriteTools,
+  filterDeliveryBlockingFails,
+} from '../council/verification/implementationDelivery.js';
+import { applyInlineJsAutofix } from '../council/verification/inlineJsAutofix.js';
 
 /**
  * Council members whose tool-emission retry is DISABLED.
@@ -129,6 +159,8 @@ export interface PureCouncilConfig {
 }
 
 export interface PureCouncilCallbacks {
+  /** Status lines surfaced in the TUI (delivery retries, verify passes). */
+  onCouncilStatus?: (message: string) => void;
   onAgentStart?: (agent: AgentRole) => void;
   onAgentChunk?: (agent: AgentRole, chunk: string) => void;
   onAgentDone?: (agent: AgentRole, content: string, thinking?: string) => void;
@@ -205,6 +237,28 @@ export function cleanAgentContent(text: string): string {
     .trim();
 }
 
+/**
+ * Tools that mutate project files. In implementation-mode council runs only the
+ * chairman (Lucifero) implements; specialists + Minosse analyze and hand off.
+ * We strip these from every non-implementer so multiple agents never edit the
+ * same files (multi-writer chaos) and "who implemented" stays unambiguous.
+ * Note: specialists inherit write tools via skill `requiredTools`, so this must
+ * filter the RESULT of computeAgentTools, not just the declared role tools.
+ */
+export const MUTATING_PROJECT_TOOLS: readonly string[] = ['write_file', 'edit_file'];
+
+/**
+ * Remove file-mutating tools for non-implementer members in implementation mode.
+ * Design-phase and the implementer (chairman) keep the full set unchanged.
+ */
+export function restrictImplementationWrites(
+  toolNames: string[],
+  opts: { runMode: CouncilRunMode; isImplementer: boolean },
+): string[] {
+  if (opts.runMode !== 'implementation' || opts.isImplementer) return toolNames;
+  return toolNames.filter((t) => !MUTATING_PROJECT_TOOLS.includes(t));
+}
+
 function buildAgentMessages(
   agent: AgentRole,
   userMessage: string,
@@ -234,7 +288,7 @@ function buildAgentMessages(
   });
   const messages: AgentMessage[] = [
     { role: 'system', content: enhancedSystemPrompt },
-    { role: 'system', content: councilModeBanner(runMode) },
+    { role: 'system', content: councilModeBanner(runMode, { isImplementer: agent.id === 'lucifer' }) },
     { role: 'system', content: 'IMPORTANT: Before making any tool calls or expensive operations, check if the information already exists in the shared context from previous agents. Avoid redundant work.' },
   ];
   if (ragContext) {
@@ -373,7 +427,15 @@ export async function* runCouncilPure(
     const effectiveProvider = override?.providerId ?? config.provider ?? 'minimax';
     const effectiveModel = override?.model ?? config.model;
 
-    const agentToolNames = filterExecutable(computeAgentTools(agent, config.aiConfig));
+    // Specialists analyze and hand off; only the chairman (Lucifero) implements
+    // in implementation mode. Strip write/edit so members don't all edit the
+    // same files. (Design-phase and the chairman keep the full set.)
+    const agentToolNames = filterExecutable(
+      restrictImplementationWrites(computeAgentTools(agent, config.aiConfig), {
+        runMode,
+        isImplementer: false,
+      }),
+    );
     const agentTools: AgentToolSpec[] = agentToolNames.length > 0
       ? getProviderTools(agentToolNames).map((t) => ({
           name: t.function.name,
@@ -471,6 +533,9 @@ export async function* runCouncilPure(
     } else if (isDesignPhase) {
       enforceDesignPhaseToolEmissions(agent.id, emittedToolNames);
     }
+    if (isDesignPhase) {
+      warnIfNfrSpecMissing(agent.id, userMessage, emittedToolNames);
+    }
     const memberDuration = Date.now() - memberStart;
     emitMemberCost({
       memberId: agent.id,
@@ -556,11 +621,14 @@ export async function* runCouncilPure(
       ),
       tools: (() => {
         const oracleToolNames = filterExecutable(
-          Array.from(new Set([
-            'createDocument',
-            'searchDocuments',
-            ...computeAgentTools(oracle, config.aiConfig),
-          ])),
+          restrictImplementationWrites(
+            Array.from(new Set([
+              'createDocument',
+              'searchDocuments',
+              ...computeAgentTools(oracle, config.aiConfig),
+            ])),
+            { runMode, isImplementer: false },
+          ),
         );
         return oracleToolNames.length > 0
           ? getProviderTools(oracleToolNames).map((tool) => ({
@@ -752,6 +820,16 @@ export async function* runCouncilPure(
     // check below (Lucifero MUST emit at least one createDocument for
     // the synthesis; see enforceDesignPhaseToolEmissions).
     const emittedToolNames: string[] = [];
+    const pendingChairmanWrites = new Map<string, { path: string; toolName: string }>();
+    let successfulWriteCount = 0;
+    // Increment 3: accumulate deduped motion violations across the whole turn
+    // (keyed by id|file|line) and remember the target files written, so we can
+    // run ONE post-turn fix pass instead of emitting a repeated per-write flood.
+    const chairmanViolations = new Map<string, MicroGateWarning>();
+    const changedTargetFiles = new Set<string>();
+    let chairmanProjectRoot: string | null = parseProjectRootFromWorkspaceContext(
+      config.workspaceContext ?? '',
+    );
     const memberStart = Date.now();
     try {
       for await (const event of chairmanHarness.run()) {
@@ -759,6 +837,48 @@ export async function* runCouncilPure(
         if (event.type === 'tool_execution_start') {
           toolCalls += 1;
           emittedToolNames.push(event.toolName);
+          if (
+            !isDesignPhase &&
+            (event.toolName === 'write_file' || event.toolName === 'edit_file') &&
+            typeof event.args.path === 'string'
+          ) {
+            pendingChairmanWrites.set(event.toolCallId, {
+              path: event.args.path,
+              toolName: event.toolName,
+            });
+          }
+        }
+        if (!isDesignPhase && event.type === 'tool_execution_end') {
+          const pending = pendingChairmanWrites.get(event.toolCallId);
+          if (pending) {
+            pendingChairmanWrites.delete(event.toolCallId);
+            if (!event.isError) {
+              let wrote = pending.toolName === 'write_file';
+              if (pending.toolName === 'edit_file' && typeof event.result === 'string') {
+                try {
+                  const parsed = JSON.parse(event.result) as { occurrencesReplaced?: number };
+                  wrote = (parsed.occurrencesReplaced ?? 0) > 0;
+                } catch {
+                  wrote = false;
+                }
+              }
+              if (wrote) {
+                successfulWriteCount += 1;
+                const projectRoot = parseProjectRootFromWorkspaceContext(config.workspaceContext);
+                if (projectRoot) {
+                  chairmanProjectRoot = projectRoot;
+                  changedTargetFiles.add(pending.path);
+                  for (const w of runChairmanMicroGate({
+                    projectRoot,
+                    relPath: pending.path,
+                    zelariRoot: `${projectRoot}/.zelari`,
+                  })) {
+                    chairmanViolations.set(`${w.id}|${w.file}|${w.line ?? ''}`, w);
+                  }
+                }
+              }
+            }
+          }
         }
         if (event.type === 'message_end' && event.usage) {
           usage = event.usage;
@@ -774,7 +894,8 @@ export async function* runCouncilPure(
           // We must detect this and mark the chairman as errored so the
           // member_cost reflects reality, otherwise the synthesis appears
           // successful when in fact the model never produced text.
-          if (event.severity !== 'cancelled') {
+          // text_tools_parse_failed is advisory — the post-turn fix loop still runs.
+          if (event.severity !== 'cancelled' && event.code !== 'text_tools_parse_failed') {
             errored = true;
             lastErrorMessage = event.message;
           }
@@ -815,6 +936,101 @@ export async function* runCouncilPure(
       });
     } else if (isDesignPhase) {
       enforceDesignPhaseToolEmissions(chairman.id, emittedToolNames);
+    } else if (!errored) {
+      // Increment 5: implementation delivery — force writes when prose-only,
+      // replay ---TOOLS---, motion fix, then verify-driven delivery loop.
+      if (chairmanProjectRoot) {
+        const zelariRoot = `${chairmanProjectRoot}/.zelari`;
+        const spec = loadNfrSpec(zelariRoot) ?? DEFAULT_NFR_SPEC;
+        for (const rel of spec.targets) {
+          if (!existsSync(join(chairmanProjectRoot, rel))) continue;
+          changedTargetFiles.add(rel);
+          for (const w of runChairmanMicroGate({ projectRoot: chairmanProjectRoot, relPath: rel, zelariRoot })) {
+            chairmanViolations.set(`${w.id}|${w.file}|${w.line ?? ''}`, w);
+          }
+        }
+      }
+      if (
+        fullText.includes('---TOOLS---') &&
+        chairmanProjectRoot &&
+        config.tools
+      ) {
+        const replayed = yield* replayChairmanTextTools({
+          synthesisText: fullText,
+          projectRoot: chairmanProjectRoot,
+          toolRegistry: config.tools,
+          sessionId,
+          memberId: chairman.id,
+        });
+        successfulWriteCount += replayed;
+        const zelariRootReplay = `${chairmanProjectRoot}/.zelari`;
+        const specReplay = loadNfrSpec(zelariRootReplay) ?? DEFAULT_NFR_SPEC;
+        for (const rel of specReplay.targets) {
+          if (!existsSync(join(chairmanProjectRoot, rel))) continue;
+          changedTargetFiles.add(rel);
+          for (const w of runChairmanMicroGate({
+            projectRoot: chairmanProjectRoot,
+            relPath: rel,
+            zelariRoot: zelariRootReplay,
+          })) {
+            chairmanViolations.set(`${w.id}|${w.file}|${w.line ?? ''}`, w);
+          }
+        }
+      }
+      if (chairmanProjectRoot) {
+        const deliveryCheck = checkImplementationDelivery(
+          successfulWriteCount,
+          countEmittedWriteTools(emittedToolNames),
+        );
+        if (!deliveryCheck.ok) {
+          yield* applyImplementationWriteRetry({
+            chairman,
+            check: deliveryCheck,
+            sessionId,
+            userMessage,
+            agentOutputs,
+            config,
+            effectiveProvider,
+            effectiveModel,
+            executableNames,
+            onToolCall: () => { toolCalls += 1; },
+            onSuccessfulWrite: () => { successfulWriteCount += 1; },
+            onCouncilStatus: callbacks.onCouncilStatus,
+          });
+        }
+      }
+      if (chairmanViolations.size > 0 && chairmanProjectRoot) {
+        yield* runChairmanFixLoop({
+          chairman,
+          violations: chairmanViolations,
+          changedFiles: changedTargetFiles,
+          projectRoot: chairmanProjectRoot,
+          executableNames,
+          sessionId,
+          userMessage,
+          agentOutputs,
+          config,
+          effectiveProvider,
+          effectiveModel,
+          onToolCall: () => { toolCalls += 1; },
+        });
+      }
+      if (chairmanProjectRoot) {
+        yield* runChairmanDeliveryLoop({
+          chairman,
+          projectRoot: chairmanProjectRoot,
+          changedFiles: changedTargetFiles,
+          executableNames,
+          sessionId,
+          userMessage,
+          agentOutputs,
+          config,
+          effectiveProvider,
+          effectiveModel,
+          onToolCall: () => { toolCalls += 1; },
+          onCouncilStatus: callbacks.onCouncilStatus,
+        });
+      }
     }
     const memberDuration = Date.now() - memberStart;
     // If the chairman errored mid-flight but produced some text, keep it
@@ -855,6 +1071,395 @@ export async function* runCouncilPure(
   };
 }
 
+
+/**
+ * Implementation-mode anti-resa retry: force grep/bash after writes.
+ */
+export async function* applyCompletionRetry(args: {
+  agent: AgentRole;
+  emittedToolNames: string[];
+  executableNames: ReadonlySet<string> | null;
+  sessionId: string;
+  userMessage: string;
+  agentOutputs: { name: string; role: string; content: string }[];
+  config: PureCouncilConfig;
+  effectiveProvider: string;
+  effectiveModel: string;
+  onToolCall: () => void;
+}): AsyncGenerator<BrainEvent, void, void> {
+  const check = checkImplementationCompletion(args.emittedToolNames);
+  if (check.ok) return;
+  const retryTool = resolveVerifyRetryTool(args.executableNames);
+  if (!retryTool) {
+    // eslint-disable-next-line no-console
+    console.warn('[council] implementation verify retry skipped — no grep_content/bash in registry');
+    return;
+  }
+  if (!shouldRetryMember([retryTool], 0)) return;
+  // eslint-disable-next-line no-console
+  console.warn(`[council] ${args.agent.id} retrying missing verify tool: ${retryTool}`);
+  try {
+    const retryGenerator = runRetryTurnForMember({
+      agent: args.agent,
+      missingToolNames: [retryTool],
+      executableTools: args.executableNames,
+      userMessage: args.userMessage,
+      ragContext: args.config.ragContext,
+      workspaceContext: args.config.workspaceContext,
+      priorOutputs: args.agentOutputs,
+      aiConfig: args.config.aiConfig,
+      sessionId: args.sessionId,
+      effectiveModel: args.effectiveModel,
+      effectiveProvider: args.effectiveProvider,
+      eventBus: args.config.eventBus,
+      toolRegistry: args.config.tools,
+      providerStream: args.config.providerStream,
+      runMode: args.config.runMode,
+      retryPrompt: buildImplementationVerifyRetryPrompt(retryTool),
+    });
+    for await (const event of retryGenerator) {
+      if (event.type === 'tool_execution_start') {
+        args.onToolCall();
+        args.emittedToolNames.push(event.toolName);
+      }
+      yield event;
+    }
+  } catch (retryErr) {
+    // eslint-disable-next-line no-console
+    console.error(`[council] ${args.agent.id} verify retry failed:`, retryErr);
+  }
+  const after = checkImplementationCompletion(args.emittedToolNames);
+  if (!after.ok) {
+    // eslint-disable-next-line no-console
+    console.warn(`[council] ${args.agent.id} still missing verify after retry: ${after.reason}`);
+  }
+}
+
+/**
+ * Build the scoped fix instruction for the chairman from deterministic motion
+ * violations. Groups by file, lists file:line + rule, and constrains the model
+ * to fix ONLY these (no new features, no rewrites). Exported for testing.
+ */
+export function buildMotionFixPrompt(violations: MicroGateWarning[]): string {
+  const byFile = new Map<string, string[]>();
+  for (const v of violations) {
+    const file = v.file || 'index.html';
+    const loc = v.line ? `${file}:L${v.line}` : file;
+    const list = byFile.get(file) ?? [];
+    list.push(`  - ${loc}: ${v.message}`);
+    byFile.set(file, list);
+  }
+  const blocks = Array.from(byFile.values()).map((lines) => lines.join('\n')).join('\n');
+  return (
+    `Deterministic verification found ${violations.length} motion violation(s) in the file(s) you just edited. ` +
+    `Fix ONLY these — do not add features, do not rewrite sections, do not touch anything else:\n${blocks}\n\n` +
+    `Rules: animate ONLY transform and opacity. Replace any box-shadow / background / background-position / ` +
+    `filter / color / border-color / width / height / grid-template-rows used in @keyframes or transitions with ` +
+    `transform/opacity equivalents (e.g. render a glow via a pseudo-element that scales and fades). For every ` +
+    `classList.add('x') in the script, add a matching '.x' CSS rule. Use read_file to see the exact lines, then ` +
+    `edit_file. When the listed items are fixed, stop — no summary.`
+  );
+}
+
+/**
+ * Forced retry when Lucifero finished without a successful write_file/edit_file.
+ */
+export async function* applyImplementationWriteRetry(args: {
+  chairman: AgentRole;
+  check: { ok: boolean; missing: string[] };
+  sessionId: string;
+  userMessage: string;
+  agentOutputs: { name: string; role: string; content: string }[];
+  config: PureCouncilConfig;
+  effectiveProvider: string;
+  effectiveModel: string;
+  executableNames: ReadonlySet<string> | null;
+  onToolCall?: () => void;
+  onSuccessfulWrite?: () => void;
+  onCouncilStatus?: (message: string) => void;
+}): AsyncGenerator<BrainEvent, void, void> {
+  if (args.check.ok) return;
+  if (!shouldRetryMember(['write_file'], 0)) return;
+  const statusMsg = `[council] ${args.chairman.id} implementation write retry: ${args.check.missing.join(', ')}`;
+  args.onCouncilStatus?.(statusMsg);
+  // eslint-disable-next-line no-console
+  console.warn(statusMsg);
+  try {
+    const retryGenerator = runRetryTurnForMember({
+      agent: args.chairman,
+      missingToolNames: ['read_file', 'write_file', 'edit_file'],
+      minPerTool: { read_file: 3, edit_file: 8, write_file: 1 },
+      executableTools: args.executableNames,
+      userMessage: args.userMessage,
+      ragContext: args.config.ragContext,
+      workspaceContext: args.config.workspaceContext,
+      priorOutputs: args.agentOutputs,
+      aiConfig: args.config.aiConfig,
+      sessionId: args.sessionId,
+      effectiveModel: args.effectiveModel,
+      effectiveProvider: args.effectiveProvider,
+      eventBus: args.config.eventBus,
+      toolRegistry: args.config.tools,
+      providerStream: args.config.providerStream,
+      runMode: 'implementation',
+      retryPrompt: buildImplementationWriteRetryPrompt(args.userMessage),
+    });
+    for await (const event of retryGenerator) {
+      if (event.type === 'tool_execution_start') args.onToolCall?.();
+      if (
+        event.type === 'tool_execution_end' &&
+        !event.isError &&
+        typeof event.result === 'string'
+      ) {
+        try {
+          const parsed = JSON.parse(event.result) as {
+            bytesWritten?: number;
+            occurrencesReplaced?: number;
+          };
+          if (
+            (parsed.bytesWritten ?? 0) > 0 ||
+            (parsed.occurrencesReplaced ?? 0) > 0
+          ) {
+            args.onSuccessfulWrite?.();
+          }
+        } catch {
+          if (event.result.includes('bytesWritten') || event.result.includes('occurrencesReplaced')) {
+            args.onSuccessfulWrite?.();
+          }
+        }
+      }
+      yield event;
+    }
+  } catch (retryErr) {
+    // eslint-disable-next-line no-console
+    console.error(`[council] ${args.chairman.id} implementation write retry failed:`, retryErr);
+  }
+}
+
+/** Max verify-driven delivery passes after the chairman turn (inline-js, motion, etc.). */
+export const MAX_DELIVERY_ATTEMPTS = 2;
+
+/**
+ * Increment 5 — verify-driven delivery loop. Re-runs deterministic verification
+ * and forces scoped chairman fix turns until blocking technical issues clear
+ * or the attempt cap is hit.
+ */
+export async function* runChairmanDeliveryLoop(args: {
+  chairman: AgentRole;
+  projectRoot: string;
+  changedFiles: Set<string>;
+  executableNames: ReadonlySet<string> | null;
+  sessionId: string;
+  userMessage: string;
+  agentOutputs: { name: string; role: string; content: string }[];
+  config: PureCouncilConfig;
+  effectiveProvider: string;
+  effectiveModel: string;
+  onToolCall?: () => void;
+  maxAttempts?: number;
+  onCouncilStatus?: (message: string) => void;
+}): AsyncGenerator<BrainEvent, boolean, void> {
+  const maxAttempts = args.maxAttempts ?? MAX_DELIVERY_ATTEMPTS;
+  const zelariRoot = `${args.projectRoot}/.zelari`;
+  let attempt = 0;
+  while (attempt < maxAttempts) {
+    const report = runImplementationVerification({
+      projectRoot: args.projectRoot,
+      zelariRoot,
+    });
+    const blocking = filterDeliveryBlockingFails(report.results);
+    if (blocking.length === 0) return true;
+    if (blocking.some((b) => b.id === 'inline-js.budget')) {
+      const jsFix = applyInlineJsAutofix(args.projectRoot, report);
+      if (jsFix.applied) {
+        args.onCouncilStatus?.(
+          `[council] ${args.chairman.id} inline-js autofix: ${jsFix.fixes.join('; ')}`,
+        );
+        const afterJs = runImplementationVerification({
+          projectRoot: args.projectRoot,
+          zelariRoot,
+        });
+        if (filterDeliveryBlockingFails(afterJs.results).length === 0) return true;
+      }
+    }
+    attempt++;
+    const statusMsg = `[council] ${args.chairman.id} delivery pass ${attempt}/${maxAttempts}: ${blocking.map((b) => b.id).join(', ')}`;
+    args.onCouncilStatus?.(statusMsg);
+    // eslint-disable-next-line no-console
+    console.warn(statusMsg);
+    try {
+      const fixGenerator = runRetryTurnForMember({
+        agent: args.chairman,
+        missingToolNames: ['read_file', 'edit_file'],
+        minPerTool: { read_file: 3, edit_file: 10 },
+        executableTools: args.executableNames,
+        userMessage: args.userMessage,
+        ragContext: args.config.ragContext,
+        workspaceContext: args.config.workspaceContext,
+        priorOutputs: args.agentOutputs,
+        aiConfig: args.config.aiConfig,
+        sessionId: args.sessionId,
+        effectiveModel: args.effectiveModel,
+        effectiveProvider: args.effectiveProvider,
+        eventBus: args.config.eventBus,
+        toolRegistry: args.config.tools,
+        providerStream: args.config.providerStream,
+        runMode: 'implementation',
+        retryPrompt: buildDeliveryFixPrompt(blocking, args.userMessage),
+      });
+      for await (const event of fixGenerator) {
+        if (event.type === 'tool_execution_start') args.onToolCall?.();
+        yield event;
+      }
+    } catch (deliveryErr) {
+      // eslint-disable-next-line no-console
+      console.error(`[council] ${args.chairman.id} delivery pass ${attempt} failed:`, deliveryErr);
+      break;
+    }
+    for (const rel of args.changedFiles) {
+      for (const w of runChairmanMicroGate({ projectRoot: args.projectRoot, relPath: rel, zelariRoot })) {
+        // refresh changed set — delivery may touch same targets
+        args.changedFiles.add(w.file ?? rel);
+      }
+    }
+  }
+  const finalReport = runImplementationVerification({
+    projectRoot: args.projectRoot,
+    zelariRoot,
+  });
+  return filterDeliveryBlockingFails(finalReport.results).length === 0;
+}
+
+/**
+ * Re-execute edit_file/write_file calls from a `---TOOLS---` block after the
+ * chairman turn. Safety net when the harness path parsed the block but edits
+ * failed (oldString drift) or the block was not fully executed.
+ */
+export async function* replayChairmanTextTools(args: {
+  synthesisText: string;
+  projectRoot: string;
+  toolRegistry: ToolRegistry;
+  sessionId: string;
+  memberId?: string;
+}): AsyncGenerator<BrainEvent, number, void> {
+  const tools = parseTextToolCalls(args.synthesisText);
+  if (tools.length === 0) return 0;
+  let applied = 0;
+  for (const tt of tools) {
+    if (tt.name !== 'edit_file' && tt.name !== 'write_file') continue;
+    const normalized = normalizeTextToolArgs(tt.name, tt.args);
+    const toolCallId = `replay-${crypto.randomUUID().slice(0, 8)}`;
+    yield createBrainEvent('tool_execution_start', args.sessionId, {
+      toolCallId,
+      toolName: tt.name,
+      args: normalized,
+      ...(args.memberId ? { memberId: args.memberId } : {}),
+    });
+    const startMs = Date.now();
+    let resultStr = '';
+    let isError = false;
+    try {
+      const result = await args.toolRegistry.invoke<unknown>(tt.name, normalized, {
+        cwd: args.projectRoot,
+        sessionId: args.sessionId,
+      });
+      if (result.ok) {
+        const val = result.value as { occurrencesReplaced?: number };
+        if (tt.name === 'edit_file' && val.occurrencesReplaced === 0) {
+          resultStr = `edit_file: no match for oldString (replay)`;
+          isError = true;
+        } else {
+          resultStr =
+            typeof result.value === 'string'
+              ? result.value
+              : JSON.stringify(result.value, null, 2);
+          applied += 1;
+        }
+      } else {
+        resultStr = result.error;
+        isError = true;
+      }
+    } catch (err) {
+      resultStr = err instanceof Error ? err.message : String(err);
+      isError = true;
+    }
+    yield createBrainEvent('tool_execution_end', args.sessionId, {
+      toolCallId,
+      result: resultStr,
+      isError,
+      durationMs: Date.now() - startMs,
+    });
+  }
+  return applied;
+}
+
+/**
+ * Increment 4 — bounded deterministic fix loop for the chairman. When the
+ * micro-gate flagged motion violations in Lucifero's writes, force a scoped
+ * fix turn (read_file + edit_file only), re-scan the changed files, and repeat
+ * until clean or the attempt cap. Emits only the fix turn's own events; the
+ * post-council verification reports the final PASS/FAIL to the user.
+ */
+export async function* runChairmanFixLoop(args: {
+  chairman: AgentRole;
+  violations: Map<string, MicroGateWarning>;
+  changedFiles: Set<string>;
+  projectRoot: string;
+  executableNames: ReadonlySet<string> | null;
+  sessionId: string;
+  userMessage: string;
+  agentOutputs: { name: string; role: string; content: string }[];
+  config: PureCouncilConfig;
+  effectiveProvider: string;
+  effectiveModel: string;
+  onToolCall?: () => void;
+  maxAttempts?: number;
+}): AsyncGenerator<BrainEvent, void, void> {
+  const maxAttempts = args.maxAttempts ?? 3;
+  const zelariRoot = `${args.projectRoot}/.zelari`;
+  let current = Array.from(args.violations.values());
+  let attempt = 0;
+  while (current.length > 0 && attempt < maxAttempts) {
+    attempt++;
+    try {
+      const fixGenerator = runRetryTurnForMember({
+        agent: args.chairman,
+        missingToolNames: ['read_file', 'edit_file'],
+        minPerTool: { read_file: 2, edit_file: 8 },
+        executableTools: args.executableNames,
+        userMessage: args.userMessage,
+        ragContext: args.config.ragContext,
+        workspaceContext: args.config.workspaceContext,
+        priorOutputs: args.agentOutputs,
+        aiConfig: args.config.aiConfig,
+        sessionId: args.sessionId,
+        effectiveModel: args.effectiveModel,
+        effectiveProvider: args.effectiveProvider,
+        eventBus: args.config.eventBus,
+        toolRegistry: args.config.tools,
+        providerStream: args.config.providerStream,
+        runMode: 'implementation',
+        retryPrompt: buildMotionFixPrompt(current),
+      });
+      for await (const event of fixGenerator) {
+        if (event.type === 'tool_execution_start') args.onToolCall?.();
+        yield event;
+      }
+    } catch (fixErr) {
+      // eslint-disable-next-line no-console
+      console.error(`[council] chairman fix pass ${attempt} failed:`, fixErr);
+      break;
+    }
+    // Re-scan the changed target files for the next iteration / termination.
+    const rescanned = new Map<string, MicroGateWarning>();
+    for (const relPath of args.changedFiles) {
+      for (const w of runChairmanMicroGate({ projectRoot: args.projectRoot, relPath, zelariRoot })) {
+        rescanned.set(`${w.id}|${w.file}|${w.line ?? ''}`, w);
+      }
+    }
+    current = Array.from(rescanned.values());
+  }
+}
 // ── Post-condition tool emission check (v0.7.6) ────────────────────────────
 //
 // After each council member's turn, verify that the tools the role was
@@ -1103,6 +1708,8 @@ export async function* runRetryTurnForMember(args: {
   toolRegistry?: unknown;
   providerStream: ProviderStreamFn;
   runMode?: CouncilRunMode;
+  /** Override the default buildRetryPrompt message. */
+  retryPrompt?: string;
 }): AsyncGenerator<BrainEvent, string[], void> {
   // Filter the missing tools against what's actually executable in this
   // runtime. If a tool is missing from executableTools, the retry can't
@@ -1134,7 +1741,10 @@ export async function* runRetryTurnForMember(args: {
   );
   const retryMessages = [
     ...baseMessages,
-    { role: 'user' as const, content: buildRetryPrompt(executableMissing) },
+    {
+      role: 'user' as const,
+      content: args.retryPrompt ?? buildRetryPrompt(executableMissing),
+    },
   ];
   // Budget the retry turn so the model can satisfy ALL minimums in a
     // single tool_calls turn. For createDocument min:1 this is 1; for

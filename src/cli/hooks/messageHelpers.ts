@@ -1,5 +1,8 @@
-import type { ChatMessage } from '../components/ChatStream.js';
-import { formatToolSummary } from '../components/toolFormat.js';
+import type { ChatMessage } from "../components/ChatStream.js";
+import {
+  formatToolSummary,
+  toolResultForStorage,
+} from "../components/toolFormat.js";
 
 /**
  * Helpers for building ChatMessage instances in the most common shapes.
@@ -23,7 +26,7 @@ export function appendSystem(
 ): void {
   setMessages((prev) => [
     ...prev,
-    { id: crypto.randomUUID(), role: 'system', content, ts },
+    { id: crypto.randomUUID(), role: "system", content, ts },
   ]);
 }
 
@@ -35,7 +38,7 @@ export function appendUser(
 ): void {
   setMessages((prev) => [
     ...prev,
-    { id: crypto.randomUUID(), role: 'user', content, ts },
+    { id: crypto.randomUUID(), role: "user", content, ts },
   ]);
 }
 
@@ -56,18 +59,22 @@ export function appendOrExtendStreamingAssistant(
 ): void {
   setMessages((prev) => {
     const last = prev[prev.length - 1];
-    if (last && last.role === 'assistant' && last.id.startsWith('streaming-')) {
+    if (last && last.role === "assistant" && last.id.startsWith("streaming-")) {
       return [...prev.slice(0, -1), { ...last, content: fullContent }];
     }
     return [
       ...prev,
       {
         id: `streaming-${crypto.randomUUID()}`,
-        role: 'assistant',
+        role: "assistant",
         content: fullContent,
         ts,
-        ...(memberContext?.memberId ? { memberId: memberContext.memberId } : {}),
-        ...(memberContext?.memberName ? { memberName: memberContext.memberName } : {}),
+        ...(memberContext?.memberId
+          ? { memberId: memberContext.memberId }
+          : {}),
+        ...(memberContext?.memberName
+          ? { memberName: memberContext.memberName }
+          : {}),
       },
     ];
   });
@@ -78,7 +85,7 @@ export function appendOrExtendStreamingAssistant(
  * match chatState.ts — the 600-char cut chopped the JSON envelope before
  * formatToolResult could parse it, forcing the raw-escaped fallback.
  */
-export const TOOL_RESULT_PREVIEW_CHARS = 8000;
+export { TOOL_RESULT_PREVIEW_CHARS } from "../components/toolFormat.js";
 
 /** Max chars of the JSON args preview shown on the tool summary line. */
 export const TOOL_ARGS_PREVIEW_CHARS = 120;
@@ -102,7 +109,7 @@ export function appendToolStart(
     ...prev,
     {
       id: crypto.randomUUID(),
-      role: 'tool',
+      role: "tool",
       content: argsPreview,
       ts,
       toolName,
@@ -128,7 +135,12 @@ export function updateToolMessageEnd(
   setMessages((prev) => {
     for (let i = prev.length - 1; i >= 0; i--) {
       const m = prev[i];
-      if (m && m.role === 'tool' && m.toolCallId === toolCallId && m.toolDurationMs === undefined) {
+      if (
+        m &&
+        m.role === "tool" &&
+        m.toolCallId === toolCallId &&
+        m.toolDurationMs === undefined
+      ) {
         const updated = [...prev];
         updated[i] = {
           ...m,
@@ -136,10 +148,11 @@ export function updateToolMessageEnd(
           toolDurationMs: durationMs,
           ...(result !== undefined
             ? {
-                toolResult:
-                  result.length > TOOL_RESULT_PREVIEW_CHARS
-                    ? `${result.slice(0, TOOL_RESULT_PREVIEW_CHARS)}…`
-                    : result,
+                toolResult: toolResultForStorage(
+                  m.toolName ?? "",
+                  result,
+                  isError,
+                ),
               }
             : {}),
         };
@@ -161,8 +174,11 @@ export function finalizeStreamingAssistant(
 ): void {
   setMessages((prev) => {
     const last = prev[prev.length - 1];
-    if (last && last.role === 'assistant' && last.id.startsWith('streaming-')) {
-      return [...prev.slice(0, -1), { ...last, id: last.id.slice('streaming-'.length) }];
+    if (last && last.role === "assistant" && last.id.startsWith("streaming-")) {
+      return [
+        ...prev.slice(0, -1),
+        { ...last, id: last.id.slice("streaming-".length) },
+      ];
     }
     return prev;
   });

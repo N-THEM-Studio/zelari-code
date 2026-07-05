@@ -164,15 +164,23 @@ describe("buildPlanSummary (v0.7.3)", () => {
     expect(summary).toContain("read the task file(s)");
   });
 
-  it('lists tasks whose phase is missing under (unassigned)', () => {
+  it("lists tasks whose phase is missing under (unassigned)", () => {
     writePlan({
       phases: [],
-      tasks: [{ kind: 'task', id: 'orphan-1', name: 'Orphan task', phaseId: 'ghost', status: 'pending' }],
+      tasks: [
+        {
+          kind: "task",
+          id: "orphan-1",
+          name: "Orphan task",
+          phaseId: "ghost",
+          status: "pending",
+        },
+      ],
       milestones: [],
     });
     const summary = buildPlanSummary(dir)!;
-    expect(summary).toContain('(unassigned)');
-    expect(summary).toContain('Orphan task');
+    expect(summary).toContain("(unassigned)");
+    expect(summary).toContain("Orphan task");
   });
 
   it('v0.7.4: picks "next task" — first in_progress, else by priority', () => {
@@ -251,6 +259,39 @@ describe("buildPlanSummary (v0.7.3)", () => {
     });
     const summary = buildPlanSummary(dir)!;
     expect(summary).not.toContain("Next task to work on");
+  });
+
+  it("v0.9.1: splits in-scope vs backlog when userMessage is provided", () => {
+    writePlan({
+      phases: [{ kind: "phase", id: "mvp", name: "MVP", order: 1 }],
+      tasks: [
+        {
+          kind: "task",
+          id: "motion-1",
+          name: "Animate hero on index.html",
+          phaseId: "mvp",
+          status: "pending",
+          priority: "high",
+        },
+        {
+          kind: "task",
+          id: "palette-1",
+          name: "Command palette shortcuts",
+          phaseId: "mvp",
+          status: "pending",
+          priority: "medium",
+        },
+      ],
+      milestones: [],
+    });
+    const summary = buildPlanSummary(dir, {
+      userMessage: "Animate index.html with compositor-only motion",
+    })!;
+    expect(summary).toContain("## In scope for this task");
+    expect(summary).toContain("Animate hero on index.html");
+    expect(summary).toContain("## Planned but not requested (backlog)");
+    expect(summary).toContain("Command palette shortcuts");
+    expect(summary).not.toMatch(/## 1\. MVP[\s\S]*Command palette shortcuts/);
   });
 });
 
