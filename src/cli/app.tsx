@@ -70,7 +70,7 @@ export function App(): React.ReactElement {
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
   const [providerConfig, setProviderConfig] = useState(() => getProviderConfig());
-  const [sessionStats, setSessionStats] = useState({ totalTokens: 0, totalCostUsd: 0 });
+  const [sessionStats, setSessionStats] = useState({ totalTokens: 0, totalCostUsd: 0, cachedTokens: 0 });
   // v0.7.0: bump on /clear to remount <Static> (resets its internal "already
   // printed" index so the ANSI-cleared scrollback stays in sync). Also bumped
   // implicitly by a sessionId change (/new).
@@ -268,6 +268,8 @@ export function App(): React.ReactElement {
             cwd={cwd}
             elapsedMs={timer.elapsedMs}
             lastMs={timer.lastMs}
+            costUsd={sessionStats.totalCostUsd}
+            cachedTokens={sessionStats.cachedTokens}
           />
         </Box>
         {showSidebar && (

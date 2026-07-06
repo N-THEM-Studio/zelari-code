@@ -50,6 +50,38 @@ export function resolveActiveProvider(): ProviderName {
 }
 
 /**
+ * Extract the number of prompt tokens served from the provider's prompt
+ * cache, normalizing across the two OpenAI-compatible reporting shapes:
+ *   - OpenAI / xAI / GLM: `usage.prompt_tokens_details.cached_tokens`
+ *   - DeepSeek:           `usage.prompt_cache_hit_tokens`
+ *
+ * Prompt caching is automatic server-side for these providers — there is no
+ * request-side `cache_control` to send (that is an Anthropic-only mechanism).
+ * The stable prompt prefix (system prompt + tool schema + early transcript)
+ * gets cached and billed at a discount; this function surfaces the hit count
+ * so cost accounting and the cache-hit-rate stat are accurate.
+ *
+ * Returns 0 when no cache field is present or the value is not a finite
+ * non-negative number.
+ *
+ * @internal exported for unit testing
+ */
+export function parseCachedPromptTokens(usage: {
+  prompt_tokens_details?: { cached_tokens?: number };
+  prompt_cache_hit_tokens?: number;
+} | null | undefined): number {
+  if (!usage || typeof usage !== 'object') return 0;
+  const candidates = [
+    usage.prompt_tokens_details?.cached_tokens,
+    usage.prompt_cache_hit_tokens,
+  ];
+  for (const c of candidates) {
+    if (typeof c === 'number' && Number.isFinite(c) && c >= 0) return c;
+  }
+  return 0;
+}
+
+/**
  * Resolve baseUrl for a given provider. Priority:
  *   1. Custom endpoint persisted via `/provider custom <url>` (wins always)
  *   2. OPENAI_BASE_URL env override (for openai-compatible / custom)
@@ -206,6 +238,11 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
                 prompt_tokens?: number;
                 completion_tokens?: number;
                 total_tokens?: number;
+                // Cached-prompt tokens, reported two different ways:
+                //   OpenAI / xAI / GLM: usage.prompt_tokens_details.cached_tokens
+                //   DeepSeek:           usage.prompt_cache_hit_tokens
+                prompt_tokens_details?: { cached_tokens?: number };
+                prompt_cache_hit_tokens?: number;
               };
             };
             const choice = parsed.choices?.[0];
@@ -227,9 +264,15 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
                 typeof parsed.usage.total_tokens === 'number'
                   ? parsed.usage.total_tokens
                   : promptTokens + completionTokens;
+              const cachedPromptTokens = parseCachedPromptTokens(parsed.usage);
               yield {
                 kind: 'usage',
-                usage: { promptTokens, completionTokens, totalTokens },
+                usage: {
+                  promptTokens,
+                  completionTokens,
+                  totalTokens,
+                  ...(cachedPromptTokens > 0 ? { cachedPromptTokens } : {}),
+                },
               };
             }
             if (typeof delta?.content === 'string' && delta.content.length > 0) {

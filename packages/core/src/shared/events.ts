@@ -141,6 +141,17 @@ export interface UsageBreakdown {
   completionTokens: number;
   /** Convenience: promptTokens + completionTokens. */
   totalTokens: number;
+  /**
+   * Prompt tokens that were served from the provider's prompt cache
+   * (a subset of `promptTokens`). OpenAI-compatible providers cache the
+   * stable prompt prefix (system prompt + tool schema + early transcript)
+   * automatically and bill these at a steep discount — DeepSeek ~10× cheaper,
+   * OpenAI/xAI/GLM ~2–4× cheaper. Parsed from `prompt_tokens_details.cached_tokens`
+   * (OpenAI/xAI/GLM) or `prompt_cache_hit_tokens` (DeepSeek). Undefined/0 when
+   * the provider reports no cache hit. Used for accurate cost accounting and
+   * the cache-hit-rate stat.
+   */
+  cachedPromptTokens?: number;
 }
 
 // --- Reasoning (optional) ---------------------------------------------------

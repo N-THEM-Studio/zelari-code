@@ -73,7 +73,7 @@ export interface UseChatTurnParams {
   setBusy: (v: boolean) => void;
   setSessionActive: (v: boolean) => void;
   setSessionStats: React.Dispatch<
-    React.SetStateAction<{ totalTokens: number; totalCostUsd: number }>
+    React.SetStateAction<{ totalTokens: number; totalCostUsd: number; cachedTokens?: number }>
   >;
   // ── v0.7.0 live-region wiring (optional; legacy fallback when omitted) ──
   /** The live region setter (streaming bubble + pending tools). */
@@ -361,6 +361,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           promptTokens: number;
           completionTokens: number;
           totalTokens: number;
+          cachedPromptTokens?: number;
         } | null = null;
         try {
           for await (const event of harness.run()) {

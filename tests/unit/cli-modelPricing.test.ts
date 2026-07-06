@@ -84,6 +84,45 @@ describe('modelPricing (Task B.1.3)', () => {
       expect(calculateCost('grok-4', Number.POSITIVE_INFINITY, 100)).toBe(0);
     });
 
+    describe('prompt caching', () => {
+      it('bills cached prompt tokens at the model cachedInput rate (deepseek 10x cheaper)', () => {
+        // deepseek-v4-pro: input 0.55, cachedInput 0.055. 1M prompt all cached
+        // + 0 completion → 1M * 0.055/1M = 0.055 (vs 0.55 uncached).
+        const cached = calculateCost('deepseek-v4-pro', 1_000_000, 0, 1_000_000);
+        expect(cached).toBeCloseTo(0.055, 6);
+        const uncached = calculateCost('deepseek-v4-pro', 1_000_000, 0, 0);
+        expect(uncached).toBeCloseTo(0.55, 6);
+        expect(cached).toBeLessThan(uncached);
+      });
+
+      it('uses the default 0.25x discount for models without an explicit cached rate', () => {
+        // grok-4 input 3, no cachedInput → cached rate 0.75. 1M all cached.
+        expect(calculateCost('grok-4', 1_000_000, 0, 1_000_000)).toBeCloseTo(0.75, 6);
+      });
+
+      it('mixes cached + uncached prompt tokens correctly', () => {
+        // deepseek-v4-pro: 1M prompt, 400k cached → 600k*0.55 + 400k*0.055 per 1M
+        // = 0.33 + 0.022 = 0.352.
+        expect(calculateCost('deepseek-v4-pro', 1_000_000, 0, 400_000)).toBeCloseTo(0.352, 6);
+      });
+
+      it('clamps cached tokens to at most promptTokens', () => {
+        // cached (2M) > prompt (1M): clamp to 1M cached → same as fully cached.
+        const clamped = calculateCost('deepseek-v4-pro', 1_000_000, 0, 2_000_000);
+        expect(clamped).toBeCloseTo(0.055, 6);
+      });
+
+      it('ignores negative / non-finite cached values (bills all prompt as uncached)', () => {
+        const base = calculateCost('grok-4', 1000, 500, 0);
+        expect(calculateCost('grok-4', 1000, 500, -50)).toBeCloseTo(base, 6);
+        expect(calculateCost('grok-4', 1000, 500, Number.NaN)).toBeCloseTo(base, 6);
+      });
+
+      it('is backward compatible when cachedPromptTokens is omitted', () => {
+        expect(calculateCost('grok-4', 1000, 500)).toBeCloseTo(calculateCost('grok-4', 1000, 500, 0), 6);
+      });
+    });
+
     it('returns 0 for zero tokens', () => {
       expect(calculateCost('grok-4', 0, 0)).toBe(0);
     });

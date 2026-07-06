@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { formatDuration } from '../utils/duration.js';
+import { formatCost, formatTokens } from '../modelPricing.js';
 import { Spinner } from './Spinner.js';
 
 export type ChatMode = 'agent' | 'council' | 'zelari';
@@ -20,6 +21,10 @@ interface StatusBarProps {
   elapsedMs?: number | null;
   /** Duration of the last completed run; null before the first run. */
   lastMs?: number | null;
+  /** Cumulative session cost in USD; shown when > 0 (v1.2 prompt caching). */
+  costUsd?: number;
+  /** Cumulative prompt tokens served from cache; shown as "Nk cached" when > 0. */
+  cachedTokens?: number;
 }
 
 /**
@@ -46,6 +51,8 @@ export function StatusBar({
   cwd,
   elapsedMs = null,
   lastMs = null,
+  costUsd = 0,
+  cachedTokens = 0,
 }: StatusBarProps): React.ReactElement {
   return (
     <Box paddingX={1} width="100%" justifyContent="space-between" gap={2}>
@@ -92,6 +99,15 @@ export function StatusBar({
         {queueCount > 0 ? (
           <>
             <Text color="magenta">queue {queueCount}</Text>
+            <Text dimColor> · </Text>
+          </>
+        ) : null}
+        {costUsd > 0 ? (
+          <>
+            <Text color="green">{formatCost(costUsd)}</Text>
+            {cachedTokens > 0 ? (
+              <Text dimColor> ({formatTokens(cachedTokens)} cached)</Text>
+            ) : null}
             <Text dimColor> · </Text>
           </>
         ) : null}

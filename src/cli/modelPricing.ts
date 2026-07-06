@@ -15,8 +15,17 @@
  * Costs returned are precise to 6 decimals. Round to cents at the UI layer.
  */
 
-/** Pricing table (USD per 1M tokens) — conservative public list prices. */
-const PRICES_PER_MILLION: Record<string, { input: number; output: number }> = {
+/**
+ * Pricing table (USD per 1M tokens) — conservative public list prices.
+ *
+ * `cachedInput` (optional) is the discounted rate for prompt tokens served
+ * from the provider's automatic prompt cache. When omitted, cached tokens
+ * are billed at `input * DEFAULT_CACHE_DISCOUNT` (see below).
+ */
+const PRICES_PER_MILLION: Record<
+  string,
+  { input: number; output: number; cachedInput?: number }
+> = {
   // xAI Grok
   'grok-4':           { input: 3,    output: 15 },
   'grok-4-fast':      { input: 0.20, output: 0.50 },
@@ -34,8 +43,9 @@ const PRICES_PER_MILLION: Record<string, { input: number; output: number }> = {
   'MiniMax-M2-her':   { input: 0.30, output: 1.20 },
   // DeepSeek (global platform) — estimated list prices; override via
   // ANATHEMA_PRICE_DEEPSEEK_V4_FLASH / ANATHEMA_PRICE_DEEPSEEK_V4_PRO.
-  'deepseek-v4-flash': { input: 0.14, output: 0.28 },
-  'deepseek-v4-pro':   { input: 0.55, output: 2.19 },
+  // DeepSeek prompt-cache hits are ~10× cheaper than a cache miss.
+  'deepseek-v4-flash': { input: 0.14, output: 0.28, cachedInput: 0.014 },
+  'deepseek-v4-pro':   { input: 0.55, output: 2.19, cachedInput: 0.055 },
   // OpenAI (for openai-compatible fallback)
   'gpt-4o':           { input: 2.50, output: 10 },
   'gpt-4o-mini':      { input: 0.15, output: 0.60 },
@@ -46,6 +56,13 @@ const PRICES_PER_MILLION: Record<string, { input: number; output: number }> = {
 
 /** Default rate for unknown models — assume a mid-tier provider. */
 const DEFAULT_RATE = { input: 1.0, output: 3.0 };
+
+/**
+ * When a model has no explicit `cachedInput` rate, bill cache-hit prompt
+ * tokens at this fraction of the input rate. 0.25 is a conservative middle
+ * across providers (OpenAI ~0.5×, xAI ~0.25×, DeepSeek ~0.1×).
+ */
+const DEFAULT_CACHE_DISCOUNT = 0.25;
 
 /** Read an env-var override for a given model, if present. */
 function envOverride(model: string): { input: number; output: number } | null {
@@ -71,7 +88,7 @@ export function parseRateOverride(raw: string | undefined): { input: number; out
 }
 
 /** Look up pricing for a model. Falls back to DEFAULT_RATE. */
-export function getModelRate(model: string): { input: number; output: number } {
+export function getModelRate(model: string): { input: number; output: number; cachedInput?: number } {
   if (!model) return DEFAULT_RATE;
   return envOverride(model)
     ?? PRICES_PER_MILLION[model]
@@ -82,17 +99,31 @@ export function getModelRate(model: string): { input: number; output: number } {
  * Compute the USD cost for a given number of prompt + completion tokens.
  * Rates are per 1M tokens, so we divide the token count by 1_000_000.
  *
+ * `cachedPromptTokens` (optional, a subset of `promptTokens`) are prompt
+ * tokens served from the provider's automatic prompt cache; they are billed
+ * at the model's `cachedInput` rate (or `input * DEFAULT_CACHE_DISCOUNT` when
+ * the model has no explicit cached rate). Values are clamped so cached never
+ * exceeds prompt.
+ *
  * @returns cost in USD (0 if either token count is negative or NaN).
  */
 export function calculateCost(
   model: string,
   promptTokens: number,
   completionTokens: number,
+  cachedPromptTokens = 0,
 ): number {
   if (!Number.isFinite(promptTokens) || promptTokens < 0) return 0;
   if (!Number.isFinite(completionTokens) || completionTokens < 0) return 0;
   const rate = getModelRate(model);
-  const inputCost = (promptTokens / 1_000_000) * rate.input;
+  const cached =
+    Number.isFinite(cachedPromptTokens) && cachedPromptTokens > 0
+      ? Math.min(cachedPromptTokens, promptTokens)
+      : 0;
+  const uncachedPrompt = promptTokens - cached;
+  const cachedRate = rate.cachedInput ?? rate.input * DEFAULT_CACHE_DISCOUNT;
+  const inputCost =
+    (uncachedPrompt / 1_000_000) * rate.input + (cached / 1_000_000) * cachedRate;
   const outputCost = (completionTokens / 1_000_000) * rate.output;
   return Number((inputCost + outputCost).toFixed(6));
 }

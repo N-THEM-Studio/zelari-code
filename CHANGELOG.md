@@ -5,6 +5,22 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Prompt-cache accounting & surfacing.** OpenAI-compatible providers
+  (DeepSeek, GLM, Grok, OpenAI) cache the stable prompt prefix
+  (system prompt + tool schema + early transcript) server-side and bill
+  those tokens at a steep discount. The CLI now parses the cache-hit count
+  from provider usage — both the OpenAI/xAI/GLM shape
+  (`prompt_tokens_details.cached_tokens`) and the DeepSeek shape
+  (`prompt_cache_hit_tokens`) — bills cached tokens at the model's
+  `cachedInput` rate (DeepSeek ~10× cheaper; 0.25× default for models
+  without an explicit rate), and shows cumulative session cost plus
+  `(N cached)` in the status bar. No request-side changes are needed —
+  caching is automatic server-side — and the system prompt prefix was
+  verified free of volatile tokens so cache hits are not broken.
+
 ## [1.1.1] - 2026-07-06
 
 ### Fixed

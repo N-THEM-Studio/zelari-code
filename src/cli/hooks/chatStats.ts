@@ -16,19 +16,28 @@ import { calculateCost } from '../modelPricing.js';
  * responsible for merging it into state via `setSessionStats(prev => ...)`.
  */
 export function computeSessionStatsDelta(
-  realUsage: { promptTokens: number; completionTokens: number; totalTokens: number } | null,
+  realUsage: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    cachedPromptTokens?: number;
+  } | null,
   userText: string,
   assistantContent: string,
   model: string,
-  prev: { totalTokens: number; totalCostUsd: number },
-): { totalTokens: number; totalCostUsd: number } {
+  prev: { totalTokens: number; totalCostUsd: number; cachedTokens?: number },
+): { totalTokens: number; totalCostUsd: number; cachedTokens: number } {
   const promptTokens = realUsage ? realUsage.promptTokens : Math.ceil(userText.length / 4);
   const completionTokens = realUsage
     ? realUsage.completionTokens
     : Math.ceil(assistantContent.length / 4);
-  const turnCost = calculateCost(model, promptTokens, completionTokens);
+  // Cached prompt tokens are only known from real provider usage; the
+  // char/4 fallback can't distinguish them, so assume 0 there.
+  const cachedPromptTokens = realUsage?.cachedPromptTokens ?? 0;
+  const turnCost = calculateCost(model, promptTokens, completionTokens, cachedPromptTokens);
   return {
     totalTokens: prev.totalTokens + promptTokens + completionTokens,
     totalCostUsd: prev.totalCostUsd + turnCost,
+    cachedTokens: (prev.cachedTokens ?? 0) + cachedPromptTokens,
   };
 }
