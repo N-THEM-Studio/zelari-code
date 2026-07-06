@@ -27,6 +27,7 @@ import { fetchUrlTool, webSearchTool } from '@zelari/core/harness/tools/builtin/
 import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPath.js';
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
+import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
 export interface BuiltinToolSummary {
@@ -45,6 +46,14 @@ export interface CreateRegistryOptions {
   audit?: AuditLogger;
   /** Session id used in audit entries. */
   sessionId?: string;
+  /**
+   * Enable the post-edit diagnostics loop (fast file-scoped checker runs
+   * after write_file/edit_file/apply_diff, appending errors to the result).
+   * Defaults to true unless `ZELARI_DIAGNOSTICS=0` is set.
+   */
+  diagnostics?: boolean;
+  /** Inject the diagnostics process runner (tests). Defaults to real spawn. */
+  diagnosticsRunner?: Runner;
 }
 
 /**
@@ -67,13 +76,20 @@ export function createBuiltinToolRegistry(
   const sessionId = options.sessionId ?? 'cli';
 
   // Wrap filesystem tools: sandbox the path argument before delegating.
+  // Edit tools (write/edit/apply_diff) are ALSO wrapped with the diagnostics
+  // loop: after a successful edit, a fast file-scoped checker runs on the
+  // touched file and its errors/warnings are appended to the tool result so
+  // the model sees compiler feedback in the same turn (opt out: ZELARI_DIAGNOSTICS=0).
+  const diagnosticsOn = options.diagnostics ?? process.env.ZELARI_DIAGNOSTICS !== '0';
+  const withDiag = <I extends Record<string, unknown>, O>(t: ToolDefinition<I, O>) =>
+    diagnosticsOn ? wrapWithDiagnostics(t, root, options.diagnosticsRunner) : t;
   const safeReadFile = wrapWithSandbox(readFileTool, ['path'], root, audit, sessionId);
-  const safeWriteFile = wrapWithSandbox(writeFileTool, ['path'], root, audit, sessionId);
-  const safeEditFile = wrapWithSandbox(editFileTool, ['path'], root, audit, sessionId);
+  const safeWriteFile = withDiag(wrapWithSandbox(writeFileTool, ['path'], root, audit, sessionId));
+  const safeEditFile = withDiag(wrapWithSandbox(editFileTool, ['path'], root, audit, sessionId));
   const safeGrepContent = wrapWithSandbox(grepContentTool, ['path'], root, audit, sessionId);
   const safeListFiles = wrapWithSandbox(listFilesTool, ['path'], root, audit, sessionId);
   const safeShowDiff = wrapWithSandbox(showDiffTool, ['path'], root, audit, sessionId);
-  const safeApplyDiff = wrapWithSandbox(applyDiffTool, ['path'], root, audit, sessionId);
+  const safeApplyDiff = withDiag(wrapWithSandbox(applyDiffTool, ['path'], root, audit, sessionId));
 
   // Wrap bash: shell blocklist + audit.
   const safeBash = wrapWithShellSafety(bashTool, audit, sessionId);
@@ -173,6 +189,59 @@ function wrapWithSandbox<I extends Record<string, unknown>, O>(
           error: err instanceof Error ? err.message : String(err),
         } as TypedResult<O>;
       }
+    },
+  };
+}
+
+/**
+ * Wrap an edit tool (write_file / edit_file / apply_diff) with the
+ * post-edit diagnostics loop. After a successful, non-dry-run edit, a fast
+ * file-scoped checker runs on the touched file (`result.value.path`) and, if
+ * it finds anything, a compact diagnostics block is appended to the result
+ * value under `diagnostics`. The harness serializes the value into the tool
+ * message, so the model sees compiler errors in the same turn and can fix
+ * them immediately.
+ *
+ * Best-effort and non-blocking-by-design: unsupported file types, missing
+ * linters, timeouts, and parse failures all yield no diagnostics and leave
+ * the original result untouched. Never changes a failed result or a dryRun.
+ */
+function wrapWithDiagnostics<I extends Record<string, unknown>, O>(
+  original: ToolDefinition<I, O>,
+  root: string,
+  runner?: Runner,
+): ToolDefinition<I, O> {
+  return {
+    ...original,
+    execute: async (rawArgs: I, ctx: ToolContext): Promise<TypedResult<O>> => {
+      const result = await original.execute(rawArgs, ctx);
+      if (!result.ok) return result;
+      // A dry-run edit (apply_diff dryRun) writes nothing — nothing to check.
+      if ((rawArgs as Record<string, unknown>).dryRun === true) return result;
+      const value = result.value as { path?: unknown } | null;
+      const filePath =
+        value && typeof value === 'object' && typeof value.path === 'string'
+          ? value.path
+          : undefined;
+      if (!filePath) return result;
+      try {
+        const timeoutMs = Number(process.env.ZELARI_DIAGNOSTICS_TIMEOUT_MS) || 5000;
+        const diags = await runDiagnosticsForFile(filePath, {
+          cwd: root,
+          timeoutMs,
+          ...(runner ? { runner } : {}),
+        });
+        const formatted = formatDiagnostics(diags, { relativeTo: root });
+        if (formatted) {
+          return {
+            ok: true,
+            value: { ...(value as Record<string, unknown>), diagnostics: formatted },
+          } as TypedResult<O>;
+        }
+      } catch {
+        // Diagnostics must never break an edit — swallow and return as-is.
+      }
+      return result;
     },
   };
 }

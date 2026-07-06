@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Post-edit diagnostics loop (compiler-verified editing).** After a
+  successful `write_file` / `edit_file` / `apply_diff`, a fast file-scoped
+  checker runs on the touched file and its errors/warnings are appended to
+  the tool result under `diagnostics`, so the model sees real compiler
+  feedback in the same turn and can fix it immediately — instead of editing
+  blind. Ships with ESLint (js/ts/jsx/tsx/mjs/cjs) and Ruff (py) providers
+  behind a small `DiagnosticProvider` interface (LSP-pluggable). Binaries
+  resolve from the project's `node_modules/.bin` first, then PATH. Fully
+  best-effort: unsupported file types, missing linters, timeouts, and
+  unparseable output never affect the edit. Opt out with `ZELARI_DIAGNOSTICS=0`;
+  tune the per-check budget with `ZELARI_DIAGNOSTICS_TIMEOUT_MS` (default 5s).
 - **Prompt-cache accounting & surfacing.** OpenAI-compatible providers
   (DeepSeek, GLM, Grok, OpenAI) cache the stable prompt prefix
   (system prompt + tool schema + early transcript) server-side and bill
