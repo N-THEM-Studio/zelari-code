@@ -5,6 +5,31 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Rilevamento di stallo della missione zelari.** Il loop `runZelariMission`
+  ora riceve dal council il numero di file scritti nello slice
+  (`write_file`/`edit_file`) e il verdetto `degraded`. Quando uno slice di
+  *implementation* scrive **0 file** per N iterazioni consecutive (default 2,
+  configurabile con `ZELARI_MISSION_MAX_STALL`, `0` disabilita) la missione si
+  ferma con stato `stalled` e un messaggio azionabile invece di consumare
+  l'intero budget di iterazioni su run identici a vuoto. È esattamente il caso
+  documentato con composer-2.5: la synthesis dichiara "fatto" ma non produce il
+  deliverable → `DEGRADED_RUN` → `completion.ok=false` all'infinito.
+- Nuovo stato missione `stalled` in `MissionStatus` e nuova variabile
+  d'ambiente `ZELARI_MISSION_MAX_STALL`.
+
+### Changed
+- **Prompt di implementation più stringente.** Lo slice di implementation ora
+  richiede esplicitamente di creare/modificare i file reali con
+  `write_file`/`edit_file` e dichiara che un run che afferma il completamento
+  senza scrivere alcun file è un run fallito.
+- `dispatchCouncilPromptImpl` e il tipo `SliceRunResult` propagano ora
+  `writeCount` e `degraded` verso il loop di missione; nessun cambiamento per il
+  percorso `/council` normale. I driver che non riportano `writeCount`
+  mantengono il comportamento precedente (nessun rilevamento di stallo).
+
 ## [1.0.0] - 2026-07-05
 
 Primo rilascio stabile. Introduce **Zelari-mode** (missioni autonome multi-run),

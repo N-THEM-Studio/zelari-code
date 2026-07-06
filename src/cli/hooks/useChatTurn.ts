@@ -619,6 +619,10 @@ export interface CouncilSliceResult {
   completionOk: boolean;
   ran: boolean;
   synthesisText?: string;
+  /** Project-file writes (write_file/edit_file) counted this slice. */
+  writeCount?: number;
+  /** The council flagged this slice as a degraded (non-hand-off) run. */
+  degraded?: boolean;
 }
 
 /** Per-slice overrides injected by the Zelari driver. */
@@ -723,6 +727,7 @@ async function dispatchCouncilPromptImpl(
   // v1.0: slice outcome reported back to the Zelari mission loop.
   let sliceCompletionOk = false;
   let sliceRan = false;
+  let sliceDegraded = false;
   const PROVIDER_ERROR_ABORT_THRESHOLD = 2;
   try {
     for await (const event of dispatchCouncil(text, {
@@ -957,6 +962,7 @@ async function dispatchCouncilPromptImpl(
           synthesisText: chairmanSynthesisText,
           runMode: councilRunMode,
         });
+        sliceDegraded = degraded.degraded;
         if (degraded.degraded) {
           appendSystem(
             setMessages,
@@ -1076,6 +1082,8 @@ async function dispatchCouncilPromptImpl(
     completionOk: sliceCompletionOk,
     ran: sliceRan,
     synthesisText: chairmanSynthesisText || undefined,
+    writeCount: luciferWriteCount,
+    degraded: sliceDegraded,
   };
 }
 
@@ -1183,6 +1191,8 @@ async function runZelariMissionInTui(
           completionOk: r.completionOk,
           ran: r.ran,
           synthesisText: r.synthesisText,
+          writeCount: r.writeCount,
+          degraded: r.degraded,
         };
       },
     });

@@ -7,6 +7,7 @@ import { FileMemoryBackend } from '../../src/cli/memory/fileBackend.js';
 import {
   runZelariMission,
   resolveMaxIterations,
+  resolveMaxStall,
   isMissionAutoStart,
   formatBriefForChat,
   type RunSliceArgs,
@@ -93,6 +94,91 @@ describe('runZelariMission', () => {
     expect(emits.some((m) => m.includes('fermata'))).toBe(true);
   });
 
+  it('stalls early after consecutive implementation slices write no files', async () => {
+    const root = await tmp();
+    const brief = buildMissionBrief({ userMessage: 'implementa il login', hasPlan: true });
+    const emits: string[] = [];
+    let calls = 0;
+
+    const state = await runZelariMission('implementa il login', brief, {
+      projectRoot: root,
+      memory: new FileMemoryBackend(),
+      emit: (m) => emits.push(m),
+      maxIterations: 10,
+      env: { ZELARI_MISSION_MAX_STALL: '2' } as NodeJS.ProcessEnv,
+      runSlice: async (): Promise<SliceRunResult> => {
+        calls++;
+        return { completionOk: false, ran: true, writeCount: 0, degraded: true };
+      },
+    });
+
+    expect(state.status).toBe('stalled');
+    // Bails at the stall threshold, well before the iteration budget.
+    expect(calls).toBe(2);
+    expect(state.iteration).toBe(2);
+    expect(emits.some((m) => m.includes('senza') && m.includes('file'))).toBe(true);
+    expect((await readState(root)).status).toBe('stalled');
+  });
+
+  it('a real write resets the no-write streak', async () => {
+    const root = await tmp();
+    const brief = buildMissionBrief({ userMessage: 'implementa il login', hasPlan: true });
+    const writeCounts = [0, 3, 0, 0];
+    let idx = 0;
+
+    const state = await runZelariMission('implementa il login', brief, {
+      projectRoot: root,
+      memory: new FileMemoryBackend(),
+      emit: () => {},
+      maxIterations: 10,
+      env: { ZELARI_MISSION_MAX_STALL: '2' } as NodeJS.ProcessEnv,
+      runSlice: async (): Promise<SliceRunResult> => ({
+        completionOk: false,
+        ran: true,
+        writeCount: writeCounts[idx++] ?? 0,
+      }),
+    });
+
+    // 0 (streak 1) → 3 (reset) → 0 (streak 1) → 0 (streak 2 → stall).
+    expect(state.status).toBe('stalled');
+    expect(state.iteration).toBe(4);
+  });
+
+  it('does not stall when the driver does not report writeCount', async () => {
+    const root = await tmp();
+    const brief = buildMissionBrief({ userMessage: 'implementa', hasPlan: true });
+    const state = await runZelariMission('implementa', brief, {
+      projectRoot: root,
+      memory: new FileMemoryBackend(),
+      emit: () => {},
+      maxIterations: 3,
+      env: { ZELARI_MISSION_MAX_STALL: '2' } as NodeJS.ProcessEnv,
+      // Legacy driver shape: no writeCount → stall detection stays off.
+      runSlice: async (): Promise<SliceRunResult> => ({ completionOk: false, ran: true }),
+    });
+    expect(state.status).toBe('stopped');
+    expect(state.iteration).toBe(3);
+  });
+
+  it('ZELARI_MISSION_MAX_STALL=0 disables stall detection', async () => {
+    const root = await tmp();
+    const brief = buildMissionBrief({ userMessage: 'implementa', hasPlan: true });
+    const state = await runZelariMission('implementa', brief, {
+      projectRoot: root,
+      memory: new FileMemoryBackend(),
+      emit: () => {},
+      maxIterations: 3,
+      env: { ZELARI_MISSION_MAX_STALL: '0' } as NodeJS.ProcessEnv,
+      runSlice: async (): Promise<SliceRunResult> => ({
+        completionOk: false,
+        ran: true,
+        writeCount: 0,
+      }),
+    });
+    expect(state.status).toBe('stopped');
+    expect(state.iteration).toBe(3);
+  });
+
   it('records slice outcomes in project memory', async () => {
     const root = await tmp();
     const brief = buildMissionBrief({ userMessage: 'correggi', hasPlan: true });
@@ -133,6 +219,14 @@ describe('env helpers', () => {
     expect(resolveMaxIterations({} as NodeJS.ProcessEnv)).toBe(10);
     expect(resolveMaxIterations({ ZELARI_MISSION_MAX_ITER: '4' } as NodeJS.ProcessEnv)).toBe(4);
     expect(resolveMaxIterations({ ZELARI_MISSION_MAX_ITER: 'x' } as NodeJS.ProcessEnv)).toBe(10);
+  });
+
+  it('resolveMaxStall defaults to 2, honours the env, and clamps', () => {
+    expect(resolveMaxStall({} as NodeJS.ProcessEnv)).toBe(2);
+    expect(resolveMaxStall({ ZELARI_MISSION_MAX_STALL: '3' } as NodeJS.ProcessEnv)).toBe(3);
+    expect(resolveMaxStall({ ZELARI_MISSION_MAX_STALL: '0' } as NodeJS.ProcessEnv)).toBe(0);
+    expect(resolveMaxStall({ ZELARI_MISSION_MAX_STALL: 'x' } as NodeJS.ProcessEnv)).toBe(2);
+    expect(resolveMaxStall({ ZELARI_MISSION_MAX_STALL: '-1' } as NodeJS.ProcessEnv)).toBe(2);
   });
 
   it('isMissionAutoStart only when explicitly 1', () => {
