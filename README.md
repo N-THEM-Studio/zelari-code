@@ -146,8 +146,9 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 | `/steer <text>`, `/steer --interrupt <text>` | Queue follow-up during a run |
 | `/workspace …` | `.zelari/` artifacts + `AGENTS.MD` |
 | `/update`, `/update --yes` | Check / install CLI updates |
+| `/mode [agent\|council\|zelari]` | Switch dispatch mode (shift+tab fallback) |
 
-**TUI:** `shift+tab` cycles **agent** → **council** → **zelari** mode for free-form prompts.
+**TUI:** `shift+tab` cycles **agent** → **council** → **zelari** mode for free-form prompts (with terminal-fallback hardening since v1.3.0). The equivalent command `/mode [agent|council|zelari]` works in any terminal.
 
 ## Headless Mode
 
@@ -185,6 +186,10 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - ⏱️ **Execution timer** — elapsed time of the in-flight turn in the status line (`⏱ 12s`), frozen as `last 34s` when the run completes
 - 🧠 **Provider-agnostic** — OpenAI-compatible APIs (OpenAI, Together, Groq, custom), xAI Grok with OAuth refresh, GLM/Z.AI
 - 🛠️ **Built-in tools** — filesystem (read/write/edit), shell (bash), search (grep), web fetch/search
+- 🧠 **LSP code intelligence** (`lsp_*` tools) — go-to-definition, find references, hover type, document symbols, rename symbol via real language servers (tsserver, pyright, …)
+- 🌲 **AST structural tools** (`ast_*` tools) — symbol outline + find-by-name via the TypeScript compiler API, no language server needed
+- 🔎 **Semantic search** (`semantic_search` + `/index`) — concept-level code search via embeddings, local-first
+- 🌐 **Browser verification** (`browser_check`) — headless browser with click/fill/goto/wait actions, console + network + screenshot capture for visual verification of web work
 - 📚 **23 coding skills** (+ user `SKILL.md` from `.zelari/skills/`, `.claude/skills/`, …)
 - 🔄 **Cross-provider failover** — automatic retry with provider swap on transient errors
 - 📊 **Metrics + skill history** — fire-and-forget logging to `~/.tmp/zelari-code/`
