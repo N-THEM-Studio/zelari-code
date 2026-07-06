@@ -40,6 +40,7 @@
     "ink": "^6.8.0",
     "ink-text-input": "^6.0.0",
     "react": "^19.2.7",
+    "typescript": "~5.7.2",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -50,7 +51,6 @@
     "esbuild": "^0.25.0",
     "jsdom": "^29.1.1",
     "react-dom": "^19.2.7",
-    "typescript": "~5.7.2",
     "vitest": "^4.1.9"
   },
   "keywords": [

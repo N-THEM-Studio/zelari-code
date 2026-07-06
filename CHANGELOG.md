@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **AST structural tools for TS/JS (`ast_outline`, `find_symbol`).**
+  Precise, offline structural targeting via the TypeScript compiler API:
+  `ast_outline` returns every declaration in a file (function/class/method/
+  interface/type/enum/variable) with its line range and exported flag;
+  `find_symbol` returns a named declaration's EXACT source span + text so the
+  agent can edit it node-accurately instead of fuzzy string matching. Both are
+  read-only, so they're available to sub-agents too. `typescript` moves to a
+  runtime dependency but is loaded lazily and kept OUT of the CLI bundle
+  (marked external), and the tools degrade to empty results when it's
+  unavailable or the file isn't TS/JS. Opt out with `ZELARI_AST=0`.
 - **LSP code intelligence (IDE-grade navigation tools).** The agent can now
   drive real language servers over LSP for compiler-accurate navigation
   instead of guessing with grep: `go_to_definition`, `find_references`,

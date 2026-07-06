@@ -2,13 +2,15 @@ import { describe, it, expect } from 'vitest';
 import { createBuiltinToolRegistry } from '../../src/cli/toolRegistry.js';
 
 describe('createBuiltinToolRegistry (Task A1)', () => {
-  it('registers all builtin tools (filesystem + bash + search + diff + web + task + lsp)', () => {
+  it('registers all builtin tools (filesystem + bash + search + diff + web + task + ast)', () => {
     const { registry, tools } = createBuiltinToolRegistry({ lspProvider: null });
     const expected = [
       'apply_diff',
+      'ast_outline',
       'bash',
       'edit_file',
       'fetch_url',
+      'find_symbol',
       'grep_content',
       'list_files',
       'read_file',
@@ -44,7 +46,7 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
     const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
-    expect(openAITools).toHaveLength(11);
+    expect(openAITools).toHaveLength(13);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);

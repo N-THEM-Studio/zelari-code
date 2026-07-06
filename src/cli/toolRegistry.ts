@@ -31,6 +31,7 @@ import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnos
 import { createTaskTool } from './tools/taskTool.js';
 import { createLspTools } from './lsp/tools.js';
 import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
+import { createAstTools } from './ast/tools.js';
 import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
@@ -156,6 +157,15 @@ export function createBuiltinToolRegistry(
     description: t.description,
     permissions: t.permissions ?? [],
   }));
+
+  // AST structural tools (ast_outline, find_symbol) — read-only, so available
+  // in BOTH the full registry and read-only sub-agents. Gated by ZELARI_AST.
+  if (process.env.ZELARI_AST !== '0') {
+    for (const t of createAstTools()) {
+      registry.register(t);
+      tools.push({ name: t.name, description: t.description, permissions: t.permissions ?? [] });
+    }
+  }
 
   // The `task` sub-agent tool — only in the full (non-read-only) registry.
   // Each invocation spins up a fresh READ-ONLY sub-registry via this same

@@ -41,6 +41,10 @@ await build({
     // Misc
     'react-devtools-core',
     'ws',
+    // AST engine loads the TypeScript compiler API lazily at runtime from
+    // node_modules — keep it OUT of the bundle (it is ~7MB) so startup and
+    // bundle size stay lean.
+    'typescript',
   ],
   // Use tsconfig from package root
   tsconfig: path.join(pkgRoot, 'tsconfig.json'),
