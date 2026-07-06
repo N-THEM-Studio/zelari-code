@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Workspace checkpoints & atomic rollback.** `/checkpoint [label]`
+  snapshots the working tree as a restore point, and `/rollback [id|latest]`
+  restores it exactly — reverting modified files, recreating deleted ones,
+  and removing files created after the snapshot. Every autonomous Zelari
+  mission now takes a checkpoint before it starts and prints the id, so a
+  bad run can be undone in one command (opt out: `ZELARI_CHECKPOINT=0`).
+  Snapshots use git plumbing (throwaway index → `write-tree` →
+  `commit-tree` → a `refs/zelari/checkpoints/*` ref) so they capture tracked
+  **and** untracked files without ever touching your index, HEAD, branch, or
+  stash list. `/rollback` with no argument lists the available checkpoints.
 - **Post-edit diagnostics loop (compiler-verified editing).** After a
   successful `write_file` / `edit_file` / `apply_diff`, a fast file-scoped
   checker runs on the touched file and its errors/warnings are appended to

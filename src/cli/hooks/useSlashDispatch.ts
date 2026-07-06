@@ -10,6 +10,11 @@ import { appendSystem, appendUser } from './messageHelpers.js';
 import { sessionKindRouter } from '../sessionManager.js';
 import { newSessionId } from '../sessionManager.js';
 import { handleDiff, handleUndo } from '../slashHandlers/git.js';
+import {
+  handleCheckpointCreate,
+  handleRollback,
+  handleRollbackList,
+} from '../slashHandlers/checkpoint.js';
 import { handleCompact } from '../slashHandlers/transcript.js';
 import { handleUpdateCheck, handleUpdatePerform } from '../slashHandlers/updater.js';
 import { handlePromoteMember } from '../slashHandlers/promoteMember.js';
@@ -370,6 +375,23 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     }
     if (result.kind === 'undo' || result.kind === 'undo_confirm') {
       await handleUndo(baseCtx, result.message, result.kind === 'undo_confirm' && !!result.undoConfirmed);
+      setInput('');
+      return;
+    }
+
+    // ── Checkpoints / rollback ──
+    if (result.kind === 'checkpoint_create') {
+      await handleCheckpointCreate({ ...baseCtx, cwd: process.cwd() }, result.checkpointLabel);
+      setInput('');
+      return;
+    }
+    if (result.kind === 'rollback_list') {
+      await handleRollbackList({ ...baseCtx, cwd: process.cwd() });
+      setInput('');
+      return;
+    }
+    if (result.kind === 'rollback') {
+      await handleRollback({ ...baseCtx, cwd: process.cwd() }, result.rollbackId);
       setInput('');
       return;
     }

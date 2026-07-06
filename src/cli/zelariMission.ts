@@ -17,6 +17,7 @@ import * as path from 'node:path';
 import type { MemoryBackend } from '@zelari/core';
 import type { CouncilRunMode, MissionBrief } from '@zelari/core/council';
 import { formatMemoryHits } from './memory/fileBackend.js';
+import { createCheckpoint } from './checkpoint/checkpointManager.js';
 
 export type MissionStatus =
   | 'running'
@@ -190,6 +191,18 @@ export async function runZelariMission(
 
   await deps.memory.init(deps.projectRoot);
   await writeMissionState(deps.projectRoot, state);
+
+  // Safety net: snapshot the working tree before the mission mutates files,
+  // so a bad run can be rolled back atomically (opt out: ZELARI_CHECKPOINT=0).
+  // Best-effort — a non-git project or a git hiccup just skips the checkpoint.
+  if ((deps.env ?? process.env).ZELARI_CHECKPOINT !== '0') {
+    const cp = await createCheckpoint(deps.projectRoot, `zelari mission ${missionId}`);
+    if (cp.ok) {
+      deps.emit(
+        `[zelari] checkpoint ${cp.value.id} creato — se la missione va storta ripristina con \`/rollback ${cp.value.id}\`.`,
+      );
+    }
+  }
 
   const designFirst = brief.phases[0]?.mode === 'design-phase';
 
