@@ -105,6 +105,16 @@ function pickRootComponent(): {
     console.log(`zelari-code v${VERSION}`);
     process.exit(0);
   }
+  if (argv.includes("--doctor") || argv.includes("doctor")) {
+    // v1.0.3: install-health diagnostic. Runs BEFORE the bundle is loaded
+    // and before any provider / config work, so it works on a broken
+    // install (missing bundle, missing shim, wrong PATH, etc.).
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { runDoctor } =
+      require("./utils/doctor.js") as typeof import("./utils/doctor.js");
+    const healthy = runDoctor();
+    process.exit(healthy ? 0 : 1);
+  }
   if (argv.includes("--help") || argv.includes("-h")) {
     // eslint-disable-next-line no-console
     console.log(
@@ -115,6 +125,7 @@ function pickRootComponent(): {
         "Options:\n" +
         "  --version, -v       Print version and exit\n" +
         "  --help, -h          Print this help and exit\n" +
+        "  --doctor            Diagnose install health (shim, bundle, PATH, deps)\n" +
         "  --no-wizard         Skip the first-run wizard\n" +
         "  --reset-config      Re-run the wizard (clears provider.json on commit)\n" +
         "  --headless          Run a single task without mounting the TUI\n" +

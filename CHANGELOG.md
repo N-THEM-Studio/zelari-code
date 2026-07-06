@@ -5,6 +5,38 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-07-06
+
+### Added
+- **`zelari-code doctor`** (alias `--doctor`) — diagnostic command that
+  checks bin shim health, node version, CLI bundle presence, runtime
+  dependency resolvability, and whether the npm global prefix is on
+  the current `PATH`. Prints a clear fix command for each failure
+  (e.g. `npm install -g zelari-code@latest --force` for a missing
+  shim, or `export PATH="$(npm prefix -g)/bin:$PATH"` for a missing
+  PATH entry). Exits non-zero on any critical failure so it can be
+  used in install scripts. Runs BEFORE the bundle is loaded so it
+  works on a broken install.
+- **`postinstall` script (`scripts/postinstall.mjs`)** — runs after
+  every `npm install -g` and verifies the global bin shim is present
+  and points to the right package install. On a broken shim it logs
+  a clear, actionable warning to stderr (not stdout) with the exact
+  fix command and does NOT fail the install. Local installs are
+  skipped silently (the `.bin/` symlink npm creates is sufficient
+  there). Failures are caught and swallowed — a broken postinstall
+  can never break the install.
+
+### Changed
+- **`/update --yes` error output is now actionable.** Previously the
+  user saw only `npm error: <last line>`; now they see the full npm
+  stdout+stderr, the exit code, and a targeted recovery hint based
+  on the actual error class: `ERESOLVE` / `EPEERINVALID` →
+  `--legacy-peer-deps`; `EACCES` / `EPERM` → sudo / Administrator
+  guidance; `ENOENT` for `npm` → PATH fix; `zelari-code not found` /
+  `EEXIST` / `EBUSY` in output → `--force` + `zelari-code doctor`;
+  otherwise → `--verbose` + `--force` fallback. The hint builder is
+  unit-tested (`cli-updater-failure-hint.test.ts`).
+
 ## [1.0.2] - 2026-07-06
 
 ### Fixed
