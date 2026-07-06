@@ -45,6 +45,25 @@ describe('buildUpdateFailureHint', () => {
     expect(hint).toMatch(/PATH/);
   });
 
+  it('returns a shim-manager hint on Volta "Shim target not found" / exit 127', () => {
+    const hint = buildUpdateFailureHint(
+      'npm exited with code 127',
+      'Shim target not found: npm.cmd',
+      127,
+    );
+    expect(hint.toLowerCase()).toMatch(/shim/);
+    expect(hint.toLowerCase()).toMatch(/volta/);
+    expect(hint).toMatch(/npm --version/);
+    // Must NOT recommend `npm install -g` here — npm itself can't run.
+    expect(hint).not.toMatch(/npm install -g/);
+  });
+
+  it('fires the shim-manager hint on exit 127 even without shim text', () => {
+    const hint = buildUpdateFailureHint('npm exited with code 127', '', 127);
+    expect(hint.toLowerCase()).toMatch(/broken/);
+    expect(hint).toMatch(/\/update --yes/);
+  });
+
   it('returns a shim-repair hint when output mentions zelari-code + not found / shim', () => {
     // The classic Windows + npm 10/11 case: npm exits 0 but the shim is
     // missing, and the next `zelari-code` call says "not found". We don't

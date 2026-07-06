@@ -5,6 +5,22 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-07-06
+
+### Fixed
+- **`/update --yes` failing with `npm exited with code 127` /
+  "Shim target not found: npm.cmd".** When Node/npm is managed by a shim
+  tool (Volta, nvm-windows, fnm) and its `npm` shim is broken, the
+  self-update spawned `npm` through the shell and died with exit 127 — the
+  update never ran and the hint was unhelpful. `performUpdate` now retries
+  automatically via the `npm-cli.js` bundled with the running Node
+  (`node <npm-cli.js> install -g …`, resolved from `process.execPath`),
+  bypassing the broken `.cmd`/shim layer entirely. When even that is
+  unavailable, the failure hint now names the likely cause (a stale
+  version-manager shim) and gives the exact repair command per manager
+  (`volta install node`, `nvm use`, `fnm use`) instead of the generic
+  `npm install -g` advice (which can't help when npm itself won't launch).
+
 ## [1.1.0] - 2026-07-06
 
 ### Added
