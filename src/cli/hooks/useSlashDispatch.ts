@@ -16,6 +16,7 @@ import {
   handleRollbackList,
 } from '../slashHandlers/checkpoint.js';
 import { handleIndexBuild, handleIndexStatus } from '../slashHandlers/semantic.js';
+import { nextMode, describeMode } from '../mode.js';
 import { handleCompact } from '../slashHandlers/transcript.js';
 import { handleUpdateCheck, handleUpdatePerform } from '../slashHandlers/updater.js';
 import { handlePromoteMember } from '../slashHandlers/promoteMember.js';
@@ -91,6 +92,12 @@ export interface SlashDispatchParams {
    */
   mode?: 'agent' | 'council' | 'zelari';
   /**
+   * Setter for the dispatch mode — lets `/mode` change it (a terminal-
+   * independent alternative to shift+tab). Same setter the App's shift+tab
+   * handler uses.
+   */
+  setMode?: React.Dispatch<React.SetStateAction<'agent' | 'council' | 'zelari'>>;
+  /**
    * v0.7.10: opens the interactive SelectList in the App (for /provider and
    * /model pickers). When absent, the handlers fall back to text summaries.
    */
@@ -109,7 +116,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     setMessages, setInput, setBusy, setSessionId, setSessionActive, setProviderConfig,
     activeProviderSpec, activeModel, providerDefaults,
     harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt, dispatchZelariPrompt,
-    mode = 'agent',
+    mode = 'agent', setMode,
   } = params;
 
   return useCallback(async (value: string): Promise<void> => {
@@ -409,6 +416,23 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       return;
     }
 
+    // ── Mode switch (terminal-independent alternative to shift+tab) ──
+    if (result.kind === 'mode_set') {
+      if (result.message) {
+        appendSystem(setMessages, result.message);
+      } else if (setMode) {
+        // `mode` is current here (handleSubmit re-binds when it changes), so
+        // compute the target outside the updater — no side-effects in setState.
+        const target = result.modeTarget ?? nextMode(mode);
+        setMode(target);
+        appendSystem(setMessages, `[mode] ${describeMode(target)}`);
+      } else {
+        appendSystem(setMessages, '[mode] switching unavailable in this context');
+      }
+      setInput('');
+      return;
+    }
+
     // ── Promote member ──
     if (result.kind === 'promote_member' && result.promoteMemberId) {
       await handlePromoteMember(baseCtx, result.promoteMemberId);
@@ -479,7 +503,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     skills, sessionId, messages,
     setMessages, setInput, setBusy, setSessionId, setSessionActive, setProviderConfig,
     activeProviderSpec, activeModel, providerDefaults,
-    harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt, dispatchZelariPrompt, mode,
+    harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt, dispatchZelariPrompt, mode, setMode,
     params,
   ]);
 }

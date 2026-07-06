@@ -8,6 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.3.0] - 2026-07-06
 
 ### Added
+- **`/mode [agent|council|zelari]` command** — a terminal-independent way to
+  switch the dispatch mode, equivalent to shift+tab (no arg cycles). Some
+  terminals/multiplexers intercept or don't emit a shift+Tab sequence, so this
+  guarantees mode switching always works. The shift+tab cycle was also
+  extracted to a single shared source of truth (`nextMode`) and pinned with a
+  regression test that locks the Ink key-parsing contract (`\x1b[Z` and the
+  Kitty `\x1b[9;2u` both map to tab+shift) the shift+tab handler depends on.
 - **Browser verification loop (`browser_check`).** Visual verification for
   web work: the agent opens a URL in a headless browser, optionally runs
   click/fill/goto/wait actions, and gets back the signals an LLM can act on —
