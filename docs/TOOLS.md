@@ -1,8 +1,8 @@
-# Zelari Code — Tool & Skill Map (v0.7.5)
+# Zelari Code — Tool & Skill Map (v1.3.0)
 
-Mappa completa di tool, skill e sorgenti di estensione. Aggiornata dopo il
-confronto con [opencode](https://opencode.ai/docs/tools/) e
-[Hermes Agent](https://github.com/NousResearch/hermes-agent) (2026-07-03).
+Mappa completa di tool, skill e sorgenti di estensione. Aggiornata dopo
+l'aggiunta dei tool v1.3.0 (LSP, AST, semantic search, browser verification)
+e dei tool v1.2.0 (diagnostics loop, prompt-cache accounting, sub-agent delegation).
 
 ## Tool builtin (harness) — disponibili ovunque
 
@@ -13,8 +13,32 @@ confronto con [opencode](https://opencode.ai/docs/tools/) e
 | `grep_content` | read | regex ricorsiva con include/exclude glob |
 | `list_files` | read | listing ricorsivo con depth |
 | `show_diff` / `apply_diff` | read/write | diff preview + patch |
-| `fetch_url` | network | **v0.7.5** — http(s) only, HTML→testo, 15s timeout, 40k char cap |
-| `web_search` | network | **v0.7.5** — DuckDuckGo HTML senza chiave; `TAVILY_API_KEY` per Tavily |
+| `fetch_url` | network | http(s) only, HTML→testo, 15s timeout, 40k char cap |
+| `web_search` | network | DuckDuckGo HTML senza chiave; `TAVILY_API_KEY` per Tavily |
+
+## Tool v1.3.0 — frontiera
+
+| Tool | Permessi | Prereq | Note |
+|------|----------|--------|------|
+| `lsp_definition` | read | server LSP sul PATH (`typescript-language-server`, `pyright-langserver`, …) | go-to-definition via LSP |
+| `lsp_references` | read | server LSP | find-references via LSP |
+| `lsp_hover` | read | server LSP | hover type/info via LSP |
+| `lsp_symbols` | read | server LSP | document symbols via LSP |
+| `lsp_rename` | write | server LSP | rename symbol across workspace via LSP |
+| `ast_outline` | read | nessuno | outline simboli TS via TypeScript Compiler API |
+| `ast_find_symbol` | read | nessuno | find-by-name con scope TS via TS Compiler API |
+| `semantic_search` | read | `ZELARI_SEMANTIC` ≠ `0`, modello embedding scaricato on first use | concept-level code search su embeddings locali (default `Xenova/all-MiniLM-L6-v2`) |
+| `browser_check` | sandboxed network | `ZELARI_BROWSER` ≠ `0`, Playwright + chromium installati (`npx playwright install chromium`) | headless browser: goto / click / fill / wait + cattura console + network + screenshot |
+
+Disabilitazione globale: `ZELARI_LSP=0`, `ZELARI_AST=0`, `ZELARI_SEMANTIC=0`, `ZELARI_BROWSER=0`.
+
+## Tool v1.2.0 — agentic harness
+
+| Tool / hook | Permessi | Note |
+|-------------|----------|------|
+| `diagnostics_loop` | read | dopo ogni `edit_file`/`write_file`, l'harness lancia `eslint`/`ruff` (LSP-pluggable) e inietta gli errori nel prompt del modello nello stesso turno. Timeout `ZELARI_DIAGNOSTICS_TIMEOUT_MS` (default 5000ms). |
+| `task` | read (delegated, no recursion) | delega un sub-task a un sub-agente isolato con context proprio, registry read-only, max 12 turni, no `task` ricorsivo |
+| prompt-cache accounting | — | metrica per provider/modello del prompt-cache hit rate, esposta in status bar (`cache 73%`) |
 
 ## Tool workspace (stub `.zelari/`) — council sempre, agente singolo on demand
 
@@ -26,7 +50,7 @@ confronto con [opencode](https://opencode.ai/docs/tools/) e
   quando una `/skill` li dichiara in `requiredTools` (`searchRAG` è mappato a
   `searchDocuments`).
 
-## Tool MCP — v0.7.5
+## Tool MCP
 
 Config (formato Claude-Desktop-compatibile, il progetto vince sui conflitti):
 
@@ -58,12 +82,13 @@ Kill switch: `ZELARI_MCP=0`.
 
 - **Builtin (23 coding skill)**: `packages/core/src/agents/skills/builtin/*` —
   usate dal council (per ruolo) e via `/skill <id>`.
-- **SKILL.md utente — v0.7.5**: formato condiviso con opencode / Hermes /
+- **SKILL.md utente**: formato condiviso con opencode / Hermes /
   Claude Code. Directory di discovery (la prima occorrenza di un nome vince):
   1. `<project>/.zelari/skills/<name>/SKILL.md`
   2. `<project>/.claude/skills/<name>/SKILL.md`
   3. `<project>/.opencode/skills/<name>/SKILL.md`
-  4. `~/.zelari-code/skills/<name>/SKILL.md`
+  4. `<project>/.hermes/skills/<name>/SKILL.md`
+  5. `~/.zelari-code/skills/<name>/SKILL.md`
 
   Frontmatter: `name` (kebab-case, obbligatorio), `description` (obbligatorio),
   opzionali `category` (plan|refactor|debug|review|test|docs|ops|git|db|maint),
@@ -71,10 +96,13 @@ Kill switch: `ZELARI_MCP=0`.
   systemPromptFragment. Qualunque skill dell'ecosistema opencode/Hermes/Claude
   può essere copiata così com'è e invocata con `/skill <name>`.
 
+## Slash commands correlati
+
+- `/index` — costruisce / rinfresca l'indice vettoriale per `semantic_search`.
+- `/checkpoint [label]` — snapshot del working tree (target di rollback).
+- `/rollback [id|latest]` — ripristino atomico di un checkpoint.
+
 ## Gap noti (decisi, non dimenticati)
 
-- **LSP** (opencode/Hermes ce l'hanno): fuori scope per ora — costo alto.
-- **searchRAG semantico**: nella CLI `searchDocuments` è keyword-match su
-  `.zelari/**`; il RAG vero resta nell'app Electron. Un MCP server di
-  retrieval può colmare il gap senza codice.
-- **browser_navigate / computer_use** (Hermes): fuori scope CLI.
+- **computer_use** (Hermes): fuori scope CLI — la CLI gira in TUI/headless, non su desktop.
+- **searchRAG semantico su `.zelari/docs/`**: in v1.3.0 `semantic_search` copre il codice via embeddings locali; il retrieval semantico sui documenti del council resta un MCP pluggable (gap colmabile senza modificare il core).

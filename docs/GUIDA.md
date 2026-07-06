@@ -1,6 +1,6 @@
 # Zelari Code — Guida all'uso
 
-> **Versione documento:** 0.7.9  
+> **Versione documento:** 1.3.0  
 > CLI multi-agente per coding con TUI (Ink + React), council a 6 ruoli, slash commands e provider LLM agnostici.
 
 ---
@@ -8,25 +8,27 @@
 ## Indice
 
 1. [Cos'è Zelari Code](#cosè-zelari-code)
-2. [Installazione](#installazione)
-3. [Primo avvio e wizard](#primo-avvio-e-wizard)
-4. [Interfaccia TUI](#interfaccia-tui)
-5. [Modalità agent e council](#modalità-agent-e-council)
-6. [Comandi da terminale (flags)](#comandi-da-terminale-flags)
-7. [Modalità headless (CI/script)](#modalità-headless-ciscript)
-8. [Comandi slash](#comandi-slash)
-9. [Provider e autenticazione](#provider-e-autenticazione)
-10. [Skills](#skills)
-11. [Council (multi-agente)](#council-multi-agente)
-12. [Workspace `.zelari/`](#workspace-zelari)
-13. [MCP (Model Context Protocol)](#mcp-model-context-protocol)
-14. [Sessioni e branch](#sessioni-e-branch)
-15. [Tool disponibili](#tool-disponibili)
-16. [File di configurazione](#file-di-configurazione)
-17. [Variabili d'ambiente](#variabili-dambiente)
-18. [Self-update](#self-update)
-19. [Sviluppo](#sviluppo)
-20. [Risoluzione problemi](#risoluzione-problemi)
+2. [Prerequisiti](#prerequisiti)
+3. [Installazione](#installazione)
+4. [Primo avvio e wizard](#primo-avvio-e-wizard)
+5. [Interfaccia TUI](#interfaccia-tui)
+6. [Modalità agent, council e zelari](#modalità-agent-e-council)
+7. [Comandi da terminale (flags)](#comandi-da-terminale-flags)
+8. [Modalità headless (CI/script)](#modalità-headless-ciscript)
+9. [Comandi slash](#comandi-slash)
+10. [Provider e autenticazione](#provider-e-autenticazione)
+11. [Skills](#skills)
+12. [Council (multi-agente)](#council-multi-agente)
+13. [Workspace `.zelari/`](#workspace-zelari)
+14. [MCP (Model Context Protocol)](#mcp-model-context-protocol)
+15. [Sessioni e branch](#sessioni-e-branch)
+16. [Tool disponibili](#tool-disponibili)
+17. [Novità v1.3.0 (frontier tools)](#novità-v130-frontier-tools)
+18. [File di configurazione](#file-di-configurazione)
+19. [Variabili d'ambiente](#variabili-dambiente)
+20. [Self-update](#self-update)
+21. [Sviluppo](#sviluppo)
+22. [Risoluzione problemi](#risoluzione-problemi)
 
 ---
 
@@ -45,12 +47,30 @@ Il runtime condiviso è pubblicato come package npm [`@zelari/core`](https://www
 
 ---
 
+## Prerequisiti
+
+| Requisito | Versione | Note |
+|---|---|---|
+| **Node.js** | **≥ 20 LTS** | Testato su 20.x e 22.x. Versioni precedenti mancano di `fetch` stabile, `AbortController.timeout`, e `node:test`. |
+| **npm** | **≥ 10** | Fornito con Node 20 LTS; testato con npm 10 e 11. |
+| **OS** | Linux, macOS, Windows 10/11 | Windows richiede Git Bash (auto-rilevato). |
+| **Account + API key** | 1 tra: xAI Grok, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | Grok supporta OAuth via `/login grok`. |
+
+### Dipendenze opzionali (per i tool v1.3.0)
+
+La CLI funziona senza queste — il tool salta in automatico se la dipendenza manca. Servono solo se vuoi usare lo specifico tool group.
+
+| Tool group | Dipendenza | Note |
+|---|---|---|
+| `lsp_*` | Language server sul PATH (`typescript-language-server`, `pyright-langserver`, …) | cinque tool: `lsp_definition`, `lsp_references`, `lsp_hover`, `lsp_symbols`, `lsp_rename` |
+| `ast_*` | *(nessuna)* | TypeScript Compiler API integrato — `ast_outline`, `ast_find_symbol` |
+| `semantic_search` | modello embedding locale (default `Xenova/all-MiniLM-L6-v2` via `@xenova/transformers`) | scaricato on first use, ~25 MB |
+| `browser_check` | Playwright + chromium (`npx playwright install chromium`) | ~150 MB una tantum |
+| diagnostics loop | `eslint` e/o `ruff` sul PATH (preferibilmente project-local) | post-edit compile/lint feedback |
+
+Disabilitazione globale: `ZELARI_LSP=0`, `ZELARI_AST=0`, `ZELARI_SEMANTIC=0`, `ZELARI_BROWSER=0`, `ZELARI_DIAGNOSTICS=0`.
+
 ## Installazione
-
-### Requisiti
-
-- **Node.js ≥ 20**
-- Account e API key per almeno un provider LLM (o OAuth Grok)
 
 ### Installazione globale
 
@@ -283,7 +303,7 @@ OPENAI_API_KEY=sk-... zelari-code --headless \
 
 Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 
-### Riferimento rapido
+### Riferimento rapido (allineato al README)
 
 #### Aiuto e uscita
 
@@ -292,15 +312,22 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | `/help` | Elenco comandi e skill disponibili |
 | `/exit` | Esci dalla CLI |
 
+#### Modalità di dispatch (v1.3.0)
+
+| Comando | Descrizione |
+|---|---|
+| `/mode [agent\|council\|zelari]` | Forza la modalità di dispatch. Equivalente portabile di `shift+tab` (utile in terminali dove `shift+tab` è catturato). |
+| `shift+tab` (TUI) | Cicla `agent` → `council` → `zelari`. Hardening v1.3.0: rileva terminali senza supporto e cade sul comando. |
+
 #### Provider e modello
 
 | Comando | Descrizione |
 |---|---|
 | `/login <provider> [key]` | Autentica un provider; senza key avvia OAuth per `grok` |
 | `/provider` | Picker interattivo dei provider (↑/↓ + invio, esc annulla) |
-| `/provider <id>` | Cambia provider (`openai-compatible`, `grok`, `minimax`, `glm`) |
+| `/provider <id>` | Cambia provider (`openai-compatible`, `grok`, `minimax`, `glm`, `deepseek`) |
 | `/provider list` | Mostra provider attivo e disponibili (testo) |
-| `/provider custom <url>` | Endpoint custom (Ollama, LM Studio, vLLM, …) |
+| `/provider custom <url>` | Endpoint custom (Ollama, LM Studio, vLLM, DeepSeek, …) |
 | `/provider custom clear` | Rimuove override endpoint |
 | `/provider <id> refresh` | Forza refresh token OAuth |
 | `/provider <id> status` | Stato chiave, scadenza, sorgente |
@@ -373,6 +400,21 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | `/workspace show docs` | Elenco bozze in `docs/` |
 | `/workspace sync` | Ri-cura `AGENTS.MD` adesso |
 | `/workspace reset --yes` | Cancella `.zelari/` (**distruttivo**) |
+
+#### Checkpoint e rollback (v1.2.0)
+
+| Comando | Descrizione |
+|---|---|
+| `/checkpoint [label]` | Snapshot del working tree (tracciati + untracked) via git plumbing. Ogni missione zelari-mode ne prende uno all'avvio. |
+| `/rollback [id\|latest]` | Ripristino atomico di un checkpoint: ripristina i file modificati, ricrea i cancellati, rimuove i creati dopo lo snapshot. Senza argomento elenca i checkpoint disponibili. |
+| `ZELARI_CHECKPOINT=0` | Disabilita checkpoint automatici nelle missioni. |
+
+#### Semantic search (v1.3.0)
+
+| Comando | Descrizione |
+|---|---|
+| `/index` | Costruisce / rinfresca l'indice vettoriale del progetto. Richiesto prima del primo `semantic_search`. |
+| `semantic_search "<query>"` (tool) | Ricerca semantica concettuale via embeddings locali. |
 
 #### Update
 
@@ -706,6 +748,73 @@ Riepilogo; dettaglio in [TOOLS.md](./TOOLS.md).
 
 `createPlan`, `createPhase`, `createTask`, `updateTask`, `addIdea`, `createMilestone`, `createDocument`, `searchDocuments`, `linkDocuments`, `getDocumentBacklinks`
 
+### Frontier tools v1.3.0 (opt-in, no-op se la dipendenza manca)
+
+| Tool | Permesso | Prereq | Esempio |
+|---|---|---|---|
+| `lsp_definition` / `lsp_references` / `lsp_hover` / `lsp_symbols` / `lsp_rename` | read / write (`lsp_rename`) | language server sul PATH | `usa lsp_references su src/cli/app.tsx:42 per trovare tutti gli usi di "agentLoop"` |
+| `ast_outline` / `ast_find_symbol` | read | nessuno | `ast_outline su packages/core/src/agents/council/` |
+| `semantic_search` | read | indice costruito (`/index` prima) | `semantic_search "dove gestiamo l'auto-retry del provider"` |
+| `browser_check` | sandboxed network | Playwright + chromium | `browser_check su http://localhost:3000 dopo aver cliccato Submit` |
+
+### Hook v1.2.0
+
+- **Diagnostics loop** — dopo `edit_file`/`write_file`, l'harness lancia `eslint`/`ruff` (LSP-pluggable) e inietta gli errori nello stesso turno. Disattiva: `ZELARI_DIAGNOSTICS=0`.
+- **Sub-agent delegation (`task` tool)** — delega un sub-task a un sub-agente isolato con context proprio, registry read-only, max 12 turni, no ricorsione.
+- **Prompt-cache accounting** — hit-rate visibile in status bar (`cache 73%`).
+
+---
+
+## Novità v1.3.0 (frontier tools)
+
+v1.3.0 è una **release frontier**: aggiunge cinque famiglie di capability che spostano il CLI da "agente singolo con tool file/web" a "agente con accesso strutturato al codice e al browser".
+
+### Cosa è cambiato in sintesi
+
+1. **LSP code intelligence** — cinque tool (`lsp_definition`, `lsp_references`, `lsp_hover`, `lsp_symbols`, `lsp_rename`) che parlano con language server reali. L'agente ora può chiedere "dove è definita la funzione X?" o "rinomina X in Y in tutto il workspace" con precisione LSP.
+2. **AST structural tools** — `ast_outline` e `ast_find_symbol` via TypeScript Compiler API. Nessuna dipendenza esterna, funzionano out-of-the-box su progetti TS.
+3. **Semantic code search** — `semantic_search` indicizza il progetto via embeddings locali (default `Xenova/all-MiniLM-L6-v2`) e permette query concettuali ("dove gestiamo i retry?") invece di keyword esatte. Costruisci l'indice con `/index`.
+4. **Browser verification** — `browser_check` apre un URL in un browser headless (Playwright), esegue azioni (`click`, `fill`, `goto`, `wait`), cattura console + network + screenshot. Pensato per verificare visivamente il lavoro web.
+5. **shift+tab hardening + `/mode`** — il toggle della modalità ora funziona anche in terminali che catturano shift+tab, grazie al comando `/mode [agent|council|zelari]`.
+
+### Esempi d'uso
+
+```text
+# Trova tutte le referenze a una funzione via LSP
+"usa lsp_references su packages/core/src/core/harness/loop.ts per trovare tutti i caller di agentLoop"
+
+# Rinomina simbolo via LSP (cross-workspace)
+"rinomina la funzione `executeStep` in `step` ovunque con lsp_rename"
+
+# Outline di un modulo TS senza LSP
+"fai ast_outline di packages/core/src/agents/council/"
+
+# Search semantico
+"/index
+ semantic_search 'dove gestiamo il retry del provider quando il primo tentativo fallisce'"
+
+# Verifica visiva di un'app web
+"browser_check http://localhost:3000, aspetta il selettore '.todo-list', fai uno screenshot, dimmi se ci sono errori console"
+
+# Forza modalità in un terminale che cattura shift+tab
+"/mode zelari
+ progettami un'app todo full-stack"
+```
+
+### Costi e disabilitazione
+
+Tutti i nuovi tool sono **opt-out**, non opt-in:
+
+```bash
+ZELARI_LSP=0      # disabilita i 5 tool LSP
+ZELARI_AST=0      # disabilita ast_outline, ast_find_symbol
+ZELARI_SEMANTIC=0 # disabilita semantic_search e /index
+ZELARI_BROWSER=0  # disabilita browser_check
+ZELARI_DIAGNOSTICS=0  # disabilita diagnostics loop
+```
+
+Se una dipendenza manca (es. nessun language server sul PATH), il tool fallisce con un messaggio chiaro e l'agente può scegliere un'alternativa.
+
 ---
 
 ## File di configurazione
@@ -770,6 +879,20 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 | `ZELARI_MAX_TOOL_CALLS` | Limite tool call per turno |
 | `ZELARI_TOOL_OUTPUT_LINES` | Righe output tool in TUI (default 8) |
 | `ZELARI_SHELL` | Path esplicito bash (Windows) |
+
+### Frontier tools (v1.3.0) / agentic harness (v1.2.0)
+
+| Variabile | Default | Effetto |
+|---|---|---|
+| `ZELARI_LSP` | `1` | `0` disabilita i 5 tool LSP |
+| `ZELARI_AST` | `1` | `0` disabilita AST tools |
+| `ZELARI_SEMANTIC` | `1` | `0` disabilita semantic search + `/index` |
+| `ZELARI_SEMANTIC_FILE` | `~/.tmp/zelari-code/semantic.json` | path dello store embeddings |
+| `ZELARI_EMBED_MODEL` | `Xenova/all-MiniLM-L6-v2` | modello embedding per semantic search |
+| `ZELARI_BROWSER` | `1` | `0` disabilita `browser_check` |
+| `ZELARI_DIAGNOSTICS` | `1` | `0` disabilita la diagnostics loop post-edit |
+| `ZELARI_DIAGNOSTICS_TIMEOUT_MS` | `5000` | timeout della diagnostics loop |
+| `ZELARI_CHECKPOINT` | `1` | `0` disabilita i checkpoint automatici in zelari-mode |
 
 ### Path override (test/CI)
 

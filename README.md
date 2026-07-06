@@ -37,6 +37,30 @@
 > `src/main/core/`, `src/agents/`, `src/shared/`, `src/types/` paths no longer
 > exist. The published core package is `@zelari/core` (MIT). 9 subpath exports.
 
+## Prerequisites
+
+| Requirement | Version | Notes |
+|---|---|---|
+| **Node.js** | **≥ 20 LTS** | Earlier versions lack stable `fetch`, `AbortController.timeout`, and `node:test`. Works on 20.x and 22.x. |
+| **npm** | **≥ 10** | Ships with Node 20 LTS; tested with npm 10 and 11. |
+| **OS** | Linux, macOS, Windows 10/11 | Tested on Pop!_OS 24.04, macOS 15, Windows 11. Windows requires Git Bash (auto-detected). |
+| **Disk** | ~50 MB for the CLI + `@zelari/core` | Models are not bundled — provider APIs are remote. |
+| **Account + API key** | 1 of: xAI Grok, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth Grok supported via `/login grok`. |
+
+### Optional (for v1.3.0 advanced tools)
+
+These are **opt-in** — the CLI runs fine without them. The agent auto-skips a tool if its dependency is missing.
+
+| Tool group | Dependency | Used by |
+|---|---|---|
+| `lsp_*` | Language server on PATH (e.g. `typescript-language-server`, `pyright-langserver`) + Node/Python LSP client libs | `lsp_definition`, `lsp_references`, `lsp_hover`, `lsp_symbols`, `lsp_rename` |
+| `ast_*` | *(none)* | `ast_outline`, `ast_find_symbol` — TypeScript Compiler API, no LSP needed |
+| `semantic_search` | Local embedding model (default `Xenova/all-MiniLM-L6-v2` via `@xenova/transformers`, downloads on first use) | `semantic_search`, `/index` |
+| `browser_check` | Playwright (`npx playwright install chromium` once, ~150 MB) | `browser_check` |
+| diagnostics loop | `eslint` and/or `ruff` on PATH (project-local preferred) | post-edit compile/lint feedback |
+
+Disable any tool group: set `ZELARI_LSP=0`, `ZELARI_AST=0`, `ZELARI_SEMANTIC=0`, `ZELARI_BROWSER=0`, `ZELARI_DIAGNOSTICS=0`.
+
 ## Install
 
 ```bash
@@ -72,7 +96,7 @@ the regular TUI:
 
 ```
 ╭─────────────────────────────────────────────────╮
-│ zelari-code v0.6.0 — first-time setup    │
+│ zelari-code v1.3.0 — first-time setup    │
 │ 1/welcome  2/provider  3/model  4/apikey  5/...│
 │                                                 │
 │ Welcome! Let's get you coding in under 2 min.   │
@@ -147,6 +171,9 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 | `/workspace …` | `.zelari/` artifacts + `AGENTS.MD` |
 | `/update`, `/update --yes` | Check / install CLI updates |
 | `/mode [agent\|council\|zelari]` | Switch dispatch mode (shift+tab fallback) |
+| `/checkpoint [label]` | Snapshot the working tree (rollback target) |
+| `/rollback [id\|latest]` | Restore a checkpoint (revert / restore files atomically) |
+| `/index` | Build / refresh the semantic search index |
 
 **TUI:** `shift+tab` cycles **agent** → **council** → **zelari** mode for free-form prompts (with terminal-fallback hardening since v1.3.0). The equivalent command `/mode [agent|council|zelari]` works in any terminal.
 
@@ -190,6 +217,10 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 🌲 **AST structural tools** (`ast_*` tools) — symbol outline + find-by-name via the TypeScript compiler API, no language server needed
 - 🔎 **Semantic search** (`semantic_search` + `/index`) — concept-level code search via embeddings, local-first
 - 🌐 **Browser verification** (`browser_check`) — headless browser with click/fill/goto/wait actions, console + network + screenshot capture for visual verification of web work
+- 🔁 **Post-edit diagnostics loop** — after every `edit_file`/`write_file` the harness runs project lint/compile (`eslint`, `ruff`, LSP-pluggable) and surfaces the errors to the model in the same turn (opt out: `ZELARI_DIAGNOSTICS=0`)
+- 💾 **Prompt-cache accounting** — tracks prompt-cache hit rate per provider/model and surfaces it in the status bar (`cache 73%`) so you can see when a session is amortizing its prefix
+- 🧷 **Workspace checkpoints** — `/checkpoint [label]` + `/rollback [id|latest]` use git plumbing to snapshot the working tree (tracked + untracked) and restore it atomically; every zelari-mode mission takes one before starting
+- 🤝 **Sub-agent delegation** (`task` tool) — delegate a focused read-only research sub-task to an isolated sub-agent with its own fresh context, max 12 tool turns, no write/bash/recursion
 - 📚 **23 coding skills** (+ user `SKILL.md` from `.zelari/skills/`, `.claude/skills/`, …)
 - 🔄 **Cross-provider failover** — automatic retry with provider swap on transient errors
 - 📊 **Metrics + skill history** — fire-and-forget logging to `~/.tmp/zelari-code/`
@@ -237,6 +268,16 @@ zelari-code (CLI, proprietary)
 | `ZELARI_MISSION_AUTO=1` | Auto-start Zelari missions (skip the brief confirmation) |
 | `ZELARI_MISSION_MAX_ITER` | Max Zelari mission iterations (default 10) |
 | `ZELARI_MODE_MAX_TOOLS_LUCIFER` | Chairman (Lucifero) tool budget in zelari-mode (default 30) |
+| `ZELARI_DIAGNOSTICS=0` | Disable the post-edit compiler/lint diagnostics loop |
+| `ZELARI_DIAGNOSTICS_TIMEOUT_MS` | Timeout of the diagnostics loop (default 5000) |
+| `ZELARI_AST=0` | Disable AST structural tools (`ast_*`) |
+| `ZELARI_SEMANTIC=0` | Disable semantic search + `/index` |
+| `ZELARI_SEMANTIC_FILE` | Override the embeddings store path |
+| `ZELARI_EMBED_MODEL` | Embedding model id (default `Xenova/all-MiniLM-L6-v2`) |
+| `ZELARI_BROWSER=0` | Disable `browser_check` |
+| `ZELARI_LSP=0` | Disable LSP tools (`lsp_*`) |
+| `ZELARI_CHECKPOINT=0` | Disable automatic workspace checkpoints in zelari-mode |
+| `ZELARI_TOOL_OUTPUT_LINES` | Lines of tool output shown in the TUI (default 8) |
 
 See **[docs/GUIDA.md](./docs/GUIDA.md#variabili-dambiente)** for the full list.
 
