@@ -32,6 +32,7 @@ import { VERSION } from './main.js';
 import { useSession } from './hooks/useSession.js';
 import { useChatTurn } from './hooks/useChatTurn.js';
 import { useSlashDispatch } from './hooks/useSlashDispatch.js';
+import { nextMode } from './mode.js';
 import { useBatchedMessages } from './hooks/useBatchedMessages.js';
 import { useTerminalSize } from './hooks/useTerminalSize.js';
 import type { LiveState } from './hooks/chatState.js';
@@ -99,9 +100,7 @@ export function App(): React.ReactElement {
   useInput(
     (_input, key) => {
       if (key.tab && key.shift) {
-        setMode((m) =>
-          m === 'agent' ? 'council' : m === 'council' ? 'zelari' : 'agent',
-        );
+        setMode(nextMode);
       }
     },
     { isActive: isRawModeSupported === true },
@@ -179,6 +178,7 @@ export function App(): React.ReactElement {
     dispatchCouncilPrompt: chatTurn.dispatchCouncilPrompt,
     dispatchZelariPrompt: chatTurn.dispatchZelariPrompt,
     mode,
+    setMode,
     openPicker: setPicker,
     onNewSession,
     onExit,
