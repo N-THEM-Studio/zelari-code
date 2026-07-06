@@ -2,16 +2,20 @@ import { describe, it, expect } from 'vitest';
 import { createBuiltinToolRegistry } from '../../src/cli/toolRegistry.js';
 
 describe('createBuiltinToolRegistry (Task A1)', () => {
-  it('registers all 11 builtin tools (filesystem + bash + search + diff + web + task)', () => {
-    const { registry, tools } = createBuiltinToolRegistry();
+  it('registers all builtin tools (filesystem + bash + search + diff + web + task + ast)', () => {
+    const { registry, tools } = createBuiltinToolRegistry({ lspProvider: null });
     const expected = [
       'apply_diff',
+      'ast_outline',
       'bash',
+      'browser_check',
       'edit_file',
       'fetch_url',
+      'find_symbol',
       'grep_content',
       'list_files',
       'read_file',
+      'semantic_search',
       'show_diff',
       'task',
       'web_search',
@@ -19,6 +23,17 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
     ];
     expect(registry.list().sort()).toEqual(expected);
     expect(tools.map((t) => t.name).sort()).toEqual(expected);
+  });
+
+  it('adds the 5 LSP navigation tools when an LSP provider is available', () => {
+    const { registry } = createBuiltinToolRegistry({ lspProvider: null });
+    const withoutLsp = registry.list().length;
+    // A truthy provider (here the default shared manager) adds the LSP tools.
+    const { registry: withLsp } = createBuiltinToolRegistry();
+    expect(withLsp.list().length).toBe(withoutLsp + 5);
+    for (const name of ['go_to_definition', 'find_references', 'hover_type', 'document_symbols', 'rename_symbol']) {
+      expect(withLsp.get(name)).toBeDefined();
+    }
   });
 
   it('each tool summary has a non-empty name, description, and permissions', () => {
@@ -31,9 +46,9 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   });
 
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
-    const { registry } = createBuiltinToolRegistry();
+    const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
-    expect(openAITools).toHaveLength(11);
+    expect(openAITools).toHaveLength(15);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);

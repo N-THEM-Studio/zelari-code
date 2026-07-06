@@ -5,6 +5,51 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-07-06
+
+### Added
+- **Browser verification loop (`browser_check`).** Visual verification for
+  web work: the agent opens a URL in a headless browser, optionally runs
+  click/fill/goto/wait actions, and gets back the signals an LLM can act on —
+  console errors, uncaught page exceptions, failed network requests, the final
+  title/URL, whether an expected selector appeared, and a saved screenshot
+  path. Far stronger than "the tests pass" for front-end changes. Playwright
+  is an OPTIONAL dependency, loaded lazily — the tool degrades with install
+  instructions when it (or a browser) isn't present, so nothing is forced on
+  users who don't need it. Opt out with `ZELARI_BROWSER=0`.
+- **Semantic code search (`semantic_search` + `/index`).** Concept-level
+  retrieval over the codebase: describe what you're looking for in plain
+  language ("where is rate-limit backoff handled?") and get the most relevant
+  code chunks even when they share no literal keyword with the query — where
+  grep can't reach. `/index` walks the project's source files, embeds them via
+  the active provider's `/embeddings` endpoint, and persists the vectors to a
+  JSON store (`/index status` shows stats); `semantic_search` embeds the query
+  and ranks chunks by cosine similarity. Pure-JS (no native vector DB),
+  embedding model configurable via `ZELARI_EMBED_MODEL`, and fully
+  best-effort — it degrades with a clear message when the provider has no
+  embeddings endpoint or no index exists yet. Opt out with `ZELARI_SEMANTIC=0`.
+- **AST structural tools for TS/JS (`ast_outline`, `find_symbol`).**
+  Precise, offline structural targeting via the TypeScript compiler API:
+  `ast_outline` returns every declaration in a file (function/class/method/
+  interface/type/enum/variable) with its line range and exported flag;
+  `find_symbol` returns a named declaration's EXACT source span + text so the
+  agent can edit it node-accurately instead of fuzzy string matching. Both are
+  read-only, so they're available to sub-agents too. `typescript` moves to a
+  runtime dependency but is loaded lazily and kept OUT of the CLI bundle
+  (marked external), and the tools degrade to empty results when it's
+  unavailable or the file isn't TS/JS. Opt out with `ZELARI_AST=0`.
+- **LSP code intelligence (IDE-grade navigation tools).** The agent can now
+  drive real language servers over LSP for compiler-accurate navigation
+  instead of guessing with grep: `go_to_definition`, `find_references`,
+  `hover_type` (the real resolved type/docs), `document_symbols` (a file's
+  structural outline), and `rename_symbol` (previews the workspace-wide blast
+  radius of a rename before you touch anything). Servers
+  (typescript-language-server, pyright, gopls, rust-analyzer) are resolved at
+  runtime from `node_modules/.bin` then PATH — started lazily, one per
+  language, shared across turns — and the tools degrade silently when none is
+  installed. Opt out with `ZELARI_LSP=0`. Built on a dependency-free
+  JSON-RPC/LSP core (framing + client) so no new runtime dependency is added.
+
 ## [1.2.0] - 2026-07-06
 
 ### Added

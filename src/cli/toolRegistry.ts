@@ -29,6 +29,11 @@ import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.j
 import { AuditLogger } from './safety/auditLogger.js';
 import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
 import { createTaskTool } from './tools/taskTool.js';
+import { createLspTools } from './lsp/tools.js';
+import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
+import { createAstTools } from './ast/tools.js';
+import { createSemanticTool } from './semantic/tools.js';
+import { createBrowserTool } from './browser/tools.js';
 import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
@@ -64,6 +69,11 @@ export interface CreateRegistryOptions {
   readOnly?: boolean;
   /** Register the `task` sub-agent tool (default true unless readOnly). */
   enableTask?: boolean;
+  /**
+   * LSP navigation provider. Omit to use the shared, real language-server
+   * manager; pass a fake in tests; pass `null` to disable the LSP tools.
+   */
+  lspProvider?: LspProvider | null;
 }
 
 /**
@@ -150,6 +160,41 @@ export function createBuiltinToolRegistry(
     permissions: t.permissions ?? [],
   }));
 
+  // AST structural tools (ast_outline, find_symbol) — read-only, so available
+  // in BOTH the full registry and read-only sub-agents. Gated by ZELARI_AST.
+  if (process.env.ZELARI_AST !== '0') {
+    for (const t of createAstTools()) {
+      registry.register(t);
+      tools.push({ name: t.name, description: t.description, permissions: t.permissions ?? [] });
+    }
+  }
+
+  // Semantic code search — read-only, available in both registries. Gated by
+  // ZELARI_SEMANTIC. Needs a prior index (/index); the tool self-reports when
+  // none exists, so it's always safe to register.
+  if (process.env.ZELARI_SEMANTIC !== '0') {
+    const semanticTool = createSemanticTool({ root });
+    registry.register(semanticTool);
+    tools.push({
+      name: semanticTool.name,
+      description: semanticTool.description,
+      permissions: semanticTool.permissions ?? [],
+    });
+  }
+
+  // Browser verification (browser_check) — full registry only (it drives a
+  // real browser). Gated by ZELARI_BROWSER; self-reports install steps when
+  // Playwright is absent, so it's safe to register unconditionally.
+  if (!readOnly && process.env.ZELARI_BROWSER !== '0') {
+    const browserTool = createBrowserTool();
+    registry.register(browserTool);
+    tools.push({
+      name: browserTool.name,
+      description: browserTool.description,
+      permissions: browserTool.permissions ?? [],
+    });
+  }
+
   // The `task` sub-agent tool — only in the full (non-read-only) registry.
   // Each invocation spins up a fresh READ-ONLY sub-registry via this same
   // factory (readOnly:true), so sub-agents are isolated and non-recursive.
@@ -184,6 +229,20 @@ export function createBuiltinToolRegistry(
       description: taskTool.description,
       permissions: taskTool.permissions ?? [],
     });
+  }
+
+  // LSP navigation tools (go_to_definition, find_references, hover_type,
+  // document_symbols, rename_symbol). Full registry only, gated by
+  // ZELARI_LSP. Backed by a shared, lazily-spawned language-server manager —
+  // the servers start on first use and degrade silently when not installed.
+  if (!readOnly && process.env.ZELARI_LSP !== '0' && options.lspProvider !== null) {
+    const lspTools = options.lspProvider
+      ? createLspTools(options.lspProvider, root)
+      : createLspTools(getSharedLspManager(root), root);
+    for (const t of lspTools) {
+      registry.register(t);
+      tools.push({ name: t.name, description: t.description, permissions: t.permissions ?? [] });
+    }
   }
 
   return { registry, tools };
