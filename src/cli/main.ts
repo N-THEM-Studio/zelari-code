@@ -4,24 +4,30 @@
  * Phase 14 Task 14.3 + 14.4: multi-panel TUI + slash command wiring.
  */
 
-import React from 'react';
-import { render } from 'ink';
+import React from "react";
+import { render } from "ink";
 // @ts-ignore
-import { App } from './app.js';
-import { SplashGate } from './components/SplashScreen.js';
-import { getMetricsLogger } from './metrics.js';
-import { getProviderConfigPath } from './providerConfig.js';
-import {
-  parseWizardFlags,
-  shouldRunWizard,
-} from './wizard/firstRun.js';
-import { RunWizard } from './wizard/runWizard.js';
-import { parseHeadlessFlags } from './headless.js';
-import { runHeadless } from './runHeadless.js';
-import { loadSkillMdSkills } from './skillsMd.js';
-import { listCodingSkills } from '@zelari/core/skills';
+import { App } from "./app.js";
+import { SplashGate } from "./components/SplashScreen.js";
+import { getMetricsLogger } from "./metrics.js";
+import { getProviderConfigPath } from "./providerConfig.js";
+import { parseWizardFlags, shouldRunWizard } from "./wizard/firstRun.js";
+import { RunWizard } from "./wizard/runWizard.js";
+import { parseHeadlessFlags } from "./headless.js";
+import { runHeadless } from "./runHeadless.js";
+import { loadSkillMdSkills } from "./skillsMd.js";
+import { listCodingSkills } from "@zelari/core/skills";
+import { getCurrentVersion } from "./updater.js";
 
-export const VERSION = '1.0.0';
+/**
+ * Bundled CLI version. Derived from <pkg>/package.json at runtime so it
+ * stays in sync with `npm publish` / self-update checks (which also read
+ * package.json via `getCurrentVersion`). Previously hardcoded — that
+ * caused `--version` to show 1.0.0 after a 1.0.1 publish and confused
+ * `/update` (registry's "latest" was 1.0.1, current was 1.0.0 → update
+ * offered, then reinstalled 1.0.1 → no change apparent).
+ */
+export const VERSION: string = getCurrentVersion();
 
 /**
  * Silent background update check (Task N.6, v3-N).
@@ -34,10 +40,10 @@ export const VERSION = '1.0.0';
  * development where the bundled version is the source repo.
  */
 async function backgroundUpdateCheck(): Promise<void> {
-  if (process.env.ANATHEMA_DEV === '1') return;
+  if (process.env.ANATHEMA_DEV === "1") return;
   await new Promise((resolve) => setTimeout(resolve, 3000));
   try {
-    const { checkForUpdate } = await import('./updater.js');
+    const { checkForUpdate } = await import("./updater.js");
     const info = await checkForUpdate();
     if (info.updateAvailable && !info.error) {
       // eslint-disable-next-line no-console
@@ -66,7 +72,7 @@ async function shutdown(): Promise<void> {
   }
   try {
     // v0.7.5: kill spawned MCP server processes so they don't outlive the CLI.
-    const { closeMcpClients } = await import('./mcp/mcpManager.js');
+    const { closeMcpClients } = await import("./mcp/mcpManager.js");
     closeMcpClients();
   } catch {
     // Best-effort.
@@ -87,36 +93,40 @@ async function shutdown(): Promise<void> {
  * Also handles meta-flags that should NOT mount Ink (--version, --help):
  * these print to stdout and exit, leaving the TTY untouched.
  */
-function pickRootComponent(): { kind: 'wizard' | 'app' | 'headless' | 'done'; element?: React.ReactElement; headlessOpts?: Parameters<typeof runHeadless>[0] } {
+function pickRootComponent(): {
+  kind: "wizard" | "app" | "headless" | "done";
+  element?: React.ReactElement;
+  headlessOpts?: Parameters<typeof runHeadless>[0];
+} {
   const argv = process.argv.slice(2);
 
-  if (argv.includes('--version') || argv.includes('-v')) {
+  if (argv.includes("--version") || argv.includes("-v")) {
     // eslint-disable-next-line no-console
     console.log(`zelari-code v${VERSION}`);
     process.exit(0);
   }
-  if (argv.includes('--help') || argv.includes('-h')) {
+  if (argv.includes("--help") || argv.includes("-h")) {
     // eslint-disable-next-line no-console
     console.log(
-      'zelari-code — AI Council coding agent CLI.\n' +
-        '\n' +
-        'Usage: zelari-code [options]\n' +
-        '\n' +
-        'Options:\n' +
-        '  --version, -v       Print version and exit\n' +
-        '  --help, -h          Print this help and exit\n' +
-        '  --no-wizard         Skip the first-run wizard\n' +
-        '  --reset-config      Re-run the wizard (clears provider.json on commit)\n' +
-        '  --headless          Run a single task without mounting the TUI\n' +
-        '    --task <text>       Task prompt (required in headless mode)\n' +
-        '    --output json|plain Output format (default: json)\n' +
-        '    --council          Use the 6-member council pipeline\n' +
-        '    --provider <id>    Provider override (default: active)\n' +
-        '    --model <id>       Model override (default: provider default)\n' +
-        '\n' +
-        'Environment:\n' +
-        '  ZELARI_NO_WIZARD=1  Skip the first-run wizard\n' +
-        '  ANATHEMA_DEV=1      Disable background update check\n',
+      "zelari-code — AI Council coding agent CLI.\n" +
+        "\n" +
+        "Usage: zelari-code [options]\n" +
+        "\n" +
+        "Options:\n" +
+        "  --version, -v       Print version and exit\n" +
+        "  --help, -h          Print this help and exit\n" +
+        "  --no-wizard         Skip the first-run wizard\n" +
+        "  --reset-config      Re-run the wizard (clears provider.json on commit)\n" +
+        "  --headless          Run a single task without mounting the TUI\n" +
+        "    --task <text>       Task prompt (required in headless mode)\n" +
+        "    --output json|plain Output format (default: json)\n" +
+        "    --council          Use the 6-member council pipeline\n" +
+        "    --provider <id>    Provider override (default: active)\n" +
+        "    --model <id>       Model override (default: provider default)\n" +
+        "\n" +
+        "Environment:\n" +
+        "  ZELARI_NO_WIZARD=1  Skip the first-run wizard\n" +
+        "  ANATHEMA_DEV=1      Disable background update check\n",
     );
     process.exit(0);
   }
@@ -126,7 +136,7 @@ function pickRootComponent(): { kind: 'wizard' | 'app' | 'headless' | 'done'; el
   // install (no provider.json yet) by passing --provider + env var.
   const headlessParse = parseHeadlessFlags(argv);
   if (headlessParse.options !== null) {
-    return { kind: 'headless', headlessOpts: headlessParse.options };
+    return { kind: "headless", headlessOpts: headlessParse.options };
   }
   if (headlessParse.error !== undefined) {
     // eslint-disable-next-line no-console
@@ -144,14 +154,18 @@ function pickRootComponent(): { kind: 'wizard' | 'app' | 'headless' | 'done'; el
   if (decision.shouldRun) {
     // eslint-disable-next-line no-console
     console.error(`[zelari-code] starting wizard: ${decision.reason}`);
-    return { kind: 'wizard', element: React.createElement(RunWizard) };
+    return { kind: "wizard", element: React.createElement(RunWizard) };
   }
   // v0.7.8: one-shot startup splash (ASCII emblem, ~2s or any-key skip),
   // then the App mounts. Skipped automatically for non-TTY stdout, small
   // terminals, or ZELARI_NO_SPLASH=1 — see components/SplashScreen.tsx.
   return {
-    kind: 'app',
-    element: React.createElement(SplashGate, { version: VERSION }, React.createElement(App)),
+    kind: "app",
+    element: React.createElement(
+      SplashGate,
+      { version: VERSION },
+      React.createElement(App),
+    ),
   };
 }
 
@@ -167,7 +181,9 @@ function loadUserSkills(): void {
     const summary = loadSkillMdSkills(process.cwd(), { existingIds: existing });
     if (summary.loaded.length > 0) {
       // eslint-disable-next-line no-console
-      console.error(`[zelari-code] loaded ${summary.loaded.length} SKILL.md skill(s): ${summary.loaded.join(', ')}`);
+      console.error(
+        `[zelari-code] loaded ${summary.loaded.length} SKILL.md skill(s): ${summary.loaded.join(", ")}`,
+      );
     }
     for (const s of summary.skipped) {
       // eslint-disable-next-line no-console
@@ -180,13 +196,15 @@ function loadUserSkills(): void {
 
 function main() {
   const picked = pickRootComponent();
-  if (picked.kind === 'done') return; // --version or --help printed + exited
+  if (picked.kind === "done") return; // --version or --help printed + exited
 
   loadUserSkills();
 
-  if (picked.kind === 'headless') {
+  if (picked.kind === "headless") {
     void runHeadless(picked.headlessOpts!).then((code) => {
-      void getMetricsLogger().flush().catch(() => {});
+      void getMetricsLogger()
+        .flush()
+        .catch(() => {});
       process.exit(code);
     });
     return;
@@ -194,11 +212,11 @@ function main() {
 
   const { waitUntilExit, unmount } = render(picked.element!);
 
-  process.on('SIGINT', () => {
+  process.on("SIGINT", () => {
     unmount();
     void shutdown();
   });
-  process.on('SIGTERM', () => {
+  process.on("SIGTERM", () => {
     unmount();
     void shutdown();
   });

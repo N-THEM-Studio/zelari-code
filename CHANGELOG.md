@@ -5,6 +5,31 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-07-06
+
+### Fixed
+- **Drift di versione nella CLI.** `src/cli/main.ts` esportava un letterale
+  `VERSION = '1.0.0'` hardcodato, mentre `package.json` era già a `1.0.1`.
+  `--version`, il banner dell'app, la splash, la sidebar e il wizard
+  mostravano quindi `v1.0.0` dopo la pubblicazione di `1.0.1`. Inoltre il
+  self-update check (`updater.ts`) legge correttamente `package.json` via
+  `getCurrentVersion()`, quindi confrontava `1.0.1` con l'`1.0.1` del
+  registro npm e segnalava "nessun aggiornamento disponibile" — l'utente
+  vedeva `v1.0.0` e `/update` non proponeva nulla. `VERSION` ora deriva da
+  `package.json` (unica fonte di verità). Stesso trattamento per
+  `clientInfo.version` nell'handshake MCP (`src/cli/mcp/mcpClient.ts`,
+  era hardcodato a `0.7.9`).
+- **DevDependency `@zelari/core` bloccata a `1.0.0`** in `package.json`
+  (pin esatto, senza caret). Questo faceva fallire il typecheck del root
+  con `TS2305` su tutti i nuovi export del workspace 1.0.1. Aggiornato a
+  `1.0.1` (versione corrente del workspace).
+- **Sezione duplicata in `AGENTS.MD`**: il blocco auto-curato
+  (Tech Stack / Decisions / Conventions / Build / Open Questions) era
+  stato accodato una seconda volta durante un run precedente. La copia
+  duplicata conteneva inoltre riferimenti stale (`@zelari/core 0.7.0`,
+  `esbuild ^0.24.0`, `vitest ^2.1.9`). Rimossa; un futuro run di
+  `/council` rigenera correttamente da `package.json`.
+
 ## [1.0.1] - 2026-07-06
 
 ### Added

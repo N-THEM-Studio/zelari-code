@@ -12,8 +12,9 @@
  * @see https://modelcontextprotocol.io/specification (stdio transport)
  */
 
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
-import { buildCmdLine } from '../utils/cmdline.js';
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { buildCmdLine } from "../utils/cmdline.js";
+import { getCurrentVersion } from "../updater.js";
 
 /** JSON-RPC id → pending resolver. */
 interface Pending {
@@ -40,13 +41,13 @@ export interface McpToolInfo {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const INIT_TIMEOUT_MS = 15_000;
-export const MCP_PROTOCOL_VERSION = '2025-03-26';
+export const MCP_PROTOCOL_VERSION = "2025-03-26";
 
 export class McpClient {
   private child: ChildProcessWithoutNullStreams | null = null;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
-  private stdoutBuffer = '';
+  private stdoutBuffer = "";
   private closed = false;
 
   constructor(
@@ -58,7 +59,7 @@ export class McpClient {
   async start(): Promise<void> {
     if (this.child) return;
     const spawnOpts = {
-      stdio: ['pipe', 'pipe', 'pipe'] as ['pipe', 'pipe', 'pipe'],
+      stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...(this.config.env ?? {}) },
       windowsHide: true,
     };
@@ -67,7 +68,7 @@ export class McpClient {
     // with shell:true is deprecated (DEP0190: args concatenated unescaped).
     // Build the command line ourselves with explicit quoting instead.
     const child = (
-      process.platform === 'win32'
+      process.platform === "win32"
         ? spawn(buildCmdLine(this.config.command, this.config.args ?? []), {
             ...spawnOpts,
             shell: true,
@@ -76,38 +77,58 @@ export class McpClient {
     ) as ChildProcessWithoutNullStreams;
     this.child = child;
 
-    child.stdout.setEncoding('utf8');
-    child.stdout.on('data', (chunk: string) => this.onStdout(chunk));
-    child.on('error', (err) => this.failAll(new Error(`[mcp:${this.serverName}] spawn failed: ${err.message}`)));
-    child.on('exit', (code) => {
+    child.stdout.setEncoding("utf8");
+    child.stdout.on("data", (chunk: string) => this.onStdout(chunk));
+    child.on("error", (err) =>
+      this.failAll(
+        new Error(`[mcp:${this.serverName}] spawn failed: ${err.message}`),
+      ),
+    );
+    child.on("exit", (code) => {
       if (!this.closed) {
-        this.failAll(new Error(`[mcp:${this.serverName}] server exited (code ${code ?? 'null'})`));
+        this.failAll(
+          new Error(
+            `[mcp:${this.serverName}] server exited (code ${code ?? "null"})`,
+          ),
+        );
       }
     });
 
     await this.request(
-      'initialize',
+      "initialize",
       {
         protocolVersion: MCP_PROTOCOL_VERSION,
         capabilities: {},
-        clientInfo: { name: 'zelari-code', version: '0.7.9' },
+        clientInfo: { name: "zelari-code", version: getCurrentVersion() },
       },
       INIT_TIMEOUT_MS,
     );
-    this.notify('notifications/initialized', {});
+    this.notify("notifications/initialized", {});
   }
 
   /** Discover the server's tools. */
   async listTools(): Promise<McpToolInfo[]> {
-    const res = (await this.request('tools/list', {})) as {
-      tools?: Array<{ name?: string; description?: string; inputSchema?: Record<string, unknown> }>;
+    const res = (await this.request("tools/list", {})) as {
+      tools?: Array<{
+        name?: string;
+        description?: string;
+        inputSchema?: Record<string, unknown>;
+      }>;
     };
     return (res.tools ?? [])
-      .filter((t): t is { name: string; description?: string; inputSchema?: Record<string, unknown> } => !!t.name)
+      .filter(
+        (
+          t,
+        ): t is {
+          name: string;
+          description?: string;
+          inputSchema?: Record<string, unknown>;
+        } => !!t.name,
+      )
       .map((t) => ({
         name: t.name,
-        description: t.description ?? '',
-        inputSchema: t.inputSchema ?? { type: 'object', properties: {} },
+        description: t.description ?? "",
+        inputSchema: t.inputSchema ?? { type: "object", properties: {} },
       }));
   }
 
@@ -115,15 +136,28 @@ export class McpClient {
    * Call a tool. Returns the concatenated text content; non-text content
    * items are summarized by type. Throws when the server flags isError.
    */
-  async callTool(name: string, args: Record<string, unknown>, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<string> {
-    const res = (await this.request('tools/call', { name, arguments: args }, timeoutMs)) as {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  ): Promise<string> {
+    const res = (await this.request(
+      "tools/call",
+      { name, arguments: args },
+      timeoutMs,
+    )) as {
       content?: Array<{ type?: string; text?: string }>;
       isError?: boolean;
     };
     const text = (res.content ?? [])
-      .map((c) => (c.type === 'text' && typeof c.text === 'string' ? c.text : `[${c.type ?? 'unknown'} content]`))
-      .join('\n');
-    if (res.isError) throw new Error(text || `tool "${name}" reported an error`);
+      .map((c) =>
+        c.type === "text" && typeof c.text === "string"
+          ? c.text
+          : `[${c.type ?? "unknown"} content]`,
+      )
+      .join("\n");
+    if (res.isError)
+      throw new Error(text || `tool "${name}" reported an error`);
     return text;
   }
 
@@ -137,18 +171,27 @@ export class McpClient {
 
   // ── JSON-RPC plumbing ────────────────────────────────────────────────
 
-  private request(method: string, params: unknown, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<unknown> {
+  private request(
+    method: string,
+    params: unknown,
+    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+  ): Promise<unknown> {
     const child = this.child;
-    if (!child) return Promise.reject(new Error(`[mcp:${this.serverName}] not started`));
+    if (!child)
+      return Promise.reject(new Error(`[mcp:${this.serverName}] not started`));
     const id = this.nextId++;
-    const payload = JSON.stringify({ jsonrpc: '2.0', id, method, params });
+    const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params });
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
-        reject(new Error(`[mcp:${this.serverName}] ${method} timed out after ${timeoutMs}ms`));
+        reject(
+          new Error(
+            `[mcp:${this.serverName}] ${method} timed out after ${timeoutMs}ms`,
+          ),
+        );
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      child.stdin.write(payload + '\n', (err) => {
+      child.stdin.write(payload + "\n", (err) => {
         if (err) {
           clearTimeout(timer);
           this.pending.delete(id);
@@ -159,29 +202,39 @@ export class McpClient {
   }
 
   private notify(method: string, params: unknown): void {
-    this.child?.stdin.write(JSON.stringify({ jsonrpc: '2.0', method, params }) + '\n');
+    this.child?.stdin.write(
+      JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n",
+    );
   }
 
   private onStdout(chunk: string): void {
     this.stdoutBuffer += chunk;
     let nl: number;
-    while ((nl = this.stdoutBuffer.indexOf('\n')) >= 0) {
+    while ((nl = this.stdoutBuffer.indexOf("\n")) >= 0) {
       const line = this.stdoutBuffer.slice(0, nl).trim();
       this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1);
       if (!line) continue;
-      let msg: { id?: number; result?: unknown; error?: { message?: string; code?: number } };
+      let msg: {
+        id?: number;
+        result?: unknown;
+        error?: { message?: string; code?: number };
+      };
       try {
         msg = JSON.parse(line);
       } catch {
         continue; // servers sometimes log garbage to stdout — ignore non-JSON
       }
-      if (typeof msg.id !== 'number') continue; // notification from server — none handled yet
+      if (typeof msg.id !== "number") continue; // notification from server — none handled yet
       const pending = this.pending.get(msg.id);
       if (!pending) continue;
       this.pending.delete(msg.id);
       clearTimeout(pending.timer);
       if (msg.error) {
-        pending.reject(new Error(`[mcp:${this.serverName}] ${msg.error.message ?? 'JSON-RPC error'} (code ${msg.error.code ?? '?'})`));
+        pending.reject(
+          new Error(
+            `[mcp:${this.serverName}] ${msg.error.message ?? "JSON-RPC error"} (code ${msg.error.code ?? "?"})`,
+          ),
+        );
       } else {
         pending.resolve(msg.result);
       }
