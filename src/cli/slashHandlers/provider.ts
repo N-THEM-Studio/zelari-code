@@ -45,7 +45,7 @@ export interface ProviderSlashContext {
 }
 
 const UNKNOWN_PROVIDER_MSG =
-  (id: string) => `[provider] unknown: ${id}. Available: openai-compatible, minimax, glm, grok, custom`;
+  (id: string) => `[provider] unknown: ${id}. Available: openai-compatible, minimax, glm, grok, deepseek, custom`;
 
 // ---------------------------------------------------------------------------
 // Interactive picker plumbing (v0.7.10) — /provider and /model with no args
@@ -72,7 +72,7 @@ export interface PickerRequest {
 export type OpenPicker = (req: PickerRequest) => void;
 
 /** Provider ids that support /v1/models discovery. */
-const DISCOVERABLE_PROVIDERS: readonly string[] = ['grok', 'glm', 'minimax', 'openai-compatible'];
+const DISCOVERABLE_PROVIDERS: readonly string[] = ['grok', 'glm', 'minimax', 'deepseek', 'openai-compatible'];
 
 export function handleProviderList(ctx: ProviderSlashContext): void {
   const list = getActiveProviderSpec();
@@ -80,7 +80,7 @@ export function handleProviderList(ctx: ProviderSlashContext): void {
   const epHint = customEp ? ` — custom endpoint: ${customEp}` : '';
   appendSystem(
     ctx.setMessages,
-    `[provider] current: ${list.displayName} (model: ${ctx.activeModel})${epHint} — available: openai-compatible, minimax, glm, grok, custom`,
+    `[provider] current: ${list.displayName} (model: ${ctx.activeModel})${epHint} — available: openai-compatible, minimax, glm, grok, deepseek, custom`,
   );
 }
 

@@ -32,6 +32,10 @@ const PRICES_PER_MILLION: Record<string, { input: number; output: number }> = {
   'MiniMax-M2.5':     { input: 0.20, output: 1.10 },
   'MiniMax-M2':       { input: 0.20, output: 1.10 },
   'MiniMax-M2-her':   { input: 0.30, output: 1.20 },
+  // DeepSeek (global platform) — estimated list prices; override via
+  // ANATHEMA_PRICE_DEEPSEEK_V4_FLASH / ANATHEMA_PRICE_DEEPSEEK_V4_PRO.
+  'deepseek-v4-flash': { input: 0.14, output: 0.28 },
+  'deepseek-v4-pro':   { input: 0.55, output: 2.19 },
   // OpenAI (for openai-compatible fallback)
   'gpt-4o':           { input: 2.50, output: 10 },
   'gpt-4o-mini':      { input: 0.15, output: 0.60 },

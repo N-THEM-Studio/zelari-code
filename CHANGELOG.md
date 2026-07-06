@@ -5,6 +5,33 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **DeepSeek provider** (`/provider deepseek`) — the DeepSeek global
+  platform is now a first-class provider (OpenAI-compatible, base URL
+  `https://api.deepseek.com`, env var `DEEPSEEK_API_KEY`). It is fully
+  wired for `/v1/models` discovery: after `/login deepseek <key>` the
+  model list is fetched in the background, and `/model` opens the picker
+  with the discovered ids. Ships with `deepseek-v4-flash` and
+  `deepseek-v4-pro` as the discoverable defaults (default model
+  `deepseek-v4-pro`) plus pricing entries for both. Available from the
+  first-run wizard, `/provider`, `/model`, and `/models refresh`.
+
+### Fixed
+- **Windows "command not found" after `npm install -g`.** On some
+  Windows machines npm unpacked the package under
+  `<prefix>\node_modules\zelari-code\` but never created the
+  `<prefix>\zelari-code.cmd` bin shim, so the command was missing even
+  though `npm ls -g` listed the package ("as if the command wasn't
+  saved"). The `postinstall` script now auto-repairs this specific case:
+  when the shim is **missing** it writes the standard npm shim trio
+  (`.cmd`, `.ps1`, and a POSIX `sh` wrapper for Git Bash) pointing at the
+  installed package. It only ever creates shims that are absent — it
+  never overwrites an existing shim (which could shadow another tool),
+  so a shim pointing elsewhere still only produces the diagnostic
+  warning. Opt out with `ZELARI_NO_SHIM_REPAIR=1`.
+
 ## [1.0.3] - 2026-07-06
 
 ### Added

@@ -38,6 +38,9 @@ export const PROVIDER_ENDPOINTS: Record<ProviderName, string> = {
   // Pay-per-token API users can override with `/provider custom https://api.z.ai/api/paas/v4`.
   'glm': 'https://api.z.ai/api/coding/paas/v4',
   'grok': 'https://api.x.ai/v1',
+  // DeepSeek global platform (OpenAI-compatible). Chat → /chat/completions,
+  // discovery → /models against this same host.
+  'deepseek': 'https://api.deepseek.com',
   'custom': '',
 };
 

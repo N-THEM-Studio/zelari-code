@@ -46,6 +46,7 @@ const DEFAULTS: ProviderConfig = {
     'minimax': 'MiniMax-M2.5',
     'glm': 'glm-4.6',
     'grok': 'grok-4',
+    'deepseek': 'deepseek-v4-pro',
     'custom': '',
   },
   customEndpoints: {},
