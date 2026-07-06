@@ -2,8 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { createBuiltinToolRegistry } from '../../src/cli/toolRegistry.js';
 
 describe('createBuiltinToolRegistry (Task A1)', () => {
-  it('registers all 11 builtin tools (filesystem + bash + search + diff + web + task)', () => {
-    const { registry, tools } = createBuiltinToolRegistry();
+  it('registers all builtin tools (filesystem + bash + search + diff + web + task + lsp)', () => {
+    const { registry, tools } = createBuiltinToolRegistry({ lspProvider: null });
     const expected = [
       'apply_diff',
       'bash',
@@ -21,6 +21,17 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
     expect(tools.map((t) => t.name).sort()).toEqual(expected);
   });
 
+  it('adds the 5 LSP navigation tools when an LSP provider is available', () => {
+    const { registry } = createBuiltinToolRegistry({ lspProvider: null });
+    const withoutLsp = registry.list().length;
+    // A truthy provider (here the default shared manager) adds the LSP tools.
+    const { registry: withLsp } = createBuiltinToolRegistry();
+    expect(withLsp.list().length).toBe(withoutLsp + 5);
+    for (const name of ['go_to_definition', 'find_references', 'hover_type', 'document_symbols', 'rename_symbol']) {
+      expect(withLsp.get(name)).toBeDefined();
+    }
+  });
+
   it('each tool summary has a non-empty name, description, and permissions', () => {
     const { tools } = createBuiltinToolRegistry();
     for (const t of tools) {
@@ -31,7 +42,7 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   });
 
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
-    const { registry } = createBuiltinToolRegistry();
+    const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
     expect(openAITools).toHaveLength(11);
     for (const t of openAITools) {

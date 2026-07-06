@@ -5,6 +5,21 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **LSP code intelligence (IDE-grade navigation tools).** The agent can now
+  drive real language servers over LSP for compiler-accurate navigation
+  instead of guessing with grep: `go_to_definition`, `find_references`,
+  `hover_type` (the real resolved type/docs), `document_symbols` (a file's
+  structural outline), and `rename_symbol` (previews the workspace-wide blast
+  radius of a rename before you touch anything). Servers
+  (typescript-language-server, pyright, gopls, rust-analyzer) are resolved at
+  runtime from `node_modules/.bin` then PATH — started lazily, one per
+  language, shared across turns — and the tools degrade silently when none is
+  installed. Opt out with `ZELARI_LSP=0`. Built on a dependency-free
+  JSON-RPC/LSP core (framing + client) so no new runtime dependency is added.
+
 ## [1.2.0] - 2026-07-06
 
 ### Added

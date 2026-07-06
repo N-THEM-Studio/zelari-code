@@ -29,6 +29,8 @@ import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.j
 import { AuditLogger } from './safety/auditLogger.js';
 import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
 import { createTaskTool } from './tools/taskTool.js';
+import { createLspTools } from './lsp/tools.js';
+import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
@@ -64,6 +66,11 @@ export interface CreateRegistryOptions {
   readOnly?: boolean;
   /** Register the `task` sub-agent tool (default true unless readOnly). */
   enableTask?: boolean;
+  /**
+   * LSP navigation provider. Omit to use the shared, real language-server
+   * manager; pass a fake in tests; pass `null` to disable the LSP tools.
+   */
+  lspProvider?: LspProvider | null;
 }
 
 /**
@@ -184,6 +191,20 @@ export function createBuiltinToolRegistry(
       description: taskTool.description,
       permissions: taskTool.permissions ?? [],
     });
+  }
+
+  // LSP navigation tools (go_to_definition, find_references, hover_type,
+  // document_symbols, rename_symbol). Full registry only, gated by
+  // ZELARI_LSP. Backed by a shared, lazily-spawned language-server manager —
+  // the servers start on first use and degrade silently when not installed.
+  if (!readOnly && process.env.ZELARI_LSP !== '0' && options.lspProvider !== null) {
+    const lspTools = options.lspProvider
+      ? createLspTools(options.lspProvider, root)
+      : createLspTools(getSharedLspManager(root), root);
+    for (const t of lspTools) {
+      registry.register(t);
+      tools.push({ name: t.name, description: t.description, permissions: t.permissions ?? [] });
+    }
   }
 
   return { registry, tools };
