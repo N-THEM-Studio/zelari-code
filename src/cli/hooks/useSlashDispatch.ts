@@ -15,6 +15,7 @@ import {
   handleRollback,
   handleRollbackList,
 } from '../slashHandlers/checkpoint.js';
+import { handleIndexBuild, handleIndexStatus } from '../slashHandlers/semantic.js';
 import { handleCompact } from '../slashHandlers/transcript.js';
 import { handleUpdateCheck, handleUpdatePerform } from '../slashHandlers/updater.js';
 import { handlePromoteMember } from '../slashHandlers/promoteMember.js';
@@ -392,6 +393,18 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     }
     if (result.kind === 'rollback') {
       await handleRollback({ ...baseCtx, cwd: process.cwd() }, result.rollbackId);
+      setInput('');
+      return;
+    }
+
+    // ── Semantic index ──
+    if (result.kind === 'index_build') {
+      await handleIndexBuild({ ...baseCtx, cwd: process.cwd() });
+      setInput('');
+      return;
+    }
+    if (result.kind === 'index_status') {
+      handleIndexStatus({ ...baseCtx, cwd: process.cwd() });
       setInput('');
       return;
     }

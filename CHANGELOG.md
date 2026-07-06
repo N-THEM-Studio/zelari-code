@@ -8,6 +8,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Semantic code search (`semantic_search` + `/index`).** Concept-level
+  retrieval over the codebase: describe what you're looking for in plain
+  language ("where is rate-limit backoff handled?") and get the most relevant
+  code chunks even when they share no literal keyword with the query — where
+  grep can't reach. `/index` walks the project's source files, embeds them via
+  the active provider's `/embeddings` endpoint, and persists the vectors to a
+  JSON store (`/index status` shows stats); `semantic_search` embeds the query
+  and ranks chunks by cosine similarity. Pure-JS (no native vector DB),
+  embedding model configurable via `ZELARI_EMBED_MODEL`, and fully
+  best-effort — it degrades with a clear message when the provider has no
+  embeddings endpoint or no index exists yet. Opt out with `ZELARI_SEMANTIC=0`.
 - **AST structural tools for TS/JS (`ast_outline`, `find_symbol`).**
   Precise, offline structural targeting via the TypeScript compiler API:
   `ast_outline` returns every declaration in a file (function/class/method/

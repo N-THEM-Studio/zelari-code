@@ -32,6 +32,7 @@ import { createTaskTool } from './tools/taskTool.js';
 import { createLspTools } from './lsp/tools.js';
 import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { createAstTools } from './ast/tools.js';
+import { createSemanticTool } from './semantic/tools.js';
 import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
@@ -165,6 +166,19 @@ export function createBuiltinToolRegistry(
       registry.register(t);
       tools.push({ name: t.name, description: t.description, permissions: t.permissions ?? [] });
     }
+  }
+
+  // Semantic code search — read-only, available in both registries. Gated by
+  // ZELARI_SEMANTIC. Needs a prior index (/index); the tool self-reports when
+  // none exists, so it's always safe to register.
+  if (process.env.ZELARI_SEMANTIC !== '0') {
+    const semanticTool = createSemanticTool({ root });
+    registry.register(semanticTool);
+    tools.push({
+      name: semanticTool.name,
+      description: semanticTool.description,
+      permissions: semanticTool.permissions ?? [],
+    });
   }
 
   // The `task` sub-agent tool — only in the full (non-read-only) registry.
