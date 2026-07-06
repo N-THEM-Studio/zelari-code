@@ -28,6 +28,8 @@ import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPat
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
 import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
+import { createTaskTool } from './tools/taskTool.js';
+import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
 export interface BuiltinToolSummary {
@@ -54,6 +56,14 @@ export interface CreateRegistryOptions {
   diagnostics?: boolean;
   /** Inject the diagnostics process runner (tests). Defaults to real spawn. */
   diagnosticsRunner?: Runner;
+  /**
+   * Read-only registry: register only observe tools (read/list/grep/show_diff/
+   * fetch/web) and omit write/edit/apply_diff/bash + the `task` tool. Used to
+   * build the isolated, non-recursive registry each sub-agent runs with.
+   */
+  readOnly?: boolean;
+  /** Register the `task` sub-agent tool (default true unless readOnly). */
+  enableTask?: boolean;
 }
 
 /**
@@ -100,33 +110,82 @@ export function createBuiltinToolRegistry(
   const safeWebSearch = wrapWithAudit(webSearchTool, audit, sessionId);
 
   const registry = new ToolRegistry();
+  // Read-only mode (used for sub-agents): only tools that observe the
+  // workspace — no write/edit/apply_diff/bash, and no `task` tool, so a
+  // sub-agent can neither mutate the repo nor recurse into more sub-agents.
+  const readOnly = options.readOnly === true;
+
+  // Observe tools — always registered.
   registry.register(safeReadFile);
-  registry.register(safeWriteFile);
-  registry.register(safeEditFile);
-  registry.register(safeBash);
   registry.register(safeGrepContent);
   registry.register(safeListFiles);
   registry.register(safeShowDiff);
-  registry.register(safeApplyDiff);
   registry.register(safeFetchUrl);
   registry.register(safeWebSearch);
+  // Mutating tools — full registry only.
+  if (!readOnly) {
+    registry.register(safeWriteFile);
+    registry.register(safeEditFile);
+    registry.register(safeBash);
+    registry.register(safeApplyDiff);
+  }
 
-  const tools: BuiltinToolSummary[] = [
-    safeReadFile,
-    safeWriteFile,
-    safeEditFile,
-    safeBash,
-    safeGrepContent,
-    safeListFiles,
-    safeShowDiff,
-    safeApplyDiff,
-    safeFetchUrl,
-    safeWebSearch,
-  ].map((t) => ({
+  const summary = readOnly
+    ? [safeReadFile, safeGrepContent, safeListFiles, safeShowDiff, safeFetchUrl, safeWebSearch]
+    : [
+        safeReadFile,
+        safeWriteFile,
+        safeEditFile,
+        safeBash,
+        safeGrepContent,
+        safeListFiles,
+        safeShowDiff,
+        safeApplyDiff,
+        safeFetchUrl,
+        safeWebSearch,
+      ];
+  const tools: BuiltinToolSummary[] = summary.map((t) => ({
     name: t.name,
     description: t.description,
     permissions: t.permissions ?? [],
   }));
+
+  // The `task` sub-agent tool — only in the full (non-read-only) registry.
+  // Each invocation spins up a fresh READ-ONLY sub-registry via this same
+  // factory (readOnly:true), so sub-agents are isolated and non-recursive.
+  if (!readOnly && options.enableTask !== false) {
+    const taskTool = createTaskTool({
+      createSubAgentContext: async () => {
+        const cfg = await providerFromEnv();
+        if (!cfg) return null;
+        const { registry: subRegistry } = createBuiltinToolRegistry({
+          root,
+          audit,
+          sessionId,
+          readOnly: true,
+          diagnostics: false,
+        });
+        return {
+          providerStream: openaiCompatibleProvider(cfg),
+          model: cfg.model,
+          provider: 'openai-compatible',
+          registry: subRegistry,
+          tools: subRegistry.toOpenAITools().map((t) => ({
+            name: t.function.name,
+            description: t.function.description,
+            parameters: t.function.parameters,
+          })),
+        };
+      },
+    });
+    registry.register(taskTool);
+    tools.push({
+      name: taskTool.name,
+      description: taskTool.description,
+      permissions: taskTool.permissions ?? [],
+    });
+  }
+
   return { registry, tools };
 }
 

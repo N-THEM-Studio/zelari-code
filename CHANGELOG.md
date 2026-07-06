@@ -8,6 +8,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Sub-agent delegation (`task` tool).** The agent can now delegate a
+  focused, read-only research/exploration sub-task to an isolated sub-agent
+  that runs in its own fresh context and returns only a concise conclusion —
+  keeping the main conversation lean on large repos ("find where X is handled
+  and summarize how it works" costs the parent one tool result, not 20 file
+  reads). The sub-agent gets a read-only tool registry (read/list/grep/
+  show_diff/fetch/web) with no write/edit/bash and, crucially, no `task` tool
+  of its own, so sub-agents cannot mutate the repo or recurse. The underlying
+  harness self-bounds at 12 tool-loop turns. Registry gains `readOnly` /
+  `enableTask` options for building the isolated sub-registry.
 - **Workspace checkpoints & atomic rollback.** `/checkpoint [label]`
   snapshots the working tree as a restore point, and `/rollback [id|latest]`
   restores it exactly — reverting modified files, recreating deleted ones,

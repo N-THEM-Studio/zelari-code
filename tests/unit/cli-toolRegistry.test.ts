@@ -2,9 +2,9 @@ import { describe, it, expect } from 'vitest';
 import { createBuiltinToolRegistry } from '../../src/cli/toolRegistry.js';
 
 describe('createBuiltinToolRegistry (Task A1)', () => {
-  it('registers all 10 builtin tools (filesystem + bash + search + diff + web, v0.7.5)', () => {
+  it('registers all 11 builtin tools (filesystem + bash + search + diff + web + task)', () => {
     const { registry, tools } = createBuiltinToolRegistry();
-    expect(registry.list().sort()).toEqual([
+    const expected = [
       'apply_diff',
       'bash',
       'edit_file',
@@ -13,21 +13,12 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
       'list_files',
       'read_file',
       'show_diff',
+      'task',
       'web_search',
       'write_file',
-    ]);
-    expect(tools.map((t) => t.name).sort()).toEqual([
-      'apply_diff',
-      'bash',
-      'edit_file',
-      'fetch_url',
-      'grep_content',
-      'list_files',
-      'read_file',
-      'show_diff',
-      'web_search',
-      'write_file',
-    ]);
+    ];
+    expect(registry.list().sort()).toEqual(expected);
+    expect(tools.map((t) => t.name).sort()).toEqual(expected);
   });
 
   it('each tool summary has a non-empty name, description, and permissions', () => {
@@ -42,7 +33,7 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
     const { registry } = createBuiltinToolRegistry();
     const openAITools = registry.toOpenAITools();
-    expect(openAITools).toHaveLength(10);
+    expect(openAITools).toHaveLength(11);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);
