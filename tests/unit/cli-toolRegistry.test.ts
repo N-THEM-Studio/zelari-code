@@ -8,6 +8,7 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
       'apply_diff',
       'ast_outline',
       'bash',
+      'browser_check',
       'edit_file',
       'fetch_url',
       'find_symbol',
@@ -47,7 +48,7 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
     const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
-    expect(openAITools).toHaveLength(14);
+    expect(openAITools).toHaveLength(15);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);

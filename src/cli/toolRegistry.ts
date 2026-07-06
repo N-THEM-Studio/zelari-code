@@ -33,6 +33,7 @@ import { createLspTools } from './lsp/tools.js';
 import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { createAstTools } from './ast/tools.js';
 import { createSemanticTool } from './semantic/tools.js';
+import { createBrowserTool } from './browser/tools.js';
 import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 
@@ -178,6 +179,19 @@ export function createBuiltinToolRegistry(
       name: semanticTool.name,
       description: semanticTool.description,
       permissions: semanticTool.permissions ?? [],
+    });
+  }
+
+  // Browser verification (browser_check) — full registry only (it drives a
+  // real browser). Gated by ZELARI_BROWSER; self-reports install steps when
+  // Playwright is absent, so it's safe to register unconditionally.
+  if (!readOnly && process.env.ZELARI_BROWSER !== '0') {
+    const browserTool = createBrowserTool();
+    registry.register(browserTool);
+    tools.push({
+      name: browserTool.name,
+      description: browserTool.description,
+      permissions: browserTool.permissions ?? [],
     });
   }
 

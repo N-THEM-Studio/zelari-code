@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Browser verification loop (`browser_check`).** Visual verification for
+  web work: the agent opens a URL in a headless browser, optionally runs
+  click/fill/goto/wait actions, and gets back the signals an LLM can act on —
+  console errors, uncaught page exceptions, failed network requests, the final
+  title/URL, whether an expected selector appeared, and a saved screenshot
+  path. Far stronger than "the tests pass" for front-end changes. Playwright
+  is an OPTIONAL dependency, loaded lazily — the tool degrades with install
+  instructions when it (or a browser) isn't present, so nothing is forced on
+  users who don't need it. Opt out with `ZELARI_BROWSER=0`.
 - **Semantic code search (`semantic_search` + `/index`).** Concept-level
   retrieval over the codebase: describe what you're looking for in plain
   language ("where is rate-limit backoff handled?") and get the most relevant

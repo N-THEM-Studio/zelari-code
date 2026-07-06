@@ -45,6 +45,8 @@ await build({
     // node_modules — keep it OUT of the bundle (it is ~7MB) so startup and
     // bundle size stay lean.
     'typescript',
+    // Optional peer for browser_check — loaded lazily, may not be installed.
+    'playwright',
   ],
   // Use tsconfig from package root
   tsconfig: path.join(pkgRoot, 'tsconfig.json'),
