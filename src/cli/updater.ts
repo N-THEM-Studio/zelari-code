@@ -18,12 +18,60 @@
 
 import { createRequire } from 'node:module';
 import { spawn } from 'node:child_process';
+import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCmdLine } from './utils/cmdline.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/**
+ * Locate the `npm-cli.js` that ships with the Node runtime currently
+ * executing zelari-code (`process.execPath`).
+ *
+ * Why: on Windows, `/update` spawns `npm` through a shell, which resolves
+ * `npm.cmd` off PATH. When Node/npm is managed by a shim tool (Volta,
+ * nvm-windows, fnm) and that shim is broken, the spawn dies with exit 127
+ * and a message like "Shim target not found: npm.cmd" — the update never
+ * runs. npm is bundled *alongside* every Node install, so invoking
+ * `node <npm-cli.js> install -g ...` runs the exact npm that matches the
+ * running Node while side-stepping the broken `.cmd`/shim layer entirely.
+ *
+ * Returns the absolute path to npm-cli.js, or null if it can't be found
+ * next to `process.execPath` (in which case callers fall back to the
+ * PATH-resolved `npm`).
+ *
+ * @param execPath override for tests (defaults to `process.execPath`)
+ */
+export function resolveBundledNpmCli(execPath: string = process.execPath): string | null {
+  const dir = path.dirname(execPath);
+  const candidates = [
+    // Windows: C:\...\node.exe → C:\...\node_modules\npm\bin\npm-cli.js
+    path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    // POSIX: <prefix>/bin/node → <prefix>/lib/node_modules/npm/bin/npm-cli.js
+    path.join(dir, '..', 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ];
+  for (const candidate of candidates) {
+    try {
+      if (existsSync(candidate)) return candidate;
+    } catch {
+      // Unreadable path — try the next candidate.
+    }
+  }
+  return null;
+}
+
+/**
+ * True when an `npm` invocation failed in a way that looks like a broken
+ * bin shim / shim manager (Volta, nvm-windows, fnm) rather than a real npm
+ * error. These are the failures the bundled-npm fallback can recover from.
+ */
+function looksLikeBrokenShim(exitCode: number | null, output: string): boolean {
+  if (exitCode === 127) return true;
+  const h = output.toLowerCase();
+  return h.includes('shim target not found') || h.includes('is not recognized');
+}
 
 /**
  * Read the bundled package.json and return its version.
@@ -158,17 +206,56 @@ export async function checkForUpdate(
 export async function performUpdate(
   packageName = 'zelari-code',
   executor: typeof spawn = spawn,
+  resolveNpmCli: (execPath?: string) => string | null = resolveBundledNpmCli,
+): Promise<UpdatePerformResult> {
+  const args = ['install', '-g', `${packageName}@latest`];
+
+  // Attempt 1: the PATH-resolved `npm` (shell on Windows for the .cmd shim).
+  const primary = await runNpm(executor, args, 'shim');
+  if (primary.ok) return primary;
+
+  // Attempt 2 (fallback): if attempt 1 died like a broken bin shim / shim
+  // manager (Volta "Shim target not found: npm.cmd", exit 127), retry with
+  // the npm bundled next to the running Node, invoked as
+  // `node <npm-cli.js> ...` — no shell, no `.cmd`, no shim in the way.
+  const npmCli = resolveNpmCli();
+  if (npmCli && looksLikeBrokenShim(primary.exitCode, primary.output)) {
+    const fallback = await runNpm(executor, args, 'bundled', npmCli);
+    return {
+      ...fallback,
+      output:
+        `[update] npm shim failed (${primary.error ?? 'exit ' + primary.exitCode}); ` +
+        `retried via bundled npm (${npmCli}).\n${fallback.output}`,
+    };
+  }
+
+  return primary;
+}
+
+/**
+ * Spawn a single npm invocation and collect its result.
+ *
+ * `mode: 'shim'` runs the PATH-resolved `npm` (shell on Windows so the
+ * `.cmd` extension resolves). `mode: 'bundled'` runs
+ * `node <npmCliPath> ...` directly, bypassing any bin shim.
+ */
+function runNpm(
+  executor: typeof spawn,
+  args: readonly string[],
+  mode: 'shim' | 'bundled',
+  npmCliPath?: string,
 ): Promise<UpdatePerformResult> {
   return new Promise((resolve) => {
-    const args = ['install', '-g', `${packageName}@latest`];
     let stdout = '';
     let stderr = '';
-
     const stdio: ['ignore', 'pipe', 'pipe'] = ['ignore', 'pipe', 'pipe'];
+
     const child =
-      process.platform === 'win32'
-        ? executor(buildCmdLine('npm', args), { stdio, shell: true })
-        : executor('npm', args, { stdio });
+      mode === 'bundled' && npmCliPath
+        ? executor(process.execPath, [npmCliPath, ...args], { stdio })
+        : process.platform === 'win32'
+          ? executor(buildCmdLine('npm', args), { stdio, shell: true })
+          : executor('npm', args as string[], { stdio });
 
     child.stdout?.on('data', (chunk: Buffer) => {
       stdout += chunk.toString();

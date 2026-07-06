@@ -130,6 +130,29 @@ export function buildUpdateFailureHint(
     );
   }
 
+  // Broken bin shim / shim manager (Volta, nvm-windows, fnm). Volta prints
+  // "Shim target not found: npm.cmd"; a broken shim usually exits 127. In
+  // this case `npm` itself can't run, so `npm install -g ...` won't help —
+  // the user must repair their Node/npm shim first.
+  if (
+    haystack.includes("shim target not found") ||
+    haystack.includes("is not recognized") ||
+    exitCode === 127
+  ) {
+    return (
+      "💡 hint: `npm` could not be launched — its bin shim is broken.\n" +
+      '   "Shim target not found: npm.cmd" / exit 127 means a Node version\n' +
+      "   manager (Volta, nvm-windows, fnm) has a stale npm shim, so npm\n" +
+      "   itself won't run until you repair it:\n" +
+      "     • Volta:       volta install node   (reinstalls node + npm shims)\n" +
+      "     • nvm-windows: nvm use <version>     (re-links node + npm)\n" +
+      "     • fnm:         fnm use --install-if-missing\n" +
+      "   Then verify with `npm --version`, and re-run `/update --yes`.\n" +
+      "   (zelari-code retried automatically via the npm bundled with your\n" +
+      "   Node; if you still see this, that bundled npm was unavailable too.)"
+    );
+  }
+
   // ENOENT for npm itself — the shell could not find `npm` on PATH.
   if (haystack.includes("enoent") && haystack.includes("npm")) {
     return (

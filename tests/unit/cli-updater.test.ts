@@ -4,15 +4,34 @@
 
 import { describe, it, expect } from 'vitest';
 import { EventEmitter } from 'node:events';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   getCurrentVersion,
   compareSemver,
   fetchLatestVersion,
   checkForUpdate,
   performUpdate,
+  resolveBundledNpmCli,
   REGISTRY_URL,
 } from '../../src/cli/updater';
 import type { spawn as SpawnType } from 'node:child_process';
+
+/** Build a fake ChildProcess that emits the given output then closes. */
+function fakeChild(chunk: string, code: number, stream: 'stdout' | 'stderr' = 'stdout') {
+  const fake = new EventEmitter() as unknown as ReturnType<typeof SpawnType> & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+  };
+  fake.stdout = new EventEmitter();
+  fake.stderr = new EventEmitter();
+  setImmediate(() => {
+    (stream === 'stdout' ? fake.stdout : fake.stderr).emit('data', Buffer.from(chunk));
+    fake.emit('close', code);
+  });
+  return fake;
+}
 
 describe('getCurrentVersion', () => {
   it('reads version from bundled package.json', () => {
@@ -195,5 +214,92 @@ describe('performUpdate', () => {
     expect(result.exitCode).toBe(1);
     expect(result.error).toContain('exited with code 1');
     expect(result.output).toContain('EACCES');
+  });
+
+  it('does NOT retry a real npm failure (EACCES / exit 1) via bundled npm', async () => {
+    let calls = 0;
+    const fakeSpawn = ((..._a: unknown[]) => {
+      calls += 1;
+      return fakeChild('EACCES: permission denied', 1, 'stderr');
+    }) as unknown as typeof SpawnType;
+    // Resolver returns a path, but the failure is exit 1 (not a broken shim),
+    // so the fallback must not fire.
+    const result = await performUpdate('zelari-code', fakeSpawn, () => '/fake/npm-cli.js');
+    expect(calls).toBe(1);
+    expect(result.ok).toBe(false);
+    expect(result.output).not.toContain('bundled npm');
+  });
+
+  it('falls back to bundled npm on a broken-shim failure (exit 127) and succeeds', async () => {
+    const seen: Array<{ cmd: string; args: unknown }> = [];
+    let calls = 0;
+    const fakeSpawn = ((cmd: string, args: unknown) => {
+      seen.push({ cmd, args });
+      calls += 1;
+      // Attempt 1: broken Volta shim. Attempt 2 (bundled): success.
+      return calls === 1
+        ? fakeChild('Shim target not found: npm.cmd', 127, 'stderr')
+        : fakeChild('added 1 package in 2s', 0);
+    }) as unknown as typeof SpawnType;
+
+    const result = await performUpdate('zelari-code', fakeSpawn, () => '/fake/npm-cli.js');
+
+    expect(calls).toBe(2);
+    expect(result.ok).toBe(true);
+    // Second attempt must invoke `node <npm-cli.js> install -g ...` directly.
+    expect(seen[1].cmd).toBe(process.execPath);
+    expect(seen[1].args).toEqual(['/fake/npm-cli.js', 'install', '-g', 'zelari-code@latest']);
+    // Output should record that the fallback was taken.
+    expect(result.output).toContain('bundled npm');
+    expect(result.output).toContain('added 1 package');
+  });
+
+  it('does not attempt the fallback when no bundled npm is found', async () => {
+    let calls = 0;
+    const fakeSpawn = ((..._a: unknown[]) => {
+      calls += 1;
+      return fakeChild('Shim target not found: npm.cmd', 127, 'stderr');
+    }) as unknown as typeof SpawnType;
+    const result = await performUpdate('zelari-code', fakeSpawn, () => null);
+    expect(calls).toBe(1);
+    expect(result.ok).toBe(false);
+    expect(result.exitCode).toBe(127);
+  });
+});
+
+describe('resolveBundledNpmCli', () => {
+  it('finds npm-cli.js in the Windows layout next to node.exe', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'npmcli-win-'));
+    try {
+      const binDir = path.join(dir, 'node_modules', 'npm', 'bin');
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(path.join(binDir, 'npm-cli.js'), '// npm');
+      const resolved = resolveBundledNpmCli(path.join(dir, 'node.exe'));
+      expect(resolved).toBe(path.join(binDir, 'npm-cli.js'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('finds npm-cli.js in the POSIX <prefix>/lib layout', () => {
+    const prefix = mkdtempSync(path.join(tmpdir(), 'npmcli-posix-'));
+    try {
+      const binDir = path.join(prefix, 'lib', 'node_modules', 'npm', 'bin');
+      mkdirSync(binDir, { recursive: true });
+      writeFileSync(path.join(binDir, 'npm-cli.js'), '// npm');
+      const resolved = resolveBundledNpmCli(path.join(prefix, 'bin', 'node'));
+      expect(resolved).toBe(path.join(binDir, 'npm-cli.js'));
+    } finally {
+      rmSync(prefix, { recursive: true, force: true });
+    }
+  });
+
+  it('returns null when no bundled npm is present', () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'npmcli-none-'));
+    try {
+      expect(resolveBundledNpmCli(path.join(dir, 'node'))).toBeNull();
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
