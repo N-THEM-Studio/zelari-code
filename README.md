@@ -83,7 +83,7 @@ the regular TUI:
 The wizard walks you through:
 
 1. **Welcome** — overview + how to quit.
-2. **Provider** — pick from `grok`, `minimax`, `glm`, `openai-compatible` (↑/↓ + Enter).
+2. **Provider** — pick from `grok`, `minimax`, `glm`, `deepseek`, `openai-compatible` (↑/↓ + Enter).
 3. **Model** — type a model name or accept the default (Enter).
 4. **API key** — choose `env` (use `GROK_API_KEY` etc.), `keystore` (save locally), or `skip` (set later via `/login`).
 5. **Confirm** — review + Enter to commit.
@@ -220,8 +220,11 @@ zelari-code (CLI, proprietary)
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
 | `GLM_API_KEY` | GLM/Z.AI API key |
 | `GROK_API_KEY` | xAI Grok API key (alternative to OAuth) |
+| `DEEPSEEK_API_KEY` | DeepSeek API key (models auto-discovered; default `deepseek-v4-pro`) |
+| `MINIMAX_API_KEY` | MiniMax API key |
 | `ANATHEMA_DEV=1` | Disable silent update check on startup |
 | `ZELARI_NO_WIZARD=1` | Skip first-run wizard |
+| `ZELARI_NO_SHIM_REPAIR=1` | Disable auto-repair of a missing Windows bin shim on install |
 | `ZELARI_COUNCIL_TIER=lite` | Council with 3 members instead of 6 |
 | `ZELARI_MCP=0` | Disable MCP servers |
 | `ANATHEMA_FAILOVER=0` | Disable cross-provider failover |

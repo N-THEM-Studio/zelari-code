@@ -36,12 +36,132 @@ import {
   readFileSync,
   readlinkSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, '..');
+
+/**
+ * Auto-repair a MISSING Windows bin shim.
+ *
+ * This is the single most common "zelari-code: command not found on some
+ * Windows PCs" failure: npm correctly unpacks the package into
+ * `<prefix>\node_modules\zelari-code\` but never (re)creates the three bin
+ * shims `<prefix>\zelari-code[.cmd|.ps1]`, so nothing on PATH resolves the
+ * command. Repairing this is safe — unlike overwriting a shim that points
+ * elsewhere (which could shadow another tool, hence why we never touch an
+ * existing shim), writing a shim under OUR own bin name, pointing at OUR
+ * own installed package, only fills a gap npm left behind.
+ *
+ * We write the exact same three files npm's own `cmd-shim` produces (cmd,
+ * PowerShell, and a POSIX sh wrapper for Git Bash/MSYS), each resolving to
+ * `%~dp0\node_modules\zelari-code\bin\zelari-code.js` relative to the shim
+ * dir — which is the global prefix, exactly where the package was unpacked.
+ *
+ * Opt out with `ZELARI_NO_SHIM_REPAIR=1`. Never throws; returns true only
+ * when at least the `.cmd` shim was written.
+ *
+ * @param {string} prefix   npm global prefix (dir that holds the shims)
+ * @param {string} pkgName  installed package name
+ * @returns {boolean}       true if the .cmd shim was created
+ */
+function repairWindowsShim(prefix, pkgName) {
+  if (process.env.ZELARI_NO_SHIM_REPAIR === '1') return false;
+  const rel = `node_modules\\${pkgName}\\bin\\zelari-code.js`;
+  const relPosix = `node_modules/${pkgName}/bin/zelari-code.js`;
+
+  const cmd = [
+    '@ECHO off',
+    'GOTO start',
+    ':find_dp0',
+    'SET dp0=%~dp0',
+    'EXIT /b',
+    ':start',
+    'SETLOCAL',
+    'CALL :find_dp0',
+    '',
+    'IF EXIST "%dp0%\\node.exe" (',
+    '  SET "_prog=%dp0%\\node.exe"',
+    ') ELSE (',
+    '  SET "_prog=node"',
+    '  SET PATHEXT=%PATHEXT:;.JS;=;%',
+    ')',
+    '',
+    `endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\${rel}" %*`,
+    '',
+  ].join('\r\n');
+
+  const ps1 = [
+    '#!/usr/bin/env pwsh',
+    '$basedir=Split-Path $MyInvocation.MyCommand.Definition -Parent',
+    '',
+    '$exe=""',
+    'if ($PSVersionTable.PSVersion -lt "6.0" -or $IsWindows) {',
+    '  $exe=".exe"',
+    '}',
+    '$ret=0',
+    'if (Test-Path "$basedir/node$exe") {',
+    '  if ($MyInvocation.ExpectingInput) {',
+    `    $input | & "$basedir/node$exe"  "$basedir/${relPosix}" $args`,
+    '  } else {',
+    `    & "$basedir/node$exe"  "$basedir/${relPosix}" $args`,
+    '  }',
+    '  $ret=$LASTEXITCODE',
+    '} else {',
+    '  if ($MyInvocation.ExpectingInput) {',
+    `    $input | & "node$exe"  "$basedir/${relPosix}" $args`,
+    '  } else {',
+    `    & "node$exe"  "$basedir/${relPosix}" $args`,
+    '  }',
+    '  $ret=$LASTEXITCODE',
+    '}',
+    'exit $ret',
+    '',
+  ].join('\n');
+
+  const sh = [
+    '#!/bin/sh',
+    'basedir=$(dirname "$(echo "$0" | sed -e \'s,\\\\,/,g\')")',
+    '',
+    'case `uname` in',
+    '    *CYGWIN*|*MINGW*|*MSYS*)',
+    '        if command -v cygpath > /dev/null 2>&1; then',
+    '            basedir=`cygpath -w "$basedir"`',
+    '        fi',
+    '    ;;',
+    'esac',
+    '',
+    'if [ -x "$basedir/node" ]; then',
+    `  exec "$basedir/node"  "$basedir/${relPosix}" "$@"`,
+    'else',
+    `  exec node  "$basedir/${relPosix}" "$@"`,
+    'fi',
+    '',
+  ].join('\n');
+
+  const targets = [
+    ['zelari-code.cmd', cmd],
+    ['zelari-code.ps1', ps1],
+    ['zelari-code', sh],
+  ];
+  let cmdWritten = false;
+  for (const [name, content] of targets) {
+    const dest = path.join(prefix, name);
+    // Never clobber an existing shim — only fill the gap npm left.
+    if (existsSync(dest)) continue;
+    try {
+      writeFileSync(dest, content, 'utf8');
+      if (name === 'zelari-code.cmd') cmdWritten = true;
+    } catch {
+      // Permission denied (prefix owned by admin) or read-only FS — the
+      // warning below still tells the user how to fix it manually.
+    }
+  }
+  return cmdWritten;
+}
 
 const warn = (msg) => {
   // eslint-disable-next-line no-console
@@ -101,6 +221,17 @@ try {
 
   if (!existsSync(shimPath)) {
     shimReason = `shim file not found at ${shimPath}`;
+    // Auto-repair the most common Windows failure: the package unpacked but
+    // npm never created the bin shim. We only write shims that are MISSING,
+    // and only under our own bin name → no risk of shadowing another tool.
+    if (isWin) {
+      const repaired = repairWindowsShim(prefix, pkgName);
+      if (repaired && existsSync(shimPath)) {
+        note(`shim was missing — auto-created ${shimPath}`);
+        note('open a NEW terminal and run `zelari-code --version` to confirm.');
+        process.exit(0);
+      }
+    }
   } else {
     try {
       const st = statSync(shimPath);

@@ -26,7 +26,7 @@ import path from 'node:path';
 // Types
 // ---------------------------------------------------------------------------
 
-export type ProviderId = 'grok' | 'glm' | 'minimax' | 'openai-compatible';
+export type ProviderId = 'grok' | 'glm' | 'minimax' | 'deepseek' | 'openai-compatible';
 
 export interface DiscoveredModel {
   /** Model id (e.g. 'grok-4-fast-reasoning', 'glm-4.6'). */
@@ -56,6 +56,7 @@ export interface ModelsRegistry {
   grok?: ProviderModelsEntry;
   glm?: ProviderModelsEntry;
   minimax?: ProviderModelsEntry;
+  deepseek?: ProviderModelsEntry;
   'openai-compatible'?: ProviderModelsEntry;
 }
 
@@ -87,6 +88,8 @@ const PROVIDER_BASE_URLS: Record<ProviderId, string> = {
   // Must match PROVIDER_ENDPOINTS in provider/openai-compatible.ts (chat host).
   'glm': 'https://api.z.ai/api/coding/paas/v4',
   'minimax': 'https://api.minimax.io/v1',
+  // Must match PROVIDER_ENDPOINTS in provider/openai-compatible.ts (chat host).
+  'deepseek': 'https://api.deepseek.com',
   'openai-compatible': 'https://api.x.ai/v1',
 };
 

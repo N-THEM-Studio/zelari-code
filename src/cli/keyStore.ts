@@ -26,7 +26,7 @@ import {
 // and this seeds it with the built-in defaults (Grok).
 registerDefaultRefreshImpls();
 
-export type ProviderName = 'minimax' | 'glm' | 'grok' | 'openai-compatible' | 'custom';
+export type ProviderName = 'minimax' | 'glm' | 'grok' | 'deepseek' | 'openai-compatible' | 'custom';
 
 export interface ProviderSpec {
   /** Stable id used in storage + slash commands. */
@@ -44,6 +44,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
   { id: 'minimax', displayName: 'MiniMax', envVar: 'MINIMAX_API_KEY', baseUrl: 'https://api.minimax.io/v1' },
   { id: 'glm', displayName: 'GLM / Z.AI', envVar: 'GLM_API_KEY', baseUrl: 'https://api.z.ai/api/coding/paas/v4' },
   { id: 'grok', displayName: 'xAI Grok', envVar: 'GROK_API_KEY', baseUrl: 'https://api.x.ai/v1' },
+  { id: 'deepseek', displayName: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com' },
 ] as const;
 
 export function getKeyStorePath(): string {
