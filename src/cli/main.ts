@@ -185,6 +185,39 @@ function pickRootComponent(): {
     const healthy = runDoctor();
     process.exit(healthy ? 0 : 1);
   }
+  if (argv.includes("--fix-path") || argv.includes("fix-path")) {
+    // v1.4.2: runtime PATH repair. Companion to the install-time auto-fix
+    // in scripts/postinstall.mjs. Handles the "PATH lost AFTER install"
+    // case that postinstall can't reach retroactively. Windows-only at the
+    // effect level; POSIX prints an advisory and exits 1.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { repairWindowsUserPath } =
+      require("./utils/fixPath.js") as typeof import("./utils/fixPath.js");
+    const result = repairWindowsUserPath();
+    const green = "\x1b[32m";
+    const red = "\x1b[31m";
+    const dim = "\x1b[2m";
+    const reset = "\x1b[0m";
+    if (result.ok) {
+      if (result.alreadyOk) {
+        // eslint-disable-next-line no-console
+        console.log(`${green}✔${reset} npm prefix already on user PATH: ${result.prefix}`);
+      } else {
+        // eslint-disable-next-line no-console
+        console.log(`${green}✔${reset} added npm prefix to user PATH: ${result.prefix}`);
+        // eslint-disable-next-line no-console
+        console.log(`${dim}open a NEW terminal for the change to take effect, then run: zelari-code --version${reset}`);
+      }
+      process.exit(0);
+    }
+    // eslint-disable-next-line no-console
+    console.error(`${red}✗${reset} ${result.error}`);
+    if (result.prefix) {
+      // eslint-disable-next-line no-console
+      console.error(`${dim}prefix: ${result.prefix}${reset}`);
+    }
+    process.exit(1);
+  }
   if (argv.includes("--help") || argv.includes("-h")) {
     // eslint-disable-next-line no-console
     console.log(
@@ -197,6 +230,8 @@ function pickRootComponent(): {
         "  --help, -h          Print this help and exit\n" +
         "  --doctor            Diagnose install health (shim, bundle, PATH, deps,\n" +
         "                      node/git/bash in the agent shell)\n" +
+        "  --fix-path          Add the npm global prefix to the user PATH\n" +
+        "                      (Windows only; fixes 'command not found' after install)\n" +
         "  --skip-checks       Skip the boot-time prerequisite check\n" +
         "                      (alias for ZELARI_SKIP_PREFLIGHT=1)\n" +
         "  --no-wizard         Skip the first-run wizard\n" +

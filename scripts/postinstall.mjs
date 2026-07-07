@@ -41,6 +41,13 @@ import {
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+// Re-exported so existing imports (`import { repairWindowsPath } from
+// './postinstall.mjs'`) keep working. The implementation lives in
+// repair-path.mjs, which has no install-time side effects and is safe to
+// import in unit tests.
+import { repairWindowsPath } from './repair-path.mjs';
+export { repairWindowsPath };
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const pkgRoot = path.resolve(__dirname, '..');
 
@@ -163,6 +170,29 @@ function repairWindowsShim(prefix, pkgName) {
   return cmdWritten;
 }
 
+
+/**
+ * Thin wrapper around repairWindowsPath for the postinstall flow.
+ *
+ * Logs one of three outcomes (auto-fixed / already-ok / failed-but-continue)
+ * so the user understands what happened. Always non-fatal: a PATH write
+ * failure still leaves the install in a working state (the shim exists);
+ * the user can repair manually via `zelari-code --fix-path` later.
+ *
+ * @param {string} prefix  npm global prefix
+ */
+function ensureWindowsPath(prefix) {
+  if (process.platform !== 'win32') return;
+  const repaired = repairWindowsPath(prefix);
+  if (repaired) {
+    note(`added ${prefix} to the user PATH`);
+    note('open a NEW terminal for the change to take effect, then run `zelari-code --version`.');
+  }
+  // already-present or failed: silent on already-present (expected, common),
+  // and silent on failure because the warning block below covers the
+  // "command not found" symptom if it later bites the user.
+}
+
 const warn = (msg) => {
   // eslint-disable-next-line no-console
   console.warn(`[zelari-code postinstall] ${msg}`);
@@ -271,6 +301,7 @@ try {
       const repaired = repairWindowsShim(prefix, pkgName);
       if (repaired && existsSync(shimPath)) {
         note(`shim was missing — auto-created ${shimPath}`);
+        ensureWindowsPath(prefix);
         note('open a NEW terminal and run `zelari-code --version` to confirm.');
         checkGitAvailable();
         process.exit(0);
@@ -323,6 +354,7 @@ try {
 
   if (shimOk) {
     note(`shim OK: ${shimPath}`);
+    ensureWindowsPath(prefix);
     checkGitAvailable();
     process.exit(0);
   }

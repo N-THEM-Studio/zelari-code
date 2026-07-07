@@ -279,11 +279,17 @@ function checkPath(): CheckResult {
   if (pathDirs.includes(prefix)) {
     return OK(`PATH includes npm prefix (${prefix})`);
   }
+  const winHint =
+    `         fix:  zelari-code --fix-path   (adds ${prefix} to the user PATH)\n` +
+    `               then open a NEW terminal and run \`zelari-code --version\`\n` +
+    `               if it persists: see scripts/diagnose-path.ps1 in the repo`;
+  const posixHint =
+    `         fix:  export PATH="${prefix}/bin:$PATH"\n` +
+    `               (add it to ~/.bashrc / ~/.zshrc to persist)`;
   return WARN(
     `PATH does not include npm prefix (${prefix})\n` +
       `         symptom: "zelari-code: command not found" after install\n` +
-      `         fix (POSIX):   export PATH="$(npm prefix -g)/bin:$PATH"\n` +
-      `         fix (Windows): $env:Path = "$(npm prefix -g);$env:Path"`,
+      (process.platform === "win32" ? winHint : posixHint),
   );
 }
 

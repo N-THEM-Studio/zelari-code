@@ -16,6 +16,8 @@
     "bin",
     "dist",
     "scripts/postinstall.mjs",
+    "scripts/repair-path.mjs",
+    "scripts/*.ps1",
     "LICENSE",
     "README.md",
     "package.json"

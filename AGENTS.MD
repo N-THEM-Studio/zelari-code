@@ -33,7 +33,7 @@ _Free-form project description. This section is manual and preserved across upda
 See `.zelari/decisions/` for full ADRs (context/decision/consequences).
 
 **Accepted:**
-_none yet_
+- **011-windows-path-auto-fix** _(accepted)_ — Auto-fix the npm global prefix missing from the user PATH on Windows, both at install time (`scripts/postinstall.mjs` → `scripts/repair-path.mjs`) and at runtime (`zelari-code --fix-path` → `src/cli/utils/fixPath.ts`). Scope is HKCU ("User"), never HKLM; idempotent exact-entry match; opt-out via `ZELARI_NO_PATH_REPAIR=1`. `zelari-code --doctor` now points users at `--fix-path`. Residual limits: GPO PATH resets, SYSTEM-scope installs, and non-standard node managers (nvm-windows/scoop/volta) remain out of reach.
 
 **Proposed:**
 - **001-new-decision** _(proposed)_
