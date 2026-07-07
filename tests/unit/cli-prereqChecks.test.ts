@@ -104,15 +104,17 @@ function applyScenario(s: Scenario) {
   } else {
     Object.defineProperty(process, "platform", { value: REAL_PLATFORM, configurable: true });
   }
-  // Apply env overrides for ZELARI_SHELL / SHELL.
-  process.env = { ...REAL_ENV, ...(s.env ?? {}) };
-  // On win32, strip any real SHELL/ZELARI_SHELL that wasn't explicitly set,
-  // otherwise resolveAgentShellSync finds the host's /bin/bash and returns
-  // isBash:true instead of the expected cmd.exe fallback.
-  if (s.platform === "win32") {
-    if (!s.env?.ZELARI_SHELL) delete process.env.ZELARI_SHELL;
-    if (!s.env?.SHELL) delete process.env.SHELL;
+  // Build env from scratch. Never inherit SHELL/ZELARI_SHELL from the host —
+  // only the scenario can set them. Otherwise resolveAgentShellSync reads the
+  // host's /bin/bash via process.env.SHELL on win32 tests and returns isBash:true
+  // instead of the expected cmd.exe fallback.
+  const env: Record<string, string | undefined> = {};
+  for (const [k, v] of Object.entries(REAL_ENV)) {
+    if (k === "SHELL" || k === "ZELARI_SHELL") continue;
+    env[k] = v;
   }
+  Object.assign(env, s.env ?? {});
+  process.env = env;
 }
 
 beforeEach(() => {
