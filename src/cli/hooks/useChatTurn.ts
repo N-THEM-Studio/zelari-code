@@ -325,6 +325,14 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           const n = raw ? Number.parseInt(raw, 10) : 25;
           return Number.isFinite(n) && n > 0 ? n : 25;
         })();
+        // v1.5.2: tool-loop iteration cap (observe → reason → act cycles per
+        // run). Core default is 30 (raised from 12). Overridable for very
+        // large multi-file tasks or to tighten on flaky providers.
+        const maxToolLoopIterations = (() => {
+          const raw = process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS;
+          const n = raw ? Number.parseInt(raw, 10) : 30;
+          return Number.isFinite(n) && n > 0 ? n : 30;
+        })();
         const harness = new AgentHarness({
           model: envConfig.model,
           provider: "openai-compatible",
@@ -341,6 +349,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           providerStream,
           cwd,
           maxToolCallsPerTurn,
+          maxToolLoopIterations,
         });
         harnessRef.current = harness;
         setQueueCount(harness.queueLength);

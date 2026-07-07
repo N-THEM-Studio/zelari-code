@@ -109,6 +109,15 @@ export interface AgentHarnessConfig {
    */
   maxQueuedIterations?: number;
   /**
+   * Maximum number of tool-loop iterations (observe → reason → act cycles)
+   * per run() invocation before the harness forces a final-answer turn.
+   * Default 30 (raised from 12 in v1.5.2 — complex council implementations
+   * that read→edit→verify across many files routinely exhausted 12 rounds
+   * before finishing, producing incomplete deliverables that failed the
+   * verify gate). Overridable via ZELARI_MAX_TOOL_LOOP_ITERATIONS in the CLI.
+   */
+  maxToolLoopIterations?: number;
+  /**
    * Optional council-member identity, propagated to every event the
    * harness emits (`agent_start`, `agent_end`, `message_start`,
    * `message_delta`, `message_end`). When set, the event stream
@@ -150,6 +159,7 @@ export class AgentHarness {
   private readonly eventBus: EventBus | undefined;
   private readonly sessionId: string;
   private readonly maxQueuedIterations: number;
+  private readonly maxToolLoopIterations: number;
   private cancelled = false;
   private activeController: AbortController | null = null;
   private queue: string[] = [];
@@ -176,6 +186,7 @@ export class AgentHarness {
     this.eventBus = config.eventBus;
     this.sessionId = config.sessionId ?? crypto.randomUUID();
     this.maxQueuedIterations = config.maxQueuedIterations ?? 3;
+    this.maxToolLoopIterations = config.maxToolLoopIterations ?? 30;
   }
 
   /**
@@ -323,13 +334,12 @@ export class AgentHarness {
     // invocations whose results are now in the transcript (appended by
     // runSingleTurn). Re-enter the provider so the model can consume those
     // results and continue — this is the core agent loop (reason → act →
-    // observe → reason). Bounded by MAX_TOOL_LOOP_ITERATIONS to prevent runaway.
-    const MAX_TOOL_LOOP_ITERATIONS = 12;
+    // observe → reason). Bounded by this.maxToolLoopIterations to prevent runaway.
     let toolLoopTurns = 0;
     while (
       !this.cancelled &&
       !hadError &&
-      toolLoopTurns < MAX_TOOL_LOOP_ITERATIONS &&
+      toolLoopTurns < this.maxToolLoopIterations &&
       initialFinishRef.value === 'tool_calls'
     ) {
       toolLoopTurns++;
@@ -380,7 +390,7 @@ export class AgentHarness {
     // nudge so the turn always ends with assistant text answering with what
     // the model has gathered. Skipped on cancel/error (the loop already set
     // hadError or this.cancelled) and when the loop ended on a non-tool finish.
-    const hitIterationCap = toolLoopTurns >= MAX_TOOL_LOOP_ITERATIONS;
+    const hitIterationCap = toolLoopTurns >= this.maxToolLoopIterations;
     if (
       !this.cancelled &&
       !hadError &&

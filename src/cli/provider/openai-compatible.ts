@@ -18,6 +18,59 @@ import type { ProviderName } from '../keyStore.js';
 import { resolveApiKeyWithMeta } from '../keyStore.js';
 import { getProviderConfig, getModelForProvider, getCustomEndpoint } from '../providerConfig.js';
 
+/**
+ * v1.5.2: transient-HTTP retry. A single 429/5xx/network failure used to flip
+ * the whole council member turn to `reason:'error'` (AgentHarness treats any
+ * `recoverable` error event as terminal). For LLM providers this is almost
+ * always transient — rate-limit windows clear in seconds, 502s are gateway
+ * blips. We retry on the initial response (before any stream byte is read),
+ * so there is no mid-stream state to recover from.
+ *
+ * Tunables:
+ *   - RETRYABLE_STATUSES: the status codes we consider transient.
+ *   - MAX_RETRIES: attempts after the first. 3 → 4 fetches total worst case.
+ *   - Backoff: exponential, base 500ms × 2^attempt, capped at 8s. Honors
+ *     `Retry-After` (seconds) when the provider sets it (rare for LLM APIs
+ *     but standard HTTP). Overridable via ZELARI_PROVIDER_MAX_RETRIES.
+ */
+const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504]);
+const MAX_RETRIES: number = (() => {
+  const raw = process.env.ZELARI_PROVIDER_MAX_RETRIES;
+  const n = raw ? Number.parseInt(raw, 10) : 3;
+  return Number.isFinite(n) && n >= 0 ? n : 3;
+})();
+const BACKOFF_BASE_MS = 500;
+const BACKOFF_CAP_MS = 8000;
+
+/**
+ * Sleep that aborts early if the caller's signal fires (so `.cancel()` during
+ * a backoff window doesn't make the user wait for a doomed retry). Resolves
+ * early on abort; the caller re-checks `signal.aborted` after we return.
+ */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal?.aborted) return resolve();
+    const t = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(t);
+        resolve();
+      },
+      { once: true },
+    );
+  });
+}
+
+/** Compute the backoff delay for a given attempt (0-indexed), honoring Retry-After. */
+function backoffDelay(attempt: number, retryAfterHeader: string | null): number {
+  if (retryAfterHeader) {
+    const seconds = Number.parseFloat(retryAfterHeader);
+    if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, BACKOFF_CAP_MS);
+  }
+  return Math.min(BACKOFF_BASE_MS * 2 ** attempt, BACKOFF_CAP_MS);
+}
+
 export interface OpenAICompatibleConfig {
   apiKey: string;
   baseUrl: string;       // e.g. 'https://api.x.ai/v1'
@@ -160,29 +213,59 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       body.tool_choice = 'auto';
     }
 
-    let response: Response;
-    try {
-      response = await fetch(`${config.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${config.apiKey}`,
-        },
-        body: JSON.stringify(body),
-        // Use `params.signal` (per-call AbortSignal from AgentHarness
-        // controller) so `.cancel()` actually aborts the HTTP request.
-        // `config.signal` is the factory-level signal, typically undefined.
-        // v0.6.0 audit HIGH-2.
-        signal: params.signal,
-      });
-    } catch (err) {
-      yield { kind: 'error', message: `Network error: ${err instanceof Error ? err.message : String(err)}` };
-      return;
+    // v1.5.2: retry transient failures (429/5xx + network errors) on the
+    // initial response. Retries happen BEFORE any stream byte is read, so
+    // there's no mid-stream state to recover — the cleanest possible retry
+    // window. Once response.body.getReader() starts below, no retry is possible.
+    let response: Response | undefined;
+    let lastErrText = '';
+    let lastStatus = 0;
+    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+      if (params.signal?.aborted) {
+        yield { kind: 'error', message: 'aborted' };
+        return;
+      }
+      try {
+        response = await fetch(`${config.baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${config.apiKey}`,
+          },
+          body: JSON.stringify(body),
+          // Use `params.signal` (per-call AbortSignal from AgentHarness
+          // controller) so `.cancel()` actually aborts the HTTP request.
+          // `config.signal` is the factory-level signal, typically undefined.
+          // v0.6.0 audit HIGH-2.
+          signal: params.signal,
+        });
+      } catch (err) {
+        // Network error (DNS, connection refused, TLS, read timeout) —
+        // transient in most cases. Retry unless this is the last attempt.
+        lastStatus = 0;
+        lastErrText = err instanceof Error ? err.message : String(err);
+        if (attempt < MAX_RETRIES) {
+          await abortableSleep(backoffDelay(attempt, null), params.signal);
+          continue;
+        }
+        yield { kind: 'error', message: `Network error: ${lastErrText}` };
+        return;
+      }
+      // Success or non-retryable → break out of the retry loop.
+      if (response.ok && response.body) break;
+      lastStatus = response.status;
+      lastErrText = await response.text().catch(() => '');
+      if (!RETRYABLE_STATUSES.has(response.status) || attempt >= MAX_RETRIES) break;
+      // Retryable: back off honoring Retry-After if the provider set it.
+      const retryAfter = response.headers.get('retry-after');
+      await abortableSleep(backoffDelay(attempt, retryAfter), params.signal);
     }
 
-    if (!response.ok || !response.body) {
-      const errText = await response.text().catch(() => '');
-      yield { kind: 'error', message: `HTTP ${response.status}: ${errText.slice(0, 200)}` };
+    if (!response || !response.ok || !response.body) {
+      const msg = lastStatus === 0
+        ? `Network error: ${lastErrText}`
+        : `HTTP ${lastStatus}: ${lastErrText.slice(0, 200)}`;
+      yield { kind: 'error', message: msg };
       return;
     }
 

@@ -77,6 +77,11 @@ async function runHeadlessSingle(
     tools,
     toolRegistry,
     providerStream,
+    maxToolLoopIterations: (() => {
+      const raw = process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS;
+      const n = raw ? Number.parseInt(raw, 10) : 30;
+      return Number.isFinite(n) && n > 0 ? n : 30;
+    })(),
   });
 
   let finalReason: 'completed' | 'cancelled' | 'error' = 'completed';
