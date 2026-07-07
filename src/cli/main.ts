@@ -9,6 +9,7 @@ import { render } from "ink";
 // @ts-ignore
 import { App } from "./app.js";
 import { SplashGate } from "./components/SplashScreen.js";
+import { PluginGate } from "./components/PluginGate.js";
 import { getMetricsLogger } from "./metrics.js";
 import { getProviderConfigPath } from "./providerConfig.js";
 import { parseWizardFlags, shouldRunWizard } from "./wizard/firstRun.js";
@@ -179,11 +180,13 @@ function pickRootComponent(): {
     // v1.0.3: install-health diagnostic. Runs BEFORE the bundle is loaded
     // and before any provider / config work, so it works on a broken
     // install (missing bundle, missing shim, wrong PATH, etc.).
+    // v1.5.0: async — the optional-plugins check delegates to
+    // detectMissingPlugins (dynamic import + async detection).
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { runDoctor } =
       require("./utils/doctor.js") as typeof import("./utils/doctor.js");
-    const healthy = runDoctor();
-    process.exit(healthy ? 0 : 1);
+    void runDoctor().then((healthy) => process.exit(healthy ? 0 : 1));
+    return { kind: "done" };
   }
   if (argv.includes("--fix-path") || argv.includes("fix-path")) {
     // v1.4.2: runtime PATH repair. Companion to the install-time auto-fix
@@ -246,6 +249,7 @@ function pickRootComponent(): {
         "Environment:\n" +
         "  ZELARI_NO_WIZARD=1    Skip the first-run wizard\n" +
         "  ZELARI_SKIP_PREFLIGHT=1  Skip the boot prerequisite check\n" +
+        "  ZELARI_NO_PLUGIN_PROMPT=1  Skip the boot plugin-install prompt\n" +
         "  ANATHEMA_DEV=1        Disable background update check + preflight\n",
     );
     process.exit(0);
@@ -279,12 +283,19 @@ function pickRootComponent(): {
   // v0.7.8: one-shot startup splash (ASCII emblem, ~2s or any-key skip),
   // then the App mounts. Skipped automatically for non-TTY stdout, small
   // terminals, or ZELARI_NO_SPLASH=1 — see components/SplashScreen.tsx.
+  // v1.5.0: PluginGate wraps App inside SplashGate — after the splash, it
+  // detects missing optional plugins (Playwright, eslint, ruff, LSP servers)
+  // and offers to install them before the App mounts. Skips on non-TTY,
+  // ZELARI_NO_PLUGIN_PROMPT=1, or when nothing is missing.
   return {
     kind: "app",
     element: React.createElement(
       SplashGate,
       { version: VERSION },
-      React.createElement(App),
+      React.createElement(PluginGate, {
+        cwd: process.cwd(),
+        children: React.createElement(App),
+      }),
     ),
   };
 }

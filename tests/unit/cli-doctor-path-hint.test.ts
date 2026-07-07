@@ -109,7 +109,7 @@ describe("doctor checkPath() hint — win32 points to --fix-path", () => {
       processPath: "C:\\Windows\\System32;C:\\Program Files\\nodejs",
     });
     const { runDoctor } = await importFresh();
-    runDoctor();
+    await runDoctor();
     const pathLine = logs.find((l) => l.includes("PATH")) ?? "";
     // Either the OK or WARN PATH line must mention --fix-path on failure.
     const output = logs.join("\n");
@@ -124,7 +124,7 @@ describe("doctor checkPath() hint — win32 points to --fix-path", () => {
       processPath: `C:\\Windows\\System32;${prefix}`,
     });
     const { runDoctor } = await importFresh();
-    runDoctor();
+    await runDoctor();
     const output = logs.join("\n");
     expect(output).toMatch(/PATH includes npm prefix/);
     // No --fix-path hint when PATH is fine.
@@ -140,7 +140,7 @@ describe("doctor checkPath() hint — win32 points to --fix-path", () => {
       processPath: "/usr/bin:/bin",
     });
     const { runDoctor } = await importFresh();
-    runDoctor();
+    await runDoctor();
     const output = logs.join("\n");
     expect(output).toMatch(/export PATH/);
     expect(output).not.toMatch(/zelari-code --fix-path/);

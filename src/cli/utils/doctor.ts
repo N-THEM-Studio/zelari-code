@@ -307,14 +307,44 @@ function prereqToCheckResult(r: PrereqResult): CheckResult {
 }
 
 /**
+ * Check the optional tool plugins (Playwright, eslint, ruff, LSP servers).
+ *
+ * Each plugin maps to an edge feature that degrades silently when its binary
+ * is absent. doctor surfaces them as WARN (never critical — they're optional)
+ * so the user learns what's missing and how to install it (`/plugins` or the
+ * boot gate). Delegates to detectMissingPlugins so detection logic stays in
+ * one place (plugins/registry.ts).
+ */
+async function checkOptionalPlugins(): Promise<CheckResult> {
+  const { detectMissingPlugins } = await import("../plugins/registry.js");
+  let missing;
+  try {
+    missing = await detectMissingPlugins(packageRoot, { includeMuted: true });
+  } catch {
+    return WARN("could not detect optional plugins");
+  }
+  if (missing.length === 0) return OK("all optional plugins available");
+  const lines = missing.map((p) => `${p.id} missing — /plugins install ${p.id}`);
+  return WARN(
+    `${missing.length} optional plugin(s) missing (features degrade silently without them):\n` +
+      lines.map((l) => `         ${l}`).join("\n") +
+      "\n         install via: /plugins  (or the boot prompt)",
+  );
+}
+
+/**
  * Run all checks and print results. Returns true if install is healthy
  * (no critical failures), false otherwise. Never throws.
+ *
+ * Async since v1.5.0: the optional-plugins check delegates to
+ * detectMissingPlugins (dynamic import + async detection). The single caller
+ * in main.ts awaits the result.
  */
-export function runDoctor(): boolean {
+export async function runDoctor(): Promise<boolean> {
   const pkg = readPackageJson();
   const pkgName = pkg?.name ?? "zelari-code";
 
-  const checks: Array<{ name: string; run: () => CheckResult }> = [
+  const checks: Array<{ name: string; run: () => CheckResult | Promise<CheckResult> }> = [
     // --- install-health checks (main-process probes) ---
     { name: "node", run: () => checkNode(pkg) },
     { name: "bin shim", run: () => checkShim(pkgName) },
@@ -329,6 +359,12 @@ export function runDoctor(): boolean {
     { name: "node (agent shell)", run: () => prereqToCheckResult(checkAgentNode()) },
     { name: "git (agent shell)", run: () => prereqToCheckResult(checkAgentGit()) },
     { name: "bash", run: () => prereqToCheckResult(checkAgentBash()) },
+    // --- optional tool plugins (v1.5.0) ---
+    // Playwright / eslint / ruff / LSP servers. WARN-only (never critical):
+    // these power edge features that degrade silently when absent. Surfaced
+    // here so `zelari-code --doctor` tells the user what's missing + how to
+    // install (`/plugins` or the boot PluginGate).
+    { name: "plugins", run: () => checkOptionalPlugins() },
   ];
 
   // eslint-disable-next-line no-console
@@ -350,7 +386,7 @@ export function runDoctor(): boolean {
   for (const c of checks) {
     let result: CheckResult;
     try {
-      result = c.run();
+      result = await c.run();
     } catch (err) {
       result = FAIL(
         `unexpected error: ${err instanceof Error ? err.message : String(err)}`,

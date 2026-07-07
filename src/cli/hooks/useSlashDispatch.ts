@@ -19,6 +19,7 @@ import { handleIndexBuild, handleIndexStatus } from '../slashHandlers/semantic.j
 import { nextMode, describeMode } from '../mode.js';
 import { handleCompact } from '../slashHandlers/transcript.js';
 import { handleUpdateCheck, handleUpdatePerform } from '../slashHandlers/updater.js';
+import { handlePluginsList, handlePluginsInstall } from '../slashHandlers/plugins.js';
 import { handlePromoteMember } from '../slashHandlers/promoteMember.js';
 import {
   handleBranchCreate,
@@ -338,6 +339,26 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     }
     if (result.kind === 'update_usage') {
       appendSystem(setMessages, result.message ?? 'Usage: /update [--yes|-y]');
+      setInput('');
+      return;
+    }
+
+    // ── Plugins (optional tool detection + install) ──
+    if (result.kind === 'plugins_list') {
+      await handlePluginsList({ setMessages }, process.cwd());
+      setInput('');
+      return;
+    }
+    if (result.kind === 'plugins_install') {
+      await handlePluginsInstall({ setMessages }, process.cwd(), result.pluginId ?? '');
+      setInput('');
+      return;
+    }
+    if (result.kind === 'plugins_usage') {
+      appendSystem(
+        setMessages,
+        result.message ?? 'Usage: /plugins | /plugins install <id>',
+      );
       setInput('');
       return;
     }

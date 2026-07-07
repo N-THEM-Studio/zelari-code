@@ -67,7 +67,7 @@ export function resolveBundledNpmCli(execPath: string = process.execPath): strin
  * bin shim / shim manager (Volta, nvm-windows, fnm) rather than a real npm
  * error. These are the failures the bundled-npm fallback can recover from.
  */
-function looksLikeBrokenShim(exitCode: number | null, output: string): boolean {
+export function looksLikeBrokenShim(exitCode: number | null, output: string): boolean {
   if (exitCode === 127) return true;
   const h = output.toLowerCase();
   return h.includes('shim target not found') || h.includes('is not recognized');
