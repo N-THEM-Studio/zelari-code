@@ -39,6 +39,76 @@ export const VERSION: string = getCurrentVersion();
  * Disabled in dev mode (`ANATHEMA_DEV=1`) to avoid noise during local
  * development where the bundled version is the source repo.
  */
+/**
+ * Boot-time prerequisite gate (v1.4.0).
+ *
+ * Probes node/git/bash THROUGH the agent's resolved shell — not the main
+ * process — because the agent runs `npm`/`tsc`/build scripts inside the
+ * resolved bash (Git Bash on Windows), which inherits a different PATH
+ * than this Node process. A user can have node visible to the main process
+ * yet invisible to the agent's bash; without this check zelari-code boots
+ * happily and the failure surfaces only mid-task (`node: not found`), which
+ * is exactly what blocked the Anathema-Studio council run on 2026-07-07.
+ *
+ * Severity:
+ *   - node unreachable from agent shell → hard-fail (exit 1). Without node
+ *     the agent cannot run npm/build/tsc — there is nothing useful it can do.
+ *   - git / bash missing → warn to stderr, continue. Features degrade but
+ *     the agent still works for non-git, non-POSIX tasks.
+ *
+ * Bypass: `ZELARI_SKIP_PREFLIGHT=1` or `--skip-checks`. Intended for CI,
+ * sandboxes, and emergency recovery — not normal use.
+ *
+ * Runs AFTER `pickRootComponent()` (so `--version`/`--help`/`--doctor` keep
+ * working on a broken install) but BEFORE skill loading and the TUI render.
+ * Never throws — `runPrereqChecks` already swallows per-check errors.
+ *
+ * @see src/cli/utils/prereqChecks.ts — the probe implementation.
+ */
+function runPreflight(): void {
+  if (process.env.ZELARI_SKIP_PREFLIGHT === "1") return;
+  if (process.argv.includes("--skip-checks")) return;
+  if (process.env.ANATHEMA_DEV === "1") return; // dev: avoid noise on a source checkout.
+
+  const { runPrereqChecks } =
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    require("./utils/prereqChecks.js") as typeof import("./utils/prereqChecks.js");
+  const { results, hasCriticalFail, warnings } = runPrereqChecks({
+    mode: "preflight",
+  });
+
+  for (const w of warnings) {
+    // eslint-disable-next-line no-console
+    console.error(`\x1b[33m[zelari-code] ⚠ ${w.tool}: ${w.message}\x1b[0m`);
+  }
+
+  if (hasCriticalFail) {
+    const critical = results.find(
+      (r) => !r.ok && r.severity === "critical",
+    );
+    // eslint-disable-next-line no-console
+    console.error("");
+    // eslint-disable-next-line no-console
+    console.error(
+      "\x1b[31m" +
+        "==============================================================\n" +
+        " zelari-code cannot start: a critical prerequisite is missing.\n" +
+        "==============================================================\x1b[0m",
+    );
+    if (critical) {
+      // eslint-disable-next-line no-console
+      console.error(`\n  ${critical.tool}: ${critical.message}`);
+    }
+    // eslint-disable-next-line no-console
+    console.error(
+      "\n  Run `zelari-code --doctor` for the full diagnostic report.\n" +
+        "  Bypass this check with ZELARI_SKIP_PREFLIGHT=1 (NOT recommended —\n" +
+        "  the agent will still fail when it tries to run npm/build/tsc).",
+    );
+    process.exit(1);
+  }
+}
+
 async function backgroundUpdateCheck(): Promise<void> {
   if (process.env.ANATHEMA_DEV === "1") return;
   await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -125,7 +195,10 @@ function pickRootComponent(): {
         "Options:\n" +
         "  --version, -v       Print version and exit\n" +
         "  --help, -h          Print this help and exit\n" +
-        "  --doctor            Diagnose install health (shim, bundle, PATH, deps)\n" +
+        "  --doctor            Diagnose install health (shim, bundle, PATH, deps,\n" +
+        "                      node/git/bash in the agent shell)\n" +
+        "  --skip-checks       Skip the boot-time prerequisite check\n" +
+        "                      (alias for ZELARI_SKIP_PREFLIGHT=1)\n" +
         "  --no-wizard         Skip the first-run wizard\n" +
         "  --reset-config      Re-run the wizard (clears provider.json on commit)\n" +
         "  --headless          Run a single task without mounting the TUI\n" +
@@ -136,8 +209,9 @@ function pickRootComponent(): {
         "    --model <id>       Model override (default: provider default)\n" +
         "\n" +
         "Environment:\n" +
-        "  ZELARI_NO_WIZARD=1  Skip the first-run wizard\n" +
-        "  ANATHEMA_DEV=1      Disable background update check\n",
+        "  ZELARI_NO_WIZARD=1    Skip the first-run wizard\n" +
+        "  ZELARI_SKIP_PREFLIGHT=1  Skip the boot prerequisite check\n" +
+        "  ANATHEMA_DEV=1        Disable background update check + preflight\n",
     );
     process.exit(0);
   }
@@ -208,6 +282,12 @@ function loadUserSkills(): void {
 function main() {
   const picked = pickRootComponent();
   if (picked.kind === "done") return; // --version or --help printed + exited
+
+  // v1.4.0: verify node/git/bash BEFORE mounting the TUI or running a headless
+  // task. Hard-fails on missing node (the agent cannot run npm/build without it),
+  // warns on missing git/bash. Skipped for --version/--help/--doctor (handled
+  // above) so a broken install can still be diagnosed. See `runPreflight`.
+  runPreflight();
 
   loadUserSkills();
 
