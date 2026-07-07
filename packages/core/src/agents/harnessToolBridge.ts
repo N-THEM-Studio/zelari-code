@@ -64,6 +64,26 @@ function toEnhanced(tool: HarnessToolDefinition<never, unknown>): EnhancedToolDe
   };
 }
 
+/**
+ * Derive a catalog `EnhancedToolDefinition` from any harness `ToolDefinition`.
+ *
+ * This is the same transformation `toEnhanced` applies to the 10 HARNESS_TOOLS
+ * builtins, exposed so the CLI can bridge its OWN tool definitions (browser_check,
+ * the LSP navigation tools, AST outline) into the agents catalog with identical
+ * schema generation — so prompt text, provider schemas, and executor behaviour
+ * stay in lockstep, the way the harness builtins already do.
+ *
+ * The `execute` here is the same guard stub: in the CLI the harness runs these
+ * via its ToolRegistry. Catalog execution is only reachable in legacy Electron
+ * paths that never advertised these names.
+ *
+ * @param tool  Any ToolDefinition (harness builtin, browser_check, LSP tool, …).
+ * @returns     A catalog entry whose JSON Schema is generated from tool.inputSchema.
+ */
+export function cliToolToEnhanced(tool: HarnessToolDefinition<never, unknown>): EnhancedToolDefinition {
+  return toEnhanced(tool);
+}
+
 /** Harness builtin tools as catalog entries (fresh array each call). */
 export function getHarnessToolDefinitions(): EnhancedToolDefinition[] {
   return HARNESS_TOOLS.map(toEnhanced);

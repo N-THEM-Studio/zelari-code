@@ -131,6 +131,16 @@ export async function* dispatchCouncil(
     setWorkspaceStubs(buildStubs(wsCtx));
   }
 
+  // v1.5.1: bridge CLI-only tools (browser_check, LSP navigation, AST outline,
+  // semantic search) into the agents catalog so council members and the zelari
+  // loop can actually call them. Without this, the executor has the tools (so
+  // filterExecutable keeps their names) but getProviderTools silently drops
+  // them because they're absent from getAllTools(). See toolRegistry.ts.
+  if (config.tools) {
+    const { registerCliToolsIntoCouncilCatalog } = await import("./toolRegistry.js");
+    registerCliToolsIntoCouncilCatalog(config.tools);
+  }
+
   const callbacks: PureCouncilCallbacks = {};
   if (options.onCouncilStatus) {
     callbacks.onCouncilStatus = options.onCouncilStatus;

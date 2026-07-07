@@ -7,3 +7,5 @@ export * from '../agents/tools.js';
 export * from '../agents/toolSchemas.js';
 export * from '../agents/advancedTools.js';
 export * from '../agents/vaultTools.js';
+export { cliToolToEnhanced } from '../agents/harnessToolBridge.js';
+export type { EnhancedToolDefinition } from '../types/systemTypes.js';

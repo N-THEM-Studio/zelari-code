@@ -5,6 +5,11 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.1] - 2026-07-07
+
+### Fixed
+- **Council/zelari couldn't use browser_check, LSP, or AST tools** — the council and zelari paths advertise tools through the static agents catalog (`getAllTools()` → `getProviderTools()`), not through the executor's `toOpenAITools()` like the main agent does. `browser_check`, the 5 LSP navigation tools, `ast_outline`, `find_symbol`, and `semantic_search` were registered in the shared executor (so `filterExecutable` kept their names) but absent from the catalog, so `getProviderTools` silently dropped them — the council's models were never told these tools existed. v1.5.1 bridges the gap: `cliToolToEnhanced` (exported from core) derives catalog entries from the executor's `ToolDefinition`s, and `registerCliToolsIntoCouncilCatalog()` injects them into the catalog from `councilDispatcher.ts` (and `runHeadless.ts`, via the same `dispatchCouncil` path). Kill-switches are respected at registration time; harness builtins are skipped (no shadowing); eslint/ruff diagnostics were already working (they're an edit-wrapper side-effect, not a catalog entry).
+
 ## [1.5.0] - 2026-07-07
 
 ### Added

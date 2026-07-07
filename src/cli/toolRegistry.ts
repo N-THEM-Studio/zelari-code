@@ -36,6 +36,8 @@ import { createSemanticTool } from './semantic/tools.js';
 import { createBrowserTool } from './browser/tools.js';
 import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
+import { cliToolToEnhanced, registerCustomTool } from '@zelari/core/skills';
+import type { EnhancedToolDefinition } from '@zelari/core/skills';
 
 export interface BuiltinToolSummary {
   /** Tool name as registered. */
@@ -249,11 +251,90 @@ export function createBuiltinToolRegistry(
 }
 
 /**
- * Wrap a tool so that the named string args are validated through
- * resolveSandboxedPath() before the original execute() runs. The path
- * arg is rewritten to its resolved form so the tool sees the absolute
- * sandboxed path.
+ * The 10 harness builtin tool names already bridged into the agents catalog
+ * by harnessToolBridge.ts (getHarnessToolDefinitions). Used by
+ * {@link getCliToolCatalogEntries} to skip them — re-bridging would duplicate
+ * catalog entries (the dedupe-by-name in buildBuiltinRegistry would drop the
+ * duplicate anyway, but skipping is cleaner and avoids warn noise).
  */
+const HARNESS_BUILTIN_NAMES: ReadonlySet<string> = new Set([
+  'read_file',
+  'write_file',
+  'edit_file',
+  'bash',
+  'grep_content',
+  'list_files',
+  'show_diff',
+  'apply_diff',
+  'fetch_url',
+  'web_search',
+]);
+
+/**
+ * Derive agents-catalog entries for the CLI-only tools in an executor registry
+ * (browser_check, the LSP navigation tools, AST outline, semantic search).
+ *
+ * The council and zelari paths advertise tools through the static catalog
+ * (`getAllTools()` → `getProviderTools()`), not through the executor's
+ * `toOpenAITools()` like the main agent does. browser_check / LSP / AST are
+ * registered in the executor (so `filterExecutable` keeps their names) but
+ * absent from the catalog, so `getProviderTools` silently dropped them — the
+ * council's models were never told these tools existed.
+ *
+ * This bridges that gap: for every tool in `registry` that is NOT one of the
+ * 10 harness builtins, derive an `EnhancedToolDefinition` (same JSON Schema
+ * the executor uses, guard-stub `execute` since real execution flows through
+ * the council's shared ToolRegistry). The CLI then registers these into the
+ * catalog via {@link registerCliToolsIntoCouncilCatalog}.
+ *
+ * Kill-switches are respected at registration time (createBuiltinToolRegistry
+ * only registers browser_check when ZELARI_BROWSER !== '0', etc.), so this
+ * function simply reflects whatever the executor actually has — no env check
+ * needed here.
+ *
+ * @param registry  The executor registry (typically the council's shared one).
+ * @returns Catalog entries for every non-harness-builtin tool present.
+ */
+export function getCliToolCatalogEntries(registry: ToolRegistry): EnhancedToolDefinition[] {
+  const entries: EnhancedToolDefinition[] = [];
+  for (const name of registry.list()) {
+    if (HARNESS_BUILTIN_NAMES.has(name)) continue;
+    const def = registry.get(name);
+    if (!def) continue;
+    try {
+      entries.push(cliToolToEnhanced(def as unknown as ToolDefinition<never, unknown>));
+    } catch {
+      // A tool whose inputSchema can't be converted to JSON Schema is skipped
+      // (matches getProviderTools' own skip-on-no-schema behaviour). Never throw.
+    }
+  }
+  return entries;
+}
+
+/**
+ * Register the CLI-only tools (browser_check, LSP, AST, semantic) into the
+ * shared agents catalog so the council and zelari paths advertise them.
+ *
+ * Companion to the workspace-stub injection in councilDispatcher.ts: same
+ * mechanism (registerCustomTool), same direction (CLI → core), same contract
+ * (catalog entries carry schemas; execution flows through the executor).
+ *
+ * Idempotent in effect: registerCustomTool replaces by name, so re-calling
+ * with the same registry is safe. Safe to call with a registry that has only
+ * harness builtins (returns without registering anything).
+ */
+export function registerCliToolsIntoCouncilCatalog(registry: ToolRegistry): void {
+  for (const entry of getCliToolCatalogEntries(registry)) {
+    try {
+      registerCustomTool(entry);
+    } catch {
+      // registerCustomTool rebuilds an internal index; a failure there must
+      // never block the council from booting. Swallow and continue.
+    }
+  }
+}
+
+
 function wrapWithSandbox<I extends Record<string, unknown>, O>(
   original: ToolDefinition<I, O>,
   pathArgs: readonly string[],
