@@ -11,28 +11,19 @@
  * show) and converted to LSP's 0-based coordinates internally.
  */
 
-import path from 'node:path';
 import { z } from 'zod';
 import { typedOk, type ToolDefinition } from '@zelari/core/harness/tools/toolTypes';
 import { uriToPath, type Location } from './protocol.js';
 import type { LspProvider } from './manager.js';
+import { relativePosix } from '../utils/paths.js';
 
 function fmtLocation(loc: Location, relativeTo?: string): string {
   const file = uriToPath(loc.uri);
-  const rel = relativeTo ? relPath(relativeTo, file) : file;
+  const rel = relativeTo ? relativePosix(relativeTo, file) : file;
   // LSP ranges are 0-based; present 1-based to match editors.
   const line = (loc.range?.start?.line ?? 0) + 1;
   const col = (loc.range?.start?.character ?? 0) + 1;
   return `${rel}:${line}:${col}`;
-}
-
-function relPath(from: string, to: string): string {
-  try {
-    const r = path.relative(from, to);
-    return r && !r.startsWith('..') ? r : to;
-  } catch {
-    return to;
-  }
 }
 
 const PosArgs = z.object({
@@ -130,7 +121,7 @@ export function createLspTools(provider: LspProvider, root: string = process.cwd
       }
       return typedOk({
         totalEdits: result.totalEdits,
-        files: result.files.map((f) => `${relPath(root, f.file)} (${f.count} edit${f.count === 1 ? '' : 's'})`),
+        files: result.files.map((f) => `${relativePosix(root, f.file)} (${f.count} edit${f.count === 1 ? '' : 's'})`),
       });
     },
   };

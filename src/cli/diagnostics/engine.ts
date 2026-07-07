@@ -24,6 +24,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { relativePosix } from '../utils/paths.js';
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
 
@@ -312,7 +313,7 @@ export function formatDiagnostics(
     ` (${errors} error${errors === 1 ? '' : 's'}, ${warnings} warning${warnings === 1 ? '' : 's'})` +
     ` — fix before continuing:`;
   const shown = sorted.slice(0, maxLines).map((d) => {
-    const loc = opts.relativeTo ? relative(opts.relativeTo, d.file) : d.file;
+    const loc = opts.relativeTo ? relativePosix(opts.relativeTo, d.file) : d.file;
     const pos = d.column ? `${d.line}:${d.column}` : `${d.line}`;
     const tag = d.severity === 'error' ? 'error' : d.severity === 'warning' ? 'warn' : 'info';
     const code = d.code ? ` [${d.code}]` : '';
@@ -321,13 +322,4 @@ export function formatDiagnostics(
   const overflow =
     sorted.length > maxLines ? [`  … and ${sorted.length - maxLines} more`] : [];
   return [header, ...shown, ...overflow].join('\n');
-}
-
-function relative(from: string, to: string): string {
-  try {
-    const rel = path.relative(from, to);
-    return rel && !rel.startsWith('..') ? rel : to;
-  } catch {
-    return to;
-  }
 }

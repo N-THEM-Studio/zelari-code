@@ -18,6 +18,12 @@ function gitInit(dir: string): void {
   run('config', 'user.email', 'test@example.com');
   run('config', 'user.name', 'Test');
   run('config', 'commit.gpgsign', 'false');
+  // Disable line-ending normalization so restore is byte-exact on Windows.
+  // Without this, git inherits core.autocrlf=true from the system gitconfig:
+  // `git add` converts CRLF→LF into the blob, `git checkout-index` re-expands
+  // LF→CRLF on restore, and the byte-for-byte content assertions below fail
+  // (original-a\n becomes original-a\r\n). Mirrors cli-gitOps.test.ts.
+  run('config', 'core.autocrlf', 'false');
 }
 
 function commitAll(dir: string, msg: string): void {
