@@ -5,6 +5,20 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-07-07
+
+### Added
+- **Plugin manager** — zelari-code now detects optional tool dependencies that are missing but useful (Playwright → `browser_check`, typescript-language-server / pyright → LSP navigation, eslint / ruff → post-edit diagnostics) and offers to install them. Three discovery paths:
+  - **Boot gate** (`PluginGate`): after the splash, before the App mounts, surfaces a `[Install now / Maybe later / Don't ask again]` prompt for each missing plugin. Installation is buffered (mirrors `/update`). Skips on non-TTY, `ZELARI_NO_PLUGIN_PROMPT=1`, or when nothing is missing. Per-plugin scope: `-D` for project-local linters + Playwright, `-g` for cross-project LSP servers.
+  - **`/plugins` command**: on-demand status table (ignoring `dontAskAgain`) plus `/plugins install <id>` for direct install.
+  - **`--doctor`**: a new `plugins` row reports missing tools as WARN (never critical — optionals never block boot).
+  - Binary names are sourced from the existing registries (`DEFAULT_PROVIDERS`, `LSP_SERVERS`, `defaultPlaywrightLoader`), preserving a single source of truth. Detection mirrors how each feature resolves its binary (`resolveBin` walk, `--version` probe, dynamic import). Preferences persist to `~/.tmp/zelari-code/plugins.json`.
+- **Windows PATH auto-fix** — the npm global prefix (`%AppData%\npm`) missing from the user PATH is the single most common "command not found" cause on Windows. Now auto-fixed at install time (`scripts/repair-path.mjs`, idempotent exact-entry match, opt-out `ZELARI_NO_PATH_REPAIR=1`) and at runtime via `zelari-code --fix-path`. Scope is HKCU ("User"), never HKLM. `--doctor` now points Windows users at `--fix-path`.
+
+### Fixed
+- **Windows backslash-in-display-paths** — LSP tool results and diagnostic output emitted `src\a.ts` on win32 where every other path uses `src/a.ts`. Extracted `relativePosix()` into `src/cli/utils/paths.ts` (shared with the existing `shortenCwd`); both `lsp/tools.ts` and `diagnostics/engine.ts` now use it, replacing two duplicated private helpers. This was a real production bug surfaced by 4 previously-failing tests.
+- **checkpoint CRLF on Windows** — `cli-checkpoint.test.ts` inherited `core.autocrlf=true` from the system gitconfig, so restore wrote `original-a\r\n` instead of `original-a\n`. Fixed by setting `core.autocrlf=false` in the test's `gitInit` helper (mirrors `cli-gitOps.test.ts`), making the test environment-independent. The checkpoint module itself is byte-exact by design; the bug was the test environment.
+
 ## [1.4.1] - 2026-07-07
 
 ### Fixed
