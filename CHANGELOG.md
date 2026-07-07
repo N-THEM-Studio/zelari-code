@@ -5,6 +5,14 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.2] - 2026-07-07
+
+### Added
+- **Provider retry/backoff** — the #1 cause of council/zelari runs dying before reaching the verify gate was a single transient HTTP failure (429/5xx/network error) terminating the whole member turn. `openaiCompatibleProvider` now retries on the initial response (before any stream byte is read, so there's no mid-stream state to recover): retryable statuses are 429/500/502/503/504, plus network errors (fetch throws). Up to 3 retries (4 fetches worst case), exponential backoff (500ms × 2^attempt, capped 8s), honors the `Retry-After` header. `abortableSleep` respects the caller's `AbortSignal` so `.cancel()` during a backoff window exits immediately. Non-retryable statuses (4xx except 429) still fail fast. Tunable via `ZELARI_PROVIDER_MAX_RETRIES`.
+
+### Changed
+- **Tool-loop cap raised from 12 to 30** — the #2 cause was `MAX_TOOL_LOOP_ITERATIONS=12` (hardcoded in `AgentHarness.run()`). Complex council implementations that read→edit→verify across 6-8 files routinely exhausted 12 rounds, then got forced into a no-tools final-answer turn that couldn't write files → incomplete deliverable → verify FAIL. The cap is now configurable via `AgentHarnessConfig.maxToolLoopIterations` (default 30) and overridable at runtime via `ZELARI_MAX_TOOL_LOOP_ITERATIONS` (wired in `useChatTurn.ts` + `runHeadless.ts`). The "final-answer guarantee" still fires at the new threshold.
+
 ## [1.5.1] - 2026-07-07
 
 ### Fixed
