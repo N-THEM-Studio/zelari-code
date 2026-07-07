@@ -33,6 +33,12 @@ import { existsSync, readFileSync, readlinkSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import {
+  checkAgentNode,
+  checkAgentGit,
+  checkAgentBash,
+  type PrereqResult,
+} from "./prereqChecks.js";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -282,6 +288,19 @@ function checkPath(): CheckResult {
 }
 
 /**
+ * Adapt a `PrereqResult` (from prereqChecks.ts) into doctor's `CheckResult`.
+ * The shapes are isomorphic — this is a pure pass-through that lets the
+ * agent-shell-aware checks share the doctor's report formatting + summary.
+ * Keep severity semantics intact: 'critical' FAILs the report, 'warn' is advisory.
+ */
+function prereqToCheckResult(r: PrereqResult): CheckResult {
+  if (r.ok) return OK(r.message);
+  return r.severity === "critical"
+    ? FAIL(r.message, "critical")
+    : WARN(r.message);
+}
+
+/**
  * Run all checks and print results. Returns true if install is healthy
  * (no critical failures), false otherwise. Never throws.
  */
@@ -290,11 +309,20 @@ export function runDoctor(): boolean {
   const pkgName = pkg?.name ?? "zelari-code";
 
   const checks: Array<{ name: string; run: () => CheckResult }> = [
+    // --- install-health checks (main-process probes) ---
     { name: "node", run: () => checkNode(pkg) },
     { name: "bin shim", run: () => checkShim(pkgName) },
     { name: "cli bundle", run: () => checkBundle() },
     { name: "runtime deps", run: () => checkRuntimeDeps() },
     { name: "PATH", run: () => checkPath() },
+    // --- agent-shell checks (v1.4.0) ---
+    // These probe node/git/bash THROUGH the resolved shell the agent uses.
+    // A pass on "node" + a FAIL on "node (agent shell)" is the tell-tale
+    // signature of the PATH-mismatch bug (node visible to the main process,
+    // invisible to Git Bash) that silently breaks council builds.
+    { name: "node (agent shell)", run: () => prereqToCheckResult(checkAgentNode()) },
+    { name: "git (agent shell)", run: () => prereqToCheckResult(checkAgentGit()) },
+    { name: "bash", run: () => prereqToCheckResult(checkAgentBash()) },
   ];
 
   // eslint-disable-next-line no-console
