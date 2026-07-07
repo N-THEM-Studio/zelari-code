@@ -5,6 +5,20 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-07-07
+
+### Fixed
+- **prereqChecks test env leak**: `applyScenario()` inherited the host's `SHELL=/bin/bash` into the test env, causing the win32 `checkAgentBash` test to see a real bash via `resolveAgentShellSync()` instead of falling back to cmd.exe. `SHELL`/`ZELARI_SHELL` are no longer copied from the host — only the scenario object can inject them.
+
+## [1.4.0] - 2026-07-07
+
+### Added
+- **Automatic prerequisite checks (`prereqChecks.ts`)** — agent-shell-aware probes for node/git/bash. Detects the "node visible to main process but invisible to the agent's bash" PATH mismatch that broke the Anathema-Studio council on 2026-07-07. Powers boot-time preflight, `--doctor` rows, and post-update prerequisite warnings.
+- **`postinstall` git warning** — `scripts/postinstall.mjs` now warns when `git` is missing at install time so users know `/diff` and `/undo` will be disabled.
+- **`--doctor` agent-shell rows** — `src/cli/utils/doctor.ts` extended with rows reporting node/git/bash as seen by the agent's shell (not just the main process).
+- **Updater prerequisite warnings** — `slashHandlers/updater.ts` surfaces prereq warnings after updates.
+- **12 unit tests** (`tests/unit/cli-prereqChecks.test.ts`) covering the agent-shell probes and the regression case.
+
 ## [1.3.0] - 2026-07-06
 
 ### Added
