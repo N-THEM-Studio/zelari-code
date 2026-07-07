@@ -173,6 +173,49 @@ const note = (msg) => {
   console.warn(`[zelari-code postinstall] ${msg}`);
 };
 
+/**
+ * Best-effort git availability check (v1.4.0).
+ *
+ * git is not a hard prerequisite (zelari-code boots without it), but /diff,
+ * /undo and the live git sidebar all silently degrade to no-op when git is
+ * missing — which is confusing. Surface it once at install/update time so
+ * the user knows what they're missing and how to fix it. Node is NOT checked
+ * here: by definition npm (which requires node) just ran this script.
+ *
+ * Non-blocking, fail-safe: any error is swallowed. Mirrors the contract of
+ * the rest of this file (never throw, never fail the install).
+ */
+function checkGitAvailable() {
+  try {
+    let out = '';
+    try {
+      out = execSync('git --version', {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+    } catch {
+      // git not on PATH — fall through to the warning below.
+    }
+    if (!out) {
+      const hint =
+        process.platform === 'win32'
+          ? 'Install Git for Windows: https://git-scm.com/download/win'
+          : process.platform === 'darwin'
+            ? 'Install git: `brew install git` (or Xcode command-line tools)'
+            : 'Install git: `apt install git` (or your distro equivalent)';
+      warn('--------------------------------------------------------------');
+      warn(' git not found on PATH (optional but recommended).');
+      warn('--------------------------------------------------------------');
+      warn('  Without git, /diff, /undo and the git sidebar are disabled.');
+      warn(`  ${hint}`);
+      warn('  Run `zelari-code --doctor` after install to re-check.');
+      warn('--------------------------------------------------------------');
+    }
+  } catch {
+    // Even the check itself must never break the install.
+  }
+}
+
 try {
   // 0. Only run for global installs. Local installs (`npm install zelari-code`)
   //    create a `node_modules/.bin/zelari-code` symlink that npm handles
@@ -224,11 +267,12 @@ try {
     // Auto-repair the most common Windows failure: the package unpacked but
     // npm never created the bin shim. We only write shims that are MISSING,
     // and only under our own bin name → no risk of shadowing another tool.
-    if (isWin) {
+      if (isWin) {
       const repaired = repairWindowsShim(prefix, pkgName);
       if (repaired && existsSync(shimPath)) {
         note(`shim was missing — auto-created ${shimPath}`);
         note('open a NEW terminal and run `zelari-code --version` to confirm.');
+        checkGitAvailable();
         process.exit(0);
       }
     }
@@ -279,6 +323,7 @@ try {
 
   if (shimOk) {
     note(`shim OK: ${shimPath}`);
+    checkGitAvailable();
     process.exit(0);
   }
 
