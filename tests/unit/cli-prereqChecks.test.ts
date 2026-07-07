@@ -106,6 +106,13 @@ function applyScenario(s: Scenario) {
   }
   // Apply env overrides for ZELARI_SHELL / SHELL.
   process.env = { ...REAL_ENV, ...(s.env ?? {}) };
+  // On win32, strip any real SHELL/ZELARI_SHELL that wasn't explicitly set,
+  // otherwise resolveAgentShellSync finds the host's /bin/bash and returns
+  // isBash:true instead of the expected cmd.exe fallback.
+  if (s.platform === "win32") {
+    if (!s.env?.ZELARI_SHELL) delete process.env.ZELARI_SHELL;
+    if (!s.env?.SHELL) delete process.env.SHELL;
+  }
 }
 
 beforeEach(() => {
