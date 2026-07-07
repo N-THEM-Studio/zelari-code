@@ -54,11 +54,36 @@ export async function handleUpdatePerform(
     const { performUpdate } = await import("../updater.js");
     const res = await performUpdate();
     if (res.ok) {
+      // v1.4.0: after a successful update, re-run the prerequisite probes so
+      // the user learns about a broken environment NOW rather than on the
+      // next boot (which hard-fails on missing node). These checks read the
+      // system PATH, which is independent of the running process version,
+      // so they predict the post-restart state accurately. Non-blocking:
+      // warnings only — a critical node failure here is still surfaced by
+      // the boot preflight after restart, which is the right place to block.
+      let prereqBlock = "";
+      try {
+        const { runPrereqChecks } = await import(
+          "../utils/prereqChecks.js"
+        );
+        const { warnings } = runPrereqChecks({ mode: "preflight" });
+        if (warnings.length > 0) {
+          prereqBlock =
+            "\n\n⚠ Prerequisite warnings (the agent may be limited after restart):\n" +
+            warnings
+              .map((w) => `   - ${w.tool}: ${w.message.replace(/\n/g, "\n     ")}`)
+              .join("\n") +
+            "\n   Run `zelari-code --doctor` after restart for the full report.";
+        }
+      } catch {
+        // prereqChecks is best-effort here — never block an update success message.
+      }
       appendSystem(
         ctx.setMessages,
-        `[update] ✅ installed successfully\n\n` +
-          `Please restart zelari-code manually to use the new version.\n` +
-          `(exit with /exit or Ctrl+C, then run \`zelari-code\` again)`,
+        "[update] ✅ installed successfully\n\n" +
+          "Please restart zelari-code manually to use the new version.\n" +
+          "(exit with /exit or Ctrl+C, then run `zelari-code` again)" +
+          prereqBlock,
       );
     } else {
       // v1.0.3: show the FULL npm output (not just the last error line) so
