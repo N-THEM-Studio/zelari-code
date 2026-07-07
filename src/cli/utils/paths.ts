@@ -48,9 +48,19 @@ export function shortenCwd(p: string, maxLen = 40, home: string = homedir()): st
  */
 export function relativePosix(from: string, to: string): string {
   try {
-    const rel = path.relative(from, to);
+    // Use the platform-specific path module explicitly rather than the
+    // default export. The default is bound to process.platform AT MODULE
+    // LOAD TIME — mutating process.platform later (e.g. in a test that
+    // simulates win32 on a Linux runner) does NOT rebind it, so
+    // path.relative would use posix semantics and fail on Windows paths.
+    // path.win32 / path.posix are stable platform-specific namespaces that
+    // work regardless of the host platform.
+    const p = process.platform === 'win32' ? path.win32 : path.posix;
+    const rel = p.relative(from, to);
     if (!rel || rel.startsWith('..')) return to;
-    return rel.split(path.sep).join('/');
+    // Normalize any platform separator to forward slashes. On win32 path.relative
+    // joins with '\\'; on POSIX it's already '/'. Either way, split on both.
+    return rel.split(/[\\/]/).join('/');
   } catch {
     return to;
   }
