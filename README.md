@@ -68,7 +68,23 @@ npm install -g zelari-code
 zelari-code
 ```
 
-Requires **Node.js ≥ 20**.
+**Prerequisites:**
+- **Node.js ≥ 20** — required. Without it the agent cannot run `npm`/`tsc`/builds, so zelari-code refuses to boot.
+- **Git** — recommended. Without it, `/diff`, `/undo` and the git sidebar are disabled. Install from <https://git-scm.com>.
+- **Git Bash** (Windows only) — recommended. The agent's `bash` tool needs real POSIX semantics (`ls`, `which`, `$VAR`, `&&`). Ships with Git for Windows.
+
+After install, verify your environment:
+
+```bash
+zelari-code --doctor   # checks shim, bundle, PATH, node/git/bash in the agent shell
+```
+
+> **Why `--doctor` matters on Windows:** the agent runs commands through Git
+> Bash, which inherits a different `PATH` than the Node process. Node can be
+> visible to PowerShell yet invisible to Git Bash (typical when Node was
+> installed for "current user" only). `--doctor`'s `node (agent shell)` row
+> catches this; the boot-time preflight (`runPreflight`) blocks the launch
+> with an actionable message instead of letting the agent fail mid-task.
 
 ### `zelari-code: command not found` (Windows)
 
@@ -87,6 +103,8 @@ source ~/.bashrc
 ```
 
 Verify the fix: `where zelari-code` (CMD) or `which zelari-code` (Bash) should print a path.
+
+**Node visible to PowerShell but not to Git Bash?** This is the dual-PATH problem: Node installed for "current user" only reaches the user shell, while Git Bash inherits the system `Path`. Fix: reinstall Node with "Add to PATH for **all users**", or add `C:\Program Files\nodejs\` to the **System** `Path` (not User). Confirm with `zelari-code --doctor` — the `node (agent shell)` row must read OK.
 
 ## First Run
 
