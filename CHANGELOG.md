@@ -5,6 +5,14 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.3] - 2026-07-08
+
+### Changed
+- **Single-agent now uses `buildSystemPrompt()`** — the 90%-of-usage path previously built its system prompt as an inline array (`useChatTurn.ts:283-317`), bypassing the builder the council uses. It was missing 7 of 11 behavioral directives: anti-confabulation ("don't invent facts/paths"), act-don't-describe ("actually write/edit files"), output self-check, clarification protocol (`---QUESTION---` format), safety guardrails, output formatting, and tool-usage guidelines. v1.5.3 routes the single agent through `buildSystemPrompt()` with a new `SINGLE_AGENT_IDENTITY_MODULE` that overrides the council-flavored `base-identity` module — the persona is now "Zelari Code, interactive AI coding agent in your terminal", not "member of an AI Council". Shell/platform/working-directory guidance is preserved (passed via the agent's `systemPrompt`). This also activates the `customPromptModules` override mechanism for the main path, which was previously inert.
+
+### Added
+- **Tool-result truncation (head + tail)** — a `read_file` on a 5000-line file used to dump ~100k tokens verbatim into the LLM transcript, re-sent every subsequent provider turn. `ToolRegistry.invoke` now truncates results over 200 lines (configurable via `ZELARI_TOOL_RESULT_LINES`) to head + tail with a marker naming the omission: `… [+4800 lines omitted — showing head:100, tail:100 of 5000 total] …`. Applies to all tools uniformly (single choke-point), covers string results and object results with a `content` field (the common `read_file`/`show_diff` shape). Results under the cap pass through with zero overhead; errors are never truncated.
+
 ## [1.5.2] - 2026-07-07
 
 ### Added

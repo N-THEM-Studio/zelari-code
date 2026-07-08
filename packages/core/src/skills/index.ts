@@ -9,3 +9,5 @@ export * from '../agents/advancedTools.js';
 export * from '../agents/vaultTools.js';
 export { cliToolToEnhanced } from '../agents/harnessToolBridge.js';
 export type { EnhancedToolDefinition } from '../types/systemTypes.js';
+export { SINGLE_AGENT_IDENTITY_MODULE } from '../agents/promptModules.js';
+export { buildSystemPrompt } from '../agents/systemPromptBuilder.js';

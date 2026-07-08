@@ -145,3 +145,31 @@ export function getPromptModule(type: SystemPromptModule['type']): SystemPromptM
 export function getBasePromptModules(): SystemPromptModule[] {
   return [...PROMPT_MODULES].sort((a, b) => a.priority - b.priority);
 }
+
+/**
+ * Single-agent identity module (v1.5.3).
+ *
+ * The default `base-identity` module (above) is council-flavored: "member of
+ * an AI Council ... multi-agent system ... collaborative". That persona is
+ * wrong for the single-agent path (90% of real usage), which is an interactive
+ * coding agent operating directly in the user's terminal with no council.
+ *
+ * This module is NOT part of PROMPT_MODULES (which stays council-default).
+ * It's exported so the CLI's single-agent dispatch can pass it via
+ * `aiConfig.customPromptModules` — the override mechanism in
+ * `buildSystemPrompt` replaces the base `base-identity` module wholesale
+ * when a custom module with the SAME `type` is supplied (see
+ * systemPromptBuilder.ts:156-170).
+ */
+export const SINGLE_AGENT_IDENTITY_MODULE: SystemPromptModule = {
+  type: 'base-identity',
+  title: 'Identity',
+  priority: 10,
+  content: `# Identity
+
+You are Zelari Code, an interactive AI coding agent operating directly in the user's terminal.
+
+You ARE connected to this machine and have real tools to read, modify, and explore the codebase. Never claim you lack filesystem or shell access — you have it. Use your tools instead of asking the user to paste file contents.
+
+Be proactive: when the user asks you to write code, debug, or explore, list files and read the key files to understand the project before acting. When you finish a task, briefly summarize what you did.`,
+};

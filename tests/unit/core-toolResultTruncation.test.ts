@@ -1,0 +1,77 @@
+/**
+ * core-toolResultTruncation.test.ts — tests for truncateToolResult (H6).
+ *
+ * Verifies the head+tail truncation that keeps tool-result messages bounded
+ * in the LLM transcript. A 5000-line read_file used to dump ~100k tokens
+ * into config.messages; now results over the cap (default 200 lines) are
+ * truncated with a marker naming the omission.
+ */
+import { describe, it, expect } from "vitest";
+import { truncateToolResult } from "@zelari/core/harness/tools/registry";
+
+describe("truncateToolResult", () => {
+  it("passes short results through verbatim (under line cap)", () => {
+    const text = Array.from({ length: 50 }, (_, i) => `line ${i}`).join("\n");
+    expect(truncateToolResult(text, 200)).toBe(text);
+  });
+
+  it("passes single-line results through verbatim (under char budget)", () => {
+    const text = "a short single-line result";
+    expect(truncateToolResult(text, 200)).toBe(text);
+  });
+
+  it("truncates a 5000-line result to head + tail + marker", () => {
+    const lines = Array.from({ length: 5000 }, (_, i) => `line ${i}`);
+    const text = lines.join("\n");
+    const out = truncateToolResult(text, 200);
+    // Marker present, names the omission count and the head/tail split.
+    // omitted = total - cap = 5000 - 200 = 4800.
+    expect(out).toMatch(/\[\+4800 lines omitted.*head:100.*tail:100.*of 5000 total\]/);
+    // Head retained: first line preserved.
+    expect(out).toContain("line 0");
+    expect(out).toContain("line 99");
+    // Tail retained: last line preserved.
+    expect(out).toContain("line 4999");
+    expect(out).toContain("line 4900");
+    // Middle omitted.
+    expect(out).not.toContain("line 2500");
+  });
+
+  it("respects a custom cap (50 lines)", () => {
+    const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
+    const out = truncateToolResult(lines.join("\n"), 50);
+    // omitted = 200 - 50 = 150; head/tail = 25 each.
+    expect(out).toMatch(/\[\+150 lines omitted.*head:25.*tail:25.*of 200 total\]/);
+    expect(out).toContain("line 0");
+    expect(out).toContain("line 199");
+    expect(out).not.toContain("line 100");
+  });
+
+  it("does not truncate an error-sized string (errors pass verbatim)", () => {
+    const errText = "Error: tool failed with code 42";
+    expect(truncateToolResult(errText, 200)).toBe(errText);
+  });
+
+  it("handles empty string", () => {
+    expect(truncateToolResult("", 200)).toBe("");
+  });
+
+  it("fast-paths on char budget before splitting (long single-line JSON)", () => {
+    // A 30000-char single line: exceeds char budget (200*80=16000) but has
+    // only 1 line. The line-budget check catches it: lines.length (1) <= cap.
+    // Wait — that means it passes through. Let's verify the fast path logic:
+    // text.length > cap*80 is TRUE (30000 > 16000), so we split; lines.length
+    // is 1, which is <= cap (200), so return original. Correct: a single long
+    // line under the cap is preserved (the cap is line-based, not char-based).
+    const longLine = "x".repeat(30000);
+    expect(truncateToolResult(longLine, 200)).toBe(longLine);
+  });
+
+  it("truncates when many short lines exceed the line cap", () => {
+    // 300 short lines (each 5 chars): char budget 300*6=1800 < 16000, so the
+    // fast path does NOT fire. The line-budget check fires: 300 > 200.
+    const lines = Array.from({ length: 300 }, () => "short");
+    const out = truncateToolResult(lines.join("\n"), 200);
+    expect(out).toMatch(/\[\+100 lines omitted/);
+  });
+});

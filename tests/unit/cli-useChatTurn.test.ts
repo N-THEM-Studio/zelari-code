@@ -109,6 +109,16 @@ vi.mock('../../src/cli/workspace/toolRegistry.js', () => ({
 
 vi.mock('@zelari/core/skills', () => ({
   setWorkspaceStubs: vi.fn(),
+  buildSystemPrompt: () => 'stub single-agent prompt',
+  getAllTools: () => [],
+  SINGLE_AGENT_IDENTITY_MODULE: {
+    type: 'base-identity',
+    title: 'Identity',
+    priority: 10,
+    content: 'identity',
+  },
+  registerCustomTool: () => {},
+  cliToolToEnhanced: () => ({ name: 'x', description: 'x', category: 'core', parameters: {}, execute: () => '' }),
 }));
 
 // Mock the workspace summary builders so dispatchPrompt doesn't scan the

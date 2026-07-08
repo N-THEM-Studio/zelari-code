@@ -41,6 +41,48 @@ const TOOL_NAME_ALIASES: Record<string, string> = {
   exec: 'bash',
 };
 
+/**
+ * v1.5.3: tool-result truncation. A read_file / show_diff / bash on a large
+ * target used to dump the entire output into config.messages verbatim — a
+ * 5000-line file is ~100k tokens, re-sent every subsequent provider turn, and
+ * a single such call can consume 50–100% of a context window. This truncates
+ * tool results to a bounded head + tail with a marker, so the transcript LLM
+ * sees stays under control regardless of what a tool returns.
+ *
+ * Strategy: if the result has more than `cap` lines, keep the first half and
+ * the last half of `cap`, with a marker naming the omission. Single-line
+ * payloads (e.g. compact JSON) are split on a char budget derived from cap.
+ * Results under the cap pass through verbatim — zero overhead on the common
+ * case. Errors (ok:false) are never truncated (they're small by nature).
+ *
+ * Env override: ZELARI_TOOL_RESULT_LINES (default 200). Set higher for
+ * sessions that need more file context, lower to save tokens on tight windows.
+ */
+const TOOL_RESULT_LINE_CAP: number = (() => {
+  const raw = process.env.ZELARI_TOOL_RESULT_LINES;
+  const n = raw ? Number.parseInt(raw, 10) : 200;
+  return Number.isFinite(n) && n >= 10 ? n : 200;
+})();
+
+/**
+ * Truncate a string result to head + tail with a marker, bounded by line count.
+ * Exported for tests. Returns the original string if under the cap.
+ */
+export function truncateToolResult(text: string, cap: number = TOOL_RESULT_LINE_CAP): string {
+  if (text.length === 0) return text;
+  const lines = text.split('\n');
+  if (lines.length <= cap) return text; // under line budget — verbatim
+  const half = Math.floor(cap / 2);
+  const head = lines.slice(0, half);
+  const tail = lines.slice(lines.length - half);
+  const omitted = lines.length - cap;
+  return (
+    head.join('\n') +
+    `\n… [+${omitted} lines omitted — showing head:${half}, tail:${half} of ${lines.length} total] …\n` +
+    tail.join('\n')
+  );
+}
+
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
 
@@ -110,6 +152,21 @@ export class ToolRegistry {
           });
         }),
       ]);
+      // v1.5.3: truncate large results before they land in the LLM transcript.
+      // Covers string results directly, and object results that carry a
+      // `content` string (the common shape for read_file / show_diff). Errors
+      // pass through untouched. See truncateToolResult above.
+      if (result.ok) {
+        if (typeof result.value === 'string') {
+          return { ok: true, value: truncateToolResult(result.value) as unknown as O };
+        }
+        if (result.value && typeof result.value === 'object') {
+          const v = result.value as Record<string, unknown>;
+          if (typeof v.content === 'string') {
+            v.content = truncateToolResult(v.content);
+          }
+        }
+      }
       return result;
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);

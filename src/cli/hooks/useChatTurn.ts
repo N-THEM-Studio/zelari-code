@@ -18,6 +18,11 @@ import { resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
 import { PROVIDERS } from "../keyStore.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
 import {
+  buildSystemPrompt,
+  getAllTools,
+  SINGLE_AGENT_IDENTITY_MODULE,
+} from "@zelari/core/skills";
+import {
   appendOrExtendStreamingAssistant,
   appendSystem,
   appendToolStart,
@@ -258,8 +263,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         }
         // NOTE: computed AFTER the workspace wiring so updateTask (when
         // registered) is advertised in the # Available Tools section too.
-        const toolList = toolRegistry
-          .toOpenAITools()
+        const openAiTools = toolRegistry.toOpenAITools();
+        const toolListNames = openAiTools.map((t) => t.function.name);
+        const toolList = openAiTools
           .map((t) => `- ${t.function.name}: ${t.function.description}`)
           .join("\n");
         // v0.7.2 (C3): platform-aware shell guidance. The model must know which
@@ -280,12 +286,15 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           "Always pass non-interactive flags (--yes, -y, --template, --force). " +
           "If a scaffolder still insists on prompting (e.g. `npm create vite` in a non-empty directory), do NOT retry it — " +
           "scaffold into a fresh empty subdirectory and move the files, or write package.json/configs/sources yourself with write_file, then run `npm install`.";
-        const systemPrompt = [
-          "You are Zelari Code, an interactive AI coding agent operating directly in the user's terminal.",
-          "",
-          "You ARE connected to this machine and have real tools to read, modify, and explore the codebase.",
-          "Never claim you lack filesystem or shell access — you have it. Use your tools instead of asking the user to paste file contents.",
-          "",
+        // v1.5.3: build the single-agent system prompt through buildSystemPrompt(),
+        // the same builder the council uses. This routes the 7 behavioral
+        // directives (anti-confabulation, act-don't-describe, output self-check,
+        // clarification protocol, safety, formatting, tool-usage) to the 90%
+        // path that previously got an inline array and missed them all. The
+        // SINGLE_AGENT_IDENTITY_MODULE overrides the council-flavored
+        // 'base-identity' module so the persona is "Zelari Code in the terminal",
+        // not "member of an AI Council".
+        const shellContextBlock = [
           "# Platform & Shell",
           `platform: ${process.platform}`,
           `shell: ${resolvedShell.via}`,
@@ -295,26 +304,61 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           "# Working Directory",
           `You are running in: ${cwd}`,
           "All relative file paths are resolved against this directory. Always work with real files here.",
-          "",
-          "# Available Tools",
-          "You can call these tools. Use them to take action and gather information autonomously:",
-          toolList,
-          ...(workspaceSummary ? ["", workspaceSummary] : []),
-          ...(zelariReadHint ? ["", zelariReadHint] : []),
-          ...(planSummary ? ["", planSummary] : []),
-          "",
-          "# Guidelines",
-          "- When the user asks you to write code, debug, or explore, be proactive: list files (list_files, or bash: ls/dir) and read key files (read_file) to understand the project instead of asking the user to paste file contents.",
-          "- If a command fails or is cancelled, do NOT retry variants of the same command: diagnose why (read the hint in the result if present) and take a DIFFERENT approach (e.g. create the files yourself with write_file).",
-          "- After a tool result, CONTINUE your answer from where you left off. NEVER restate or re-print text you already wrote earlier in this turn.",
-          '- Only invoke tools when they are necessary to answer the user\'s prompt. If the user is just saying hello or greeting them (e.g., "ciao", "hello"), simply greet them back and ask how you can help, without running any commands or tools.',
-          "- When you finish a task, briefly summarize what you did.",
           ...(planSummary
             ? [
+                "",
+                "# Plan Tracking",
                 '- Plan tasks: when you START working on a plan task call updateTask {taskId, status: "in_progress"}; when it is complete and verified call updateTask {taskId, status: "done"}. NEVER edit .zelari/plan.json by hand.',
               ]
             : []),
         ].join("\n");
+        const singleAgentRole = {
+          id: "single",
+          name: "Zelari Code",
+          codename: "zelari",
+          role: "interactive coding agent",
+          color: "#00d9a3",
+          avatar: "◆",
+          tools: toolListNames,
+          systemPrompt: shellContextBlock,
+        };
+        // workspaceContext + ragContext carry the summaries that were inline
+        // before; the builder places them under # Current Workspace State and
+        // # Retrieved Knowledge (RAG) headers.
+        const workspaceContext = [workspaceSummary, zelariReadHint]
+          .filter(Boolean)
+          .join("\n\n");
+        // v1.5.3: build via the shared builder. Wrap in try/catch with a
+        // minimal fallback so a builder failure (e.g. test context without a
+        // populated catalog) never breaks dispatch — the harness still gets a
+        // usable system prompt and the turn proceeds.
+        let systemPrompt: string;
+        try {
+          systemPrompt = buildSystemPrompt(singleAgentRole, {
+            tools: getAllTools(),
+            toolNames: toolListNames,
+            aiConfig: {
+              enabledSkills: [],
+              enabledTools: toolListNames,
+              customPromptModules: [SINGLE_AGENT_IDENTITY_MODULE],
+              agentSkillConfigs: [],
+            },
+            workspaceContext: workspaceContext || undefined,
+            ragContext: planSummary || undefined,
+          });
+        } catch {
+          // Fallback: identity + platform/shell + tool list. Keeps the turn
+          // runnable even if the builder or catalog is unavailable.
+          systemPrompt = [
+            SINGLE_AGENT_IDENTITY_MODULE.content,
+            shellContextBlock,
+            "# Available Tools",
+            "You can call these tools. Use them to take action and gather information autonomously:",
+            toolList,
+            ...(workspaceContext ? ["", workspaceContext] : []),
+            ...(planSummary ? ["", planSummary] : []),
+          ].join("\n");
+        }
         // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
         // The council sets 5; the single-prompt path previously set NONE, so a
         // flailing model could loop for the full MAX_TOOL_LOOP_ITERATIONS (12)
