@@ -5,6 +5,11 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.5] - 2026-07-08
+
+### Fixed
+- **`--doctor` false-positive FAIL on `react-dom`** — every clean global install reported `FAIL runtime deps missing runtime deps: react-dom`. Root cause: `checkRuntimeDeps()` in `src/cli/utils/doctor.ts` hardcoded a required list that included `react-dom`, but (a) the CLI never imports `react-dom` — Ink renders via `react-reconciler` — and (b) `react-dom` ships in `devDependencies`, so `npm install -g` does not provide it. The `require.resolve` probe therefore threw on every global install, surfacing a phantom critical failure. The list now contains only the genuine runtime externals (`react`, `ink`, `ink-text-input`) plus `zod` as an install-coherence probe.
+
 ## [1.5.4] - 2026-07-08
 
 ### Fixed

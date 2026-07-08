@@ -248,7 +248,13 @@ function checkBundle(): CheckResult {
 
 /** Check each runtime dep is resolvable. */
 function checkRuntimeDeps(): CheckResult {
-  const required = ["react", "react-dom", "ink", "ink-text-input", "zod"];
+  // Runtime deps are the modules the bundled CLI imports as externals (see
+  // scripts/bundle-cli.mjs): react, ink, ink-text-input. zod is fully bundled
+  // but kept here as an install-coherence probe. NOTE: react-dom is NOT a
+  // runtime dep — Ink renders via react-reconciler, never react-dom — and it
+  // ships in devDependencies, so listing it produced a false-positive FAIL on
+  // every clean global install.
+  const required = ["react", "ink", "ink-text-input", "zod"];
   const missing: string[] = [];
   for (const dep of required) {
     try {
@@ -261,7 +267,7 @@ function checkRuntimeDeps(): CheckResult {
   }
   if (missing.length === 0) {
     return OK(
-      "runtime deps resolvable (react, react-dom, ink, ink-text-input, zod)",
+      "runtime deps resolvable (react, ink, ink-text-input, zod)",
     );
   }
   return FAIL(
