@@ -23,10 +23,17 @@ type Scenario = {
 let scenario: Scenario = {};
 
 vi.mock("node:child_process", () => ({
-  spawnSync: vi.fn((cmd: string, args: string[]) => {
-    // Global-bin probe: `<bin> --version`. cmd is the binary name.
-    if (args[0] === "--version") {
-      const status = scenario.globalBins?.[cmd];
+  spawnSync: vi.fn((cmd: string, arg2: unknown) => {
+    // After DEP0190 fix, calling convention is platform-dependent:
+    //   POSIX: spawnSync(bin, ["--version"], opts)        — arg2 is args array
+    //   win32: spawnSync(buildCmdLine(bin, args), opts)    — arg2 is options, no args
+    const args = Array.isArray(arg2) ? (arg2 as string[]) : [];
+    const isVersionProbe =
+      args[0] === "--version" ||
+      (typeof cmd === "string" && cmd.includes(" --version"));
+    if (isVersionProbe) {
+      const binName = cmd.split(" ")[0];
+      const status = scenario.globalBins?.[binName];
       if (status === undefined) return { status: 127, stdout: "", stderr: "" };
       return { status, stdout: status === 0 ? "1.0.0\n" : "", stderr: "" };
     }

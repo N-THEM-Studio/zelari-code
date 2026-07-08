@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
 import path from 'node:path';
 import {
   encodeMessage,
@@ -10,6 +11,7 @@ import {
 } from '../../src/cli/lsp/protocol.js';
 import { LspClient, type LspTransport } from '../../src/cli/lsp/client.js';
 import {
+  LspManager,
   normalizeLocations,
   extractHoverText,
   normalizeSymbols,
@@ -265,6 +267,71 @@ describe('lsp tools in the registry', () => {
     try {
       const { tools } = createBuiltinToolRegistry({ root, readOnly: true, lspProvider: fakeProvider() });
       expect(tools.map((t) => t.name)).not.toContain('go_to_definition');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// manager: spawn-failure handling (regression for ENOENT process crash)
+// ---------------------------------------------------------------------------
+
+// A stand-in for a child_process the manager can drive. It mimics a missing
+// binary by emitting 'error' { code: 'ENOENT' } on the next microtask — exactly
+// how node behaves when spawn() can't find the command on PATH.
+function makeMissingBinaryChild(): EventEmitter {
+  const child = new EventEmitter();
+  (child as { stdin?: unknown }).stdin = { writable: true, write: () => true };
+  (child as { stdout?: unknown }).stdout = new EventEmitter();
+  (child as { kill: () => void }).kill = () => {};
+  queueMicrotask(() => {
+    const err = Object.assign(new Error('spawn typescript-language-server ENOENT'), {
+      code: 'ENOENT',
+      errno: -4058,
+      syscall: 'spawn typescript-language-server',
+      path: 'typescript-language-server',
+      spawnargs: ['--stdio'],
+    });
+    child.emit('error', err);
+  });
+  return child;
+}
+
+describe('LspManager spawn-failure handling', () => {
+  it('degrades to empty results when the server binary is missing (no process crash)', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'lsp-enoent-'));
+    // A .ts file is required so resolveServerCommand maps it to the TS server.
+    const file = path.join(root, 'a.ts');
+    writeFileSync(file, 'export const x = 1;\n');
+    const warnings: string[] = [];
+    let spawnCalls = 0;
+    try {
+      const manager = new LspManager({
+        cwd: root,
+        onWarn: (m) => warnings.push(m),
+        spawnImpl: () => {
+          spawnCalls++;
+          return makeMissingBinaryChild() as never;
+        },
+      });
+
+      // First call: spawns, the 'error' event fires, tool must return its
+      // fallback instead of crashing the process with an unhandled 'error'.
+      await expect(manager.definition(file, 1, 1)).resolves.toEqual([]);
+      await expect(manager.documentSymbols(file)).resolves.toEqual([]);
+      await expect(manager.hover(file, 1, 1)).resolves.toBeNull();
+
+      // A single warning was surfaced, once per language.
+      expect(warnings).toHaveLength(1);
+      expect(warnings[0]).toMatch(/typescript-language-server/);
+      expect(warnings[0]).toMatch(/ENOENT|PATH/);
+
+      // Second call: cached as unavailable — no second spawn attempt.
+      const callsBefore = spawnCalls;
+      await expect(manager.references(file, 1, 1)).resolves.toEqual([]);
+      expect(spawnCalls).toBe(callsBefore);
+      expect(warnings).toHaveLength(1); // still only one warning
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

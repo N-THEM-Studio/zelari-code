@@ -5,6 +5,15 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.4] - 2026-07-08
+
+### Fixed
+- **Single-agent crash on missing LSP binary (`spawn typescript-language-server ENOENT`)** — when `typescript-language-server` (or any LSP server: `pyright-langserver`, `gopls`, `rust-analyzer`) was not on PATH, the first LSP tool call in a single-agent turn crashed the whole process. Root cause: `child_process.spawn` does not throw synchronously on a missing binary — it emits the `'error'` event asynchronously on the next tick, and `src/cli/lsp/manager.ts` had no `child.on('error', …)` handler (the only spawn site in `src/cli/` without one; the other 7 all attach it). The synchronous `try/catch` around `spawn()` could not catch it, and with no global `uncaughtException` handler, the event killed the process — violating the documented contract that "a missing server binary resolves to an empty/neutral result so the tools degrade cleanly." `getServer()` now attaches `child.on('error', …)`, which marks the language unavailable in the cache (no retry storm), rejects the in-flight initialize, disposes the client, and emits a once-per-language `[zelari-code]` warning naming the missing binary. A regression test (`LspManager spawn-failure handling`) reproduces the exact Node behavior (ENOENT via `queueMicrotask`) and asserts the fallback results, the single warning, and the no-retry cache behavior.
+
+### Changed
+- **Single-agent tool-loop cap raised from 30 to 90** — `ZELARI_MAX_TOOL_LOOP_ITERATIONS` default in `useChatTurn.ts` raised 30 → 90 (override still honored). Lets the single agent complete larger multi-file read→edit→verify tasks without hitting the cap mid-work. The council `chairmanBudget` (`ZELARI_MODE_MAX_TOOLS_LUCIFER`, default 30) is intentionally left untouched.
+- **Node DEP0190 compliance for `child_process` spawn with `shell:true`** — passing an args array to `spawn`/`spawnSync` with `shell:true` is deprecated (DEP0190) and escapes args inconsistently. The three win32 `shell:true` spawn sites (`diagnostics/engine.ts` eslint/tsc runner, `plugins/registry.ts` global-bin `--version` probe, `workspace/projectSmoke.ts` `npm run` runner) now build a pre-quoted command line via the existing `buildCmdLine()` util instead of relying on the deprecated array form. `plugins-registry.test.ts` updated for the platform-dependent calling convention. Behavior unchanged on POSIX.
+
 ## [1.5.3] - 2026-07-08
 
 ### Changed

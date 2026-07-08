@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { buildCmdLine } from "../utils/cmdline.js";
 
 export const SMOKE_SCRIPT_PRIORITY = ["typecheck", "test", "build"] as const;
 
@@ -60,13 +61,24 @@ export async function runProjectSmoke(
   }
 
   return await new Promise<ProjectSmokeResult>((resolveRun) => {
-    const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
-    const child = spawn(npmCmd, ["run", script], {
-      cwd: projectRoot,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: process.env,
-      shell: process.platform === "win32",
-    });
+    // On win32 shell:true is needed so .cmd shims resolve, but passing args
+    // array with shell:true is deprecated (DEP0190). Use buildCmdLine to
+    // pre-quote args into a single string; shell:true can then resolve npm.
+    // NOTE: must use npm.cmd (not npm) on Windows — fnm/nvm-windows shims
+    // can fail to resolve the bare name through cmd.exe PATHEXT.
+    const child =
+      process.platform === "win32"
+        ? spawn(buildCmdLine("npm.cmd", ["run", script]), {
+            cwd: projectRoot,
+            stdio: ["ignore", "pipe", "pipe"],
+            env: process.env,
+            shell: true,
+          })
+        : spawn("npm", ["run", script], {
+            cwd: projectRoot,
+            stdio: ["ignore", "pipe", "pipe"],
+            env: process.env,
+          });
 
     let stdout = "";
     let stderr = "";

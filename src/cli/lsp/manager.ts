@@ -83,18 +83,23 @@ export interface LspManagerOptions {
   spawnImpl?: typeof spawn;
   /** Per-request timeout (ms). */
   timeoutMs?: number;
+  /** Sink for once-per-language "server unavailable" notices (default: console.error). */
+  onWarn?: (message: string) => void;
 }
 
 export class LspManager implements LspProvider {
   private readonly cwd: string;
   private readonly spawnImpl: typeof spawn;
   private readonly timeoutMs: number;
+  private readonly onWarn: (message: string) => void;
   private servers = new Map<string, ServerEntry | null>(); // language → entry (null = unavailable)
+  private warnedMissing = new Set<string>(); // languages already flagged as unavailable
 
   constructor(options: LspManagerOptions = {}) {
     this.cwd = options.cwd ?? process.cwd();
     this.spawnImpl = options.spawnImpl ?? spawn;
     this.timeoutMs = options.timeoutMs ?? 15_000;
+    this.onWarn = options.onWarn ?? ((m) => console.error(m));
   }
 
   /** Lazily start (or reuse) the server for a file's language. Null if none. */
@@ -104,13 +109,49 @@ export class LspManager implements LspProvider {
     const cached = this.servers.get(cmd.language);
     if (cached !== undefined) return cached;
 
+    // The 'error' event (e.g. ENOENT for a missing binary) fires asynchronously,
+    // so a synchronous try/catch around spawn() cannot catch it. We build the
+    // initialize promise from an explicit controller so the handler below can
+    // reject it and flip the cache to null — mirroring the documented contract
+    // that a missing/spawning server resolves to an empty/neutral result.
+    let resolveInit!: () => void;
+    let rejectInit!: (e: Error) => void;
+    const initialized = new Promise<void>((resolve, reject) => {
+      resolveInit = resolve;
+      rejectInit = reject;
+    });
+
     let entry: ServerEntry | null = null;
     try {
       const child = this.spawnImpl(cmd.command, cmd.args, {
         cwd: this.cwd,
       }) as ChildProcessWithoutNullStreams;
       const client = new LspClient(processTransport(child), { timeoutMs: this.timeoutMs });
-      const initialized = client
+
+      // Handle spawn failures (missing binary, EACCES, …) that emit 'error'
+      // AFTER spawn() returned. Without this, the event is unhandled and kills
+      // the whole process. Mark the language unavailable so we never retry and
+      // any in-flight call rejects into the withDoc() fallback.
+      child.on('error', (err: NodeJS.ErrnoException) => {
+        if (this.servers.get(cmd.language) === null) return; // already handled
+        this.servers.set(cmd.language, null);
+        rejectInit(err instanceof Error ? err : new Error(String(err)));
+        try {
+          client.dispose();
+        } catch {
+          /* ignore */
+        }
+        if (!this.warnedMissing.has(cmd.language)) {
+          this.warnedMissing.add(cmd.language);
+          this.onWarn(
+            `[zelari-code] ${cmd.command} unavailable (LSP tools disabled for ${cmd.language}): ${
+              err?.code === 'ENOENT' ? 'binary not found on PATH' : err?.message ?? String(err)
+            }`,
+          );
+        }
+      });
+
+      client
         .request('initialize', {
           processId: process.pid,
           rootUri: pathToUri(this.cwd),
@@ -119,13 +160,29 @@ export class LspManager implements LspProvider {
         })
         .then(() => {
           client.notify('initialized', {});
-        });
+          resolveInit();
+        })
+        .catch((e: unknown) => rejectInit(e instanceof Error ? e : new Error(String(e))));
+
       entry = { client, initialized, opened: new Map(), dispose: () => client.dispose() };
-    } catch {
-      entry = null; // spawn failed (binary not found)
+    } catch (e) {
+      // Synchronous spawn failure (rare; most failures surface via 'error').
+      this.servers.set(cmd.language, null);
+      this.warnMissing(cmd.language, cmd.command, e);
+      return null;
     }
     this.servers.set(cmd.language, entry);
     return entry;
+  }
+
+  private warnMissing(language: string, command: string, err: unknown): void {
+    if (this.warnedMissing.has(language)) return;
+    this.warnedMissing.add(language);
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    const msg = code === 'ENOENT'
+      ? 'binary not found on PATH'
+      : (err as Error | undefined)?.message ?? String(err);
+    this.onWarn(`[zelari-code] ${command} unavailable (LSP tools disabled for ${language}): ${msg}`);
   }
 
   /** Ensure a document is open (or synced) on the server. */

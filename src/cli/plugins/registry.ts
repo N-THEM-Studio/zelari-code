@@ -35,6 +35,7 @@
  */
 
 import { spawnSync } from 'node:child_process';
+import { buildCmdLine } from '../utils/cmdline.js';
 import { resolveBin } from '../diagnostics/engine.js';
 import { defaultPlaywrightLoader } from '../browser/driver.js';
 import { DEFAULT_PROVIDERS } from '../diagnostics/engine.js';
@@ -100,13 +101,21 @@ function detectLocalBin(bin: string): (cwd: string) => Promise<boolean> {
 function detectGlobalBin(bin: string): (_cwd: string) => Promise<boolean> {
   return () => {
     try {
-      // On win32 a bare binary name needs shell:true so .cmd shims resolve;
-      // on POSIX a direct spawn is fine.
-      const res = spawnSync(bin, ['--version'], {
-        stdio: ['ignore', 'pipe', 'ignore'],
-        shell: process.platform === 'win32',
-        timeout: 4000,
-      });
+      const args = ['--version'];
+      // On win32 a bare binary name needs shell:true so .cmd shims resolve,
+      // but passing args array with shell:true is deprecated (DEP0190).
+      // Use buildCmdLine to pre-quote args into a single string.
+      const res =
+        process.platform === 'win32'
+          ? spawnSync(buildCmdLine(bin, args), {
+              stdio: ['ignore', 'pipe', 'ignore'],
+              shell: true,
+              timeout: 4000,
+            })
+          : spawnSync(bin, args, {
+              stdio: ['ignore', 'pipe', 'ignore'],
+              timeout: 4000,
+            });
       return Promise.resolve(res.status === 0 || (res.stdout != null && res.stdout.toString().trim().length > 0 && res.error === undefined));
     } catch {
       return Promise.resolve(false);

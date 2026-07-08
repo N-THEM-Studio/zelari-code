@@ -24,6 +24,7 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { buildCmdLine } from '../utils/cmdline.js';
 import { relativePosix } from '../utils/paths.js';
 
 export type DiagnosticSeverity = 'error' | 'warning' | 'info';
@@ -219,10 +220,11 @@ const defaultRunner: Runner = (cmd, args, opts) =>
     let child: ReturnType<typeof spawn>;
     try {
       // shell:true on win32 so `.cmd` shims (eslint.cmd) resolve; POSIX runs
-      // the binary directly.
+      // the binary directly. Use buildCmdLine to quote args instead of naive
+      // join, since passing args array with shell:true is deprecated (DEP0190).
       child =
         process.platform === 'win32'
-          ? spawn(`${cmd} ${args.join(' ')}`, { cwd: opts.cwd, shell: true })
+          ? spawn(buildCmdLine(cmd, args), { cwd: opts.cwd, shell: true })
           : spawn(cmd, args as string[], { cwd: opts.cwd });
     } catch {
       // Binary genuinely not launchable — treat as "no diagnostics".
