@@ -62,11 +62,20 @@ export interface PickerItem {
 }
 
 export interface PickerRequest {
-  kind: 'provider' | 'model';
+  kind: 'provider' | 'model' | 'clarification';
   title: string;
   items: PickerItem[];
-  /** Slash command the selected value is dispatched through. */
-  commandPrefix: string;
+  /** Slash command the selected value is dispatched through (provider/model). */
+  commandPrefix?: string;
+  /**
+   * v1.6.0: for kind 'clarification' — invoked with the chosen value when
+   * the user picks an option from an agent-posed clarifying question. The
+   * selected text flows into dispatchPrompt as the next user turn, and
+   * rolling history (see useChatTurn historyRef) ensures the model sees
+   * its own question, so the answer binds correctly. Absent for
+   * provider/model kinds (those use commandPrefix).
+   */
+  onAnswer?: (value: string) => void;
 }
 
 export type OpenPicker = (req: PickerRequest) => void;

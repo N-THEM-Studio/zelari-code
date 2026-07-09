@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from "react";
 import type { ChatMessage } from "../components/ChatStream.js";
 import { AgentHarness } from "@zelari/core/harness";
+import type { AgentMessage } from "@zelari/core/harness";
 import { SessionJsonlWriter } from "@zelari/core/harness";
 import { MetricsLogger, getMetricsLogger } from "../metrics.js";
 import { calculateCost } from "../modelPricing.js";
@@ -23,6 +24,10 @@ import {
   SINGLE_AGENT_IDENTITY_MODULE,
 } from "@zelari/core/skills";
 import {
+  parseClarificationRequest,
+  cleanAgentContent,
+} from "@zelari/core";
+import {
   appendOrExtendStreamingAssistant,
   appendSystem,
   appendToolStart,
@@ -36,6 +41,7 @@ import {
   completeTool,
   type LiveState,
 } from "./chatState.js";
+import { compactHistory } from "./historyCompaction.js";
 import type { ProviderName } from "../keyStore.js";
 import { computeSessionStatsDelta } from "./chatStats.js";
 
@@ -85,6 +91,13 @@ export interface UseChatTurnParams {
   setLive?: React.Dispatch<React.SetStateAction<LiveState>>;
   /** Always-current live snapshot for non-reactive event-loop reads. */
   liveRef?: React.MutableRefObject<LiveState>;
+  /**
+   * v1.6.0: opens an interactive picker when the agent poses a clarifying
+   * question (---QUESTION--- block). Optional — when omitted (tests), the
+   * question is still visible as text and rolling history alone ensures the
+   * user's typed answer binds to the question on the next turn.
+   */
+  setPicker?: (req: import("../slashHandlers/provider.js").PickerRequest) => void;
 }
 
 export interface UseChatTurnResult {
@@ -110,9 +123,19 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
     setSessionStats,
     setLive,
     liveRef,
+    setPicker,
   } = params;
   const harnessRef = useRef<AgentHarness | null>(null);
   const [queueCount, setQueueCount] = useState<number>(0);
+  // v1.6.0: rolling conversation history. The single-agent loop was
+  // stateless across turns — each dispatchPrompt rebuilt
+  // messages:[{system},{user}] from scratch, so the model never saw its
+  // own prior question when the user answered with a short reply ("full",
+  // "sì", "la seconda"). This ref carries prior turns forward: the seed
+  // for turn N is [system, ...history, user_N], and after the run we
+  // snapshot the assistant+tool tail the harness accumulated and append
+  // it here for turn N+1. Capped by compactHistory() (ZELARI_HISTORY_TURNS).
+  const historyRef = useRef<AgentMessage[]>([]);
 
   // v0.7.0: when the live region is wired, streaming + tool events route
   // there; otherwise we fall back to the v0.6 single-array behavior so the
@@ -143,7 +166,23 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       // feedback instead of an actionable error message.
       let envConfig: Awaited<ReturnType<typeof providerFromEnv>>;
       let harness: AgentHarness;
+      // v1.6.0: length of the history seed actually passed to the harness.
+      // Captured here (after compaction) so the finally block can slice off
+      // exactly the seed and keep only this turn's newly-appended tail.
+      let historySeedLen = 0;
+      // v1.6.0: set true only after the stream loop completes without
+      // throwing, so the finally snapshot is skipped on error (a failed
+      // turn — provider 500, abort — must not pollute rolling history
+      // with a partial assistant tail).
+      let turnSucceeded = false;
       try {
+        // v1.6.0: trim rolling history before seeding the next turn. No-op
+        // (returns the same ref) under the cap; replaces the array when it
+        // exceeds 2× ZELARI_HISTORY_TURNS. When the env var is 0 the cap
+        // resolves to [] and the loop degrades to the pre-1.6 stateless
+        // [system, user] behavior.
+        historyRef.current = compactHistory(historyRef.current);
+        historySeedLen = historyRef.current.length;
         envConfig = await providerFromEnv();
         if (!envConfig) {
           // Name the ACTIVE provider — the old hardcoded "OPENAI_API_KEY not
@@ -382,6 +421,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           provider: "openai-compatible",
           messages: [
             { role: "system", content: systemPrompt },
+            // v1.6.0: seed prior turns so the model sees its own last
+            // question when the user answers briefly. historyRef.current
+            // is compacted above (possibly empty if ZELARI_HISTORY_TURNS=0).
+            ...historyRef.current,
             { role: "user", content: userText },
           ],
           tools: toolRegistry.toOpenAITools().map((t) => ({
@@ -539,12 +582,73 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               }
             }
           }
+          turnSucceeded = true;
         } finally {
           // Drain any buffered streaming deltas so the final assistant message
           // is committed before busy flips to false (and the input re-enables).
           flushStreaming();
           if (useLiveModel) finalizeStreaming(setMessages, setLive!);
           else finalizeStreamingAssistant(setMessages);
+          // v1.6.0: snapshot this turn's tail (assistant text + tool_calls +
+          // tool results that harness.run() appended) so the NEXT turn sees
+          // them as history. The seed we passed was
+          // [system, ...historySeed, user], so the tail is everything after
+          // that prefix. We snapshot BEFORE nulling harnessRef. Skipped on
+          // error (turnSucceeded is false) — a failed turn doesn't pollute
+          // history with a partial assistant tail.
+          try {
+            const h = harnessRef.current;
+            if (h && turnSucceeded) {
+              const all = h.getMessages();
+              const seedLen = 1 /*system*/ + historySeedLen + 1 /*user*/;
+              if (all.length > seedLen) {
+                historyRef.current = historyRef.current.concat(
+                  all.slice(seedLen),
+                );
+              }
+            }
+          } catch {
+            // Non-fatal: a snapshot failure must never break the turn.
+          }
+          // v1.6.0: if the assistant ended its turn by posing a clarifying
+          // question (---QUESTION--- block), parse it and open the picker so
+          // the user can pick from the offered choices. Rolling history
+          // (above) already guarantees the model sees its own question next
+          // turn, so the binding works whether the user picks or types. The
+          // picker is purely ergonomic. Skipped when setPicker is unset
+          // (tests) or the run failed.
+          if (turnSucceeded && setPicker && assistantContent) {
+            try {
+              const clar = parseClarificationRequest(assistantContent);
+              if (clar && clar.choices && clar.choices.length >= 2) {
+                // Strip the raw ---QUESTION--- block from the finalized
+                // assistant message so the display shows prose, not JSON.
+                const cleaned = cleanAgentContent(assistantContent);
+                if (cleaned !== assistantContent) {
+                  setMessages((prev) => {
+                    const next = [...prev];
+                    for (let i = next.length - 1; i >= 0; i--) {
+                      if (next[i].role === "assistant") {
+                        next[i] = { ...next[i], content: cleaned };
+                        break;
+                      }
+                    }
+                    return next;
+                  });
+                }
+                setPicker({
+                  kind: "clarification",
+                  title: clar.question,
+                  items: clar.choices.map((c) => ({ value: c, label: c })),
+                  onAnswer: (value: string) => {
+                    void dispatchPrompt(value);
+                  },
+                });
+              }
+            } catch {
+              // Parsing/picker failure must never break the turn.
+            }
+          }
           harnessRef.current = null;
           setQueueCount(0);
           setBusy(false);

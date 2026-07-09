@@ -137,6 +137,10 @@ export function App(): React.ReactElement {
     setSessionStats,
     setLive: session.setLive,
     liveRef: session.liveRef,
+    // v1.6.0: lets dispatchPrompt open a SelectList when the agent poses a
+    // ---QUESTION--- clarifying block, so the user picks from the offered
+    // choices instead of typing (and the answer binds via rolling history).
+    setPicker,
   });
 
   // /new callback: close the old writer, open a new one for the new id.
@@ -187,11 +191,18 @@ export function App(): React.ReactElement {
 
   // Picker selection re-enters the normal slash pipeline ('/provider <id>' /
   // '/model <id>') so persistence, config refresh and the system message all
-  // come from the same code path as a typed command.
+  // come from the same code path as a typed command. For kind 'clarification'
+  // (v1.6.0) the selected value is the user's answer to an agent-posed
+  // question — it flows through onAnswer → dispatchPrompt, and rolling
+  // history ensures the model re-sees its own question.
   const onPickerSelect = useCallback((value: string) => {
     if (!picker) return;
-    const cmd = `${picker.commandPrefix} ${value}`;
     setPicker(null);
+    if (picker.kind === 'clarification') {
+      picker.onAnswer?.(value);
+      return;
+    }
+    const cmd = `${picker.commandPrefix} ${value}`;
     void handleSubmit(cmd);
   }, [picker, handleSubmit]);
   const onPickerCancel = useCallback(() => setPicker(null), []);

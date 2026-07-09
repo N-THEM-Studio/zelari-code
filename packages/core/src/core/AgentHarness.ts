@@ -190,12 +190,33 @@ export class AgentHarness {
   }
 
   /**
+   * Snapshot of the live transcript (`this.config.messages`) as mutated
+   * across `run()` iterations — the seed passed at construction plus any
+   * assistant turns (with `toolCalls`) and tool results the loop appended.
+   *
+   * Used by the single-agent chat loop to carry rolling history across
+   * turns: after a run completes, the caller reads the tail of this array
+   * (the assistant/tool messages produced this turn) and feeds it back as
+   * the seed for the next turn, so the model sees its own prior question
+   * when the user answers with a short reply.
+   *
+   * The returned reference is the live array — callers MUST treat it as
+   * read-only (do not mutate). Copy (`[...harness.getMessages()]`) before
+   * retaining across runs.
+   *
+   * @since v1.6.0
+   */
+  getMessages(): readonly AgentMessage[] {
+    return this.config.messages;
+  }
+
+  /**
    * Member identity fields (memberId + memberName) to merge into every
    * event payload. Returns an empty object when the run is a direct
    * user prompt (no member context), so call sites can spread it
    * unconditionally.
    *
-   * @since 0.5.0
+   * @since v0.5.0
    */
   private memberFields(): { memberId?: string; memberName?: string } {
     return {

@@ -1,6 +1,6 @@
 {
   "name": "zelari-code",
-  "version": "1.5.5",
+  "version": "1.6.0",
   "description": "Zelari Code — AI Council coding agent CLI. Multi-agent orchestration (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with slash commands, provider-agnostic LLM streaming, and self-update.",
   "author": "N-THEM Studio",
   "license": "SEE LICENSE IN LICENSE",

@@ -23,24 +23,48 @@ import type { ReactNode } from 'react';
 // AgentHarness mock and the test would never receive any message_delta events).
 // `FakeWriter` is hoisted via vi.hoisted so it's available inside the mock
 // factory (which runs before any module-level statements).
-const { FakeWriter } = vi.hoisted(() => ({
+//
+// v1.6.0: the harness mock is now STATEFUL — it records the messages passed
+// to the constructor, appends the assistant delta it emits, and exposes
+// getMessages() so the rolling-history snapshot in dispatchPrompt can read
+// the tail. `nextAssistantDelta` lets a test override what the next run()
+// streams (defaults to 'hello').
+const { FakeWriter, harnessState } = vi.hoisted(() => ({
   FakeWriter: class FakeWriter {
     append = (..._args: unknown[]) => Promise.resolve();
     close = (..._args: unknown[]) => Promise.resolve();
+  },
+  harnessState: {
+    /** Messages captured from the most recent constructor call. */
+    lastMessages: [] as unknown[],
+    /** Delta the next run() will stream as assistant content. */
+    nextAssistantDelta: 'hello' as string,
   },
 }));
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const _FakeWriter_marker = FakeWriter; // keep reference alive for the mock below
 vi.mock('@zelari/core/harness', () => ({
   AgentHarness: class {
-    run = async function* () {
-      yield { type: 'message_delta', delta: 'hello', ts: Date.now() };
+    private messages: unknown[];
+    constructor(opts: { messages?: unknown[] }) {
+      // Copy so later mutation by the (mocked) run() doesn't alias the caller.
+      this.messages = [...(opts.messages ?? [])];
+      harnessState.lastMessages = this.messages;
+    }
+    getMessages() {
+      return this.messages;
+    }
+    run = async function* (this: { messages: unknown[] }) {
+      const delta = harnessState.nextAssistantDelta;
+      // Simulate the real harness: append the assistant turn to the transcript
+      // so getMessages() reflects what the snapshot reads post-run.
+      this.messages.push({ role: 'assistant', content: delta });
+      yield { type: 'message_delta', delta, ts: Date.now() };
       yield { type: 'agent_end', reason: 'stop', durationMs: 100, ts: Date.now() };
     };
     queueLength = 0;
     enqueue = vi.fn();
     cancel = vi.fn();
-    constructor(_opts: unknown) {}
   },
   SessionJsonlWriter: FakeWriter,
 }));
@@ -361,5 +385,225 @@ describe('useChatTurn (v0.4.3 audit coverage)', () => {
 
     // buildPlanSummary (default mock) returns null → no workspace registry.
     expect(createWorkspaceToolRegistry).not.toHaveBeenCalled();
+  });
+});
+
+// ─── v1.6.0: rolling conversation history ──────────────────────────────
+// The single-agent loop was stateless across turns (rebuilt
+// [system, user] each turn). The fix carries prior turns forward so the
+// model sees its own question when the user answers briefly.
+describe('useChatTurn — rolling history (v1.6.0)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    // Reset the harness mock's delta between sub-tests.
+    harnessState.nextAssistantDelta = 'hello';
+    harnessState.lastMessages = [];
+  });
+
+  it('carries the prior turn forward: turn 2 sees [system, <assistant turn1>, user turn2]', async () => {
+    const w = makeWrapper();
+    const { result } = renderHook(() =>
+      useChatTurn({
+        sessionId: 'history-session',
+        writerRef: w.writerRef,
+        setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
+        setBusy: w.setBusy,
+        setSessionActive: w.setSessionActive,
+        setSessionStats: w.setSessionStats,
+      }),
+    );
+
+    // Turn 1: assistant says "hello".
+    harnessState.nextAssistantDelta = 'turn1-answer';
+    await act(async () => {
+      await result.current.dispatchPrompt('turn1-question');
+    });
+
+    // Turn 2: the harness must be seeded with turn 1's assistant output.
+    harnessState.nextAssistantDelta = 'turn2-answer';
+    await act(async () => {
+      await result.current.dispatchPrompt('turn2-question');
+    });
+
+    // harnessState.lastMessages = what the constructor got on turn 2:
+    // [system, <assistant "turn1-answer">, user "turn2-question"]
+    const msgs = harnessState.lastMessages as Array<{ role: string; content: string }>;
+    expect(msgs.length).toBeGreaterThanOrEqual(3);
+    expect(msgs[0].role).toBe('system');
+    // The carried assistant turn must be present.
+    const carriedAssistant = msgs.find(
+      (m) => m.role === 'assistant' && m.content === 'turn1-answer',
+    );
+    expect(carriedAssistant).toBeDefined();
+    // The current user prompt must be present.
+    const currentUser = msgs.find(
+      (m) => m.role === 'user' && m.content === 'turn2-question',
+    );
+    expect(currentUser).toBeDefined();
+  });
+
+  it('binds a short answer to a prior clarifying question via carried history', async () => {
+    // Simulates the reported bug: agent asks a question with choices
+    // [Minimal, Standard, Full, Scaffold]; user answers "full". With rolling
+    // history, turn 2's seed must include turn 1's question text so the model
+    // can bind "full" to the Full choice.
+    const w = makeWrapper();
+    const { result } = renderHook(() =>
+      useChatTurn({
+        sessionId: 'clarify-session',
+        writerRef: w.writerRef,
+        setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
+        setBusy: w.setBusy,
+        setSessionActive: w.setSessionActive,
+        setSessionStats: w.setSessionStats,
+      }),
+    );
+
+    // Turn 1: assistant poses a clarifying question (the ---QUESTION--- block
+    // is part of the streamed assistant content).
+    harnessState.nextAssistantDelta =
+      'Which scope?\n---QUESTION---\n{"question":"scope?","choices":["Minimal","Standard","Full","Scaffold"]}\n---END---';
+    await act(async () => {
+      await result.current.dispatchPrompt('modernize the UI');
+    });
+
+    // Turn 2: user answers "full".
+    harnessState.nextAssistantDelta = 'applying Full scope';
+    await act(async () => {
+      await result.current.dispatchPrompt('full');
+    });
+
+    // The seed for turn 2 must contain the prior assistant turn (with the
+    // question) so the model can bind "full" → Full.
+    const msgs = harnessState.lastMessages as Array<{ role: string; content: string }>;
+    const priorQuestion = msgs.find(
+      (m) => m.role === 'assistant' && m.content.includes('---QUESTION---'),
+    );
+    expect(priorQuestion).toBeDefined();
+    const answer = msgs.find((m) => m.role === 'user' && m.content === 'full');
+    expect(answer).toBeDefined();
+  });
+
+  it('does not pollute history when a turn errors (failed turn snapshot skipped)', async () => {
+    const { providerFromEnv } = await import(
+      '../../src/cli/provider/openai-compatible.js'
+    );
+    const w = makeWrapper();
+    const { result } = renderHook(() =>
+      useChatTurn({
+        sessionId: 'err-session',
+        writerRef: w.writerRef,
+        setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
+        setBusy: w.setBusy,
+        setSessionActive: w.setSessionActive,
+        setSessionStats: w.setSessionStats,
+      }),
+    );
+
+    // Turn 1 succeeds.
+    harnessState.nextAssistantDelta = 'good-answer';
+    await act(async () => {
+      await result.current.dispatchPrompt('q1');
+    });
+
+    // Turn 2 fails at provider resolution (before the harness runs).
+    vi.mocked(providerFromEnv).mockRejectedValueOnce(new Error('boom'));
+    await act(async () => {
+      await result.current.dispatchPrompt('q2');
+    });
+
+    // Turn 3 succeeds — its seed must NOT contain a phantom turn-2 assistant
+    // message (the failed turn must not have snapshotted anything).
+    harnessState.nextAssistantDelta = 'q3-answer';
+    await act(async () => {
+      await result.current.dispatchPrompt('q3');
+    });
+
+    const msgs = harnessState.lastMessages as Array<{ role: string; content: string }>;
+    // The seed for turn 3 = [system, <assistant "good-answer"> (carried from
+    // turn 1), user "q3", <assistant "q3-answer"> (appended by this run)].
+    // Crucially, there must be NO assistant message from the failed turn 2 —
+    // the snapshot was skipped, so turn 2's "would-be" output is absent.
+    const assistantContents = msgs
+      .filter((m) => m.role === 'assistant')
+      .map((m) => m.content);
+    expect(assistantContents).toContain('good-answer');
+    expect(assistantContents).toContain('q3-answer');
+    // Exactly two assistants: turn 1's (carried) + turn 3's (current). No
+    // phantom turn-2 output.
+    expect(assistantContents.length).toBe(2);
+  });
+
+  it('opens the clarification picker when the agent emits a ---QUESTION--- block', async () => {
+    // v1.6.0: when the assistant's turn ends with a clarifying question
+    // (---QUESTION--- {json} ---END---), dispatchPrompt must parse it and
+    // call setPicker with kind 'clarification' + the offered choices.
+    const w = makeWrapper();
+    const pickerCalls: unknown[] = [];
+    const { result } = renderHook(() =>
+      useChatTurn({
+        sessionId: 'picker-session',
+        writerRef: w.writerRef,
+        setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
+        setBusy: w.setBusy,
+        setSessionActive: w.setSessionActive,
+        setSessionStats: w.setSessionStats,
+        setPicker: (req: unknown) => pickerCalls.push(req),
+      }),
+    );
+
+    harnessState.nextAssistantDelta =
+      'Which scope do you want?\n---QUESTION---\n{"question":"What scope?","choices":["Minimal","Standard","Full"],"context":"pick one"}\n---END---';
+    await act(async () => {
+      await result.current.dispatchPrompt('modernize the UI');
+    });
+
+    expect(pickerCalls.length).toBe(1);
+    const req = pickerCalls[0] as {
+      kind: string;
+      title: string;
+      items: { value: string; label: string }[];
+      onAnswer?: (v: string) => void;
+    };
+    expect(req.kind).toBe('clarification');
+    expect(req.title).toBe('What scope?');
+    expect(req.items.map((i) => i.value)).toEqual(['Minimal', 'Standard', 'Full']);
+    expect(typeof req.onAnswer).toBe('function');
+  });
+
+  it('does NOT open the picker when the assistant asks a question with <2 choices', async () => {
+    // The protocol allows 2-4 choices. A block with only 1 choice (or none)
+    // is malformed and should not trigger the picker — the user just types.
+    const w = makeWrapper();
+    const pickerCalls: unknown[] = [];
+    const { result } = renderHook(() =>
+      useChatTurn({
+        sessionId: 'no-picker-session',
+        writerRef: w.writerRef,
+        setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
+        setBusy: w.setBusy,
+        setSessionActive: w.setSessionActive,
+        setSessionStats: w.setSessionStats,
+        setPicker: (req: unknown) => pickerCalls.push(req),
+      }),
+    );
+
+    harnessState.nextAssistantDelta =
+      'hmm\n---QUESTION---\n{"question":"only one?","choices":["lonely"]}\n---END---';
+    await act(async () => {
+      await result.current.dispatchPrompt('test');
+    });
+
+    expect(pickerCalls.length).toBe(0);
   });
 });

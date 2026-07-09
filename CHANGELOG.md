@@ -5,6 +5,19 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-07-09
+
+### Fixed
+- **Single-agent lost all conversation context between turns** — the root cause of the "clarifying question forgotten" bug. Every `dispatchPrompt` rebuilt `messages: [{system}, {user}]` from scratch (`useChatTurn.ts:383-386`), so the assistant turn from the previous turn — including any `---QUESTION---` clarifying block — never reached the provider on the next turn. The model had no way to bind a short reply ("full", "sì", "la seconda", "ancora") to its own prior question, so it treated the answer as a new ambiguous request. This was not a matching bug (there was no matcher: the `---QUESTION---` block is a text convention, and `parseClarificationRequest` was only called in the council path). It was a structural statelessness: the transcript was rebuilt from scratch each turn, with prior turns living only in the React display state and the JSONL sidecar (both write-only w.r.t. the provider). v1.6.0 adds an in-memory `AgentMessage[]` accumulator (`historyRef`) that carries prior turns forward: the seed for turn N is `[system, ...history, user_N]`, and after the run the assistant+tool tail is snapshotted for turn N+1. The "glasmorphism" answer in the bug report matched by semantic coincidence (rare word); "full" failed because, without the question in context, a common word has no anchor.
+
+### Added
+- **Rolling-history compaction with atomic tool-chain drop** (`src/cli/hooks/historyCompaction.ts`) — left unchecked, the accumulator grows without bound. `compactHistory()` trims it on a count basis (default `ZELARI_HISTORY_TURNS=6`, `0` disables → pre-1.6.0 stateless behavior, garbage falls back to the default rather than silently disabling). The hard invariant: it never splits an `assistant(tool_calls) → tool(result)` chain — a naive cut landing between the two is extended backward to include the whole chain, because strict providers (MiniMax/GLM) return HTTP 400 for an orphaned `role:'tool'` without its declaring assistant (the `core-agentHarness-toolResultOrder` regression). A `[history]` marker is prepended when messages are dropped.
+- **Clarifying-question picker** — when the assistant ends a turn with a `---QUESTION---` block, `dispatchPrompt` now parses it (reusing `parseClarificationRequest`/`cleanAgentContent` from `@zelari/core`) and opens the existing `SelectList` picker (`PickerRequest.kind: 'clarification'`) so the user picks from the offered choices instead of typing. The raw JSON block is stripped from the display. Esc cancels the picker → free-text fallback, which still binds correctly because rolling history (above) now lets the model see its own question. The picker is ergonomic; rolling history is the actual fix.
+- **`AgentHarness.getMessages()`** — public getter exposing the live transcript the harness accumulates during `run()`, so the chat loop can snapshot the turn's tail. Read-only contract; callers copy before retaining.
+
+### Changed
+- **`PickerRequest.commandPrefix` is now optional** — `kind: 'clarification'` uses an `onAnswer` callback instead of the slash-command `commandPrefix`. Existing `/provider` and `/model` pickers are unchanged.
+
 ## [1.5.5] - 2026-07-08
 
 ### Fixed
