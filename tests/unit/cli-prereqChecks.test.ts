@@ -80,7 +80,20 @@ vi.mock("node:fs", async (importOriginal) => {
       if (scenario.bashPathExists === false) return false;
       // Standard bash paths: only "exist" if the scenario sets them.
       if (typeof p === "string" && p.includes("bash.exe")) {
-        return scenario.env?.ZELARI_SHELL === p || scenario.env?.SHELL === p;
+        if (scenario.env?.ZELARI_SHELL === p || scenario.env?.SHELL === p) {
+          return true;
+        }
+        // `where bash` hits must "exist" so the resolver reaches the WSL filter
+        // (production: System32\bash.exe exists; without this the mock would
+        // skip them before isWslBashPath runs).
+        if (scenario.whereBash?.status === 0 && scenario.whereBash.stdout) {
+          const hits = scenario.whereBash.stdout
+            .split(/\r?\n/)
+            .map((l) => l.trim())
+            .filter(Boolean);
+          if (hits.includes(p) || hits.includes(p.trim())) return true;
+        }
+        return false;
       }
       return actual.existsSync(p);
     }),
@@ -248,6 +261,56 @@ describe("prereqChecks — agent-shell-aware probes", () => {
     const { checkAgentBash } = await importFresh();
     const r = checkAgentBash();
     expect(r.ok).toBe(true);
+  });
+
+  it("rejects WSL System32 bash from `where bash` and falls back to cmd.exe", async () => {
+    // Production bug (v1.4.0+): without Git for Windows, `where bash` returns
+    // C:\Windows\System32\bash.exe (WSL). Preflight then fails node inside
+    // Linux while Windows node is fine. WSL must never be the agent shell.
+    applyScenario({
+      platform: "win32",
+      whereBash: {
+        stdout: "C:\\Windows\\System32\\bash.exe\r\nC:\\Users\\x\\AppData\\Local\\Microsoft\\WindowsApps\\bash.exe\r\n",
+        status: 0,
+      },
+      // cmd.exe probe (execSync) finds node:
+      mainProbe: { stdout: "v20.11.1\n" },
+    });
+    const { checkAgentBash, checkAgentNode, runPrereqChecks, isWslBashPath } =
+      await importFresh();
+
+    expect(isWslBashPath("C:\\Windows\\System32\\bash.exe")).toBe(true);
+    expect(
+      isWslBashPath(
+        "C:\\Users\\x\\AppData\\Local\\Microsoft\\WindowsApps\\bash.exe",
+      ),
+    ).toBe(true);
+    expect(isWslBashPath("C:\\Program Files\\Git\\bin\\bash.exe")).toBe(false);
+
+    const bash = checkAgentBash();
+    expect(bash.ok).toBe(false);
+    expect(bash.severity).toBe("warn");
+    expect(bash.message.toLowerCase()).toContain("git bash");
+
+    const node = checkAgentNode();
+    expect(node.ok).toBe(true);
+    expect(node.message).toContain("20.11.1");
+
+    const run = runPrereqChecks({ mode: "preflight" });
+    expect(run.hasCriticalFail).toBe(false);
+  });
+
+  it("rejects ZELARI_SHELL pointing at WSL bash (falls through to cmd)", async () => {
+    applyScenario({
+      platform: "win32",
+      env: { ZELARI_SHELL: "C:\\Windows\\System32\\bash.exe" },
+      bashPathExists: true,
+      whereBash: { stdout: "", status: 1 },
+      mainProbe: { stdout: "v22.0.0\n" },
+    });
+    const { checkAgentBash, checkAgentNode } = await importFresh();
+    expect(checkAgentBash().ok).toBe(false);
+    expect(checkAgentNode().ok).toBe(true);
   });
 });
 

@@ -59,6 +59,35 @@ let memoized: ResolvedShell | null = null;
 let warnedFallback = false;
 
 /**
+ * True when `p` is the Windows Subsystem for Linux bash *launcher*, not Git Bash.
+ *
+ * `where bash` on a machine without Git for Windows often returns
+ * `C:\Windows\System32\bash.exe` (or the WindowsApps stub). That binary enters
+ * a Linux distro with a Linux PATH — Windows `node`/`npm` are invisible, so the
+ * agent cannot run builds. Never treat WSL as the agent shell.
+ *
+ * Kept in lockstep with `src/cli/utils/prereqChecks.ts`.
+ */
+export function isWslBashPath(p: string): boolean {
+  if (!p || typeof p !== 'string') return false;
+  // Normalize separators + case for win32 path matching.
+  const n = p.replace(/\//g, '\\').toLowerCase();
+  if (n.includes('\\windows\\system32\\bash.exe')) return true;
+  if (n.includes('\\windows\\syswow64\\bash.exe')) return true;
+  if (n.includes('\\windowsapps\\bash.exe')) return true;
+  return false;
+}
+
+/** Accept only a real (non-WSL) bash path that exists on disk. */
+function acceptBashPath(p: string | undefined | null): string | null {
+  if (!p || p.trim().length === 0) return null;
+  const trimmed = p.trim();
+  if (isWslBashPath(trimmed)) return null;
+  if (!existsSyncSafe(trimmed)) return null;
+  return trimmed;
+}
+
+/**
  * Resolve the shell to use for command execution. Memoized per-process.
  *
  * @param forceReResolve bypass the memo (for tests).
@@ -95,30 +124,30 @@ export function resolveShell(forceReResolve = false): ResolvedShell {
 
 /** Detection chain for a bash binary on win32. Returns the path or null. */
 function resolveBashWindows(): string | null {
-  // 1. Explicit override.
-  const envShell = process.env.ZELARI_SHELL;
-  if (envShell && envShell.trim().length > 0 && existsSyncSafe(envShell)) {
-    return envShell;
-  }
+  // 1. Explicit override (WSL launchers rejected — see isWslBashPath).
+  const fromEnv = acceptBashPath(process.env.ZELARI_SHELL);
+  if (fromEnv) return fromEnv;
 
   // 2. SHELL env var (set by Git Bash / MSYS2 sessions).
-  const sessionShell = process.env.SHELL;
-  if (sessionShell && sessionShell.trim().length > 0 && existsSyncSafe(sessionShell)) {
-    return sessionShell;
-  }
+  const fromSession = acceptBashPath(process.env.SHELL);
+  if (fromSession) return fromSession;
 
   // 3. Standard install paths.
   for (const p of STANDARD_BASH_PATHS) {
-    if (existsSyncSafe(p)) return p;
+    const accepted = acceptBashPath(p);
+    if (accepted) return accepted;
   }
 
   // 4. `where bash` — PATH lookup. `where` ships with Windows (a real .exe,
   // so no shell needed — and shell:true + args array is deprecated, DEP0190).
+  // Skip WSL launchers; prefer a later non-WSL hit if any.
   try {
     const result = spawnSync('where', ['bash'], { encoding: 'utf-8', windowsHide: true });
     if (result.status === 0 && result.stdout) {
-      const first = result.stdout.split(/\r?\n/).find((l) => l.trim().length > 0);
-      if (first && existsSyncSafe(first)) return first.trim();
+      for (const line of result.stdout.split(/\r?\n/)) {
+        const accepted = acceptBashPath(line);
+        if (accepted) return accepted;
+      }
     }
   } catch {
     // `where` not available or failed — fall through to null.

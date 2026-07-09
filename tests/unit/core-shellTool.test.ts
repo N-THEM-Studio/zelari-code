@@ -6,7 +6,11 @@
  * env to drive the detection chain without requiring a real bash binary.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { resolveShell, _resetShellResolverForTests } from '@zelari/core/harness/tools/builtin/shellResolver';
+import {
+  resolveShell,
+  _resetShellResolverForTests,
+  isWslBashPath,
+} from '@zelari/core/harness/tools/builtin/shellResolver';
 import { bashTool } from '@zelari/core/harness/tools/builtin/shell';
 
 describe('resolveShell — platform branching (v0.7.2)', () => {
@@ -88,6 +92,41 @@ describe('resolveShell — platform branching (v0.7.2)', () => {
     const a = resolveShell(true);
     const b = resolveShell(); // not forced
     expect(b).toBe(a);
+  });
+
+  it('isWslBashPath detects System32 / WindowsApps launchers, not Git Bash', () => {
+    expect(isWslBashPath('C:\\Windows\\System32\\bash.exe')).toBe(true);
+    expect(isWslBashPath('C:/Windows/System32/bash.exe')).toBe(true);
+    expect(isWslBashPath('C:\\Windows\\SysWOW64\\bash.exe')).toBe(true);
+    expect(
+      isWslBashPath(
+        'C:\\Users\\andre\\AppData\\Local\\Microsoft\\WindowsApps\\bash.exe',
+      ),
+    ).toBe(true);
+    expect(isWslBashPath('C:\\Program Files\\Git\\bin\\bash.exe')).toBe(false);
+    expect(isWslBashPath('D:\\Git\\usr\\bin\\bash.exe')).toBe(false);
+    expect(isWslBashPath('')).toBe(false);
+  });
+
+  it('win32: ZELARI_SHELL set to WSL bash is rejected (falls through)', () => {
+    setPlatform('win32');
+    // WSL launcher exists on this host when WSL is installed; if not, the
+    // override is still rejected by isWslBashPath before existsSync matters.
+    vi.stubEnv('ZELARI_SHELL', 'C:\\Windows\\System32\\bash.exe');
+    vi.stubEnv('SHELL', '');
+    const r = resolveShell(true);
+    // Must not claim WSL as a real Git-Bash agent shell.
+    if (typeof r.shell === 'string') {
+      expect(isWslBashPath(r.shell)).toBe(false);
+    }
+    // Either a non-WSL bash (Git) or cmd.exe fallback.
+    if (r.via === 'cmd.exe') {
+      expect(r.isBash).toBe(false);
+    } else {
+      expect(r.isBash).toBe(true);
+      expect(r.via.toLowerCase()).not.toContain('system32');
+      expect(r.via.toLowerCase()).not.toContain('windowsapps');
+    }
   });
 });
 

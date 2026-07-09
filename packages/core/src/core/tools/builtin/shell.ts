@@ -1,7 +1,30 @@
 import { z } from 'zod';
 import { spawn } from 'node:child_process';
+import { dirname } from 'node:path';
 import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
 import { resolveShell } from './shellResolver.js';
+
+/**
+ * Ensure the directory of the running node binary is on PATH so agent shell
+ * commands (npm, tsc, node) resolve even when Git Bash inherits a thinner Path.
+ */
+function withNodeDirOnPath(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base };
+  try {
+    const nodeDir = dirname(process.execPath);
+    if (!nodeDir) return env;
+    const sep = process.platform === 'win32' ? ';' : ':';
+    const current = env.PATH ?? env.Path ?? '';
+    const parts = current.split(sep).filter((p) => p.length > 0);
+    const has = parts.some((p) => p.toLowerCase() === nodeDir.toLowerCase());
+    if (!has) {
+      env.PATH = `${nodeDir}${sep}${current}`;
+    }
+  } catch {
+    // best-effort
+  }
+  return env;
+}
 
 const BashArgsSchema = z.object({
   command: z.string().min(1),
@@ -62,7 +85,10 @@ export const bashTool: ToolDefinition<BashArgs, BashResult> = {
       // into non-interactive mode; stdin 'ignore' makes the rest fail FAST
       // with EOF instead of hanging on a prompt until the timeout (live test:
       // `npm create vite` in a non-empty dir prompted → "Operation cancelled").
-      const baseEnv = { ...process.env, CI: process.env.CI ?? '1' };
+      const baseEnv = withNodeDirOnPath({
+        ...process.env,
+        CI: process.env.CI ?? '1',
+      });
       const env = resolved.isBash
         ? { ...baseEnv, MSYSTEM: process.env.MSYSTEM ?? 'MINGW64' }
         : baseEnv;

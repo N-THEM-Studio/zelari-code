@@ -36,6 +36,7 @@
 
 import { execSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
+import { dirname } from "node:path";
 
 /** Minimum Node major version (mirrors `engines.node` ">=20.0.0" in package.json). */
 const MIN_NODE_MAJOR = 20;
@@ -68,15 +69,39 @@ interface AgentShell {
 }
 
 /**
+ * True when `p` is the WSL bash launcher, not Git Bash.
+ * Must stay in lockstep with `shellResolver.isWslBashPath`.
+ *
+ * @see packages/core/src/core/tools/builtin/shellResolver.ts
+ */
+export function isWslBashPath(p: string): boolean {
+  if (!p || typeof p !== "string") return false;
+  const n = p.replace(/\//g, "\\").toLowerCase();
+  if (n.includes("\\windows\\system32\\bash.exe")) return true;
+  if (n.includes("\\windows\\syswow64\\bash.exe")) return true;
+  if (n.includes("\\windowsapps\\bash.exe")) return true;
+  return false;
+}
+
+/** Accept only a real (non-WSL) bash path that exists on disk. */
+function acceptBashPath(p: string | undefined | null): string | null {
+  if (!p || p.trim().length === 0) return null;
+  const trimmed = p.trim();
+  if (isWslBashPath(trimmed)) return null;
+  if (!existsSyncSafe(trimmed)) return null;
+  return trimmed;
+}
+
+/**
  * Resolve the shell the agent will use — SYNC version of `resolveShell()`.
  *
  * Replicated (not imported) so this module has no runtime dependency on
  * @zelari/core. The detection order MUST stay in lockstep with
  * `packages/core/src/core/tools/builtin/shellResolver.ts:resolveBashWindows`:
- *   1. ZELARI_SHELL env var (explicit override)
- *   2. SHELL env var (set by Git Bash / MSYS2 sessions)
+ *   1. ZELARI_SHELL env var (explicit override; WSL rejected)
+ *   2. SHELL env var (set by Git Bash / MSYS2 sessions; WSL rejected)
  *   3. Standard Git for Windows install paths (existsSync probe)
- *   4. `where bash` (PATH lookup)
+ *   4. `where bash` (PATH lookup; skip WSL launchers)
  *   5. Fallback: cmd.exe on win32, /bin/sh on POSIX
  */
 function resolveAgentShellSync(): AgentShell {
@@ -86,45 +111,46 @@ function resolveAgentShellSync(): AgentShell {
   }
 
   // 1. Explicit override.
-  const envShell = process.env.ZELARI_SHELL;
-  if (envShell && envShell.trim().length > 0 && existsSyncSafe(envShell)) {
-    return { bashPath: envShell, isBash: true, via: `bash (${envShell})` };
+  const fromEnv = acceptBashPath(process.env.ZELARI_SHELL);
+  if (fromEnv) {
+    return { bashPath: fromEnv, isBash: true, via: `bash (${fromEnv})` };
   }
 
   // 2. SHELL env var (Git Bash / MSYS2 sessions).
-  const sessionShell = process.env.SHELL;
-  if (
-    sessionShell &&
-    sessionShell.trim().length > 0 &&
-    existsSyncSafe(sessionShell)
-  ) {
+  const fromSession = acceptBashPath(process.env.SHELL);
+  if (fromSession) {
     return {
-      bashPath: sessionShell,
+      bashPath: fromSession,
       isBash: true,
-      via: `bash (${sessionShell})`,
+      via: `bash (${fromSession})`,
     };
   }
 
   // 3. Standard install paths.
   for (const p of STANDARD_BASH_PATHS) {
-    if (existsSyncSafe(p)) {
-      return { bashPath: p, isBash: true, via: `bash (${p})` };
+    const accepted = acceptBashPath(p);
+    if (accepted) {
+      return { bashPath: accepted, isBash: true, via: `bash (${accepted})` };
     }
   }
 
   // 4. `where bash` — PATH lookup. `where` ships with Windows as a real .exe.
+  // Skip WSL launchers (System32/WindowsApps); prefer a later non-WSL hit.
   try {
     const result = spawnSync("where", ["bash"], {
       encoding: "utf8",
       windowsHide: true,
     });
     if (result.status === 0 && result.stdout) {
-      const first = result.stdout
-        .split(/\r?\n/)
-        .find((l) => l.trim().length > 0);
-      if (first && existsSyncSafe(first)) {
-        const trimmed = first.trim();
-        return { bashPath: trimmed, isBash: true, via: `bash (${trimmed})` };
+      for (const line of result.stdout.split(/\r?\n/)) {
+        const accepted = acceptBashPath(line);
+        if (accepted) {
+          return {
+            bashPath: accepted,
+            isBash: true,
+            via: `bash (${accepted})`,
+          };
+        }
       }
     }
   } catch {
@@ -133,6 +159,31 @@ function resolveAgentShellSync(): AgentShell {
 
   // 5. Fallback: cmd.exe. POSIX commands (ls, which, $VAR) may fail here.
   return { bashPath: null, isBash: false, via: "cmd.exe" };
+}
+
+/**
+ * Env for agent-shell probes/spawns: ensure the directory that hosts the
+ * running node binary is on PATH (covers "user-only Node install" when the
+ * main process already found node via a richer PATH than Git Bash inherits).
+ */
+function agentProbeEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env };
+  try {
+    const nodeDir = dirname(process.execPath);
+    if (!nodeDir) return env;
+    const sep = process.platform === "win32" ? ";" : ":";
+    const current = env.PATH ?? env.Path ?? "";
+    const parts = current.split(sep).filter((p) => p.length > 0);
+    const has = parts.some(
+      (p) => p.toLowerCase() === nodeDir.toLowerCase(),
+    );
+    if (!has) {
+      env.PATH = `${nodeDir}${sep}${current}`;
+    }
+  } catch {
+    // ignore — best-effort
+  }
+  return env;
 }
 
 /** existsSync that swallows edge-case errors (invalid chars on win32, etc.). */
@@ -156,16 +207,19 @@ function probeTool(
   const shell = resolveAgentShellSync();
   let stdout = "";
 
+  const env = agentProbeEnv();
+
   if (shell.bashPath) {
     // Real bash (win32 Git Bash or explicit ZELARI_SHELL): spawn directly
     // with `-c` so we get the EXACT environment the agent's `bash` tool
     // gets — this is what catches the "node visible to main, invisible to
-    // bash" mismatch.
+    // bash" mismatch. PATH is enriched with dirname(process.execPath).
     try {
       const r = spawnSync(shell.bashPath, ["-c", `${tool} --version`], {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
         windowsHide: true,
+        env,
       });
       if (r.status === 0) stdout = (r.stdout || "").trim();
       // status !== 0 means the tool isn't on bash's PATH (or errored) — leave stdout empty.
@@ -173,11 +227,12 @@ function probeTool(
       // spawn failure (e.g. bashPath stale) — fall through to empty.
     }
   } else if (process.platform === "win32") {
-    // cmd.exe fallback (no Git Bash found). execSync with shell:true → cmd.exe.
+    // cmd.exe fallback (no Git Bash found / WSL-only). shell:true → cmd.exe.
     try {
       stdout = execSync(`${tool} --version`, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
+        env,
       }).trim();
     } catch {
       // not on cmd's PATH either
@@ -188,6 +243,7 @@ function probeTool(
       stdout = execSync(`${tool} --version`, {
         encoding: "utf8",
         stdio: ["ignore", "pipe", "ignore"],
+        env,
       }).trim();
     } catch {
       // ignore
@@ -210,15 +266,26 @@ function probeTool(
 function nodeMissingHint(): string {
   const shell = resolveAgentShellSync();
   if (process.platform === "win32") {
+    if (!shell.isBash) {
+      // cmd.exe fallback still can't see node → genuine missing/broken PATH.
+      return (
+        `node is not reachable from the agent's shell (${shell.via}).\n` +
+        `         Install Node >= ${MIN_NODE_MAJOR} (https://nodejs.org) and ensure it is\n` +
+        `         on PATH, then open a NEW terminal. Optional: install Git for\n` +
+        `         Windows so the agent can use real bash (https://git-scm.com/download/win).`
+      );
+    }
+    // Real Git Bash (or ZELARI_SHELL) selected but node missing inside it.
     return (
       `node is not reachable from the agent's shell (${shell.via}).\n` +
       `         This usually means Node was installed for "current user" only,\n` +
-      `         while Git Bash inherits the SYSTEM Path. Fix (pick one):\n` +
+      `         while Git Bash sees a different Path. Fix (pick one):\n` +
       `           - Reinstall Node (https://nodejs.org) and choose\n` +
       `             "Add to PATH for all users", OR\n` +
-      `           - Add C:\\Program Files\\nodejs\\ to the SYSTEM Path\n` +
-      `             (System Properties → Environment Variables → Path), OR\n` +
-      `           - Set ZELARI_SHELL to a bash that already sees node.`
+      `           - Add your nodejs folder to the User or System Path, OR\n` +
+      `           - Set ZELARI_SHELL to a bash that already sees node.\n` +
+      `         Note: WSL's C:\\Windows\\System32\\bash.exe is NOT a valid agent\n` +
+      `         shell — install Git for Windows instead.`
     );
   }
   return (

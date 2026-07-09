@@ -5,6 +5,11 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.1] - 2026-07-10
+
+### Fixed
+- **Windows preflight false-fail when only WSL bash is on PATH** — without Git for Windows, `where bash` returns `C:\Windows\System32\bash.exe` (WSL launcher). The agent-shell resolver treated it as Git Bash, probed `node` inside Linux (missing), and hard-failed boot even though Windows Node was fine. WSL launchers (`System32`, `SysWOW64`, `WindowsApps`) are now rejected; the agent falls back to `cmd.exe` with a WARN to install Git for Windows. Also prepends `dirname(process.execPath)` to the agent shell PATH so dual-PATH Node installs are more resilient.
+
 ## [1.7.0] - 2026-07-09
 
 ### Added
