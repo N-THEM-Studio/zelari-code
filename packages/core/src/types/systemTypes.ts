@@ -64,6 +64,7 @@ export type PromptModuleType =
   | 'context-sharing-rules'
   | 'output-formatting'
   | 'tool-usage-guidelines'
+  | 'language-policy'
   | 'custom';
 
 /** A modular fragment of the system prompt. */

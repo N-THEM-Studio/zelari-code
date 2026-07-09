@@ -11,3 +11,12 @@ export { cliToolToEnhanced } from '../agents/harnessToolBridge.js';
 export type { EnhancedToolDefinition } from '../types/systemTypes.js';
 export { SINGLE_AGENT_IDENTITY_MODULE } from '../agents/promptModules.js';
 export { buildSystemPrompt } from '../agents/systemPromptBuilder.js';
+export {
+  detectResponseLanguage,
+  resolveResponseLanguage,
+  buildLanguageDirective,
+  buildLanguagePolicyModule,
+  buildLanguagePolicyModuleFor,
+  LANGUAGE_POLICY_MODULE_TYPE,
+} from '../agents/languagePolicy.js';
+export type { SupportedLanguage } from '../agents/languagePolicy.js';

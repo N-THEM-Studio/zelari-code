@@ -5,6 +5,26 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-07-09
+
+### Added
+- **Response-language policy across all 3 modes (single, council, zelari)** — the agent now replies in the user's language for the entirety of its response, including the final synthesis, clarifying questions (`---QUESTION---` blocks), and tool-call descriptions. Detection uses a dependency-free heuristic: non-Latin script ranges (CJK / Cyrillic / Arabic) win first, then unique-accent owners (ñ → es, ã/õ → pt, ç → fr, ß → de), then function-word majority scoring. Default fallback is `it` (N-THEM Studio CLI). Override with `ZELARI_RESPONSE_LANG=<it|en|fr|es|de|pt|nl|zh|ja|ko|ru|ar>` or `=auto` to re-enable detection. Wired through:
+  - Single agent (`useChatTurn.dispatchPrompt`): language-policy module appended to `customPromptModules` alongside `SINGLE_AGENT_IDENTITY_MODULE`, priority 5 so it sorts before the base-identity module (10).
+  - Council (`runCouncilPure.buildAgentMessages`): the module is built ONCE per run from the user message and reused for every member (specialists, oracle, chairman). Injected as an extra system message so it always lands regardless of any `aiConfig` overrides.
+  - Zelari mode: delegates to the council path — single source of truth.
+  - Headless (`runHeadless.ts` single-mode): the previously-inline 3-line prompt was routed through `buildSystemPrompt()` (same builder as the TUI). Two regressions in one: headless now also gets the 7 missing behavioral directives that the inline prompt skipped AND the language-policy directive.
+
+- **`envNumber()` helper** (`src/cli/utils/envNumber.ts`) — centralized parser for env-var integers, replaces the duplicated `Number.parseInt + Number.isFinite + clamp` pattern that was scattered across `useChatTurn.ts`, `runHeadless.ts`, `historyCompaction.ts`, `councilConfig.ts`, `slashCommands.ts`, `zelariMission.ts`, and `openai-compatible.ts`. Behavior:
+  - empty / unset / `undefined` / `null` tokens → default
+  - non-finite (NaN, `abc`, `1e3`, `30x` partial parses, `30.5` floats) → default (rejects the silent `parseInt("30x")` → 30 trap)
+  - below min → clamped to min (preserves `ZELARI_HISTORY_TURNS=0` as "disable" by using `min:0`)
+  - above max → clamped to max
+- **22 unit tests** (`tests/unit/cli-envNumber.test.ts`) pin every branch and regression-pin each existing env var (`ZELARI_MAX_TOOL_CALLS`, `ZELARI_MAX_TOOL_LOOP_ITERATIONS`, `ZELARI_PROVIDER_MAX_RETRIES`, `ZELARI_HISTORY_TURNS`).
+- **27 unit tests** (`tests/unit/core-languagePolicy.test.ts`) pin the detection heuristic (unique-accent, script range, function-word scoring, code-block stripping, tie-break) and the directive-module shape consumed by `buildSystemPrompt`.
+
+### Changed
+- `useChatTurn.ts`, `runHeadless.ts`, `historyCompaction.ts` now read env vars through `envNumber()` instead of inline parse-and-clamp IIFEs.
+
 ## [1.6.0] - 2026-07-09
 
 ### Fixed

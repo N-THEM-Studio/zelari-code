@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Zelari Code — CLI da terminale con AI Council. Landing moderna stile terminal/code; installazione npm, comandi slash e orchestrazione multi-agente." />
+  <title>Zelari Code — Terminal AI Council CLI</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --accent: #3fb950;
+      --accent-dim: #238636;
+      --cyan: #58a6ff;
+      --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+      --radius: 10px;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      .cursor-blink { animation: none !important; opacity: 1; }
+      .reveal { animation: none !important; opacity: 1; transform: none !important; }
+    }
+    body {
+      margin: 0;
+      font-family: var(--font-mono);
+      font-size: 15px;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+      background-image:
+        linear-gradient(rgba(48, 54, 61, 0.35) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(48, 54, 61, 0.35) 1px, transparent 1px);
+      background-size: 24px 24px;
+    }
+    a { color: var(--cyan); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .skip {
+      position: absolute;
+      left: -9999px;
+      top: 0;
+      background: var(--accent);
+      color: #000;
+      padding: 0.5rem 1rem;
+      z-index: 100;
+    }
+    .skip:focus { left: 0.5rem; top: 0.5rem; }
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: rgba(13, 17, 23, 0.92);
+      border-bottom: 1px solid var(--border);
+      backdrop-filter: blur(8px);
+    }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 0 1.25rem; }
+    nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem 1.25rem;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.75rem 0;
+    }
+    .logo { color: var(--accent); font-weight: 700; letter-spacing: 0.04em; }
+    .logo span { color: var(--muted); font-weight: 400; }
+    nav ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+    }
+    nav a { color: var(--muted); font-size: 0.9rem; }
+    nav a:hover { color: var(--text); }
+    main { padding: 2rem 0 4rem; }
+    .window {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--surface);
+      overflow: hidden;
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+    }
+    .titlebar {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      background: #010409;
+      border-bottom: 1px solid var(--border);
+    }
+    .dot { width: 10px; height: 10px; border-radius: 50%; }
+    .dot-r { background: #ff5f57; }
+    .dot-y { background: #febc2e; }
+    .dot-g { background: #28c840; }
+    .titlebar span { color: var(--muted); font-size: 0.8rem; margin-left: 0.5rem; }
+    .terminal-body { padding: 1.25rem 1.5rem 1.5rem; min-height: 12rem; }
+    .prompt { color: var(--accent); }
+    .line { margin: 0.35rem 0; word-break: break-word; }
+    .cursor-blink {
+      display: inline-block;
+      width: 0.55em;
+      height: 1em;
+      background: var(--accent);
+      vertical-align: text-bottom;
+      margin-left: 2px;
+      animation: blink 1s step-end infinite;
+    }
+    @keyframes blink { 50% { opacity: 0; } }
+    .hero-actions { margin-top: 1.5rem; display: flex; flex-wrap: wrap; gap: 0.75rem; }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 44px;
+      padding: 0.5rem 1.1rem;
+      border-radius: 6px;
+      font-family: inherit;
+      font-size: 0.9rem;
+      border: 1px solid var(--border);
+      cursor: pointer;
+      background: transparent;
+      color: var(--text);
+    }
+    .btn-primary {
+      background: var(--accent-dim);
+      border-color: var(--accent);
+      color: #fff;
+    }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .btn:focus-visible, nav a:focus-visible, .skip:focus-visible {
+      outline: 2px solid var(--cyan);
+      outline-offset: 2px;
+    }
+    section { margin-top: 3rem; }
+    h2 {
+      font-size: 1.1rem;
+      color: var(--accent);
+      margin: 0 0 1rem;
+      font-weight: 600;
+    }
+    h2::before { content: "# "; color: var(--muted); }
+    .grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    }
+    .card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem 1.1rem;
+      background: rgba(22, 27, 34, 0.6);
+    }
+    .card h3 { margin: 0 0 0.5rem; font-size: 0.95rem; color: var(--cyan); }
+    .card p { margin: 0; color: var(--muted); font-size: 0.88rem; }
+    pre {
+      margin: 0;
+      padding: 1rem 1.1rem;
+      background: #010409;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 0.85rem;
+    }
+    code { color: var(--accent); }
+    .cmd-table { width: 100%; border-collapse: collapse; font-size: 0.88rem; }
+    .cmd-table th, .cmd-table td {
+      text-align: left;
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .cmd-table th { color: var(--muted); font-weight: 500; }
+    .reveal {
+      opacity: 0;
+      transform: translateY(8px);
+      animation: rise 0.6s ease forwards;
+    }
+    .reveal:nth-child(2) { animation-delay: 0.08s; }
+    .reveal:nth-child(3) { animation-delay: 0.16s; }
+    .reveal:nth-child(4) { animation-delay: 0.24s; }
+    @media (max-width: 480px) {
+      nav { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
+      nav ul { gap: 0.5rem; font-size: 0.82rem; }
+      nav a { font-size: 0.82rem; }
+    }
+    @keyframes rise {
+      to { opacity: 1; transform: translateY(0); }
+    }
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2rem 0;
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <a class="skip" href="#main">Salta al contenuto</a>
+  <header>
+    <div class="wrap">
+      <nav aria-label="Primary">
+        <div class="logo">zelari<span>-code</span></div>
+        <ul>
+          <li><a href="#features">features</a></li>
+          <li><a href="#install">install</a></li>
+          <li><a href="#commands">commands</a></li>
+          <li><a href="./docs/GUIDA.md">guida (IT)</a></li>
+        </ul>
+      </nav>
+    </div>
+  </header>
+  <main id="main" class="wrap">
+    <div class="window" role="region" aria-label="Terminal preview">
+      <div class="titlebar" aria-hidden="true">
+        <span class="dot dot-r"></span>
+        <span class="dot dot-y"></span>
+        <span class="dot dot-g"></span>
+        <span>zelari-code — bash — 80×24</span>
+      </div>
+      <div class="terminal-body">
+        <p class="line"><span class="prompt">$</span> cat README.tagline</p>
+        <p class="line">AI Council coding agent CLI — multi-agent orchestration in your terminal.</p>
+        <p class="line" style="color: var(--muted); font-size: 0.9rem;">Landing per <strong>zelari-code</strong>: un solo <code>index.html</code>, stile terminale moderno.</p>
+        <p class="line"><span class="prompt">$</span> <span id="typeout" aria-live="polite"></span><span class="cursor-blink" aria-hidden="true"></span></p>
+        <div class="hero-actions">
+          <a class="btn btn-primary" href="#install">npm install -g zelari-code</a>
+          <a class="btn" href="#commands">/council &amp; /zelari</a>
+        </div>
+      </div>
+    </div>
+
+    <section id="features" aria-labelledby="features-heading">
+      <h2 id="features-heading">features</h2>
+      <div class="grid">
+        <article class="card reveal">
+          <h3>Multi-agent council</h3>
+          <p>Six roles — Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero — with feedback loops and promotion to skills.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Zelari-mode missions</h3>
+          <p>Autonomous multi-run council until your MVP slice hits <code>completion.ok</code> or the iteration budget ends.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Rich TUI + tools</h3>
+          <p>Ink + React chat, git sidebar, filesystem/shell/grep/web tools, 23+ skills, MCP via <code>.zelari/</code> workspace.</p>
+        </article>
+        <article class="card reveal">
+          <h3>Provider-agnostic</h3>
+          <p>OpenAI-compatible APIs, xAI Grok OAuth, GLM/Z.AI — failover, headless CI, and <code>/update</code> self-update.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="install" aria-labelledby="install-heading">
+      <h2 id="install-heading">install</h2>
+      <p class="line" style="color: var(--muted); margin-bottom: 1rem;">Requires <strong>Node.js ≥ 20</strong>. Proprietary © N-THEM Studio.</p>
+      <pre><code>npm install -g zelari-code
+zelari-code</code></pre>
+      <p class="line" style="margin-top: 1rem; color: var(--muted); font-size: 0.88rem;">
+        Headless: <code>zelari-code --headless --task "…" --council --output json</code>
+      </p>
+    </section>
+
+    <section id="commands" aria-labelledby="commands-heading">
+      <h2 id="commands-heading">commands</h2>
+      <table class="cmd-table">
+        <thead>
+          <tr><th scope="col">Slash</th><th scope="col">Description</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>/council &lt;input&gt;</code></td><td>Run the 6-member council pipeline</td></tr>
+          <tr><td><code>/zelari &lt;input&gt;</code></td><td>Autonomous mission until MVP slice completes</td></tr>
+          <tr><td><code>/skill &lt;id&gt;</code></td><td>Invoke a coding skill (built-in + SKILL.md)</td></tr>
+          <tr><td><code>/workspace</code></td><td>List <code>.zelari/</code> artifacts and sync AGENTS.MD</td></tr>
+          <tr><td><code>/update</code></td><td>Check or install CLI updates from npm</td></tr>
+        </tbody>
+      </table>
+      <p class="line" style="margin-top: 1rem; color: var(--muted);">TUI: <kbd>shift</kbd>+<kbd>tab</kbd> cycles agent → council → zelari mode.</p>
+    </section>
+  </main>
+  <footer class="wrap">
+    <p>Zelari Code · <a href="./README.md">README</a> · <a href="./docs/GUIDA.md">Guida (IT)</a> · <a href="https://www.npmjs.com/package/zelari-code">npm</a></p>
+  </footer>
+  <script>
+(function () {
+  var text = "/zelari \"ship my MVP\"";
+  var el = document.getElementById("typeout");
+  if (!el) return;
+  var reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (reduced) { el.textContent = text; return; }
+  var i = 0;
+  function tick() {
+    if (i <= text.length) {
+      el.textContent = text.slice(0, i);
+      i++;
+      setTimeout(tick, i < 6 ? 120 : 45);
+    }
+  }
+  tick();
+})();
+  </script>
+</body>
+</html>

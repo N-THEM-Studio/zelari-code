@@ -23,6 +23,13 @@ import {
   resolveHeadlessProvider,
   type HeadlessOptions,
 } from './headless.js';
+import {
+  buildSystemPrompt,
+  getAllTools,
+  SINGLE_AGENT_IDENTITY_MODULE,
+  buildLanguagePolicyModuleFor,
+} from '@zelari/core/skills';
+import { envNumber } from './utils/envNumber.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   const { provider, model } = resolveHeadlessProvider(opts);
@@ -59,12 +66,80 @@ async function runHeadlessSingle(
     description: t.function.description,
     parameters: t.function.parameters as Record<string, unknown>,
   }));
+  const toolNames = tools.map((t) => t.name);
 
-  const systemPrompt = [
-    'You are zelari-code, a CLI coding agent. Be concise and direct.',
-    'When the user asks you to write code, debug, or explore, be proactive: list files and read key files to understand the project.',
-    'When you finish a task, briefly summarize what you did.',
-  ].join('\n');
+  // v1.7.0: route through buildSystemPrompt with SINGLE_AGENT_IDENTITY_MODULE
+  // + the language-policy directive so the headless single-mode replies in
+  // the user's language. Before this, the prompt was an inline 3-line array
+  // missing 7 of 11 behavioral directives (anti-confabulation, act-don't-
+  // describe, output self-check, clarification protocol, safety, formatting,
+  // tool-usage) AND the response language policy — two regressions in one.
+  // The fallback below preserves the pre-1.7 inline behavior for any case
+  // where buildSystemPrompt throws (e.g. test context without a populated
+  // catalog).
+  //
+  // v1.7.0 fix (agy audit): build the language module ONCE outside the
+  // try/catch so a thrown detection error in `buildLanguagePolicyModuleFor`
+  // does not re-throw inside the catch (which would crash the CLI instead
+  // of recovering). The module's directive content is wrapped in try/catch
+  // too, so even a Unicode edge case degrades to a minimal "reply in
+  // Italian" stub.
+  let systemPrompt: string;
+  let languageDirectiveContent: string;
+  try {
+    languageDirectiveContent = buildLanguagePolicyModuleFor(opts.task).content;
+  } catch {
+    // Detection threw (e.g. malformed input). Use a safe stub so the rest
+    // of the prompt assembly still proceeds.
+    languageDirectiveContent = '# Response Language\nReply in the user\'s language when possible, otherwise Italian.';
+  }
+  try {
+    const headlessRole = {
+      id: 'single',
+      name: 'Zelari Code',
+      codename: 'zelari',
+      role: 'headless coding agent',
+      color: '#00d9a3',
+      avatar: '◆',
+      tools: toolNames,
+      // v1.7.0 fix (agy audit): include platform/shell context in the role
+      // prompt so the agent knows its cwd and shell — previously this was
+      // empty (systemPrompt: '') and the agent lacked the platform block
+      // the TUI single-agent path gets.
+      systemPrompt: [
+        '# Platform',
+        `platform: ${process.platform}`,
+        `shell: ${process.platform === 'win32' ? 'cmd.exe / Git Bash (auto-detected)' : '/bin/sh'}`,
+        '',
+        '# Working Directory',
+        `You are running in: ${process.cwd()}`,
+        'All relative file paths are resolved against this directory.',
+        'The shell is NON-INTERACTIVE (stdin closed): pass non-interactive flags (--yes, --force, --template).',
+      ].join('\n'),
+    };
+    systemPrompt = buildSystemPrompt(headlessRole, {
+      tools: getAllTools(),
+      toolNames,
+      aiConfig: {
+        enabledSkills: [],
+        enabledTools: toolNames,
+        customPromptModules: [SINGLE_AGENT_IDENTITY_MODULE, {
+          type: 'language-policy',
+          title: 'Response Language',
+          priority: 5,
+          content: languageDirectiveContent,
+        }],
+        agentSkillConfigs: [],
+      },
+    });
+  } catch {
+    systemPrompt = [
+      'You are zelari-code, a CLI coding agent. Be concise and direct.',
+      'When the user asks you to write code, debug, or explore, be proactive: list files and read key files to understand the project.',
+      'When you finish a task, briefly summarize what you did.',
+      languageDirectiveContent,
+    ].join('\n');
+  }
 
   const harness = new AgentHarness({
     model,
@@ -78,9 +153,8 @@ async function runHeadlessSingle(
     toolRegistry,
     providerStream,
     maxToolLoopIterations: (() => {
-      const raw = process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS;
-      const n = raw ? Number.parseInt(raw, 10) : 30;
-      return Number.isFinite(n) && n > 0 ? n : 30;
+      const n = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, { default: 30, min: 1 });
+      return n;
     })(),
   });
 

@@ -24,6 +24,7 @@
  */
 
 import type { AgentMessage } from "@zelari/core/harness";
+import { envNumber } from "../utils/envNumber.js";
 
 export interface CompactHistoryOptions {
   /**
@@ -43,11 +44,11 @@ const COMPACT_MARKER = "[history] Earlier turns were compacted to stay within th
  * Returns 0 to signal "history disabled" (caller should short-circuit).
  */
 export function resolveMaxMessages(opts?: CompactHistoryOptions): number {
-  const raw = process.env.ZELARI_HISTORY_TURNS;
-  const parsed = raw ? Number.parseInt(raw, 10) : 6;
-  // Garbage / NaN falls back to the default, NOT to 0 — silently disabling
-  // history on a typo would be a confusing regression.
-  const envTurns = Number.isFinite(parsed) && parsed >= 0 ? parsed : 6;
+  // v1.7.0: routed through envNumber. Behavior preserved (default 6, min 0
+  // because ZELARI_HISTORY_TURNS=0 legitimately means "disable history" —
+  // the pre-1.6 stateless fallback — and must NOT be coerced to a non-zero
+  // default on a typo).
+  const envTurns = envNumber(process.env.ZELARI_HISTORY_TURNS, { default: 6, min: 0 });
   // opts override env; env default is 6 turns × ~4 messages/turn.
   const turns = opts?.maxMessages ? Math.ceil(opts.maxMessages / 4) : envTurns;
   if (turns <= 0) return 0;

@@ -22,6 +22,7 @@ import {
   buildSystemPrompt,
   getAllTools,
   SINGLE_AGENT_IDENTITY_MODULE,
+  buildLanguagePolicyModuleFor,
 } from "@zelari/core/skills";
 import {
   parseClarificationRequest,
@@ -44,6 +45,7 @@ import {
 import { compactHistory } from "./historyCompaction.js";
 import type { ProviderName } from "../keyStore.js";
 import { computeSessionStatsDelta } from "./chatStats.js";
+import { envNumber } from "../utils/envNumber.js";
 
 /**
  * useChatTurn — owns the chat-turn lifecycle (single prompt dispatch +
@@ -373,13 +375,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // usable system prompt and the turn proceeds.
         let systemPrompt: string;
         try {
+          // v1.7.0: detect the user's language and inject the language-policy
+          // module so the agent replies in the user's language. Honors
+          // ZELARI_RESPONSE_LANG override (auto|it|en|fr|...). The module is
+          // appended to customPromptModules alongside SINGLE_AGENT_IDENTITY_MODULE
+          // — it lives in priority space (5) so it sorts BEFORE the base-identity
+          // module (10): the model sets language scaffolding before reading role text.
+          const languageModule = buildLanguagePolicyModuleFor(userText);
           systemPrompt = buildSystemPrompt(singleAgentRole, {
             tools: getAllTools(),
             toolNames: toolListNames,
             aiConfig: {
               enabledSkills: [],
               enabledTools: toolListNames,
-              customPromptModules: [SINGLE_AGENT_IDENTITY_MODULE],
+              customPromptModules: [SINGLE_AGENT_IDENTITY_MODULE, languageModule],
               agentSkillConfigs: [],
             },
             workspaceContext: workspaceContext || undefined,
@@ -388,8 +397,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         } catch {
           // Fallback: identity + platform/shell + tool list. Keeps the turn
           // runnable even if the builder or catalog is unavailable.
+          const languageModule = buildLanguagePolicyModuleFor(userText);
           systemPrompt = [
             SINGLE_AGENT_IDENTITY_MODULE.content,
+            languageModule.content,
             shellContextBlock,
             "# Available Tools",
             "You can call these tools. Use them to take action and gather information autonomously:",
@@ -403,19 +414,17 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // flailing model could loop for the full MAX_TOOL_LOOP_ITERATIONS (12)
         // of junk calls (e.g. read_file same path ×3 then silence). Default 25,
         // overridable via ZELARI_MAX_TOOL_CALLS.
-        const maxToolCallsPerTurn = (() => {
-          const raw = process.env.ZELARI_MAX_TOOL_CALLS;
-          const n = raw ? Number.parseInt(raw, 10) : 25;
-          return Number.isFinite(n) && n > 0 ? n : 25;
-        })();
+        const maxToolCallsPerTurn = envNumber(process.env.ZELARI_MAX_TOOL_CALLS, {
+          default: 25,
+          min: 1,
+        });
         // v1.5.2: tool-loop iteration cap (observe → reason → act cycles per
         // run). Core default is 90 (raised from 30). Overridable for very
         // large multi-file tasks or to tighten on flaky providers.
-        const maxToolLoopIterations = (() => {
-          const raw = process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS;
-          const n = raw ? Number.parseInt(raw, 10) : 90;
-          return Number.isFinite(n) && n > 0 ? n : 90;
-        })();
+        const maxToolLoopIterations = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
+          default: 90,
+          min: 1,
+        });
         const harness = new AgentHarness({
           model: envConfig.model,
           provider: "openai-compatible",
@@ -864,11 +873,10 @@ async function dispatchCouncilPromptImpl(
   // 5 tool calls per turn (a planner creating 8 tasks got 3 of them skipped
   // with "[skipped] maxToolCallsPerTurn reached"). Same env override as the
   // single-prompt path.
-  const councilMaxToolCalls = (() => {
-    const raw = process.env.ZELARI_MAX_TOOL_CALLS;
-    const n = raw ? Number.parseInt(raw, 10) : 15;
-    return Number.isFinite(n) && n > 0 ? n : 15;
-  })();
+  const councilMaxToolCalls = envNumber(process.env.ZELARI_MAX_TOOL_CALLS, {
+    default: 15,
+    min: 1,
+  });
   // v0.7.1 (A3): track member completion so the AGENTS.MD hook only runs when
   // the council actually produced output. v0.7.1 (A4): track repeated provider
   // errors to abort the remaining members instead of grinding through every
@@ -1328,11 +1336,10 @@ async function runZelariMissionInTui(
     hasPlan: hasWorkspacePlan(projectRoot),
   });
   const memory = await getMemoryBackend(projectRoot);
-  const chairmanBudget = (() => {
-    const raw = process.env.ZELARI_MODE_MAX_TOOLS_LUCIFER;
-    const n = raw ? Number.parseInt(raw, 10) : 30;
-    return Number.isFinite(n) && n > 0 ? n : 30;
-  })();
+  const chairmanBudget = envNumber(process.env.ZELARI_MODE_MAX_TOOLS_LUCIFER, {
+    default: 30,
+    min: 1,
+  });
 
   try {
     await runZelariMission(userMessage, brief, {

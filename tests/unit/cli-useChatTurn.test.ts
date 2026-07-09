@@ -143,6 +143,36 @@ vi.mock('@zelari/core/skills', () => ({
   },
   registerCustomTool: () => {},
   cliToolToEnhanced: () => ({ name: 'x', description: 'x', category: 'core', parameters: {}, execute: () => '' }),
+  // v1.7.0 (agy audit L1): language-policy helpers. The real implementation
+  // reads env + runs detection. In this test we mirror the REAL output
+  // shape (with `type: 'language-policy'`) so a bug where the module lands
+  // in `customPromptModules` with the wrong type and silences 5 base
+  // directives (the v1.7.0 critical bug) would still be caught. The
+  // language argument follows the userText passed in (so a test that
+  // asserts EN-detection works gets an EN directive back).
+  detectResponseLanguage: vi.fn((text: string) => {
+    // Cheap echo of the real detection: latin accent + function words.
+    // Matches the tests' userText strings.
+    if (text.toLowerCase().includes('please') || text.toLowerCase().includes('help')) return 'en';
+    return 'it';
+  }),
+  resolveResponseLanguage: vi.fn((text: string) => text.includes('please') ? 'en' : 'it'),
+  buildLanguageDirective: vi.fn((lang: string) => `# Response Language — ${lang}\nReply in ${lang}.`),
+  buildLanguagePolicyModule: vi.fn((lang: string) => ({
+    type: 'language-policy',
+    title: `Response Language (${lang})`,
+    priority: 5,
+    content: `# Response Language — ${lang}\nReply in ${lang}.`,
+  })),
+  buildLanguagePolicyModuleFor: vi.fn((text: string) => {
+    const lang = text.toLowerCase().includes('please') ? 'en' : 'it';
+    return {
+      type: 'language-policy',
+      title: `Response Language (${lang})`,
+      priority: 5,
+      content: `# Response Language — ${lang}\nReply in ${lang}.`,
+    };
+  }),
 }));
 
 // Mock the workspace summary builders so dispatchPrompt doesn't scan the

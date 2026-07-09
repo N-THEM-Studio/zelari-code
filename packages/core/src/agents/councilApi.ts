@@ -5,7 +5,8 @@ import { getCouncilAgents, swapMembers } from './roles.js';
 import { getProviderTools, type ParsedToolCall } from './toolSchemas.js';
 import { buildSystemPrompt, computeAgentTools } from './systemPromptBuilder.js';
 import { getAllTools } from './tools.js';
-import type { SystemPromptConfig } from '../types/systemTypes.js';
+import { buildLanguagePolicyModuleFor } from './languagePolicy.js';
+import type { SystemPromptConfig, SystemPromptModule } from '../types/systemTypes.js';
 import type { BrainEvent, UsageBreakdown } from '../shared/events.js';
 import { createBrainEvent } from '../shared/events.js';
 import type {
@@ -343,6 +344,23 @@ export async function* runCouncilPure(
   const runMode: CouncilRunMode = config.runMode ?? 'implementation';
   const isDesignPhase = runMode === 'design-phase';
 
+  // v1.7.0 (agy audit M2): build the language module ONCE per run. Each
+  // member then receives the SAME module reference — all 6 council
+  // members agree on the response language without re-running detection.
+  // Wrapped in try/catch so a malformed user message degrades to a
+  // safe "Italian" stub instead of crashing the whole council run.
+  let councilLanguageModule: SystemPromptModule;
+  try {
+    councilLanguageModule = buildLanguagePolicyModuleFor(userMessage);
+  } catch {
+    councilLanguageModule = {
+      type: 'language-policy',
+      title: 'Response Language',
+      priority: 5,
+      content: '# Response Language\nReply in the user\'s language when possible, otherwise Italian.',
+    };
+  }
+
   yield createBrainEvent('council_mode', sessionId, {
     tier: councilTierFromSize(config.councilSize),
     councilSize: config.councilSize,
@@ -536,6 +554,7 @@ export async function* runCouncilPure(
         effectiveProvider,
         effectiveModel,
         onToolCall: () => { toolCalls += 1; },
+        languageModule: councilLanguageModule,
       });
     } else if (isDesignPhase) {
       enforceDesignPhaseToolEmissions(agent.id, emittedToolNames);
@@ -711,6 +730,7 @@ export async function* runCouncilPure(
         effectiveProvider,
         effectiveModel,
         onToolCall: () => { toolCalls += 1; },
+        languageModule: councilLanguageModule,
       });
     } else if (isDesignPhase) {
       enforceDesignPhaseToolEmissions(oracle.id, emittedToolNames);
@@ -943,6 +963,7 @@ export async function* runCouncilPure(
         effectiveProvider,
         effectiveModel,
         onToolCall: () => { toolCalls += 1; },
+        languageModule: councilLanguageModule,
       });
     } else if (isDesignPhase) {
       enforceDesignPhaseToolEmissions(chairman.id, emittedToolNames);
@@ -1006,6 +1027,7 @@ export async function* runCouncilPure(
             onToolCall: () => { toolCalls += 1; },
             onSuccessfulWrite: () => { successfulWriteCount += 1; },
             onCouncilStatus: callbacks.onCouncilStatus,
+            languageModule: councilLanguageModule,
           });
         }
       }
@@ -1023,6 +1045,7 @@ export async function* runCouncilPure(
           effectiveProvider,
           effectiveModel,
           onToolCall: () => { toolCalls += 1; },
+          languageModule: councilLanguageModule,
         });
       }
       if (chairmanProjectRoot) {
@@ -1039,6 +1062,7 @@ export async function* runCouncilPure(
           effectiveModel,
           onToolCall: () => { toolCalls += 1; },
           onCouncilStatus: callbacks.onCouncilStatus,
+          languageModule: councilLanguageModule,
         });
       }
     }
@@ -1096,6 +1120,9 @@ export async function* applyCompletionRetry(args: {
   effectiveProvider: string;
   effectiveModel: string;
   onToolCall: () => void;
+  /** v1.7.0 (Pass-2 agy finding): pre-built language module so the retry
+   * turn's response language matches the rest of the council. Optional. */
+  languageModule?: SystemPromptModule;
 }): AsyncGenerator<BrainEvent, void, void> {
   const check = checkImplementationCompletion(args.emittedToolNames);
   if (check.ok) return;
@@ -1126,6 +1153,7 @@ export async function* applyCompletionRetry(args: {
       providerStream: args.config.providerStream,
       runMode: args.config.runMode,
       retryPrompt: buildImplementationVerifyRetryPrompt(retryTool),
+      languageModule: args.languageModule,
     });
     for await (const event of retryGenerator) {
       if (event.type === 'tool_execution_start') {
@@ -1187,6 +1215,8 @@ export async function* applyImplementationWriteRetry(args: {
   onToolCall?: () => void;
   onSuccessfulWrite?: () => void;
   onCouncilStatus?: (message: string) => void;
+  /** v1.7.0 (Pass-2 agy finding): see applyCompletionRetry. */
+  languageModule?: SystemPromptModule;
 }): AsyncGenerator<BrainEvent, void, void> {
   if (args.check.ok) return;
   if (!shouldRetryMember(['write_file'], 0)) return;
@@ -1213,6 +1243,7 @@ export async function* applyImplementationWriteRetry(args: {
       providerStream: args.config.providerStream,
       runMode: 'implementation',
       retryPrompt: buildImplementationWriteRetryPrompt(args.userMessage),
+      languageModule: args.languageModule,
     });
     for await (const event of retryGenerator) {
       if (event.type === 'tool_execution_start') args.onToolCall?.();
@@ -1268,6 +1299,8 @@ export async function* runChairmanDeliveryLoop(args: {
   onToolCall?: () => void;
   maxAttempts?: number;
   onCouncilStatus?: (message: string) => void;
+  /** v1.7.0 (Pass-2 agy finding): see applyCompletionRetry. */
+  languageModule?: SystemPromptModule;
 }): AsyncGenerator<BrainEvent, boolean, void> {
   const maxAttempts = args.maxAttempts ?? MAX_DELIVERY_ATTEMPTS;
   const zelariRoot = `${args.projectRoot}/.zelari`;
@@ -1316,6 +1349,7 @@ export async function* runChairmanDeliveryLoop(args: {
         providerStream: args.config.providerStream,
         runMode: 'implementation',
         retryPrompt: buildDeliveryFixPrompt(blocking, args.userMessage),
+        languageModule: args.languageModule,
       });
       for await (const event of fixGenerator) {
         if (event.type === 'tool_execution_start') args.onToolCall?.();
@@ -1424,6 +1458,8 @@ export async function* runChairmanFixLoop(args: {
   effectiveModel: string;
   onToolCall?: () => void;
   maxAttempts?: number;
+  /** v1.7.0 (Pass-2 agy finding): see applyCompletionRetry. */
+  languageModule?: SystemPromptModule;
 }): AsyncGenerator<BrainEvent, void, void> {
   const maxAttempts = args.maxAttempts ?? 3;
   const zelariRoot = `${args.projectRoot}/.zelari`;
@@ -1450,6 +1486,7 @@ export async function* runChairmanFixLoop(args: {
         providerStream: args.config.providerStream,
         runMode: 'implementation',
         retryPrompt: buildMotionFixPrompt(current),
+        languageModule: args.languageModule,
       });
       for await (const event of fixGenerator) {
         if (event.type === 'tool_execution_start') args.onToolCall?.();
@@ -1720,6 +1757,13 @@ export async function* runRetryTurnForMember(args: {
   runMode?: CouncilRunMode;
   /** Override the default buildRetryPrompt message. */
   retryPrompt?: string;
+  /**
+   * v1.7.0 (agy audit M2): pre-built language module. Optional — when
+   * omitted, no language-policy system message is added (preserves the
+   * pre-1.7 retry behavior for tests and callers that don't track it).
+   * `runCouncilPure` threads the module it built once per run.
+   */
+  languageModule?: SystemPromptModule;
 }): AsyncGenerator<BrainEvent, string[], void> {
   // Filter the missing tools against what's actually executable in this
   // runtime. If a tool is missing from executableTools, the retry can't
@@ -1827,6 +1871,8 @@ export async function* applyRetryIfMissing(args: {
   effectiveModel: string;
   /** Callback to bump the per-member tool-call counter on each retry emission. */
   onToolCall: () => void;
+  /** v1.7.0 (Pass-2 agy finding): see applyCompletionRetry. */
+  languageModule?: SystemPromptModule;
 }): AsyncGenerator<BrainEvent, void, void> {
   if (args.check.ok) return;
   const missingToolNames = args.check.missing.map((m) => m.split(' ')[0]);
@@ -1863,6 +1909,7 @@ export async function* applyRetryIfMissing(args: {
       toolRegistry: args.config.tools,
       providerStream: args.config.providerStream,
       runMode: args.config.runMode,
+      languageModule: args.languageModule,
     });
     for await (const event of retryGenerator) {
       if (event.type === 'tool_execution_start') {
