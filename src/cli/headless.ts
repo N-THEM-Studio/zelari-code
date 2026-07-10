@@ -21,6 +21,8 @@ import type { WorkPhase } from './phase.js';
 import { parsePhase } from './phase.js';
 import { parseMode } from './mode.js';
 import type { ChatMode } from './components/StatusBar.js';
+import type { AgentMessage } from '@zelari/core/harness';
+import { readFileSync } from 'node:fs';
 
 /** Dispatch mode for headless (mirrors TUI shift+tab modes). */
 export type HeadlessMode = ChatMode; // 'agent' | 'council' | 'zelari'
@@ -49,6 +51,15 @@ export interface HeadlessOptions {
   provider?: string;
   /** Model override (defaults to provider.json model). */
   model?: string;
+  /**
+   * Prior conversation turns, so the desktop (which spawns a fresh headless
+   * process per message) can preserve multi-turn context. Each invocation
+   * seeds the harness with `[system, ...history, {user: task}]` and emits a
+   * `history_snapshot` event at end-of-turn for the caller to replay next time.
+   * Parsed from `--history <json>`; invalid JSON is ignored (stateless fallback).
+   * @since v1.10.0
+   */
+  history?: AgentMessage[];
 }
 
 export interface HeadlessParseResult {
@@ -70,6 +81,8 @@ Options:
   --phase plan|build         Work phase (default: build)
   --provider <id>            Provider override (default: active)
   --model <name>             Model override (default: provider default)
+  --history <json>           Prior turns (JSON AgentMessage[]) for multi-turn context
+  --history-file <path>      Same as --history but read from a file (avoids Windows argv cap)
 
 Exit codes:
   0  completed
@@ -95,6 +108,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
   let councilFlag = false;
   let provider: string | undefined;
   let model: string | undefined;
+  let history: AgentMessage[] | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -144,6 +158,41 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
     } else if (arg === '--model') {
       model = argv[i + 1];
       i++;
+    } else if (arg === '--history' || arg === '--history-file') {
+      // Multi-turn context from the desktop. `--history` takes the JSON inline
+      // (kept for backward compat / scripting); `--history-file` reads it from
+      // a tempfile. The file path is PREFERRED on Windows because CreateProcess
+      // caps the command line at ~32KB (os error 206) and a long chat history
+      // overflows it. Invalid/missing JSON is ignored: the run degrades to
+      // stateless (pre-v1.10.0 behavior) rather than erroring out.
+      const next = argv[i + 1];
+      if (next) {
+        let raw: string | null = null;
+        if (arg === '--history-file') {
+          try {
+            raw = readFileSync(next, 'utf-8');
+          } catch {
+            raw = null; // File gone/unreadable — run stateless.
+          }
+        } else {
+          raw = next;
+        }
+        if (raw) {
+          try {
+            const parsedHist = JSON.parse(raw);
+            if (Array.isArray(parsedHist)) {
+              history = parsedHist.filter(
+                (m): m is AgentMessage =>
+                  m && typeof m === 'object' && typeof m.role === 'string' &&
+                  typeof m.content === 'string',
+              );
+            }
+          } catch {
+            // Swallow: stale/incompatible history.
+          }
+        }
+        i++;
+      }
     }
   }
 
@@ -170,6 +219,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       useCouncil: mode === 'council',
       provider,
       model,
+      ...(history && history.length > 0 ? { history } : {}),
     },
   };
 }

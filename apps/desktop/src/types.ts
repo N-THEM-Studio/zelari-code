@@ -40,6 +40,9 @@ export interface Conversation {
   model?: string;
   archived?: boolean;
   archivedAt?: number;
+  /** Rolling provider-side history snapshot emitted by the CLI. Replayed on
+   * the next runTask so the headless agent keeps multi-turn context. */
+  history?: AgentMessageLite[];
 }
 
 export interface CliStatus {
@@ -84,6 +87,22 @@ export interface RunTaskArgs {
   /** Working directory chosen via "Open Folder". When set, the CLI agent runs
    * inside it. Undefined = inherit the Tauri process cwd. */
   cwd?: string;
+  /** JSON-encoded prior conversation turns, so the agent keeps multi-turn
+   * context across the per-message process boundary. Built from the
+   * `history_snapshot` events emitted by the CLI. */
+  history?: AgentMessageLite[];
+}
+
+/**
+ * Mirror of the CLI's AgentMessage. We store snapshots of these per
+ * conversation and replay them on the next runTask so the headless agent
+ * has context (answers "procedi" / "sì" correctly instead of amnesia).
+ */
+export interface AgentMessageLite {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+  toolCallId?: string;
+  toolCalls?: { id: string; name: string; args: Record<string, unknown> }[];
 }
 
 export interface DiscoverModelsResult {
@@ -117,4 +136,5 @@ export type AgentEvent =
   | { type: "agent_end"; reason?: string }
   | { type: "error"; message?: string; error?: string }
   | { type: "log"; message?: string }
+  | { type: "history_snapshot"; messages: AgentMessageLite[] }
   | { type: string; [key: string]: unknown };

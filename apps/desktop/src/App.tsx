@@ -21,6 +21,7 @@ import { PhaseToggle } from "./components/PhaseToggle";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
 import type {
+  AgentMessageLite,
   AppView,
   ChatMessage,
   CliStatus,
@@ -328,6 +329,29 @@ export default function App() {
                           createdAt: Date.now(),
                         },
                       ],
+                    }
+                  : c,
+              ),
+            );
+          }
+          return;
+        }
+
+        // v1.10.0: collect the rolling provider-side history so the next
+        // runTask can replay it (--history) and the agent keeps multi-turn
+        // context. Emitted once at end-of-turn by the headless CLI.
+        if (ev.type === "history_snapshot") {
+          const msgs = (ev as { messages?: AgentMessageLite[] }).messages;
+          if (Array.isArray(msgs)) {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === convId
+                  ? {
+                      ...c,
+                      history: [
+                        ...(c.history ?? []),
+                        ...msgs,
+                      ].slice(-24), // cap to keep argv/context window bounded
                     }
                   : c,
               ),
@@ -674,6 +698,9 @@ export default function App() {
         provider: provider || undefined,
         model: model || undefined,
         cwd: workdir ?? undefined,
+        // Replay rolling history so the headless agent keeps multi-turn
+        // context (answers "procedi" / "sì" instead of amnesia).
+        history: active?.history,
       });
     } catch (e) {
       setRunning(false);

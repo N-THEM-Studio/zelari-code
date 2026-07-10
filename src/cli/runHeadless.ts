@@ -16,6 +16,8 @@
  */
 import { AgentHarness, type ProviderStreamFn } from '@zelari/core/harness';
 import type { AgentMessage, AgentToolSpec } from '@zelari/core/harness';
+import { cleanAgentContent } from '@zelari/core';
+import { maybeAnchorShortAnswer } from './hooks/conversationContext.js';
 import { createBuiltinToolRegistry } from './toolRegistry.js';
 import {
   emitEvent,
@@ -33,8 +35,42 @@ import {
 import { envNumber } from './utils/envNumber.js';
 import { setPhase } from './phaseState.js';
 import { describePhase } from './phase.js';
+import { createStreamScrubber } from './utils/streamScrub.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
+  // === Global crash handlers (headless-only) ===
+  // Without these, an uncaught exception during a tool call (e.g. write_file
+  // failing deep in the harness) kills the process silently: no agent_end,
+  // no run-finished, and the desktop hangs forever waiting for output that
+  // never comes. Here we surface the failure as a final NDJSON error event
+  // + stderr line, then exit non-zero, so the desktop can show the cause.
+  let crashed = false;
+  const handleFatal = (label: string, err: unknown) => {
+    if (crashed) return; // Re-entrant: log only the first fatal cause.
+    crashed = true;
+    const msg = err instanceof Error ? err.message : String(err);
+    const stack = err instanceof Error && err.stack ? `\n${err.stack}` : '';
+    const line = `[zelari-code --headless] FATAL ${label}: ${msg}${stack}`;
+    try {
+      // Emit a structured error event the desktop renders in the chat.
+      emitEvent({
+        type: 'error',
+        severity: 'fatal',
+        message: `${label}: ${msg}`,
+        code: 'uncaught',
+      });
+    } catch {
+      // If stdout is already gone, at least try stderr.
+    }
+    try { process.stderr.write(line + '\n'); } catch { /* ignore */ }
+    // Force exit: the default Node behavior would print to stderr and keep
+    // an exit code 1, but for unhandledRejection it just warns and continues
+    // (which leaves the desktop hanging). We make both fatal + explicit.
+    process.exit(2);
+  };
+  process.on('uncaughtException', (err) => handleFatal('uncaughtException', err));
+  process.on('unhandledRejection', (err) => handleFatal('unhandledRejection', err));
+
   // Apply work phase before any tool registry is built.
   setPhase(opts.phase ?? 'build');
 
@@ -152,13 +188,34 @@ async function runHeadlessSingle(
     ].join('\n');
   }
 
+  // v1.10.0: multi-turn context for the desktop. Each desktop message spawns
+  // a fresh headless process, so without seeding prior turns the agent has
+  // amnesia and treats "procedi" / "sì" as brand-new requests. The desktop
+  // passes the rolling history via --history <json>; we scrub it (strip
+  // <think> tags but KEEP ---QUESTION--- blocks so short answers can bind),
+  // then seed the harness as [system, ...history, {user: task}].
+  const historySeed: AgentMessage[] = (opts.history ?? []).map((m) =>
+    m.role === 'assistant' && m.content
+      ? { ...m, content: cleanAgentContent(m.content, { stripQuestion: false }) }
+      : m,
+  );
+
+  // Short-answer anchoring: if the last history turn was a clarifying
+  // question and the user's reply is short ("procedi", "2", "sì"), rewrite
+  // it to re-state the question so the model can't treat it as contextless.
+  // Mirrors the TUI's maybeAnchorShortAnswer (conversationContext.ts).
+  const effectiveTask = maybeAnchorShortAnswer(opts.task)
+    ?? opts.task;
+  const historySeedLen = historySeed.length;
+
   const harness = new AgentHarness({
     model,
     provider,
     sessionId,
     messages: [
       { role: 'system', content: systemPrompt },
-      { role: 'user', content: opts.task },
+      ...historySeed,
+      { role: 'user', content: effectiveTask },
     ] as AgentMessage[],
     tools,
     toolRegistry,
@@ -172,24 +229,50 @@ async function runHeadlessSingle(
   let finalReason: 'completed' | 'cancelled' | 'error' = 'completed';
   let exitCode = 0;
   const textBuffer: string[] = [];
+  // Scrub <think>/---QUESTION--- leaks from the streamed text. The TUI does
+  // this in useChatTurn; the headless path used to emit raw deltas, leaking
+  // model reasoning into the desktop UI. One scrubber per turn accumulates
+  // raw text and yields only clean increments.
+  const scrub = createStreamScrubber();
 
   try {
     for await (const event of harness.run()) {
-      if (opts.output === 'json') {
-        emitEvent(event);
+      // Reset the scrubber on every new assistant message so an unclosed
+      // <think> in one message can't swallow the next message's text.
+      // (In a tool-loop turn the harness emits multiple message_start/end cycles.)
+      if (event.type === 'message_start') {
+        scrub.reset();
       }
-      if (event.type === 'message_delta') {
-        if (opts.output === 'plain') {
-          process.stdout.write(event.delta);
+      if (event.type === 'message_delta' && typeof event.delta === 'string') {
+        const cleanDelta = scrub.push(event.delta);
+        if (opts.output === 'json') {
+          // Re-emit a scrubbed message_delta so JSON consumers never see
+          // <think> tags. (Other event types pass through untouched.)
+          if (cleanDelta.length > 0) {
+            emitEvent({ ...event, delta: cleanDelta });
+          }
+        } else if (opts.output === 'plain') {
+          if (cleanDelta.length > 0) process.stdout.write(cleanDelta);
         } else {
-          textBuffer.push(event.delta);
+          if (cleanDelta.length > 0) textBuffer.push(cleanDelta);
         }
-      } else if (event.type === 'agent_end') {
-        finalReason = event.reason;
-        if (event.reason === 'error') exitCode = 3;
-      } else if (event.type === 'error') {
-        if (event.severity === 'fatal') {
-          exitCode = 2;
+      } else {
+        if (opts.output === 'json') {
+          emitEvent(event);
+        }
+        if (event.type === 'agent_end') {
+          // Flush any trailing cleaned text before signaling end.
+          const tail = scrub.flush();
+          if (tail.length > 0) {
+            if (opts.output === 'plain') process.stdout.write(tail);
+            else textBuffer.push(tail);
+          }
+          finalReason = event.reason;
+          if (event.reason === 'error') exitCode = 3;
+        } else if (event.type === 'error') {
+          if (event.severity === 'fatal') {
+            exitCode = 2;
+          }
         }
       }
     }
@@ -204,6 +287,30 @@ async function runHeadlessSingle(
     process.stdout.write(textBuffer.join(''));
   }
   process.stdout.write('');
+
+  // v1.10.0: emit a history_snapshot so the desktop can replay this turn's
+  // assistant+tool tail on the next message. We snapshot the messages BEYOND
+  // the seed (everything the harness added this turn), scrubbing <think> from
+  // assistant content but KEEPING ---QUESTION--- blocks (so the next turn's
+  // short-answer anchor can still bind). Mirrors useChatTurn's finally block.
+  if (finalReason !== 'error' && opts.output === 'json') {
+    try {
+      const all = harness.getMessages();
+      const seedLen = 1 /*system*/ + historySeedLen + 1 /*user*/;
+      if (all.length > seedLen) {
+        const tail = all.slice(seedLen).map((m) =>
+          m.role === 'assistant' && m.content
+            ? { ...m, content: cleanAgentContent(m.content, { stripQuestion: false }) }
+            : m,
+        );
+        if (tail.length > 0) {
+          emitEvent({ type: 'history_snapshot', messages: tail });
+        }
+      }
+    } catch {
+      // Non-fatal: a snapshot failure must never break the run.
+    }
+  }
 
   if (finalReason === 'error') return 3;
   return exitCode;
@@ -238,6 +345,7 @@ async function runHeadlessCouncil(
   const feedbackStore = new FeedbackStore();
 
   let exitCode = 0;
+  const scrub = createStreamScrubber();
   try {
     for await (const event of dispatchCouncil(opts.task, {
       apiKey: 'REDACTED',
@@ -249,14 +357,25 @@ async function runHeadlessCouncil(
       feedbackStore,
       runMode: planModeFromOpts(opts) ? 'design-phase' : 'implementation',
     })) {
-      if (opts.output === 'json') {
-        emitEvent(event);
-      } else if (event.type === 'message_delta') {
-        process.stdout.write(event.delta);
-      } else if (event.type === 'agent_end' && event.reason === 'error') {
-        exitCode = 3;
-      } else if (event.type === 'error' && event.severity === 'fatal') {
-        exitCode = 2;
+      if (event.type === 'message_start') {
+        scrub.reset();
+      }
+      if (event.type === 'message_delta' && typeof event.delta === 'string') {
+        const cleanDelta = scrub.push(event.delta);
+        if (opts.output === 'json') {
+          if (cleanDelta.length > 0) emitEvent({ ...event, delta: cleanDelta });
+        } else if (opts.output === 'plain' && cleanDelta.length > 0) {
+          process.stdout.write(cleanDelta);
+        }
+      } else {
+        if (opts.output === 'json') emitEvent(event);
+        if (event.type === 'agent_end') {
+          const tail = scrub.flush();
+          if (opts.output === 'plain' && tail.length > 0) process.stdout.write(tail);
+          if (event.reason === 'error') exitCode = 3;
+        } else if (event.type === 'error' && event.severity === 'fatal') {
+          exitCode = 2;
+        }
       }
     }
   } catch (err) {
@@ -325,6 +444,7 @@ async function runHeadlessZelari(
         let writeCount = 0;
         let chairmanErrored = false;
         let membersCompleted = 0;
+        const scrub = createStreamScrubber();
 
         for await (const event of dispatchCouncil(fullPrompt, {
           apiKey: 'REDACTED',
@@ -337,15 +457,24 @@ async function runHeadlessZelari(
           runMode: planModeFromOpts(opts) ? 'design-phase' : runMode,
           maxToolCallsChairman: chairmanBudget,
         })) {
-          if (opts.output === 'json') {
-            emitEvent(event);
-          } else if (event.type === 'message_delta') {
-            process.stdout.write(event.delta);
+          if (event.type === 'message_start') {
+            scrub.reset();
           }
-
           if (event.type === 'message_delta' && typeof event.delta === 'string') {
-            // Best-effort accumulate last member stream as synthesis proxy
+            // Best-effort accumulate RAW last member stream as synthesis proxy
+            // (the synthesis accumulator tracks raw provider text; the display
+            // path below emits the scrubbed version separately).
             synthesisText += event.delta;
+            const cleanDelta = scrub.push(event.delta);
+            if (opts.output === 'json') {
+              if (cleanDelta.length > 0) emitEvent({ ...event, delta: cleanDelta });
+            } else if (opts.output === 'plain' && cleanDelta.length > 0) {
+              process.stdout.write(cleanDelta);
+            }
+          } else {
+            if (opts.output === 'json') {
+              emitEvent(event);
+            }
           }
           if (event.type === 'tool_execution_end') {
             const name = (event as { toolName?: string; name?: string }).toolName

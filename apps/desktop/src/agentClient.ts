@@ -56,7 +56,13 @@ export async function updateCli(args?: {
 }
 
 export async function runTask(args: RunTaskArgs): Promise<string> {
-  return invoke<string>("run_task", { args });
+  // Rust expects `history` as a JSON string (Option<String>) that it forwards
+  // verbatim to the CLI as `--history <json>`. The desktop works in typed
+  // arrays; serialize here so the boundary stays clean.
+  const payload = args.history
+    ? { ...args, history: JSON.stringify(args.history) }
+    : { ...args, history: undefined };
+  return invoke<string>("run_task", { args: payload });
 }
 
 export async function cancelRun(): Promise<void> {

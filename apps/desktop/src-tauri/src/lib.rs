@@ -5,6 +5,7 @@
 //! to the web UI via Tauri events.
 
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -723,6 +724,11 @@ struct RunTaskArgs {
     /// on the user-selected project. None = inherit the Tauri process cwd.
     #[serde(default)]
     cwd: Option<String>,
+    /// JSON-encoded AgentMessage[] of prior conversation turns, forwarded to
+    /// the CLI as `--history <json>` so the agent keeps multi-turn context
+    /// across the per-message process boundary. None/empty = stateless.
+    #[serde(default)]
+    history: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -806,6 +812,7 @@ fn run_task(
     let provider = args.provider;
     let model = args.model;
     let cwd = args.cwd;
+    let history = args.history;
 
     thread::spawn(move || {
         let result = spawn_headless(
@@ -819,6 +826,7 @@ fn run_task(
             provider.as_deref(),
             model.as_deref(),
             cwd.as_deref(),
+            history.as_deref(),
         );
 
         let (exit_code, cancelled) = match result {
@@ -862,6 +870,7 @@ fn spawn_headless(
     provider: Option<&str>,
     model: Option<&str>,
     cwd: Option<&str>,
+    history: Option<&str>,
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
 
@@ -885,6 +894,35 @@ fn spawn_headless(
             cmd.arg("--model").arg(m);
         }
     }
+    // Forward conversation history so the desktop (fresh process per message)
+    // preserves multi-turn context. We write the JSON to a TEMP FILE rather
+    // than passing it as `--history <json>` because Windows' CreateProcess has
+    // a ~32KB command-line ceiling (os error 206) and a multi-turn chat's
+    // serialized history can easily exceed it. The CLI reads it via
+    // `--history-file <path>`; we clean up the file below after the run ends.
+    let history_file: Option<PathBuf> = if let Some(h) = history {
+        if !h.is_empty() {
+            let file_name = format!(
+                "zelari-history-{}.json",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            );
+            let path = std::env::temp_dir().join(file_name);
+            match fs::write(&path, h) {
+                Ok(()) => {
+                    cmd.arg("--history-file").arg(&path);
+                    Some(path)
+                }
+                Err(_) => None, // Non-fatal: degrade to stateless.
+            }
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -1012,6 +1050,10 @@ fn spawn_headless(
 
     let _ = err_thread.join();
     let _ = out_thread.join();
+    // Clean up the history tempfile (best-effort; never fail the run on cleanup).
+    if let Some(ref p) = history_file {
+        let _ = fs::remove_file(p);
+    }
     match child.try_wait() {
         Ok(Some(s)) => Ok(s.code().unwrap_or(if s.success() { 0 } else { 2 })),
         Ok(None) => match child.wait() {

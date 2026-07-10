@@ -968,6 +968,34 @@ export class AgentHarness {
               finishRef.value = 'tool_calls';
             }
           }
+          // === Truncated tool-call detection ===
+          // If the provider sent finish_reason='tool_calls' but NO tool_call
+          // was emitted (native or text-format), the stream was truncated mid-
+          // args (common with MiniMax on long write_file content). Without
+          // this guard the loop re-enters the provider, which re-emits the
+          // same truncated call forever — the desktop freezes on "Running
+          // write_file…" with no error, no completion ("muore e basta").
+          // Treat it as a recoverable error and force finish='stop' so the
+          // turn ends and the model gets a chance to recover on the next turn.
+          if (
+            finishRef.value === 'tool_calls' &&
+            turnToolCalls.length === 0 &&
+            turnToolResults.length === 0
+          ) {
+            const truncErr = createBrainEvent('error', this.sessionId, {
+              severity: 'recoverable',
+              message:
+                'Tool call was truncated (finish_reason=tool_calls but no complete tool_call received). ' +
+                'The provider cut the response mid-arguments. Retry with a shorter payload or split the work.',
+              code: 'tool_call_truncated',
+            });
+            this.emit(truncErr);
+            yield truncErr;
+            // Force-exit the tool loop: pretend the turn finished normally so
+            // the outer loop doesn't re-enter the provider for the same doomed
+            // truncated call.
+            finishRef.value = 'stop';
+          }
           // Append the assistant turn (text + any tool_calls) to the transcript.
           // This MUST happen before the loop re-enters the provider (either via
           // queue drain or a follow-up tool-result turn) so the conversation

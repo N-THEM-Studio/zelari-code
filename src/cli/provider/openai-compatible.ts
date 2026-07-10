@@ -41,6 +41,20 @@ const MAX_RETRIES: number = (() => {
 })();
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 8000;
+/**
+ * Hard timeout for a single provider HTTP request (connect + stream).
+ * Without this, a provider that accepts the TCP connection but never sends a
+ * response (load balancer stall, silent gateway timeout) makes fetch() hang
+ * forever — the harness sits blocked in the provider stream, emits no
+ * agent_end, and the desktop UI freezes ("muore e basta"). This is the
+ * silent-hang root cause for long tool-loop turns on flaky providers (MiniMax).
+ * Default 5 min (LLM tool turns can be slow); override via env.
+ */
+const PROVIDER_TIMEOUT_MS: number = (() => {
+  const raw = process.env.ZELARI_PROVIDER_TIMEOUT_MS;
+  const n = raw ? Number.parseInt(raw, 10) : 300_000;
+  return Number.isFinite(n) && n >= 10_000 ? n : 300_000;
+})();
 
 /**
  * Sleep that aborts early if the caller's signal fires (so `.cancel()` during
@@ -226,6 +240,15 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
         return;
       }
       try {
+        // Combine the caller's cancel signal with a hard timeout. Without the
+        // timeout, a provider that stalls after accepting the connection makes
+        // fetch() hang forever (the silent "muore e basta" freeze). The timeout
+        // aborts the request so it surfaces as a retryable network error
+        // instead of an infinite hang.
+        const timeoutSignal = AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
+        const fetchSignal = params.signal
+          ? AbortSignal.any([params.signal, timeoutSignal])
+          : timeoutSignal;
         response = await fetch(`${config.baseUrl}/chat/completions`, {
           method: 'POST',
           headers: {
@@ -237,13 +260,22 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
           // controller) so `.cancel()` actually aborts the HTTP request.
           // `config.signal` is the factory-level signal, typically undefined.
           // v0.6.0 audit HIGH-2.
-          signal: params.signal,
+          // v1.10.0: also apply PROVIDER_TIMEOUT_MS so a stalled connection
+          // can't hang the harness forever.
+          signal: fetchSignal,
         });
       } catch (err) {
-        // Network error (DNS, connection refused, TLS, read timeout) —
-        // transient in most cases. Retry unless this is the last attempt.
+        // Network error (DNS, connection refused, TLS, read timeout, or our
+        // PROVIDER_TIMEOUT_MS firing) — transient in most cases. Retry unless
+        // this is the last attempt. A timeout-induced abort looks like a
+        // normal AbortError here, so it follows the same retry path.
         lastStatus = 0;
         lastErrText = err instanceof Error ? err.message : String(err);
+        // If the user cancelled, don't retry — bail out immediately.
+        if (params.signal?.aborted) {
+          yield { kind: 'error', message: 'aborted' };
+          return;
+        }
         if (attempt < MAX_RETRIES) {
           await abortableSleep(backoffDelay(attempt, null), params.signal);
           continue;
@@ -360,6 +392,18 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
             }
             if (typeof delta?.content === 'string' && delta.content.length > 0) {
               yield { kind: 'text', delta: delta.content };
+            }
+            // Chain-of-thought / reasoning channel. GLM, DeepSeek, Qwen and
+            // MiniMax expose this separately from `content` so it never needs
+            // to be scrubbed out of the visible message. Without this yield
+            // the harness never emits a `thinking_delta` BrainEvent, the
+            // desktop's thinking-render path stays dead, and reasoning either
+            // leaks inline as <think> tags or is silently dropped.
+            const reasoning =
+              (delta as { reasoning_content?: unknown })?.reasoning_content ??
+              (delta as { reasoning?: unknown })?.reasoning;
+            if (typeof reasoning === 'string' && reasoning.length > 0) {
+              yield { kind: 'thinking', delta: reasoning };
             }
             // OpenAI tool_calls are streamed incrementally — accumulate args
             // per index and emit a tool_call delta when the args JSON closes.
