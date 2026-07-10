@@ -51,10 +51,15 @@ jobs:
             patchelf \
             libssl-dev
 
-      - name: Install monorepo deps (CLI side-car build optional)
+      - name: Install monorepo deps
         run: npm ci
 
-      - name: Build CLI (so local side-car path works in dev smoke)
+      # Fresh checkout has no packages/core/dist — root tsc resolves @zelari/core/*
+      # to those .d.ts files (same as publish.yml). Without this step: TS2307 cascade.
+      - name: Build @zelari/core
+        run: npm run build --workspace=@zelari/core
+
+      - name: Build CLI
         run: npm run build
 
       - name: Install desktop deps
