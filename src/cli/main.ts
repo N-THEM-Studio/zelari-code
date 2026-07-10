@@ -90,9 +90,14 @@ function runPreflight(): void {
     mode: "preflight",
   });
 
+  // Soft warnings: one compact line each (no multi-line walls before the TUI).
+  // Full detail stays in `zelari-code --doctor`.
   for (const w of warnings) {
+    const oneLine = w.message.replace(/\s*\n\s*/g, " ").replace(/\s+/g, " ").trim();
+    const short =
+      oneLine.length > 120 ? `${oneLine.slice(0, 117)}…` : oneLine;
     // eslint-disable-next-line no-console
-    console.error(`\x1b[33m[zelari-code] ⚠ ${w.tool}: ${w.message}\x1b[0m`);
+    console.error(`\x1b[33m[zelari-code] ⚠ ${w.tool}: ${short}\x1b[0m`);
   }
 
   if (hasCriticalFail) {

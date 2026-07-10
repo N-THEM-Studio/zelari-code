@@ -383,10 +383,7 @@ export function checkAgentBash(): PrereqResult {
     severity: "warn",
     tool: "bash",
     message:
-      `no Git Bash found — the agent's \`bash\` tool falls back to cmd.exe,\n` +
-      `         where POSIX commands (ls, which, $VAR, &&) may fail. Install Git\n` +
-      `         for Windows (https://git-scm.com/download/win) or set ZELARI_SHELL\n` +
-      `         to your bash binary.`,
+      "no Git Bash — bash tool uses cmd.exe (install Git for Windows or set ZELARI_SHELL). Details: zelari-code --doctor",
   };
 }
 

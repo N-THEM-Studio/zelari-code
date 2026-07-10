@@ -222,7 +222,7 @@ export function App(): React.ReactElement {
     setPicker(null);
   }, [picker]);
 
-  // One-shot brand header (ASCII logo via Ink columns — not space-padded text).
+  // One-shot clean header (text only; Braille logo is in the right Sidebar).
   // Marker message content is unused; Static renders StartupBanner for this id.
   const banner = useMemo<ChatMessage>(() => {
     return {
