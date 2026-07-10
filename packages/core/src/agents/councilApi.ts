@@ -196,6 +196,15 @@ export interface PureCouncilCallbacks {
     toolCalls: number;
     errored: boolean;
   }) => void;
+  /**
+   * v1.8.0: when a member emits a structured ---QUESTION--- with choices,
+   * the CLI may pause and ask the user (SelectList). Return the chosen
+   * answer (or null if cancelled / free-text will follow later). Injected
+   * into agentOutputs so subsequent members see the reply.
+   */
+  onClarification?: (
+    req: ClarificationRequest,
+  ) => Promise<string | null | undefined>;
 }
 
 const QUESTION_MARKER = '---QUESTION---';
@@ -603,14 +612,32 @@ export async function* runCouncilPure(
 
     const clarification = parseClarificationRequest(fullText);
     if (clarification) {
-      // Note: Pure council doesn't pause for user clarifications.
-      // The CLI caller (Phase 14) handles this at the slash-command level.
-      // For now, just inject the question into shared context as a comment.
       agentOutputs.push({
         name: 'Clarification',
         role: 'system',
         content: `(Agent ${agent.name} asked: ${clarification.question})`,
       });
+      // v1.8.0: optional interactive pause (CLI wires SelectList). When the
+      // user answers, inject it so oracle/chairman see the choice.
+      if (
+        callbacks.onClarification &&
+        clarification.choices &&
+        clarification.choices.length >= 2
+      ) {
+        try {
+          const answer = await callbacks.onClarification(clarification);
+          if (answer && answer.trim()) {
+            agentOutputs.push({
+              name: 'User',
+              role: 'user',
+              content:
+                `Answer to clarifying question "${clarification.question}": ${answer.trim()}`,
+            });
+          }
+        } catch {
+          // Clarification UI failure must never abort the council.
+        }
+      }
     }
   }
 

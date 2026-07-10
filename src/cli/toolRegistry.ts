@@ -76,6 +76,12 @@ export interface CreateRegistryOptions {
    * manager; pass a fake in tests; pass `null` to disable the LSP tools.
    */
   lspProvider?: LspProvider | null;
+  /**
+   * v1.8.0 plan phase: omit mutating builtins (write/edit/bash/apply_diff)
+   * and the task tool. Workspace plan tools can still be registered by the
+   * caller. Equivalent to a soft read-only for project files.
+   */
+  planMode?: boolean;
 }
 
 /**
@@ -125,7 +131,8 @@ export function createBuiltinToolRegistry(
   // Read-only mode (used for sub-agents): only tools that observe the
   // workspace — no write/edit/apply_diff/bash, and no `task` tool, so a
   // sub-agent can neither mutate the repo nor recurse into more sub-agents.
-  const readOnly = options.readOnly === true;
+  // v1.8.0 planMode: same mutator strip (plan phase explores/designs only).
+  const readOnly = options.readOnly === true || options.planMode === true;
 
   // Observe tools — always registered.
   registry.register(safeReadFile);
@@ -134,7 +141,7 @@ export function createBuiltinToolRegistry(
   registry.register(safeShowDiff);
   registry.register(safeFetchUrl);
   registry.register(safeWebSearch);
-  // Mutating tools — full registry only.
+  // Mutating tools — full registry only (not plan phase / sub-agent).
   if (!readOnly) {
     registry.register(safeWriteFile);
     registry.register(safeEditFile);

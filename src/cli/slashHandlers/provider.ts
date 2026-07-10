@@ -71,11 +71,15 @@ export interface PickerRequest {
    * v1.6.0: for kind 'clarification' — invoked with the chosen value when
    * the user picks an option from an agent-posed clarifying question. The
    * selected text flows into dispatchPrompt as the next user turn, and
-   * rolling history (see useChatTurn historyRef) ensures the model sees
-   * its own question, so the answer binds correctly. Absent for
+   * rolling history ensures the model sees its own question. Absent for
    * provider/model kinds (those use commandPrefix).
    */
   onAnswer?: (value: string) => void;
+  /**
+   * v1.8.0: Esc / cancel on a clarification picker (council pause must
+   * resolve so the run does not hang forever).
+   */
+  onCancel?: () => void;
 }
 
 export type OpenPicker = (req: PickerRequest) => void;

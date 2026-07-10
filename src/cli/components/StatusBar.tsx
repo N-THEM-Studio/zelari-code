@@ -5,6 +5,7 @@ import { formatCost, formatTokens } from '../modelPricing.js';
 import { Spinner } from './Spinner.js';
 
 export type ChatMode = 'agent' | 'council' | 'zelari';
+export type WorkPhaseLabel = 'plan' | 'build';
 
 interface StatusBarProps {
   model: string;
@@ -15,6 +16,8 @@ interface StatusBarProps {
   busy?: boolean;
   /** Dispatch mode for free-form prompts — toggled with shift+tab (v0.7.9). */
   mode?: ChatMode;
+  /** Work phase — plan (design) or build (implement). v1.8.0. */
+  phase?: WorkPhaseLabel;
   /** Current working directory, already shortened by the caller. */
   cwd?: string;
   /** Milliseconds elapsed in the current run; null while idle (v0.7.9). */
@@ -25,6 +28,12 @@ interface StatusBarProps {
   costUsd?: number;
   /** Cumulative prompt tokens served from cache; shown as "Nk cached" when > 0. */
   cachedTokens?: number;
+  /** Estimated context used (tokens). v1.8.0 meter. */
+  contextUsed?: number;
+  /** Context window limit (tokens). */
+  contextLimit?: number;
+  /** Brand/version shown on the right (Grok-style). */
+  brandVersion?: string;
 }
 
 /**
@@ -48,12 +57,23 @@ export function StatusBar({
   queueCount = 0,
   busy = false,
   mode = 'agent',
+  phase = 'build',
   cwd,
   elapsedMs = null,
   lastMs = null,
   costUsd = 0,
   cachedTokens = 0,
+  contextUsed = 0,
+  contextLimit = 0,
+  brandVersion,
 }: StatusBarProps): React.ReactElement {
+  const ctxLabel =
+    contextLimit > 0
+      ? `${formatTokens(contextUsed)}/${formatTokens(contextLimit)}`
+      : contextUsed > 0
+        ? formatTokens(contextUsed)
+        : null;
+
   return (
     <Box paddingX={1} width="100%" justifyContent="space-between" gap={2}>
       {/* Left group shrinks (truncates) before the right one on narrow panes. */}
@@ -63,13 +83,16 @@ export function StatusBar({
           {sessionActive ? '●' : '○'}
         </Text>
         <Text dimColor> </Text>
+        <Text bold color={phase === 'plan' ? 'yellow' : 'green'}>
+          {phase === 'plan' ? '◇ plan' : '◆ build'}
+        </Text>
+        <Text dimColor> · </Text>
         <Text
           bold
           color={mode === 'council' ? 'magenta' : mode === 'zelari' ? 'green' : 'cyan'}
         >
-          {mode === 'council' ? '⛬ council' : mode === 'zelari' ? '⚡ zelari' : '⏵ agent'}
+          {mode === 'council' ? 'council' : mode === 'zelari' ? 'zelari' : 'agent'}
         </Text>
-        <Text dimColor> (shift+tab)</Text>
         <Text dimColor> · </Text>
         <Text bold color="cyan">{provider}</Text>
         <Text dimColor> · </Text>
@@ -102,12 +125,25 @@ export function StatusBar({
             <Text dimColor> · </Text>
           </>
         ) : null}
+        {ctxLabel ? (
+          <>
+            <Text color="cyan">{ctxLabel}</Text>
+            <Text dimColor> · </Text>
+          </>
+        ) : null}
         {costUsd > 0 ? (
           <>
             <Text color="green">{formatCost(costUsd)}</Text>
             {cachedTokens > 0 ? (
               <Text dimColor> ({formatTokens(cachedTokens)} cached)</Text>
             ) : null}
+            <Text dimColor> · </Text>
+          </>
+        ) : null}
+        {brandVersion ? (
+          <>
+            <Text bold color="white">ZELARI</Text>
+            <Text dimColor> v{brandVersion}</Text>
             <Text dimColor> · </Text>
           </>
         ) : null}

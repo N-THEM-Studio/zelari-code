@@ -423,11 +423,16 @@ describe('useChatTurn (v0.4.3 audit coverage)', () => {
 // [system, user] each turn). The fix carries prior turns forward so the
 // model sees its own question when the user answers briefly.
 describe('useChatTurn — rolling history (v1.6.0)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks();
     // Reset the harness mock's delta between sub-tests.
     harnessState.nextAssistantDelta = 'hello';
     harnessState.lastMessages = [];
+    // v1.8.0: history is module-global — isolate tests.
+    const { _resetConversationContextForTests } = await import(
+      '../../src/cli/hooks/conversationContext.js'
+    );
+    _resetConversationContextForTests();
   });
 
   it('carries the prior turn forward: turn 2 sees [system, <assistant turn1>, user turn2]', async () => {
@@ -508,13 +513,19 @@ describe('useChatTurn — rolling history (v1.6.0)', () => {
     });
 
     // The seed for turn 2 must contain the prior assistant turn (with the
-    // question) so the model can bind "full" → Full.
+    // question) so the model can bind "full" → Full. v1.8.0 also rewrites the
+    // short user message into an anchored form that re-states the question.
     const msgs = harnessState.lastMessages as Array<{ role: string; content: string }>;
     const priorQuestion = msgs.find(
       (m) => m.role === 'assistant' && m.content.includes('---QUESTION---'),
     );
     expect(priorQuestion).toBeDefined();
-    const answer = msgs.find((m) => m.role === 'user' && m.content === 'full');
+    const answer = msgs.find(
+      (m) =>
+        m.role === 'user' &&
+        (m.content === 'full' ||
+          (m.content.includes('User\'s answer') && m.content.toLowerCase().includes('full'))),
+    );
     expect(answer).toBeDefined();
   });
 

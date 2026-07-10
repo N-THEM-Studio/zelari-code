@@ -63,6 +63,8 @@ export interface CouncilDispatchOptions {
   workspaceRoot?: string;
   /** Status lines (delivery retries, inline-js autofix) for the TUI. */
   onCouncilStatus?: PureCouncilCallbacks["onCouncilStatus"];
+  /** v1.8.0: interactive clarifying-question pause (SelectList in CLI). */
+  onClarification?: PureCouncilCallbacks["onClarification"];
 }
 
 export class CouncilDispatchError extends Error {
@@ -144,6 +146,9 @@ export async function* dispatchCouncil(
   const callbacks: PureCouncilCallbacks = {};
   if (options.onCouncilStatus) {
     callbacks.onCouncilStatus = options.onCouncilStatus;
+  }
+  if (options.onClarification) {
+    callbacks.onClarification = options.onClarification;
   }
   yield* runCouncilPure(userMessage, config, callbacks);
 }

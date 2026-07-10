@@ -226,6 +226,189 @@ export class AgentHarness {
   }
 
   /**
+   * v1.8.0: true when a tool may run concurrently with other parallel-safe
+   * tools. Write/execute tools stay serial (preserve file/order safety).
+   * `task` is parallel-safe (read-only sub-agents). Opt out: ZELARI_PARALLEL_TOOLS=0.
+   */
+  private isParallelSafeTool(toolName: string): boolean {
+    if (process.env.ZELARI_PARALLEL_TOOLS === '0') return false;
+    if (toolName === 'task') return true;
+    const def = this.config.toolRegistry?.get(toolName);
+    if (!def) {
+      // Unknown / MCP: allow parallel for search-like MCP tools; serial otherwise.
+      if (toolName.startsWith('mcp_')) {
+        const lower = toolName.toLowerCase();
+        if (lower.includes('write') || lower.includes('edit') || lower.includes('delete')) {
+          return false;
+        }
+        return true;
+      }
+      return false;
+    }
+    const perms = def.permissions ?? [];
+    if (perms.includes('write') || perms.includes('execute')) return false;
+    return true;
+  }
+
+  /**
+   * Execute buffered native tool calls: consecutive parallel-safe tools run
+   * via Promise.all (chunked by ZELARI_MAX_PARALLEL_TOOLS, default 6); write/
+   * execute tools run one-at-a-time in order.
+   */
+  private async executePendingTools(
+    pending: ReadonlyArray<{
+      toolCallId: string;
+      toolName: string;
+      args: Record<string, unknown>;
+      skipped: boolean;
+      cached?: string;
+    }>,
+    maxToolCalls: number | undefined,
+  ): Promise<
+    Array<{
+      toolCallId: string;
+      content: string;
+      isError: boolean;
+      endEvent: BrainToolExecutionEndEvent;
+      cacheKey?: string;
+    }>
+  > {
+    const out: Array<{
+      toolCallId: string;
+      content: string;
+      isError: boolean;
+      endEvent: BrainToolExecutionEndEvent;
+      cacheKey?: string;
+    }> = new Array(pending.length);
+
+    const maxParallel = Math.max(
+      1,
+      Number.parseInt(process.env.ZELARI_MAX_PARALLEL_TOOLS ?? '6', 10) || 6,
+    );
+
+    // In-flight map so identical tool+args within a parallel batch share one
+    // invoke (duplicate short-circuit still holds when tools run concurrently).
+    const inflight = new Map<
+      string,
+      Promise<{ content: string; isError: boolean; durationMs: number }>
+    >();
+
+    const invokeOne = async (
+      p: (typeof pending)[number],
+    ): Promise<{ content: string; isError: boolean; durationMs: number; cacheKey?: string }> => {
+      if (p.cached !== undefined) {
+        return {
+          content: p.cached,
+          isError: p.skipped || p.cached.startsWith('[skipped]'),
+          durationMs: 0,
+        };
+      }
+      if (p.skipped || !this.config.toolRegistry) {
+        return {
+          content: `[skipped] maxToolCallsPerTurn reached (limit=${maxToolCalls})`,
+          isError: true,
+          durationMs: 0,
+        };
+      }
+      const callKey = hashToolCall(p.toolName, p.args);
+      const fromRunCache = this.toolCallCache.get(callKey);
+      if (fromRunCache !== undefined) {
+        return {
+          content: `[duplicate call — result repeated; do not call this tool again with the same arguments]\n${fromRunCache}`,
+          isError: false,
+          durationMs: 0,
+        };
+      }
+      const existing = inflight.get(callKey);
+      if (existing) {
+        const shared = await existing;
+        return {
+          content: `[duplicate call — result repeated; do not call this tool again with the same arguments]\n${shared.content}`,
+          isError: false,
+          durationMs: 0,
+        };
+      }
+      const startMs = Date.now();
+      const prom = (async () => {
+        const result = await this.config.toolRegistry!.invoke<unknown>(p.toolName, p.args, {
+          cwd: this.config.cwd,
+          sessionId: this.sessionId,
+          signal: this.activeController?.signal,
+        });
+        let resultStr = '';
+        if (result.ok) {
+          if (typeof result.value === 'string') resultStr = result.value;
+          else if (typeof result.value === 'object' && result.value !== null) {
+            resultStr = JSON.stringify(result.value, null, 2);
+          } else resultStr = String(result.value);
+        } else {
+          resultStr = result.error;
+        }
+        return {
+          content: resultStr,
+          isError: !result.ok,
+          durationMs: Date.now() - startMs,
+        };
+      })();
+      inflight.set(callKey, prom);
+      const r = await prom;
+      if (!r.isError) this.toolCallCache.set(callKey, r.content);
+      return { ...r, cacheKey: callKey };
+    };
+
+    const toOut = (
+      p: (typeof pending)[number],
+      r: { content: string; isError: boolean; durationMs: number; cacheKey?: string },
+    ) => {
+      const endEvent = createBrainEvent('tool_execution_end', this.sessionId, {
+        toolCallId: p.toolCallId,
+        result: r.content,
+        isError: r.isError,
+        durationMs: r.durationMs,
+      }) as BrainToolExecutionEndEvent;
+      return {
+        toolCallId: p.toolCallId,
+        content: r.content,
+        isError: r.isError,
+        endEvent,
+        // Cache already written in invokeOne; no need to re-set.
+      };
+    };
+
+    let i = 0;
+    while (i < pending.length) {
+      const p = pending[i]!;
+      if (p.skipped || p.cached !== undefined || !this.isParallelSafeTool(p.toolName)) {
+        out[i] = toOut(p, await invokeOne(p));
+        i += 1;
+        continue;
+      }
+
+      // Consecutive parallel-safe tools → one or more Promise.all chunks.
+      let j = i;
+      while (
+        j < pending.length &&
+        !pending[j]!.skipped &&
+        pending[j]!.cached === undefined &&
+        this.isParallelSafeTool(pending[j]!.toolName)
+      ) {
+        j += 1;
+      }
+      for (let off = i; off < j; off += maxParallel) {
+        const end = Math.min(off + maxParallel, j);
+        const slice = pending.slice(off, end);
+        const results = await Promise.all(slice.map((item) => invokeOne(item)));
+        for (let k = 0; k < results.length; k++) {
+          out[off + k] = toOut(slice[k]!, results[k]!);
+        }
+      }
+      i = j;
+    }
+
+    return out;
+  }
+
+  /**
    * Cancel the in-flight run. Events drain until end of stream.
    *
    * Idempotent: calling cancel() multiple times is safe — the cancelled
@@ -532,6 +715,16 @@ export class AgentHarness {
       // (MiniMax: "tool result's tool id ... not found (2013)"). xAI/grok
       // tolerated the reversed order; MiniMax/GLM do not.
       const turnToolResults: { toolCallId: string; content: string }[] = [];
+      // v1.8.0: queue native tool_call deltas; execute on `finish` so
+      // consecutive read-only tools (and multi-`task`) run in parallel.
+      type PendingNativeTool = {
+        toolCallId: string;
+        toolName: string;
+        args: Record<string, unknown>;
+        skipped: boolean;
+        cached?: string;
+      };
+      const pendingNativeTools: PendingNativeTool[] = [];
 
       for await (const delta of stream) {
         if (this.cancelled) {
@@ -576,111 +769,62 @@ export class AgentHarness {
           this.emit(toolStartEvent);
           yield toolStartEvent;
 
-          // Skip registry execution if we've exceeded the per-turn limit
-          // (Task G.2, carryover from v3-C C.1.5). Emit a synthetic
-          // `tool_execution_end` so the UI can still render the attempt
-          // and downstream consumers (e.g. the LLM context) see a clean
-          // closure. Without this guard, a council member could fire 50
-          // read_file calls in one turn and blow the message context.
+          // Queue for execution on `finish` (parallel-safe batches). Without a
+          // registry we only emit start (legacy — no end events).
           const skipped = typeof maxToolCalls === 'number' && toolCallsThisTurn > maxToolCalls;
-
-          if (this.config.toolRegistry && !skipped) {
-            // v0.7.1 (A2): duplicate-call short-circuit. If the model re-issues
-            // an identical tool call (same name + same args) within this run,
-            // replay the cached result instead of re-executing. Feed it back
-            // with a prefix so the model learns not to repeat the call. This
-            // preserves the iteration budget for real progress instead of
-            // burning it on read_file(same path) ×3.
+          if (!this.config.toolRegistry) {
+            // no-op: start already yielded; no end (pre-v1.8.0 contract)
+          } else if (skipped) {
+            pendingNativeTools.push({
+              toolCallId: delta.toolCallId,
+              toolName: delta.toolName,
+              args: delta.args,
+              skipped: true,
+            });
+          } else {
             const callKey = hashToolCall(delta.toolName, delta.args);
             const cached = this.toolCallCache.get(callKey);
             if (cached !== undefined) {
-              const dupResult = `[duplicate call — result repeated; do not call this tool again with the same arguments]\n${cached}`;
-              const endEvent: BrainToolExecutionEndEvent = createBrainEvent(
-                'tool_execution_end',
-                this.sessionId,
-                {
-                  toolCallId: delta.toolCallId,
-                  result: dupResult,
-                  isError: false,
-                  durationMs: 0,
-                },
-              );
-              this.emit(endEvent);
-              yield endEvent;
-              turnToolResults.push({
+              pendingNativeTools.push({
                 toolCallId: delta.toolCallId,
-                content: dupResult,
+                toolName: delta.toolName,
+                args: delta.args,
+                skipped: false,
+                cached: `[duplicate call — result repeated; do not call this tool again with the same arguments]\n${cached}`,
               });
             } else {
-            const startMs = Date.now();
-            const result = await this.config.toolRegistry.invoke<unknown>(
-              delta.toolName,
-              delta.args,
-              {
-                cwd: this.config.cwd,
-                sessionId: this.sessionId,
-                signal: this.activeController?.signal,
-              },
-            );
-            let resultStr = '';
-            if (result.ok) {
-              if (typeof result.value === 'string') {
-                resultStr = result.value;
-              } else if (typeof result.value === 'object' && result.value !== null) {
-                resultStr = JSON.stringify(result.value, null, 2);
-              } else {
-                resultStr = String(result.value);
-              }
-            } else {
-              resultStr = result.error;
-            }
-            const endEvent: BrainToolExecutionEndEvent = createBrainEvent(
-              'tool_execution_end',
-              this.sessionId,
-              {
+              pendingNativeTools.push({
                 toolCallId: delta.toolCallId,
-                result: resultStr,
-                isError: !result.ok,
-                durationMs: Date.now() - startMs,
-              },
-            );
-            this.emit(endEvent);
-            yield endEvent;
-            // Buffer the tool result; it is appended to the transcript AFTER
-            // the assistant tool_calls message on `finish` (see turnToolResults).
-            turnToolResults.push({
-              toolCallId: delta.toolCallId,
-              content: resultStr,
-            });
-            // v0.7.1 (A2): cache the result so an identical re-issue is
-            // short-circuited above instead of re-executed.
-            this.toolCallCache.set(callKey, resultStr);
+                toolName: delta.toolName,
+                args: delta.args,
+                skipped: false,
+              });
             }
-          } else if (skipped) {
-            // Synthetic end event — no registry call, just close out the
-            // tool_execution_start with an explicit skip reason. The LLM
-            // can see in the next provider turn that this tool didn't run.
-            const endEvent: BrainToolExecutionEndEvent = createBrainEvent(
-              'tool_execution_end',
-              this.sessionId,
-              {
-                toolCallId: delta.toolCallId,
-                result: `[skipped] maxToolCallsPerTurn reached (limit=${maxToolCalls})`,
-                isError: true,
-                durationMs: 0,
-              },
-            );
-            this.emit(endEvent);
-            yield endEvent;
-            turnToolResults.push({
-              toolCallId: delta.toolCallId,
-              content: `[skipped] maxToolCallsPerTurn reached (limit=${maxToolCalls})`,
-            });
           }
         } else if (delta.kind === 'finish') {
           // Capture the finish reason via the shared ref so the caller
           // can synthesize the matching `message_end`.
           finishRef.value = delta.reason;
+
+          // v1.8.0: execute queued native tools (parallel read-only batches).
+          if (pendingNativeTools.length > 0) {
+            const executed = await this.executePendingTools(
+              pendingNativeTools,
+              maxToolCalls,
+            );
+            for (const item of executed) {
+              this.emit(item.endEvent);
+              yield item.endEvent;
+              turnToolResults.push({
+                toolCallId: item.toolCallId,
+                content: item.content,
+              });
+              if (item.cacheKey && item.content && !item.isError) {
+                this.toolCallCache.set(item.cacheKey, item.content);
+              }
+            }
+            pendingNativeTools.length = 0;
+          }
           // Fallback: some models emit tool calls as a ---TOOLS---[json]---END---
           // text block instead of native tool_calls. Execute them so edits are not
           // silently lost. When native read/grep tools ran in the same turn, still

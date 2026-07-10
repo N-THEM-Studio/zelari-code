@@ -47,7 +47,7 @@ export function createBrowserTool(deps: BrowserToolDeps = {}): ToolDefinition {
       waitForSelector: z.string().optional().describe('Assert this CSS selector is present after actions.'),
       screenshot: z.boolean().optional().describe('Save a screenshot (default true).'),
     }),
-    execute: async (args) => {
+    execute: async (args, ctx) => {
       const a = args as {
         url: string;
         actions?: BrowserAction[];
@@ -57,9 +57,12 @@ export function createBrowserTool(deps: BrowserToolDeps = {}): ToolDefinition {
       const dir = deps.screenshotDir ?? os.tmpdir();
       const screenshotPath =
         a.screenshot === false ? undefined : path.join(dir, `zelari-browser-${Date.now()}.png`);
+      // Pass ctx.cwd so a project-local `npm i -D playwright` is found (the
+      // CLI process itself cannot see it via bare import when installed -g).
       const result = await runBrowserCheck(
         {
           url: a.url,
+          cwd: ctx.cwd,
           ...(a.actions ? { actions: a.actions } : {}),
           ...(a.waitForSelector ? { waitForSelector: a.waitForSelector } : {}),
           ...(screenshotPath ? { screenshotPath } : {}),

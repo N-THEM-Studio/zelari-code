@@ -109,6 +109,8 @@ export interface SlashDispatchParams {
   onExit?: () => void;
   /** Called by /clear (v0.7.0): caller bumps its Static-remount epoch. */
   onClear?: () => void;
+  /** v1.8.0: called when /plan or /build changes the work phase. */
+  onPhaseChange?: (phase: 'plan' | 'build') => void;
 }
 
 export function useSlashDispatch(params: SlashDispatchParams): (value: string) => Promise<void> {
@@ -187,6 +189,12 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
         setSessionId(id);
         setMessages([]);
         setSessionActive(false);
+        try {
+          const { clearHistory } = await import('./conversationContext.js');
+          clearHistory();
+        } catch {
+          /* non-fatal */
+        }
         onNewSession?.(id);
       }
       setInput('');
@@ -454,6 +462,47 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       return;
     }
 
+    // ── Plan / build phase (orthogonal to dispatch mode) ──
+    if (result.kind === 'phase_set' && result.phaseTarget) {
+      const { setPhase } = await import('../phaseState.js');
+      const { describePhase } = await import('../phase.js');
+      setPhase(result.phaseTarget);
+      // Notify App so StatusBar re-renders (phaseState alone is not reactive).
+      params.onPhaseChange?.(result.phaseTarget);
+      appendSystem(setMessages, `[phase] ${describePhase(result.phaseTarget)}`);
+      setInput('');
+      if (result.phaseGoal) {
+        appendUser(setMessages, result.phaseGoal);
+        setSessionActive(true);
+        if (mode === 'zelari') {
+          await dispatchZelariPrompt(result.phaseGoal);
+        } else if (mode === 'council') {
+          await dispatchCouncilPrompt(result.phaseGoal);
+        } else {
+          await dispatchPrompt(result.phaseGoal);
+        }
+      }
+      return;
+    }
+
+    if (result.kind === 'view_plan') {
+      // Reuse workspace show plan path when available.
+      try {
+        const { buildPlanSummary } = await import('../workspace/workspaceSummary.js');
+        const summary = buildPlanSummary(process.cwd(), { userMessage: '' });
+        appendSystem(
+          setMessages,
+          summary?.trim()
+            ? summary
+            : '[plan] No plan found. Run /plan <goal> or /workspace show plan after a design council.',
+        );
+      } catch {
+        appendSystem(setMessages, '[plan] Unable to read plan (workspace summary failed).');
+      }
+      setInput('');
+      return;
+    }
+
     // ── Promote member ──
     if (result.kind === 'promote_member' && result.promoteMemberId) {
       await handlePromoteMember(baseCtx, result.promoteMemberId);
@@ -497,6 +546,14 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     // ── Clear / exit ──
     if (result.kind === 'clear') {
       handleClearChat(setMessages, setSessionActive);
+      // v1.8.0: also drop provider rolling history so the next turn cannot
+      // leak pre-clear context (clarifying answers from a prior topic).
+      try {
+        const { clearHistory } = await import('./conversationContext.js');
+        clearHistory();
+      } catch {
+        /* non-fatal */
+      }
       // v0.7.0: notify the App so it bumps a "clear epoch" counter that
       // remounts <Static> (its internal "already printed" index must reset
       // for the ANSI-cleared scrollback to stay in sync).

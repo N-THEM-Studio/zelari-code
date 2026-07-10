@@ -5,6 +5,35 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-07-10
+
+### Added
+- **Shared conversation context across agent / council / zelari** — rolling provider history (`conversationContext`) so short answers to clarifying questions bind in every mode; `/clear` and `/new` reset it.
+- **Short-answer anchoring** — if the model asked a `---QUESTION---` and the user replies with a choice / number / short token, the next turn re-states the question for the model.
+- **Interactive council clarifications** — `onClarification` pauses the council, opens the SelectList picker, injects the answer for subsequent members.
+- **Plan / build work phase** (orthogonal to dispatch mode) — `/plan [goal]`, `/build [goal]`, `/view-plan`. Plan phase strips write/edit/bash/apply_diff; council is forced to design-phase. StatusBar shows `◇ plan` / `◆ build`.
+- **UI: brand + version on the right of StatusBar** (and banner first line); Sidebar is git-changes only. Context meter `used/limit` (default limit 200K, override `ZELARI_CONTEXT_LIMIT`).
+- **fff MCP plugin** — optional fast codebase search (`fff-mcp`); boot gate + `/plugins install fff`; wire via `~/.zelari-code/mcp.json`. Opt out: `ZELARI_FFF=0`.
+
+### Changed
+- Sidebar no longer shows the large Braille emblem / wordmark at bottom-right (moved to StatusBar right cluster per product request).
+
+### Added (PR-D completion)
+- **Parallel tool execution** — consecutive read-only tools (and multi-`task`) run via `Promise.all` in the agent harness; write/execute stay serial. Cap: `ZELARI_MAX_PARALLEL_TOOLS` (default 6). Opt out: `ZELARI_PARALLEL_TOOLS=0`.
+- **Dynamic token budget** — `applyBudgetPolicy` warns at 70%, auto-compacts at 85%, hard-trims at 95% of `ZELARI_CONTEXT_LIMIT`; plan phase uses lower default tool-loop cap than build.
+
+## [1.7.2] - 2026-07-10
+
+### Fixed
+- **Plugin boot gate re-prompted forever after "Install now"** — three detection bugs made optional tools look missing every launch even when already installed:
+  1. **Playwright** was installed with `npm i -D` into the project, but presence (and `browser_check`) used a bare `import('playwright')` from the globally installed CLI process, which cannot see the project's `node_modules`. Both detect and runtime now resolve via `loadPlaywright(cwd)` (`createRequire` from the workspace first, then bare import).
+  2. **LSP globals** (especially `pyright-langserver`) were probed with `<bin> --version`. Language servers often reject that flag and exit non-zero with empty stdout, so pyright was reported missing forever despite a working global install. Detection now matches runtime: project-local `resolveBin`, then **PATH file existence** (`isBinaryOnPath`), never `--version`.
+  3. **PluginGate** re-runs `detect(cwd)` after a successful npm install; if the package is still not loadable it reports a clear failure instead of a false green.
+- **`browser_check` ignored project-local Playwright** — the tool now passes `ctx.cwd` into the loader so a `-D` install in the workspace actually enables automation.
+
+### Added
+- **`loadPlaywright(cwd?)`** / **`isBinaryOnPath(bin)`** — shared detection helpers used by the plugin registry and browser driver (unit-tested).
+
 ## [1.7.1] - 2026-07-10
 
 ### Fixed

@@ -42,10 +42,22 @@ import {
   completeTool,
   type LiveState,
 } from "./chatState.js";
-import { compactHistory } from "./historyCompaction.js";
+import {
+  getHistory,
+  compactInPlace,
+  appendMessages,
+  clearHistory,
+  setLastClarification,
+  maybeAnchorShortAnswer,
+  formatHistoryForCouncil,
+  setHistory,
+} from "./conversationContext.js";
 import type { ProviderName } from "../keyStore.js";
 import { computeSessionStatsDelta } from "./chatStats.js";
 import { envNumber } from "../utils/envNumber.js";
+import { getPhase } from "../phaseState.js";
+import { describePhase } from "../phase.js";
+import { applyBudgetPolicy } from "../budget/tokenBudget.js";
 
 /**
  * useChatTurn — owns the chat-turn lifecycle (single prompt dispatch +
@@ -99,7 +111,9 @@ export interface UseChatTurnParams {
    * question is still visible as text and rolling history alone ensures the
    * user's typed answer binds to the question on the next turn.
    */
-  setPicker?: (req: import("../slashHandlers/provider.js").PickerRequest) => void;
+  setPicker?: (
+    req: import("../slashHandlers/provider.js").PickerRequest | null,
+  ) => void;
 }
 
 export interface UseChatTurnResult {
@@ -111,6 +125,8 @@ export interface UseChatTurnResult {
   harnessRef: React.MutableRefObject<AgentHarness | null>;
   queueCount: number;
   setQueueCount: (n: number) => void;
+  /** Reset provider rolling history (call from /clear and /new). */
+  clearConversationHistory: () => void;
 }
 
 export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
@@ -129,21 +145,19 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
   } = params;
   const harnessRef = useRef<AgentHarness | null>(null);
   const [queueCount, setQueueCount] = useState<number>(0);
-  // v1.6.0: rolling conversation history. The single-agent loop was
-  // stateless across turns — each dispatchPrompt rebuilt
-  // messages:[{system},{user}] from scratch, so the model never saw its
-  // own prior question when the user answered with a short reply ("full",
-  // "sì", "la seconda"). This ref carries prior turns forward: the seed
-  // for turn N is [system, ...history, user_N], and after the run we
-  // snapshot the assistant+tool tail the harness accumulated and append
-  // it here for turn N+1. Capped by compactHistory() (ZELARI_HISTORY_TURNS).
-  const historyRef = useRef<AgentMessage[]>([]);
+  // v1.8.0: rolling history lives in conversationContext (shared by agent,
+  // council, zelari) so /clear|/new can reset it and short answers bind
+  // across all modes. Seed for turn N is [system, ...history, user_N].
 
   // v0.7.0: when the live region is wired, streaming + tool events route
   // there; otherwise we fall back to the v0.6 single-array behavior so the
   // existing unit tests (which pass only setMessages/commitStreaming) keep
   // asserting on `messages` directly.
   const useLiveModel = !!(setLive && liveRef);
+
+  const clearConversationHistory = useCallback(() => {
+    clearHistory();
+  }, []);
 
   const dispatchPrompt = useCallback(
     async (
@@ -178,13 +192,19 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       // with a partial assistant tail).
       let turnSucceeded = false;
       try {
-        // v1.6.0: trim rolling history before seeding the next turn. No-op
-        // (returns the same ref) under the cap; replaces the array when it
-        // exceeds 2× ZELARI_HISTORY_TURNS. When the env var is 0 the cap
-        // resolves to [] and the loop degrades to the pre-1.6 stateless
-        // [system, user] behavior.
-        historyRef.current = compactHistory(historyRef.current);
-        historySeedLen = historyRef.current.length;
+        // v1.8.0: budget-aware compact (phase plan/build + occupancy thresholds).
+        compactInPlace();
+        const budget = applyBudgetPolicy(getHistory(), getPhase());
+        setHistory(budget.history);
+        for (const w of budget.warnings) {
+          appendSystem(setMessages, w, Date.now());
+        }
+        historySeedLen = getHistory().length;
+        // Short-answer anchor: if the user is replying to a ---QUESTION---,
+        // rewrite the user message so the model cannot treat "full"/"2" as
+        // a brand-new request even if compaction dropped the prior turn.
+        const anchored = maybeAnchorShortAnswer(userText);
+        const effectiveUserText = anchored ?? userText;
         envConfig = await providerFromEnv();
         if (!envConfig) {
           // Name the ACTIVE provider — the old hardcoded "OPENAI_API_KEY not
@@ -198,7 +218,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           return;
         }
         setBusy(true);
-        const { registry: toolRegistry } = createBuiltinToolRegistry();
+        const workPhase = getPhase();
+        const { registry: toolRegistry } = createBuiltinToolRegistry({
+          planMode: workPhase === "plan",
+        });
         const baseProviderStream = openaiCompatibleProvider(envConfig);
         const failoverResolution = await resolveFailoverStream({
           failoverEnabled: process.env.ANATHEMA_FAILOVER !== "0",
@@ -335,12 +358,31 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // SINGLE_AGENT_IDENTITY_MODULE overrides the council-flavored
         // 'base-identity' module so the persona is "Zelari Code in the terminal",
         // not "member of an AI Council".
+        const planPhaseBlock =
+          workPhase === "plan"
+            ? [
+                "",
+                "# Work Phase: PLAN",
+                "You are in PLAN mode. Explore and design only.",
+                "- Do NOT implement production code or run destructive shell commands.",
+                "- write_file / edit_file / bash / apply_diff are unavailable.",
+                "- Produce a clear plan, ask clarifying questions (---QUESTION---), use workspace plan tools when relevant.",
+                "- When the plan is ready, tell the user to run /build to implement.",
+              ].join("\n")
+            : workPhase === "build" && planSummary
+              ? [
+                  "",
+                  "# Work Phase: BUILD",
+                  "Implement the approved plan. Prefer acting over describing. Update plan task statuses as you go.",
+                ].join("\n")
+              : "";
         const shellContextBlock = [
           "# Platform & Shell",
           `platform: ${process.platform}`,
           `shell: ${resolvedShell.via}`,
           shellGuidance,
           nonInteractiveGuidance,
+          planPhaseBlock,
           "",
           "# Working Directory",
           `You are running in: ${cwd}`,
@@ -418,23 +460,19 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           default: 25,
           min: 1,
         });
-        // v1.5.2: tool-loop iteration cap (observe → reason → act cycles per
-        // run). Core default is 90 (raised from 30). Overridable for very
-        // large multi-file tasks or to tighten on flaky providers.
-        const maxToolLoopIterations = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
-          default: 90,
-          min: 1,
-        });
+        // v1.5.2 / v1.8.0: tool-loop cap — budget policy may lower under
+        // context pressure; env still wins as the ceiling via applyBudgetPolicy.
+        const maxToolLoopIterations = budget.maxToolLoopIterations;
         const harness = new AgentHarness({
           model: envConfig.model,
           provider: "openai-compatible",
           messages: [
             { role: "system", content: systemPrompt },
-            // v1.6.0: seed prior turns so the model sees its own last
-            // question when the user answers briefly. historyRef.current
-            // is compacted above (possibly empty if ZELARI_HISTORY_TURNS=0).
-            ...historyRef.current,
-            { role: "user", content: userText },
+            // v1.8.0: shared rolling history (agent/council/zelari) so short
+            // answers bind to prior ---QUESTION--- blocks. Possibly empty
+            // when ZELARI_HISTORY_TURNS=0.
+            ...getHistory(),
+            { role: "user", content: effectiveUserText },
           ],
           tools: toolRegistry.toOpenAITools().map((t) => ({
             name: t.function.name,
@@ -611,25 +649,23 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               const all = h.getMessages();
               const seedLen = 1 /*system*/ + historySeedLen + 1 /*user*/;
               if (all.length > seedLen) {
-                historyRef.current = historyRef.current.concat(
-                  all.slice(seedLen),
-                );
+                appendMessages(all.slice(seedLen));
               }
             }
           } catch {
             // Non-fatal: a snapshot failure must never break the turn.
           }
-          // v1.6.0: if the assistant ended its turn by posing a clarifying
-          // question (---QUESTION--- block), parse it and open the picker so
-          // the user can pick from the offered choices. Rolling history
-          // (above) already guarantees the model sees its own question next
-          // turn, so the binding works whether the user picks or types. The
-          // picker is purely ergonomic. Skipped when setPicker is unset
-          // (tests) or the run failed.
-          if (turnSucceeded && setPicker && assistantContent) {
+          // v1.6.0/v1.8.0: clarifying-question picker + lastClarification for
+          // short-answer anchoring. Rolling history already binds answers;
+          // setLastClarification covers compaction edge cases.
+          if (turnSucceeded && assistantContent) {
             try {
               const clar = parseClarificationRequest(assistantContent);
               if (clar && clar.choices && clar.choices.length >= 2) {
+                setLastClarification({
+                  question: clar.question,
+                  choices: clar.choices,
+                });
                 // Strip the raw ---QUESTION--- block from the finalized
                 // assistant message so the display shows prose, not JSON.
                 const cleaned = cleanAgentContent(assistantContent);
@@ -645,14 +681,19 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                     return next;
                   });
                 }
-                setPicker({
-                  kind: "clarification",
-                  title: clar.question,
-                  items: clar.choices.map((c) => ({ value: c, label: c })),
-                  onAnswer: (value: string) => {
-                    void dispatchPrompt(value);
-                  },
-                });
+                if (setPicker) {
+                  setPicker({
+                    kind: "clarification",
+                    title: clar.question,
+                    items: clar.choices.map((c) => ({ value: c, label: c })),
+                    onAnswer: (value: string) => {
+                      void dispatchPrompt(value);
+                    },
+                  });
+                }
+              } else {
+                // Free-form answer path next turn — clear stale question.
+                setLastClarification(null);
               }
             } catch {
               // Parsing/picker failure must never break the turn.
@@ -713,6 +754,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         setQueueCount,
         setLive,
         liveRef,
+        setPicker,
       });
     },
     [
@@ -725,6 +767,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       setQueueCount,
       setLive,
       liveRef,
+      setPicker,
     ],
   );
 
@@ -767,6 +810,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
     harnessRef,
     queueCount,
     setQueueCount,
+    clearConversationHistory,
   };
 }
 
@@ -813,6 +857,7 @@ async function dispatchCouncilPromptImpl(
     setBusy,
     setLive,
     liveRef,
+    setPicker,
   } = deps;
   const useLiveModel = !!(setLive && liveRef);
   const envConfig = await providerFromEnv();
@@ -826,6 +871,20 @@ async function dispatchCouncilPromptImpl(
     return { completionOk: false, ran: false };
   }
   setBusy(true);
+  // v1.8.0: compact shared history + budget + short-answer anchor.
+  compactInPlace();
+  const councilBudget = applyBudgetPolicy(getHistory(), getPhase());
+  setHistory(councilBudget.history);
+  for (const w of councilBudget.warnings) {
+    appendSystem(setMessages, w, Date.now());
+  }
+  const anchored = maybeAnchorShortAnswer(text);
+  const effectiveText = anchored ?? text;
+  appendSystem(
+    setMessages,
+    `[phase] ${describePhase(getPhase())}`,
+    Date.now(),
+  );
   // Import dynamically to avoid a circular dep at module-load time.
   const { dispatchCouncil } = await import("../councilDispatcher.js");
   const { createWorkspaceContext, createWorkspaceStubs } =
@@ -841,13 +900,23 @@ async function dispatchCouncilPromptImpl(
     await import("../workspace/buildLessonsSummary.js");
   const { FeedbackStore } = await import("../councilFeedback.js");
 
-  const { registry: councilToolRegistry } = createBuiltinToolRegistry();
+  const workPhase = getPhase();
+  const { registry: councilToolRegistry } = createBuiltinToolRegistry({
+    planMode: workPhase === "plan",
+  });
   const workspaceCtx = createWorkspaceContext();
   const workspaceReg = createWorkspaceToolRegistry(workspaceCtx);
   for (const name of workspaceReg.list()) {
     const td = workspaceReg.get(name);
-    if (td) councilToolRegistry.register(td);
+    if (!td) continue;
+    // Plan phase: keep workspace plan/doc tools (createPlan, …); skip any
+    // that are pure project-file mutators if ever added.
+    councilToolRegistry.register(td);
   }
+  // Force council design-phase when UI phase is plan (and vice-versa for build).
+  const phaseRunMode =
+    overrides.runMode ??
+    (workPhase === "plan" ? "design-phase" : "implementation");
   // v0.7.5: MCP tools for the council too (same lazy singleton as the
   // single-agent path — zero extra spawns).
   try {
@@ -896,7 +965,7 @@ async function dispatchCouncilPromptImpl(
   let sliceDegraded = false;
   const PROVIDER_ERROR_ABORT_THRESHOLD = 2;
   try {
-    for await (const event of dispatchCouncil(text, {
+    for await (const event of dispatchCouncil(effectiveText, {
       apiKey: envConfig.apiKey,
       model: envConfig.model,
       provider: "openai-compatible",
@@ -910,10 +979,13 @@ async function dispatchCouncilPromptImpl(
       // on and projected their identity onto the task.
       // v0.7.3: append the existing plan (if any) so a follow-up /council
       // continues it instead of re-planning from scratch.
+      // v1.8.0: rolling conversation context so short answers bind across
+      // council turns (same history store as the single-agent path).
       workspaceContext: [
         buildWorkspaceSummary(process.cwd()),
-        buildPlanSummary(process.cwd(), { userMessage: text }),
-        buildLessonsSummary(process.cwd(), text),
+        buildPlanSummary(process.cwd(), { userMessage: effectiveText }),
+        buildLessonsSummary(process.cwd(), effectiveText),
+        formatHistoryForCouncil(4),
       ]
         .filter(Boolean)
         .join("\n\n"),
@@ -921,13 +993,42 @@ async function dispatchCouncilPromptImpl(
       // v1.0: Zelari-mode per-slice overrides (memory RAG, forced run mode,
       // raised chairman budget). No-ops for a normal /council run.
       ...(overrides.ragContext ? { ragContext: overrides.ragContext } : {}),
-      ...(overrides.runMode ? { runMode: overrides.runMode } : {}),
+      runMode: phaseRunMode,
       ...(overrides.maxToolCallsChairman
         ? { maxToolCallsChairman: overrides.maxToolCallsChairman }
         : {}),
       onCouncilStatus: (message) => {
         appendSystem(setMessages, message, Date.now());
       },
+      // v1.8.0: pause council when a member asks a structured question.
+      onClarification: setPicker
+        ? (req) =>
+            new Promise<string | null>((resolve) => {
+              const choices = req.choices ?? [];
+              if (choices.length < 2) {
+                resolve(null);
+                return;
+              }
+              setLastClarification({
+                question: req.question,
+                choices,
+              });
+              let settled = false;
+              const finish = (value: string | null) => {
+                if (settled) return;
+                settled = true;
+                setPicker(null);
+                resolve(value);
+              };
+              setPicker({
+                kind: "clarification",
+                title: req.question,
+                items: choices.map((c) => ({ value: c, label: c })),
+                onAnswer: (value: string) => finish(value),
+                onCancel: () => finish(null),
+              });
+            })
+        : undefined,
     })) {
       if (councilAborted) {
         // Drain remaining events silently after the abort decision.
@@ -1113,6 +1214,23 @@ async function dispatchCouncilPromptImpl(
     flushStreaming();
     if (useLiveModel) finalizeStreaming(setMessages, setLive!);
     else finalizeStreamingAssistant(setMessages);
+    // v1.8.0: fold this council turn into shared rolling history so the next
+    // agent/council/zelari turn sees user + synthesis (short answers bind).
+    if (membersCompleted > 0 || chairmanProducedOutput) {
+      try {
+        appendMessages([
+          { role: "user", content: effectiveText },
+          {
+            role: "assistant",
+            content:
+              chairmanSynthesisText.trim() ||
+              "[council completed without chairman synthesis text]",
+          },
+        ]);
+      } catch {
+        // Non-fatal.
+      }
+    }
     // v0.7.1 (A3): only auto-write AGENTS.MD when the council actually produced
     // output. Running the hook after an all-error run (e.g. the HTTP 400 from
     // A1) dirtied the working tree with sections rewritten from nothing.
@@ -1138,7 +1256,7 @@ async function dispatchCouncilPromptImpl(
         }
         const hook = await runPostCouncilHook(workspaceCtx, {
           runMode: councilRunMode,
-          userMessage: text,
+          userMessage: effectiveText,
           synthesisText: chairmanSynthesisText || undefined,
           degradedRun: degraded.degraded,
           degradedReasons: degraded.reasons,

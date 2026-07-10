@@ -79,6 +79,9 @@ export function App(): React.ReactElement {
   // v0.7.9: dispatch mode for free-form prompts — 'agent' (single harness
   // turn) or 'council' (6-member pipeline). Toggled with shift+tab.
   const [mode, setMode] = useState<ChatMode>('agent');
+  // v1.8.0: work phase (plan | build) — React state mirrors phaseState module
+  // so StatusBar re-renders when /plan or /build is used.
+  const [phase, setPhaseUi] = useState<'plan' | 'build'>('build');
   // v0.7.10: interactive picker (/provider, /model). While open it replaces
   // the InputBar so ink-text-input never competes for arrow keys.
   const [picker, setPicker] = useState<PickerRequest | null>(null);
@@ -187,6 +190,7 @@ export function App(): React.ReactElement {
     onNewSession,
     onExit,
     onClear,
+    onPhaseChange: setPhaseUi,
   });
 
   // Picker selection re-enters the normal slash pipeline ('/provider <id>' /
@@ -205,20 +209,30 @@ export function App(): React.ReactElement {
     const cmd = `${picker.commandPrefix} ${value}`;
     void handleSubmit(cmd);
   }, [picker, handleSubmit]);
-  const onPickerCancel = useCallback(() => setPicker(null), []);
+  const onPickerCancel = useCallback(() => {
+    if (picker?.kind === 'clarification') {
+      picker.onCancel?.();
+    }
+    setPicker(null);
+  }, [picker]);
 
   // The one-shot banner: printed once as the first Static item. v0.7.9: the
   // skill list is gone (it doubled the banner height and duplicated /help);
   // the banner is now just the wordmark line + cwd + a hint.
   const banner = useMemo<ChatMessage>(() => {
+    // v1.8.0: brand + version on the right of the first line (StatusBar also
+    // shows ZELARI vX on the right of the dynamic footer).
+    const left = `zelari-code · ${activeProviderSpec.id}/${activeModel}`;
+    const right = `ZELARI CODE  v${VERSION}`;
+    const pad = Math.max(2, 72 - left.length - right.length);
     return {
       id: 'banner-once',
       role: 'system',
       ts: 0,
       content:
-        `zelari-code v${VERSION} — ${activeProviderSpec.id}/${activeModel}\n` +
+        `${left}${' '.repeat(pad)}${right}\n` +
         `cwd: ${cwd}\n` +
-        `/help for commands · /skill <name> · shift+tab toggles agent/council`,
+        `/help · /plan · /build · /view-plan · shift+tab mode (agent/council/zelari)`,
     };
   }, [activeProviderSpec.id, activeModel, cwd]);
 
@@ -276,11 +290,15 @@ export function App(): React.ReactElement {
             queueCount={chatTurn.queueCount}
             busy={busy}
             mode={mode}
+            phase={phase}
             cwd={cwd}
             elapsedMs={timer.elapsedMs}
             lastMs={timer.lastMs}
             costUsd={sessionStats.totalCostUsd}
             cachedTokens={sessionStats.cachedTokens}
+            contextUsed={sessionStats.totalTokens}
+            contextLimit={Number(process.env.ZELARI_CONTEXT_LIMIT) || 200_000}
+            brandVersion={VERSION}
           />
         </Box>
         {showSidebar && (

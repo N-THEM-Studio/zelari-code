@@ -1,13 +1,13 @@
 import type { CodingSkillDefinition } from '@zelari/core/skills';
 
 export type SlashCommand =
-  | 'login' | 'model' | 'model_refresh' | 'models' | 'discover' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'zelari' | 'mode' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'checkpoint' | 'rollback' | 'index' | 'promote-member' | 'update' | 'plugins' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset';
+  | 'login' | 'model' | 'model_refresh' | 'models' | 'discover' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'zelari' | 'mode' | 'plan' | 'build' | 'view-plan' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'checkpoint' | 'rollback' | 'index' | 'promote-member' | 'update' | 'plugins' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset';
 
 export interface SlashCommandResult {
   /** Whether the command was recognized. */
   handled: boolean;
   /** Discriminated kind for what the caller should do. */
-  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'model_picker' | 'models_list' | 'models_refresh' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'zelari' | 'provider' | 'provider_set' | 'provider_list' | 'provider_picker' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'checkpoint_create' | 'rollback' | 'rollback_list' | 'index_build' | 'index_status' | 'mode_set' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage' | 'plugins_list' | 'plugins_install' | 'plugins_usage' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset';
+  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'model_picker' | 'models_list' | 'models_refresh' | 'skill' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'zelari' | 'provider' | 'provider_set' | 'provider_list' | 'provider_picker' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'checkpoint_create' | 'rollback' | 'rollback_list' | 'index_build' | 'index_status' | 'mode_set' | 'phase_set' | 'view_plan' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage' | 'plugins_list' | 'plugins_install' | 'plugins_usage' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset';
   /** Optional human-readable message (e.g. for `clear` or `help`). */
   message?: string;
   /** For `model`: the new model name. */
@@ -56,6 +56,10 @@ export interface SlashCommandResult {
   pluginId?: string;
   /** For `mode_set`: target mode; undefined → cycle to the next mode. */
   modeTarget?: 'agent' | 'council' | 'zelari';
+  /** For `phase_set`: target work phase (plan | build). */
+  phaseTarget?: 'plan' | 'build';
+  /** For `phase_set`/`plan`/`build`: optional goal to dispatch after switching. */
+  phaseGoal?: string;
   /** For `checkpoint_create`: optional label for the new checkpoint. */
   checkpointLabel?: string;
   /** For `compact`: number of recent messages to keep (Task B.3.2). */
@@ -604,6 +608,31 @@ export function handleSlashCommand(
         return { handled: true, kind: 'mode_set', message: `[mode] unknown: ${target}. Use agent, council, or zelari (or /mode to cycle).` };
       }
       return { handled: true, kind: 'mode_set' };
+    }
+
+    case 'plan': {
+      // `/plan` or `/plan <goal>` — enter plan phase; optional goal dispatches.
+      const goal = args.join(' ').trim();
+      return {
+        handled: true,
+        kind: 'phase_set',
+        phaseTarget: 'plan',
+        ...(goal ? { phaseGoal: goal } : {}),
+      };
+    }
+
+    case 'build': {
+      const goal = args.join(' ').trim();
+      return {
+        handled: true,
+        kind: 'phase_set',
+        phaseTarget: 'build',
+        ...(goal ? { phaseGoal: goal } : {}),
+      };
+    }
+
+    case 'view-plan': {
+      return { handled: true, kind: 'view_plan' };
     }
 
     case 'index': {

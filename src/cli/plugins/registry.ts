@@ -17,14 +17,16 @@
  *   - DEFAULT_PROVIDERS (diagnostics/engine.ts) → eslint, ruff
  *   - LSP_SERVERS (lsp/servers.ts)              → typescript-language-server,
  *                                                 pyright-langserver
- *   - defaultPlaywrightLoader (browser/driver)  → playwright
+ *   - loadPlaywright (browser/driver)           → playwright
  *
  * Detection mirrors how each feature actually resolves its binary:
  *   - project-local linters (eslint/ruff) → resolveBin() walk of node_modules/.bin
- *   - LSP servers                          → PATH probe via `<bin> --version`
- *     (they're global dev tools, conventionally installed once)
- *   - Playwright                           → the same dynamic-import loader the
- *     browser_check tool uses, so "installed" means "importable + has chromium"
+ *   - LSP servers                          → resolveBin local, then PATH file
+ *     existence (NOT `<bin> --version` — language servers like
+ *     pyright-langserver reject --version and exit non-zero, so a version
+ *     probe falsely reported them as missing forever)
+ *   - Playwright                           → loadPlaywright(cwd): project
+ *     node_modules first, then bare import (same as browser_check)
  *
  * Contract: detect() is async, never throws, returns Promise<boolean>. The
  * caller (PluginGate / doctor / /plugins) treats false as "missing, offer to
@@ -34,10 +36,10 @@
  *      the OPTIONAL complement: tools we recommend but don't mandate)
  */
 
-import { spawnSync } from 'node:child_process';
-import { buildCmdLine } from '../utils/cmdline.js';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { resolveBin } from '../diagnostics/engine.js';
-import { defaultPlaywrightLoader } from '../browser/driver.js';
+import { loadPlaywright } from '../browser/driver.js';
 import { DEFAULT_PROVIDERS } from '../diagnostics/engine.js';
 import { LSP_SERVERS } from '../lsp/servers.js';
 import { isMuted } from './prefs.js';
@@ -91,42 +93,89 @@ function detectLocalBin(bin: string): (cwd: string) => Promise<boolean> {
   };
 }
 
+export interface IsBinaryOnPathOptions {
+  /** Override PATH (tests). Defaults to process.env.PATH. */
+  pathEnv?: string;
+  /** Override PATHEXT on win32 (tests). Defaults to process.env.PATHEXT. */
+  pathExt?: string;
+  /** Override platform (tests). Defaults to process.platform. */
+  platform?: NodeJS.Platform;
+  /** Override existsSync (tests). */
+  exists?: (p: string) => boolean;
+}
+
 /**
- * Detect a globally-installed binary (LSP servers). Spawn `<bin> --version`
- * synchronously through the default shell; a non-zero / errored spawn means
- * "not on PATH". This is the pattern prereqChecks.ts uses for node/git/bash,
- * adapted for a generic binary. Synchronous because detection runs at boot
- * gate / doctor time where blocking briefly is acceptable.
+ * True when `bin` (a bare command name) resolves to a file on PATH.
+ *
+ * Used instead of `<bin> --version` because several language-server binaries
+ * (notably `pyright-langserver`) ignore/reject `--version`, exit non-zero with
+ * empty stdout, and would be reported as "missing" forever even when installed.
+ * Runtime spawn uses the same PATH; existence is the right presence signal.
+ *
+ * Never throws. Rejects path-like names (contain `/` or `\`) to avoid treating
+ * a full path as a PATH search.
  */
-function detectGlobalBin(bin: string): (_cwd: string) => Promise<boolean> {
-  return () => {
-    try {
-      const args = ['--version'];
-      // On win32 a bare binary name needs shell:true so .cmd shims resolve,
-      // but passing args array with shell:true is deprecated (DEP0190).
-      // Use buildCmdLine to pre-quote args into a single string.
-      const res =
-        process.platform === 'win32'
-          ? spawnSync(buildCmdLine(bin, args), {
-              stdio: ['ignore', 'pipe', 'ignore'],
-              shell: true,
-              timeout: 4000,
-            })
-          : spawnSync(bin, args, {
-              stdio: ['ignore', 'pipe', 'ignore'],
-              timeout: 4000,
-            });
-      return Promise.resolve(res.status === 0 || (res.stdout != null && res.stdout.toString().trim().length > 0 && res.error === undefined));
-    } catch {
-      return Promise.resolve(false);
+export function isBinaryOnPath(
+  bin: string,
+  opts: IsBinaryOnPathOptions = {},
+): boolean {
+  if (!bin || bin.includes('/') || bin.includes('\\') || bin.includes('..')) {
+    return false;
+  }
+  const platform = opts.platform ?? process.platform;
+  const exists = opts.exists ?? existsSync;
+  const pathEnv = opts.pathEnv ?? process.env.PATH ?? '';
+  // Use the path dialect of the TARGET platform (not the host). Otherwise a
+  // platform:'linux' probe on Windows would path.join with win32 rules and
+  // never match posix PATH entries (and vice versa).
+  const pathMod = platform === 'win32' ? path.win32 : path.posix;
+  const sep = platform === 'win32' ? ';' : ':';
+  const dirs = pathEnv.split(sep).filter((d) => d.length > 0);
+
+  const candidates: string[] = [bin];
+  if (platform === 'win32') {
+    const pathExt = opts.pathExt ?? process.env.PATHEXT ?? '.EXE;.CMD;.BAT;.COM';
+    for (const ext of pathExt.split(';')) {
+      if (!ext) continue;
+      candidates.push(bin + ext);
+      // PATHEXT is usually uppercase; shims on disk are often lowercase (.cmd).
+      const lower = ext.toLowerCase();
+      if (lower !== ext) candidates.push(bin + lower);
     }
+  }
+
+  for (const dir of dirs) {
+    for (const name of candidates) {
+      try {
+        if (exists(pathMod.join(dir, name))) return true;
+      } catch {
+        // ignore per-candidate fs errors
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Detect an LSP (or other global) binary the same way runtime does:
+ *   1. project-local `node_modules/.bin` via resolveBin
+ *   2. bare name present on PATH (file existence, not --version)
+ */
+function detectPathBin(bin: string): (cwd: string) => Promise<boolean> {
+  return (cwd: string) => {
+    try {
+      if (resolveBin(bin, cwd) !== bin) return Promise.resolve(true);
+    } catch {
+      // fall through to PATH
+    }
+    return Promise.resolve(isBinaryOnPath(bin));
   };
 }
 
-/** Detect Playwright via the exact loader browser_check uses. */
-async function detectPlaywright(): Promise<boolean> {
+/** Detect Playwright via the exact loader browser_check uses (cwd-aware). */
+async function detectPlaywright(cwd: string): Promise<boolean> {
   try {
-    const mod = await defaultPlaywrightLoader();
+    const mod = await loadPlaywright(cwd);
     return mod !== null;
   } catch {
     return false;
@@ -166,7 +215,7 @@ export const PLUGINS: readonly PluginSpec[] = [
     label: 'Playwright (browser_check tool)',
     npmPackage: 'playwright',
     installScope: 'dev',
-    detect: () => detectPlaywright(),
+    detect: detectPlaywright,
     postInstallHint: 'Then fetch the browser binary: `npx playwright install chromium`',
     featureGate: 'ZELARI_BROWSER',
     description: 'Powers the browser_check tool (URL probing, click/fill/wait, screenshots).',
@@ -176,7 +225,7 @@ export const PLUGINS: readonly PluginSpec[] = [
     label: 'typescript-language-server (LSP for TS/JS)',
     npmPackage: 'typescript-language-server',
     installScope: 'global',
-    detect: detectGlobalBin(binForLspLanguage('typescript')),
+    detect: detectPathBin(binForLspLanguage('typescript')),
     featureGate: 'ZELARI_LSP',
     description: 'Powers go_to_definition / find_references / hover_type / rename_symbol for TS/JS.',
   },
@@ -185,9 +234,26 @@ export const PLUGINS: readonly PluginSpec[] = [
     label: 'pyright (LSP for Python)',
     npmPackage: 'pyright',
     installScope: 'global',
-    detect: detectGlobalBin(binForLspLanguage('python')),
+    // Detect the langserver binary runtime spawns (pyright-langserver), not
+    // the `pyright` CLI — and never via --version (langserver rejects it).
+    detect: detectPathBin(binForLspLanguage('python')),
     featureGate: 'ZELARI_LSP',
     description: 'Powers go_to_definition / find_references / hover_type / rename_symbol for Python.',
+  },
+  {
+    // fff — high-performance codebase search MCP (fffind / ffgrep).
+    // Installed as a global CLI; wire it in ~/.zelari-code/mcp.json (see
+    // postInstallHint). Kill-switch: ZELARI_FFF=0.
+    id: 'fff',
+    label: 'fff (fast codebase search MCP)',
+    npmPackage: 'fff-mcp',
+    installScope: 'global',
+    detect: detectPathBin('fff-mcp'),
+    postInstallHint:
+      'Add to ~/.zelari-code/mcp.json: {"mcpServers":{"fff":{"command":"fff-mcp","args":[]}}} then restart. Prefer mcp_fff_* tools for search.',
+    featureGate: 'ZELARI_FFF',
+    description:
+      'Accelerates codebase search via fff MCP (fffind, ffgrep, fff-multi-grep) — faster and more token-efficient than plain grep.',
   },
 ];
 

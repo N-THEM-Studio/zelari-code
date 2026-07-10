@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   runBrowserCheck,
+  loadPlaywright,
   type PlaywrightLoader,
   type BrowserAction,
 } from '../../src/cli/browser/driver.js';
@@ -120,6 +121,43 @@ describe('runBrowserCheck', () => {
     const res = await runBrowserCheck({ url: 'x' }, async () => null);
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/Playwright/i);
+  });
+
+  it('loadPlaywright resolves a project-local install via cwd', async () => {
+    // Minimal fake package that satisfies asPlaywright() — no real Playwright.
+    const root = mkdtempSync(path.join(tmpdir(), 'pw-local-'));
+    try {
+      writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+      const pkgDir = path.join(root, 'node_modules', 'playwright');
+      mkdirSync(pkgDir, { recursive: true });
+      writeFileSync(
+        path.join(pkgDir, 'package.json'),
+        JSON.stringify({ name: 'playwright', type: 'module', main: 'index.js' }),
+      );
+      writeFileSync(
+        path.join(pkgDir, 'index.js'),
+        'export const chromium = { launch: async () => ({ newPage: async () => ({}), close: async () => {} }) };\n',
+      );
+      const mod = await loadPlaywright(root);
+      expect(mod).not.toBeNull();
+      expect(typeof mod?.chromium.launch).toBe('function');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('loadPlaywright returns null for a cwd with no playwright', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'pw-none-'));
+    try {
+      writeFileSync(path.join(root, 'package.json'), JSON.stringify({ name: 'app' }));
+      // Bare import may still succeed if the host has playwright; only assert
+      // the project-local path does not throw and returns a typed result.
+      const mod = await loadPlaywright(root);
+      // null or a global install — both are valid; must not throw.
+      expect(mod === null || typeof mod?.chromium?.launch === 'function').toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it('reports a navigation failure without throwing', async () => {

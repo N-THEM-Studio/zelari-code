@@ -122,7 +122,30 @@ export function PluginGate({ cwd, children }: PluginGateProps): React.ReactEleme
       } else if (value === CHOICE_INSTALL) {
         setPhase('installing');
         void installPlugin(current, cwd)
-          .then((r) => {
+          .then(async (r) => {
+            // Re-detect after a claimed success. Catches install/detect
+            // mismatches (e.g. package landed somewhere the feature cannot
+            // load) so the user sees a clear failure instead of a false green.
+            if (r.ok) {
+              let present = false;
+              try {
+                present = await current.detect(cwd);
+              } catch {
+                present = false;
+              }
+              if (!present) {
+                setResult({
+                  ok: false,
+                  output: r.output,
+                  exitCode: r.exitCode,
+                  error:
+                    `npm reported success but ${current.label} is still not detectable ` +
+                    `from this workspace. Try \`/plugins install ${current.id}\` or see the post-install hint.`,
+                });
+                setPhase('result');
+                return;
+              }
+            }
             setResult(r);
             setPhase('result');
           })

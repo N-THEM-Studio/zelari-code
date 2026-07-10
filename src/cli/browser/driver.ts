@@ -11,7 +11,15 @@
  * a hard requirement of the package. When it (or a browser) isn't available,
  * the tool degrades with a clear message. The loader is injectable, so the
  * driver's orchestration is unit-testable with a fake browser.
+ *
+ * Resolution order (v1.7.2+): project `cwd` node_modules first (where
+ * `npm i -D playwright` lands), then the bare package import (global / CLI
+ * tree). Matches how the plugin gate detects presence.
  */
+
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 export type BrowserAction =
   | { type: 'click'; selector: string }
@@ -28,6 +36,11 @@ export interface BrowserCheckOptions {
   screenshotPath?: string;
   /** Overall navigation timeout (ms, default 15000). */
   timeoutMs?: number;
+  /**
+   * Working directory used to resolve a project-local Playwright install
+   * (`npm i -D playwright`). Defaults to `process.cwd()` when omitted.
+   */
+  cwd?: string;
 }
 
 export interface BrowserCheckResult {
@@ -71,20 +84,59 @@ export interface PlaywrightLike {
 
 export type PlaywrightLoader = () => Promise<PlaywrightLike | null>;
 
-/** Default loader: dynamic-import playwright, or null if unavailable. */
-export const defaultPlaywrightLoader: PlaywrightLoader = async () => {
+/** Coerce a dynamic-import module shape into PlaywrightLike (or null). */
+function asPlaywright(mod: unknown): PlaywrightLike | null {
+  if (!mod || typeof mod !== 'object') return null;
+  const m = mod as PlaywrightLike & { default?: PlaywrightLike };
+  if (m.chromium && typeof m.chromium.launch === 'function') return m;
+  const d = m.default;
+  if (d && d.chromium && typeof d.chromium.launch === 'function') return d;
+  return null;
+}
+
+/**
+ * Load Playwright from the project tree (cwd) first, then fall back to a bare
+ * package import (global install / hoisted into the CLI's node_modules).
+ *
+ * Why cwd-first: the plugin gate installs with `npm i -D playwright`, which
+ * lands in `<project>/node_modules`. A bare `import('playwright')` from the
+ * globally-installed CLI resolves against the CLI package, not the project —
+ * so after a successful project install the old loader still returned null and
+ * the boot gate re-prompted forever.
+ */
+export async function loadPlaywright(cwd?: string): Promise<PlaywrightLike | null> {
+  const base = cwd && cwd.length > 0 ? path.resolve(cwd) : undefined;
+  if (base) {
+    try {
+      // createRequire base file need not exist; resolution walks node_modules
+      // from its directory upward (same algorithm as a require from that dir).
+      const req = createRequire(path.join(base, 'package.json'));
+      const resolved = req.resolve('playwright');
+      const mod = await import(pathToFileURL(resolved).href);
+      const pw = asPlaywright(mod);
+      if (pw) return pw;
+    } catch {
+      // Not installed under this project tree — fall through.
+    }
+  }
+
   try {
     // Indirect specifier so TypeScript doesn't require `playwright` types at
-    // build time (it's an OPTIONAL runtime dependency). Resolved from
-    // node_modules when installed; throws (→ null) when it isn't.
+    // build time (it's an OPTIONAL runtime dependency).
     const pkg = 'playwright';
-    const mod = (await import(pkg)) as unknown as PlaywrightLike;
-    if (mod && mod.chromium && typeof mod.chromium.launch === 'function') return mod;
-    return null;
+    const mod = (await import(pkg)) as unknown;
+    return asPlaywright(mod);
   } catch {
     return null;
   }
-};
+}
+
+/**
+ * Default loader: resolve Playwright from `process.cwd()` then bare import.
+ * Prefer `loadPlaywright(explicitCwd)` at call sites that know the workspace.
+ */
+export const defaultPlaywrightLoader: PlaywrightLoader = async () =>
+  loadPlaywright(process.cwd());
 
 /**
  * Navigate to a URL (optionally running a sequence of actions) and collect
@@ -93,14 +145,17 @@ export const defaultPlaywrightLoader: PlaywrightLoader = async () => {
  */
 export async function runBrowserCheck(
   options: BrowserCheckOptions,
-  loader: PlaywrightLoader = defaultPlaywrightLoader,
+  loader?: PlaywrightLoader,
 ): Promise<BrowserCheckResult> {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
   const failedRequests: string[] = [];
   const base: BrowserCheckResult = { ok: false, consoleErrors, pageErrors, failedRequests };
 
-  const pw = await loader();
+  const resolve =
+    loader ??
+    (() => loadPlaywright(options.cwd ?? process.cwd()));
+  const pw = await resolve();
   if (!pw) {
     return {
       ...base,
