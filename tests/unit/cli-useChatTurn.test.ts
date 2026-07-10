@@ -207,6 +207,9 @@ function makeWrapper() {
   const setMessages = (updater: React.SetStateAction<ChatMessage[]>) => {
     if (typeof updater === 'function') {
       const next = (updater as (prev: ChatMessage[]) => ChatMessage[])(messages);
+      // If the updater returns the same array ref (no-op), do not wipe it —
+      // `messages.length = 0; push(...sameRef)` would empty the chat.
+      if (next === messages) return;
       messages.length = 0;
       messages.push(...next);
     } else {
@@ -223,7 +226,16 @@ function makeWrapper() {
   const setBusy = vi.fn();
   const setSessionActive = vi.fn();
   const writerRef = { current: new FakeWriter() } as React.MutableRefObject<any>;
-  return { messages, setMessages, commitStreaming, flushStreaming, setSessionStats, setBusy, setSessionActive, writerRef };
+  return {
+    messages,
+    setMessages,
+    commitStreaming,
+    flushStreaming,
+    setSessionStats,
+    setBusy,
+    setSessionActive,
+    writerRef,
+  };
 }
 
 beforeEach(() => {

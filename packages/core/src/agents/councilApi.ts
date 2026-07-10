@@ -249,25 +249,39 @@ export function parseThinking(text: string): string {
   return open ? open[1].trim() : '';
 }
 
+export interface CleanAgentContentOptions {
+  /**
+   * When true (default), strip `---QUESTION---` blocks from display text.
+   * Set false when cleaning text for rolling PROVIDER history — the model
+   * still needs to see its own clarifying question on the next turn.
+   */
+  stripQuestion?: boolean;
+}
+
 /**
  * Strip model "private" channels from text shown to the user / re-fed as
  * history. Covers:
  *   - complete + unclosed `<think>` / `<thinking>` (GLM/MiniMax style)
  *   - MiniMax XML tool-call wrappers
- *   - clarifying-question JSON blocks
+ *   - clarifying-question JSON blocks (display only; keep in provider history)
  *
  * Without unclosed-tag stripping, streamed thinking that never got a closing
  * tag leaked into the TUI as visible assistant prose (v1.8.1).
  */
-export function cleanAgentContent(text: string): string {
-  return text
+export function cleanAgentContent(
+  text: string,
+  opts: CleanAgentContentOptions = {},
+): string {
+  const stripQuestion = opts.stripQuestion !== false;
+  let out = text
     .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
     .replace(/<think(?:ing)?>[\s\S]*$/gi, '')
     .replace(/<\/think(?:ing)?>/gi, '')
-    .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '')
-    .replace(/---QUESTION---[\s\S]*?---END---/g, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+    .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
+  if (stripQuestion) {
+    out = out.replace(/---QUESTION---[\s\S]*?---END---/g, '');
+  }
+  return out.replace(/\n{3,}/g, '\n\n').trim();
 }
 
 /**

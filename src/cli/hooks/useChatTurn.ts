@@ -654,11 +654,17 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               const seedLen = 1 /*system*/ + historySeedLen + 1 /*user*/;
               if (all.length > seedLen) {
                 // Strip think blocks from history so the next turn does not
-                // re-feed private reasoning (and so short answers stay clean).
+                // re-feed private reasoning — but KEEP ---QUESTION--- so the
+                // model can bind short answers ("full") to its own choices.
                 appendMessages(
                   all.slice(seedLen).map((m) =>
                     m.role === "assistant" && m.content
-                      ? { ...m, content: cleanAgentContent(m.content) }
+                      ? {
+                          ...m,
+                          content: cleanAgentContent(m.content, {
+                            stripQuestion: false,
+                          }),
+                        }
                       : m,
                   ),
                 );
@@ -671,26 +677,31 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // display transcript after a successful turn — not only when a
           // clarifying picker opens. Otherwise GLM/MiniMax reasoning leaks
           // into the TUI as visible assistant prose.
+          // Only call setMessages when at least one bubble needs scrubbing —
+          // returning the same `prev` array ref from a functional updater is
+          // fine for React, but breaks test harnesses that wipe-then-push.
           if (turnSucceeded && assistantContent) {
             try {
-              setMessages((prev) => {
-                let changed = false;
-                const next = prev.map((m) => {
-                  if (m.role !== "assistant") return m;
-                  if (
-                    !m.content.includes("<think") &&
-                    !m.content.includes("<thinking") &&
-                    !m.content.includes("---QUESTION---")
-                  ) {
-                    return m;
-                  }
-                  const cleaned = cleanAgentContent(m.content);
-                  if (cleaned === m.content) return m;
-                  changed = true;
-                  return { ...m, content: cleaned };
-                });
-                return changed ? next : prev;
-              });
+              const needsScrub =
+                assistantContent.includes("<think") ||
+                assistantContent.includes("<thinking") ||
+                assistantContent.includes("---QUESTION---");
+              if (needsScrub) {
+                setMessages((prev) =>
+                  prev.map((m) => {
+                    if (m.role !== "assistant") return m;
+                    if (
+                      !m.content.includes("<think") &&
+                      !m.content.includes("<thinking") &&
+                      !m.content.includes("---QUESTION---")
+                    ) {
+                      return m;
+                    }
+                    const cleaned = cleanAgentContent(m.content);
+                    return cleaned === m.content ? m : { ...m, content: cleaned };
+                  }),
+                );
+              }
 
               const clar = parseClarificationRequest(assistantContent);
               if (clar && clar.choices && clar.choices.length >= 2) {
