@@ -6,19 +6,54 @@ import type { GitChanges, GitFileChange } from '../hooks/useGitChanges.js';
 export const SIDEBAR_WIDTH = 28;
 /** Sidebar only renders on terminals at least this wide. */
 export const SIDEBAR_MIN_COLUMNS = 96;
-/** Tall terminals get more file rows in the git-changes list. */
-const EMBLEM_MIN_ROWS = 26;
+/**
+ * Hysteresis floor: once visible, stay visible until width drops below this.
+ * Prevents show/hide thrash while the user drags the window across 96 cols
+ * (each toggle reflows the dynamic region and can trash Static scrollback).
+ */
+export const SIDEBAR_HIDE_COLUMNS = 88;
+/** Min rows to show; hide below this. */
+export const SIDEBAR_MIN_ROWS = 16;
+export const SIDEBAR_HIDE_ROWS = 14;
 /** Max file rows before collapsing to "+N more". */
-const MAX_FILES_SHORT = 6;
-const MAX_FILES_TALL = 10;
+const MAX_FILES_SHORT = 4;
+const MAX_FILES_TALL = 8;
+/** Absolute cap: sidebar chrome + files must stay short vs terminal rows. */
+const SIDEBAR_CHROME_LINES = 4;
 
 /**
  * Pure helper: should the sidebar render at all? It lives in the dynamic
  * region (Ink repaints it), so it must never make that region taller than
  * the terminal — narrow or tiny panes skip it entirely.
+ *
+ * Prefer {@link sidebarVisibility} when you have the previous visibility
+ * (hysteresis). This boolean form is the strict "enter" threshold.
  */
 export function shouldShowSidebar(columns: number, rows: number): boolean {
-  return columns >= SIDEBAR_MIN_COLUMNS && rows >= 16;
+  return columns >= SIDEBAR_MIN_COLUMNS && rows >= SIDEBAR_MIN_ROWS;
+}
+
+/**
+ * Hysteresis visibility: once shown, requires a clearer "leave" signal
+ * (narrower / shorter) before hiding — stops resize-edge flicker.
+ */
+export function sidebarVisibility(
+  columns: number,
+  rows: number,
+  currentlyVisible: boolean,
+): boolean {
+  if (currentlyVisible) {
+    return columns >= SIDEBAR_HIDE_COLUMNS && rows >= SIDEBAR_HIDE_ROWS;
+  }
+  return shouldShowSidebar(columns, rows);
+}
+
+/** How many file rows fit without blowing the dynamic-region budget. */
+export function maxSidebarFiles(rows: number): number {
+  // Reserve room for LiveRegion (~12) + input + status + chrome.
+  const budget = Math.max(2, rows - 14 - SIDEBAR_CHROME_LINES);
+  const cap = rows >= 28 ? MAX_FILES_TALL : MAX_FILES_SHORT;
+  return Math.min(cap, budget);
 }
 
 /** Truncate a repo-relative path to `max` chars keeping the tail (filename). */
@@ -42,7 +77,7 @@ interface SidebarProps {
  */
 export function Sidebar({ version, changes, rows }: SidebarProps): React.ReactElement {
   void version; // brand lives in StatusBar; keep prop for API stability
-  const maxFiles = rows >= EMBLEM_MIN_ROWS + 8 ? MAX_FILES_TALL : MAX_FILES_SHORT;
+  const maxFiles = maxSidebarFiles(rows);
   const visible = changes.files.slice(0, maxFiles);
   const hidden = changes.files.length - visible.length;
   // Width available for the path inside the box: total − border(2) − padding(2)
@@ -57,6 +92,9 @@ export function Sidebar({ version, changes, rows }: SidebarProps): React.ReactEl
       borderColor="gray"
       paddingX={1}
       flexShrink={0}
+      // Hard cap so a huge git status never makes Ink clear the whole screen.
+      height={Math.min(rows - 8, SIDEBAR_CHROME_LINES + maxFiles + 2)}
+      overflow="hidden"
     >
       <Box justifyContent="center">
         <Text dimColor>

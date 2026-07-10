@@ -5,6 +5,17 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.1] - 2026-07-10
+
+### Fixed
+- **Terminal destroy on window resize** — banner logo no longer reflows on every resize (froze at first paint); sidebar show/hide uses hysteresis (96→88 cols) so edge thrash stops; resize events coalesced to 120ms and no-op size updates skipped; dynamic region hard-capped in height with `overflow:hidden`; sidebar/git file list budgeted vs terminal rows.
+- **Model `<think>` blocks leaked into the TUI** — scrub complete + unclosed think tags on stream and at turn end; history also cleaned.
+- **`grep_content` failed when `include` was a string** — accept string or string[] (models often emit `"*.ts"` bare).
+- **`---TOOLS---` multi-array parse failure** — merge stacked JSON arrays (`][{…}][{…}]`), strip fences, recover light over-escape.
+
+### Changed
+- ASCII logo restored **top-right** in the Static banner (not bottom sidebar).
+
 ## [1.8.0] - 2026-07-10
 
 ### Added

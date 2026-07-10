@@ -29,8 +29,16 @@ export interface TerminalSizeOptions {
  * and reused by other components that care about dimensions (Sidebar,
  * ChatStream already take height/width as props).
  */
+/**
+ * Default coalescing window. 16ms was too short for Windows Terminal /
+ * ConPTY resize storms: each intermediate size still triggered a full Ink
+ * reflow of the dynamic region, which corrupt native scrollback (Static).
+ * 120ms ≈ one deliberate drag pause and cuts redraws ~8×.
+ */
+const DEFAULT_COALESCE_MS = 120;
+
 export function useTerminalSize(options: TerminalSizeOptions = {}): TerminalSize {
-  const { defaults = { columns: 80, rows: 24 }, coalesceMs = 16 } = options;
+  const { defaults = { columns: 80, rows: 24 }, coalesceMs = DEFAULT_COALESCE_MS } = options;
   const { stdout } = useStdout();
   const [size, setSize] = useState<TerminalSize>({
     columns: stdout?.columns ?? defaults.columns,
@@ -43,25 +51,27 @@ export function useTerminalSize(options: TerminalSizeOptions = {}): TerminalSize
     // test bootstrap or some terminal wrappers), the size would stay at
     // the default 80x24 until the user manually resized. Pull the current
     // dimensions immediately when stdout becomes available.
-    setSize({
+    const read = (): TerminalSize => ({
       columns: stdout.columns ?? defaults.columns,
       rows: stdout.rows ?? defaults.rows,
     });
+    // Only commit when dimensions actually change — Ink setState with an
+    // identical size still re-renders the whole tree on Windows.
+    const commit = (next: TerminalSize) => {
+      setSize((prev) =>
+        prev.columns === next.columns && prev.rows === next.rows ? prev : next,
+      );
+    };
+    commit(read());
     let rafId: ReturnType<typeof setTimeout> | null = null;
     const handleResize = () => {
       if (coalesceMs <= 0) {
-        setSize({
-          columns: stdout.columns ?? defaults.columns,
-          rows: stdout.rows ?? defaults.rows,
-        });
+        commit(read());
         return;
       }
       if (rafId !== null) clearTimeout(rafId);
       rafId = setTimeout(() => {
-        setSize({
-          columns: stdout.columns ?? defaults.columns,
-          rows: stdout.rows ?? defaults.rows,
-        });
+        commit(read());
         rafId = null;
       }, coalesceMs);
     };

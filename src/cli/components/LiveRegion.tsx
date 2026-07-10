@@ -32,6 +32,9 @@ interface LiveRegionProps {
  * repaint → no flicker, by construction. Finalized messages live in the
  * terminal's native scrollback via `<Static>` (printed exactly once).
  */
+/** Cap concurrent tool lines so resize + many tools never blow the viewport. */
+const MAX_LIVE_TOOLS = 4;
+
 export function LiveRegion({ live, busy, elapsedMs = null }: LiveRegionProps): React.ReactElement | null {
   const { streaming, runningTools } = live;
 
@@ -39,6 +42,9 @@ export function LiveRegion({ live, busy, elapsedMs = null }: LiveRegionProps): R
   // shows between dispatch and the first streamed token / tool call. (The
   // old check dropped `busy`, which made the fallback line dead code.)
   if (!streaming && runningTools.length === 0 && !busy) return null;
+
+  const visibleTools = runningTools.slice(0, MAX_LIVE_TOOLS);
+  const hiddenTools = runningTools.length - visibleTools.length;
 
   return (
     <Box flexDirection="column" paddingX={1}>
@@ -51,11 +57,14 @@ export function LiveRegion({ live, busy, elapsedMs = null }: LiveRegionProps): R
           memberId={streaming.memberId}
         />
       )}
-      {runningTools.map((t) => (
+      {visibleTools.map((t) => (
         <Box key={t.id} flexDirection="column">
           {renderMessage(t, true)}
         </Box>
       ))}
+      {hiddenTools > 0 ? (
+        <Text dimColor>  … +{hiddenTools} more tools</Text>
+      ) : null}
       {busy && runningTools.length === 0 && !streaming && (
         <WorkingIndicator elapsedMs={elapsedMs} />
       )}

@@ -8,7 +8,7 @@ import { InputBar } from './components/InputBar.js';
 import { LiveRegion } from './components/LiveRegion.js';
 import { StatusBar, type ChatMode } from './components/StatusBar.js';
 import { SelectList } from './components/SelectList.js';
-import { Sidebar, shouldShowSidebar } from './components/Sidebar.js';
+import { Sidebar, sidebarVisibility } from './components/Sidebar.js';
 import { formatBannerWithLogoRight } from './components/brandArt.js';
 import type { PickerRequest } from './slashHandlers/provider.js';
 import { discoverModelsInBackground, isModelsCacheStale, type ProviderId as DiscoveryProviderId } from './modelDiscovery.js';
@@ -217,10 +217,19 @@ export function App(): React.ReactElement {
     setPicker(null);
   }, [picker]);
 
+  // Freeze banner layout to the FIRST measured size. Re-wrapping the ASCII
+  // logo on every resize rewrites the Static item identity chain and, with
+  // Ink's dynamic region reflow, corrupts native scrollback on Windows.
+  const bannerColsRef = useRef<number | null>(null);
+  if (bannerColsRef.current === null) {
+    bannerColsRef.current = size.columns > 0 ? size.columns : 80;
+  }
+
   // The one-shot banner: printed once as the first Static item. v1.8.x:
   // ASCII logo restored, right-aligned at the TOP of the scrollback (only
   // place a multi-line mark can sit "top-right" under static-scrollback).
   const banner = useMemo<ChatMessage>(() => {
+    const cols = bannerColsRef.current ?? 80;
     const content = formatBannerWithLogoRight({
       leftLines: [
         `zelari-code · ${activeProviderSpec.id}/${activeModel}`,
@@ -228,8 +237,8 @@ export function App(): React.ReactElement {
         `/help · /plan · /build · /view-plan · shift+tab mode`,
       ],
       version: VERSION,
-      columns: size.columns || 80,
-      compact: (size.columns || 80) < 72 || (size.rows || 24) < 20,
+      columns: cols,
+      compact: cols < 72,
     });
     return {
       id: 'banner-once',
@@ -237,7 +246,13 @@ export function App(): React.ReactElement {
       ts: 0,
       content,
     };
-  }, [activeProviderSpec.id, activeModel, cwd, size.columns, size.rows]);
+  }, [activeProviderSpec.id, activeModel, cwd]);
+
+  // Sidebar visibility with hysteresis — avoid flapping at the 96-col edge.
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  useEffect(() => {
+    setSidebarOpen((prev) => sidebarVisibility(size.columns, size.rows, prev));
+  }, [size.columns, size.rows]);
 
   // The Static feed: banner first, then finalized messages. `key` lets /clear
   // remount Static so its internal "already printed" index resets. clearEpoch
@@ -253,21 +268,24 @@ export function App(): React.ReactElement {
     ? [banner, ...session.messages]
     : [];
 
-  // v0.7.9: right Sidebar (logo + git changes). It lives in the dynamic
-  // region — a full-height column can't coexist with the native-scrollback
-  // <Static> model — so it docks beside the live/status/input block. Hidden
-  // on narrow/short terminals to keep the dynamic region under one screen.
-  const showSidebar = shouldShowSidebar(size.columns, size.rows);
+  // Cap dynamic-region height so Ink never clear-screens on resize.
+  // Live + input + status ≈ 14 lines max; leave the rest to native scrollback.
+  const dynamicMaxRows = Math.max(8, Math.min(18, size.rows - 2));
 
   return (
     <>
       <Static key={staticKey} items={staticItems}>
         {(item) => renderMessage(item)}
       </Static>
-      <Box flexDirection="row">
+      <Box
+        flexDirection="row"
+        width={size.columns > 0 ? size.columns : undefined}
+        height={dynamicMaxRows}
+        overflow="hidden"
+      >
         {/* v0.7.9: the status line moved BELOW the input box (no more bar
             above it) and shows the execution timer instead of tokens/cost. */}
-        <Box flexDirection="column" flexGrow={1} paddingX={1}>
+        <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden">
           <LiveRegion live={session.live} busy={busy} elapsedMs={timer.elapsedMs} />
           {picker ? (
             <SelectList
@@ -275,7 +293,7 @@ export function App(): React.ReactElement {
               items={picker.items}
               onSelect={onPickerSelect}
               onCancel={onPickerCancel}
-              maxVisible={Math.max(4, Math.min(10, size.rows - 10))}
+              maxVisible={Math.max(3, Math.min(8, size.rows - 12))}
             />
           ) : (
             <InputBar
@@ -304,7 +322,7 @@ export function App(): React.ReactElement {
             brandVersion={VERSION}
           />
         </Box>
-        {showSidebar && (
+        {sidebarOpen && (
           <Sidebar version={VERSION} changes={gitChanges} rows={size.rows} />
         )}
       </Box>

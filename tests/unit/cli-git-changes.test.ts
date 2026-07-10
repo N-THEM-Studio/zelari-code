@@ -106,6 +106,20 @@ describe('Sidebar helpers', () => {
     expect(shouldShowSidebar(SIDEBAR_MIN_COLUMNS - 1, 30)).toBe(false);
     expect(shouldShowSidebar(200, 10)).toBe(false);
   });
+
+  it('sidebarVisibility uses hysteresis so resize edges do not thrash', async () => {
+    const { sidebarVisibility, SIDEBAR_HIDE_COLUMNS } = await import(
+      '../../src/cli/components/Sidebar.js'
+    );
+    // Enter at 96×30
+    expect(sidebarVisibility(96, 30, false)).toBe(true);
+    // Stay visible slightly below enter threshold
+    expect(sidebarVisibility(90, 30, true)).toBe(true);
+    // Only hide once past the hide floor
+    expect(sidebarVisibility(SIDEBAR_HIDE_COLUMNS - 1, 30, true)).toBe(false);
+    // Stay hidden until clear enter threshold again
+    expect(sidebarVisibility(90, 30, false)).toBe(false);
+  });
   it('truncatePath keeps the filename tail', () => {
     expect(truncatePath('src/cli/components/Sidebar.tsx', 12)).toBe('…Sidebar.tsx');
     expect(truncatePath('short.ts', 12)).toBe('short.ts');
