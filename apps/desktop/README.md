@@ -64,6 +64,18 @@ Artifacts land under `apps/desktop/src-tauri/target/release/bundle/` (msi/nsis o
 
 Settings (⚙) reads `zelari-code --print-config` and writes via `--set-config`.
 
+Also supported from Settings / CLI:
+
+| Action | CLI |
+|--------|-----|
+| Custom OpenAI base URL | `--set-config --provider openai-compatible --endpoint <url>` |
+| Store API key | `--set-key --provider <id> --key <secret>` |
+| Refresh models | `--discover-models --provider <id>` (also on model select open) |
+
+Chats: Active / Archived filters, archive ⬇, delete × (localStorage).
+
+Replies: light structured view (headings, lists, tables, code) without raw `#`/`**` artifacts; thinking animation; light duration/tool stats.
+
 ## Non-goals (v0.1 shell)
 
 - Full rewrite of `@zelari/core` in Rust

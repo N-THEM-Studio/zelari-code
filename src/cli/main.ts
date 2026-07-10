@@ -18,9 +18,15 @@ import { parseHeadlessFlags } from "./headless.js";
 import { runHeadless } from "./runHeadless.js";
 import {
   applySetConfig,
+  applySetKey,
+  parseDiscoverModelsFlags,
   parseSetConfigFlags,
+  parseSetKeyFlags,
   printDesktopConfig,
+  runDiscoverModels,
+  wantsDiscoverModels,
   wantsPrintConfig,
+  wantsSetKey,
 } from "./desktopConfig.js";
 import { loadSkillMdSkills } from "./skillsMd.js";
 import { listCodingSkills } from "@zelari/core/skills";
@@ -254,9 +260,16 @@ function pickRootComponent(): {
         "    --provider <id>    Provider override (default: active)\n" +
         "    --model <id>       Model override (default: provider default)\n" +
         "  --print-config      Print provider/model config as JSON (no secrets)\n" +
-        "  --set-config        Persist provider/model\n" +
+        "  --set-config        Persist provider/model/endpoint\n" +
         "    --provider <id>    Set active provider\n" +
         "    --model <id>       Set model for that provider\n" +
+        "    --endpoint <url>   Custom OpenAI-compatible base URL\n" +
+        "    --endpoint-clear   Remove custom endpoint override\n" +
+        "  --set-key           Store an API key (never printed back)\n" +
+        "    --provider <id>    Provider id (required)\n" +
+        "    --key <secret>     API key (required)\n" +
+        "  --discover-models   Refresh model list for a provider\n" +
+        "    --provider <id>    Provider (default: active)\n" +
         "\n" +
         "Environment:\n" +
         "  ZELARI_NO_WIZARD=1    Skip the first-run wizard\n" +
@@ -296,6 +309,49 @@ function pickRootComponent(): {
     // eslint-disable-next-line no-console
     console.log(JSON.stringify({ ok: true, message: result.message }));
     process.exit(0);
+  }
+
+  if (wantsSetKey(argv)) {
+    const keyParse = parseSetKeyFlags(argv);
+    if (keyParse.error || !keyParse.request) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[zelari-code --set-key] ${keyParse.error ?? "invalid arguments"}`,
+      );
+      process.exit(1);
+    }
+    const result = applySetKey(keyParse.request);
+    if (!result.ok) {
+      // eslint-disable-next-line no-console
+      console.error(`[zelari-code --set-key] ${result.error}`);
+      process.exit(1);
+    }
+    // eslint-disable-next-line no-console
+    console.log(
+      JSON.stringify({
+        ok: true,
+        provider: result.provider,
+        masked: result.masked,
+      }),
+    );
+    process.exit(0);
+  }
+
+  if (wantsDiscoverModels(argv)) {
+    const disc = parseDiscoverModelsFlags(argv);
+    void runDiscoverModels(disc.provider).then((result) => {
+      if (!result.ok) {
+        // eslint-disable-next-line no-console
+        console.error(
+          JSON.stringify({ ok: false, error: result.error }),
+        );
+        process.exit(1);
+      }
+      // eslint-disable-next-line no-console
+      console.log(JSON.stringify(result.payload));
+      process.exit(0);
+    });
+    return { kind: "done" };
   }
 
   // Headless mode: short-circuit TUI entirely. Must be checked BEFORE

@@ -8,6 +8,8 @@ export type WorkPhase = "plan" | "build";
 
 export type AppView = "chat" | "settings";
 
+export type SessionFilter = "active" | "archived";
+
 export interface ChatMessage {
   id: string;
   role: Role;
@@ -16,6 +18,14 @@ export interface ChatMessage {
   streaming?: boolean;
   toolName?: string;
   meta?: string;
+  /** Light run stats attached when a turn finishes. */
+  stats?: MessageStats;
+}
+
+export interface MessageStats {
+  durationMs?: number;
+  toolCount?: number;
+  charCount?: number;
 }
 
 export interface Conversation {
@@ -28,6 +38,8 @@ export interface Conversation {
   phase: WorkPhase;
   provider?: string;
   model?: string;
+  archived?: boolean;
+  archivedAt?: number;
 }
 
 export interface CliStatus {
@@ -46,6 +58,8 @@ export interface DesktopProviderInfo {
   envVar: string;
   models: string[];
   defaultModel: string;
+  endpoint?: string | null;
+  baseUrl?: string | null;
 }
 
 export interface DesktopConfig {
@@ -67,6 +81,15 @@ export interface RunTaskArgs {
   council?: boolean;
   provider?: string;
   model?: string;
+}
+
+export interface DiscoverModelsResult {
+  ok?: boolean;
+  provider?: string;
+  models?: string[];
+  fetchedAt?: number;
+  baseUrl?: string;
+  error?: string;
 }
 
 /** Subset of BrainEvent shapes we care about for the chat UI. */

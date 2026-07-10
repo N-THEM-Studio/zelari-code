@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { setApiKey, setAppConfig } from "../agentClient";
 import type { CliStatus, DesktopConfig, DispatchMode, WorkPhase } from "../types";
 
 interface Props {
@@ -32,6 +33,8 @@ export function SettingsView({
   const [mode, setMode] = useState<DispatchMode>(defaultMode);
   const [phase, setPhase] = useState<WorkPhase>(defaultPhase);
   const [customModel, setCustomModel] = useState("");
+  const [endpoint, setEndpoint] = useState("");
+  const [apiKey, setApiKeyInput] = useState("");
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -40,11 +43,19 @@ export function SettingsView({
     if (!config) return;
     setProvider(config.activeProviderId);
     setModel(config.modelByProvider[config.activeProviderId] ?? "");
+    const p = config.providers.find((x) => x.id === config.activeProviderId);
+    setEndpoint(p?.endpoint ?? "");
   }, [config]);
 
   const providers = config?.providers ?? [];
   const active = providers.find((p) => p.id === provider);
   const models = active?.models ?? [];
+
+  // Endpoint editing targets openai-compatible by default when switching
+  useEffect(() => {
+    const p = providers.find((x) => x.id === provider);
+    setEndpoint(p?.endpoint ?? "");
+  }, [provider, providers]);
 
   const save = async () => {
     setSaving(true);
@@ -68,6 +79,63 @@ export function SettingsView({
     }
   };
 
+  const saveEndpoint = async () => {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const url = endpoint.trim();
+      if (!url) {
+        setError("Enter an endpoint URL, or use Clear.");
+        return;
+      }
+      await setAppConfig({ provider, endpoint: url });
+      setMessage(`Endpoint saved for ${provider}.`);
+      await onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clearEndpoint = async () => {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await setAppConfig({ provider, endpointClear: true });
+      setEndpoint("");
+      setMessage("Endpoint cleared.");
+      await onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveKey = async () => {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const key = apiKey.trim();
+      if (!key) {
+        setError("Enter an API key.");
+        return;
+      }
+      const r = await setApiKey({ provider, key });
+      setApiKeyInput("");
+      setMessage(`Key stored for ${r.provider ?? provider} (${r.masked ?? "••••"}).`);
+      await onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="settings-view">
       <header className="settings-header">
@@ -81,8 +149,7 @@ export function SettingsView({
         <section className="settings-card">
           <h2>Provider & model</h2>
           <p className="muted">
-            Persists to CLI <code>provider.json</code> (same as TUI{" "}
-            <code>/provider</code> / <code>/model</code>).
+            Persists to CLI <code>provider.json</code>.
           </p>
           <label className="field">
             <span>Active provider</span>
@@ -117,7 +184,7 @@ export function SettingsView({
             </select>
           </label>
           <label className="field">
-            <span>Custom model id (optional override)</span>
+            <span>Custom model id (optional)</span>
             <input
               type="text"
               placeholder="e.g. MiniMax-M2.5"
@@ -125,13 +192,86 @@ export function SettingsView({
               onChange={(e) => setCustomModel(e.target.value)}
             />
           </label>
-          {active && !active.hasKey && (
-            <p className="warn">
-              No key for {active.displayName}. Run in a terminal:{" "}
-              <code>zelari-code</code> then <code>/login {active.id}</code> (or
-              set <code>{active.envVar}</code>).
+        </section>
+
+        <section className="settings-card">
+          <h2>API key</h2>
+          <p className="muted">
+            Stored in CLI keystore (never shown again). Env var:{" "}
+            <code>{active?.envVar ?? "—"}</code>
+          </p>
+          {active?.hasKey ? (
+            <p className="ok-inline">Key on file for {active.displayName}.</p>
+          ) : (
+            <p className="warn">No key for this provider yet.</p>
+          )}
+          <label className="field">
+            <span>
+              {active?.hasKey ? "Replace key" : "Paste API key"}
+            </span>
+            <input
+              type="password"
+              autoComplete="off"
+              placeholder="sk-…"
+              value={apiKey}
+              onChange={(e) => setApiKeyInput(e.target.value)}
+            />
+          </label>
+          <div className="settings-actions inline">
+            <button
+              type="button"
+              className="btn-send"
+              disabled={saving || !apiKey.trim()}
+              onClick={() => void saveKey()}
+            >
+              Save key
+            </button>
+          </div>
+          {provider === "grok" && (
+            <p className="muted" style={{ marginTop: 10 }}>
+              Grok OAuth: use CLI <code>/login grok</code> for device flow.
             </p>
           )}
+        </section>
+
+        <section className="settings-card">
+          <h2>Custom endpoint</h2>
+          <p className="muted">
+            OpenAI-compatible base URL (Ollama, LM Studio, vLLM, proxy…). Applies
+            to the selected provider via <code>customEndpoints</code>.
+          </p>
+          {active?.baseUrl && (
+            <p className="muted">
+              Effective base: <code>{active.baseUrl}</code>
+            </p>
+          )}
+          <label className="field">
+            <span>Base URL</span>
+            <input
+              type="url"
+              placeholder="http://127.0.0.1:11434/v1"
+              value={endpoint}
+              onChange={(e) => setEndpoint(e.target.value)}
+            />
+          </label>
+          <div className="settings-actions inline">
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={saving}
+              onClick={() => void clearEndpoint()}
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              className="btn-send"
+              disabled={saving || !endpoint.trim()}
+              onClick={() => void saveEndpoint()}
+            >
+              Save endpoint
+            </button>
+          </div>
         </section>
 
         <section className="settings-card">
@@ -179,16 +319,17 @@ export function SettingsView({
               <code>{config?.configPaths.keys ?? "—"}</code>
             </dd>
           </dl>
-          <p className="muted">
-            API keys are never shown here. Manage credentials via the CLI.
-          </p>
         </section>
 
         {error && <p className="error-banner">{error}</p>}
         {message && <p className="ok-banner">{message}</p>}
 
         <div className="settings-actions">
-          <button type="button" className="btn-ghost" onClick={() => void onRefresh()}>
+          <button
+            type="button"
+            className="btn-ghost"
+            onClick={() => void onRefresh()}
+          >
             Refresh
           </button>
           <button
@@ -197,7 +338,7 @@ export function SettingsView({
             disabled={saving || !provider}
             onClick={() => void save()}
           >
-            {saving ? "Saving…" : "Save"}
+            {saving ? "Saving…" : "Save provider & model"}
           </button>
         </div>
       </div>

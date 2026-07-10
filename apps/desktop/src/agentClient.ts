@@ -4,6 +4,7 @@ import type {
   AgentEvent,
   CliStatus,
   DesktopConfig,
+  DiscoverModelsResult,
   RunTaskArgs,
 } from "./types";
 
@@ -18,8 +19,23 @@ export async function getAppConfig(): Promise<DesktopConfig> {
 export async function setAppConfig(args: {
   provider?: string;
   model?: string;
+  endpoint?: string;
+  endpointClear?: boolean;
 }): Promise<{ ok?: boolean; message?: string }> {
   return invoke("set_app_config", { args });
+}
+
+export async function setApiKey(args: {
+  provider: string;
+  key: string;
+}): Promise<{ ok?: boolean; provider?: string; masked?: string }> {
+  return invoke("set_api_key", { args });
+}
+
+export async function discoverModels(args: {
+  provider?: string;
+}): Promise<DiscoverModelsResult> {
+  return invoke("discover_models", { args });
 }
 
 export async function runTask(args: RunTaskArgs): Promise<string> {

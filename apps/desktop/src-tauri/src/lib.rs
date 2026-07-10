@@ -258,6 +258,9 @@ fn get_app_config() -> Result<serde_json::Value, String> {
 struct SetConfigArgs {
     provider: Option<String>,
     model: Option<String>,
+    endpoint: Option<String>,
+    #[serde(default)]
+    endpoint_clear: bool,
 }
 
 #[tauri::command]
@@ -273,16 +276,97 @@ fn set_app_config(args: SetConfigArgs) -> Result<serde_json::Value, String> {
         argv.push("--model".into());
         argv.push(m.to_string());
     }
+    if let Some(ep) = args.endpoint.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--endpoint".into());
+        argv.push(ep.to_string());
+    }
+    if args.endpoint_clear {
+        argv.push("--endpoint-clear".into());
+    }
     if argv.len() == 1 {
-        return Err("set_app_config requires provider and/or model".into());
+        return Err(
+            "set_app_config requires provider, model, endpoint, and/or endpointClear".into(),
+        );
     }
     let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     let raw = run_cli_capture(&node, &cli, &refs)?;
-    // Prefer JSON ok payload; fall back to wrapping message
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw.trim()) {
         return Ok(v);
     }
     Ok(serde_json::json!({ "ok": true, "message": raw.trim() }))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetKeyArgs {
+    provider: String,
+    key: String,
+}
+
+#[tauri::command]
+fn set_api_key(args: SetKeyArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let provider = args.provider.trim();
+    let key = args.key.trim();
+    if provider.is_empty() || key.is_empty() {
+        return Err("provider and key are required".into());
+    }
+    let raw = run_cli_capture(
+        &node,
+        &cli,
+        &["--set-key", "--provider", provider, "--key", key],
+    )?;
+    serde_json::from_str(raw.trim())
+        .or_else(|_| Ok(serde_json::json!({ "ok": true, "message": raw.trim() })))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct DiscoverArgs {
+    provider: Option<String>,
+}
+
+#[tauri::command]
+fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv: Vec<String> = vec!["--discover-models".into()];
+    if let Some(p) = args.provider.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--provider".into());
+        argv.push(p.to_string());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    // Discovery can take a while (network)
+    let mut cmd = spawn_cli_base(&node, &cli);
+    for a in &refs {
+        cmd.arg(a);
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to spawn discover-models: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if !output.status.success() {
+        // Prefer JSON error from stderr or stdout
+        for blob in [stderr.trim(), stdout.trim()] {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(blob) {
+                return Err(
+                    v.get("error")
+                        .and_then(|e| e.as_str())
+                        .unwrap_or(blob)
+                        .to_string(),
+                );
+            }
+            if !blob.is_empty() {
+                return Err(blob.to_string());
+            }
+        }
+        return Err("discover-models failed".into());
+    }
+    serde_json::from_str(stdout.trim())
+        .map_err(|e| format!("Invalid discover-models JSON: {e}\n{stdout}"))
 }
 
 #[tauri::command]
@@ -552,6 +636,8 @@ pub fn run() {
             get_cli_status,
             get_app_config,
             set_app_config,
+            set_api_key,
+            discover_models,
             run_task,
             cancel_run
         ])

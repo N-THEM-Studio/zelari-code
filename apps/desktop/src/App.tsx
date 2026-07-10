@@ -11,6 +11,8 @@ import {
   runTask,
   setAppConfig,
 } from "./agentClient";
+import { loadConversations, saveConversations } from "./chatStorage";
+import { MessageContent, ThinkingIndicator } from "./components/MessageContent";
 import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
 import { ProviderModelBar } from "./components/ProviderModelBar";
@@ -22,6 +24,7 @@ import type {
   Conversation,
   DesktopConfig,
   DispatchMode,
+  SessionFilter,
   WorkPhase,
 } from "./types";
 import "./App.css";
@@ -96,6 +99,7 @@ function newConversation(
     phase,
     provider,
     model,
+    archived: false,
   };
 }
 
@@ -104,11 +108,16 @@ export default function App() {
   const [view, setView] = useState<AppView>("chat");
   const [defaultMode, setDefaultMode] = useState<DispatchMode>(defaults.mode);
   const [defaultPhase, setDefaultPhase] = useState<WorkPhase>(defaults.phase);
+  const [sessionFilter, setSessionFilter] = useState<SessionFilter>("active");
 
-  const [conversations, setConversations] = useState<Conversation[]>(() => [
-    newConversation(defaults.mode, defaults.phase),
-  ]);
-  const [activeId, setActiveId] = useState(() => conversations[0].id);
+  const [conversations, setConversations] = useState<Conversation[]>(() => {
+    const stored = loadConversations();
+    if (stored && stored.length > 0) return stored;
+    return [newConversation(defaults.mode, defaults.phase)];
+  });
+  const [activeId, setActiveId] = useState(
+    () => conversations.find((c) => !c.archived)?.id ?? conversations[0].id,
+  );
   const [draft, setDraft] = useState("");
   const [running, setRunning] = useState(false);
   const [mode, setMode] = useState<DispatchMode>(defaults.mode);
@@ -124,11 +133,25 @@ export default function App() {
   const assistantIdRef = useRef<string | null>(null);
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+  const runStartedAtRef = useRef<number>(0);
+  const toolCountRef = useRef(0);
+  const hasAssistantTextRef = useRef(false);
+
+  // Persist chats
+  useEffect(() => {
+    saveConversations(conversations);
+  }, [conversations]);
 
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? conversations[0],
     [conversations, activeId],
   );
+
+  const visibleSessions = useMemo(() => {
+    return conversations.filter((c) =>
+      sessionFilter === "archived" ? c.archived : !c.archived,
+    );
+  }, [conversations, sessionFilter]);
 
   const refreshCli = useCallback(async () => {
     try {
@@ -189,7 +212,7 @@ export default function App() {
             typeof (ev as { message?: string }).message === "string"
               ? (ev as { message: string }).message
               : "";
-          if (msg) setStatusLine(msg.replace(/^\[.*?\]\s*/, "").slice(0, 120));
+          if (msg) setStatusLine(msg.replace(/^\[.*?\]\s*/, "").slice(0, 140));
           if (msg.startsWith("[zelari]") || msg.startsWith("[headless]")) {
             setConversations((prev) =>
               prev.map((c) =>
@@ -217,6 +240,7 @@ export default function App() {
           const delta = extractDelta(ev);
           if (!delta) return;
           const isThinking = ev.type === "thinking_delta";
+          if (!isThinking) hasAssistantTextRef.current = true;
           setConversations((prev) =>
             prev.map((c) => {
               if (c.id !== convId) return c;
@@ -243,7 +267,7 @@ export default function App() {
                         ...m,
                         content: m.content + delta,
                         streaming: true,
-                        meta: isThinking ? "thinking" : m.meta,
+                        meta: isThinking ? "thinking" : m.meta === "thinking" && !isThinking ? undefined : m.meta,
                       }
                     : m,
                 ),
@@ -272,6 +296,7 @@ export default function App() {
 
         if (ev.type === "tool_execution_start") {
           const name = extractToolName(ev);
+          toolCountRef.current += 1;
           const toolMsg: ChatMessage = {
             id: uid("tool"),
             role: "tool",
@@ -355,9 +380,44 @@ export default function App() {
       const u3 = await onRunFinished(({ exitCode, cancelled: wasCancelled }) => {
         if (cancelled) return;
         setRunning(false);
+        const durationMs = Date.now() - (runStartedAtRef.current || Date.now());
+        const tools = toolCountRef.current;
+        const aid = assistantIdRef.current;
         assistantIdRef.current = null;
+
+        // Attach light stats to last assistant message
+        setConversations((prev) =>
+          prev.map((c) => {
+            if (c.id !== activeIdRef.current) return c;
+            const messages = [...c.messages];
+            const targetId =
+              aid ??
+              [...messages].reverse().find((m) => m.role === "assistant")?.id;
+            if (!targetId) return c;
+            return {
+              ...c,
+              messages: messages.map((m) =>
+                m.id === targetId
+                  ? {
+                      ...m,
+                      streaming: false,
+                      stats: {
+                        durationMs,
+                        toolCount: tools,
+                        charCount: m.content.length,
+                      },
+                    }
+                  : m,
+              ),
+            };
+          }),
+        );
+
         if (wasCancelled) setStatusLine("Run cancelled");
-        else if (exitCode === 0) setStatusLine("Completed");
+        else if (exitCode === 0)
+          setStatusLine(
+            `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools`,
+          );
         else setStatusLine(`Finished with exit code ${exitCode}`);
         void refreshCli();
       });
@@ -375,9 +435,59 @@ export default function App() {
     const c = newConversation(mode, phase, provider, model);
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
+    setSessionFilter("active");
     setDraft("");
     assistantIdRef.current = null;
     taRef.current?.focus();
+  };
+
+  const archiveChat = (id: string) => {
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? { ...c, archived: true, archivedAt: Date.now(), updatedAt: Date.now() }
+          : c,
+      ),
+    );
+    if (activeId === id) {
+      const next = conversations.find((c) => c.id !== id && !c.archived);
+      if (next) {
+        setActiveId(next.id);
+        setMode(next.mode);
+        setPhase(next.phase);
+      } else {
+        startNewChat();
+      }
+    }
+  };
+
+  const unarchiveChat = (id: string) => {
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === id
+          ? { ...c, archived: false, archivedAt: undefined, updatedAt: Date.now() }
+          : c,
+      ),
+    );
+  };
+
+  const deleteChat = (id: string) => {
+    if (!window.confirm("Delete this chat permanently?")) return;
+    setConversations((prev) => {
+      const next = prev.filter((c) => c.id !== id);
+      if (next.length === 0) {
+        const fresh = newConversation(mode, phase, provider, model);
+        setActiveId(fresh.id);
+        return [fresh];
+      }
+      if (activeId === id) {
+        const pick = next.find((c) => !c.archived) ?? next[0];
+        setActiveId(pick.id);
+        setMode(pick.mode);
+        setPhase(pick.phase);
+      }
+      return next;
+    });
   };
 
   const onModeChange = (m: DispatchMode) => {
@@ -402,9 +512,7 @@ export default function App() {
     setModel(nextModel);
     setConversations((prev) =>
       prev.map((c) =>
-        c.id === activeId
-          ? { ...c, provider: id, model: nextModel }
-          : c,
+        c.id === activeId ? { ...c, provider: id, model: nextModel } : c,
       ),
     );
   };
@@ -433,6 +541,9 @@ export default function App() {
     };
 
     assistantIdRef.current = null;
+    hasAssistantTextRef.current = false;
+    toolCountRef.current = 0;
+    runStartedAtRef.current = Date.now();
     setDraft("");
     setRunning(true);
     setStatusLine(`${mode} · ${phase} running…`);
@@ -448,6 +559,7 @@ export default function App() {
           phase,
           provider,
           model,
+          archived: false,
           updatedAt: Date.now(),
           messages: [...c.messages, userMsg],
         };
@@ -505,6 +617,8 @@ export default function App() {
 
   const messages = active?.messages ?? [];
   const empty = messages.length === 0;
+  const showGlobalThinking =
+    running && !hasAssistantTextRef.current && !messages.some((m) => m.streaming);
 
   if (view === "settings") {
     return (
@@ -557,30 +671,84 @@ export default function App() {
           >
             <span aria-hidden>+</span> New chat
           </button>
+          <div className="session-filter">
+            <button
+              type="button"
+              className={sessionFilter === "active" ? "active" : ""}
+              onClick={() => setSessionFilter("active")}
+            >
+              Active
+            </button>
+            <button
+              type="button"
+              className={sessionFilter === "archived" ? "active" : ""}
+              onClick={() => setSessionFilter("archived")}
+            >
+              Archived
+            </button>
+          </div>
         </div>
 
         <div className="session-list">
           <div className="session-label">Sessions</div>
-          {conversations.map((c) => (
-            <button
+          {visibleSessions.length === 0 && (
+            <div className="session-empty">
+              {sessionFilter === "archived"
+                ? "No archived chats"
+                : "No active chats"}
+            </div>
+          )}
+          {visibleSessions.map((c) => (
+            <div
               key={c.id}
-              type="button"
-              className={`session-item${c.id === activeId ? " active" : ""}`}
-              onClick={() => {
-                if (!running) {
-                  setActiveId(c.id);
-                  setMode(c.mode);
-                  setPhase(c.phase);
-                  if (c.provider) setProvider(c.provider);
-                  if (c.model) setModel(c.model);
-                }
-              }}
+              className={`session-item-wrap${c.id === activeId ? " active" : ""}`}
             >
-              <span className="session-title">{c.title}</span>
-              <span className="session-meta">
-                {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
-              </span>
-            </button>
+              <button
+                type="button"
+                className="session-item"
+                onClick={() => {
+                  if (!running) {
+                    setActiveId(c.id);
+                    setMode(c.mode);
+                    setPhase(c.phase);
+                    if (c.provider) setProvider(c.provider);
+                    if (c.model) setModel(c.model);
+                  }
+                }}
+              >
+                <span className="session-title">{c.title}</span>
+                <span className="session-meta">
+                  {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
+                </span>
+              </button>
+              <div className="session-actions">
+                {c.archived ? (
+                  <button
+                    type="button"
+                    title="Unarchive"
+                    onClick={() => unarchiveChat(c.id)}
+                  >
+                    ↩
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    title="Archive"
+                    onClick={() => archiveChat(c.id)}
+                  >
+                    ⬇
+                  </button>
+                )}
+                <button
+                  type="button"
+                  title="Delete"
+                  className="danger"
+                  onClick={() => deleteChat(c.id)}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
           ))}
         </div>
 
@@ -599,11 +767,6 @@ export default function App() {
             />
             <div>
               <div>{statusLine}</div>
-              {cli?.cliPath && (
-                <div>
-                  <code>{cli.cliPath}</code>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -644,23 +807,21 @@ export default function App() {
             disabled={running}
             onProviderChange={onProviderChange}
             onModelChange={onModelChange}
+            onConfigRefresh={setConfig}
+            onStatus={setStatusLine}
           />
         </div>
 
         <div className="chat-scroll" ref={scrollRef}>
-          {empty ? (
+          {empty && !running ? (
             <div className="empty-state">
               <div className="brand-mark" style={{ width: 40, height: 40 }}>
                 Z
               </div>
               <h1>What should we build?</h1>
               <p>
-                Agent · Council · Zelari with Plan/Build phases — same controls
-                as the CLI TUI, via{" "}
-                <code style={{ fontFamily: "var(--mono)", fontSize: 12 }}>
-                  --headless
-                </code>
-                .
+                Agent · Council · Zelari with Plan/Build — clean reply layout,
+                tools, and light stats.
               </p>
               <div className="suggestions">
                 {SUGGESTIONS.map((s) => (
@@ -693,13 +854,41 @@ export default function App() {
                     )}
                     {m.streaming && <span className="badge">streaming</span>}
                   </div>
-                  <div
-                    className={`bubble${m.streaming ? " streaming-cursor" : ""}`}
-                  >
-                    {m.content}
-                  </div>
+                  {m.role === "assistant" ? (
+                    <MessageContent
+                      content={m.content}
+                      streaming={m.streaming}
+                      thinking={m.meta === "thinking"}
+                      showThinking={
+                        m.streaming &&
+                        m.meta === "thinking" &&
+                        !m.content.trim()
+                      }
+                      stats={m.stats}
+                    />
+                  ) : m.role === "user" ? (
+                    <div className="bubble user-bubble">{m.content}</div>
+                  ) : (
+                    <div className="bubble tool-bubble">{m.content}</div>
+                  )}
                 </div>
               ))}
+              {showGlobalThinking && (
+                <div className="message assistant">
+                  <div className="message-role">
+                    Zelari <span className="badge">thinking</span>
+                  </div>
+                  <ThinkingIndicator
+                    label={
+                      mode === "zelari"
+                        ? "Mission running"
+                        : mode === "council"
+                          ? "Council deliberating"
+                          : "Thinking"
+                    }
+                  />
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -744,12 +933,6 @@ export default function App() {
                 )}
               </div>
             </div>
-          </div>
-          <div className="footer-note">
-            CLI remains first-class:{" "}
-            <code style={{ fontFamily: "var(--mono)" }}>
-              npm i -g zelari-code
-            </code>
           </div>
         </div>
       </main>
