@@ -25,8 +25,19 @@ export function computeSessionStatsDelta(
   userText: string,
   assistantContent: string,
   model: string,
-  prev: { totalTokens: number; totalCostUsd: number; cachedTokens?: number },
-): { totalTokens: number; totalCostUsd: number; cachedTokens: number } {
+  prev: {
+    totalTokens: number;
+    totalCostUsd: number;
+    cachedTokens?: number;
+    /** Last-turn context occupancy (for the StatusBar meter, not cumulative). */
+    contextTokens?: number;
+  },
+): {
+  totalTokens: number;
+  totalCostUsd: number;
+  cachedTokens: number;
+  contextTokens: number;
+} {
   const promptTokens = realUsage ? realUsage.promptTokens : Math.ceil(userText.length / 4);
   const completionTokens = realUsage
     ? realUsage.completionTokens
@@ -35,9 +46,16 @@ export function computeSessionStatsDelta(
   // char/4 fallback can't distinguish them, so assume 0 there.
   const cachedPromptTokens = realUsage?.cachedPromptTokens ?? 0;
   const turnCost = calculateCost(model, promptTokens, completionTokens, cachedPromptTokens);
+  // Context meter = this turn's prompt+completion (provider context window
+  // occupancy proxy), NOT the session cumulative total (which always grows
+  // and produced absurd "474k/200k" displays).
+  const contextTokens = realUsage
+    ? realUsage.totalTokens || promptTokens + completionTokens
+    : promptTokens + completionTokens;
   return {
     totalTokens: prev.totalTokens + promptTokens + completionTokens,
     totalCostUsd: prev.totalCostUsd + turnCost,
     cachedTokens: (prev.cachedTokens ?? 0) + cachedPromptTokens,
+    contextTokens,
   };
 }

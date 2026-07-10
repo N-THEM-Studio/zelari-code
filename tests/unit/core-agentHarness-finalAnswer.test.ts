@@ -170,6 +170,45 @@ describe('AgentHarness — final-answer guarantee (v0.7.1 A2)', () => {
     expect(providerCalls).toBeGreaterThan(12);
   });
 
+  it('extends soft tool budget before hard-cap final answer (v1.8.3)', async () => {
+    // Soft=2, hard=5 → should extend at least once and emit tool_budget_extended.
+    let providerCalls = 0;
+    const provider: ProviderStreamFn = async function* (params) {
+      providerCalls++;
+      if (params.tools.length === 0) {
+        yield { kind: 'text', delta: 'wrapped up' };
+        yield { kind: 'finish', reason: 'stop' };
+        return;
+      }
+      yield { kind: 'tool_call', toolCallId: `t${providerCalls}`, toolName: 'echo', args: { n: providerCalls } };
+      yield { kind: 'finish', reason: 'tool_calls' };
+    };
+    const { registry } = newRegistryWithCounter();
+    const harness = new AgentHarness({
+      model: 'm',
+      provider: 'p',
+      sessionId: 's-extend',
+      messages: [{ role: 'user', content: 'go' }],
+      tools: [{ name: 'echo', description: 'e', parameters: {} }],
+      toolRegistry: registry,
+      providerStream: provider,
+      maxToolLoopIterations: 2,
+      maxToolLoopHardCap: 5,
+    });
+    const events = await collect(harness.run());
+    const extended = events.filter(
+      (e) => e.type === 'error' && (e as { code?: string }).code === 'tool_budget_extended',
+    );
+    expect(extended.length).toBeGreaterThan(0);
+    const allText = events
+      .filter((e) => e.type === 'message_delta')
+      .map((e) => (e as { delta: string }).delta)
+      .join('');
+    expect(allText).toContain('wrapped up');
+    // Soft 2 + extensions up to hard 5 + final-answer call > soft alone
+    expect(providerCalls).toBeGreaterThan(3);
+  });
+
   it('does NOT trigger a final-answer turn when the loop ended on a non-tool finish', async () => {
     // Normal turn: text then stop. No tool loop → no final-answer call.
     let calls = 0;

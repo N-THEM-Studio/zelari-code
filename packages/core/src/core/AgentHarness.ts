@@ -109,14 +109,25 @@ export interface AgentHarnessConfig {
    */
   maxQueuedIterations?: number;
   /**
-   * Maximum number of tool-loop iterations (observe → reason → act cycles)
-   * per run() invocation before the harness forces a final-answer turn.
-   * Default 30 (raised from 12 in v1.5.2 — complex council implementations
-   * that read→edit→verify across many files routinely exhausted 12 rounds
-   * before finishing, producing incomplete deliverables that failed the
-   * verify gate). Overridable via ZELARI_MAX_TOOL_LOOP_ITERATIONS in the CLI.
+   * Soft maximum of tool-loop iterations (observe → reason → act cycles)
+   * per run() before the harness considers extending or forcing a final
+   * answer. Default 30. Overridable via ZELARI_MAX_TOOL_LOOP_ITERATIONS.
+   *
+   * v1.8.3: this is a SOFT budget — if the model still wants tools and the
+   * hard cap has not been reached, the harness auto-extends in chunks so
+   * multi-step implementation can finish without a premature "budget
+   * exhausted" summary.
    */
   maxToolLoopIterations?: number;
+  /**
+   * Hard ceiling on tool-loop iterations (absolute stop). Default =
+   * max(soft×3, soft+60), overridable via ZELARI_MAX_TOOL_LOOP_HARD.
+   * Set equal to soft to disable dynamic extension (pre-1.8.3 behavior).
+   * Set 0 to use the computed default.
+   *
+   * @since v1.8.3
+   */
+  maxToolLoopHardCap?: number;
   /**
    * Optional council-member identity, propagated to every event the
    * harness emits (`agent_start`, `agent_end`, `message_start`,
@@ -160,6 +171,7 @@ export class AgentHarness {
   private readonly sessionId: string;
   private readonly maxQueuedIterations: number;
   private readonly maxToolLoopIterations: number;
+  private readonly maxToolLoopHardCap: number;
   private cancelled = false;
   private activeController: AbortController | null = null;
   private queue: string[] = [];
@@ -187,6 +199,14 @@ export class AgentHarness {
     this.sessionId = config.sessionId ?? crypto.randomUUID();
     this.maxQueuedIterations = config.maxQueuedIterations ?? 3;
     this.maxToolLoopIterations = config.maxToolLoopIterations ?? 30;
+    // Hard cap: explicit config, else soft×3 (min soft+60) so long builds
+    // can finish without unbounded loops.
+    const soft = this.maxToolLoopIterations;
+    const hardCfg = config.maxToolLoopHardCap;
+    this.maxToolLoopHardCap =
+      typeof hardCfg === 'number' && hardCfg > 0
+        ? Math.max(soft, hardCfg)
+        : Math.max(soft * 3, soft + 60);
   }
 
   /**
@@ -534,16 +554,20 @@ export class AgentHarness {
     yield initialMsgEnd;
 
     // === Agentic tool-call loop ===
-    // When the model's finish reason is 'tool_calls', the turn produced tool
-    // invocations whose results are now in the transcript (appended by
-    // runSingleTurn). Re-enter the provider so the model can consume those
-    // results and continue — this is the core agent loop (reason → act →
-    // observe → reason). Bounded by this.maxToolLoopIterations to prevent runaway.
+    // Soft budget (maxToolLoopIterations) can auto-extend up to the hard cap
+    // when the model still wants tools — multi-step work finishes instead of
+    // dying mid-task with "budget exhausted". Absolute hard cap still bounds
+    // runaway loops. Env: ZELARI_MAX_TOOL_LOOP_ITERATIONS / _HARD.
     let toolLoopTurns = 0;
+    let softCap = this.maxToolLoopIterations;
+    const hardCap = this.maxToolLoopHardCap;
+    let extensions = 0;
+    const maxExtensions = 8;
+
     while (
       !this.cancelled &&
       !hadError &&
-      toolLoopTurns < this.maxToolLoopIterations &&
+      toolLoopTurns < softCap &&
       initialFinishRef.value === 'tool_calls'
     ) {
       toolLoopTurns++;
@@ -583,23 +607,46 @@ export class AgentHarness {
       // Drive the loop: keep going only if this turn again requested tool calls.
       initialFinishRef.value = turnFinishRef.value;
       if (hadError || this.cancelled) break;
+
+      // Soft-cap hit but model still wants tools → extend until hard cap.
+      if (
+        initialFinishRef.value === 'tool_calls' &&
+        toolLoopTurns >= softCap &&
+        toolLoopTurns < hardCap &&
+        extensions < maxExtensions
+      ) {
+        extensions++;
+        const chunk = this.maxToolLoopIterations;
+        softCap = Math.min(hardCap, softCap + chunk);
+        this.config.messages.push({
+          role: 'user',
+          content:
+            `[system] Soft tool budget reached (${toolLoopTurns}/${hardCap} hard). ` +
+            `Work may be incomplete — CONTINUE with tools as needed to finish remaining steps. ` +
+            `Prefer concrete progress over summarizing. Do not apologize for budgets.`,
+        });
+        const note = createBrainEvent('error', this.sessionId, {
+          severity: 'recoverable',
+          message: `Tool budget extended (${toolLoopTurns}→${softCap}, hard ${hardCap}) to allow completion.`,
+          code: 'tool_budget_extended',
+        });
+        this.emit(note);
+        yield note;
+      }
     }
 
-    // === Final-answer guarantee (v0.7.1 A2) ===
-    // When the tool-call loop exits because it hit the iteration cap (or the
-    // per-turn tool-call limit keeps producing tool_calls finish reasons) the
-    // run would otherwise end with tool noise and NO assistant answer — the
-    // user sees silence after the last tool box. Detect that terminal state
-    // and make ONE more provider call with tools OMITTED + a synthetic system
-    // nudge so the turn always ends with assistant text answering with what
-    // the model has gathered. Skipped on cancel/error (the loop already set
-    // hadError or this.cancelled) and when the loop ended on a non-tool finish.
-    const hitIterationCap = toolLoopTurns >= this.maxToolLoopIterations;
+    // === Final-answer guarantee (v0.7.1 A2 / v1.8.3 hard cap only) ===
+    // Only force a no-tools closing answer when the HARD cap is hit (or soft
+    // equals hard and we cannot extend). Soft exhaustion alone is handled by
+    // the extension block above.
+    const hitHardCap =
+      toolLoopTurns >= hardCap ||
+      (toolLoopTurns >= softCap && softCap >= hardCap);
     if (
       !this.cancelled &&
       !hadError &&
       initialFinishRef.value === 'tool_calls' &&
-      hitIterationCap
+      hitHardCap
     ) {
       yield* this.runFinalAnswerTurn();
     }
@@ -825,29 +872,26 @@ export class AgentHarness {
             }
             pendingNativeTools.length = 0;
           }
-          // Fallback: some models emit tool calls as a ---TOOLS---[json]---END---
-          // text block instead of native tool_calls. Execute them so edits are not
-          // silently lost. When native read/grep tools ran in the same turn, still
-          // execute write_file/edit_file from the text block (common Lucifero pattern).
+          // Fallback text-format tools: ---TOOLS--- JSON, MiniMax invoke XML,
+          // and garbled invoke dumps. Run any text tools not already executed
+          // natively this turn (so updateTask still runs after a native read).
           const textTools = parseTextToolCalls(turnText);
-          const nativeWriteRan = turnToolCalls.some(
-            (t) => t.name === 'write_file' || t.name === 'edit_file',
-          );
-          const textWriteTools = textTools.filter(
-            (t) => t.name === 'write_file' || t.name === 'edit_file',
-          );
-          const toolsToRun =
-            nativeWriteRan
-              ? []
-              : turnToolCalls.length === 0
-                ? textTools
-                : textWriteTools;
-          if (/---TOOLS---/.test(turnText) && textTools.length === 0) {
+          const toolsToRun = textTools.filter((tt) => {
+            const key = hashToolCall(tt.name, tt.args);
+            return !turnToolCalls.some(
+              (n) => hashToolCall(n.name, n.args) === key,
+            );
+          });
+          if (
+            (/---TOOLS---/.test(turnText) ||
+              /minimax|invoke\s+name=/i.test(turnText)) &&
+            textTools.length === 0
+          ) {
             const parseErr = createBrainEvent('error', this.sessionId, {
               severity: 'recoverable',
               message:
-                'Found ---TOOLS--- block but JSON parse failed; tool calls were not executed. ' +
-                'Emit valid JSON (escape newlines as \\n inside strings).',
+                'Found text-format tool block but parse failed; tool calls were not executed. ' +
+                'Prefer native tool_call, or ---TOOLS--- with ONE valid JSON array.',
               code: 'text_tools_parse_failed',
             });
             this.emit(parseErr);
@@ -1013,7 +1057,7 @@ export class AgentHarness {
     this.config.messages.push({
       role: 'user',
       content:
-        '[system] Tool iteration budget exhausted. Stop calling tools and answer the original request now using the information you have already gathered. Do not apologize for the tools.',
+        '[system] Hard tool-iteration ceiling reached. Stop calling tools and give a clear status: what is DONE, what remains, and the exact next steps. Use what you already gathered. Do not apologize for the tools.',
     });
 
     let totalLength = 0;
@@ -1131,45 +1175,143 @@ export function normalizeTextToolArgs(
 export function parseTextToolCalls(
   text: string,
 ): { name: string; args: Record<string, unknown> }[] {
+  // 1) Canonical ---TOOLS--- … ---END--- block
   const m = /---TOOLS---\s*([\s\S]*?)---END---/.exec(text);
-  if (!m || !m[1]) return [];
-  let body = m[1].trim();
-  // Strip markdown fences models wrap around the block body.
-  body = body
-    .replace(/^```(?:json)?\s*/i, '')
-    .replace(/\s*```$/i, '')
-    .trim();
+  if (m?.[1]) {
+    let body = m[1].trim();
+    body = body
+      .replace(/^```(?:json)?\s*/i, '')
+      .replace(/\s*```$/i, '')
+      .trim();
 
-  const candidates: string[] = [body];
-  // Concatenated arrays: `[{a}]\n[{b}]` → `[{a},{b}]`
-  if (/\]\s*\[/.test(body)) {
-    candidates.push(body.replace(/\]\s*\[/g, ','));
-  }
-  // Over-escaped quotes (common when models double-encode): `{\"name\"` → `{"name"`
-  if (body.includes('\\"')) {
-    candidates.push(body.replace(/\\"/g, '"'));
+    const candidates: string[] = [body];
     if (/\]\s*\[/.test(body)) {
-      candidates.push(body.replace(/\\"/g, '"').replace(/\]\s*\[/g, ','));
+      candidates.push(body.replace(/\]\s*\[/g, ','));
+    }
+    if (body.includes('\\"')) {
+      candidates.push(body.replace(/\\"/g, '"'));
+      if (/\]\s*\[/.test(body)) {
+        candidates.push(body.replace(/\\"/g, '"').replace(/\]\s*\[/g, ','));
+      }
+    }
+
+    for (const cand of candidates) {
+      const items = tryParseToolArray(cand);
+      if (items.length > 0) return items;
+    }
+
+    const arrays = extractJsonArrays(body);
+    if (arrays.length > 1) {
+      const merged: { name: string; args: Record<string, unknown> }[] = [];
+      for (const a of arrays) {
+        merged.push(...tryParseToolArray(a));
+      }
+      if (merged.length > 0) return merged;
+    }
+
+    const objs = extractToolObjects(body);
+    if (objs.length > 0) return objs;
+  }
+
+  // 2) MiniMax / XML-style invoke dumps (and garbled variants from some UIs)
+  const mini = parseMinimaxStyleToolCalls(text);
+  if (mini.length > 0) return mini;
+
+  return [];
+}
+
+/**
+ * Parse MiniMax-style and garbled invoke tool dumps, e.g.:
+ *   <minimax:tool_call><invoke name="updateTask">...</invoke></minimax:tool_call>
+ *   invoke name="updateTask" … taskId>foo status>done
+ *   ]<]minimax[>[<invoke name="updateTask">  (display-mangled form)
+ */
+export function parseMinimaxStyleToolCalls(
+  text: string,
+): { name: string; args: Record<string, unknown> }[] {
+  const out: { name: string; args: Record<string, unknown> }[] = [];
+
+  // Normalize common mangling: ]<]minimax[>[ → <minimax:  and ]< → <
+  const normalized = text
+    .replace(/\]\s*<\s*\]\s*minimax\s*\[\s*>\s*\[</gi, '<minimax:')
+    .replace(/\]\s*<\s*\]\s*minimax\s*\[\s*>/gi, '<minimax:')
+    .replace(/minimax\s*\[\s*>\s*\[</gi, 'minimax:')
+    .replace(/\]\s*</g, '<');
+
+  // Blocks: <minimax:tool_call>...</minimax:tool_call> or bare <invoke name="...">...</invoke>
+  const blockRe =
+    /<(?:minimax:)?tool_call[^>]*>([\s\S]*?)<\/(?:minimax:)?tool_call>|<invoke\s+name=["']([^"']+)["'][^>]*>([\s\S]*?)(?:<\/invoke>|(?=<invoke\s+name=)|$)/gi;
+  let match: RegExpExecArray | null;
+  while ((match = blockRe.exec(normalized)) !== null) {
+    if (match[2]) {
+      // <invoke name="X"> body
+      out.push({ name: match[2], args: parseLooseArgs(match[3] ?? '') });
+    } else if (match[1]) {
+      const inner = match[1];
+      const inv = /invoke\s+name=["']([^"']+)["']/i.exec(inner);
+      if (inv) {
+        out.push({ name: inv[1]!, args: parseLooseArgs(inner) });
+      } else {
+        // JSON body inside minimax block?
+        const jsonish = tryParseToolArray(inner.trim()) ;
+        if (jsonish.length) out.push(...jsonish);
+        else {
+          const objs = extractToolObjects(inner);
+          if (objs.length) out.push(...objs);
+        }
+      }
     }
   }
 
-  for (const cand of candidates) {
-    const items = tryParseToolArray(cand);
-    if (items.length > 0) return items;
-  }
-
-  // Last resort: extract every top-level `[...]` array in the body and merge.
-  const arrays = extractJsonArrays(body);
-  if (arrays.length > 1) {
-    const merged: { name: string; args: Record<string, unknown> }[] = [];
-    for (const a of arrays) {
-      merged.push(...tryParseToolArray(a));
+  // Fallback: scan for invoke name="..." even without closing tags
+  if (out.length === 0) {
+    const loose = /invoke\s+name=["']([^"']+)["']([\s\S]*?)(?=invoke\s+name=|$)/gi;
+    let lm: RegExpExecArray | null;
+    while ((lm = loose.exec(normalized)) !== null) {
+      const name = lm[1]!;
+      const args = parseLooseArgs(lm[2] ?? '');
+      if (name) out.push({ name, args });
     }
-    if (merged.length > 0) return merged;
   }
 
-  // Absolute last resort: find individual {"name":"...","args":{...}} objects.
-  return extractToolObjects(body);
+  return out;
+}
+
+/** Extract key/value args from XML-ish or "key>value" / "key: value" fragments. */
+function parseLooseArgs(body: string): Record<string, unknown> {
+  const args: Record<string, unknown> = {};
+  // <parameter name="k">v</parameter> or <k>v</k>
+  const paramTag =
+    /(?:parameter\s+name=|<\s*)["']?([a-zA-Z_][\w]*)["']?\s*(?:>|=\s*["']?)([^<\]\n]+)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = paramTag.exec(body)) !== null) {
+    const key = m[1]!;
+    if (key === 'invoke' || key === 'minimax' || key === 'tool_call') continue;
+    args[key] = m[2]!.replace(/^["']|["']$/g, '').trim();
+  }
+  // key>value or key: value lines
+  const lineRe = /(?:^|[\s\[>])([a-zA-Z_][\w]*)\s*[>:=]\s*([^\n<\]]+)/g;
+  while ((m = lineRe.exec(body)) !== null) {
+    const key = m[1]!;
+    if (args[key] !== undefined) continue;
+    if (['invoke', 'name', 'minimax', 'tool_call', 'parameter'].includes(key)) continue;
+    args[key] = m[2]!.replace(/^["']|["']$/g, '').trim();
+  }
+  // JSON object somewhere in body
+  if (Object.keys(args).length === 0) {
+    const brace = body.indexOf('{');
+    if (brace >= 0) {
+      try {
+        const parsed = JSON.parse(body.slice(brace));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+  return args;
 }
 
 function tryParseToolArray(

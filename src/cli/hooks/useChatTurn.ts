@@ -460,9 +460,13 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           default: 25,
           min: 1,
         });
-        // v1.5.2 / v1.8.0: tool-loop cap — budget policy may lower under
-        // context pressure; env still wins as the ceiling via applyBudgetPolicy.
+        // v1.5.2 / v1.8.0 / v1.8.3: soft tool-loop + optional hard ceiling.
+        // Soft can auto-extend until hard so multi-step work finishes.
         const maxToolLoopIterations = budget.maxToolLoopIterations;
+        const maxToolLoopHardCap = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_HARD, {
+          default: 0, // 0 → harness default (soft×3, min soft+60)
+          min: 0,
+        });
         const harness = new AgentHarness({
           model: envConfig.model,
           provider: "openai-compatible",
@@ -484,6 +488,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           cwd,
           maxToolCallsPerTurn,
           maxToolLoopIterations,
+          ...(maxToolLoopHardCap > 0 ? { maxToolLoopHardCap } : {}),
         });
         harnessRef.current = harness;
         setQueueCount(harness.queueLength);
@@ -582,7 +587,16 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               }
             } else if (event.type === "error") {
               flushStreaming();
-              appendSystem(setMessages, `[error] ${event.message}`, Date.now());
+              // Budget extension is informational, not a hard error.
+              if (event.code === "tool_budget_extended") {
+                appendSystem(
+                  setMessages,
+                  `[budget] ${event.message}`,
+                  Date.now(),
+                );
+              } else {
+                appendSystem(setMessages, `[error] ${event.message}`, Date.now());
+              }
             } else if (event.type === "tool_execution_start") {
               toolNameById.set(event.toolCallId, event.toolName);
               // Drain buffered deltas FIRST so the text streamed before the

@@ -5,6 +5,16 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.3] - 2026-07-10
+
+### Added
+- **Dynamic tool-loop budget (continue until complete)** — soft cap (`ZELARI_MAX_TOOL_LOOP_ITERATIONS`, default 90 from CLI budget / 30 harness default) auto-extends in chunks up to a hard ceiling (`ZELARI_MAX_TOOL_LOOP_HARD`, default soft×3). Emits `[budget] Tool budget extended…` and keeps tools available so multi-step work is not cut off mid-task. Final no-tools summary only at the hard ceiling.
+- **MiniMax / invoke text-tool recovery** — parse `<minimax:tool_call>`, `<invoke name="…">`, and display-mangled variants so tool calls still execute when the model does not emit native `tool_calls`.
+
+### Fixed
+- **Context meter showed cumulative session tokens** (e.g. `474k/200k`) — StatusBar now uses last-turn context occupancy (`contextTokens`), not lifetime totals.
+- Text-format tools after a native tool in the same turn (e.g. `updateTask` after `read_file`) are no longer dropped.
+
 ## [1.8.2] - 2026-07-10
 
 ### Fixed

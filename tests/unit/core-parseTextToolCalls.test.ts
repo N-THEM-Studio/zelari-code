@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeTextToolArgs,
   parseTextToolCalls,
+  parseMinimaxStyleToolCalls,
 } from "@zelari/core/harness";
 
 describe("parseTextToolCalls", () => {
@@ -90,6 +91,28 @@ describe("parseTextToolCalls", () => {
     expect(parseTextToolCalls(text)).toEqual([
       { name: "read_file", args: { path: "x.ts" } },
     ]);
+  });
+
+  it("parses MiniMax invoke XML tool dumps", () => {
+    const text = `
+<minimax:tool_call>
+<invoke name="updateTask">
+<parameter name="taskId">visual-foundation-theme</parameter>
+<parameter name="status">done</parameter>
+</invoke>
+</minimax:tool_call>`;
+    const out = parseMinimaxStyleToolCalls(text);
+    expect(out.length).toBeGreaterThanOrEqual(1);
+    expect(out[0]?.name).toBe("updateTask");
+    expect(out[0]?.args.taskId).toMatch(/visual-foundation/);
+    expect(out[0]?.args.status).toBe("done");
+  });
+
+  it("parses garbled minimax invoke markers from broken renderers", () => {
+    const text =
+      ']<]minimax[>[<invoke name="updateTask">]<]minimax[>[<taskId>foo-bar]<]minimax[>[</taskId>]<]minimax[>[<status>done';
+    const out = parseTextToolCalls(text);
+    expect(out.some((t) => t.name === "updateTask")).toBe(true);
   });
 });
 
