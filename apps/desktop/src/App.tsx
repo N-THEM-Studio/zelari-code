@@ -28,6 +28,7 @@ import type {
   WorkPhase,
 } from "./types";
 import zelariLogo from "./assets/zelari-logo.png";
+import { checkForDesktopUpdate } from "./updater";
 import "./App.css";
 
 const SUGGESTIONS = [
@@ -192,6 +193,28 @@ export default function App() {
     void refreshCli();
     void refreshConfig();
   }, [refreshCli, refreshConfig]);
+
+  // Quiet desktop update check on launch (signed GitHub Releases).
+  useEffect(() => {
+    let cancelled = false;
+    const t = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const { update, current } = await checkForDesktopUpdate();
+          if (cancelled || !update) return;
+          setStatusLine(
+            `Desktop update available: v${update.version} (you have v${current}) — open Settings`,
+          );
+        } catch {
+          // Offline / dev without Tauri — ignore
+        }
+      })();
+    }, 2500);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;

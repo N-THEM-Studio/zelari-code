@@ -1,6 +1,6 @@
 {
   "name": "@zelari/core",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "description": "Zelari Code core library â€” provider-neutral agent loop (AgentHarness), multi-agent council orchestration, and built-in skills. Used by the zelari-code CLI; consumable by other agent frontends.",
   "author": "N-THEM Studio",
   "license": "MIT",

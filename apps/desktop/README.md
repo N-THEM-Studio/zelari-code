@@ -76,6 +76,30 @@ Chats: Active / Archived filters, archive ⬇, delete × (localStorage).
 
 Replies: light structured view (headings, lists, tables, code) without raw `#`/`**` artifacts; thinking animation; light duration/tool stats.
 
+## Auto-update
+
+Desktop uses **Tauri updater** → `https://github.com/N-THEM-Studio/zelari-code/releases/latest/download/latest.json`.
+
+- **Settings → App updates** — check / download & install / relaunch  
+- On launch, a quiet check surfaces “update available” in the status line  
+
+### Signing (maintainers)
+
+```bash
+cd apps/desktop
+npx tauri signer generate -w keys/zelari.key --ci   # once; never commit the private key
+```
+
+GitHub Actions secrets:
+
+| Secret | Value |
+|--------|--------|
+| `TAURI_SIGNING_PRIVATE_KEY` | Full contents of `keys/zelari.key` |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Password if set (optional) |
+
+Public key is embedded in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`.  
+`bundle.createUpdaterArtifacts: true` produces `.sig` + `latest.json` on release builds.
+
 ## Non-goals (v0.1 shell)
 
 - Full rewrite of `@zelari/core` in Rust

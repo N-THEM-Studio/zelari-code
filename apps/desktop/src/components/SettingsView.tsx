@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { setApiKey, setAppConfig } from "../agentClient";
 import type { CliStatus, DesktopConfig, DispatchMode, WorkPhase } from "../types";
+import { UpdateSection } from "./UpdateSection";
 
 interface Props {
   config: DesktopConfig | null;
@@ -298,6 +299,8 @@ export function SettingsView({
             </select>
           </label>
         </section>
+
+        <UpdateSection autoCheck />
 
         <section className="settings-card">
           <h2>CLI side-car</h2>

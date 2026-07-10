@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Zelari Desktop",
-  "version": "1.9.0",
+  "version": "1.9.1",
   "identifier": "com.nthem.zelari-desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -29,6 +29,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "shortDescription": "Zelari Code desktop shell",
     "longDescription": "Installable desktop shell for Zelari Code — multi-agent coding with optional computer-use later. CLI remains available via npm.",
@@ -40,5 +41,16 @@
       "icons/icon.ico",
       "icons/icon.png"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJCM0VFMTg0RTlBQjc3QTUKUldTbGQ2dnBoT0UrSytpZ2hpTTYzQ2hBMFpQTVVxY2hBck15Zk9yUGVsUDYxTmJNMVRmVUJzdkIK",
+      "endpoints": [
+        "https://github.com/N-THEM-Studio/zelari-code/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

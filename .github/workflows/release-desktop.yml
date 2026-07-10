@@ -89,6 +89,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Required for createUpdaterArtifacts + signed latest.json
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           tagName: ${{ steps.tag.outputs.name }}
@@ -104,7 +107,11 @@ jobs:
             npm packages for this tag are published by the companion **Publish to npm** workflow.
 
             ### Assets
-            Platform installers attached below (MSI/NSIS, DMG, AppImage/deb as available).
+            Platform installers + updater signatures (`latest.json`, `*.sig`) for auto-update.
+
+            ### Desktop auto-update
+            Installed apps check `latest.json` on GitHub Releases via the built-in updater.
+            Requires release assets signed with the repo `TAURI_SIGNING_PRIVATE_KEY` secret.
           releaseDraft: false
           prerelease: false
           args: ''

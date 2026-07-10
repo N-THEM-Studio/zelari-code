@@ -323,15 +323,30 @@ fn set_app_config(args: SetConfigArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv: Vec<String> = vec!["--set-config".into()];
-    if let Some(p) = args.provider.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(p) = args
+        .provider
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--provider".into());
         argv.push(p.to_string());
     }
-    if let Some(m) = args.model.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(m) = args
+        .model
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--model".into());
         argv.push(m.to_string());
     }
-    if let Some(ep) = args.endpoint.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(ep) = args
+        .endpoint
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--endpoint".into());
         argv.push(ep.to_string());
     }
@@ -420,7 +435,12 @@ fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv: Vec<String> = vec!["--discover-models".into()];
-    if let Some(p) = args.provider.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(p) = args
+        .provider
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--provider".into());
         argv.push(p.to_string());
     }
@@ -465,8 +485,7 @@ fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
         return Err("discover-models failed (no model list in output)".into());
     }
 
-    parse_cli_json_stdout(&stdout)
-        .ok_or_else(|| format!("Invalid discover-models JSON:\n{stdout}"))
+    parse_cli_json_stdout(&stdout).ok_or_else(|| format!("Invalid discover-models JSON:\n{stdout}"))
 }
 
 #[tauri::command]
@@ -757,7 +776,9 @@ fn spawn_headless(
                     }
                     let _ = err_thread.join();
                     let _ = out_thread.join();
-                    return Ok(status.code().unwrap_or(if status.success() { 0 } else { 2 }));
+                    return Ok(status
+                        .code()
+                        .unwrap_or(if status.success() { 0 } else { 2 }));
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
@@ -790,6 +811,8 @@ fn spawn_headless(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .manage(Arc::new(RunState::default()))
         .invoke_handler(tauri::generate_handler![
