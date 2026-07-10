@@ -9,6 +9,7 @@ import { LiveRegion } from './components/LiveRegion.js';
 import { StatusBar, type ChatMode } from './components/StatusBar.js';
 import { SelectList } from './components/SelectList.js';
 import { Sidebar, sidebarVisibility } from './components/Sidebar.js';
+import { StartupBanner } from './components/StartupBanner.js';
 import type { PickerRequest } from './slashHandlers/provider.js';
 import { discoverModelsInBackground, isModelsCacheStale, type ProviderId as DiscoveryProviderId } from './modelDiscovery.js';
 import { renderMessage, type ChatMessage } from './components/ChatStream.js';
@@ -221,18 +222,16 @@ export function App(): React.ReactElement {
     setPicker(null);
   }, [picker]);
 
-  // One-shot banner — exact v1.6.0 content shape (logo lives in Sidebar).
+  // One-shot brand header (ASCII logo via Ink columns — not space-padded text).
+  // Marker message content is unused; Static renders StartupBanner for this id.
   const banner = useMemo<ChatMessage>(() => {
     return {
       id: 'banner-once',
       role: 'system',
       ts: 0,
-      content:
-        `zelari-code v${VERSION} — ${activeProviderSpec.id}/${activeModel}\n` +
-        `cwd: ${cwd}\n` +
-        `/help for commands · /skill <name> · shift+tab toggles agent/council · /plan /build`,
+      content: '',
     };
-  }, [activeProviderSpec.id, activeModel, cwd]);
+  }, []);
 
   // Sidebar visibility with hysteresis — avoid flapping at the 96-col edge.
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -257,7 +256,21 @@ export function App(): React.ReactElement {
   return (
     <>
       <Static key={staticKey} items={staticItems}>
-        {(item) => renderMessage(item)}
+        {(item) =>
+          item.id === 'banner-once' ? (
+            <StartupBanner
+              key={item.id}
+              version={VERSION}
+              providerId={activeProviderSpec.id}
+              model={activeModel}
+              cwd={cwd}
+              columns={size.columns || 80}
+              rows={size.rows || 24}
+            />
+          ) : (
+            renderMessage(item)
+          )
+        }
       </Static>
       <Box flexDirection="row">
         {/* v0.7.9: the status line moved BELOW the input box (no more bar
