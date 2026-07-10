@@ -5,6 +5,11 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-07-10
+
+### Added
+- **Desktop: Open Folder** — pick a working directory per window (VSCode-style: one window = one folder). Native folder picker via `tauri-plugin-dialog`; the chosen folder is passed as `current_dir` to the spawned CLI so the agent operates on the user-selected project. Choice persists across restarts.
+
 ## [1.9.4] - 2026-07-10
 
 ### Fixed
