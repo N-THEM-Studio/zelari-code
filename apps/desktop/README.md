@@ -4,6 +4,8 @@ Optional **Tauri 2** installable shell for [zelari-code](https://github.com/N-TH
 
 The **CLI stays the product of record** (`npm i -g zelari-code`). This app is a modern chat UI (Claude Desktop / Codex / Antigravity-inspired) that spawns:
 
+> **Installer ≠ CLI.** Downloading a Desktop release from GitHub does **not** upgrade the global `zelari-code` package. Use Settings → **CLI package (npm)** → **Update CLI**, or run `npm i -g zelari-code@latest`.
+
 ```bash
 node bin/zelari-code.js --headless --task "…" --output json
 ```

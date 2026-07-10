@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   cancelRun,
+  checkCliUpdate,
   extractDelta,
   extractToolName,
   getAppConfig,
@@ -10,6 +11,7 @@ import {
   onRunFinished,
   runTask,
   setAppConfig,
+  updateCli,
 } from "./agentClient";
 import { loadConversations, saveConversations } from "./chatStorage";
 import { MessageContent, ThinkingIndicator } from "./components/MessageContent";
@@ -135,6 +137,9 @@ export default function App() {
   const [statusLine, setStatusLine] = useState("Connecting…");
   const [pendingUpdate, setPendingUpdate] =
     useState<PendingDesktopUpdate | null>(null);
+  const [cliNpmLatest, setCliNpmLatest] = useState<string | null>(null);
+  const [cliNeedsUpdate, setCliNeedsUpdate] = useState(false);
+  const [cliUpdating, setCliUpdating] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -224,13 +229,55 @@ export default function App() {
     }
   }, []);
 
-  // Quiet desktop update check on launch (signed GitHub Releases).
+  // Quiet desktop + CLI update checks on launch.
   useEffect(() => {
     const t = window.setTimeout(() => {
       void runDesktopUpdateCheck(true);
+      void (async () => {
+        try {
+          const r = await checkCliUpdate();
+          setCliNpmLatest(r.npmLatest ?? null);
+          setCliNeedsUpdate(!!r.updateAvailable);
+          if (r.updateAvailable && r.installed && r.npmLatest) {
+            setStatusLine(
+              `CLI is v${r.installed} (npm latest v${r.npmLatest}) — Update CLI in Settings or top bar`,
+            );
+          }
+        } catch {
+          /* offline */
+        }
+      })();
     }, 2500);
     return () => window.clearTimeout(t);
   }, [runDesktopUpdateCheck]);
+
+  const runCliUpdate = useCallback(async () => {
+    setCliUpdating(true);
+    setStatusLine("Updating CLI via npm…");
+    try {
+      const r = await updateCli({
+        version: cliNpmLatest ?? "latest",
+      });
+      setStatusLine(
+        r.installed
+          ? `CLI updated to v${r.installed}`
+          : "CLI update finished — re-check version",
+      );
+      setCliNeedsUpdate(false);
+      await refreshCli();
+      try {
+        const chk = await checkCliUpdate();
+        setCliNeedsUpdate(!!chk.updateAvailable);
+        setCliNpmLatest(chk.npmLatest ?? null);
+      } catch {
+        /* ignore */
+      }
+    } catch (e) {
+      setStatusLine(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCliUpdating(false);
+    }
+  }, [cliNpmLatest, refreshCli]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -818,9 +865,22 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-title">{active?.title ?? "Zelari"}</div>
           <div className="topbar-actions">
+            {cliNeedsUpdate && (
+              <button
+                type="button"
+                className="btn-update btn-update-cli"
+                disabled={running || cliUpdating}
+                title="Install latest zelari-code from npm (Desktop installer does not update the CLI)"
+                onClick={() => void runCliUpdate()}
+              >
+                {cliUpdating
+                  ? "Updating CLI…"
+                  : `Update CLI${cliNpmLatest ? ` v${cliNpmLatest}` : ""}`}
+              </button>
+            )}
             <UpdateBarButton
               pending={pendingUpdate}
-              busy={running}
+              busy={running || cliUpdating}
               onCheck={() => void runDesktopUpdateCheck(false)}
               onProgress={setStatusLine}
               onError={setStatusLine}

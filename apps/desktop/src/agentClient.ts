@@ -38,6 +38,23 @@ export async function discoverModels(args: {
   return invoke("discover_models", { args });
 }
 
+export interface CliUpdateCheck {
+  installed?: string | null;
+  npmLatest?: string | null;
+  updateAvailable: boolean;
+  message: string;
+}
+
+export async function checkCliUpdate(): Promise<CliUpdateCheck> {
+  return invoke<CliUpdateCheck>("check_cli_update");
+}
+
+export async function updateCli(args?: {
+  version?: string;
+}): Promise<{ ok?: boolean; installed?: string; output?: string; package?: string }> {
+  return invoke("update_cli", { args: args ?? {} });
+}
+
 export async function runTask(args: RunTaskArgs): Promise<string> {
   return invoke<string>("run_task", { args });
 }

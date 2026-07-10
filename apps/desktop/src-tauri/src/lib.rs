@@ -166,6 +166,205 @@ fn read_cli_version(node: &Path, cli: &Path) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+/// Normalize "zelari-code v1.8.3" / "v1.8.3" / "1.8.3" → "1.8.3"
+fn normalize_semver(raw: &str) -> String {
+    let s = raw.trim();
+    // Take last whitespace-separated token (drops "zelari-code")
+    let token = s.split_whitespace().last().unwrap_or(s);
+    token.trim().trim_start_matches('v').to_string()
+}
+
+fn parse_semver(raw: &str) -> Option<(u64, u64, u64)> {
+    let s = normalize_semver(raw);
+    let core = s.split('-').next().unwrap_or(&s);
+    let mut parts = core.split('.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// -1 if a < b, 0 equal, 1 if a > b
+fn cmp_semver(a: &str, b: &str) -> i32 {
+    match (parse_semver(a), parse_semver(b)) {
+        (Some(x), Some(y)) => {
+            if x < y {
+                -1
+            } else if x > y {
+                1
+            } else {
+                0
+            }
+        }
+        _ => 0,
+    }
+}
+
+/// Fetch latest zelari-code version from npm (via Node fetch — no extra Rust dep).
+fn fetch_npm_latest_cli(node: &Path) -> Result<String, String> {
+    let script = r#"
+fetch('https://registry.npmjs.org/zelari-code/latest')
+  .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+  .then(j => { if (!j.version) throw new Error('no version'); process.stdout.write(String(j.version)); })
+  .catch(e => { process.stderr.write(String(e && e.message || e)); process.exit(1); });
+"#;
+    let mut cmd = Command::new(node);
+    cmd.arg("-e").arg(script);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to query npm registry: {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        return Err(if err.trim().is_empty() {
+            "Failed to query npm registry".into()
+        } else {
+            err.trim().to_string()
+        });
+    }
+    let v = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if v.is_empty() {
+        return Err("Empty version from npm".into());
+    }
+    Ok(normalize_semver(&v))
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CliUpdateCheck {
+    installed: Option<String>,
+    npm_latest: Option<String>,
+    update_available: bool,
+    message: String,
+}
+
+#[tauri::command]
+fn check_cli_update() -> Result<CliUpdateCheck, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let installed = resolve_cli_entry()
+        .ok()
+        .and_then(|cli| read_cli_version(&node, &cli))
+        .map(|v| normalize_semver(&v));
+
+    let npm_latest = fetch_npm_latest_cli(&node)?;
+
+    let update_available = match &installed {
+        Some(cur) => cmp_semver(cur, &npm_latest) < 0,
+        None => true,
+    };
+
+    let message = match &installed {
+        Some(cur) if update_available => {
+            format!("CLI is v{cur}; npm latest is v{npm_latest}. Use Update CLI to upgrade.")
+        }
+        Some(cur) => format!("CLI is up to date (v{cur})."),
+        None => format!("CLI not found. Install with: npm i -g zelari-code@{npm_latest}"),
+    };
+
+    Ok(CliUpdateCheck {
+        installed,
+        npm_latest: Some(npm_latest),
+        update_available,
+        message,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateCliArgs {
+    /// Optional pin e.g. "1.9.2"; default "latest"
+    #[serde(default)]
+    version: Option<String>,
+}
+
+#[tauri::command]
+fn update_cli(args: UpdateCliArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let ver = args
+        .version
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("latest");
+    let pkg = format!("zelari-code@{ver}");
+
+    // Prefer: node <npm-cli.js> install -g … (avoids broken .cmd shims on Windows)
+    let npm_cli = {
+        let dir = node.parent().map(|p| p.to_path_buf());
+        let mut candidates = Vec::new();
+        if let Some(d) = dir {
+            candidates.push(d.join("node_modules").join("npm").join("bin").join("npm-cli.js"));
+            candidates.push(
+                d.join("..")
+                    .join("lib")
+                    .join("node_modules")
+                    .join("npm")
+                    .join("bin")
+                    .join("npm-cli.js"),
+            );
+        }
+        candidates.into_iter().find(|p| p.is_file())
+    };
+
+    let mut cmd = if let Some(ref cli_js) = npm_cli {
+        let mut c = Command::new(&node);
+        c.arg(cli_js).arg("install").arg("-g").arg(&pkg);
+        c
+    } else {
+        // Fallback: PATH npm (shell on Windows for .cmd shim)
+        #[cfg(windows)]
+        {
+            let mut c = Command::new("cmd");
+            c.args(["/C", "npm", "install", "-g", &pkg]);
+            c
+        }
+        #[cfg(not(windows))]
+        {
+            let mut c = Command::new("npm");
+            c.args(["install", "-g", &pkg]);
+            c
+        }
+    };
+
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to run npm install: {e}"))?;
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let combined = format!("{stdout}{stderr}");
+
+    if !output.status.success() {
+        return Err(if combined.trim().is_empty() {
+            format!("npm install failed ({})", output.status)
+        } else {
+            combined.trim().to_string()
+        });
+    }
+
+    // Re-read installed version
+    let installed = resolve_cli_entry()
+        .ok()
+        .and_then(|cli| read_cli_version(&node, &cli))
+        .map(|v| normalize_semver(&v));
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "package": pkg,
+        "installed": installed,
+        "output": combined.trim(),
+    }))
+}
+
 fn is_js_entry(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
@@ -821,6 +1020,8 @@ pub fn run() {
             set_app_config,
             set_api_key,
             discover_models,
+            check_cli_update,
+            update_cli,
             run_task,
             cancel_run
         ])

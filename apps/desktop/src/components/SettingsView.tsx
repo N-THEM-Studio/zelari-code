@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { setApiKey, setAppConfig } from "../agentClient";
 import type { CliStatus, DesktopConfig, DispatchMode, WorkPhase } from "../types";
+import { CliUpdateSection } from "./CliUpdateSection";
 import { UpdateSection } from "./UpdateSection";
 
 interface Props {
@@ -302,13 +303,13 @@ export function SettingsView({
 
         <UpdateSection autoCheck />
 
+        <CliUpdateSection cli={cli} onCliRefreshed={onRefresh} />
+
         <section className="settings-card">
-          <h2>CLI side-car</h2>
+          <h2>Paths</h2>
           <dl className="kv">
-            <dt>Status</dt>
+            <dt>CLI status</dt>
             <dd>{cli?.ok ? "OK" : cli?.message ?? "—"}</dd>
-            <dt>Version</dt>
-            <dd>{cli?.cliVersion ?? config?.cliVersion ?? "—"}</dd>
             <dt>CLI path</dt>
             <dd>
               <code>{cli?.cliPath ?? "—"}</code>

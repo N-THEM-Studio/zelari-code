@@ -1058,6 +1058,11 @@ button {
   padding: 4px 8px !important;
 }
 
+.btn-update-cli {
+  background: linear-gradient(135deg, #4ade80, #22d3ee);
+  color: #041016;
+}
+
 /* ── Settings ── */
 .app-settings {
   display: block;
