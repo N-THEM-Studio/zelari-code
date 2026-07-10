@@ -376,7 +376,7 @@ fn is_js_entry(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn spawn_cli_base(node: &Path, cli: &Path) -> Command {
+fn spawn_cli_base(node: &Path, cli: &Path, cwd: Option<&Path>) -> Command {
     let mut c = if is_js_entry(cli) {
         let mut c = Command::new(node);
         c.arg(cli);
@@ -392,6 +392,13 @@ fn spawn_cli_base(node: &Path, cli: &Path) -> Command {
     // extra shells (a common UV_HANDLE_CLOSING trigger on Windows).
     c.env("ZELARI_SKIP_PREFLIGHT", "1");
     c.env("ANATHEMA_DEV", "1"); // no background update check mid-stream
+    // When the user picks a working folder (Open Folder), the spawned CLI
+    // must run inside it so process.cwd() reflects the chosen project. All
+    // CLI subsystems (workspace, council, mission, lsp, safety) read cwd
+    // directly, so a single current_dir() here aligns everything.
+    if let Some(dir) = cwd {
+        c.current_dir(dir);
+    }
     #[cfg(windows)]
     {
         c.creation_flags(CREATE_NO_WINDOW);
@@ -424,7 +431,7 @@ fn kill_child_tree(child: &mut Child) {
 }
 
 fn run_cli_capture(node: &Path, cli: &Path, args: &[&str]) -> Result<String, String> {
-    let mut cmd = spawn_cli_base(node, cli);
+    let mut cmd = spawn_cli_base(node, cli, None);
     for a in args {
         cmd.arg(a);
     }
@@ -645,7 +652,7 @@ fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
     }
     let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     // Discovery can take a while (network)
-    let mut cmd = spawn_cli_base(&node, &cli);
+    let mut cmd = spawn_cli_base(&node, &cli, None);
     for a in &refs {
         cmd.arg(a);
     }
@@ -711,6 +718,11 @@ struct RunTaskArgs {
     provider: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    /// Optional working directory chosen via "Open Folder". When set, the
+    /// headless CLI is spawned inside it (current_dir) so the agent operates
+    /// on the user-selected project. None = inherit the Tauri process cwd.
+    #[serde(default)]
+    cwd: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -793,6 +805,7 @@ fn run_task(
     let run_id_thread = run_id.clone();
     let provider = args.provider;
     let model = args.model;
+    let cwd = args.cwd;
 
     thread::spawn(move || {
         let result = spawn_headless(
@@ -805,6 +818,7 @@ fn run_task(
             &phase,
             provider.as_deref(),
             model.as_deref(),
+            cwd.as_deref(),
         );
 
         let (exit_code, cancelled) = match result {
@@ -847,8 +861,9 @@ fn spawn_headless(
     phase: &str,
     provider: Option<&str>,
     model: Option<&str>,
+    cwd: Option<&str>,
 ) -> Result<i32, String> {
-    let mut cmd = spawn_cli_base(node, cli);
+    let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
 
     cmd.arg("--headless")
         .arg("--task")
@@ -1013,6 +1028,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(RunState::default()))
         .invoke_handler(tauri::generate_handler![
             get_cli_status,

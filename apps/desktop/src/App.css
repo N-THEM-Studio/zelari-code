@@ -1007,6 +1007,18 @@ button {
   line-height: 1;
 }
 
+.topbar-folder {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.topbar-folder:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;

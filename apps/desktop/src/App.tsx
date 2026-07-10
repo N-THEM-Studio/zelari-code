@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { open } from "@tauri-apps/plugin-dialog";
 import {
   cancelRun,
   checkCliUpdate,
@@ -140,6 +141,12 @@ export default function App() {
   const [cliNpmLatest, setCliNpmLatest] = useState<string | null>(null);
   const [cliNeedsUpdate, setCliNeedsUpdate] = useState(false);
   const [cliUpdating, setCliUpdating] = useState(false);
+  // Working folder chosen via "Open Folder". Global to the app (one window =
+  // one folder, like VSCode). Persisted across restarts. Null = inherit the
+  // Tauri process cwd.
+  const [workdir, setWorkdir] = useState<string | null>(
+    () => localStorage.getItem("zelari-desktop-workdir") || null,
+  );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -154,6 +161,12 @@ export default function App() {
   useEffect(() => {
     saveConversations(conversations);
   }, [conversations]);
+
+  // Persist the chosen working folder
+  useEffect(() => {
+    if (workdir) localStorage.setItem("zelari-desktop-workdir", workdir);
+    else localStorage.removeItem("zelari-desktop-workdir");
+  }, [workdir]);
 
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? conversations[0],
@@ -660,6 +673,7 @@ export default function App() {
         phase,
         provider: provider || undefined,
         model: model || undefined,
+        cwd: workdir ?? undefined,
       });
     } catch (e) {
       setRunning(false);
@@ -699,6 +713,18 @@ export default function App() {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void send();
+    }
+  };
+
+  const pickFolder = async () => {
+    try {
+      const selected = await open({ directory: true, multiple: false });
+      if (typeof selected === "string") {
+        setWorkdir(selected);
+        setStatusLine(`Cartella: ${selected}`);
+      }
+    } catch (e) {
+      setStatusLine(e instanceof Error ? e.message : String(e));
     }
   };
 
@@ -865,6 +891,19 @@ export default function App() {
         <header className="topbar">
           <div className="topbar-title">{active?.title ?? "Zelari"}</div>
           <div className="topbar-actions">
+            <button
+              type="button"
+              className="btn-ghost topbar-folder"
+              disabled={running}
+              onClick={() => void pickFolder()}
+              title={
+                workdir
+                  ? `${workdir} — click per cambiare cartella`
+                  : "Apri una cartella di lavoro"
+              }
+            >
+              📁 {workdir ? workdir.replace(/.*[\\/]/, "") : "Open Folder"}
+            </button>
             {cliNeedsUpdate && (
               <button
                 type="button"

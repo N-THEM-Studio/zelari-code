@@ -81,6 +81,9 @@ export interface RunTaskArgs {
   council?: boolean;
   provider?: string;
   model?: string;
+  /** Working directory chosen via "Open Folder". When set, the CLI agent runs
+   * inside it. Undefined = inherit the Tauri process cwd. */
+  cwd?: string;
 }
 
 export interface DiscoverModelsResult {

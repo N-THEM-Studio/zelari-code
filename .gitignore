@@ -19,3 +19,6 @@ apps/desktop/src-tauri/target/
 .zelari/
 # Local MCP server clones/installs (v0.7.9): per-machine, NOT committed
 /mcps/
+
+# ZCode agent session workspace (per-machine, NOT committed)
+.zcode/
