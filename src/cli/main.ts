@@ -437,12 +437,39 @@ function main() {
   loadUserSkills();
 
   if (picked.kind === "headless") {
-    void runHeadless(picked.headlessOpts!).then((code) => {
-      void getMetricsLogger()
-        .flush()
-        .catch(() => {});
-      process.exit(code);
-    });
+    // Clean exit path: await flush + MCP teardown BEFORE process.exit.
+    // Exiting mid-flush on Windows can trip libuv
+    // `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` in async.c
+    // when pipes/async handles are still closing.
+    void runHeadless(picked.headlessOpts!)
+      .then(async (code) => {
+        try {
+          await getMetricsLogger().flush();
+        } catch {
+          // best-effort
+        }
+        try {
+          const { closeMcpClients } = await import("./mcp/mcpManager.js");
+          closeMcpClients();
+        } catch {
+          // best-effort
+        }
+        // Let the event loop drain closed handles one tick before exit.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        process.exit(code);
+      })
+      .catch(async (err) => {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[zelari-code --headless] fatal: ${err instanceof Error ? err.message : String(err)}`,
+        );
+        try {
+          await getMetricsLogger().flush();
+        } catch {
+          /* ignore */
+        }
+        process.exit(2);
+      });
     return;
   }
 

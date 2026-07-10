@@ -7,11 +7,20 @@
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
 use std::sync::Arc;
 use std::thread;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// Hide console window for short-lived CLI helpers on Windows.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Shared cancel flag for the active headless run (single-flight for v0.1).
 struct RunState {
@@ -169,12 +178,49 @@ fn is_js_entry(path: &Path) -> bool {
 }
 
 fn spawn_cli_base(node: &Path, cli: &Path) -> Command {
-    if is_js_entry(cli) {
+    let mut c = if is_js_entry(cli) {
         let mut c = Command::new(node);
         c.arg(cli);
         c
     } else {
         Command::new(cli)
+    };
+    // Avoid inheriting a console / stdin that can leave dangling uv handles
+    // when the parent (Tauri) already owns the UI process.
+    c.stdin(Stdio::null());
+    c.env("FORCE_COLOR", "0");
+    // Desktop already verified Node exists; skip preflight probes that spawn
+    // extra shells (a common UV_HANDLE_CLOSING trigger on Windows).
+    c.env("ZELARI_SKIP_PREFLIGHT", "1");
+    c.env("ANATHEMA_DEV", "1"); // no background update check mid-stream
+    #[cfg(windows)]
+    {
+        c.creation_flags(CREATE_NO_WINDOW);
+    }
+    c
+}
+
+/// Kill a child process tree. On Windows, plain `Child::kill` often leaves
+/// grandchild node processes (and their libuv handles) half-closed, which
+/// surfaces as `UV_HANDLE_CLOSING` assertions in `async.c`.
+/// Does **not** wait — caller must `wait()` once to reap.
+fn kill_child_tree(child: &mut Child) {
+    let pid = child.id();
+    #[cfg(windows)]
+    {
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid.to_string(), "/T", "/F"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(CREATE_NO_WINDOW)
+            .status();
+        // Also signal via Win32 kill in case taskkill is unavailable.
+        let _ = child.kill();
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = child.kill();
     }
 }
 
@@ -553,7 +599,6 @@ fn spawn_headless(
         }
     }
 
-    cmd.env("FORCE_COLOR", "0");
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd
@@ -569,6 +614,7 @@ fn spawn_headless(
         .take()
         .ok_or_else(|| "Failed to capture CLI stderr".to_string())?;
 
+    // Drain stderr on a side thread (never block the NDJSON reader).
     let app_err = app.clone();
     let err_thread = thread::spawn(move || {
         let reader = BufReader::new(stderr);
@@ -581,15 +627,56 @@ fn spawn_headless(
         }
     });
 
-    let reader = BufReader::new(stdout);
-    for line in reader.lines() {
+    // Read stdout on a side thread so we can poll cancel without waiting for
+    // the next line (thinking phases can be silent for minutes).
+    let (tx, rx) = mpsc::channel::<Result<String, String>>();
+    let out_thread = thread::spawn(move || {
+        let reader = BufReader::new(stdout);
+        for line in reader.lines() {
+            match line {
+                Ok(l) => {
+                    if tx.send(Ok(l)).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(e.to_string()));
+                    break;
+                }
+            }
+        }
+    });
+
+    let mut cancelled = false;
+    loop {
         if state.cancel.load(Ordering::SeqCst) {
-            let _ = child.kill();
+            cancelled = true;
+            kill_child_tree(&mut child);
             break;
         }
-        let line = match line {
-            Ok(l) => l,
-            Err(e) => {
+
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(Ok(line)) => {
+                let trimmed = line.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                match serde_json::from_str::<serde_json::Value>(trimmed) {
+                    Ok(value) => {
+                        let _ = app.emit("agent-event", value);
+                    }
+                    Err(_) => {
+                        let _ = app.emit(
+                            "agent-event",
+                            serde_json::json!({
+                                "type": "log",
+                                "message": trimmed,
+                            }),
+                        );
+                    }
+                }
+            }
+            Ok(Err(e)) => {
                 let _ = app.emit(
                     "agent-event",
                     serde_json::json!({
@@ -599,32 +686,51 @@ fn spawn_headless(
                 );
                 break;
             }
-        };
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        match serde_json::from_str::<serde_json::Value>(trimmed) {
-            Ok(value) => {
-                let _ = app.emit("agent-event", value);
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // Still running — loop to re-check cancel.
+                if let Ok(Some(status)) = child.try_wait() {
+                    // Process exited; drain remaining lines briefly.
+                    while let Ok(msg) = rx.try_recv() {
+                        if let Ok(line) = msg {
+                            let trimmed = line.trim();
+                            if trimmed.is_empty() {
+                                continue;
+                            }
+                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
+                                let _ = app.emit("agent-event", value);
+                            }
+                        }
+                    }
+                    let _ = err_thread.join();
+                    let _ = out_thread.join();
+                    return Ok(status.code().unwrap_or(if status.success() { 0 } else { 2 }));
+                }
             }
-            Err(_) => {
-                let _ = app.emit(
-                    "agent-event",
-                    serde_json::json!({
-                        "type": "log",
-                        "message": trimmed,
-                    }),
-                );
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    // Reader finished or cancel: reap exactly once.
+    if !cancelled {
+        if let Ok(None) = child.try_wait() {
+            // stdout closed but process still alive — give it a moment, then kill tree
+            thread::sleep(Duration::from_millis(150));
+            if let Ok(None) = child.try_wait() {
+                kill_child_tree(&mut child);
             }
         }
     }
 
     let _ = err_thread.join();
-    let status = child
-        .wait()
-        .map_err(|e| format!("Failed waiting for CLI: {e}"))?;
-    Ok(status.code().unwrap_or(if status.success() { 0 } else { 2 }))
+    let _ = out_thread.join();
+    match child.try_wait() {
+        Ok(Some(s)) => Ok(s.code().unwrap_or(if s.success() { 0 } else { 2 })),
+        Ok(None) => match child.wait() {
+            Ok(s) => Ok(s.code().unwrap_or(if s.success() { 0 } else { 2 })),
+            Err(_) => Ok(if cancelled { 130 } else { 2 }),
+        },
+        Err(_) => Ok(if cancelled { 130 } else { 2 }),
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
