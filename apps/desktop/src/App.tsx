@@ -27,6 +27,7 @@ import type {
   SessionFilter,
   WorkPhase,
 } from "./types";
+import zelariLogo from "./assets/zelari-logo.png";
 import "./App.css";
 
 const SUGGESTIONS = [
@@ -657,7 +658,9 @@ export default function App() {
       <aside className="sidebar">
         <div className="sidebar-top">
           <div className="brand">
-            <div className="brand-mark">Z</div>
+            <div className="brand-mark" aria-hidden>
+              <img src={zelariLogo} alt="" className="brand-logo" />
+            </div>
             <div className="brand-text">
               <span className="brand-name">Zelari Desktop</span>
               <span className="brand-sub">coding agent shell</span>
@@ -815,8 +818,8 @@ export default function App() {
         <div className="chat-scroll" ref={scrollRef}>
           {empty && !running ? (
             <div className="empty-state">
-              <div className="brand-mark" style={{ width: 40, height: 40 }}>
-                Z
+              <div className="brand-mark lg" aria-hidden>
+                <img src={zelariLogo} alt="Zelari" className="brand-logo" />
               </div>
               <h1>What should we build?</h1>
               <p>

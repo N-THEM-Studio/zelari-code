@@ -91,15 +91,33 @@ button {
   width: 28px;
   height: 28px;
   border-radius: 8px;
-  background: linear-gradient(135deg, #7c3aed 0%, #a78bfa 50%, #22d3ee 100%);
+  background: transparent;
   display: grid;
   place-items: center;
-  font-weight: 700;
-  font-size: 13px;
-  color: white;
-  letter-spacing: -0.02em;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08),
-    0 8px 24px rgba(124, 58, 237, 0.25);
+  overflow: hidden;
+  flex-shrink: 0;
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.15),
+    0 6px 18px rgba(0, 0, 0, 0.35);
+}
+
+.brand-mark img,
+.brand-logo {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.brand-mark.lg {
+  width: 56px;
+  height: 56px;
+  border-radius: 14px;
+  box-shadow: 0 0 0 1px rgba(34, 211, 238, 0.2),
+    0 12px 32px rgba(0, 180, 220, 0.18);
+}
+
+.empty-state .brand-mark.lg {
+  margin-bottom: 4px;
 }
 
 .brand-text {
