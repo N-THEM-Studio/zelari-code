@@ -32,8 +32,6 @@ interface StatusBarProps {
   contextUsed?: number;
   /** Context window limit (tokens). */
   contextLimit?: number;
-  /** Brand/version shown on the right (Grok-style). */
-  brandVersion?: string;
 }
 
 /**
@@ -65,7 +63,6 @@ export function StatusBar({
   cachedTokens = 0,
   contextUsed = 0,
   contextLimit = 0,
-  brandVersion,
 }: StatusBarProps): React.ReactElement {
   const ctxLabel =
     contextLimit > 0
@@ -137,13 +134,6 @@ export function StatusBar({
             {cachedTokens > 0 ? (
               <Text dimColor> ({formatTokens(cachedTokens)} cached)</Text>
             ) : null}
-            <Text dimColor> · </Text>
-          </>
-        ) : null}
-        {brandVersion ? (
-          <>
-            <Text bold color="white">ZELARI</Text>
-            <Text dimColor> v{brandVersion}</Text>
             <Text dimColor> · </Text>
           </>
         ) : null}

@@ -2,14 +2,13 @@
 // the v3-N monolithic app. Behavior is correct; a future pass will tighten the
 // hook signatures and remove this annotation. The split is documented in
 // `docs/plans/2026-07-01-app-split.md`.
-import React, { useState, useMemo, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { Box, Text, Static, useInput, useStdin } from 'ink';
 import { InputBar } from './components/InputBar.js';
 import { LiveRegion } from './components/LiveRegion.js';
 import { StatusBar, type ChatMode } from './components/StatusBar.js';
 import { SelectList } from './components/SelectList.js';
 import { Sidebar, sidebarVisibility } from './components/Sidebar.js';
-import { formatBannerWithLogoRight } from './components/brandArt.js';
 import type { PickerRequest } from './slashHandlers/provider.js';
 import { discoverModelsInBackground, isModelsCacheStale, type ProviderId as DiscoveryProviderId } from './modelDiscovery.js';
 import { renderMessage, type ChatMessage } from './components/ChatStream.js';
@@ -222,34 +221,16 @@ export function App(): React.ReactElement {
     setPicker(null);
   }, [picker]);
 
-  // Freeze banner layout to the FIRST measured size. Re-wrapping the ASCII
-  // logo on every resize rewrites the Static item identity chain and, with
-  // Ink's dynamic region reflow, corrupts native scrollback on Windows.
-  const bannerColsRef = useRef<number | null>(null);
-  if (bannerColsRef.current === null) {
-    bannerColsRef.current = size.columns > 0 ? size.columns : 80;
-  }
-
-  // The one-shot banner: printed once as the first Static item. v1.8.x:
-  // ASCII logo restored, right-aligned at the TOP of the scrollback (only
-  // place a multi-line mark can sit "top-right" under static-scrollback).
+  // One-shot banner — exact v1.6.0 content shape (logo lives in Sidebar).
   const banner = useMemo<ChatMessage>(() => {
-    const cols = bannerColsRef.current ?? 80;
-    const content = formatBannerWithLogoRight({
-      leftLines: [
-        `zelari-code · ${activeProviderSpec.id}/${activeModel}`,
-        `cwd: ${cwd}`,
-        `/help · /plan · /build · /view-plan · shift+tab mode`,
-      ],
-      version: VERSION,
-      columns: cols,
-      compact: cols < 72,
-    });
     return {
       id: 'banner-once',
       role: 'system',
       ts: 0,
-      content,
+      content:
+        `zelari-code v${VERSION} — ${activeProviderSpec.id}/${activeModel}\n` +
+        `cwd: ${cwd}\n` +
+        `/help for commands · /skill <name> · shift+tab toggles agent/council · /plan /build`,
     };
   }, [activeProviderSpec.id, activeModel, cwd]);
 
@@ -273,24 +254,15 @@ export function App(): React.ReactElement {
     ? [banner, ...session.messages]
     : [];
 
-  // Cap dynamic-region height so Ink never clear-screens on resize.
-  // Live + input + status ≈ 14 lines max; leave the rest to native scrollback.
-  const dynamicMaxRows = Math.max(8, Math.min(18, size.rows - 2));
-
   return (
     <>
       <Static key={staticKey} items={staticItems}>
         {(item) => renderMessage(item)}
       </Static>
-      <Box
-        flexDirection="row"
-        width={size.columns > 0 ? size.columns : undefined}
-        height={dynamicMaxRows}
-        overflow="hidden"
-      >
+      <Box flexDirection="row">
         {/* v0.7.9: the status line moved BELOW the input box (no more bar
             above it) and shows the execution timer instead of tokens/cost. */}
-        <Box flexDirection="column" flexGrow={1} paddingX={1} overflow="hidden">
+        <Box flexDirection="column" flexGrow={1} paddingX={1}>
           <LiveRegion live={session.live} busy={busy} elapsedMs={timer.elapsedMs} />
           {picker ? (
             <SelectList
@@ -298,7 +270,7 @@ export function App(): React.ReactElement {
               items={picker.items}
               onSelect={onPickerSelect}
               onCancel={onPickerCancel}
-              maxVisible={Math.max(3, Math.min(8, size.rows - 12))}
+              maxVisible={Math.max(4, Math.min(10, size.rows - 10))}
             />
           ) : (
             <InputBar
@@ -324,7 +296,6 @@ export function App(): React.ReactElement {
             cachedTokens={sessionStats.cachedTokens}
             contextUsed={sessionStats.contextTokens || 0}
             contextLimit={Number(process.env.ZELARI_CONTEXT_LIMIT) || 200_000}
-            brandVersion={VERSION}
           />
         </Box>
         {sidebarOpen && (
