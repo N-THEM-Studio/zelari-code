@@ -9,6 +9,7 @@ import { LiveRegion } from './components/LiveRegion.js';
 import { StatusBar, type ChatMode } from './components/StatusBar.js';
 import { SelectList } from './components/SelectList.js';
 import { Sidebar, shouldShowSidebar } from './components/Sidebar.js';
+import { formatBannerWithLogoRight } from './components/brandArt.js';
 import type { PickerRequest } from './slashHandlers/provider.js';
 import { discoverModelsInBackground, isModelsCacheStale, type ProviderId as DiscoveryProviderId } from './modelDiscovery.js';
 import { renderMessage, type ChatMessage } from './components/ChatStream.js';
@@ -216,25 +217,27 @@ export function App(): React.ReactElement {
     setPicker(null);
   }, [picker]);
 
-  // The one-shot banner: printed once as the first Static item. v0.7.9: the
-  // skill list is gone (it doubled the banner height and duplicated /help);
-  // the banner is now just the wordmark line + cwd + a hint.
+  // The one-shot banner: printed once as the first Static item. v1.8.x:
+  // ASCII logo restored, right-aligned at the TOP of the scrollback (only
+  // place a multi-line mark can sit "top-right" under static-scrollback).
   const banner = useMemo<ChatMessage>(() => {
-    // v1.8.0: brand + version on the right of the first line (StatusBar also
-    // shows ZELARI vX on the right of the dynamic footer).
-    const left = `zelari-code · ${activeProviderSpec.id}/${activeModel}`;
-    const right = `ZELARI CODE  v${VERSION}`;
-    const pad = Math.max(2, 72 - left.length - right.length);
+    const content = formatBannerWithLogoRight({
+      leftLines: [
+        `zelari-code · ${activeProviderSpec.id}/${activeModel}`,
+        `cwd: ${cwd}`,
+        `/help · /plan · /build · /view-plan · shift+tab mode`,
+      ],
+      version: VERSION,
+      columns: size.columns || 80,
+      compact: (size.columns || 80) < 72 || (size.rows || 24) < 20,
+    });
     return {
       id: 'banner-once',
       role: 'system',
       ts: 0,
-      content:
-        `${left}${' '.repeat(pad)}${right}\n` +
-        `cwd: ${cwd}\n` +
-        `/help · /plan · /build · /view-plan · shift+tab mode (agent/council/zelari)`,
+      content,
     };
-  }, [activeProviderSpec.id, activeModel, cwd]);
+  }, [activeProviderSpec.id, activeModel, cwd, size.columns, size.rows]);
 
   // The Static feed: banner first, then finalized messages. `key` lets /clear
   // remount Static so its internal "already printed" index resets. clearEpoch
