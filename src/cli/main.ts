@@ -339,18 +339,38 @@ function pickRootComponent(): {
 
   if (wantsDiscoverModels(argv)) {
     const disc = parseDiscoverModelsFlags(argv);
-    void runDiscoverModels(disc.provider).then((result) => {
-      if (!result.ok) {
+    void runDiscoverModels(disc.provider)
+      .then(async (result) => {
+        if (!result.ok) {
+          // eslint-disable-next-line no-console
+          console.error(JSON.stringify({ ok: false, error: result.error }));
+          await new Promise<void>((r) => setImmediate(r));
+          process.exit(1);
+          return;
+        }
+        // Single JSON line on stdout — consumers (Desktop) parse this even if
+        // the process later aborts on Windows libuv teardown.
+        // eslint-disable-next-line no-console
+        console.log(JSON.stringify(result.payload));
+        try {
+          await getMetricsLogger().flush();
+        } catch {
+          /* ignore */
+        }
+        await new Promise<void>((r) => setImmediate(r));
+        process.exit(0);
+      })
+      .catch(async (err) => {
         // eslint-disable-next-line no-console
         console.error(
-          JSON.stringify({ ok: false, error: result.error }),
+          JSON.stringify({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
         );
+        await new Promise<void>((r) => setImmediate(r));
         process.exit(1);
-      }
-      // eslint-disable-next-line no-console
-      console.log(JSON.stringify(result.payload));
-      process.exit(0);
-    });
+      });
     return { kind: "done" };
   }
 

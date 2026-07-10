@@ -233,19 +233,28 @@ fn run_cli_capture(node: &Path, cli: &Path, args: &[&str]) -> Result<String, Str
     let output = cmd
         .output()
         .map_err(|e| format!("Failed to spawn zelari-code: {e}"))?;
+    let out = String::from_utf8_lossy(&output.stdout).to_string();
+    let err = String::from_utf8_lossy(&output.stderr).to_string();
+
+    // On Windows, Node may print valid JSON then abort with UV_HANDLE_CLOSING.
+    // Treat non-empty stdout as success when exit status is non-zero.
     if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        let out = String::from_utf8_lossy(&output.stdout);
-        let msg = if !err.trim().is_empty() {
+        if !out.trim().is_empty()
+            && (out.trim_start().starts_with('{') || out.trim_start().starts_with('['))
+        {
+            return Ok(out);
+        }
+        let msg = if !err.trim().is_empty()
+            && !err.contains("UV_HANDLE_CLOSING")
+            && !err.contains("Assertion failed")
+        {
             err.trim().to_string()
-        } else {
+        } else if !out.trim().is_empty() {
             out.trim().to_string()
-        };
-        return Err(if msg.is_empty() {
-            format!("CLI exited with {}", output.status)
         } else {
-            msg
-        });
+            format!("CLI exited with {}", output.status)
+        };
+        return Err(msg);
     }
     String::from_utf8(output.stdout).map_err(|e| format!("Invalid UTF-8 from CLI: {e}"))
 }
@@ -373,6 +382,39 @@ struct DiscoverArgs {
     provider: Option<String>,
 }
 
+/// Parse a JSON object from CLI stdout. Tolerates trailing noise and prefers
+/// the last `{…}` line (Node on Windows can abort after printing valid JSON
+/// with UV_HANDLE_CLOSING, still leaving a good payload on stdout).
+fn parse_cli_json_stdout(stdout: &str) -> Option<serde_json::Value> {
+    let trimmed = stdout.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return Some(v);
+    }
+    for line in trimmed.lines().rev() {
+        let l = line.trim();
+        if !l.starts_with('{') {
+            continue;
+        }
+        if let Ok(v) = serde_json::from_str::<serde_json::Value>(l) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+fn is_discover_success(v: &serde_json::Value) -> bool {
+    if v.get("ok").and_then(|x| x.as_bool()) == Some(true) {
+        return true;
+    }
+    v.get("models")
+        .and_then(|m| m.as_array())
+        .map(|a| !a.is_empty())
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
@@ -394,25 +436,37 @@ fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
         .map_err(|e| format!("Failed to spawn discover-models: {e}"))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Prefer stdout JSON even when process exit code is non-zero (Windows UV abort
+    // after successful discovery is common and must not discard the model list).
+    if let Some(v) = parse_cli_json_stdout(&stdout) {
+        if is_discover_success(&v) {
+            return Ok(v);
+        }
+        if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+            return Err(err.to_string());
+        }
+    }
+
     if !output.status.success() {
-        // Prefer JSON error from stderr or stdout
         for blob in [stderr.trim(), stdout.trim()] {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(blob) {
-                return Err(
-                    v.get("error")
-                        .and_then(|e| e.as_str())
-                        .unwrap_or(blob)
-                        .to_string(),
-                );
+            if let Some(v) = parse_cli_json_stdout(blob) {
+                if let Some(err) = v.get("error").and_then(|e| e.as_str()) {
+                    return Err(err.to_string());
+                }
             }
-            if !blob.is_empty() {
+            if !blob.is_empty()
+                && !blob.contains("UV_HANDLE_CLOSING")
+                && !blob.contains("Assertion failed")
+            {
                 return Err(blob.to_string());
             }
         }
-        return Err("discover-models failed".into());
+        return Err("discover-models failed (no model list in output)".into());
     }
-    serde_json::from_str(stdout.trim())
-        .map_err(|e| format!("Invalid discover-models JSON: {e}\n{stdout}"))
+
+    parse_cli_json_stdout(&stdout)
+        .ok_or_else(|| format!("Invalid discover-models JSON:\n{stdout}"))
 }
 
 #[tauri::command]
