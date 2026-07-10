@@ -16,6 +16,12 @@ import { parseWizardFlags, shouldRunWizard } from "./wizard/firstRun.js";
 import { RunWizard } from "./wizard/runWizard.js";
 import { parseHeadlessFlags } from "./headless.js";
 import { runHeadless } from "./runHeadless.js";
+import {
+  applySetConfig,
+  parseSetConfigFlags,
+  printDesktopConfig,
+  wantsPrintConfig,
+} from "./desktopConfig.js";
 import { loadSkillMdSkills } from "./skillsMd.js";
 import { listCodingSkills } from "@zelari/core/skills";
 import { getCurrentVersion } from "./updater.js";
@@ -242,9 +248,15 @@ function pickRootComponent(): {
         "  --headless          Run a single task without mounting the TUI\n" +
         "    --task <text>       Task prompt (required in headless mode)\n" +
         "    --output json|plain Output format (default: json)\n" +
-        "    --council          Use the 6-member council pipeline\n" +
+        "    --mode agent|council|zelari  Dispatch mode (default: agent)\n" +
+        "    --council          Alias for --mode council\n" +
+        "    --phase plan|build  Work phase (default: build)\n" +
         "    --provider <id>    Provider override (default: active)\n" +
         "    --model <id>       Model override (default: provider default)\n" +
+        "  --print-config      Print provider/model config as JSON (no secrets)\n" +
+        "  --set-config        Persist provider/model\n" +
+        "    --provider <id>    Set active provider\n" +
+        "    --model <id>       Set model for that provider\n" +
         "\n" +
         "Environment:\n" +
         "  ZELARI_NO_WIZARD=1    Skip the first-run wizard\n" +
@@ -252,6 +264,37 @@ function pickRootComponent(): {
         "  ZELARI_NO_PLUGIN_PROMPT=1  Skip the boot plugin-install prompt\n" +
         "  ANATHEMA_DEV=1        Disable background update check + preflight\n",
     );
+    process.exit(0);
+  }
+
+  // Desktop / scripting config helpers (no TUI, no task required).
+  if (wantsPrintConfig(argv)) {
+    try {
+      printDesktopConfig();
+      process.exit(0);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[zelari-code --print-config] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  const setConfigParse = parseSetConfigFlags(argv);
+  if (setConfigParse.error) {
+    // eslint-disable-next-line no-console
+    console.error(`[zelari-code --set-config] ${setConfigParse.error}`);
+    process.exit(1);
+  }
+  if (setConfigParse.request) {
+    const result = applySetConfig(setConfigParse.request);
+    if (!result.ok) {
+      // eslint-disable-next-line no-console
+      console.error(`[zelari-code --set-config] ${result.error}`);
+      process.exit(1);
+    }
+    // eslint-disable-next-line no-console
+    console.log(JSON.stringify({ ok: true, message: result.message }));
     process.exit(0);
   }
 

@@ -26,6 +26,8 @@ describe('parseHeadlessFlags', () => {
     expect(r.options).toEqual({
       task: 'add tests',
       output: 'json',
+      mode: 'agent',
+      phase: 'build',
       useCouncil: false,
       provider: undefined,
       model: undefined,
@@ -61,9 +63,44 @@ describe('parseHeadlessFlags', () => {
     expect(r.error).toMatch(/--output requires 'json' or 'plain'/);
   });
 
-  it('parses --council flag', () => {
+  it('parses --council flag as mode council', () => {
     const r = parseHeadlessFlags(['--headless', '--task', 'x', '--council']);
     expect(r.options?.useCouncil).toBe(true);
+    expect(r.options?.mode).toBe('council');
+  });
+
+  it('parses --mode agent|council|zelari', () => {
+    expect(parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'agent']).options?.mode)
+      .toBe('agent');
+    expect(parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'council']).options)
+      .toMatchObject({ mode: 'council', useCouncil: true });
+    expect(parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'zelari']).options?.mode)
+      .toBe('zelari');
+  });
+
+  it('errors on invalid --mode', () => {
+    const r = parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'robot']);
+    expect(r.options).toBeNull();
+    expect(r.error).toMatch(/--mode requires/);
+  });
+
+  it('errors when --council conflicts with --mode agent', () => {
+    const r = parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'agent', '--council']);
+    expect(r.options).toBeNull();
+    expect(r.error).toMatch(/conflicts/);
+  });
+
+  it('parses --phase plan|build', () => {
+    expect(parseHeadlessFlags(['--headless', '--task', 'x', '--phase', 'plan']).options?.phase)
+      .toBe('plan');
+    expect(parseHeadlessFlags(['--headless', '--task', 'x', '--phase', 'build']).options?.phase)
+      .toBe('build');
+  });
+
+  it('errors on invalid --phase', () => {
+    const r = parseHeadlessFlags(['--headless', '--task', 'x', '--phase', 'ship']);
+    expect(r.options).toBeNull();
+    expect(r.error).toMatch(/--phase requires/);
   });
 
   it('parses --provider and --model', () => {
@@ -77,11 +114,14 @@ describe('parseHeadlessFlags', () => {
   it('handles flags in any order', () => {
     const r = parseHeadlessFlags([
       '--provider', 'glm', '--headless', '--council', '--task', 'audit', '--output', 'plain',
+      '--phase', 'plan',
     ]);
     expect(r.error).toBeUndefined();
     expect(r.options).toEqual({
       task: 'audit',
       output: 'plain',
+      mode: 'council',
+      phase: 'plan',
       useCouncil: true,
       provider: 'glm',
       model: undefined,
@@ -89,7 +129,6 @@ describe('parseHeadlessFlags', () => {
   });
 
   it('captures task with embedded spaces (single argv token)', () => {
-    // shell-style: --task "fix the bug" arrives as one argv element
     const r = parseHeadlessFlags(['--headless', '--task', 'fix the bug in auth.ts']);
     expect(r.options?.task).toBe('fix the bug in auth.ts');
   });

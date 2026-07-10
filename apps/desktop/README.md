@@ -54,14 +54,17 @@ npm run tauri:build
 
 Artifacts land under `apps/desktop/src-tauri/target/release/bundle/` (msi/nsis on Windows, dmg on macOS, deb/AppImage on Linux).
 
-## Modes
+## Modes & phases
 
-| Mode | Behavior |
-|------|----------|
-| **Agent** | Single-agent headless run |
-| **Council** | `--council` multi-agent pipeline |
+| Control | Values | CLI flag |
+|---------|--------|----------|
+| **Mode** | Agent · Council · Zelari | `--mode agent\|council\|zelari` |
+| **Phase** | Plan · Build | `--phase plan\|build` |
+| **Provider / model** | from Settings / bar | `--provider` / `--model` |
 
-## Non-goals (v0.1)
+Settings (⚙) reads `zelari-code --print-config` and writes via `--set-config`.
+
+## Non-goals (v0.1 shell)
 
 - Full rewrite of `@zelari/core` in Rust
 - Computer-use / OS input injection (planned as opt-in later)

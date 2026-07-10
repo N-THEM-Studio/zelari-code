@@ -1,5 +1,13 @@
 export type Role = "user" | "assistant" | "system" | "tool";
 
+/** Mirrors CLI shift+tab modes. */
+export type DispatchMode = "agent" | "council" | "zelari";
+
+/** Mirrors CLI /plan /build phases. */
+export type WorkPhase = "plan" | "build";
+
+export type AppView = "chat" | "settings";
+
 export interface ChatMessage {
   id: string;
   role: Role;
@@ -16,7 +24,10 @@ export interface Conversation {
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
-  council: boolean;
+  mode: DispatchMode;
+  phase: WorkPhase;
+  provider?: string;
+  model?: string;
 }
 
 export interface CliStatus {
@@ -28,8 +39,31 @@ export interface CliStatus {
   message: string;
 }
 
+export interface DesktopProviderInfo {
+  id: string;
+  displayName: string;
+  hasKey: boolean;
+  envVar: string;
+  models: string[];
+  defaultModel: string;
+}
+
+export interface DesktopConfig {
+  activeProviderId: string;
+  modelByProvider: Record<string, string>;
+  providers: DesktopProviderInfo[];
+  cliVersion: string;
+  configPaths: {
+    provider: string;
+    keys: string;
+  };
+}
+
 export interface RunTaskArgs {
   prompt: string;
+  mode?: DispatchMode;
+  phase?: WorkPhase;
+  /** @deprecated prefer mode */
   council?: boolean;
   provider?: string;
   model?: string;
@@ -41,8 +75,18 @@ export type AgentEvent =
   | { type: "message_start"; role?: string }
   | { type: "message_end" }
   | { type: "thinking_delta"; delta?: string; text?: string }
-  | { type: "tool_execution_start"; toolName?: string; name?: string; tool?: string }
-  | { type: "tool_execution_end"; toolName?: string; name?: string; success?: boolean }
+  | {
+      type: "tool_execution_start";
+      toolName?: string;
+      name?: string;
+      tool?: string;
+    }
+  | {
+      type: "tool_execution_end";
+      toolName?: string;
+      name?: string;
+      success?: boolean;
+    }
   | { type: "agent_start" }
   | { type: "agent_end"; reason?: string }
   | { type: "error"; message?: string; error?: string }

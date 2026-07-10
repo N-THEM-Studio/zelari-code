@@ -1,9 +1,25 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { AgentEvent, CliStatus, RunTaskArgs } from "./types";
+import type {
+  AgentEvent,
+  CliStatus,
+  DesktopConfig,
+  RunTaskArgs,
+} from "./types";
 
 export async function getCliStatus(): Promise<CliStatus> {
   return invoke<CliStatus>("get_cli_status");
+}
+
+export async function getAppConfig(): Promise<DesktopConfig> {
+  return invoke<DesktopConfig>("get_app_config");
+}
+
+export async function setAppConfig(args: {
+  provider?: string;
+  model?: string;
+}): Promise<{ ok?: boolean; message?: string }> {
+  return invoke("set_app_config", { args });
 }
 
 export async function runTask(args: RunTaskArgs): Promise<string> {
@@ -25,18 +41,6 @@ export async function onAgentStderr(
 ): Promise<UnlistenFn> {
   return listen<{ line: string }>("agent-stderr", (e) =>
     handler(e.payload.line),
-  );
-}
-
-export async function onRunStarted(
-  handler: (payload: {
-    runId: string;
-    prompt: string;
-    council: boolean;
-  }) => void,
-): Promise<UnlistenFn> {
-  return listen("run-started", (e) =>
-    handler(e.payload as { runId: string; prompt: string; council: boolean }),
   );
 }
 

@@ -575,6 +575,263 @@ button {
   background: transparent;
 }
 
+/* ── Control bar (mode / phase / provider) ── */
+.control-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 20px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+}
+
+.control-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.control-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.seg-toggle {
+  display: inline-flex;
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  gap: 2px;
+}
+
+.seg-btn {
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  font-weight: 500;
+  transition: background 0.12s, color 0.12s;
+}
+
+.seg-btn.active {
+  background: var(--bg);
+  color: var(--text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.seg-btn.phase-plan.active {
+  color: #7dd3fc;
+}
+
+.seg-btn.phase-build.active {
+  color: #86efac;
+}
+
+.seg-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.provider-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.field-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.field-inline span {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.field-inline select,
+.field select,
+.field input {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: var(--text);
+  min-width: 140px;
+  outline: none;
+}
+
+.field-inline select:focus,
+.field select:focus,
+.field input:focus {
+  border-color: rgba(167, 139, 250, 0.5);
+}
+
+.btn-ghost {
+  padding: 6px 10px;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.btn-ghost:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.btn-settings {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.btn-settings:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.topbar-settings {
+  font-size: 16px;
+  line-height: 1;
+}
+
+/* ── Settings ── */
+.app-settings {
+  display: block;
+  overflow: auto;
+}
+
+.settings-view {
+  max-width: 640px;
+  margin: 0 auto;
+  padding: 24px 20px 48px;
+  min-height: 100%;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.settings-header h1 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.settings-body {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.settings-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 18px;
+}
+
+.settings-card h2 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.settings-card .muted {
+  margin: 0 0 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.settings-card code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 13px;
+}
+
+.field span {
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.kv {
+  display: grid;
+  grid-template-columns: 120px 1fr;
+  gap: 8px 12px;
+  margin: 0;
+  font-size: 12.5px;
+}
+
+.kv dt {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.kv dd {
+  margin: 0;
+  word-break: break-all;
+}
+
+.kv code {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.warn {
+  font-size: 12.5px;
+  color: var(--warning);
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
+
+.error-banner {
+  color: var(--danger);
+  background: rgba(248, 113, 113, 0.1);
+  border: 1px solid rgba(248, 113, 113, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.ok-banner {
+  color: var(--success);
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: 13px;
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  padding-top: 4px;
+}
+
 @media (max-width: 720px) {
   .app {
     grid-template-columns: 1fr;
@@ -585,4 +842,9 @@ button {
   .suggestions {
     grid-template-columns: 1fr;
   }
+  .control-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
 }
+

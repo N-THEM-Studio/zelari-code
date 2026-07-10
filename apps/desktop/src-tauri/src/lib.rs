@@ -4,7 +4,7 @@
 //! resolves the CLI, spawns headless runs, and streams NDJSON BrainEvents
 //! to the web UI via Tauri events.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -44,7 +44,8 @@ struct CliStatus {
 struct RunStarted {
     run_id: String,
     prompt: String,
-    council: bool,
+    mode: String,
+    phase: String,
 }
 
 #[derive(Clone, Serialize)]
@@ -59,12 +60,6 @@ fn find_node() -> Option<PathBuf> {
     which::which("node").ok()
 }
 
-/// Resolve path to `bin/zelari-code.js` or a global `zelari-code` shim.
-///
-/// Order:
-/// 1. `ZELARI_CLI_PATH` env (file or dir containing bin/zelari-code.js)
-/// 2. Monorepo relative paths from the desktop app cwd
-/// 3. Global `zelari-code` on PATH (returns the binary path; spawn via node only if .js)
 fn resolve_cli_entry() -> Result<PathBuf, String> {
     if let Ok(raw) = std::env::var("ZELARI_CLI_PATH") {
         let p = PathBuf::from(raw.trim());
@@ -81,7 +76,6 @@ fn resolve_cli_entry() -> Result<PathBuf, String> {
         ));
     }
 
-    // apps/desktop → repo root when running `npm run tauri dev` from apps/desktop
     let candidates = [
         PathBuf::from("../../bin/zelari-code.js"),
         PathBuf::from("../bin/zelari-code.js"),
@@ -99,7 +93,6 @@ fn resolve_cli_entry() -> Result<PathBuf, String> {
         }
     }
 
-    // Walk up from current_exe / cwd looking for monorepo root
     if let Ok(cwd) = std::env::current_dir() {
         if let Some(found) = walk_up_for_cli(&cwd) {
             return Ok(found);
@@ -167,8 +160,48 @@ fn read_cli_version(node: &Path, cli: &Path) -> Option<String> {
 fn is_js_entry(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
-        .map(|e| e.eq_ignore_ascii_case("js") || e.eq_ignore_ascii_case("mjs") || e.eq_ignore_ascii_case("cjs"))
+        .map(|e| {
+            e.eq_ignore_ascii_case("js")
+                || e.eq_ignore_ascii_case("mjs")
+                || e.eq_ignore_ascii_case("cjs")
+        })
         .unwrap_or(false)
+}
+
+fn spawn_cli_base(node: &Path, cli: &Path) -> Command {
+    if is_js_entry(cli) {
+        let mut c = Command::new(node);
+        c.arg(cli);
+        c
+    } else {
+        Command::new(cli)
+    }
+}
+
+fn run_cli_capture(node: &Path, cli: &Path, args: &[&str]) -> Result<String, String> {
+    let mut cmd = spawn_cli_base(node, cli);
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to spawn zelari-code: {e}"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        let out = String::from_utf8_lossy(&output.stdout);
+        let msg = if !err.trim().is_empty() {
+            err.trim().to_string()
+        } else {
+            out.trim().to_string()
+        };
+        return Err(if msg.is_empty() {
+            format!("CLI exited with {}", output.status)
+        } else {
+            msg
+        });
+    }
+    String::from_utf8(output.stdout).map_err(|e| format!("Invalid UTF-8 from CLI: {e}"))
 }
 
 #[tauri::command]
@@ -211,6 +244,47 @@ fn get_cli_status() -> CliStatus {
     }
 }
 
+/// Returns the JSON string from `zelari-code --print-config`.
+#[tauri::command]
+fn get_app_config() -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let raw = run_cli_capture(&node, &cli, &["--print-config"])?;
+    serde_json::from_str(raw.trim()).map_err(|e| format!("Invalid --print-config JSON: {e}\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetConfigArgs {
+    provider: Option<String>,
+    model: Option<String>,
+}
+
+#[tauri::command]
+fn set_app_config(args: SetConfigArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv: Vec<String> = vec!["--set-config".into()];
+    if let Some(p) = args.provider.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--provider".into());
+        argv.push(p.to_string());
+    }
+    if let Some(m) = args.model.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--model".into());
+        argv.push(m.to_string());
+    }
+    if argv.len() == 1 {
+        return Err("set_app_config requires provider and/or model".into());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    // Prefer JSON ok payload; fall back to wrapping message
+    if let Ok(v) = serde_json::from_str::<serde_json::Value>(raw.trim()) {
+        return Ok(v);
+    }
+    Ok(serde_json::json!({ "ok": true, "message": raw.trim() }))
+}
+
 #[tauri::command]
 fn cancel_run(state: State<'_, Arc<RunState>>) -> Result<(), String> {
     if state.running.load(Ordering::SeqCst) {
@@ -221,16 +295,45 @@ fn cancel_run(state: State<'_, Arc<RunState>>) -> Result<(), String> {
     }
 }
 
-#[derive(serde::Deserialize)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RunTaskArgs {
     prompt: String,
+    #[serde(default = "default_mode")]
+    mode: String,
+    #[serde(default = "default_phase")]
+    phase: String,
     #[serde(default)]
     council: bool,
     #[serde(default)]
     provider: Option<String>,
     #[serde(default)]
     model: Option<String>,
+}
+
+fn default_mode() -> String {
+    "agent".into()
+}
+fn default_phase() -> String {
+    "build".into()
+}
+
+fn normalize_mode(mode: &str, council: bool) -> String {
+    let m = mode.trim().to_lowercase();
+    if council && (m.is_empty() || m == "agent") {
+        return "council".into();
+    }
+    match m.as_str() {
+        "agent" | "council" | "zelari" => m,
+        _ => "agent".into(),
+    }
+}
+
+fn normalize_phase(phase: &str) -> String {
+    match phase.trim().to_lowercase().as_str() {
+        "plan" => "plan".into(),
+        _ => "build".into(),
+    }
 }
 
 #[tauri::command]
@@ -249,6 +352,9 @@ fn run_task(
         state.running.store(false, Ordering::SeqCst);
         return Err("Prompt is empty".into());
     }
+
+    let mode = normalize_mode(&args.mode, args.council);
+    let phase = normalize_phase(&args.phase);
 
     let node = find_node().ok_or_else(|| {
         state.running.store(false, Ordering::SeqCst);
@@ -275,14 +381,14 @@ fn run_task(
         RunStarted {
             run_id: run_id.clone(),
             prompt: prompt.clone(),
-            council: args.council,
+            mode: mode.clone(),
+            phase: phase.clone(),
         },
     );
 
     let run_state = Arc::clone(&state);
     let app_handle = app.clone();
     let run_id_thread = run_id.clone();
-    let council = args.council;
     let provider = args.provider;
     let model = args.model;
 
@@ -293,7 +399,8 @@ fn run_task(
             &node,
             &cli,
             &prompt,
-            council,
+            &mode,
+            &phase,
             provider.as_deref(),
             model.as_deref(),
         );
@@ -334,27 +441,23 @@ fn spawn_headless(
     node: &Path,
     cli: &Path,
     prompt: &str,
-    council: bool,
+    mode: &str,
+    phase: &str,
     provider: Option<&str>,
     model: Option<&str>,
 ) -> Result<i32, String> {
-    let mut cmd = if is_js_entry(cli) {
-        let mut c = Command::new(node);
-        c.arg(cli);
-        c
-    } else {
-        Command::new(cli)
-    };
+    let mut cmd = spawn_cli_base(node, cli);
 
     cmd.arg("--headless")
         .arg("--task")
         .arg(prompt)
         .arg("--output")
-        .arg("json");
+        .arg("json")
+        .arg("--mode")
+        .arg(mode)
+        .arg("--phase")
+        .arg(phase);
 
-    if council {
-        cmd.arg("--council");
-    }
     if let Some(p) = provider {
         if !p.is_empty() {
             cmd.arg("--provider").arg(p);
@@ -366,7 +469,6 @@ fn spawn_headless(
         }
     }
 
-    // Force UTF-8 friendly output on Windows consoles when possible
     cmd.env("FORCE_COLOR", "0");
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
@@ -391,10 +493,7 @@ fn spawn_headless(
             if trimmed.is_empty() {
                 continue;
             }
-            let _ = app_err.emit(
-                "agent-stderr",
-                serde_json::json!({ "line": trimmed }),
-            );
+            let _ = app_err.emit("agent-stderr", serde_json::json!({ "line": trimmed }));
         }
     });
 
@@ -426,7 +525,6 @@ fn spawn_headless(
                 let _ = app.emit("agent-event", value);
             }
             Err(_) => {
-                // Non-JSON line (rare) — surface as plain log
                 let _ = app.emit(
                     "agent-event",
                     serde_json::json!({
@@ -452,6 +550,8 @@ pub fn run() {
         .manage(Arc::new(RunState::default()))
         .invoke_handler(tauri::generate_handler![
             get_cli_status,
+            get_app_config,
+            set_app_config,
             run_task,
             cancel_run
         ])

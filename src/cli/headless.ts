@@ -1,5 +1,5 @@
 /**
- * headless — non-interactive CLI mode for CI/CD and scripting.
+ * headless — non-interactive CLI mode for CI/CD, scripting, and Zelari Desktop.
  *
  * Bypasses Ink entirely. Reads `--task <prompt>`, runs the prompt
  * through the same dispatch path the TUI uses, and serializes the
@@ -17,13 +17,33 @@
 import { PROVIDERS, resolveApiKeyWithMeta } from './keyStore.js';
 import { getActiveProvider, getModelForProvider } from './providerConfig.js';
 import { openaiCompatibleProvider } from './provider/openai-compatible.js';
+import type { WorkPhase } from './phase.js';
+import { parsePhase } from './phase.js';
+import { parseMode } from './mode.js';
+import type { ChatMode } from './components/StatusBar.js';
+
+/** Dispatch mode for headless (mirrors TUI shift+tab modes). */
+export type HeadlessMode = ChatMode; // 'agent' | 'council' | 'zelari'
 
 export interface HeadlessOptions {
   /** The user prompt. */
   task: string;
   /** Output format. 'json' = one NDJSON object per event, 'plain' = streamed text. */
   output: 'json' | 'plain';
-  /** Use the council pipeline instead of single-agent dispatch. */
+  /**
+   * Dispatch mode. Prefer this over `useCouncil`.
+   * @since desktop parity
+   */
+  mode: HeadlessMode;
+  /**
+   * Work phase (plan = no project writes; build = full tools).
+   * @since desktop parity
+   */
+  phase: WorkPhase;
+  /**
+   * Use the council pipeline instead of single-agent dispatch.
+   * Kept for backward compatibility; derived from `mode === 'council'` when parsing.
+   */
   useCouncil: boolean;
   /** Provider id override (defaults to active provider). */
   provider?: string;
@@ -37,10 +57,19 @@ export interface HeadlessParseResult {
   help?: string;
 }
 
-const HELP_TEXT = `zelari-code --headless --task <prompt> [--output json|plain] [--council] [--provider <id>] [--model <name>]
+const HELP_TEXT = `zelari-code --headless --task <prompt> [options]
 
 Non-interactive mode. Streams BrainEvents as NDJSON to stdout (one JSON
 object per line) or as plain text (just the assistant message text).
+
+Options:
+  --task <text>              Task prompt (required)
+  --output json|plain        Output format (default: json)
+  --mode agent|council|zelari  Dispatch mode (default: agent)
+  --council                  Alias for --mode council
+  --phase plan|build         Work phase (default: build)
+  --provider <id>            Provider override (default: active)
+  --model <name>             Model override (default: provider default)
 
 Exit codes:
   0  completed
@@ -60,7 +89,10 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
 
   let task: string | undefined;
   let output: 'json' | 'plain' = 'json';
-  let useCouncil = false;
+  let mode: HeadlessMode = 'agent';
+  let phase: WorkPhase = 'build';
+  let modeExplicit = false;
+  let councilFlag = false;
   let provider: string | undefined;
   let model: string | undefined;
 
@@ -82,7 +114,30 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       task = argv[i + 1];
       i++;
     } else if (arg === '--council') {
-      useCouncil = true;
+      councilFlag = true;
+    } else if (arg === '--mode') {
+      const next = argv[i + 1];
+      const parsed = next ? parseMode(next) : null;
+      if (!parsed) {
+        return {
+          options: null,
+          error: `--mode requires 'agent', 'council', or 'zelari', got '${next ?? '(missing)'}'`,
+        };
+      }
+      mode = parsed;
+      modeExplicit = true;
+      i++;
+    } else if (arg === '--phase') {
+      const next = argv[i + 1];
+      const parsed = next ? parsePhase(next) : null;
+      if (!parsed) {
+        return {
+          options: null,
+          error: `--phase requires 'plan' or 'build', got '${next ?? '(missing)'}'`,
+        };
+      }
+      phase = parsed;
+      i++;
     } else if (arg === '--provider') {
       provider = argv[i + 1];
       i++;
@@ -92,12 +147,30 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
     }
   }
 
+  // --council is an alias for --mode council when --mode was not set.
+  if (councilFlag && !modeExplicit) {
+    mode = 'council';
+  } else if (councilFlag && modeExplicit && mode !== 'council') {
+    return {
+      options: null,
+      error: `--council conflicts with --mode ${mode}`,
+    };
+  }
+
   if (!task || task.trim().length === 0) {
     return { options: null, error: '--headless requires --task <prompt>' };
   }
 
   return {
-    options: { task, output, useCouncil, provider, model },
+    options: {
+      task,
+      output,
+      mode,
+      phase,
+      useCouncil: mode === 'council',
+      provider,
+      model,
+    },
   };
 }
 
