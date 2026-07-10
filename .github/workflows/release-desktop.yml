@@ -1,0 +1,110 @@
+# Build & publish Zelari Desktop installers on version tags.
+# Complements publish.yml (npm CLI + @zelari/core).
+name: Release Desktop
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to build (e.g. v1.9.0)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+          - platform: macos-latest
+          - platform: ubuntu-22.04
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux WebKit deps
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev
+
+      - name: Install monorepo deps (CLI side-car build optional)
+        run: npm ci
+
+      - name: Build CLI (so local side-car path works in dev smoke)
+        run: npm run build
+
+      - name: Install desktop deps
+        working-directory: apps/desktop
+        run: npm ci
+
+      - name: Verify desktop version matches tag
+        shell: bash
+        run: |
+          TAG_VERSION=${GITHUB_REF_NAME#v}
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG_VERSION=${{ github.event.inputs.tag }}
+            TAG_VERSION=${TAG_VERSION#v}
+          fi
+          PKG=$(node -e "console.log(require('./apps/desktop/package.json').version)")
+          CONF=$(node -e "console.log(require('./apps/desktop/src-tauri/tauri.conf.json').version)")
+          if [ "$TAG_VERSION" != "$PKG" ] || [ "$TAG_VERSION" != "$CONF" ]; then
+            echo "Tag $TAG_VERSION must match desktop package ($PKG) and tauri.conf ($CONF)"
+            exit 1
+          fi
+          echo "✓ Desktop version $PKG matches tag"
+
+      - name: Resolve tag name
+        id: tag
+        shell: bash
+        run: |
+          T="${{ github.event.inputs.tag || github.ref_name }}"
+          echo "name=$T" >> "$GITHUB_OUTPUT"
+          echo "plain=${T#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ steps.tag.outputs.name }}
+          releaseName: 'Zelari Desktop ${{ steps.tag.outputs.name }}'
+          releaseBody: |
+            Installable **Zelari Desktop** shell for this tag.
+
+            ### Requirements
+            - **Node.js ≥ 20** and `zelari-code` CLI (`npm i -g zelari-code@${{ steps.tag.outputs.plain }}`).
+            - Configure providers via Settings or CLI (`/login`, `--set-key`).
+
+            ### CLI / core
+            npm packages for this tag are published by the companion **Publish to npm** workflow.
+
+            ### Assets
+            Platform installers attached below (MSI/NSIS, DMG, AppImage/deb as available).
+          releaseDraft: false
+          prerelease: false
+          args: ''

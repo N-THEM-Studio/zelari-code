@@ -5,6 +5,22 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-07-10
+
+### Added
+- **Zelari Desktop (Tauri 2)** — installable shell (`apps/desktop`) that streams `zelari-code --headless` into a modern chat UI (Agent / Council / Zelari, Plan / Build, provider & model, Settings).
+- **Headless dispatch parity** — `--mode agent|council|zelari`, `--phase plan|build` (plan strips project mutators); zelari mission path in headless.
+- **Desktop config CLI** — `--print-config`, `--set-config` (provider/model/endpoint), `--set-key`, `--discover-models` for Settings / IPC (no secrets in print).
+- **Desktop UX** — API key + custom OpenAI-compatible endpoint in Settings; model list refresh on select open; Active/Archived chat sessions (localStorage); thinking animation; light structured reply rendering (tables/lists without raw markdown noise); run stats (duration/tools/chars).
+- **Desktop branding** — pyramid logo as app icon (transparent bg) + in-app brand mark; GitHub Actions workflow publishes Windows/macOS/Linux installers on `v*` tags.
+
+### Fixed
+- **CLI logo visibility** — StartupBanner two-column ASCII logo (no space-padding collapse); Sidebar always shows compact ASCII on Windows (Braille optional on tall non-Windows).
+- **Windows UV_HANDLE_CLOSING** — safer headless exit (flush/MCP before `process.exit`); desktop side-car uses process-tree kill, skip preflight, accept discovery JSON when Node aborts after stdout.
+
+### Changed
+- Version alignment: CLI, `@zelari/core`, and Desktop ship as **1.9.0**.
+
 ## [1.8.3] - 2026-07-10
 
 ### Added

@@ -70,7 +70,7 @@ zelari-code
 
 ### Optional: Zelari Desktop (Tauri)
 
-An installable GUI shell lives in `apps/desktop/` (branch `feat/desktop-tauri` and later). It does **not** replace the CLI — it streams `zelari-code --headless` into a modern chat UI.
+An installable GUI shell lives in `apps/desktop/`. It does **not** replace the CLI — it streams `zelari-code --headless` into a modern chat UI. GitHub Releases attach platform installers on each `v*` tag.
 
 ```bash
 npm run build                 # CLI side-car
