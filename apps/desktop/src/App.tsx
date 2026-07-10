@@ -28,6 +28,10 @@ import type {
   WorkPhase,
 } from "./types";
 import zelariLogo from "./assets/zelari-logo.png";
+import {
+  UpdateBarButton,
+  type PendingDesktopUpdate,
+} from "./components/UpdateBarButton";
 import { checkForDesktopUpdate } from "./updater";
 import "./App.css";
 
@@ -129,6 +133,8 @@ export default function App() {
   const [cli, setCli] = useState<CliStatus | null>(null);
   const [config, setConfig] = useState<DesktopConfig | null>(null);
   const [statusLine, setStatusLine] = useState("Connecting…");
+  const [pendingUpdate, setPendingUpdate] =
+    useState<PendingDesktopUpdate | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -194,27 +200,37 @@ export default function App() {
     void refreshConfig();
   }, [refreshCli, refreshConfig]);
 
+  const runDesktopUpdateCheck = useCallback(async (quiet = false) => {
+    if (!quiet) setStatusLine("Checking for desktop updates…");
+    try {
+      const { update, current } = await checkForDesktopUpdate();
+      if (!update) {
+        setPendingUpdate(null);
+        if (!quiet) setStatusLine(`Desktop up to date (v${current})`);
+        return;
+      }
+      setPendingUpdate({
+        version: update.version,
+        current,
+        update,
+      });
+      setStatusLine(
+        `Update available: v${update.version} (you have v${current}) — click Update`,
+      );
+    } catch (e) {
+      if (!quiet) {
+        setStatusLine(e instanceof Error ? e.message : String(e));
+      }
+    }
+  }, []);
+
   // Quiet desktop update check on launch (signed GitHub Releases).
   useEffect(() => {
-    let cancelled = false;
     const t = window.setTimeout(() => {
-      void (async () => {
-        try {
-          const { update, current } = await checkForDesktopUpdate();
-          if (cancelled || !update) return;
-          setStatusLine(
-            `Desktop update available: v${update.version} (you have v${current}) — open Settings`,
-          );
-        } catch {
-          // Offline / dev without Tauri — ignore
-        }
-      })();
+      void runDesktopUpdateCheck(true);
     }, 2500);
-    return () => {
-      cancelled = true;
-      window.clearTimeout(t);
-    };
-  }, []);
+    return () => window.clearTimeout(t);
+  }, [runDesktopUpdateCheck]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -801,14 +817,27 @@ export default function App() {
       <main className="main">
         <header className="topbar">
           <div className="topbar-title">{active?.title ?? "Zelari"}</div>
-          <button
-            type="button"
-            className="btn-ghost topbar-settings"
-            onClick={() => setView("settings")}
-            title="Settings"
-          >
-            ⚙
-          </button>
+          <div className="topbar-actions">
+            <UpdateBarButton
+              pending={pendingUpdate}
+              busy={running}
+              onCheck={() => void runDesktopUpdateCheck(false)}
+              onProgress={setStatusLine}
+              onError={setStatusLine}
+              onInstalled={() => {
+                setPendingUpdate(null);
+                setStatusLine("Update installed — restarting…");
+              }}
+            />
+            <button
+              type="button"
+              className="btn-ghost topbar-settings"
+              onClick={() => setView("settings")}
+              title="Settings"
+            >
+              ⚙
+            </button>
+          </div>
         </header>
 
         <div className="control-bar">

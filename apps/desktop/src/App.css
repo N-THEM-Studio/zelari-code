@@ -1007,6 +1007,57 @@ button {
   line-height: 1;
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.btn-update {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: #041016;
+  background: linear-gradient(135deg, #22d3ee, #a78bfa);
+  box-shadow: 0 2px 12px rgba(34, 211, 238, 0.35);
+  border: none;
+  cursor: pointer;
+  white-space: nowrap;
+  animation: update-pulse 2s ease-in-out infinite;
+}
+
+.btn-update:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.btn-update:disabled {
+  opacity: 0.65;
+  cursor: wait;
+  animation: none;
+}
+
+@keyframes update-pulse {
+  0%,
+  100% {
+    box-shadow: 0 2px 12px rgba(34, 211, 238, 0.3);
+  }
+  50% {
+    box-shadow: 0 2px 18px rgba(167, 139, 250, 0.55);
+  }
+}
+
+.topbar-update-check {
+  font-size: 15px;
+  min-width: 32px;
+  padding: 4px 8px !important;
+}
+
 /* ── Settings ── */
 .app-settings {
   display: block;

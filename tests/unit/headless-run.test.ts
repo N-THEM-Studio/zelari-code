@@ -142,11 +142,18 @@ describe('runHeadless — single agent', () => {
     }
 
     const text = out.read();
-    // One line per event; valid JSON; final line ends with newline
+    // NDJSON: optional leading meta log (`[headless] mode=…`) + harness events
     const lines = text.split('\n').filter((l) => l.length > 0);
-    expect(lines).toHaveLength(6);
-    for (const line of lines) {
-      expect(() => JSON.parse(line)).not.toThrow();
+    expect(lines.length).toBeGreaterThanOrEqual(6);
+    const events = lines.map((l) => {
+      expect(() => JSON.parse(l)).not.toThrow();
+      return JSON.parse(l) as { type: string; message?: string };
+    });
+    expect(events.some((e) => e.type === 'agent_start')).toBe(true);
+    expect(events.some((e) => e.type === 'message_delta')).toBe(true);
+    expect(events.some((e) => e.type === 'agent_end')).toBe(true);
+    if (events[0]?.type === 'log') {
+      expect(events[0].message).toMatch(/\[headless\]/);
     }
   });
 
