@@ -5,6 +5,15 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-07-10
+
+### Fixed
+- **Desktop: multi-turn context** — the desktop agent no longer loses context between messages. Conversation history now round-trips (desktop → Rust → CLI via `--history-file`) and short replies ("procedi", "1", "sì") are re-anchored to the last clarifying question. Backward-compatible: invalid history degrades to stateless.
+- **Desktop: `<think>` tag leak** — model reasoning no longer appears as visible `<think>...</think>` prose in the chat. The provider now reads `reasoning_content`/`reasoning` fields (GLM/DeepSeek/Qwen/MiniMax) into the dedicated thinking channel, and a new `streamScrub` helper strips any inline think tags + `---QUESTION---` blocks from the headless stream.
+- **Desktop: silent freeze on truncated tool calls** — the agent no longer hangs forever ("muore e basta") when MiniMax truncates a `write_file` payload mid-stream. Truncated tool calls (`finish_reason=tool_calls` with no emitted tool) are now detected and surfaced as a recoverable error.
+- **Desktop: HTTP hang protection** — provider fetch now has a hard timeout (`AbortSignal.timeout`, default 5min, `ZELARI_PROVIDER_TIMEOUT_MS`) so a stalled connection can't freeze the harness.
+- **Desktop: crash handler** — uncaught exceptions / unhandled rejections in headless mode now emit a visible error event instead of killing the process silently.
+
 ## [1.10.0] - 2026-07-10
 
 ### Added
