@@ -1,7 +1,7 @@
 {
   "name": "@zelari/desktop",
   "private": true,
-  "version": "1.9.3",
+  "version": "1.9.4",
   "description": "Zelari Desktop — Tauri 2 shell over zelari-code --headless",
   "type": "module",
   "scripts": {

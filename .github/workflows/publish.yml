@@ -7,35 +7,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag to publish (e.g. v0.5.0)'
+        description: 'Version tag to publish (e.g. v1.9.4)'
         required: true
 
 # Publishes BOTH the CLI (`zelari-code`) and the core library
-# (`@zelari/core`) to the npm registry.
-#
-# Authentication: Trusted Publishing (OIDC). Requires the matching
-# "Trusted Publisher" entry to be configured on each package's npmjs.com
-# settings page:
-#   - https://www.npmjs.com/package/zelari-code/access  (or org page)
-#   - https://www.npmjs.com/package/@zelari/core/access
-# Settings:
-#   - Provider: GitHub Actions
-#   - Repository: N-THEM-Studio/zelari-code
-#   - Workflow file: .github/workflows/publish.yml
-#   - Environment: (none — leave empty unless you also use GitHub envs)
-#
-# Once OIDC is configured, the long-lived NPM_TOKEN secret becomes
-# unnecessary and can be removed from the repo.
-#
-# No NPM_TOKEN secret is referenced in this workflow. The `id-token: write`
-# permission below is what enables OIDC; `actions/setup-node` exchanges
-# the OIDC token for a short-lived npm token at publish time.
-#
-# v0.6.2 audit (agy): publish-cli and publish-core run sequentially
-# (needs: publish-core) to prevent the CLI from being published before
-# its matching @zelari/core version. Tag version is checked against
-# package.json to fail fast on mismatches. Smoke test runs the bundled
-# CLI to catch ESM/load-time errors before publish.
+# (`@zelari/core`) to the npm registry via Trusted Publishing (OIDC).
 jobs:
   publish-core:
     name: Publish @zelari/core
@@ -46,39 +22,46 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # v0.6.2 audit HIGH-2: workflow_dispatch tag input was being
-          # ignored. Fall back to the pushed ref when not dispatched.
           ref: ${{ github.event.inputs.tag || github.ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # v0.7.10: node 24 — its bundled npm (>= 11.5.1) is required for
-          # OIDC Trusted Publishing. node 20 ships npm 10.x, whose publish
-          # sends setup-node's placeholder token and gets E404 on the PUT.
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify tag matches package.json version
-        # v0.6.2 audit MEDIUM-6: fail fast on tag/package.json mismatch
-        # instead of letting npm registry reject the publish at the end.
+      - name: Resolve expected version
+        id: ver
+        shell: bash
         run: |
-          TAG_VERSION=${GITHUB_REF_NAME#v}
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG_VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Expected version: $TAG_VERSION (from $TAG)"
+
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
           PKG_VERSION=$(node -e "console.log(require('./packages/core/package.json').version)")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "Tag version ($TAG_VERSION) does not match packages/core/package.json ($PKG_VERSION)"
+          if [ "${{ steps.ver.outputs.version }}" != "$PKG_VERSION" ]; then
+            echo "Tag version (${{ steps.ver.outputs.version }}) does not match packages/core/package.json ($PKG_VERSION)"
             exit 1
           fi
-          echo "✓ Tag $TAG_VERSION matches package.json"
-
-      - name: Typecheck (core)
-        run: npm run typecheck --workspace=@zelari/core
+          echo "✓ Tag matches packages/core @ $PKG_VERSION"
 
       - name: Build @zelari/core
         run: npm run build --workspace=@zelari/core
+
+      - name: Typecheck (core)
+        run: npm run typecheck --workspace=@zelari/core
 
       - name: Run tests (core)
         run: npm test --workspace=@zelari/core
@@ -88,8 +71,6 @@ jobs:
 
   publish-cli:
     name: Publish zelari-code (CLI)
-    # v0.6.2 audit HIGH-3: must wait for core so the CLI's pinned
-    # @zelari/core dep resolves to a published version on install.
     needs: publish-core
     runs-on: ubuntu-latest
     permissions:
@@ -103,29 +84,34 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          # v0.7.10: node 24 — its bundled npm (>= 11.5.1) is required for
-          # OIDC Trusted Publishing. node 20 ships npm 10.x, whose publish
-          # sends setup-node's placeholder token and gets E404 on the PUT.
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Verify tag matches package.json version
+      - name: Resolve expected version
+        id: ver
+        shell: bash
         run: |
-          TAG_VERSION=${GITHUB_REF_NAME#v}
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG_VERSION="${TAG#v}"
+          echo "version=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Verify tag matches package.json version
+        shell: bash
+        run: |
           PKG_VERSION=$(node -e "console.log(require('./package.json').version)")
-          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
-            echo "Tag version ($TAG_VERSION) does not match package.json ($PKG_VERSION)"
+          if [ "${{ steps.ver.outputs.version }}" != "$PKG_VERSION" ]; then
+            echo "Tag version (${{ steps.ver.outputs.version }}) does not match package.json ($PKG_VERSION)"
             exit 1
           fi
-          echo "✓ Tag $TAG_VERSION matches package.json"
+          echo "✓ Tag matches zelari-code @ $PKG_VERSION"
 
-      # The root typecheck imports @zelari/core's emitted .d.ts files
-      # (packages/core/dist). On a fresh checkout they don't exist, so core
-      # must be built FIRST or tsc fails with TS2307 on every
-      # '@zelari/core/*' import. (Locally this is masked by `pretest`.)
       - name: Build @zelari/core
         run: npm run build --workspace=@zelari/core
 
@@ -138,12 +124,8 @@ jobs:
       - name: Run tests
         run: npm test
 
-      # v0.6.2 audit LOW-7: smoke test the bundled CLI to catch load-time
-      # errors (broken ESM, missing exports) before pushing to npm.
       - name: Smoke test bundled CLI
         run: npm run smoke
 
-      # `zelari-code` is the ROOT package, not a workspace member —
-      # `npm publish --workspace=zelari-code` fails with "No workspaces found".
       - name: Publish zelari-code
         run: npm publish --access public

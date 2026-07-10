@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Version tag to build (e.g. v1.9.0)'
+        description: 'Version tag to build (e.g. v1.9.4)'
         required: true
 
 permissions:
@@ -54,8 +54,7 @@ jobs:
       - name: Install monorepo deps
         run: npm ci
 
-      # Fresh checkout has no packages/core/dist — root tsc resolves @zelari/core/*
-      # to those .d.ts files (same as publish.yml). Without this step: TS2307 cascade.
+      # Fresh checkout has no packages/core/dist — root tsc needs those .d.ts files.
       - name: Build @zelari/core
         run: npm run build --workspace=@zelari/core
 
@@ -66,57 +65,78 @@ jobs:
         working-directory: apps/desktop
         run: npm ci
 
+      - name: Resolve tag / version
+        id: ver
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          TAG_VERSION="${TAG#v}"
+          echo "name=$TAG" >> "$GITHUB_OUTPUT"
+          echo "plain=$TAG_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved tag=$TAG version=$TAG_VERSION"
+
       - name: Verify desktop version matches tag
         shell: bash
         run: |
-          TAG_VERSION=${GITHUB_REF_NAME#v}
-          if [ -n "${{ github.event.inputs.tag }}" ]; then
-            TAG_VERSION=${{ github.event.inputs.tag }}
-            TAG_VERSION=${TAG_VERSION#v}
-          fi
           PKG=$(node -e "console.log(require('./apps/desktop/package.json').version)")
           CONF=$(node -e "console.log(require('./apps/desktop/src-tauri/tauri.conf.json').version)")
-          if [ "$TAG_VERSION" != "$PKG" ] || [ "$TAG_VERSION" != "$CONF" ]; then
-            echo "Tag $TAG_VERSION must match desktop package ($PKG) and tauri.conf ($CONF)"
+          if [ "${{ steps.ver.outputs.plain }}" != "$PKG" ] || [ "${{ steps.ver.outputs.plain }}" != "$CONF" ]; then
+            echo "Tag ${{ steps.ver.outputs.plain }} must match desktop package ($PKG) and tauri.conf ($CONF)"
             exit 1
           fi
           echo "✓ Desktop version $PKG matches tag"
 
-      - name: Resolve tag name
-        id: tag
+      # createUpdaterArtifacts requires TAURI_SIGNING_PRIVATE_KEY. Without it,
+      # disable artifacts so installers still build (auto-update just won't work).
+      - name: Configure updater artifacts for signing
         shell: bash
+        env:
+          HAS_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
-          T="${{ github.event.inputs.tag || github.ref_name }}"
-          echo "name=$T" >> "$GITHUB_OUTPUT"
-          echo "plain=${T#v}" >> "$GITHUB_OUTPUT"
+          if [ -z "$HAS_KEY" ]; then
+            node <<'NODE'
+          const fs = require('fs');
+          const p = 'apps/desktop/src-tauri/tauri.conf.json';
+          const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+          j.bundle = j.bundle || {};
+          j.bundle.createUpdaterArtifacts = false;
+          fs.writeFileSync(p, JSON.stringify(j, null, 2) + '\n');
+          console.log('No TAURI_SIGNING_PRIVATE_KEY — createUpdaterArtifacts=false');
+          NODE
+          else
+            echo "TAURI_SIGNING_PRIVATE_KEY present — updater artifacts enabled"
+          fi
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Required for createUpdaterArtifacts + signed latest.json
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
-          tagName: ${{ steps.tag.outputs.name }}
-          releaseName: 'Zelari Desktop ${{ steps.tag.outputs.name }}'
+          tagName: ${{ steps.ver.outputs.name }}
+          releaseName: 'Zelari ${{ steps.ver.outputs.name }}'
           releaseBody: |
-            Installable **Zelari Desktop** shell for this tag.
+            ## Zelari ${{ steps.ver.outputs.name }}
 
-            ### Requirements
-            - **Node.js ≥ 20** and `zelari-code` CLI (`npm i -g zelari-code@${{ steps.tag.outputs.plain }}`).
-            - Configure providers via Settings or CLI (`/login`, `--set-key`).
+            ### CLI (npm)
+            ```bash
+            npm i -g zelari-code@${{ steps.ver.outputs.plain }}
+            zelari-code --version
+            ```
 
-            ### CLI / core
-            npm packages for this tag are published by the companion **Publish to npm** workflow.
+            ### Desktop
+            Installers attached below. **Desktop installer does not upgrade the CLI** —
+            use `npm i -g zelari-code@${{ steps.ver.outputs.plain }}` (or Settings → Update CLI).
 
-            ### Assets
-            Platform installers + updater signatures (`latest.json`, `*.sig`) for auto-update.
-
-            ### Desktop auto-update
-            Installed apps check `latest.json` on GitHub Releases via the built-in updater.
-            Requires release assets signed with the repo `TAURI_SIGNING_PRIVATE_KEY` secret.
+            ### Auto-update (Desktop app)
+            Requires release assets signed with repo secret `TAURI_SIGNING_PRIVATE_KEY`.
+            If that secret is missing, installers still ship but in-app update may be unavailable.
           releaseDraft: false
           prerelease: false
           args: ''
