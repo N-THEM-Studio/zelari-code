@@ -5,7 +5,7 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.9.1] - 2026-07-10
+## [1.9.2] - 2026-07-10`n`n### Fixed`n- **CI headless-run** — allow leading `[headless]` NDJSON log line (count >= 6).`n- **Desktop** — topbar Update button when a newer release is available.`n`n## [1.9.1] - 2026-07-10
 
 ### Added
 - **Desktop auto-update** — Tauri updater plugin checks GitHub Releases (`latest.json`), Settings → “App updates” (check / download & install / relaunch), quiet check on launch. Release workflow signs artifacts via `TAURI_SIGNING_PRIVATE_KEY`.
