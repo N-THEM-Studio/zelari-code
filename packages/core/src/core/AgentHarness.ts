@@ -1121,20 +1121,82 @@ export function normalizeTextToolArgs(
   return out;
 }
 
+/**
+ * Parse a `---TOOLS--- … ---END---` block. Models frequently mis-emit:
+ *   - multiple JSON arrays back-to-back (`][{...}][{...}]`)
+ *   - markdown fences around the JSON
+ *   - lightly over-escaped quotes (`\"` inside an already-JSON string)
+ * This parser tries several recovery strategies before giving up.
+ */
 export function parseTextToolCalls(
   text: string,
 ): { name: string; args: Record<string, unknown> }[] {
   const m = /---TOOLS---\s*([\s\S]*?)---END---/.exec(text);
   if (!m || !m[1]) return [];
+  let body = m[1].trim();
+  // Strip markdown fences models wrap around the block body.
+  body = body
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/\s*```$/i, '')
+    .trim();
+
+  const candidates: string[] = [body];
+  // Concatenated arrays: `[{a}]\n[{b}]` → `[{a},{b}]`
+  if (/\]\s*\[/.test(body)) {
+    candidates.push(body.replace(/\]\s*\[/g, ','));
+  }
+  // Over-escaped quotes (common when models double-encode): `{\"name\"` → `{"name"`
+  if (body.includes('\\"')) {
+    candidates.push(body.replace(/\\"/g, '"'));
+    if (/\]\s*\[/.test(body)) {
+      candidates.push(body.replace(/\\"/g, '"').replace(/\]\s*\[/g, ','));
+    }
+  }
+
+  for (const cand of candidates) {
+    const items = tryParseToolArray(cand);
+    if (items.length > 0) return items;
+  }
+
+  // Last resort: extract every top-level `[...]` array in the body and merge.
+  const arrays = extractJsonArrays(body);
+  if (arrays.length > 1) {
+    const merged: { name: string; args: Record<string, unknown> }[] = [];
+    for (const a of arrays) {
+      merged.push(...tryParseToolArray(a));
+    }
+    if (merged.length > 0) return merged;
+  }
+
+  // Absolute last resort: find individual {"name":"...","args":{...}} objects.
+  return extractToolObjects(body);
+}
+
+function tryParseToolArray(
+  raw: string,
+): { name: string; args: Record<string, unknown> }[] {
   let parsed: unknown;
   try {
-    parsed = JSON.parse(m[1].trim());
+    parsed = JSON.parse(raw.trim());
   } catch {
     return [];
   }
-  if (!Array.isArray(parsed)) return [];
+  if (!Array.isArray(parsed)) {
+    // Single object form: {"name":"x","args":{}}
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      parsed = [parsed];
+    } else {
+      return [];
+    }
+  }
+  return normalizeToolItems(parsed as unknown[]);
+}
+
+function normalizeToolItems(
+  items: unknown[],
+): { name: string; args: Record<string, unknown> }[] {
   const out: { name: string; args: Record<string, unknown> }[] = [];
-  for (const item of parsed) {
+  for (const item of items) {
     if (
       item &&
       typeof item === 'object' &&
@@ -1149,6 +1211,76 @@ export function parseTextToolCalls(
             : {},
       });
     }
+  }
+  return out;
+}
+
+/** Extract balanced top-level `[...]` substrings (best-effort, string-aware). */
+function extractJsonArrays(text: string): string[] {
+  const out: string[] = [];
+  let i = 0;
+  while (i < text.length) {
+    if (text[i] !== '[') {
+      i++;
+      continue;
+    }
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    let end = -1;
+    for (let j = i; j < text.length; j++) {
+      const c = text[j]!;
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') {
+        inStr = true;
+        continue;
+      }
+      if (c === '[') depth++;
+      else if (c === ']') {
+        depth--;
+        if (depth === 0) {
+          end = j;
+          break;
+        }
+      }
+    }
+    if (end > i) {
+      out.push(text.slice(i, end + 1));
+      i = end + 1;
+    } else {
+      i++;
+    }
+  }
+  return out;
+}
+
+/** Regex-scan for individual tool call objects when full JSON parse fails. */
+function extractToolObjects(
+  text: string,
+): { name: string; args: Record<string, unknown> }[] {
+  const out: { name: string; args: Record<string, unknown> }[] = [];
+  // Match {"name":"tool", ... } with nested braces best-effort via extractJsonArrays
+  // on each {...} region is hard; use a simpler name+args capture.
+  const re =
+    /\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{[\s\S]*?\})\s*\}/g;
+  let match: RegExpExecArray | null;
+  while ((match = re.exec(text)) !== null) {
+    const name = match[1]!;
+    let args: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(match[2]!);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        args = parsed as Record<string, unknown>;
+      }
+    } catch {
+      // leave empty args
+    }
+    out.push({ name, args });
   }
   return out;
 }

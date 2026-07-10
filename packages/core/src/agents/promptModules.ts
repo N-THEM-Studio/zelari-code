@@ -98,20 +98,24 @@ The council shares a context window across turns. Follow these rules:
     type: 'tool-usage-guidelines',
     title: 'Tool Usage',
     priority: 60,
-    content: `# Tool Usage Guidelines
-
-- Use tools to create or modify durable state (tasks, ideas, documents, mind maps, milestones).
-- Tool calls go in a dedicated block at the end of your response using the exact format documented below.
-- Only use tools listed in the AVAILABLE TOOLS section. Never invent tool names.
-- Pass arguments as JSON. Required parameters must be present.
-- One tool call per entry. Multiple entries are allowed in a single block.
-
-Format:
-\`\`\`
----TOOLS---
-[{"name":"<toolName>","args":{...}}]
----END---
-\`\`\``,
+    content: [
+      '# Tool Usage Guidelines',
+      '',
+      '- Use tools to create or modify durable state (tasks, ideas, documents, mind maps, milestones).',
+      '- Tool calls go in a dedicated block at the end of your response using the exact format documented below.',
+      '- Only use tools listed in the AVAILABLE TOOLS section. Never invent tool names.',
+      '- Pass arguments as JSON. Required parameters must be present.',
+      '- One tool call per entry. Multiple entries are allowed in a single block.',
+      '',
+      'Format (ONE JSON array only - never multiple arrays stacked):',
+      '```',
+      '---TOOLS---',
+      '[{"name":"<toolName>","args":{"key":"value"}},{"name":"<toolName2>","args":{"key":"value"}}]',
+      '---END---',
+      '```',
+      'Rules: valid JSON; escape newlines inside strings as \\n; do NOT stack separate',
+      'JSON arrays (one tool per array) - put every call in the SAME outer array.',
+    ].join('\n'),
   },
   {
     type: 'custom',

@@ -61,6 +61,36 @@ describe("parseTextToolCalls", () => {
       '---TOOLS---\n[{"args":{"x":1}},{"name":"ok","args":{}}]\n---END---';
     expect(parseTextToolCalls(text)).toEqual([{ name: "ok", args: {} }]);
   });
+
+  it("merges multiple stacked JSON arrays (common model mistake)", () => {
+    // Observed in live plan-mode: one array per updateTask instead of one array.
+    const text = `---TOOLS---
+[{"name":"updateTask","args":{"taskId":"a","status":"done"}}]
+[{"name":"updateTask","args":{"taskId":"b","status":"in_progress"}}]
+[{"name":"updateTask","args":{"taskId":"c","status":"pending"}}]
+---END---`;
+    const out = parseTextToolCalls(text);
+    expect(out).toHaveLength(3);
+    expect(out.map((t) => t.args.taskId)).toEqual(["a", "b", "c"]);
+  });
+
+  it("recovers lightly over-escaped quotes", () => {
+    const text =
+      '---TOOLS---\n[{\\"name\\":\\"list_files\\",\\"args\\":{}}]\n---END---';
+    const out = parseTextToolCalls(text);
+    expect(out).toEqual([{ name: "list_files", args: {} }]);
+  });
+
+  it("strips markdown fences around the JSON body", () => {
+    const text = `---TOOLS---
+\`\`\`json
+[{"name":"read_file","args":{"path":"x.ts"}}]
+\`\`\`
+---END---`;
+    expect(parseTextToolCalls(text)).toEqual([
+      { name: "read_file", args: { path: "x.ts" } },
+    ]);
+  });
 });
 
 describe("normalizeTextToolArgs", () => {

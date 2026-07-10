@@ -555,10 +555,14 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             if (event.type === "message_delta") {
               assistantContent += event.delta;
               streamContent += event.delta;
+              // v1.8.1: hide <think>… from the live bubble while streaming so
+              // private reasoning never flashes in the TUI (full scrub also
+              // runs on turn end).
+              const displayContent = cleanAgentContent(streamContent);
               // Route through the throttled setter so per-token deltas (50-200/sec)
               // coalesce into ≤60 renders/sec instead of flickering the TUI.
               if (useLiveModel) {
-                setStreaming(commitStreaming, streamContent, Date.now(), {
+                setStreaming(commitStreaming, displayContent, Date.now(), {
                   ...(event.memberId ? { memberId: event.memberId } : {}),
                   ...(event.memberName ? { memberName: event.memberName } : {}),
                 });
@@ -566,7 +570,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 // Legacy single-array fallback (existing tests).
                 appendOrExtendStreamingAssistant(
                   commitStreaming,
-                  streamContent,
+                  displayContent,
                   Date.now(),
                   {
                     ...(event.memberId ? { memberId: event.memberId } : {}),
@@ -1075,10 +1079,15 @@ async function dispatchCouncilPromptImpl(
             streamMemberId = memberId;
           }
           streamContent += event.delta;
-          setStreaming(commitStreaming, streamContent, event.ts, {
-            ...(event.memberId ? { memberId: event.memberId } : {}),
-            ...(event.memberName ? { memberName: event.memberName } : {}),
-          });
+          setStreaming(
+            commitStreaming,
+            cleanAgentContent(streamContent),
+            event.ts,
+            {
+              ...(event.memberId ? { memberId: event.memberId } : {}),
+              ...(event.memberName ? { memberName: event.memberName } : {}),
+            },
+          );
         } else {
           // Legacy single-array fallback. Extend the trailing streaming bubble
           // only when it belongs to the SAME member — otherwise one specialist's
@@ -1091,9 +1100,10 @@ async function dispatchCouncilPromptImpl(
               last.id.startsWith("streaming-") &&
               (last.memberId ?? null) === (event.memberId ?? null)
             ) {
+              const nextContent = cleanAgentContent(last.content + event.delta);
               return [
                 ...prev.slice(0, -1),
-                { ...last, content: last.content + event.delta },
+                { ...last, content: nextContent },
               ];
             }
             return [
@@ -1101,7 +1111,7 @@ async function dispatchCouncilPromptImpl(
               {
                 id: `streaming-${crypto.randomUUID()}`,
                 role: "assistant",
-                content: event.delta,
+                content: cleanAgentContent(event.delta),
                 ts: event.ts,
                 ...(event.memberId ? { memberId: event.memberId } : {}),
                 ...(event.memberName ? { memberName: event.memberName } : {}),
