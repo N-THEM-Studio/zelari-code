@@ -23,6 +23,37 @@ import {
  * Glob syntax: `*`, `?`, `[abc]`, `**` (recursive). See _walk.ts.
  */
 
+/**
+ * Coerce a model-emitted string OR string[] into string[].
+ * Models often pass `include: "index.html"` or `include: "*.ts"` instead of
+ * `["index.html"]` — without coercion Zod rejects with
+ * "expected array, received string" and the whole tool call fails (v1.8.1).
+ *
+ * Kept OUT of the Zod schema (no `.transform`) so `toJSONSchema` still works
+ * for LLM function-calling definitions.
+ */
+export function coerceStringList(value: unknown, fallback: string[]): string[] {
+  if (value === undefined || value === null) return fallback;
+  if (Array.isArray(value)) {
+    const cleaned = value.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+    return cleaned.length > 0 ? cleaned : fallback;
+  }
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (!s) return fallback;
+    // Allow comma-separated globs: "*.ts,*.tsx"
+    if (s.includes(',') && !s.includes('{')) {
+      const parts = s.split(',').map((x) => x.trim()).filter(Boolean);
+      return parts.length > 0 ? parts : fallback;
+    }
+    return [s];
+  }
+  return fallback;
+}
+
+/** Accept string OR string[] so model-emitted bare strings pass validation. */
+const stringOrStringArray = z.union([z.string(), z.array(z.string())]);
+
 const GrepContentArgsSchema = z.object({
   /** File OR directory to search (relative to cwd or absolute). */
   path: z.string().min(1),
@@ -33,15 +64,16 @@ const GrepContentArgsSchema = z.object({
   /** Max matches returned (total matches still counted). */
   maxMatches: z.number().int().positive().max(1000).default(50),
   /**
-   * Glob patterns to INCLUDE when path is a directory (e.g. ['*.ts', '*.tsx']).
+   * Glob pattern(s) to INCLUDE when path is a directory.
+   * Accepts a string OR string[] (models often emit a bare string).
    * Default ['*'] = all files. Ignored when path is a file.
    */
-  include: z.array(z.string()).default(['*']),
+  include: stringOrStringArray.optional().default(['*']),
   /**
-   * Glob patterns to EXCLUDE when path is a directory (e.g. ['*.test.ts']).
-   * Defaults to common noise dirs. Ignored when path is a file.
+   * Glob pattern(s) to EXCLUDE when path is a directory.
+   * Accepts a string OR string[]. Defaults to common noise dirs.
    */
-  exclude: z.array(z.string()).default(DEFAULT_EXCLUDES),
+  exclude: stringOrStringArray.optional().default(DEFAULT_EXCLUDES),
   /** Max recursion depth when path is a directory (default 8). */
   maxDepth: z.number().int().positive().max(15).default(8),
 });
@@ -126,8 +158,9 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
   description:
     'Regex search for content in a file OR recursively in a directory. ' +
     'When path is a directory, include/exclude globs filter which files are searched ' +
-    '(default: all files, excluding node_modules/dist/.git/etc.). Returns matches with ' +
-    'line numbers and surrounding context. Single-file mode preserves v0.3.x behavior.',
+    '(default: all files, excluding node_modules/dist/.git/etc.). ' +
+    'include/exclude accept a single glob string (e.g. "*.ts") OR an array of globs. ' +
+    'Returns matches with line numbers and surrounding context.',
   permissions: ['read'],
   timeoutMs: 30000,
   inputSchema: GrepContentArgsSchema,
@@ -135,6 +168,9 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
     try {
       const absRoot = path.isAbsolute(args.path) ? args.path : path.join(ctx.cwd, args.path);
       const regex = new RegExp(args.pattern, 'gm');
+      // Coerce model-friendly string|string[] into string[] for the walker.
+      const include = coerceStringList(args.include, ['*']);
+      const exclude = coerceStringList(args.exclude, DEFAULT_EXCLUDES);
 
       // ── Single-file mode ────────────────────────────────────────
       if (!(await isDirectory(absRoot))) {
@@ -150,8 +186,8 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
 
       // ── Recursive (directory) mode ──────────────────────────────
       const allEntries: FileEntry[] = [];
-      await walk(absRoot, '', 0, args.maxDepth, args.exclude, allEntries, ctx.signal);
-      const matchedFiles = filterByInclude(allEntries, args.include);
+      await walk(absRoot, '', 0, args.maxDepth, exclude, allEntries, ctx.signal);
+      const matchedFiles = filterByInclude(allEntries, include);
 
       const allMatches: GrepMatch[] = [];
       let totalMatches = 0;

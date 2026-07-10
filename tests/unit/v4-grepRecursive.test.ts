@@ -41,6 +41,40 @@ function run(rawArgs: Record<string, unknown>) {
 }
 
 describe('grep_content (v0.4.0: recursive mode)', () => {
+  describe('include/exclude coercion (v1.8.1)', () => {
+    it('accepts include as a bare string (models often omit the array)', () => {
+      // Must not throw — previously Zod required array-only and the tool
+      // failed with "expected array, received string".
+      const parsed = GrepContentArgsSchema.parse({
+        path: 'src',
+        pattern: 'foo',
+        include: '*.ts',
+      });
+      expect(parsed.include).toBe('*.ts');
+    });
+
+    it('accepts include as a string array (canonical form)', () => {
+      const parsed = GrepContentArgsSchema.parse({
+        path: 'src',
+        pattern: 'foo',
+        include: ['*.ts', '*.tsx'],
+      });
+      expect(parsed.include).toEqual(['*.ts', '*.tsx']);
+    });
+
+    it('defaults include to ["*"] when omitted', () => {
+      const parsed = GrepContentArgsSchema.parse({ path: 'src', pattern: 'foo' });
+      expect(parsed.include).toEqual(['*']);
+    });
+
+    it('coerces bare string include through execute (recursive mode)', async () => {
+      const { coerceStringList } = await import('@zelari/core/harness/tools/builtin/search');
+      expect(coerceStringList('*.ts', ['*'])).toEqual(['*.ts']);
+      expect(coerceStringList(['a', 'b'], ['*'])).toEqual(['a', 'b']);
+      expect(coerceStringList(undefined, ['*'])).toEqual(['*']);
+    });
+  });
+
   describe('single-file mode (backward compat)', () => {
     it('matches a regex in a single file', async () => {
       await makeTree({ 'app.ts': 'hello world\nfoo bar\nhello again' });

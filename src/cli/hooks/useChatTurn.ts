@@ -649,38 +649,51 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               const all = h.getMessages();
               const seedLen = 1 /*system*/ + historySeedLen + 1 /*user*/;
               if (all.length > seedLen) {
-                appendMessages(all.slice(seedLen));
+                // Strip think blocks from history so the next turn does not
+                // re-feed private reasoning (and so short answers stay clean).
+                appendMessages(
+                  all.slice(seedLen).map((m) =>
+                    m.role === "assistant" && m.content
+                      ? { ...m, content: cleanAgentContent(m.content) }
+                      : m,
+                  ),
+                );
               }
             }
           } catch {
             // Non-fatal: a snapshot failure must never break the turn.
           }
-          // v1.6.0/v1.8.0: clarifying-question picker + lastClarification for
-          // short-answer anchoring. Rolling history already binds answers;
-          // setLastClarification covers compaction edge cases.
+          // v1.8.1: ALWAYS strip <think>/QUESTION private channels from the
+          // display transcript after a successful turn — not only when a
+          // clarifying picker opens. Otherwise GLM/MiniMax reasoning leaks
+          // into the TUI as visible assistant prose.
           if (turnSucceeded && assistantContent) {
             try {
+              setMessages((prev) => {
+                let changed = false;
+                const next = prev.map((m) => {
+                  if (m.role !== "assistant") return m;
+                  if (
+                    !m.content.includes("<think") &&
+                    !m.content.includes("<thinking") &&
+                    !m.content.includes("---QUESTION---")
+                  ) {
+                    return m;
+                  }
+                  const cleaned = cleanAgentContent(m.content);
+                  if (cleaned === m.content) return m;
+                  changed = true;
+                  return { ...m, content: cleaned };
+                });
+                return changed ? next : prev;
+              });
+
               const clar = parseClarificationRequest(assistantContent);
               if (clar && clar.choices && clar.choices.length >= 2) {
                 setLastClarification({
                   question: clar.question,
                   choices: clar.choices,
                 });
-                // Strip the raw ---QUESTION--- block from the finalized
-                // assistant message so the display shows prose, not JSON.
-                const cleaned = cleanAgentContent(assistantContent);
-                if (cleaned !== assistantContent) {
-                  setMessages((prev) => {
-                    const next = [...prev];
-                    for (let i = next.length - 1; i >= 0; i--) {
-                      if (next[i].role === "assistant") {
-                        next[i] = { ...next[i], content: cleaned };
-                        break;
-                      }
-                    }
-                    return next;
-                  });
-                }
                 if (setPicker) {
                   setPicker({
                     kind: "clarification",
@@ -692,7 +705,6 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   });
                 }
               } else {
-                // Free-form answer path next turn — clear stale question.
                 setLastClarification(null);
               }
             } catch {

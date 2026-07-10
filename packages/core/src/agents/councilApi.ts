@@ -242,15 +242,31 @@ export function parseClarificationRequest(text: string): ClarificationRequest | 
 }
 
 export function parseThinking(text: string): string {
-  const match = text.match(/<think>([\s\S]*?)<\/think>/);
-  return match ? match[1].trim() : '';
+  // Prefer complete blocks; fall back to unclosed trailing block (common mid-stream).
+  const complete = text.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
+  if (complete) return complete[1].trim();
+  const open = text.match(/<think(?:ing)?>([\s\S]*)$/i);
+  return open ? open[1].trim() : '';
 }
 
+/**
+ * Strip model "private" channels from text shown to the user / re-fed as
+ * history. Covers:
+ *   - complete + unclosed `<think>` / `<thinking>` (GLM/MiniMax style)
+ *   - MiniMax XML tool-call wrappers
+ *   - clarifying-question JSON blocks
+ *
+ * Without unclosed-tag stripping, streamed thinking that never got a closing
+ * tag leaked into the TUI as visible assistant prose (v1.8.1).
+ */
 export function cleanAgentContent(text: string): string {
   return text
-    .replace(/<think>[\s\S]*?<\/think>/g, '')
+    .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+    .replace(/<think(?:ing)?>[\s\S]*$/gi, '')
+    .replace(/<\/think(?:ing)?>/gi, '')
     .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '')
     .replace(/---QUESTION---[\s\S]*?---END---/g, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
