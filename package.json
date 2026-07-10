@@ -35,6 +35,9 @@
     "test:watch": "vitest",
     "smoke": "node bin/zelari-code.js --version",
     "verify:council": "npm run build --workspace=@zelari/core && node scripts/verify-council.mjs",
+    "desktop:install": "npm install --prefix apps/desktop",
+    "desktop:dev": "npm run tauri:dev --prefix apps/desktop",
+    "desktop:build": "npm run tauri:build --prefix apps/desktop",
     "postinstall": "node scripts/postinstall.mjs",
     "prepublishOnly": "node scripts/prepublish.mjs"
   },

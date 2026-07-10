@@ -68,6 +68,19 @@ npm install -g zelari-code
 zelari-code
 ```
 
+### Optional: Zelari Desktop (Tauri)
+
+An installable GUI shell lives in `apps/desktop/` (branch `feat/desktop-tauri` and later). It does **not** replace the CLI — it streams `zelari-code --headless` into a modern chat UI.
+
+```bash
+npm run build                 # CLI side-car
+npm run desktop:install
+npm run desktop:dev           # Tauri dev window
+# npm run desktop:build       # MSI / NSIS / DMG / AppImage
+```
+
+See [apps/desktop/README.md](./apps/desktop/README.md). Requires Rust + Node ≥ 20.
+
 **Prerequisites:**
 - **Node.js ≥ 20** — required. Without it the agent cannot run `npm`/`tsc`/builds, so zelari-code refuses to boot.
 - **Git** — recommended. Without it, `/diff`, `/undo` and the git sidebar are disabled. Install from <https://git-scm.com>.

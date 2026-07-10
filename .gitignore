@@ -7,6 +7,11 @@ coverage/
 *.tsbuildinfo
 packages/*/dist/
 
+# Desktop (Tauri) — keep apps/desktop source, ignore build artifacts
+apps/desktop/node_modules/
+apps/desktop/dist/
+apps/desktop/src-tauri/target/
+
 # Hermes local agent state (plans, audit reports, session logs)
 .hermes/
 
