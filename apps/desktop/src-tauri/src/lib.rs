@@ -707,6 +707,483 @@ fn cancel_run(state: State<'_, Arc<RunState>>) -> Result<(), String> {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct GitStatusArgs {
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitFileChangeDto {
+    path: String,
+    added: Option<i64>,
+    removed: Option<i64>,
+    untracked: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct GitStatusDto {
+    is_repo: bool,
+    branch: Option<String>,
+    files: Vec<GitFileChangeDto>,
+    cwd: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
+    let mut c = Command::new("git");
+    c.arg("-C").arg(cwd).args(args);
+    #[cfg(windows)]
+    {
+        c.creation_flags(CREATE_NO_WINDOW);
+    }
+    let out = c.output().ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+}
+
+/// Lightweight git snapshot for the desktop right rail (branch + changed files).
+#[tauri::command]
+fn get_git_status(args: GitStatusArgs) -> Result<GitStatusDto, String> {
+    let cwd = args
+        .cwd
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    let inside = git_output(&cwd, &["rev-parse", "--is-inside-work-tree"]);
+    if inside.as_deref().map(|s| s.trim()) != Some("true") {
+        return Ok(GitStatusDto {
+            is_repo: false,
+            branch: None,
+            files: vec![],
+            cwd: cwd.display().to_string(),
+            error: None,
+        });
+    }
+
+    let branch = git_output(&cwd, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let mut by_path: std::collections::BTreeMap<String, GitFileChangeDto> =
+        std::collections::BTreeMap::new();
+
+    let parse_numstat = |out: &str, map: &mut std::collections::BTreeMap<String, GitFileChangeDto>| {
+        for line in out.lines() {
+            if line.trim().is_empty() {
+                continue;
+            }
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let added = if parts[0] == "-" {
+                None
+            } else {
+                parts[0].parse::<i64>().ok()
+            };
+            let removed = if parts[1] == "-" {
+                None
+            } else {
+                parts[1].parse::<i64>().ok()
+            };
+            let mut path = parts[2..].join("\t");
+            // Collapse rename "old => new"
+            if let Some(idx) = path.rfind(" => ") {
+                path = path[idx + 4..].to_string();
+            }
+            let entry = map.entry(path.clone()).or_insert(GitFileChangeDto {
+                path: path.clone(),
+                added: Some(0),
+                removed: Some(0),
+                untracked: false,
+            });
+            entry.untracked = false;
+            entry.added = match (entry.added, added) {
+                (Some(a), Some(b)) => Some(a + b),
+                (None, _) | (_, None) => None,
+            };
+            entry.removed = match (entry.removed, removed) {
+                (Some(a), Some(b)) => Some(a + b),
+                (None, _) | (_, None) => None,
+            };
+        }
+    };
+
+    if let Some(u) = git_output(&cwd, &["diff", "--numstat"]) {
+        parse_numstat(&u, &mut by_path);
+    }
+    if let Some(s) = git_output(&cwd, &["diff", "--cached", "--numstat"]) {
+        parse_numstat(&s, &mut by_path);
+    }
+    if let Some(status) = git_output(&cwd, &["status", "--porcelain=v1"]) {
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("?? ") {
+                let path = rest.trim().trim_matches('"').to_string();
+                if path.is_empty() {
+                    continue;
+                }
+                by_path.entry(path.clone()).or_insert(GitFileChangeDto {
+                    path,
+                    added: None,
+                    removed: None,
+                    untracked: true,
+                });
+            }
+        }
+    }
+
+    let mut files: Vec<GitFileChangeDto> = by_path.into_values().collect();
+    files.sort_by(|a, b| {
+        let churn = |f: &GitFileChangeDto| {
+            if f.untracked {
+                return -1i64;
+            }
+            f.added.unwrap_or(0) + f.removed.unwrap_or(0)
+        };
+        churn(b).cmp(&churn(a)).then_with(|| a.path.cmp(&b.path))
+    });
+    // Cap list for UI
+    files.truncate(40);
+
+    Ok(GitStatusDto {
+        is_repo: true,
+        branch,
+        files,
+        cwd: cwd.display().to_string(),
+        error: None,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ListDirArgs {
+    /// Absolute directory to list. When None, uses `cwd` (or process cwd).
+    #[serde(default)]
+    path: Option<String>,
+    /// Project root / workdir for sandbox. Listing is confined under this root.
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DirEntryDto {
+    name: String,
+    path: String,
+    is_dir: bool,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ListDirDto {
+    path: String,
+    entries: Vec<DirEntryDto>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+fn is_hidden_noise_name(name: &str) -> bool {
+    matches!(
+        name,
+        "node_modules"
+            | ".git"
+            | "target"
+            | "dist"
+            | ".next"
+            | ".turbo"
+            | "coverage"
+            | "__pycache__"
+            | ".venv"
+            | "venv"
+    )
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrintMcpArgs {
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[tauri::command]
+fn print_mcp(args: PrintMcpArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv = vec!["--print-mcp".to_string()];
+    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--cwd".into());
+        argv.push(cwd.to_string());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --print-mcp JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetMcpArgs {
+    name: String,
+    command: String,
+    #[serde(default)]
+    args: Option<Vec<String>>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    enabled: Option<bool>,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[tauri::command]
+fn set_mcp(args: SetMcpArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv = vec![
+        "--set-mcp".to_string(),
+        "--name".into(),
+        args.name,
+        "--command".into(),
+        args.command,
+        "--scope".into(),
+        args.scope.unwrap_or_else(|| "user".into()),
+    ];
+    if let Some(en) = args.enabled {
+        argv.push("--enabled".into());
+        argv.push(if en { "true".into() } else { "false".into() });
+    }
+    if let Some(a) = args.args {
+        argv.push("--args".into());
+        argv.push(serde_json::to_string(&a).map_err(|e| e.to_string())?);
+    }
+    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--cwd".into());
+        argv.push(cwd.to_string());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --set-mcp JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoveMcpArgs {
+    name: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[tauri::command]
+fn remove_mcp(args: RemoveMcpArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv = vec![
+        "--remove-mcp".to_string(),
+        "--name".into(),
+        args.name,
+        "--scope".into(),
+        args.scope.unwrap_or_else(|| "user".into()),
+    ];
+    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--cwd".into());
+        argv.push(cwd.to_string());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --remove-mcp JSON:\n{raw}"))
+}
+
+#[tauri::command]
+fn print_ssh_targets() -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let raw = run_cli_capture(&node, &cli, &["--print-ssh-targets"])?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --print-ssh-targets JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetSshTargetArgs {
+    /// Full target object as JSON string or structured fields via `json`
+    json: String,
+}
+
+#[tauri::command]
+fn set_ssh_target(args: SetSshTargetArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let raw = run_cli_capture(
+        &node,
+        &cli,
+        &["--set-ssh-target", "--json", &args.json],
+    )?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --set-ssh-target JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SshIdArgs {
+    id: String,
+}
+
+#[tauri::command]
+fn remove_ssh_target(args: SshIdArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let raw = run_cli_capture(&node, &cli, &["--remove-ssh-target", "--id", &args.id])?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --remove-ssh-target JSON:\n{raw}"))
+}
+
+#[tauri::command]
+fn test_ssh_target(args: SshIdArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    // test may exit non-zero on failure but still print JSON
+    let mut cmd = spawn_cli_base(&node, &cli, None);
+    cmd.arg("--test-ssh-target").arg("--id").arg(&args.id);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to spawn zelari-code: {e}"))?;
+    let out = String::from_utf8_lossy(&output.stdout).to_string();
+    if let Some(v) = parse_cli_json_stdout(&out) {
+        return Ok(v);
+    }
+    let err = String::from_utf8_lossy(&output.stderr).to_string();
+    Err(if !err.trim().is_empty() {
+        err
+    } else {
+        out
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrintSshPubkeyArgs {
+    path: String,
+}
+
+#[tauri::command]
+fn print_ssh_pubkey(args: PrintSshPubkeyArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut cmd = spawn_cli_base(&node, &cli, None);
+    cmd.arg("--print-ssh-pubkey").arg("--path").arg(&args.path);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let output = cmd
+        .output()
+        .map_err(|e| format!("Failed to spawn zelari-code: {e}"))?;
+    let out = String::from_utf8_lossy(&output.stdout).to_string();
+    if let Some(v) = parse_cli_json_stdout(&out) {
+        return Ok(v);
+    }
+    let err = String::from_utf8_lossy(&output.stderr).to_string();
+    Err(if !err.trim().is_empty() {
+        err
+    } else {
+        out
+    })
+}
+
+/// List one directory level under the project workdir (lazy file tree).
+#[tauri::command]
+fn list_dir(args: ListDirArgs) -> Result<ListDirDto, String> {
+    let root = args
+        .cwd
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+
+    let root_canon = fs::canonicalize(&root).unwrap_or(root.clone());
+
+    let target = match args.path.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(p) => PathBuf::from(p),
+        None => root.clone(),
+    };
+
+    let target_canon = match fs::canonicalize(&target) {
+        Ok(p) => p,
+        Err(e) => {
+            return Ok(ListDirDto {
+                path: target.display().to_string(),
+                entries: vec![],
+                error: Some(format!("Cannot open: {e}")),
+            });
+        }
+    };
+
+    // Sandbox: listing must stay under project root
+    if !target_canon.starts_with(&root_canon) {
+        return Err("Path is outside the open project folder".into());
+    }
+
+    if !target_canon.is_dir() {
+        return Ok(ListDirDto {
+            path: target_canon.display().to_string(),
+            entries: vec![],
+            error: Some("Not a directory".into()),
+        });
+    }
+
+    let mut entries: Vec<DirEntryDto> = Vec::new();
+    let rd = match fs::read_dir(&target_canon) {
+        Ok(r) => r,
+        Err(e) => {
+            return Ok(ListDirDto {
+                path: target_canon.display().to_string(),
+                entries: vec![],
+                error: Some(e.to_string()),
+            });
+        }
+    };
+
+    for ent in rd.flatten() {
+        let name = ent.file_name().to_string_lossy().to_string();
+        if name == "." || name == ".." {
+            continue;
+        }
+        if is_hidden_noise_name(&name) {
+            continue;
+        }
+        let meta = match ent.metadata() {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        let path = ent.path().display().to_string();
+        entries.push(DirEntryDto {
+            name,
+            path,
+            is_dir: meta.is_dir(),
+        });
+        if entries.len() >= 200 {
+            break;
+        }
+    }
+
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
+    });
+
+    Ok(ListDirDto {
+        path: target_canon.display().to_string(),
+        entries,
+        error: None,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct RunTaskArgs {
     prompt: String,
     #[serde(default = "default_mode")]
@@ -1081,7 +1558,17 @@ pub fn run() {
             check_cli_update,
             update_cli,
             run_task,
-            cancel_run
+            cancel_run,
+            get_git_status,
+            list_dir,
+            print_mcp,
+            set_mcp,
+            remove_mcp,
+            print_ssh_targets,
+            set_ssh_target,
+            remove_ssh_target,
+            test_ssh_target,
+            print_ssh_pubkey
         ])
         .run(tauri::generate_context!())
         .expect("error while running Zelari Desktop");

@@ -147,12 +147,14 @@ export function ProviderModelBar({
   }, [provider]);
 
   return (
-    <div className="provider-bar">
-      <label className="field-inline">
-        <span>Provider</span>
+    <div className="control-cluster control-cluster-model provider-bar">
+      <div className="toolbar-select-group">
         <select
+          className="toolbar-select toolbar-select-provider"
           value={provider}
           disabled={disabled || !providers.length}
+          aria-label="Provider"
+          title="Provider"
           onChange={(e) => onProviderChange(e.target.value)}
         >
           {!providers.length && (
@@ -165,12 +167,12 @@ export function ProviderModelBar({
             </option>
           ))}
         </select>
-      </label>
-      <label className="field-inline">
-        <span>Model</span>
         <select
+          className="toolbar-select toolbar-select-model"
           value={models.includes(model) ? model : model || ""}
           disabled={disabled || discovering}
+          aria-label="Model"
+          title="Model"
           onFocus={() => void refreshModels(false)}
           onChange={(e) => onModelChange(e.target.value)}
         >
@@ -183,21 +185,20 @@ export function ProviderModelBar({
             </option>
           ))}
           {!models.length && (
-            <option value="">
-              {discovering ? "Loading…" : "—"}
-            </option>
+            <option value="">{discovering ? "Loading…" : "—"}</option>
           )}
         </select>
-      </label>
-      <button
-        type="button"
-        className="btn-ghost btn-discover"
-        disabled={disabled || discovering || !provider}
-        title="Refresh model list from provider API"
-        onClick={() => void refreshModels(true)}
-      >
-        {discovering ? "…" : "↻"}
-      </button>
+        <button
+          type="button"
+          className="btn-ghost btn-discover toolbar-discover"
+          disabled={disabled || discovering || !provider}
+          title="Refresh model list from provider API"
+          aria-label="Refresh models"
+          onClick={() => void refreshModels(true)}
+        >
+          {discovering ? "…" : "↻"}
+        </button>
+      </div>
     </div>
   );
 }

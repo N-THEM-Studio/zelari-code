@@ -123,26 +123,90 @@ export function maybeAnchorShortAnswer(userText: string): string | null {
  * Build a compact text block of recent conversation for council/zelari paths
  * that do not feed full AgentMessage[] into every member (token control).
  * Includes the last few user/assistant turns only.
+ *
+ * Uses **module** history (TUI long-lived process).
  */
 export function formatHistoryForCouncil(maxTurns = 4): string {
-  if (history.length === 0) return '';
-  const lines: string[] = [];
-  // Walk from the end; collect up to maxTurns user+assistant pairs.
+  return formatHistoryMessages(history, maxTurns);
+}
+
+/**
+ * Same as formatHistoryForCouncil but from an explicit message list
+ * (Desktop headless: each spawn is a new process, module history is empty).
+ */
+export function formatHistoryMessages(
+  messages: readonly AgentMessage[],
+  maxTurns = 6,
+  maxTotalChars = 12_000,
+): string {
+  if (messages.length === 0) return '';
   let turns = 0;
   const chunk: string[] = [];
-  for (let i = history.length - 1; i >= 0 && turns < maxTurns; i--) {
-    const m = history[i];
+  for (let i = messages.length - 1; i >= 0 && turns < maxTurns; i--) {
+    const m = messages[i];
     if (m.role === 'user') {
-      chunk.push(`User: ${truncate(m.content, 400)}`);
+      chunk.push(`User: ${truncate(m.content, 800)}`);
       turns += 1;
     } else if (m.role === 'assistant' && m.content.trim()) {
-      chunk.push(`Assistant: ${truncate(m.content, 600)}`);
+      chunk.push(`Assistant: ${truncate(m.content, 2000)}`);
     }
   }
   if (chunk.length === 0) return '';
-  lines.push('## Prior conversation (rolling context)');
-  lines.push(...chunk.reverse());
-  return lines.join('\n');
+  let body = ['## Prior conversation (rolling context)', ...chunk.reverse()].join(
+    '\n',
+  );
+  if (body.length > maxTotalChars) {
+    body = `…\n${body.slice(body.length - maxTotalChars)}`;
+  }
+  return body;
+}
+
+const SHORT_CONTINUE =
+  /^(procedi|continua|continue|go\s*ahead|go|ok|okay|sì|si|yes|vai|avanti|next|proceed)$/i;
+
+/**
+ * Build the user task for headless council/zelari with multi-turn context.
+ * Desktop spawns a fresh process each message — history must come from
+ * `opts.history`, not the in-process module store.
+ */
+export function buildCouncilTaskWithHistory(
+  task: string,
+  prior: readonly AgentMessage[] | undefined,
+): string {
+  const messages = prior ?? [];
+  const trimmed = task.trim();
+
+  // Prefer explicit short-answer anchor when a clarifying question was stored
+  // (TUI). For headless, also treat continue-verbs against last assistant.
+  let userPart = maybeAnchorShortAnswer(task) ?? task;
+
+  if (
+    messages.length > 0 &&
+    (SHORT_CONTINUE.test(trimmed) ||
+      (trimmed.length <= 40 && !trimmed.includes('\n')))
+  ) {
+    const lastAsst = [...messages]
+      .reverse()
+      .find((m) => m.role === 'assistant' && m.content.trim());
+    if (lastAsst && SHORT_CONTINUE.test(trimmed)) {
+      userPart =
+        `The user says "${trimmed}" — continue from the prior conversation. ` +
+        `Do NOT restart from zero, do NOT re-ask for the overall goal, and do NOT ignore the prior plan/risks/decisions.\n\n` +
+        `## Prior assistant output (authoritative context)\n` +
+        `${truncate(lastAsst.content, 4500)}\n\n` +
+        `## Instruction\n` +
+        `Proceed with the next concrete steps implied by that context ` +
+        `(implementation when the work phase is build; otherwise the next planned actions).`;
+    }
+  }
+
+  const block = formatHistoryMessages(messages, 6, 12_000);
+  if (!block) return userPart;
+  // Avoid triple-duplicating if userPart already embeds prior assistant
+  if (userPart.includes('Prior assistant output')) {
+    return userPart;
+  }
+  return `${block}\n\n## Current user request\n${userPart}`;
 }
 
 function truncate(s: string, max: number): string {

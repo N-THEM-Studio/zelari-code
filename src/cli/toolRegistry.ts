@@ -34,6 +34,7 @@ import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { createAstTools } from './ast/tools.js';
 import { createSemanticTool } from './semantic/tools.js';
 import { createBrowserTool } from './browser/tools.js';
+import { createSshTools } from './ssh/tools.js';
 import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 import { cliToolToEnhanced, registerCustomTool } from '@zelari/core/skills';
@@ -202,6 +203,19 @@ export function createBuiltinToolRegistry(
       description: browserTool.description,
       permissions: browserTool.permissions ?? [],
     });
+  }
+
+  // SSH deploy/monitor tools — full registry only. Gated by ZELARI_SSH=0.
+  // Targets from ~/.zelari-code/ssh-targets.json; ssh_run is allowlist-only.
+  if (!readOnly && process.env.ZELARI_SSH !== '0') {
+    for (const t of createSshTools()) {
+      registry.register(t);
+      tools.push({
+        name: t.name,
+        description: t.description,
+        permissions: t.permissions ?? [],
+      });
+    }
   }
 
   // The `task` sub-agent tool — only in the full (non-read-only) registry.

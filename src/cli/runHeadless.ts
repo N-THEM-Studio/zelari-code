@@ -16,8 +16,12 @@
  */
 import { AgentHarness, type ProviderStreamFn } from '@zelari/core/harness';
 import type { AgentMessage, AgentToolSpec } from '@zelari/core/harness';
+import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import { cleanAgentContent } from '@zelari/core';
-import { maybeAnchorShortAnswer } from './hooks/conversationContext.js';
+import {
+  buildCouncilTaskWithHistory,
+  maybeAnchorShortAnswer,
+} from './hooks/conversationContext.js';
 import { createBuiltinToolRegistry } from './toolRegistry.js';
 import {
   emitEvent,
@@ -115,6 +119,49 @@ function planModeFromOpts(opts: HeadlessOptions): boolean {
   return (opts.phase ?? 'build') === 'plan';
 }
 
+let mcpExitHookInstalled = false;
+
+async function registerHeadlessMcp(
+  toolRegistry: ToolRegistry,
+  opts: HeadlessOptions,
+): Promise<void> {
+  try {
+    const { registerMcpTools, closeMcpClients } = await import('./mcp/mcpManager.js');
+    const mcp = await registerMcpTools(toolRegistry, process.cwd());
+    // Ensure MCP child processes are torn down when the headless process exits.
+    if (!mcpExitHookInstalled) {
+      mcpExitHookInstalled = true;
+      process.once('exit', () => {
+        try {
+          closeMcpClients();
+        } catch {
+          /* ignore */
+        }
+      });
+    }
+    if (mcp.registered.length > 0 && opts.output === 'json') {
+      emitEvent({
+        type: 'log',
+        message: `[headless] MCP tools: ${mcp.registered.length} registered`,
+      });
+    }
+    for (const w of mcp.warnings) {
+      if (opts.output === 'json') {
+        emitEvent({ type: 'log', message: `[mcp] ${w}` });
+      } else {
+        process.stderr.write(`[zelari-code --headless] [mcp] ${w}\n`);
+      }
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (opts.output === 'json') {
+      emitEvent({ type: 'log', message: `[mcp] registration skipped: ${msg}` });
+    } else {
+      process.stderr.write(`[zelari-code --headless] [mcp] registration skipped: ${msg}\n`);
+    }
+  }
+}
+
 async function runHeadlessSingle(
   opts: HeadlessOptions,
   provider: string,
@@ -125,6 +172,8 @@ async function runHeadlessSingle(
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     planMode: planModeFromOpts(opts),
   });
+  // Parity with TUI: project MCP tools must be available from Desktop/headless.
+  await registerHeadlessMcp(toolRegistry, opts);
   const tools: AgentToolSpec[] = toolRegistry.toOpenAITools().map((t) => ({
     name: t.function.name,
     description: t.function.description,
@@ -164,21 +213,43 @@ async function runHeadlessSingle(
           : 'BUILD phase: full tools; implement changes.',
       ].join('\n'),
     };
-    systemPrompt = buildSystemPrompt(headlessRole, {
-      tools: getAllTools(),
-      toolNames,
-      aiConfig: {
-        enabledSkills: [],
-        enabledTools: toolNames,
-        customPromptModules: [SINGLE_AGENT_IDENTITY_MODULE, {
-          type: 'language-policy',
-          title: 'Response Language',
-          priority: 5,
-          content: languageDirectiveContent,
-        }],
-        agentSkillConfigs: [],
+    const { loadProjectInstructions } = await import(
+      './workspace/projectInstructions.js'
+    );
+    const projectInstructions = loadProjectInstructions(process.cwd()).content;
+    let sshBlock = '';
+    try {
+      const { formatSshTargetsForPrompt } = await import('./ssh/targets.js');
+      sshBlock = formatSshTargetsForPrompt();
+    } catch {
+      /* optional */
+    }
+    const rolePrompt = [headlessRole.systemPrompt, sshBlock]
+      .filter(Boolean)
+      .join('\n\n');
+    systemPrompt = buildSystemPrompt(
+      { ...headlessRole, systemPrompt: rolePrompt },
+      {
+        tools: getAllTools(),
+        toolNames,
+        mode: 'agent',
+        projectInstructions: projectInstructions || undefined,
+        aiConfig: {
+          enabledSkills: [],
+          enabledTools: toolNames,
+          customPromptModules: [
+            SINGLE_AGENT_IDENTITY_MODULE,
+            {
+              type: 'language-policy',
+              title: 'Response Language',
+              priority: 5,
+              content: languageDirectiveContent,
+            },
+          ],
+          agentSkillConfigs: [],
+        },
       },
-    });
+    );
   } catch {
     systemPrompt = [
       'You are zelari-code, a CLI coding agent. Be concise and direct.',
@@ -316,7 +387,10 @@ async function runHeadlessSingle(
   return exitCode;
 }
 
-async function buildCouncilToolRegistry(planMode: boolean) {
+async function buildCouncilToolRegistry(
+  planMode: boolean,
+  opts?: HeadlessOptions,
+) {
   const { registry: toolRegistry } = createBuiltinToolRegistry({ planMode });
   const { createWorkspaceContext, createWorkspaceStubs } = await import('./workspace/stubs.js');
   const { createWorkspaceToolRegistry } = await import('./workspace/toolRegistry.js');
@@ -329,6 +403,9 @@ async function buildCouncilToolRegistry(planMode: boolean) {
     if (td) toolRegistry.register(td);
   }
   setWorkspaceStubs(createWorkspaceStubs(realCtx));
+  if (opts) {
+    await registerHeadlessMcp(toolRegistry, opts);
+  }
   return { toolRegistry, workspaceCtx: realCtx };
 }
 
@@ -340,14 +417,30 @@ async function runHeadlessCouncil(
 ): Promise<number> {
   const { dispatchCouncil } = await import('./councilDispatcher.js');
   const sessionId = crypto.randomUUID();
-  const { toolRegistry } = await buildCouncilToolRegistry(planModeFromOpts(opts));
+  const { toolRegistry } = await buildCouncilToolRegistry(
+    planModeFromOpts(opts),
+    opts,
+  );
   const { FeedbackStore } = await import('./councilFeedback.js');
   const feedbackStore = new FeedbackStore();
 
+  // Multi-turn: Desktop passes --history, but council used to ignore it →
+  // "procedi" looked like a brand-new empty request. Inject prior transcript
+  // into the user task and emit history_snapshot for the next turn.
+  const historySeed: AgentMessage[] = (opts.history ?? []).map((m) =>
+    m.role === 'assistant' && m.content
+      ? { ...m, content: cleanAgentContent(m.content, { stripQuestion: false }) }
+      : m,
+  );
+  const effectiveTask = buildCouncilTaskWithHistory(opts.task, historySeed);
+
   let exitCode = 0;
   const scrub = createStreamScrubber();
+  /** Last finished assistant blob this run (chairman / specialist). */
+  let lastAssistantText = '';
+  let currentAssistantText = '';
   try {
-    for await (const event of dispatchCouncil(opts.task, {
+    for await (const event of dispatchCouncil(effectiveTask, {
       apiKey: 'REDACTED',
       model,
       provider: 'openai-compatible',
@@ -359,9 +452,11 @@ async function runHeadlessCouncil(
     })) {
       if (event.type === 'message_start') {
         scrub.reset();
+        currentAssistantText = '';
       }
       if (event.type === 'message_delta' && typeof event.delta === 'string') {
         const cleanDelta = scrub.push(event.delta);
+        if (cleanDelta.length > 0) currentAssistantText += cleanDelta;
         if (opts.output === 'json') {
           if (cleanDelta.length > 0) emitEvent({ ...event, delta: cleanDelta });
         } else if (opts.output === 'plain' && cleanDelta.length > 0) {
@@ -369,10 +464,18 @@ async function runHeadlessCouncil(
         }
       } else {
         if (opts.output === 'json') emitEvent(event);
-        if (event.type === 'agent_end') {
+        if (event.type === 'message_end' || event.type === 'agent_end') {
           const tail = scrub.flush();
-          if (opts.output === 'plain' && tail.length > 0) process.stdout.write(tail);
-          if (event.reason === 'error') exitCode = 3;
+          if (tail.length > 0) {
+            currentAssistantText += tail;
+            if (opts.output === 'plain') process.stdout.write(tail);
+          }
+          if (currentAssistantText.trim()) {
+            lastAssistantText = currentAssistantText.trim();
+          }
+          if (event.type === 'agent_end' && event.reason === 'error') {
+            exitCode = 3;
+          }
         } else if (event.type === 'error' && event.severity === 'fatal') {
           exitCode = 2;
         }
@@ -383,6 +486,21 @@ async function runHeadlessCouncil(
       `[zelari-code --headless] council error: ${err instanceof Error ? err.message : String(err)}\n`,
     );
     return 2;
+  }
+
+  // Desktop multi-turn: append this turn so the next "procedi" has context.
+  if (opts.output === 'json') {
+    try {
+      const snapshot: AgentMessage[] = [
+        { role: 'user', content: opts.task },
+        ...(lastAssistantText
+          ? ([{ role: 'assistant', content: lastAssistantText }] as AgentMessage[])
+          : []),
+      ];
+      emitEvent({ type: 'history_snapshot', messages: snapshot });
+    } catch {
+      /* non-fatal */
+    }
   }
   return exitCode;
 }
@@ -410,7 +528,10 @@ async function runHeadlessZelari(
     hasPlan: hasWorkspacePlan(projectRoot),
   });
   const memory = await getMemoryBackend(projectRoot);
-  const { toolRegistry, workspaceCtx } = await buildCouncilToolRegistry(planModeFromOpts(opts));
+  const { toolRegistry, workspaceCtx } = await buildCouncilToolRegistry(
+    planModeFromOpts(opts),
+    opts,
+  );
   const feedbackStore = new FeedbackStore();
   const chairmanBudget = envNumber(process.env.ZELARI_MODE_MAX_TOOLS_LUCIFER, {
     default: 30,
@@ -425,12 +546,20 @@ async function runHeadlessZelari(
     }
   };
 
+  const historySeed: AgentMessage[] = (opts.history ?? []).map((m) =>
+    m.role === 'assistant' && m.content
+      ? { ...m, content: cleanAgentContent(m.content, { stripQuestion: false }) }
+      : m,
+  );
+  const missionTask = buildCouncilTaskWithHistory(opts.task, historySeed);
+
   // Surface the brief once so the desktop UI is not blank.
   emit(`[zelari] mission brief\n${JSON.stringify({ deliverable: brief.deliverableThisMission, mvp: brief.sliceMvp?.title }, null, 0)}`);
 
   let exitCode = 0;
+  let lastMissionAssistant = '';
   try {
-    const state = await runZelariMission(opts.task, brief, {
+    const state = await runZelariMission(missionTask, brief, {
       projectRoot,
       memory,
       emit,
@@ -521,6 +650,12 @@ async function runHeadlessZelari(
           // best-effort
         }
 
+        if (synthesisText.trim()) {
+          lastMissionAssistant = cleanAgentContent(synthesisText, {
+            stripQuestion: false,
+          });
+        }
+
         return {
           completionOk,
           ran: membersCompleted > 0 || synthesisText.length > 0,
@@ -541,6 +676,22 @@ async function runHeadlessZelari(
     return 2;
   } finally {
     await memory.close().catch(() => undefined);
+  }
+
+  if (opts.output === 'json') {
+    try {
+      emitEvent({
+        type: 'history_snapshot',
+        messages: [
+          { role: 'user', content: opts.task },
+          ...(lastMissionAssistant
+            ? ([{ role: 'assistant', content: lastMissionAssistant }] as AgentMessage[])
+            : []),
+        ],
+      });
+    } catch {
+      /* non-fatal */
+    }
   }
 
   return exitCode;

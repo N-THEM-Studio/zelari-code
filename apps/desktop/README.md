@@ -2,9 +2,9 @@
 
 Optional **Tauri 2** installable shell for [zelari-code](https://github.com/N-THEM-Studio/zelari-code).
 
-The **CLI stays the product of record** (`npm i -g zelari-code`). This app is a modern chat UI (Claude Desktop / Codex / Antigravity-inspired) that spawns:
+The **CLI stays the product of record** (`npm i -g zelari-code`). This app is a modern chat UI that spawns:
 
-> **Installer ≠ CLI.** Downloading a Desktop release from GitHub does **not** upgrade the global `zelari-code` package. Use Settings → **CLI package (npm)** → **Update CLI**, or run `npm i -g zelari-code@latest`.
+> **Installer ≠ CLI.** Downloading a Desktop release from GitHub does **not** install or upgrade the global `zelari-code` package. The app is a UI shell that spawns the CLI headless.
 
 ```bash
 node bin/zelari-code.js --headless --task "…" --output json
@@ -12,12 +12,23 @@ node bin/zelari-code.js --headless --task "…" --output json
 
 and streams NDJSON BrainEvents into the window.
 
+### First launch (end users)
+
+If Node or the CLI is missing, Desktop shows a **Setup** overlay:
+
+1. **Node.js ≥ 20** on PATH ([nodejs.org](https://nodejs.org/) LTS)
+2. **Install CLI** — one-click `npm install -g zelari-code` (when Node is present), or run the command manually
+3. **API key** — Settings → Provider
+
+You can also use Settings → **Updates** → **Update CLI** later. Monorepo developers can point at a local build with `ZELARI_CLI_PATH`.
+
 ## Requirements
 
 - Node.js ≥ 20
 - Rust toolchain (for Tauri)
 - On Windows: MSVC build tools / WebView2 (usually preinstalled on Win10/11)
 - A working Zelari CLI (monorepo build **or** global install)
+- For SSH targets: OpenSSH client (`ssh`) on PATH
 
 ## Develop
 
@@ -63,6 +74,7 @@ Artifacts land under `apps/desktop/src-tauri/target/release/bundle/` (msi/nsis o
 | **Mode** | Agent · Council · Zelari | `--mode agent\|council\|zelari` |
 | **Phase** | Plan · Build | `--phase plan\|build` |
 | **Provider / model** | from Settings / bar | `--provider` / `--model` |
+| **Open Folder** | workdir for this window | CLI `current_dir` |
 
 Settings (⚙) reads `zelari-code --print-config` and writes via `--set-config`.
 
@@ -73,17 +85,44 @@ Also supported from Settings / CLI:
 | Custom OpenAI base URL | `--set-config --provider openai-compatible --endpoint <url>` |
 | Store API key | `--set-key --provider <id> --key <secret>` |
 | Refresh models | `--discover-models --provider <id>` (also on model select open) |
+| MCP list / install | `--print-mcp` / `--set-mcp` / `--remove-mcp` |
+| SSH targets | `--print-ssh-targets` / `--set-ssh-target` / `--test-ssh-target` |
 
-Chats: Active / Archived filters, archive ⬇, delete × (localStorage).
+Chats: Active / Archived filters, archive ⬇, delete × (localStorage); multi-turn history via `--history-file`.
 
-Replies: light structured view (headings, lists, tables, code) without raw `#`/`**` artifacts; thinking animation; light duration/tool stats.
+Replies: light structured view (headings, lists, tables, code); tool calls as **ToolCallCard**; thinking animation; run stats.
 
-## Auto-update
+## Project panel
 
-Desktop uses **Tauri updater** → `https://github.com/N-THEM-Studio/zelari-code/releases/latest/download/latest.json`.
+**Files | Git** beside the chat — lazy directory tree under the open folder (Tauri `list_dir`).
 
-- **Settings → App updates** — check / download & install / relaunch  
-- On launch, a quiet check surfaces “update available” in the status line  
+## MCP Extensions
+
+Settings → **MCP Extensions**: curated catalog of common MCP servers. Install writes Claude-compatible entries to project or user `mcp.json` (`npx -y …` on demand). Full guide: [docs/GUIDA.md](../../docs/GUIDA.md#mcp-model-context-protocol).
+
+## SSH Connections
+
+Settings → **Connections**: register hosts for agent tools `ssh_status` / `ssh_run`.
+
+| Auth | Fields |
+|------|--------|
+| **Password** (default) | Host/IP, username, password, port |
+| **ssh-agent** | Host/IP, user — keys already in agent |
+| **File key pair** | Private key path + optional `.pub` (Load / Copy public key) |
+
+- Targets: `~/.zelari-code/ssh-targets.json`
+- Passwords only: `~/.zelari-code/ssh-secrets.json` (not sent to the model)
+- Remote commands must match the target **allowlist**
+- Kill switch: `ZELARI_SSH=0`
+
+Guide: [docs/GUIDA.md — SSH](../../docs/GUIDA.md#ssh-deploy--monitor).
+
+## Auto-update (two channels)
+
+| Channel | What | Where |
+|---------|------|--------|
+| **App** | Desktop binary | Tauri updater → GitHub Releases `latest.json` |
+| **CLI** | `zelari-code` on npm | Settings → Update CLI / topbar when outdated |
 
 ### Signing (maintainers)
 
@@ -102,17 +141,20 @@ GitHub Actions secrets:
 Public key is embedded in `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`.  
 `bundle.createUpdaterArtifacts: true` produces `.sig` + `latest.json` on release builds.
 
-## Non-goals (v0.1 shell)
+## Non-goals
 
 - Full rewrite of `@zelari/core` in Rust
 - Computer-use / OS input injection (planned as opt-in later)
 - Replacing the Ink TUI CLI
+- Interactive full SSH terminal (OpenSSH tools + config only)
 
 ## Architecture
 
 ```
-apps/desktop/          React + Vite UI
-apps/desktop/src-tauri Rust host (spawn CLI, emit events)
-bin/zelari-code.js     Existing CLI entry (unchanged)
-packages/core          Coding brain (unchanged)
+apps/desktop/          React + Vite UI (TitleBar, ProjectPanel, Settings, MCP, SSH)
+apps/desktop/src-tauri Rust host (spawn CLI, emit events, list_dir, IPC)
+bin/zelari-code.js     Existing CLI entry
+packages/core          Coding brain
+src/cli/ssh/           SSH targets + tools
+src/cli/mcp/           mcp.json I/O helpers
 ```

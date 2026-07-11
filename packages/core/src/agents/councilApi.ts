@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CouncilMessage, AgentRole } from '../types/index.js';
-import { getCouncilAgents, swapMembers } from './roles.js';
+import { getCouncilAgents, resolveRoleSystemPrompt, swapMembers } from './roles.js';
 import { getProviderTools, type ParsedToolCall } from './toolSchemas.js';
 import { buildSystemPrompt, computeAgentTools } from './systemPromptBuilder.js';
 import { getAllTools } from './tools.js';
@@ -315,6 +315,7 @@ function buildAgentMessages(
   aiConfig?: SystemPromptConfig,
   executableTools?: ReadonlySet<string> | null,
   runMode: CouncilRunMode = 'implementation',
+  languageModule?: SystemPromptModule,
 ): AgentMessage[] {
   // v0.7.5: the AVAILABLE TOOLS prompt block must match the schemas the
   // harness actually advertises. The v0.7.3 fix filtered the schemas
@@ -326,24 +327,43 @@ function buildAgentMessages(
   const toolNames = executableTools
     ? allToolNames.filter((n) => executableTools.has(n))
     : allToolNames;
-  const enhancedSystemPrompt = buildSystemPrompt(agent, {
+
+  // Merge language policy into custom modules so every primary council turn
+  // gets it (retries previously received the arg but never used it).
+  const mergedAiConfig: SystemPromptConfig | undefined = languageModule
+    ? {
+        enabledSkills: aiConfig?.enabledSkills ?? [],
+        enabledTools: aiConfig?.enabledTools ?? [],
+        agentSkillConfigs: aiConfig?.agentSkillConfigs ?? [],
+        customSkills: aiConfig?.customSkills,
+        customPromptModules: [
+          ...(aiConfig?.customPromptModules ?? []),
+          languageModule,
+        ],
+      }
+    : aiConfig;
+
+  // Mode-split: design mandatories only when runMode is design-phase.
+  const modeAwareAgent = {
+    ...agent,
+    systemPrompt: resolveRoleSystemPrompt(agent, runMode),
+  };
+
+  // Embed workspace/RAG once inside the system prompt (no second copy below).
+  const enhancedSystemPrompt = buildSystemPrompt(modeAwareAgent, {
     tools: getAllTools(),
     toolNames,
-    aiConfig,
+    aiConfig: mergedAiConfig,
     workspaceContext,
     ragContext,
+    mode: 'council',
+    includeWorkspaceInPrompt: true,
   });
   const messages: AgentMessage[] = [
     { role: 'system', content: enhancedSystemPrompt },
     { role: 'system', content: councilModeBanner(runMode, { isImplementer: agent.id === 'lucifer' }) },
     { role: 'system', content: 'IMPORTANT: Before making any tool calls or expensive operations, check if the information already exists in the shared context from previous agents. Avoid redundant work.' },
   ];
-  if (ragContext) {
-    messages.push({ role: 'system', content: `Relevant workspace context (from RAG retrieval):\n${ragContext}` });
-  }
-  if (workspaceContext) {
-    messages.push({ role: 'system', content: `Current workspace state:\n${workspaceContext}` });
-  }
   if (priorOutputs.length > 0) {
     const summary = priorOutputs.map((o) => `[${o.name} - ${o.role}]: ${o.content}`).join('\n\n');
     messages.push({ role: 'user', content: `Previous council members have said:\n${summary}\n\nOriginal user request: ${userMessage}` });
@@ -512,7 +532,7 @@ export async function* runCouncilPure(
       model: effectiveModel,
       provider: effectiveProvider,
       sessionId,
-      messages: buildAgentMessages(agent, userMessage, config.ragContext, config.workspaceContext, agentOutputs, config.aiConfig, executableNames, runMode),
+      messages: buildAgentMessages(agent, userMessage, config.ragContext, config.workspaceContext, agentOutputs, config.aiConfig, executableNames, runMode, councilLanguageModule),
       tools: agentTools,
       eventBus: config.eventBus,
       toolRegistry: config.tools,
@@ -700,7 +720,9 @@ export async function* runCouncilPure(
         '',
         anonymized,
         config.aiConfig,
-        executableNames, runMode,
+        executableNames,
+        runMode,
+        councilLanguageModule,
       ),
       tools: (() => {
         const oracleToolNames = filterExecutable(
@@ -879,7 +901,9 @@ export async function* runCouncilPure(
         config.workspaceContext,
         agentOutputs,
         config.aiConfig,
-        executableNames, runMode,
+        executableNames,
+        runMode,
+        councilLanguageModule,
       ),
       tools: chairmanTools,
       eventBus: config.eventBus,
@@ -1849,6 +1873,7 @@ export async function* runRetryTurnForMember(args: {
     args.aiConfig,
     args.executableTools,
     args.runMode ?? 'implementation',
+    args.languageModule,
   );
   const retryMessages = [
     ...baseMessages,

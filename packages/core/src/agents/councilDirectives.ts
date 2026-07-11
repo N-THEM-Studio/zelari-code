@@ -3,10 +3,8 @@ import type { SystemPromptModule } from '../types/systemTypes.js';
 /**
  * Council Directives — distilled and adapted from System.md.
  *
- * System.md is a 122KB Claude Fable 5 system prompt; most of it (Anthropic
- * product info, Claude identity, web/search behavior) is irrelevant to
- * AnathemaBrain. This module extracts only the *operational methodology* that
- * improves council agent behaviour:
+ * Distilled operational methodology for Zelari Code council agents
+ * (structured reasoning, tool use, quality, collaboration):
  *
  *   1. Structured multi-step reasoning (think → conclude).
  *   2. Tool-use protocol: when to ACT vs DESCRIBE.
@@ -41,21 +39,20 @@ export const TOOL_USE_PROTOCOL_DIRECTIVE: SystemPromptModule = {
   priority: 25,
   content: `# Tool-Use Protocol — Act, Don't Just Describe
 
-You have access to tools that operate on a real codebase: read and edit files, run shell commands, search the tree. Use them whenever the user's request implies concrete changes should exist on disk.
+You have tools for a real codebase (read/edit files, shell, search). Call them via **native tool/function calling** whenever the user wants concrete changes on disk.
 
-When to ACT (call a tool):
-- The request asks to create, build, generate, fix, or produce something concrete (a file, a component, a function, a config, a fix).
-- A deliverable would outlive this single message (written code, applied edits, verified commands).
+When to ACT:
+- Create, build, generate, fix, or produce durable artifacts (files, configs, verified commands).
 
-When to DESCRIBE only (no tool):
-- The request is a question, an explanation, a critique, a comparison, or a one-off analysis.
-- The Minosse role: evaluate, never create.
+When to DESCRIBE only:
+- Pure Q&A, critique, or analysis with no required disk change.
+- Minosse: evaluate; never create or mutate project files.
 
 Rules:
-- For code tasks: actually write/edit files (write_file, edit_file) and run commands (bash) to implement and verify — do not just describe what should be done.
-- Pass complete, well-formed arguments. Required parameters must be present.
-- Never invent tool names — use only the tools listed in your AVAILABLE TOOLS section.
-- After making changes, briefly name what you created/modified so downstream agents can build on it without re-reading everything.`,
+- Implement with write_file / edit_file / bash when that is the job — do not only describe.
+- Never invent tool names; only AVAILABLE TOOLS.
+- Complete, valid arguments for every call.
+- After changes, name what you created/modified for downstream members or the user.`,
 };
 
 export const OUTPUT_QUALITY_DIRECTIVE: SystemPromptModule = {

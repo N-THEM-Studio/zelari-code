@@ -31,6 +31,19 @@ import {
 import { loadSkillMdSkills } from "./skillsMd.js";
 import { listCodingSkills } from "@zelari/core/skills";
 import { getCurrentVersion } from "./updater.js";
+import {
+  listMcpServers,
+  removeMcpServer,
+  upsertMcpServer,
+} from "./mcp/mcpConfigIo.js";
+import {
+  listSshTargets,
+  readSshPublicKey,
+  removeSshTarget,
+  testSshTarget,
+  upsertSshTarget,
+  type SshTargetInput,
+} from "./ssh/targets.js";
 
 /**
  * Bundled CLI version. Derived from <pkg>/package.json at runtime so it
@@ -275,6 +288,22 @@ function pickRootComponent(): {
         "    --key <secret>     API key (required)\n" +
         "  --discover-models   Refresh model list for a provider\n" +
         "    --provider <id>    Provider (default: active)\n" +
+        "  --print-mcp         Print MCP server config (user + project)\n" +
+        "    --cwd <path>      Project root for .zelari/mcp.json\n" +
+        "  --set-mcp           Add/update an MCP server entry\n" +
+        "    --name <id>       Server name (required)\n" +
+        "    --command <bin>   Executable (required)\n" +
+        "    --args <json>     JSON array of args (optional)\n" +
+        "    --scope user|project  Default: user\n" +
+        "    --enabled true|false  Default: true\n" +
+        "    --cwd <path>      Required when scope=project\n" +
+        "  --remove-mcp        Remove an MCP server entry\n" +
+        "    --name <id> --scope user|project [--cwd <path>]\n" +
+        "  --print-ssh-targets Print SSH deploy/monitor targets\n" +
+        "  --set-ssh-target    Upsert target (--json '{...}' or flags)\n" +
+        "  --remove-ssh-target --id <id>\n" +
+        "  --test-ssh-target   --id <id>  (BatchMode ssh true)\n" +
+        "  --print-ssh-pubkey  --path <private-or-.pub>  (display public key)\n" +
         "\n" +
         "Environment:\n" +
         "  ZELARI_NO_WIZARD=1    Skip the first-run wizard\n" +
@@ -283,6 +312,200 @@ function pickRootComponent(): {
         "  ANATHEMA_DEV=1        Disable background update check + preflight\n",
     );
     process.exit(0);
+  }
+
+  // MCP config helpers (Desktop Extensions store).
+  if (argv.includes("--print-mcp")) {
+    try {
+      const cwdIdx = argv.indexOf("--cwd");
+      const cwd =
+        cwdIdx >= 0 && argv[cwdIdx + 1] ? argv[cwdIdx + 1] : process.cwd();
+      const snap = listMcpServers(cwd);
+      console.log(JSON.stringify(snap, null, 2));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --print-mcp] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  if (argv.includes("--set-mcp")) {
+    try {
+      const get = (flag: string) => {
+        const i = argv.indexOf(flag);
+        return i >= 0 && argv[i + 1] ? argv[i + 1] : undefined;
+      };
+      const name = get("--name");
+      const command = get("--command");
+      const scopeRaw = get("--scope") ?? "user";
+      const scope = scopeRaw === "project" ? "project" : "user";
+      const cwd = get("--cwd") ?? process.cwd();
+      const enabledRaw = get("--enabled");
+      const enabled = enabledRaw === undefined ? true : enabledRaw !== "false";
+      let args: string[] | undefined;
+      const argsRaw = get("--args");
+      if (argsRaw) {
+        const parsed = JSON.parse(argsRaw) as unknown;
+        if (!Array.isArray(parsed)) throw new Error("--args must be a JSON array");
+        args = parsed.map(String);
+      }
+      if (!name || !command) {
+        throw new Error("--name and --command are required");
+      }
+      const result = upsertMcpServer({
+        scope,
+        name,
+        projectRoot: cwd,
+        config: { command, args, enabled },
+      });
+      if (!result.ok) throw new Error(result.error);
+      console.log(JSON.stringify({ ok: true, path: result.path, name, scope }));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --set-mcp] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  if (argv.includes("--remove-mcp")) {
+    try {
+      const get = (flag: string) => {
+        const i = argv.indexOf(flag);
+        return i >= 0 && argv[i + 1] ? argv[i + 1] : undefined;
+      };
+      const name = get("--name");
+      const scopeRaw = get("--scope") ?? "user";
+      const scope = scopeRaw === "project" ? "project" : "user";
+      const cwd = get("--cwd") ?? process.cwd();
+      if (!name) throw new Error("--name is required");
+      const result = removeMcpServer({ scope, name, projectRoot: cwd });
+      if (!result.ok) throw new Error(result.error);
+      console.log(JSON.stringify({ ok: true, path: result.path, name, scope }));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --remove-mcp] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+
+  // SSH targets (Desktop Connections + agent tools).
+  if (argv.includes("--print-ssh-targets")) {
+    try {
+      console.log(JSON.stringify(listSshTargets(), null, 2));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --print-ssh-targets] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  if (argv.includes("--set-ssh-target")) {
+    try {
+      const get = (flag: string) => {
+        const i = argv.indexOf(flag);
+        return i >= 0 && argv[i + 1] ? argv[i + 1] : undefined;
+      };
+      let target: SshTargetInput;
+      const jsonRaw = get("--json");
+      if (jsonRaw) {
+        target = JSON.parse(jsonRaw) as SshTargetInput;
+      } else {
+        const id = get("--id");
+        const host = get("--host");
+        const user = get("--user");
+        if (!id || !host || !user) {
+          throw new Error("Need --json or --id --host --user");
+        }
+        const allowedRaw = get("--allowed");
+        const authFlag = get("--auth");
+        const auth =
+          authFlag === "password" || get("--password")
+            ? "password"
+            : get("--key-path")
+              ? "keyPath"
+              : "agent";
+        target = {
+          id,
+          name: get("--name") ?? id,
+          host,
+          user,
+          port: get("--port") ? Number(get("--port")) : 22,
+          auth,
+          keyPath: get("--key-path"),
+          password: get("--password"),
+          defaultRemotePath: get("--remote-path"),
+          allowedCommands: allowedRaw
+            ? allowedRaw.split("|").map((s) => s.trim()).filter(Boolean)
+            : [],
+          enabled: get("--enabled") !== "false",
+        };
+      }
+      const result = upsertSshTarget(target);
+      if (!result.ok) throw new Error(result.error);
+      console.log(JSON.stringify({ ok: true, id: target.id }));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --set-ssh-target] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  if (argv.includes("--remove-ssh-target")) {
+    try {
+      const i = argv.indexOf("--id");
+      const id = i >= 0 ? argv[i + 1] : undefined;
+      if (!id) throw new Error("--id is required");
+      const result = removeSshTarget(id);
+      if (!result.ok) throw new Error(result.error);
+      console.log(JSON.stringify({ ok: true, id }));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --remove-ssh-target] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  if (argv.includes("--test-ssh-target")) {
+    const i = argv.indexOf("--id");
+    const id = i >= 0 ? argv[i + 1] : undefined;
+    if (!id) {
+      console.error("[zelari-code --test-ssh-target] --id is required");
+      process.exit(1);
+    }
+    void testSshTarget(id)
+      .then((result) => {
+        console.log(JSON.stringify(result));
+        process.exit(result.ok ? 0 : 1);
+      })
+      .catch((err) => {
+        console.error(
+          `[zelari-code --test-ssh-target] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      });
+    return { kind: "done" };
+  }
+  if (argv.includes("--print-ssh-pubkey")) {
+    try {
+      const i = argv.indexOf("--path");
+      const p = i >= 0 ? argv[i + 1] : undefined;
+      if (!p) throw new Error("--path is required");
+      const result = readSshPublicKey(p);
+      console.log(JSON.stringify(result));
+      process.exit(result.ok ? 0 : 1);
+    } catch (err) {
+      console.error(
+        `[zelari-code --print-ssh-pubkey] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
   }
 
   // Desktop / scripting config helpers (no TUI, no task required).

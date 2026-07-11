@@ -9,7 +9,14 @@ export * from '../agents/advancedTools.js';
 export * from '../agents/vaultTools.js';
 export { cliToolToEnhanced } from '../agents/harnessToolBridge.js';
 export type { EnhancedToolDefinition } from '../types/systemTypes.js';
-export { SINGLE_AGENT_IDENTITY_MODULE } from '../agents/promptModules.js';
+export {
+  SINGLE_AGENT_IDENTITY_MODULE,
+  getBasePromptModules,
+  CODING_PRACTICES_MODULE,
+  NATIVE_TOOL_PROTOCOL_MODULE,
+  CLARIFICATION_PROTOCOL_MODULE,
+} from '../agents/promptModules.js';
+export type { PromptPackMode } from '../agents/promptModules.js';
 export { buildSystemPrompt } from '../agents/systemPromptBuilder.js';
 export {
   detectResponseLanguage,

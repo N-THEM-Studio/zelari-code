@@ -1,5 +1,5 @@
 /**
- * BrainEvent — provider-neutral event contract for AnathemaBrain's agent system.
+ * BrainEvent — provider-neutral event contract for Zelari Code's agent system.
  *
  * These types are the ONLY contract between the agent loop (main process) and any
  * frontend (Electron renderer today, Ink CLI tomorrow). They are intentionally

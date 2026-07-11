@@ -424,13 +424,24 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // — it lives in priority space (5) so it sorts BEFORE the base-identity
           // module (10): the model sets language scaffolding before reading role text.
           const languageModule = buildLanguagePolicyModuleFor(userText);
+          const { loadProjectInstructions } = await import(
+            "../workspace/projectInstructions.js"
+          );
+          const projectInstructions = loadProjectInstructions(
+            process.cwd(),
+          ).content;
           systemPrompt = buildSystemPrompt(singleAgentRole, {
             tools: getAllTools(),
             toolNames: toolListNames,
+            mode: "agent",
+            projectInstructions: projectInstructions || undefined,
             aiConfig: {
               enabledSkills: [],
               enabledTools: toolListNames,
-              customPromptModules: [SINGLE_AGENT_IDENTITY_MODULE, languageModule],
+              customPromptModules: [
+                SINGLE_AGENT_IDENTITY_MODULE,
+                languageModule,
+              ],
               agentSkillConfigs: [],
             },
             workspaceContext: workspaceContext || undefined,

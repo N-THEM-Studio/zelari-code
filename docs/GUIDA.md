@@ -1,7 +1,7 @@
 # Zelari Code — Guida all'uso
 
-> **Versione documento:** 1.3.0  
-> CLI multi-agente per coding con TUI (Ink + React), council a 6 ruoli, slash commands e provider LLM agnostici.
+> **Versione documento:** 1.12.0  
+> CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri), council a 6 ruoli, slash commands, MCP, SSH e provider LLM agnostici.
 
 ---
 
@@ -15,20 +15,22 @@
 6. [Modalità agent, council e zelari](#modalità-agent-e-council)
 7. [Comandi da terminale (flags)](#comandi-da-terminale-flags)
 8. [Modalità headless (CI/script)](#modalità-headless-ciscript)
-9. [Comandi slash](#comandi-slash)
-10. [Provider e autenticazione](#provider-e-autenticazione)
-11. [Skills](#skills)
-12. [Council (multi-agente)](#council-multi-agente)
-13. [Workspace `.zelari/`](#workspace-zelari)
-14. [MCP (Model Context Protocol)](#mcp-model-context-protocol)
-15. [Sessioni e branch](#sessioni-e-branch)
-16. [Tool disponibili](#tool-disponibili)
-17. [Novità v1.3.0 (frontier tools)](#novità-v130-frontier-tools)
-18. [File di configurazione](#file-di-configurazione)
-19. [Variabili d'ambiente](#variabili-dambiente)
-20. [Self-update](#self-update)
-21. [Sviluppo](#sviluppo)
-22. [Risoluzione problemi](#risoluzione-problemi)
+9. [Zelari Desktop](#zelari-desktop)
+10. [Comandi slash](#comandi-slash)
+11. [Provider e autenticazione](#provider-e-autenticazione)
+12. [Skills](#skills)
+13. [Council (multi-agente)](#council-multi-agente)
+14. [Workspace `.zelari/`](#workspace-zelari)
+15. [MCP (Model Context Protocol)](#mcp-model-context-protocol)
+16. [SSH (deploy / monitor)](#ssh-deploy--monitor)
+17. [Sessioni e branch](#sessioni-e-branch)
+18. [Tool disponibili](#tool-disponibili)
+19. [Novità v1.3.0 (frontier tools)](#novità-v130-frontier-tools)
+20. [File di configurazione](#file-di-configurazione)
+21. [Variabili d'ambiente](#variabili-dambiente)
+22. [Self-update](#self-update)
+23. [Sviluppo](#sviluppo)
+24. [Risoluzione problemi](#risoluzione-problemi)
 
 ---
 
@@ -41,7 +43,7 @@
 - Un **council** a 6 membri (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero)
 - **23 skill** builtin + skill personalizzate in formato `SKILL.md`
 - Persistenza progetto in **`.zelari/`** e auto-curation di **`AGENTS.MD`**
-- Supporto **MCP**, **headless mode** e **self-update**
+- Supporto **MCP**, **SSH targets**, **headless mode**, **Zelari Desktop** e **self-update**
 
 Il runtime condiviso è pubblicato come package npm [`@zelari/core`](https://www.npmjs.com/package/@zelari/core) (MIT).
 
@@ -72,12 +74,22 @@ Disabilitazione globale: `ZELARI_LSP=0`, `ZELARI_AST=0`, `ZELARI_SEMANTIC=0`, `Z
 
 ## Installazione
 
-### Installazione globale
+### Installazione globale (CLI — prodotto principale)
 
 ```bash
 npm install -g zelari-code
 zelari-code --version
 ```
+
+### Zelari Desktop (opzionale)
+
+Gli installer da [GitHub Releases](https://github.com/N-THEM-Studio/zelari-code/releases) **non** installano la CLI globale. Dopo l’installer (o in dev):
+
+1. Node.js ≥ 20 sul PATH  
+2. `npm install -g zelari-code` (o **Settings → Update CLI** nella Desktop)  
+3. API key in Settings → Provider  
+
+Vedi [Zelari Desktop](#zelari-desktop) e [`apps/desktop/README.md`](../apps/desktop/README.md).
 
 ### Windows: `zelari-code` non trovato
 
@@ -251,12 +263,18 @@ zelari-code [opzioni]
 | `--no-wizard` | Salta il wizard al primo avvio |
 | `--reset-config` | Forza il wizard (reset configurazione) |
 | `--headless` | Esecuzione non interattiva (vedi sotto) |
+| `--doctor` | Diagnostica ambiente (PATH, node, git, bash agente) |
+| `--fix-path` | Windows: ripara prefix npm nel PATH utente |
+| `--print-config` / `--set-config` / `--set-key` / `--discover-models` | Helper config per Desktop / script |
+| `--print-mcp` / `--set-mcp` / `--remove-mcp` | Gestione `mcp.json` |
+| `--print-ssh-targets` / `--set-ssh-target` / `--remove-ssh-target` / `--test-ssh-target` | Target SSH |
+| `--print-ssh-pubkey --path <…>` | Mostra contenuto `.pub` (copia su server) |
 
 ---
 
 ## Modalità headless (CI/script)
 
-Esegue un singolo task senza montare la TUI. Utile per pipeline CI, script e automazione.
+Esegue un singolo task senza montare la TUI. Utile per pipeline CI, script e **Zelari Desktop**.
 
 ```bash
 zelari-code --headless --task "Spiega cosa fa src/cli/main.ts" --output json
@@ -268,9 +286,12 @@ zelari-code --headless --task "Spiega cosa fa src/cli/main.ts" --output json
 |---|---|---|
 | `--task <testo>` | *(obbligatorio)* | Prompt da eseguire |
 | `--output json\|plain` | `json` | `json` = NDJSON (un evento BrainEvent per riga); `plain` = solo testo assistant |
-| `--council` | off | Usa il pipeline council invece dell'agente singolo |
+| `--mode agent\|council\|zelari` | `agent` | Dispatch mode (preferito a `--council` legacy) |
+| `--phase plan\|build` | `build` | In `plan` non muta il progetto (no write/edit/bash aggressivi) |
+| `--council` | off | Alias legacy → mode council |
 | `--provider <id>` | provider attivo | Override provider |
 | `--model <nome>` | modello del provider | Override modello |
+| `--history-file <path>` | — | Storia multi-turno (JSON) usata dalla Desktop |
 
 ### Esempi
 
@@ -281,6 +302,9 @@ zelari-code --headless --task "Elenca i file in src/cli" --output plain
 # Council, output JSON per piping
 zelari-code --headless --task "Progetta API REST per todo" --council --output json \
   | jq 'select(.type=="message_delta") | .delta'
+
+# Plan-only (niente mutazioni)
+zelari-code --headless --mode agent --phase plan --task "Outline the refactor"
 
 # Provider esplicito (utile senza wizard/config)
 OPENAI_API_KEY=sk-... zelari-code --headless \
@@ -296,6 +320,40 @@ OPENAI_API_KEY=sk-... zelari-code --headless \
 | `1` | Errore utente (flag mancanti, API key assente) |
 | `2` | Errore runtime (provider, eccezione council) |
 | `3` | Run agente terminato con errore |
+
+---
+
+## Zelari Desktop
+
+Shell **Tauri 2** opzionale (`apps/desktop/`): chat moderna che esegue `zelari-code --headless` e streama eventi NDJSON.
+
+| Controllo | Valori | Flag CLI |
+|---|---|---|
+| Mode | Agent · Council · Zelari | `--mode` |
+| Phase | Plan · Build | `--phase` |
+| Provider / model | barra + Settings | `--provider` / `--model` |
+| Open Folder | directory di lavoro | cwd del processo CLI |
+
+### Settings
+
+- **Provider** — API key, endpoint OpenAI-compatible, discover models  
+- **Updates** — aggiornamento **app** (Tauri / GitHub Releases) vs **CLI** (`npm install -g`)  
+- **MCP Extensions** — catalogo server comuni → scrive `mcp.json`  
+- **Connections (SSH)** — host per deploy/monitor (vedi [SSH](#ssh-deploy--monitor))  
+
+### Primo avvio
+
+Se mancano Node o la CLI, appare la **Setup guide**. L’installer Desktop da solo non basta.
+
+### Sviluppo
+
+```bash
+npm run build
+npm run desktop:install
+npm run desktop:dev
+```
+
+Override monorepo: `ZELARI_CLI_PATH` → path a `bin/zelari-code.js`.
 
 ---
 
@@ -695,9 +753,58 @@ File in formato Claude Desktop (il progetto vince sui conflitti):
 
 I tool MCP appaiono come `mcp_<server>_<tool>` nel registry.
 
+**Desktop:** Settings → **MCP Extensions** installa voci comuni (npx on-demand) senza editare a mano.
+
+CLI: `--print-mcp`, `--set-mcp`, `--remove-mcp`.
+
 Disabilitare tutto: `ZELARI_MCP=0`
 
 Vedi anche [TOOLS.md](./TOOLS.md).
+
+---
+
+## SSH (deploy / monitor)
+
+Zelari **non** è un client SSH interattivo: registra **target** e espone tool OpenSSH (`ssh` sul PATH) all’agente.
+
+### Config
+
+| File | Contenuto |
+|---|---|
+| `~/.zelari-code/ssh-targets.json` | Host, user, port, auth, allowlist comandi |
+| `~/.zelari-code/ssh-secrets.json` | Password (solo auth=password; non in chat/LLM) |
+
+### Auth
+
+| Mode | Cosa serve |
+|---|---|
+| **password** | IP/host + username + password (caso VPS tipico) |
+| **agent** | Chiavi già caricate in `ssh-agent` |
+| **keyPath** | Path chiave privata locale (+ `.pub` opzionale per copia su server) |
+
+### Desktop
+
+Settings → **Connections** → Add target → Auth **Password** → Host/IP, User, Password → Save → **Test**.
+
+### Tool agente
+
+| Tool | Uso |
+|---|---|
+| `ssh_status` | Health check sul target (`true` / status) |
+| `ssh_run` | Comando remoto **solo** se matcha `allowedCommands` (literal o `prefix*`) |
+
+Esempio allowlist: `systemctl status *`, `journalctl *`, `docker ps*`, `df -h*`, `uptime`.
+
+### CLI
+
+```bash
+zelari-code --print-ssh-targets
+zelari-code --set-ssh-target --json '{"id":"vps1","name":"VPS","host":"1.2.3.4","user":"root","auth":"password","password":"…","allowedCommands":["uptime","df -h*"]}'
+zelari-code --test-ssh-target --id vps1
+zelari-code --print-ssh-pubkey --path %USERPROFILE%\.ssh\id_ed25519.pub
+```
+
+Kill switch: `ZELARI_SSH=0`.
 
 ---
 
@@ -871,14 +978,18 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 | `ZELARI_AGENTS_MD=0` | Disabilita sync AGENTS.MD |
 | `ZELARI_COMPLETE_DESIGN=0` | Disabilita post-processor design |
 
-### Tool / MCP / shell
+### Tool / MCP / shell / SSH / Desktop
 
 | Variabile | Effetto |
 |---|---|
 | `ZELARI_MCP=0` | Disabilita MCP |
+| `ZELARI_SSH=0` | Disabilita tool e target SSH |
+| `ZELARI_CLI_PATH` | Desktop: path a `bin/zelari-code.js` locale |
+| `ZELARI_NO_PATH_REPAIR=1` | Windows: non riparare il PATH npm |
 | `ZELARI_MAX_TOOL_CALLS` | Limite tool call per turno |
 | `ZELARI_TOOL_OUTPUT_LINES` | Righe output tool in TUI (default 8) |
 | `ZELARI_SHELL` | Path esplicito bash (Windows) |
+| `ZELARI_PROVIDER_TIMEOUT_MS` | Timeout hard sulla fetch provider (default 5 min) |
 
 ### Frontier tools (v1.3.0) / agentic harness (v1.2.0)
 

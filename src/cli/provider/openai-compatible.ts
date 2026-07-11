@@ -181,7 +181,10 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
         };
       }
       if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-        return {
+        // DeepSeek thinking mode: when an assistant turn issued tool_calls,
+        // `reasoning_content` MUST be echoed on every subsequent request or
+        // the API returns HTTP 400. Other providers ignore the extra field.
+        const msg: Record<string, unknown> = {
           role: 'assistant' as const,
           content: m.content ?? '',
           tool_calls: m.toolCalls.map((tc) => ({
@@ -192,6 +195,23 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
               arguments: JSON.stringify(tc.args ?? {}),
             },
           })),
+        };
+        if (m.reasoningContent && m.reasoningContent.length > 0) {
+          msg.reasoning_content = m.reasoningContent;
+        }
+        return msg;
+      }
+      // Assistant text-only turns may still carry reasoning_content for
+      // multi-turn continuity on some providers; include when present.
+      if (
+        m.role === 'assistant' &&
+        m.reasoningContent &&
+        m.reasoningContent.length > 0
+      ) {
+        return {
+          role: 'assistant' as const,
+          content: m.content ?? '',
+          reasoning_content: m.reasoningContent,
         };
       }
       return { role: m.role, content: m.content };

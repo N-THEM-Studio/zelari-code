@@ -192,7 +192,17 @@ export interface AgentRole {
   role: string;
   color: string;
   avatar: string;
+  /** Always-on role prompt (persona + methodology). */
   systemPrompt: string;
+  /**
+   * Appended only when council `runMode === 'design-phase'`.
+   * Keeps createPlan / createDocument mandatories out of implementation turns.
+   */
+  designPhaseAddendum?: string;
+  /**
+   * Appended only when council `runMode === 'implementation'`.
+   */
+  implementationAddendum?: string;
   tools: string[];
   /**
    * Skill IDs from the skill catalog (see agents/skills.ts) that this agent

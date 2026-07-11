@@ -57,10 +57,13 @@ export function UpdateBarButton({
         type="button"
         className="btn-update"
         disabled={busy || installing}
-        title={`Install desktop update v${pending.version}`}
+        title={`Install desktop app update v${pending.version} (current ${pending.current})`}
         onClick={() => void onInstall()}
       >
-        {installing ? "Updating…" : `Update v${pending.version}`}
+        {installing ? "Updating…" : `Update`}
+        {!installing ? (
+          <span className="btn-update-ver">v{pending.version}</span>
+        ) : null}
       </button>
     );
   }
@@ -71,9 +74,10 @@ export function UpdateBarButton({
       className="btn-ghost topbar-update-check"
       disabled={busy || installing}
       title="Check for desktop app updates"
+      aria-label="Check for updates"
       onClick={onCheck}
     >
-      ↻
+      <span className="update-check-label">Updates</span>
     </button>
   );
 }

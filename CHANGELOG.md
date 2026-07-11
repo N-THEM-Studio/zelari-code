@@ -5,6 +5,26 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.0] - 2026-07-11
+
+### Added
+- **Desktop: SSH Connections** — Settings → Connections registers deploy/monitor hosts (`~/.zelari-code/ssh-targets.json`). Auth modes: **password** (IP + user + password), **ssh-agent**, **key file** (private + `.pub`). Passwords live in `~/.zelari-code/ssh-secrets.json` (never in chat / LLM prompt). Agent tools: `ssh_status`, `ssh_run` (command allowlist). Kill switch: `ZELARI_SSH=0`. CLI: `--print-ssh-targets`, `--set-ssh-target`, `--remove-ssh-target`, `--test-ssh-target`, `--print-ssh-pubkey`.
+- **Desktop: MCP Extensions store** — browse/install common MCP servers into Claude-compatible `mcp.json` (project or user). CLI helpers for list/set/remove MCP config used by the shell.
+- **Desktop: first-run CLI setup guide** — installer ≠ global CLI; Setup overlay installs Node/CLI when missing; Settings → Update CLI via npm.
+- **Desktop: Project panel** — Files | Git tree beside chat (lazy directory listing).
+- **Desktop: Cursor-like chrome** — frameless window + custom TitleBar; unified Settings layout; tool calls as structured **ToolCallCard**s; Mode / Phase / Provider bar polish.
+- **Desktop: multi-turn history** — conversation history + short-reply anchoring for council/agent (“procedi”, “1”, “sì”); agent clarification protocol reintroduced in prompts.
+- **CLI: public key helper** — `--print-ssh-pubkey --path <private-or-.pub>` for copy into server `authorized_keys`.
+
+### Fixed
+- **DeepSeek / reasoning models** — echo `reasoning_content` in the tool loop so multi-step runs do not 400.
+- **Desktop Connections page** — blank/black panel when loading SSH targets fixed (robust list + form rendering).
+- **Prompt packs** — agent vs council identity/language policy cleaned; less amnesia on multi-turn council continue.
+
+### Changed
+- Desktop default SSH form prefers **password** (IP + username + password) for the common VPS flow; key/agent remain available.
+- Docs: README, `docs/GUIDA.md`, and `apps/desktop/README.md` cover Desktop setup, MCP store, and SSH.
+
 ## [1.11.0] - 2026-07-10
 
 ### Fixed

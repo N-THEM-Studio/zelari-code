@@ -17,6 +17,16 @@ export interface ChatMessage {
   createdAt: number;
   streaming?: boolean;
   toolName?: string;
+  /** Correlates start/end tool events from the CLI. */
+  toolCallId?: string;
+  toolStatus?: "running" | "done";
+  toolOk?: boolean;
+  toolDurationMs?: number;
+  /** Short one-line summary derived from tool args (path, command, …). */
+  toolSummary?: string;
+  /** Council member display name (e.g. Caronte) when attributed. */
+  memberName?: string;
+  memberId?: string;
   meta?: string;
   /** Light run stats attached when a turn finishes. */
   stats?: MessageStats;
@@ -26,6 +36,9 @@ export interface MessageStats {
   durationMs?: number;
   toolCount?: number;
   charCount?: number;
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
 }
 
 export interface Conversation {
@@ -103,6 +116,8 @@ export interface AgentMessageLite {
   content: string;
   toolCallId?: string;
   toolCalls?: { id: string; name: string; args: Record<string, unknown> }[];
+  /** DeepSeek/GLM thinking-mode echo field (must survive multi-turn history). */
+  reasoningContent?: string;
 }
 
 export interface DiscoverModelsResult {
@@ -114,27 +129,108 @@ export interface DiscoverModelsResult {
   error?: string;
 }
 
+export interface UsageBreakdown {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+}
+
 /** Subset of BrainEvent shapes we care about for the chat UI. */
 export type AgentEvent =
-  | { type: "message_delta"; delta?: string; text?: string; content?: string }
-  | { type: "message_start"; role?: string }
-  | { type: "message_end" }
+  | {
+      type: "message_delta";
+      delta?: string;
+      text?: string;
+      content?: string;
+      memberName?: string;
+      memberId?: string;
+    }
+  | {
+      type: "message_start";
+      role?: string;
+      memberName?: string;
+      memberId?: string;
+    }
+  | {
+      type: "message_end";
+      memberName?: string;
+      memberId?: string;
+      usage?: UsageBreakdown;
+    }
   | { type: "thinking_delta"; delta?: string; text?: string }
   | {
       type: "tool_execution_start";
       toolName?: string;
       name?: string;
       tool?: string;
+      toolCallId?: string;
+      args?: Record<string, unknown>;
     }
   | {
       type: "tool_execution_end";
       toolName?: string;
       name?: string;
+      toolCallId?: string;
       success?: boolean;
+      isError?: boolean;
+      result?: string;
+      durationMs?: number;
     }
-  | { type: "agent_start" }
-  | { type: "agent_end"; reason?: string }
+  | {
+      type: "agent_start";
+      memberName?: string;
+      memberId?: string;
+      model?: string;
+      provider?: string;
+    }
+  | {
+      type: "agent_end";
+      reason?: string;
+      memberName?: string;
+      memberId?: string;
+      durationMs?: number;
+    }
+  | {
+      type: "member_cost";
+      cost?: {
+        memberId?: string;
+        name?: string;
+        promptTokens?: number;
+        completionTokens?: number;
+        totalTokens?: number;
+        durationMs?: number;
+        toolCalls?: number;
+        errored?: boolean;
+      };
+    }
   | { type: "error"; message?: string; error?: string }
   | { type: "log"; message?: string }
   | { type: "history_snapshot"; messages: AgentMessageLite[] }
   | { type: string; [key: string]: unknown };
+
+export interface GitFileChange {
+  path: string;
+  added: number | null;
+  removed: number | null;
+  untracked: boolean;
+}
+
+export interface GitStatusSnapshot {
+  isRepo: boolean;
+  branch: string | null;
+  files: GitFileChange[];
+  cwd: string;
+  error?: string;
+}
+
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
+export interface ListDirResult {
+  path: string;
+  entries: DirEntry[];
+  error?: string;
+}

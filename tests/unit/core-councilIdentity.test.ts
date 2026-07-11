@@ -14,7 +14,7 @@ const BANNED_IDENTITY_TERMS = ['AnathemaBrain', 'Obsidian', 'Knowledge Vault', '
 
 describe('Council identity — de-branded (v0.7.2)', () => {
   it('the base-identity module contains no AnathemaBrain/Obsidian/Vault terms', () => {
-    const identity = getBasePromptModules().find((m) => m.type === 'base-identity');
+    const identity = getBasePromptModules('council').find((m) => m.type === 'base-identity');
     expect(identity, 'base-identity module must exist').toBeDefined();
     for (const term of BANNED_IDENTITY_TERMS) {
       expect(identity!.content, `should not mention "${term}"`).not.toContain(term);
@@ -22,8 +22,22 @@ describe('Council identity — de-branded (v0.7.2)', () => {
   });
 
   it('the identity is coding-oriented (mentions codebase/files)', () => {
-    const identity = getBasePromptModules().find((m) => m.type === 'base-identity');
+    const identity = getBasePromptModules('council').find((m) => m.type === 'base-identity');
     expect(identity!.content).toMatch(/codebase|software|files/i);
+  });
+
+  it('both agent and council packs include clarification; agent keeps coding practices', () => {
+    const council = getBasePromptModules('council')
+      .map((m) => m.content)
+      .join('\n');
+    const agent = getBasePromptModules('agent')
+      .map((m) => m.content)
+      .join('\n');
+    expect(council).toMatch(/---QUESTION---/);
+    expect(agent).toMatch(/---QUESTION---/);
+    expect(agent).toMatch(/Coding Practices|Read before edit/i);
+    // Agent still has no council collab noise
+    expect(agent).not.toMatch(/downstream agents or the Lucifero/i);
   });
 });
 
@@ -56,9 +70,14 @@ describe('Council roles — coding tools (v0.7.2 tool swap)', () => {
     }
   });
 
-  it('Minosse (critic) declares no tools (invariant: evaluates, never creates)', () => {
+  it('Minosse (critic) has read-only tools (grounded critique, never mutates)', () => {
     const minos = AGENT_ROLES.find((r) => r.id === 'minos')!;
-    expect(minos.tools).toEqual([]);
+    expect(minos.tools).toEqual(
+      expect.arrayContaining(['read_file', 'list_files', 'grep_content']),
+    );
+    for (const t of minos.tools ?? []) {
+      expect(['read_file', 'list_files', 'grep_content', 'searchDocuments']).toContain(t);
+    }
   });
 });
 

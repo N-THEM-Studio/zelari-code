@@ -193,16 +193,26 @@ export const SKILL_CATALOG: SkillMetadata[] = [
     systemPromptFragment: `You write polished documents.
 - Choose an appropriate structure (guide, spec, reference, narrative).
 - Maintain a consistent tone and voice.
-- Use headings, lists, and code blocks where helpful; link related notes with [[wikilinks]].`,
+- Use headings, lists, and code blocks where helpful.`,
   },
 ];
 
-/** Default skill assignments per agent id. */
+/**
+ * Default skill assignments per agent id (Dante roster).
+ * Legacy Greek ids kept as aliases for old configs / tests.
+ */
 const DEFAULT_AGENT_SKILLS: Record<string, string[]> = {
+  charont: ['project-planner', 'research-analyst'],
+  nettun: ['project-planner', 'vault-manager'],
+  geryon: ['document-writer', 'idea-synthesizer'],
+  pluton: ['document-writer', 'research-analyst'],
+  minos: ['document-writer', 'research-analyst'],
+  lucifer: ['vault-manager', 'project-planner', 'idea-synthesizer'],
+  // legacy aliases
   sisyphus: ['project-planner', 'research-analyst'],
   prometheus: ['project-planner', 'vault-manager'],
-  hephaestus: ['idea-synthesizer', 'mind-mapper', 'document-writer'],
-  atlas: ['mind-mapper', 'research-analyst'],
+  hephaestus: ['document-writer', 'idea-synthesizer'],
+  atlas: ['document-writer', 'research-analyst'],
   oracle: ['research-analyst'],
   chairman: ['vault-manager', 'project-planner', 'idea-synthesizer'],
 };

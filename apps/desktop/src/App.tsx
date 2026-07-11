@@ -4,7 +4,11 @@ import {
   cancelRun,
   checkCliUpdate,
   extractDelta,
+  extractToolCallId,
+  extractToolDurationMs,
+  extractToolIsError,
   extractToolName,
+  extractToolResult,
   getAppConfig,
   getCliStatus,
   onAgentEvent,
@@ -12,7 +16,8 @@ import {
   onRunFinished,
   runTask,
   setAppConfig,
-  updateCli,
+  summarizeToolArgs,
+  truncateToolPreview,
 } from "./agentClient";
 import { loadConversations, saveConversations } from "./chatStorage";
 import { MessageContent, ThinkingIndicator } from "./components/MessageContent";
@@ -20,6 +25,14 @@ import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
+import { ToolCallCard } from "./components/ToolCallCard";
+import { ProjectPanel } from "./components/ProjectPanel";
+import { CliSetupGuide } from "./components/CliSetupGuide";
+import { TitleBar } from "./components/TitleBar";
+import {
+  exportConversationJson,
+  exportConversationMarkdown,
+} from "./components/exportChat";
 import type {
   AgentMessageLite,
   AppView,
@@ -32,10 +45,6 @@ import type {
   WorkPhase,
 } from "./types";
 import zelariLogo from "./assets/zelari-logo.png";
-import {
-  UpdateBarButton,
-  type PendingDesktopUpdate,
-} from "./components/UpdateBarButton";
 import { checkForDesktopUpdate } from "./updater";
 import "./App.css";
 
@@ -66,6 +75,42 @@ function formatTime(ts: number): string {
   } catch {
     return "";
   }
+}
+
+/**
+ * Fallback multi-turn history when the CLI never emitted history_snapshot
+ * (legacy council runs). Keep user + assistant only, last ~12 messages.
+ * Excludes the user message just about to be sent (already the task).
+ */
+function deriveHistoryFromChat(
+  messages: ChatMessage[],
+  currentPrompt: string,
+): AgentMessageLite[] {
+  const out: AgentMessageLite[] = [];
+  for (const m of messages) {
+    if (m.role !== "user" && m.role !== "assistant") continue;
+    const content = (m.content ?? "").trim();
+    if (!content) continue;
+    // Skip pure thinking-only empty streams
+    if (m.role === "assistant" && content.length < 8) continue;
+    out.push({
+      role: m.role,
+      content:
+        content.length > 6000 ? `${content.slice(0, 5999)}…` : content,
+    });
+  }
+  // Drop trailing user if it equals the message we're about to send
+  // (send() appends userMsg before runTask, so it may already be in messages).
+  if (out.length > 0) {
+    const last = out[out.length - 1];
+    if (
+      last.role === "user" &&
+      last.content.trim() === currentPrompt.trim()
+    ) {
+      out.pop();
+    }
+  }
+  return out.slice(-12);
 }
 
 function loadDefaults(): { mode: DispatchMode; phase: WorkPhase } {
@@ -137,26 +182,40 @@ export default function App() {
   const [cli, setCli] = useState<CliStatus | null>(null);
   const [config, setConfig] = useState<DesktopConfig | null>(null);
   const [statusLine, setStatusLine] = useState("Connecting…");
-  const [pendingUpdate, setPendingUpdate] =
-    useState<PendingDesktopUpdate | null>(null);
-  const [cliNpmLatest, setCliNpmLatest] = useState<string | null>(null);
-  const [cliNeedsUpdate, setCliNeedsUpdate] = useState(false);
-  const [cliUpdating, setCliUpdating] = useState(false);
   // Working folder chosen via "Open Folder". Global to the app (one window =
   // one folder, like VSCode). Persisted across restarts. Null = inherit the
   // Tauri process cwd.
   const [workdir, setWorkdir] = useState<string | null>(
     () => localStorage.getItem("zelari-desktop-workdir") || null,
   );
+  const [gitCollapsed, setGitCollapsed] = useState(
+    () => localStorage.getItem("zelari-desktop-git-collapsed") === "1",
+  );
+  const [gitRefreshKey, setGitRefreshKey] = useState(0);
+  /** User dismissed the missing-CLI setup overlay for this session. */
+  const [setupDismissed, setSetupDismissed] = useState(false);
+  const [cliStatusLoading, setCliStatusLoading] = useState(true);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const assistantIdRef = useRef<string | null>(null);
+  const activeMemberRef = useRef<{ name?: string; id?: string }>({});
+  const turnTokensRef = useRef({
+    prompt: 0,
+    completion: 0,
+    total: 0,
+  });
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
   const runStartedAtRef = useRef<number>(0);
   const toolCountRef = useRef(0);
   const hasAssistantTextRef = useRef(false);
+  const modeRef = useRef(mode);
+  const phaseRef = useRef(phase);
+  modeRef.current = mode;
+  phaseRef.current = phase;
+  const runningRef = useRef(running);
+  runningRef.current = running;
 
   // Persist chats
   useEffect(() => {
@@ -168,6 +227,13 @@ export default function App() {
     if (workdir) localStorage.setItem("zelari-desktop-workdir", workdir);
     else localStorage.removeItem("zelari-desktop-workdir");
   }, [workdir]);
+
+  useEffect(() => {
+    localStorage.setItem(
+      "zelari-desktop-git-collapsed",
+      gitCollapsed ? "1" : "0",
+    );
+  }, [gitCollapsed]);
 
   const active = useMemo(
     () => conversations.find((c) => c.id === activeId) ?? conversations[0],
@@ -187,11 +253,14 @@ export default function App() {
       setStatusLine(
         s.ok ? `CLI ${s.cliVersion ?? "ready"} · ${s.message}` : s.message,
       );
+      if (s.ok) setSetupDismissed(false);
     } catch (e) {
       setCli(null);
       setStatusLine(
         e instanceof Error ? e.message : "Failed to query CLI status",
       );
+    } finally {
+      setCliStatusLoading(false);
     }
   }, []);
 
@@ -219,42 +288,26 @@ export default function App() {
     void refreshConfig();
   }, [refreshCli, refreshConfig]);
 
-  const runDesktopUpdateCheck = useCallback(async (quiet = false) => {
-    if (!quiet) setStatusLine("Checking for desktop updates…");
-    try {
-      const { update, current } = await checkForDesktopUpdate();
-      if (!update) {
-        setPendingUpdate(null);
-        if (!quiet) setStatusLine(`Desktop up to date (v${current})`);
-        return;
-      }
-      setPendingUpdate({
-        version: update.version,
-        current,
-        update,
-      });
-      setStatusLine(
-        `Update available: v${update.version} (you have v${current}) — click Update`,
-      );
-    } catch (e) {
-      if (!quiet) {
-        setStatusLine(e instanceof Error ? e.message : String(e));
-      }
-    }
-  }, []);
-
-  // Quiet desktop + CLI update checks on launch.
+  // Quiet update checks on launch — only status line; install lives in Settings.
   useEffect(() => {
     const t = window.setTimeout(() => {
-      void runDesktopUpdateCheck(true);
       void (async () => {
         try {
+          const { update, current } = await checkForDesktopUpdate();
+          if (update) {
+            setStatusLine(
+              `Desktop update available: v${update.version} (you have v${current}) — Settings → Updates`,
+            );
+            return;
+          }
+        } catch {
+          /* offline / non-tauri */
+        }
+        try {
           const r = await checkCliUpdate();
-          setCliNpmLatest(r.npmLatest ?? null);
-          setCliNeedsUpdate(!!r.updateAvailable);
           if (r.updateAvailable && r.installed && r.npmLatest) {
             setStatusLine(
-              `CLI is v${r.installed} (npm latest v${r.npmLatest}) — Update CLI in Settings or top bar`,
+              `CLI is v${r.installed} (npm latest v${r.npmLatest}) — Settings → Updates`,
             );
           }
         } catch {
@@ -263,35 +316,7 @@ export default function App() {
       })();
     }, 2500);
     return () => window.clearTimeout(t);
-  }, [runDesktopUpdateCheck]);
-
-  const runCliUpdate = useCallback(async () => {
-    setCliUpdating(true);
-    setStatusLine("Updating CLI via npm…");
-    try {
-      const r = await updateCli({
-        version: cliNpmLatest ?? "latest",
-      });
-      setStatusLine(
-        r.installed
-          ? `CLI updated to v${r.installed}`
-          : "CLI update finished — re-check version",
-      );
-      setCliNeedsUpdate(false);
-      await refreshCli();
-      try {
-        const chk = await checkCliUpdate();
-        setCliNeedsUpdate(!!chk.updateAvailable);
-        setCliNpmLatest(chk.npmLatest ?? null);
-      } catch {
-        /* ignore */
-      }
-    } catch (e) {
-      setStatusLine(e instanceof Error ? e.message : String(e));
-    } finally {
-      setCliUpdating(false);
-    }
-  }, [cliNpmLatest, refreshCli]);
+  }, []);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -360,11 +385,71 @@ export default function App() {
           return;
         }
 
+        if (ev.type === "agent_start") {
+          const anyEv = ev as {
+            memberName?: string;
+            memberId?: string;
+          };
+          if (anyEv.memberName || anyEv.memberId) {
+            activeMemberRef.current = {
+              name: anyEv.memberName,
+              id: anyEv.memberId,
+            };
+            if (anyEv.memberName) {
+              setStatusLine(`${anyEv.memberName} speaking…`);
+            }
+          }
+          return;
+        }
+
+        if (ev.type === "message_start") {
+          const anyEv = ev as { memberName?: string; memberId?: string };
+          if (anyEv.memberName || anyEv.memberId) {
+            activeMemberRef.current = {
+              name: anyEv.memberName ?? activeMemberRef.current.name,
+              id: anyEv.memberId ?? activeMemberRef.current.id,
+            };
+          }
+          // Start a fresh assistant bubble per council member turn
+          assistantIdRef.current = null;
+          return;
+        }
+
+        if (ev.type === "member_cost") {
+          const cost = (ev as {
+            cost?: {
+              name?: string;
+              promptTokens?: number;
+              completionTokens?: number;
+              totalTokens?: number;
+            };
+          }).cost;
+          if (cost) {
+            turnTokensRef.current.prompt += cost.promptTokens ?? 0;
+            turnTokensRef.current.completion += cost.completionTokens ?? 0;
+            turnTokensRef.current.total += cost.totalTokens ?? 0;
+            const who = cost.name ?? "member";
+            const tok = cost.totalTokens ?? 0;
+            if (tok > 0) {
+              setStatusLine(
+                `${who} · ${tok.toLocaleString()} tokens (turn ${turnTokensRef.current.total.toLocaleString()})`,
+              );
+            }
+          }
+          return;
+        }
+
         if (ev.type === "message_delta" || ev.type === "thinking_delta") {
           const delta = extractDelta(ev);
           if (!delta) return;
           const isThinking = ev.type === "thinking_delta";
           if (!isThinking) hasAssistantTextRef.current = true;
+          const memberName =
+            (ev as { memberName?: string }).memberName ??
+            activeMemberRef.current.name;
+          const memberId =
+            (ev as { memberId?: string }).memberId ??
+            activeMemberRef.current.id;
           setConversations((prev) =>
             prev.map((c) => {
               if (c.id !== convId) return c;
@@ -380,6 +465,8 @@ export default function App() {
                   createdAt: Date.now(),
                   streaming: true,
                   meta: isThinking ? "thinking" : undefined,
+                  memberName,
+                  memberId,
                 });
               }
               return {
@@ -391,7 +478,13 @@ export default function App() {
                         ...m,
                         content: m.content + delta,
                         streaming: true,
-                        meta: isThinking ? "thinking" : m.meta === "thinking" && !isThinking ? undefined : m.meta,
+                        memberName: m.memberName ?? memberName,
+                        memberId: m.memberId ?? memberId,
+                        meta: isThinking
+                          ? "thinking"
+                          : m.meta === "thinking" && !isThinking
+                            ? undefined
+                            : m.meta,
                       }
                     : m,
                 ),
@@ -403,6 +496,21 @@ export default function App() {
 
         if (ev.type === "message_end" || ev.type === "agent_end") {
           const aid = assistantIdRef.current;
+          const usage =
+            ev.type === "message_end"
+              ? (ev as { usage?: {
+                  promptTokens?: number;
+                  completionTokens?: number;
+                  totalTokens?: number;
+                } }).usage
+              : undefined;
+          if (usage) {
+            turnTokensRef.current.prompt += usage.promptTokens ?? 0;
+            turnTokensRef.current.completion += usage.completionTokens ?? 0;
+            turnTokensRef.current.total +=
+              usage.totalTokens ??
+              (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0);
+          }
           if (!aid) return;
           setConversations((prev) =>
             prev.map((c) => {
@@ -410,7 +518,23 @@ export default function App() {
               return {
                 ...c,
                 messages: c.messages.map((m) =>
-                  m.id === aid ? { ...m, streaming: false } : m,
+                  m.id === aid
+                    ? {
+                        ...m,
+                        streaming: false,
+                        stats: usage
+                          ? {
+                              ...m.stats,
+                              promptTokens: usage.promptTokens,
+                              completionTokens: usage.completionTokens,
+                              totalTokens:
+                                usage.totalTokens ??
+                                (usage.promptTokens ?? 0) +
+                                  (usage.completionTokens ?? 0),
+                            }
+                          : m.stats,
+                      }
+                    : m,
                 ),
               };
             }),
@@ -420,12 +544,18 @@ export default function App() {
 
         if (ev.type === "tool_execution_start") {
           const name = extractToolName(ev);
+          const toolCallId = extractToolCallId(ev);
+          const anyEv = ev as { args?: Record<string, unknown> };
+          const toolSummary = summarizeToolArgs(name, anyEv.args);
           toolCountRef.current += 1;
           const toolMsg: ChatMessage = {
             id: uid("tool"),
             role: "tool",
-            content: `Running ${name}…`,
+            content: "",
             toolName: name,
+            toolCallId,
+            toolStatus: "running",
+            toolSummary: toolSummary || undefined,
             createdAt: Date.now(),
           };
           assistantIdRef.current = null;
@@ -445,19 +575,45 @@ export default function App() {
 
         if (ev.type === "tool_execution_end") {
           const name = extractToolName(ev);
+          const toolCallId = extractToolCallId(ev);
+          const isError = extractToolIsError(ev);
+          const durationMs = extractToolDurationMs(ev);
+          const resultPreview = truncateToolPreview(extractToolResult(ev));
           setConversations((prev) =>
             prev.map((c) => {
               if (c.id !== convId) return c;
               const messages = [...c.messages];
-              for (let i = messages.length - 1; i >= 0; i--) {
-                if (
-                  messages[i].role === "tool" &&
-                  messages[i].toolName === name &&
-                  messages[i].content.endsWith("…")
-                ) {
-                  messages[i] = { ...messages[i], content: `✓ ${name}` };
-                  break;
+              let idx = -1;
+              if (toolCallId) {
+                idx = messages.findIndex(
+                  (m) =>
+                    m.role === "tool" &&
+                    m.toolCallId === toolCallId &&
+                    m.toolStatus !== "done",
+                );
+              }
+              if (idx < 0) {
+                for (let i = messages.length - 1; i >= 0; i--) {
+                  if (
+                    messages[i].role === "tool" &&
+                    messages[i].toolStatus !== "done" &&
+                    (messages[i].toolName === name ||
+                      messages[i].content.endsWith("…"))
+                  ) {
+                    idx = i;
+                    break;
+                  }
                 }
+              }
+              if (idx >= 0) {
+                messages[idx] = {
+                  ...messages[idx],
+                  toolStatus: "done",
+                  toolOk: !isError,
+                  toolDurationMs: durationMs,
+                  content: resultPreview,
+                  toolName: messages[idx].toolName || name,
+                };
               }
               return { ...c, messages };
             }),
@@ -506,8 +662,10 @@ export default function App() {
         setRunning(false);
         const durationMs = Date.now() - (runStartedAtRef.current || Date.now());
         const tools = toolCountRef.current;
+        const tokens = turnTokensRef.current;
         const aid = assistantIdRef.current;
         assistantIdRef.current = null;
+        activeMemberRef.current = {};
 
         // Attach light stats to last assistant message
         setConversations((prev) =>
@@ -526,9 +684,21 @@ export default function App() {
                       ...m,
                       streaming: false,
                       stats: {
+                        ...m.stats,
                         durationMs,
                         toolCount: tools,
                         charCount: m.content.length,
+                        promptTokens:
+                          m.stats?.promptTokens ??
+                          (tokens.prompt > 0 ? tokens.prompt : undefined),
+                        completionTokens:
+                          m.stats?.completionTokens ??
+                          (tokens.completion > 0
+                            ? tokens.completion
+                            : undefined),
+                        totalTokens:
+                          m.stats?.totalTokens ??
+                          (tokens.total > 0 ? tokens.total : undefined),
                       },
                     }
                   : m,
@@ -537,12 +707,17 @@ export default function App() {
           }),
         );
 
+        const tokPart =
+          tokens.total > 0
+            ? ` · ${tokens.total.toLocaleString()} tokens`
+            : "";
         if (wasCancelled) setStatusLine("Run cancelled");
         else if (exitCode === 0)
           setStatusLine(
-            `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools`,
+            `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools${tokPart}`,
           );
-        else setStatusLine(`Finished with exit code ${exitCode}`);
+        else setStatusLine(`Finished with exit code ${exitCode}${tokPart}`);
+        setGitRefreshKey((k) => k + 1);
         void refreshCli();
       });
       if (!cancelled) unsubs.push(u3);
@@ -665,8 +840,10 @@ export default function App() {
     };
 
     assistantIdRef.current = null;
+    activeMemberRef.current = {};
     hasAssistantTextRef.current = false;
     toolCountRef.current = 0;
+    turnTokensRef.current = { prompt: 0, completion: 0, total: 0 };
     runStartedAtRef.current = Date.now();
     setDraft("");
     setRunning(true);
@@ -691,6 +868,13 @@ export default function App() {
     );
 
     try {
+      // Prefer CLI history_snapshot chain; if missing (older council runs),
+      // derive user/assistant turns from the chat UI so "procedi" keeps context.
+      const historyForRun =
+        active?.history && active.history.length > 0
+          ? active.history
+          : deriveHistoryFromChat(active?.messages ?? [], prompt);
+
       await runTask({
         prompt,
         mode,
@@ -698,9 +882,9 @@ export default function App() {
         provider: provider || undefined,
         model: model || undefined,
         cwd: workdir ?? undefined,
-        // Replay rolling history so the headless agent keeps multi-turn
+        // Replay rolling history so the headless agent/council keeps multi-turn
         // context (answers "procedi" / "sì" instead of amnesia).
-        history: active?.history,
+        history: historyForRun,
       });
     } catch (e) {
       setRunning(false);
@@ -736,6 +920,74 @@ export default function App() {
     }
   };
 
+  // Global shortcuts — use e.code (layout-stable). Ctrl+Shift+M is stolen by
+  // Chromium/WebView2 (device mode), so mode cycles with Ctrl+Shift+D.
+  useEffect(() => {
+    const onGlobalKey = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+
+      if (e.key === "Escape" && runningRef.current) {
+        e.preventDefault();
+        void cancelRun()
+          .then(() => setStatusLine("Cancelling…"))
+          .catch((err) =>
+            setStatusLine(err instanceof Error ? err.message : String(err)),
+          );
+        return;
+      }
+      if (mod && !e.shiftKey && e.code === "KeyN") {
+        e.preventDefault();
+        if (!runningRef.current) {
+          const c = newConversation(
+            modeRef.current,
+            phaseRef.current,
+            provider,
+            model,
+          );
+          setConversations((prev) => [c, ...prev]);
+          setActiveId(c.id);
+          setSessionFilter("active");
+          setDraft("");
+          assistantIdRef.current = null;
+          taRef.current?.focus();
+        }
+        return;
+      }
+      if (mod && e.shiftKey && e.code === "KeyD") {
+        e.preventDefault();
+        e.stopPropagation();
+        const order: DispatchMode[] = ["agent", "council", "zelari"];
+        const cur = modeRef.current;
+        const next = order[(order.indexOf(cur) + 1) % order.length];
+        setMode(next);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === activeIdRef.current ? { ...c, mode: next } : c,
+          ),
+        );
+        setStatusLine(`Mode · ${next}`);
+        return;
+      }
+      if (mod && e.shiftKey && e.code === "KeyP") {
+        e.preventDefault();
+        e.stopPropagation();
+        const next: WorkPhase =
+          phaseRef.current === "plan" ? "build" : "plan";
+        setPhase(next);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === activeIdRef.current ? { ...c, phase: next } : c,
+          ),
+        );
+        setStatusLine(`Phase · ${next}`);
+        return;
+      }
+    };
+    window.addEventListener("keydown", onGlobalKey, true);
+    return () => window.removeEventListener("keydown", onGlobalKey, true);
+    // provider/model only for new-chat defaults
+  }, [provider, model]);
+
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -762,49 +1014,58 @@ export default function App() {
 
   if (view === "settings") {
     return (
-      <div className="app app-settings">
-        <SettingsView
-          config={config}
-          cli={cli}
-          defaultMode={defaultMode}
-          defaultPhase={defaultPhase}
-          onBack={() => setView("chat")}
-          onRefresh={async () => {
-            await refreshConfig();
-            await refreshCli();
-          }}
-          onSave={async (args) => {
-            await setAppConfig({
-              provider: args.provider,
-              model: args.model,
-            });
-            setDefaultMode(args.defaultMode);
-            setDefaultPhase(args.defaultPhase);
-            saveDefaults(args.defaultMode, args.defaultPhase);
-            setProvider(args.provider);
-            setModel(args.model);
-            setMode(args.defaultMode);
-            setPhase(args.defaultPhase);
-            await refreshConfig();
-          }}
-        />
+      <div className="app app-chrome app-settings">
+        <TitleBar />
+        <div className="app-settings-body">
+          <SettingsView
+            config={config}
+            cli={cli}
+            defaultMode={defaultMode}
+            defaultPhase={defaultPhase}
+            workdir={workdir}
+            onBack={() => setView("chat")}
+            onRefresh={async () => {
+              await refreshConfig();
+              await refreshCli();
+            }}
+            onSave={async (args) => {
+              await setAppConfig({
+                provider: args.provider,
+                model: args.model,
+              });
+              setDefaultMode(args.defaultMode);
+              setDefaultPhase(args.defaultPhase);
+              saveDefaults(args.defaultMode, args.defaultPhase);
+              setProvider(args.provider);
+              setModel(args.model);
+              setMode(args.defaultMode);
+              setPhase(args.defaultPhase);
+              await refreshConfig();
+            }}
+          />
+        </div>
       </div>
     );
   }
 
+  const showCliSetup =
+    !setupDismissed && !cliStatusLoading && cli !== null && !cli.ok;
+
   return (
-    <div className="app">
+    <div className="app app-chrome">
+      <TitleBar />
+      {showCliSetup && (
+        <CliSetupGuide
+          cli={cli}
+          loading={cliStatusLoading}
+          onRefresh={refreshCli}
+          onOpenSettings={() => setView("settings")}
+          onDismiss={() => setSetupDismissed(true)}
+        />
+      )}
+      <div className="app-body">
       <aside className="sidebar">
         <div className="sidebar-top">
-          <div className="brand">
-            <div className="brand-mark" aria-hidden>
-              <img src={zelariLogo} alt="" className="brand-logo" />
-            </div>
-            <div className="brand-text">
-              <span className="brand-name">Zelari Desktop</span>
-              <span className="brand-sub">coding agent shell</span>
-            </div>
-          </div>
           <button
             type="button"
             className="btn-new"
@@ -914,6 +1175,7 @@ export default function App() {
         </div>
       </aside>
 
+      <div className="workspace">
       <main className="main">
         <header className="topbar">
           <div className="topbar-title">{active?.title ?? "Zelari"}</div>
@@ -931,56 +1193,45 @@ export default function App() {
             >
               📁 {workdir ? workdir.replace(/.*[\\/]/, "") : "Open Folder"}
             </button>
-            {cliNeedsUpdate && (
-              <button
-                type="button"
-                className="btn-update btn-update-cli"
-                disabled={running || cliUpdating}
-                title="Install latest zelari-code from npm (Desktop installer does not update the CLI)"
-                onClick={() => void runCliUpdate()}
-              >
-                {cliUpdating
-                  ? "Updating CLI…"
-                  : `Update CLI${cliNpmLatest ? ` v${cliNpmLatest}` : ""}`}
-              </button>
+            {active && messages.length > 0 && (
+              <div className="export-menu">
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  title="Export chat as Markdown"
+                  disabled={running}
+                  onClick={() => exportConversationMarkdown(active)}
+                >
+                  ⬇ MD
+                </button>
+                <button
+                  type="button"
+                  className="btn-ghost"
+                  title="Export chat as JSON"
+                  disabled={running}
+                  onClick={() => exportConversationJson(active)}
+                >
+                  ⬇ JSON
+                </button>
+              </div>
             )}
-            <UpdateBarButton
-              pending={pendingUpdate}
-              busy={running || cliUpdating}
-              onCheck={() => void runDesktopUpdateCheck(false)}
-              onProgress={setStatusLine}
-              onError={setStatusLine}
-              onInstalled={() => {
-                setPendingUpdate(null);
-                setStatusLine("Update installed — restarting…");
-              }}
-            />
-            <button
-              type="button"
-              className="btn-ghost topbar-settings"
-              onClick={() => setView("settings")}
-              title="Settings"
-            >
-              ⚙
-            </button>
           </div>
         </header>
 
         <div className="control-bar">
-          <div className="control-row">
-            <span className="control-label">Mode</span>
+          <div className="control-cluster control-cluster-run">
             <ModeToggle
               value={mode}
               disabled={running}
               onChange={onModeChange}
             />
-            <span className="control-label">Phase</span>
             <PhaseToggle
               value={phase}
               disabled={running}
               onChange={onPhaseChange}
             />
           </div>
+          <div className="control-divider" aria-hidden />
           <ProviderModelBar
             config={config}
             provider={provider}
@@ -1020,51 +1271,61 @@ export default function App() {
             </div>
           ) : (
             <div className="chat-inner">
-              {messages.map((m) => (
-                <div key={m.id} className={`message ${m.role}`}>
-                  <div className="message-role">
-                    {m.role === "user"
-                      ? "You"
-                      : m.role === "assistant"
-                        ? "Zelari"
-                        : m.role === "tool"
-                          ? "Tool"
-                          : "System"}
-                    {m.meta === "thinking" && (
-                      <span className="badge">thinking</span>
-                    )}
-                    {m.streaming && <span className="badge">streaming</span>}
+              {messages.map((m) =>
+                m.role === "tool" ? (
+                  <div key={m.id} className="message tool">
+                    <ToolCallCard message={m} />
                   </div>
-                  {m.role === "assistant" ? (
-                    <MessageContent
-                      content={m.content}
-                      streaming={m.streaming}
-                      thinking={m.meta === "thinking"}
-                      showThinking={
-                        m.streaming &&
-                        m.meta === "thinking" &&
-                        !m.content.trim()
-                      }
-                      stats={m.stats}
-                    />
-                  ) : m.role === "user" ? (
-                    <div className="bubble user-bubble">{m.content}</div>
-                  ) : (
-                    <div className="bubble tool-bubble">{m.content}</div>
-                  )}
-                </div>
-              ))}
+                ) : (
+                  <div key={m.id} className={`message ${m.role}`}>
+                    <div className="message-role">
+                      {m.role === "user"
+                        ? "You"
+                        : m.role === "assistant"
+                          ? m.memberName || "Zelari"
+                          : "System"}
+                      {m.role === "assistant" && m.memberName && (
+                        <span className="badge badge-member">council</span>
+                      )}
+                      {m.meta === "thinking" && (
+                        <span className="badge">thinking</span>
+                      )}
+                      {m.streaming && <span className="badge">streaming</span>}
+                    </div>
+                    {m.role === "assistant" ? (
+                      <MessageContent
+                        content={m.content}
+                        streaming={m.streaming}
+                        thinking={m.meta === "thinking"}
+                        showThinking={
+                          m.streaming &&
+                          m.meta === "thinking" &&
+                          !m.content.trim()
+                        }
+                        stats={m.stats}
+                      />
+                    ) : m.role === "user" ? (
+                      <div className="bubble user-bubble">{m.content}</div>
+                    ) : (
+                      <div className="bubble system-bubble">{m.content}</div>
+                    )}
+                  </div>
+                ),
+              )}
               {showGlobalThinking && (
                 <div className="message assistant">
                   <div className="message-role">
-                    Zelari <span className="badge">thinking</span>
+                    {activeMemberRef.current.name || "Zelari"}{" "}
+                    <span className="badge">thinking</span>
                   </div>
                   <ThinkingIndicator
                     label={
                       mode === "zelari"
                         ? "Mission running"
                         : mode === "council"
-                          ? "Council deliberating"
+                          ? activeMemberRef.current.name
+                            ? `${activeMemberRef.current.name} working`
+                            : "Council deliberating"
                           : "Thinking"
                     }
                   />
@@ -1096,10 +1357,14 @@ export default function App() {
                 {phase} · {mode}
                 {provider ? ` · ${provider}` : ""}
                 {model ? ` / ${model}` : ""}
+                <span className="composer-shortcuts" title="Keyboard shortcuts">
+                  {" "}
+                  · Esc stop · ⌘/Ctrl+N new · ⌘/Ctrl+Shift+D mode · ⌘/Ctrl+Shift+P phase
+                </span>
               </div>
               <div className="composer-actions">
                 {running ? (
-                  <button type="button" className="btn-stop" onClick={onStop}>
+                  <button type="button" className="btn-stop" onClick={() => void onStop()}>
                     Stop
                   </button>
                 ) : (
@@ -1117,6 +1382,16 @@ export default function App() {
           </div>
         </div>
       </main>
+
+      <ProjectPanel
+        cwd={workdir}
+        refreshKey={gitRefreshKey}
+        collapsed={gitCollapsed}
+        onToggle={() => setGitCollapsed((v) => !v)}
+        onStatus={setStatusLine}
+      />
+      </div>
+      </div>
     </div>
   );
 }

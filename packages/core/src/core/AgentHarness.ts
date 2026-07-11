@@ -47,6 +47,14 @@ export interface AgentMessage {
    * after tool results are appended.
    */
   toolCalls?: { id: string; name: string; args: Record<string, unknown> }[];
+  /**
+   * DeepSeek / GLM / Qwen "thinking mode" chain-of-thought for this assistant
+   * turn (`reasoning_content` on the wire). Must be echoed back on every
+   * subsequent API request when the turn included tool calls — otherwise
+   * DeepSeek returns HTTP 400:
+   * "The `reasoning_content` in the thinking mode must be passed back to the API."
+   */
+  reasoningContent?: string;
 }
 
 export interface AgentToolSpec {
@@ -753,6 +761,8 @@ export class AgentHarness {
       // provider. Without this, tool results would arrive at the API with no
       // preceding assistant tool_calls message → HTTP 400.
       let turnText = '';
+      /** Accumulated reasoning_content for providers that require echo-back. */
+      let turnReasoning = '';
       const turnToolCalls: { id: string; name: string; args: Record<string, unknown> }[] = [];
       // Buffer this turn's tool results and flush them AFTER the assistant
       // message (with tool_calls) on `finish`. OpenAI ordering requires every
@@ -797,6 +807,8 @@ export class AgentHarness {
           this.emit(deltaEvent);
           yield deltaEvent;
         } else if (delta.kind === 'thinking') {
+          // Keep a full copy for transcript echo-back (DeepSeek thinking mode).
+          turnReasoning += delta.delta;
           const thinkEvent = createBrainEvent('thinking_delta', this.sessionId, {
             messageId,
             delta: delta.delta,
@@ -996,16 +1008,21 @@ export class AgentHarness {
             // truncated call.
             finishRef.value = 'stop';
           }
-          // Append the assistant turn (text + any tool_calls) to the transcript.
-          // This MUST happen before the loop re-enters the provider (either via
-          // queue drain or a follow-up tool-result turn) so the conversation
-          // history stays valid: every role:'tool' message needs a preceding
-          // assistant message that declared the matching tool_calls.
-          if (turnToolCalls.length > 0 || turnText.length > 0) {
+          // Append the assistant turn (text + any tool_calls + reasoning) to
+          // the transcript. This MUST happen before the loop re-enters the
+          // provider (either via queue drain or a follow-up tool-result turn)
+          // so the conversation history stays valid: every role:'tool' message
+          // needs a preceding assistant message that declared the matching
+          // tool_calls. reasoningContent must be kept when tool_calls are
+          // present (DeepSeek thinking mode).
+          if (turnToolCalls.length > 0 || turnText.length > 0 || turnReasoning.length > 0) {
             this.config.messages.push({
               role: 'assistant',
               content: turnText,
               ...(turnToolCalls.length > 0 ? { toolCalls: turnToolCalls } : {}),
+              ...(turnReasoning.length > 0
+                ? { reasoningContent: turnReasoning }
+                : {}),
             });
           }
           // Flush buffered tool results AFTER the assistant tool_calls message

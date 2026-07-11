@@ -72,6 +72,10 @@ zelari-code
 
 An installable GUI shell lives in `apps/desktop/`. It does **not** replace the CLI — it streams `zelari-code --headless` into a modern chat UI. GitHub Releases attach platform installers on each `v*` tag.
 
+> **Installer ≠ CLI.** Downloading Desktop from GitHub does **not** install or upgrade the global `zelari-code` package. Use `npm i -g zelari-code` (or Desktop → Settings → **Update CLI**). First launch shows a Setup guide when Node/CLI is missing.
+
+**Desktop highlights (v1.12+):** Mode / Phase / Provider bar · Files|Git project panel · Settings (provider keys, App updates, **Update CLI**, **MCP Extensions**, **SSH Connections**) · multi-turn chat history · password/agent/key SSH targets for deploy/monitor (`ssh_status` / `ssh_run`).
+
 ```bash
 npm run build                 # CLI side-car
 npm run desktop:install
@@ -79,7 +83,7 @@ npm run desktop:dev           # Tauri dev window
 # npm run desktop:build       # MSI / NSIS / DMG / AppImage
 ```
 
-See [apps/desktop/README.md](./apps/desktop/README.md). Requires Rust + Node ≥ 20.
+See [apps/desktop/README.md](./apps/desktop/README.md) and **[docs/GUIDA.md](./docs/GUIDA.md)** (Desktop, MCP, SSH). Requires Rust + Node ≥ 20.
 
 **Prerequisites:**
 - **Node.js ≥ 20** — required. Without it the agent cannot run `npm`/`tsc`/builds, so zelari-code refuses to boot.
@@ -210,14 +214,15 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 
 ## Headless Mode
 
-Run a single task without the TUI (CI/scripts):
+Run a single task without the TUI (CI/scripts/Desktop):
 
 ```bash
 zelari-code --headless --task "Explain src/cli/main.ts" --output plain
 zelari-code --headless --task "Design a REST API" --council --output json
+zelari-code --headless --mode agent --phase plan --task "Outline the change"
 ```
 
-See **[docs/GUIDA.md](./docs/GUIDA.md#modalità-headless-ciscript)** for exit codes and all flags.
+Useful flags: `--mode agent|council|zelari`, `--phase plan|build`, `--provider`, `--model`, `--history-file` (multi-turn Desktop). See **[docs/GUIDA.md](./docs/GUIDA.md#modalità-headless-ciscript)** for exit codes and config helpers (`--print-config`, MCP, SSH).
 
 ## Self-Update
 
@@ -257,7 +262,9 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 📊 **Metrics + skill history** — fire-and-forget logging to `~/.tmp/zelari-code/`
 - 🗜️ **Session management** — JSONL transcripts, resume across restarts, compaction
 - 🌿 **Branch isolation** — session snapshots per branch
-- 🔌 **MCP** — external MCP servers via `.zelari/mcp.json`
+- 🔌 **MCP** — external MCP servers via `.zelari/mcp.json` or `~/.zelari-code/mcp.json`; Desktop **Extensions** store for one-click install
+- 🔐 **SSH targets** — configure hosts for deploy/monitor (password, agent, or key); tools `ssh_status` / `ssh_run` with allowlist; `ZELARI_SSH=0` kill switch
+- 🖥️ **Zelari Desktop** — Tauri shell with chat UI, project tree, Settings, dual updates (app vs npm CLI)
 - 🆕 **Self-update** — `/update` slash command + silent registry check on startup
 
 ## Architecture
@@ -294,6 +301,9 @@ zelari-code (CLI, proprietary)
 | `ZELARI_NO_SHIM_REPAIR=1` | Disable auto-repair of a missing Windows bin shim on install |
 | `ZELARI_COUNCIL_TIER=lite` | Council with 3 members instead of 6 |
 | `ZELARI_MCP=0` | Disable MCP servers |
+| `ZELARI_SSH=0` | Disable SSH tools / targets |
+| `ZELARI_CLI_PATH` | Desktop: path to local `bin/zelari-code.js` monorepo entry |
+| `ZELARI_NO_PATH_REPAIR=1` | Windows: skip npm-prefix PATH auto-repair |
 | `ANATHEMA_FAILOVER=0` | Disable cross-provider failover |
 | `ZELARI_MEMORY=0` | Disable the file-based project memory (`.zelari/memory/`) |
 | `ZELARI_MISSION_AUTO=1` | Auto-start Zelari missions (skip the brief confirmation) |

@@ -270,6 +270,14 @@ export function MessageContent({
               {stats.toolCount} tool{stats.toolCount === 1 ? "" : "s"}
             </span>
           )}
+          {stats.totalTokens != null && stats.totalTokens > 0 && (
+            <span>
+              {stats.totalTokens.toLocaleString()} tok
+              {stats.promptTokens != null && stats.completionTokens != null
+                ? ` (↑${stats.promptTokens.toLocaleString()} ↓${stats.completionTokens.toLocaleString()})`
+                : ""}
+            </span>
+          )}
           {stats.charCount != null && stats.charCount > 0 && (
             <span>{stats.charCount.toLocaleString()} chars</span>
           )}

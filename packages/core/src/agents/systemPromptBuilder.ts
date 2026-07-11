@@ -5,7 +5,10 @@ import type {
   SystemPromptConfig,
 } from '../types/systemTypes.js';
 import type { AgentRole as CoreAgentRole } from '../types/index.js';
-import { getBasePromptModules } from './promptModules.js';
+import {
+  getBasePromptModules,
+  type PromptPackMode,
+} from './promptModules.js';
 import { resolveAgentSkills, getSkillById } from './skills.js';
 
 /**
@@ -133,6 +136,12 @@ export function getToolDescriptions(
 
 /**
  * Build the full system prompt for an agent.
+ *
+ * @param options.mode - \`agent\` (default for CLI single-agent) uses the lean
+ *   coding pack; \`council\` keeps collaboration + clarification modules.
+ * @param options.projectInstructions - optional AGENTS.md / CLAUDE.md body.
+ * @param options.includeWorkspaceInPrompt - when false, skip embedding
+ *   workspace/RAG here (caller injects separately). Default true.
  */
 export function buildSystemPrompt(
   agent: CoreAgentRole & { skills?: string[] },
@@ -142,14 +151,27 @@ export function buildSystemPrompt(
     aiConfig?: SystemPromptConfig;
     workspaceContext?: string;
     ragContext?: string;
+    mode?: PromptPackMode;
+    projectInstructions?: string;
+    /** Default true. Set false to avoid double-inject with separate system msgs. */
+    includeWorkspaceInPrompt?: boolean;
   }
 ): string {
-  const { tools, toolNames, aiConfig, workspaceContext, ragContext } = options;
+  const {
+    tools,
+    toolNames,
+    aiConfig,
+    workspaceContext,
+    ragContext,
+    mode = 'council',
+    projectInstructions,
+    includeWorkspaceInPrompt = true,
+  } = options;
   const registry = new Map(tools.map((t) => [t.name, t]));
 
   // 1. Base modules (filtered by conditional predicates against the agent's skills)
   const skills = computeAgentSkills(agent, aiConfig);
-  const baseModules = getBasePromptModules().filter(
+  const baseModules = getBasePromptModules(mode).filter(
     (m) => !m.conditional || m.conditional(skills)
   );
 
@@ -179,6 +201,11 @@ export function buildSystemPrompt(
     parts.push(`# Your Role\n\n${agent.systemPrompt}`);
   }
 
+  // 3b. Project instructions (AGENTS.md / CLAUDE.md) — coding CLI baseline
+  if (projectInstructions && projectInstructions.trim()) {
+    parts.push(`# Project Instructions\n\n${projectInstructions.trim()}`);
+  }
+
   // 4. Skill prompt fragments
   if (skills.length > 0) {
     parts.push(
@@ -193,12 +220,14 @@ export function buildSystemPrompt(
     parts.push(`# Tools\n\n${toolBlock}`);
   }
 
-  // 6. Context
-  if (workspaceContext && workspaceContext.trim()) {
-    parts.push(`# Current Workspace State\n\n${workspaceContext}`);
-  }
-  if (ragContext && ragContext.trim()) {
-    parts.push(`# Retrieved Knowledge (RAG)\n\n${ragContext}`);
+  // 6. Context (optional — council may inject once as separate system msgs)
+  if (includeWorkspaceInPrompt) {
+    if (workspaceContext && workspaceContext.trim()) {
+      parts.push(`# Current Workspace State\n\n${workspaceContext}`);
+    }
+    if (ragContext && ragContext.trim()) {
+      parts.push(`# Retrieved Knowledge (RAG)\n\n${ragContext}`);
+    }
   }
 
   return parts.join('\n\n---\n\n');
