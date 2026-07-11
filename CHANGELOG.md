@@ -5,6 +5,11 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.12.1] - 2026-07-11
+
+### Fixed
+- **CI tests** — tool registry expects `ssh_status` / `ssh_run`; design-phase workspace-tool assertions use `resolveRoleSystemPrompt` (mode-split addenda), not base `systemPrompt` alone.
+
 ## [1.12.0] - 2026-07-11
 
 ### Added
@@ -40,6 +45,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop: Open Folder** — pick a working directory per window (VSCode-style: one window = one folder). Native folder picker via `tauri-plugin-dialog`; the chosen folder is passed as `current_dir` to the spawned CLI so the agent operates on the user-selected project. Choice persists across restarts.
 
 ## [1.9.4] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [1.12.1] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
