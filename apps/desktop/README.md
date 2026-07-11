@@ -67,6 +67,33 @@ npm run tauri:build
 
 Artifacts land under `apps/desktop/src-tauri/target/release/bundle/` (msi/nsis on Windows, dmg on macOS, deb/AppImage on Linux).
 
+### App icon & NSIS branding
+
+OS / installer icons are **independent** of the in-app logo (`src/assets/zelari-logo.png`).
+
+| Asset | Path |
+|-------|------|
+| Master PNG (1024×1024) | `src-tauri/app-icon-source.png` |
+| Generated icon set | `src-tauri/icons/` (`icon.ico`, `icon.icns`, PNG sizes) |
+| Source photos | `src-tauri/installer/source/logonsis.jpg`, `lateralnsis.jpg` |
+| NSIS header / sidebar | `src-tauri/installer/nsis-header.bmp` (150×57), `nsis-sidebar.bmp` (164×314) |
+
+Regenerate after changing artwork:
+
+```bash
+cd apps/desktop
+# App / taskbar / shortcut icon = in-app logo + brand-mark contour (rounded + cyan ring)
+python scripts/gen-app-icon-from-ui.py
+npx tauri icon src-tauri/app-icon-source.png
+# optional: NSIS sidebar/header BMP from installer/source/*.jpg
+python scripts/gen-installer-assets.py
+npm run tauri:build
+```
+
+The in-app image `src/assets/zelari-logo.png` is never overwritten by these scripts.
+
+NSIS options live in `src-tauri/tauri.conf.json` → `bundle.windows.nsis` (`installerIcon`, `headerImage`, `sidebarImage`, languages).
+
 ## Modes & phases
 
 | Control | Values | CLI flag |
