@@ -6,6 +6,7 @@ import { getProviderTools, type ParsedToolCall } from './toolSchemas.js';
 import { buildSystemPrompt, computeAgentTools } from './systemPromptBuilder.js';
 import { getAllTools } from './tools.js';
 import { buildLanguagePolicyModuleFor } from './languagePolicy.js';
+import { scrubProprietaryLeak } from './secrecyPolicy.js';
 import type { SystemPromptConfig, SystemPromptModule } from '../types/systemTypes.js';
 import type { BrainEvent, UsageBreakdown } from '../shared/events.js';
 import { createBrainEvent } from '../shared/events.js';
@@ -281,7 +282,9 @@ export function cleanAgentContent(
   if (stripQuestion) {
     out = out.replace(/---QUESTION---[\s\S]*?---END---/g, '');
   }
-  return out.replace(/\n{3,}/g, '\n\n').trim();
+  out = out.replace(/\n{3,}/g, '\n\n').trim();
+  // Defense-in-depth: strip proprietary prompt dumps that escaped model policy.
+  return scrubProprietaryLeak(out);
 }
 
 /**

@@ -4,9 +4,11 @@
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import zelariLogo from "../assets/zelari-logo.png";
+import { openOrFocusOverlay } from "../overlayWindow";
 
 export function TitleBar() {
   const [maximized, setMaximized] = useState(false);
+  const [overlayBusy, setOverlayBusy] = useState(false);
 
   useEffect(() => {
     const win = getCurrentWindow();
@@ -43,6 +45,22 @@ export function TitleBar() {
     void getCurrentWindow().close().catch(() => undefined);
   }, []);
 
+  const openOverlay = useCallback(() => {
+    if (overlayBusy) return;
+    setOverlayBusy(true);
+    void openOrFocusOverlay()
+      .then(async () => {
+        // Manual open: focus the bar after resetting to min size
+        const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
+        const w = await WebviewWindow.getByLabel("overlay");
+        await w?.setFocus();
+      })
+      .catch((e) => {
+        console.error("overlay", e);
+      })
+      .finally(() => setOverlayBusy(false));
+  }, [overlayBusy]);
+
   return (
     <header className="titlebar" data-tauri-drag-region>
       <div className="titlebar-brand" data-tauri-drag-region>
@@ -53,6 +71,16 @@ export function TitleBar() {
       </div>
       <div className="titlebar-drag" data-tauri-drag-region />
       <div className="titlebar-controls">
+        <button
+          type="button"
+          className="titlebar-btn"
+          title="Floating overlay bar (voice + final answer)"
+          aria-label="Open overlay bar"
+          disabled={overlayBusy}
+          onClick={openOverlay}
+        >
+          <span aria-hidden>◉</span>
+        </button>
         <button
           type="button"
           className="titlebar-btn"

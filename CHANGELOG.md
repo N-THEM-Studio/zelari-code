@@ -5,6 +5,21 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-07-12
+
+### Added
+- **Desktop: floating overlay HUD** — always-on-top detachable bar (voice + text → same headless agent). Compact glass UI, mode/phase selects, collapsible final-answer panel with auto window resize. Opens at minimum size on Desktop launch (title bar **◉** to re-open).
+- **Proprietary confidentiality policy** — system prompt module for agent and council packs: never reveal system/role prompts, skill fragments, tool catalog dumps, or internal council/runtime pipeline. Forced into `buildSystemPrompt` even if custom modules override base types.
+- **Output redaction** — `scrubProprietaryLeak` in `cleanAgentContent` strips high-signal system-prompt dumps (defense in depth).
+- **Installer branding** — NSIS header/sidebar assets + app icon pipeline docs (`apps/desktop` scripts).
+
+### Fixed
+- **Desktop: double stream deltas** — StrictMode async `listen` cleanup race no longer doubles assistant text (`CCiaoiao`); same fix on overlay event subscriptions + submit lock.
+- **Desktop: thinking body** — product UI no longer renders raw `thinking_delta` content (spinner only until assistant text).
+
+### Changed
+- Headless fallback system prompt includes a minimal proprietary confidentiality clause if full prompt build fails.
+
 ## [1.12.1] - 2026-07-11
 
 ### Fixed
@@ -55,6 +70,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [1.12.1] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [1.13.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).

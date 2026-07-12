@@ -94,6 +94,23 @@ The in-app image `src/assets/zelari-logo.png` is never overwritten by these scri
 
 NSIS options live in `src-tauri/tauri.conf.json` → `bundle.windows.nsis` (`installerIcon`, `headerImage`, `sidebarImage`, languages).
 
+## Floating overlay bar (HUD)
+
+Detachable always-on-top bar that stays usable when the main window is minimized:
+
+- **Open:** title bar button **◉** (or recreate via the same control)
+- **Compact + glass:** thin bar at rest; stronger transparency + blur
+- **Auto-resize:** window grows with the final answer; text sits in a max-height scrollable panel
+- **Voice:** browser/WebView speech recognition → prompt (type as fallback)
+- **Output:** only assistant `message_delta` text (no thinking / tools)
+- **States:** mic off · listening · processing · agent working
+- Uses the same headless `run_task` as the main chat (mode/phase/workdir from local defaults + Open Folder)
+
+```bash
+# multi-page Vite entry: index.html + overlay.html
+npm run build
+```
+
 ## Modes & phases
 
 | Control | Values | CLI flag |

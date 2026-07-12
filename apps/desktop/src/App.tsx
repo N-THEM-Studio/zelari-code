@@ -45,6 +45,7 @@ import type {
   WorkPhase,
 } from "./types";
 import zelariLogo from "./assets/zelari-logo.png";
+import { ensureOverlayOpenAtMin } from "./overlayWindow";
 import { checkForDesktopUpdate } from "./updater";
 import "./App.css";
 
@@ -221,6 +222,11 @@ export default function App() {
   useEffect(() => {
     saveConversations(conversations);
   }, [conversations]);
+
+  // Floating HUD: open once at minimum size when Desktop starts
+  useEffect(() => {
+    void ensureOverlayOpenAtMin().catch(() => undefined);
+  }, []);
 
   // Persist the chosen working folder
   useEffect(() => {
@@ -439,11 +445,16 @@ export default function App() {
           return;
         }
 
-        if (ev.type === "message_delta" || ev.type === "thinking_delta") {
+        // Proprietary CoT: never surface thinking_delta body in the product UI.
+        // Spinner uses showGlobalThinking while running with no assistant text yet.
+        if (ev.type === "thinking_delta") {
+          return;
+        }
+
+        if (ev.type === "message_delta") {
           const delta = extractDelta(ev);
           if (!delta) return;
-          const isThinking = ev.type === "thinking_delta";
-          if (!isThinking) hasAssistantTextRef.current = true;
+          hasAssistantTextRef.current = true;
           const memberName =
             (ev as { memberName?: string }).memberName ??
             activeMemberRef.current.name;
@@ -464,7 +475,6 @@ export default function App() {
                   content: "",
                   createdAt: Date.now(),
                   streaming: true,
-                  meta: isThinking ? "thinking" : undefined,
                   memberName,
                   memberId,
                 });
@@ -480,18 +490,12 @@ export default function App() {
                         streaming: true,
                         memberName: m.memberName ?? memberName,
                         memberId: m.memberId ?? memberId,
-                        meta: isThinking
-                          ? "thinking"
-                          : m.meta === "thinking" && !isThinking
-                            ? undefined
-                            : m.meta,
                       }
                     : m,
                 ),
               };
             }),
-          );
-          return;
+          );          return;
         }
 
         if (ev.type === "message_end" || ev.type === "agent_end") {
@@ -647,7 +651,10 @@ export default function App() {
           );
         }
       });
-      if (!cancelled) unsubs.push(u1);
+      // If cleanup already ran (StrictMode remount), drop the listener
+      // immediately — otherwise orphan handlers double-append deltas ("CCiao").
+      if (cancelled) u1();
+      else unsubs.push(u1);
 
       const u2 = await onAgentStderr((line) => {
         if (cancelled) return;
@@ -655,7 +662,8 @@ export default function App() {
           setStatusLine(line);
         }
       });
-      if (!cancelled) unsubs.push(u2);
+      if (cancelled) u2();
+      else unsubs.push(u2);
 
       const u3 = await onRunFinished(({ exitCode, cancelled: wasCancelled }) => {
         if (cancelled) return;
@@ -720,12 +728,14 @@ export default function App() {
         setGitRefreshKey((k) => k + 1);
         void refreshCli();
       });
-      if (!cancelled) unsubs.push(u3);
+      if (cancelled) u3();
+      else unsubs.push(u3);
     })();
 
     return () => {
       cancelled = true;
       for (const u of unsubs) u();
+      unsubs.length = 0;
     };
   }, [refreshCli]);
 

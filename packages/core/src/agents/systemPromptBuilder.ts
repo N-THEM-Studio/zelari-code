@@ -9,6 +9,10 @@ import {
   getBasePromptModules,
   type PromptPackMode,
 } from './promptModules.js';
+import {
+  PROPRIETARY_SECRECY_MARKER,
+  PROPRIETARY_SECRECY_MODULE,
+} from './secrecyPolicy.js';
 import { resolveAgentSkills, getSkillById } from './skills.js';
 
 /**
@@ -194,6 +198,12 @@ export function buildSystemPrompt(
   const parts: string[] = [];
   for (const mod of allModules) {
     parts.push(mod.content);
+  }
+
+  // Non-optional IP guard: always present even if custom modules replace types.
+  const assembledSoFar = parts.join('\n');
+  if (!assembledSoFar.includes(PROPRIETARY_SECRECY_MARKER)) {
+    parts.splice(1, 0, PROPRIETARY_SECRECY_MODULE.content);
   }
 
   // 3. Agent's inline role prompt (role-specific persona)
