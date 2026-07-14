@@ -98,12 +98,12 @@ NSIS options live in `src-tauri/tauri.conf.json` → `bundle.windows.nsis` (`ins
 
 Detachable always-on-top bar that stays usable when the main window is minimized:
 
-- **Open:** title bar button **◉** (or recreate via the same control)
+- **Open:** title bar button **◉** only (does **not** auto-open on Desktop launch)
 - **Compact + glass:** thin bar at rest; stronger transparency + blur
 - **Auto-resize:** window grows with the final answer; text sits in a max-height scrollable panel
-- **Voice:** browser/WebView speech recognition → prompt (type as fallback)
-- **Output:** only assistant `message_delta` text (no thinking / tools)
-- **States:** mic off · listening · processing · agent working
+- **Voice:** click mic to start, click again to stop (no auto-send); type + Enter/→ to run
+- **Output:** final answer only (`message_delta`), rendered without raw markdown noise (`**`, etc.)
+- **States:** mic off · listening · agent working
 - Uses the same headless `run_task` as the main chat (mode/phase/workdir from local defaults + Open Folder)
 
 ```bash

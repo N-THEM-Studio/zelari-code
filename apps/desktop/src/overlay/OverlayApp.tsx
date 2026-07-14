@@ -12,6 +12,7 @@ import {
   onRunFinished,
   runTask,
 } from "../agentClient";
+import { MessageContent } from "../components/MessageContent";
 import {
   OVERLAY_DEFAULT_WIDTH,
   OVERLAY_MAX_HEIGHT,
@@ -19,7 +20,8 @@ import {
 } from "../overlayWindow";
 import type { DispatchMode, WorkPhase } from "../types";
 
-type MicState = "off" | "listening" | "processing" | "agent_working";
+/** Mic is manual toggle only: click on → listen, click off → stop (no auto-send). */
+type MicState = "off" | "listening" | "agent_working";
 
 const LS_DEFAULTS = "zelari-desktop-defaults-v1";
 const LS_WORKDIR = "zelari-desktop-workdir";
@@ -30,13 +32,14 @@ interface SpeechRecognitionLike extends EventTarget {
   lang: string;
   start: () => void;
   stop: () => void;
-  abort: () => void;
+  abort?: () => void;
   onresult: ((ev: SpeechRecognitionEventLike) => void) | null;
   onerror: ((ev: { error?: string }) => void) | null;
   onend: (() => void) | null;
 }
 
 interface SpeechRecognitionEventLike {
+  resultIndex?: number;
   results: ArrayLike<ArrayLike<{ transcript: string }> & { isFinal?: boolean }>;
 }
 
@@ -95,7 +98,7 @@ function MicIcon({ state }: { state: MicState }) {
       </svg>
     );
   }
-  // processing / agent_working — solid mic + activity
+  // agent_working — solid mic + activity
   return (
     <svg viewBox="0 0 24 24" aria-hidden>
       <path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z" />
@@ -122,6 +125,8 @@ export function OverlayApp() {
   const answerBuf = useRef("");
   const recogRef = useRef<SpeechRecognitionLike | null>(null);
   const wantListen = useRef(false);
+  /** Bumps on stop/start so stale onend handlers never restart the wrong session. */
+  const listenGen = useRef(0);
   /** Prevent double runTask (StrictMode / double speech final / Enter+click). */
   const submitLock = useRef(false);
   const shellRef = useRef<HTMLDivElement | null>(null);
@@ -264,6 +269,12 @@ export function OverlayApp() {
 
   const stopRecognition = useCallback(() => {
     wantListen.current = false;
+    listenGen.current += 1;
+    try {
+      recogRef.current?.abort?.();
+    } catch {
+      /* ignore */
+    }
     try {
       recogRef.current?.stop();
     } catch {
@@ -272,51 +283,58 @@ export function OverlayApp() {
     recogRef.current = null;
   }, []);
 
-  const submitPrompt = useCallback(async (text: string) => {
-    const prompt = text.trim();
-    if (!prompt) return;
-    if (submitLock.current) return;
-    submitLock.current = true;
+  const submitPrompt = useCallback(
+    async (text: string) => {
+      const prompt = text.trim();
+      if (!prompt) return;
+      if (submitLock.current) return;
+      submitLock.current = true;
 
-    setError(null);
-    setDraft("");
-    setInterim("");
-    answerBuf.current = "";
-    setAnswer("");
-    setRunning(true);
-    setMic("agent_working");
-    setHint("Agent working…");
+      // Manual send only — stop mic if still open
+      stopRecognition();
 
-    try {
-      const cli = await getCliStatus();
-      if (!cli.ok) {
-        throw new Error(cli.message || "CLI not ready");
+      setError(null);
+      setDraft("");
+      setInterim("");
+      answerBuf.current = "";
+      setAnswer("");
+      setRunning(true);
+      setMic("agent_working");
+      setHint("Agent working…");
+
+      try {
+        const cli = await getCliStatus();
+        if (!cli.ok) {
+          throw new Error(cli.message || "CLI not ready");
+        }
+        const cfg = await getAppConfig();
+        const workdir = localStorage.getItem(LS_WORKDIR);
+        const provider = cfg.activeProviderId;
+        const model =
+          cfg.modelByProvider[provider] ||
+          cfg.providers.find((p) => p.id === provider)?.defaultModel;
+
+        writeDefaults(mode, phase);
+        await runTask({
+          prompt,
+          mode,
+          phase,
+          provider: provider || undefined,
+          model: model || undefined,
+          cwd: workdir || undefined,
+        });
+      } catch (e) {
+        submitLock.current = false;
+        const msg = e instanceof Error ? e.message : String(e);
+        setError(msg);
+        setRunning(false);
+        setMic("off");
+        setHint("Error");
       }
-      const cfg = await getAppConfig();
-      const workdir = localStorage.getItem(LS_WORKDIR);
-      const provider = cfg.activeProviderId;
-      const model =
-        cfg.modelByProvider[provider] ||
-        cfg.providers.find((p) => p.id === provider)?.defaultModel;
+    },
+    [mode, phase, stopRecognition],
+  );
 
-      writeDefaults(mode, phase);
-      await runTask({
-        prompt,
-        mode,
-        phase,
-        provider: provider || undefined,
-        model: model || undefined,
-        cwd: workdir || undefined,
-      });
-    } catch (e) {
-      submitLock.current = false;
-      const msg = e instanceof Error ? e.message : String(e);
-      setError(msg);
-      setRunning(false);
-      setMic("off");
-      setHint("Error");
-    }
-  }, [mode, phase]);
   const startListening = useCallback(() => {
     const Ctor = getSpeechRecognitionCtor();
     if (!Ctor) {
@@ -324,70 +342,86 @@ export function OverlayApp() {
       return;
     }
     stopRecognition();
+    const gen = ++listenGen.current;
     const rec = new Ctor();
-    rec.continuous = false;
+    // Continuous: keep listening until user clicks mic off (no auto-send).
+    rec.continuous = true;
     rec.interimResults = true;
     rec.lang = navigator.language || "it-IT";
     wantListen.current = true;
     setMic("listening");
     setError(null);
-    setHint("Listening…");
+    setHint("Listening… click mic to stop");
     setInterim("");
 
-    rec.onresult = (ev) => {
-      let interimText = "";
-      let finalText = "";
-      const results = ev.results;
-      for (let i = 0; i < results.length; i++) {
-        const row = results[i];
-        const piece = row?.[0]?.transcript ?? "";
-        if ((row as { isFinal?: boolean }).isFinal) finalText += piece;
-        else interimText += piece;
-      }
-      if (interimText) setInterim(interimText);
-      if (finalText.trim()) {
-        // One-shot: stop before submit so onend/onresult cannot re-fire send
-        wantListen.current = false;
-        try {
-          rec.stop();
-        } catch {
-          /* ignore */
+    const attachHandlers = (target: SpeechRecognitionLike) => {
+      target.onresult = (ev) => {
+        if (listenGen.current !== gen || !wantListen.current) return;
+        let interimText = "";
+        let finalChunk = "";
+        const results = ev.results;
+        // Only process newly finalized segments (SpeechRecognition is cumulative).
+        const resultIndex =
+          typeof ev.resultIndex === "number" ? ev.resultIndex : 0;
+        for (let i = resultIndex; i < results.length; i++) {
+          const row = results[i];
+          const piece = row?.[0]?.transcript ?? "";
+          if ((row as { isFinal?: boolean }).isFinal) finalChunk += piece;
+          else interimText += piece;
         }
-        recogRef.current = null;
-        setMic("processing");
-        setHint("Sending…");
-        setDraft(finalText.trim());
-        setInterim("");
-        void submitPrompt(finalText.trim());
-      }
-    };
-    rec.onerror = (ev) => {
-      if (ev.error === "aborted" || ev.error === "no-speech") {
-        if (wantListen.current) setMic("off");
-        return;
-      }
-      setError(ev.error || "mic error");
-      setMic("off");
-      wantListen.current = false;
-    };
-    rec.onend = () => {
-      recogRef.current = null;
-      if (wantListen.current && !running) {
-        // one-shot ended without final — back off
-        setMic("off");
+        if (interimText) setInterim(interimText);
+        else setInterim("");
+        if (finalChunk.trim()) {
+          const piece = finalChunk.trim();
+          setDraft((prev) => (prev ? `${prev.trimEnd()} ${piece}` : piece));
+          setInterim("");
+          setHint("Listening… click mic to stop");
+        }
+      };
+      target.onerror = (ev) => {
+        if (listenGen.current !== gen) return;
+        // no-speech / aborted: stay listening if user still wants mic on
+        if (ev.error === "aborted") return;
+        if (ev.error === "no-speech") return;
+        setError(ev.error || "mic error");
         wantListen.current = false;
+        setMic("off");
         setHint("Mic off");
-      }
+      };
+      target.onend = () => {
+        if (listenGen.current !== gen) return;
+        recogRef.current = null;
+        // Browsers often end continuous sessions after a pause — restart while armed.
+        if (wantListen.current) {
+          try {
+            const again = new Ctor();
+            again.continuous = true;
+            again.interimResults = true;
+            again.lang = navigator.language || "it-IT";
+            attachHandlers(again);
+            recogRef.current = again;
+            again.start();
+          } catch {
+            wantListen.current = false;
+            setMic("off");
+            setHint("Mic off");
+          }
+        } else {
+          setMic((m) => (m === "agent_working" ? m : "off"));
+        }
+      };
     };
 
+    attachHandlers(rec);
     recogRef.current = rec;
     try {
       rec.start();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      wantListen.current = false;
       setMic("off");
     }
-  }, [running, stopRecognition, submitPrompt]);
+  }, [stopRecognition]);
 
   const toggleMic = useCallback(() => {
     if (mic === "listening") {
@@ -397,13 +431,14 @@ export function OverlayApp() {
       setHint("Mic off");
       return;
     }
-    if (running || mic === "agent_working" || mic === "processing") return;
+    if (running || mic === "agent_working") return;
     startListening();
   }, [mic, running, startListening, stopRecognition]);
 
   const onSend = () => {
     if (running) return;
-    void submitPrompt(draft || interim);
+    const text = [draft, interim].filter(Boolean).join(" ").trim();
+    void submitPrompt(text);
   };
 
   const onStopAgent = async () => {
@@ -424,12 +459,11 @@ export function OverlayApp() {
     void getCurrentWindow().startDragging().catch(() => undefined);
   };
 
-  const displayAnswer = error
-    ? error
-    : answer || (interim ? `… ${interim}` : "");
-  const hasAnswer = Boolean(displayAnswer);
+  const displayAnswer = error ? error : answer;
+  const hasAnswer = Boolean(displayAnswer.trim());
   const showAnswerBody = hasAnswer && !answerCollapsed;
-  const showHint = Boolean(error) || mic === "listening" || running;
+  const showHint =
+    Boolean(error) || mic === "listening" || running || Boolean(interim);
 
   const onModeChange = (m: DispatchMode) => {
     setMode(m);
@@ -448,15 +482,14 @@ export function OverlayApp() {
           className={`mic-btn ${mic}`}
           title={
             mic === "listening"
-              ? "Stop listening"
+              ? "Stop listening (click)"
               : speechOk
-                ? "Start voice input"
+                ? "Start voice input (click to toggle)"
                 : "Voice unavailable — type below"
           }
           aria-label="Microphone"
           disabled={
             (!speechOk && mic === "off") ||
-            mic === "processing" ||
             (running && mic !== "listening")
           }
           onClick={toggleMic}
@@ -469,13 +502,7 @@ export function OverlayApp() {
           title={hint}
         >
           <span className="dot" />
-          {running
-            ? "Work"
-            : mic === "listening"
-              ? "Mic"
-              : mic === "processing"
-                ? "…"
-                : "Idle"}
+          {running ? "Work" : mic === "listening" ? "Mic" : "Idle"}
         </span>
 
         <div className="overlay-drag" onMouseDown={startDrag} />
@@ -568,13 +595,21 @@ export function OverlayApp() {
               ref={answerPanelRef}
               className={`answer-panel ${error ? "error" : ""}`}
             >
-              {displayAnswer}
+              {error ? (
+                displayAnswer
+              ) : (
+                <MessageContent content={displayAnswer} streaming={running} />
+              )}
             </div>
           ) : null}
         </div>
       ) : null}
 
-      {showHint ? <div className="hint">{hint}</div> : null}
+      {showHint ? (
+        <div className="hint">
+          {interim ? `… ${interim}` : hint}
+        </div>
+      ) : null}
     </div>
   );
 }

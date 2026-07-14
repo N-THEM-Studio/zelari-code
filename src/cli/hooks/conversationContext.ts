@@ -162,7 +162,99 @@ export function formatHistoryMessages(
 }
 
 const SHORT_CONTINUE =
-  /^(procedi|continua|continue|go\s*ahead|go|ok|okay|sì|si|yes|vai|avanti|next|proceed)$/i;
+  /^(procedi|continua|continue|go\s*ahead|go|ok|okay|sì|si|yes|vai|avanti|next|proceed|conferma|confermo|applica|fai|scrivi|esegui|implementa|vai pure|fai pure|ok procedi|sì procedi|si procedi)$/i;
+
+/** Loose “continue” cues even when the reply is a short sentence. */
+const SHORT_CONTINUE_LOOSE =
+  /\b(procedi|continua|continue|conferma|confermo|applica|implementa|scriv[ia]|esegui|vai pure|fai pure|go ahead|proceed)\b/i;
+
+/**
+ * True when the user message is a short affirmation / continue cue that needs
+ * prior-turn re-anchoring (Desktop plan→build swaps, "procedi", "sì", …).
+ */
+export function isShortContinueReply(task: string): boolean {
+  const trimmed = task.trim();
+  if (!trimmed) return false;
+  if (SHORT_CONTINUE.test(trimmed)) return true;
+  if (trimmed.length <= 80 && !trimmed.includes('\n') && SHORT_CONTINUE_LOOSE.test(trimmed)) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Rewrite a short continue reply so a fresh headless process cannot treat it
+ * as a brand-new empty session (common after Desktop phase plan→build).
+ */
+export function buildContinueUserMessage(
+  task: string,
+  prior: readonly AgentMessage[],
+  opts?: { maxPriorChars?: number },
+): string | null {
+  if (!isShortContinueReply(task) || prior.length === 0) return null;
+  const lastAsst = [...prior]
+    .reverse()
+    .find((m) => m.role === 'assistant' && (m.content ?? '').trim());
+  if (!lastAsst) return null;
+  const max = opts?.maxPriorChars ?? 8000;
+  const trimmed = task.trim();
+  return (
+    `The user says "${trimmed}" — this is a CONTINUATION of an existing multi-turn session ` +
+    `(the Desktop phase may have switched plan↔build; mode may have changed). ` +
+    `This is NOT a new conversation and you DO have prior context below.\n\n` +
+    `## CRITICAL — plan text ≠ done on disk\n` +
+    `The prior assistant output is a PLAN / SPEC / PROPOSAL (or analysis). ` +
+    `It is NOT proof that project files already contain those changes.\n` +
+    `The user CONFIRMED the plan and wants you to IMPLEMENT it ON DISK NOW.\n` +
+    `- You MUST use write_file and/or edit_file (and bash when needed) to apply every planned change.\n` +
+    `- Reading files alone is incomplete. Do not stop after read_file/list_files/grep.\n` +
+    `- Do NOT claim "already implemented" / "tutto fatto" unless you verified the changes ` +
+    `exist on disk in THIS turn (read after your own successful writes).\n` +
+    `- Do NOT restart from zero or re-ask for the overall goal.\n\n` +
+    `## Prior assistant output (plan to implement — authoritative)\n` +
+    `${truncate(lastAsst.content, max)}\n\n` +
+    `## Instruction\n` +
+    `Implement the plan on disk now with mutating tools, then briefly list the files you wrote/edited.`
+  );
+}
+
+/**
+ * True when this headless turn is expected to mutate project files
+ * (BUILD phase + continue/implement cue, or explicit write verbs).
+ */
+export function expectsDiskImplementation(
+  task: string,
+  phase: string | undefined,
+  prior?: readonly AgentMessage[],
+): boolean {
+  if ((phase ?? 'build') === 'plan') return false;
+  const trimmed = task.trim();
+  if (!trimmed) return false;
+  if (isShortContinueReply(trimmed)) return true;
+  if (
+    /\b(implement|implementa|scrivi|scriviamo|applica|modifica|fix|write|edit|crea|aggiungi|aggiorna|apply|patch)\b/i.test(
+      trimmed,
+    )
+  ) {
+    return true;
+  }
+  // Prior plan + short user reply → treat as confirmed implementation.
+  // (Do not force writes on unrelated follow-ups like "what is X?".)
+  if (prior && prior.length > 0 && isShortContinueReply(trimmed)) {
+    const lastAsst = [...prior]
+      .reverse()
+      .find((m) => m.role === 'assistant' && (m.content ?? '').trim());
+    if (
+      lastAsst &&
+      /\b(se confermi|passo alla|scriv|implement|on disk|write_file|modifiche proposte|riepilogo delle modifiche)\b/i.test(
+        lastAsst.content,
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Build the user task for headless council/zelari with multi-turn context.
@@ -180,24 +272,11 @@ export function buildCouncilTaskWithHistory(
   // (TUI). For headless, also treat continue-verbs against last assistant.
   let userPart = maybeAnchorShortAnswer(task) ?? task;
 
-  if (
-    messages.length > 0 &&
-    (SHORT_CONTINUE.test(trimmed) ||
-      (trimmed.length <= 40 && !trimmed.includes('\n')))
-  ) {
-    const lastAsst = [...messages]
-      .reverse()
-      .find((m) => m.role === 'assistant' && m.content.trim());
-    if (lastAsst && SHORT_CONTINUE.test(trimmed)) {
-      userPart =
-        `The user says "${trimmed}" — continue from the prior conversation. ` +
-        `Do NOT restart from zero, do NOT re-ask for the overall goal, and do NOT ignore the prior plan/risks/decisions.\n\n` +
-        `## Prior assistant output (authoritative context)\n` +
-        `${truncate(lastAsst.content, 4500)}\n\n` +
-        `## Instruction\n` +
-        `Proceed with the next concrete steps implied by that context ` +
-        `(implementation when the work phase is build; otherwise the next planned actions).`;
-    }
+  const continued = buildContinueUserMessage(trimmed, messages, {
+    maxPriorChars: 4500,
+  });
+  if (continued) {
+    userPart = continued;
   }
 
   const block = formatHistoryMessages(messages, 6, 12_000);
@@ -207,6 +286,21 @@ export function buildCouncilTaskWithHistory(
     return userPart;
   }
   return `${block}\n\n## Current user request\n${userPart}`;
+}
+
+/**
+ * Agent headless: effective user message for multi-turn Desktop.
+ * Short continues get an explicit re-anchor; longer messages stay as-is
+ * (prior turns are also seeded into the harness messages array).
+ */
+export function buildAgentUserWithHistory(
+  task: string,
+  prior: readonly AgentMessage[] | undefined,
+): string {
+  const messages = prior ?? [];
+  const anchored = maybeAnchorShortAnswer(task);
+  if (anchored) return anchored;
+  return buildContinueUserMessage(task, messages, { maxPriorChars: 8000 }) ?? task;
 }
 
 function truncate(s: string, max: number): string {

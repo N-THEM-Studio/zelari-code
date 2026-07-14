@@ -4,8 +4,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import type { AgentMessage } from '@zelari/core/harness';
 import {
+  buildAgentUserWithHistory,
   buildCouncilTaskWithHistory,
+  expectsDiskImplementation,
   formatHistoryMessages,
+  isShortContinueReply,
   _resetConversationContextForTests,
 } from '../../src/cli/hooks/conversationContext.js';
 
@@ -60,5 +63,58 @@ describe('formatHistoryMessages', () => {
     const s = formatHistoryMessages(msgs, 2);
     expect(s).toMatch(/u2/);
     expect(s).toMatch(/a2/);
+  });
+});
+
+describe('buildAgentUserWithHistory (Desktop plan→build)', () => {
+  const prior: AgentMessage[] = [
+    {
+      role: 'user',
+      content: 'Arricchisci la pagina Storia',
+    },
+    {
+      role: 'assistant',
+      content:
+        'Sintesi: 4 sezioni nuove, timeline 10 milestone, CTA finale. Se confermi, passo alla scrittura su disco.',
+    },
+  ];
+
+  it('re-anchors short confirmations so agent cannot claim empty session', () => {
+    const msg = buildAgentUserWithHistory('procedi', prior);
+    expect(msg).toMatch(/CONTINUATION|Prior assistant|plan to implement/i);
+    expect(msg).toMatch(/timeline 10 milestone|Sintesi/i);
+    expect(msg).toMatch(/write_file|ON DISK|IMPLEMENT/i);
+    expect(msg).not.toBe('procedi');
+  });
+
+  it('expectsDiskImplementation for build continues and plan confirmations', () => {
+    expect(expectsDiskImplementation('procedi', 'build', prior)).toBe(true);
+    expect(expectsDiskImplementation('procedi', 'plan', prior)).toBe(false);
+    expect(
+      expectsDiskImplementation('what is typescript?', 'build', prior),
+    ).toBe(false);
+    expect(
+      expectsDiskImplementation('implement the founder section', 'build', []),
+    ).toBe(true);
+  });
+
+  it('re-anchors Italian confirm phrases', () => {
+    const msg = buildAgentUserWithHistory('sì conferma e scrivi', prior);
+    expect(msg).toMatch(/Prior assistant|Sintesi/i);
+  });
+
+  it('leaves long free-form tasks unchanged', () => {
+    const long =
+      'Implement only the founder biography section with the gold border photo layout.';
+    expect(buildAgentUserWithHistory(long, prior)).toBe(long);
+  });
+
+  it('isShortContinueReply detects continue cues', () => {
+    expect(isShortContinueReply('procedi')).toBe(true);
+    expect(isShortContinueReply('ok')).toBe(true);
+    expect(isShortContinueReply('sì, procedi pure')).toBe(true);
+    expect(isShortContinueReply('rewrite the whole page with different copy')).toBe(
+      false,
+    );
   });
 });

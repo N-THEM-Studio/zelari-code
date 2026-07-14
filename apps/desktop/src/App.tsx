@@ -45,7 +45,6 @@ import type {
   WorkPhase,
 } from "./types";
 import zelariLogo from "./assets/zelari-logo.png";
-import { ensureOverlayOpenAtMin } from "./overlayWindow";
 import { checkForDesktopUpdate } from "./updater";
 import "./App.css";
 
@@ -79,9 +78,15 @@ function formatTime(ts: number): string {
 }
 
 /**
- * Fallback multi-turn history when the CLI never emitted history_snapshot
- * (legacy council runs). Keep user + assistant only, last ~12 messages.
- * Excludes the user message just about to be sent (already the task).
+ * Multi-turn history for headless runs — derived from the chat UI.
+ *
+ * The chat transcript is the source of truth: CLI history_snapshot can be
+ * tool-heavy, racey on process exit, or missing after a plan→build phase
+ * switch, which previously caused "no previous context" amnesia.
+ *
+ * Keep user + assistant only. Long assistant bodies keep the TAIL (plan
+ * summaries / synthesis usually sit at the end). Excludes the user message
+ * about to be sent (already the task).
  */
 function deriveHistoryFromChat(
   messages: ChatMessage[],
@@ -90,14 +95,17 @@ function deriveHistoryFromChat(
   const out: AgentMessageLite[] = [];
   for (const m of messages) {
     if (m.role !== "user" && m.role !== "assistant") continue;
-    const content = (m.content ?? "").trim();
+    let content = (m.content ?? "").trim();
     if (!content) continue;
     // Skip pure thinking-only empty streams
     if (m.role === "assistant" && content.length < 8) continue;
+    // Prefer end of long plans (synthesis / confirmation Q live there)
+    if (content.length > 12_000) {
+      content = `…${content.slice(-(12_000 - 1))}`;
+    }
     out.push({
       role: m.role,
-      content:
-        content.length > 6000 ? `${content.slice(0, 5999)}…` : content,
+      content,
     });
   }
   // Drop trailing user if it equals the message we're about to send
@@ -111,7 +119,7 @@ function deriveHistoryFromChat(
       out.pop();
     }
   }
-  return out.slice(-12);
+  return out.slice(-16);
 }
 
 function loadDefaults(): { mode: DispatchMode; phase: WorkPhase } {
@@ -208,6 +216,8 @@ export default function App() {
   });
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
+  const conversationsRef = useRef(conversations);
+  conversationsRef.current = conversations;
   const runStartedAtRef = useRef<number>(0);
   const toolCountRef = useRef(0);
   const hasAssistantTextRef = useRef(false);
@@ -222,11 +232,6 @@ export default function App() {
   useEffect(() => {
     saveConversations(conversations);
   }, [conversations]);
-
-  // Floating HUD: open once at minimum size when Desktop starts
-  useEffect(() => {
-    void ensureOverlayOpenAtMin().catch(() => undefined);
-  }, []);
 
   // Persist the chosen working folder
   useEffect(() => {
@@ -368,25 +373,43 @@ export default function App() {
           return;
         }
 
-        // v1.10.0: collect the rolling provider-side history so the next
-        // runTask can replay it (--history) and the agent keeps multi-turn
-        // context. Emitted once at end-of-turn by the headless CLI.
+        // v1.10.0: collect rolling history for the next runTask. Prefer
+        // user/assistant pairs only (tool tails blow the budget and caused
+        // plan→build amnesia). Merge with chat-derived when richer.
         if (ev.type === "history_snapshot") {
           const msgs = (ev as { messages?: AgentMessageLite[] }).messages;
           if (Array.isArray(msgs)) {
-            setConversations((prev) =>
-              prev.map((c) =>
-                c.id === convId
-                  ? {
-                      ...c,
-                      history: [
-                        ...(c.history ?? []),
-                        ...msgs,
-                      ].slice(-24), // cap to keep argv/context window bounded
-                    }
-                  : c,
-              ),
-            );
+            const clean = msgs
+              .filter(
+                (m) =>
+                  m &&
+                  (m.role === "user" || m.role === "assistant") &&
+                  typeof m.content === "string" &&
+                  m.content.trim().length > 0,
+              )
+              .map((m) => ({
+                role: m.role as "user" | "assistant",
+                content:
+                  m.content.length > 12_000
+                    ? `…${m.content.slice(-11_999)}`
+                    : m.content,
+              }));
+            if (clean.length > 0) {
+              setConversations((prev) =>
+                prev.map((c) => {
+                  if (c.id !== convId) return c;
+                  const fromChat = deriveHistoryFromChat(c.messages, "");
+                  const merged = [...(c.history ?? []), ...clean].slice(-24);
+                  // Chat UI wins when it already has full assistant text
+                  const history =
+                    fromChat.length >= merged.length &&
+                    fromChat.some((m) => m.role === "assistant")
+                      ? fromChat
+                      : merged;
+                  return { ...c, history };
+                }),
+              );
+            }
           }
           return;
         }
@@ -878,12 +901,21 @@ export default function App() {
     );
 
     try {
-      // Prefer CLI history_snapshot chain; if missing (older council runs),
-      // derive user/assistant turns from the chat UI so "procedi" keeps context.
+      // Chat UI is the source of truth for multi-turn (survives phase plan→build
+      // and mode swaps). Read from ref so we always see the latest transcript
+      // even if this handler closed over a stale `active`.
+      const live =
+        conversationsRef.current.find((c) => c.id === activeIdRef.current) ??
+        active;
+      const fromChat = deriveHistoryFromChat(live?.messages ?? [], prompt);
+      const fromSnap = (live?.history ?? []).filter(
+        (m) =>
+          (m.role === "user" || m.role === "assistant") &&
+          typeof m.content === "string" &&
+          m.content.trim().length > 0,
+      );
       const historyForRun =
-        active?.history && active.history.length > 0
-          ? active.history
-          : deriveHistoryFromChat(active?.messages ?? [], prompt);
+        fromChat.length > 0 ? fromChat : fromSnap.slice(-16);
 
       await runTask({
         prompt,

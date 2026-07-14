@@ -5,6 +5,18 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.0] - 2026-07-14
+
+### Fixed
+- **Desktop multi-turn / plan→build amnesia** — chat UI is the source of truth for `--history`; short continues (`procedi`, `conferma`, …) re-anchor prior assistant plan text so a fresh headless process cannot claim an empty session.
+- **Agent BUILD prose-only “already done”** — BUILD phase prompts require on-disk writes; headless forces one implementation retry when `write_file`/`edit_file` never succeed; plan text is treated as a SPEC, not proof of disk state.
+- **Overlay HUD** — no auto-open on Desktop launch; mic is click-to-toggle (no auto-send); final answer rendered without raw markdown noise (`**`, unpaired markers).
+- **History seed quality** — agent history snapshots are user/assistant only (tool tails no longer blow the message budget); headless history parse coerces content safely.
+
+### Changed
+- Overlay opens only via title bar **◉**; voice accumulates in the input until the user sends with Enter/→.
+- Agent/council continue anchors and BUILD system prompts emphasize implement-on-disk after plan confirmation.
+
 ## [1.13.0] - 2026-07-12
 
 ### Added
@@ -80,6 +92,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [1.13.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [1.14.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).

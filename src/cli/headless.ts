@@ -181,11 +181,42 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
           try {
             const parsedHist = JSON.parse(raw);
             if (Array.isArray(parsedHist)) {
-              history = parsedHist.filter(
-                (m): m is AgentMessage =>
-                  m && typeof m === 'object' && typeof m.role === 'string' &&
-                  typeof m.content === 'string',
-              );
+              // Coerce content to string: snapshots may omit content on
+              // tool-call assistant stubs; empty string keeps the role.
+              history = parsedHist
+                .filter(
+                  (m): m is Record<string, unknown> =>
+                    !!m &&
+                    typeof m === 'object' &&
+                    typeof (m as { role?: unknown }).role === 'string',
+                )
+                .map((m) => {
+                  const role = String(m.role);
+                  const raw = m.content;
+                  const content =
+                    typeof raw === 'string'
+                      ? raw
+                      : raw == null
+                        ? ''
+                        : typeof raw === 'object'
+                          ? JSON.stringify(raw)
+                          : String(raw);
+                  const msg: AgentMessage = {
+                    role: role as AgentMessage['role'],
+                    content,
+                  };
+                  if (typeof m.toolCallId === 'string') {
+                    msg.toolCallId = m.toolCallId;
+                  }
+                  return msg;
+                })
+                .filter(
+                  (m) =>
+                    m.role === 'user' ||
+                    m.role === 'assistant' ||
+                    m.role === 'tool' ||
+                    m.role === 'system',
+                );
             }
           } catch {
             // Swallow: stale/incompatible history.

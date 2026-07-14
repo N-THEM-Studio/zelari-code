@@ -82,8 +82,8 @@ export async function openOrFocusOverlay(): Promise<void> {
 }
 
 /**
- * Auto-open on app start at minimum size without focusing the bar.
- * Safe to call multiple times (idempotent).
+ * Open overlay at minimum size without focusing (e.g. programmatic restore).
+ * Not used on Desktop launch — user opens via title bar ◉.
  */
 export async function ensureOverlayOpenAtMin(): Promise<void> {
   await openOrFocusOverlay();

@@ -14,14 +14,22 @@ type Block =
   | { kind: "quote"; text: string };
 
 function stripInlineArtifacts(s: string): string {
-  return s
+  let t = s
     .replace(/\*\*(.+?)\*\*/g, "$1")
     .replace(/__(.+?)__/g, "$1")
     .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "$1")
     .replace(/`([^`]+)`/g, "$1")
+    .replace(/~~(.+?)~~/g, "$1")
     .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
-    .replace(/^#{1,6}\s+/, "")
-    .trim();
+    .replace(/^#{1,6}\s+/, "");
+  // Streaming / unpaired leftovers (keep snake_case underscores intact)
+  t = t
+    .replace(/\*\*/g, "")
+    .replace(/(?<![\w])\*(?![\w])/g, "")
+    .replace(/__/g, "")
+    .replace(/~~/g, "")
+    .replace(/`+/g, "");
+  return t.trim();
 }
 
 function isTableSeparator(line: string): boolean {

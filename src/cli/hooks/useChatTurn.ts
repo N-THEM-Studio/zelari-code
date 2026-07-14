@@ -369,12 +369,21 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 "- Produce a clear plan, ask clarifying questions (---QUESTION---), use workspace plan tools when relevant.",
                 "- When the plan is ready, tell the user to run /build to implement.",
               ].join("\n")
-            : workPhase === "build" && planSummary
+            : workPhase === "build"
               ? [
                   "",
                   "# Work Phase: BUILD",
-                  "Implement the approved plan. Prefer acting over describing. Update plan task statuses as you go.",
-                ].join("\n")
+                  "Implement on disk. Prefer acting over describing.",
+                  "- Prior plan/synthesis text is a SPEC to apply — not proof files already changed.",
+                  "- You MUST use write_file/edit_file for every file you change before claiming done.",
+                  "- After read_file: if the planned change is missing, WRITE it — do not stop at analysis.",
+                  "- Never claim already-implemented based only on reading a plan or skimming code.",
+                  planSummary
+                    ? "- An approved plan exists in the workspace — implement it and update task statuses as you go."
+                    : "",
+                ]
+                  .filter(Boolean)
+                  .join("\n")
               : "";
         const shellContextBlock = [
           "# Platform & Shell",

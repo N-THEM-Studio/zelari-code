@@ -139,7 +139,6 @@ body,
   animation: pulse 1.4s ease-in-out infinite;
 }
 
-.mic-btn.processing,
 .mic-btn.agent_working {
   color: var(--working);
   border-color: rgba(167, 139, 250, 0.5);
@@ -303,10 +302,102 @@ body,
   line-height: 1.35;
   color: var(--text);
   user-select: text;
-  white-space: pre-wrap;
   word-break: break-word;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+}
+
+/* Compact MessageContent styles (strip ** / * / # without App.css) */
+.answer-panel .md-content {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  white-space: normal;
+}
+
+.answer-panel .md-h {
+  font-weight: 650;
+  margin: 0;
+  color: var(--text);
+}
+
+.answer-panel .md-h1 {
+  font-size: 12px;
+}
+.answer-panel .md-h2 {
+  font-size: 11.5px;
+}
+.answer-panel .md-h3 {
+  font-size: 11px;
+  color: rgba(244, 244, 245, 0.92);
+}
+
+.answer-panel .md-p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.answer-panel .md-list {
+  margin: 0;
+  padding-left: 1.15em;
+}
+
+.answer-panel .md-list li {
+  margin: 1px 0;
+}
+
+.answer-panel .md-code {
+  margin: 0;
+  padding: 4px 6px;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+  font-size: 10px;
+  line-height: 1.3;
+  white-space: pre;
+}
+
+.answer-panel .md-code code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+}
+
+.answer-panel .md-table-wrap {
+  overflow-x: auto;
+}
+
+.answer-panel .md-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 10px;
+}
+
+.answer-panel .md-table th,
+.answer-panel .md-table td {
+  border: 1px solid var(--border);
+  padding: 2px 4px;
+  text-align: left;
+}
+
+.answer-panel .md-quote {
+  margin: 0;
+  padding-left: 6px;
+  border-left: 2px solid rgba(34, 211, 238, 0.45);
+  color: var(--muted);
+}
+
+.answer-panel .stream-cursor {
+  display: inline-block;
+  width: 5px;
+  height: 0.9em;
+  margin-left: 1px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: blink 0.9s step-end infinite;
+}
+
+.answer-panel .msg-stats {
+  display: none; /* keep HUD free of stats chrome */
 }
 
 .answer-panel::-webkit-scrollbar {

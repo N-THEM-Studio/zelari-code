@@ -19,9 +19,11 @@ import type { AgentMessage, AgentToolSpec } from '@zelari/core/harness';
 import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import { cleanAgentContent } from '@zelari/core';
 import {
+  buildAgentUserWithHistory,
   buildCouncilTaskWithHistory,
-  maybeAnchorShortAnswer,
+  expectsDiskImplementation,
 } from './hooks/conversationContext.js';
+import { buildImplementationWriteRetryPrompt } from '@zelari/core/council';
 import { createBuiltinToolRegistry } from './toolRegistry.js';
 import {
   emitEvent,
@@ -209,8 +211,20 @@ async function runHeadlessSingle(
         '',
         `# Work phase: ${opts.phase ?? 'build'}`,
         (opts.phase ?? 'build') === 'plan'
-          ? 'PLAN phase: explore and design only. Do not write project source files (write_file/edit_file/bash blocked). Plan artifacts under .zelari are allowed.'
-          : 'BUILD phase: full tools; implement changes.',
+          ? [
+              'PLAN phase: explore and design only.',
+              'Do not write project source files (write_file/edit_file/bash blocked).',
+              'Plan artifacts under .zelari are allowed.',
+              'When the plan is ready, tell the user to switch to BUILD to implement on disk.',
+            ].join(' ')
+          : [
+              'BUILD phase — IMPLEMENT ON DISK (mandatory when the user wants code/file changes).',
+              'Prior chat may contain a plan or synthesis: that text is a SPEC to apply, NOT proof that files already changed.',
+              'You MUST call write_file and/or edit_file for every file you change before saying you are done.',
+              'After read_file: if the planned change is missing, WRITE it — do not stop at analysis.',
+              'Never claim "already implemented" / "tutto fatto" based only on reading a plan or skimming code.',
+              'Only claim done after successful mutating tool calls in THIS turn (or after proving the exact planned diff already exists on disk via read_file of the real files).',
+            ].join(' '),
       ].join('\n'),
     };
     const { loadProjectInstructions } = await import(
@@ -268,126 +282,263 @@ async function runHeadlessSingle(
   // passes the rolling history via --history <json>; we scrub it (strip
   // <think> tags but KEEP ---QUESTION--- blocks so short answers can bind),
   // then seed the harness as [system, ...history, {user: task}].
-  const historySeed: AgentMessage[] = (opts.history ?? []).map((m) =>
-    m.role === 'assistant' && m.content
-      ? { ...m, content: cleanAgentContent(m.content, { stripQuestion: false }) }
-      : m,
-  );
-
-  // Short-answer anchoring: if the last history turn was a clarifying
-  // question and the user's reply is short ("procedi", "2", "sì"), rewrite
-  // it to re-state the question so the model can't treat it as contextless.
-  // Mirrors the TUI's maybeAnchorShortAnswer (conversationContext.ts).
-  const effectiveTask = maybeAnchorShortAnswer(opts.task)
-    ?? opts.task;
-  const historySeedLen = historySeed.length;
-
-  const harness = new AgentHarness({
-    model,
-    provider,
-    sessionId,
-    messages: [
-      { role: 'system', content: systemPrompt },
-      ...historySeed,
-      { role: 'user', content: effectiveTask },
-    ] as AgentMessage[],
-    tools,
-    toolRegistry,
-    providerStream,
-    maxToolLoopIterations: (() => {
-      const n = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, { default: 30, min: 1 });
-      return n;
-    })(),
-  });
-
-  let finalReason: 'completed' | 'cancelled' | 'error' = 'completed';
-  let exitCode = 0;
-  const textBuffer: string[] = [];
-  // Scrub <think>/---QUESTION--- leaks from the streamed text. The TUI does
-  // this in useChatTurn; the headless path used to emit raw deltas, leaking
-  // model reasoning into the desktop UI. One scrubber per turn accumulates
-  // raw text and yields only clean increments.
-  const scrub = createStreamScrubber();
-
-  try {
-    for await (const event of harness.run()) {
-      // Reset the scrubber on every new assistant message so an unclosed
-      // <think> in one message can't swallow the next message's text.
-      // (In a tool-loop turn the harness emits multiple message_start/end cycles.)
-      if (event.type === 'message_start') {
-        scrub.reset();
-      }
-      if (event.type === 'message_delta' && typeof event.delta === 'string') {
-        const cleanDelta = scrub.push(event.delta);
-        if (opts.output === 'json') {
-          // Re-emit a scrubbed message_delta so JSON consumers never see
-          // <think> tags. (Other event types pass through untouched.)
-          if (cleanDelta.length > 0) {
-            emitEvent({ ...event, delta: cleanDelta });
+  //
+  // Prefer user/assistant only in the seed: tool call tails from prior
+  // processes often fail provider validation or blow the slice budget and
+  // drop the actual plan text (Desktop plan→build amnesia).
+  const historySeed: AgentMessage[] = (opts.history ?? [])
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) =>
+      m.role === 'assistant' && m.content
+        ? {
+            role: 'assistant' as const,
+            content: cleanAgentContent(m.content, { stripQuestion: false }),
           }
-        } else if (opts.output === 'plain') {
-          if (cleanDelta.length > 0) process.stdout.write(cleanDelta);
+        : { role: m.role as 'user' | 'assistant', content: m.content ?? '' },
+    )
+    .filter((m) => (m.content ?? '').trim().length > 0);
+
+  // Short continues ("procedi", "conferma", phase plan→build) re-anchor the
+  // prior assistant output into the user message — module lastClarification
+  // is empty in a fresh headless process.
+  const effectiveTask = buildAgentUserWithHistory(opts.task, historySeed);
+
+  const maxToolLoop = (() => {
+    const n = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
+      default: 30,
+      min: 1,
+    });
+    return n;
+  })();
+
+  type SinglePassResult = {
+    finalReason: 'completed' | 'cancelled' | 'error';
+    exitCode: number;
+    textBuffer: string[];
+    successfulWrites: number;
+    emittedWrites: number;
+    messages: readonly AgentMessage[];
+  };
+
+  /**
+   * One AgentHarness pass. Tracks write_file/edit_file success so BUILD can
+   * force a retry when the model only reads and claims "already done".
+   */
+  async function runSinglePass(
+    messages: AgentMessage[],
+    passSessionId: string,
+  ): Promise<SinglePassResult> {
+    const harness = new AgentHarness({
+      model,
+      provider,
+      sessionId: passSessionId,
+      messages,
+      tools,
+      toolRegistry,
+      providerStream,
+      maxToolLoopIterations: maxToolLoop,
+    });
+
+    let finalReason: 'completed' | 'cancelled' | 'error' = 'completed';
+    let exitCode = 0;
+    const textBuffer: string[] = [];
+    let successfulWrites = 0;
+    let emittedWrites = 0;
+    /** toolCallId → toolName (end events omit the name). */
+    const pendingToolNames = new Map<string, string>();
+    const scrub = createStreamScrubber();
+
+    try {
+      for await (const event of harness.run()) {
+        if (event.type === 'message_start') {
+          scrub.reset();
+        }
+        if (event.type === 'tool_execution_start') {
+          const name = (event as { toolName?: string }).toolName ?? '';
+          const id = (event as { toolCallId?: string }).toolCallId ?? '';
+          if (id && name) pendingToolNames.set(id, name);
+          if (name === 'write_file' || name === 'edit_file' || name === 'apply_diff') {
+            emittedWrites += 1;
+          }
+        }
+        if (event.type === 'tool_execution_end') {
+          const id = (event as { toolCallId?: string }).toolCallId ?? '';
+          const name = pendingToolNames.get(id) ?? '';
+          pendingToolNames.delete(id);
+          const isError = !!(event as { isError?: boolean }).isError;
+          const result = String((event as { result?: string }).result ?? '');
+          if (
+            (name === 'write_file' || name === 'edit_file' || name === 'apply_diff') &&
+            !isError
+          ) {
+            // edit_file may return ok with 0 replacements — still count as
+            // attempted; require non-empty success signal when present.
+            const zeroEdit =
+              name === 'edit_file' &&
+              /occurrencesReplaced["']?\s*[:=]\s*0\b|0 occurrence|no changes/i.test(
+                result,
+              );
+            if (!zeroEdit) successfulWrites += 1;
+          }
+        }
+        if (event.type === 'message_delta' && typeof event.delta === 'string') {
+          const cleanDelta = scrub.push(event.delta);
+          if (opts.output === 'json') {
+            if (cleanDelta.length > 0) {
+              emitEvent({ ...event, delta: cleanDelta });
+            }
+          } else if (opts.output === 'plain') {
+            if (cleanDelta.length > 0) process.stdout.write(cleanDelta);
+          } else {
+            if (cleanDelta.length > 0) textBuffer.push(cleanDelta);
+          }
         } else {
-          if (cleanDelta.length > 0) textBuffer.push(cleanDelta);
-        }
-      } else {
-        if (opts.output === 'json') {
-          emitEvent(event);
-        }
-        if (event.type === 'agent_end') {
-          // Flush any trailing cleaned text before signaling end.
-          const tail = scrub.flush();
-          if (tail.length > 0) {
-            if (opts.output === 'plain') process.stdout.write(tail);
-            else textBuffer.push(tail);
+          if (opts.output === 'json') {
+            emitEvent(event);
           }
-          finalReason = event.reason;
-          if (event.reason === 'error') exitCode = 3;
-        } else if (event.type === 'error') {
-          if (event.severity === 'fatal') {
-            exitCode = 2;
+          if (event.type === 'agent_end') {
+            const tail = scrub.flush();
+            if (tail.length > 0) {
+              if (opts.output === 'plain') process.stdout.write(tail);
+              else textBuffer.push(tail);
+            }
+            finalReason = event.reason;
+            if (event.reason === 'error') exitCode = 3;
+          } else if (event.type === 'error') {
+            if (event.severity === 'fatal') {
+              exitCode = 2;
+            }
           }
         }
       }
+    } catch (err) {
+      process.stderr.write(
+        `[zelari-code --headless] runtime error: ${err instanceof Error ? err.message : String(err)}\n`,
+      );
+      return {
+        finalReason: 'error',
+        exitCode: 2,
+        textBuffer,
+        successfulWrites,
+        emittedWrites,
+        messages: harness.getMessages(),
+      };
     }
-  } catch (err) {
-    process.stderr.write(
-      `[zelari-code --headless] runtime error: ${err instanceof Error ? err.message : String(err)}\n`,
-    );
-    return 2;
+
+    return {
+      finalReason,
+      exitCode,
+      textBuffer,
+      successfulWrites,
+      emittedWrites,
+      messages: harness.getMessages(),
+    };
   }
 
-  if (opts.output === 'plain' && textBuffer.length > 0) {
-    process.stdout.write(textBuffer.join(''));
+  const initialMessages: AgentMessage[] = [
+    { role: 'system', content: systemPrompt },
+    ...historySeed,
+    { role: 'user', content: effectiveTask },
+  ];
+
+  let pass = await runSinglePass(initialMessages, sessionId);
+
+  // BUILD delivery gate: model often reads the plan + existing files then
+  // falsely claims "already implemented". Force one write-focused retry.
+  const wantWrites = expectsDiskImplementation(
+    opts.task,
+    opts.phase,
+    historySeed,
+  );
+  if (
+    wantWrites &&
+    pass.successfulWrites === 0 &&
+    pass.finalReason === 'completed' &&
+    pass.exitCode === 0
+  ) {
+    const retryPrompt = buildImplementationWriteRetryPrompt(opts.task);
+    if (opts.output === 'json') {
+      emitEvent({
+        type: 'log',
+        message:
+          '[headless] BUILD: no successful write_file/edit_file — forcing implementation retry',
+      });
+    } else {
+      process.stderr.write(
+        `[zelari-code --headless] BUILD: no successful writes — forcing implementation retry\n`,
+      );
+    }
+    // Keep full prior pass messages so the model sees what it already read;
+    // append a hard user directive to write now.
+    const retryMessages: AgentMessage[] = [
+      ...pass.messages.filter((m) => m.role !== 'system'),
+    ];
+    // Re-prepend the same system prompt (filtered out above if present).
+    const withSystem: AgentMessage[] = [
+      { role: 'system', content: systemPrompt },
+      ...retryMessages,
+      { role: 'user', content: retryPrompt },
+    ];
+    const retry = await runSinglePass(withSystem, `${sessionId}-write-retry`);
+    // Prefer retry outcome; merge streamed text so the UI sees both passes.
+    pass = {
+      ...retry,
+      textBuffer: [...pass.textBuffer, ...retry.textBuffer],
+      successfulWrites: pass.successfulWrites + retry.successfulWrites,
+      emittedWrites: pass.emittedWrites + retry.emittedWrites,
+    };
+  }
+
+  if (opts.output === 'plain' && pass.textBuffer.length > 0) {
+    process.stdout.write(pass.textBuffer.join(''));
   }
   process.stdout.write('');
 
-  // v1.10.0: emit a history_snapshot so the desktop can replay this turn's
-  // assistant+tool tail on the next message. We snapshot the messages BEYOND
-  // the seed (everything the harness added this turn), scrubbing <think> from
-  // assistant content but KEEPING ---QUESTION--- blocks (so the next turn's
-  // short-answer anchor can still bind). Mirrors useChatTurn's finally block.
-  if (finalReason !== 'error' && opts.output === 'json') {
+  // v1.10.0: emit a history_snapshot so the desktop can replay this turn.
+  // Include the user turn + final assistant text (user/assistant only).
+  if (pass.finalReason !== 'error' && opts.output === 'json') {
     try {
-      const all = harness.getMessages();
-      const seedLen = 1 /*system*/ + historySeedLen + 1 /*user*/;
-      if (all.length > seedLen) {
-        const tail = all.slice(seedLen).map((m) =>
-          m.role === 'assistant' && m.content
-            ? { ...m, content: cleanAgentContent(m.content, { stripQuestion: false }) }
-            : m,
-        );
-        if (tail.length > 0) {
-          emitEvent({ type: 'history_snapshot', messages: tail });
+      const all = pass.messages;
+      // Prefer the last non-empty assistant message as the turn summary.
+      let lastAsst = '';
+      for (let i = all.length - 1; i >= 0; i--) {
+        const m = all[i];
+        if (m?.role === 'assistant' && (m.content ?? '').trim()) {
+          lastAsst = cleanAgentContent(m.content, { stripQuestion: false });
+          break;
         }
+      }
+      if (!lastAsst.trim() && pass.textBuffer.length > 0) {
+        lastAsst = pass.textBuffer.join('').trim();
+      }
+      // Note if delivery gate still failed so the next turn can re-try.
+      if (wantWrites && pass.successfulWrites === 0) {
+        lastAsst =
+          (lastAsst ? `${lastAsst}\n\n` : '') +
+          '[zelari] WARNING: BUILD turn ended with zero successful file writes. ' +
+          'The planned changes may still need to be applied on disk.';
+        emitEvent({
+          type: 'log',
+          message:
+            '[headless] BUILD warning: still zero successful writes after retry',
+        });
+      }
+      const snapshot: AgentMessage[] = [
+        { role: 'user', content: opts.task },
+        ...(lastAsst
+          ? ([{ role: 'assistant', content: lastAsst }] as AgentMessage[])
+          : []),
+      ];
+      if (snapshot.length > 0) {
+        emitEvent({ type: 'history_snapshot', messages: snapshot });
       }
     } catch {
       // Non-fatal: a snapshot failure must never break the run.
     }
   }
 
-  if (finalReason === 'error') return 3;
-  return exitCode;
+  if (pass.finalReason === 'error') return 3;
+  return pass.exitCode;
 }
 
 async function buildCouncilToolRegistry(
