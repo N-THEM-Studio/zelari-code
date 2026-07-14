@@ -27,6 +27,7 @@ vi.mock('@zelari/core/harness', () => ({
       for (const ev of harnessEvents) yield ev;
     };
     queueLength = 0;
+    getMessages = () => [] as readonly unknown[];
     enqueue = vi.fn();
     cancel = vi.fn();
     constructor(_opts: unknown) {
