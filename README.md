@@ -35,14 +35,14 @@ By **[Anathema Studio](https://anathema-studio.com/)** · [Contributing](./CONTR
 
 **Trailer (EN, ~30s):** [docs/media/trailer/zelari-code-trailer.mp4](./docs/media/trailer/zelari-code-trailer.mp4) · [media kit](./docs/media/README.md)
 
-📖 **[Guida completa all'uso (IT)](./docs/GUIDA.md)** — installazione, TUI, comandi slash, council, skills, workspace, headless, MCP.
+📖 **[Full user guide (IT)](./docs/GUIDA.md)** — install, TUI, slash commands, council, skills, workspace, headless, MCP, Desktop.
 
-**Zelari Code** is a standalone CLI extracted from [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain). It brings the multi-agent council (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) directly into your terminal with a rich TUI (Ink + React), slash command system, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok with OAuth, GLM/Z.AI).
+**Zelari Code** is an open-source **AI council coding agent** for the terminal: a multi-agent pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero), a single-agent mode for focused work, and optional **zelari** missions that loop until a deliverable is done. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok with OAuth, GLM/Z.AI, MiniMax, DeepSeek). The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (MIT).
 
-> **Upgrading from ≤ 0.4.x?** See [MIGRATION.md](./MIGRATION.md) — the internal
-> `src/main/core/`, `src/agents/`, `src/shared/`, `src/types/` paths no longer
-> exist. The published core package is `@zelari/core` (MIT) with curated
-> [subpath exports](./packages/core/package.json) (harness, council, skills, memory, …).
+```bash
+npm install -g zelari-code
+zelari-code
+```
 
 ## Prerequisites
 
@@ -70,9 +70,11 @@ Disable any tool group: set `ZELARI_LSP=0`, `ZELARI_AST=0`, `ZELARI_SEMANTIC=0`,
 
 ## Install
 
+If you already ran `npm install -g zelari-code` above, skip to [First Run](#first-run).
+
 ```bash
 npm install -g zelari-code
-zelari-code
+zelari-code --doctor   # recommended once on Windows
 ```
 
 ### Optional: Zelari Desktop (Tauri)
@@ -81,7 +83,7 @@ An installable GUI shell lives in `apps/desktop/`. It does **not** replace the C
 
 > **Installer ≠ CLI.** Downloading Desktop from GitHub does **not** install or upgrade the global `zelari-code` package. Use `npm i -g zelari-code` (or Desktop → Settings → **Update CLI**). First launch shows a Setup guide when Node/CLI is missing.
 
-**Desktop highlights (v1.12+):** Mode / Phase / Provider bar · Files|Git project panel · Settings (provider keys, App updates, **Update CLI**, **MCP Extensions**, **SSH Connections**) · multi-turn chat history · password/agent/key SSH targets for deploy/monitor (`ssh_status` / `ssh_run`).
+**Desktop highlights:** Mode / Phase / Provider bar · Files|Git project panel · Settings (provider keys, App updates, **Update CLI**, **MCP Extensions**, **SSH Connections**) · multi-turn chat history · optional overlay HUD · password/agent/key SSH targets (`ssh_status` / `ssh_run`).
 
 ```bash
 npm run build                 # CLI side-car
@@ -253,7 +255,7 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 🧠 **Project memory** — zero-dependency file-based recall (`.zelari/memory/`), fed into the council as RAG context between mission slices (opt-out with `ZELARI_MEMORY=0`)
 - ⇧⇥ **Agent/council/zelari mode switch** — `shift+tab` cycles free-form prompts between the single agent, the full council pipeline, and an autonomous mission (mode shown in the status line)
 - 🎨 **Rich TUI** — Ink + React: native-scrollback chat stream, input bar with status line below it (mode · provider · model · session · cwd · execution timer)
-- 🗂️ **Live git sidebar** — right-hand panel with the N-THEM emblem and the working-tree changes (`+added`/`-removed` per file, refreshed every 4s; auto-hidden on narrow terminals)
+- 🗂️ **Live git sidebar** — right-hand panel with working-tree changes (`+added`/`-removed` per file, refreshed every 4s; auto-hidden on narrow terminals)
 - ⏱️ **Execution timer** — elapsed time of the in-flight turn in the status line (`⏱ 12s`), frozen as `last 34s` when the run completes
 - 🧠 **Provider-agnostic** — OpenAI-compatible APIs (OpenAI, Together, Groq, custom), xAI Grok with OAuth refresh, GLM/Z.AI
 - 🛠️ **Built-in tools** — filesystem (read/write/edit), shell (bash), search (grep), web fetch/search
@@ -394,13 +396,14 @@ See [`docs/plans/2026-07-01-council-workspace-cli-stubs.md`](./docs/plans/2026-0
 
 | Doc | Description |
 |---|---|
-| [docs/GUIDA.md](./docs/GUIDA.md) | **Guida utente completa** (IT) |
-| [docs/TOOLS.md](./docs/TOOLS.md) | Tool builtin, workspace, MCP, SSH, plan phase |
-| [MIGRATION.md](./MIGRATION.md) | Upgrade from ≤ 0.4.x |
+| [docs/GUIDA.md](./docs/GUIDA.md) | **Full user guide** (Italian) |
+| [docs/TOOLS.md](./docs/TOOLS.md) | Tool map (builtin, workspace, MCP, SSH, plan phase) |
+| [docs/media/](./docs/media/) | English marketing stills + trailer |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Dev setup, PR expectations |
 | [SECURITY.md](./SECURITY.md) | Vulnerability reporting |
 | [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) | Community standards |
-| [docs/decisions/](./docs/decisions/) | ADRs (monorepo, MIT OSS, API policy) |
+| [docs/decisions/](./docs/decisions/) | Architecture Decision Records |
+| [MIGRATION.md](./MIGRATION.md) | For **library consumers** of old `@zelari/core` import paths only (not needed for the CLI) |
 
 ## Development
 
@@ -425,10 +428,9 @@ npm test
 npm run typecheck
 ```
 
-## Related Projects
+## Related
 
 - [Anathema Studio](https://anathema-studio.com/) — product home
-- [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain) — Electron desktop lineage that shared the agent runtime + council system with this CLI
 - [@zelari/core on npm](https://www.npmjs.com/package/@zelari/core) — reusable agent runtime (MIT)
 
 ## License
