@@ -3,6 +3,8 @@
   "private": true,
   "version": "1.14.1",
   "description": "Zelari Desktop — Tauri 2 shell over zelari-code --headless",
+  "author": "Anathema Studio <https://anathema-studio.com/>",
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "vite",

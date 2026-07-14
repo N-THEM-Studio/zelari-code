@@ -16,6 +16,7 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 | 0005 | Deprecation dei path sorgente legacy                | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
 | 0006 | Lucifero chairman synthesis reale (v0.6.0)           | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
 | 0007 | Independent pre-release audit (agy) come workflow gate | ✅ Accettato | 2026-07-02    | 2026-07-02 (auto, MiniMax-M3) |
+| 0008 | Monorepo MIT per rilascio open source (Anathema Studio) | ✅ Accettato | 2026-07-15    | 2026-07-15 |
 
 ## Formato
 

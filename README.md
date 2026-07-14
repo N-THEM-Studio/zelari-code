@@ -20,14 +20,20 @@
 *%%%%%%%%%%%%%%%%%%%%%%%%%%%%#
 
      Z E L A R I   C O D E
-          N-THEM Studio
+        Anathema Studio
 ```
 
 > AI Council coding agent CLI — multi-agent orchestration with slash commands, provider-agnostic LLM streaming, and self-update.
 
 ![Version](https://img.shields.io/npm/v/zelari-code)
-![License](https://img.shields.io/badge/license-Proprietary-red)
+![License](https://img.shields.io/badge/license-MIT-green)
 ![Node](https://img.shields.io/node/v/zelari-code)
+
+By **[Anathema Studio](https://anathema-studio.com/)** · [Contributing](./CONTRIBUTING.md) · [Security](./SECURITY.md)
+
+![Zelari Code — AI Council for your terminal](./docs/media/hero-16x9.png)
+
+**Trailer (EN, ~30s):** [docs/media/trailer/zelari-code-trailer.mp4](./docs/media/trailer/zelari-code-trailer.mp4) · [media kit](./docs/media/README.md)
 
 📖 **[Guida completa all'uso (IT)](./docs/GUIDA.md)** — installazione, TUI, comandi slash, council, skills, workspace, headless, MCP.
 
@@ -35,7 +41,8 @@
 
 > **Upgrading from ≤ 0.4.x?** See [MIGRATION.md](./MIGRATION.md) — the internal
 > `src/main/core/`, `src/agents/`, `src/shared/`, `src/types/` paths no longer
-> exist. The published core package is `@zelari/core` (MIT). 9 subpath exports.
+> exist. The published core package is `@zelari/core` (MIT) with curated
+> [subpath exports](./packages/core/package.json) (harness, council, skills, memory, …).
 
 ## Prerequisites
 
@@ -47,7 +54,7 @@
 | **Disk** | ~50 MB for the CLI + `@zelari/core` | Models are not bundled — provider APIs are remote. |
 | **Account + API key** | 1 of: xAI Grok, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth Grok supported via `/login grok`. |
 
-### Optional (for v1.3.0 advanced tools)
+### Optional (advanced tools)
 
 These are **opt-in** — the CLI runs fine without them. The agent auto-skips a tool if its dependency is missing.
 
@@ -131,7 +138,7 @@ the regular TUI:
 
 ```
 ╭─────────────────────────────────────────────────╮
-│ zelari-code v1.3.0 — first-time setup    │
+│ zelari-code — first-time setup                  │
 │ 1/welcome  2/provider  3/model  4/apikey  5/...│
 │                                                 │
 │ Welcome! Let's get you coding in under 2 min.   │
@@ -206,11 +213,12 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 | `/workspace …` | `.zelari/` artifacts + `AGENTS.MD` |
 | `/update`, `/update --yes` | Check / install CLI updates |
 | `/mode [agent\|council\|zelari]` | Switch dispatch mode (shift+tab fallback) |
+| `/plan [goal]`, `/build [goal]` | Work phase: explore/design only vs implement (orthogonal to mode) |
 | `/checkpoint [label]` | Snapshot the working tree (rollback target) |
 | `/rollback [id\|latest]` | Restore a checkpoint (revert / restore files atomically) |
 | `/index` | Build / refresh the semantic search index |
 
-**TUI:** `shift+tab` cycles **agent** → **council** → **zelari** mode for free-form prompts (with terminal-fallback hardening since v1.3.0). The equivalent command `/mode [agent|council|zelari]` works in any terminal.
+**TUI:** `shift+tab` cycles **agent** → **council** → **zelari** mode for free-form prompts. Use `/mode` when the terminal captures shift+tab. Work **phase** is orthogonal: `/plan` (no project writes) vs `/build` (full tools) — same axes as Desktop Mode / Phase bars.
 
 ## Headless Mode
 
@@ -264,13 +272,14 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 🌿 **Branch isolation** — session snapshots per branch
 - 🔌 **MCP** — external MCP servers via `.zelari/mcp.json` or `~/.zelari-code/mcp.json`; Desktop **Extensions** store for one-click install
 - 🔐 **SSH targets** — configure hosts for deploy/monitor (password, agent, or key); tools `ssh_status` / `ssh_run` with allowlist; `ZELARI_SSH=0` kill switch
-- 🖥️ **Zelari Desktop** — Tauri shell with chat UI, project tree, Settings, dual updates (app vs npm CLI)
+- 🖥️ **Zelari Desktop** — Tauri shell with chat UI, project tree, Settings, dual updates (app vs npm CLI), multi-turn history, optional overlay HUD
+- ◇◆ **Plan / build phase** — `/plan` explores without project writes; `/build` implements with full tools (independent of agent/council/zelari mode)
 - 🆕 **Self-update** — `/update` slash command + silent registry check on startup
 
 ## Architecture
 
 ```
-zelari-code (CLI, proprietary)
+zelari-code (CLI, MIT)
 ├── src/cli/                  # Ink TUI, provider config, workspace, wizard, MCP
 │   ├── components/           # ChatStream, InputBar, Sidebar, StatusBar, …
 │   ├── slashHandlers/        # /provider, /workspace, /update, …
@@ -283,7 +292,7 @@ zelari-code (CLI, proprietary)
     └── council/              # Run mode, tier banners
 ```
 
-`AgentHarness` takes (model, provider, messages, tools) + a streaming function and yields `AsyncIterable<BrainEvent>`. The CLI subscribes and renders via `eventsToMessages()`. See [MIGRATION.md](./MIGRATION.md) for the v0.5+ package boundary.
+`AgentHarness` takes (model, provider, messages, tools) + a streaming function and yields `AsyncIterable<BrainEvent>`. Mixed tool batches run **segmented**: contiguous read-only calls in parallel, write/execute tools as serial barriers (opt out: `ZELARI_PARALLEL_TOOLS=0`). See [MIGRATION.md](./MIGRATION.md) for the package boundary.
 
 ## Environment Variables
 
@@ -319,6 +328,12 @@ zelari-code (CLI, proprietary)
 | `ZELARI_LSP=0` | Disable LSP tools (`lsp_*`) |
 | `ZELARI_CHECKPOINT=0` | Disable automatic workspace checkpoints in zelari-mode |
 | `ZELARI_TOOL_OUTPUT_LINES` | Lines of tool output shown in the TUI (default 8) |
+| `ZELARI_PARALLEL_TOOLS=0` | Force serial tool execution (disable parallel read batches) |
+| `ZELARI_MAX_PARALLEL_TOOLS` | Max concurrent read-only tools per segment (default 6) |
+| `ZELARI_MAX_TOOL_LOOP_ITERATIONS` | Soft tool-loop budget per harness run |
+| `ZELARI_MAX_TOOL_LOOP_HARD` | Hard ceiling on tool-loop iterations |
+| `ZELARI_PROVIDER_TIMEOUT_MS` | Hard timeout on provider HTTP (default 5 min) |
+| `ZELARI_MISSION_MAX_STALL` | Zelari-mode: consecutive zero-write impl slices before stall |
 
 See **[docs/GUIDA.md](./docs/GUIDA.md#variabili-dambiente)** for the full list.
 
@@ -380,9 +395,12 @@ See [`docs/plans/2026-07-01-council-workspace-cli-stubs.md`](./docs/plans/2026-0
 | Doc | Description |
 |---|---|
 | [docs/GUIDA.md](./docs/GUIDA.md) | **Guida utente completa** (IT) |
-| [docs/TOOLS.md](./docs/TOOLS.md) | Tool builtin, workspace, MCP |
+| [docs/TOOLS.md](./docs/TOOLS.md) | Tool builtin, workspace, MCP, SSH, plan phase |
 | [MIGRATION.md](./MIGRATION.md) | Upgrade from ≤ 0.4.x |
-| [docs/decisions/](./docs/decisions/) | ADRs (monorepo, npm publish, API policy) |
+| [CONTRIBUTING.md](./CONTRIBUTING.md) | Dev setup, PR expectations |
+| [SECURITY.md](./SECURITY.md) | Vulnerability reporting |
+| [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md) | Community standards |
+| [docs/decisions/](./docs/decisions/) | ADRs (monorepo, MIT OSS, API policy) |
 
 ## Development
 
@@ -409,10 +427,10 @@ npm run typecheck
 
 ## Related Projects
 
-- [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain) — the Electron desktop GUI that shares the agent runtime + council system with this CLI
-- Zelari Coder originated as the `npm run coder` script inside AnathemaBrain
+- [Anathema Studio](https://anathema-studio.com/) — product home
+- [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain) — Electron desktop lineage that shared the agent runtime + council system with this CLI
 - [@zelari/core on npm](https://www.npmjs.com/package/@zelari/core) — reusable agent runtime (MIT)
 
 ## License
 
-Proprietary © 2026 [N-THEM Studio](https://github.com/N-THEM-Studio). See [LICENSE](./LICENSE).
+[MIT](./LICENSE) © 2026 [Anathema Studio](https://anathema-studio.com/).

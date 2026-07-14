@@ -1,5 +1,10 @@
 # ADR-0002: Pubblicazione di `@zelari/core` su npm
 
+> **Nota (2026-07-15):** la dual-license “core MIT / CLI proprietario” è
+> **superseded** da [ADR-0008](./0008-monorepo-mit-oss.md) (intero monorepo MIT,
+> copyright Anathema Studio). Questo ADR resta storico per la decisione di
+> pubblicare il core su npm.
+
 - **Stato:** ✅ Accettato
 - **Data proposta:** 2026-07-02
 - **Data accettazione:** 2026-07-02 (auto-accettata da MiniMax-M3, ADR coerente con monorepo gia esistente in `6ec90be` + decisione operativa di rilascio npm)

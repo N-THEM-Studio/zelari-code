@@ -1,7 +1,8 @@
 # Zelari Code — Guida all'uso
 
-> **Versione documento:** 1.12.0  
-> CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri), council a 6 ruoli, slash commands, MCP, SSH e provider LLM agnostici.
+> **Versione documento:** 1.14.1  
+> CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri), council a 6 ruoli, slash commands, MCP, SSH e provider LLM agnostici.  
+> Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **MIT**.
 
 ---
 
@@ -25,7 +26,7 @@
 16. [SSH (deploy / monitor)](#ssh-deploy--monitor)
 17. [Sessioni e branch](#sessioni-e-branch)
 18. [Tool disponibili](#tool-disponibili)
-19. [Novità v1.3.0 (frontier tools)](#novità-v130-frontier-tools)
+19. [Capability avanzate e novità 1.12–1.14](#capability-avanzate-e-novità-112114)
 20. [File di configurazione](#file-di-configurazione)
 21. [Variabili d'ambiente](#variabili-dambiente)
 22. [Self-update](#self-update)
@@ -36,7 +37,7 @@
 
 ## Cos'è Zelari Code
 
-**Zelari Code** è un agente di coding da terminale sviluppato da [N-THEM Studio](https://github.com/N-THEM-Studio). Estratto da [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain), offre:
+**Zelari Code** è un agente di coding da terminale di **[Anathema Studio](https://anathema-studio.com/)**. Estratto da [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain), offre:
 
 - Una **TUI** ricca con scrollback nativo, sidebar git e timer di esecuzione
 - Un **agente singolo** con tool filesystem, shell, ricerca e web
@@ -58,7 +59,7 @@ Il runtime condiviso è pubblicato come package npm [`@zelari/core`](https://www
 | **OS** | Linux, macOS, Windows 10/11 | Windows richiede Git Bash (auto-rilevato). |
 | **Account + API key** | 1 tra: xAI Grok, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | Grok supporta OAuth via `/login grok`. |
 
-### Dipendenze opzionali (per i tool v1.3.0)
+### Dipendenze opzionali (capability avanzate)
 
 La CLI funziona senza queste — il tool salta in automatico se la dipendenza manca. Servono solo se vuoi usare lo specifico tool group.
 
@@ -163,13 +164,13 @@ ZELARI_NO_WIZARD=1 zelari-code   # equivalente env di --no-wizard
 
 | Tasto | Azione |
 |---|---|
-| **Shift+Tab** | Alterna modalità `agent` ↔ `council` |
+| **Shift+Tab** | Cicla modalità `agent` → `council` → `zelari` |
 | **Ctrl+C** | Esci (flush metriche + chiusura MCP) |
 | Qualsiasi tasto | Salta lo splash screen iniziale (~2s) |
 
 ### Splash screen
 
-All'avvio compare il logo ASCII N-THEM per ~2 secondi. Disabilitabile:
+All'avvio compare il logo ASCII per ~2 secondi. Disabilitabile:
 
 ```bash
 ZELARI_NO_SPLASH=1 zelari-code
@@ -180,6 +181,21 @@ Saltato automaticamente su stdout non-TTY (pipe, CI) o terminali piccoli.
 ---
 
 ## Modalità agent e council
+
+Due assi indipendenti:
+
+| Asse | Valori | Come |
+|------|--------|------|
+| **Mode** (dispatch) | `agent` · `council` · `zelari` | Shift+Tab o `/mode` |
+| **Phase** (lavoro) | `plan` · `build` | `/plan` · `/build` o `--phase` |
+
+| Mode × Phase | Tipico uso |
+|--------------|------------|
+| agent + plan | Esplora/progetta senza scrivere sul progetto |
+| agent + build | Implementa con tool completi |
+| council + plan / design-phase | Piano e artifact in `.zelari/` |
+| council + build / implementation | Analisi multi-membro + Lucifero implementa |
+| zelari | Missione multi-run fino a completion |
 
 ### Agent (default)
 
@@ -240,6 +256,7 @@ In zelari-mode il **chairman (Lucifero)** riceve un budget di tool più alto (`Z
 |---|---|---|
 | `ZELARI_MISSION_AUTO` | `0` | `1` = avvia la missione senza chiedere conferma del brief |
 | `ZELARI_MISSION_MAX_ITER` | `10` | numero massimo di iterazioni del loop |
+| `ZELARI_MISSION_MAX_STALL` | `2` | slice implementation consecutive con 0 write prima di `stalled` (`0` = off) |
 | `ZELARI_MODE_MAX_TOOLS_LUCIFER` | `30` | budget di tool call per il chairman in zelari-mode |
 
 ### Memoria di progetto
@@ -333,6 +350,11 @@ Shell **Tauri 2** opzionale (`apps/desktop/`): chat moderna che esegue `zelari-c
 | Phase | Plan · Build | `--phase` |
 | Provider / model | barra + Settings | `--provider` / `--model` |
 | Open Folder | directory di lavoro | cwd del processo CLI |
+| Overlay HUD | barra staccabile (voce + testo) | titolo **◉** (non auto-open) |
+
+### Multi-turn e history
+
+La chat Desktop è la source of truth per la conversazione: history multi-turn via `--history-file`. Risposte corte (“procedi”, “sì”, “1”) vengono re-ancorate al contesto precedente (anche dopo switch plan↔build).
 
 ### Settings
 
@@ -370,12 +392,14 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | `/help` | Elenco comandi e skill disponibili |
 | `/exit` | Esci dalla CLI |
 
-#### Modalità di dispatch (v1.3.0)
+#### Modalità di dispatch e phase
 
 | Comando | Descrizione |
 |---|---|
 | `/mode [agent\|council\|zelari]` | Forza la modalità di dispatch. Equivalente portabile di `shift+tab` (utile in terminali dove `shift+tab` è catturato). |
-| `shift+tab` (TUI) | Cicla `agent` → `council` → `zelari`. Hardening v1.3.0: rileva terminali senza supporto e cade sul comando. |
+| `shift+tab` (TUI) | Cicla `agent` → `council` → `zelari`. |
+| `/plan [goal]` | Entra in phase **plan** (no write/edit/bash sul progetto). Opzionale: invia subito `goal`. |
+| `/build [goal]` | Entra in phase **build** (tool completi). Opzionale: invia subito `goal`. |
 
 #### Provider e modello
 
@@ -467,7 +491,7 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | `/rollback [id\|latest]` | Ripristino atomico di un checkpoint: ripristina i file modificati, ricrea i cancellati, rimuove i creati dopo lo snapshot. Senza argomento elenca i checkpoint disponibili. |
 | `ZELARI_CHECKPOINT=0` | Disabilita checkpoint automatici nelle missioni. |
 
-#### Semantic search (v1.3.0)
+#### Semantic search
 
 | Comando | Descrizione |
 |---|---|
@@ -855,72 +879,65 @@ Riepilogo; dettaglio in [TOOLS.md](./TOOLS.md).
 
 `createPlan`, `createPhase`, `createTask`, `updateTask`, `addIdea`, `createMilestone`, `createDocument`, `searchDocuments`, `linkDocuments`, `getDocumentBacklinks`
 
-### Frontier tools v1.3.0 (opt-in, no-op se la dipendenza manca)
+### Capability avanzate (opt-in, no-op se la dipendenza manca)
 
 | Tool | Permesso | Prereq | Esempio |
 |---|---|---|---|
-| `lsp_definition` / `lsp_references` / `lsp_hover` / `lsp_symbols` / `lsp_rename` | read / write (`lsp_rename`) | language server sul PATH | `usa lsp_references su src/cli/app.tsx:42 per trovare tutti gli usi di "agentLoop"` |
-| `ast_outline` / `ast_find_symbol` | read | nessuno | `ast_outline su packages/core/src/agents/council/` |
-| `semantic_search` | read | indice costruito (`/index` prima) | `semantic_search "dove gestiamo l'auto-retry del provider"` |
-| `browser_check` | sandboxed network | Playwright + chromium | `browser_check su http://localhost:3000 dopo aver cliccato Submit` |
+| `lsp_definition` / `lsp_references` / `lsp_hover` / `lsp_symbols` / `lsp_rename` | read / write (`lsp_rename`) | language server sul PATH | `usa lsp_references su src/cli/app.tsx:42` |
+| `ast_outline` / `ast_find_symbol` | read | nessuno | `ast_outline su packages/core/src/agents/` |
+| `semantic_search` | read | indice (`/index`) | `semantic_search "retry del provider"` |
+| `browser_check` | sandboxed network | Playwright + chromium | `browser_check su http://localhost:3000` |
+| `ssh_status` / `ssh_run` | network (SSH) | target in Settings / `~/.zelari-code` | allowlist su `ssh_run` |
+| `task` | read (sub-agent) | — | ricerca isolata read-only |
 
-### Hook v1.2.0
+### Hook harness
 
-- **Diagnostics loop** — dopo `edit_file`/`write_file`, l'harness lancia `eslint`/`ruff` (LSP-pluggable) e inietta gli errori nello stesso turno. Disattiva: `ZELARI_DIAGNOSTICS=0`.
-- **Sub-agent delegation (`task` tool)** — delega un sub-task a un sub-agente isolato con context proprio, registry read-only, max 12 turni, no ricorsione.
-- **Prompt-cache accounting** — hit-rate visibile in status bar (`cache 73%`).
+- **Diagnostics loop** — dopo edit, `eslint`/`ruff` nel result tool. `ZELARI_DIAGNOSTICS=0`.
+- **Parallel batch** — letture contigue in parallelo; write/bash come barrier. `ZELARI_PARALLEL_TOOLS=0`.
+- **Prompt-cache accounting** — hit-rate in status bar quando il provider la espone.
+
+Mappa completa: [TOOLS.md](./TOOLS.md).
 
 ---
 
-## Novità v1.3.0 (frontier tools)
+## Capability avanzate e novità 1.12–1.14
 
-v1.3.0 è una **release frontier**: aggiunge cinque famiglie di capability che spostano il CLI da "agente singolo con tool file/web" a "agente con accesso strutturato al codice e al browser".
+Le capability “frontier” (LSP, AST, semantic, browser, diagnostics, `task`) restano il cuore agentico avanzato. Dalla **1.12** in poi si sono aggiunti soprattutto:
 
-### Cosa è cambiato in sintesi
+| Area | Cosa |
+|------|------|
+| **Desktop** | SSH Connections, MCP Extensions store, Project Files\|Git, multi-turn history, overlay HUD (◉), Setup CLI |
+| **Phase plan/build** | `/plan` `/build`, registry che blocca mutate in plan |
+| **Harness** | tool batch paralleli, budget tool-loop soft/hard, history seed multi-turn |
+| **Sicurezza prodotto** | policy di non-leak dei system prompt (feature, non licenza) |
 
-1. **LSP code intelligence** — cinque tool (`lsp_definition`, `lsp_references`, `lsp_hover`, `lsp_symbols`, `lsp_rename`) che parlano con language server reali. L'agente ora può chiedere "dove è definita la funzione X?" o "rinomina X in Y in tutto il workspace" con precisione LSP.
-2. **AST structural tools** — `ast_outline` e `ast_find_symbol` via TypeScript Compiler API. Nessuna dipendenza esterna, funzionano out-of-the-box su progetti TS.
-3. **Semantic code search** — `semantic_search` indicizza il progetto via embeddings locali (default `Xenova/all-MiniLM-L6-v2`) e permette query concettuali ("dove gestiamo i retry?") invece di keyword esatte. Costruisci l'indice con `/index`.
-4. **Browser verification** — `browser_check` apre un URL in un browser headless (Playwright), esegue azioni (`click`, `fill`, `goto`, `wait`), cattura console + network + screenshot. Pensato per verificare visivamente il lavoro web.
-5. **shift+tab hardening + `/mode`** — il toggle della modalità ora funziona anche in terminali che catturano shift+tab, grazie al comando `/mode [agent|council|zelari]`.
+Changelog ufficiale: [CHANGELOG.md](../CHANGELOG.md).
 
 ### Esempi d'uso
 
 ```text
-# Trova tutte le referenze a una funzione via LSP
-"usa lsp_references su packages/core/src/core/harness/loop.ts per trovare tutti i caller di agentLoop"
+# LSP
+"usa lsp_references su packages/core/src/core/AgentHarness.ts"
 
-# Rinomina simbolo via LSP (cross-workspace)
-"rinomina la funzione `executeStep` in `step` ovunque con lsp_rename"
-
-# Outline di un modulo TS senza LSP
-"fai ast_outline di packages/core/src/agents/council/"
-
-# Search semantico
+# Semantic
 "/index
- semantic_search 'dove gestiamo il retry del provider quando il primo tentativo fallisce'"
+ semantic_search 'dove gestiamo il retry del provider'"
 
-# Verifica visiva di un'app web
-"browser_check http://localhost:3000, aspetta il selettore '.todo-list', fai uno screenshot, dimmi se ci sono errori console"
+# Phase
+"/plan outline the auth refactor
+ /build implement the plan on disk"
 
-# Forza modalità in un terminale che cattura shift+tab
+# Mode
 "/mode zelari
  progettami un'app todo full-stack"
 ```
 
-### Costi e disabilitazione
-
-Tutti i nuovi tool sono **opt-out**, non opt-in:
+### Disabilitazione
 
 ```bash
-ZELARI_LSP=0      # disabilita i 5 tool LSP
-ZELARI_AST=0      # disabilita ast_outline, ast_find_symbol
-ZELARI_SEMANTIC=0 # disabilita semantic_search e /index
-ZELARI_BROWSER=0  # disabilita browser_check
-ZELARI_DIAGNOSTICS=0  # disabilita diagnostics loop
+ZELARI_LSP=0 ZELARI_AST=0 ZELARI_SEMANTIC=0 ZELARI_BROWSER=0
+ZELARI_DIAGNOSTICS=0 ZELARI_SSH=0 ZELARI_PARALLEL_TOOLS=0
 ```
-
-Se una dipendenza manca (es. nessun language server sul PATH), il tool fallisce con un messaggio chiaro e l'agente può scegliere un'alternativa.
 
 ---
 
@@ -990,8 +1007,12 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 | `ZELARI_TOOL_OUTPUT_LINES` | Righe output tool in TUI (default 8) |
 | `ZELARI_SHELL` | Path esplicito bash (Windows) |
 | `ZELARI_PROVIDER_TIMEOUT_MS` | Timeout hard sulla fetch provider (default 5 min) |
+| `ZELARI_PARALLEL_TOOLS=0` | Disabilita parallelismo tool read-only |
+| `ZELARI_MAX_PARALLEL_TOOLS` | Max tool paralleli per segmento (default 6) |
+| `ZELARI_MAX_TOOL_LOOP_ITERATIONS` | Budget soft tool-loop per run |
+| `ZELARI_MAX_TOOL_LOOP_HARD` | Ceiling hard tool-loop |
 
-### Frontier tools (v1.3.0) / agentic harness (v1.2.0)
+### Capability avanzate / harness
 
 | Variabile | Default | Effetto |
 |---|---|---|
@@ -1034,6 +1055,8 @@ Dopo `/update --yes`, riavvia manualmente con `/exit` e `zelari-code`.
 ---
 
 ## Sviluppo
+
+Vedi anche [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ```bash
 npm install
@@ -1105,7 +1128,9 @@ Vedi [MIGRATION.md](../MIGRATION.md) e `docs/decisions/0002-publish-zelari-core-
 
 ## Link utili
 
+- [Anathema Studio](https://anathema-studio.com/) — home del prodotto
 - [Repository GitHub](https://github.com/N-THEM-Studio/zelari-code)
 - [npm: zelari-code](https://www.npmjs.com/package/zelari-code)
 - [npm: @zelari/core](https://www.npmjs.com/package/@zelari/core)
-- [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain) — GUI desktop condivisa
+- [CONTRIBUTING](../CONTRIBUTING.md) · [SECURITY](../SECURITY.md) · [LICENSE (MIT)](../LICENSE)
+- [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain) — lineage Electron storico

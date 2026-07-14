@@ -5,6 +5,16 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Open source (MIT)** — monorepo relicensed to MIT (was proprietary CLI + MIT `@zelari/core`). Public attribution: [Anathema Studio](https://anathema-studio.com/). See [ADR-0008](./docs/decisions/0008-monorepo-mit-oss.md).
+- **Docs refresh for ≥ 1.14** — `README`, `docs/GUIDA.md`, `docs/TOOLS.md`, `docs/README.md`, `MIGRATION.md` aligned with plan/build phase, SSH tools, parallel tool batches, Desktop multi-turn/overlay, and current env vars.
+
+### Added
+- `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `docs/plans/README.md` (historical plans disclaimer).
+- **English marketing media** — `docs/media/` hero/feature stills + ~30s trailer (`trailer/zelari-code-trailer.mp4`).
+
 ## [1.14.1] - 2026-07-14
 
 ### Fixed

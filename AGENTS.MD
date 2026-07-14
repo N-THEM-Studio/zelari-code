@@ -5,7 +5,9 @@
 
 ## Overview
 
-_Free-form project description. This section is manual and preserved across updates._
+**Zelari Code** — AI council coding agent CLI + `@zelari/core` + optional Tauri Desktop.  
+Maintained by [Anathema Studio](https://anathema-studio.com/). Monorepo MIT.  
+User docs: `README.md`, `docs/GUIDA.md`, `docs/TOOLS.md`. Contribute: `CONTRIBUTING.md`.
 
 ## Tech Stack
 

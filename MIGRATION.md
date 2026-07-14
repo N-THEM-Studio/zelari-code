@@ -11,7 +11,8 @@ own code), nothing changes for you — just run `zelari-code` as before.
 
 - If you imported core code from internal paths, change the path.
 - There is **no compatibility shim**. Old paths will not work.
-- All 9 subpath exports are listed in the table below.
+- Curated subpath exports are listed below; the live map is
+  `packages/core/package.json` → `exports` (grows over minor releases).
 
 ## v1.0.0 — additive, non-breaking
 
@@ -31,8 +32,9 @@ in-repo locations. Publishing them as-is would have leaked internal
 file structure to npm consumers, which is the wrong abstraction.
 
 v0.5.0 extracts the core into a real npm workspace package
-(`packages/core/`) and exposes **9 curated subpath exports**. The
-rationale lives in
+(`packages/core/`) and exposes **curated subpath exports** (originally 9;
+later releases added e.g. `@zelari/core/memory` and fine-grained
+`harness/tools/*` paths). The rationale lives in
 [`docs/decisions/0001-monorepo-for-zelari-core.md`](docs/decisions/0001-monorepo-for-zelari-core.md)
 and
 [`docs/decisions/0004-public-api-stability-policy.md`](docs/decisions/0004-public-api-stability-policy.md).
@@ -119,8 +121,8 @@ open an issue with the label `migration`. We will:
 
 ## What we will NOT do
 
-- **No `src/legacy-compat/` shim.** The 9 subpath exports are the
-  one and only entry point. The reasoning is in
+- **No `src/legacy-compat/` shim.** The package `exports` map is the
+  one and only public entry point. The reasoning is in
   [ADR-0005](docs/decisions/0005-deprecate-legacy-src-paths.md).
 - **No git tag on pre-0.5.0 paths.** `git log --follow` works as
   expected and gives you the history of any moved file.
@@ -130,6 +132,8 @@ open an issue with the label `migration`. We will:
 ## Need help?
 
 - File: [github.com/N-THEM-Studio/zelari-code/issues](https://github.com/N-THEM-Studio/zelari-code/issues)
-- Email: maintainers@zelari-code.dev
-- Read the [v0.5.0 release notes](CHANGELOG.md#unreleased) for the
-  full list of what changed in this release.
+- Product: [anathema-studio.com](https://anathema-studio.com/)
+- Read the [CHANGELOG](CHANGELOG.md) (start at the v0.5.0 section) for
+  the full list of what changed in the monorepo extraction release.
+  Monorepo license is **MIT** as of the open-source packaging work
+  ([ADR-0008](docs/decisions/0008-monorepo-mit-oss.md)).

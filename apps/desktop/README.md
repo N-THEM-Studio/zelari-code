@@ -1,6 +1,7 @@
 # Zelari Desktop
 
-Optional **Tauri 2** installable shell for [zelari-code](https://github.com/N-THEM-Studio/zelari-code).
+Optional **Tauri 2** installable shell for [zelari-code](https://github.com/N-THEM-Studio/zelari-code).  
+By [Anathema Studio](https://anathema-studio.com/) · **MIT** License.
 
 The **CLI stays the product of record** (`npm i -g zelari-code`). This app is a modern chat UI that spawns:
 
