@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `docs/plans/README.md` (historical plans disclaimer).
 - **English marketing media** — `docs/media/` hero/feature stills + ~30s trailer (`trailer/zelari-code-trailer.mp4`).
+- **Product cross-links** — README / GUIDA / package `homepage` → [anathema-studio.com/zelari-code](https://anathema-studio.com/zelari-code); site CTAs → GitHub + npm.
 
 ## [1.14.1] - 2026-07-14
 

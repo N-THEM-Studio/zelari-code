@@ -37,7 +37,7 @@
 
 ## Cos'è Zelari Code
 
-**Zelari Code** è un agente di coding da terminale di **[Anathema Studio](https://anathema-studio.com/)**. Estratto da [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain), offre:
+**Zelari Code** è un agente di coding da terminale open source MIT di **[Anathema Studio](https://anathema-studio.com/)**. Pagina prodotto: [anathema-studio.com/zelari-code](https://anathema-studio.com/zelari-code). Offre:
 
 - Una **TUI** ricca con scrollback nativo, sidebar git e timer di esecuzione
 - Un **agente singolo** con tool filesystem, shell, ricerca e web
@@ -1128,9 +1128,9 @@ Vedi [MIGRATION.md](../MIGRATION.md) e `docs/decisions/0002-publish-zelari-core-
 
 ## Link utili
 
-- [Anathema Studio](https://anathema-studio.com/) — home del prodotto
-- [Repository GitHub](https://github.com/N-THEM-Studio/zelari-code)
-- [npm: zelari-code](https://www.npmjs.com/package/zelari-code)
-- [npm: @zelari/core](https://www.npmjs.com/package/@zelari/core)
+- [Pagina prodotto](https://anathema-studio.com/zelari-code) (IT: [zelari-codice](https://anathema-studio.com/zelari-codice))
+- [Documentazione sul sito](https://anathema-studio.com/zelari-code/docs) (IT: [documentazione](https://anathema-studio.com/zelari-codice/documentazione))
+- [Anathema Studio](https://anathema-studio.com/) — home
+- [Repository GitHub](https://github.com/N-THEM-Studio/zelari-code) · [Releases](https://github.com/N-THEM-Studio/zelari-code/releases)
+- [npm: zelari-code](https://www.npmjs.com/package/zelari-code) · [npm: @zelari/core](https://www.npmjs.com/package/@zelari/core)
 - [CONTRIBUTING](../CONTRIBUTING.md) · [SECURITY](../SECURITY.md) · [LICENSE (MIT)](../LICENSE)
-- [AnathemaBrain](https://github.com/N-THEM-Studio/AnathemaBrain) — lineage Electron storico

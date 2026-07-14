@@ -83,6 +83,7 @@ docs/plans/              # Historical design notes (may be outdated)
 
 | Doc | Audience |
 |-----|----------|
+| [Product page](https://anathema-studio.com/zelari-code) | Marketing + install CTAs |
 | [README.md](./README.md) | English landing + install |
 | [docs/GUIDA.md](./docs/GUIDA.md) | Full Italian user guide |
 | [docs/TOOLS.md](./docs/TOOLS.md) | Tool / skill map |

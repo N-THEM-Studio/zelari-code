@@ -29,7 +29,12 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Node](https://img.shields.io/node/v/zelari-code)
 
-By **[Anathema Studio](https://anathema-studio.com/)** · [Contributing](./CONTRIBUTING.md) · [Security](./SECURITY.md)
+By **[Anathema Studio](https://anathema-studio.com/)** ·
+[Product page](https://anathema-studio.com/zelari-code) ·
+[GitHub](https://github.com/N-THEM-Studio/zelari-code) ·
+[npm](https://www.npmjs.com/package/zelari-code) ·
+[Contributing](./CONTRIBUTING.md) ·
+[Security](./SECURITY.md)
 
 ![Zelari Code — AI Council for your terminal](./docs/media/hero-16x9.png)
 
@@ -430,8 +435,11 @@ npm run typecheck
 
 ## Related
 
-- [Anathema Studio](https://anathema-studio.com/) — product home
-- [@zelari/core on npm](https://www.npmjs.com/package/@zelari/core) — reusable agent runtime (MIT)
+- [Product page](https://anathema-studio.com/zelari-code) (IT: [zelari-codice](https://anathema-studio.com/zelari-codice)) — Anathema Studio
+- [GitHub repository](https://github.com/N-THEM-Studio/zelari-code)
+- [npm: zelari-code](https://www.npmjs.com/package/zelari-code) — CLI
+- [npm: @zelari/core](https://www.npmjs.com/package/@zelari/core) — reusable runtime (MIT)
+- [Site docs](https://anathema-studio.com/zelari-code/docs) (IT: [documentazione](https://anathema-studio.com/zelari-codice/documentazione))
 
 ## License
 

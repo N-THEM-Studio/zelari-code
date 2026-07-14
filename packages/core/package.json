@@ -148,7 +148,7 @@
     "url": "git+https://github.com/N-THEM-Studio/zelari-code.git",
     "directory": "packages/core"
   },
-  "homepage": "https://github.com/N-THEM-Studio/zelari-code#readme",
+  "homepage": "https://anathema-studio.com/zelari-code",
   "bugs": {
     "url": "https://github.com/N-THEM-Studio/zelari-code/issues"
   }
