@@ -5,6 +5,11 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.14.1] - 2026-07-14
+
+### Fixed
+- **CI tests** — the headless single-agent `AgentHarness` mock in `tests/unit/headless-run.test.ts` was missing `getMessages()`, which `runSinglePass` started calling on both return paths in 1.14.0 (message-history snapshot). This made 4 tests throw `TypeError: harness.getMessages is not a function` and blocked the `@zelari/core@1.14.0` publish gate. Added the method to the mock to mirror the real public API.
+
 ## [1.14.0] - 2026-07-14
 
 ### Fixed
