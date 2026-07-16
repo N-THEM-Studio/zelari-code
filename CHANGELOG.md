@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.4] - 2026-07-16
+
+### Fixed
+- **Desktop (Windows): spawn CLI** — resolve npm `zelari-code.cmd` shims to `node …/bin/zelari-code.js` before `CreateProcess`. Fixes `Failed to spawn zelari-code: batch file arguments are invalid` (Rust ≥ 1.77 batch-arg hardening). Version probes and headless runs share the same unwrap path; clearer error if the JS entry is missing.
+
 ## [1.14.3] - 2026-07-16
 
 ### Fixed

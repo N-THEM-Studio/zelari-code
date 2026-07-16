@@ -71,6 +71,12 @@ fn find_node() -> Option<PathBuf> {
 }
 
 fn resolve_cli_entry() -> Result<PathBuf, String> {
+    let resolved = resolve_cli_entry_raw()?;
+    Ok(unwrap_cli_js_entry(&resolved))
+}
+
+/// Locate a CLI path without unwrapping Windows `.cmd` shims to JS.
+fn resolve_cli_entry_raw() -> Result<PathBuf, String> {
     if let Ok(raw) = std::env::var("ZELARI_CLI_PATH") {
         let p = PathBuf::from(raw.trim());
         if p.is_file() {
@@ -142,22 +148,11 @@ fn walk_up_for_cli(start: &Path) -> Option<PathBuf> {
 }
 
 fn read_cli_version(node: &Path, cli: &Path) -> Option<String> {
-    let output = if is_js_entry(cli) {
-        Command::new(node)
-            .arg(cli)
-            .arg("--version")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?
-    } else {
-        Command::new(cli)
-            .arg("--version")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .output()
-            .ok()?
-    };
+    let mut cmd = spawn_cli_base(node, cli, None);
+    cmd.arg("--version")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null());
+    let output = cmd.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -377,13 +372,128 @@ fn is_js_entry(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
+fn is_batch_shim(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("cmd") || e.eq_ignore_ascii_case("bat"))
+        .unwrap_or(false)
+}
+
+/// Resolve an npm Windows bin shim (`.cmd`/`.bat`) to the real JS entry.
+///
+/// Rust's `Command` cannot safely spawn batch files with args (CVE-2024-24576
+/// hardening → "batch file arguments are invalid"). Prefer
+/// `node <prefix>/node_modules/zelari-code/bin/zelari-code.js` instead.
+fn unwrap_cli_js_entry(path: &Path) -> PathBuf {
+    if is_js_entry(path) {
+        return path.to_path_buf();
+    }
+
+    // Bare name or extensionless shim next to zelari-code.cmd (PATHEXT order).
+    let batch_candidate = if is_batch_shim(path) {
+        path.to_path_buf()
+    } else if path.extension().is_none() {
+        let with_cmd = path.with_extension("cmd");
+        if with_cmd.is_file() {
+            with_cmd
+        } else {
+            return path.to_path_buf();
+        }
+    } else {
+        return path.to_path_buf();
+    };
+
+    if let Some(parent) = batch_candidate.parent() {
+        let candidate = parent
+            .join("node_modules")
+            .join("zelari-code")
+            .join("bin")
+            .join("zelari-code.js");
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    // Fallback: parse the shim for a path ending in zelari-code.js.
+    if let Ok(text) = fs::read_to_string(&batch_candidate) {
+        if let Some(js) = extract_js_path_from_cmd_shim(&text, batch_candidate.parent()) {
+            if js.is_file() {
+                return js;
+            }
+        }
+    }
+
+    path.to_path_buf()
+}
+
+/// Best-effort extract of `…zelari-code.js` from an npm-style `.cmd` shim body.
+fn extract_js_path_from_cmd_shim(text: &str, shim_dir: Option<&Path>) -> Option<PathBuf> {
+    // Match quoted paths first (npm cmd-shim: "%dp0%\node_modules\…\zelari-code.js").
+    for token in text.split(|c: char| c == '"' || c.is_whitespace()) {
+        let t = token.trim().trim_matches('"').trim_matches('\'');
+        if t.is_empty() {
+            continue;
+        }
+        // Normalize %dp0%\rel or %~dp0\rel → relative to shim dir.
+        let cleaned = t
+            .replace("%~dp0%", "")
+            .replace("%~dp0", "")
+            .replace("%dp0%\\", "")
+            .replace("%dp0%/", "")
+            .replace("%dp0%", "")
+            .replace("%dp0\\", "")
+            .replace("%dp0/", "")
+            .replace("%dp0", "");
+        let lower = cleaned.to_ascii_lowercase();
+        if !lower.ends_with("zelari-code.js") {
+            continue;
+        }
+        let p = PathBuf::from(&cleaned);
+        if p.is_file() {
+            return Some(p);
+        }
+        if let Some(dir) = shim_dir {
+            let joined = dir.join(&cleaned);
+            if joined.is_file() {
+                return Some(joined);
+            }
+            // Strip leading separators left after %dp0% removal.
+            let trimmed = cleaned.trim_start_matches(['\\', '/']);
+            let joined = dir.join(trimmed);
+            if joined.is_file() {
+                return Some(joined);
+            }
+        }
+    }
+    None
+}
+
+/// Human-readable spawn failure (Windows batch-shim hint).
+fn format_cli_spawn_err(err: impl std::fmt::Display) -> String {
+    let msg = err.to_string();
+    if msg.contains("batch file arguments are invalid") {
+        format!(
+            "Failed to spawn zelari-code: {msg}. \
+             On Windows, Desktop must run the JS entry (node …/bin/zelari-code.js), \
+             not the npm .cmd shim. Reinstall with `npm i -g zelari-code` or set \
+             ZELARI_CLI_PATH to the monorepo root / bin/zelari-code.js."
+        )
+    } else {
+        format!("Failed to spawn zelari-code: {msg}")
+    }
+}
+
 fn spawn_cli_base(node: &Path, cli: &Path, cwd: Option<&Path>) -> Command {
-    let mut c = if is_js_entry(cli) {
+    // Always prefer the unwrapped JS entry so Windows never CreateProcess'es a .cmd.
+    let cli = unwrap_cli_js_entry(cli);
+    let mut c = if is_js_entry(&cli) {
         let mut c = Command::new(node);
-        c.arg(cli);
+        c.arg(&cli);
         c
     } else {
-        Command::new(cli)
+        // Non-JS (native binary, or unresolvable .cmd). Spawning a .cmd with
+        // args fails on Windows; callers map that via format_cli_spawn_err.
+        Command::new(&cli)
     };
     // Avoid inheriting a console / stdin that can leave dangling uv handles
     // when the parent (Tauri) already owns the UI process.
@@ -439,7 +549,7 @@ fn run_cli_capture(node: &Path, cli: &Path, args: &[&str]) -> Result<String, Str
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = cmd
         .output()
-        .map_err(|e| format!("Failed to spawn zelari-code: {e}"))?;
+        .map_err(format_cli_spawn_err)?;
     let out = String::from_utf8_lossy(&output.stdout).to_string();
     let err = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -660,7 +770,10 @@ fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = cmd
         .output()
-        .map_err(|e| format!("Failed to spawn discover-models: {e}"))?;
+        .map_err(|e| {
+            let msg = format_cli_spawn_err(e);
+            msg.replacen("Failed to spawn zelari-code", "Failed to spawn discover-models", 1)
+        })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -1052,7 +1165,7 @@ fn test_ssh_target(args: SshIdArgs) -> Result<serde_json::Value, String> {
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = cmd
         .output()
-        .map_err(|e| format!("Failed to spawn zelari-code: {e}"))?;
+        .map_err(format_cli_spawn_err)?;
     let out = String::from_utf8_lossy(&output.stdout).to_string();
     if let Some(v) = parse_cli_json_stdout(&out) {
         return Ok(v);
@@ -1080,7 +1193,7 @@ fn print_ssh_pubkey(args: PrintSshPubkeyArgs) -> Result<serde_json::Value, Strin
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     let output = cmd
         .output()
-        .map_err(|e| format!("Failed to spawn zelari-code: {e}"))?;
+        .map_err(format_cli_spawn_err)?;
     let out = String::from_utf8_lossy(&output.stdout).to_string();
     if let Some(v) = parse_cli_json_stdout(&out) {
         return Ok(v);
@@ -1405,7 +1518,7 @@ fn spawn_headless(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| format!("Failed to spawn zelari-code: {e}"))?;
+        .map_err(format_cli_spawn_err)?;
 
     let stdout = child
         .stdout
@@ -1572,4 +1685,82 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running Zelari Desktop");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn unwrap_leaves_js_entry_alone() {
+        let p = PathBuf::from("bin/zelari-code.js");
+        assert_eq!(unwrap_cli_js_entry(&p), p);
+    }
+
+    #[test]
+    fn unwrap_resolves_npm_cmd_shim_layout() {
+        let dir = std::env::temp_dir().join(format!(
+            "zelari-unwrap-test-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        let js_dir = dir.join("node_modules").join("zelari-code").join("bin");
+        fs::create_dir_all(&js_dir).unwrap();
+        let js = js_dir.join("zelari-code.js");
+        fs::write(&js, b"// stub\n").unwrap();
+        let cmd = dir.join("zelari-code.cmd");
+        fs::write(
+            &cmd,
+            r#"@ECHO off
+"node" "%dp0%\node_modules\zelari-code\bin\zelari-code.js" %*
+"#,
+        )
+        .unwrap();
+
+        let resolved = unwrap_cli_js_entry(&cmd);
+        assert_eq!(resolved, js);
+
+        let bare = dir.join("zelari-code");
+        // Extensionless next to .cmd should also unwrap via with_extension("cmd").
+        let resolved_bare = unwrap_cli_js_entry(&bare);
+        assert_eq!(resolved_bare, js);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unwrap_parses_cmd_shim_when_layout_differs() {
+        let dir = std::env::temp_dir().join(format!(
+            "zelari-unwrap-parse-{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        // JS not under node_modules/… — only reachable via parse.
+        let js = dir.join("custom").join("zelari-code.js");
+        fs::create_dir_all(js.parent().unwrap()).unwrap();
+        fs::write(&js, b"// stub\n").unwrap();
+        let cmd = dir.join("zelari-code.cmd");
+        let mut f = fs::File::create(&cmd).unwrap();
+        writeln!(
+            f,
+            r#"@ECHO off
+node "{}" %*"#,
+            js.display()
+        )
+        .unwrap();
+
+        let resolved = unwrap_cli_js_entry(&cmd);
+        assert_eq!(resolved, js);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn format_cli_spawn_err_hints_on_batch_invalid() {
+        let msg = format_cli_spawn_err("batch file arguments are invalid");
+        assert!(msg.contains("JS entry"));
+        assert!(msg.contains("ZELARI_CLI_PATH"));
+    }
 }
