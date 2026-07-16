@@ -327,11 +327,48 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     // Accumulator for OpenAI tool_calls streaming (Task A1).
     // Args JSON is delivered incrementally; we emit a `tool_call` delta
     // when the accumulated args for a given index parse to a complete
-    // JSON object.
+    // JSON object. Remaining entries are flushed on finish/[DONE] so
+    // providers that never re-send a closing chunk (or send empty `{}`
+    // only at the end) still execute tools — critical for MiniMax-M3.
     const toolCallAccumulator = new Map<
       number,
       { id: string; name: string; argsJson: string }
     >();
+    let emittedToolCall = false;
+    /** MiniMax reasoning_split may stream cumulative `reasoning_details[].text`. */
+    let reasoningDetailsBuf = '';
+
+    const tryParseArgs = (raw: string): Record<string, unknown> | null => {
+      const t = raw.trim();
+      if (t.length === 0) return {};
+      try {
+        const parsed = JSON.parse(t) as unknown;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+        return null;
+      } catch {
+        return null;
+      }
+    };
+
+    const flushToolAccumulator = function* (): Generator<ProviderDelta> {
+      const entries = [...toolCallAccumulator.entries()].sort((a, b) => a[0] - b[0]);
+      for (const [idx, existing] of entries) {
+        if (!existing.name) continue;
+        const args = tryParseArgs(existing.argsJson);
+        if (args === null) continue; // incomplete JSON — leave dropped
+        toolCallAccumulator.delete(idx);
+        emittedToolCall = true;
+        yield {
+          kind: 'tool_call',
+          toolCallId: existing.id || `tc-${idx}`,
+          toolName: existing.name,
+          args,
+        };
+      }
+      toolCallAccumulator.clear();
+    };
 
     try {
       while (true) {
@@ -348,7 +385,13 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
           if (!trimmed.startsWith('data:')) continue;
           const data = trimmed.slice(5).trim();
           if (data === '[DONE]') {
-            yield { kind: 'finish', reason: 'stop' };
+            yield* flushToolAccumulator();
+            // If tools ran but the provider never sent finish_reason=tool_calls
+            // (only [DONE]), still report tool_calls so the harness loop continues.
+            yield {
+              kind: 'finish',
+              reason: emittedToolCall ? 'tool_calls' : 'stop',
+            };
             return;
           }
           try {
@@ -425,6 +468,25 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
             if (typeof reasoning === 'string' && reasoning.length > 0) {
               yield { kind: 'thinking', delta: reasoning };
             }
+            // MiniMax-M3 reasoning_split format: reasoning_details[{text}]
+            // may be cumulative across chunks (same pattern as content buffer).
+            const details = (delta as { reasoning_details?: unknown })?.reasoning_details;
+            if (Array.isArray(details)) {
+              for (const d of details) {
+                if (!d || typeof d !== 'object') continue;
+                const t = (d as { text?: unknown }).text;
+                if (typeof t !== 'string' || t.length === 0) continue;
+                if (t.startsWith(reasoningDetailsBuf)) {
+                  const piece = t.slice(reasoningDetailsBuf.length);
+                  reasoningDetailsBuf = t;
+                  if (piece.length > 0) yield { kind: 'thinking', delta: piece };
+                } else {
+                  // Non-cumulative chunk — treat as a fresh delta.
+                  reasoningDetailsBuf += t;
+                  yield { kind: 'thinking', delta: t };
+                }
+              }
+            }
             // OpenAI tool_calls are streamed incrementally — accumulate args
             // per index and emit a tool_call delta when the args JSON closes.
             if (Array.isArray(delta?.tool_calls)) {
@@ -440,33 +502,44 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
                 if (tc.function?.arguments) existing.argsJson += tc.function.arguments;
                 toolCallAccumulator.set(idx, existing);
                 // Heuristic: when argsJson parses as a complete JSON object, emit.
+                // Do NOT emit on empty args mid-stream (name often arrives first;
+                // empty `{}` is flushed on finish/[DONE] instead).
                 if (existing.argsJson.trim().endsWith('}')) {
-                  try {
-                    const parsedArgs = JSON.parse(existing.argsJson);
+                  const parsedArgs = tryParseArgs(existing.argsJson);
+                  if (parsedArgs !== null && existing.name) {
                     toolCallAccumulator.delete(idx);
+                    emittedToolCall = true;
                     yield {
                       kind: 'tool_call',
                       toolCallId: existing.id || `tc-${idx}`,
                       toolName: existing.name,
                       args: parsedArgs,
                     };
-                  } catch {
-                    // JSON not closed yet — keep accumulating.
                   }
                 }
               }
             }
-            // Final chunk: if the provider includes a finish_reason, surface it
-            // (especially 'tool_calls', which the harness uses to decide whether
-            // to re-enter the provider after tool results are appended).
+            // Final chunk: flush any leftover complete tool calls, then surface
+            // finish_reason (especially 'tool_calls' for the harness loop).
             if (choice?.finish_reason) {
-              yield { kind: 'finish', reason: choice.finish_reason };
+              yield* flushToolAccumulator();
+              const reason =
+                choice.finish_reason === 'stop' && emittedToolCall
+                  ? 'tool_calls'
+                  : choice.finish_reason;
+              yield { kind: 'finish', reason };
             }
           } catch {
             // Skip malformed lines
           }
         }
       }
+      // Stream ended without [DONE] — still flush tools + finish.
+      yield* flushToolAccumulator();
+      yield {
+        kind: 'finish',
+        reason: emittedToolCall ? 'tool_calls' : 'stop',
+      };
     } finally {
       reader.releaseLock();
     }

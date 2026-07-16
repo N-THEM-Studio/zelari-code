@@ -92,7 +92,7 @@ describe('openai-compatible provider routing (Task 15.2)', () => {
       expect(config?.providerId).toBe('grok');
       expect(config?.apiKey).toBe('***');
       expect(config?.baseUrl).toBe('https://api.x.ai/v1');
-      expect(config?.model).toBe('grok-4');  // default model
+      expect(config?.model).toBe('grok-4.5');  // default model
     });
 
     it('providerConfigFor() respects env key override over keyStore', async () => {

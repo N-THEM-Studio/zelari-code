@@ -156,4 +156,50 @@ describe('openaiCompatibleProvider — SSE tool_calls parsing (Task A1)', () => 
     }
     expect(texts.join('')).toBe('survivor');
   });
+
+  it('flushes tool calls with empty args on [DONE] (name-only chunks)', async () => {
+    // MiniMax sometimes sends name first and empty/no arguments until end.
+    mockFetchWithSseChunks([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_empty","function":{"name":"list_files","arguments":""}}]}}]}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+    const provider = openaiCompatibleProvider({
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'gpt-test',
+      providerId: 'openai-compatible',
+    });
+    let toolCall: { name: string; args: Record<string, unknown> } | null = null;
+    let finishReason: string | null = null;
+    for await (const d of provider({ messages: [], model: 'gpt-test', provider: 'openai-compatible', tools: [] })) {
+      if (d.kind === 'tool_call') toolCall = { name: d.toolName, args: d.args };
+      if (d.kind === 'finish') finishReason = d.reason;
+    }
+    expect(toolCall).not.toBeNull();
+    expect(toolCall!.name).toBe('list_files');
+    expect(toolCall!.args).toEqual({});
+    expect(finishReason).toBe('tool_calls');
+  });
+
+  it('upgrades finish_reason stop→tool_calls when tools were emitted', async () => {
+    mockFetchWithSseChunks([
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_5","function":{"name":"read_file","arguments":"{\\"path\\":\\"a.ts\\"}"}}]}}]}\n\n',
+      'data: {"choices":[{"finish_reason":"stop"}]}\n\n',
+      'data: [DONE]\n\n',
+    ]);
+    const provider = openaiCompatibleProvider({
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'gpt-test',
+      providerId: 'openai-compatible',
+    });
+    const finishes: string[] = [];
+    let sawTool = false;
+    for await (const d of provider({ messages: [], model: 'gpt-test', provider: 'openai-compatible', tools: [] })) {
+      if (d.kind === 'tool_call') sawTool = true;
+      if (d.kind === 'finish') finishes.push(d.reason);
+    }
+    expect(sawTool).toBe(true);
+    expect(finishes[0]).toBe('tool_calls');
+  });
 });

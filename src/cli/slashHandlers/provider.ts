@@ -280,7 +280,7 @@ export async function handleLoginOAuthGrok(ctx: ProviderSlashContext): Promise<v
     });
     persistActiveProvider('grok');
     if (!getModelForProvider('grok')) {
-      persistModelForProvider('grok', ctx.providerDefaults['grok'] ?? 'grok-4');
+      persistModelForProvider('grok', ctx.providerDefaults['grok'] ?? 'grok-4.5');
     }
     const expiresHint = resultOAuth.expiresAt ? `, expires ${new Date(resultOAuth.expiresAt).toISOString()}` : '';
     const refreshHint = resultOAuth.refreshToken ? ', refresh token saved' : '';

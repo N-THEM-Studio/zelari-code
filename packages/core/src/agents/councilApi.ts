@@ -257,12 +257,20 @@ export interface CleanAgentContentOptions {
    * still needs to see its own clarifying question on the next turn.
    */
   stripQuestion?: boolean;
+  /**
+   * When true (default), strip `<think>` / `<thinking>` blocks (UI display).
+   * Set **false** for multi-turn **provider** history: MiniMax-M3 (and M2.x)
+   * require the full assistant `content` including think tags so interleaved
+   * tool-use reasoning continues. Stripping them for the API degrades tool
+   * loops ("announces intent then stops"). Display paths keep the default.
+   */
+  stripThink?: boolean;
 }
 
 /**
  * Strip model "private" channels from text shown to the user / re-fed as
  * history. Covers:
- *   - complete + unclosed `<think>` / `<thinking>` (GLM/MiniMax style)
+ *   - complete + unclosed `<think>` / `<thinking>` (GLM/MiniMax style) — optional
  *   - MiniMax XML tool-call wrappers
  *   - clarifying-question JSON blocks (display only; keep in provider history)
  *
@@ -274,11 +282,15 @@ export function cleanAgentContent(
   opts: CleanAgentContentOptions = {},
 ): string {
   const stripQuestion = opts.stripQuestion !== false;
-  let out = text
-    .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
-    .replace(/<think(?:ing)?>[\s\S]*$/gi, '')
-    .replace(/<\/think(?:ing)?>/gi, '')
-    .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
+  const stripThink = opts.stripThink !== false;
+  let out = text;
+  if (stripThink) {
+    out = out
+      .replace(/<think(?:ing)?>[\s\S]*?<\/think(?:ing)?>/gi, '')
+      .replace(/<think(?:ing)?>[\s\S]*$/gi, '')
+      .replace(/<\/think(?:ing)?>/gi, '');
+  }
+  out = out.replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
   if (stripQuestion) {
     out = out.replace(/---QUESTION---[\s\S]*?---END---/g, '');
   }

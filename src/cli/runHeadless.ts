@@ -286,13 +286,17 @@ async function runHeadlessSingle(
   // Prefer user/assistant only in the seed: tool call tails from prior
   // processes often fail provider validation or blow the slice budget and
   // drop the actual plan text (Desktop plan→build amnesia).
+  // Preserve <think> for MiniMax-M3 multi-turn tool use (provider history).
   const historySeed: AgentMessage[] = (opts.history ?? [])
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) =>
       m.role === 'assistant' && m.content
         ? {
             role: 'assistant' as const,
-            content: cleanAgentContent(m.content, { stripQuestion: false }),
+            content: cleanAgentContent(m.content, {
+              stripQuestion: false,
+              stripThink: false,
+            }),
           }
         : { role: m.role as 'user' | 'assistant', content: m.content ?? '' },
     )
@@ -504,7 +508,10 @@ async function runHeadlessSingle(
       for (let i = all.length - 1; i >= 0; i--) {
         const m = all[i];
         if (m?.role === 'assistant' && (m.content ?? '').trim()) {
-          lastAsst = cleanAgentContent(m.content, { stripQuestion: false });
+          lastAsst = cleanAgentContent(m.content, {
+            stripQuestion: false,
+            stripThink: false,
+          });
           break;
         }
       }
@@ -583,7 +590,13 @@ async function runHeadlessCouncil(
   // into the user task and emit history_snapshot for the next turn.
   const historySeed: AgentMessage[] = (opts.history ?? []).map((m) =>
     m.role === 'assistant' && m.content
-      ? { ...m, content: cleanAgentContent(m.content, { stripQuestion: false }) }
+      ? {
+          ...m,
+          content: cleanAgentContent(m.content, {
+            stripQuestion: false,
+            stripThink: false,
+          }),
+        }
       : m,
   );
   const effectiveTask = buildCouncilTaskWithHistory(opts.task, historySeed);
@@ -702,7 +715,13 @@ async function runHeadlessZelari(
 
   const historySeed: AgentMessage[] = (opts.history ?? []).map((m) =>
     m.role === 'assistant' && m.content
-      ? { ...m, content: cleanAgentContent(m.content, { stripQuestion: false }) }
+      ? {
+          ...m,
+          content: cleanAgentContent(m.content, {
+            stripQuestion: false,
+            stripThink: false,
+          }),
+        }
       : m,
   );
   const missionTask = buildCouncilTaskWithHistory(opts.task, historySeed);
@@ -807,6 +826,7 @@ async function runHeadlessZelari(
         if (synthesisText.trim()) {
           lastMissionAssistant = cleanAgentContent(synthesisText, {
             stripQuestion: false,
+            stripThink: false,
           });
         }
 

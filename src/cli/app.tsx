@@ -38,7 +38,7 @@ import { useBatchedMessages } from './hooks/useBatchedMessages.js';
 import { useTerminalSize } from './hooks/useTerminalSize.js';
 import type { LiveState } from './hooks/chatState.js';
 
-const MODEL = process.env.OPENAI_MODEL ?? 'grok-4';
+const MODEL = process.env.OPENAI_MODEL ?? 'grok-4.5';
 const PROVIDER = 'openai-compatible';
 
 /**
@@ -46,8 +46,8 @@ const PROVIDER = 'openai-compatible';
  * without a prior `/model <name>` call.
  */
 const providerDefaults: Record<string, string> = {
-  'openai-compatible': 'grok-4',
-  'grok': 'grok-4',
+  'openai-compatible': 'grok-4.5',
+  'grok': 'grok-4.5',
   'minimax': 'MiniMax-chat-latest',
   'glm': 'glm-4.5',
   'deepseek': 'deepseek-v4-pro',

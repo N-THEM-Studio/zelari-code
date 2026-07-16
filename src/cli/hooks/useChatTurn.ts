@@ -687,9 +687,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               const all = h.getMessages();
               const seedLen = 1 /*system*/ + historySeedLen + 1 /*user*/;
               if (all.length > seedLen) {
-                // Strip think blocks from history so the next turn does not
-                // re-feed private reasoning — but KEEP ---QUESTION--- so the
-                // model can bind short answers ("full") to its own choices.
+                // Provider history: KEEP <think> (MiniMax-M3 interleaved tool
+                // use requires full assistant content) and KEEP ---QUESTION---
+                // so short answers bind. Still strip MiniMax XML tool dumps
+                // and proprietary leaks via cleanAgentContent.
                 appendMessages(
                   all.slice(seedLen).map((m) =>
                     m.role === "assistant" && m.content
@@ -697,6 +698,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                           ...m,
                           content: cleanAgentContent(m.content, {
                             stripQuestion: false,
+                            stripThink: false,
                           }),
                         }
                       : m,

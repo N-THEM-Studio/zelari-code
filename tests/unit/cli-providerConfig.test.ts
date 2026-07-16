@@ -49,7 +49,8 @@ describe('providerConfig', () => {
   it('getProviderConfig() returns defaults when file missing', () => {
     const config = getProviderConfig();
     expect(config.activeProviderId).toBe('openai-compatible');
-    expect(config.modelByProvider.grok).toBe('grok-4');
+    expect(config.modelByProvider.grok).toBe('grok-4.5');
+    expect(config.modelByProvider['openai-compatible']).toBe('grok-4.5');
     expect(config.modelByProvider.minimax).toBe('MiniMax-M2.5');
     expect(config.modelByProvider.glm).toBe('glm-4.6');
   });
@@ -59,7 +60,7 @@ describe('providerConfig', () => {
     const config = getProviderConfig();
     expect(config.activeProviderId).toBe('grok');
     // The grok model entry should already exist (defaults).
-    expect(config.modelByProvider.grok).toBe('grok-4');
+    expect(config.modelByProvider.grok).toBe('grok-4.5');
   });
 
   it('setActiveProviderId() throws on unknown id', () => {

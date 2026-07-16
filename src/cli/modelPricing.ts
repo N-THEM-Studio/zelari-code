@@ -26,7 +26,9 @@ const PRICES_PER_MILLION: Record<
   string,
   { input: number; output: number; cachedInput?: number }
 > = {
-  // xAI Grok
+  // xAI Grok (list prices; grok-4.5 default reasoning_effort is "high")
+  'grok-4.5':         { input: 2,    output: 6,  cachedInput: 0.50 },
+  'grok-4.3':         { input: 1.25, output: 2.50, cachedInput: 0.20 },
   'grok-4':           { input: 3,    output: 15 },
   'grok-4-fast':      { input: 0.20, output: 0.50 },
   'grok-3':           { input: 3,    output: 15 },

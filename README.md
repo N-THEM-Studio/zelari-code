@@ -306,7 +306,7 @@ zelari-code (CLI, MIT)
 | Variable | Description |
 |---|---|
 | `OPENAI_API_KEY` | OpenAI API key |
-| `OPENAI_MODEL` | Default model (default: `grok-4`) |
+| `OPENAI_MODEL` | Default model (default: `grok-4.5`) |
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
 | `GLM_API_KEY` | GLM/Z.AI API key |
 | `GROK_API_KEY` | xAI Grok API key (alternative to OAuth) |

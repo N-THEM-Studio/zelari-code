@@ -894,9 +894,14 @@ export class AgentHarness {
               (n) => hashToolCall(n.name, n.args) === key,
             );
           });
+          // Detect actual tool-dump markers only — NOT the bare word "MiniMax"
+          // (models often list providers by name; that was a false-positive
+          // text_tools_parse_failed after a plain summary with no tool block).
           if (
             (/---TOOLS---/.test(turnText) ||
-              /minimax|invoke\s+name=/i.test(turnText)) &&
+              /<\/?minimax:tool_call\b/i.test(turnText) ||
+              /invoke\s+name\s*=/i.test(turnText) ||
+              /\]\s*<\s*\]\s*minimax\s*\[/i.test(turnText)) &&
             textTools.length === 0
           ) {
             const parseErr = createBrainEvent('error', this.sessionId, {
@@ -979,6 +984,15 @@ export class AgentHarness {
               this.textToolReentries += 1;
               finishRef.value = 'tool_calls';
             }
+          }
+          // === Force tool-loop re-entry when tools actually ran ===
+          // Some OpenAI-compatible streams (observed with MiniMax-M3) emit
+          // complete tool_call deltas but finish_reason='stop' (or only
+          // [DONE]→stop). Tools already executed above; without forcing
+          // finish='tool_calls' the outer loop exits and never feeds results
+          // back — the model "lists intent" then dies mid-task.
+          if (turnToolResults.length > 0) {
+            finishRef.value = 'tool_calls';
           }
           // === Truncated tool-call detection ===
           // If the provider sent finish_reason='tool_calls' but NO tool_call

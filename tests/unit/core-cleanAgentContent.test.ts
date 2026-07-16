@@ -28,6 +28,23 @@ describe('cleanAgentContent / parseThinking (v1.8.1 think leak)', () => {
     expect(cleanAgentContent(raw)).toBe('Ask:\n\nDone.');
   });
 
+  it('preserves <think> when stripThink:false (MiniMax-M3 provider history)', () => {
+    const raw =
+      '<think>\nplan the tool call\n</think>\n\nI will list providers.';
+    expect(
+      cleanAgentContent(raw, { stripThink: false, stripQuestion: false }),
+    ).toBe(raw.trim());
+  });
+
+  it('still strips minimax tool wrappers when preserving think', () => {
+    const raw =
+      '<think>x</think>\n<minimax:tool_call><invoke name="list_files"></invoke></minimax:tool_call>\nDone.';
+    const out = cleanAgentContent(raw, { stripThink: false });
+    expect(out).toContain('<think>x</think>');
+    expect(out).toContain('Done.');
+    expect(out).not.toContain('minimax:tool_call');
+  });
+
   it('parseThinking extracts body from complete block', () => {
     expect(parseThinking('<think>\nalpha\n</think>\nbeta')).toBe('alpha');
   });

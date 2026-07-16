@@ -7,14 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **Open source (MIT)** — monorepo relicensed to MIT (was proprietary CLI + MIT `@zelari/core`). Public attribution: [Anathema Studio](https://anathema-studio.com/). See [ADR-0008](./docs/decisions/0008-monorepo-mit-oss.md).
-- **Docs refresh for ≥ 1.14** — `README`, `docs/GUIDA.md`, `docs/TOOLS.md`, `docs/README.md`, `MIGRATION.md` aligned with plan/build phase, SSH tools, parallel tool batches, Desktop multi-turn/overlay, and current env vars.
+## [1.14.2] - 2026-07-16
 
-### Added
-- `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`, `SECURITY.md`, `docs/plans/README.md` (historical plans disclaimer).
-- **English marketing media** — `docs/media/` hero/feature stills + ~30s trailer (`trailer/zelari-code-trailer.mp4`).
-- **Product cross-links** — README / GUIDA / package `homepage` → [anathema-studio.com/zelari-code](https://anathema-studio.com/zelari-code); site CTAs → GitHub + npm.
+### Fixed
+- **MiniMax-M3 agent tool loop** — when the model emits tool calls but finishes with `stop` (or only `[DONE]`), the harness now forces `finish=tool_calls` so results are fed back instead of ending mid-task after “I’ll examine…”.
+- **OpenAI-compatible stream tool flush** — leftover tool-call accumulators are flushed on `finish`/`[DONE]`; empty args and `stop`→`tool_calls` upgrade when tools ran; basic `reasoning_details` streaming support.
+- **Provider history keeps `<think>`** — multi-turn provider history no longer strips MiniMax/GLM think tags (required for interleaved tool use). Display still scrubs them in the TUI.
+- **False `text_tools_parse_failed`** — bare mention of “MiniMax” in assistant prose no longer triggers a parse-failed error; only real tool-dump markers do.
+
+### Changed
+- **Default Grok model** — static default for `grok` / `openai-compatible` is now **`grok-4.5`** (xAI flagship; API `reasoning_effort` defaults to high). Pricing table includes `grok-4.5` and `grok-4.3`.
 
 ## [1.14.1] - 2026-07-14
 

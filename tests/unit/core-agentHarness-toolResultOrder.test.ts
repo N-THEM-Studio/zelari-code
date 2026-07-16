@@ -221,6 +221,47 @@ describe("AgentHarness ---TOOLS--- text-format tool execution", () => {
     expect(toolIdx).toBeGreaterThan(asstIdx);
   });
 
+  it("re-enters tool loop when provider finishes stop but tools ran (MiniMax-M3)", async () => {
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "list_files",
+      description: "list",
+      inputSchema: z.object({}),
+      permissions: [],
+      execute: async () => ({ ok: true, value: "ok" }),
+    });
+    let turn = 0;
+    const provider: ProviderStreamFn = async function* () {
+      turn++;
+      if (turn === 1) {
+        yield text("looking…");
+        yield toolCall("call_stop", "list_files", {});
+        // Bug: MiniMax sometimes emits tools then finish_reason=stop.
+        yield finish("stop");
+      } else {
+        yield text("found the files");
+        yield finish("stop");
+      }
+    } as ProviderStreamFn;
+
+    const harness = new AgentHarness({
+      model: "test-model",
+      provider: "minimax",
+      sessionId: "sess-finish-stop-tools",
+      messages: [{ role: "user", content: "list" }],
+      tools: [],
+      toolRegistry: registry,
+      providerStream: provider,
+    });
+    const events = await collect(harness.run());
+    expect(turn).toBeGreaterThanOrEqual(2);
+    const textOut = events
+      .filter((e) => e.type === "message_delta")
+      .map((e) => (e as { delta: string }).delta)
+      .join("");
+    expect(textOut).toContain("found the files");
+  });
+
   it("emits parse failure error when ---TOOLS--- block has invalid JSON", async () => {
     const registry = new ToolRegistry();
     let turn = 0;
@@ -251,5 +292,34 @@ describe("AgentHarness ---TOOLS--- text-format tool execution", () => {
         (e) => e.type === "error" && e.code === "text_tools_parse_failed",
       ),
     ).toBe(true);
+  });
+
+  it("does NOT emit text_tools_parse_failed when text merely mentions MiniMax", async () => {
+    // Regression: bare "MiniMax" in a provider list used to match /minimax/i
+    // and fire a false parse-failed error after a plain summary turn.
+    const registry = new ToolRegistry();
+    const provider: ProviderStreamFn = async function* () {
+      yield text(
+        "Providers: OpenAI-compatible, Grok, GLM, MiniMax, DeepSeek. Ready.",
+      );
+      yield finish("stop");
+    } as ProviderStreamFn;
+
+    const harness = new AgentHarness({
+      model: "MiniMax-M3",
+      provider: "minimax",
+      sessionId: "sess-minimax-word",
+      messages: [{ role: "user", content: "overview" }],
+      tools: [],
+      toolRegistry: registry,
+      providerStream: provider,
+    });
+
+    const events = await collect(harness.run());
+    expect(
+      events.some(
+        (e) => e.type === "error" && e.code === "text_tools_parse_failed",
+      ),
+    ).toBe(false);
   });
 });
