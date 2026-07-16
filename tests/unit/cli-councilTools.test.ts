@@ -207,12 +207,14 @@ describe('runCouncilPure + tools (Phase 24 — Council × Tools)', () => {
 
   it('with tool registry: mixed text + tool_call stream → both render correctly', async () => {
     const { registry, echoCalls } = buildMixedRegistry();
-    const stream: ProviderStreamFn = async function* () {
-      yield { kind: 'text', delta: 'before ' };
-      yield { kind: 'tool_call', toolCallId: 'tc-5', toolName: 'echo', args: { text: 'mid' } };
-      yield { kind: 'text', delta: ' after' };
-      yield { kind: 'finish', reason: 'stop' };
-    };
+    // streamEmitting: first pass has tools+text; re-entry after tools is stop-only
+    // (harness upgrades finish=stop → tool_calls when results exist).
+    const stream = streamEmitting([
+      { kind: 'text', delta: 'before ' },
+      { kind: 'tool_call', toolCallId: 'tc-5', toolName: 'echo', args: { text: 'mid' } },
+      { kind: 'text', delta: ' after' },
+      { kind: 'finish', reason: 'stop' },
+    ]);
     const events = await collect(runCouncilPure('mixed', {
       apiKey: 'sk-test',
       model: 'm',

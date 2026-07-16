@@ -69,17 +69,27 @@ describe('AgentHarness maxToolCallsPerTurn enforcement (Task G.2.4)', () => {
       },
     });
 
-    const provider = asyncGen([
-      text('starting'),
-      // v0.7.1: distinct args per call so the A2 duplicate-call cache does
-      // not short-circuit them — this test isolates the per-turn limit.
-      toolCall('tc-1', 'noop', { n: 1 }),
-      toolCall('tc-2', 'noop', { n: 2 }),
-      toolCall('tc-3', 'noop', { n: 3 }),
-      toolCall('tc-4', 'noop', { n: 4 }),
-      text('done'),
-      finish('stop'),
-    ]);
+    // Stateful: after tools run the harness re-enters (finish upgraded to
+    // tool_calls when results exist). Second call must be text-only stop.
+    let call = 0;
+    const provider: ProviderStreamFn = async function* () {
+      call++;
+      if (call === 1) {
+        yield text('starting');
+        // v0.7.1: distinct args per call so the A2 duplicate-call cache does
+        // not short-circuit them — this test isolates the per-turn limit.
+        yield toolCall('tc-1', 'noop', { n: 1 });
+        yield toolCall('tc-2', 'noop', { n: 2 });
+        yield toolCall('tc-3', 'noop', { n: 3 });
+        yield toolCall('tc-4', 'noop', { n: 4 });
+        yield text('done');
+        // Provider may send stop after tools (MiniMax); harness continues loop.
+        yield finish('stop');
+      } else {
+        yield text('summary');
+        yield finish('stop');
+      }
+    };
 
     const harness = new AgentHarness({
       model: 'test-model',
@@ -131,21 +141,28 @@ describe('AgentHarness maxToolCallsPerTurn enforcement (Task G.2.4)', () => {
       },
     });
 
-    // Factory provider — each call to the ProviderStreamFn returns a
-    // fresh generator. The first turn yields one tool call, the second
-    // (queue-drained) yields another. Counter must reset between turns.
-    // v0.7.1: distinct args per turn so the A2 dup-call cache (which is
-    // per-run, not per-turn) does not short-circuit the second execution.
+    // Tool-loop turn 1 + follow-up after tools, then queue-drained user turn.
+    // Counter resets per assistant turn → both tool calls execute (limit=1).
+    // v0.7.1: distinct args so the A2 dup-call cache does not short-circuit.
     let turnIdx = 0;
-    const provider: ProviderStreamFn = (async function* () {
+    const provider: ProviderStreamFn = async function* () {
       turnIdx++;
       if (turnIdx === 1) {
         yield toolCall('tc-1', 'noop', { turn: 1 });
-      } else {
+        yield finish('stop'); // upgraded to tool_calls after results
+      } else if (turnIdx === 2) {
+        // After first tool results — brief ack before queue drain
+        yield text('ok1');
+        yield finish('stop');
+      } else if (turnIdx === 3) {
+        // Queue-drained second user prompt
         yield toolCall('tc-2', 'noop', { turn: 2 });
+        yield finish('stop');
+      } else {
+        yield text('ok2');
+        yield finish('stop');
       }
-      yield finish('stop');
-    }) as ProviderStreamFn;
+    };
 
     const harness = new AgentHarness({
       model: 'test-model',
@@ -159,16 +176,14 @@ describe('AgentHarness maxToolCallsPerTurn enforcement (Task G.2.4)', () => {
     });
 
     // Pre-populate the queue with one prompt so the harness drains a
-    // second turn after the initial one. Both turns have 1 tool call.
-    // Counter resets per turn → both execute (limit=1, count=1, not > 1).
+    // second user turn after the initial tool loop settles.
     harness.enqueue('next turn');
     const events = await collect(harness.run());
     const ends = events.filter((e) => e.type === 'tool_execution_end');
-    // 2 turns × 1 tool each = 2 successful ends
+    // 2 user-driven tool turns × 1 tool each = 2 successful ends
     expect(ends.length).toBe(2);
     expect(executed).toBe(2);
-    // Sanity: turnIdx was bumped twice
-    expect(turnIdx).toBeGreaterThanOrEqual(2);
+    expect(turnIdx).toBeGreaterThanOrEqual(3);
   });
 
   it('limit undefined → backward compatible (no skips)', async () => {
@@ -185,13 +200,20 @@ describe('AgentHarness maxToolCallsPerTurn enforcement (Task G.2.4)', () => {
       },
     });
 
-    const provider = asyncGen([
-      // v0.7.1: distinct args so the A2 dup-call cache doesn't short-circuit.
-      toolCall('tc-1', 'noop', { n: 1 }),
-      toolCall('tc-2', 'noop', { n: 2 }),
-      toolCall('tc-3', 'noop', { n: 3 }),
-      finish('stop'),
-    ]);
+    let call = 0;
+    const provider: ProviderStreamFn = async function* () {
+      call++;
+      if (call === 1) {
+        // v0.7.1: distinct args so the A2 dup-call cache doesn't short-circuit.
+        yield toolCall('tc-1', 'noop', { n: 1 });
+        yield toolCall('tc-2', 'noop', { n: 2 });
+        yield toolCall('tc-3', 'noop', { n: 3 });
+        yield finish('stop');
+      } else {
+        yield text('done');
+        yield finish('stop');
+      }
+    };
 
     const harness = new AgentHarness({
       model: 'test-model',

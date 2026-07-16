@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.14.3] - 2026-07-16
+
+### Fixed
+- **CI / tool-loop tests** — mocks that finish with `stop` after tools must be stateful (re-entry yields a final answer). Unblocks npm publish after 1.14.2 gate failure.
+
 ## [1.14.2] - 2026-07-16
 
 ### Fixed
