@@ -46,13 +46,24 @@ const state: {
   clients: McpClient[];
 } = { loaded: false, tools: [], warnings: [], clients: [] };
 
-/** Read + merge MCP config files (project entries win on name conflict). */
+/**
+ * Read + merge MCP config files (project entries win on name conflict).
+ *
+ * Sources (in order, later wins):
+ *   1. ~/.zelari-code/mcp.json  — skipped when `ZELARI_MCP_USER=0` (tests /
+ *      hermetic CI that must not see the developer's personal servers)
+ *   2. <project>/.zelari/mcp.json
+ */
 export function readMcpConfig(projectRoot: string = process.cwd()): Record<string, McpServerConfig> {
   const merged: Record<string, McpServerConfig> = {};
-  const paths = [
-    join(homedir(), '.zelari-code', 'mcp.json'),
-    join(projectRoot, '.zelari', 'mcp.json'), // later = higher precedence
-  ];
+  const paths: string[] = [];
+  // Opt out of the user-global config so unit tests don't pick up real MCP
+  // servers installed on the developer machine (merge would otherwise leak
+  // github/memory/filesystem/… into hermetic fixtures).
+  if (process.env['ZELARI_MCP_USER'] !== '0') {
+    paths.push(join(homedir(), '.zelari-code', 'mcp.json'));
+  }
+  paths.push(join(projectRoot, '.zelari', 'mcp.json')); // later = higher precedence
   for (const p of paths) {
     if (!existsSync(p)) continue;
     try {

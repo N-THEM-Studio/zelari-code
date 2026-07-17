@@ -48,11 +48,14 @@ let dir: string;
 let serverScript: string;
 
 beforeAll(() => {
+  // Hermetic: never merge the developer's ~/.zelari-code/mcp.json into fixtures.
+  process.env['ZELARI_MCP_USER'] = '0';
   dir = mkdtempSync(join(tmpdir(), 'mcp-test-'));
   serverScript = join(dir, 'fake-mcp.cjs');
   writeFileSync(serverScript, FAKE_SERVER);
 });
 afterAll(() => {
+  delete process.env['ZELARI_MCP_USER'];
   rmSync(dir, { recursive: true, force: true });
 });
 afterEach(() => {

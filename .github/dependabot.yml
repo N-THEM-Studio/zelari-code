@@ -1,0 +1,95 @@
+# Dependabot config — Zelari Code v0.10.0-prep
+# Generato da Lucifero il 2026-07-16 per chiudere il gap B3 (Dipendabot alert 1c+1h+3m senza config).
+# Vedi: .zelari/risks.md → R5; .zelari/HANDOFF-v0.10.0.md § Gap HANDOFF
+
+version: 2
+
+# Global: limite di PR aperte per evitare flood durante release.
+# Allineato con cadence bisettimanale di Zelari Code.
+
+updates:
+  # === npm root (CLI + deps condivise) ===
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 5
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+      security:
+        applies-to: "security-updates"
+    labels:
+      - "dependencies"
+      - "npm"
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+      include: "scope"
+
+  # === npm packages/core (workspace interno) ===
+  - package-ecosystem: "npm"
+    directory: "/packages/core"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "npm-core"
+    commit-message:
+      prefix: "chore(core)"
+
+  # === npm apps/desktop (Tauri frontend) ===
+  - package-ecosystem: "npm"
+    directory: "/apps/desktop"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "09:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "npm-desktop"
+    commit-message:
+      prefix: "chore(desktop)"
+
+  # === cargo apps/desktop/src-tauri (Rust shell) ===
+  - package-ecosystem: "cargo"
+    directory: "/apps/desktop/src-tauri"
+    schedule:
+      interval: "weekly"
+      day: "wednesday"
+      time: "09:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "cargo"
+    commit-message:
+      prefix: "chore(rust)"
+
+  # === GitHub Actions ===
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "thursday"
+      time: "09:00"
+      timezone: "Europe/Rome"
+    open-pull-requests-limit: 3
+    labels:
+      - "dependencies"
+      - "ci"
+    commit-message:
+      prefix: "ci(actions)"

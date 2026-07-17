@@ -113,6 +113,8 @@ function captureStderr(): { read(): string; restore(): void } {
 
 beforeEach(() => {
   harnessEvents.length = 0;
+  // runHeadless still calls registerMcpTools unless disabled — keep unit tests hermetic.
+  process.env['ZELARI_MCP'] = '0';
 });
 
 afterEach(() => {

@@ -1,6 +1,6 @@
 [package]
 name = "zelari-desktop"
-version = "1.14.4"
+version = "1.15.0"
 description = "Zelari Desktop — coding agent shell (Tauri 2) over @zelari/core"
 authors = ["N-THEM Studio"]
 edition = "2021"

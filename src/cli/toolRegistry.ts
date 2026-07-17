@@ -35,6 +35,7 @@ import { createAstTools } from './ast/tools.js';
 import { createSemanticTool } from './semantic/tools.js';
 import { createBrowserTool } from './browser/tools.js';
 import { createSshTools } from './ssh/tools.js';
+import { createWorldModelTools } from './workspace/worldModel.js';
 import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
 import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
 import { cliToolToEnhanced, registerCustomTool } from '@zelari/core/skills';
@@ -210,6 +211,20 @@ export function createBuiltinToolRegistry(
   if (!readOnly && process.env.ZELARI_SSH !== '0') {
     for (const t of createSshTools()) {
       registry.register(t);
+      tools.push({
+        name: t.name,
+        description: t.description,
+        permissions: t.permissions ?? [],
+      });
+    }
+  }
+
+  // Schema-inspired world model (hypothesis / checks / run_backtest / timeline).
+  // Full registry only. Kill switch: ZELARI_SCHEMA_LOOP=0.
+  if (!readOnly) {
+    for (const t of createWorldModelTools()) {
+      const safe = wrapWithAudit(t as ToolDefinition<Record<string, unknown>, unknown>, audit, sessionId);
+      registry.register(safe);
       tools.push({
         name: t.name,
         description: t.description,

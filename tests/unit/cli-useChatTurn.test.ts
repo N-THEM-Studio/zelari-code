@@ -240,6 +240,11 @@ function makeWrapper() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // dispatchPrompt registers real MCP tools via registerMcpTools (lazy
+  // singleton). Spawning the developer's MCP servers makes the first test
+  // take ~9s and blow the default 5s vitest timeout, cascading into
+  // result.current === null for every subsequent test. Keep unit tests hermetic.
+  process.env['ZELARI_MCP'] = '0';
 });
 
 describe('useChatTurn (v0.4.3 audit coverage)', () => {

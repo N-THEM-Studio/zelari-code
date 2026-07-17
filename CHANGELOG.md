@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.15.0] - 2026-07-17
+
+### Added
+- **Schema loop / world model** — skill `schema-loop` + tool `update_world_hypothesis`, `set_world_checks`, `run_backtest`, `record_world_observation` (persistenza sotto `.zelari/world/`). Kill switch: `ZELARI_SCHEMA_LOOP=0`.
+- **`.github/dependabot.yml`** — Dependabot weekly per npm (root, `packages/core`, `apps/desktop`), cargo (`apps/desktop/src-tauri`) e github-actions.
+- **`HANDOFF-v0.10.0.md`** — handoff operativo prep v0.10.0 (non tocca `HANDOFF.md` SUPERSEDED).
+
+### Fixed
+- **Hermetic MCP in unit tests** — `ZELARI_MCP_USER=0` salta `~/.zelari-code/mcp.json`; test headless/useChatTurn disabilitano MCP (`ZELARI_MCP=0`) per evitare spawn di server personali e timeout.
+
+### Changed
+- Docs (`GUIDA.md`, `TOOLS.md`) documentano world-model tools e env MCP hermetic.
+
 ## [1.14.4] - 2026-07-16
 
 ### Fixed

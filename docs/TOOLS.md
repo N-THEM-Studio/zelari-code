@@ -17,6 +17,12 @@ Prodotto: [Anathema Studio](https://anathema-studio.com/) · CLI MIT.
 | `fetch_url` | network | http(s) only, HTML→testo, timeout + char cap |
 | `web_search` | network | DuckDuckGo HTML; `TAVILY_API_KEY` per Tavily |
 | `task` | read (sub-agent) | sub-agente isolato, registry read-only, no ricorsione |
+| `update_world_hypothesis` | write | `.zelari/world/hypothesis.md` (Schema-style notes) |
+| `set_world_checks` | write | `.zelari/world/checks.json` |
+| `run_backtest` | execute | certifica i check; non claim-done se red |
+| `record_world_observation` | write | timeline append-only |
+
+World-model tools: kill switch `ZELARI_SCHEMA_LOOP=0`. Skill: `schema-loop`.
 
 ## Capability avanzate (opt-in)
 
@@ -79,7 +85,8 @@ Config (formato Claude-Desktop-compatibile; il progetto vince sui conflitti):
 - `<project>/.zelari/mcp.json`
 - `~/.zelari-code/mcp.json`
 
-I tool scoperti sono `mcp_<server>_<tool>`. Kill switch: `ZELARI_MCP=0`.
+I tool scoperti sono `mcp_<server>_<tool>`. Kill switch: `ZELARI_MCP=0`.  
+Hermetic / CI: `ZELARI_MCP_USER=0` ignora `~/.zelari-code/mcp.json` (solo project config).
 
 ## Coerenza prompt ↔ esecuzione
 

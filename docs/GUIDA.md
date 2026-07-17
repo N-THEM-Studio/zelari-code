@@ -1,6 +1,6 @@
 # Zelari Code — Guida all'uso
 
-> **Versione documento:** 1.14.4  
+> **Versione documento:** 1.15.0  
 > CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri), council a 6 ruoli, slash commands, MCP, SSH e provider LLM agnostici.  
 > Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **MIT**.
 
@@ -890,6 +890,19 @@ Riepilogo; dettaglio in [TOOLS.md](./TOOLS.md).
 | `ssh_status` / `ssh_run` | network (SSH) | target in Settings / `~/.zelari-code` | allowlist su `ssh_run` |
 | `task` | read (sub-agent) | — | ricerca isolata read-only |
 
+### Schema loop (world model leggero)
+
+Ispirato a [Schema harness](https://schema-harness.github.io/): ipotesi esplicita + check certificabili + `run_backtest` prima di dichiarare done.
+
+| Tool | Ruolo |
+|---|---|
+| `update_world_hypothesis` | Scrive `.zelari/world/hypothesis.md` |
+| `set_world_checks` | Definisce `.zelari/world/checks.json` |
+| `run_backtest` | Esegue i check e report pass/fail |
+| `record_world_observation` | Append su `.zelari/world/timeline.jsonl` |
+
+Skill: `/skill schema-loop`. Kill switch tool: `ZELARI_SCHEMA_LOOP=0`.
+
 ### Hook harness
 
 - **Diagnostics loop** — dopo edit, `eslint`/`ruff` nel result tool. `ZELARI_DIAGNOSTICS=0`.
@@ -1000,6 +1013,8 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 | Variabile | Effetto |
 |---|---|
 | `ZELARI_MCP=0` | Disabilita MCP |
+| `ZELARI_MCP_USER=0` | Non legge `~/.zelari-code/mcp.json` (solo project `.zelari/mcp.json`; utile in test) |
+| `ZELARI_SCHEMA_LOOP=0` | Disabilita tool world model (`run_backtest`, hypothesis, checks) |
 | `ZELARI_SSH=0` | Disabilita tool e target SSH |
 | `ZELARI_CLI_PATH` | Desktop: path a `bin/zelari-code.js` locale |
 | `ZELARI_NO_PATH_REPAIR=1` | Windows: non riparare il PATH npm |
