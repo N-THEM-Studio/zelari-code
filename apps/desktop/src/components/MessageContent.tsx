@@ -4,6 +4,7 @@
  */
 
 import type { MessageStats } from "../types";
+import { scrubDisplayText } from "./scrubDisplayText";
 
 type Block =
   | { kind: "heading"; level: number; text: string }
@@ -193,7 +194,21 @@ export function MessageContent({
     );
   }
 
-  const blocks = parseBlocks(content || "");
+  // Strip tool-call XML / MiniMax invoke noise that leaked into prose.
+  // Streaming: only closed blocks (never eat prose after an unclosed open tag).
+  const clean = scrubDisplayText(content || "", { streaming: !!streaming });
+  if (!clean.trim() && streaming) {
+    return (
+      <div className="thinking-block" aria-live="polite" aria-busy="true">
+        <span className="thinking-orb" />
+        <span className="thinking-orb" />
+        <span className="thinking-orb" />
+        <span className="thinking-label">Working</span>
+      </div>
+    );
+  }
+
+  const blocks = parseBlocks(clean);
 
   return (
     <div className={`md-content${streaming ? " is-streaming" : ""}`}>

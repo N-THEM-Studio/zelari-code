@@ -339,6 +339,26 @@ async function checkOptionalPlugins(): Promise<CheckResult> {
 }
 
 /**
+ * Optional Cua Driver binary (desktop computer-use via MCP).
+ * WARN-only: coding works without it; agent gains native GUI control when present.
+ */
+function checkCuaDriver(): CheckResult {
+  if (process.env["ZELARI_CUA"] === "0") {
+    return OK("Cua Driver skipped (ZELARI_CUA=0)");
+  }
+  const ver = tryExec("cua-driver --version");
+  if (!ver) {
+    return WARN(
+      "cua-driver not on PATH (optional desktop computer-use)\n" +
+        "         install: https://cua.ai/docs/how-to-guides/driver/install\n" +
+        "         then:    zelari-code --set-mcp-preset cua\n" +
+        "         verify:  cua-driver doctor",
+    );
+  }
+  return OK(`cua-driver available (${ver.split("\n")[0]})`);
+}
+
+/**
  * Run all checks and print results. Returns true if install is healthy
  * (no critical failures), false otherwise. Never throws.
  *
@@ -371,6 +391,8 @@ export async function runDoctor(): Promise<boolean> {
     // here so `zelari-code --doctor` tells the user what's missing + how to
     // install (`/plugins` or the boot PluginGate).
     { name: "plugins", run: () => checkOptionalPlugins() },
+    // --- optional desktop computer-use (Cua Driver, trycua) ---
+    { name: "cua-driver", run: () => checkCuaDriver() },
   ];
 
   // eslint-disable-next-line no-console

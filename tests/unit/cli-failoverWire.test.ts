@@ -35,7 +35,8 @@ describe('useChatTurn.ts wiring of providerFailover (Task G.1.2)', () => {
     // dispatchPrompt must reference providerFailover and the env knob.
     const idx = src.indexOf('const dispatchPrompt');
     expect(idx).toBeGreaterThan(0);
-    const window = src.slice(idx, idx + 5000);
+    // Window must cover ask_user wiring that precedes failover in dispatchPrompt.
+    const window = src.slice(idx, idx + 16000);
     expect(window).toMatch(/providerFailover\s*\(\s*\{/);
     expect(window).toMatch(/ANATHEMA_FAILOVER/);
   });

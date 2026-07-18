@@ -159,9 +159,21 @@ export async function getMemoryBackend(
   }
 }
 
+/** Max chars per memory hit line (keeps RAG from rehydrating giant synthesis dumps). */
+const MEMORY_HIT_MAX_CHARS = 400;
+
 /** Render memory hits as a compact RAG block for the council `ragContext`. */
 export function formatMemoryHits(hits: MemoryResult[]): string {
   if (hits.length === 0) return '';
-  const lines = hits.map((h, i) => `${i + 1}. ${h.text.replace(/\s+/g, ' ').trim()}`);
-  return `## Recalled from project memory\n${lines.join('\n')}`;
+  const lines = hits.map((h, i) => {
+    let t = h.text.replace(/\s+/g, ' ').trim();
+    if (t.length > MEMORY_HIT_MAX_CHARS) {
+      t = t.slice(0, MEMORY_HIT_MAX_CHARS) + '…';
+    }
+    return `${i + 1}. ${t}`;
+  });
+  return (
+    `## Recalled from project memory (hypotheses — verify on disk)\n` +
+    lines.join('\n')
+  );
 }

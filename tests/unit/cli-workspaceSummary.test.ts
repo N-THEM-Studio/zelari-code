@@ -150,9 +150,10 @@ describe("buildPlanSummary (v0.7.3)", () => {
       ],
     });
     const summary = buildPlanSummary(dir)!;
-    expect(summary).toContain("# Project Plan");
+    expect(summary).toContain("# Plan ops (DRAFT");
     expect(summary).toContain("Phase 1: MVP");
-    expect(summary).toContain("Ship the basics");
+    // Phase free-text description is intentionally NOT injected (context hygiene).
+    expect(summary).not.toContain("Ship the basics");
     // Open task rendered with its title and the pointer to the detail file.
     expect(summary).toContain(
       "[pending/high] Setup entry points → .zelari/plan-tasks/mvp-setup-1.md",
@@ -161,7 +162,7 @@ describe("buildPlanSummary (v0.7.3)", () => {
     expect(summary).not.toContain("Old task");
     expect(summary).toContain("2 task(s) total — 1 open, 1 done.");
     expect(summary).toContain("v1 live (target: v1.0.0)");
-    expect(summary).toContain("read the task file(s)");
+    expect(summary).toMatch(/Suggested next task|hypothesis/i);
   });
 
   it("lists tasks whose phase is missing under (unassigned)", () => {
@@ -209,7 +210,7 @@ describe("buildPlanSummary (v0.7.3)", () => {
     const summary = buildPlanSummary(dir)!;
     // First in_progress wins, even when another open task has higher priority.
     expect(summary).toMatch(
-      /\*\*Next task to work on:\*\*\s+- WIP \(in_progress\/low\)/,
+      /\*\*Suggested next task[^*]*\*\*\s+- WIP \(in_progress\/low\)/,
     );
   });
 
@@ -238,7 +239,7 @@ describe("buildPlanSummary (v0.7.3)", () => {
     });
     const summary = buildPlanSummary(dir)!;
     expect(summary).toMatch(
-      /\*\*Next task to work on:\*\*\s+- Critical \(pending\/critical\)/,
+      /\*\*Suggested next task[^*]*\*\*\s+- Critical \(pending\/critical\)/,
     );
   });
 

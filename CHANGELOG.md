@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.16.0] - 2026-07-18
+
+### Added
+- **Desktop liquid-glass UI** — greyscale/white glass palette, aurora backdrop, slim topbar, speech-to-text in composer, file drag-and-drop attachments, follow-stream detach chip, live activity (thinking phrases + rotating tool labels without per-tool cards), reply accordion with tokens/time/tools stats, council member-per-card streaming.
+- **Desktop Project panel** — improved Files/Git layout; **Show in Explorer** on project root, tree rows, and git entries.
+- **`ask_user` tool (Grok Build–style)** — native clarifying question that **blocks the harness tool-loop** until the TUI SelectList resolves, then returns a tool_result so the **same turn continues**. Preferred over `---QUESTION---` text markers. Headless soft-proceeds with an assumption message.
+- **Cua Driver opt-in** — `zelari-code --set-mcp-preset cua` writes MCP entry for trycua/Cua Driver desktop computer-use; `--doctor` checks `cua-driver` on PATH; skill `computer-use-cua`; kill switch `ZELARI_CUA=0`; council skips Cua tools unless `ZELARI_CUA_COUNCIL=1` (context hygiene). Docs in GUIDA/TOOLS.
+
+### Changed
+- **Context hygiene (anti-hallucination)** — unified `composeProjectContext` for agent/council/zelari/headless: product tree first, plan as **draft ops** (not RAG), design vault as **index only**, epistemic banners, section char caps. Prior council member outputs truncated (~2.8k each). Collaboration directive: hypotheses, not authority. Memory hits capped per line.
+- **Zelari mission budget** — `ZELARI_MISSION_MAX_ITER` default is **6 implementation slices**; the initial **design-phase is free** (does not consume the budget). Override env still honoured. Stall detection remains `ZELARI_MISSION_MAX_STALL` default 2 zero-write implementation slices.
+- **Zelari implementer-retry roster** — implementation attempts **2+** run **Minosse + Lucifero only** (`skipSpecialists`), not a full 6-member council. Design + first implementation stay full roster.
+- **Council members honour tool-loop env** — `ZELARI_MAX_TOOL_LOOP_ITERATIONS` / `ZELARI_MAX_TOOL_LOOP_HARD` are forwarded into every council member harness (TUI + headless), not only the single-agent path.
+- **Settings UI** — white nav sidebar, roomier layout; primary actions are text pills (not composer circles).
+- **Overlay detachable** — greyscale glass chrome aligned with Desktop.
+
+### Fixed
+- **Assistant turn separation** — a new user message opens a new reply card (no stacking into the previous assistant bubble).
+- **Tool-call prose leak scrub** — while streaming, only *closed* tool/think blocks are removed; trailing unclosed scaffolding is stripped only at end-of-turn (prevents deleting the final answer after a broken open tag).
+- **Hide headless bootstrap system lines** in desktop chat (`[headless] mode=…`, `[headless] MCP tools:…`).
+- **Interactive `---QUESTION---` pause** — parse tolerates missing `---END---` and MiniMax junk after JSON; harness skips trailing text-tools when a question with choices is present (no false `text_tools_parse_failed`); TUI shows `[in attesa di risposta]` + SelectList; council already awaited via Promise. Typed short answers still bind via rolling history.
+- **Recoverable harness errors no longer abort the tool-loop** — `text_tools_parse_failed`, truncated tool calls, and other `severity: 'recoverable'` events no longer set `hadError` / force `agent_end.reason='error'`. Only `fatal` aborts. Stops MiniMax garbled text-tool dumps from killing multi-step runs mid-task.
+
 ## [1.15.0] - 2026-07-17
 
 ### Added
@@ -143,6 +166,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [1.14.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [1.16.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).

@@ -151,18 +151,34 @@ export const CLARIFICATION_PROTOCOL_MODULE: SystemPromptModule = {
   priority: 55,
   content: `# Clarification Protocol
 
-When blocked by a single missing fact that would materially change your output, ask exactly ONE question:
+When blocked by a single missing fact that would materially change your output, ask **exactly ONE** question, then continue the task with the answer.
 
+## Preferred: native tool (same tool-loop — answer comes back as tool result)
+If \`ask_user\` is in AVAILABLE TOOLS, call it:
+
+\`\`\`
+ask_user({
+  "question": "One focused question?",
+  "choices": ["Option A", "Option B", "Option C"],
+  "context": "Why this matters in one line"
+})
+\`\`\`
+
+After the tool returns \`[ask_user] User answered: …\`, **continue the same run** (implement / plan) — do not stop and re-ask.
+
+## Fallback only (no ask_user tool): text block
 \`\`\`
 ---QUESTION---
 { "question": "One focused question", "choices": ["Option A", "Option B"], "context": "Why this matters in one line" }
 ---END---
 \`\`\`
 
+Rules:
 - Ask only when genuinely blocked; otherwise assume and state the assumption.
-- 2–4 concrete choices when natural; user may type a free answer.
+- 2–4 concrete choices when natural.
 - Never re-ask for information already in context or retrievable via tools.
-- At most one question per turn.`,
+- At most one question per turn.
+- Do **not** emit tool dumps or ---TOOLS--- after a question.`,
 };
 
 /**

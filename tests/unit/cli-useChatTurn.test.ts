@@ -182,6 +182,20 @@ vi.mock('../../src/cli/workspace/workspaceSummary.js', () => ({
   buildWorkspaceSummary: vi.fn(() => 'ws-summary'),
   buildPlanSummary: vi.fn(() => null),
   buildZelariReadHint: vi.fn(() => ''),
+  EPISTEMIC_BANNER: '# EPISTEMIC RULES',
+}));
+
+vi.mock('../../src/cli/workspace/composeContext.js', () => ({
+  composeProjectContext: vi.fn(() => ({
+    projectInstructions: '',
+    workspaceContext: 'ws-composed',
+    ragContext: '',
+    warnings: [],
+  })),
+}));
+
+vi.mock('../../src/cli/workspace/planDetect.js', () => ({
+  hasWorkspacePlan: vi.fn(() => false),
 }));
 
 vi.mock('../../src/cli/workspace/postCouncilHook.js', () => ({
@@ -365,8 +379,8 @@ describe('useChatTurn (v0.4.3 audit coverage)', () => {
     // v0.7.4: the single agent implements the council's tasks and must be
     // able to advance their status through updateTask (mutex + atomic
     // plan.json write) instead of hand-editing the JSON.
-    const { buildPlanSummary } = await import('../../src/cli/workspace/workspaceSummary.js');
-    vi.mocked(buildPlanSummary).mockReturnValueOnce('# Project Plan\n- [pending/high] T1');
+    const { hasWorkspacePlan } = await import('../../src/cli/workspace/planDetect.js');
+    vi.mocked(hasWorkspacePlan).mockReturnValueOnce(true);
     const fakeUpdateTask = {
       name: 'updateTask',
       description: 'update a task status',

@@ -540,10 +540,11 @@ export class AgentHarness {
       if (ev.type === 'message_delta') {
         initialTurnLength += (ev as BrainMessageDeltaEvent).delta.length;
       } else if (ev.type === 'error') {
-        // Cancellations are emitted as error events with severity='cancelled'
-        // (Task C.3.1) — they must NOT set hadError, otherwise the final
-        // agent_end would emit reason='error' instead of 'cancelled'.
-        if (ev.severity !== 'cancelled') {
+        // Only fatal errors abort the tool-loop / mark agent_end as error.
+        // Recoverable codes (text_tools_parse_failed, tool_call_truncated,
+        // provider soft errors) are advisory — the model must still be
+        // allowed to continue if finish=tool_calls. Cancelled is never error.
+        if (ev.severity === 'fatal') {
           hadError = true;
         }
       }
@@ -596,7 +597,8 @@ export class AgentHarness {
         if (ev.type === 'message_delta') {
           turnLength += (ev as BrainMessageDeltaEvent).delta.length;
         } else if (ev.type === 'error') {
-          if (ev.severity !== 'cancelled') hadError = true;
+          // Fatal only — recoverable parse/stream issues must not kill the loop.
+          if (ev.severity === 'fatal') hadError = true;
         }
         yield ev;
       }
@@ -691,7 +693,7 @@ export class AgentHarness {
         if (ev.type === 'message_delta') {
           turnLength += (ev as BrainMessageDeltaEvent).delta.length;
         } else if (ev.type === 'error') {
-          hadError = true;
+          if (ev.severity === 'fatal') hadError = true;
         }
         yield ev;
       }
@@ -884,10 +886,22 @@ export class AgentHarness {
             }
             pendingNativeTools.length = 0;
           }
+          // Clarification pause: if the model posed a ---QUESTION--- with choices,
+          // do NOT execute trailing text-format tools (MiniMax often dumps invoke
+          // garbage after the question). Force stop so the UI can open a picker.
+          const clarificationPause =
+            /---QUESTION---/.test(turnText) &&
+            /"choices"\s*:\s*\[/.test(turnText);
+          if (clarificationPause) {
+            finishRef.value = 'stop';
+          }
+
           // Fallback text-format tools: ---TOOLS--- JSON, MiniMax invoke XML,
           // and garbled invoke dumps. Run any text tools not already executed
           // natively this turn (so updateTask still runs after a native read).
-          const textTools = parseTextToolCalls(turnText);
+          const textTools = clarificationPause
+            ? []
+            : parseTextToolCalls(turnText);
           const toolsToRun = textTools.filter((tt) => {
             const key = hashToolCall(tt.name, tt.args);
             return !turnToolCalls.some(
@@ -897,7 +911,9 @@ export class AgentHarness {
           // Detect actual tool-dump markers only — NOT the bare word "MiniMax"
           // (models often list providers by name; that was a false-positive
           // text_tools_parse_failed after a plain summary with no tool block).
+          // Skip when we are in a clarification pause (junk after QUESTION is expected).
           if (
+            !clarificationPause &&
             (/---TOOLS---/.test(turnText) ||
               /<\/?minimax:tool_call\b/i.test(turnText) ||
               /invoke\s+name\s*=/i.test(turnText) ||
@@ -915,6 +931,7 @@ export class AgentHarness {
             yield parseErr;
           }
           if (
+            !clarificationPause &&
             toolsToRun.length > 0 &&
             this.config.toolRegistry &&
             !this.cancelled &&

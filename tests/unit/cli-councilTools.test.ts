@@ -69,6 +69,35 @@ function streamEmitting(events: Array<{ kind: string; [k: string]: unknown }>): 
 }
 
 describe('runCouncilPure + tools (Phase 24 — Council × Tools)', () => {
+  it('skipSpecialists runs only Minosse + Lucifero (implementer-retry roster)', async () => {
+    const stream: ProviderStreamFn = async function* () {
+      yield { kind: 'text', delta: 'ok' };
+      yield { kind: 'finish', reason: 'stop' };
+    };
+    const started: string[] = [];
+    await collect(
+      runCouncilPure('fix remaining fails', {
+        apiKey: 'sk-test',
+        model: 'm',
+        provider: 'p',
+        councilSize: 6,
+        debateMode: false,
+        ragContext: '',
+        workspaceContext: '',
+        providerStream: stream,
+        skipSpecialists: true,
+      }, {
+        onAgentStart: (a) => {
+          started.push(a.id);
+        },
+      }),
+    );
+    // Specialists must not run; oracle + chairman only.
+    expect(started).toEqual(['minos', 'lucifer']);
+    expect(started).not.toContain('charont');
+    expect(started).not.toContain('nettun');
+  });
+
   it('text-only stream with no tools: no tool execution events emitted (legacy behavior)', async () => {
     const stream: ProviderStreamFn = async function* () {
       yield { kind: 'text', delta: 'plain response' };

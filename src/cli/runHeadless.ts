@@ -227,10 +227,15 @@ async function runHeadlessSingle(
             ].join(' '),
       ].join('\n'),
     };
-    const { loadProjectInstructions } = await import(
-      './workspace/projectInstructions.js'
+    const { composeProjectContext } = await import(
+      './workspace/composeContext.js'
     );
-    const projectInstructions = loadProjectInstructions(process.cwd()).content;
+    const composed = composeProjectContext({
+      mode: 'agent',
+      cwd: process.cwd(),
+      userMessage: opts.task,
+      includeLessons: false,
+    });
     let sshBlock = '';
     try {
       const { formatSshTargetsForPrompt } = await import('./ssh/targets.js');
@@ -247,7 +252,10 @@ async function runHeadlessSingle(
         tools: getAllTools(),
         toolNames,
         mode: 'agent',
-        projectInstructions: projectInstructions || undefined,
+        projectInstructions: composed.projectInstructions || undefined,
+        workspaceContext: composed.workspaceContext || undefined,
+        // Plan lives in workspaceContext as draft ops — never as RAG.
+        ragContext: undefined,
         aiConfig: {
           enabledSkills: [],
           enabledTools: toolNames,
@@ -607,6 +615,13 @@ async function runHeadlessCouncil(
   let lastAssistantText = '';
   let currentAssistantText = '';
   try {
+    const { composeProjectContext } = await import('./workspace/composeContext.js');
+    const composed = composeProjectContext({
+      mode: 'council',
+      cwd: process.cwd(),
+      userMessage: opts.task,
+      includeLessons: true,
+    });
     for await (const event of dispatchCouncil(effectiveTask, {
       apiKey: 'REDACTED',
       model,
@@ -616,6 +631,19 @@ async function runHeadlessCouncil(
       tools: toolRegistry,
       feedbackStore,
       runMode: planModeFromOpts(opts) ? 'design-phase' : 'implementation',
+      workspaceContext: composed.workspaceContext,
+      ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
+      maxToolLoopIterations: envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
+        default: 30,
+        min: 1,
+      }),
+      ...(() => {
+        const hard = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_HARD, {
+          default: 0,
+          min: 0,
+        });
+        return hard > 0 ? { maxToolLoopHardCap: hard } : {};
+      })(),
     })) {
       if (event.type === 'message_start') {
         scrub.reset();
@@ -736,7 +764,12 @@ async function runHeadlessZelari(
       projectRoot,
       memory,
       emit,
-      runSlice: async ({ userMessage: slicePrompt, runMode, ragContext }) => {
+      runSlice: async ({
+        userMessage: slicePrompt,
+        runMode,
+        ragContext,
+        implementerRetry,
+      }) => {
         const sessionId = crypto.randomUUID();
         const fullPrompt = ragContext
           ? `${slicePrompt}\n\n## Memory context\n${ragContext}`
@@ -748,6 +781,21 @@ async function runHeadlessZelari(
         let membersCompleted = 0;
         const scrub = createStreamScrubber();
 
+        const { composeProjectContext } = await import(
+          './workspace/composeContext.js'
+        );
+        // fullPrompt already embeds memory; also compose product+plan ops.
+        // Prefer pure memory for ragContext (not the whole prompt) when possible.
+        const memOnly = ragContext?.trim()
+          ? ragContext
+          : undefined;
+        const composed = composeProjectContext({
+          mode: 'zelari',
+          cwd: projectRoot,
+          userMessage: slicePrompt,
+          memoryHits: memOnly,
+          includeLessons: true,
+        });
         for await (const event of dispatchCouncil(fullPrompt, {
           apiKey: 'REDACTED',
           model,
@@ -758,6 +806,20 @@ async function runHeadlessZelari(
           feedbackStore,
           runMode: planModeFromOpts(opts) ? 'design-phase' : runMode,
           maxToolCallsChairman: chairmanBudget,
+          ...(implementerRetry ? { skipSpecialists: true } : {}),
+          workspaceContext: composed.workspaceContext,
+          ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
+          maxToolLoopIterations: envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
+            default: 30,
+            min: 1,
+          }),
+          ...(() => {
+            const hard = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_HARD, {
+              default: 0,
+              min: 0,
+            });
+            return hard > 0 ? { maxToolLoopHardCap: hard } : {};
+          })(),
         })) {
           if (event.type === 'message_start') {
             scrub.reset();

@@ -292,6 +292,66 @@ describe("AgentHarness ---TOOLS--- text-format tool execution", () => {
         (e) => e.type === "error" && e.code === "text_tools_parse_failed",
       ),
     ).toBe(true);
+    // Recoverable parse fail must NOT mark agent_end as error (would abort
+    // multi-step loops mid-task on MiniMax text dumps).
+    const end = events.find((e) => e.type === "agent_end") as
+      | { reason?: string }
+      | undefined;
+    expect(end?.reason).toBe("completed");
+  });
+
+  it("continues the tool-loop after a recoverable text_tools_parse_failed mid-run", async () => {
+    // Turn 1: native tool → re-enter loop. Turn 2: bad ---TOOLS--- + stop.
+    // Recoverable parse fail must not mark agent_end as error.
+    const registry = new ToolRegistry();
+    registry.register({
+      name: "ping",
+      description: "ping",
+      inputSchema: z.object({}),
+      permissions: [],
+      execute: async () => ({ ok: true, value: "pong" }),
+    });
+    let turn = 0;
+    const provider: ProviderStreamFn = async function* () {
+      turn++;
+      if (turn === 1) {
+        yield toolCall("c1", "ping", {});
+        yield finish("tool_calls");
+      } else if (turn === 2) {
+        yield text("---TOOLS---\n[not json]\n---END---");
+        yield finish("stop");
+      } else {
+        yield text("recovered");
+        yield finish("stop");
+      }
+    } as ProviderStreamFn;
+
+    const harness = new AgentHarness({
+      model: "test-model",
+      provider: "minimax",
+      sessionId: "sess-parse-continue",
+      messages: [{ role: "user", content: "go" }],
+      tools: [],
+      toolRegistry: registry,
+      providerStream: provider,
+      maxToolLoopIterations: 5,
+    });
+
+    const events = await collect(harness.run());
+    expect(
+      events.some(
+        (e) => e.type === "error" && e.code === "text_tools_parse_failed",
+      ),
+    ).toBe(true);
+    const end = events.find((e) => e.type === "agent_end") as
+      | { reason?: string }
+      | undefined;
+    expect(end?.reason).toBe("completed");
+    expect(
+      events.some(
+        (e) => e.type === "tool_execution_end" && e.isError === false,
+      ),
+    ).toBe(true);
   });
 
   it("does NOT emit text_tools_parse_failed when text merely mentions MiniMax", async () => {

@@ -25,6 +25,7 @@ import '@zelari/core/skills/builtin/refactoring';
 import '@zelari/core/skills/builtin/review';
 import '@zelari/core/skills/builtin/testing';
 import '@zelari/core/skills/builtin/schema-loop';
+import '@zelari/core/skills/builtin/computer-use-cua';
 import {
   getProviderConfig,
   getActiveProvider as getActiveProviderSpec,

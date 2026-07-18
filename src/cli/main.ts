@@ -36,6 +36,7 @@ import {
   removeMcpServer,
   upsertMcpServer,
 } from "./mcp/mcpConfigIo.js";
+import { applyMcpPreset } from "./mcp/mcpPresets.js";
 import {
   listSshTargets,
   readSshPublicKey,
@@ -297,6 +298,10 @@ function pickRootComponent(): {
         "    --scope user|project  Default: user\n" +
         "    --enabled true|false  Default: true\n" +
         "    --cwd <path>      Required when scope=project\n" +
+        "  --set-mcp-preset    Install a named MCP preset (e.g. cua)\n" +
+        "    --preset cua      Cua Driver desktop computer-use (MCP)\n" +
+        "    --scope user|project  Default: user\n" +
+        "    --cwd <path>      Required when scope=project\n" +
         "  --remove-mcp        Remove an MCP server entry\n" +
         "    --name <id> --scope user|project [--cwd <path>]\n" +
         "  --print-ssh-targets Print SSH deploy/monitor targets\n" +
@@ -387,6 +392,54 @@ function pickRootComponent(): {
     } catch (err) {
       console.error(
         `[zelari-code --remove-mcp] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  if (argv.includes("--set-mcp-preset")) {
+    try {
+      const get = (flag: string) => {
+        const i = argv.indexOf(flag);
+        return i >= 0 && argv[i + 1] ? argv[i + 1] : undefined;
+      };
+      // Allow: --set-mcp-preset cua  OR  --set-mcp-preset --preset cua
+      const presetFlag = get("--preset");
+      const pos =
+        argv[argv.indexOf("--set-mcp-preset") + 1] &&
+        !argv[argv.indexOf("--set-mcp-preset") + 1]!.startsWith("-")
+          ? argv[argv.indexOf("--set-mcp-preset") + 1]
+          : undefined;
+      const presetId = presetFlag ?? pos;
+      if (!presetId) throw new Error("--preset <id> is required (e.g. cua)");
+      const scopeRaw = get("--scope") ?? "user";
+      const scope = scopeRaw === "project" ? "project" : "user";
+      const cwd = get("--cwd") ?? process.cwd();
+      const result = applyMcpPreset({
+        presetId,
+        scope,
+        projectRoot: cwd,
+      });
+      if (!result.ok) throw new Error(result.error);
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            path: result.path,
+            preset: result.preset.id,
+            servers: result.servers,
+            scope,
+          },
+          null,
+          2,
+        ),
+      );
+      for (const n of result.preset.notes) {
+        console.error(`  ${n}`);
+      }
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --set-mcp-preset] ${err instanceof Error ? err.message : String(err)}`,
       );
       process.exit(1);
     }

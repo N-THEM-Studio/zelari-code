@@ -26,6 +26,20 @@ function loadTab(): ProjectTab {
   }
 }
 
+async function revealInExplorer(path: string): Promise<void> {
+  const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+  await revealItemInDir(path);
+}
+
+function IconReveal() {
+  return (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" aria-hidden>
+      <path d="M2.5 4.5h11v8a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-8z" strokeLinejoin="round" />
+      <path d="M5 4.5V3.5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v1" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export function ProjectPanel({
   cwd,
   refreshKey = 0,
@@ -36,7 +50,6 @@ export function ProjectPanel({
   const [tab, setTab] = useState<ProjectTab>(() => loadTab());
   const [snap, setSnap] = useState<GitStatusSnapshot | null>(null);
 
-  // File tree state
   const [rootEntries, setRootEntries] = useState<DirEntry[]>([]);
   const [rootError, setRootError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
@@ -55,6 +68,18 @@ export function ProjectPanel({
       /* ignore */
     }
   };
+
+  const onReveal = useCallback(
+    async (path: string) => {
+      try {
+        await revealInExplorer(path);
+        onStatus?.(`Opened in explorer: ${path}`);
+      } catch (e) {
+        onStatus?.(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [onStatus],
+  );
 
   const refreshGit = useCallback(async () => {
     try {
@@ -202,6 +227,16 @@ export function ProjectPanel({
             {snap.branch}
           </span>
         ) : null}
+        {cwd ? (
+          <button
+            type="button"
+            className="btn-ghost git-reveal-root"
+            title="Show folder in Explorer"
+            onClick={() => void onReveal(cwd)}
+          >
+            <IconReveal />
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn-ghost git-refresh"
@@ -233,16 +268,20 @@ export function ProjectPanel({
             loadingPaths={loadingPaths}
             onToggleDir={(e) => void toggleDir(e)}
             onFileClick={(path) => onStatus?.(path)}
+            onReveal={(path) => void onReveal(path)}
           />
         ) : (
-          <GitBody snap={snap} />
+          <GitBody
+            snap={snap}
+            cwd={cwd}
+            onReveal={(path) => void onReveal(path)}
+          />
         )}
       </div>
     </aside>
   );
 }
 
-/** Monochrome outline icons for the tree (no fill colors). */
 function IconFolder({ open }: { open?: boolean }) {
   if (open) {
     return (
@@ -268,7 +307,22 @@ function IconFile() {
   );
 }
 
-function GitBody({ snap }: { snap: GitStatusSnapshot | null }) {
+function joinPath(root: string, rel: string): string {
+  const r = root.replace(/[/\\]+$/, "");
+  const p = rel.replace(/^[/\\]+/, "");
+  const sep = r.includes("\\") ? "\\" : "/";
+  return `${r}${sep}${p.replace(/\//g, sep)}`;
+}
+
+function GitBody({
+  snap,
+  cwd,
+  onReveal,
+}: {
+  snap: GitStatusSnapshot | null;
+  cwd: string | null;
+  onReveal: (path: string) => void;
+}) {
   if (!snap) {
     return <div className="git-muted pad">Loading…</div>;
   }
@@ -284,26 +338,42 @@ function GitBody({ snap }: { snap: GitStatusSnapshot | null }) {
   }
   return (
     <ul className="git-file-list">
-      {snap.files.map((f) => (
-        <li key={f.path} className={f.untracked ? "untracked" : ""}>
-          <span className="git-file-icon" aria-hidden>
-            <IconFile />
-          </span>
-          <span className="git-file-path" title={f.path}>
-            {f.path.replace(/\\/g, "/").split("/").pop() ?? f.path}
-          </span>
-          {f.untracked ? (
-            <span className="git-badge untracked">U</span>
-          ) : (
-            <span className="git-counts">
-              {f.added != null ? <span className="add">+{f.added}</span> : null}
-              {f.removed != null ? (
-                <span className="del">−{f.removed}</span>
-              ) : null}
+      {snap.files.map((f) => {
+        const abs = cwd ? joinPath(cwd, f.path) : f.path;
+        return (
+          <li key={f.path} className={f.untracked ? "untracked" : ""}>
+            <span className="git-file-icon" aria-hidden>
+              <IconFile />
             </span>
-          )}
-        </li>
-      ))}
+            <span className="git-file-path" title={f.path}>
+              {f.path.replace(/\\/g, "/")}
+            </span>
+            {f.untracked ? (
+              <span className="git-badge untracked">U</span>
+            ) : (
+              <span className="git-counts">
+                {f.added != null ? (
+                  <span className="add">+{f.added}</span>
+                ) : null}
+                {f.removed != null ? (
+                  <span className="del">−{f.removed}</span>
+                ) : null}
+              </span>
+            )}
+            <button
+              type="button"
+              className="btn-reveal"
+              title="Show in Explorer"
+              onClick={(e) => {
+                e.stopPropagation();
+                onReveal(abs);
+              }}
+            >
+              <IconReveal />
+            </button>
+          </li>
+        );
+      })}
     </ul>
   );
 }
@@ -317,6 +387,7 @@ function FilesTree({
   loadingPaths,
   onToggleDir,
   onFileClick,
+  onReveal,
 }: {
   cwd: string | null;
   entries: DirEntry[];
@@ -326,6 +397,7 @@ function FilesTree({
   loadingPaths: Set<string>;
   onToggleDir: (e: DirEntry) => void;
   onFileClick: (path: string) => void;
+  onReveal: (path: string) => void;
 }) {
   if (!cwd) {
     return (
@@ -356,6 +428,7 @@ function FilesTree({
           loadingPaths={loadingPaths}
           onToggleDir={onToggleDir}
           onFileClick={onFileClick}
+          onReveal={onReveal}
         />
       ))}
     </ul>
@@ -370,6 +443,7 @@ function TreeNode({
   loadingPaths,
   onToggleDir,
   onFileClick,
+  onReveal,
 }: {
   entry: DirEntry;
   depth: number;
@@ -378,6 +452,7 @@ function TreeNode({
   loadingPaths: Set<string>;
   onToggleDir: (e: DirEntry) => void;
   onFileClick: (path: string) => void;
+  onReveal: (path: string) => void;
 }) {
   const isOpen = expanded.has(entry.path);
   const kids = childrenMap.get(entry.path);
@@ -385,25 +460,42 @@ function TreeNode({
 
   return (
     <li className={`file-tree-node${entry.isDir ? " is-dir" : " is-file"}`}>
-      <button
-        type="button"
+      <div
         className="file-tree-row"
-        style={{ paddingLeft: 8 + depth * 12 }}
+        style={{ paddingLeft: 6 + depth * 12 }}
         title={entry.path}
-        onClick={() => {
-          if (entry.isDir) onToggleDir(entry);
-          else onFileClick(entry.path);
-        }}
       >
-        <span className="file-tree-chevron" aria-hidden>
-          {entry.isDir ? (isOpen ? "▾" : "▸") : ""}
+        <button
+          type="button"
+          className="file-tree-main"
+          onClick={() => {
+            if (entry.isDir) onToggleDir(entry);
+            else onFileClick(entry.path);
+          }}
+        >
+          <span className="file-tree-chevron" aria-hidden>
+            {entry.isDir ? (isOpen ? "▾" : "▸") : ""}
+          </span>
+          <span className="file-tree-icon" aria-hidden>
+            {entry.isDir ? <IconFolder open={isOpen} /> : <IconFile />}
+          </span>
+          <span className="file-tree-name">{entry.name}</span>
+          {loading ? <span className="file-tree-loading">…</span> : null}
+        </button>
+        <span className="file-tree-row-actions">
+          <button
+            type="button"
+            className="btn-reveal"
+            title="Show in Explorer"
+            onClick={(e) => {
+              e.stopPropagation();
+              onReveal(entry.path);
+            }}
+          >
+            <IconReveal />
+          </button>
         </span>
-        <span className="file-tree-icon" aria-hidden>
-          {entry.isDir ? <IconFolder open={isOpen} /> : <IconFile />}
-        </span>
-        <span className="file-tree-name">{entry.name}</span>
-        {loading ? <span className="file-tree-loading">…</span> : null}
-      </button>
+      </div>
       {entry.isDir && isOpen && kids && kids.length > 0 ? (
         <ul className="file-tree">
           {kids.map((c) => (
@@ -416,6 +508,7 @@ function TreeNode({
               loadingPaths={loadingPaths}
               onToggleDir={onToggleDir}
               onFileClick={onFileClick}
+              onReveal={onReveal}
             />
           ))}
         </ul>

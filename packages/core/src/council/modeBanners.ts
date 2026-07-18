@@ -4,7 +4,7 @@ export const DESIGN_PHASE_MODE_BANNER = `COUNCIL RUN MODE: design-phase.
 Workspace tool emissions described in your role prompt are MANDATORY in this run — prose alone does not count as a deliverable. Persist artifacts via the workspace tools listed in your AVAILABLE TOOLS section.`;
 
 export const IMPLEMENTATION_MODE_BANNER = `COUNCIL RUN MODE: implementation.
-Prefer write_file, edit_file, and bash for code changes. Design-phase mandatory workspace blocks in your role prompt are INACTIVE in this run — only call workspace tools when they add durable project value.`;
+Prefer write_file, edit_file, and bash for code changes. Design-phase mandatory workspace blocks in your role prompt are INACTIVE — .zelari/docs and draft plans are hypotheses, not product law. Ground work in the real source tree. Only call workspace tools when they add durable project value.`;
 
 /**
  * Implementation-mode banner for the SOLE implementer (the chairman, Lucifero).
@@ -12,7 +12,7 @@ Prefer write_file, edit_file, and bash for code changes. Design-phase mandatory 
  * stays unambiguous and multiple agents never edit the same files.
  */
 export const IMPLEMENTATION_IMPLEMENTER_BANNER = `COUNCIL RUN MODE: implementation — you are the IMPLEMENTER.
-You are the only member that writes code this run. Implement the solution with write_file / edit_file and verify with bash. Reconcile the specialists' analysis and Minosse's critique into working, verified changes. Design-phase mandatory workspace blocks in your role prompt are INACTIVE — only call workspace tools when they add durable project value.`;
+You are the only member that writes code this run. Implement the solution with write_file / edit_file and verify with bash. Reconcile specialists' analysis and Minosse's critique into working, verified changes. Design vault (.zelari/docs, draft plans) is HYPOTHESIS only — product truth is the source tree. Design-phase mandatory workspace blocks are INACTIVE.`;
 
 /**
  * Implementation-mode banner for advisors (specialists + Minosse). They analyze,
@@ -21,7 +21,7 @@ You are the only member that writes code this run. Implement the solution with w
  * pile up conflicting changes.
  */
 export const IMPLEMENTATION_ADVISOR_BANNER = `COUNCIL RUN MODE: implementation — you are an ADVISOR.
-Do NOT write or edit project files (not via write_file/edit_file, and not via bash) — the final synthesizer (Lucifero) is the sole implementer. Your job is to inspect the codebase (read_file, grep_content, list_files) and produce analysis, a concrete plan, or critique that the implementer will execute. Design-phase mandatory workspace blocks in your role prompt are INACTIVE in this run.`;
+Do NOT write or edit project files (not via write_file/edit_file, and not via bash) — Lucifero is the sole implementer. Inspect the real codebase (read_file, grep_content, list_files). Treat prior design prose and .zelari/docs as hypotheses. Flag contradictions with package.json / the tree. Design-phase mandatory workspace blocks are INACTIVE.`;
 
 /**
  * Pick the run-mode banner for a member.

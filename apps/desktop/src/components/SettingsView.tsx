@@ -149,6 +149,8 @@ function loadTab(): SettingsTab {
   return "provider";
 }
 
+export type UiTheme = "dark" | "light";
+
 interface Props {
   config: DesktopConfig | null;
   cli: CliStatus | null;
@@ -156,6 +158,8 @@ interface Props {
   defaultPhase: WorkPhase;
   /** Open Folder cwd for project-scoped MCP. */
   workdir?: string | null;
+  theme: UiTheme;
+  onThemeChange: (theme: UiTheme) => void;
   onBack: () => void;
   onSave: (args: {
     provider: string;
@@ -172,6 +176,8 @@ export function SettingsView({
   defaultMode,
   defaultPhase,
   workdir = null,
+  theme,
+  onThemeChange,
   onBack,
   onSave,
   onRefresh,
@@ -561,6 +567,34 @@ export function SettingsView({
 
           {tab === "system" && (
               <div className="settings-stack">
+                <section className="settings-card">
+                  <h2>Appearance</h2>
+                  <p className="muted">
+                    Dark is the default liquid-glass look. Light uses the same
+                    layout with a blue-tinted light palette.
+                  </p>
+                  <div
+                    className="theme-toggle"
+                    role="group"
+                    aria-label="Color theme"
+                  >
+                    <button
+                      type="button"
+                      className={theme === "dark" ? "active" : ""}
+                      onClick={() => onThemeChange("dark")}
+                    >
+                      Dark
+                    </button>
+                    <button
+                      type="button"
+                      className={theme === "light" ? "active" : ""}
+                      onClick={() => onThemeChange("light")}
+                    >
+                      Light
+                    </button>
+                  </div>
+                </section>
+
                 <section className="settings-card">
                   <h2>Versions</h2>
                   <dl className="kv">

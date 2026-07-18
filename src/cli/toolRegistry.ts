@@ -29,6 +29,7 @@ import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.j
 import { AuditLogger } from './safety/auditLogger.js';
 import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
 import { createTaskTool } from './tools/taskTool.js';
+import { createAskUserTool, type AskUserHandler } from './tools/askUser.js';
 import { createLspTools } from './lsp/tools.js';
 import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { createAstTools } from './ast/tools.js';
@@ -84,6 +85,11 @@ export interface CreateRegistryOptions {
    * caller. Equivalent to a soft read-only for project files.
    */
   planMode?: boolean;
+  /**
+   * Interactive ask_user tool (Grok-style). When provided, the tool blocks
+   * the harness until the UI resolves. Omit for headless / readOnly subagents.
+   */
+  onAskUser?: AskUserHandler;
 }
 
 /**
@@ -151,6 +157,14 @@ export function createBuiltinToolRegistry(
     registry.register(safeApplyDiff);
   }
 
+  // Interactive clarification — available in plan + build (not sub-agent readOnly).
+  // Blocks the tool-loop until the user answers (same-run continue).
+  const askUserTool =
+    options.readOnly === true ? null : createAskUserTool(options.onAskUser);
+  if (askUserTool) {
+    registry.register(askUserTool);
+  }
+
   const summary = readOnly
     ? [safeReadFile, safeGrepContent, safeListFiles, safeShowDiff, safeFetchUrl, safeWebSearch]
     : [
@@ -164,6 +178,7 @@ export function createBuiltinToolRegistry(
         safeApplyDiff,
         safeFetchUrl,
         safeWebSearch,
+        ...(askUserTool ? [askUserTool] : []),
       ];
   const tools: BuiltinToolSummary[] = summary.map((t) => ({
     name: t.name,

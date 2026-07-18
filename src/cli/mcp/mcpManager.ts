@@ -25,6 +25,11 @@ import { z } from 'zod';
 import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import { typedOk, typedErr, type TypedResult } from '@zelari/core/harness/tools/toolTypes';
 import { McpClient, type McpServerConfig, type McpToolInfo } from './mcpClient.js';
+import {
+  isCuaAllowedForCouncil,
+  isCuaDisabled,
+  isCuaMcpServerName,
+} from './mcpPresets.js';
 
 interface McpConfigFile {
   mcpServers?: Record<string, McpServerConfig>;
@@ -87,6 +92,13 @@ async function ensureLoaded(projectRoot: string): Promise<void> {
   const servers = readMcpConfig(projectRoot);
   for (const [name, cfg] of Object.entries(servers)) {
     if (cfg.enabled === false) continue;
+    // Opt-out: ZELARI_CUA=0 skips Cua Driver MCP servers (desktop computer-use).
+    if (isCuaDisabled() && isCuaMcpServerName(name)) {
+      state.warnings.push(
+        `[mcp:${name}] skipped (ZELARI_CUA=0). Unset to enable desktop computer-use.`,
+      );
+      continue;
+    }
     const client = new McpClient(name, cfg);
     try {
       await client.start();
@@ -122,12 +134,25 @@ function sanitizeToolName(raw: string): string {
 export async function registerMcpTools(
   registry: ToolRegistry,
   projectRoot: string = process.cwd(),
+  opts?: {
+    /**
+     * When true (council turns), skip Cua Driver tools unless
+     * ZELARI_CUA_COUNCIL=1 — avoids saturating 6 members with desktop tools.
+     */
+    councilMode?: boolean;
+  },
 ): Promise<{ registered: string[]; warnings: string[] }> {
   if (process.env['ZELARI_MCP'] === '0') return { registered: [], warnings: [] };
   await ensureLoaded(projectRoot);
 
+  const skipCuaForCouncil =
+    opts?.councilMode === true && !isCuaAllowedForCouncil();
+
   const registered: string[] = [];
   for (const t of state.tools) {
+    if (skipCuaForCouncil && isCuaMcpServerName(t.serverName)) {
+      continue;
+    }
     registry.register({
       name: t.registryName,
       description: `[MCP:${t.serverName}] ${t.info.description}`.slice(0, 1024),

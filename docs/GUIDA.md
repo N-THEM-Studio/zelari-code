@@ -246,7 +246,7 @@ La terza modalità (`⚡ zelari`) trasforma **un prompt libero** in una **missio
 2. Zelari costruisce un **mission brief** (intent, stack inferito, deliverable, assunzioni, out-of-scope, slice MVP) e lo mostra in chat.
 3. Confermi con `ok` (o imposti `ZELARI_MISSION_AUTO=1` per l'avvio automatico).
 4. Il loop gira: per i progetti greenfield prima **design-phase**, poi **implementation** a ripetizione. Tra un'iterazione e l'altra viene re-iniettato solo un contesto compatto (brief + hit di memoria), mai l'intero transcript.
-5. La missione termina con **successo** quando `completion.ok` è verde sullo slice MVP, oppure si **ferma** al raggiungimento del budget di iterazioni (`ZELARI_MISSION_MAX_ITER`, default 10), salvando lo stato in `.zelari/mission-state.json`.
+5. La missione termina con **successo** quando `completion.ok` è verde sullo slice MVP, oppure si **ferma** al raggiungimento del budget di **implementazioni** (`ZELARI_MISSION_MAX_ITER`, default 6). La **design-phase** iniziale (se prevista dal brief) è **fuori budget** e non consuma iterazioni. La **prima** implementation usa il council completo; dalle **implementation 2+** il roster è ridotto a **Minosse + Lucifero** (fix/verify senza ripagare i 4 specialisti). Stato salvato in `.zelari/mission-state.json`.
 
 In zelari-mode il **chairman (Lucifero)** riceve un budget di tool più alto (`ZELARI_MODE_MAX_TOOLS_LUCIFER`, default 30) per reggere i run di implementazione lunghi.
 
@@ -255,7 +255,7 @@ In zelari-mode il **chairman (Lucifero)** riceve un budget di tool più alto (`Z
 | Variabile | Default | Effetto |
 |---|---|---|
 | `ZELARI_MISSION_AUTO` | `0` | `1` = avvia la missione senza chiedere conferma del brief |
-| `ZELARI_MISSION_MAX_ITER` | `10` | numero massimo di iterazioni del loop |
+| `ZELARI_MISSION_MAX_ITER` | `6` | max slice di **implementation** (design-phase gratuita) |
 | `ZELARI_MISSION_MAX_STALL` | `2` | slice implementation consecutive con 0 write prima di `stalled` (`0` = off) |
 | `ZELARI_MODE_MAX_TOOLS_LUCIFER` | `30` | budget di tool call per il chairman in zelari-mode |
 
@@ -1014,6 +1014,8 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 |---|---|
 | `ZELARI_MCP=0` | Disabilita MCP |
 | `ZELARI_MCP_USER=0` | Non legge `~/.zelari-code/mcp.json` (solo project `.zelari/mcp.json`; utile in test) |
+| `ZELARI_CUA=0` | Disabilita MCP Cua Driver (desktop computer-use) |
+| `ZELARI_CUA_COUNCIL=1` | Espone tool Cua anche in council (default off, anti-saturazione) |
 | `ZELARI_SCHEMA_LOOP=0` | Disabilita tool world model (`run_backtest`, hypothesis, checks) |
 | `ZELARI_SSH=0` | Disabilita tool e target SSH |
 | `ZELARI_CLI_PATH` | Desktop: path a `bin/zelari-code.js` locale |

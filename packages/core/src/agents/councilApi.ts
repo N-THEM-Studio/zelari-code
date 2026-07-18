@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { CouncilMessage, AgentRole } from '../types/index.js';
-import { getCouncilAgents, resolveRoleSystemPrompt, swapMembers } from './roles.js';
+import { getAgent, getCouncilAgents, resolveRoleSystemPrompt, swapMembers } from './roles.js';
 import { getProviderTools, type ParsedToolCall } from './toolSchemas.js';
 import { buildSystemPrompt, computeAgentTools } from './systemPromptBuilder.js';
 import { getAllTools } from './tools.js';
@@ -163,6 +163,24 @@ export interface PureCouncilConfig {
    * `maxToolCallsPerTurn`, then 5.
    */
   maxToolCallsChairman?: number;
+  /**
+   * Soft max observe→reason→act cycles per member harness run.
+   * Forwarded to AgentHarness; default is the harness default (30) when unset.
+   * CLI wires this from `ZELARI_MAX_TOOL_LOOP_ITERATIONS`.
+   */
+  maxToolLoopIterations?: number;
+  /**
+   * Hard ceiling on tool-loop iterations per member. `0`/unset → harness
+   * computes max(soft×3, soft+60). CLI: `ZELARI_MAX_TOOL_LOOP_HARD`.
+   */
+  maxToolLoopHardCap?: number;
+  /**
+   * When true, skip all specialists (Caronte…Plutone). Only Minosse (oracle)
+   * and Lucifero (chairman) run. Used by Zelari mission implementer-retry
+   * slices (implementation 2+) so fix/verify loops do not re-pay a full
+   * 6-member council. Default false — full roster.
+   */
+  skipSpecialists?: boolean;
   /** Council run mode. Default: `implementation`. */
   runMode?: CouncilRunMode;
 }
@@ -217,6 +235,44 @@ export interface ClarificationRequest {
   context?: string;
 }
 
+/**
+ * Extract the first top-level JSON object from `s` using brace depth so trailing
+ * MiniMax/tool garbage after `}` does not break JSON.parse (common failure mode:
+ * `---QUESTION--- {…}]<]minimax…` without ---END---).
+ */
+function extractBalancedJsonObject(s: string): string | null {
+  const start = s.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i]!;
+    if (inString) {
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (ch === '\\') {
+        escape = true;
+        continue;
+      }
+      if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') {
+      inString = true;
+      continue;
+    }
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
+}
+
 export function parseClarificationRequest(text: string): ClarificationRequest | null {
   const start = text.indexOf(QUESTION_MARKER);
   if (start < 0) return null;
@@ -224,9 +280,15 @@ export function parseClarificationRequest(text: string): ClarificationRequest | 
   const end = rest.indexOf(QUESTION_END_MARKER);
   const block = end >= 0 ? rest.slice(0, end) : rest;
   const cleaned = block.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-  const objStart = cleaned.indexOf('{');
-  const objEnd = cleaned.lastIndexOf('}');
-  const jsonText = objStart >= 0 && objEnd > objStart ? cleaned.slice(objStart, objEnd + 1) : cleaned;
+  const jsonText =
+    extractBalancedJsonObject(cleaned) ??
+    (() => {
+      const objStart = cleaned.indexOf('{');
+      const objEnd = cleaned.lastIndexOf('}');
+      return objStart >= 0 && objEnd > objStart
+        ? cleaned.slice(objStart, objEnd + 1)
+        : cleaned;
+    })();
   try {
     const parsed = JSON.parse(jsonText) as Partial<ClarificationRequest>;
     if (typeof parsed.question !== 'string' || !parsed.question.trim()) return null;
@@ -240,6 +302,12 @@ export function parseClarificationRequest(text: string): ClarificationRequest | 
   } catch {
     return null;
   }
+}
+
+/** True when text contains a structured question with ≥2 choices (pause UI). */
+export function hasInteractiveClarification(text: string): boolean {
+  const c = parseClarificationRequest(text);
+  return !!(c && c.choices && c.choices.length >= 2);
 }
 
 export function parseThinking(text: string): string {
@@ -290,9 +358,43 @@ export function cleanAgentContent(
       .replace(/<think(?:ing)?>[\s\S]*$/gi, '')
       .replace(/<\/think(?:ing)?>/gi, '');
   }
-  out = out.replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/g, '');
+  // Tool-call markup that models sometimes dump into prose (MiniMax / GLM / generic).
+  // Prefer closed-block removal first; only then strip *trailing* unclosed
+  // open tags. Never use a mid-string open-tag → EOF wipe for tool tags when
+  // there may still be real prose after a broken unclosed tag sequence —
+  // headless streamScrub re-cleans the full buffer each push, so closed pairs
+  // are enough mid-stream; trailing open is for end-of-turn.
+  out = out
+    .replace(/<minimax:tool_call>[\s\S]*?<\/minimax:tool_call>/gi, '')
+    .replace(/<\/?minimax:tool_call>/gi, '')
+    .replace(/<tool_call>[\s\S]*?<\/tool_call>/gi, '')
+    .replace(/<\/?tool_call>/gi, '')
+    .replace(/<function_call>[\s\S]*?<\/function_call>/gi, '')
+    .replace(/<\/?function_call>/gi, '')
+    .replace(/<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi, '')
+    .replace(/<\/invoke>/gi, '')
+    .replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>/gi, '')
+    .replace(/<\/parameter>/gi, '')
+    .replace(
+      /\]\s*<\]\s*minimax\s*\[>\s*\[?<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi,
+      '',
+    )
+    // Trailing unclosed tool channels only (end of buffer)
+    .replace(/<minimax:tool_call>[\s\S]*$/gi, '')
+    .replace(/<tool_call>[\s\S]*$/gi, '')
+    .replace(/<function_call>[\s\S]*$/gi, '')
+    .replace(/<invoke\b[^>]*>[\s\S]*$/gi, '')
+    .replace(/\]\s*<\]\s*minimax\s*\[>[\s\S]*$/gi, '')
+    .replace(/^\s*\]\s*<\]\s*minimax\s*\[>.*$/gim, '')
+    .replace(
+      /^\s*<\/?(?:tool_call|function_call|invoke|parameter|minimax:tool_call)\b[^>]*>\s*$/gim,
+      '',
+    );
   if (stripQuestion) {
-    out = out.replace(/---QUESTION---[\s\S]*?---END---/g, '');
+    // Closed block, or unclosed (model often omits ---END--- then dumps tools).
+    out = out
+      .replace(/---QUESTION---[\s\S]*?---END---/g, '')
+      .replace(/---QUESTION---[\s\S]*$/g, '');
   }
   out = out.replace(/\n{3,}/g, '\n\n').trim();
   // Defense-in-depth: strip proprietary prompt dumps that escaped model policy.
@@ -380,8 +482,24 @@ function buildAgentMessages(
     { role: 'system', content: 'IMPORTANT: Before making any tool calls or expensive operations, check if the information already exists in the shared context from previous agents. Avoid redundant work.' },
   ];
   if (priorOutputs.length > 0) {
-    const summary = priorOutputs.map((o) => `[${o.name} - ${o.role}]: ${o.content}`).join('\n\n');
-    messages.push({ role: 'user', content: `Previous council members have said:\n${summary}\n\nOriginal user request: ${userMessage}` });
+    // Cap each prior member blob so one verbose specialist cannot saturate
+    // downstream members (chairman especially). Full text is not product law.
+    const MAX_PRIOR_CHARS = 2800;
+    const summary = priorOutputs
+      .map((o) => {
+        const body =
+          o.content.length > MAX_PRIOR_CHARS
+            ? `${o.content.slice(0, MAX_PRIOR_CHARS)}\n… [truncated ${o.content.length}→${MAX_PRIOR_CHARS} chars; treat as hypothesis]`
+            : o.content;
+        return `[${o.name} - ${o.role}]: ${body}`;
+      })
+      .join('\n\n');
+    messages.push({
+      role: 'user',
+      content:
+        `Previous council members have said (hypotheses — prefer product files on disk if they conflict):\n${summary}\n\n` +
+        `Original user request: ${userMessage}`,
+    });
   } else {
     messages.push({ role: 'user', content: userMessage });
   }
@@ -511,12 +629,21 @@ export async function* runCouncilPure(
   // Apply optional feedback-driven specialist ordering (Task I.2 close-out).
   // Minosse and chairman are extracted BEFORE ranking so their positions are
   // fixed (debate review + final synthesis roles are not reorderable).
+  // Zelari implementer-retry: skipSpecialists → Minosse + Lucifero only.
   const allSpecialists = agents.filter((a) => a.id !== 'lucifer' && a.id !== 'minos');
-  const specialists = config.feedbackStore
-    ? config.feedbackStore.ranked(allSpecialists)
-    : allSpecialists;
-  const oracle = agents.find((a) => a.id === 'minos');
-  const chairman = agents.find((a) => a.id === 'lucifer');
+  const specialists = config.skipSpecialists
+    ? []
+    : config.feedbackStore
+      ? config.feedbackStore.ranked(allSpecialists)
+      : allSpecialists;
+  // On lite tier (size < 6) minos/lucifer may be absent from `agents` —
+  // implementer-retry must still get critic + implementer.
+  const oracle =
+    agents.find((a) => a.id === 'minos') ??
+    (config.skipSpecialists ? getAgent('minos') : undefined);
+  const chairman =
+    agents.find((a) => a.id === 'lucifer') ??
+    (config.skipSpecialists ? getAgent('lucifer') : undefined);
 
   for (const agent of specialists) {
     if (completedIds.has(agent.id)) continue;
@@ -555,6 +682,12 @@ export async function* runCouncilPure(
       // Council members can otherwise fire N tool calls in one turn and blow
       // the message context. Default to 5 if not set by caller.
       maxToolCallsPerTurn: config.maxToolCallsPerTurn ?? 5,
+      ...(typeof config.maxToolLoopIterations === 'number'
+        ? { maxToolLoopIterations: config.maxToolLoopIterations }
+        : {}),
+      ...(typeof config.maxToolLoopHardCap === 'number' && config.maxToolLoopHardCap > 0
+        ? { maxToolLoopHardCap: config.maxToolLoopHardCap }
+        : {}),
       // Visible-reasoning wiring (v0.5.0): stamp every event the
       // harness emits with the council-member identity so the UI can
       // render "Caronte: …" headers above the streamed text.
@@ -762,6 +895,12 @@ export async function* runCouncilPure(
       toolRegistry: config.tools,
       // Task G.2 — same per-turn limit applies to oracle.
       maxToolCallsPerTurn: config.maxToolCallsPerTurn ?? 5,
+      ...(typeof config.maxToolLoopIterations === 'number'
+        ? { maxToolLoopIterations: config.maxToolLoopIterations }
+        : {}),
+      ...(typeof config.maxToolLoopHardCap === 'number' && config.maxToolLoopHardCap > 0
+        ? { maxToolLoopHardCap: config.maxToolLoopHardCap }
+        : {}),
       // Visible-reasoning (v0.5.0): same member-stamping as the
       // specialist loop above. Minosse's events are marked as
       // belonging to the oracle / debate round.
@@ -927,6 +1066,12 @@ export async function* runCouncilPure(
       // keep the shared default.
       maxToolCallsPerTurn:
         config.maxToolCallsChairman ?? config.maxToolCallsPerTurn ?? 5,
+      ...(typeof config.maxToolLoopIterations === 'number'
+        ? { maxToolLoopIterations: config.maxToolLoopIterations }
+        : {}),
+      ...(typeof config.maxToolLoopHardCap === 'number' && config.maxToolLoopHardCap > 0
+        ? { maxToolLoopHardCap: config.maxToolLoopHardCap }
+        : {}),
       // v0.5.0 visible-reasoning wiring: stamp every event with
       // the chairman identity so the UI renders `· Lucifero` in
       // purple. Same pattern as the specialist loop above.

@@ -48,6 +48,10 @@ When to DESCRIBE only:
 - Pure Q&A, critique, or analysis with no required disk change.
 - Minosse: evaluate; never create or mutate project files.
 
+When blocked by a product decision:
+- Prefer native tool \`ask_user\` (waits for the user; you continue the same turn after the result).
+- Do not dump text-format tool junk after a question.
+
 Rules:
 - Implement with write_file / edit_file / bash when that is the job — do not only describe.
 - Never invent tool names; only AVAILABLE TOOLS.
@@ -81,13 +85,14 @@ export const COLLABORATION_DIRECTIVE: SystemPromptModule = {
   priority: 16,
   content: `# Inter-Agent Collaboration
 
-You are one member of a council. Earlier agents' outputs appear in your context as shared work.
+You are one member of a council. Earlier agents' outputs appear in your context as **shared hypotheses**, not immutable law.
 
-- Treat prior agents' outputs as authoritative unless they contain an error you must flag. Do not re-derive what they already established.
-- Build on, extend, or critique prior work by name (e.g. "Nettuno proposed X; I add Y").
-- If you spot a gap, risk, or contradiction in a prior agent's output, name it explicitly and propose a concrete fix.
+- Prefer **on-disk product files** (source tree, package.json) over prior prose or \`.zelari/docs\` when they conflict.
+- Build on, extend, or critique prior work by name (e.g. "Nettuno proposed X; I add Y") — do not re-derive blindly, but **do flag errors**.
+- If you spot a gap, risk, or contradiction (wrong stack, invented paths, fiction-as-shipped), name it explicitly and correct course.
 - Keep the shared context lean: summarise rather than quote verbatim when content is long.
-- Hand off cleanly: end with a crisp statement of what you produced and what remains for downstream agents or the Lucifero.`,
+- Hand off cleanly: end with what you produced and what remains for downstream agents or Lucifero.
+- Design vault artifacts are drafts until implemented and verified on disk.`,
 };
 
 /** All council directives, sorted by priority ascending. */

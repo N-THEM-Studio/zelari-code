@@ -76,6 +76,65 @@ describe('runZelariMission', () => {
     expect(state.iteration).toBe(2);
   });
 
+  it('marks implementerRetry on implementation 2+ (not first impl or design)', async () => {
+    const root = await tmp();
+    const brief = buildMissionBrief({ userMessage: 'costruisci una vetrina e-commerce' });
+    const flags: Array<{ mode: string; retry?: boolean; implIdx?: number }> = [];
+
+    await runZelariMission('costruisci una vetrina e-commerce', brief, {
+      projectRoot: root,
+      memory: new FileMemoryBackend(),
+      emit: () => {},
+      maxIterations: 3,
+      runSlice: async (a: RunSliceArgs): Promise<SliceRunResult> => {
+        flags.push({
+          mode: a.runMode,
+          retry: a.implementerRetry,
+          implIdx: a.implementationIndex,
+        });
+        return { completionOk: false, ran: true };
+      },
+    });
+
+    // design free + 3 impl attempts
+    expect(flags).toEqual([
+      { mode: 'design-phase', retry: false, implIdx: undefined },
+      { mode: 'implementation', retry: false, implIdx: 1 },
+      { mode: 'implementation', retry: true, implIdx: 2 },
+      { mode: 'implementation', retry: true, implIdx: 3 },
+    ]);
+  });
+
+  it('design-phase does not consume the implementation budget', async () => {
+    const root = await tmp();
+    const brief = buildMissionBrief({ userMessage: 'costruisci una vetrina e-commerce' });
+    const runModes: string[] = [];
+    const emits: string[] = [];
+
+    const state = await runZelariMission('costruisci una vetrina e-commerce', brief, {
+      projectRoot: root,
+      memory: new FileMemoryBackend(),
+      emit: (m) => emits.push(m),
+      maxIterations: 2,
+      runSlice: async (a: RunSliceArgs): Promise<SliceRunResult> => {
+        runModes.push(a.runMode);
+        // Never green — force budget exhaust on implementation only.
+        return { completionOk: false, ran: true };
+      },
+    });
+
+    // 1 free design + 2 implementation = 3 slice calls; budget is impl-only.
+    expect(runModes).toEqual(['design-phase', 'implementation', 'implementation']);
+    expect(state.status).toBe('stopped');
+    expect(state.iteration).toBe(3);
+    expect(emits.some((m) => m.includes('design-phase') && m.includes('fuori budget'))).toBe(
+      true,
+    );
+    expect(emits.some((m) => m.includes('2 implementazioni') && m.includes('design-phase'))).toBe(
+      true,
+    );
+  });
+
   it('stops after the iteration budget without a green completion', async () => {
     const root = await tmp();
     const brief = buildMissionBrief({ userMessage: 'correggi qualcosa', hasPlan: true });
@@ -215,10 +274,10 @@ describe('runZelariMission', () => {
 });
 
 describe('env helpers', () => {
-  it('resolveMaxIterations defaults to 10 and honours the env', () => {
-    expect(resolveMaxIterations({} as NodeJS.ProcessEnv)).toBe(10);
+  it('resolveMaxIterations defaults to 6 and honours the env', () => {
+    expect(resolveMaxIterations({} as NodeJS.ProcessEnv)).toBe(6);
     expect(resolveMaxIterations({ ZELARI_MISSION_MAX_ITER: '4' } as NodeJS.ProcessEnv)).toBe(4);
-    expect(resolveMaxIterations({ ZELARI_MISSION_MAX_ITER: 'x' } as NodeJS.ProcessEnv)).toBe(10);
+    expect(resolveMaxIterations({ ZELARI_MISSION_MAX_ITER: 'x' } as NodeJS.ProcessEnv)).toBe(6);
   });
 
   it('resolveMaxStall defaults to 2, honours the env, and clamps', () => {

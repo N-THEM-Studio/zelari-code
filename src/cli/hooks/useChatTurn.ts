@@ -219,8 +219,53 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         }
         setBusy(true);
         const workPhase = getPhase();
+        // Grok-style ask_user: block the tool-loop until picker resolves so
+        // the same harness run continues with the answer as tool_result.
+        const onAskUser = setPicker
+          ? (req: {
+              question: string;
+              choices: string[];
+              context?: string;
+            }) =>
+              new Promise<string | null>((resolve) => {
+                const choices = req.choices ?? [];
+                if (choices.length < 2) {
+                  resolve(null);
+                  return;
+                }
+                setLastClarification({
+                  question: req.question,
+                  choices,
+                });
+                const choiceLines = choices
+                  .map((c, i) => `  ${i + 1}. ${c}`)
+                  .join("\n");
+                appendSystem(
+                  setMessages,
+                  `[in attesa di risposta — ask_user]\n${req.question}\n${choiceLines}` +
+                    (req.context ? `\n_(${req.context})_` : "") +
+                    "\n→ scegli dalla lista (il turno continua dopo).",
+                  Date.now(),
+                );
+                let settled = false;
+                const finish = (value: string | null) => {
+                  if (settled) return;
+                  settled = true;
+                  setPicker(null);
+                  resolve(value);
+                };
+                setPicker({
+                  kind: "clarification",
+                  title: req.question,
+                  items: choices.map((c) => ({ value: c, label: c })),
+                  onAnswer: (value: string) => finish(value),
+                  onCancel: () => finish(null),
+                });
+              })
+          : undefined;
         const { registry: toolRegistry } = createBuiltinToolRegistry({
           planMode: workPhase === "plan",
+          onAskUser,
         });
         const baseProviderStream = openaiCompatibleProvider(envConfig);
         const failoverResolution = await resolveFailoverStream({
@@ -257,21 +302,30 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // The plan lives in .zelari/plan.json but the agent had no idea it
         // existed — users had to paste task-file paths by hand. Best-effort:
         // no plan → null → zero prompt-token cost.
-        let planSummary: string | null = null;
-        // v0.7.4: give the single agent the same project awareness the council
-        // has (tech stack, file layout, scripts) plus a pointer to the council
-        // workspace so it reads .zelari/plan.json with its own tools.
-        let workspaceSummary: string | null = null;
-        let zelariReadHint = "";
+        // v1.16: unified compose — product truth + draft plan ops; plan is
+        // NEVER mislabeled as ragContext (that slot is for real memory only).
+        let composedWorkspace = "";
+        let composedInstructions = "";
+        let hasPlan = false;
         try {
-          const {
-            buildPlanSummary,
-            buildWorkspaceSummary,
-            buildZelariReadHint,
-          } = await import("../workspace/workspaceSummary.js");
-          planSummary = buildPlanSummary(cwd);
-          workspaceSummary = buildWorkspaceSummary(cwd);
-          zelariReadHint = buildZelariReadHint(cwd);
+          const { composeProjectContext } = await import(
+            "../workspace/composeContext.js"
+          );
+          const { hasWorkspacePlan } = await import(
+            "../workspace/planDetect.js"
+          );
+          hasPlan = hasWorkspacePlan(cwd);
+          const composed = composeProjectContext({
+            mode: "agent",
+            cwd,
+            userMessage: userText,
+            includeLessons: false,
+          });
+          composedWorkspace = composed.workspaceContext;
+          composedInstructions = composed.projectInstructions;
+          for (const w of composed.warnings) {
+            appendSystem(setMessages, w, Date.now());
+          }
           // v0.7.4: close the plan loop. The single agent implements the tasks
           // the council planned, but had no official way to advance their
           // status — it would have to hand-edit plan.json with write_file
@@ -283,7 +337,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // requires (opts.requiredTools), mapping the Electron-era `searchRAG`
           // to the CLI's `searchDocuments`.
           const wantedWorkspaceTools = new Set<string>();
-          if (planSummary) wantedWorkspaceTools.add("updateTask");
+          if (hasPlan) wantedWorkspaceTools.add("updateTask");
           const WORKSPACE_STUB_NAMES = new Set([
             "createPhase",
             "createTask",
@@ -378,8 +432,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   "- You MUST use write_file/edit_file for every file you change before claiming done.",
                   "- After read_file: if the planned change is missing, WRITE it — do not stop at analysis.",
                   "- Never claim already-implemented based only on reading a plan or skimming code.",
-                  planSummary
-                    ? "- An approved plan exists in the workspace — implement it and update task statuses as you go."
+                  hasPlan
+                    ? "- A draft plan exists under .zelari/ — implement grounded tasks and update statuses; do not treat design docs as shipped code."
                     : "",
                 ]
                   .filter(Boolean)
@@ -396,11 +450,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           "# Working Directory",
           `You are running in: ${cwd}`,
           "All relative file paths are resolved against this directory. Always work with real files here.",
-          ...(planSummary
+          ...(hasPlan
             ? [
                 "",
                 "# Plan Tracking",
-                '- Plan tasks: when you START working on a plan task call updateTask {taskId, status: "in_progress"}; when it is complete and verified call updateTask {taskId, status: "done"}. NEVER edit .zelari/plan.json by hand.',
+                '- Plan tasks (draft ops): when you START a task call updateTask {taskId, status: "in_progress"}; when complete and verified call updateTask {taskId, status: "done"}. NEVER edit .zelari/plan.json by hand. Prefer product tree over design docs.',
               ]
             : []),
         ].join("\n");
@@ -414,12 +468,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           tools: toolListNames,
           systemPrompt: shellContextBlock,
         };
-        // workspaceContext + ragContext carry the summaries that were inline
-        // before; the builder places them under # Current Workspace State and
-        // # Retrieved Knowledge (RAG) headers.
-        const workspaceContext = [workspaceSummary, zelariReadHint]
-          .filter(Boolean)
-          .join("\n\n");
+        // Composed workspace already includes product tree + draft plan ops +
+        // epistemic banner. ragContext stays empty on the agent path (memory
+        // is zelari-only) so plan is never mislabeled as "Retrieved Knowledge".
+        const workspaceContext = composedWorkspace;
         // v1.5.3: build via the shared builder. Wrap in try/catch with a
         // minimal fallback so a builder failure (e.g. test context without a
         // populated catalog) never breaks dispatch — the harness still gets a
@@ -433,17 +485,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // — it lives in priority space (5) so it sorts BEFORE the base-identity
           // module (10): the model sets language scaffolding before reading role text.
           const languageModule = buildLanguagePolicyModuleFor(userText);
-          const { loadProjectInstructions } = await import(
-            "../workspace/projectInstructions.js"
-          );
-          const projectInstructions = loadProjectInstructions(
-            process.cwd(),
-          ).content;
           systemPrompt = buildSystemPrompt(singleAgentRole, {
             tools: getAllTools(),
             toolNames: toolListNames,
             mode: "agent",
-            projectInstructions: projectInstructions || undefined,
+            projectInstructions: composedInstructions || undefined,
             aiConfig: {
               enabledSkills: [],
               enabledTools: toolListNames,
@@ -454,7 +500,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               agentSkillConfigs: [],
             },
             workspaceContext: workspaceContext || undefined,
-            ragContext: planSummary || undefined,
+            // Do NOT put plan text here — that was mislabeled as RAG and
+            // taught models to treat design vault as retrieved knowledge.
+            ragContext: undefined,
           });
         } catch {
           // Fallback: identity + platform/shell + tool list. Keeps the turn
@@ -468,7 +516,6 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             "You can call these tools. Use them to take action and gather information autonomously:",
             toolList,
             ...(workspaceContext ? ["", workspaceContext] : []),
-            ...(planSummary ? ["", planSummary] : []),
           ].join("\n");
         }
         // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
@@ -745,6 +792,18 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   question: clar.question,
                   choices: clar.choices,
                 });
+                // Visible prompt while the model "waits": turn is finished,
+                // busy=false, SelectList (or typed short answer) continues.
+                const choiceLines = clar.choices
+                  .map((c, i) => `  ${i + 1}. ${c}`)
+                  .join("\n");
+                appendSystem(
+                  setMessages,
+                  `[in attesa di risposta]\n${clar.question}\n${choiceLines}` +
+                    (clar.context ? `\n_(${clar.context})_` : "") +
+                    "\n→ scegli dalla lista oppure digita la risposta e invia.",
+                  Date.now(),
+                );
                 if (setPicker) {
                   setPicker({
                     kind: "clarification",
@@ -752,6 +811,13 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                     items: clar.choices.map((c) => ({ value: c, label: c })),
                     onAnswer: (value: string) => {
                       void dispatchPrompt(value);
+                    },
+                    onCancel: () => {
+                      appendSystem(
+                        setMessages,
+                        "[chiarimento annullato — puoi ancora rispondere scrivendo in chat]",
+                        Date.now(),
+                      );
                     },
                   });
                 }
@@ -904,6 +970,8 @@ interface CouncilRunOverrides {
   ragContext?: string;
   runMode?: "implementation" | "design-phase";
   maxToolCallsChairman?: number;
+  /** Implementation 2+: Minosse + Lucifero only (skip specialists). */
+  skipSpecialists?: boolean;
 }
 
 async function dispatchCouncilPromptImpl(
@@ -957,15 +1025,57 @@ async function dispatchCouncilPromptImpl(
   const { setWorkspaceStubs } = await import("@zelari/core/skills");
   const { runPostCouncilHook } =
     await import("../workspace/postCouncilHook.js");
-  const { buildWorkspaceSummary, buildPlanSummary } =
-    await import("../workspace/workspaceSummary.js");
-  const { buildLessonsSummary } =
-    await import("../workspace/buildLessonsSummary.js");
+  const { composeProjectContext } = await import(
+    "../workspace/composeContext.js"
+  );
   const { FeedbackStore } = await import("../councilFeedback.js");
 
   const workPhase = getPhase();
+  const onAskUserCouncil = setPicker
+    ? (req: {
+        question: string;
+        choices: string[];
+        context?: string;
+      }) =>
+        new Promise<string | null>((resolve) => {
+          const choices = req.choices ?? [];
+          if (choices.length < 2) {
+            resolve(null);
+            return;
+          }
+          setLastClarification({
+            question: req.question,
+            choices,
+          });
+          const choiceLines = choices
+            .map((c, i) => `  ${i + 1}. ${c}`)
+            .join("\n");
+          appendSystem(
+            setMessages,
+            `[council in attesa — ask_user]\n${req.question}\n${choiceLines}` +
+              (req.context ? `\n_(${req.context})_` : "") +
+              "\n→ scegli dalla lista (il membro riprende dopo la risposta).",
+            Date.now(),
+          );
+          let settled = false;
+          const finish = (value: string | null) => {
+            if (settled) return;
+            settled = true;
+            setPicker(null);
+            resolve(value);
+          };
+          setPicker({
+            kind: "clarification",
+            title: req.question,
+            items: choices.map((c) => ({ value: c, label: c })),
+            onAnswer: (value: string) => finish(value),
+            onCancel: () => finish(null),
+          });
+        })
+    : undefined;
   const { registry: councilToolRegistry } = createBuiltinToolRegistry({
     planMode: workPhase === "plan",
+    onAskUser: onAskUserCouncil,
   });
   const workspaceCtx = createWorkspaceContext();
   const workspaceReg = createWorkspaceToolRegistry(workspaceCtx);
@@ -984,7 +1094,10 @@ async function dispatchCouncilPromptImpl(
   // single-agent path — zero extra spawns).
   try {
     const { registerMcpTools } = await import("../mcp/mcpManager.js");
-    const mcp = await registerMcpTools(councilToolRegistry);
+    // Council: skip Cua desktop tools by default (context hygiene).
+    const mcp = await registerMcpTools(councilToolRegistry, process.cwd(), {
+      councilMode: true,
+    });
     for (const w of mcp.warnings) appendSystem(setMessages, w);
   } catch {
     // Best-effort.
@@ -1009,6 +1122,17 @@ async function dispatchCouncilPromptImpl(
     default: 15,
     min: 1,
   });
+  // Wire soft/hard tool-loop budgets into every council member harness
+  // (previously only the single-agent path set these — members defaulted
+  // to harness soft=30 with unbounded soft×3 hard extension).
+  const councilMaxToolLoop = envNumber(
+    process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS,
+    { default: 30, min: 1 },
+  );
+  const councilMaxToolLoopHard = envNumber(
+    process.env.ZELARI_MAX_TOOL_LOOP_HARD,
+    { default: 0, min: 0 },
+  );
   // v0.7.1 (A3): track member completion so the AGENTS.MD hook only runs when
   // the council actually produced output. v0.7.1 (A4): track repeated provider
   // errors to abort the remaining members instead of grinding through every
@@ -1036,30 +1160,45 @@ async function dispatchCouncilPromptImpl(
       sessionId,
       tools: councilToolRegistry,
       feedbackStore: councilFeedbackStore,
-      // v0.7.2 (B2): give the council the same project awareness the
-      // single-prompt path has — cwd, tech stack, file layout, build scripts.
-      // Without this, members had no idea which project they were operating
-      // on and projected their identity onto the task.
-      // v0.7.3: append the existing plan (if any) so a follow-up /council
-      // continues it instead of re-planning from scratch.
-      // v1.8.0: rolling conversation context so short answers bind across
-      // council turns (same history store as the single-agent path).
-      workspaceContext: [
-        buildWorkspaceSummary(process.cwd()),
-        buildPlanSummary(process.cwd(), { userMessage: effectiveText }),
-        buildLessonsSummary(process.cwd(), effectiveText),
-        formatHistoryForCouncil(4),
-      ]
-        .filter(Boolean)
-        .join("\n\n"),
+      // v1.16: unified compose — product truth + draft plan ops + design index
+      // (not full vault). Memory RAG only via overrides.ragContext.
+      // Fail-soft: never block a council run if compose throws in tests/odd cwd.
+      ...(() => {
+        try {
+          const composed = composeProjectContext({
+            mode: overrides.ragContext ? "zelari" : "council",
+            cwd: process.cwd(),
+            userMessage: effectiveText,
+            memoryHits: overrides.ragContext,
+            historySnippet: formatHistoryForCouncil(4) || undefined,
+            includeLessons: true,
+          });
+          for (const w of composed.warnings) {
+            appendSystem(setMessages, w, Date.now());
+          }
+          return {
+            workspaceContext: composed.workspaceContext,
+            ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
+          };
+        } catch {
+          return {
+            workspaceContext: formatHistoryForCouncil(4) || "",
+            ...(overrides.ragContext
+              ? { ragContext: overrides.ragContext }
+              : {}),
+          };
+        }
+      })(),
       maxToolCallsPerTurn: councilMaxToolCalls,
-      // v1.0: Zelari-mode per-slice overrides (memory RAG, forced run mode,
-      // raised chairman budget). No-ops for a normal /council run.
-      ...(overrides.ragContext ? { ragContext: overrides.ragContext } : {}),
+      maxToolLoopIterations: councilMaxToolLoop,
+      ...(councilMaxToolLoopHard > 0
+        ? { maxToolLoopHardCap: councilMaxToolLoopHard }
+        : {}),
       runMode: phaseRunMode,
       ...(overrides.maxToolCallsChairman
         ? { maxToolCallsChairman: overrides.maxToolCallsChairman }
         : {}),
+      ...(overrides.skipSpecialists ? { skipSpecialists: true } : {}),
       onCouncilStatus: (message) => {
         appendSystem(setMessages, message, Date.now());
       },
@@ -1076,6 +1215,16 @@ async function dispatchCouncilPromptImpl(
                 question: req.question,
                 choices,
               });
+              const choiceLines = choices
+                .map((c, i) => `  ${i + 1}. ${c}`)
+                .join("\n");
+              appendSystem(
+                setMessages,
+                `[council in attesa]\n${req.question}\n${choiceLines}` +
+                  (req.context ? `\n_(${req.context})_` : "") +
+                  "\n→ scegli dalla lista (il membro riprende dopo la risposta).",
+                Date.now(),
+              );
               let settled = false;
               const finish = (value: string | null) => {
                 if (settled) return;
@@ -1533,11 +1682,17 @@ async function runZelariMissionInTui(
       projectRoot,
       memory,
       emit,
-      runSlice: async ({ userMessage: slicePrompt, runMode, ragContext }) => {
+      runSlice: async ({
+        userMessage: slicePrompt,
+        runMode,
+        ragContext,
+        implementerRetry,
+      }) => {
         const r = await dispatchCouncilPromptImpl(slicePrompt, deps, {
           ragContext,
           runMode,
           maxToolCallsChairman: chairmanBudget,
+          ...(implementerRetry ? { skipSpecialists: true } : {}),
         });
         return {
           completionOk: r.completionOk,

@@ -26,12 +26,29 @@ import type { PlanFrontmatter } from "./types.js";
 export interface BuildPlanSummaryOptions {
   /** Current user request — enables in-scope vs backlog split (v0.9.1). */
   userMessage?: string;
+  /** Hard char cap for the plan ops block. Default 2800. */
+  maxChars?: number;
 }
 
 export interface WorkspaceSummaryOptions {
   /** Max top-level entries to list. Default 30. */
   maxEntries?: number;
+  /** Hard char cap for product workspace summary. Default 3500. */
+  maxChars?: number;
+  /** Max dependency bullets per section (runtime/dev). Default 24. */
+  maxDeps?: number;
+  /** Max npm scripts listed. Default 16. */
+  maxScripts?: number;
 }
+
+/** Injected whenever plan/design vault context is present. */
+export const EPISTEMIC_BANNER = [
+  "# EPISTEMIC RULES (harness)",
+  "- **Product source of truth** = real project files (source tree, package.json, README), not `.zelari/docs`.",
+  "- Artifacts under `.zelari/` (plan, docs, risks, ADR) are **UNVERIFIED DESIGN HYPOTHESES** until implemented and verified on disk.",
+  "- Prefer read_file / list_files on the product tree over treating council docs as law.",
+  "- Do not invent paths, stack, or features that package.json / the tree contradict.",
+].join("\n");
 
 /**
  * Build a markdown workspace summary for the council system prompt.
@@ -42,7 +59,8 @@ export function buildWorkspaceSummary(
   projectRoot: string = process.cwd(),
   options: WorkspaceSummaryOptions = {},
 ): string {
-  const { maxEntries = 30 } = options;
+  const { maxEntries = 30, maxChars = 3500, maxDeps = 24, maxScripts = 16 } =
+    options;
   const name = safeProjectName(projectRoot);
   const parts: string[] = [
     `# Project: ${name}`,
@@ -50,7 +68,7 @@ export function buildWorkspaceSummary(
   ];
 
   // Tech stack from package.json (if present).
-  const stack = readTechStack(projectRoot);
+  const stack = readTechStack(projectRoot, maxDeps);
   if (stack) {
     parts.push("", "## Tech stack (from package.json)", stack);
   }
@@ -62,12 +80,18 @@ export function buildWorkspaceSummary(
   }
 
   // Build scripts (if present) — tells the council how to run/test/build.
-  const scripts = readBuildScripts(projectRoot);
+  const scripts = readBuildScripts(projectRoot, maxScripts);
   if (scripts) {
     parts.push("", "## npm scripts", scripts);
   }
 
-  return parts.join("\n");
+  let out = parts.join("\n");
+  if (out.length > maxChars) {
+    out =
+      out.slice(0, maxChars) +
+      `\n\n… [workspace summary truncated at ${maxChars} chars]`;
+  }
+  return out;
 }
 
 /** Max tasks listed individually in the plan summary (rest is counted). */
@@ -113,8 +137,10 @@ export function buildPlanSummary(
   if (phases.length === 0 && tasks.length === 0 && milestones.length === 0)
     return null;
 
+  const maxChars = options?.maxChars ?? 2800;
   const parts: string[] = [
-    "# Project Plan (created by /council — lives in .zelari/)",
+    "# Plan ops (DRAFT — .zelari/plan.json)",
+    "_This is operational task list from design, not product law. Ground every change in the real source tree._",
   ];
 
   // Open (pending/in_progress/blocked) tasks first; done tasks are counted only.
@@ -189,8 +215,9 @@ export function buildPlanSummary(
     (a, b) => (a.order ?? 0) - (b.order ?? 0),
   )) {
     const phaseTasks = scopedOpen.filter((t) => t.phaseId === phase.id);
+    // Ops only: phase name — do NOT inject free-text phase descriptions
+    // (they re-saturate context with design prose).
     parts.push("", `## ${phase.order ?? "?"}. ${phase.name ?? phase.id}`);
-    if (phase.description) parts.push(phase.description);
     for (const t of phaseTasks.slice(0, PLAN_SUMMARY_MAX_TASKS)) {
       parts.push(formatTaskLine(t));
     }
@@ -222,14 +249,12 @@ export function buildPlanSummary(
     }
   }
 
-  // v0.7.4: point the agent at ONE concrete task so "implement the plan"
-  // starts immediately instead of asking the user which task to pick.
-  // First in_progress wins (finish what's started); else highest priority.
+  // Suggested next task (hypothesis) — not a hard mandate.
   const next = pickNextTask(scopedOpen.length > 0 ? scopedOpen : open);
   if (next) {
     parts.push(
       "",
-      "**Next task to work on:**",
+      "**Suggested next task (hypothesis — verify against product tree):**",
       `- ${next.name ?? next.id} (${next.status ?? "pending"}/${next.priority ?? "medium"}) → .zelari/plan-tasks/${next.id}.md`,
     );
   }
@@ -237,9 +262,15 @@ export function buildPlanSummary(
   parts.push(
     "",
     `${tasks.length} task(s) total — ${open.length} open, ${done} done.`,
-    "When asked to implement the plan (or a task), read the task file(s) above with read_file first, then work ONE task at a time.",
+    "If implementing: ground fileRefs in the real tree first; work one task; do not treat design docs as shipped features.",
   );
-  return parts.join("\n");
+  let out = parts.join("\n");
+  if (out.length > maxChars) {
+    out =
+      out.slice(0, maxChars) +
+      `\n\n… [plan ops truncated at ${maxChars} chars — read .zelari/plan.json for full list]`;
+  }
+  return out;
 }
 
 /** Priority rank for next-task selection (higher = more urgent). */
@@ -274,9 +305,9 @@ export function buildZelariReadHint(
   const planPath = join(resolveWorkspaceRoot(projectRoot), "plan.json");
   if (!existsSync(planPath)) return "";
   return [
-    "# Council workspace detected (.zelari/)",
-    "This project has a council workspace: .zelari/plan.json holds the plan (phases, tasks, milestones) and .zelari/plan-tasks/ holds one detail file per task.",
-    "Before working on the plan, use list_files on .zelari/ and read_file on .zelari/plan.json (and the relevant task files) to load the current state.",
+    "# Council workspace detected (.zelari/) — DRAFT vault",
+    "`.zelari/plan.json` and `.zelari/docs/` hold **design hypotheses**, not verified product state.",
+    "Product truth is the source tree + package.json. Use list_files/read_file on product paths first; open `.zelari/` only when you need plan task details.",
   ].join("\n");
 }
 
@@ -305,30 +336,43 @@ function readPackageJson(projectRoot: string): MinimalPkg | null {
   }
 }
 
-/** Markdown bullet list of runtime + dev deps. */
-function readTechStack(projectRoot: string): string | null {
+/** Markdown bullet list of runtime + dev deps (capped). */
+function readTechStack(
+  projectRoot: string,
+  maxDeps: number = 24,
+): string | null {
   const pkg = readPackageJson(projectRoot);
   if (!pkg) return null;
-  const fmt = (entries: Record<string, string> | undefined): string =>
-    entries && Object.keys(entries).length > 0
-      ? Object.entries(entries)
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([k, v]) => `- ${k} \`${v}\``)
-          .join("\n")
-      : "_none_";
+  const fmt = (entries: Record<string, string> | undefined): string => {
+    if (!entries || Object.keys(entries).length === 0) return "_none_";
+    const all = Object.entries(entries).sort(([a], [b]) => a.localeCompare(b));
+    const slice = all.slice(0, maxDeps);
+    const lines = slice.map(([k, v]) => `- ${k} \`${v}\``);
+    if (all.length > maxDeps) {
+      lines.push(`- … (+${all.length - maxDeps} more deps omitted)`);
+    }
+    return lines.join("\n");
+  };
   return `**Runtime:**\n${fmt(pkg.dependencies)}\n\n**Dev:**\n${fmt(pkg.devDependencies)}`;
 }
 
-/** Markdown bullet list of npm scripts (name: command). */
-function readBuildScripts(projectRoot: string): string | null {
+/** Markdown bullet list of npm scripts (name: command), capped. */
+function readBuildScripts(
+  projectRoot: string,
+  maxScripts: number = 16,
+): string | null {
   const pkg = readPackageJson(projectRoot);
   if (!pkg?.scripts) return null;
-  const entries = Object.entries(pkg.scripts);
+  const entries = Object.entries(pkg.scripts).sort(([a], [b]) =>
+    a.localeCompare(b),
+  );
   if (entries.length === 0) return null;
-  return entries
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `- \`${k}\`: ${v}`)
-    .join("\n");
+  const slice = entries.slice(0, maxScripts);
+  const lines = slice.map(([k, v]) => `- \`${k}\`: ${v}`);
+  if (entries.length > maxScripts) {
+    lines.push(`- … (+${entries.length - maxScripts} more scripts omitted)`);
+  }
+  return lines.join("\n");
 }
 
 /** Shallow listing of top-level entries + one level of subdirectories. */

@@ -57,6 +57,15 @@ export interface CouncilDispatchOptions {
   maxToolCallsPerTurn?: number;
   /** Chairman-only (Lucifero) tool budget — raised in zelari-mode. */
   maxToolCallsChairman?: number;
+  /** Soft tool-loop iterations per member (AgentHarness). */
+  maxToolLoopIterations?: number;
+  /** Hard tool-loop ceiling per member (AgentHarness). */
+  maxToolLoopHardCap?: number;
+  /**
+   * Skip specialists — only Minosse + Lucifero run.
+   * Used by Zelari mission implementation retries (2+).
+   */
+  skipSpecialists?: boolean;
   feedbackStore?: FeedbackStore;
   /** @internal */
   disableWorkspaceTools?: boolean;
@@ -120,6 +129,9 @@ export async function* dispatchCouncil(
         : createWorkspaceToolRegistry(createWorkspaceContext(projectRoot))),
     maxToolCallsPerTurn: options.maxToolCallsPerTurn,
     maxToolCallsChairman: options.maxToolCallsChairman,
+    maxToolLoopIterations: options.maxToolLoopIterations,
+    maxToolLoopHardCap: options.maxToolLoopHardCap,
+    skipSpecialists: options.skipSpecialists,
     feedbackStore: options.feedbackStore,
   };
 

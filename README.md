@@ -317,13 +317,15 @@ zelari-code (CLI, MIT)
 | `ZELARI_NO_SHIM_REPAIR=1` | Disable auto-repair of a missing Windows bin shim on install |
 | `ZELARI_COUNCIL_TIER=lite` | Council with 3 members instead of 6 |
 | `ZELARI_MCP=0` | Disable MCP servers |
+| `ZELARI_CUA=0` | Disable Cua Driver MCP (desktop computer-use) |
+| `ZELARI_CUA_COUNCIL=1` | Expose Cua MCP tools in council turns (default: agent only) |
 | `ZELARI_SSH=0` | Disable SSH tools / targets |
 | `ZELARI_CLI_PATH` | Desktop: path to local `bin/zelari-code.js` monorepo entry |
 | `ZELARI_NO_PATH_REPAIR=1` | Windows: skip npm-prefix PATH auto-repair |
 | `ANATHEMA_FAILOVER=0` | Disable cross-provider failover |
 | `ZELARI_MEMORY=0` | Disable the file-based project memory (`.zelari/memory/`) |
 | `ZELARI_MISSION_AUTO=1` | Auto-start Zelari missions (skip the brief confirmation) |
-| `ZELARI_MISSION_MAX_ITER` | Max Zelari mission iterations (default 10) |
+| `ZELARI_MISSION_MAX_ITER` | Max **implementation** slices per Zelari mission (default 6; design-phase is free; impl 2+ = Minosse+Lucifero only) |
 | `ZELARI_MODE_MAX_TOOLS_LUCIFER` | Chairman (Lucifero) tool budget in zelari-mode (default 30) |
 | `ZELARI_DIAGNOSTICS=0` | Disable the post-edit compiler/lint diagnostics loop |
 | `ZELARI_DIAGNOSTICS_TIMEOUT_MS` | Timeout of the diagnostics loop (default 5000) |

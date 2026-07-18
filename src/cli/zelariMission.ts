@@ -60,7 +60,18 @@ export interface RunSliceArgs {
   userMessage: string;
   runMode: CouncilRunMode;
   ragContext: string;
+  /** Wall-clock step (design + implementation). */
   iteration: number;
+  /**
+   * 1-based implementation attempt when `runMode === 'implementation'`.
+   * Design-phase leaves this undefined / 0.
+   */
+  implementationIndex?: number;
+  /**
+   * True on implementation attempts after the first: drivers should run a
+   * reduced roster (Minosse + Lucifero only) instead of a full council.
+   */
+  implementerRetry?: boolean;
 }
 
 export interface ZelariMissionDeps {
@@ -76,7 +87,12 @@ export interface ZelariMissionDeps {
   missionId?: string;
 }
 
-const DEFAULT_MAX_ITER = 10;
+/**
+ * Default budget for **implementation** slices only.
+ * Design-phase (when the brief asks for it) is free and does not consume this.
+ * Override via `ZELARI_MISSION_MAX_ITER`.
+ */
+const DEFAULT_MAX_ITER = 6;
 const DEFAULT_MAX_STALL = 2;
 
 export function resolveMaxIterations(env: NodeJS.ProcessEnv = process.env): number {
@@ -209,50 +225,104 @@ export async function runZelariMission(
   // Consecutive implementation iterations that wrote 0 project files. Reset on
   // any real write. Drives the `stalled` early-out (see resolveMaxStall).
   let noWriteStreak = 0;
+  // Wall-clock step counter (design + impl) for state.iteration / logging.
+  let step = 0;
+  // Implementation slices only — this is what maxIter budgets.
+  let implStep = 0;
+  // One free design-phase pass when the brief asks for it (does not burn budget).
+  let pendingDesign = designFirst;
 
-  for (let i = 1; i <= maxIter; i++) {
-    state.iteration = i;
-    const runMode: CouncilRunMode = i === 1 && designFirst ? 'design-phase' : 'implementation';
+  while (true) {
+    const runMode: CouncilRunMode = pendingDesign ? 'design-phase' : 'implementation';
+    if (runMode === 'implementation') {
+      if (implStep >= maxIter) break;
+      implStep++;
+    }
+    step++;
+    state.iteration = step;
 
     const hits = await deps.memory.search(`${brief.deliverableThisMission} ${userMessage}`, {
       limit: 8,
       metadataFilter: { projectRoot: deps.projectRoot },
     });
     const ragContext = formatMemoryHits(hits);
-    const slicePrompt = buildSlicePrompt(brief, userMessage, runMode, i);
+    // buildSlicePrompt uses iteration>1 for "fix remaining failures" — that
+    // should track implementation attempts, not free design steps.
+    const promptIter = runMode === 'implementation' ? implStep : 1;
+    const slicePrompt = buildSlicePrompt(brief, userMessage, runMode, promptIter);
 
-    deps.emit(`[zelari] iterazione ${i}/${maxIter} · ${runMode} · slice ${brief.sliceMvp.id}`);
+    const implementerRetry = runMode === 'implementation' && implStep > 1;
+
+    if (runMode === 'design-phase') {
+      deps.emit(
+        `[zelari] design-phase (fuori budget) · step ${step} · slice ${brief.sliceMvp.id}`,
+      );
+    } else if (implementerRetry) {
+      deps.emit(
+        `[zelari] implementazione ${implStep}/${maxIter} · step ${step} · ` +
+          `roster ridotto (Minosse+Lucifero) · slice ${brief.sliceMvp.id}`,
+      );
+    } else {
+      deps.emit(
+        `[zelari] implementazione ${implStep}/${maxIter} · step ${step} · ` +
+          `council completo · slice ${brief.sliceMvp.id}`,
+      );
+    }
 
     let result: SliceRunResult;
     try {
-      result = await deps.runSlice({ userMessage: slicePrompt, runMode, ragContext, iteration: i });
+      result = await deps.runSlice({
+        userMessage: slicePrompt,
+        runMode,
+        ragContext,
+        iteration: step,
+        implementationIndex: runMode === 'implementation' ? implStep : undefined,
+        implementerRetry,
+      });
     } catch (err) {
       state.status = 'error';
       state.updatedAt = now().toISOString();
       await writeMissionState(deps.projectRoot, state);
-      deps.emit(`[zelari] errore all'iterazione ${i}: ${err instanceof Error ? err.message : String(err)}`);
+      deps.emit(
+        `[zelari] errore allo step ${step}: ${err instanceof Error ? err.message : String(err)}`,
+      );
       return state;
     }
 
     await deps.memory.add(
       JSON.stringify({
-        iteration: i,
+        iteration: step,
+        implStep: runMode === 'implementation' ? implStep : 0,
         runMode,
         completionOk: result.completionOk,
         synthesis: result.synthesisText?.slice(0, 2000) ?? '',
       }),
-      { projectRoot: deps.projectRoot, missionId, sliceId: brief.sliceMvp.id, source: 'council', iteration: i },
+      {
+        projectRoot: deps.projectRoot,
+        missionId,
+        sliceId: brief.sliceMvp.id,
+        source: 'council',
+        iteration: step,
+      },
     );
 
     state.lastCompletionOk = result.completionOk;
     state.updatedAt = now().toISOString();
 
-    // Success only when an IMPLEMENTATION slice completes — a design-phase run
-    // never writes completion.json, so it always advances the loop.
-    if (result.completionOk && runMode === 'implementation') {
+    // Design is free: clear the flag and continue into implementation budget.
+    if (runMode === 'design-phase') {
+      pendingDesign = false;
+      await writeMissionState(deps.projectRoot, state);
+      continue;
+    }
+
+    // Success only when an IMPLEMENTATION slice completes.
+    if (result.completionOk) {
       state.status = 'success';
       await writeMissionState(deps.projectRoot, state);
-      deps.emit(`[zelari] ✓ missione completata — slice MVP verde all'iterazione ${i}.`);
+      deps.emit(
+        `[zelari] ✓ missione completata — slice MVP verde all'implementazione ${implStep}/${maxIter} (step ${step}).`,
+      );
       return state;
     }
 
@@ -261,7 +331,7 @@ export async function runZelariMission(
     // synthesis claims done but nothing is written). Bail early with an
     // actionable message instead of burning the whole iteration budget on
     // identical no-op runs. Only counts when the driver reports writeCount.
-    if (runMode === 'implementation' && typeof result.writeCount === 'number') {
+    if (typeof result.writeCount === 'number') {
       if (result.writeCount === 0) noWriteStreak++;
       else noWriteStreak = 0;
 
@@ -286,8 +356,9 @@ export async function runZelariMission(
   state.updatedAt = now().toISOString();
   await writeMissionState(deps.projectRoot, state);
   deps.emit(
-    `[zelari] fermata dopo ${maxIter} iterazioni senza completamento verde. ` +
-      'Stato salvato in .zelari/mission-state.json',
+    `[zelari] fermata dopo ${maxIter} implementazioni senza completamento verde` +
+      (designFirst ? ' (design-phase esclusa dal budget)' : '') +
+      '. Stato salvato in .zelari/mission-state.json',
   );
   return state;
 }

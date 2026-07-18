@@ -4,11 +4,7 @@ import {
   cancelRun,
   checkCliUpdate,
   extractDelta,
-  extractToolCallId,
-  extractToolDurationMs,
-  extractToolIsError,
   extractToolName,
-  extractToolResult,
   getAppConfig,
   getCliStatus,
   onAgentEvent,
@@ -17,22 +13,20 @@ import {
   runTask,
   setAppConfig,
   summarizeToolArgs,
-  truncateToolPreview,
 } from "./agentClient";
 import { loadConversations, saveConversations } from "./chatStorage";
-import { MessageContent, ThinkingIndicator } from "./components/MessageContent";
+import { MessageContent } from "./components/MessageContent";
 import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
-import { ToolCallCard } from "./components/ToolCallCard";
+import { RunActivity } from "./components/RunActivity";
+import { ReplyAccordion } from "./components/ReplyAccordion";
+import { friendlyToolLabel } from "./components/toolLabels";
+import { scrubDisplayText } from "./components/scrubDisplayText";
 import { ProjectPanel } from "./components/ProjectPanel";
 import { CliSetupGuide } from "./components/CliSetupGuide";
 import { TitleBar } from "./components/TitleBar";
-import {
-  exportConversationJson,
-  exportConversationMarkdown,
-} from "./components/exportChat";
 import type {
   AgentMessageLite,
   AppView,
@@ -46,6 +40,7 @@ import type {
 } from "./types";
 import zelariLogo from "./assets/zelari-logo.png";
 import { checkForDesktopUpdate } from "./updater";
+import { useSpeechToText } from "./hooks/useSpeechToText";
 import "./App.css";
 
 const SUGGESTIONS = [
@@ -55,7 +50,125 @@ const SUGGESTIONS = [
   "Review recent git changes for risk",
 ];
 
+/** Max chars of file text inlined into the agent prompt per attachment. */
+const ATTACH_TEXT_MAX = 48_000;
+const ATTACH_FILE_MAX_BYTES = 512_000;
+
+type PendingAttachment = {
+  id: string;
+  name: string;
+  size: number;
+  path?: string;
+  text?: string;
+  note?: string;
+};
+
+function fileNativePath(f: File): string | undefined {
+  const p = (f as File & { path?: string }).path;
+  return typeof p === "string" && p.trim() ? p : undefined;
+}
+
+function isProbablyText(file: File, head: string): boolean {
+  const t = (file.type || "").toLowerCase();
+  if (t.startsWith("text/")) return true;
+  if (
+    t.includes("json") ||
+    t.includes("xml") ||
+    t.includes("javascript") ||
+    t.includes("typescript") ||
+    t.includes("svg")
+  )
+    return true;
+  const n = file.name.toLowerCase();
+  if (
+    /\.(txt|md|markdown|json|jsonc|ts|tsx|js|jsx|mjs|cjs|css|scss|html|htm|xml|yml|yaml|toml|ini|cfg|conf|rs|go|py|java|kt|swift|c|cc|cpp|h|hpp|cs|rb|php|sh|bash|zsh|ps1|sql|graphql|env|gitignore|dockerfile|makefile|cmake|lock|svg)$/i.test(
+      n,
+    )
+  )
+    return true;
+  // Heuristic: no NUL in first chunk
+  return !head.includes("\0") && /[\x09\x0a\x0d\x20-\x7e]/.test(head.slice(0, 200));
+}
+
+async function readFileAsAttachment(file: File): Promise<PendingAttachment> {
+  const id = uid("att");
+  const path = fileNativePath(file);
+  const base: PendingAttachment = {
+    id,
+    name: file.name,
+    size: file.size,
+    path,
+  };
+  if (file.size > ATTACH_FILE_MAX_BYTES) {
+    return {
+      ...base,
+      note: `too large (${Math.round(file.size / 1024)} KB) — path only`,
+    };
+  }
+  try {
+    const buf = await file.arrayBuffer();
+    const bytes = new Uint8Array(buf);
+    const head = new TextDecoder("utf-8", { fatal: false }).decode(
+      bytes.slice(0, 800),
+    );
+    if (!isProbablyText(file, head)) {
+      return { ...base, note: "binary — path only" };
+    }
+    let text = new TextDecoder("utf-8", { fatal: false }).decode(bytes);
+    // Strip BOM
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    if (text.length > ATTACH_TEXT_MAX) {
+      text =
+        text.slice(0, ATTACH_TEXT_MAX) +
+        `\n\n… [truncated, ${text.length - ATTACH_TEXT_MAX} more chars]`;
+    }
+    return { ...base, text };
+  } catch (e) {
+    return {
+      ...base,
+      note: e instanceof Error ? e.message : "could not read file",
+    };
+  }
+}
+
+function buildPromptWithAttachments(
+  userText: string,
+  attachments: PendingAttachment[],
+): string {
+  if (attachments.length === 0) return userText;
+  const blocks = attachments.map((a) => {
+    const label = a.path || a.name;
+    if (a.text != null && a.text.length > 0) {
+      return `--- File: ${label} ---\n${a.text}\n--- End file ---`;
+    }
+    const extra = a.note ? ` (${a.note})` : "";
+    return `--- File: ${label}${extra} ---`;
+  });
+  return `${userText.trim()}\n\n[Attached files]\n${blocks.join("\n\n")}`;
+}
+
 const LS_DEFAULTS = "zelari-desktop-defaults-v1";
+const LS_THEME = "zelari-desktop-theme-v1";
+
+type UiTheme = "dark" | "light";
+
+function loadTheme(): UiTheme {
+  try {
+    const t = localStorage.getItem(LS_THEME);
+    if (t === "light" || t === "dark") return t;
+  } catch {
+    /* ignore */
+  }
+  return "dark";
+}
+
+function saveTheme(theme: UiTheme) {
+  try {
+    localStorage.setItem(LS_THEME, theme);
+  } catch {
+    /* ignore */
+  }
+}
 
 function uid(prefix = "id"): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -170,6 +283,7 @@ function newConversation(
 export default function App() {
   const defaults = useMemo(() => loadDefaults(), []);
   const [view, setView] = useState<AppView>("chat");
+  const [theme, setTheme] = useState<UiTheme>(() => loadTheme());
   const [defaultMode, setDefaultMode] = useState<DispatchMode>(defaults.mode);
   const [defaultPhase, setDefaultPhase] = useState<WorkPhase>(defaults.phase);
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>("active");
@@ -204,6 +318,19 @@ export default function App() {
   /** User dismissed the missing-CLI setup overlay for this session. */
   const [setupDismissed, setSetupDismissed] = useState(false);
   const [cliStatusLoading, setCliStatusLoading] = useState(true);
+  /** Live tool activity line (no per-tool cards in the stream). */
+  const [liveToolLabel, setLiveToolLabel] = useState<string | null>(null);
+  const [liveMemberName, setLiveMemberName] = useState<string | null>(null);
+  const toolLabelClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** When true, chat auto-scrolls with the stream; user scroll-up detaches. */
+  const [followStream, setFollowStream] = useState(true);
+  const followStreamRef = useRef(true);
+  followStreamRef.current = followStream;
+  /** Ignore scroll events caused by programmatic stick-to-bottom. */
+  const programmaticScrollRef = useRef(false);
+  const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
+  const [dragOver, setDragOver] = useState(false);
+  const dragDepthRef = useRef(0);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -232,6 +359,18 @@ export default function App() {
   useEffect(() => {
     saveConversations(conversations);
   }, [conversations]);
+
+  // Theme: persist + sync color-scheme for native form controls
+  useEffect(() => {
+    saveTheme(theme);
+    document.documentElement.style.colorScheme = theme;
+    document.documentElement.dataset.theme = theme;
+    document.body.dataset.theme = theme;
+  }, [theme]);
+
+  const onThemeChange = useCallback((next: UiTheme) => {
+    setTheme(next);
+  }, []);
 
   // Persist the chosen working folder
   useEffect(() => {
@@ -329,11 +468,112 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, []);
 
+  const NEAR_BOTTOM_PX = 96;
+
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
+    const el = scrollRef.current;
+    if (!el) return;
+    programmaticScrollRef.current = true;
+    if (behavior === "smooth") {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    } else {
+      el.scrollTop = el.scrollHeight;
+    }
+    // Clear flag after layout settles (smooth needs a longer grace)
+    window.setTimeout(
+      () => {
+        programmaticScrollRef.current = false;
+      },
+      behavior === "smooth" ? 400 : 50,
+    );
+  }, []);
+
+  const reattachStream = useCallback(() => {
+    setFollowStream(true);
+    followStreamRef.current = true;
+    // Double rAF so DOM (new deltas / accordions) is painted first
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => scrollToBottom("smooth"));
+    });
+  }, [scrollToBottom]);
+
+  // Content fingerprint so every streaming delta re-triggers stick-to-bottom
+  const streamTick = useMemo(() => {
+    const msgs = active?.messages ?? [];
+    let n = 0;
+    let chars = 0;
+    for (const m of msgs) {
+      if (m.role === "tool") continue;
+      n += 1;
+      chars += m.content?.length ?? 0;
+      if (m.streaming) chars += 1;
+    }
+    return `${n}:${chars}:${running ? 1 : 0}:${liveToolLabel ?? ""}:${liveMemberName ?? ""}`;
+  }, [active?.messages, running, liveToolLabel, liveMemberName]);
+
+  // Stick to bottom only while following the stream
+  useEffect(() => {
+    if (!followStream) return;
+    scrollToBottom("auto");
+  }, [streamTick, followStream, scrollToBottom]);
+
+  // ResizeObserver: keep pinned when accordion/body height grows mid-stream
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !followStream) return;
+    const ro = new ResizeObserver(() => {
+      if (!followStreamRef.current) return;
+      scrollToBottom("auto");
+    });
+    const inner = el.firstElementChild;
+    if (inner) ro.observe(inner);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [followStream, scrollToBottom, activeId]);
+
+  // User scroll / wheel: detach when leaving bottom
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [active?.messages, running]);
+    const onScroll = () => {
+      if (programmaticScrollRef.current) return;
+      const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distance > NEAR_BOTTOM_PX) {
+        if (followStreamRef.current) {
+          setFollowStream(false);
+          followStreamRef.current = false;
+        }
+      }
+      // Do not auto re-attach on scroll-to-bottom: only the button does.
+      // (avoids fighting the user while they skim near the end)
+    };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0 && followStreamRef.current) {
+        // Explicit scroll up → detach immediately
+        setFollowStream(false);
+        followStreamRef.current = false;
+      }
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    el.addEventListener("wheel", onWheel, { passive: true });
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      el.removeEventListener("wheel", onWheel);
+    };
+  }, []);
+
+  // New chat: always re-follow
+  useEffect(() => {
+    setFollowStream(true);
+    followStreamRef.current = true;
+  }, [activeId]);
+
+  const speech = useSpeechToText({
+    disabled: running,
+    onFinal: (piece) => {
+      setDraft((prev) => (prev ? `${prev.trimEnd()} ${piece}` : piece));
+    },
+  });
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
@@ -350,7 +590,16 @@ export default function App() {
               ? (ev as { message: string }).message
               : "";
           if (msg) setStatusLine(msg.replace(/^\[.*?\]\s*/, "").slice(0, 140));
-          if (msg.startsWith("[zelari]") || msg.startsWith("[headless]")) {
+          // Do not surface routine headless bootstrap lines in the chat UI
+          // (mode/phase/provider line, MCP registration count, etc.).
+          const hideFromChat =
+            /^\[headless\]\s*mode=/i.test(msg) ||
+            /^\[headless\]\s*MCP tools:/i.test(msg) ||
+            /^\[headless\]\s*MCP tools\s*:/i.test(msg);
+          if (
+            !hideFromChat &&
+            (msg.startsWith("[zelari]") || msg.startsWith("[headless]"))
+          ) {
             setConversations((prev) =>
               prev.map((c) =>
                 c.id === convId
@@ -414,33 +663,86 @@ export default function App() {
           return;
         }
 
+        /** True if a/b refer to the same council member (id preferred, else name). */
+        const isSameMember = (
+          a: { name?: string; id?: string },
+          b: { name?: string; id?: string },
+        ) => {
+          if (a.id && b.id) return a.id === b.id;
+          if (a.name && b.name)
+            return a.name.localeCompare(b.name, undefined, {
+              sensitivity: "accent",
+            }) === 0;
+          // Only one side known → cannot prove switch; treat as same only if both empty
+          if (!a.id && !a.name && !b.id && !b.name) return true;
+          // One known, other empty → keep current bubble (tools mid-turn)
+          if ((!a.id && !a.name) || (!b.id && !b.name)) return true;
+          return false;
+        };
+
+        const switchToMember = (next: {
+          name?: string;
+          id?: string;
+        }) => {
+          const prev = activeMemberRef.current;
+          const hasNext = Boolean(next.name || next.id);
+          if (!hasNext) return;
+          const changed =
+            Boolean(prev.name || prev.id) && !isSameMember(prev, next);
+          activeMemberRef.current = {
+            name: next.name ?? prev.name,
+            id: next.id ?? prev.id,
+          };
+          if (next.name) {
+            setLiveMemberName(next.name);
+            setStatusLine(`${next.name} speaking…`);
+          }
+          if (changed) {
+            const prevAid = assistantIdRef.current;
+            if (prevAid) {
+              setConversations((prevC) =>
+                prevC.map((c) =>
+                  c.id !== convId
+                    ? c
+                    : {
+                        ...c,
+                        messages: c.messages.map((m) =>
+                          m.id === prevAid
+                            ? { ...m, streaming: false }
+                            : m,
+                        ),
+                      },
+                ),
+              );
+            }
+            // Force a new accordion for the new member
+            assistantIdRef.current = null;
+          }
+        };
+
         if (ev.type === "agent_start") {
           const anyEv = ev as {
             memberName?: string;
             memberId?: string;
           };
           if (anyEv.memberName || anyEv.memberId) {
-            activeMemberRef.current = {
+            switchToMember({
               name: anyEv.memberName,
               id: anyEv.memberId,
-            };
-            if (anyEv.memberName) {
-              setStatusLine(`${anyEv.memberName} speaking…`);
-            }
+            });
           }
           return;
         }
 
         if (ev.type === "message_start") {
           const anyEv = ev as { memberName?: string; memberId?: string };
+          // Only switch on *explicit* member fields — never invent from prev
           if (anyEv.memberName || anyEv.memberId) {
-            activeMemberRef.current = {
-              name: anyEv.memberName ?? activeMemberRef.current.name,
-              id: anyEv.memberId ?? activeMemberRef.current.id,
-            };
+            switchToMember({
+              name: anyEv.memberName,
+              id: anyEv.memberId,
+            });
           }
-          // Start a fresh assistant bubble per council member turn
-          assistantIdRef.current = null;
           return;
         }
 
@@ -448,12 +750,16 @@ export default function App() {
           const cost = (ev as {
             cost?: {
               name?: string;
+              id?: string;
               promptTokens?: number;
               completionTokens?: number;
               totalTokens?: number;
             };
           }).cost;
           if (cost) {
+            if (cost.name || cost.id) {
+              switchToMember({ name: cost.name, id: cost.id });
+            }
             turnTokensRef.current.prompt += cost.promptTokens ?? 0;
             turnTokensRef.current.completion += cost.completionTokens ?? 0;
             turnTokensRef.current.total += cost.totalTokens ?? 0;
@@ -478,30 +784,79 @@ export default function App() {
           const delta = extractDelta(ev);
           if (!delta) return;
           hasAssistantTextRef.current = true;
+          const evMember = ev as {
+            memberName?: string;
+            memberId?: string;
+          };
+          // Prefer event attribution; fall back to active member from agent_start
+          if (evMember.memberName || evMember.memberId) {
+            switchToMember({
+              name: evMember.memberName,
+              id: evMember.memberId,
+            });
+          }
           const memberName =
-            (ev as { memberName?: string }).memberName ??
-            activeMemberRef.current.name;
-          const memberId =
-            (ev as { memberId?: string }).memberId ??
-            activeMemberRef.current.id;
+            evMember.memberName ?? activeMemberRef.current.name;
+          const memberId = evMember.memberId ?? activeMemberRef.current.id;
+          if (memberName) setLiveMemberName(memberName);
+          // Text is streaming — clear tool line so member focus shows.
+          if (toolLabelClearRef.current) {
+            clearTimeout(toolLabelClearRef.current);
+            toolLabelClearRef.current = null;
+          }
+          setLiveToolLabel(null);
+
+          const matchesMember = (m: ChatMessage) => {
+            if (m.role !== "assistant") return false;
+            return isSameMember(
+              { name: m.memberName, id: m.memberId },
+              { name: memberName, id: memberId },
+            );
+          };
+
           setConversations((prev) =>
             prev.map((c) => {
               if (c.id !== convId) return c;
               const messages = [...c.messages];
-              let aid = assistantIdRef.current;
-              if (!aid || !messages.some((m) => m.id === aid)) {
-                aid = uid("asst");
-                assistantIdRef.current = aid;
-                messages.push({
-                  id: aid,
-                  role: "assistant",
-                  content: "",
-                  createdAt: Date.now(),
-                  streaming: true,
-                  memberName,
-                  memberId,
-                });
+              let aid: string | null = assistantIdRef.current;
+              const open = aid ? messages.find((m) => m.id === aid) : undefined;
+
+              // Open bubble is a different member → close it for a new card
+              if (open && !matchesMember(open)) {
+                aid = null;
+                assistantIdRef.current = null;
               }
+
+              // Resume only the *current turn* assistant card:
+              // - ref still points at this turn's bubble, or
+              // - the latest non-tool message is still that assistant
+              //   (multi-part stream / after tools — no user msg after it).
+              // Never append onto an older reply after a new user message.
+              if (!aid || !messages.some((m) => m.id === aid)) {
+                const last = [...messages]
+                  .reverse()
+                  .find((m) => m.role !== "tool");
+                if (
+                  last?.role === "assistant" &&
+                  matchesMember(last)
+                ) {
+                  aid = last.id;
+                  assistantIdRef.current = aid;
+                } else {
+                  aid = uid("asst");
+                  assistantIdRef.current = aid;
+                  messages.push({
+                    id: aid,
+                    role: "assistant",
+                    content: "",
+                    createdAt: Date.now(),
+                    streaming: true,
+                    memberName,
+                    memberId,
+                  });
+                }
+              }
+
               return {
                 ...c,
                 updatedAt: Date.now(),
@@ -509,16 +864,21 @@ export default function App() {
                   m.id === aid
                     ? {
                         ...m,
-                        content: m.content + delta,
+                        // Keep raw stream while live — scrub only closed tool
+                        // blocks so unclosed tags cannot delete later prose.
+                        content: scrubDisplayText(m.content + delta, {
+                          streaming: true,
+                        }),
                         streaming: true,
-                        memberName: m.memberName ?? memberName,
-                        memberId: m.memberId ?? memberId,
+                        memberName: memberName ?? m.memberName,
+                        memberId: memberId ?? m.memberId,
                       }
                     : m,
                 ),
               };
             }),
-          );          return;
+          );
+          return;
         }
 
         if (ev.type === "message_end" || ev.type === "agent_end") {
@@ -549,6 +909,10 @@ export default function App() {
                     ? {
                         ...m,
                         streaming: false,
+                        // Final scrub: drop trailing unclosed tool scaffolding
+                        content: scrubDisplayText(m.content, {
+                          streaming: false,
+                        }),
                         stats: usage
                           ? {
                               ...m.stats,
@@ -571,80 +935,26 @@ export default function App() {
 
         if (ev.type === "tool_execution_start") {
           const name = extractToolName(ev);
-          const toolCallId = extractToolCallId(ev);
           const anyEv = ev as { args?: Record<string, unknown> };
           const toolSummary = summarizeToolArgs(name, anyEv.args);
           toolCountRef.current += 1;
-          const toolMsg: ChatMessage = {
-            id: uid("tool"),
-            role: "tool",
-            content: "",
-            toolName: name,
-            toolCallId,
-            toolStatus: "running",
-            toolSummary: toolSummary || undefined,
-            createdAt: Date.now(),
-          };
-          assistantIdRef.current = null;
-          setConversations((prev) =>
-            prev.map((c) =>
-              c.id === convId
-                ? {
-                    ...c,
-                    updatedAt: Date.now(),
-                    messages: [...c.messages, toolMsg],
-                  }
-                : c,
-            ),
-          );
+          // Do not append tool cards — rotate a single live activity line.
+          if (toolLabelClearRef.current) {
+            clearTimeout(toolLabelClearRef.current);
+            toolLabelClearRef.current = null;
+          }
+          setLiveToolLabel(friendlyToolLabel(name, toolSummary));
+          // Keep assistantId — post-tool text continues in the same accordion.
           return;
         }
 
         if (ev.type === "tool_execution_end") {
-          const name = extractToolName(ev);
-          const toolCallId = extractToolCallId(ev);
-          const isError = extractToolIsError(ev);
-          const durationMs = extractToolDurationMs(ev);
-          const resultPreview = truncateToolPreview(extractToolResult(ev));
-          setConversations((prev) =>
-            prev.map((c) => {
-              if (c.id !== convId) return c;
-              const messages = [...c.messages];
-              let idx = -1;
-              if (toolCallId) {
-                idx = messages.findIndex(
-                  (m) =>
-                    m.role === "tool" &&
-                    m.toolCallId === toolCallId &&
-                    m.toolStatus !== "done",
-                );
-              }
-              if (idx < 0) {
-                for (let i = messages.length - 1; i >= 0; i--) {
-                  if (
-                    messages[i].role === "tool" &&
-                    messages[i].toolStatus !== "done" &&
-                    (messages[i].toolName === name ||
-                      messages[i].content.endsWith("…"))
-                  ) {
-                    idx = i;
-                    break;
-                  }
-                }
-              }
-              if (idx >= 0) {
-                messages[idx] = {
-                  ...messages[idx],
-                  toolStatus: "done",
-                  toolOk: !isError,
-                  toolDurationMs: durationMs,
-                  content: resultPreview,
-                  toolName: messages[idx].toolName || name,
-                };
-              }
-              return { ...c, messages };
-            }),
-          );
+          // Brief hold, then fade back to thinking phrases.
+          if (toolLabelClearRef.current) clearTimeout(toolLabelClearRef.current);
+          toolLabelClearRef.current = setTimeout(() => {
+            setLiveToolLabel(null);
+            toolLabelClearRef.current = null;
+          }, 900);
           return;
         }
 
@@ -691,6 +1001,12 @@ export default function App() {
       const u3 = await onRunFinished(({ exitCode, cancelled: wasCancelled }) => {
         if (cancelled) return;
         setRunning(false);
+        setLiveToolLabel(null);
+        setLiveMemberName(null);
+        if (toolLabelClearRef.current) {
+          clearTimeout(toolLabelClearRef.current);
+          toolLabelClearRef.current = null;
+        }
         const durationMs = Date.now() - (runStartedAtRef.current || Date.now());
         const tools = toolCountRef.current;
         const tokens = turnTokensRef.current;
@@ -714,11 +1030,16 @@ export default function App() {
                   ? {
                       ...m,
                       streaming: false,
+                      content: scrubDisplayText(m.content, {
+                        streaming: false,
+                      }),
                       stats: {
                         ...m.stats,
                         durationMs,
                         toolCount: tools,
-                        charCount: m.content.length,
+                        charCount: scrubDisplayText(m.content, {
+                          streaming: false,
+                        }).length,
                         promptTokens:
                           m.stats?.promptTokens ??
                           (tokens.prompt > 0 ? tokens.prompt : undefined),
@@ -743,11 +1064,24 @@ export default function App() {
             ? ` · ${tokens.total.toLocaleString()} tokens`
             : "";
         if (wasCancelled) setStatusLine("Run cancelled");
-        else if (exitCode === 0)
+        else if (exitCode === 0) {
+          // Detect incomplete-looking finals (many tools, little clean prose)
+          const lastAsst = [...(conversationsRef.current.find(
+            (x) => x.id === activeIdRef.current,
+          )?.messages ?? [])]
+            .reverse()
+            .find((m) => m.role === "assistant");
+          const cleanLen = scrubDisplayText(lastAsst?.content ?? "", {
+            streaming: false,
+          }).length;
+          const thin =
+            tools >= 12 && cleanLen > 0 && cleanLen < 400;
           setStatusLine(
-            `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools${tokPart}`,
+            thin
+              ? `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools${tokPart} · reply looks thin — try “continue”`
+              : `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools${tokPart}`,
           );
-        else setStatusLine(`Finished with exit code ${exitCode}${tokPart}`);
+        } else setStatusLine(`Finished with exit code ${exitCode}${tokPart}`);
         setGitRefreshKey((k) => k + 1);
         void refreshCli();
       });
@@ -763,6 +1097,8 @@ export default function App() {
   }, [refreshCli]);
 
   const startNewChat = () => {
+    setFollowStream(true);
+    followStreamRef.current = true;
     if (running) return;
     const c = newConversation(mode, phase, provider, model);
     setConversations((prev) => [c, ...prev]);
@@ -856,14 +1192,85 @@ export default function App() {
     );
   };
 
+  const addFiles = useCallback(async (files: FileList | File[]) => {
+    const list = Array.from(files).filter((f) => f && f.size >= 0);
+    if (list.length === 0) return;
+    const next = await Promise.all(list.map((f) => readFileAsAttachment(f)));
+    setAttachments((prev) => {
+      const names = new Set(
+        prev.map((p) => (p.path || p.name).toLowerCase()),
+      );
+      const merged = [...prev];
+      for (const a of next) {
+        const key = (a.path || a.name).toLowerCase();
+        if (names.has(key)) continue;
+        names.add(key);
+        merged.push(a);
+      }
+      return merged.slice(0, 12);
+    });
+    setStatusLine(
+      next.length === 1
+        ? `Attached ${next[0].name}`
+        : `Attached ${next.length} files`,
+    );
+  }, []);
+
+  const removeAttachment = useCallback((id: string) => {
+    setAttachments((prev) => prev.filter((a) => a.id !== id));
+  }, []);
+
+  const onDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current += 1;
+    if (e.dataTransfer?.types?.includes("Files")) setDragOver(true);
+  }, []);
+
+  const onDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+    if (dragDepthRef.current === 0) setDragOver(false);
+  }, []);
+
+  const onDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+  }, []);
+
+  const onDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      dragDepthRef.current = 0;
+      setDragOver(false);
+      if (running) return;
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) void addFiles(files);
+    },
+    [addFiles, running],
+  );
+
   const send = async (text?: string) => {
-    const prompt = (text ?? draft).trim();
-    if (!prompt || running) return;
+    const fromSpeech = [draft, speech.interim].filter(Boolean).join(" ").trim();
+    const base = (text ?? fromSpeech).trim();
+    if ((!base && attachments.length === 0) || running) return;
+    speech.stop();
 
     if (cli && !cli.ok) {
       setStatusLine(cli.message);
       return;
     }
+
+    const userVisible =
+      base ||
+      (attachments.length === 1
+        ? `Please review: ${attachments[0].name}`
+        : `Please review the attached files (${attachments.length})`);
+    // Full prompt (with file bodies) is stored so multi-turn history keeps context.
+    const prompt = buildPromptWithAttachments(userVisible, attachments);
 
     const userMsg: ChatMessage = {
       id: uid("user"),
@@ -876,9 +1283,14 @@ export default function App() {
     activeMemberRef.current = {};
     hasAssistantTextRef.current = false;
     toolCountRef.current = 0;
+    setLiveToolLabel(null);
+    setLiveMemberName(null);
+    setFollowStream(true);
+    followStreamRef.current = true;
     turnTokensRef.current = { prompt: 0, completion: 0, total: 0 };
     runStartedAtRef.current = Date.now();
     setDraft("");
+    setAttachments([]);
     setRunning(true);
     setStatusLine(`${mode} · ${phase} running…`);
 
@@ -1051,12 +1463,25 @@ export default function App() {
 
   const messages = active?.messages ?? [];
   const empty = messages.length === 0;
-  const showGlobalThinking =
-    running && !hasAssistantTextRef.current && !messages.some((m) => m.streaming);
+
+  const aurora = (
+    <div className="aurora" aria-hidden>
+      <div className="blob b1" />
+      <div className="blob b2" />
+      <div className="blob b3" />
+      <div className="blob b4" />
+      <div className="grain" />
+    </div>
+  );
 
   if (view === "settings") {
     return (
-      <div className="app app-chrome app-settings">
+      <div
+        className="app app-chrome app-settings"
+        data-mode={mode}
+        data-theme={theme}
+      >
+        {aurora}
         <TitleBar />
         <div className="app-settings-body">
           <SettingsView
@@ -1065,6 +1490,8 @@ export default function App() {
             defaultMode={defaultMode}
             defaultPhase={defaultPhase}
             workdir={workdir}
+            theme={theme}
+            onThemeChange={onThemeChange}
             onBack={() => setView("chat")}
             onRefresh={async () => {
               await refreshConfig();
@@ -1094,8 +1521,28 @@ export default function App() {
     !setupDismissed && !cliStatusLoading && cli !== null && !cli.ok;
 
   return (
-    <div className="app app-chrome">
+    <div
+      className={`app app-chrome${dragOver ? " is-drag-over" : ""}`}
+      data-mode={mode}
+      data-theme={theme}
+      onDragEnter={onDragEnter}
+      onDragLeave={onDragLeave}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+    >
+      {aurora}
       <TitleBar />
+      {dragOver && (
+        <div className="drop-overlay" aria-hidden>
+          <div className="drop-overlay-card glass-capsule">
+            <div className="drop-overlay-title">Drop files to attach</div>
+            <div className="drop-overlay-sub">
+              Text is inlined into the next message · max{" "}
+              {Math.round(ATTACH_FILE_MAX_BYTES / 1024)} KB each
+            </div>
+          </div>
+        </div>
+      )}
       {showCliSetup && (
         <CliSetupGuide
           cli={cli}
@@ -1219,9 +1666,39 @@ export default function App() {
 
       <div className="workspace">
       <main className="main">
-        <header className="topbar">
-          <div className="topbar-title">{active?.title ?? "Zelari"}</div>
-          <div className="topbar-actions">
+        <header className="topbar glass-capsule">
+          <div className="topbar-left">
+            <div className="model-chip">
+              <span
+                className={`model-live-dot${cli?.ok ? " ok" : ""}`}
+                aria-hidden
+              />
+              <ProviderModelBar
+                config={config}
+                provider={provider}
+                model={model}
+                disabled={running}
+                onProviderChange={onProviderChange}
+                onModelChange={onModelChange}
+                onConfigRefresh={setConfig}
+                onStatus={setStatusLine}
+              />
+            </div>
+            <div className="topbar-title" title={active?.title ?? "Zelari"}>
+              {active?.title ?? "Zelari"}
+            </div>
+          </div>
+          <div className="topbar-right">
+            <ModeToggle
+              value={mode}
+              disabled={running}
+              onChange={onModeChange}
+            />
+            <PhaseToggle
+              value={phase}
+              disabled={running}
+              onChange={onPhaseChange}
+            />
             <button
               type="button"
               className="btn-ghost topbar-folder"
@@ -1233,194 +1710,269 @@ export default function App() {
                   : "Apri una cartella di lavoro"
               }
             >
-              📁 {workdir ? workdir.replace(/.*[\\/]/, "") : "Open Folder"}
+              📁 {workdir ? workdir.replace(/.*[\\/]/, "") : "Folder"}
             </button>
-            {active && messages.length > 0 && (
-              <div className="export-menu">
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  title="Export chat as Markdown"
-                  disabled={running}
-                  onClick={() => exportConversationMarkdown(active)}
-                >
-                  ⬇ MD
-                </button>
-                <button
-                  type="button"
-                  className="btn-ghost"
-                  title="Export chat as JSON"
-                  disabled={running}
-                  onClick={() => exportConversationJson(active)}
-                >
-                  ⬇ JSON
-                </button>
-              </div>
-            )}
           </div>
         </header>
 
-        <div className="control-bar">
-          <div className="control-cluster control-cluster-run">
-            <ModeToggle
-              value={mode}
-              disabled={running}
-              onChange={onModeChange}
-            />
-            <PhaseToggle
-              value={phase}
-              disabled={running}
-              onChange={onPhaseChange}
-            />
-          </div>
-          <div className="control-divider" aria-hidden />
-          <ProviderModelBar
-            config={config}
-            provider={provider}
-            model={model}
-            disabled={running}
-            onProviderChange={onProviderChange}
-            onModelChange={onModelChange}
-            onConfigRefresh={setConfig}
-            onStatus={setStatusLine}
-          />
-        </div>
-
-        <div className="chat-scroll" ref={scrollRef}>
-          {empty && !running ? (
-            <div className="empty-state">
-              <div className="brand-mark lg" aria-hidden>
-                <img src={zelariLogo} alt="Zelari" className="brand-logo" />
-              </div>
-              <h1>What should we build?</h1>
-              <p>
-                Agent · Council · Zelari with Plan/Build — clean reply layout,
-                tools, and light stats.
-              </p>
-              <div className="suggestions">
-                {SUGGESTIONS.map((s) => (
-                  <button
-                    key={s}
-                    type="button"
-                    className="suggestion"
-                    onClick={() => void send(s)}
-                    disabled={running || (cli !== null && !cli.ok)}
-                  >
-                    {s}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : (
-            <div className="chat-inner">
-              {messages.map((m) =>
-                m.role === "tool" ? (
-                  <div key={m.id} className="message tool">
-                    <ToolCallCard message={m} />
-                  </div>
-                ) : (
-                  <div key={m.id} className={`message ${m.role}`}>
-                    <div className="message-role">
-                      {m.role === "user"
-                        ? "You"
-                        : m.role === "assistant"
-                          ? m.memberName || "Zelari"
-                          : "System"}
-                      {m.role === "assistant" && m.memberName && (
-                        <span className="badge badge-member">council</span>
-                      )}
-                      {m.meta === "thinking" && (
-                        <span className="badge">thinking</span>
-                      )}
-                      {m.streaming && <span className="badge">streaming</span>}
-                    </div>
-                    {m.role === "assistant" ? (
-                      <MessageContent
-                        content={m.content}
-                        streaming={m.streaming}
-                        thinking={m.meta === "thinking"}
-                        showThinking={
-                          m.streaming &&
-                          m.meta === "thinking" &&
-                          !m.content.trim()
-                        }
-                        stats={m.stats}
-                      />
-                    ) : m.role === "user" ? (
-                      <div className="bubble user-bubble">{m.content}</div>
-                    ) : (
-                      <div className="bubble system-bubble">{m.content}</div>
-                    )}
-                  </div>
-                ),
-              )}
-              {showGlobalThinking && (
-                <div className="message assistant">
-                  <div className="message-role">
-                    {activeMemberRef.current.name || "Zelari"}{" "}
-                    <span className="badge">thinking</span>
-                  </div>
-                  <ThinkingIndicator
-                    label={
-                      mode === "zelari"
-                        ? "Mission running"
-                        : mode === "council"
-                          ? activeMemberRef.current.name
-                            ? `${activeMemberRef.current.name} working`
-                            : "Council deliberating"
-                          : "Thinking"
-                    }
-                  />
+        <div className="chat-scroll-shell">
+          <div className="chat-scroll" ref={scrollRef}>
+            {empty && !running ? (
+              <div className="empty-state">
+                <div className="brand-mark lg" aria-hidden>
+                  <img src={zelariLogo} alt="Zelari" className="brand-logo" />
                 </div>
-              )}
-            </div>
+                <h1>What should we build?</h1>
+                <p>
+                  Agent · Council · Zelari with Plan/Build — clean reply layout,
+                  tools, and light stats.
+                </p>
+                <div className="suggestions">
+                  {SUGGESTIONS.map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      className="suggestion"
+                      onClick={() => void send(s)}
+                      disabled={running || (cli !== null && !cli.ok)}
+                    >
+                      {s}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              <div className="chat-inner">
+                {messages
+                  .filter((m) => {
+                    if (m.role === "tool") return false;
+                    // Hide legacy bootstrap noise already stored in chat history
+                    if (m.role === "system") {
+                      const t = m.content.trim();
+                      if (/^\[headless\]\s*mode=/i.test(t)) return false;
+                      if (/^\[headless\]\s*MCP tools\s*:/i.test(t)) return false;
+                    }
+                    return true;
+                  })
+                  .map((m) =>
+                    m.role === "assistant" ? (
+                      <div
+                        key={m.id}
+                        className={`message assistant msg-fade${m.streaming ? " is-streaming" : ""}`}
+                      >
+                        <ReplyAccordion
+                          title={m.memberName || "Zelari"}
+                          badge={m.memberName ? "council" : undefined}
+                          streaming={m.streaming}
+                          defaultOpen
+                          stats={m.stats}
+                        >
+                          <MessageContent
+                            content={m.content}
+                            streaming={m.streaming}
+                            thinking={m.meta === "thinking"}
+                            showThinking={
+                              m.streaming &&
+                              m.meta === "thinking" &&
+                              !m.content.trim()
+                            }
+                          />
+                        </ReplyAccordion>
+                      </div>
+                    ) : (
+                      <div key={m.id} className={`message ${m.role}`}>
+                        {m.role === "user" ? (
+                          <div className="bubble user-bubble">{m.content}</div>
+                        ) : (
+                          <div className="bubble system-bubble">{m.content}</div>
+                        )}
+                      </div>
+                    ),
+                  )}
+                {running && (
+                  <RunActivity
+                    running={running}
+                    mode={mode}
+                    memberName={
+                      liveMemberName || activeMemberRef.current.name || null
+                    }
+                    toolLabel={liveToolLabel}
+                  />
+                )}
+              </div>
+            )}
+          </div>
+          {!followStream && (!empty || running) && (
+            <button
+              type="button"
+              className={`btn-follow-stream${running ? " is-live" : ""}`}
+              onClick={reattachStream}
+              title="Jump back to the live stream and keep scrolling"
+            >
+              <span className="btn-follow-stream-icon" aria-hidden>
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  {/* Pin / re-attach to live stream */}
+                  <path d="M12 5v10" />
+                  <path d="m7 11 5 5 5-5" />
+                  <path d="M5 19h14" />
+                </svg>
+              </span>
+              <span className="btn-follow-stream-label">
+                <span className="btn-follow-stream-kicker">
+                  {running ? "Live" : "Chat"}
+                </span>
+                <span className="btn-follow-stream-text">
+                  {running ? "Follow stream" : "Jump to latest"}
+                </span>
+              </span>
+            </button>
           )}
         </div>
 
         <div className="composer-wrap">
-          <div className="composer">
-            <textarea
-              ref={taRef}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={onKeyDown}
-              placeholder={
-                mode === "zelari"
-                  ? "Describe the mission… (Enter to send)"
-                  : mode === "council"
-                    ? "Ask the council… (Enter to send)"
-                    : "Message the agent… (Enter to send)"
-              }
-              rows={2}
-              disabled={running}
-            />
-            <div className="composer-bar">
-              <div className="composer-hints">
-                {phase} · {mode}
-                {provider ? ` · ${provider}` : ""}
-                {model ? ` / ${model}` : ""}
-                <span className="composer-shortcuts" title="Keyboard shortcuts">
-                  {" "}
-                  · Esc stop · ⌘/Ctrl+N new · ⌘/Ctrl+Shift+D mode · ⌘/Ctrl+Shift+P phase
-                </span>
-              </div>
-              <div className="composer-actions">
-                {running ? (
-                  <button type="button" className="btn-stop" onClick={() => void onStop()}>
-                    Stop
-                  </button>
-                ) : (
+          {attachments.length > 0 && (
+            <div className="attach-strip" aria-label="Attached files">
+              {attachments.map((a) => (
+                <div key={a.id} className="attach-chip" title={a.path || a.name}>
+                  <span className="attach-chip-icon" aria-hidden>
+                    📄
+                  </span>
+                  <span className="attach-chip-meta">
+                    <span className="attach-chip-name">{a.name}</span>
+                    <span className="attach-chip-sub">
+                      {a.text != null
+                        ? `${Math.round(a.size / 1024) || 1} KB · text`
+                        : a.note || `${Math.round(a.size / 1024) || 1} KB`}
+                    </span>
+                  </span>
                   <button
                     type="button"
-                    className="btn-send"
-                    disabled={!draft.trim() || (cli !== null && !cli.ok)}
-                    onClick={() => void send()}
+                    className="attach-chip-remove"
+                    title="Remove"
+                    disabled={running}
+                    onClick={() => removeAttachment(a.id)}
                   >
-                    Send
+                    ×
                   </button>
-                )}
-              </div>
+                </div>
+              ))}
             </div>
+          )}
+          <div
+            className={`composer glass-capsule${speech.listening ? " is-listening" : ""}`}
+          >
+            <button
+              type="button"
+              className={`btn-mic${speech.listening ? " is-on" : ""}${!speech.speechOk ? " is-unavailable" : ""}`}
+              title={
+                !speech.speechOk
+                  ? "Speech recognition not available in this WebView"
+                  : speech.listening
+                    ? "Stop listening"
+                    : "Speech to text"
+              }
+              aria-label="Speech to text"
+              aria-pressed={speech.listening}
+              disabled={!speech.speechOk || running}
+              onClick={() => speech.toggle()}
+            >
+              {speech.listening ? (
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
+                  <path
+                    fill="currentColor"
+                    d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"
+                  />
+                </svg>
+              ) : (
+                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
+                  <path
+                    fill="currentColor"
+                    d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"
+                  />
+                </svg>
+              )}
+            </button>
+            <div className="composer-input-wrap">
+              <textarea
+                ref={taRef}
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={onKeyDown}
+                placeholder={
+                  speech.listening
+                    ? "Listening… speak now"
+                    : mode === "zelari"
+                      ? "Describe the mission…"
+                      : mode === "council"
+                        ? "Ask the council of models…"
+                        : "Message the agent…"
+                }
+                rows={1}
+                disabled={running}
+              />
+              {speech.interim ? (
+                <div className="speech-interim" aria-live="polite">
+                  {speech.interim}
+                </div>
+              ) : null}
+              {speech.error ? (
+                <div className="speech-error" role="status">
+                  {speech.error}
+                </div>
+              ) : null}
+            </div>
+            <div className="composer-actions">
+              {running ? (
+                <button
+                  type="button"
+                  className="btn-stop"
+                  onClick={() => void onStop()}
+                  title="Stop"
+                >
+                  Stop
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn-send"
+                  disabled={
+                    (!(draft.trim() || speech.interim.trim()) &&
+                      attachments.length === 0) ||
+                    (cli !== null && !cli.ok)
+                  }
+                  onClick={() => void send()}
+                  title="Send"
+                  aria-label="Send"
+                >
+                  <svg
+                    viewBox="0 0 24 24"
+                    width="17"
+                    height="17"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    aria-hidden
+                  >
+                    <path d="M12 19V5M5 12l7-7 7 7" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="composer-hint">
+            Enter to send · Shift+Enter newline · drop files to attach · {phase}{" "}
+            · {mode}
+            {provider ? ` · ${provider}` : ""}
+            {model ? ` / ${model}` : ""}
           </div>
         </div>
       </main>

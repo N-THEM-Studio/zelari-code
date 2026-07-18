@@ -88,6 +88,28 @@ Config (formato Claude-Desktop-compatibile; il progetto vince sui conflitti):
 I tool scoperti sono `mcp_<server>_<tool>`. Kill switch: `ZELARI_MCP=0`.  
 Hermetic / CI: `ZELARI_MCP_USER=0` ignora `~/.zelari-code/mcp.json` (solo project config).
 
+### Cua Driver (desktop computer-use)
+
+[Cua Driver](https://cua.ai/cua-driver) (trycua) pilota **app native** in background via MCP (click, type, snapshot finestra senza rubare focus). **Non** è vendored: installi il binary a parte.
+
+```bash
+# 1) Install binary — https://cua.ai/docs/how-to-guides/driver/install
+# 2) Register MCP preset (user scope):
+zelari-code --set-mcp-preset cua
+
+# Equivalente manuale:
+# zelari-code --set-mcp --name cua-driver --command cua-driver --args '["mcp"]'
+```
+
+| Env | Effetto |
+|-----|---------|
+| `ZELARI_CUA=0` | Non avvia server MCP Cua (`cua-driver`, `cua-*`) |
+| `ZELARI_CUA_COUNCIL=1` | Espone tool Cua anche ai turn council (default: **solo agent**, per non saturare i 6 membri) |
+| `ZELARI_MCP=0` | Disabilita tutto MCP (incluso Cua) |
+
+Preferisci `browser_check` (Playwright) per **web**; Cua per **desktop nativo**.  
+Skill: `computer-use-cua` (`/skill computer-use-cua`). Doctor: `zelari-code --doctor` segnala se `cua-driver` manca dal PATH.
+
 ## Coerenza prompt ↔ esecuzione
 
 1. **`harnessToolBridge`**: builtin harness nel catalogo `getAllTools()` con schemi dagli zod reali.

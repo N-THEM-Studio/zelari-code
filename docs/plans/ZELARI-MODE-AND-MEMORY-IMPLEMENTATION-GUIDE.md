@@ -473,7 +473,7 @@ await memory.add(
 | `ZELARI_MEMORY` | `1` | `0` disabilita Lance backend |
 | `ZELARI_MEMORY_BACKEND` | `lancedb` | `mempalace` futuro |
 | `ZELARI_MISSION_AUTO` | `0` | `1` salta conferma brief |
-| `ZELARI_MISSION_MAX_ITER` | `10` | Max iterazioni loop |
+| `ZELARI_MISSION_MAX_ITER` | `6` | Max implementazioni (design-phase fuori budget) |
 | `ZELARI_MODE_MAX_TOOLS_LUCIFER` | `30` | Tool cap implementer |
 | `ZELARI_COUNCIL_MODE` | (auto) | `design` / `impl` override |
 | `ZELARI_VERIFY_AUTOFIX` | `0` | Già documentato roadmap verify |
