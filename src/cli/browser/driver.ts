@@ -4,8 +4,9 @@
  * The "visual verification loop" for web projects: after the agent edits a UI,
  * it navigates the running app and gets back the signals an LLM can actually
  * act on — console errors, uncaught page exceptions, failed network requests,
- * the final title/URL, whether an expected selector is present, and a saved
- * screenshot path. Far stronger than "the tests pass" for front-end work.
+ * the final title/URL, whether an expected selector is present, evaluate
+ * results, and a saved screenshot path. Far stronger than "the tests pass"
+ * for front-end work.
  *
  * Playwright is an OPTIONAL dependency, loaded via dynamic import so it is not
  * a hard requirement of the package. When it (or a browser) isn't available,
@@ -21,11 +22,31 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
+/** Max length of an evaluate expression (chars). */
+const MAX_EVAL_EXPR = 4_000;
+/** Max JSON-serialized evaluate result size. */
+const MAX_EVAL_RESULT = 8_000;
+/** Max body text sample returned to the agent. */
+const MAX_BODY_SNIPPET = 2_000;
+
 export type BrowserAction =
   | { type: 'click'; selector: string }
   | { type: 'fill'; selector: string; value: string }
   | { type: 'wait'; ms: number }
-  | { type: 'goto'; url: string };
+  | { type: 'goto'; url: string }
+  /** Run JS in the page context (Playwright page.evaluate). Return must be JSON-serializable. */
+  | { type: 'evaluate'; expression: string }
+  /** Keyboard key press (e.g. "Space", "KeyW", "ArrowLeft"). */
+  | { type: 'press'; key: string }
+  /** Wait until the document body contains this substring (case-sensitive). */
+  | { type: 'waitForText'; text: string; timeoutMs?: number };
+
+export interface EvaluateResultEntry {
+  expression: string;
+  /** JSON-serializable value, or null when error. */
+  value?: unknown;
+  error?: string;
+}
 
 export interface BrowserCheckOptions {
   url: string;
@@ -41,6 +62,8 @@ export interface BrowserCheckOptions {
    * (`npm i -D playwright`). Defaults to `process.cwd()` when omitted.
    */
   cwd?: string;
+  /** Include a short visible body-text sample in the result. */
+  textSample?: boolean;
 }
 
 export interface BrowserCheckResult {
@@ -54,10 +77,20 @@ export interface BrowserCheckResult {
   screenshotPath?: string;
   /** Present only when `waitForSelector` was requested. */
   selectorFound?: boolean;
+  /** Results from `evaluate` actions (in order). */
+  evaluateResults?: EvaluateResultEntry[];
+  /** True when a waitForText action succeeded; false if any timed out. */
+  textFound?: boolean;
+  /** Optional body.innerText snippet when textSample was requested. */
+  bodyTextSnippet?: string;
 }
 
 // --- Minimal structural surface of the Playwright API we use ---------------
 // Kept intentionally loose (no dependency on playwright's types).
+
+interface KeyboardLike {
+  press(key: string, opts?: { timeout?: number }): Promise<unknown>;
+}
 
 interface PageLike {
   on(event: 'console', cb: (msg: { type(): string; text(): string }) => void): void;
@@ -68,9 +101,16 @@ interface PageLike {
   fill(selector: string, value: string, opts?: { timeout?: number }): Promise<unknown>;
   waitForSelector(selector: string, opts?: { timeout?: number }): Promise<unknown>;
   waitForTimeout(ms: number): Promise<unknown>;
+  waitForFunction(
+    fn: string | ((arg: string) => boolean),
+    arg?: string,
+    opts?: { timeout?: number },
+  ): Promise<unknown>;
+  evaluate<T = unknown>(pageFunction: string | (() => T)): Promise<T>;
   title(): Promise<string>;
   url(): string;
   screenshot(opts: { path: string }): Promise<unknown>;
+  keyboard?: KeyboardLike;
 }
 
 interface BrowserLike {
@@ -138,6 +178,46 @@ export async function loadPlaywright(cwd?: string): Promise<PlaywrightLike | nul
 export const defaultPlaywrightLoader: PlaywrightLoader = async () =>
   loadPlaywright(process.cwd());
 
+/** Cap and JSON-safe-clone evaluate return values for the agent. */
+export function serializeEvaluateValue(value: unknown): unknown {
+  try {
+    const json = JSON.stringify(value, (_k, v) => {
+      if (typeof v === 'function') return '[Function]';
+      if (typeof v === 'bigint') return v.toString();
+      if (v instanceof Error) return { name: v.name, message: v.message };
+      return v;
+    });
+    if (json === undefined) return null;
+    if (json.length > MAX_EVAL_RESULT) {
+      return {
+        truncated: true,
+        preview: json.slice(0, MAX_EVAL_RESULT),
+      };
+    }
+    return JSON.parse(json) as unknown;
+  } catch (err) {
+    return {
+      error: `non-serializable: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
+ * Wrap a user expression as a Playwright evaluate **function body**.
+ * Playwright treats string pageFunctions as `function(){ <body> }`, so we
+ * must `return` the value.
+ */
+export function wrapEvaluateExpression(expression: string): string {
+  const expr = expression.trim();
+  if (!expr) return 'return undefined';
+  // Multi-statement or already has return → use as body (ensure return if missing).
+  if (/\breturn\b/.test(expr) || expr.includes('\n')) {
+    return expr;
+  }
+  // Single expression
+  return `return (${expr})`;
+}
+
 /**
  * Navigate to a URL (optionally running a sequence of actions) and collect
  * verification signals. Best-effort — never throws; a missing browser or a
@@ -150,6 +230,7 @@ export async function runBrowserCheck(
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
   const failedRequests: string[] = [];
+  const evaluateResults: EvaluateResultEntry[] = [];
   const base: BrowserCheckResult = { ok: false, consoleErrors, pageErrors, failedRequests };
 
   const resolve =
@@ -170,6 +251,7 @@ export async function runBrowserCheck(
 
   const timeout = options.timeoutMs ?? 15_000;
   let browser: BrowserLike | undefined;
+  let textFound: boolean | undefined;
   try {
     browser = await pw.chromium.launch({ headless: true });
     const page = await browser.newPage();
@@ -198,6 +280,65 @@ export async function runBrowserCheck(
         case 'wait':
           await page.waitForTimeout(action.ms);
           break;
+        case 'press': {
+          const key = action.key.trim();
+          if (!key) break;
+          if (page.keyboard && typeof page.keyboard.press === 'function') {
+            await page.keyboard.press(key, { timeout });
+          } else {
+            // Fallback for fakes / surfaces without keyboard
+            await page.evaluate(
+              wrapEvaluateExpression(
+                `document.dispatchEvent(new KeyboardEvent('keydown',{key:${JSON.stringify(key)},bubbles:true})); true`,
+              ),
+            );
+          }
+          break;
+        }
+        case 'waitForText': {
+          const needle = action.text;
+          const t = action.timeoutMs ?? timeout;
+          try {
+            // String function body: Playwright injects as function(arg) { ... }
+            await page.waitForFunction(
+              `return (document.body && (document.body.innerText || document.body.textContent || '')).includes(arguments[0])`,
+              needle,
+              { timeout: t },
+            );
+            textFound = textFound === false ? false : true;
+          } catch {
+            textFound = false;
+          }
+          break;
+        }
+        case 'evaluate': {
+          const raw = action.expression ?? '';
+          if (raw.length > MAX_EVAL_EXPR) {
+            evaluateResults.push({
+              expression: raw.slice(0, 120) + '…',
+              error: `expression too long (max ${MAX_EVAL_EXPR} chars)`,
+            });
+            break;
+          }
+          if (!raw.trim()) {
+            evaluateResults.push({ expression: raw, error: 'empty expression' });
+            break;
+          }
+          try {
+            const wrapped = wrapEvaluateExpression(raw);
+            const value = await page.evaluate(wrapped);
+            evaluateResults.push({
+              expression: raw.length > 200 ? raw.slice(0, 200) + '…' : raw,
+              value: serializeEvaluateValue(value),
+            });
+          } catch (err) {
+            evaluateResults.push({
+              expression: raw.length > 200 ? raw.slice(0, 200) + '…' : raw,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          break;
+        }
         default:
           break;
       }
@@ -210,6 +351,25 @@ export async function runBrowserCheck(
         selectorFound = true;
       } catch {
         selectorFound = false;
+      }
+    }
+
+    let bodyTextSnippet: string | undefined;
+    if (options.textSample) {
+      try {
+        const text = await page.evaluate(
+          wrapEvaluateExpression(
+            `(document.body?.innerText || document.body?.textContent || '').trim()`,
+          ),
+        );
+        if (typeof text === 'string' && text.length > 0) {
+          bodyTextSnippet =
+            text.length > MAX_BODY_SNIPPET
+              ? text.slice(0, MAX_BODY_SNIPPET) + '…'
+              : text;
+        }
+      } catch {
+        // ignore
       }
     }
 
@@ -232,6 +392,9 @@ export async function runBrowserCheck(
       url: page.url(),
       ...(title !== undefined ? { title } : {}),
       ...(selectorFound !== undefined ? { selectorFound } : {}),
+      ...(evaluateResults.length > 0 ? { evaluateResults } : {}),
+      ...(textFound !== undefined ? { textFound } : {}),
+      ...(bodyTextSnippet !== undefined ? { bodyTextSnippet } : {}),
       ...(screenshotPath ? { screenshotPath } : {}),
     };
   } catch (err) {

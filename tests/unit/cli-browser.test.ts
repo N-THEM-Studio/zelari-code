@@ -5,6 +5,8 @@ import path from 'node:path';
 import {
   runBrowserCheck,
   loadPlaywright,
+  wrapEvaluateExpression,
+  serializeEvaluateValue,
   type PlaywrightLoader,
   type BrowserAction,
 } from '../../src/cli/browser/driver.js';
@@ -20,6 +22,11 @@ interface FakeOpts {
   title?: string;
   finalUrl?: string;
   recordActions?: BrowserAction[];
+  /** Body text for waitForText / textSample */
+  bodyText?: string;
+  /** Map expression → value for evaluate */
+  evaluateMap?: Record<string, unknown>;
+  evaluateThrow?: string;
 }
 
 function fakeLoader(opts: FakeOpts): PlaywrightLoader {
@@ -56,6 +63,40 @@ function fakeLoader(opts: FakeOpts): PlaywrightLoader {
             if (!opts.selectorPresent) throw new Error('timeout');
           },
           async waitForTimeout() {},
+          async waitForFunction(_fn: unknown, arg?: string) {
+            const body = opts.bodyText ?? '';
+            if (typeof arg === 'string' && body.includes(arg)) return;
+            throw new Error('timeout waiting for text');
+          },
+          async evaluate(pageFunction: string | (() => unknown)) {
+            if (opts.evaluateThrow) throw new Error(opts.evaluateThrow);
+            if (typeof pageFunction === 'function') return pageFunction();
+            const src = String(pageFunction);
+            // textSample path
+            if (src.includes('innerText') || src.includes('textContent')) {
+              return opts.bodyText ?? '';
+            }
+            // Match evaluateMap keys against expression fragments
+            for (const [k, v] of Object.entries(opts.evaluateMap ?? {})) {
+              if (src.includes(k) || src.includes(`return (${k})`)) return v;
+            }
+            // unwrap `return (expr)` for simple literals
+            const m = /^return\s*\((.*)\)\s*;?\s*$/s.exec(src.trim());
+            if (m) {
+              try {
+                // eslint-disable-next-line no-new-func
+                return Function(`"use strict"; return (${m[1]});`)();
+              } catch {
+                /* fallthrough */
+              }
+            }
+            return undefined;
+          },
+          keyboard: {
+            async press(key: string) {
+              opts.recordActions?.push({ type: 'press', key });
+            },
+          },
           async title() {
             return opts.title ?? 'Fake';
           },
@@ -165,6 +206,84 @@ describe('runBrowserCheck', () => {
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/ERR_CONNECTION_REFUSED/);
   });
+
+  it('runs evaluate and returns serialized values', async () => {
+    const res = await runBrowserCheck(
+      {
+        url: 'http://x',
+        actions: [
+          { type: 'evaluate', expression: '1+2' },
+          { type: 'evaluate', expression: 'document.title' },
+        ],
+      },
+      fakeLoader({
+        evaluateMap: { 'document.title': 'Game' },
+      }),
+    );
+    expect(res.ok).toBe(true);
+    expect(res.evaluateResults).toHaveLength(2);
+    expect(res.evaluateResults![0]!.value).toBe(3);
+    expect(res.evaluateResults![1]!.value).toBe('Game');
+  });
+
+  it('captures evaluate errors without failing the whole check', async () => {
+    const res = await runBrowserCheck(
+      { url: 'http://x', actions: [{ type: 'evaluate', expression: 'boom()' }] },
+      fakeLoader({ evaluateThrow: 'boom is not defined' }),
+    );
+    expect(res.ok).toBe(true);
+    expect(res.evaluateResults![0]!.error).toMatch(/boom/);
+  });
+
+  it('waitForText sets textFound', async () => {
+    const ok = await runBrowserCheck(
+      {
+        url: 'http://x',
+        actions: [{ type: 'waitForText', text: 'Game Over' }],
+      },
+      fakeLoader({ bodyText: 'Hai raggiunto Wave 1\nGame Over' }),
+    );
+    expect(ok.textFound).toBe(true);
+
+    const miss = await runBrowserCheck(
+      {
+        url: 'http://x',
+        actions: [{ type: 'waitForText', text: 'Victory' }],
+      },
+      fakeLoader({ bodyText: 'Game Over' }),
+    );
+    expect(miss.textFound).toBe(false);
+  });
+
+  it('records press actions', async () => {
+    const recorded: BrowserAction[] = [];
+    await runBrowserCheck(
+      { url: 'http://x', actions: [{ type: 'press', key: 'Space' }] },
+      fakeLoader({ recordActions: recorded }),
+    );
+    expect(recorded).toEqual([{ type: 'press', key: 'Space' }]);
+  });
+
+  it('returns bodyTextSnippet when textSample is true', async () => {
+    const res = await runBrowserCheck(
+      { url: 'http://x', textSample: true },
+      fakeLoader({ bodyText: 'HP 100  Wave 1' }),
+    );
+    expect(res.bodyTextSnippet).toContain('Wave 1');
+  });
+});
+
+describe('evaluate helpers', () => {
+  it('wrapEvaluateExpression adds return for expressions', () => {
+    expect(wrapEvaluateExpression('1+2')).toBe('return (1+2)');
+    expect(wrapEvaluateExpression('return 3')).toBe('return 3');
+  });
+
+  it('serializeEvaluateValue truncates large payloads', () => {
+    const big = { x: 'y'.repeat(20_000) };
+    const v = serializeEvaluateValue(big) as { truncated?: boolean };
+    expect(v.truncated).toBe(true);
+  });
 });
 
 describe('browser_check tool', () => {
@@ -175,6 +294,35 @@ describe('browser_check tool', () => {
     const res = await tool.execute({ url: 'http://localhost:3000', screenshot: false }, ctx);
     expect(res.ok).toBe(true);
     if (res.ok) expect((res.value as { clean: boolean }).clean).toBe(true);
+  });
+
+  it('flags weak smoke when no DOM/evaluate assertions', async () => {
+    const tool = createBrowserTool({ loader: fakeLoader({ title: 'App' }), screenshotDir: tmpdir() });
+    const res = await tool.execute(
+      { url: 'http://localhost:3000', screenshot: false, actions: [{ type: 'wait', ms: 100 }] },
+      ctx,
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      const v = res.value as { smokeStrength?: string; note?: string };
+      expect(v.smokeStrength).toBe('weak');
+      expect(v.note).toMatch(/Weak smoke/i);
+    }
+  });
+
+  it('smokeStrength asserted when waitForSelector used', async () => {
+    const tool = createBrowserTool({
+      loader: fakeLoader({ selectorPresent: true }),
+      screenshotDir: tmpdir(),
+    });
+    const res = await tool.execute(
+      { url: 'http://x', screenshot: false, waitForSelector: '#game-over' },
+      ctx,
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) {
+      expect((res.value as { smokeStrength?: string }).smokeStrength).toBe('asserted');
+    }
   });
 
   it('reports clean=false when there are console errors', async () => {

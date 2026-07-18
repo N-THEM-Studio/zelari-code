@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.1] - 2026-07-18
+
+### Added
+- **`browser_check` deep probes** — actions `evaluate` (page JS, JSON-safe), `press` (keyboard), `waitForText`; optional `textSample` body snippet.
+- **`smokeStrength`** — tool result is `weak` when only crash-absence (no selector/text/evaluate); `asserted` when DOM/JS checks ran. Stops overclaiming “fix verified” from a short wait with no errors.
+
+### Changed
+- **Tool + prompt guidance** — prefer DOM assertions over `window.*` (ES modules hide symbols); no analysis spiral on re-exporting globals.
+- **TOOLS.md** documents the new actions and weak-smoke semantics.
+
+### Note (Desktop)
+- Update the coding engine: `npm i -g zelari-code@1.18.1` (installer does not upgrade the CLI).
+
 ## [1.18.0] - 2026-07-18
 
 ### Added
@@ -239,6 +252,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [1.18.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [1.18.1] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).

@@ -31,7 +31,7 @@ World-model tools: kill switch `ZELARI_SCHEMA_LOOP=0`. Skill: `schema-loop`.
 | `lsp_definition` / `lsp_references` / `lsp_hover` / `lsp_symbols` / `lsp_rename` | read / write (`rename`) | language server sul PATH | kill switch `ZELARI_LSP=0` |
 | `ast_outline` / `ast_find_symbol` | read | nessuno (TS Compiler API) | `ZELARI_AST=0` |
 | `semantic_search` | read | embeddings on first use; `/index` | `ZELARI_SEMANTIC=0` |
-| `browser_check` | sandboxed network | Playwright + chromium | `ZELARI_BROWSER=0` |
+| `browser_check` | sandboxed network | Playwright + chromium | `ZELARI_BROWSER=0`. Actions: `click` / `fill` / `wait` / `goto` / **`evaluate`** / **`press`** / **`waitForText`**. Prefer DOM asserts over `window.*` (ES modules hide symbols). No selector/text/evaluate → result `smokeStrength: "weak"`. |
 
 **Diagnostics loop** (non un tool separato): dopo `write_file` / `edit_file` / `apply_diff` l’harness può lanciare `eslint`/`ruff` e appendere errori al result. `ZELARI_DIAGNOSTICS=0`.
 

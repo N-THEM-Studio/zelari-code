@@ -140,7 +140,8 @@ export const CODING_PRACTICES_MODULE: SystemPromptModule = {
 - **Verify**: after non-trivial edits, run the project's tests/typecheck/build when available; fix failures you introduced.
 - **Use project scripts**: prefer package.json / Makefile / existing tooling over ad-hoc commands.
 - **Finish**: list the paths you wrote/edited and how to verify. If you wrote nothing, say so honestly — do not invent a done report.
-- **No spam**: never repeat the same paragraph or status line. One diagnosis, then tools (or one short final answer).`,
+- **No spam**: never repeat the same paragraph or status line. One diagnosis, then tools (or one short final answer).
+- **Browser smoke honesty**: with \`browser_check\`, prefer \`waitForSelector\` / \`waitForText\` / \`evaluate\` on DOM (or explicit test hooks). Do not claim a logic fix is verified from “no console errors after N seconds” alone (\`smokeStrength: weak\`). ES modules keep symbols off \`window\` — do not loop on exposing globals; assert visible UI or inject \`evaluate\` on \`document\`.`,
 };
 
 /**

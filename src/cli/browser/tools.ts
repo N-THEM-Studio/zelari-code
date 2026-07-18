@@ -2,10 +2,10 @@
  * browser/tools — the `browser_check` visual-verification tool.
  *
  * Lets the agent confirm a web change actually works in a real browser:
- * navigate the running app, optionally click/fill, and get back console
- * errors, uncaught exceptions, failed requests, the title/URL, whether an
- * expected element appeared, and a screenshot path. Optional Playwright dep —
- * degrades with install instructions when it's not present.
+ * navigate the running app, optionally click/fill/evaluate/press, and get back
+ * console errors, uncaught exceptions, failed requests, the title/URL, whether
+ * an expected element/text appeared, evaluate results, and a screenshot path.
+ * Optional Playwright dep — degrades with install instructions when absent.
  */
 
 import path from 'node:path';
@@ -19,6 +19,29 @@ const ActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('fill'), selector: z.string().min(1), value: z.string() }),
   z.object({ type: z.literal('wait'), ms: z.number().int().positive().max(30_000) }),
   z.object({ type: z.literal('goto'), url: z.string().min(1) }),
+  z.object({
+    type: z.literal('evaluate'),
+    expression: z
+      .string()
+      .min(1)
+      .max(4_000)
+      .describe(
+        'JS expression or statements run in the page (page.evaluate). Prefer DOM reads ' +
+          '(document.querySelector…), not assuming window.game exists. Return JSON-safe values.',
+      ),
+  }),
+  z.object({
+    type: z.literal('press'),
+    key: z
+      .string()
+      .min(1)
+      .describe('Playwright key name, e.g. "Space", "KeyW", "ArrowLeft", "Enter".'),
+  }),
+  z.object({
+    type: z.literal('waitForText'),
+    text: z.string().min(1).describe('Substring that must appear in document body text.'),
+    timeoutMs: z.number().int().positive().max(60_000).optional(),
+  }),
 ]);
 
 export interface BrowserToolDeps {
@@ -33,19 +56,28 @@ export function createBrowserTool(deps: BrowserToolDeps = {}): ToolDefinition {
     name: 'browser_check',
     description:
       'Open a URL in a headless browser to VERIFY a web change: optionally run ' +
-      'click/fill/goto/wait actions, then report console errors, uncaught page ' +
-      'exceptions, failed network requests, the final title/URL, whether an ' +
-      'expected selector appeared, and a screenshot path. Use it to confirm UI ' +
-      'edits actually render and run — stronger than "tests pass" for front-end. ' +
-      'Requires Playwright (optional dependency).',
+      'click/fill/goto/wait/press/waitForText/evaluate actions, then report console errors, ' +
+      'uncaught page exceptions, failed network requests, final title/URL, selector/text ' +
+      'presence, evaluate results, and a screenshot path. ' +
+      'Prefer DOM assertions (waitForSelector, waitForText, evaluate on document.querySelector) ' +
+      'over window.* globals — ES modules and const keep symbols off window. ' +
+      'Absence of console errors after a short wait is WEAK smoke only; assert UI state when ' +
+      'claiming a fix is verified. Requires Playwright (optional dependency).',
     permissions: ['network'],
     // A browser launch + navigation can take a while.
     timeoutMs: 60_000,
     inputSchema: z.object({
       url: z.string().min(1).describe('URL to open (e.g. http://localhost:3000).'),
-      actions: z.array(ActionSchema).optional().describe('Optional sequence of interactions before checking.'),
+      actions: z
+        .array(ActionSchema)
+        .optional()
+        .describe('Optional sequence of interactions / probes before checking.'),
       waitForSelector: z.string().optional().describe('Assert this CSS selector is present after actions.'),
       screenshot: z.boolean().optional().describe('Save a screenshot (default true).'),
+      textSample: z
+        .boolean()
+        .optional()
+        .describe('Include a short body.innerText snippet (HUD / Game Over text).'),
     }),
     execute: async (args, ctx) => {
       const a = args as {
@@ -53,6 +85,7 @@ export function createBrowserTool(deps: BrowserToolDeps = {}): ToolDefinition {
         actions?: BrowserAction[];
         waitForSelector?: string;
         screenshot?: boolean;
+        textSample?: boolean;
       };
       const dir = deps.screenshotDir ?? os.tmpdir();
       const screenshotPath =
@@ -66,6 +99,7 @@ export function createBrowserTool(deps: BrowserToolDeps = {}): ToolDefinition {
           ...(a.actions ? { actions: a.actions } : {}),
           ...(a.waitForSelector ? { waitForSelector: a.waitForSelector } : {}),
           ...(screenshotPath ? { screenshotPath } : {}),
+          ...(a.textSample ? { textSample: true } : {}),
         },
         deps.loader,
       );
@@ -77,7 +111,18 @@ export function createBrowserTool(deps: BrowserToolDeps = {}): ToolDefinition {
         result.consoleErrors.length === 0 &&
         result.pageErrors.length === 0 &&
         result.failedRequests.length === 0 &&
-        result.selectorFound !== false;
+        result.selectorFound !== false &&
+        result.textFound !== false;
+
+      const hadDomAssertion =
+        result.selectorFound !== undefined ||
+        result.textFound !== undefined ||
+        (result.evaluateResults !== undefined && result.evaluateResults.length > 0) ||
+        !!result.bodyTextSnippet;
+
+      // Only waits / navigate / screenshot with no errors → weak smoke.
+      const onlyWeakSmoke = clean && !hadDomAssertion;
+
       return typedOk({
         ok: true,
         clean,
@@ -87,7 +132,19 @@ export function createBrowserTool(deps: BrowserToolDeps = {}): ToolDefinition {
         pageErrors: result.pageErrors,
         failedRequests: result.failedRequests,
         ...(result.selectorFound !== undefined ? { selectorFound: result.selectorFound } : {}),
+        ...(result.evaluateResults ? { evaluateResults: result.evaluateResults } : {}),
+        ...(result.textFound !== undefined ? { textFound: result.textFound } : {}),
+        ...(result.bodyTextSnippet ? { bodyTextSnippet: result.bodyTextSnippet } : {}),
         ...(result.screenshotPath ? { screenshotPath: result.screenshotPath } : {}),
+        ...(onlyWeakSmoke
+          ? {
+              note:
+                'Weak smoke only: no selector/text/evaluate assertions. ' +
+                'No console/page errors is necessary but not sufficient to claim a logic fix. ' +
+                'Add waitForSelector, waitForText, or evaluate (DOM/read hooks) for stronger evidence.',
+              smokeStrength: 'weak' as const,
+            }
+          : { smokeStrength: 'asserted' as const }),
       });
     },
   };
