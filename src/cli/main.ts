@@ -28,6 +28,12 @@ import {
   wantsPrintConfig,
   wantsSetKey,
 } from "./desktopConfig.js";
+import {
+  runPluginsInstall,
+  runPluginsStatus,
+  wantsPluginsInstall,
+  wantsPluginsStatus,
+} from "./plugins/cliFlags.js";
 import { loadSkillMdSkills } from "./skillsMd.js";
 import { listCodingSkills } from "@zelari/core/skills";
 import { getCurrentVersion } from "./updater.js";
@@ -207,6 +213,15 @@ function pickRootComponent(): {
     console.log(`zelari-code v${VERSION}`);
     process.exit(0);
   }
+  // Desktop / scripts: optional plugin status + install (JSON on stdout).
+  if (wantsPluginsStatus(argv)) {
+    void runPluginsStatus(argv).then((code) => process.exit(code));
+    return { kind: "done" };
+  }
+  if (wantsPluginsInstall(argv)) {
+    void runPluginsInstall(argv).then((code) => process.exit(code));
+    return { kind: "done" };
+  }
   if (argv.includes("--doctor") || argv.includes("doctor")) {
     // v1.0.3: install-health diagnostic. Runs BEFORE the bundle is loaded
     // and before any provider / config work, so it works on a broken
@@ -279,6 +294,9 @@ function pickRootComponent(): {
         "    --provider <id>    Provider override (default: active)\n" +
         "    --model <id>       Model override (default: provider default)\n" +
         "  --print-config      Print provider/model config as JSON (no secrets)\n" +
+        "  --plugins-status    JSON status of optional plugins (Playwright, eslint, …)\n" +
+        "  --plugins-install <id>  Install plugin (playwright also fetches Chromium)\n" +
+        "    --cwd <path>       Workspace for -D installs (default: process.cwd())\n" +
         "  --set-config        Persist provider/model/endpoint\n" +
         "    --provider <id>    Set active provider\n" +
         "    --model <id>       Set model for that provider\n" +

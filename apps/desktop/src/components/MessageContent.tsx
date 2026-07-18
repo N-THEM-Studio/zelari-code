@@ -5,6 +5,12 @@
 
 import type { MessageStats } from "../types";
 import { scrubDisplayText } from "./scrubDisplayText";
+import {
+  hasQuestionMarker,
+  parseClarificationRequest,
+  stripQuestionBlocks,
+} from "./parseClarification";
+import { ClarificationCard } from "./ClarificationCard";
 
 type Block =
   | { kind: "heading"; level: number; text: string }
@@ -42,6 +48,48 @@ function parseTableRow(line: string): string[] {
   if (s.startsWith("|")) s = s.slice(1);
   if (s.endsWith("|")) s = s.slice(0, -1);
   return s.split("|").map((c) => stripInlineArtifacts(c.trim()));
+}
+
+/**
+ * Collapse consecutive identical paragraphs so a model text-loop does not
+ * paint dozens of the same card in the chat UI. Keeps the first two, then
+ * a single ×N marker.
+ */
+function collapseRepeatedParagraphBlocks(blocks: Block[]): Block[] {
+  if (blocks.length < 3) return blocks;
+  const out: Block[] = [];
+  let i = 0;
+  while (i < blocks.length) {
+    const b = blocks[i]!;
+    if (b.kind !== "paragraph") {
+      out.push(b);
+      i++;
+      continue;
+    }
+    const key = b.text.trim();
+    let j = i + 1;
+    while (
+      j < blocks.length &&
+      blocks[j]!.kind === "paragraph" &&
+      (blocks[j] as { kind: "paragraph"; text: string }).text.trim() === key
+    ) {
+      j++;
+    }
+    const count = j - i;
+    if (count >= 3 && key.length >= 40) {
+      out.push(b);
+      if (count >= 2) out.push(blocks[i + 1]!);
+      out.push({
+        kind: "paragraph",
+        text: `⋯ repeated ×${count} (model loop — generation stopped or truncated)`,
+      });
+      i = j;
+    } else {
+      out.push(b);
+      i++;
+    }
+  }
+  return out;
 }
 
 function parseBlocks(raw: string): Block[] {
@@ -155,7 +203,7 @@ function parseBlocks(raw: string): Block[] {
     }
   }
 
-  return blocks;
+  return collapseRepeatedParagraphBlocks(blocks);
 }
 
 function formatDuration(ms: number): string {
@@ -174,6 +222,10 @@ interface Props {
   stats?: MessageStats;
   /** When true, show thinking animation even if content empty */
   showThinking?: boolean;
+  /** Disable clarification buttons while another run is active */
+  clarificationDisabled?: boolean;
+  /** User picked a choice from ---QUESTION--- */
+  onClarificationChoose?: (choice: string) => void;
 }
 
 export function MessageContent({
@@ -182,6 +234,8 @@ export function MessageContent({
   thinking,
   stats,
   showThinking,
+  clarificationDisabled,
+  onClarificationChoose,
 }: Props) {
   if (showThinking || (thinking && !content.trim())) {
     return (
@@ -194,10 +248,19 @@ export function MessageContent({
     );
   }
 
+  const raw = content || "";
+  const clarification = parseClarificationRequest(raw);
+  // Prose without the private question channel (card renders it separately).
+  // While streaming an incomplete QUESTION, hide the raw marker tail.
+  let proseSource = stripQuestionBlocks(raw);
+  if (streaming && hasQuestionMarker(raw) && !clarification) {
+    proseSource = stripQuestionBlocks(raw);
+  }
+
   // Strip tool-call XML / MiniMax invoke noise that leaked into prose.
   // Streaming: only closed blocks (never eat prose after an unclosed open tag).
-  const clean = scrubDisplayText(content || "", { streaming: !!streaming });
-  if (!clean.trim() && streaming) {
+  const clean = scrubDisplayText(proseSource, { streaming: !!streaming });
+  if (!clean.trim() && streaming && !clarification) {
     return (
       <div className="thinking-block" aria-live="polite" aria-busy="true">
         <span className="thinking-orb" />
@@ -209,6 +272,8 @@ export function MessageContent({
   }
 
   const blocks = parseBlocks(clean);
+  const showIncompleteQuestion =
+    !streaming && hasQuestionMarker(raw) && !clarification;
 
   return (
     <div className={`md-content${streaming ? " is-streaming" : ""}`}>
@@ -283,6 +348,22 @@ export function MessageContent({
         }
       })}
       {streaming && <span className="stream-cursor" aria-hidden />}
+      {clarification && !streaming && onClarificationChoose ? (
+        <ClarificationCard
+          request={clarification}
+          disabled={clarificationDisabled}
+          onChoose={onClarificationChoose}
+        />
+      ) : null}
+      {showIncompleteQuestion ? (
+        <div className="clarification-card is-incomplete" role="status">
+          <div className="clarification-kicker">Incomplete question</div>
+          <div className="clarification-hint">
+            The agent started a ---QUESTION--- block but did not finish the JSON.
+            Type your answer in the composer, or ask it to re-state the choices.
+          </div>
+        </div>
+      ) : null}
       {stats && !streaming && (
         <div className="msg-stats">
           {stats.durationMs != null && (

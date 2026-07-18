@@ -7,6 +7,8 @@ import {
   extractToolName,
   getAppConfig,
   getCliStatus,
+  getPluginsStatus,
+  installPlugin,
   onAgentEvent,
   onAgentStderr,
   onRunFinished,
@@ -27,6 +29,10 @@ import { scrubDisplayText } from "./components/scrubDisplayText";
 import { ProjectPanel } from "./components/ProjectPanel";
 import { CliSetupGuide } from "./components/CliSetupGuide";
 import { TitleBar } from "./components/TitleBar";
+import {
+  PluginInstallBanner,
+  type PluginStatusRow,
+} from "./components/PluginInstallBanner";
 import type {
   AgentMessageLite,
   AppView,
@@ -318,6 +324,12 @@ export default function App() {
   /** User dismissed the missing-CLI setup overlay for this session. */
   const [setupDismissed, setSetupDismissed] = useState(false);
   const [cliStatusLoading, setCliStatusLoading] = useState(true);
+  /** Optional plugins (Playwright, etc.) missing in the current workdir. */
+  const [pluginRows, setPluginRows] = useState<PluginStatusRow[]>([]);
+  const [pluginBannerDismissed, setPluginBannerDismissed] = useState(false);
+  const [installingPluginId, setInstallingPluginId] = useState<string | null>(
+    null,
+  );
   /** Live tool activity line (no per-tool cards in the stream). */
   const [liveToolLabel, setLiveToolLabel] = useState<string | null>(null);
   const [liveMemberName, setLiveMemberName] = useState<string | null>(null);
@@ -964,6 +976,15 @@ export default function App() {
             (typeof (ev as { error?: string }).error === "string" &&
               (ev as { error?: string }).error) ||
             "Unknown error";
+          const code =
+            typeof (ev as { code?: string }).code === "string"
+              ? (ev as { code?: string }).code
+              : undefined;
+          if (code === "assistant_text_loop") {
+            setStatusLine(
+              "Model stuck repeating the same text — stopped. Retry or ask for tool-based fixes.",
+            );
+          }
           setConversations((prev) =>
             prev.map((c) =>
               c.id === convId
@@ -1095,6 +1116,54 @@ export default function App() {
       unsubs.length = 0;
     };
   }, [refreshCli]);
+
+  const refreshPlugins = useCallback(async () => {
+    try {
+      const snap = await getPluginsStatus(workdir ?? undefined);
+      setPluginRows(
+        (snap.plugins ?? []).map((p) => ({
+          id: p.id,
+          label: p.label,
+          present: p.present,
+          description: p.description,
+          postInstallHint: p.postInstallHint,
+        })),
+      );
+    } catch {
+      // Older CLI without --plugins-status — ignore silently.
+      setPluginRows([]);
+    }
+  }, [workdir]);
+
+  useEffect(() => {
+    setPluginBannerDismissed(false);
+    void refreshPlugins();
+  }, [workdir, refreshPlugins]);
+
+  const onInstallPlugin = useCallback(
+    async (id: string) => {
+      setInstallingPluginId(id);
+      setStatusLine(`Installing plugin ${id}…`);
+      try {
+        const res = await installPlugin(id, workdir ?? undefined);
+        if (res.ok) {
+          setStatusLine(
+            res.message ||
+              `Installed ${id}` +
+                (res.postInstallHint ? ` — ${res.postInstallHint}` : ""),
+          );
+          await refreshPlugins();
+        } else {
+          setStatusLine(res.message || `Install failed for ${id}`);
+        }
+      } catch (e) {
+        setStatusLine(e instanceof Error ? e.message : String(e));
+      } finally {
+        setInstallingPluginId(null);
+      }
+    },
+    [workdir, refreshPlugins],
+  );
 
   const startNewChat = () => {
     setFollowStream(true);
@@ -1717,6 +1786,17 @@ export default function App() {
 
         <div className="chat-scroll-shell">
           <div className="chat-scroll" ref={scrollRef}>
+            {!pluginBannerDismissed &&
+              pluginRows.some((p) => !p.present) && (
+                <div className="chat-inner" style={{ paddingBottom: 0 }}>
+                  <PluginInstallBanner
+                    plugins={pluginRows}
+                    installingId={installingPluginId}
+                    onInstall={(id) => void onInstallPlugin(id)}
+                    onDismiss={() => setPluginBannerDismissed(true)}
+                  />
+                </div>
+              )}
             {empty && !running ? (
               <div className="empty-state">
                 <div className="brand-mark lg" aria-hidden>
@@ -1776,6 +1856,11 @@ export default function App() {
                               m.meta === "thinking" &&
                               !m.content.trim()
                             }
+                            clarificationDisabled={running}
+                            onClarificationChoose={(choice) => {
+                              if (running) return;
+                              void send(choice);
+                            }}
                           />
                         </ReplyAccordion>
                       </div>

@@ -122,6 +122,7 @@ export const NATIVE_TOOL_PROTOCOL_MODULE: SystemPromptModule = {
 - Pass complete, valid arguments. Required parameters must be present.
 - Prefer tools over asking the user to paste file contents.
 - After durable changes, briefly name what you created or modified.
+- **Act, don't narrate**: if you will edit/fix files, call the tools in this turn. Do not restate the same diagnosis or "I will fix…" plan on a loop without tool calls.
 - Text-only tool blocks (\`---TOOLS---\` JSON) are a legacy fallback — use them only if the runtime has no native tool channel.`,
 };
 
@@ -138,7 +139,8 @@ export const CODING_PRACTICES_MODULE: SystemPromptModule = {
 - **Don't invent**: no fake APIs, deps, or config keys — discover from the tree or package manifests.
 - **Verify**: after non-trivial edits, run the project's tests/typecheck/build when available; fix failures you introduced.
 - **Use project scripts**: prefer package.json / Makefile / existing tooling over ad-hoc commands.
-- **Finish**: list the paths you wrote/edited and how to verify. If you wrote nothing, say so honestly — do not invent a done report.`,
+- **Finish**: list the paths you wrote/edited and how to verify. If you wrote nothing, say so honestly — do not invent a done report.
+- **No spam**: never repeat the same paragraph or status line. One diagnosis, then tools (or one short final answer).`,
 };
 
 /**

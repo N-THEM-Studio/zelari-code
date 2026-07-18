@@ -29,8 +29,10 @@ function stripClosedBlocks(text: string): string {
     .replace(/<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi, "")
     .replace(/<\/invoke>/gi, "")
     .replace(/<parameter\b[^>]*>[\s\S]*?<\/parameter>/gi, "")
-    .replace(/<\/parameter>/gi, "")
-    .replace(/---QUESTION---[\s\S]*?---END---/g, "");
+    .replace(/<\/parameter>/gi, "");
+  // NOTE: do NOT strip ---QUESTION--- here. Desktop renders those as an
+  // interactive ClarificationCard (choices). Stripping them made questions
+  // invisible ("---QUESTION" flash then gone / never shown).
   // Closed garbled minimax channel blobs (bounded)
   out = out.replace(
     /\]\s*<\]\s*minimax\s*\[>\s*\[?<invoke\b[^>]*>[\s\S]*?<\/invoke>/gi,
@@ -48,7 +50,7 @@ function stripTrailingOpen(text: string): string {
     .replace(/<tool_call>[\s\S]*$/gi, "")
     .replace(/<function_call>[\s\S]*$/gi, "")
     .replace(/<invoke\b[^>]*>[\s\S]*$/gi, "")
-    .replace(/---QUESTION---[\s\S]*$/g, "")
+    // Keep ---QUESTION--- for ClarificationCard (even if ---END--- is missing).
     // Trailing garbled minimax open
     .replace(/\]\s*<\]\s*minimax\s*\[>[\s\S]*$/gi, "")
     .replace(/^\s*\]\s*<\]\s*minimax\s*\[>.*$/gim, "")

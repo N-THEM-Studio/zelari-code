@@ -1346,6 +1346,70 @@ fn normalize_phase(phase: &str) -> String {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginsCwdArgs {
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PluginsInstallArgs {
+    id: String,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+/// `zelari-code --plugins-status [--cwd <path>]` → JSON plugin list.
+#[tauri::command]
+fn plugins_status(args: PluginsCwdArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv: Vec<String> = vec!["--plugins-status".into()];
+    if let Some(ref cwd) = args.cwd {
+        if !cwd.trim().is_empty() {
+            argv.push("--cwd".into());
+            argv.push(cwd.clone());
+        }
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    serde_json::from_str(raw.trim())
+        .map_err(|e| format!("Invalid --plugins-status JSON: {e}\n{raw}"))
+}
+
+/// `zelari-code --plugins-install <id> [--cwd <path>]` → JSON install result.
+/// Installs Playwright package + Chromium when id=playwright.
+#[tauri::command]
+fn plugins_install(args: PluginsInstallArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let id = args.id.trim();
+    if id.is_empty() {
+        return Err("plugin id is required".into());
+    }
+    let mut argv: Vec<String> = vec!["--plugins-install".into(), id.into()];
+    if let Some(ref cwd) = args.cwd {
+        if !cwd.trim().is_empty() {
+            argv.push("--cwd".into());
+            argv.push(cwd.clone());
+        }
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    // Install may take minutes (Chromium). run_cli_capture waits for process end.
+    // Prefer JSON on stdout even when exit code non-zero.
+    serde_json::from_str(raw.trim()).or_else(|_| {
+        Ok(serde_json::json!({
+            "ok": false,
+            "id": id,
+            "message": raw.trim(),
+            "output": raw,
+        }))
+    })
+}
+
 #[tauri::command]
 fn run_task(
     app: AppHandle,
@@ -1670,6 +1734,8 @@ pub fn run() {
             discover_models,
             check_cli_update,
             update_cli,
+            plugins_status,
+            plugins_install,
             run_task,
             cancel_run,
             get_git_status,

@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.18.0] - 2026-07-18
+
+### Added
+- **Assistant text-loop guard** (`assistant_text_loop`) — `AgentHarness` detects degenerate repeated prose (same diagnosis / “I’ll fix…” block ×N), stops generation early, seals a collapsed transcript, and emits a recoverable error so Desktop/CLI do not stream max_tokens of spam.
+- **Desktop clarification UI** — `---QUESTION---` blocks render as a choice card (not stripped). Incomplete JSON shows a fallback hint; picking a choice sends the answer as the next user turn.
+- **Desktop plugin install banner** — detects missing optional tools (Playwright, eslint, ruff, LSP, …) for the open folder and offers one-click install.
+- **CLI plugin flags** — `zelari-code --plugins-status [--cwd]` and `--plugins-install <id> [--cwd]` (JSON for Desktop/scripts). Playwright install also runs `npx playwright install chromium`.
+
+### Fixed
+- **Desktop questions invisible** — scrubber no longer deletes `---QUESTION---` before render (CLI had a picker; Desktop did not).
+- **Playwright / browser_check on Desktop** — PluginGate existed only in the Ink TUI; Desktop headless path had no install path. Clearer `browser_check` error with install commands.
+- **Playwright post-install** — package install alone left Chromium missing; installer now fetches Chromium after `npm i -D playwright`.
+
+### Changed
+- **Prompt** — tool-usage / coding practices: act with tools, do not restate the same diagnosis in a loop.
+
+### Note (Desktop)
+- Installer does **not** upgrade the coding engine. Use `npm i -g zelari-code@1.18.0` (or Settings → Update CLI). Rebuild/reinstall Desktop for the clarification card + plugin banner.
+
 ## [1.17.1] - 2026-07-18
 
 ### Changed
@@ -210,6 +229,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [1.16.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [1.18.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).

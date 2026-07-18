@@ -60,23 +60,94 @@ export async function installPlugin(
   const args = ['install', scopeFlag, spec.npmPackage];
 
   // Attempt 1: PATH-resolved npm (shell on win32 for the .cmd shim).
-  const primary = await runNpm(executor, args, cwd, 'shim');
-  if (primary.ok) return primary;
+  let result = await runNpm(executor, args, cwd, 'shim');
 
   // Attempt 2: if attempt 1 died like a broken bin shim (Volta/nvm/fnm),
   // retry via the npm bundled with Node. No shell, no .cmd in the way.
-  const npmCli = resolveBundledNpmCli();
-  if (npmCli && looksLikeBrokenShim(primary.exitCode, primary.output)) {
-    const fallback = await runNpm(executor, args, cwd, 'bundled', npmCli);
-    return {
-      ...fallback,
-      output:
-        `[plugins] npm shim failed (${primary.error ?? 'exit ' + primary.exitCode}); ` +
-        `retried via bundled npm (${npmCli}).\n${fallback.output}`,
-    };
+  if (!result.ok) {
+    const npmCli = resolveBundledNpmCli();
+    if (npmCli && looksLikeBrokenShim(result.exitCode, result.output)) {
+      const fallback = await runNpm(executor, args, cwd, 'bundled', npmCli);
+      result = {
+        ...fallback,
+        output:
+          `[plugins] npm shim failed (${result.error ?? 'exit ' + result.exitCode}); ` +
+          `retried via bundled npm (${npmCli}).\n${fallback.output}`,
+      };
+    }
   }
 
-  return primary;
+  if (!result.ok) return result;
+
+  // Playwright needs a second step: download Chromium (~150 MB). Without it,
+  // browser_check still fails with "Executable doesn't exist".
+  if (spec.id === 'playwright') {
+    const browsers = await runPlaywrightInstallChromium(cwd, executor);
+    result = {
+      ...result,
+      ok: browsers.ok ? true : result.ok,
+      // Prefer package success even if browser download fails — surface both.
+      output:
+        (result.output ? result.output + '\n' : '') +
+        (browsers.output ? `[playwright browsers]\n${browsers.output}` : '') +
+        (browsers.ok
+          ? ''
+          : `\n[playwright] Chromium install failed: ${browsers.error ?? 'unknown'}. ` +
+            `Run: npx playwright install chromium`),
+      error: browsers.ok
+        ? result.error
+        : result.error ??
+          `playwright package installed but Chromium download failed: ${browsers.error ?? 'unknown'}`,
+    };
+    // Package is usable for import even if browser download failed — keep ok
+    // true so the gate advances; browser_check will print a clear error.
+    result = { ...result, ok: true };
+  }
+
+  return result;
+}
+
+/**
+ * `npx playwright install chromium` in the project cwd (after npm i -D playwright).
+ */
+function runPlaywrightInstallChromium(
+  cwd: string,
+  executor: typeof spawn,
+): Promise<InstallResult> {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    const stdio: ['ignore', 'pipe', 'pipe'] = ['ignore', 'pipe', 'pipe'];
+    const args = ['playwright', 'install', 'chromium'];
+    const child: ChildProcess =
+      process.platform === 'win32'
+        ? executor(buildCmdLine('npx', args), { stdio, shell: true, cwd })
+        : executor('npx', args, { stdio, cwd });
+
+    child.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
+    child.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on('error', (err) => {
+      resolve({
+        ok: false,
+        output: stdout + stderr,
+        error: err.message,
+        exitCode: null,
+      });
+    });
+    child.on('close', (code) => {
+      const ok = code === 0;
+      resolve({
+        ok,
+        output: stdout + stderr,
+        exitCode: code,
+        error: ok ? undefined : `npx playwright install chromium exited ${code}`,
+      });
+    });
+  });
 }
 
 /**

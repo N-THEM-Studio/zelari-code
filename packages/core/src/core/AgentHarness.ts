@@ -32,6 +32,17 @@ import {
   type UsageBreakdown,
 } from '../shared/events.js';
 import { ToolRegistry } from './tools/registry.js';
+import {
+  collapseLoopedAssistantText,
+  detectAssistantTextLoop,
+} from './textLoopDetect.js';
+
+export {
+  collapseLoopedAssistantText,
+  detectAssistantTextLoop,
+  normalizeLoopUnit,
+  type TextLoopHit,
+} from './textLoopDetect.js';
 
 // --- Public types -----------------------------------------------------------
 
@@ -784,6 +795,8 @@ export class AgentHarness {
         cached?: string;
       };
       const pendingNativeTools: PendingNativeTool[] = [];
+      /** Last turnText length at which we ran the repetition detector. */
+      let lastLoopCheckLen = 0;
 
       for await (const delta of stream) {
         if (this.cancelled) {
@@ -808,6 +821,42 @@ export class AgentHarness {
           );
           this.emit(deltaEvent);
           yield deltaEvent;
+
+          // Degenerate prose loop (same diagnosis / "I'll fix" block ×N).
+          // Stop the turn early so Desktop/CLI do not stream max_tokens of spam.
+          // Check every ~48 chars once the buffer is long enough for 3× units.
+          if (
+            turnText.length >= 48 * 3 &&
+            turnText.length - lastLoopCheckLen >= 48
+          ) {
+            lastLoopCheckLen = turnText.length;
+            const loopHit = detectAssistantTextLoop(turnText);
+            if (loopHit.looping) {
+              const loopErr = createBrainEvent('error', this.sessionId, {
+                severity: 'recoverable',
+                message:
+                  `Assistant text loop detected (same block ×${loopHit.count}). ` +
+                  `Stopped generation — model was repeating instead of calling tools or finishing. ` +
+                  `Retry or ask it to apply changes with tools.`,
+                code: 'assistant_text_loop',
+              });
+              this.emit(loopErr);
+              yield loopErr;
+              finishRef.value = 'stop';
+              // Seal a collapsed transcript so the next user turn is not polluted.
+              const sealed = collapseLoopedAssistantText(turnText);
+              if (sealed.length > 0 || turnReasoning.length > 0) {
+                this.config.messages.push({
+                  role: 'assistant',
+                  content: sealed,
+                  ...(turnReasoning.length > 0
+                    ? { reasoningContent: turnReasoning }
+                    : {}),
+                });
+              }
+              break;
+            }
+          }
         } else if (delta.kind === 'thinking') {
           // Keep a full copy for transcript echo-back (DeepSeek thinking mode).
           turnReasoning += delta.delta;

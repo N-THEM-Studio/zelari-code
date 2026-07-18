@@ -67,6 +67,48 @@ export async function runTask(args: RunTaskArgs): Promise<string> {
   return invoke<string>("run_task", { args: payload });
 }
 
+export interface PluginStatusDto {
+  id: string;
+  label: string;
+  present: boolean;
+  description?: string;
+  postInstallHint?: string;
+  npmPackage?: string;
+  installScope?: string;
+}
+
+export interface PluginsStatusSnapshot {
+  cwd: string;
+  plugins: PluginStatusDto[];
+}
+
+/** List optional plugins (Playwright, eslint, …) and whether they are present. */
+export async function getPluginsStatus(
+  cwd?: string | null,
+): Promise<PluginsStatusSnapshot> {
+  return invoke<PluginsStatusSnapshot>("plugins_status", {
+    args: { cwd: cwd ?? null },
+  });
+}
+
+export interface InstallPluginResult {
+  ok: boolean;
+  id: string;
+  message: string;
+  output?: string;
+  postInstallHint?: string;
+}
+
+/** Install an optional plugin into the project (or globally for LSP). */
+export async function installPlugin(
+  id: string,
+  cwd?: string | null,
+): Promise<InstallPluginResult> {
+  return invoke<InstallPluginResult>("plugins_install", {
+    args: { id, cwd: cwd ?? null },
+  });
+}
+
 export async function cancelRun(): Promise<void> {
   return invoke("cancel_run");
 }

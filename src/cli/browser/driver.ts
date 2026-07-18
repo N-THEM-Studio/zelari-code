@@ -160,7 +160,11 @@ export async function runBrowserCheck(
     return {
       ...base,
       error:
-        'browser automation unavailable — install Playwright (`npm i -D playwright && npx playwright install chromium`) to enable browser_check',
+        'browser automation unavailable — Playwright is not installed in this workspace. ' +
+        'Install it with: `zelari-code --plugins-install playwright --cwd .` ' +
+        '(or Desktop banner “Install”, or CLI `/plugins install playwright`, or ' +
+        '`npm i -D playwright && npx playwright install chromium`). ' +
+        'Then re-run browser_check.',
     };
   }
 
