@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.1] - 2026-07-18
+
+### Changed
+- **Unified durable context load** — `loadDurableContext()` async (shared by agent/council/zelari/headless) with short process cache; avoids double materialize and sync/async drift. Zelari mission passes memory-only RAG; compose injects HEAD once.
+- **Agent mode sees durable HEAD** — HEAD materialization merged into volatile context (not only council/zelari).
+- **Cache stats single source** — `computeSessionStatsDelta` delegates to `accumulatePromptCacheStats`; richer `/cache stats` (premium, hash, busts, TTL pref).
+- **Checkpoint policy** — hard mission commits prefer linking the mission-start checkpoint instead of creating a new one every slice.
+- **`/state status`** — shows reusable discovery count, parent, verification, checkpoint, stablePromptHash.
+- **GUIDA** — honest `ZELARI_PROMPT_CACHE_TTL` docs (OpenAI-compat = prefix stability; Desktop uses global CLI engine).
+
+### Fixed
+- **Double durable block** on Zelari path (mission materialize + compose sync fallback).
+- **`stablePromptHash` plumbing** through `tryStateCommit` when provided.
+
+### Note (Desktop)
+- Installer does **not** upgrade the coding engine. Use `npm i -g zelari-code@1.17.1` (or Settings → Update CLI).
+
 ## [1.17.0] - 2026-07-18
 
 ### Added

@@ -317,14 +317,29 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             "../workspace/planDetect.js"
           );
           hasPlan = hasWorkspacePlan(cwd);
+          const { loadDurableContext } = await import(
+            "../state/loadDurableContext.js"
+          );
+          const durableState = await loadDurableContext(cwd);
           const composed = composeProjectContext({
             mode: "agent",
             cwd,
             userMessage: userText,
             includeLessons: false,
+            durableState: durableState || undefined,
+            // Pre-loaded async — skip sync fallback double-read.
+            includeDurableState: false,
           });
           composedWorkspace = composed.workspaceContext;
           composedInstructions = composed.projectInstructions;
+          // Put durable into volatile workspace path via rag if compose put it
+          // in ragContext — agent buildSystemPrompt uses workspaceContext only;
+          // merge rag durable into workspace for agent visibility.
+          if (composed.ragContext) {
+            composedWorkspace = [composedWorkspace, composed.ragContext]
+              .filter(Boolean)
+              .join("\n\n");
+          }
           for (const w of composed.warnings) {
             appendSystem(setMessages, w, Date.now());
           }
@@ -1169,6 +1184,41 @@ async function dispatchCouncilPromptImpl(
   let sliceRan = false;
   let sliceDegraded = false;
   const PROVIDER_ERROR_ABORT_THRESHOLD = 2;
+  // Pre-load durable HEAD once (async materialize) for all council members.
+  let councilCompose: {
+    workspaceContext: string;
+    ragContext?: string;
+  } = { workspaceContext: formatHistoryForCouncil(4) || "" };
+  try {
+    const { loadDurableContext } = await import(
+      "../state/loadDurableContext.js"
+    );
+    const durableState = await loadDurableContext(process.cwd());
+    const composed = composeProjectContext({
+      mode: overrides.ragContext ? "zelari" : "council",
+      cwd: process.cwd(),
+      userMessage: effectiveText,
+      memoryHits: overrides.ragContext,
+      durableState: durableState || undefined,
+      historySnippet: formatHistoryForCouncil(4) || undefined,
+      includeLessons: true,
+      includeDurableState: false,
+    });
+    for (const w of composed.warnings) {
+      appendSystem(setMessages, w, Date.now());
+    }
+    councilCompose = {
+      workspaceContext: composed.workspaceContext,
+      ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
+    };
+  } catch {
+    if (overrides.ragContext) {
+      councilCompose = {
+        workspaceContext: formatHistoryForCouncil(4) || "",
+        ragContext: overrides.ragContext,
+      };
+    }
+  }
   try {
     for await (const event of dispatchCouncil(effectiveText, {
       apiKey: envConfig.apiKey,
@@ -1178,35 +1228,10 @@ async function dispatchCouncilPromptImpl(
       sessionId,
       tools: councilToolRegistry,
       feedbackStore: councilFeedbackStore,
-      // v1.16: unified compose — product truth + draft plan ops + design index
-      // (not full vault). Memory RAG only via overrides.ragContext.
-      // Fail-soft: never block a council run if compose throws in tests/odd cwd.
-      ...(() => {
-        try {
-          const composed = composeProjectContext({
-            mode: overrides.ragContext ? "zelari" : "council",
-            cwd: process.cwd(),
-            userMessage: effectiveText,
-            memoryHits: overrides.ragContext,
-            historySnippet: formatHistoryForCouncil(4) || undefined,
-            includeLessons: true,
-          });
-          for (const w of composed.warnings) {
-            appendSystem(setMessages, w, Date.now());
-          }
-          return {
-            workspaceContext: composed.workspaceContext,
-            ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
-          };
-        } catch {
-          return {
-            workspaceContext: formatHistoryForCouncil(4) || "",
-            ...(overrides.ragContext
-              ? { ragContext: overrides.ragContext }
-              : {}),
-          };
-        }
-      })(),
+      workspaceContext: councilCompose.workspaceContext,
+      ...(councilCompose.ragContext
+        ? { ragContext: councilCompose.ragContext }
+        : {}),
       maxToolCallsPerTurn: councilMaxToolCalls,
       maxToolLoopIterations: councilMaxToolLoop,
       ...(councilMaxToolLoopHard > 0

@@ -37,8 +37,10 @@ export interface ComposeProjectContextInput {
   /** Include lessons.jsonl recall (council/zelari default on). */
   includeLessons?: boolean;
   /**
-   * When true (default for council/zelari), try to load HEAD materialize from
-   * `.zelari/state/` if `durableState` was not provided.
+   * When true (default for council/zelari/agent when state enabled), try to load
+   * HEAD materialize from `.zelari/state/` if `durableState` was not provided.
+   * Prefer async `loadDurableContext()` at call sites and pass `durableState`
+   * to avoid the sync fallback.
    */
   includeDurableState?: boolean;
 }
@@ -193,10 +195,16 @@ export function composeProjectContext(
     default: 3000,
     min: 200,
   });
+  // Default: inject durable HEAD for all modes when state is enabled, unless
+  // caller passes includeDurableState: false (e.g. already merged elsewhere).
   const wantDurable =
     input.includeDurableState ??
-    (input.mode === "council" || input.mode === "zelari");
+    (process.env.ZELARI_STATE !== "0" &&
+      (input.mode === "council" ||
+        input.mode === "zelari" ||
+        input.mode === "agent"));
   let durableRaw = input.durableState?.trim() ?? "";
+  // Sync fallback only when async loadDurableContext was not used upstream.
   if (!durableRaw && wantDurable) {
     durableRaw = readDurableHeadSync(cwd);
   }

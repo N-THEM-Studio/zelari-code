@@ -83,6 +83,7 @@ export function App(): React.ReactElement {
     cacheHitRate: 0,
     promptTokens: 0,
     stableBustCount: 0,
+    lastStableHash: undefined as string | undefined,
   });
   // v0.7.0: bump on /clear to remount <Static> (resets its internal "already
   // printed" index so the ANSI-cleared scrollback stays in sync). Also bumped

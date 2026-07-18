@@ -24,25 +24,39 @@ export async function handleStateStatus(ctx: StateSlashContext): Promise<void> {
   if (!head) {
     appendSystem(
       ctx.setMessages,
-      '[state] no durable commits yet. Run a verified Zelari slice or `/state commit [label]`.',
+      '[state] no durable commits yet. Run a verified Zelari slice or `/state commit [label]`.\n' +
+        '  Kill switch: ZELARI_STATE=0 disables the store.',
     );
     return;
   }
-  const recent = await store.list(5);
+  const discoveries = await store.loadDiscoveries(head.id);
+  const reusable = discoveries.filter((d) => d.reusable).length;
+  const recent = await store.list(8);
   const lines = recent.map((c, i: number) => {
     const ver = c.verification.ran ? (c.verification.ok ? 'ok' : 'fail') : 'n/a';
     return (
       `  ${i === 0 ? '→' : ' '} ${c.id}  ${ago(c.createdAt)}  ${c.label}` +
       `  ver=${ver}` +
-      (c.layer ? `  [${c.layer}]` : '')
+      (c.layer ? `  [${c.layer}]` : '') +
+      (c.stablePromptHash ? `  hash=${c.stablePromptHash.slice(0, 8)}` : '')
     );
   });
+  const ver = head.verification;
   appendSystem(
     ctx.setMessages,
-    `[state] HEAD ${head.id} · ${head.discoveryCount} discoveries · mode ${head.mode}\n` +
+    `[state] HEAD ${head.id} · mode ${head.mode}` +
+      (head.layer ? ` · layer ${head.layer}` : '') +
+      `\n  discoveries: ${head.discoveryCount} total, ${reusable} reusable` +
+      `\n  verification: ran=${ver.ran} ok=${ver.ok}` +
+      (ver.reportPath ? `  report=${ver.reportPath}` : '') +
+      (head.parentId ? `\n  parent: ${head.parentId}` : '') +
       (head.workspaceCheckpointId
-        ? `linked checkpoint: ${head.workspaceCheckpointId}\n`
+        ? `\n  workspaceCheckpoint: ${head.workspaceCheckpointId}`
         : '') +
+      (head.stablePromptHash
+        ? `\n  stablePromptHash: ${head.stablePromptHash}`
+        : '') +
+      `\n  created: ${ago(head.createdAt)}\n` +
       lines.join('\n'),
   );
 }

@@ -1,19 +1,17 @@
 import { calculateCost } from '../modelPricing.js';
+import {
+  accumulatePromptCacheStats,
+  emptyPromptCacheStats,
+  type PromptCacheSessionStats,
+} from '../state/promptCacheStats.js';
 
 /**
  * Compute the next session-stats snapshot after a chat turn (Task G.4.5).
  * Pure helper extracted from app.tsx so the "real usage vs ~4-char fallback"
  * branch is testable without React/Ink.
  *
- * Behavior:
- *  - When `realUsage` is present (provider honored `stream_options.include_usage`),
- *    use those numbers exactly.
- *  - When `realUsage` is null, fall back to the v3-B approximation:
- *    `Math.ceil(text.length / 4)` for both prompt and completion tokens.
- *
- * Cost is computed via `calculateCost(model, prompt, completion)` from
- * `modelPricing.ts`. The result is the new stats object; the caller is
- * responsible for merging it into state via `setSessionStats(prev => ...)`.
+ * Cache hit/premium/stable-bust math is delegated to `accumulatePromptCacheStats`
+ * (single source of truth with `/cache stats`).
  */
 export function computeSessionStatsDelta(
   realUsage: {
@@ -66,30 +64,44 @@ export function computeSessionStatsDelta(
   const contextTokens = realUsage
     ? realUsage.totalTokens || promptTokens + completionTokens
     : promptTokens + completionTokens;
-  const nextCached = (prev.cachedTokens ?? 0) + cachedPromptTokens;
-  const nextPrompt = (prev.promptTokens ?? 0) + promptTokens;
-  const premiumDelta = Math.max(0, promptTokens - cachedPromptTokens);
-  const nextPremium = (prev.premiumTokens ?? 0) + premiumDelta;
-  const cacheHitRate = nextPrompt > 0 ? nextCached / nextPrompt : 0;
 
-  let stableBustCount = prev.stableBustCount ?? 0;
-  let lastStableHash = prev.lastStableHash;
-  if (opts?.stableHash) {
-    if (lastStableHash && lastStableHash !== opts.stableHash) {
-      stableBustCount += 1;
-    }
-    lastStableHash = opts.stableHash;
-  }
+  const prevCache: PromptCacheSessionStats = {
+    ...(emptyPromptCacheStats()),
+    promptTokens: prev.promptTokens ?? 0,
+    cachedTokens: prev.cachedTokens ?? 0,
+    premiumTokens: prev.premiumTokens ?? 0,
+    hitRate: prev.cacheHitRate ?? 0,
+    estimatedCostUsd: prev.totalCostUsd,
+    lastStableHash: prev.lastStableHash,
+    stableBustCount: prev.stableBustCount ?? 0,
+    turns: 0,
+  };
+  const nextCache = accumulatePromptCacheStats(prevCache, {
+    promptTokens,
+    cachedTokens: cachedPromptTokens,
+    costUsd: turnCost,
+    stableHash: opts?.stableHash,
+  });
 
   return {
     totalTokens: prev.totalTokens + promptTokens + completionTokens,
     totalCostUsd: prev.totalCostUsd + turnCost,
-    cachedTokens: nextCached,
+    cachedTokens: nextCache.cachedTokens,
     contextTokens,
-    premiumTokens: nextPremium,
-    cacheHitRate,
-    promptTokens: nextPrompt,
-    lastStableHash,
-    stableBustCount,
+    premiumTokens: nextCache.premiumTokens,
+    cacheHitRate: nextCache.hitRate,
+    promptTokens: nextCache.promptTokens,
+    lastStableHash: nextCache.lastStableHash,
+    stableBustCount: nextCache.stableBustCount,
   };
+}
+
+/** Resolve prompt-cache TTL preference (honest: only meaningful on Anthropic path). */
+export function resolvePromptCacheTtl(
+  env: NodeJS.ProcessEnv = process.env,
+): '1h' | '5m' | 'auto' {
+  const raw = (env.ZELARI_PROMPT_CACHE_TTL ?? 'auto').toLowerCase().trim();
+  if (raw === '1h' || raw === '1hour' || raw === 'long') return '1h';
+  if (raw === '5m' || raw === '5min' || raw === 'short') return '5m';
+  return 'auto';
 }

@@ -126,6 +126,7 @@ export interface SlashDispatchParams {
     cacheHitRate?: number;
     promptTokens?: number;
     stableBustCount?: number;
+    lastStableHash?: string;
     totalTokens?: number;
   };
 }

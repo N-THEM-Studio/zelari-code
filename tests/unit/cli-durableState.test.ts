@@ -192,6 +192,7 @@ describe('tryStateCommit + restoreDurableState', () => {
       mode: 'zelari',
       label: 'first',
       verification: { ok: true, ran: true },
+      stablePromptHash: 'abc123deadbeef01',
       discoveries: discoveriesFromOutcome({
         stepId: '1',
         writeCount: 2,
@@ -200,6 +201,7 @@ describe('tryStateCommit + restoreDurableState', () => {
     });
     expect(r1.ok).toBe(true);
     expect(r1.meta?.id).toBeTruthy();
+    expect(r1.meta?.stablePromptHash).toBe('abc123deadbeef01');
 
     const r2 = await tryStateCommit({
       projectRoot: root,

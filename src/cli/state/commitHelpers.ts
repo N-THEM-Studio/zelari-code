@@ -18,7 +18,14 @@ export interface TryCommitArgs {
   force?: boolean;
   discoveries?: Discovery[];
   changedPaths?: string[];
-  /** When true, also create a git workspace checkpoint and link it. */
+  /** Hash of stable prompt pack at commit time (cache coordination). */
+  stablePromptHash?: string;
+  /**
+   * Prefer linking this existing git checkpoint (avoids creating a new one).
+   * Used when withCheckpoint is true or when only linking without create.
+   */
+  workspaceCheckpointId?: string;
+  /** When true, create a git workspace checkpoint if none was provided. */
   withCheckpoint?: boolean;
   store?: DurableStateStore;
   env?: NodeJS.ProcessEnv;
@@ -37,8 +44,12 @@ export interface TryCommitResult {
 export async function tryStateCommit(args: TryCommitArgs): Promise<TryCommitResult> {
   try {
     const store = args.store ?? (await getStateStore(args.projectRoot, args.env));
-    let workspaceCheckpointId: string | undefined;
-    if (args.withCheckpoint && (args.env ?? process.env).ZELARI_CHECKPOINT !== '0') {
+    let workspaceCheckpointId = args.workspaceCheckpointId;
+    if (
+      !workspaceCheckpointId &&
+      args.withCheckpoint &&
+      (args.env ?? process.env).ZELARI_CHECKPOINT !== '0'
+    ) {
       const cp = await createCheckpoint(
         args.projectRoot,
         `state ${args.layer ?? args.label}`.slice(0, 80),
@@ -54,9 +65,17 @@ export async function tryStateCommit(args: TryCommitArgs): Promise<TryCommitResu
       verification: args.verification,
       changedPaths: args.changedPaths,
       discoveries: args.discoveries,
+      stablePromptHash: args.stablePromptHash,
       force: args.force,
     });
     if (!meta.id) return { ok: false, error: 'noop store', checkpointId: workspaceCheckpointId };
+    // Invalidate durable context cache so next turn sees new HEAD.
+    try {
+      const { clearDurableContextCache } = await import('./loadDurableContext.js');
+      clearDurableContextCache();
+    } catch {
+      /* optional */
+    }
     return { ok: true, meta, checkpointId: workspaceCheckpointId };
   } catch (err) {
     return {

@@ -507,10 +507,12 @@ Accumulo **verificato** di artefatti (Palmer *State, Not Tokens*) e ottimizzazio
 |---|---|---|
 | `ZELARI_STATE` | `1` | `0` disabilita durable state store |
 | `ZELARI_STATE_AUTO` | `0` (agent) | Auto-commit agent mode (Zelari/council post-verify sono on) |
-| `ZELARI_PROMPT_CACHE_TTL` | `auto` | Preferenza TTL (1h/5m) per path Anthropic futuri; OpenAI-compat usa prefix stabile |
+| `ZELARI_PROMPT_CACHE_TTL` | `auto` | Preferenza documentata in `/cache stats` (`1h`/`5m`/`auto`). Sul path OpenAI-compat il caching è automatico server-side: l’efficienza reale viene dal **prefix stabile** (identity+tools), non da questo flag. Marker Anthropic futuri potranno usarlo. |
 | `ZELARI_CTX_DURABLE_CHARS` | `3000` | Cap del blocco durable iniettato nel volatile prompt |
 
-**Memoria vs state:** `.zelari/memory/` è retrieval soft; `.zelari/state/` è catena di commit post-verification. I worker successivi ereditano `materializeContext(HEAD)` senza ri-derivare via LLM.
+**Memoria vs state:** `.zelari/memory/` è retrieval soft; `.zelari/state/` è catena di commit post-verification. Agent/council/zelari/headless caricano HEAD via `loadDurableContext()` (async) e lo mettono nel **volatile** context (non nel system prefix cachabile).
+
+**Restore:** `/state restore [id]` ripunta HEAD e, se presente, ripristina il git checkpoint collegato. Usa `--no-tree` per solo HEAD cognitivo.
 
 #### Semantic search
 

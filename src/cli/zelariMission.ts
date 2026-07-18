@@ -264,17 +264,9 @@ export async function runZelariMission(
       limit: 8,
       metadataFilter: { projectRoot: deps.projectRoot },
     });
-    // Memory (soft RAG) + durable HEAD materialization (verified + progress).
-    // lastGoodCommitId is retained for resume/oracle; next-slice context uses HEAD
-    // so progress soft-commits are visible immediately.
-    let durableBlock = '';
-    try {
-      durableBlock = await stateStore.materializeContext();
-    } catch {
-      durableBlock = '';
-    }
-    const memBlock = formatMemoryHits(hits);
-    const ragContext = [durableBlock, memBlock].filter(Boolean).join('\n\n');
+    // Memory only here — durable HEAD is injected once via compose/loadDurableContext
+    // in the council dispatch path (avoids double materialize of the same block).
+    const ragContext = formatMemoryHits(hits);
     // buildSlicePrompt uses iteration>1 for "fix remaining failures" — that
     // should track implementation attempts, not free design steps.
     const promptIter = runMode === 'implementation' ? implStep : 1;
@@ -364,7 +356,9 @@ export async function runZelariMission(
         sessionId: missionId,
         verification: { ok: hard, ran: result.ran },
         force: !hard,
-        withCheckpoint: hard,
+        // Prefer linking the mission-start checkpoint (no explosion).
+        workspaceCheckpointId: missionCheckpointId,
+        withCheckpoint: hard && !missionCheckpointId,
         discoveries: discoveriesFromOutcome({
           stepId: `${missionId}-${step}`,
           synthesis: result.synthesisText,
@@ -378,7 +372,7 @@ export async function runZelariMission(
         // Only advance lastGoodCommitId on verified commits (Palmer: oracle PASS).
         if (hard) {
           state.lastGoodCommitId = commitRes.meta.id;
-          if (commitRes.checkpointId) {
+          if (commitRes.checkpointId && !missionCheckpointId) {
             missionCheckpointId = commitRes.checkpointId;
           }
         }

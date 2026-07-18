@@ -230,11 +230,16 @@ async function runHeadlessSingle(
     const { composeProjectContext } = await import(
       './workspace/composeContext.js'
     );
+    const { loadDurableContext } = await import('./state/loadDurableContext.js');
+    const cwd = process.cwd();
+    const durableState = await loadDurableContext(cwd);
     const composed = composeProjectContext({
       mode: 'agent',
-      cwd: process.cwd(),
+      cwd,
       userMessage: opts.task,
       includeLessons: false,
+      durableState: durableState || undefined,
+      includeDurableState: false,
     });
     let sshBlock = '';
     try {
@@ -248,6 +253,10 @@ async function runHeadlessSingle(
       .join('\n\n');
     // Concatenated form of stable+volatile (buildSystemPromptSplit); headless
     // uses a single system message for maximum provider compatibility.
+    // Merge durable (ragContext) into workspace so single-system prompt sees it.
+    const agentWorkspace = [composed.workspaceContext, composed.ragContext]
+      .filter(Boolean)
+      .join('\n\n');
     systemPrompt = buildSystemPrompt(
       { ...headlessRole, systemPrompt: rolePrompt },
       {
@@ -255,7 +264,7 @@ async function runHeadlessSingle(
         toolNames,
         mode: 'agent',
         projectInstructions: composed.projectInstructions || undefined,
-        workspaceContext: composed.workspaceContext || undefined,
+        workspaceContext: agentWorkspace || undefined,
         // Plan lives in workspaceContext as draft ops — never as RAG.
         ragContext: undefined,
         aiConfig: {
@@ -618,11 +627,16 @@ async function runHeadlessCouncil(
   let currentAssistantText = '';
   try {
     const { composeProjectContext } = await import('./workspace/composeContext.js');
+    const { loadDurableContext } = await import('./state/loadDurableContext.js');
+    const cwd = process.cwd();
+    const durableState = await loadDurableContext(cwd);
     const composed = composeProjectContext({
       mode: 'council',
-      cwd: process.cwd(),
+      cwd,
       userMessage: opts.task,
       includeLessons: true,
+      durableState: durableState || undefined,
+      includeDurableState: false,
     });
     for await (const event of dispatchCouncil(effectiveTask, {
       apiKey: 'REDACTED',
@@ -786,17 +800,21 @@ async function runHeadlessZelari(
         const { composeProjectContext } = await import(
           './workspace/composeContext.js'
         );
+        const { loadDurableContext } = await import('./state/loadDurableContext.js');
         // fullPrompt already embeds memory; also compose product+plan ops.
         // Prefer pure memory for ragContext (not the whole prompt) when possible.
         const memOnly = ragContext?.trim()
           ? ragContext
           : undefined;
+        const durableState = await loadDurableContext(projectRoot);
         const composed = composeProjectContext({
           mode: 'zelari',
           cwd: projectRoot,
           userMessage: slicePrompt,
           memoryHits: memOnly,
+          durableState: durableState || undefined,
           includeLessons: true,
+          includeDurableState: false,
         });
         for await (const event of dispatchCouncil(fullPrompt, {
           apiKey: 'REDACTED',
