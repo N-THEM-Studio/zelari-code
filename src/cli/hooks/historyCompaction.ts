@@ -34,6 +34,11 @@ export interface CompactHistoryOptions {
    * `ZELARI_HISTORY_TURNS` (default 6 → ~24 messages at 4 msg/turn).
    */
   maxMessages?: number;
+  /**
+   * When durable state HEAD exists, prefer a tighter window — verified
+   * discoveries live on disk (Palmer), so transcript can be shorter (cheaper).
+   */
+  durableStatePresent?: boolean;
 }
 
 /** Marker prepended when messages are dropped, so the model knows context was trimmed. */
@@ -50,7 +55,16 @@ export function resolveMaxMessages(opts?: CompactHistoryOptions): number {
   // default on a typo).
   const envTurns = envNumber(process.env.ZELARI_HISTORY_TURNS, { default: 6, min: 0 });
   // opts override env; env default is 6 turns × ~4 messages/turn.
-  const turns = opts?.maxMessages ? Math.ceil(opts.maxMessages / 4) : envTurns;
+  let turns = opts?.maxMessages ? Math.ceil(opts.maxMessages / 4) : envTurns;
+  // With durable state, default to a tighter window (min 2 turns) unless the
+  // user explicitly set maxMessages or a non-default HISTORY_TURNS.
+  if (
+    opts?.durableStatePresent &&
+    !opts?.maxMessages &&
+    process.env.ZELARI_HISTORY_TURNS === undefined
+  ) {
+    turns = Math.min(turns, 3);
+  }
   if (turns <= 0) return 0;
   return turns * 4;
 }

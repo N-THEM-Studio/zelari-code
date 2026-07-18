@@ -79,6 +79,10 @@ export function App(): React.ReactElement {
     totalCostUsd: 0,
     cachedTokens: 0,
     contextTokens: 0,
+    premiumTokens: 0,
+    cacheHitRate: 0,
+    promptTokens: 0,
+    stableBustCount: 0,
   });
   // v0.7.0: bump on /clear to remount <Static> (resets its internal "already
   // printed" index so the ANSI-cleared scrollback stays in sync). Also bumped
@@ -199,6 +203,7 @@ export function App(): React.ReactElement {
     onExit,
     onClear,
     onPhaseChange: setPhaseUi,
+    sessionStats,
   });
 
   // Picker selection re-enters the normal slash pipeline ('/provider <id>' /
@@ -309,6 +314,7 @@ export function App(): React.ReactElement {
             lastMs={timer.lastMs}
             costUsd={sessionStats.totalCostUsd}
             cachedTokens={sessionStats.cachedTokens}
+            cacheHitRate={sessionStats.cacheHitRate || 0}
             contextUsed={sessionStats.contextTokens || 0}
             contextLimit={Number(process.env.ZELARI_CONTEXT_LIMIT) || 200_000}
           />

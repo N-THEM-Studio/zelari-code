@@ -138,29 +138,37 @@ export function getToolDescriptions(
   return lines.join('\n');
 }
 
+/** Options shared by buildSystemPrompt / buildSystemPromptSplit. */
+export type BuildSystemPromptOptions = {
+  tools: EnhancedToolDefinition[];
+  toolNames: string[];
+  aiConfig?: SystemPromptConfig;
+  workspaceContext?: string;
+  ragContext?: string;
+  mode?: PromptPackMode;
+  projectInstructions?: string;
+  /** Default true. Set false to avoid double-inject with separate system msgs. */
+  includeWorkspaceInPrompt?: boolean;
+  /**
+   * Optional durable-state materialization (Palmer accumulation).
+   * Always placed in the *volatile* section so it never busts the cache prefix.
+   */
+  durableStateContext?: string;
+};
+
 /**
- * Build the full system prompt for an agent.
+ * Split system prompt for prompt-cache efficiency (AGNT Labs Cache Wars):
+ * - **stable**: identity, secrecy, role, project instructions, skills, tools
+ *   — byte-stable across turns when mode/tools/skills do not change
+ * - **volatile**: workspace, RAG, durable state — may change every turn
  *
- * @param options.mode - \`agent\` (default for CLI single-agent) uses the lean
- *   coding pack; \`council\` keeps collaboration + clarification modules.
- * @param options.projectInstructions - optional AGENTS.md / CLAUDE.md body.
- * @param options.includeWorkspaceInPrompt - when false, skip embedding
- *   workspace/RAG here (caller injects separately). Default true.
+ * Callers should send stable first, then volatile (separate system messages
+ * or concatenated stable+volatile). Never put volatile before stable.
  */
-export function buildSystemPrompt(
+export function buildSystemPromptSplit(
   agent: CoreAgentRole & { skills?: string[] },
-  options: {
-    tools: EnhancedToolDefinition[];
-    toolNames: string[];
-    aiConfig?: SystemPromptConfig;
-    workspaceContext?: string;
-    ragContext?: string;
-    mode?: PromptPackMode;
-    projectInstructions?: string;
-    /** Default true. Set false to avoid double-inject with separate system msgs. */
-    includeWorkspaceInPrompt?: boolean;
-  }
-): string {
+  options: BuildSystemPromptOptions,
+): { stable: string; volatile: string } {
   const {
     tools,
     toolNames,
@@ -170,6 +178,7 @@ export function buildSystemPrompt(
     mode = 'council',
     projectInstructions,
     includeWorkspaceInPrompt = true,
+    durableStateContext,
   } = options;
   const registry = new Map(tools.map((t) => [t.name, t]));
 
@@ -195,30 +204,32 @@ export function buildSystemPrompt(
 
   const allModules = [...baseNotOverridden, ...customModules].sort((a, b) => a.priority - b.priority);
 
-  const parts: string[] = [];
+  const stableParts: string[] = [];
   for (const mod of allModules) {
-    parts.push(mod.content);
+    stableParts.push(mod.content);
   }
 
   // Non-optional IP guard: always present even if custom modules replace types.
-  const assembledSoFar = parts.join('\n');
+  const assembledSoFar = stableParts.join('\n');
   if (!assembledSoFar.includes(PROPRIETARY_SECRECY_MARKER)) {
-    parts.splice(1, 0, PROPRIETARY_SECRECY_MODULE.content);
+    stableParts.splice(1, 0, PROPRIETARY_SECRECY_MODULE.content);
   }
 
   // 3. Agent's inline role prompt (role-specific persona)
   if (agent.systemPrompt && agent.systemPrompt.trim()) {
-    parts.push(`# Your Role\n\n${agent.systemPrompt}`);
+    stableParts.push(`# Your Role\n\n${agent.systemPrompt}`);
   }
 
   // 3b. Project instructions (AGENTS.md / CLAUDE.md) — coding CLI baseline
+  // Treated as stable for a session (file rarely mid-turn); if AGENTS.md changes
+  // mid-session the stable hash will bust intentionally.
   if (projectInstructions && projectInstructions.trim()) {
-    parts.push(`# Project Instructions\n\n${projectInstructions.trim()}`);
+    stableParts.push(`# Project Instructions\n\n${projectInstructions.trim()}`);
   }
 
   // 4. Skill prompt fragments
   if (skills.length > 0) {
-    parts.push(
+    stableParts.push(
       `# Active Skills\n\n` +
         skills.map((s) => `## ${s.name}\n${s.systemPromptFragment}`).join('\n\n')
     );
@@ -227,18 +238,69 @@ export function buildSystemPrompt(
   // 5. Tool documentation
   const toolBlock = getToolDescriptions(toolNames, registry);
   if (toolNames.length > 0) {
-    parts.push(`# Tools\n\n${toolBlock}`);
+    stableParts.push(`# Tools\n\n${toolBlock}`);
   }
 
-  // 6. Context (optional — council may inject once as separate system msgs)
+  // 6. Volatile context (workspace / RAG / durable state)
+  const volatileParts: string[] = [];
   if (includeWorkspaceInPrompt) {
     if (workspaceContext && workspaceContext.trim()) {
-      parts.push(`# Current Workspace State\n\n${workspaceContext}`);
+      volatileParts.push(`# Current Workspace State\n\n${workspaceContext}`);
     }
     if (ragContext && ragContext.trim()) {
-      parts.push(`# Retrieved Knowledge (RAG)\n\n${ragContext}`);
+      volatileParts.push(`# Retrieved Knowledge (RAG)\n\n${ragContext}`);
     }
   }
+  if (durableStateContext && durableStateContext.trim()) {
+    volatileParts.push(`# Durable State (verified)\n\n${durableStateContext.trim()}`);
+  }
 
-  return parts.join('\n\n---\n\n');
+  return {
+    stable: stableParts.join('\n\n---\n\n'),
+    volatile: volatileParts.join('\n\n---\n\n'),
+  };
+}
+
+/**
+ * Build the full system prompt for an agent.
+ *
+ * Prefers {@link buildSystemPromptSplit} and concatenates stable + volatile
+ * for backward compatibility with callers that expect a single string.
+ *
+ * @param options.mode - \`agent\` (default for CLI single-agent) uses the lean
+ *   coding pack; \`council\` keeps collaboration + clarification modules.
+ * @param options.projectInstructions - optional AGENTS.md / CLAUDE.md body.
+ * @param options.includeWorkspaceInPrompt - when false, skip embedding
+ *   workspace/RAG here (caller injects separately). Default true.
+ */
+export function buildSystemPrompt(
+  agent: CoreAgentRole & { skills?: string[] },
+  options: BuildSystemPromptOptions,
+): string {
+  const { stable, volatile } = buildSystemPromptSplit(agent, options);
+  if (!volatile) return stable;
+  if (!stable) return volatile;
+  return `${stable}\n\n---\n\n${volatile}`;
+}
+
+/**
+ * Assemble AgentMessage system slots from a split prompt.
+ * Multi-system when both parts present (stable first — required for prefix cache).
+ * Set `singleSystem: true` to concatenate for providers that reject multi-system.
+ */
+export function systemMessagesFromSplit(
+  split: { stable: string; volatile: string },
+  opts?: { singleSystem?: boolean },
+): Array<{ role: 'system'; content: string }> {
+  const stable = split.stable.trim();
+  const volatile = split.volatile.trim();
+  if (!stable && !volatile) return [];
+  if (opts?.singleSystem) {
+    const content = [stable, volatile].filter(Boolean).join('\n\n---\n\n');
+    return content ? [{ role: 'system', content }] : [];
+  }
+  const msgs: Array<{ role: 'system'; content: string }> = [];
+  if (stable) msgs.push({ role: 'system', content: stable });
+  if (volatile) msgs.push({ role: 'system', content: volatile });
+  return msgs;
 }

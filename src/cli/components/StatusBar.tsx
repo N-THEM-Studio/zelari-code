@@ -28,6 +28,8 @@ interface StatusBarProps {
   costUsd?: number;
   /** Cumulative prompt tokens served from cache; shown as "Nk cached" when > 0. */
   cachedTokens?: number;
+  /** Session prompt-cache hit rate 0..1; shown as "N% hit" when prompt volume > 0. */
+  cacheHitRate?: number;
   /** Estimated context used (tokens). v1.8.0 meter. */
   contextUsed?: number;
   /** Context window limit (tokens). */
@@ -61,6 +63,7 @@ export function StatusBar({
   lastMs = null,
   costUsd = 0,
   cachedTokens = 0,
+  cacheHitRate = 0,
   contextUsed = 0,
   contextLimit = 0,
 }: StatusBarProps): React.ReactElement {
@@ -133,6 +136,9 @@ export function StatusBar({
             <Text color="green">{formatCost(costUsd)}</Text>
             {cachedTokens > 0 ? (
               <Text dimColor> ({formatTokens(cachedTokens)} cached)</Text>
+            ) : null}
+            {cacheHitRate > 0 ? (
+              <Text dimColor> {Math.round(cacheHitRate * 100)}% hit</Text>
             ) : null}
             <Text dimColor> · </Text>
           </>

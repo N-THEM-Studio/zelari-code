@@ -31,12 +31,26 @@ export function computeSessionStatsDelta(
     cachedTokens?: number;
     /** Last-turn context occupancy (for the StatusBar meter, not cumulative). */
     contextTokens?: number;
+    /** Cumulative uncached (premium) prompt tokens. */
+    premiumTokens?: number;
+    /** Session prompt-cache hit rate 0..1 (weighted by tokens). */
+    cacheHitRate?: number;
+    /** Cumulative prompt tokens (for hit rate). */
+    promptTokens?: number;
+    lastStableHash?: string;
+    stableBustCount?: number;
   },
+  opts?: { stableHash?: string },
 ): {
   totalTokens: number;
   totalCostUsd: number;
   cachedTokens: number;
   contextTokens: number;
+  premiumTokens: number;
+  cacheHitRate: number;
+  promptTokens: number;
+  lastStableHash?: string;
+  stableBustCount: number;
 } {
   const promptTokens = realUsage ? realUsage.promptTokens : Math.ceil(userText.length / 4);
   const completionTokens = realUsage
@@ -52,10 +66,30 @@ export function computeSessionStatsDelta(
   const contextTokens = realUsage
     ? realUsage.totalTokens || promptTokens + completionTokens
     : promptTokens + completionTokens;
+  const nextCached = (prev.cachedTokens ?? 0) + cachedPromptTokens;
+  const nextPrompt = (prev.promptTokens ?? 0) + promptTokens;
+  const premiumDelta = Math.max(0, promptTokens - cachedPromptTokens);
+  const nextPremium = (prev.premiumTokens ?? 0) + premiumDelta;
+  const cacheHitRate = nextPrompt > 0 ? nextCached / nextPrompt : 0;
+
+  let stableBustCount = prev.stableBustCount ?? 0;
+  let lastStableHash = prev.lastStableHash;
+  if (opts?.stableHash) {
+    if (lastStableHash && lastStableHash !== opts.stableHash) {
+      stableBustCount += 1;
+    }
+    lastStableHash = opts.stableHash;
+  }
+
   return {
     totalTokens: prev.totalTokens + promptTokens + completionTokens,
     totalCostUsd: prev.totalCostUsd + turnCost,
-    cachedTokens: (prev.cachedTokens ?? 0) + cachedPromptTokens,
+    cachedTokens: nextCached,
     contextTokens,
+    premiumTokens: nextPremium,
+    cacheHitRate,
+    promptTokens: nextPrompt,
+    lastStableHash,
+    stableBustCount,
   };
 }

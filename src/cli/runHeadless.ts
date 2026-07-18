@@ -246,6 +246,8 @@ async function runHeadlessSingle(
     const rolePrompt = [headlessRole.systemPrompt, sshBlock]
       .filter(Boolean)
       .join('\n\n');
+    // Concatenated form of stable+volatile (buildSystemPromptSplit); headless
+    // uses a single system message for maximum provider compatibility.
     systemPrompt = buildSystemPrompt(
       { ...headlessRole, systemPrompt: rolePrompt },
       {

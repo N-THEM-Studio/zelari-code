@@ -19,11 +19,13 @@ import { resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
 import { PROVIDERS } from "../keyStore.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
 import {
-  buildSystemPrompt,
+  buildSystemPromptSplit,
+  systemMessagesFromSplit,
   getAllTools,
   SINGLE_AGENT_IDENTITY_MODULE,
   buildLanguagePolicyModuleFor,
 } from "@zelari/core/skills";
+import { hashStablePrompt } from "../state/fileStateStore.js";
 import {
   parseClarificationRequest,
   cleanAgentContent,
@@ -415,7 +417,6 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         const planPhaseBlock =
           workPhase === "plan"
             ? [
-                "",
                 "# Work Phase: PLAN",
                 "You are in PLAN mode. Explore and design only.",
                 "- Do NOT implement production code or run destructive shell commands.",
@@ -425,7 +426,6 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               ].join("\n")
             : workPhase === "build"
               ? [
-                  "",
                   "# Work Phase: BUILD",
                   "Implement on disk. Prefer acting over describing.",
                   "- Prior plan/synthesis text is a SPEC to apply — not proof files already changed.",
@@ -439,25 +439,29 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   .filter(Boolean)
                   .join("\n")
               : "";
+        // Stable platform/shell block (session-constant). Phase/plan go in volatile.
         const shellContextBlock = [
           "# Platform & Shell",
           `platform: ${process.platform}`,
           `shell: ${resolvedShell.via}`,
           shellGuidance,
           nonInteractiveGuidance,
-          planPhaseBlock,
           "",
           "# Working Directory",
           `You are running in: ${cwd}`,
           "All relative file paths are resolved against this directory. Always work with real files here.",
-          ...(hasPlan
+        ].join("\n");
+        const volatileSessionBlock = [
+          planPhaseBlock,
+          hasPlan
             ? [
-                "",
                 "# Plan Tracking",
                 '- Plan tasks (draft ops): when you START a task call updateTask {taskId, status: "in_progress"}; when complete and verified call updateTask {taskId, status: "done"}. NEVER edit .zelari/plan.json by hand. Prefer product tree over design docs.',
-              ]
-            : []),
-        ].join("\n");
+              ].join("\n")
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n\n");
         const singleAgentRole = {
           id: "single",
           name: "Zelari Code",
@@ -471,12 +475,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // Composed workspace already includes product tree + draft plan ops +
         // epistemic banner. ragContext stays empty on the agent path (memory
         // is zelari-only) so plan is never mislabeled as "Retrieved Knowledge".
-        const workspaceContext = composedWorkspace;
+        const workspaceContext = [
+          volatileSessionBlock,
+          composedWorkspace,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
         // v1.5.3: build via the shared builder. Wrap in try/catch with a
         // minimal fallback so a builder failure (e.g. test context without a
         // populated catalog) never breaks dispatch — the harness still gets a
         // usable system prompt and the turn proceeds.
-        let systemPrompt: string;
+        // Cache Wars: stable/volatile split so plan/workspace updates do not
+        // bust the cached prefix (identity + tools + platform).
+        let systemMessages: AgentMessage[] = [];
+        let lastStableHash: string | undefined;
         try {
           // v1.7.0: detect the user's language and inject the language-policy
           // module so the agent replies in the user's language. Honors
@@ -485,7 +497,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // — it lives in priority space (5) so it sorts BEFORE the base-identity
           // module (10): the model sets language scaffolding before reading role text.
           const languageModule = buildLanguagePolicyModuleFor(userText);
-          systemPrompt = buildSystemPrompt(singleAgentRole, {
+          const split = buildSystemPromptSplit(singleAgentRole, {
             tools: getAllTools(),
             toolNames: toolListNames,
             mode: "agent",
@@ -504,11 +516,13 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             // taught models to treat design vault as retrieved knowledge.
             ragContext: undefined,
           });
+          lastStableHash = hashStablePrompt(split.stable);
+          systemMessages = systemMessagesFromSplit(split) as AgentMessage[];
         } catch {
           // Fallback: identity + platform/shell + tool list. Keeps the turn
           // runnable even if the builder or catalog is unavailable.
           const languageModule = buildLanguagePolicyModuleFor(userText);
-          systemPrompt = [
+          const fallback = [
             SINGLE_AGENT_IDENTITY_MODULE.content,
             languageModule.content,
             shellContextBlock,
@@ -517,7 +531,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             toolList,
             ...(workspaceContext ? ["", workspaceContext] : []),
           ].join("\n");
+          lastStableHash = hashStablePrompt(fallback);
+          systemMessages = [{ role: "system", content: fallback }];
         }
+
         // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
         // The council sets 5; the single-prompt path previously set NONE, so a
         // flailing model could loop for the full MAX_TOOL_LOOP_ITERATIONS (12)
@@ -538,7 +555,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           model: envConfig.model,
           provider: "openai-compatible",
           messages: [
-            { role: "system", content: systemPrompt },
+            ...systemMessages,
             // v1.8.0: shared rolling history (agent/council/zelari) so short
             // answers bind to prior ---QUESTION--- blocks. Possibly empty
             // when ZELARI_HISTORY_TURNS=0.
@@ -838,6 +855,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               assistantContent,
               envConfig.model,
               prev,
+              lastStableHash ? { stableHash: lastStableHash } : undefined,
             ),
           );
         }
@@ -1565,6 +1583,56 @@ async function dispatchCouncilPromptImpl(
               `[completion] readyToCommit=false — ${n} blocking issue(s)${c.degraded ? " (degraded run)" : ""}`,
               Date.now(),
             );
+          }
+        }
+        // Durable State Commit after verified council completion (Palmer).
+        // Skip degraded / failed verification — those must not become HEAD.
+        const verifyOk = hook.verification?.ran
+          ? hook.verification.ok === true
+          : false;
+        const completionOk =
+          hook.completion?.completion?.ok === true ||
+          hook.completion?.completion?.readyToCommit === true;
+        if (
+          !degraded.degraded &&
+          !councilAborted &&
+          (verifyOk || completionOk) &&
+          luciferWriteCount > 0
+        ) {
+          try {
+            const { tryStateCommit, discoveriesFromOutcome } = await import(
+              "../state/commitHelpers.js"
+            );
+            const res = await tryStateCommit({
+              projectRoot: process.cwd(),
+              mode: "council",
+              layer: `council:${councilRunMode ?? "run"}`,
+              label: `council ${councilRunMode ?? "run"} verified`,
+              sessionId,
+              verification: {
+                ok: true,
+                ran: hook.verification?.ran ?? completionOk,
+              },
+              withCheckpoint: true,
+              discoveries: discoveriesFromOutcome({
+                stepId: `${sessionId}-${Date.now()}`,
+                synthesis: chairmanSynthesisText,
+                writeCount: luciferWriteCount,
+                note: "Council implementation verified",
+              }),
+            });
+            if (res.ok && res.meta?.id) {
+              appendSystem(
+                setMessages,
+                `[state] commit ${res.meta.id}` +
+                  (res.checkpointId
+                    ? ` · checkpoint ${res.checkpointId}`
+                    : ""),
+                Date.now(),
+              );
+            }
+          } catch {
+            // fail-open
           }
         }
       } catch {

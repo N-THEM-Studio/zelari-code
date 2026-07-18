@@ -8,7 +8,7 @@ export type TypedResult<T> =
 
 /** Tool permission categories. The CLI prompts the user before invoking
  *  tools with write/execute/network permissions. */
-export type ToolPermission = 'read' | 'write' | 'execute' | 'network';
+export type ToolPermission = 'read' | 'write' | 'execute' | 'network' | 'ui';
 
 export interface ToolDefinition<I = unknown, O = unknown> {
   /** Stable tool name (used by LLM function-calling). */

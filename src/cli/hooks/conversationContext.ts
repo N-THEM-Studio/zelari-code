@@ -12,6 +12,8 @@
  * @since v1.8.0 (PR-A context unification)
  */
 
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { AgentMessage } from '@zelari/core/harness';
 import { compactHistory } from './historyCompaction.js';
 
@@ -37,8 +39,9 @@ export function setHistory(messages: readonly AgentMessage[]): void {
 }
 
 /** Compact in place using the same rules as the agent loop. */
-export function compactInPlace(): void {
-  history = compactHistory(history);
+export function compactInPlace(cwd: string = process.cwd()): void {
+  const durableStatePresent = existsSync(join(cwd, '.zelari', 'state', 'HEAD.json'));
+  history = compactHistory(history, { durableStatePresent });
 }
 
 /** Append messages (e.g. this turn's assistant+tool tail). */

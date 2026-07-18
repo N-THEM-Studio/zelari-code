@@ -3,7 +3,10 @@ import { join } from 'node:path';
 import type { CouncilMessage, AgentRole } from '../types/index.js';
 import { getAgent, getCouncilAgents, resolveRoleSystemPrompt, swapMembers } from './roles.js';
 import { getProviderTools, type ParsedToolCall } from './toolSchemas.js';
-import { buildSystemPrompt, computeAgentTools } from './systemPromptBuilder.js';
+import {
+  buildSystemPromptSplit,
+  computeAgentTools,
+} from './systemPromptBuilder.js';
 import { getAllTools } from './tools.js';
 import { buildLanguagePolicyModuleFor } from './languagePolicy.js';
 import { scrubProprietaryLeak } from './secrecyPolicy.js';
@@ -466,8 +469,9 @@ function buildAgentMessages(
     systemPrompt: resolveRoleSystemPrompt(agent, runMode),
   };
 
-  // Embed workspace/RAG once inside the system prompt (no second copy below).
-  const enhancedSystemPrompt = buildSystemPrompt(modeAwareAgent, {
+  // Cache-efficient split (Cache Wars): stable = identity/tools/role;
+  // volatile = workspace/RAG; banners stay trailing system msgs (volatile).
+  const split = buildSystemPromptSplit(modeAwareAgent, {
     tools: getAllTools(),
     toolNames,
     aiConfig: mergedAiConfig,
@@ -477,10 +481,15 @@ function buildAgentMessages(
     includeWorkspaceInPrompt: true,
   });
   const messages: AgentMessage[] = [
-    { role: 'system', content: enhancedSystemPrompt },
+    { role: 'system', content: split.stable },
+  ];
+  if (split.volatile.trim()) {
+    messages.push({ role: 'system', content: split.volatile });
+  }
+  messages.push(
     { role: 'system', content: councilModeBanner(runMode, { isImplementer: agent.id === 'lucifer' }) },
     { role: 'system', content: 'IMPORTANT: Before making any tool calls or expensive operations, check if the information already exists in the shared context from previous agents. Avoid redundant work.' },
-  ];
+  );
   if (priorOutputs.length > 0) {
     // Cap each prior member blob so one verbose specialist cannot saturate
     // downstream members (chairman especially). Full text is not product law.

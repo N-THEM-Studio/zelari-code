@@ -15,6 +15,13 @@ import {
   handleRollback,
   handleRollbackList,
 } from '../slashHandlers/checkpoint.js';
+import {
+  handleStateStatus,
+  handleStateCommit,
+  handleStateShow,
+  handleStateRestore,
+} from '../slashHandlers/state.js';
+import { handleCacheStats } from '../slashHandlers/cache.js';
 import { handleIndexBuild, handleIndexStatus } from '../slashHandlers/semantic.js';
 import { nextMode, describeMode } from '../mode.js';
 import { handleCompact } from '../slashHandlers/transcript.js';
@@ -111,6 +118,16 @@ export interface SlashDispatchParams {
   onClear?: () => void;
   /** v1.8.0: called when /plan or /build changes the work phase. */
   onPhaseChange?: (phase: 'plan' | 'build') => void;
+  /** Session usage for /cache stats (optional). */
+  sessionStats?: {
+    totalCostUsd?: number;
+    cachedTokens?: number;
+    premiumTokens?: number;
+    cacheHitRate?: number;
+    promptTokens?: number;
+    stableBustCount?: number;
+    totalTokens?: number;
+  };
 }
 
 export function useSlashDispatch(params: SlashDispatchParams): (value: string) => Promise<void> {
@@ -429,6 +446,51 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     }
     if (result.kind === 'rollback') {
       await handleRollback({ ...baseCtx, cwd: process.cwd() }, result.rollbackId);
+      setInput('');
+      return;
+    }
+
+    // ── Durable state ──
+    if (result.kind === 'state_status') {
+      await handleStateStatus({ ...baseCtx, cwd: process.cwd() });
+      setInput('');
+      return;
+    }
+    if (result.kind === 'state_commit') {
+      await handleStateCommit({ ...baseCtx, cwd: process.cwd() }, result.stateArg);
+      setInput('');
+      return;
+    }
+    if (result.kind === 'state_show') {
+      await handleStateShow({ ...baseCtx, cwd: process.cwd() }, result.stateArg);
+      setInput('');
+      return;
+    }
+    if (result.kind === 'state_restore') {
+      await handleStateRestore(
+        { ...baseCtx, cwd: process.cwd() },
+        result.stateArg,
+        { restoreTree: !result.stateNoTree },
+      );
+      setInput('');
+      return;
+    }
+    if (result.kind === 'state_usage') {
+      appendSystem(setMessages, result.message ?? '[state] usage');
+      setInput('');
+      return;
+    }
+
+    // ── Prompt cache stats ──
+    if (result.kind === 'cache_stats') {
+      if (result.message) {
+        appendSystem(setMessages, result.message);
+      } else {
+        handleCacheStats({
+          setMessages,
+          sessionStats: params.sessionStats,
+        });
+      }
       setInput('');
       return;
     }

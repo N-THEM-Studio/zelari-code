@@ -6,7 +6,7 @@
  * design dumps cannot saturate the system prompt.
  */
 
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { envNumber } from "../utils/envNumber.js";
 import { loadProjectInstructions } from "./projectInstructions.js";
@@ -27,10 +27,20 @@ export interface ComposeProjectContextInput {
   userMessage?: string;
   /** Real memory/RAG only — never plan text. */
   memoryHits?: string;
+  /**
+   * Durable state materialization (verified accumulation). Merged into
+   * ragContext as a separate block — never into stable system prefix.
+   */
+  durableState?: string;
   /** Compact history block (council). */
   historySnippet?: string;
   /** Include lessons.jsonl recall (council/zelari default on). */
   includeLessons?: boolean;
+  /**
+   * When true (default for council/zelari), try to load HEAD materialize from
+   * `.zelari/state/` if `durableState` was not provided.
+   */
+  includeDurableState?: boolean;
 }
 
 export interface ComposedProjectContext {
@@ -42,7 +52,7 @@ export interface ComposedProjectContext {
    */
   workspaceContext: string;
   /**
-   * ONLY memory / real retrieval. Plan must never appear here.
+   * ONLY memory / real retrieval + optional durable state. Plan must never appear here.
    */
   ragContext: string;
   /** Human-readable notes for TUI (caps hit, vault detected, …). */
@@ -103,6 +113,8 @@ function buildDesignIndex(projectRoot: string, maxChars: number): string {
 
 /**
  * Compose project context for any dispatch path.
+ * Note: durable state auto-load is sync-best-effort via a cached file read;
+ * callers that already materialize async should pass `durableState` explicitly.
  */
 export function composeProjectContext(
   input: ComposeProjectContextInput,
@@ -177,12 +189,32 @@ export function composeProjectContext(
     );
   }
 
-  let ragContext = "";
+  const durableMax = envNumber(process.env.ZELARI_CTX_DURABLE_CHARS, {
+    default: 3000,
+    min: 200,
+  });
+  const wantDurable =
+    input.includeDurableState ??
+    (input.mode === "council" || input.mode === "zelari");
+  let durableRaw = input.durableState?.trim() ?? "";
+  if (!durableRaw && wantDurable) {
+    durableRaw = readDurableHeadSync(cwd);
+  }
+
+  const ragParts: string[] = [];
+  if (durableRaw) {
+    const d = cap(durableRaw, durableMax, "durable-state");
+    ragParts.push(d.text);
+    if (d.truncated) {
+      warnings.push(`[context] durable state truncated to ${durableMax} chars.`);
+    }
+  }
   if (input.memoryHits?.trim()) {
     const m = cap(input.memoryHits.trim(), memoryMax, "memory");
-    ragContext = m.text;
+    ragParts.push(m.text);
     if (m.truncated) warnings.push(`[context] memory RAG truncated to ${memoryMax} chars.`);
   }
+  const ragContext = ragParts.join("\n\n");
 
   return {
     projectInstructions: instr.content,
@@ -190,4 +222,51 @@ export function composeProjectContext(
     ragContext,
     warnings,
   };
+}
+
+/**
+ * Sync best-effort read of durable HEAD materialization.
+ * Avoids making composeProjectContext async (many call sites).
+ */
+function readDurableHeadSync(projectRoot: string): string {
+  try {
+    const headPath = join(projectRoot, ".zelari", "state", "HEAD.json");
+    if (!existsSync(headPath)) return "";
+    const head = JSON.parse(readFileSync(headPath, "utf8")) as { id?: string };
+    if (!head?.id) return "";
+    const metaPath = join(projectRoot, ".zelari", "state", "commits", `${head.id}.json`);
+    if (!existsSync(metaPath)) return "";
+    const meta = JSON.parse(readFileSync(metaPath, "utf8")) as {
+      id?: string;
+      label?: string;
+      layer?: string;
+      verification?: { ok?: boolean; ran?: boolean };
+      artifactDir?: string;
+    };
+    const discPath = meta.artifactDir
+      ? join(projectRoot, ".zelari", "state", meta.artifactDir, "discoveries.json")
+      : join(projectRoot, ".zelari", "state", "artifacts", head.id, "discoveries.json");
+    let discoveries: Array<{
+      kind?: string;
+      summary?: string;
+      reusable?: boolean;
+      paths?: string[];
+    }> = [];
+    if (existsSync(discPath)) {
+      discoveries = JSON.parse(readFileSync(discPath, "utf8")) as typeof discoveries;
+    }
+    const reusable = discoveries.filter((d) => d.reusable !== false);
+    const lines = [
+      `# Durable State (commit ${meta.id ?? head.id}${meta.layer ? `, layer ${meta.layer}` : ""})`,
+      `label: ${meta.label ?? ""}`,
+      `verification: ran=${meta.verification?.ran ?? "?"} ok=${meta.verification?.ok ?? "?"}`,
+    ];
+    for (const d of reusable.slice(0, 24)) {
+      const pathHint = d.paths?.length ? ` — ${d.paths.join(", ")}` : "";
+      lines.push(`- [${d.kind ?? "note"}] ${d.summary ?? ""}${pathHint}`);
+    }
+    return lines.join("\n");
+  } catch {
+    return "";
+  }
 }

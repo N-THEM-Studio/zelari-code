@@ -79,6 +79,38 @@ describe("composeProjectContext", () => {
     expect(c.workspaceContext).not.toContain("A".repeat(500)); // phase description stripped
   });
 
+  it("injects durable HEAD into ragContext for council/zelari (not plan)", () => {
+    const stateDir = join(dir, ".zelari", "state");
+    mkdirSync(join(stateDir, "commits"), { recursive: true });
+    mkdirSync(join(stateDir, "artifacts", "abc123"), { recursive: true });
+    writeFileSync(join(stateDir, "HEAD.json"), JSON.stringify({ id: "abc123" }));
+    writeFileSync(
+      join(stateDir, "commits", "abc123.json"),
+      JSON.stringify({
+        id: "abc123",
+        label: "verified layer",
+        layer: "mission:impl-1",
+        verification: { ok: true, ran: true },
+        artifactDir: "artifacts/abc123",
+      }),
+    );
+    writeFileSync(
+      join(stateDir, "artifacts", "abc123", "discoveries.json"),
+      JSON.stringify([
+        { id: "d1", kind: "file_change", summary: "added widget.ts", reusable: true },
+      ]),
+    );
+
+    const c = composeProjectContext({
+      mode: "council",
+      cwd: dir,
+      userMessage: "continue",
+    });
+    expect(c.ragContext).toMatch(/Durable State/);
+    expect(c.ragContext).toMatch(/widget\.ts/);
+    expect(c.ragContext).not.toMatch(/A{50}/); // plan phase dump still not in RAG
+  });
+
   it("does not inject full design doc bodies", () => {
     const c = composeProjectContext({
       mode: "agent",

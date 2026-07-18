@@ -50,6 +50,12 @@ describe("historyCompaction (v1.6.0)", () => {
       expect(resolveMaxMessages()).toBe(24);
     });
 
+    it("tightens window when durableStatePresent and env unset", () => {
+      delete process.env.ZELARI_HISTORY_TURNS;
+      // default 6 → min(6,3)=3 turns × 4 = 12
+      expect(resolveMaxMessages({ durableStatePresent: true })).toBe(12);
+    });
+
     it("returns 0 (history disabled) when ZELARI_HISTORY_TURNS=0", () => {
       process.env.ZELARI_HISTORY_TURNS = "0";
       expect(resolveMaxMessages()).toBe(0);

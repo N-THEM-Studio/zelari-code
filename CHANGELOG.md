@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.17.0] - 2026-07-18
+
+### Added
+- **Durable State Layer** (Palmer *State, Not Tokens*) — verified accumulation under `.zelari/state/` (`commits/`, `artifacts/`, `HEAD.json`). `DurableStateStore` types in `@zelari/core`; file backend + fail-open `getStateStore`.
+- **State commits after verification** — Zelari Mode auto-commits verified success layers and soft progress commits when files were written; Council commits after verify/completion PASS with Lucifero writes.
+- **Prompt stable/volatile split** (Cache Wars) — `buildSystemPromptSplit` / `systemMessagesFromSplit`: identity+tools stay in a byte-stable prefix; workspace/RAG/durable state stay volatile. Agent + Council assembly updated.
+- **Prompt-cache instrumentation** — session hit rate, premium vs cached tokens, stable bust count; StatusBar shows `N% hit`; `/cache stats`.
+- **Slash commands** — `/state status|commit|show|restore [--no-tree]`, `/cache stats`.
+- **composeContext durable injection** — council/zelari auto-load HEAD materialization into volatile RAG (cap `ZELARI_CTX_DURABLE_CHARS`).
+- **History compaction state-aware** — tighter default window when durable HEAD exists.
+
+### Fixed
+- **Typecheck: `ask_user` permissions** — extend `ToolPermission` with `'ui'` so `permissions: ["ui"]` typechecks (unblocked CI after v1.16.0).
+
+### Docs
+- ADR `docs/decisions/012-durable-state-and-prompt-cache.md`; GUIDA section for durable state + cache env vars.
+
 ## [1.16.0] - 2026-07-18
 
 ### Added

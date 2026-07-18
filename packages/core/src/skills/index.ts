@@ -17,7 +17,12 @@ export {
   CLARIFICATION_PROTOCOL_MODULE,
 } from '../agents/promptModules.js';
 export type { PromptPackMode } from '../agents/promptModules.js';
-export { buildSystemPrompt } from '../agents/systemPromptBuilder.js';
+export {
+  buildSystemPrompt,
+  buildSystemPromptSplit,
+  systemMessagesFromSplit,
+} from '../agents/systemPromptBuilder.js';
+export type { BuildSystemPromptOptions } from '../agents/systemPromptBuilder.js';
 export {
   detectResponseLanguage,
   resolveResponseLanguage,

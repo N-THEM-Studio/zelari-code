@@ -491,6 +491,27 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | `/rollback [id\|latest]` | Ripristino atomico di un checkpoint: ripristina i file modificati, ricrea i cancellati, rimuove i creati dopo lo snapshot. Senza argomento elenca i checkpoint disponibili. |
 | `ZELARI_CHECKPOINT=0` | Disabilita checkpoint automatici nelle missioni. |
 
+#### Durable state + prompt cache (v1.17)
+
+Accumulo **verificato** di artefatti (Palmer *State, Not Tokens*) e ottimizzazione del **prefix cache** (AGNT Labs *Cache Wars*). Diverso da memory RAG (soft) e da git checkpoint (solo working tree).
+
+| Comando | Descrizione |
+|---|---|
+| `/state status` | HEAD durable + ultimi commit sotto `.zelari/state/` |
+| `/state commit [label]` | Soft commit manuale (force; non richiede verification) |
+| `/state show [id]` | Materializza discoveries (HEAD se omesso) |
+| `/state restore [id] [--no-tree]` | Imposta HEAD e, se presente, ripristina il git checkpoint collegato |
+| `/cache stats` | Hit rate sessione, premium vs cached, stable busts |
+
+| Variabile | Default | Effetto |
+|---|---|---|
+| `ZELARI_STATE` | `1` | `0` disabilita durable state store |
+| `ZELARI_STATE_AUTO` | `0` (agent) | Auto-commit agent mode (Zelari/council post-verify sono on) |
+| `ZELARI_PROMPT_CACHE_TTL` | `auto` | Preferenza TTL (1h/5m) per path Anthropic futuri; OpenAI-compat usa prefix stabile |
+| `ZELARI_CTX_DURABLE_CHARS` | `3000` | Cap del blocco durable iniettato nel volatile prompt |
+
+**Memoria vs state:** `.zelari/memory/` è retrieval soft; `.zelari/state/` è catena di commit post-verification. I worker successivi ereditano `materializeContext(HEAD)` senza ri-derivare via LLM.
+
 #### Semantic search
 
 | Comando | Descrizione |
@@ -1042,6 +1063,8 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 | `ZELARI_DIAGNOSTICS` | `1` | `0` disabilita la diagnostics loop post-edit |
 | `ZELARI_DIAGNOSTICS_TIMEOUT_MS` | `5000` | timeout della diagnostics loop |
 | `ZELARI_CHECKPOINT` | `1` | `0` disabilita i checkpoint automatici in zelari-mode |
+| `ZELARI_STATE` | `1` | `0` disabilita durable state (`.zelari/state/`) |
+| `ZELARI_CTX_DURABLE_CHARS` | `3000` | max chars durable state nel volatile prompt |
 
 ### Path override (test/CI)
 

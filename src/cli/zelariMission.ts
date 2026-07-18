@@ -14,10 +14,12 @@
 import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import type { MemoryBackend } from '@zelari/core';
+import type { DurableStateStore, MemoryBackend } from '@zelari/core';
 import type { CouncilRunMode, MissionBrief } from '@zelari/core/council';
 import { formatMemoryHits } from './memory/fileBackend.js';
 import { createCheckpoint } from './checkpoint/checkpointManager.js';
+import { getStateStore } from './state/fileStateStore.js';
+import { discoveriesFromOutcome, tryStateCommit } from './state/commitHelpers.js';
 
 export type MissionStatus =
   | 'running'
@@ -37,6 +39,8 @@ export interface MissionState {
   lastCompletionOk: boolean;
   startedAt: string;
   updatedAt: string;
+  /** HEAD of durable state after last verified commit (Palmer accumulation). */
+  lastGoodCommitId?: string;
 }
 
 /** What one council slice run reports back to the loop. */
@@ -77,6 +81,11 @@ export interface RunSliceArgs {
 export interface ZelariMissionDeps {
   projectRoot: string;
   memory: MemoryBackend;
+  /**
+   * Optional durable state store. When omitted, the driver resolves one via
+   * getStateStore(projectRoot) (fail-open). Inject in tests to assert commits.
+   */
+  stateStore?: DurableStateStore;
   /** Runs a single council slice and reports its completion. */
   runSlice: (args: RunSliceArgs) => Promise<SliceRunResult>;
   /** Emit a status/progress line to the UI. */
@@ -208,12 +217,22 @@ export async function runZelariMission(
   await deps.memory.init(deps.projectRoot);
   await writeMissionState(deps.projectRoot, state);
 
+  const stateStore =
+    deps.stateStore ?? (await getStateStore(deps.projectRoot, deps.env ?? process.env));
+  try {
+    await stateStore.init(deps.projectRoot);
+  } catch {
+    // fail-open
+  }
+
   // Safety net: snapshot the working tree before the mission mutates files,
   // so a bad run can be rolled back atomically (opt out: ZELARI_CHECKPOINT=0).
   // Best-effort — a non-git project or a git hiccup just skips the checkpoint.
+  let missionCheckpointId: string | undefined;
   if ((deps.env ?? process.env).ZELARI_CHECKPOINT !== '0') {
     const cp = await createCheckpoint(deps.projectRoot, `zelari mission ${missionId}`);
     if (cp.ok) {
+      missionCheckpointId = cp.value.id;
       deps.emit(
         `[zelari] checkpoint ${cp.value.id} creato — se la missione va storta ripristina con \`/rollback ${cp.value.id}\`.`,
       );
@@ -245,7 +264,17 @@ export async function runZelariMission(
       limit: 8,
       metadataFilter: { projectRoot: deps.projectRoot },
     });
-    const ragContext = formatMemoryHits(hits);
+    // Memory (soft RAG) + durable HEAD materialization (verified + progress).
+    // lastGoodCommitId is retained for resume/oracle; next-slice context uses HEAD
+    // so progress soft-commits are visible immediately.
+    let durableBlock = '';
+    try {
+      durableBlock = await stateStore.materializeContext();
+    } catch {
+      durableBlock = '';
+    }
+    const memBlock = formatMemoryHits(hits);
+    const ragContext = [durableBlock, memBlock].filter(Boolean).join('\n\n');
     // buildSlicePrompt uses iteration>1 for "fix remaining failures" — that
     // should track implementation attempts, not free design steps.
     const promptIter = runMode === 'implementation' ? implStep : 1;
@@ -314,6 +343,52 @@ export async function runZelariMission(
       pendingDesign = false;
       await writeMissionState(deps.projectRoot, state);
       continue;
+    }
+
+    // Durable accumulation: verified success → hard commit; progress with
+    // writes → soft progress commit so the next slice inherits discoveries.
+    const wrote = typeof result.writeCount === 'number' && result.writeCount > 0;
+    if (result.completionOk || wrote) {
+      const hard = result.completionOk === true;
+      const commitRes = await tryStateCommit({
+        projectRoot: deps.projectRoot,
+        store: stateStore,
+        env: deps.env,
+        mode: 'zelari',
+        layer: hard
+          ? `mission:impl-${implStep}`
+          : `mission:progress-${implStep}`,
+        label: hard
+          ? `zelari ${brief.sliceMvp.id} impl ${implStep} verified`
+          : `zelari ${brief.sliceMvp.id} progress impl ${implStep}`,
+        sessionId: missionId,
+        verification: { ok: hard, ran: result.ran },
+        force: !hard,
+        withCheckpoint: hard,
+        discoveries: discoveriesFromOutcome({
+          stepId: `${missionId}-${step}`,
+          synthesis: result.synthesisText,
+          writeCount: result.writeCount,
+          note: hard
+            ? `Implementation slice ${implStep} completed (verified)`
+            : `Progress slice ${implStep} (${result.writeCount} writes, not yet complete)`,
+        }),
+      });
+      if (commitRes.ok && commitRes.meta?.id) {
+        // Only advance lastGoodCommitId on verified commits (Palmer: oracle PASS).
+        if (hard) {
+          state.lastGoodCommitId = commitRes.meta.id;
+          if (commitRes.checkpointId) {
+            missionCheckpointId = commitRes.checkpointId;
+          }
+        }
+        deps.emit(
+          `[zelari] state commit ${commitRes.meta.id}` +
+            ` (${hard ? 'verified' : 'progress'} layer mission:${hard ? 'impl' : 'progress'}-${implStep})`,
+        );
+      } else if (commitRes.error) {
+        deps.emit(`[zelari] state commit skipped: ${commitRes.error}`);
+      }
     }
 
     // Success only when an IMPLEMENTATION slice completes.
