@@ -1111,8 +1111,34 @@ async function dispatchCouncilPromptImpl(
           });
         })
     : undefined;
+  // Force council design-phase when UI phase is plan (and vice-versa for build).
+  // Experiment: free-form council+build is soft-gated to design-phase unless
+  // ZELARI_COUNCIL_CAN_BUILD=1 or the caller (zelari legacy path) opts in.
+  // Soft-gate also enables planMode tool registry so write_file/edit_file/bash
+  // cannot create product files while "planning".
+  let phaseRunMode =
+    overrides.runMode ??
+    (workPhase === "plan" ? "design-phase" : "implementation");
+  let softGatedToDesign = false;
+  if (phaseRunMode === "implementation") {
+    const { shouldAllowCouncilBuild } = await import("../buildPolicy.js");
+    const allowed =
+      overrides.allowCouncilBuild === true || shouldAllowCouncilBuild();
+    if (!allowed) {
+      phaseRunMode = "design-phase";
+      softGatedToDesign = true;
+      appendSystem(
+        setMessages,
+        "[council] build soft-gate: implementation disabled for free-form council " +
+          "(experiment: multi-agent = plan). Forced design-phase + plan tools. " +
+          "Set ZELARI_COUNCIL_CAN_BUILD=1 to let Lucifero implement, " +
+          "or use mode agent/zelari for on-disk work.",
+        Date.now(),
+      );
+    }
+  }
   const { registry: councilToolRegistry } = createBuiltinToolRegistry({
-    planMode: workPhase === "plan",
+    planMode: workPhase === "plan" || softGatedToDesign,
     onAskUser: onAskUserCouncil,
   });
   const workspaceCtx = createWorkspaceContext();
@@ -1123,28 +1149,6 @@ async function dispatchCouncilPromptImpl(
     // Plan phase: keep workspace plan/doc tools (createPlan, …); skip any
     // that are pure project-file mutators if ever added.
     councilToolRegistry.register(td);
-  }
-  // Force council design-phase when UI phase is plan (and vice-versa for build).
-  // Experiment: free-form council+build is soft-gated to design-phase unless
-  // ZELARI_COUNCIL_CAN_BUILD=1 or the caller (zelari legacy path) opts in.
-  let phaseRunMode =
-    overrides.runMode ??
-    (workPhase === "plan" ? "design-phase" : "implementation");
-  if (phaseRunMode === "implementation") {
-    const { shouldAllowCouncilBuild } = await import("../buildPolicy.js");
-    const allowed =
-      overrides.allowCouncilBuild === true || shouldAllowCouncilBuild();
-    if (!allowed) {
-      phaseRunMode = "design-phase";
-      appendSystem(
-        setMessages,
-        "[council] build soft-gate: implementation disabled for free-form council " +
-          "(experiment: multi-agent = plan). Forced design-phase. " +
-          "Set ZELARI_COUNCIL_CAN_BUILD=1 to let Lucifero implement, " +
-          "or use mode agent/zelari for on-disk work.",
-        Date.now(),
-      );
-    }
   }
   // v0.7.5: MCP tools for the council too (same lazy singleton as the
   // single-agent path — zero extra spawns).

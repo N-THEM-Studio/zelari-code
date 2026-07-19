@@ -597,8 +597,23 @@ async function runHeadlessCouncil(
 ): Promise<number> {
   const { dispatchCouncil } = await import('./councilDispatcher.js');
   const sessionId = crypto.randomUUID();
+  // Experiment: free-form council+build soft-gated to design-phase unless
+  // ZELARI_COUNCIL_CAN_BUILD=1. Also strip project mutators (planMode tools).
+  const { shouldAllowCouncilBuild } = await import('./buildPolicy.js');
+  let councilRunMode: 'design-phase' | 'implementation' = planModeFromOpts(opts)
+    ? 'design-phase'
+    : 'implementation';
+  let softGated = false;
+  if (councilRunMode === 'implementation' && !shouldAllowCouncilBuild()) {
+    councilRunMode = 'design-phase';
+    softGated = true;
+    process.stderr.write(
+      '[zelari-code --headless] council build soft-gate: forced design-phase ' +
+        '(set ZELARI_COUNCIL_CAN_BUILD=1 to allow Lucifero implement)\n',
+    );
+  }
   const { toolRegistry } = await buildCouncilToolRegistry(
-    planModeFromOpts(opts),
+    planModeFromOpts(opts) || softGated,
     opts,
   );
   const { FeedbackStore } = await import('./councilFeedback.js');
@@ -638,19 +653,6 @@ async function runHeadlessCouncil(
       durableState: durableState || undefined,
       includeDurableState: false,
     });
-    // Experiment: free-form council+build soft-gated to design-phase unless
-    // ZELARI_COUNCIL_CAN_BUILD=1.
-    const { shouldAllowCouncilBuild } = await import('./buildPolicy.js');
-    let councilRunMode: 'design-phase' | 'implementation' = planModeFromOpts(opts)
-      ? 'design-phase'
-      : 'implementation';
-    if (councilRunMode === 'implementation' && !shouldAllowCouncilBuild()) {
-      councilRunMode = 'design-phase';
-      process.stderr.write(
-        '[zelari-code --headless] council build soft-gate: forced design-phase ' +
-          '(set ZELARI_COUNCIL_CAN_BUILD=1 to allow Lucifero implement)\n',
-      );
-    }
     for await (const event of dispatchCouncil(effectiveTask, {
       apiKey: 'REDACTED',
       model,
