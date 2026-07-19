@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.19.0] - 2026-07-19
+
+### Added
+- **Plan@multiagent · build@agent** (default Zelari mission policy) — design-phase stays on the **council**; implementation slices run on the **single-agent** harness (`missionSlice` + write-count + zero-write retry).
+- **Feature flags** — `ZELARI_BUILD_VIA_AGENT` (default on; set `0` for legacy council implementer), `ZELARI_COUNCIL_CAN_BUILD=1` (allow free-form council to implement via Lucifero), `ZELARI_MODE_MAX_TOOLS_AGENT` (default 40).
+- **`buildPolicy.ts`** — pure policy helpers for the experiment matrix.
+- **GUIDA** — mode×phase matrix and env table updated for the hybrid mission path.
+- **Dogfood notes** — `docs/plans/2026-07-19-plan-multiagent-build-agent-dogfood.md`.
+
+### Changed
+- **Zelari mission emit labels** — `build@agent` vs `council completo` / Minosse+Lucifero depending on policy.
+- **`/mode` descriptions** — reflect plan@council → build@agent and council plan-only default.
+- **Council free-form + build** — soft-gated to design-phase + plan-mode tool registry unless `ZELARI_COUNCIL_CAN_BUILD=1`.
+
+### Fixed
+- **False mission success with zero project writes** — `completion.ok` ignored when `writeCount === 0` (agent slice + mission driver).
+- **Soft-gate without mutator strip** — design-phase force now also enables planMode so product `write_file` is not on the free-form council registry by default.
+
+### Note (Desktop)
+- Installer does **not** upgrade the coding engine. Use `npm i -g zelari-code@1.19.0` (or Settings → Update CLI). Point monorepo Desktop at the new CLI with `ZELARI_CLI_PATH` if developing from source.
+
 ## [1.18.1] - 2026-07-18
 
 ### Added
@@ -262,6 +283,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [1.18.1] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [1.19.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
