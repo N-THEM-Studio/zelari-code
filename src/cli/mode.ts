@@ -28,10 +28,10 @@ export function parseMode(input: string): ChatMode | null {
 export function describeMode(mode: ChatMode): string {
   switch (mode) {
     case 'council':
-      return 'council — 6-member pipeline (Caronte…Lucifero)';
+      return 'council — multi-member plan/design (Caronte…Lucifero; build needs ZELARI_COUNCIL_CAN_BUILD=1)';
     case 'zelari':
-      return 'zelari — autonomous multi-run mission';
+      return 'zelari — mission: plan@council → build@agent (legacy: ZELARI_BUILD_VIA_AGENT=0)';
     default:
-      return 'agent — single LLM turn';
+      return 'agent — single LLM turn (default implementer)';
   }
 }

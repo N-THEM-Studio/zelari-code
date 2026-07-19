@@ -192,10 +192,12 @@ Due assi indipendenti:
 | Mode × Phase | Tipico uso |
 |--------------|------------|
 | agent + plan | Esplora/progetta senza scrivere sul progetto |
-| agent + build | Implementa con tool completi |
-| council + plan / design-phase | Piano e artifact in `.zelari/` |
-| council + build / implementation | Analisi multi-membro + Lucifero implementa |
-| zelari | Missione multi-run fino a completion |
+| agent + build | **Implementer di default** — tool completi |
+| council + plan / design-phase | Piano e artifact in `.zelari/` (ruolo principale del multi-agente) |
+| council + build / implementation | Soft-gate: di default resta in design-phase; Lucifero implementa solo con `ZELARI_COUNCIL_CAN_BUILD=1` |
+| zelari | Missione: **design@council → build@agent** fino a completion |
+
+> **Esperimento (branch `experiment/plan-multiagent-build-agent`):** multi-agente = planning; agent singolo = build. Vedi variabili sotto.
 
 ### Agent (default)
 
@@ -246,9 +248,7 @@ La terza modalità (`⚡ zelari`) trasforma **un prompt libero** in una **missio
 2. Zelari costruisce un **mission brief** (intent, stack inferito, deliverable, assunzioni, out-of-scope, slice MVP) e lo mostra in chat.
 3. Confermi con `ok` (o imposti `ZELARI_MISSION_AUTO=1` per l'avvio automatico).
 4. Il loop gira: per i progetti greenfield prima **design-phase**, poi **implementation** a ripetizione. Tra un'iterazione e l'altra viene re-iniettato solo un contesto compatto (brief + hit di memoria), mai l'intero transcript.
-5. La missione termina con **successo** quando `completion.ok` è verde sullo slice MVP, oppure si **ferma** al raggiungimento del budget di **implementazioni** (`ZELARI_MISSION_MAX_ITER`, default 6). La **design-phase** iniziale (se prevista dal brief) è **fuori budget** e non consuma iterazioni. La **prima** implementation usa il council completo; dalle **implementation 2+** il roster è ridotto a **Minosse + Lucifero** (fix/verify senza ripagare i 4 specialisti). Stato salvato in `.zelari/mission-state.json`.
-
-In zelari-mode il **chairman (Lucifero)** riceve un budget di tool più alto (`ZELARI_MODE_MAX_TOOLS_LUCIFER`, default 30) per reggere i run di implementazione lunghi.
+5. La missione termina con **successo** quando `completion.ok` è verde sullo slice MVP, oppure si **ferma** al raggiungimento del budget di **implementazioni** (`ZELARI_MISSION_MAX_ITER`, default 6). La **design-phase** iniziale (se prevista dal brief) è **fuori budget** e non consuma iterazioni. **Default esperimento:** le slice di **implementation** usano l’**agente singolo** (`build@agent`); la design-phase resta sul council. Con `ZELARI_BUILD_VIA_AGENT=0` (legacy) la prima implementation usa il council completo e dalle **implementation 2+** il roster è ridotto a **Minosse + Lucifero**. Stato salvato in `.zelari/mission-state.json`.
 
 **Variabili:**
 
@@ -257,7 +257,10 @@ In zelari-mode il **chairman (Lucifero)** riceve un budget di tool più alto (`Z
 | `ZELARI_MISSION_AUTO` | `0` | `1` = avvia la missione senza chiedere conferma del brief |
 | `ZELARI_MISSION_MAX_ITER` | `6` | max slice di **implementation** (design-phase gratuita) |
 | `ZELARI_MISSION_MAX_STALL` | `2` | slice implementation consecutive con 0 write prima di `stalled` (`0` = off) |
-| `ZELARI_MODE_MAX_TOOLS_LUCIFER` | `30` | budget di tool call per il chairman in zelari-mode |
+| `ZELARI_BUILD_VIA_AGENT` | on (≠`0`) | `0` = zelari impl di nuovo via council (legacy) |
+| `ZELARI_COUNCIL_CAN_BUILD` | off | `1` = free-form council può implementare (Lucifero); forza anche zelari su path council |
+| `ZELARI_MODE_MAX_TOOLS_AGENT` | `40` | budget tool call per slice agent in missione |
+| `ZELARI_MODE_MAX_TOOLS_LUCIFER` | `30` | budget tool call chairman (solo path legacy council impl) |
 
 ### Memoria di progetto
 

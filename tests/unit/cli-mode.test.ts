@@ -37,6 +37,12 @@ describe('mode helper', () => {
   it('describeMode is non-empty for every mode', () => {
     for (const m of MODES) expect(describeMode(m).length).toBeGreaterThan(0);
   });
+
+  it('describeMode reflects plan@council / build@agent experiment copy', () => {
+    expect(describeMode('agent')).toMatch(/implementer|single/i);
+    expect(describeMode('council')).toMatch(/plan|design/i);
+    expect(describeMode('zelari')).toMatch(/build@agent|plan@council/i);
+  });
 });
 
 /**
