@@ -638,6 +638,19 @@ async function runHeadlessCouncil(
       durableState: durableState || undefined,
       includeDurableState: false,
     });
+    // Experiment: free-form council+build soft-gated to design-phase unless
+    // ZELARI_COUNCIL_CAN_BUILD=1.
+    const { shouldAllowCouncilBuild } = await import('./buildPolicy.js');
+    let councilRunMode: 'design-phase' | 'implementation' = planModeFromOpts(opts)
+      ? 'design-phase'
+      : 'implementation';
+    if (councilRunMode === 'implementation' && !shouldAllowCouncilBuild()) {
+      councilRunMode = 'design-phase';
+      process.stderr.write(
+        '[zelari-code --headless] council build soft-gate: forced design-phase ' +
+          '(set ZELARI_COUNCIL_CAN_BUILD=1 to allow Lucifero implement)\n',
+      );
+    }
     for await (const event of dispatchCouncil(effectiveTask, {
       apiKey: 'REDACTED',
       model,
@@ -646,7 +659,7 @@ async function runHeadlessCouncil(
       sessionId,
       tools: toolRegistry,
       feedbackStore,
-      runMode: planModeFromOpts(opts) ? 'design-phase' : 'implementation',
+      runMode: councilRunMode,
       workspaceContext: composed.workspaceContext,
       ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
       maxToolLoopIterations: envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
@@ -748,6 +761,8 @@ async function runHeadlessZelari(
     default: 30,
     min: 1,
   });
+  const { shouldBuildViaAgent } = await import('./buildPolicy.js');
+  const buildViaAgent = shouldBuildViaAgent();
 
   const emit = (message: string) => {
     if (opts.output === 'json') {
@@ -772,6 +787,11 @@ async function runHeadlessZelari(
 
   // Surface the brief once so the desktop UI is not blank.
   emit(`[zelari] mission brief\n${JSON.stringify({ deliverable: brief.deliverableThisMission, mvp: brief.sliceMvp?.title }, null, 0)}`);
+  if (buildViaAgent) {
+    emit(
+      '[zelari] policy: design@council · build@agent (set ZELARI_BUILD_VIA_AGENT=0 for legacy)',
+    );
+  }
 
   let exitCode = 0;
   let lastMissionAssistant = '';
@@ -780,145 +800,222 @@ async function runHeadlessZelari(
       projectRoot,
       memory,
       emit,
+      buildViaAgent,
       runSlice: async ({
         userMessage: slicePrompt,
         runMode,
         ragContext,
         implementerRetry,
       }) => {
-        const sessionId = crypto.randomUUID();
-        const fullPrompt = ragContext
-          ? `${slicePrompt}\n\n## Memory context\n${ragContext}`
-          : slicePrompt;
+        const effectiveRunMode = planModeFromOpts(opts) ? 'design-phase' : runMode;
 
-        let synthesisText = '';
-        let writeCount = 0;
-        let chairmanErrored = false;
-        let membersCompleted = 0;
-        const scrub = createStreamScrubber();
+        // design-phase always council; implementation uses agent when policy ON
+        if (effectiveRunMode === 'design-phase' || !buildViaAgent) {
+          const sessionId = crypto.randomUUID();
+          const fullPrompt = ragContext
+            ? `${slicePrompt}\n\n## Memory context\n${ragContext}`
+            : slicePrompt;
 
+          let synthesisText = '';
+          let writeCount = 0;
+          let chairmanErrored = false;
+          let membersCompleted = 0;
+          const scrub = createStreamScrubber();
+
+          const { composeProjectContext } = await import(
+            './workspace/composeContext.js'
+          );
+          const { loadDurableContext } = await import('./state/loadDurableContext.js');
+          const memOnly = ragContext?.trim() ? ragContext : undefined;
+          const durableState = await loadDurableContext(projectRoot);
+          const composed = composeProjectContext({
+            mode: 'zelari',
+            cwd: projectRoot,
+            userMessage: slicePrompt,
+            memoryHits: memOnly,
+            durableState: durableState || undefined,
+            includeLessons: true,
+            includeDurableState: false,
+          });
+          for await (const event of dispatchCouncil(fullPrompt, {
+            apiKey: 'REDACTED',
+            model,
+            provider: 'openai-compatible',
+            providerStream,
+            sessionId,
+            tools: toolRegistry,
+            feedbackStore,
+            runMode: effectiveRunMode,
+            maxToolCallsChairman: chairmanBudget,
+            ...(implementerRetry ? { skipSpecialists: true } : {}),
+            workspaceContext: composed.workspaceContext,
+            ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
+            maxToolLoopIterations: envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
+              default: 30,
+              min: 1,
+            }),
+            ...(() => {
+              const hard = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_HARD, {
+                default: 0,
+                min: 0,
+              });
+              return hard > 0 ? { maxToolLoopHardCap: hard } : {};
+            })(),
+          })) {
+            if (event.type === 'message_start') {
+              scrub.reset();
+            }
+            if (event.type === 'message_delta' && typeof event.delta === 'string') {
+              synthesisText += event.delta;
+              const cleanDelta = scrub.push(event.delta);
+              if (opts.output === 'json') {
+                if (cleanDelta.length > 0) emitEvent({ ...event, delta: cleanDelta });
+              } else if (opts.output === 'plain' && cleanDelta.length > 0) {
+                process.stdout.write(cleanDelta);
+              }
+            } else if (opts.output === 'json') {
+              emitEvent(event);
+            }
+            if (event.type === 'tool_execution_end') {
+              const name = (event as { toolName?: string; name?: string }).toolName
+                ?? (event as { name?: string }).name
+                ?? '';
+              if (name === 'write_file' || name === 'edit_file' || name === 'apply_diff') {
+                writeCount += 1;
+              }
+            }
+            if (event.type === 'agent_end') {
+              membersCompleted += 1;
+              if (event.reason === 'error') chairmanErrored = true;
+            }
+            if (event.type === 'error' && (event as { severity?: string }).severity === 'fatal') {
+              chairmanErrored = true;
+              exitCode = 2;
+            }
+          }
+
+          let completionOk = false;
+          let degraded = false;
+          try {
+            const { detectDegradedRun } = await import('@zelari/core/council');
+            const d = detectDegradedRun({
+              chairmanErrored,
+              councilAborted: false,
+              luciferWriteCount: writeCount,
+              synthesisText,
+              runMode: effectiveRunMode,
+            });
+            degraded = d.degraded;
+            const hook = await runPostCouncilHook(workspaceCtx, {
+              runMode: effectiveRunMode,
+              userMessage: opts.task,
+              synthesisText: synthesisText || undefined,
+              degradedRun: d.degraded,
+              degradedReasons: d.reasons,
+            });
+            completionOk = hook.completion?.completion?.ok ?? false;
+            if (completionOk) {
+              emit(`[zelari] slice completion ok`);
+            }
+          } catch {
+            // best-effort
+          }
+
+          if (synthesisText.trim()) {
+            lastMissionAssistant = cleanAgentContent(synthesisText, {
+              stripQuestion: false,
+              stripThink: false,
+            });
+          }
+
+          return {
+            completionOk,
+            ran: membersCompleted > 0 || synthesisText.length > 0,
+            synthesisText: synthesisText || undefined,
+            writeCount,
+            degraded,
+          };
+        }
+
+        // build@agent implementation slice
+        const { runAgentMissionSlice } = await import('./missionSlice.js');
+        const { createBuiltinToolRegistry } = await import('./toolRegistry.js');
         const { composeProjectContext } = await import(
           './workspace/composeContext.js'
         );
         const { loadDurableContext } = await import('./state/loadDurableContext.js');
-        // fullPrompt already embeds memory; also compose product+plan ops.
-        // Prefer pure memory for ragContext (not the whole prompt) when possible.
-        const memOnly = ragContext?.trim()
-          ? ragContext
-          : undefined;
+        const { detectDegradedRun } = await import('@zelari/core/council');
+
+        const { registry: agentRegistry } = createBuiltinToolRegistry({
+          planMode: false,
+        });
+        await registerHeadlessMcp(agentRegistry, opts);
+
         const durableState = await loadDurableContext(projectRoot);
         const composed = composeProjectContext({
           mode: 'zelari',
           cwd: projectRoot,
           userMessage: slicePrompt,
-          memoryHits: memOnly,
+          memoryHits: ragContext?.trim() ? ragContext : undefined,
           durableState: durableState || undefined,
           includeLessons: true,
           includeDurableState: false,
         });
-        for await (const event of dispatchCouncil(fullPrompt, {
-          apiKey: 'REDACTED',
+
+        const sliceResult = await runAgentMissionSlice({
+          projectRoot,
           model,
           provider: 'openai-compatible',
           providerStream,
-          sessionId,
-          tools: toolRegistry,
-          feedbackStore,
-          runMode: planModeFromOpts(opts) ? 'design-phase' : runMode,
-          maxToolCallsChairman: chairmanBudget,
-          ...(implementerRetry ? { skipSpecialists: true } : {}),
+          toolRegistry: agentRegistry,
+          slicePrompt,
+          ragContext: composed.ragContext ?? ragContext,
           workspaceContext: composed.workspaceContext,
-          ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
-          maxToolLoopIterations: envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
-            default: 30,
-            min: 1,
-          }),
-          ...(() => {
-            const hard = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_HARD, {
-              default: 0,
-              min: 0,
+          projectInstructions: composed.projectInstructions,
+          emit,
+          onEvent: async (event) => {
+            if (opts.output === 'json') {
+              if (event.type === 'message_delta' && typeof event.delta === 'string') {
+                emitEvent(event);
+              } else {
+                emitEvent(event);
+              }
+            } else if (
+              opts.output === 'plain' &&
+              event.type === 'message_delta' &&
+              typeof event.delta === 'string'
+            ) {
+              process.stdout.write(event.delta);
+            }
+          },
+          runCompletionHook: async ({ synthesisText, writeCount, errored }) => {
+            const d = detectDegradedRun({
+              chairmanErrored: errored,
+              luciferWriteCount: writeCount,
+              synthesisText,
+              runMode: 'implementation',
             });
-            return hard > 0 ? { maxToolLoopHardCap: hard } : {};
-          })(),
-        })) {
-          if (event.type === 'message_start') {
-            scrub.reset();
-          }
-          if (event.type === 'message_delta' && typeof event.delta === 'string') {
-            // Best-effort accumulate RAW last member stream as synthesis proxy
-            // (the synthesis accumulator tracks raw provider text; the display
-            // path below emits the scrubbed version separately).
-            synthesisText += event.delta;
-            const cleanDelta = scrub.push(event.delta);
-            if (opts.output === 'json') {
-              if (cleanDelta.length > 0) emitEvent({ ...event, delta: cleanDelta });
-            } else if (opts.output === 'plain' && cleanDelta.length > 0) {
-              process.stdout.write(cleanDelta);
+            const hook = await runPostCouncilHook(workspaceCtx, {
+              runMode: 'implementation',
+              userMessage: opts.task,
+              synthesisText: synthesisText || undefined,
+              degradedRun: d.degraded,
+              degradedReasons: d.reasons,
+            });
+            if (hook.completion?.completion?.ok) {
+              emit(`[zelari] slice completion ok`);
             }
-          } else {
-            if (opts.output === 'json') {
-              emitEvent(event);
-            }
-          }
-          if (event.type === 'tool_execution_end') {
-            const name = (event as { toolName?: string; name?: string }).toolName
-              ?? (event as { name?: string }).name
-              ?? '';
-            if (name === 'write_file' || name === 'edit_file' || name === 'apply_diff') {
-              writeCount += 1;
-            }
-          }
-          if (event.type === 'agent_end') {
-            membersCompleted += 1;
-            if (event.reason === 'error') chairmanErrored = true;
-          }
-          if (event.type === 'error' && (event as { severity?: string }).severity === 'fatal') {
-            chairmanErrored = true;
-            exitCode = 2;
-          }
-        }
+            return {
+              completionOk: hook.completion?.completion?.ok ?? false,
+              degraded: d.degraded,
+            };
+          },
+        });
 
-        let completionOk = false;
-        let degraded = false;
-        try {
-          const { detectDegradedRun } = await import('@zelari/core/council');
-          const d = detectDegradedRun({
-            chairmanErrored,
-            councilAborted: false,
-            luciferWriteCount: writeCount,
-            synthesisText,
-            runMode,
-          });
-          degraded = d.degraded;
-          const hook = await runPostCouncilHook(workspaceCtx, {
-            runMode,
-            userMessage: opts.task,
-            synthesisText: synthesisText || undefined,
-            degradedRun: d.degraded,
-            degradedReasons: d.reasons,
-          });
-          completionOk = hook.completion?.completion?.ok ?? false;
-          if (completionOk) {
-            emit(`[zelari] slice completion ok`);
-          }
-        } catch {
-          // best-effort
+        if (sliceResult.synthesisText?.trim()) {
+          lastMissionAssistant = sliceResult.synthesisText;
         }
-
-        if (synthesisText.trim()) {
-          lastMissionAssistant = cleanAgentContent(synthesisText, {
-            stripQuestion: false,
-            stripThink: false,
-          });
-        }
-
-        return {
-          completionOk,
-          ran: membersCompleted > 0 || synthesisText.length > 0,
-          synthesisText: synthesisText || undefined,
-          writeCount,
-          degraded,
-        };
+        return sliceResult;
       },
     });
 

@@ -1005,6 +1005,11 @@ interface CouncilRunOverrides {
   maxToolCallsChairman?: number;
   /** Implementation 2+: Minosse + Lucifero only (skip specialists). */
   skipSpecialists?: boolean;
+  /**
+   * When true, allow implementation even if free-form council is plan-only
+   * (ZELARI_COUNCIL_CAN_BUILD unset). Used by Zelari legacy build@council path.
+   */
+  allowCouncilBuild?: boolean;
 }
 
 async function dispatchCouncilPromptImpl(
@@ -1120,9 +1125,27 @@ async function dispatchCouncilPromptImpl(
     councilToolRegistry.register(td);
   }
   // Force council design-phase when UI phase is plan (and vice-versa for build).
-  const phaseRunMode =
+  // Experiment: free-form council+build is soft-gated to design-phase unless
+  // ZELARI_COUNCIL_CAN_BUILD=1 or the caller (zelari legacy path) opts in.
+  let phaseRunMode =
     overrides.runMode ??
     (workPhase === "plan" ? "design-phase" : "implementation");
+  if (phaseRunMode === "implementation") {
+    const { shouldAllowCouncilBuild } = await import("../buildPolicy.js");
+    const allowed =
+      overrides.allowCouncilBuild === true || shouldAllowCouncilBuild();
+    if (!allowed) {
+      phaseRunMode = "design-phase";
+      appendSystem(
+        setMessages,
+        "[council] build soft-gate: implementation disabled for free-form council " +
+          "(experiment: multi-agent = plan). Forced design-phase. " +
+          "Set ZELARI_COUNCIL_CAN_BUILD=1 to let Lucifero implement, " +
+          "or use mode agent/zelari for on-disk work.",
+        Date.now(),
+      );
+    }
+  }
   // v0.7.5: MCP tools for the council too (same lazy singleton as the
   // single-agent path — zero extra spawns).
   try {
@@ -1769,31 +1792,152 @@ async function runZelariMissionInTui(
     default: 30,
     min: 1,
   });
+  const { shouldBuildViaAgent } = await import("../buildPolicy.js");
+  const buildViaAgent = shouldBuildViaAgent();
+  if (buildViaAgent) {
+    emit(
+      "[zelari] policy: design@council · build@agent (ZELARI_BUILD_VIA_AGENT; set=0 for legacy council impl)",
+    );
+  }
 
   try {
     await runZelariMission(userMessage, brief, {
       projectRoot,
       memory,
       emit,
+      buildViaAgent,
       runSlice: async ({
         userMessage: slicePrompt,
         runMode,
         ragContext,
         implementerRetry,
       }) => {
-        const r = await dispatchCouncilPromptImpl(slicePrompt, deps, {
-          ragContext,
-          runMode,
-          maxToolCallsChairman: chairmanBudget,
-          ...(implementerRetry ? { skipSpecialists: true } : {}),
+        // Design always uses council. Implementation uses agent when policy says so.
+        if (runMode === "design-phase" || !buildViaAgent) {
+          const r = await dispatchCouncilPromptImpl(slicePrompt, deps, {
+            ragContext,
+            runMode,
+            maxToolCallsChairman: chairmanBudget,
+            ...(implementerRetry ? { skipSpecialists: true } : {}),
+            // Mission may need Lucifero to write even when free-form council is plan-only.
+            allowCouncilBuild: true,
+          });
+          return {
+            completionOk: r.completionOk,
+            ran: r.ran,
+            synthesisText: r.synthesisText,
+            writeCount: r.writeCount,
+            degraded: r.degraded,
+          };
+        }
+
+        // build@agent implementation slice
+        const { runAgentMissionSlice } = await import("../missionSlice.js");
+        // createBuiltinToolRegistry, openaiCompatibleProvider, providerFromEnv
+        // already imported at module top.
+        const { composeProjectContext } = await import(
+          "../workspace/composeContext.js"
+        );
+        const { loadDurableContext } = await import(
+          "../state/loadDurableContext.js"
+        );
+        const { createWorkspaceContext } = await import(
+          "../workspace/stubs.js"
+        );
+        const { runPostCouncilHook } = await import(
+          "../workspace/postCouncilHook.js"
+        );
+        const { detectDegradedRun } = await import("@zelari/core/council");
+
+        const envConfig = await providerFromEnv();
+        if (!envConfig) {
+          emit(
+            "[zelari] build@agent aborted: missing API key for active provider",
+          );
+          return { completionOk: false, ran: false };
+        }
+
+        const { registry: toolRegistry } = createBuiltinToolRegistry({
+          planMode: false,
         });
-        return {
-          completionOk: r.completionOk,
-          ran: r.ran,
-          synthesisText: r.synthesisText,
-          writeCount: r.writeCount,
-          degraded: r.degraded,
-        };
+        try {
+          const { registerMcpTools } = await import("../mcp/mcpManager.js");
+          await registerMcpTools(toolRegistry, projectRoot);
+        } catch {
+          // best-effort MCP
+        }
+
+        const durableState = await loadDurableContext(projectRoot);
+        const composed = composeProjectContext({
+          mode: "zelari",
+          cwd: projectRoot,
+          userMessage: slicePrompt,
+          memoryHits: ragContext,
+          durableState: durableState || undefined,
+          includeLessons: true,
+          includeDurableState: false,
+        });
+        for (const w of composed.warnings) {
+          emit(w);
+        }
+
+        const workspaceCtx = createWorkspaceContext(projectRoot);
+        const { setMessages, writerRef, setBusy } = deps;
+        setBusy(true);
+        try {
+          return await runAgentMissionSlice({
+            projectRoot,
+            model: envConfig.model,
+            provider: "openai-compatible",
+            providerStream: openaiCompatibleProvider(envConfig),
+            toolRegistry,
+            slicePrompt,
+            ragContext: composed.ragContext ?? ragContext,
+            workspaceContext: composed.workspaceContext,
+            projectInstructions: composed.projectInstructions,
+            emit,
+            onEvent: async (event) => {
+              if (writerRef.current) await writerRef.current.append(event);
+              if (event.type === "tool_execution_start") {
+                const name =
+                  (event as { toolName?: string }).toolName ?? "tool";
+                appendSystem(
+                  setMessages,
+                  `[build@agent] → ${name}`,
+                  Date.now(),
+                );
+              }
+            },
+            runCompletionHook: async ({ synthesisText, writeCount, errored }) => {
+              const d = detectDegradedRun({
+                chairmanErrored: errored,
+                luciferWriteCount: writeCount,
+                synthesisText,
+                runMode: "implementation",
+              });
+              if (d.degraded) {
+                appendSystem(
+                  setMessages,
+                  `[zelari] DEGRADED_RUN — ${d.reasons.join("; ")}`,
+                  Date.now(),
+                );
+              }
+              const hook = await runPostCouncilHook(workspaceCtx, {
+                runMode: "implementation",
+                userMessage: userMessage,
+                synthesisText: synthesisText || undefined,
+                degradedRun: d.degraded,
+                degradedReasons: d.reasons,
+              });
+              return {
+                completionOk: hook.completion?.completion?.ok ?? false,
+                degraded: d.degraded,
+              };
+            },
+          });
+        } finally {
+          setBusy(false);
+        }
       },
     });
   } catch (err) {

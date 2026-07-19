@@ -76,6 +76,27 @@ describe('runZelariMission', () => {
     expect(state.iteration).toBe(2);
   });
 
+  it('emits build@agent labels when buildViaAgent is true', async () => {
+    const root = await tmp();
+    const brief = buildMissionBrief({ userMessage: 'correggi il bug', hasPlan: true });
+    const emits: string[] = [];
+
+    await runZelariMission('correggi il bug', brief, {
+      projectRoot: root,
+      memory: new FileMemoryBackend(),
+      emit: (m) => emits.push(m),
+      buildViaAgent: true,
+      runSlice: async (): Promise<SliceRunResult> => ({
+        completionOk: true,
+        ran: true,
+        writeCount: 1,
+      }),
+    });
+
+    expect(emits.some((m) => m.includes('build@agent'))).toBe(true);
+    expect(emits.some((m) => m.includes('council completo'))).toBe(false);
+  });
+
   it('marks implementerRetry on implementation 2+ (not first impl or design)', async () => {
     const root = await tmp();
     const brief = buildMissionBrief({ userMessage: 'costruisci una vetrina e-commerce' });

@@ -94,6 +94,12 @@ export interface ZelariMissionDeps {
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   missionId?: string;
+  /**
+   * When true, implementation slices use single-agent harness (emit labels
+   * say build@agent). When false/undefined, emit legacy council roster labels.
+   * Does not change runSlice wiring — the caller still injects the runner.
+   */
+  buildViaAgent?: boolean;
 }
 
 /**
@@ -277,6 +283,11 @@ export async function runZelariMission(
     if (runMode === 'design-phase') {
       deps.emit(
         `[zelari] design-phase (fuori budget) · step ${step} · slice ${brief.sliceMvp.id}`,
+      );
+    } else if (deps.buildViaAgent) {
+      deps.emit(
+        `[zelari] implementazione ${implStep}/${maxIter} · step ${step} · ` +
+          `build@agent · slice ${brief.sliceMvp.id}`,
       );
     } else if (implementerRetry) {
       deps.emit(
