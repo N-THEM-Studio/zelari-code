@@ -371,8 +371,15 @@ export async function runAgentMissionSlice(
     completionOk = totalWrites > 0 && !errored && !degraded;
   }
 
-  // Extra degraded signal: zero writes after retry on implementation
-  if (totalWrites === 0 && !degraded) {
+  // Hard gate: verification can be vacuously green on an empty tree with no
+  // plan tasks. An implementation slice with zero project writes is never done.
+  if (totalWrites === 0) {
+    if (completionOk) {
+      deps.emit?.(
+        '[zelari] build@agent: completion.ok overridden — 0 project writes (not done)',
+      );
+    }
+    completionOk = false;
     const d = detectDegradedRun({
       chairmanErrored: errored,
       luciferWriteCount: 0,
@@ -380,6 +387,7 @@ export async function runAgentMissionSlice(
       runMode: 'implementation',
     });
     if (d.degraded) degraded = true;
+    else degraded = true; // zero-write impl is always degraded for hand-off
   }
 
   void totalEmitted;

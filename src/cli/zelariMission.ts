@@ -338,7 +338,22 @@ export async function runZelariMission(
       },
     );
 
-    state.lastCompletionOk = result.completionOk;
+    // Implementation slices that report writeCount===0 cannot be "done" even if
+    // a vacuous completion.json says ok (empty tree / no blocking verify).
+    let completionOk = result.completionOk;
+    if (
+      runMode === 'implementation' &&
+      completionOk &&
+      typeof result.writeCount === 'number' &&
+      result.writeCount === 0
+    ) {
+      completionOk = false;
+      deps.emit(
+        '[zelari] completion.ok ignored: implementation slice wrote 0 project files',
+      );
+    }
+
+    state.lastCompletionOk = completionOk;
     state.updatedAt = now().toISOString();
 
     // Design is free: clear the flag and continue into implementation budget.
@@ -351,7 +366,7 @@ export async function runZelariMission(
     // Durable accumulation: verified success → hard commit; progress with
     // writes → soft progress commit so the next slice inherits discoveries.
     const wrote = typeof result.writeCount === 'number' && result.writeCount > 0;
-    if (result.completionOk || wrote) {
+    if (completionOk || wrote) {
       const hard = result.completionOk === true;
       const commitRes = await tryStateCommit({
         projectRoot: deps.projectRoot,
@@ -396,8 +411,8 @@ export async function runZelariMission(
       }
     }
 
-    // Success only when an IMPLEMENTATION slice completes.
-    if (result.completionOk) {
+    // Success only when an IMPLEMENTATION slice completes (and wrote if counted).
+    if (completionOk) {
       state.status = 'success';
       await writeMissionState(deps.projectRoot, state);
       deps.emit(

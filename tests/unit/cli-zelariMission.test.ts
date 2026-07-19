@@ -76,6 +76,36 @@ describe('runZelariMission', () => {
     expect(state.iteration).toBe(2);
   });
 
+  it('does not succeed on completionOk when writeCount is explicitly 0', async () => {
+    const root = await tmp();
+    const brief = buildMissionBrief({ userMessage: 'correggi il bug', hasPlan: true });
+    const emits: string[] = [];
+
+    const state = await runZelariMission('correggi il bug', brief, {
+      projectRoot: root,
+      memory: new FileMemoryBackend(),
+      emit: (m) => emits.push(m),
+      maxIterations: 2,
+      env: { ZELARI_MISSION_MAX_STALL: '2' } as NodeJS.ProcessEnv,
+      runSlice: async (): Promise<SliceRunResult> => ({
+        completionOk: true,
+        ran: true,
+        writeCount: 0,
+        synthesisText: 'tutto fatto',
+      }),
+    });
+
+    expect(state.status).not.toBe('success');
+    expect(
+      emits.some(
+        (m) =>
+          m.includes('0 project files') ||
+          m.includes('senza scrivere') ||
+          m.includes('completion.ok ignored'),
+      ),
+    ).toBe(true);
+  });
+
   it('emits build@agent labels when buildViaAgent is true', async () => {
     const root = await tmp();
     const brief = buildMissionBrief({ userMessage: 'correggi il bug', hasPlan: true });
