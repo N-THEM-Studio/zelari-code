@@ -300,6 +300,51 @@ function checkPath(): CheckResult {
 }
 
 /**
+ * Check that the recommended tool-budget env vars are set so the agent
+ * doesn't get force-summarized mid-task by the hard cap. Reads process.env
+ * (not the registry) — what the running process actually sees.
+ */
+function checkBudget(): CheckResult {
+  const expected = {
+    ZELARI_MAX_TOOL_LOOP_HARD: "180",
+    ZELARI_MAX_TOOL_LOOP_ITERATIONS: "60",
+    ZELARI_CONTEXT_LIMIT: "400000",
+  };
+  const missing: string[] = [];
+  const wrong: string[] = [];
+  for (const [name, target] of Object.entries(expected)) {
+    const current = process.env[name];
+    if (current === undefined || current === "") missing.push(name);
+    else if (current !== target) wrong.push(`${name}=${current} (recommended ${target})`);
+  }
+  if (missing.length === 0 && wrong.length === 0) {
+    return OK(`budget at recommended values (hard=180, soft=60, ctx=400k)`);
+  }
+  const lines: string[] = [];
+  if (missing.length > 0) {
+    lines.push(
+      `missing: ${missing.join(", ")} — agent uses tighter in-code defaults`,
+    );
+  }
+  if (wrong.length > 0) {
+    lines.push(`override: ${wrong.join("; ")}`);
+  }
+  const winHint =
+    `         fix:  zelari-code --fix-budget   (sets all three at User scope)\n` +
+    `               then open a NEW terminal for the changes to take effect`;
+  const posixHint =
+    `         fix:  export ZELARI_MAX_TOOL_LOOP_HARD=180\n` +
+    `               export ZELARI_MAX_TOOL_LOOP_ITERATIONS=60\n` +
+    `               export ZELARI_CONTEXT_LIMIT=400000\n` +
+    `               (add to ~/.bashrc or ~/.zshrc to persist)`;
+  return WARN(
+    `${lines.join("\n")}\n` +
+      `         symptom: agent stops mid-task without completing (not rate limit)\n` +
+      (process.platform === "win32" ? winHint : posixHint),
+  );
+}
+
+/**
  * Adapt a `PrereqResult` (from prereqChecks.ts) into doctor's `CheckResult`.
  * The shapes are isomorphic — this is a pure pass-through that lets the
  * agent-shell-aware checks share the doctor's report formatting + summary.
@@ -385,6 +430,10 @@ export async function runDoctor(): Promise<boolean> {
     { name: "node (agent shell)", run: () => prereqToCheckResult(checkAgentNode()) },
     { name: "git (agent shell)", run: () => prereqToCheckResult(checkAgentGit()) },
     { name: "bash", run: () => prereqToCheckResult(checkAgentBash()) },
+    // --- tool-budget sanity (v1.20.0) ---
+    // WARNS when the recommended ZELARI_* caps are unset/overridden, so users
+    // learn why the agent stops mid-task without completing. Points to --fix-budget.
+    { name: "budget", run: () => checkBudget() },
     // --- optional tool plugins (v1.5.0) ---
     // Playwright / eslint / ruff / LSP servers. WARN-only (never critical):
     // these power edge features that degrade silently when absent. Surfaced

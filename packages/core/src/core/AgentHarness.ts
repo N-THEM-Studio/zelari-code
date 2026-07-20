@@ -217,7 +217,12 @@ export class AgentHarness {
     this.eventBus = config.eventBus;
     this.sessionId = config.sessionId ?? crypto.randomUUID();
     this.maxQueuedIterations = config.maxQueuedIterations ?? 3;
-    this.maxToolLoopIterations = config.maxToolLoopIterations ?? 30;
+    // v1.20.0: raised the soft default from 30 → 60 so multi-step
+    // implementations (build + test + verify) don't get force-summarized
+    // by the hard cap. The text-loop detector still catches pathological
+    // loops, so the higher budget cannot run away. Override via env
+    // ZELARI_MAX_TOOL_LOOP_ITERATIONS.
+    this.maxToolLoopIterations = config.maxToolLoopIterations ?? 60;
     // Hard cap: explicit config, else soft×3 (min soft+60) so long builds
     // can finish without unbounded loops.
     const soft = this.maxToolLoopIterations;

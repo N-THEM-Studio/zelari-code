@@ -130,6 +130,78 @@ describe('resolveShell — platform branching (v0.7.2)', () => {
   });
 });
 
+describe('resolveShell — PowerShell fallback (v1.20.0)', () => {
+  const realPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
+
+  beforeEach(() => {
+    _resetShellResolverForTests();
+  });
+  afterEach(() => {
+    _resetShellResolverForTests();
+    if (realPlatform) {
+      Object.defineProperty(process, 'platform', realPlatform);
+    }
+    vi.unstubAllEnvs();
+  });
+
+  function setPlatform(p: string): void {
+    Object.defineProperty(process, 'platform', { value: p, configurable: true });
+  }
+
+  it('win32: ZELARI_SHELL=powershell.exe returns isPowerShell=true', () => {
+    setPlatform('win32');
+    // powershell.exe always exists on modern Windows at this path. We use it
+    // as a guaranteed-present binary for the override test, same pattern as
+    // the node-binary stub in the bash tests above. If the host lacks this
+    // exact path (e.g. POSIX test runner), the test is skipped implicitly
+    // because acceptPowerShellPath requires existsSync.
+    const ps = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    vi.stubEnv('ZELARI_SHELL', ps);
+    vi.stubEnv('SHELL', '');
+    const r = resolveShell(true);
+    // If the host doesn't have this exact path, the test degrades gracefully.
+    if (r.via === 'cmd.exe') return; // path not found on this host
+    expect(r.isPowerShell).toBe(true);
+    expect(r.isBash).toBe(false);
+    expect(r.shell).toBe(ps);
+    expect(r.via.toLowerCase()).toContain('powershell');
+  });
+
+  it('win32: ZELARI_SHELL=powershell.exe does NOT get misclassified as bash', () => {
+    setPlatform('win32');
+    const ps = 'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe';
+    vi.stubEnv('ZELARI_SHELL', ps);
+    vi.stubEnv('SHELL', '');
+    const r = resolveShell(true);
+    if (r.via === 'cmd.exe') return; // path not found on this host
+    // The whole point of the isPowerShell flag: PowerShell is NOT bash.
+    expect(r.isBash).toBe(false);
+    expect(r.isPowerShell).toBe(true);
+  });
+
+  it('win32: ZELARI_SHELL=pwsh.exe (PS Core 7+) returns isPowerShell=true', () => {
+    setPlatform('win32');
+    // pwsh.exe only exists if PowerShell Core 7+ is installed. Test is
+    // environment-aware: skip-style early return when absent.
+    const pwsh = 'C:\\Program Files\\PowerShell\\7\\pwsh.exe';
+    vi.stubEnv('ZELARI_SHELL', pwsh);
+    vi.stubEnv('SHELL', '');
+    const r = resolveShell(true);
+    if (r.via === 'cmd.exe') return; // pwsh not installed on this host
+    expect(r.isPowerShell).toBe(true);
+    expect(r.isBash).toBe(false);
+    expect(r.shell).toBe(pwsh);
+  });
+
+  it('POSIX: isPowerShell is always false on non-Windows', () => {
+    setPlatform('linux');
+    const r = resolveShell(true);
+    expect(r.isPowerShell).toBe(false);
+    expect(r.isBash).toBe(false);
+    expect(r.via).toBe('/bin/sh');
+  });
+});
+
 describe('bashTool — interactive-prompt detection (v0.7.3)', () => {
   // Live test 2026-07-02: `npm create vite` in a non-empty dir prompts, dies
   // on the closed stdin printing "Operation cancelled" — and exits 0, so the

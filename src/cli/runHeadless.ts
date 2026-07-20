@@ -665,7 +665,7 @@ async function runHeadlessCouncil(
       workspaceContext: composed.workspaceContext,
       ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
       maxToolLoopIterations: envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
-        default: 30,
+        default: 60,
         min: 1,
       }),
       ...(() => {

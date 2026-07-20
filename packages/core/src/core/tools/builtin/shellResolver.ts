@@ -32,19 +32,20 @@ import { spawnSync } from 'node:child_process';
 
 export interface ResolvedShell {
   /**
-   * The value to pass to `spawn`'s `shell` option, OR a bash binary path to
-   * spawn directly via `spawn(path, ['-c', cmd], { shell: false })`.
+   * The value to pass to `spawn`'s `shell` option, OR a bash/powershell binary
+   * path to spawn directly via `spawn(path, ['-c' | '-Command', cmd], { shell: false })`.
    *
-   * - When `isBash` is true, `shell` is an absolute path string; spawn it
-   *   directly with `-c`.
-   * - When `isBash` is false, `shell` is `true` (let Node pick cmd.exe on
-   *   win32, /bin/sh on POSIX).
+   * - When `isBash` is true, `shell` is a bash binary path; spawn with `-c`.
+   * - When `isPowerShell` is true, `shell` is a powershell binary path; spawn with `-Command`.
+   * - When both false, `shell` is `true` (let Node pick cmd.exe on win32, /bin/sh on POSIX).
    */
   shell: string | true;
   /** Human-readable label for logs / the model, e.g. "bash (D:\\Git\\bin\\bash.exe)". */
   via: string;
   /** True when `shell` is a real bash binary (spawn via `-c`, POSIX semantics). */
   isBash: boolean;
+  /** True when `shell` is a PowerShell binary (spawn via `-Command`). */
+  isPowerShell: boolean;
 }
 
 /** Standard Git for Windows bash locations (probed in order). */
@@ -53,6 +54,17 @@ const STANDARD_BASH_PATHS = [
   'C:\\Program Files\\Git\\usr\\bin\\bash.exe',
   'C:\\Program Files (x86)\\Git\\bin\\bash.exe',
   'C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe',
+];
+
+/** PowerShell binary names (lowercase). */
+const POWERSHELL_EXES = ['pwsh.exe', 'powershell.exe'];
+
+/** Standard PowerShell install paths (probed in order, prefers Core 7+). */
+const STANDARD_POWERSHELL_PATHS = [
+  'C:\\Program Files\\PowerShell\\7\\pwsh.exe',
+  'C:\\Program Files\\PowerShell\\7\\powershell.exe',
+  'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe',
+  'C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe',
 ];
 
 let memoized: ResolvedShell | null = null;
@@ -78,17 +90,34 @@ export function isWslBashPath(p: string): boolean {
   return false;
 }
 
-/** Accept only a real (non-WSL) bash path that exists on disk. */
+/** True when `p` is a PowerShell binary (pwsh.exe or powershell.exe). */
+function isPowerShellPath(p: string): boolean {
+  if (!p || typeof p !== 'string') return false;
+  const lower = p.toLowerCase().trim();
+  return POWERSHELL_EXES.some((exe) => lower.endsWith(exe));
+}
+
+/** Accept only a real (non-WSL, non-PowerShell) bash path that exists on disk. */
 function acceptBashPath(p: string | undefined | null): string | null {
   if (!p || p.trim().length === 0) return null;
   const trimmed = p.trim();
   if (isWslBashPath(trimmed)) return null;
+  if (isPowerShellPath(trimmed)) return null; // PowerShell goes to resolvePowerShellWindows
   if (!existsSyncSafe(trimmed)) return null;
   return trimmed;
 }
 
 /**
  * Resolve the shell to use for command execution. Memoized per-process.
+ *
+ * Detection order on win32:
+ *   1. `ZELARI_SHELL` env var (explicit user override — bash or PowerShell)
+ *   2. `SHELL` env var (Git Bash / MSYS2)
+ *   3. Standard Git for Windows install paths
+ *   4. `where bash` (PATH lookup)
+ *   5. `where pwsh` / `where powershell` (PowerShell PATH lookup)
+ *   6. Standard PowerShell install paths
+ *   7. Fallback: cmd.exe
  *
  * @param forceReResolve bypass the memo (for tests).
  */
@@ -97,14 +126,21 @@ export function resolveShell(forceReResolve = false): ResolvedShell {
 
   // POSIX: Node's `shell: true` already uses /bin/sh — no work needed.
   if (process.platform !== 'win32') {
-    memoized = { shell: true, via: '/bin/sh', isBash: false };
+    memoized = { shell: true, via: '/bin/sh', isBash: false, isPowerShell: false };
     return memoized;
   }
 
-  // win32: try to find a real bash.
-  const found = resolveBashWindows();
-  if (found) {
-    memoized = { shell: found, via: `bash (${found})`, isBash: true };
+  // win32: try to find a real bash first.
+  const bashFound = resolveBashWindows();
+  if (bashFound) {
+    memoized = { shell: bashFound, via: `bash (${bashFound})`, isBash: true, isPowerShell: false };
+    return memoized;
+  }
+
+  // No bash found — try PowerShell (available on every modern Windows).
+  const psFound = resolvePowerShellWindows();
+  if (psFound) {
+    memoized = { shell: psFound, via: `powershell (${psFound})`, isBash: false, isPowerShell: true };
     return memoized;
   }
 
@@ -118,7 +154,7 @@ export function resolveShell(forceReResolve = false): ResolvedShell {
         'or set ZELARI_SHELL to your bash binary for proper POSIX support.',
     );
   }
-  memoized = { shell: true, via: 'cmd.exe', isBash: false };
+  memoized = { shell: true, via: 'cmd.exe', isBash: false, isPowerShell: false };
   return memoized;
 }
 
@@ -156,6 +192,46 @@ function resolveBashWindows(): string | null {
   return null;
 }
 
+/** Accept a PowerShell path that exists on disk. Rejects WSL bash and non-PowerShell paths. */
+function acceptPowerShellPath(p: string | undefined | null): string | null {
+  if (!p || p.trim().length === 0) return null;
+  const trimmed = p.trim();
+  if (isWslBashPath(trimmed)) return null;
+  if (!isPowerShellPath(trimmed)) return null;
+  if (!existsSyncSafe(trimmed)) return null;
+  return trimmed;
+}
+
+/** Detection chain for a PowerShell binary on win32. Returns the path or null. */
+function resolvePowerShellWindows(): string | null {
+  // 1. ZELARI_SHELL env var — if it points to a PowerShell, use it.
+  const fromEnv = acceptPowerShellPath(process.env.ZELARI_SHELL);
+  if (fromEnv) return fromEnv;
+
+  // 2. Standard install paths.
+  for (const p of STANDARD_POWERSHELL_PATHS) {
+    const accepted = acceptPowerShellPath(p);
+    if (accepted) return accepted;
+  }
+
+  // 3. `where pwsh` / `where powershell` — PATH lookup.
+  try {
+    for (const name of POWERSHELL_EXES) {
+      const result = spawnSync('where', [name], { encoding: 'utf-8', windowsHide: true });
+      if (result.status === 0 && result.stdout) {
+        for (const line of result.stdout.split(/\r?\n/)) {
+          const accepted = acceptPowerShellPath(line);
+          if (accepted) return accepted;
+        }
+      }
+    }
+  } catch {
+    // `where` not available or failed — fall through to null.
+  }
+
+  return null;
+}
+
 /** existsSync that swallows edge-case errors (e.g. invalid chars on win32). */
 function existsSyncSafe(p: string): boolean {
   try {
@@ -165,7 +241,7 @@ function existsSyncSafe(p: string): boolean {
   }
 }
 
-/** Test-only: reset memo + warning flag. */
+/** Test-only: reset memo + warning flags. */
 export function _resetShellResolverForTests(): void {
   memoized = null;
   warnedFallback = false;

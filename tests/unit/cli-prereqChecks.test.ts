@@ -29,6 +29,12 @@ type Scenario = {
   platform?: NodeJS.Platform;
   env?: Record<string, string | undefined>;
   bashPathExists?: boolean; // for existsSync on the resolved bash path
+  /** `where pwsh` result (PowerShell Core 7+). Default: not found. */
+  wherePwsh?: { stdout: string; status: number };
+  /** `where powershell` result (Windows PowerShell 5.1). Default: not found. */
+  wherePowershell?: { stdout: string; status: number };
+  /** When true, existsSync returns true for PowerShell paths in STANDARD_POWERSHELL_PATHS. */
+  powershellExists?: boolean;
 };
 
 let scenario: Scenario = {};
@@ -41,8 +47,15 @@ vi.mock("node:child_process", () => ({
         ? { stdout: scenario.whereBash.stdout, status: scenario.whereBash.status }
         : { stdout: "", status: 1 };
     }
+    // `where pwsh` / `where powershell` — PowerShell PATH lookup (v1.20.0).
+    if (cmd === "where" && (args[0] === "pwsh" || args[0] === "powershell")) {
+      const key = args[0] === "pwsh" ? "wherePwsh" : "wherePowershell";
+      const s = scenario[key];
+      return s ? { stdout: s.stdout, status: s.status } : { stdout: "", status: 1 };
+    }
     // bash probe: spawnSync(bashPath, ['-c', '<tool> --version'])
-    // args = ['-c', 'node --version'] or ['-c', 'git --version']
+    // PowerShell probe: spawnSync(psPath, ['-Command', '<tool> --version'])
+    // args = ['-c'|'-Command', 'node --version'] or ['-c'|'-Command', 'git --version']
     const cmd2 = (args[1] as string) ?? "";
     if (cmd2.includes("node")) {
       return scenario.bashProbe
@@ -77,7 +90,20 @@ vi.mock("node:fs", async (importOriginal) => {
     ...actual,
     // existsSync: pretend the resolved bash path exists when the scenario says so.
     existsSync: vi.fn((p: string) => {
-      if (scenario.bashPathExists === false) return false;
+      if (scenario.bashPathExists === false && typeof p === "string" && p.includes("bash.exe")) {
+        return false;
+      }
+      // PowerShell paths: only "exist" if the scenario opts in.
+      if (typeof p === "string" && (p.includes("pwsh.exe") || p.includes("powershell.exe"))) {
+        if (scenario.powershellExists) return true;
+        // Also accept PowerShell paths returned by `where pwsh`/`where powershell`.
+        const pwshHits = (scenario.wherePwsh?.stdout ?? "")
+          .split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        const psHits = (scenario.wherePowershell?.stdout ?? "")
+          .split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        if (pwshHits.includes(p) || psHits.includes(p)) return true;
+        return false;
+      }
       // Standard bash paths: only "exist" if the scenario sets them.
       if (typeof p === "string" && p.includes("bash.exe")) {
         if (scenario.env?.ZELARI_SHELL === p || scenario.env?.SHELL === p) {
@@ -235,14 +261,32 @@ describe("prereqChecks — agent-shell-aware probes", () => {
   it("checkAgentBash WARNs on win32 when no Git Bash is found (cmd.exe fallback)", async () => {
     applyScenario({
       platform: "win32",
-      // No ZELARI_SHELL, no SHELL, no standard paths, `where bash` fails.
+      // No ZELARI_SHELL, no SHELL, no standard paths, `where bash` fails,
+      // no PowerShell either → genuine cmd.exe fallback.
       whereBash: { stdout: "", status: 1 },
+      powershellExists: false,
     });
     const { checkAgentBash } = await importFresh();
     const r = checkAgentBash();
     expect(r.ok).toBe(false);
     expect(r.severity).toBe("warn");
     expect(r.message.toLowerCase()).toContain("git bash");
+  });
+
+  it("checkAgentBash OKs on win32 when PowerShell is available (no Git Bash)", async () => {
+    // v1.20.0: PowerShell is a valid bash replacement. When Git Bash is absent
+    // but PowerShell is present (default on every modern Windows), the agent
+    // uses it via -Command instead of falling back to cmd.exe.
+    applyScenario({
+      platform: "win32",
+      whereBash: { stdout: "", status: 1 },
+      powershellExists: true,
+      bashProbe: { stdout: "v20.11.1\n", status: 0 },
+    });
+    const { checkAgentBash } = await importFresh();
+    const r = checkAgentBash();
+    expect(r.ok).toBe(true);
+    expect(r.message.toLowerCase()).toContain("powershell");
   });
 
   it("checkAgentBash OKs on win32 when ZELARI_SHELL points at a real bash", async () => {
@@ -273,6 +317,9 @@ describe("prereqChecks — agent-shell-aware probes", () => {
         stdout: "C:\\Windows\\System32\\bash.exe\r\nC:\\Users\\x\\AppData\\Local\\Microsoft\\WindowsApps\\bash.exe\r\n",
         status: 0,
       },
+      // Explicitly no PowerShell either — we want the genuine cmd.exe fallback
+      // to assert the WSL rejection contract. PowerShell tests are separate.
+      powershellExists: false,
       // cmd.exe probe (execSync) finds node:
       mainProbe: { stdout: "v20.11.1\n" },
     });
@@ -306,6 +353,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
       env: { ZELARI_SHELL: "C:\\Windows\\System32\\bash.exe" },
       bashPathExists: true,
       whereBash: { stdout: "", status: 1 },
+      powershellExists: false,
       mainProbe: { stdout: "v22.0.0\n" },
     });
     const { checkAgentBash, checkAgentNode } = await importFresh();

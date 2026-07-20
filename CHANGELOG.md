@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.20.0] - 2026-07-20
+
+### Added
+- **PowerShell as fallback shell on Windows** — when Git Bash is not available, the agent now auto-detects PowerShell (`pwsh.exe` for PS7+, `powershell.exe` for PS5.1) and runs commands via `-Command` instead of falling back to the broken cmd.exe path. Eliminates at the root the shell-escaping and `.cmd`-path issues that consumed tool-call budget and stalled multi-step tasks on Windows without Git Bash.
+- **`--fix-budget` command** — Windows-only one-shot that writes `ZELARI_MAX_TOOL_LOOP_HARD=180`, `ZELARI_MAX_TOOL_LOOP_ITERATIONS=60`, `ZELARI_CONTEXT_LIMIT=400000` to the User registry (idempotent, no admin prompt). Companion to `--fix-path`. On POSIX it prints an advisory `~/.bashrc` snippet.
+- **`budget` row in `--doctor`** — surfaces whether the recommended ZELARI_* caps are set; points users to `--fix-budget` (Windows) or the export commands (POSIX).
+- **PowerShell guidance in system prompt** — the agent receives explicit PowerShell syntax hints (`ls`/`cat` aliases, `$env:VAR`, `&&` in PS7+) so it writes compatible commands instead of cmd.exe syntax.
+
+### Changed
+- **Default tool-loop budget raised out-of-the-box** — `AgentHarness` soft cap 30 → 60 (hard cap 90 → 180), phase-aware `tokenBudget` plan 40 → 60 / build 90 → 120, headless 30 → 60, `ZELARI_CONTEXT_LIMIT` default 200k → 400k. Prevents the agent from being force-summarized mid-task by `runFinalAnswerTurn()` on long multi-step implementations. The existing text-loop detector still guards against pathological loops.
+- **`prereqChecks.ts` PowerShell mirror** — `resolveAgentShellSync` now has the same 3-state detection (bash → PowerShell → cmd.exe) as `shellResolver.ts`, so `--doctor` reports the actual shell the agent will use instead of claiming cmd.exe when PowerShell is in fact available.
+
+### Fixed
+- **Agent stops without completing (Windows, no Git Bash)** — root-caused to a combination of (a) hard cap 90 cutting off multi-step work and forcing a no-tools summary, (b) cmd.exe shell-escaping consuming 30+ tool-calls per turn, (c) context-compaction losing state across the forced continuation. The PowerShell fallback + raised defaults resolve all three.
+- **`node_modules/@zelari/core` junction** — pointed at the previous drive after the repo was copied across volumes; recreated at install path.
+
 ## [1.19.0] - 2026-07-19
 
 ### Added
@@ -293,6 +309,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [1.19.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [1.20.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).

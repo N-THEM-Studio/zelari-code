@@ -100,6 +100,16 @@ export const bashTool: ToolDefinition<BashArgs, BashResult> = {
           env,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
+      } else if (resolved.isPowerShell) {
+        // PowerShell: use `-Command` (works on PS5.1 and PS7+).
+        // Do NOT set MSYSTEM — it's not a bash/MSYS2 environment.
+        child = spawn(resolved.shell as string, ['-Command', args.command], {
+          cwd,
+          signal: ctx.signal,
+          shell: false,
+          env: baseEnv,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
       } else {
         child = spawn(args.command, {
           shell: resolved.shell,

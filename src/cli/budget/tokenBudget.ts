@@ -54,8 +54,12 @@ export function estimateHistoryTokens(messages: readonly AgentMessage[]): number
 }
 
 export function resolveContextLimit(): number {
+  // v1.20.0: raised default from 200k → 400k so the rolling history can
+  // hold a full multi-step turn (build + smoke + verify + JSON updates)
+  // without triggering HARD 95% compaction mid-work. The 85%/95% clamps
+  // in applyBudgetPolicy still fire when genuinely needed.
   return envNumber(process.env.ZELARI_CONTEXT_LIMIT, {
-    default: 200_000,
+    default: 400_000,
     min: 4_000,
     max: 2_000_000,
   });
@@ -80,8 +84,8 @@ export function applyBudgetPolicy(
       : envNumber(process.env.ZELARI_HISTORY_TURNS, { default: 6, min: 0 });
   let maxToolLoopIterations =
     phase === 'plan'
-      ? envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, { default: 40, min: 1 })
-      : envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, { default: 90, min: 1 });
+      ? envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, { default: 60, min: 1 })
+      : envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, { default: 120, min: 1 });
 
   let hist = history as AgentMessage[];
   let estimated = estimateHistoryTokens(hist);

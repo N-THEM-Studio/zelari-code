@@ -59,11 +59,24 @@ const STANDARD_BASH_PATHS = [
   "C:\\Program Files (x86)\\Git\\usr\\bin\\bash.exe",
 ];
 
-interface AgentShell {
-  /** Absolute path to a real bash binary, or null when falling back to cmd.exe / using /bin/sh. */
+/** PowerShell binary names (mirrors shellResolver.POWERSHELL_EXES). */
+const POWERSHELL_EXES = ["pwsh.exe", "powershell.exe"];
+
+/** Standard PowerShell install paths (mirrors shellResolver.STANDARD_POWERSHELL_PATHS). */
+const STANDARD_POWERSHELL_PATHS = [
+  "C:\\Program Files\\PowerShell\\7\\pwsh.exe",
+  "C:\\Program Files\\PowerShell\\7\\powershell.exe",
+  "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+  "C:\\Windows\\SysWOW64\\WindowsPowerShell\\v1.0\\powershell.exe",
+];
+
+export interface AgentShell {
+  /** Absolute path to a real bash or PowerShell binary, or null when falling back to cmd.exe / using /bin/sh. */
   bashPath: string | null;
   /** True when commands will run under real POSIX bash semantics. */
   isBash: boolean;
+  /** True when commands will run under PowerShell (spawn via -Command). */
+  isPowerShell: boolean;
   /** Human-readable label for diagnostics, e.g. "bash (C:\\...\\bash.exe)". */
   via: string;
 }
@@ -83,13 +96,70 @@ export function isWslBashPath(p: string): boolean {
   return false;
 }
 
-/** Accept only a real (non-WSL) bash path that exists on disk. */
+/**
+ * True when `p` is a PowerShell binary (pwsh.exe or powershell.exe).
+ * Mirrors `shellResolver.isPowerShellPath`.
+ */
+export function isPowerShellPath(p: string): boolean {
+  if (!p || typeof p !== "string") return false;
+  const lower = p.toLowerCase().trim();
+  return POWERSHELL_EXES.some((exe) => lower.endsWith(exe));
+}
+
+/** Accept only a real (non-WSL, non-PowerShell) bash path that exists on disk. */
 function acceptBashPath(p: string | undefined | null): string | null {
   if (!p || p.trim().length === 0) return null;
   const trimmed = p.trim();
   if (isWslBashPath(trimmed)) return null;
+  if (isPowerShellPath(trimmed)) return null; // PowerShell → resolvePowerShellWindowsSync
   if (!existsSyncSafe(trimmed)) return null;
   return trimmed;
+}
+
+/** Accept a PowerShell path that exists on disk. Rejects WSL bash and non-PowerShell paths. */
+function acceptPowerShellPath(p: string | undefined | null): string | null {
+  if (!p || p.trim().length === 0) return null;
+  const trimmed = p.trim();
+  if (isWslBashPath(trimmed)) return null;
+  if (!isPowerShellPath(trimmed)) return null;
+  if (!existsSyncSafe(trimmed)) return null;
+  return trimmed;
+}
+
+/**
+ * SYNC PowerShell detection chain. Mirrors `shellResolver.resolvePowerShellWindows`.
+ * Returns the path or null.
+ */
+function resolvePowerShellWindowsSync(): string | null {
+  // 1. ZELARI_SHELL env var — if it points to a PowerShell, use it.
+  const fromEnv = acceptPowerShellPath(process.env.ZELARI_SHELL);
+  if (fromEnv) return fromEnv;
+
+  // 2. Standard install paths.
+  for (const p of STANDARD_POWERSHELL_PATHS) {
+    const accepted = acceptPowerShellPath(p);
+    if (accepted) return accepted;
+  }
+
+  // 3. `where pwsh` / `where powershell` — PATH lookup.
+  try {
+    for (const name of POWERSHELL_EXES) {
+      const result = spawnSync("where", [name], {
+        encoding: "utf8",
+        windowsHide: true,
+      });
+      if (result.status === 0 && result.stdout) {
+        for (const line of result.stdout.split(/\r?\n/)) {
+          const accepted = acceptPowerShellPath(line);
+          if (accepted) return accepted;
+        }
+      }
+    }
+  } catch {
+    // `where` unavailable or failed — fall through.
+  }
+
+  return null;
 }
 
 /**
@@ -97,23 +167,24 @@ function acceptBashPath(p: string | undefined | null): string | null {
  *
  * Replicated (not imported) so this module has no runtime dependency on
  * @zelari/core. The detection order MUST stay in lockstep with
- * `packages/core/src/core/tools/builtin/shellResolver.ts:resolveBashWindows`:
+ * `packages/core/src/core/tools/builtin/shellResolver.ts:resolveShell`:
  *   1. ZELARI_SHELL env var (explicit override; WSL rejected)
  *   2. SHELL env var (set by Git Bash / MSYS2 sessions; WSL rejected)
  *   3. Standard Git for Windows install paths (existsSync probe)
  *   4. `where bash` (PATH lookup; skip WSL launchers)
- *   5. Fallback: cmd.exe on win32, /bin/sh on POSIX
+ *   5. Standard PowerShell install paths + `where pwsh`/`where powershell`
+ *   6. Fallback: cmd.exe on win32, /bin/sh on POSIX
  */
 function resolveAgentShellSync(): AgentShell {
   // POSIX: Node's `shell: true` already uses /bin/sh — bash-compatible enough.
   if (process.platform !== "win32") {
-    return { bashPath: null, isBash: true, via: "/bin/sh" };
+    return { bashPath: null, isBash: true, isPowerShell: false, via: "/bin/sh" };
   }
 
   // 1. Explicit override.
   const fromEnv = acceptBashPath(process.env.ZELARI_SHELL);
   if (fromEnv) {
-    return { bashPath: fromEnv, isBash: true, via: `bash (${fromEnv})` };
+    return { bashPath: fromEnv, isBash: true, isPowerShell: false, via: `bash (${fromEnv})` };
   }
 
   // 2. SHELL env var (Git Bash / MSYS2 sessions).
@@ -122,6 +193,7 @@ function resolveAgentShellSync(): AgentShell {
     return {
       bashPath: fromSession,
       isBash: true,
+      isPowerShell: false,
       via: `bash (${fromSession})`,
     };
   }
@@ -130,7 +202,7 @@ function resolveAgentShellSync(): AgentShell {
   for (const p of STANDARD_BASH_PATHS) {
     const accepted = acceptBashPath(p);
     if (accepted) {
-      return { bashPath: accepted, isBash: true, via: `bash (${accepted})` };
+      return { bashPath: accepted, isBash: true, isPowerShell: false, via: `bash (${accepted})` };
     }
   }
 
@@ -148,17 +220,24 @@ function resolveAgentShellSync(): AgentShell {
           return {
             bashPath: accepted,
             isBash: true,
+            isPowerShell: false,
             via: `bash (${accepted})`,
           };
         }
       }
     }
   } catch {
-    // `where` unavailable or failed — fall through to cmd.exe.
+    // `where` unavailable or failed — fall through.
   }
 
-  // 5. Fallback: cmd.exe. POSIX commands (ls, which, $VAR) may fail here.
-  return { bashPath: null, isBash: false, via: "cmd.exe" };
+  // 5. No bash found — try PowerShell (available on every modern Windows).
+  const psFound = resolvePowerShellWindowsSync();
+  if (psFound) {
+    return { bashPath: psFound, isBash: false, isPowerShell: true, via: `powershell (${psFound})` };
+  }
+
+  // 6. Fallback: cmd.exe. POSIX commands (ls, which, $VAR) may fail here.
+  return { bashPath: null, isBash: false, isPowerShell: false, via: "cmd.exe" };
 }
 
 /**
@@ -210,21 +289,36 @@ function probeTool(
   const env = agentProbeEnv();
 
   if (shell.bashPath) {
-    // Real bash (win32 Git Bash or explicit ZELARI_SHELL): spawn directly
-    // with `-c` so we get the EXACT environment the agent's `bash` tool
-    // gets — this is what catches the "node visible to main, invisible to
-    // bash" mismatch. PATH is enriched with dirname(process.execPath).
-    try {
-      const r = spawnSync(shell.bashPath, ["-c", `${tool} --version`], {
-        encoding: "utf8",
-        stdio: ["ignore", "pipe", "ignore"],
-        windowsHide: true,
-        env,
-      });
-      if (r.status === 0) stdout = (r.stdout || "").trim();
-      // status !== 0 means the tool isn't on bash's PATH (or errored) — leave stdout empty.
-    } catch {
-      // spawn failure (e.g. bashPath stale) — fall through to empty.
+    if (shell.isPowerShell) {
+      // PowerShell: spawn with -Command (works on PS5.1 and PS7+).
+      try {
+        const r = spawnSync(shell.bashPath, ["-Command", `${tool} --version`], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
+          env,
+        });
+        if (r.status === 0) stdout = (r.stdout || "").trim();
+      } catch {
+        // spawn failure — fall through to empty.
+      }
+    } else {
+      // Real bash (win32 Git Bash or explicit ZELARI_SHELL): spawn directly
+      // with `-c` so we get the EXACT environment the agent's `bash` tool
+      // gets — this is what catches the "node visible to main, invisible to
+      // bash" mismatch. PATH is enriched with dirname(process.execPath).
+      try {
+        const r = spawnSync(shell.bashPath, ["-c", `${tool} --version`], {
+          encoding: "utf8",
+          stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: true,
+          env,
+        });
+        if (r.status === 0) stdout = (r.stdout || "").trim();
+        // status !== 0 means the tool isn't on bash's PATH (or errored) — leave stdout empty.
+      } catch {
+        // spawn failure (e.g. bashPath stale) — fall through to empty.
+      }
     }
   } else if (process.platform === "win32") {
     // cmd.exe fallback (no Git Bash found / WSL-only). shell:true → cmd.exe.
@@ -356,9 +450,10 @@ export function checkAgentGit(): PrereqResult {
 }
 
 /**
- * Check that a real bash is available on Windows. When the resolver falls
- * back to cmd.exe, POSIX commands (`ls`, `which`, `$VAR`, `&&`) will fail
- * inside the agent's `bash` tool — confusing and hard to debug. Warn only.
+ * Check that a real bash (or PowerShell) is available on Windows. When the
+ * resolver falls back to cmd.exe, POSIX commands (`ls`, `which`, `$VAR`,
+ * `&&`) will fail inside the agent's `bash` tool — confusing and hard to
+ * debug. PowerShell is a workable fallback (better than cmd.exe). Warn only.
  */
 export function checkAgentBash(): PrereqResult {
   if (process.platform !== "win32") {
@@ -378,12 +473,20 @@ export function checkAgentBash(): PrereqResult {
       message: `real bash available (${shell.via})`,
     };
   }
+  if (shell.isPowerShell) {
+    return {
+      ok: true,
+      severity: "warn",
+      tool: "bash",
+      message: `PowerShell available (${shell.via}) — works as bash replacement`,
+    };
+  }
   return {
     ok: false,
     severity: "warn",
     tool: "bash",
     message:
-      "no Git Bash — bash tool uses cmd.exe (install Git for Windows or set ZELARI_SHELL). Details: zelari-code --doctor",
+      "no Git Bash or PowerShell — bash tool uses cmd.exe (install Git for Windows, or set ZELARI_SHELL). Details: zelari-code --doctor",
   };
 }
 

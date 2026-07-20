@@ -267,6 +267,39 @@ function pickRootComponent(): {
     }
     process.exit(1);
   }
+  if (argv.includes("--fix-budget") || argv.includes("fix-budget")) {
+    // v1.20.0: runtime tool-budget repair. Sets the recommended ZELARI_*
+    // env vars (hard cap, soft cap, context limit) at User scope so multi-step
+    // implementations don't get force-summarized mid-work. Windows-only at the
+    // effect level; POSIX prints an advisory and exits 1.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { repairWindowsBudget } =
+      require("./utils/fixBudget.js") as typeof import("./utils/fixBudget.js");
+    const result = repairWindowsBudget();
+    const green = "\x1b[32m";
+    const red = "\x1b[31m";
+    const dim = "\x1b[2m";
+    const reset = "\x1b[0m";
+    if (result.ok) {
+      if (result.alreadyOk) {
+        // eslint-disable-next-line no-console
+        console.log(`${green}✔${reset} budget variables already at recommended values (${result.skipped.join(", ")})`);
+      } else {
+        // eslint-disable-next-line no-console
+        console.log(`${green}✔${reset} applied budget variables: ${result.applied.join(", ")}`);
+        if (result.skipped.length > 0) {
+          // eslint-disable-next-line no-console
+          console.log(`${dim}already set: ${result.skipped.join(", ")}${reset}`);
+        }
+        // eslint-disable-next-line no-console
+        console.log(`${dim}open a NEW terminal for the changes to take effect${reset}`);
+      }
+      process.exit(0);
+    }
+    // eslint-disable-next-line no-console
+    console.error(`${red}✗${reset} ${result.error}`);
+    process.exit(1);
+  }
   if (argv.includes("--help") || argv.includes("-h")) {
     // eslint-disable-next-line no-console
     console.log(
@@ -281,6 +314,9 @@ function pickRootComponent(): {
         "                      node/git/bash in the agent shell)\n" +
         "  --fix-path          Add the npm global prefix to the user PATH\n" +
         "                      (Windows only; fixes 'command not found' after install)\n" +
+        "  --fix-budget        Set recommended ZELARI_MAX_TOOL_LOOP_HARD=180,\n" +
+        "                      ZELARI_MAX_TOOL_LOOP_ITERATIONS=60, ZELARI_CONTEXT_LIMIT=400000\n" +
+        "                      at User scope (prevents the agent stopping mid-task)\n" +
         "  --skip-checks       Skip the boot-time prerequisite check\n" +
         "                      (alias for ZELARI_SKIP_PREFLIGHT=1)\n" +
         "  --no-wizard         Skip the first-run wizard\n" +
