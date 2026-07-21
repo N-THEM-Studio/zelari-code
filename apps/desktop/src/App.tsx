@@ -19,7 +19,6 @@ import {
 import { loadConversations, saveConversations } from "./chatStorage";
 import {
   cleanAssistantContent,
-  exportConversation,
   hasExportableMessages,
 } from "./exportSession";
 import { MessageContent } from "./components/MessageContent";

@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.1] - 2026-07-21
+
+### Fixed
+- **Desktop release build** — removed unused `exportConversation` import in `App.tsx` that failed `tsc` (noUnusedLocals) and blocked Tauri installers for v1.22.0.
+
+### Note
+- Functional features ship in **1.22.0**. Use `npm i -g zelari-code@1.22.1`; Desktop installers attach to this tag.
 ## [1.22.0] - 2026-07-21
 
 ### Added
@@ -1028,6 +1035,13 @@ tool itself is wire-compatible for the CLI use case.
 
 ## [Unreleased]
 
+## [1.22.1] - 2026-07-21
+
+### Fixed
+- **Desktop release build** — removed unused `exportConversation` import in `App.tsx` that failed `tsc` (noUnusedLocals) and blocked Tauri installers for v1.22.0.
+
+### Note
+- Functional features ship in **1.22.0**. Use `npm i -g zelari-code@1.22.1`; Desktop installers attach to this tag.
 ### Added (Fase 3 â€” council reliability)
 - **Visible reasoning**: every `agent_start`, `agent_end`, `message_start`,
   `message_delta`, `message_end` event now carries optional `memberId` +
