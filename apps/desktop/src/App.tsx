@@ -17,7 +17,13 @@ import {
   summarizeToolArgs,
 } from "./agentClient";
 import { loadConversations, saveConversations } from "./chatStorage";
+import {
+  cleanAssistantContent,
+  exportConversation,
+  hasExportableMessages,
+} from "./exportSession";
 import { MessageContent } from "./components/MessageContent";
+import { CopyButton } from "./components/CopyButton";
 import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
 import { ProviderModelBar } from "./components/ProviderModelBar";
@@ -31,6 +37,7 @@ import { CliSetupGuide } from "./components/CliSetupGuide";
 import { TitleBar } from "./components/TitleBar";
 import {
   PluginInstallBanner,
+  type PluginInstallError,
   type PluginStatusRow,
 } from "./components/PluginInstallBanner";
 import type {
@@ -328,6 +335,10 @@ export default function App() {
   const [pluginRows, setPluginRows] = useState<PluginStatusRow[]>([]);
   const [pluginBannerDismissed, setPluginBannerDismissed] = useState(false);
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(
+    null,
+  );
+  /** Last failed plugin install — real npm error + output, shown in banner. */
+  const [pluginError, setPluginError] = useState<PluginInstallError | null>(
     null,
   );
   /** Live tool activity line (no per-tool cards in the stream). */
@@ -1143,6 +1154,7 @@ export default function App() {
   const onInstallPlugin = useCallback(
     async (id: string) => {
       setInstallingPluginId(id);
+      setPluginError(null);
       setStatusLine(`Installing plugin ${id}…`);
       try {
         const res = await installPlugin(id, workdir ?? undefined);
@@ -1154,10 +1166,14 @@ export default function App() {
           );
           await refreshPlugins();
         } else {
-          setStatusLine(res.message || `Install failed for ${id}`);
+          const message = res.message || `Install failed for ${id}`;
+          setStatusLine(message);
+          setPluginError({ id, message, output: res.output });
         }
       } catch (e) {
-        setStatusLine(e instanceof Error ? e.message : String(e));
+        const message = e instanceof Error ? e.message : String(e);
+        setStatusLine(message);
+        setPluginError({ id, message });
       } finally {
         setInstallingPluginId(null);
       }
@@ -1683,6 +1699,14 @@ export default function App() {
                 </span>
               </button>
               <div className="session-actions">
+                <button
+                  type="button"
+                  title="Export as Markdown"
+                  disabled={!hasExportableMessages(c)}
+                  onClick={() => exportConversation(c)}
+                >
+                  ⤓
+                </button>
                 {c.archived ? (
                   <button
                     type="button"
@@ -1787,13 +1811,15 @@ export default function App() {
         <div className="chat-scroll-shell">
           <div className="chat-scroll" ref={scrollRef}>
             {!pluginBannerDismissed &&
-              pluginRows.some((p) => !p.present) && (
+              (pluginRows.some((p) => !p.present) || pluginError) && (
                 <div className="chat-inner" style={{ paddingBottom: 0 }}>
                   <PluginInstallBanner
                     plugins={pluginRows}
                     installingId={installingPluginId}
                     onInstall={(id) => void onInstallPlugin(id)}
                     onDismiss={() => setPluginBannerDismissed(true)}
+                    error={pluginError}
+                    onClearError={() => setPluginError(null)}
                   />
                 </div>
               )}
@@ -1846,6 +1872,7 @@ export default function App() {
                           streaming={m.streaming}
                           defaultOpen
                           stats={m.stats}
+                          onCopy={() => cleanAssistantContent(m.content)}
                         >
                           <MessageContent
                             content={m.content}
@@ -1867,7 +1894,15 @@ export default function App() {
                     ) : (
                       <div key={m.id} className={`message ${m.role}`}>
                         {m.role === "user" ? (
-                          <div className="bubble user-bubble">{m.content}</div>
+                          <>
+                            <div className="bubble user-bubble">{m.content}</div>
+                            <div className="bubble-actions">
+                              <CopyButton
+                                getText={() => m.content}
+                                title="Copy message"
+                              />
+                            </div>
+                          </>
                         ) : (
                           <div className="bubble system-bubble">{m.content}</div>
                         )}

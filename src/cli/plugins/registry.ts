@@ -240,21 +240,6 @@ export const PLUGINS: readonly PluginSpec[] = [
     featureGate: 'ZELARI_LSP',
     description: 'Powers go_to_definition / find_references / hover_type / rename_symbol for Python.',
   },
-  {
-    // fff — high-performance codebase search MCP (fffind / ffgrep).
-    // Installed as a global CLI; wire it in ~/.zelari-code/mcp.json (see
-    // postInstallHint). Kill-switch: ZELARI_FFF=0.
-    id: 'fff',
-    label: 'fff (fast codebase search MCP)',
-    npmPackage: 'fff-mcp',
-    installScope: 'global',
-    detect: detectPathBin('fff-mcp'),
-    postInstallHint:
-      'Add to ~/.zelari-code/mcp.json: {"mcpServers":{"fff":{"command":"fff-mcp","args":[]}}} then restart. Prefer mcp_fff_* tools for search.',
-    featureGate: 'ZELARI_FFF',
-    description:
-      'Accelerates codebase search via fff MCP (fffind, ffgrep, fff-multi-grep) — faster and more token-efficient than plain grep.',
-  },
 ];
 
 // ---------------------------------------------------------------------------

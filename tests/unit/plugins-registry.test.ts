@@ -101,7 +101,6 @@ describe("PLUGINS catalog", () => {
       "playwright",
       "typescript-language-server",
       "pyright",
-      "fff",
     ]);
   });
 
@@ -180,7 +179,7 @@ describe("detectMissingPlugins", () => {
     const { detectMissingPlugins } = await importFresh();
     const missing = await detectMissingPlugins("/repo");
     expect(missing.map((p) => p.id).sort()).toEqual(
-      ["eslint", "fff", "playwright", "pyright", "ruff", "typescript-language-server"],
+      ["eslint", "playwright", "pyright", "ruff", "typescript-language-server"],
     );
   });
 
@@ -192,7 +191,6 @@ describe("detectMissingPlugins", () => {
     const binDir = makePathBins([
       "typescript-language-server",
       "pyright-langserver",
-      "fff-mcp",
     ]);
     try {
       process.env.PATH = binDir;

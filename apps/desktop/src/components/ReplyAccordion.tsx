@@ -3,6 +3,7 @@
  */
 import { useEffect, useState, type ReactNode } from "react";
 import type { MessageStats } from "../types";
+import { CopyButton } from "./CopyButton";
 
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${Math.round(ms)}ms`;
@@ -20,6 +21,8 @@ interface Props {
   /** Force open while streaming; default open on first paint */
   defaultOpen?: boolean;
   stats?: MessageStats;
+  /** When provided, renders a copy button in the header (reads text lazily). */
+  onCopy?: () => string;
   children: ReactNode;
   className?: string;
 }
@@ -30,6 +33,7 @@ export function ReplyAccordion({
   streaming,
   defaultOpen = true,
   stats,
+  onCopy,
   children,
   className = "",
 }: Props) {
@@ -41,7 +45,7 @@ export function ReplyAccordion({
 
   return (
     <div
-      className={`reply-accordion${streaming ? " is-streaming" : ""}${open ? " is-open" : ""}${className ? ` ${className}` : ""}`}
+      className={`reply-accordion${streaming ? " is-streaming" : ""}${open ? " is-open" : ""}${onCopy ? " has-copy" : ""}${className ? ` ${className}` : ""}`}
     >
       {/* Fixed header: title / badge never scroll away */}
       <button
@@ -57,6 +61,11 @@ export function ReplyAccordion({
         {badge ? <span className="badge badge-member">{badge}</span> : null}
         {streaming ? <span className="badge">streaming</span> : null}
       </button>
+      {/* Sibling (not nested) of the head button — buttons can't nest. The
+          card never scrolls itself, so this stays pinned over the header. */}
+      {onCopy && !streaming ? (
+        <CopyButton getText={onCopy} title="Copy reply" className="reply-copy" />
+      ) : null}
       {open ? (
         <div className="reply-accordion-scroll">
           <div className="reply-accordion-body">{children}</div>

@@ -5,6 +5,7 @@
 
 import type { MessageStats } from "../types";
 import { scrubDisplayText } from "./scrubDisplayText";
+import { CopyButton } from "./CopyButton";
 import {
   hasQuestionMarker,
   parseClarificationRequest,
@@ -310,9 +311,16 @@ export function MessageContent({
             );
           case "code":
             return (
-              <pre key={idx} className="md-code" data-lang={b.lang || ""}>
-                <code>{b.text}</code>
-              </pre>
+              <div key={idx} className="md-code-wrap">
+                <pre className="md-code" data-lang={b.lang || ""}>
+                  <code>{b.text}</code>
+                </pre>
+                <CopyButton
+                  getText={() => b.text}
+                  title="Copy code"
+                  className="code-copy"
+                />
+              </div>
             );
           case "table":
             return (
