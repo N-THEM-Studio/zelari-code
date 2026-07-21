@@ -3672,6 +3672,37 @@ kbd {
   background: var(--hover-tint);
 }
 
+/* ── Text-loop recovery banner ── */
+.text-loop-recovery {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 140, 80, 0.35);
+  background: linear-gradient(
+    160deg,
+    rgba(255, 120, 60, 0.12),
+    rgba(255, 255, 255, 0.03)
+  );
+}
+
+.text-loop-recovery-label {
+  flex: 1;
+  min-width: 160px;
+  font-size: 12.5px;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.text-loop-recovery-btn {
+  font-size: 12.5px !important;
+  padding: 6px 12px !important;
+  white-space: nowrap;
+}
+
 /* ── Session todos (agent todo_write) ── */
 .session-todos-panel {
   flex-shrink: 0;

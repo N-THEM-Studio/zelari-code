@@ -2,9 +2,40 @@
  * Detect degenerate assistant text loops (same paragraph/block repeated).
  *
  * Observed failure mode: models re-emit "Diagnosi fatta. Procedo coi 4 fix…"
- * (or equivalent intent prose) dozens of times without tool calls, burning
- * tokens until max_tokens. Harness stops the stream early when this fires.
+ * or "Bene. dungeon.js fatto. Aggiorno todo e procedo con inventory" dozens of
+ * times without tool calls, burning tokens until max_tokens. Harness stops the
+ * stream early when this fires.
+ *
+ * After a stop, {@link TEXT_LOOP_RECOVERY_SYSTEM} is appended so the next
+ * provider turn is steered to tools + a clean conclude-or-ask finish.
  */
+
+/**
+ * System message injected into rolling history after a text-loop stop.
+ * Short, imperative — optimized for the next user/provider turn.
+ */
+export const TEXT_LOOP_RECOVERY_SYSTEM = [
+  '[text-loop recovery] Your previous reply was stopped: you repeated status text',
+  'instead of finishing (no clean conclusion).',
+  '',
+  'On the next turn you MUST:',
+  '1) list_files / read_file what already exists (do not re-plan the whole project).',
+  '2) Apply at most ONE small disk change with write_file/edit_file if still needed.',
+  '3) Then STOP with either:',
+  '   A) Done — paths changed + how to verify, or',
+  '   B) Short resoconto (done / next) and ask_user whether to continue.',
+  '4) Forbidden: more "procedo con / aggiorno todo / ora creo" monologue without tools.',
+].join('\n');
+
+/**
+ * Suggested user message for TUI/Desktop "Continue with tools" actions.
+ */
+export const TEXT_LOOP_RECOVERY_USER_PROMPT = [
+  'Continue from the text-loop stop.',
+  'Inspect disk, apply at most one missing piece with tools if needed,',
+  'then either mark DONE with a short verify list OR give a brief resoconto and ask if I want you to continue.',
+  'No status theater, no full rewrite.',
+].join(' ');
 
 export type TextLoopHit =
   | {
@@ -17,12 +48,39 @@ export type TextLoopHit =
 
 /** Min unit length so short echoes ("ok ok ok") do not trip the guard. */
 const MIN_UNIT = 48;
-/** Consecutive repeats required (3 = original + 2 copies). */
+/** Consecutive repeats for generic prose (original + 2 copies). */
 const MIN_REPEATS = 3;
+/**
+ * Status-theater monologues ("Procedo con…", "Aggiorno todo…") trip earlier
+ * so the model cannot burn a whole turn on intention spam.
+ */
+const MIN_REPEATS_STATUS = 2;
 /** Cap how far back we scan for continuous periods (perf). */
 const MAX_TAIL = 6000;
 /** Max single-unit length for suffix period scan. */
 const MAX_PERIOD = 600;
+
+/**
+ * Meta-progress / status theater (IT + EN). When this matches, fewer repeats
+ * are required to stop the stream.
+ */
+export function isStatusTheaterUnit(unit: string): boolean {
+  const u = normalizeLoopUnit(unit).toLowerCase();
+  if (u.length < 32) return false;
+  return (
+    /\b(procedo|procediamo|continuo|continuiamo)\b/.test(u) ||
+    /\b(aggiorno|updating)\s+(il\s+)?todo\b/.test(u) ||
+    /\bora\s+(creo|creo|scrivo|implemento|faccio)\b/.test(u) ||
+    /\b(next\s+i\s+will|i\s+will\s+(now\s+)?(create|write|implement|update))\b/.test(
+      u,
+    ) ||
+    /\b(let\s+me\s+(now\s+)?(create|write|update|proceed))\b/.test(u) ||
+    /\b(fatto\.?\s*(ora|next|procedo)|bene\.?\s*(ora|procedo|aggiorno))\b/.test(
+      u,
+    ) ||
+    /\b(todo\s+(list\s+)?updated|moving\s+on\s+to)\b/.test(u)
+  );
+}
 
 /** Strip light markup so `<small>foo</small>` matches bare `foo`. */
 export function normalizeLoopUnit(s: string): string {
@@ -34,20 +92,24 @@ export function normalizeLoopUnit(s: string): string {
 }
 
 /**
- * Detect when the last `k` chunks form a block that repeats ≥ MIN_REPEATS
- * times at the end of `chunks`.
+ * Detect when the last `k` chunks form a block that repeats enough times.
+ * Status-theater units need only {@link MIN_REPEATS_STATUS} consecutive copies.
  */
 function detectChunkSequenceLoop(
   chunks: string[],
   kind: 'paragraph' | 'line',
 ): TextLoopHit {
-  if (chunks.length < MIN_REPEATS) return { looping: false };
+  if (chunks.length < MIN_REPEATS_STATUS) return { looping: false };
 
-  const maxK = Math.min(12, Math.floor(chunks.length / MIN_REPEATS));
+  const maxK = Math.min(12, Math.floor(chunks.length / MIN_REPEATS_STATUS));
   for (let k = 1; k <= maxK; k++) {
     const unitParts = chunks.slice(chunks.length - k);
     const unitKey = unitParts.join('\n');
-    if (normalizeLoopUnit(unitKey).length < MIN_UNIT) continue;
+    const norm = normalizeLoopUnit(unitKey);
+    if (norm.length < MIN_UNIT) continue;
+
+    const need = isStatusTheaterUnit(unitKey) ? MIN_REPEATS_STATUS : MIN_REPEATS;
+    if (chunks.length < need * k) continue;
 
     let count = 1;
     let pos = chunks.length - k;
@@ -64,7 +126,7 @@ function detectChunkSequenceLoop(
       count++;
       pos -= k;
     }
-    if (count >= MIN_REPEATS) {
+    if (count >= need) {
       return {
         looping: true,
         unit: unitKey,
@@ -77,23 +139,25 @@ function detectChunkSequenceLoop(
 }
 
 /**
- * Continuous period: last `period * MIN_REPEATS` chars are unit repeated.
+ * Continuous period: last `period * need` chars are unit repeated.
  */
 function detectSuffixPeriod(text: string): TextLoopHit {
   const compact = text.replace(/\s+/g, ' ').trim();
-  if (compact.length < MIN_UNIT * MIN_REPEATS) return { looping: false };
+  if (compact.length < MIN_UNIT * MIN_REPEATS_STATUS) return { looping: false };
 
   const tail = compact.slice(-Math.min(compact.length, MAX_TAIL));
-  const maxP = Math.min(MAX_PERIOD, Math.floor(tail.length / MIN_REPEATS));
+  const maxP = Math.min(MAX_PERIOD, Math.floor(tail.length / MIN_REPEATS_STATUS));
 
   for (let period = MIN_UNIT; period <= maxP; period++) {
-    const need = period * MIN_REPEATS;
-    if (tail.length < need) continue;
     const unit = tail.slice(tail.length - period);
     if (normalizeLoopUnit(unit).length < MIN_UNIT * 0.55) continue;
 
+    const need = isStatusTheaterUnit(unit) ? MIN_REPEATS_STATUS : MIN_REPEATS;
+    const needChars = period * need;
+    if (tail.length < needChars) continue;
+
     let ok = true;
-    for (let r = 1; r < MIN_REPEATS; r++) {
+    for (let r = 1; r < need; r++) {
       const start = tail.length - period * (r + 1);
       if (tail.slice(start, start + period) !== unit) {
         ok = false;
@@ -102,9 +166,8 @@ function detectSuffixPeriod(text: string): TextLoopHit {
     }
     if (!ok) continue;
 
-    // Count full consecutive trailing repeats
-    let count = MIN_REPEATS;
-    let end = tail.length - period * MIN_REPEATS;
+    let count = need;
+    let end = tail.length - period * need;
     while (end >= period && tail.slice(end - period, end) === unit) {
       count++;
       end -= period;
@@ -124,14 +187,12 @@ function detectSuffixPeriod(text: string): TextLoopHit {
  * enough times to indicate model degeneration (not normal prose).
  */
 export function detectAssistantTextLoop(text: string): TextLoopHit {
-  if (!text || text.length < MIN_UNIT * MIN_REPEATS) {
+  if (!text || text.length < MIN_UNIT * MIN_REPEATS_STATUS) {
     return { looping: false };
   }
 
   const nl = text.replace(/\r\n/g, '\n');
 
-  // 1) Multi-paragraph blocks (blank-line separated chunks, sequence of k).
-  //    Handles diagnosis multi-line units that repeat as a whole.
   const paragraphs = nl
     .split(/\n\s*\n+/)
     .map((p) => normalizeLoopUnit(p))
@@ -139,7 +200,6 @@ export function detectAssistantTextLoop(text: string): TextLoopHit {
   const paraHit = detectChunkSequenceLoop(paragraphs, 'paragraph');
   if (paraHit.looping) return paraHit;
 
-  // 2) Line-level sequence (single newlines).
   const lines = nl
     .split('\n')
     .map((l) => normalizeLoopUnit(l))
@@ -147,7 +207,6 @@ export function detectAssistantTextLoop(text: string): TextLoopHit {
   const lineHit = detectChunkSequenceLoop(lines, 'line');
   if (lineHit.looping) return lineHit;
 
-  // 3) Continuous suffix periods (no separators / different unit lengths).
   return detectSuffixPeriod(nl);
 }
 
@@ -159,11 +218,12 @@ export function collapseLoopedAssistantText(text: string): string {
   const hit = detectAssistantTextLoop(text);
   if (!hit.looping) return text;
 
-  const note = `\n\n[system: stopped repeating the same text ×${hit.count}; call tools or finish.]`;
+  const note =
+    `\n\n[system: stopped repeating the same text ×${hit.count}.]\n` +
+    TEXT_LOOP_RECOVERY_SYSTEM;
 
   if (hit.kind === 'paragraph' || hit.kind === 'line') {
     const joinSep = hit.kind === 'paragraph' ? '\n\n' : '\n';
-    // Rebuild using normalized comparison against unit parts
     const unitParts = hit.unit.split('\n').map((p) => normalizeLoopUnit(p));
     const k = unitParts.length;
     if (k === 0) return text + note;
@@ -173,8 +233,11 @@ export function collapseLoopedAssistantText(text: string): string {
       .split(hit.kind === 'paragraph' ? /\n\s*\n+/ : /\n/)
       .filter((p) => normalizeLoopUnit(p).length > 0);
 
-    if (rawParts.length < k * MIN_REPEATS) {
-      // Fallback: cut by character using unit length × excess
+    const minNeed = isStatusTheaterUnit(hit.unit)
+      ? MIN_REPEATS_STATUS
+      : MIN_REPEATS;
+
+    if (rawParts.length < k * minNeed) {
       return collapseByCharBudget(text, hit.unit, hit.count) + note;
     }
 
@@ -193,23 +256,26 @@ export function collapseLoopedAssistantText(text: string): string {
       pos -= k;
     }
 
-    if (trailBlocks < MIN_REPEATS) {
+    if (trailBlocks < minNeed) {
       return collapseByCharBudget(text, hit.unit, hit.count) + note;
     }
 
-    const keepBlocks = 2;
-    const keepParts = rawParts.slice(0, rawParts.length - k * (trailBlocks - keepBlocks));
+    const keepBlocks = Math.min(2, trailBlocks);
+    const keepParts = rawParts.slice(
+      0,
+      rawParts.length - k * (trailBlocks - keepBlocks),
+    );
     return keepParts.join(joinSep).trimEnd() + note;
   }
 
-  // Suffix
   return collapseByCharBudget(text, hit.unit, hit.count) + note;
 }
 
 function collapseByCharBudget(text: string, unit: string, count: number): string {
   const unitLen = Math.max(unit.length, MIN_UNIT);
-  if (count < MIN_REPEATS) return text;
-  const drop = unitLen * (count - 2);
+  if (count < 2) return text;
+  const keep = Math.min(2, count);
+  const drop = unitLen * (count - keep);
   const cut = Math.max(0, text.length - drop);
   return text.slice(0, cut).trimEnd();
 }

@@ -7,6 +7,8 @@ import {
   detectAssistantTextLoop,
   collapseLoopedAssistantText,
   normalizeLoopUnit,
+  TEXT_LOOP_RECOVERY_SYSTEM,
+  TEXT_LOOP_RECOVERY_USER_PROMPT,
   type ProviderStreamFn,
   type ProviderDelta,
 } from '@zelari/core/harness';
@@ -72,6 +74,21 @@ describe('detectAssistantTextLoop', () => {
   it('does not flag three short identical words', () => {
     expect(detectAssistantTextLoop('ok\n\nok\n\nok')).toEqual({ looping: false });
   });
+
+  it('trips earlier on status-theater (procedo / aggiorno todo) at ×2', () => {
+    const unit =
+      'Bene. dungeon.js fatto. Aggiorno todo e procedo con inventory.js ora.';
+    const text = [unit, unit].join('\n\n');
+    const hit = detectAssistantTextLoop(text);
+    expect(hit.looping).toBe(true);
+    if (hit.looping) expect(hit.count).toBeGreaterThanOrEqual(2);
+  });
+
+  it('does not trip status-theater on a single progress sentence', () => {
+    const unit =
+      'Bene. dungeon.js fatto. Aggiorno todo e procedo con inventory.js ora.';
+    expect(detectAssistantTextLoop(unit)).toEqual({ looping: false });
+  });
 });
 
 describe('collapseLoopedAssistantText', () => {
@@ -132,6 +149,20 @@ describe('AgentHarness — assistant_text_loop early stop', () => {
     const asst = [...msgs].reverse().find((m) => m.role === 'assistant');
     expect(asst).toBeTruthy();
     expect((asst!.content ?? '').length).toBeGreaterThan(0);
+
+    // Recovery system message is appended so the next turn is tool-first
+    const recovery = [...msgs]
+      .reverse()
+      .find(
+        (m) =>
+          m.role === 'system' &&
+          typeof m.content === 'string' &&
+          m.content.includes('[text-loop recovery]'),
+      );
+    expect(recovery).toBeTruthy();
+    expect(recovery!.content).toMatch(/ask_user whether to continue|resoconto/i);
+    expect(TEXT_LOOP_RECOVERY_SYSTEM).toContain('[text-loop recovery]');
+    expect(TEXT_LOOP_RECOVERY_USER_PROMPT).toMatch(/continue|DONE|resoconto/i);
   });
 
   it('does not fire on a normal single-paragraph answer', async () => {

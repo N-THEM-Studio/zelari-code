@@ -353,6 +353,11 @@ export default function App() {
   const [liveToolLabel, setLiveToolLabel] = useState<string | null>(null);
   /** Session todos mirrored from todo_write / todo_read tool results. */
   const [sessionTodos, setSessionTodos] = useState<DesktopTodo[]>([]);
+  /**
+   * After assistant_text_loop, offer a one-click tool-only resume prompt.
+   * Cleared when the user sends anything or starts a new chat.
+   */
+  const [textLoopRecovery, setTextLoopRecovery] = useState(false);
   const [liveMemberName, setLiveMemberName] = useState<string | null>(null);
   const toolLabelClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** When true, chat auto-scrolls with the stream; user scroll-up detaches. */
@@ -1013,8 +1018,9 @@ export default function App() {
               ? (ev as { code?: string }).code
               : undefined;
           if (code === "assistant_text_loop") {
+            setTextLoopRecovery(true);
             setStatusLine(
-              "Model stuck repeating the same text — stopped. Retry or ask for tool-based fixes.",
+              "Text loop stopped — use “Continue with tools” (inspect disk → one write).",
             );
           }
           setConversations((prev) =>
@@ -1027,7 +1033,10 @@ export default function App() {
                       {
                         id: uid("sys"),
                         role: "system",
-                        content: msg,
+                        content:
+                          code === "assistant_text_loop"
+                            ? `${msg}\n\n→ Click “Continue with tools” below, or send a short tool-only request (list_files → one write_file).`
+                            : msg,
                         createdAt: Date.now(),
                       },
                     ],
@@ -1212,9 +1221,16 @@ export default function App() {
     setSessionFilter("active");
     setDraft("");
     setSessionTodos([]);
+    setTextLoopRecovery(false);
     assistantIdRef.current = null;
     taRef.current?.focus();
   };
+
+  /** User-facing recovery prompt after assistant_text_loop (keep in sync with core TEXT_LOOP_RECOVERY_USER_PROMPT). */
+  const TEXT_LOOP_CONTINUE =
+    "Continue from the text-loop stop. Inspect disk, apply at most one missing piece with tools if needed, " +
+    "then either mark DONE with a short verify list OR give a brief resoconto and ask if I want you to continue. " +
+    "No status theater, no full rewrite.";
 
   const archiveChat = (id: string) => {
     setConversations((prev) =>
@@ -1365,6 +1381,7 @@ export default function App() {
     const base = (text ?? fromSpeech).trim();
     if ((!base && attachments.length === 0) || running) return;
     speech.stop();
+    setTextLoopRecovery(false);
 
     if (cli && !cli.ok) {
       setStatusLine(cli.message);
@@ -2053,6 +2070,28 @@ export default function App() {
         </div>
 
         <div className="composer-wrap">
+          {textLoopRecovery && !running && (
+            <div className="text-loop-recovery" role="status">
+              <span className="text-loop-recovery-label">
+                Generation stopped (text loop). Resume: tools if needed, then
+                finish or report and ask to continue:
+              </span>
+              <button
+                type="button"
+                className="btn-primary text-loop-recovery-btn"
+                onClick={() => void send(TEXT_LOOP_CONTINUE)}
+              >
+                Continue with tools
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={() => setTextLoopRecovery(false)}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="attach-strip" aria-label="Attached files">
               {attachments.map((a) => (

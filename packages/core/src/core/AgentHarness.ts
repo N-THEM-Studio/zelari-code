@@ -35,12 +35,17 @@ import { ToolRegistry } from './tools/registry.js';
 import {
   collapseLoopedAssistantText,
   detectAssistantTextLoop,
+  TEXT_LOOP_RECOVERY_SYSTEM,
+  TEXT_LOOP_RECOVERY_USER_PROMPT,
 } from './textLoopDetect.js';
 
 export {
   collapseLoopedAssistantText,
   detectAssistantTextLoop,
   normalizeLoopUnit,
+  isStatusTheaterUnit,
+  TEXT_LOOP_RECOVERY_SYSTEM,
+  TEXT_LOOP_RECOVERY_USER_PROMPT,
   type TextLoopHit,
 } from './textLoopDetect.js';
 
@@ -866,7 +871,8 @@ export class AgentHarness {
                 message:
                   `Assistant text loop detected (same block ×${loopHit.count}). ` +
                   `Stopped generation — model was repeating instead of calling tools or finishing. ` +
-                  `Retry or ask it to apply changes with tools.`,
+                  `Recovery injected: next turn should use tools only (inspect disk → one write). ` +
+                  `Or send: "${TEXT_LOOP_RECOVERY_USER_PROMPT.slice(0, 80)}…"`,
                 code: 'assistant_text_loop',
               });
               this.emit(loopErr);
@@ -881,6 +887,21 @@ export class AgentHarness {
                   ...(turnReasoning.length > 0
                     ? { reasoningContent: turnReasoning }
                     : {}),
+                });
+              }
+              // Steer the following provider turn away from more status prose.
+              // Idempotent: skip if the last message is already a recovery hint.
+              const last = this.config.messages[this.config.messages.length - 1];
+              if (
+                !(
+                  last?.role === 'system' &&
+                  typeof last.content === 'string' &&
+                  last.content.includes('[text-loop recovery]')
+                )
+              ) {
+                this.config.messages.push({
+                  role: 'system',
+                  content: TEXT_LOOP_RECOVERY_SYSTEM,
                 });
               }
               break;

@@ -707,6 +707,13 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   `[budget] ${event.message}`,
                   Date.now(),
                 );
+              } else if (event.code === "assistant_text_loop") {
+                appendSystem(
+                  setMessages,
+                  `[text-loop] ${event.message}\n` +
+                    `→ Next message tip: "Continue with tools only — inspect disk, one write_file, stop."`,
+                  Date.now(),
+                );
               } else {
                 appendSystem(setMessages, `[error] ${event.message}`, Date.now());
               }

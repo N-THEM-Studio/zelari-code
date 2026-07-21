@@ -7,10 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.23.0] - 2026-07-21
+
+### Added
+- **Turn Completion Contract** (agent system prompt) — every turn must end as Done (paths + verify), Checkpoint (short resoconto + ask_user to continue), or one blocking question. Forbids endless "procedo con…" monologues.
+- **Status-theater early stop** — phrases like "Aggiorno todo / Procedo con / Ora creo" trip the text-loop guard at ×2 (not only ×3).
+- **Post text-loop recovery** — injects a system recovery hint (inspect disk → at most one write → Done or resoconto+ask); Desktop banner **Continue with tools**; CLI tip after `assistant_text_loop`.
+
+### Changed
+- Stronger single-agent identity / coding practices for large multi-file tasks (thin vertical slices per turn).
+
+### Note (Desktop)
+- Update CLI: `npm i -g zelari-code@1.23.0`. Rebuild Desktop for the recovery banner.
+
 ## [1.22.1] - 2026-07-21
 
 ### Fixed
-- **Desktop release build** � removed unused `exportConversation` import in `App.tsx` that failed `tsc` (noUnusedLocals) and blocked Tauri installers for v1.22.0.
+- **Desktop release build** � removed unused `exportConversation` import in `App.tsx` that failed `tsc` (noUnusedLocals) and blocked Tauri installers for v1.22.0.
 
 ### Note
 - Functional features ship in **1.22.0**. Use `npm i -g zelari-code@1.22.1`; Desktop installers attach to this tag.
@@ -1038,7 +1051,7 @@ tool itself is wire-compatible for the CLI use case.
 ## [1.22.1] - 2026-07-21
 
 ### Fixed
-- **Desktop release build** � removed unused `exportConversation` import in `App.tsx` that failed `tsc` (noUnusedLocals) and blocked Tauri installers for v1.22.0.
+- **Desktop release build** � removed unused `exportConversation` import in `App.tsx` that failed `tsc` (noUnusedLocals) and blocked Tauri installers for v1.22.0.
 
 ### Note
 - Functional features ship in **1.22.0**. Use `npm i -g zelari-code@1.22.1`; Desktop installers attach to this tag.
