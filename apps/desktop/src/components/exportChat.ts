@@ -1,7 +1,13 @@
 /**
- * Export active conversation as Markdown or JSON (browser download).
+ * Export active conversation as Markdown or JSON.
+ * In Tauri Desktop: native folder picker + write to disk.
+ * Fallback: browser download (Vite-only / no dialog).
  */
+import { open } from "@tauri-apps/plugin-dialog";
+import { writeTextFile } from "../agentClient";
 import type { Conversation } from "../types";
+
+const LS_EXPORT_DIR = "zelari-desktop-export-dir";
 
 function downloadBlob(filename: string, content: string, mime: string) {
   const blob = new Blob([content], { type: mime });
@@ -13,7 +19,7 @@ function downloadBlob(filename: string, content: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
-function safeFilename(title: string): string {
+export function safeFilename(title: string): string {
   const base = title
     .trim()
     .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "")
@@ -22,7 +28,36 @@ function safeFilename(title: string): string {
   return base || "chat";
 }
 
-export function exportConversationJson(conv: Conversation): void {
+function joinPath(dir: string, file: string): string {
+  const sep = dir.includes("\\") ? "\\" : "/";
+  return dir.replace(/[/\\]+$/, "") + sep + file;
+}
+
+function loadLastExportDir(): string | undefined {
+  try {
+    const d = localStorage.getItem(LS_EXPORT_DIR);
+    return d && d.trim() ? d.trim() : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function saveLastExportDir(dir: string): void {
+  try {
+    localStorage.setItem(LS_EXPORT_DIR, dir);
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function stampedFilename(base: string, ext: string): string {
+  const d = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`;
+  return `${base}-${stamp}.${ext}`;
+}
+
+export function conversationToJson(conv: Conversation): string {
   const payload = {
     id: conv.id,
     title: conv.title,
@@ -42,20 +77,18 @@ export function exportConversationJson(conv: Conversation): void {
       stats: m.stats,
     })),
   };
-  downloadBlob(
-    `${safeFilename(conv.title)}.json`,
-    JSON.stringify(payload, null, 2),
-    "application/json",
-  );
+  return JSON.stringify(payload, null, 2);
 }
 
-export function exportConversationMarkdown(conv: Conversation): void {
+export function conversationToMarkdown(conv: Conversation): string {
   const lines: string[] = [
     `# ${conv.title}`,
     "",
     `- Mode: ${conv.mode}`,
     `- Phase: ${conv.phase}`,
-    conv.provider ? `- Provider: ${conv.provider}${conv.model ? ` / ${conv.model}` : ""}` : "",
+    conv.provider
+      ? `- Provider: ${conv.provider}${conv.model ? ` / ${conv.model}` : ""}`
+      : "",
     `- Updated: ${new Date(conv.updatedAt).toISOString()}`,
     "",
     "---",
@@ -70,9 +103,7 @@ export function exportConversationMarkdown(conv: Conversation): void {
           : m.toolOk === false
             ? "error"
             : "ok";
-      lines.push(
-        `### Tool · ${m.toolName ?? "tool"} (${status})`,
-      );
+      lines.push(`### Tool · ${m.toolName ?? "tool"} (${status})`);
       if (m.toolSummary) lines.push(`\`${m.toolSummary}\``);
       if (m.content.trim()) {
         lines.push("```", m.content.trim(), "```");
@@ -89,9 +120,93 @@ export function exportConversationMarkdown(conv: Conversation): void {
     lines.push(`### ${who}`, "", m.content || "_(empty)_", "");
   }
 
+  return lines.join("\n");
+}
+
+/** Browser download fallback (no folder choice). */
+export function exportConversationJson(conv: Conversation): void {
+  downloadBlob(
+    `${safeFilename(conv.title)}.json`,
+    conversationToJson(conv),
+    "application/json",
+  );
+}
+
+/** Browser download fallback (no folder choice). */
+export function exportConversationMarkdown(conv: Conversation): void {
   downloadBlob(
     `${safeFilename(conv.title)}.md`,
-    lines.join("\n"),
+    conversationToMarkdown(conv),
     "text/markdown;charset=utf-8",
   );
+}
+
+export interface ExportToFolderResult {
+  path: string;
+}
+
+async function pickExportFolder(): Promise<string | null> {
+  const defaultPath = loadLastExportDir();
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    ...(defaultPath ? { defaultPath } : {}),
+  });
+  if (typeof selected !== "string" || !selected.trim()) return null;
+  saveLastExportDir(selected);
+  return selected;
+}
+
+/**
+ * Ask for a destination folder, write `{title}.md` (timestamp if name collides
+ * is handled by always preferring the base name; write overwrites).
+ * Returns null if the user cancels the dialog.
+ */
+export async function exportConversationMarkdownToFolder(
+  conv: Conversation,
+): Promise<ExportToFolderResult | null> {
+  const dir = await pickExportFolder();
+  if (!dir) return null;
+
+  const base = safeFilename(conv.title);
+  const preferred = joinPath(dir, `${base}.md`);
+  const content = conversationToMarkdown(conv);
+
+  try {
+    const path = await writeTextFile(preferred, content);
+    return { path };
+  } catch (first) {
+    // If overwrite is blocked or path odd, try a stamped name once.
+    const alt = joinPath(dir, stampedFilename(base, "md"));
+    try {
+      const path = await writeTextFile(alt, content);
+      return { path };
+    } catch {
+      throw first instanceof Error ? first : new Error(String(first));
+    }
+  }
+}
+
+export async function exportConversationJsonToFolder(
+  conv: Conversation,
+): Promise<ExportToFolderResult | null> {
+  const dir = await pickExportFolder();
+  if (!dir) return null;
+
+  const base = safeFilename(conv.title);
+  const preferred = joinPath(dir, `${base}.json`);
+  const content = conversationToJson(conv);
+
+  try {
+    const path = await writeTextFile(preferred, content);
+    return { path };
+  } catch (first) {
+    const alt = joinPath(dir, stampedFilename(base, "json"));
+    try {
+      const path = await writeTextFile(alt, content);
+      return { path };
+    } catch {
+      throw first instanceof Error ? first : new Error(String(first));
+    }
+  }
 }

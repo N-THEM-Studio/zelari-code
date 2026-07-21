@@ -13,8 +13,10 @@
  * return HTTP 400 otherwise (see core-agentHarness-toolResultOrder.test.ts).
  * So when the naive cut point lands between an assistant-with-toolCalls and
  * its tool results, the window is extended backward to include the whole
- * chain. This is cheaper than LLM summarization (no extra round-trip, no
- * token spend) and preserves the structural invariant the provider needs.
+ * chain.
+ *
+ * v1.21.0: dropped turns are replaced by an extractive (and optionally LLM)
+ * continuity summary instead of a bare "N messages dropped" marker.
  *
  * Tunable via `ZELARI_HISTORY_TURNS` (number of kept *turns*; default 6,
  * `0` disables history entirely → the loop falls back to the pre-1.6
@@ -24,6 +26,11 @@
  */
 
 import type { AgentMessage } from "@zelari/core/harness";
+import {
+  extractiveHistorySummary,
+  formatDroppedForLlm,
+} from "../budget/historySummary.js";
+import { llmSummarizeHistory } from "../budget/llmCompact.js";
 import { envNumber } from "../utils/envNumber.js";
 
 export interface CompactHistoryOptions {
@@ -41,8 +48,16 @@ export interface CompactHistoryOptions {
   durableStatePresent?: boolean;
 }
 
-/** Marker prepended when messages are dropped, so the model knows context was trimmed. */
+/** Marker prepended when messages are dropped (legacy short form). */
 const COMPACT_MARKER = "[history] Earlier turns were compacted to stay within the context budget.";
+
+export interface CompactHistoryResult {
+  messages: AgentMessage[];
+  /** True when messages were actually rewritten/truncated. */
+  compacted: boolean;
+  messagesRemoved: number;
+  summary: string;
+}
 
 /**
  * Resolve the effective max-messages cap from options or the env var.
@@ -129,28 +144,97 @@ function findValidCutIndex(messages: readonly AgentMessage[], naiveCut: number):
  *
  * Returns the SAME array reference (unmutated) when no compaction is needed,
  * so callers can compare by reference cheaply on the hot path.
+ *
+ * Uses extractive summary of dropped turns (sync, no network).
  */
 export function compactHistory(
   messages: readonly AgentMessage[],
   opts?: CompactHistoryOptions,
 ): AgentMessage[] {
+  return compactHistoryDetailed(messages, opts).messages;
+}
+
+/**
+ * Same as compactHistory but returns metadata (removed count + summary text).
+ */
+export function compactHistoryDetailed(
+  messages: readonly AgentMessage[],
+  opts?: CompactHistoryOptions,
+): CompactHistoryResult {
   const maxMessages = resolveMaxMessages(opts);
-  // 0 → history disabled signal; caller handles that before calling, but
-  // guard anyway: return empty so the loop degrades to stateless.
-  if (maxMessages === 0) return [];
+  if (maxMessages === 0) {
+    return { messages: [], compacted: true, messagesRemoved: messages.length, summary: "" };
+  }
   // Trigger at 2× cap so we don't compact on every single turn (amortize).
-  if (messages.length <= maxMessages * 2) return messages as AgentMessage[];
+  if (messages.length <= maxMessages * 2) {
+    return {
+      messages: messages as AgentMessage[],
+      compacted: false,
+      messagesRemoved: 0,
+      summary: "",
+    };
+  }
 
   const naiveCut = messages.length - maxMessages;
   const cut = findValidCutIndex(messages, naiveCut);
-  const dropped = cut;
+  if (cut === 0) {
+    return {
+      messages: messages as AgentMessage[],
+      compacted: false,
+      messagesRemoved: 0,
+      summary: "",
+    };
+  }
 
-  if (dropped === 0) return messages as AgentMessage[]; // nothing to drop
-
+  const droppedMsgs = messages.slice(0, cut);
   const kept = messages.slice(cut);
+  const summaryText = extractiveHistorySummary(droppedMsgs);
   const summary: AgentMessage = {
     role: "system",
-    content: `${COMPACT_MARKER} ${dropped} earlier message(s) dropped.`,
+    content: summaryText || `${COMPACT_MARKER} ${cut} earlier message(s) dropped.`,
   };
-  return [summary, ...kept];
+  return {
+    messages: [summary, ...kept],
+    compacted: true,
+    messagesRemoved: cut,
+    summary: summary.content,
+  };
+}
+
+/**
+ * Async compaction: extractive summary, then optional LLM rewrite when
+ * ZELARI_LLM_COMPACT is enabled (default). Falls back to extractive on any error.
+ */
+export async function compactHistoryAsync(
+  messages: readonly AgentMessage[],
+  opts?: CompactHistoryOptions & { signal?: AbortSignal },
+): Promise<CompactHistoryResult> {
+  const base = compactHistoryDetailed(messages, opts);
+  if (!base.compacted || base.messagesRemoved === 0) return base;
+
+  const cut = base.messagesRemoved;
+  const droppedMsgs = messages.slice(0, cut);
+  const extractive = extractiveHistorySummary(droppedMsgs);
+  const droppedTranscript = formatDroppedForLlm(droppedMsgs);
+
+  let summaryText = extractive;
+  try {
+    const llm = await llmSummarizeHistory({
+      extractive,
+      droppedTranscript,
+      signal: opts?.signal,
+    });
+    if (llm && llm.trim().length > 40) summaryText = llm.trim();
+  } catch {
+    // keep extractive
+  }
+
+  const kept = messages.slice(cut);
+  const summary: AgentMessage = { role: "system", content: summaryText };
+  return {
+    messages: [summary, ...kept],
+    compacted: true,
+    messagesRemoved: cut,
+    summary: summaryText,
+  };
 }

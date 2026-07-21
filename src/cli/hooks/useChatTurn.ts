@@ -18,6 +18,8 @@ import { resolveFailoverStream } from "../crossProviderFailover.js";
 import { resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
 import { PROVIDERS } from "../keyStore.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
+import { createPermissionAskHandler } from "./permissionPicker.js";
+import { defaultPermissionPolicy } from "../safety/toolPermissions.js";
 import {
   buildSystemPromptSplit,
   systemMessagesFromSplit,
@@ -59,7 +61,7 @@ import { computeSessionStatsDelta } from "./chatStats.js";
 import { envNumber } from "../utils/envNumber.js";
 import { getPhase } from "../phaseState.js";
 import { describePhase } from "../phase.js";
-import { applyBudgetPolicy } from "../budget/tokenBudget.js";
+import { applyBudgetPolicyAsync } from "../budget/tokenBudget.js";
 
 /**
  * useChatTurn — owns the chat-turn lifecycle (single prompt dispatch +
@@ -194,9 +196,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       // with a partial assistant tail).
       let turnSucceeded = false;
       try {
-        // v1.8.0: budget-aware compact (phase plan/build + occupancy thresholds).
+        // v1.8.0 / v1.21.0: budget-aware compact (phase + occupancy).
+        // Async path may LLM-summarize dropped turns when context is tight.
         compactInPlace();
-        const budget = applyBudgetPolicy(getHistory(), getPhase());
+        const budget = await applyBudgetPolicyAsync(getHistory(), getPhase());
         setHistory(budget.history);
         for (const w of budget.warnings) {
           appendSystem(setMessages, w, Date.now());
@@ -265,9 +268,18 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 });
               })
           : undefined;
+        const onPermissionAsk = setPicker
+          ? createPermissionAskHandler({
+              setPicker,
+              appendSystem: (msg, at) =>
+                appendSystem(setMessages, msg, at ?? Date.now()),
+            })
+          : undefined;
         const { registry: toolRegistry } = createBuiltinToolRegistry({
           planMode: workPhase === "plan",
           onAskUser,
+          onPermissionAsk,
+          permissionPolicy: defaultPermissionPolicy(),
         });
         const baseProviderStream = openaiCompatibleProvider(envConfig);
         const failoverResolution = await resolveFailoverStream({
@@ -1042,9 +1054,9 @@ async function dispatchCouncilPromptImpl(
     return { completionOk: false, ran: false };
   }
   setBusy(true);
-  // v1.8.0: compact shared history + budget + short-answer anchor.
+  // v1.8.0 / v1.21.0: compact shared history + budget + short-answer anchor.
   compactInPlace();
-  const councilBudget = applyBudgetPolicy(getHistory(), getPhase());
+  const councilBudget = await applyBudgetPolicyAsync(getHistory(), getPhase());
   setHistory(councilBudget.history);
   for (const w of councilBudget.warnings) {
     appendSystem(setMessages, w, Date.now());
@@ -1139,9 +1151,18 @@ async function dispatchCouncilPromptImpl(
       );
     }
   }
+  const onPermissionAskCouncil = setPicker
+    ? createPermissionAskHandler({
+        setPicker,
+        appendSystem: (msg, at) =>
+          appendSystem(setMessages, msg, at ?? Date.now()),
+      })
+    : undefined;
   const { registry: councilToolRegistry } = createBuiltinToolRegistry({
     planMode: workPhase === "plan" || softGatedToDesign,
     onAskUser: onAskUserCouncil,
+    onPermissionAsk: onPermissionAskCouncil,
+    permissionPolicy: defaultPermissionPolicy(),
   });
   const workspaceCtx = createWorkspaceContext();
   const workspaceReg = createWorkspaceToolRegistry(workspaceCtx);
@@ -1863,8 +1884,17 @@ async function runZelariMissionInTui(
           return { completionOk: false, ran: false };
         }
 
+        const onPermissionAskZelari = setPicker
+          ? createPermissionAskHandler({
+              setPicker,
+              appendSystem: (msg, at) =>
+                appendSystem(setMessages, msg, at ?? Date.now()),
+            })
+          : undefined;
         const { registry: toolRegistry } = createBuiltinToolRegistry({
           planMode: false,
+          onPermissionAsk: onPermissionAskZelari,
+          permissionPolicy: defaultPermissionPolicy(),
         });
         try {
           const { registerMcpTools } = await import("../mcp/mcpManager.js");

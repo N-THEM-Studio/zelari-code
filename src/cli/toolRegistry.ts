@@ -28,8 +28,10 @@ import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPat
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
 import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
-import { createTaskTool } from './tools/taskTool.js';
+import { createTaskTool, type TaskAgentKind } from './tools/taskTool.js';
 import { createAskUserTool, type AskUserHandler } from './tools/askUser.js';
+import { createSkillTool } from './tools/skillTool.js';
+import { createTodoReadTool, createTodoWriteTool } from './tools/todoTools.js';
 import { createLspTools } from './lsp/tools.js';
 import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { createAstTools } from './ast/tools.js';
@@ -38,7 +40,19 @@ import { createBrowserTool } from './browser/tools.js';
 import { createSshTools } from './ssh/tools.js';
 import { createWorldModelTools } from './workspace/worldModel.js';
 import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
-import type { ToolDefinition, TypedResult, ToolContext } from '@zelari/core/harness/tools/toolTypes';
+import {
+  defaultPermissionPolicy,
+  resolveToolPermission,
+  type PermissionAskHandler,
+  type PermissionPolicy,
+} from './safety/toolPermissions.js';
+import type {
+  ToolDefinition,
+  TypedResult,
+  ToolContext,
+  ToolPermission,
+} from '@zelari/core/harness/tools/toolTypes';
+import { typedErr } from '@zelari/core/harness/tools/toolTypes';
 import { cliToolToEnhanced, registerCustomTool } from '@zelari/core/skills';
 import type { EnhancedToolDefinition } from '@zelari/core/skills';
 
@@ -90,6 +104,28 @@ export interface CreateRegistryOptions {
    * the harness until the UI resolves. Omit for headless / readOnly subagents.
    */
   onAskUser?: AskUserHandler;
+  /**
+   * Permission policy (allow/ask/deny by category). Defaults from env via
+   * {@link defaultPermissionPolicy}.
+   */
+  permissionPolicy?: PermissionPolicy;
+  /**
+   * Interactive approval when a tool resolves to "ask". If omitted and action
+   * is ask (and not auto), the tool is denied with a clear message.
+   */
+  onPermissionAsk?: PermissionAskHandler;
+  /**
+   * Sub-agent tool profile:
+   * - full: default parent registry
+   * - explore: read-only observe tools
+   * - verify: observe + bash (no writes, no task)
+   * - general: full mutators but no nested task
+   */
+  profile?: 'full' | 'explore' | 'verify' | 'general';
+  /** Register the lazy `skill` tool (default true unless readOnly/sub profile). */
+  enableSkill?: boolean;
+  /** Register session todo_write/todo_read (default true for full/plan parent). */
+  enableTodos?: boolean;
 }
 
 /**
@@ -136,50 +172,83 @@ export function createBuiltinToolRegistry(
   const safeWebSearch = wrapWithAudit(webSearchTool, audit, sessionId);
 
   const registry = new ToolRegistry();
-  // Read-only mode (used for sub-agents): only tools that observe the
-  // workspace — no write/edit/apply_diff/bash, and no `task` tool, so a
-  // sub-agent can neither mutate the repo nor recurse into more sub-agents.
-  // v1.8.0 planMode: same mutator strip (plan phase explores/designs only).
-  const readOnly = options.readOnly === true || options.planMode === true;
+  const profile = options.profile ?? 'full';
+  // Read-only / plan / explore: observe only.
+  // verify: observe + bash.
+  // general: mutators but no nested task (handled below).
+  const readOnly =
+    options.readOnly === true ||
+    options.planMode === true ||
+    profile === 'explore';
+  const verifyMode = profile === 'verify';
+  const allowMutators = !readOnly && !verifyMode;
+  const allowBash = allowMutators || verifyMode;
+
+  const permPolicy = options.permissionPolicy ?? defaultPermissionPolicy();
+  const withPerm = <I, O>(t: ToolDefinition<I, O>) =>
+    wrapWithPermissions(t, permPolicy, options.onPermissionAsk);
 
   // Observe tools — always registered.
-  registry.register(safeReadFile);
-  registry.register(safeGrepContent);
-  registry.register(safeListFiles);
-  registry.register(safeShowDiff);
-  registry.register(safeFetchUrl);
-  registry.register(safeWebSearch);
-  // Mutating tools — full registry only (not plan phase / sub-agent).
-  if (!readOnly) {
-    registry.register(safeWriteFile);
-    registry.register(safeEditFile);
-    registry.register(safeBash);
-    registry.register(safeApplyDiff);
+  registry.register(withPerm(safeReadFile));
+  registry.register(withPerm(safeGrepContent));
+  registry.register(withPerm(safeListFiles));
+  registry.register(withPerm(safeShowDiff));
+  registry.register(withPerm(safeFetchUrl));
+  registry.register(withPerm(safeWebSearch));
+  // Mutating tools — full/general only.
+  if (allowMutators) {
+    registry.register(withPerm(safeWriteFile));
+    registry.register(withPerm(safeEditFile));
+    registry.register(withPerm(safeApplyDiff));
+  }
+  if (allowBash) {
+    registry.register(withPerm(safeBash));
   }
 
-  // Interactive clarification — available in plan + build (not sub-agent readOnly).
-  // Blocks the tool-loop until the user answers (same-run continue).
+  // Interactive clarification — available in plan + build (not pure explore RO).
   const askUserTool =
-    options.readOnly === true ? null : createAskUserTool(options.onAskUser);
+    options.readOnly === true || profile === 'explore' || profile === 'verify'
+      ? null
+      : createAskUserTool(options.onAskUser);
   if (askUserTool) {
-    registry.register(askUserTool);
+    registry.register(withPerm(askUserTool));
   }
 
-  const summary = readOnly
-    ? [safeReadFile, safeGrepContent, safeListFiles, safeShowDiff, safeFetchUrl, safeWebSearch]
-    : [
-        safeReadFile,
-        safeWriteFile,
-        safeEditFile,
-        safeBash,
-        safeGrepContent,
-        safeListFiles,
-        safeShowDiff,
-        safeApplyDiff,
-        safeFetchUrl,
-        safeWebSearch,
-        ...(askUserTool ? [askUserTool] : []),
-      ];
+  // Lazy skill loader — parent (plan/build) and general subagent; not explore/verify.
+  const enableSkill =
+    options.enableSkill !== false &&
+    options.readOnly !== true &&
+    profile !== 'explore' &&
+    profile !== 'verify';
+  const skillTool = enableSkill ? withPerm(createSkillTool({ cwd: root })) : null;
+  if (skillTool) {
+    registry.register(skillTool);
+  }
+
+  // Session todos — parent agent only (not explore/verify; general skips like OpenCode).
+  const enableTodos =
+    options.enableTodos !== false &&
+    options.readOnly !== true &&
+    profile === 'full';
+  const todoWrite = enableTodos ? withPerm(createTodoWriteTool()) : null;
+  const todoRead = enableTodos ? withPerm(createTodoReadTool()) : null;
+  if (todoWrite) registry.register(todoWrite);
+  if (todoRead) registry.register(todoRead);
+
+  const summary = [
+    safeReadFile,
+    safeGrepContent,
+    safeListFiles,
+    safeShowDiff,
+    safeFetchUrl,
+    safeWebSearch,
+    ...(allowMutators ? [safeWriteFile, safeEditFile, safeApplyDiff] : []),
+    ...(allowBash ? [safeBash] : []),
+    ...(askUserTool ? [askUserTool] : []),
+    ...(skillTool ? [skillTool] : []),
+    ...(todoWrite ? [todoWrite] : []),
+    ...(todoRead ? [todoRead] : []),
+  ];
   const tools: BuiltinToolSummary[] = summary.map((t) => ({
     name: t.name,
     description: t.description,
@@ -248,20 +317,30 @@ export function createBuiltinToolRegistry(
     }
   }
 
-  // The `task` sub-agent tool — only in the full (non-read-only) registry.
-  // Each invocation spins up a fresh READ-ONLY sub-registry via this same
-  // factory (readOnly:true), so sub-agents are isolated and non-recursive.
-  if (!readOnly && options.enableTask !== false) {
+  // The `task` sub-agent tool — parent full registry only (not plan/explore/verify/general).
+  // Sub-agents get a profile-specific registry and never nest another `task`.
+  const enableTask =
+    options.enableTask !== false &&
+    !readOnly &&
+    !verifyMode &&
+    profile === 'full' &&
+    !options.planMode;
+  if (enableTask) {
     const taskTool = createTaskTool({
-      createSubAgentContext: async () => {
+      createSubAgentContext: async ({ agent }) => {
         const cfg = await providerFromEnv();
         if (!cfg) return null;
+        const subProfile = taskAgentToProfile(agent);
         const { registry: subRegistry } = createBuiltinToolRegistry({
           root,
           audit,
           sessionId,
-          readOnly: true,
+          profile: subProfile,
+          enableTask: false,
+          enableSkill: agent === 'general',
           diagnostics: false,
+          lspProvider: null,
+          permissionPolicy: defaultPermissionPolicy({ auto: true }),
         });
         return {
           providerStream: openaiCompatibleProvider(cfg),
@@ -273,10 +352,11 @@ export function createBuiltinToolRegistry(
             description: t.function.description,
             parameters: t.function.parameters,
           })),
+          agent,
         };
       },
     });
-    registry.register(taskTool);
+    registry.register(withPerm(taskTool));
     tools.push({
       name: taskTool.name,
       description: taskTool.description,
@@ -385,6 +465,64 @@ export function registerCliToolsIntoCouncilCatalog(registry: ToolRegistry): void
   }
 }
 
+
+function taskAgentToProfile(agent: TaskAgentKind): 'explore' | 'verify' | 'general' {
+  if (agent === 'general') return 'general';
+  if (agent === 'verify') return 'verify';
+  return 'explore';
+}
+
+/**
+ * Gate tool execution with allow/ask/deny policy (OpenCode-style permissions).
+ */
+function wrapWithPermissions<I, O>(
+  original: ToolDefinition<I, O>,
+  policy: PermissionPolicy,
+  onAsk?: PermissionAskHandler,
+): ToolDefinition<I, O> {
+  const required = (original.permissions ?? []) as ToolPermission[];
+  // Pure read tools under allow policy — no wrap overhead.
+  const decisionProbe = resolveToolPermission(original.name, required, policy);
+  if (decisionProbe.action === 'allow' && !required.includes('write') && !required.includes('execute')) {
+    // Still wrap write/execute categories; for read-only allow skip? Keep wrap
+    // always for consistency when policy might deny network later.
+  }
+  return {
+    ...original,
+    execute: async (input: I, ctx: ToolContext): Promise<TypedResult<O>> => {
+      const decision = resolveToolPermission(original.name, required, policy);
+      if (decision.action === 'deny') {
+        return typedErr(`[permission] ${decision.reason}`);
+      }
+      if (decision.action === 'ask') {
+        if (!onAsk) {
+          return typedErr(
+            `[permission] ${decision.reason} No interactive approval available ` +
+              `(set ZELARI_AUTO=1 to auto-allow, or configure onPermissionAsk).`,
+          );
+        }
+        try {
+          const ok = await onAsk({
+            toolName: original.name,
+            reason: decision.reason,
+            categories: decision.categories,
+            args: input,
+          });
+          if (!ok) {
+            return typedErr(
+              `[permission] User denied "${original.name}" (${decision.categories.join(', ')}).`,
+            );
+          }
+        } catch (err) {
+          return typedErr(
+            `[permission] Approval UI failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
+      }
+      return original.execute(input, ctx);
+    },
+  };
+}
 
 function wrapWithSandbox<I extends Record<string, unknown>, O>(
   original: ToolDefinition<I, O>,

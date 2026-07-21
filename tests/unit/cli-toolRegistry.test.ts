@@ -21,9 +21,12 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
       'semantic_search',
       'set_world_checks',
       'show_diff',
+      'skill',
       'ssh_run',
       'ssh_status',
       'task',
+      'todo_read',
+      'todo_write',
       'update_world_hypothesis',
       'web_search',
       'write_file',
@@ -55,7 +58,7 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
     const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
-    expect(openAITools).toHaveLength(22);
+    expect(openAITools).toHaveLength(25);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);

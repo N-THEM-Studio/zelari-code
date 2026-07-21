@@ -249,6 +249,14 @@ export async function printSshPubkey(path: string): Promise<
   return invoke("print_ssh_pubkey", { args: { path } });
 }
 
+/** Write UTF-8 text to a user-chosen path (chat export, etc.). Returns the path written. */
+export async function writeTextFile(
+  path: string,
+  content: string,
+): Promise<string> {
+  return invoke<string>("write_text_file", { args: { path, content } });
+}
+
 export async function onAgentEvent(
   handler: (event: AgentEvent) => void,
 ): Promise<UnlistenFn> {

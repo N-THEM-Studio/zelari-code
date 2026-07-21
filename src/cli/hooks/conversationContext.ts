@@ -15,6 +15,8 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { AgentMessage } from '@zelari/core/harness';
+import { clearSessionPermissionGrants } from '../safety/toolPermissions.js';
+import { clearSessionTodos } from '../sessionTodos.js';
 import { compactHistory } from './historyCompaction.js';
 
 /** Snapshot of the last assistant clarifying question (for short-answer anchoring). */
@@ -54,6 +56,9 @@ export function appendMessages(msgs: readonly AgentMessage[]): void {
 export function clearHistory(): void {
   history = [];
   lastClarification = null;
+  // Session todos + permission grants are conversation-scoped.
+  clearSessionTodos();
+  clearSessionPermissionGrants();
 }
 
 /** Serialize for session sidecar / tests. */
@@ -316,4 +321,6 @@ function truncate(s: string, max: number): string {
 export function _resetConversationContextForTests(): void {
   history = [];
   lastClarification = null;
+  clearSessionTodos();
+  clearSessionPermissionGrants();
 }

@@ -34,6 +34,11 @@ interface StatusBarProps {
   contextUsed?: number;
   /** Context window limit (tokens). */
   contextLimit?: number;
+  /**
+   * Compact session-todo summary (e.g. "todos 2/5"). Omitted when empty.
+   * @since v1.21.0
+   */
+  todoSummary?: string | null;
 }
 
 /**
@@ -66,6 +71,7 @@ export function StatusBar({
   cacheHitRate = 0,
   contextUsed = 0,
   contextLimit = 0,
+  todoSummary = null,
 }: StatusBarProps): React.ReactElement {
   const ctxLabel =
     contextLimit > 0
@@ -122,6 +128,12 @@ export function StatusBar({
         {queueCount > 0 ? (
           <>
             <Text color="magenta">queue {queueCount}</Text>
+            <Text dimColor> · </Text>
+          </>
+        ) : null}
+        {todoSummary ? (
+          <>
+            <Text color="yellow">{todoSummary}</Text>
             <Text dimColor> · </Text>
           </>
         ) : null}

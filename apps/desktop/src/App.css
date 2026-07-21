@@ -669,10 +669,12 @@ button {
 }
 
 .session-actions button {
-  width: 26px;
+  min-width: 26px;
   height: 24px;
+  padding: 0 4px;
   border-radius: 6px;
-  font-size: 12px;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-muted);
 }
 
@@ -3668,6 +3670,92 @@ kbd {
 
 .settings-view .btn-ghost:hover {
   background: var(--hover-tint);
+}
+
+/* ── Session todos (agent todo_write) ── */
+.session-todos-panel {
+  flex-shrink: 0;
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(
+    160deg,
+    rgba(255, 220, 100, 0.08),
+    rgba(255, 255, 255, 0.03)
+  );
+}
+
+.session-todos-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.session-todos-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.session-todos-summary {
+  font-size: 12px;
+  color: var(--text-muted);
+  flex: 1;
+}
+
+.session-todos-clear {
+  font-size: 11px !important;
+  padding: 2px 8px !important;
+}
+
+.session-todos-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+.session-todo {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.session-todo.status-completed {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.session-todo.status-in_progress .session-todo-mark {
+  color: #f0c14b;
+}
+
+.session-todo-mark {
+  flex-shrink: 0;
+  width: 1.1em;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.todo-chip {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(240, 193, 75, 0.15);
+  color: #e8c86a;
+  border: 1px solid rgba(240, 193, 75, 0.25);
+  white-space: nowrap;
 }
 
 /* ── Export + shortcuts ── */

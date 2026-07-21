@@ -38,6 +38,14 @@ describe('createTaskTool', () => {
     expect(tool.name).toBe('task');
     expect(tool.inputSchema.safeParse({ description: 'x' }).success).toBe(false);
     expect(tool.inputSchema.safeParse({ description: 'find X', prompt: 'do it' }).success).toBe(true);
+    expect(
+      tool.inputSchema.safeParse({
+        description: 'find X',
+        prompt: 'do it',
+        agent: 'explore',
+        thoroughness: 'quick',
+      }).success,
+    ).toBe(true);
   });
 
   it('returns an error when no provider is configured', async () => {
@@ -60,7 +68,31 @@ describe('createTaskTool', () => {
     });
     const res = await tool.execute({ description: 'locate handler', prompt: 'where is X?' }, ctx);
     expect(res.ok).toBe(true);
-    if (res.ok) expect(res.value.result).toBe('The handler lives in src/foo.ts:42.');
+    if (res.ok) {
+      expect(res.value.result).toContain('The handler lives in src/foo.ts:42.');
+      expect(res.value.agent).toBe('explore');
+    }
+  });
+
+  it('passes agent kind to createSubAgentContext', async () => {
+    let seen: string | undefined;
+    const tool = createTaskTool({
+      createSubAgentContext: async ({ agent }) => {
+        seen = agent;
+        return dummyContext;
+      },
+      harnessFactory: () =>
+        fakeHarness([
+          { type: 'message_start' },
+          { type: 'message_delta', delta: 'ok' } as Partial<BrainEvent>,
+          { type: 'message_end' },
+        ]),
+    });
+    await tool.execute(
+      { description: 'edit', prompt: 'fix x', agent: 'general', thoroughness: 'deep' },
+      ctx,
+    );
+    expect(seen).toBe('general');
   });
 
   it('returns the LAST completed message (tool-call turns discarded)', async () => {
@@ -78,7 +110,7 @@ describe('createTaskTool', () => {
     });
     const res = await tool.execute({ description: 'x', prompt: 'p' }, ctx);
     expect(res.ok).toBe(true);
-    if (res.ok) expect(res.value.result).toBe('Final: use bar().');
+    if (res.ok) expect(res.value.result).toContain('Final: use bar().');
   });
 
   it('errors when the sub-agent produces no output', async () => {
@@ -102,6 +134,7 @@ describe('createBuiltinToolRegistry — task tool + readOnly isolation', () => {
     const names = tools.map((t) => t.name);
     expect(names).toContain('task');
     expect(names).toContain('write_file');
+    expect(names).toContain('skill');
     expect(registry.get('task')).toBeDefined();
   });
 
@@ -113,11 +146,28 @@ describe('createBuiltinToolRegistry — task tool + readOnly isolation', () => {
     expect(names).not.toContain('edit_file');
     expect(names).not.toContain('apply_diff');
     expect(names).not.toContain('bash');
+    expect(names).not.toContain('skill');
     // Observe tools remain.
     expect(names).toContain('read_file');
     expect(names).toContain('grep_content');
     expect(registry.get('task')).toBeUndefined();
     expect(registry.get('write_file')).toBeUndefined();
+  });
+
+  it('verify profile has bash but no writes/task', () => {
+    const { tools } = createBuiltinToolRegistry({ root, profile: 'verify' });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain('bash');
+    expect(names).toContain('read_file');
+    expect(names).not.toContain('write_file');
+    expect(names).not.toContain('task');
+  });
+
+  it('general profile has writes but no nested task', () => {
+    const { tools } = createBuiltinToolRegistry({ root, profile: 'general' });
+    const names = tools.map((t) => t.name);
+    expect(names).toContain('write_file');
+    expect(names).not.toContain('task');
   });
 
   it('respects enableTask:false in the full registry', () => {

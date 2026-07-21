@@ -203,6 +203,12 @@ export class AgentHarness {
    * real progress. Reset on every `run()` so it does not leak across turns.
    */
   private toolCallCache: Map<string, string> = new Map();
+  /**
+   * Count of identical tool+args invocations this run (incl. first).
+   * v1.21.0 doom_loop: after DOOM_LOOP_THRESHOLD, return a hard error so the
+   * model must change approach instead of soft-replaying forever.
+   */
+  private toolCallCounts: Map<string, number> = new Map();
 
   /**
    * How many times this run re-entered the provider because the model emitted
@@ -340,13 +346,6 @@ export class AgentHarness {
     const invokeOne = async (
       p: (typeof pending)[number],
     ): Promise<{ content: string; isError: boolean; durationMs: number; cacheKey?: string }> => {
-      if (p.cached !== undefined) {
-        return {
-          content: p.cached,
-          isError: p.skipped || p.cached.startsWith('[skipped]'),
-          durationMs: 0,
-        };
-      }
       if (p.skipped || !this.config.toolRegistry) {
         return {
           content: `[skipped] maxToolCallsPerTurn reached (limit=${maxToolCalls})`,
@@ -354,7 +353,31 @@ export class AgentHarness {
           durationMs: 0,
         };
       }
+
       const callKey = hashToolCall(p.toolName, p.args);
+      const nextCount = (this.toolCallCounts.get(callKey) ?? 0) + 1;
+      this.toolCallCounts.set(callKey, nextCount);
+
+      // doom_loop: 3rd+ identical invocation → hard stop (OpenCode-style).
+      if (nextCount >= DOOM_LOOP_THRESHOLD) {
+        return {
+          content:
+            `[doom_loop] Tool "${p.toolName}" called ${nextCount} times with identical arguments. ` +
+            `Stop repeating. Change approach: different path/args, another tool, or answer with what you already have.`,
+          isError: true,
+          durationMs: 0,
+        };
+      }
+
+      // Soft duplicate / pre-resolved cache (still counts toward doom_loop).
+      if (p.cached !== undefined) {
+        return {
+          content: p.cached,
+          isError: p.cached.startsWith('[skipped]') || p.cached.startsWith('[doom_loop]'),
+          durationMs: 0,
+        };
+      }
+
       const fromRunCache = this.toolCallCache.get(callKey);
       if (fromRunCache !== undefined) {
         return {
@@ -518,8 +541,9 @@ export class AgentHarness {
   async *run(): AsyncIterable<BrainEvent> {
     const startTime = Date.now();
     this.activeController = new AbortController();
-    // Reset the per-run duplicate-call cache (v0.7.1 A2).
+    // Reset the per-run duplicate-call cache (v0.7.1 A2) + doom_loop counts.
     this.toolCallCache = new Map();
+    this.toolCallCounts = new Map();
     this.textToolReentries = 0;
 
     // Emit agent_start
@@ -1249,6 +1273,9 @@ export class AgentHarness {
  * JSON.stringify so `{a:1,b:2}` and `{b:2,a:1}` collide (same logical call).
  * Exported for unit tests.
  */
+/** Identical tool+args count that triggers a hard doom_loop error (incl. first). */
+export const DOOM_LOOP_THRESHOLD = 3;
+
 export function hashToolCall(toolName: string, args: unknown): string {
   const canonical = stableStringify(args);
   return `${toolName}::${canonical}`;

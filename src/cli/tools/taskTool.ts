@@ -1,24 +1,12 @@
 /**
  * taskTool — delegate a bounded sub-task to an isolated sub-agent.
  *
- * The `task` tool lets the main agent spin up a fresh, read-only sub-agent
- * that runs a focused exploration/analysis task in ITS OWN context and
- * returns only a short conclusion. This keeps the main conversation lean on
- * large repos: instead of the parent burning thousands of tokens reading 20
- * files to answer "where is X handled?", it delegates, and only the answer
- * comes back.
- *
  * Isolation & safety:
- *   - The sub-agent gets a READ-ONLY tool registry (read_file, list_files,
- *     grep_content, show_diff, fetch_url, web_search) — no write/edit/bash —
- *     and, crucially, no `task` tool of its own, so sub-agents cannot recurse.
- *   - Its messages are a fresh [system, user] pair; the parent transcript is
- *     never shared, and only the final assistant message returns to the parent.
- *   - The underlying AgentHarness self-bounds at 12 tool-loop turns, so a
- *     sub-agent can't run away; the tool also carries a long timeout.
+ *   - explore / verify: READ-ONLY (or read+bash for verify)
+ *   - general: full tools except nested `task` (no recursion)
+ *   - Parent gets only a short conclusion, not the full sub-transcript
  *
- * The provider/registry factory and the harness constructor are injected
- * (`TaskToolDeps`) so the whole flow is unit-testable without a real provider.
+ * @since v0.7.x · typed agents v1.21.0
  */
 
 import { z } from 'zod';
@@ -36,6 +24,10 @@ import {
   type TypedResult,
 } from '@zelari/core/harness/tools/toolTypes';
 
+/** Sub-agent kinds (OpenCode-inspired). */
+export type TaskAgentKind = 'explore' | 'general' | 'verify';
+export type TaskThoroughness = 'quick' | 'medium' | 'deep';
+
 /** Everything a sub-agent needs to run, built fresh per invocation. */
 export interface SubAgentContext {
   providerStream: ProviderStreamFn;
@@ -43,6 +35,8 @@ export interface SubAgentContext {
   provider: string;
   registry: ToolRegistry;
   tools: AgentToolSpec[];
+  /** Effective agent kind for prompts / budgets. */
+  agent?: TaskAgentKind;
 }
 
 /** A minimal harness surface — just the event stream. */
@@ -52,28 +46,67 @@ export interface SubAgentHarness {
 
 export interface TaskToolDeps {
   /**
-   * Build an isolated, read-only provider + tool registry for one sub-agent
-   * run. Returns null when no provider is configured (missing API key) so the
-   * tool can report a friendly error instead of throwing.
+   * Build provider + tool registry for one sub-agent run.
+   * `agent` selects tool set (explore RO / general write / verify tests).
    */
-  createSubAgentContext: () => Promise<SubAgentContext | null>;
+  createSubAgentContext: (opts: {
+    agent: TaskAgentKind;
+    thoroughness: TaskThoroughness;
+  }) => Promise<SubAgentContext | null>;
   /** Construct the harness. Overridable in tests; defaults to AgentHarness. */
   harnessFactory?: (config: AgentHarnessConfig) => SubAgentHarness;
 }
 
-export const SUBAGENT_SYSTEM_PROMPT = [
-  'You are a focused sub-agent spawned to answer ONE bounded question or',
-  'complete ONE small research task for a parent coding agent.',
-  '',
-  'You have READ-ONLY tools (read files, list files, search, fetch URLs).',
-  'You cannot edit files or run shell commands — do not attempt to.',
-  '',
-  'Work efficiently: gather only what you need, then STOP and reply with a',
-  'concise, self-contained conclusion the parent can act on. Include concrete',
-  'references (file paths, line numbers, symbol names) but do not paste large',
-  'file dumps. Do not ask the parent follow-up questions — deliver your best',
-  'answer with what you can find.',
+const EXPLORE_PROMPT = [
+  'You are a focused EXPLORE sub-agent for a parent coding agent.',
+  'READ-ONLY tools only (read, list, grep, fetch). No edits, no shell.',
+  'Gather only what you need, then STOP with a concise conclusion:',
+  'file paths, symbols, line refs, and how things connect. No large dumps.',
+  'Do not ask follow-up questions.',
 ].join('\n');
+
+const GENERAL_PROMPT = [
+  'You are a GENERAL sub-agent that can read AND modify the codebase for one',
+  'bounded unit of work. Prefer small, correct edits. Run checks when needed.',
+  'Return a short report: what changed, files touched, remaining risks.',
+  'Do not spawn further sub-agents. Do not expand scope beyond the prompt.',
+].join('\n');
+
+const VERIFY_PROMPT = [
+  'You are a VERIFY sub-agent. Confirm whether work is correct on disk.',
+  'You may read files and run test/build commands via bash. Prefer',
+  'targeted checks over full suite when possible.',
+  'Report: pass/fail, commands run, key output, and gaps.',
+].join('\n');
+
+export function systemPromptForAgent(agent: TaskAgentKind): string {
+  if (agent === 'general') return GENERAL_PROMPT;
+  if (agent === 'verify') return VERIFY_PROMPT;
+  return EXPLORE_PROMPT;
+}
+
+export function maxToolCallsForThoroughness(
+  thoroughness: TaskThoroughness,
+  agent: TaskAgentKind,
+): number {
+  if (agent === 'general') {
+    if (thoroughness === 'quick') return 8;
+    if (thoroughness === 'deep') return 20;
+    return 12;
+  }
+  if (agent === 'verify') {
+    if (thoroughness === 'quick') return 6;
+    if (thoroughness === 'deep') return 14;
+    return 10;
+  }
+  // explore
+  if (thoroughness === 'quick') return 4;
+  if (thoroughness === 'deep') return 12;
+  return 6;
+}
+
+/** @deprecated use systemPromptForAgent('explore') — kept for tests */
+export const SUBAGENT_SYSTEM_PROMPT = EXPLORE_PROMPT;
 
 const TaskArgsSchema = z.object({
   description: z
@@ -87,6 +120,17 @@ const TaskArgsSchema = z.object({
       'The full, self-contained instruction for the sub-agent. It has no access ' +
         'to this conversation, so include all context it needs.',
     ),
+  agent: z
+    .enum(['explore', 'general', 'verify'])
+    .optional()
+    .describe(
+      'Sub-agent type: explore (read-only research, default), general (can edit), ' +
+        'verify (read + bash tests). Prefer explore for search; general for isolated edits.',
+    ),
+  thoroughness: z
+    .enum(['quick', 'medium', 'deep'])
+    .optional()
+    .describe('How deep the sub-agent should go (tool budget). Default medium.'),
 });
 
 type TaskArgs = z.infer<typeof TaskArgsSchema>;
@@ -110,64 +154,68 @@ async function runSubAgent(
         current += ev.delta;
         break;
       case 'message_end':
-        // Keep the most recent non-empty message as the running conclusion.
         if (current.trim()) lastCompleted = current;
         current = '';
         break;
       case 'error':
-        // Cancellations arrive as error events; record the message.
         error = ev.message;
         break;
       default:
         break;
     }
   }
-  // A run that ended mid-stream (no message_end) still has buffered text.
   const result = (lastCompleted || current).trim();
   return { result, ...(error ? { error } : {}) };
 }
 
 /** Build the `task` tool from injected sub-agent deps. */
-export function createTaskTool(deps: TaskToolDeps): ToolDefinition<TaskArgs, { result: string }> {
+export function createTaskTool(deps: TaskToolDeps): ToolDefinition<TaskArgs, { result: string; agent: string }> {
   return {
     name: 'task',
     description:
-      'Delegate a focused, READ-ONLY research/exploration sub-task to an isolated ' +
-      'sub-agent that has its own fresh context and returns only a concise conclusion. ' +
-      'Use it to keep your own context lean — e.g. "find where feature X is implemented ' +
-      'and summarize how it works" — on large codebases. The sub-agent cannot edit files ' +
-      'or run shell commands. Provide a fully self-contained `prompt` (it cannot see this ' +
-      'conversation).',
-    // The sub-agent reads the workspace and may hit the network (fetch/search),
-    // but never writes or runs shell commands.
-    permissions: ['read', 'network'],
-    // Sub-agents run a full (bounded) agent loop — allow generous wall time.
+      'Delegate a focused sub-task to an isolated sub-agent with its own context; ' +
+      'returns only a concise conclusion (keeps parent context lean).\n' +
+      '- agent=explore (default): read-only research/search\n' +
+      '- agent=general: can edit files for one bounded unit of work\n' +
+      '- agent=verify: read + bash to run tests/checks\n' +
+      'Provide a fully self-contained `prompt` (sub-agent cannot see this conversation).',
+    permissions: ['read', 'network', 'write', 'execute'],
     timeoutMs: 300_000,
     inputSchema: TaskArgsSchema,
-    execute: async (args, ctx): Promise<TypedResult<{ result: string }>> => {
+    execute: async (args, ctx): Promise<TypedResult<{ result: string; agent: string }>> => {
+      const agent: TaskAgentKind = args.agent ?? 'explore';
+      const thoroughness: TaskThoroughness = args.thoroughness ?? 'medium';
+
       let sub: SubAgentContext | null;
       try {
-        sub = await deps.createSubAgentContext();
+        sub = await deps.createSubAgentContext({ agent, thoroughness });
       } catch (err) {
-        return typedErr(`task: could not initialize sub-agent — ${err instanceof Error ? err.message : String(err)}`);
+        return typedErr(
+          `task: could not initialize sub-agent — ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
       if (!sub) {
-        return typedErr('task: no provider configured for the sub-agent (set an API key / run /login).');
+        return typedErr(
+          'task: no provider configured for the sub-agent (set an API key / run /login).',
+        );
       }
+
+      const maxToolCalls = maxToolCallsForThoroughness(thoroughness, agent);
       const config: AgentHarnessConfig = {
         model: sub.model,
         provider: sub.provider,
         messages: [
-          { role: 'system', content: SUBAGENT_SYSTEM_PROMPT },
+          { role: 'system', content: systemPromptForAgent(agent) },
           { role: 'user', content: args.prompt },
         ],
         tools: sub.tools,
         toolRegistry: sub.registry,
         providerStream: sub.providerStream,
         cwd: ctx.cwd,
-        // Guard against a single turn ballooning context on "explore" tasks.
-        maxToolCallsPerTurn: 5,
+        maxToolCallsPerTurn: maxToolCalls,
+        maxToolLoopIterations: Math.max(12, maxToolCalls + 4),
       };
+
       let harness: SubAgentHarness;
       try {
         if (deps.harnessFactory) {
@@ -177,13 +225,21 @@ export function createTaskTool(deps: TaskToolDeps): ToolDefinition<TaskArgs, { r
           harness = new AgentHarness(config);
         }
       } catch (err) {
-        return typedErr(`task: failed to start sub-agent — ${err instanceof Error ? err.message : String(err)}`);
+        return typedErr(
+          `task: failed to start sub-agent — ${err instanceof Error ? err.message : String(err)}`,
+        );
       }
+
       const { result, error } = await runSubAgent(harness);
       if (!result) {
-        return typedErr(`task: sub-agent produced no output${error ? ` (${error})` : ''}.`);
+        return typedErr(
+          `task: sub-agent (${agent}) produced no output${error ? ` (${error})` : ''}.`,
+        );
       }
-      return typedOk({ result });
+      return typedOk({
+        result: `[sub-agent:${agent}/${thoroughness}]\n${result}`,
+        agent,
+      });
     },
   };
 }

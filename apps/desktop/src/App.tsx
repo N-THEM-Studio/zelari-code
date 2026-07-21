@@ -29,12 +29,21 @@ import { PhaseToggle } from "./components/PhaseToggle";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
 import { RunActivity } from "./components/RunActivity";
+import { SessionTodosPanel } from "./components/SessionTodosPanel";
+import {
+  parseTodoToolResult,
+  type DesktopTodo,
+} from "./sessionTodosUi";
 import { ReplyAccordion } from "./components/ReplyAccordion";
 import { friendlyToolLabel } from "./components/toolLabels";
 import { scrubDisplayText } from "./components/scrubDisplayText";
 import { ProjectPanel } from "./components/ProjectPanel";
 import { CliSetupGuide } from "./components/CliSetupGuide";
 import { TitleBar } from "./components/TitleBar";
+import {
+  exportConversationJsonToFolder,
+  exportConversationMarkdownToFolder,
+} from "./components/exportChat";
 import {
   PluginInstallBanner,
   type PluginInstallError,
@@ -343,6 +352,8 @@ export default function App() {
   );
   /** Live tool activity line (no per-tool cards in the stream). */
   const [liveToolLabel, setLiveToolLabel] = useState<string | null>(null);
+  /** Session todos mirrored from todo_write / todo_read tool results. */
+  const [sessionTodos, setSessionTodos] = useState<DesktopTodo[]>([]);
   const [liveMemberName, setLiveMemberName] = useState<string | null>(null);
   const toolLabelClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** When true, chat auto-scrolls with the stream; user scroll-up detaches. */
@@ -978,6 +989,17 @@ export default function App() {
             setLiveToolLabel(null);
             toolLabelClearRef.current = null;
           }, 900);
+          // Mirror session todos from headless agent tools (in-process store
+          // is not shared across Desktop's per-message CLI spawns).
+          const endName = extractToolName(ev);
+          if (
+            (endName === "todo_write" || endName === "todo_read") &&
+            typeof ev.result === "string" &&
+            !ev.isError
+          ) {
+            const parsed = parseTodoToolResult(ev.result);
+            if (parsed) setSessionTodos(parsed);
+          }
           return;
         }
 
@@ -1190,6 +1212,7 @@ export default function App() {
     setActiveId(c.id);
     setSessionFilter("active");
     setDraft("");
+    setSessionTodos([]);
     assistantIdRef.current = null;
     taRef.current?.focus();
   };
@@ -1546,6 +1569,48 @@ export default function App() {
     }
   };
 
+  const exportChatMd = async (conv: Conversation | undefined) => {
+    if (!conv) {
+      setStatusLine("Nessuna chat da esportare");
+      return;
+    }
+    try {
+      const result = await exportConversationMarkdownToFolder(conv);
+      if (result) {
+        setStatusLine(`Esportato MD: ${result.path}`);
+        try {
+          const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+          await revealItemInDir(result.path);
+        } catch {
+          /* reveal is best-effort */
+        }
+      }
+    } catch (e) {
+      setStatusLine(e instanceof Error ? e.message : String(e));
+    }
+  };
+
+  const exportChatJson = async (conv: Conversation | undefined) => {
+    if (!conv) {
+      setStatusLine("Nessuna chat da esportare");
+      return;
+    }
+    try {
+      const result = await exportConversationJsonToFolder(conv);
+      if (result) {
+        setStatusLine(`Esportato JSON: ${result.path}`);
+        try {
+          const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+          await revealItemInDir(result.path);
+        } catch {
+          /* reveal is best-effort */
+        }
+      }
+    } catch (e) {
+      setStatusLine(e instanceof Error ? e.message : String(e));
+    }
+  };
+
   const messages = active?.messages ?? [];
   const empty = messages.length === 0;
 
@@ -1701,11 +1766,11 @@ export default function App() {
               <div className="session-actions">
                 <button
                   type="button"
-                  title="Export as Markdown"
+                  title="Export Markdown… (choose folder)"
                   disabled={!hasExportableMessages(c)}
-                  onClick={() => exportConversation(c)}
+                  onClick={() => void exportChatMd(c)}
                 >
-                  ⤓
+                  MD
                 </button>
                 {c.archived ? (
                   <button
@@ -1780,6 +1845,12 @@ export default function App() {
             <div className="topbar-title" title={active?.title ?? "Zelari"}>
               {active?.title ?? "Zelari"}
             </div>
+            {sessionTodos.length > 0 ? (
+              <span className="todo-chip" title="Session tasks from agent">
+                {sessionTodos.filter((t) => t.status === "completed").length}/
+                {sessionTodos.length} todos
+              </span>
+            ) : null}
           </div>
           <div className="topbar-right">
             <ModeToggle
@@ -1792,6 +1863,26 @@ export default function App() {
               disabled={running}
               onChange={onPhaseChange}
             />
+            <div className="export-menu">
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={!active}
+                onClick={() => void exportChatMd(active)}
+                title="Esporta chat in Markdown (scegli cartella)"
+              >
+                Export MD
+              </button>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={!active}
+                onClick={() => void exportChatJson(active)}
+                title="Esporta chat in JSON (scegli cartella)"
+              >
+                JSON
+              </button>
+            </div>
             <button
               type="button"
               className="btn-ghost topbar-folder"
@@ -1809,6 +1900,12 @@ export default function App() {
         </header>
 
         <div className="chat-scroll-shell">
+          {sessionTodos.length > 0 ? (
+            <SessionTodosPanel
+              todos={sessionTodos}
+              onClear={() => setSessionTodos([])}
+            />
+          ) : null}
           <div className="chat-scroll" ref={scrollRef}>
             {!pluginBannerDismissed &&
               (pluginRows.some((p) => !p.present) || pluginError) && (

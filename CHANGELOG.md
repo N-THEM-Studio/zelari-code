@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.22.0] - 2026-07-21
+
+### Added
+- **Agent context longevity (OpenCode-inspired)** — oversized tool results spill full text to a managed dir (`~/.tmp/zelari-code/tool-output/`) while the transcript keeps a head/tail preview; env `ZELARI_TOOL_SPILL`, `ZELARI_TOOL_OUTPUT_DIR`.
+- **LLM / extractive history compaction** — at ≥85% context occupancy the rolling history is replaced with a continuity summary (extractive always; optional LLM rewrite). Env `ZELARI_LLM_COMPACT`, `ZELARI_COMPACT_MODEL`.
+- **Tool permissions allow/ask/deny** — policy by category with env `ZELARI_PERMISSION_*` and `ZELARI_AUTO=1`. TUI picker: Allow once · Allow always (tool) · Allow always (category) · Deny. Session grants clear on `/clear`|/new.
+- **doom_loop guard** — third identical tool+args call returns a hard error so the model must change approach.
+- **Typed `task` subagents** — `agent=explore|general|verify` + `thoroughness=quick|medium|deep` with profile-specific tool sets; summary-only return to parent.
+- **Lazy `skill` tool** — catalog of skill names/descriptions; body loaded on demand (SKILL.md compatible).
+- **Session `todo_write` / `todo_read`** — multi-step task list for the agent; TUI status chip + Desktop Tasks panel.
+- **Desktop folder-pick export** — Export MD/JSON with native directory dialog and write-to-disk (complements 1.21.0 Blob export).
+
+### Changed
+- **`applyBudgetPolicyAsync`** used on agent/council turns so compaction can call the provider for a continuity brief when enabled.
+- **Headless/Desktop** permission policy defaults to auto-allow (no interactive hang).
+
+### Note (Desktop)
+- Installer does **not** upgrade the coding engine. Use `npm i -g zelari-code@1.22.0` (or Settings → Update CLI). Rebuild Desktop for todos UI + folder export.
+
 ## [1.21.0] - 2026-07-21
 
 ### Added

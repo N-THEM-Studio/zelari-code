@@ -171,8 +171,19 @@ async function runHeadlessSingle(
   providerStream: ProviderStreamFn,
 ): Promise<number> {
   const sessionId = crypto.randomUUID();
+  // Headless / Desktop: no interactive permission UI — auto-allow "ask" rules
+  // unless the user set an explicit deny. Override with ZELARI_AUTO=0 and
+  // ZELARI_PERMISSION_*=deny for hard lockdown.
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     planMode: planModeFromOpts(opts),
+    permissionPolicy: {
+      read: 'allow',
+      write: 'allow',
+      execute: 'allow',
+      network: 'allow',
+      ui: 'allow',
+      auto: true,
+    },
   });
   // Parity with TUI: project MCP tools must be available from Desktop/headless.
   await registerHeadlessMcp(toolRegistry, opts);
@@ -571,7 +582,17 @@ async function buildCouncilToolRegistry(
   planMode: boolean,
   opts?: HeadlessOptions,
 ) {
-  const { registry: toolRegistry } = createBuiltinToolRegistry({ planMode });
+  const { registry: toolRegistry } = createBuiltinToolRegistry({
+    planMode,
+    permissionPolicy: {
+      read: 'allow',
+      write: 'allow',
+      execute: 'allow',
+      network: 'allow',
+      ui: 'allow',
+      auto: true,
+    },
+  });
   const { createWorkspaceContext, createWorkspaceStubs } = await import('./workspace/stubs.js');
   const { createWorkspaceToolRegistry } = await import('./workspace/toolRegistry.js');
   const { setWorkspaceStubs } = await import('@zelari/core/skills');
@@ -950,6 +971,14 @@ async function runHeadlessZelari(
 
         const { registry: agentRegistry } = createBuiltinToolRegistry({
           planMode: false,
+          permissionPolicy: {
+            read: 'allow',
+            write: 'allow',
+            execute: 'allow',
+            network: 'allow',
+            ui: 'allow',
+            auto: true,
+          },
         });
         await registerHeadlessMcp(agentRegistry, opts);
 

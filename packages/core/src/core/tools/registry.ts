@@ -1,11 +1,25 @@
 import { zodToJsonSchema } from './zodBridge.js';
+import { spillToolOutput } from './toolOutputSpill.js';
 import { typedErr, type ToolDefinition, type ToolContext, type TypedResult } from './toolTypes.js';
+
+export { spillToolOutput, resolveToolOutputDir, isToolSpillEnabled } from './toolOutputSpill.js';
 
 export interface InvokeOptions {
   timeoutMs?: number;
   signal?: AbortSignal;
   cwd?: string;
   sessionId?: string;
+  /** Optional tool name for spill file naming (defaults to invoked name). */
+  toolName?: string;
+}
+
+export interface TruncateToolResultOptions {
+  /** Line cap (default ZELARI_TOOL_RESULT_LINES / 200). */
+  cap?: number;
+  /** When true (default), spill full text to managed dir if truncated. */
+  spill?: boolean;
+  /** Used in spill filename + marker. */
+  toolName?: string;
 }
 
 /**
@@ -65,22 +79,80 @@ const TOOL_RESULT_LINE_CAP: number = (() => {
 })();
 
 /**
- * Truncate a string result to head + tail with a marker, bounded by line count.
+ * Truncate a string result to head + tail with a marker, bounded by line count
+ * (and a soft char budget for huge single-line payloads).
+ *
+ * When the result is truncated and spill is enabled, the **full** text is
+ * written under the managed tool-output dir and the marker includes the path
+ * so the model can re-open it with read_file if needed.
+ *
  * Exported for tests. Returns the original string if under the cap.
+ *
+ * Overloads:
+ *   truncateToolResult(text, cap?)
+ *   truncateToolResult(text, { cap, spill, toolName })
  */
-export function truncateToolResult(text: string, cap: number = TOOL_RESULT_LINE_CAP): string {
+export function truncateToolResult(
+  text: string,
+  capOrOpts: number | TruncateToolResultOptions = TOOL_RESULT_LINE_CAP,
+): string {
   if (text.length === 0) return text;
+
+  const opts: TruncateToolResultOptions =
+    typeof capOrOpts === 'number' ? { cap: capOrOpts } : (capOrOpts ?? {});
+  const cap =
+    typeof opts.cap === 'number' && Number.isFinite(opts.cap) && opts.cap >= 10
+      ? opts.cap
+      : TOOL_RESULT_LINE_CAP;
+  const doSpill = opts.spill !== false;
+
   const lines = text.split('\n');
-  if (lines.length <= cap) return text; // under line budget — verbatim
-  const half = Math.floor(cap / 2);
-  const head = lines.slice(0, half);
-  const tail = lines.slice(lines.length - half);
-  const omitted = lines.length - cap;
-  return (
-    head.join('\n') +
-    `\n… [+${omitted} lines omitted — showing head:${half}, tail:${half} of ${lines.length} total] …\n` +
-    tail.join('\n')
-  );
+  // Soft char budget: ~80 chars/line × cap. Catches single-line megabytes
+  // that would otherwise pass the line check.
+  const charBudget = cap * 80;
+  const overLines = lines.length > cap;
+  const overChars = text.length > charBudget && lines.length <= cap;
+
+  if (!overLines && !overChars) return text;
+
+  let preview: string;
+  let marker: string;
+
+  if (overLines) {
+    const half = Math.floor(cap / 2);
+    const head = lines.slice(0, half);
+    const tail = lines.slice(lines.length - half);
+    const omitted = lines.length - cap;
+    marker = `+${omitted} lines omitted — showing head:${half}, tail:${half} of ${lines.length} total`;
+    preview =
+      head.join('\n') +
+      `\n… [${marker}] …\n` +
+      tail.join('\n');
+  } else {
+    // Single (or few) huge lines — keep head + tail chars.
+    const half = Math.floor(charBudget / 2);
+    const head = text.slice(0, half);
+    const tail = text.slice(text.length - half);
+    const omitted = text.length - charBudget;
+    marker = `+${omitted} chars omitted — showing head/tail of ${text.length} total (line-sparse payload)`;
+    preview = `${head}\n… [${marker}] …\n${tail}`;
+  }
+
+  if (doSpill) {
+    const path = spillToolOutput(text, { toolName: opts.toolName });
+    if (path) {
+      const spillNote =
+        `\n… [full output spilled to: ${path} — re-read with read_file if you need the complete text] …`;
+      // Insert spill note after the omission marker line for visibility.
+      if (preview.includes('] …\n')) {
+        preview = preview.replace('] …\n', `] …${spillNote}\n`);
+      } else {
+        preview = preview + spillNote;
+      }
+    }
+  }
+
+  return preview;
 }
 
 export class ToolRegistry {
@@ -152,18 +224,23 @@ export class ToolRegistry {
           });
         }),
       ]);
-      // v1.5.3: truncate large results before they land in the LLM transcript.
-      // Covers string results directly, and object results that carry a
-      // `content` string (the common shape for read_file / show_diff). Errors
-      // pass through untouched. See truncateToolResult above.
+      // v1.5.3 / v1.21.0: truncate large results before they land in the LLM
+      // transcript; spill full text to managed dir when truncated so the
+      // model can re-open via path. Errors pass through untouched.
       if (result.ok) {
+        const tName = options.toolName ?? name;
         if (typeof result.value === 'string') {
-          return { ok: true, value: truncateToolResult(result.value) as unknown as O };
+          return {
+            ok: true,
+            value: truncateToolResult(result.value, {
+              toolName: tName,
+            }) as unknown as O,
+          };
         }
         if (result.value && typeof result.value === 'object') {
           const v = result.value as Record<string, unknown>;
           if (typeof v.content === 'string') {
-            v.content = truncateToolResult(v.content);
+            v.content = truncateToolResult(v.content, { toolName: tName });
           }
         }
       }

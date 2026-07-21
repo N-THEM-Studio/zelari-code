@@ -99,7 +99,8 @@ describe("historyCompaction (v1.6.0)", () => {
       const result = compactHistory(msgs, opts);
       expect(result.length).toBeLessThan(msgs.length);
       expect(result[0].role).toBe("system");
-      expect(result[0].content).toContain("[history]");
+      // v1.21+: extractive continuity summary (still history-related).
+      expect(result[0].content).toMatch(/\[history/);
       // The kept tail should be the most recent messages.
       const lastKept = result[result.length - 1];
       expect(lastKept.content).toBe("m19");

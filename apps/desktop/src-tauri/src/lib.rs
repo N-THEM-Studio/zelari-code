@@ -1206,6 +1206,37 @@ fn print_ssh_pubkey(args: PrintSshPubkeyArgs) -> Result<serde_json::Value, Strin
     })
 }
 
+/// Write UTF-8 text to an absolute path chosen by the user (e.g. chat export).
+/// Not sandboxed to the project workdir — destination comes from the native dialog.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WriteTextFileArgs {
+    path: String,
+    content: String,
+}
+
+#[tauri::command]
+fn write_text_file(args: WriteTextFileArgs) -> Result<String, String> {
+    let path = args.path.trim();
+    if path.is_empty() {
+        return Err("Path is empty".into());
+    }
+    let p = PathBuf::from(path);
+    if p.is_dir() {
+        return Err("Path is a directory; expected a file path".into());
+    }
+    if let Some(parent) = p.parent() {
+        if !parent.as_os_str().is_empty() && !parent.is_dir() {
+            return Err(format!(
+                "Parent folder does not exist: {}",
+                parent.display()
+            ));
+        }
+    }
+    fs::write(&p, args.content.as_bytes()).map_err(|e| format!("Write failed: {e}"))?;
+    Ok(p.display().to_string())
+}
+
 /// List one directory level under the project workdir (lazy file tree).
 #[tauri::command]
 fn list_dir(args: ListDirArgs) -> Result<ListDirDto, String> {
@@ -1739,6 +1770,7 @@ pub fn run() {
             run_task,
             cancel_run,
             get_git_status,
+            write_text_file,
             list_dir,
             print_mcp,
             set_mcp,
