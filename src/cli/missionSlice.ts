@@ -24,6 +24,7 @@ import { cleanAgentContent } from '@zelari/core';
 import { resolveAgentMissionToolBudget } from './buildPolicy.js';
 import { envNumber } from './utils/envNumber.js';
 import type { SliceRunResult } from './zelariMission.js';
+import { calculateCost } from './modelPricing.js';
 
 const MUTATING = new Set(['write_file', 'edit_file', 'apply_diff']);
 
@@ -237,6 +238,8 @@ export async function runAgentMissionSlice(
     emittedWrites: number;
     errored: boolean;
     messages: readonly AgentMessage[];
+    promptTokens: number;
+    completionTokens: number;
   }> {
     const counter = createWriteCounter();
     const harness = new AgentHarness({
@@ -255,6 +258,8 @@ export async function runAgentMissionSlice(
 
     let text = '';
     let errored = false;
+    let promptTokens = 0;
+    let completionTokens = 0;
 
     try {
       for await (const event of harness.run()) {
@@ -271,6 +276,14 @@ export async function runAgentMissionSlice(
         }
         if (event.type === 'agent_end' && event.reason === 'error') {
           errored = true;
+        }
+        if (
+          event.type === 'message_end' &&
+          (event as { usage?: { promptTokens?: number; completionTokens?: number } }).usage
+        ) {
+          const u = (event as { usage: { promptTokens?: number; completionTokens?: number } }).usage;
+          promptTokens += u.promptTokens ?? 0;
+          completionTokens += u.completionTokens ?? 0;
         }
         if (event.type === 'error' && (event as { severity?: string }).severity === 'fatal') {
           errored = true;
@@ -298,6 +311,8 @@ export async function runAgentMissionSlice(
       emittedWrites: counter.state.emittedWrites,
       errored,
       messages: harness.getMessages(),
+      promptTokens,
+      completionTokens,
     };
   }
 
@@ -311,6 +326,8 @@ export async function runAgentMissionSlice(
   let totalEmitted = pass.emittedWrites;
   let synthesisText = pass.text;
   let errored = pass.errored;
+  let totalPromptTokens = pass.promptTokens;
+  let totalCompletionTokens = pass.completionTokens;
 
   if (
     writeRetry &&
@@ -335,6 +352,8 @@ export async function runAgentMissionSlice(
         : retry.text;
     }
     errored = errored || retry.errored;
+    totalPromptTokens += retry.promptTokens;
+    totalCompletionTokens += retry.completionTokens;
   }
 
   const cleaned = cleanAgentContent(synthesisText, {
@@ -392,11 +411,16 @@ export async function runAgentMissionSlice(
 
   void totalEmitted;
 
+  const costTokens = totalPromptTokens + totalCompletionTokens;
+  const costUsd = calculateCost(deps.model, totalPromptTokens, totalCompletionTokens);
+
   return {
     completionOk,
     ran: true,
     synthesisText: cleaned || undefined,
     writeCount: totalWrites,
     degraded,
+    costTokens,
+    costUsd,
   };
 }

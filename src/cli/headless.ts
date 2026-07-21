@@ -60,6 +60,11 @@ export interface HeadlessOptions {
    * @since v1.10.0
    */
   history?: AgentMessage[];
+  /**
+   * When true, forces a single-cycle run (ZELARI_MISSION_MAX_ITER=1) and
+   * acquires a trigger lockfile. Used by cron/git-hook triggers (ADR-0014).
+   */
+  once?: boolean;
 }
 
 export interface HeadlessParseResult {
@@ -83,6 +88,7 @@ Options:
   --model <name>             Model override (default: provider default)
   --history <json>           Prior turns (JSON AgentMessage[]) for multi-turn context
   --history-file <path>      Same as --history but read from a file (avoids Windows argv cap)
+  --once                     Trigger mode: single cycle + lockfile (for cron/git hooks)
 
 Exit codes:
   0  completed
@@ -109,6 +115,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
   let provider: string | undefined;
   let model: string | undefined;
   let history: AgentMessage[] | undefined;
+  let once = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -224,6 +231,8 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
         }
         i++;
       }
+    } else if (arg === '--once') {
+      once = true;
     }
   }
 
@@ -251,6 +260,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       provider,
       model,
       ...(history && history.length > 0 ? { history } : {}),
+      ...(once ? { once: true } : {}),
     },
   };
 }

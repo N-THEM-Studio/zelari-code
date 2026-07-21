@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.24.0] - 2026-07-22
+
+### Added
+- **Mission budget cap** — third stop-rule for the `/zelari` mission loop. Set `ZELARI_MISSION_MAX_COST` (USD) or `ZELARI_MISSION_MAX_TOKENS` to hard-stop runaway loops. Defaults off (zero regression). Token usage is accumulated per-slice from the LLM `message_end` usage and converted to cost via the existing pricing table.
+- **Council trace view** — every mission slice now persists a structured trace entry (member, latency, token cost, tool calls, errors) to `.zelari/trace/<missionId>.json`. Enables post-mission observability: who ran, in what order, how much each step cost.
+- **Event-driven triggers (`--once`)** — new headless flag that acquires a PID lockfile (`.zelari/trigger.lock`), forces `MAX_ITER=1`, and releases on exit. Enables cron-driven and git-hook-triggered autonomous missions without a daemon. Ships with `scripts/zelari-cron-example.sh` and `scripts/zelari-git-hook.mjs` templates.
+
+### Note
+- Use `npm i -g zelari-code@1.24.0`.
+
 ## [1.23.0] - 2026-07-21
 
 ### Added

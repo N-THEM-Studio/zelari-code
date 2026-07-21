@@ -818,6 +818,24 @@ async function runHeadlessZelari(
 
   let exitCode = 0;
   let lastMissionAssistant = '';
+
+  // ADR-0014: --once trigger mode — acquire lock + force single iteration.
+  let lockAcquired = false;
+  if (opts.once) {
+    const { acquireLock } = await import('./triggerLock.js');
+    const lockRes = await acquireLock(projectRoot);
+    if (!lockRes.acquired) {
+      process.stderr.write(
+        `[zelari-code --once] skip: another mission is running (pid ${lockRes.heldBy}).\n`,
+      );
+      return 0;
+    }
+    lockAcquired = true;
+    if (!process.env.ZELARI_MISSION_MAX_ITER) {
+      process.env.ZELARI_MISSION_MAX_ITER = '1';
+    }
+  }
+
   try {
     const state = await runZelariMission(missionTask, brief, {
       projectRoot,
@@ -1059,6 +1077,10 @@ async function runHeadlessZelari(
     );
     return 2;
   } finally {
+    if (lockAcquired) {
+      const { releaseLock } = await import('./triggerLock.js');
+      await releaseLock(projectRoot);
+    }
     await memory.close().catch(() => undefined);
   }
 

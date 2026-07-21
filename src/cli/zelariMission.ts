@@ -20,6 +20,8 @@ import { formatMemoryHits } from './memory/fileBackend.js';
 import { createCheckpoint } from './checkpoint/checkpointManager.js';
 import { getStateStore } from './state/fileStateStore.js';
 import { discoveriesFromOutcome, tryStateCommit } from './state/commitHelpers.js';
+import { formatCost, formatTokens } from './modelPricing.js';
+import { saveTrace } from './traceStore.js';
 
 export type MissionStatus =
   | 'running'
@@ -41,6 +43,12 @@ export interface MissionState {
   updatedAt: string;
   /** HEAD of durable state after last verified commit (Palmer accumulation). */
   lastGoodCommitId?: string;
+  /** Cumulative USD cost at last persistence (ADR-0013 budget cap). */
+  cumulativeCostUsd?: number;
+  /** Cumulative token count at last persistence (ADR-0013 budget cap). */
+  cumulativeTokens?: number;
+  /** Per-slice execution trace (ADR-0015-A). */
+  trace?: SliceTrace[];
 }
 
 /** What one council slice run reports back to the loop. */
@@ -58,6 +66,29 @@ export interface SliceRunResult {
   writeCount?: number;
   /** The council flagged this slice as a degraded (non-hand-off) run. */
   degraded?: boolean;
+  /** Token totali (prompt+completion) consumati da questa slice (ADR-0013). */
+  costTokens?: number;
+  /** Costo stimato in USD di questa slice (ADR-0013). */
+  costUsd?: number;
+}
+
+/**
+ * One entry in the execution trace of a mission (ADR-0015-A trace view).
+ * Captured per-slice for post-mortem debugging: who ran, in what order,
+ * how much it cost, and whether it diverged from the plan.
+ */
+export interface SliceTrace {
+  sliceId: string;
+  iteration: number;
+  runMode: CouncilRunMode;
+  completionOk: boolean;
+  degraded?: boolean;
+  /** Token totali (prompt+completion) consumati da questa slice. */
+  costTokens?: number;
+  /** Costo stimato in USD di questa slice. */
+  costUsd?: number;
+  startedAt: string;
+  durationMs: number;
 }
 
 export interface RunSliceArgs {
@@ -130,6 +161,30 @@ export function resolveMaxStall(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_STALL;
 }
 
+/**
+ * Maximum cumulative USD cost for a mission (ADR-0013 budget cap).
+ * Default: undefined (off). When set, the mission stops when the
+ * cumulative cost reaches this threshold.
+ */
+export function resolveMaxCost(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = env.ZELARI_MISSION_MAX_COST;
+  if (!raw) return undefined;
+  const n = Number.parseFloat(raw);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+/**
+ * Maximum cumulative tokens for a mission (ADR-0013 budget cap).
+ * Default: undefined (off). When set, the mission stops when the
+ * cumulative token count reaches this threshold.
+ */
+export function resolveMaxTokens(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const raw = env.ZELARI_MISSION_MAX_TOKENS;
+  if (!raw) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 /** True unless auto-start is explicitly requested. */
 export function isMissionAutoStart(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.ZELARI_MISSION_AUTO === '1';
@@ -143,6 +198,14 @@ async function writeMissionState(projectRoot: string, state: MissionState): Prom
     JSON.stringify(state, null, 2) + '\n',
     'utf8',
   );
+  // Also persist the per-mission trace file (ADR-0015-A).
+  if (state.trace?.length) {
+    try {
+      await saveTrace(projectRoot, state.missionId, state.trace);
+    } catch {
+      // best-effort — trace is also in mission-state.json
+    }
+  }
 }
 
 function buildSlicePrompt(
@@ -205,6 +268,8 @@ export async function runZelariMission(
   const now = deps.now ?? (() => new Date());
   const maxIter = deps.maxIterations ?? resolveMaxIterations(deps.env);
   const maxStall = resolveMaxStall(deps.env);
+  const maxCost = resolveMaxCost(deps.env);
+  const maxTokens = resolveMaxTokens(deps.env);
   const missionId = deps.missionId ?? `m_${randomUUID().slice(0, 8)}`;
   const startedAt = now().toISOString();
 
@@ -256,6 +321,9 @@ export async function runZelariMission(
   let implStep = 0;
   // One free design-phase pass when the brief asks for it (does not burn budget).
   let pendingDesign = designFirst;
+  // Budget cap accumulators (ADR-0013).
+  let cumulativeCostUsd = 0;
+  let cumulativeTokens = 0;
 
   while (true) {
     const runMode: CouncilRunMode = pendingDesign ? 'design-phase' : 'implementation';
@@ -279,6 +347,8 @@ export async function runZelariMission(
     const slicePrompt = buildSlicePrompt(brief, userMessage, runMode, promptIter);
 
     const implementerRetry = runMode === 'implementation' && implStep > 1;
+    const sliceStartedAt = now().toISOString();
+    const sliceStartMs = now().getTime();
 
     if (runMode === 'design-phase') {
       deps.emit(
@@ -321,6 +391,10 @@ export async function runZelariMission(
       return state;
     }
 
+    // Budget cap accumulation (ADR-0013).
+    if (typeof result.costUsd === 'number') cumulativeCostUsd += result.costUsd;
+    if (typeof result.costTokens === 'number') cumulativeTokens += result.costTokens;
+
     await deps.memory.add(
       JSON.stringify({
         iteration: step,
@@ -355,6 +429,22 @@ export async function runZelariMission(
 
     state.lastCompletionOk = completionOk;
     state.updatedAt = now().toISOString();
+    state.cumulativeCostUsd = cumulativeCostUsd;
+    state.cumulativeTokens = cumulativeTokens;
+
+    // Trace view accumulation (ADR-0015-A).
+    if (!state.trace) state.trace = [];
+    state.trace.push({
+      sliceId: brief.sliceMvp.id,
+      iteration: step,
+      runMode,
+      completionOk,
+      degraded: result.degraded,
+      costTokens: typeof result.costTokens === 'number' ? result.costTokens : undefined,
+      costUsd: typeof result.costUsd === 'number' ? result.costUsd : undefined,
+      startedAt: sliceStartedAt,
+      durationMs: now().getTime() - sliceStartMs,
+    });
 
     // Design is free: clear the flag and continue into implementation budget.
     if (runMode === 'design-phase') {
@@ -442,6 +532,26 @@ export async function runZelariMission(
         );
         return state;
       }
+    }
+
+    // Budget cap: third stop-rule (ADR-0013 / Loop Engineering).
+    if (
+      (maxCost !== undefined && cumulativeCostUsd >= maxCost) ||
+      (maxTokens !== undefined && cumulativeTokens >= maxTokens)
+    ) {
+      state.status = 'stopped';
+      state.updatedAt = now().toISOString();
+      await writeMissionState(deps.projectRoot, state);
+      const reason =
+        maxCost !== undefined && cumulativeCostUsd >= maxCost
+          ? `budget USD ${formatCost(cumulativeCostUsd)} ≥ ${formatCost(maxCost)}`
+          : `token ${formatTokens(cumulativeTokens)} ≥ ${formatTokens(maxTokens!)}`;
+      deps.emit(
+        `[zelari] fermata: ${reason}. ` +
+          'Imposta ZELARI_MISSION_MAX_COST / ZELARI_MISSION_MAX_TOKENS più alto, ' +
+          'o usa un modello più economico. Stato salvato in .zelari/mission-state.json',
+      );
+      return state;
     }
 
     await writeMissionState(deps.projectRoot, state);
