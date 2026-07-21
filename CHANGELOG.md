@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.21.0] - 2026-07-21
+
+### Added
+- **Copy single message (Desktop)** — every assistant reply (collapsed or open), user bubble (on hover), and code block now has a copy button with transient 'Copied' feedback. Assistant prose is scrubbed with the same pipeline as the chat display, so copied text is clean (no leaked tool-call scaffolding).
+- **Export a session as Markdown (Desktop)** — new `⤓` button in the sidebar per-conversation actions. Triggers a Blob download (`zelari-<title>-<YYYYMMDD-HHmm>.md`) with metadata, member attribution for council replies, and the same tool-call scrubbing. Disabled when the conversation is empty; works for both active and archived sessions.
+- **`exportSession.ts` module** — pure functions (`conversationToMarkdown`, `slugifyTitle`, `exportFileName`, `hasExportableMessages`) shared by the Desktop UI; 18 new vitest unit tests under `desktop-export-session.test.ts`.
+
+### Removed
+- **`fff` from the optional plugins catalog** — `fff-mcp` does not exist on the npm registry (404 verified), so the Install button always exited with code 1. Wire `fff` manually via `~/.zelari-code/mcp.json` (`{"mcpServers":{"fff":{"command":"fff-mcp","args":[]}}}`). `ZELARI_FFF` kill-switch is preserved in the docs; fff support itself is unchanged.
+
+### Fixed
+- **Opaque `npm exited with code 1` in the Desktop plugin banner** — the actual npm error (and the last 4 KB of output) is now surfaced inline in `PluginInstallBanner` under a collapsible 'npm output' details block, next to the failed plugin label. Banner stays visible while any failed plugin is pending. Makes -D install failures (EPERM, ENOSPC, proxy errors, broken shims) diagnosable without leaving the app.
+
 ## [1.20.0] - 2026-07-20
 
 ### Added
@@ -319,6 +332,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [1.20.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [1.21.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
