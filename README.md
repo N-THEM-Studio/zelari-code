@@ -280,6 +280,9 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 🔌 **MCP** — external MCP servers via `.zelari/mcp.json` or `~/.zelari-code/mcp.json`; Desktop **Extensions** store for one-click install
 - 🔐 **SSH targets** — configure hosts for deploy/monitor (password, agent, or key); tools `ssh_status` / `ssh_run` with allowlist; `ZELARI_SSH=0` kill switch
 - 🖥️ **Zelari Desktop** — Tauri shell with chat UI, project tree, Settings, dual updates (app vs npm CLI), multi-turn history, optional overlay HUD
+- 📱 **Companion host + Android** — `zelari-code serve` (SSE over Tailscale/LAN) + Settings → Start companion serve; MVP app in `apps/companion-android/`
+- 🧩 **Skills store (Desktop)** — create/remove user & project `SKILL.md`; import skill from URL with the selected model; `/skills` picker in TUI
+- 📎 **@-tag paths** — tag workspace files/folders in Desktop composer and CLI prompts
 - ◇◆ **Plan / build phase** — `/plan` explores without project writes; `/build` implements with full tools (independent of agent/council/zelari mode)
 - 🆕 **Self-update** — `/update` slash command + silent registry check on startup
 

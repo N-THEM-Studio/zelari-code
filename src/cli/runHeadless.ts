@@ -44,6 +44,21 @@ import { describePhase } from './phase.js';
 import { createStreamScrubber } from './utils/streamScrub.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
+  // Expand @path tags in the task prompt (Desktop/CLI parity). Best-effort —
+  // already-inlined Desktop attachments are left alone if no @tokens remain.
+  try {
+    const { expandAtMentions } = await import('./atMentions.js');
+    const task = typeof opts.task === 'string' ? opts.task : '';
+    if (task.includes('@')) {
+      const { text } = expandAtMentions(task, process.cwd());
+      if (text !== task) {
+        opts = { ...opts, task: text };
+      }
+    }
+  } catch {
+    /* non-fatal */
+  }
+
   // === Global crash handlers (headless-only) ===
   // Without these, an uncaught exception during a tool call (e.g. write_file
   // failing deep in the harness) kills the process silently: no agent_end,

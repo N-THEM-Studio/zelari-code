@@ -40,6 +40,20 @@ import { ProjectPanel } from "./components/ProjectPanel";
 import { CliSetupGuide } from "./components/CliSetupGuide";
 import { TitleBar } from "./components/TitleBar";
 import {
+  MentionPopup,
+  applyMentionInsert,
+  detectMentionQuery,
+} from "./components/MentionPopup";
+import {
+  SkillPicker,
+  expandDesktopSkill,
+} from "./components/SkillPicker";
+import {
+  readProjectText,
+  type SkillEntryDto,
+  type WorkspaceHit,
+} from "./agentClient";
+import {
   exportConversationJsonToFolder,
   exportConversationMarkdownToFolder,
 } from "./components/exportChat";
@@ -369,6 +383,16 @@ export default function App() {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const dragDepthRef = useRef(0);
+  /** @-mention autocomplete (path after @). */
+  const [mention, setMention] = useState<{
+    start: number;
+    query: string;
+  } | null>(null);
+  const [mentionIndex, setMentionIndex] = useState(0);
+  const [mentionHits, setMentionHits] = useState<WorkspaceHit[]>([]);
+  const [skillPickerOpen, setSkillPickerOpen] = useState(false);
+  /** When set, next send expands this skill around the user draft. */
+  const [pendingSkill, setPendingSkill] = useState<SkillEntryDto | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -1343,6 +1367,78 @@ export default function App() {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   }, []);
 
+  const attachWorkspacePath = useCallback(
+    async (hit: WorkspaceHit) => {
+      try {
+        const res = await readProjectText({
+          path: hit.absolute || hit.path,
+          cwd: workdir,
+        });
+        const att: PendingAttachment = {
+          id: uid("att"),
+          name: hit.name || res.path.split("/").pop() || res.path,
+          size: res.size || 0,
+          path: res.absolute || hit.absolute,
+          text: res.text ?? undefined,
+          note: res.note ?? (res.isDir ? "directory" : undefined),
+        };
+        setAttachments((prev) => {
+          const key = (att.path || att.name).toLowerCase();
+          if (prev.some((p) => (p.path || p.name).toLowerCase() === key)) {
+            return prev;
+          }
+          return [...prev, att].slice(0, 12);
+        });
+        setStatusLine(`Tagged ${res.path}`);
+      } catch (e) {
+        setStatusLine(e instanceof Error ? e.message : String(e));
+      }
+    },
+    [workdir],
+  );
+
+  const onPickMention = useCallback(
+    (hit: WorkspaceHit) => {
+      const ta = taRef.current;
+      const caret = ta?.selectionStart ?? draft.length;
+      const det = mention ?? detectMentionQuery(draft, caret);
+      if (!det) return;
+      const { text, caret: nextCaret } = applyMentionInsert(
+        draft,
+        det.start,
+        caret,
+        hit.path,
+      );
+      setDraft(text);
+      setMention(null);
+      void attachWorkspacePath(hit);
+      requestAnimationFrame(() => {
+        const el = taRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(nextCaret, nextCaret);
+      });
+    },
+    [draft, mention, attachWorkspacePath],
+  );
+
+  const onDraftChange = useCallback(
+    (value: string, caret?: number) => {
+      setDraft(value);
+      const c = caret ?? value.length;
+      const det = detectMentionQuery(value, c);
+      setMention(det);
+      if (!det) setMentionIndex(0);
+    },
+    [],
+  );
+
+  const onSelectSkill = useCallback((skill: SkillEntryDto) => {
+    setPendingSkill(skill);
+    setStatusLine(`Skill selected: ${skill.id} — type a task and send`);
+    taRef.current?.focus();
+  }, []);
+
   const onDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -1378,14 +1474,21 @@ export default function App() {
 
   const send = async (text?: string) => {
     const fromSpeech = [draft, speech.interim].filter(Boolean).join(" ").trim();
-    const base = (text ?? fromSpeech).trim();
-    if ((!base && attachments.length === 0) || running) return;
+    let base = (text ?? fromSpeech).trim();
+    if ((!base && attachments.length === 0 && !pendingSkill) || running) return;
     speech.stop();
     setTextLoopRecovery(false);
+    setMention(null);
 
     if (cli && !cli.ok) {
       setStatusLine(cli.message);
       return;
+    }
+
+    const skillForSend = pendingSkill;
+    if (skillForSend) {
+      base = expandDesktopSkill(skillForSend, base);
+      setPendingSkill(null);
     }
 
     const userVisible =
@@ -1567,6 +1670,37 @@ export default function App() {
   }, [provider, model]);
 
   const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (mention) {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setMention(null);
+        return;
+      }
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setMentionIndex((i) =>
+          mentionHits.length ? (i + 1) % mentionHits.length : 0,
+        );
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setMentionIndex((i) =>
+          mentionHits.length
+            ? (i - 1 + mentionHits.length) % mentionHits.length
+            : 0,
+        );
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        const hit = mentionHits[mentionIndex];
+        if (hit) {
+          e.preventDefault();
+          onPickMention(hit);
+          return;
+        }
+      }
+    }
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void send();
@@ -2092,6 +2226,22 @@ export default function App() {
               </button>
             </div>
           )}
+          {pendingSkill && (
+            <div className="pending-skill-chip" role="status">
+              <span>
+                Skill: <strong>{pendingSkill.id}</strong>
+                <span className="muted"> — will expand on send</span>
+              </span>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={running}
+                onClick={() => setPendingSkill(null)}
+              >
+                Clear
+              </button>
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="attach-strip" aria-label="Attached files">
               {attachments.map((a) => (
@@ -2120,9 +2270,37 @@ export default function App() {
               ))}
             </div>
           )}
+          <div className="composer-stack">
+          {mention && (
+            <MentionPopup
+              cwd={workdir}
+              query={mention.query}
+              open
+              onPick={onPickMention}
+              onClose={() => setMention(null)}
+              activeIndex={mentionIndex}
+              onActiveIndexChange={setMentionIndex}
+              onHitsChange={setMentionHits}
+            />
+          )}
           <div
             className={`composer glass-capsule${speech.listening ? " is-listening" : ""}`}
           >
+            <button
+              type="button"
+              className="btn-skill-pick"
+              title="List & select a skill"
+              aria-label="Skills"
+              disabled={running}
+              onClick={() => setSkillPickerOpen(true)}
+            >
+              <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden>
+                <path
+                  fill="currentColor"
+                  d="M12 2l2.4 7.2H22l-6 4.4 2.3 7.2L12 16.8 5.7 20.8 8 13.6 2 9.2h7.6L12 2z"
+                />
+              </svg>
+            </button>
             <button
               type="button"
               className={`btn-mic${speech.listening ? " is-on" : ""}${!speech.speechOk ? " is-unavailable" : ""}`}
@@ -2158,16 +2336,37 @@ export default function App() {
               <textarea
                 ref={taRef}
                 value={draft}
-                onChange={(e) => setDraft(e.target.value)}
+                onChange={(e) => {
+                  const el = e.target;
+                  onDraftChange(el.value, el.selectionStart ?? el.value.length);
+                }}
+                onClick={(e) => {
+                  const el = e.currentTarget;
+                  onDraftChange(el.value, el.selectionStart ?? el.value.length);
+                }}
+                onKeyUp={(e) => {
+                  const el = e.currentTarget;
+                  if (
+                    e.key === "ArrowLeft" ||
+                    e.key === "ArrowRight" ||
+                    e.key === "Home" ||
+                    e.key === "End"
+                  ) {
+                    onDraftChange(
+                      el.value,
+                      el.selectionStart ?? el.value.length,
+                    );
+                  }
+                }}
                 onKeyDown={onKeyDown}
                 placeholder={
                   speech.listening
                     ? "Listening… speak now"
                     : mode === "zelari"
-                      ? "Describe the mission…"
+                      ? "Describe the mission… (@file to tag)"
                       : mode === "council"
-                        ? "Ask the council of models…"
-                        : "Message the agent…"
+                        ? "Ask the council… (@file · Skills ★)"
+                        : "Message the agent… (@file to tag paths)"
                 }
                 rows={1}
                 disabled={running}
@@ -2199,7 +2398,8 @@ export default function App() {
                   className="btn-send"
                   disabled={
                     (!(draft.trim() || speech.interim.trim()) &&
-                      attachments.length === 0) ||
+                      attachments.length === 0 &&
+                      !pendingSkill) ||
                     (cli !== null && !cli.ok)
                   }
                   onClick={() => void send()}
@@ -2223,13 +2423,20 @@ export default function App() {
               )}
             </div>
           </div>
+          </div>
           <div className="composer-hint">
-            Enter to send · Shift+Enter newline · drop files to attach · {phase}{" "}
+            Enter to send · @tag files · Skills ★ · drop to attach · {phase}{" "}
             · {mode}
             {provider ? ` · ${provider}` : ""}
             {model ? ` / ${model}` : ""}
           </div>
         </div>
+        <SkillPicker
+          open={skillPickerOpen}
+          workdir={workdir}
+          onClose={() => setSkillPickerOpen(false)}
+          onSelect={onSelectSkill}
+        />
       </main>
 
       <ProjectPanel
@@ -2238,6 +2445,13 @@ export default function App() {
         collapsed={gitCollapsed}
         onToggle={() => setGitCollapsed((v) => !v)}
         onStatus={setStatusLine}
+        onTagPath={(hit) => {
+          setDraft((d) => {
+            const tag = `@${hit.path} `;
+            return d.trim() ? `${d.replace(/\s*$/, " ")}${tag}` : tag;
+          });
+          void attachWorkspacePath(hit);
+        }}
       />
       </div>
       </div>

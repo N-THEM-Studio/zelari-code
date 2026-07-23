@@ -2222,8 +2222,9 @@ button {
 }
 
 .attach-strip {
-  max-width: 820px;
-  margin: 0 auto 8px;
+  width: 100%;
+  max-width: none;
+  margin: 0 0 8px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -2301,8 +2302,10 @@ button {
 }
 
 .composer {
-  max-width: 820px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
   display: flex;
   align-items: flex-end;
   gap: 8px;
@@ -2439,8 +2442,9 @@ button {
 }
 
 .composer-hint {
-  max-width: 820px;
-  margin: 8px auto 0;
+  width: 100%;
+  max-width: none;
+  margin: 8px 0 0;
   text-align: center;
   font-size: 11.5px;
   color: var(--text-muted);
@@ -3472,6 +3476,277 @@ button {
 .settings-card code {
   font-family: var(--mono);
   font-size: 11.5px;
+}
+
+
+.settings-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.settings-scope-select {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-row {
+  display: flex;
+  gap: 12px;
+}
+
+.settings-row .field {
+  flex: 1;
+}
+
+.settings-card-inner {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: var(--bg-elevated);
+}
+
+/* ── @-mention popup + skill picker (composer) ───────────────────────── */
+
+.composer-stack {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.skill-url-row {
+  align-items: stretch;
+}
+
+.skill-url-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.skill-url-row .btn-send {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.mention-popup {
+  position: absolute;
+  bottom: 100%;
+  left: 0;
+  right: 0;
+  margin-bottom: 6px;
+  max-height: 240px;
+  overflow: auto;
+  z-index: 40;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--bg-elevated, #1a1a1e);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+}
+
+.mention-popup-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.mention-close {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.mention-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px;
+}
+
+.mention-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.mention-item:hover,
+.mention-item.is-active {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.mention-kind {
+  flex-shrink: 0;
+}
+
+.mention-path {
+  font-family: var(--mono, monospace);
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-empty {
+  padding: 12px;
+  font-size: 12.5px;
+  color: var(--muted, #888);
+}
+
+.btn-skill-pick {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-secondary, #aaa);
+  cursor: pointer;
+}
+
+.btn-skill-pick:hover:not(:disabled) {
+  color: var(--accent, #c9a227);
+  background: rgba(201, 162, 39, 0.12);
+}
+
+.btn-skill-pick:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pending-skill-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(201, 162, 39, 0.35);
+  background: rgba(201, 162, 39, 0.08);
+  font-size: 12.5px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.skill-picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.45);
+  padding: 24px;
+}
+
+.skill-picker {
+  width: min(520px, 100%);
+  max-height: min(70vh, 560px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated, #16161a);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.skill-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.skill-picker-head h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.skill-picker-hint {
+  margin: 8px 16px 0;
+  font-size: 12.5px;
+}
+
+.skill-picker-filter {
+  margin: 10px 16px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg, #0e0e10);
+  color: inherit;
+  font-size: 13px;
+}
+
+.skill-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 8px 12px;
+  overflow: auto;
+  flex: 1;
+}
+
+.skill-picker-item {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+  padding: 10px 12px;
+  margin-bottom: 4px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.skill-picker-item:hover {
+  background: var(--bg-hover, rgba(255, 255, 255, 0.06));
+}
+
+.skill-picker-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.skill-picker-desc {
+  font-size: 12.5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.skill-picker-id {
+  font-size: 11px;
+  opacity: 0.75;
 }
 
 .settings-footer {

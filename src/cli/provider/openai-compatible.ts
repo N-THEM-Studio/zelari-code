@@ -42,19 +42,48 @@ const MAX_RETRIES: number = (() => {
 const BACKOFF_BASE_MS = 500;
 const BACKOFF_CAP_MS = 8000;
 /**
- * Hard timeout for a single provider HTTP request (connect + stream).
- * Without this, a provider that accepts the TCP connection but never sends a
- * response (load balancer stall, silent gateway timeout) makes fetch() hang
- * forever — the harness sits blocked in the provider stream, emits no
- * agent_end, and the desktop UI freezes ("muore e basta"). This is the
- * silent-hang root cause for long tool-loop turns on flaky providers (MiniMax).
- * Default 5 min (LLM tool turns can be slow); override via env.
+ * Timeouts (split connect vs stream idle).
+ *
+ * Previously a single AbortSignal.timeout(5min) covered the *entire* fetch
+ * including the SSE body. Long tool-loop turns (thinking + multi-minute
+ * streams) were aborted mid-flight even while the model was actively
+ * streaming — Desktop showed rotating "Considering approaches…" for ~5–20
+ * min (timeout × retries), then "The operation was aborted due to timeout".
+ *
+ * Now:
+ *   - CONNECT: wall clock until response headers (default 90s)
+ *   - STREAM_IDLE: max silence between body chunks (default 5 min)
+ *   - STREAM_MAX: hard cap on one stream lifetime (default 30 min)
+ *
+ * Env overrides:
+ *   ZELARI_PROVIDER_CONNECT_TIMEOUT_MS
+ *   ZELARI_PROVIDER_STREAM_IDLE_MS
+ *   ZELARI_PROVIDER_STREAM_MAX_MS
+ *   ZELARI_PROVIDER_TIMEOUT_MS — legacy alias for STREAM_IDLE
  */
-const PROVIDER_TIMEOUT_MS: number = (() => {
-  const raw = process.env.ZELARI_PROVIDER_TIMEOUT_MS;
-  const n = raw ? Number.parseInt(raw, 10) : 300_000;
-  return Number.isFinite(n) && n >= 10_000 ? n : 300_000;
+const PROVIDER_CONNECT_TIMEOUT_MS: number = (() => {
+  const raw = process.env.ZELARI_PROVIDER_CONNECT_TIMEOUT_MS;
+  // Short connect default — stream idle is separate (see below).
+  const n = raw ? Number.parseInt(raw, 10) : 90_000;
+  return Number.isFinite(n) && n >= 5_000 ? n : 90_000;
 })();
+
+const PROVIDER_STREAM_IDLE_MS: number = (() => {
+  const raw =
+    process.env.ZELARI_PROVIDER_STREAM_IDLE_MS ??
+    process.env.ZELARI_PROVIDER_TIMEOUT_MS;
+  const n = raw ? Number.parseInt(raw, 10) : 300_000;
+  return Number.isFinite(n) && n >= 15_000 ? n : 300_000;
+})();
+
+const PROVIDER_STREAM_MAX_MS: number = (() => {
+  const raw = process.env.ZELARI_PROVIDER_STREAM_MAX_MS;
+  const n = raw ? Number.parseInt(raw, 10) : 1_800_000; // 30 min
+  return Number.isFinite(n) && n >= 60_000 ? n : 1_800_000;
+})();
+
+/** @deprecated use PROVIDER_STREAM_IDLE_MS — kept for tests that import the name. */
+const PROVIDER_TIMEOUT_MS = PROVIDER_STREAM_IDLE_MS;
 
 /**
  * Sleep that aborts early if the caller's signal fires (so `.cancel()` during
@@ -74,6 +103,64 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
       { once: true },
     );
   });
+}
+
+function isTimeoutAbortMessage(msg: string): boolean {
+  const m = msg.toLowerCase();
+  return (
+    m.includes('aborted due to timeout') ||
+    m.includes('timeout') ||
+    m.includes('the operation was aborted')
+  );
+}
+
+/**
+ * Read one stream chunk with idle + absolute max timeouts.
+ * Resets the idle timer whenever a chunk arrives (active streams never die
+ * just because the turn is long).
+ */
+async function readChunkWithTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  opts: { idleMs: number; deadlineMs: number; signal?: AbortSignal },
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (opts.signal?.aborted) {
+    throw new Error('aborted');
+  }
+  const remaining = opts.deadlineMs - Date.now();
+  if (remaining <= 0) {
+    throw new Error(
+      `Provider stream exceeded max duration (${Math.round(PROVIDER_STREAM_MAX_MS / 1000)}s). ` +
+        `Raise ZELARI_PROVIDER_STREAM_MAX_MS if needed.`,
+    );
+  }
+  const waitMs = Math.min(opts.idleMs, remaining);
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  let onAbort: (() => void) | undefined;
+  try {
+    return await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        idleTimer = setTimeout(() => {
+          reject(
+            new Error(
+              `Provider stream idle for ${Math.round(waitMs / 1000)}s ` +
+                `(no tokens). The model/gateway stalled — try again or switch model. ` +
+                `Override with ZELARI_PROVIDER_STREAM_IDLE_MS.`,
+            ),
+          );
+        }, waitMs);
+        if (opts.signal) {
+          onAbort = () => reject(new Error('aborted'));
+          opts.signal.addEventListener('abort', onAbort, { once: true });
+        }
+      }),
+    ]);
+  } finally {
+    if (idleTimer) clearTimeout(idleTimer);
+    if (onAbort && opts.signal) {
+      opts.signal.removeEventListener('abort', onAbort);
+    }
+  }
 }
 
 /** Compute the backoff delay for a given attempt (0-indexed), honoring Retry-After. */
@@ -260,43 +347,75 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
         return;
       }
       try {
-        // Combine the caller's cancel signal with a hard timeout. Without the
-        // timeout, a provider that stalls after accepting the connection makes
-        // fetch() hang forever (the silent "muore e basta" freeze). The timeout
-        // aborts the request so it surfaces as a retryable network error
-        // instead of an infinite hang.
-        const timeoutSignal = AbortSignal.timeout(PROVIDER_TIMEOUT_MS);
-        const fetchSignal = params.signal
-          ? AbortSignal.any([params.signal, timeoutSignal])
-          : timeoutSignal;
-        response = await fetch(`${config.baseUrl}/chat/completions`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${config.apiKey}`,
-          },
-          body: JSON.stringify(body),
-          // Use `params.signal` (per-call AbortSignal from AgentHarness
-          // controller) so `.cancel()` actually aborts the HTTP request.
-          // `config.signal` is the factory-level signal, typically undefined.
-          // v0.6.0 audit HIGH-2.
-          // v1.10.0: also apply PROVIDER_TIMEOUT_MS so a stalled connection
-          // can't hang the harness forever.
-          signal: fetchSignal,
-        });
+        // CONNECT-only timeout: abort if headers never arrive. Do NOT bind a
+        // wall-clock timeout to the whole stream lifetime — long thinking /
+        // tool-arg streams are normal and must keep running while chunks flow.
+        const connectController = new AbortController();
+        const connectTimer = setTimeout(() => {
+          connectController.abort(
+            new Error(
+              `Provider connect timeout after ${Math.round(PROVIDER_CONNECT_TIMEOUT_MS / 1000)}s ` +
+                `(no response headers). Override ZELARI_PROVIDER_CONNECT_TIMEOUT_MS.`,
+            ),
+          );
+        }, PROVIDER_CONNECT_TIMEOUT_MS);
+        const signals: AbortSignal[] = [connectController.signal];
+        if (params.signal) signals.push(params.signal);
+        const fetchSignal =
+          signals.length === 1
+            ? signals[0]!
+            : AbortSignal.any(signals);
+        try {
+          response = await fetch(`${config.baseUrl}/chat/completions`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${config.apiKey}`,
+            },
+            body: JSON.stringify(body),
+            // Cancel aborts the HTTP request; stream idle is enforced below
+            // per-chunk so active multi-minute streams are not killed.
+            signal: fetchSignal,
+          });
+        } finally {
+          clearTimeout(connectTimer);
+        }
       } catch (err) {
-        // Network error (DNS, connection refused, TLS, read timeout, or our
-        // PROVIDER_TIMEOUT_MS firing) — transient in most cases. Retry unless
-        // this is the last attempt. A timeout-induced abort looks like a
-        // normal AbortError here, so it follows the same retry path.
+        // Network error (DNS, connection refused, TLS, connect timeout) —
+        // transient in most cases. Retry unless this is the last attempt.
         lastStatus = 0;
-        lastErrText = err instanceof Error ? err.message : String(err);
+        const asErr = err instanceof Error ? err : null;
+        const causeMsg =
+          asErr?.cause instanceof Error
+            ? asErr.cause.message
+            : typeof (asErr as { cause?: unknown } | null)?.cause === 'string'
+              ? String((asErr as { cause: string }).cause)
+              : '';
+        lastErrText =
+          (causeMsg && causeMsg.includes('Provider connect')
+            ? causeMsg
+            : null) ||
+          asErr?.message ||
+          String(err);
+        // Normalize browser/Node AbortSignal.timeout wording.
+        if (
+          isTimeoutAbortMessage(lastErrText) &&
+          !lastErrText.includes('Provider connect')
+        ) {
+          lastErrText =
+            `Provider connect timeout after ${Math.round(PROVIDER_CONNECT_TIMEOUT_MS / 1000)}s ` +
+            `(no response headers). Last error: ${lastErrText}`;
+        }
         // If the user cancelled, don't retry — bail out immediately.
         if (params.signal?.aborted) {
           yield { kind: 'error', message: 'aborted' };
           return;
         }
-        if (attempt < MAX_RETRIES) {
+        // Timeouts: at most 1 retry (was up to 3×5min = 20min of freeze).
+        const maxAttempts = isTimeoutAbortMessage(lastErrText)
+          ? Math.min(1, MAX_RETRIES)
+          : MAX_RETRIES;
+        if (attempt < maxAttempts) {
           await abortableSleep(backoffDelay(attempt, null), params.signal);
           continue;
         }
@@ -370,9 +489,32 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       toolCallAccumulator.clear();
     };
 
+    const streamDeadline = Date.now() + PROVIDER_STREAM_MAX_MS;
     try {
       while (true) {
-        const { value, done } = await reader.read();
+        let chunk: ReadableStreamReadResult<Uint8Array>;
+        try {
+          chunk = await readChunkWithTimeout(reader, {
+            idleMs: PROVIDER_STREAM_IDLE_MS,
+            deadlineMs: streamDeadline,
+            signal: params.signal,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (msg === 'aborted' || params.signal?.aborted) {
+            yield { kind: 'error', message: 'aborted' };
+            return;
+          }
+          // Cancel the underlying stream so the socket doesn't linger.
+          try {
+            await reader.cancel(msg);
+          } catch {
+            /* ignore */
+          }
+          yield { kind: 'error', message: msg };
+          return;
+        }
+        const { value, done } = chunk;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
 

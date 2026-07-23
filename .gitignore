@@ -12,6 +12,14 @@ apps/desktop/node_modules/
 apps/desktop/dist/
 apps/desktop/src-tauri/target/
 
+# Android companion
+apps/companion-android/local.properties
+apps/companion-android/.gradle/
+apps/companion-android/**/build/
+apps/companion-android/.idea/
+apps/companion-android/*.iml
+apps/companion-android/captures/
+
 # Hermes local agent state (plans, audit reports, session logs)
 .hermes/
 

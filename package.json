@@ -1,6 +1,6 @@
 {
   "name": "zelari-code",
-  "version": "1.24.0",
+  "version": "1.25.0",
   "description": "Zelari Code — AI Council coding agent CLI. Multi-agent orchestration (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with slash commands, provider-agnostic LLM streaming, and self-update.",
   "author": "Anathema Studio <https://anathema-studio.com/>",
   "license": "MIT",
@@ -36,7 +36,8 @@
     "smoke": "node bin/zelari-code.js --version",
     "verify:council": "npm run build --workspace=@zelari/core && node scripts/verify-council.mjs",
     "desktop:install": "npm install --prefix apps/desktop",
-    "desktop:dev": "npm run tauri:dev --prefix apps/desktop",
+    "desktop:dev": "npm run build:cli && npm run tauri:dev --prefix apps/desktop",
+    "companion:android": "cd apps/companion-android && .\\gradlew.bat assembleDebug",
     "desktop:build": "npm run tauri:build --prefix apps/desktop",
     "postinstall": "node scripts/postinstall.mjs",
     "prepublishOnly": "node scripts/prepublish.mjs"

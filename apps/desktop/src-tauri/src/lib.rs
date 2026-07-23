@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, State};
@@ -34,6 +34,118 @@ impl Default for RunState {
         Self {
             cancel: AtomicBool::new(false),
             running: AtomicBool::new(false),
+        }
+    }
+}
+
+/// Background `zelari-code serve` process for Android companion.
+struct CompanionServeState {
+    child: Mutex<Option<Child>>,
+    bind: Mutex<String>,
+    port: Mutex<u16>,
+}
+
+impl Default for CompanionServeState {
+    fn default() -> Self {
+        Self {
+            child: Mutex::new(None),
+            bind: Mutex::new("127.0.0.1".into()),
+            port: Mutex::new(7421),
+        }
+    }
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct CompanionServeStatus {
+    running: bool,
+    healthy: bool,
+    bind: String,
+    port: u16,
+    url: String,
+    /// Full token for QR/pairing (local only). Empty if missing.
+    token: String,
+    token_path: String,
+    pid: Option<u32>,
+    message: String,
+}
+
+fn zelari_home_dir() -> PathBuf {
+    if let Ok(h) = std::env::var("USERPROFILE") {
+        return PathBuf::from(h).join(".zelari-code");
+    }
+    if let Ok(h) = std::env::var("HOME") {
+        return PathBuf::from(h).join(".zelari-code");
+    }
+    PathBuf::from(".zelari-code")
+}
+
+fn companion_token_path() -> PathBuf {
+    zelari_home_dir().join("companion.token")
+}
+
+fn read_companion_token() -> String {
+    let p = companion_token_path();
+    fs::read_to_string(&p)
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default()
+}
+
+/// HTTP GET body (tiny helper — no extra deps).
+fn http_get_text(url: &str, timeout: Duration) -> Result<String, String> {
+    // Prefer curl on PATH (present on modern Windows + Unix); fallback to raw TCP is overkill.
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "-sS",
+        "--max-time",
+        &timeout.as_secs().max(1).to_string(),
+        url,
+    ]);
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let out = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("curl failed: {e}"))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(if err.trim().is_empty() {
+            format!("curl exit {}", out.status)
+        } else {
+            err.trim().to_string()
+        });
+    }
+    String::from_utf8(out.stdout).map_err(|e| e.to_string())
+}
+
+fn companion_health_ok(bind: &str, port: u16) -> bool {
+    // Always probe loopback — serve bound to 0.0.0.0 still answers on 127.0.0.1.
+    let host = if bind == "0.0.0.0" || bind == "::" {
+        "127.0.0.1"
+    } else {
+        bind
+    };
+    let url = format!("http://{host}:{port}/health");
+    match http_get_text(&url, Duration::from_secs(2)) {
+        Ok(body) => body.contains("\"ok\"") && body.contains("true"),
+        Err(_) => false,
+    }
+}
+
+fn reap_dead_companion(state: &CompanionServeState) {
+    let mut guard = state.child.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(child) = guard.as_mut() {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                *guard = None;
+            }
+            Ok(None) => {}
+            Err(_) => {
+                *guard = None;
+            }
         }
     }
 }
@@ -622,7 +734,13 @@ fn get_app_config() -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let raw = run_cli_capture(&node, &cli, &["--print-config"])?;
-    serde_json::from_str(raw.trim()).map_err(|e| format!("Invalid --print-config JSON: {e}\n{raw}"))
+    // Prefer tolerant JSON extraction (CLI may print warnings on stderr/stdout
+    // mix on Windows); full-string parse first, then line scan.
+    parse_cli_json_stdout(&raw).ok_or_else(|| {
+        format!(
+            "Failed to load provider config (invalid --print-config JSON).\n{raw}"
+        )
+    })
 }
 
 #[derive(Deserialize)]
@@ -1018,6 +1136,246 @@ fn is_hidden_noise_name(name: &str) -> bool {
     )
 }
 
+/// Search project files/dirs for @-mention autocomplete (bounded walk).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchWorkspaceArgs {
+    #[serde(default)]
+    cwd: Option<String>,
+    /// Case-insensitive substring filter on relative path (optional).
+    #[serde(default)]
+    query: Option<String>,
+    /// Max results (default 40, cap 100).
+    #[serde(default)]
+    limit: Option<u32>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceHitDto {
+    /// Path relative to project root (forward slashes).
+    path: String,
+    /// Absolute path.
+    absolute: String,
+    is_dir: bool,
+    name: String,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchWorkspaceDto {
+    cwd: String,
+    hits: Vec<WorkspaceHitDto>,
+}
+
+fn path_under_root(path: &std::path::Path, root: &std::path::Path) -> bool {
+    path == root || path.starts_with(root)
+}
+
+fn rel_display(abs: &std::path::Path, root: &std::path::Path) -> String {
+    abs.strip_prefix(root)
+        .map(|p| p.to_string_lossy().replace('\\', "/"))
+        .unwrap_or_else(|_| abs.to_string_lossy().replace('\\', "/"))
+}
+
+#[tauri::command]
+fn search_workspace(args: SearchWorkspaceArgs) -> Result<SearchWorkspaceDto, String> {
+    let root = args
+        .cwd
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let root_canon = fs::canonicalize(&root).unwrap_or(root.clone());
+    let q = args
+        .query
+        .as_ref()
+        .map(|s| s.trim().to_lowercase())
+        .filter(|s| !s.is_empty());
+    let limit = args.limit.unwrap_or(40).clamp(1, 100) as usize;
+
+    let mut hits: Vec<WorkspaceHitDto> = Vec::new();
+    let mut stack: Vec<PathBuf> = vec![root_canon.clone()];
+    let mut visited = 0usize;
+    const MAX_VISIT: usize = 4_000;
+
+    while let Some(dir) = stack.pop() {
+        if hits.len() >= limit || visited >= MAX_VISIT {
+            break;
+        }
+        let rd = match fs::read_dir(&dir) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for ent in rd.flatten() {
+            if hits.len() >= limit || visited >= MAX_VISIT {
+                break;
+            }
+            visited += 1;
+            let name = ent.file_name().to_string_lossy().to_string();
+            if name == "." || name == ".." || is_hidden_noise_name(&name) {
+                continue;
+            }
+            // Skip other hidden dirs at top-level of each walk step
+            if name.starts_with('.') && name != ".zelari" && name != ".claude" && name != ".opencode"
+            {
+                continue;
+            }
+            let path = ent.path();
+            let is_dir = ent.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            if is_dir {
+                stack.push(path.clone());
+            }
+            let rel = rel_display(&path, &root_canon);
+            if rel.is_empty() {
+                continue;
+            }
+            if let Some(ref qq) = q {
+                let hay = rel.to_lowercase();
+                let name_l = name.to_lowercase();
+                if !hay.contains(qq.as_str()) && !name_l.contains(qq.as_str()) {
+                    continue;
+                }
+            }
+            hits.push(WorkspaceHitDto {
+                path: rel,
+                absolute: path.display().to_string(),
+                is_dir,
+                name,
+            });
+        }
+    }
+
+    // Prefer shorter paths / files that match name first
+    hits.sort_by(|a, b| {
+        let score = |h: &WorkspaceHitDto| {
+            let mut s = h.path.len() as i32;
+            if h.is_dir {
+                s += 2;
+            }
+            s
+        };
+        score(a).cmp(&score(b)).then_with(|| a.path.cmp(&b.path))
+    });
+    if hits.len() > limit {
+        hits.truncate(limit);
+    }
+
+    Ok(SearchWorkspaceDto {
+        cwd: root_canon.display().to_string(),
+        hits,
+    })
+}
+
+/// Read a text file under the project workdir (for @-mention attach).
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadProjectTextArgs {
+    path: String,
+    #[serde(default)]
+    cwd: Option<String>,
+    /// Max bytes to read (default 512_000, cap 1_000_000).
+    #[serde(default)]
+    max_bytes: Option<u64>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReadProjectTextDto {
+    path: String,
+    absolute: String,
+    is_dir: bool,
+    text: Option<String>,
+    note: Option<String>,
+    size: u64,
+}
+
+#[tauri::command]
+fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, String> {
+    let root = args
+        .cwd
+        .as_ref()
+        .map(PathBuf::from)
+        .filter(|p| p.is_dir())
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    let root_canon = fs::canonicalize(&root).unwrap_or(root.clone());
+
+    let raw = args.path.trim();
+    if raw.is_empty() {
+        return Err("Path is empty".into());
+    }
+    let candidate = {
+        let p = PathBuf::from(raw);
+        if p.is_absolute() {
+            p
+        } else {
+            root_canon.join(p)
+        }
+    };
+    let abs = fs::canonicalize(&candidate).map_err(|e| format!("Cannot open: {e}"))?;
+    if !path_under_root(&abs, &root_canon) {
+        return Err("Path is outside the open project folder".into());
+    }
+    let rel = rel_display(&abs, &root_canon);
+    let meta = fs::metadata(&abs).map_err(|e| format!("stat failed: {e}"))?;
+    if meta.is_dir() {
+        return Ok(ReadProjectTextDto {
+            path: rel,
+            absolute: abs.display().to_string(),
+            is_dir: true,
+            text: None,
+            note: Some("directory — list/read with tools as needed".into()),
+            size: 0,
+        });
+    }
+    let max_b = args.max_bytes.unwrap_or(512_000).min(1_000_000);
+    let size = meta.len();
+    if size > max_b {
+        return Ok(ReadProjectTextDto {
+            path: rel,
+            absolute: abs.display().to_string(),
+            is_dir: false,
+            text: None,
+            note: Some(format!(
+                "too large ({} KB) — path only",
+                (size / 1024).max(1)
+            )),
+            size,
+        });
+    }
+    let bytes = fs::read(&abs).map_err(|e| format!("read failed: {e}"))?;
+    // Binary heuristic: NUL in first 800 bytes
+    let head_n = bytes.len().min(800);
+    if bytes[..head_n].contains(&0) {
+        return Ok(ReadProjectTextDto {
+            path: rel,
+            absolute: abs.display().to_string(),
+            is_dir: false,
+            text: None,
+            note: Some("binary — path only".into()),
+            size,
+        });
+    }
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    if text.starts_with('\u{feff}') {
+        text = text.trim_start_matches('\u{feff}').to_string();
+    }
+    const TEXT_MAX: usize = 48_000;
+    if text.len() > TEXT_MAX {
+        let more = text.len() - TEXT_MAX;
+        text.truncate(TEXT_MAX);
+        text.push_str(&format!("\n\n… [truncated, {more} more chars]"));
+    }
+    Ok(ReadProjectTextDto {
+        path: rel,
+        absolute: abs.display().to_string(),
+        is_dir: false,
+        text: Some(text),
+        note: None,
+        size,
+    })
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PrintMcpArgs {
@@ -1112,6 +1470,147 @@ fn remove_mcp(args: RemoveMcpArgs) -> Result<serde_json::Value, String> {
     let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
     let raw = run_cli_capture(&node, &cli, &refs)?;
     parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --remove-mcp JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PrintSkillsArgs {
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[tauri::command]
+fn print_skills(args: PrintSkillsArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv = vec!["--print-skills".to_string()];
+    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--cwd".into());
+        argv.push(cwd.to_string());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --print-skills JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SetSkillArgs {
+    name: String,
+    description: String,
+    body: String,
+    #[serde(default)]
+    category: Option<String>,
+    #[serde(default)]
+    tools: Option<Vec<String>>,
+    #[serde(default)]
+    cost: Option<String>,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[tauri::command]
+fn set_skill(args: SetSkillArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv = vec![
+        "--set-skill".to_string(),
+        "--name".into(),
+        args.name,
+        "--description".into(),
+        args.description,
+        "--body".into(),
+        args.body,
+        "--scope".into(),
+        args.scope.unwrap_or_else(|| "user".into()),
+    ];
+    if let Some(c) = args.category {
+        argv.push("--category".into());
+        argv.push(c);
+    }
+    if let Some(tools) = args.tools {
+        if !tools.is_empty() {
+            argv.push("--tools".into());
+            argv.push(tools.join(","));
+        }
+    }
+    if let Some(cost) = args.cost {
+        argv.push("--cost".into());
+        argv.push(cost);
+    }
+    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--cwd".into());
+        argv.push(cwd.to_string());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --set-skill JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RemoveSkillArgs {
+    name: String,
+    #[serde(default)]
+    scope: Option<String>,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[tauri::command]
+fn remove_skill(args: RemoveSkillArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv = vec![
+        "--remove-skill".to_string(),
+        "--name".into(),
+        args.name,
+        "--scope".into(),
+        args.scope.unwrap_or_else(|| "user".into()),
+    ];
+    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--cwd".into());
+        argv.push(cwd.to_string());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --remove-skill JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct GenerateSkillFromUrlArgs {
+    url: String,
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    model: Option<String>,
+}
+
+/// Fetch a URL and draft a skill with the selected model (long-running).
+#[tauri::command]
+fn generate_skill_from_url(args: GenerateSkillFromUrlArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut argv = vec![
+        "--generate-skill-from-url".to_string(),
+        "--url".into(),
+        args.url,
+    ];
+    if let Some(p) = args.provider.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--provider".into());
+        argv.push(p.to_string());
+    }
+    if let Some(m) = args.model.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        argv.push("--model".into());
+        argv.push(m.to_string());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    parse_cli_json_stdout(&raw)
+        .ok_or_else(|| format!("Invalid --generate-skill-from-url JSON:\n{raw}"))
 }
 
 #[tauri::command]
@@ -1749,6 +2248,191 @@ fn spawn_headless(
     }
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CompanionServeStartArgs {
+    #[serde(default)]
+    bind: Option<String>,
+    #[serde(default)]
+    port: Option<u16>,
+    /// Project folder (Open Folder). Added as --project allowlist entry.
+    #[serde(default)]
+    project: Option<String>,
+}
+
+#[tauri::command]
+fn companion_serve_status(state: State<'_, Arc<CompanionServeState>>) -> CompanionServeStatus {
+    reap_dead_companion(&state);
+    let bind = state
+        .bind
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let port = *state.port.lock().unwrap_or_else(|e| e.into_inner());
+    let pid = state
+        .child
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map(|c| c.id());
+    let healthy = companion_health_ok(&bind, port);
+    let tracked = pid.is_some();
+    let running = tracked || healthy;
+    let host = if bind == "0.0.0.0" || bind == "::" {
+        "127.0.0.1"
+    } else {
+        bind.as_str()
+    };
+    let url = format!("http://{host}:{port}");
+    let token = read_companion_token();
+    let message = if healthy {
+        "Companion serve is reachable".into()
+    } else if tracked {
+        "Process started; waiting for /health…".into()
+    } else {
+        "Companion serve is stopped".into()
+    };
+    CompanionServeStatus {
+        running,
+        healthy,
+        bind,
+        port,
+        url,
+        token,
+        token_path: companion_token_path().display().to_string(),
+        pid,
+        message,
+    }
+}
+
+#[tauri::command]
+fn companion_serve_start(
+    state: State<'_, Arc<CompanionServeState>>,
+    args: CompanionServeStartArgs,
+) -> Result<CompanionServeStatus, String> {
+    reap_dead_companion(&state);
+    // Already healthy → no-op success.
+    {
+        let bind = state.bind.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        let port = *state.port.lock().unwrap_or_else(|e| e.into_inner());
+        let has_child = state
+            .child
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .is_some();
+        if companion_health_ok(&bind, port) {
+            return Ok(companion_serve_status(state));
+        }
+        // Stale child that never became healthy — kill before restart.
+        if has_child {
+            let mut guard = state.child.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(mut child) = guard.take() {
+                kill_child_tree(&mut child);
+                let _ = child.wait();
+            }
+        }
+    }
+
+    let bind = args
+        .bind
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "127.0.0.1".into());
+    let port = args.port.unwrap_or(7421);
+    if port == 0 {
+        return Err("Invalid port".into());
+    }
+
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+
+    // Detached long-running process — not capture mode.
+    let mut cmd = spawn_cli_base(&node, &cli, None);
+    cmd.arg("serve")
+        .arg("--bind")
+        .arg(&bind)
+        .arg("--port")
+        .arg(port.to_string());
+    if let Some(proj) = args
+        .project
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        cmd.arg("--project").arg(proj);
+    }
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
+
+    let child = cmd.spawn().map_err(format_cli_spawn_err)?;
+    let pid = child.id();
+
+    *state.bind.lock().unwrap_or_else(|e| e.into_inner()) = bind.clone();
+    *state.port.lock().unwrap_or_else(|e| e.into_inner()) = port;
+    *state.child.lock().unwrap_or_else(|e| e.into_inner()) = Some(child);
+
+    // Wait briefly for /health (CLI boot + token write).
+    let mut healthy = false;
+    for _ in 0..20 {
+        thread::sleep(Duration::from_millis(250));
+        if companion_health_ok(&bind, port) {
+            healthy = true;
+            break;
+        }
+        // Child died?
+        let mut g = state.child.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(c) = g.as_mut() {
+            if let Ok(Some(status)) = c.try_wait() {
+                *g = None;
+                return Err(format!(
+                    "Companion serve exited immediately (code {:?}). \
+                     Ensure the monorepo CLI is built (npm run build:cli) — \
+                     global npm may lack `serve`.",
+                    status.code()
+                ));
+            }
+        }
+    }
+
+    let token = read_companion_token();
+    let host = if bind == "0.0.0.0" || bind == "::" {
+        "127.0.0.1"
+    } else {
+        bind.as_str()
+    };
+    Ok(CompanionServeStatus {
+        running: true,
+        healthy,
+        bind: bind.clone(),
+        port,
+        url: format!("http://{host}:{port}"),
+        token,
+        token_path: companion_token_path().display().to_string(),
+        pid: Some(pid),
+        message: if healthy {
+            "Companion serve started".into()
+        } else {
+            "Process launched; /health not ready yet — retry Status".into()
+        },
+    })
+}
+
+#[tauri::command]
+fn companion_serve_stop(
+    state: State<'_, Arc<CompanionServeState>>,
+) -> Result<CompanionServeStatus, String> {
+    {
+        let mut guard = state.child.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(mut child) = guard.take() {
+            kill_child_tree(&mut child);
+            let _ = child.wait();
+        }
+    }
+    // Brief pause so the port frees.
+    thread::sleep(Duration::from_millis(300));
+    Ok(companion_serve_status(state))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1757,6 +2441,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(RunState::default()))
+        .manage(Arc::new(CompanionServeState::default()))
         .invoke_handler(tauri::generate_handler![
             get_cli_status,
             get_app_config,
@@ -1772,9 +2457,18 @@ pub fn run() {
             get_git_status,
             write_text_file,
             list_dir,
+            search_workspace,
+            read_project_text,
             print_mcp,
             set_mcp,
             remove_mcp,
+            print_skills,
+            set_skill,
+            remove_skill,
+            companion_serve_status,
+            companion_serve_start,
+            companion_serve_stop,
+            generate_skill_from_url,
             print_ssh_targets,
             set_ssh_target,
             remove_ssh_target,

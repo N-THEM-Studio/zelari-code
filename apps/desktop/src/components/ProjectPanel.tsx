@@ -13,6 +13,13 @@ interface Props {
   collapsed?: boolean;
   onToggle?: () => void;
   onStatus?: (msg: string) => void;
+  /** Tag a path into the chat composer (@mention + attach). */
+  onTagPath?: (hit: {
+    path: string;
+    absolute: string;
+    isDir: boolean;
+    name: string;
+  }) => void;
 }
 
 const LS_TAB = "zelari-desktop-project-tab";
@@ -46,6 +53,7 @@ export function ProjectPanel({
   collapsed,
   onToggle,
   onStatus,
+  onTagPath,
 }: Props) {
   const [tab, setTab] = useState<ProjectTab>(() => loadTab());
   const [snap, setSnap] = useState<GitStatusSnapshot | null>(null);
@@ -269,6 +277,7 @@ export function ProjectPanel({
             onToggleDir={(e) => void toggleDir(e)}
             onFileClick={(path) => onStatus?.(path)}
             onReveal={(path) => void onReveal(path)}
+            onTagPath={onTagPath}
           />
         ) : (
           <GitBody
@@ -388,6 +397,7 @@ function FilesTree({
   onToggleDir,
   onFileClick,
   onReveal,
+  onTagPath,
 }: {
   cwd: string | null;
   entries: DirEntry[];
@@ -398,6 +408,12 @@ function FilesTree({
   onToggleDir: (e: DirEntry) => void;
   onFileClick: (path: string) => void;
   onReveal: (path: string) => void;
+  onTagPath?: (hit: {
+    path: string;
+    absolute: string;
+    isDir: boolean;
+    name: string;
+  }) => void;
 }) {
   if (!cwd) {
     return (
@@ -423,12 +439,14 @@ function FilesTree({
           key={e.path}
           entry={e}
           depth={0}
+          cwd={cwd}
           expanded={expanded}
           childrenMap={childrenMap}
           loadingPaths={loadingPaths}
           onToggleDir={onToggleDir}
           onFileClick={onFileClick}
           onReveal={onReveal}
+          onTagPath={onTagPath}
         />
       ))}
     </ul>
@@ -438,25 +456,38 @@ function FilesTree({
 function TreeNode({
   entry,
   depth,
+  cwd,
   expanded,
   childrenMap,
   loadingPaths,
   onToggleDir,
   onFileClick,
   onReveal,
+  onTagPath,
 }: {
   entry: DirEntry;
   depth: number;
+  cwd: string | null;
   expanded: Set<string>;
   childrenMap: Map<string, DirEntry[]>;
   loadingPaths: Set<string>;
   onToggleDir: (e: DirEntry) => void;
   onFileClick: (path: string) => void;
   onReveal: (path: string) => void;
+  onTagPath?: (hit: {
+    path: string;
+    absolute: string;
+    isDir: boolean;
+    name: string;
+  }) => void;
 }) {
   const isOpen = expanded.has(entry.path);
   const kids = childrenMap.get(entry.path);
   const loading = loadingPaths.has(entry.path);
+  const rel =
+    cwd && entry.path.toLowerCase().startsWith(cwd.toLowerCase())
+      ? entry.path.slice(cwd.length).replace(/^[/\\]+/, "").replace(/\\/g, "/")
+      : entry.name;
 
   return (
     <li className={`file-tree-node${entry.isDir ? " is-dir" : " is-file"}`}>
@@ -483,6 +514,24 @@ function TreeNode({
           {loading ? <span className="file-tree-loading">…</span> : null}
         </button>
         <span className="file-tree-row-actions">
+          {onTagPath ? (
+            <button
+              type="button"
+              className="btn-reveal"
+              title="Tag in chat (@)"
+              onClick={(e) => {
+                e.stopPropagation();
+                onTagPath({
+                  path: rel || entry.name,
+                  absolute: entry.path,
+                  isDir: entry.isDir,
+                  name: entry.name,
+                });
+              }}
+            >
+              @
+            </button>
+          ) : null}
           <button
             type="button"
             className="btn-reveal"
@@ -503,12 +552,14 @@ function TreeNode({
               key={c.path}
               entry={c}
               depth={depth + 1}
+              cwd={cwd}
               expanded={expanded}
               childrenMap={childrenMap}
               loadingPaths={loadingPaths}
               onToggleDir={onToggleDir}
               onFileClick={onFileClick}
               onReveal={onReveal}
+              onTagPath={onTagPath}
             />
           ))}
         </ul>

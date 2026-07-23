@@ -62,10 +62,10 @@ export interface PickerItem {
 }
 
 export interface PickerRequest {
-  kind: 'provider' | 'model' | 'clarification';
+  kind: 'provider' | 'model' | 'clarification' | 'skill';
   title: string;
   items: PickerItem[];
-  /** Slash command the selected value is dispatched through (provider/model). */
+  /** Slash command the selected value is dispatched through (provider/model/skill). */
   commandPrefix?: string;
   /**
    * v1.6.0: for kind 'clarification' — invoked with the chosen value when

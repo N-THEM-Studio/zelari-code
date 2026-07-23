@@ -5,7 +5,9 @@ import { getAppVersion } from "../updater";
 import { CliUpdateSection } from "./CliUpdateSection";
 import { UpdateSection } from "./UpdateSection";
 import { McpSection } from "./McpSection";
+import { SkillsSection } from "./SkillsSection";
 import { SshSection } from "./SshSection";
+import { CompanionServeSection } from "./CompanionServeSection";
 
 type SettingsTab =
   | "provider"
@@ -20,8 +22,8 @@ const LS_TAB = "zelari-desktop-settings-tab";
 const TABS: { id: SettingsTab; label: string; hint: string }[] = [
   { id: "provider", label: "Provider", hint: "Model, API key, endpoint" },
   { id: "defaults", label: "Defaults", hint: "Mode & phase for new chats" },
-  { id: "extensions", label: "Extensions", hint: "MCP servers & store" },
-  { id: "connections", label: "Connections", hint: "SSH deploy / monitor" },
+  { id: "extensions", label: "Extensions", hint: "MCP servers, skills & store" },
+  { id: "connections", label: "Connections", hint: "SSH, Android companion" },
   { id: "updates", label: "Updates", hint: "Desktop app & CLI package" },
   { id: "system", label: "System", hint: "Paths, versions, shortcuts" },
 ];
@@ -540,22 +542,42 @@ export function SettingsView({
           )}
 
           {tab === "extensions" && (
-              <McpSection
-                workdir={workdir}
-                onStatus={(msg) => {
-                  setMessage(msg);
-                  setError(null);
-                }}
-              />
+              <div className="settings-stack">
+                <McpSection
+                  workdir={workdir}
+                  onStatus={(msg) => {
+                    setMessage(msg);
+                    setError(null);
+                  }}
+                />
+                <SkillsSection
+                  workdir={workdir}
+                  provider={provider}
+                  model={customModel.trim() || model}
+                  onStatus={(msg) => {
+                    setMessage(msg);
+                    setError(null);
+                  }}
+                />
+              </div>
           )}
 
           {tab === "connections" && (
-              <SshSection
-                onStatus={(msg) => {
-                  setMessage(msg);
-                  setError(null);
-                }}
-              />
+              <div className="settings-stack">
+                <CompanionServeSection
+                  workdir={workdir}
+                  onStatus={(msg) => {
+                    setMessage(msg);
+                    setError(null);
+                  }}
+                />
+                <SshSection
+                  onStatus={(msg) => {
+                    setMessage(msg);
+                    setError(null);
+                  }}
+                />
+              </div>
           )}
 
           {tab === "updates" && (

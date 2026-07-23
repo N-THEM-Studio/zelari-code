@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.25.0] - 2026-07-23
+
+### Added
+- **Skills in Desktop (Extensions)** — create/list/remove user & project `SKILL.md` skills (`~/.zelari-code/skills/`, `.zelari/skills/`); CLI `--print-skills` / `--set-skill` / `--remove-skill`.
+- **Import skill from URL** — Settings → Extensions → New skill → **Convert with model** (`--generate-skill-from-url`) uses the selected provider/model to draft id, description, body.
+- **Skill picker** — Desktop composer ★ Skills; CLI `/skills` and bare `/skill` open an interactive SelectList (parity with `/provider`).
+- **@-tag paths** — Desktop `@` autocomplete + Project panel `@`; CLI expands `@path` into `[Tagged paths]` context (shared `atMentions`).
+- **Companion host `zelari-code serve`** — opt-in HTTP + SSE for remote clients (Tailscale/LAN): auth bearer token, project allowlist, single-flight headless runs. ADR-0015.
+- **Desktop: Start companion serve** — Settings → Connections → Android companion (start/stop, bind/port, copy URL/token).
+- **Android companion app (MVP)** — `apps/companion-android` (Compose): connect, projects, mode/phase, chat stream, cancel. See `apps/companion-android/README.md`.
+
+### Fixed
+- **Provider stream timeouts** — connect timeout vs stream-idle vs stream-max (no more hard kill of active multi-minute streams); clearer errors; fewer timeout retries.
+- **Desktop `ANATHEMA_DEV` + CLI source** — no longer forces tsx source load (fixed “Failed to load provider config” at Desktop boot).
+- **CLI entry** — prefer dist bundle for Desktop; `desktop:dev` runs `build:cli` first so new flags ship with Tauri.
+
+### Note
+- Install CLI: `npm i -g zelari-code@1.25.0` (or from monorepo: `npm run build:cli && npm install -g .`).
+- Companion: `zelari-code serve --bind <tailscale-ip> --port 7421 --project <repo>` or Desktop **Start companion serve**.
+- Android: open `apps/companion-android` in Android Studio or `npm run companion:android`.
+
 ## [1.24.0] - 2026-07-22
 
 ### Added

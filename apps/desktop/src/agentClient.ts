@@ -133,6 +133,57 @@ export async function listDir(args?: {
   });
 }
 
+export interface WorkspaceHit {
+  path: string;
+  absolute: string;
+  isDir: boolean;
+  name: string;
+}
+
+export interface SearchWorkspaceResult {
+  cwd: string;
+  hits: WorkspaceHit[];
+}
+
+/** Bounded project walk for @-mention autocomplete. */
+export async function searchWorkspace(args?: {
+  cwd?: string | null;
+  query?: string | null;
+  limit?: number;
+}): Promise<SearchWorkspaceResult> {
+  return invoke<SearchWorkspaceResult>("search_workspace", {
+    args: {
+      cwd: args?.cwd ?? null,
+      query: args?.query ?? null,
+      limit: args?.limit ?? 40,
+    },
+  });
+}
+
+export interface ReadProjectTextResult {
+  path: string;
+  absolute: string;
+  isDir: boolean;
+  text?: string | null;
+  note?: string | null;
+  size: number;
+}
+
+/** Read a sandboxed project file for @-mention attach. */
+export async function readProjectText(args: {
+  path: string;
+  cwd?: string | null;
+  maxBytes?: number;
+}): Promise<ReadProjectTextResult> {
+  return invoke<ReadProjectTextResult>("read_project_text", {
+    args: {
+      path: args.path,
+      cwd: args.cwd ?? null,
+      maxBytes: args.maxBytes ?? null,
+    },
+  });
+}
+
 export interface McpServerEntryDto {
   name: string;
   command: string;
@@ -190,6 +241,154 @@ export async function removeMcp(args: {
       cwd: args.cwd ?? null,
     },
   });
+}
+
+
+// ---------------------------------------------------------------------------
+// Skills (SKILL.md) — Desktop Extensions store, parity with MCP.
+// ---------------------------------------------------------------------------
+
+export type SkillScope = 'user' | 'project' | 'compat' | 'builtin';
+
+export interface SkillEntryDto {
+  id: string;
+  name: string;
+  description: string;
+  category?: string;
+  estimatedCost?: string;
+  requiredTools?: string[];
+  scope: SkillScope;
+  /** Absolute path to SKILL.md, or null for builtins. */
+  path: string | null;
+  /** Full markdown body (user/project/compat only). */
+  body?: string;
+  builtin: boolean;
+  /** true when this entry can be removed/edited via --set-skill / --remove-skill. */
+  writable: boolean;
+}
+
+export interface SkillsSnapshot {
+  userSkillsDir: string;
+  projectSkillsDir: string | null;
+  skills: SkillEntryDto[];
+}
+
+/** List all skills: builtin (read-only) + user + project + compat dirs. */
+export async function printSkills(args?: {
+  cwd?: string | null;
+}): Promise<SkillsSnapshot> {
+  return invoke<SkillsSnapshot>("print_skills", {
+    args: { cwd: args?.cwd ?? null },
+  });
+}
+
+/** Create or update a SKILL.md in user or project scope. */
+export async function setSkill(args: {
+  name: string;
+  description: string;
+  body: string;
+  category?: string;
+  tools?: string[];
+  cost?: string;
+  scope?: "user" | "project";
+  cwd?: string | null;
+}): Promise<{ ok?: boolean; path?: string; name?: string; scope?: string }> {
+  return invoke("set_skill", {
+    args: {
+      name: args.name,
+      description: args.description,
+      body: args.body,
+      category: args.category ?? null,
+      tools: args.tools ?? null,
+      cost: args.cost ?? null,
+      scope: args.scope ?? "user",
+      cwd: args.cwd ?? null,
+    },
+  });
+}
+
+/** Remove a user or project SKILL.md directory. */
+export async function removeSkill(args: {
+  name: string;
+  scope?: "user" | "project";
+  cwd?: string | null;
+}): Promise<{ ok?: boolean; path?: string; name?: string; scope?: string }> {
+  return invoke("remove_skill", {
+    args: {
+      name: args.name,
+      scope: args.scope ?? "user",
+      cwd: args.cwd ?? null,
+    },
+  });
+}
+
+export interface GeneratedSkillDraft {
+  ok?: boolean;
+  name: string;
+  description: string;
+  body: string;
+  category?: string;
+  tools?: string[];
+  cost?: string;
+  sourceUrl: string;
+  model: string;
+  provider: string;
+}
+
+/**
+ * Fetch a URL and draft a skill with the selected model
+ * (CLI --generate-skill-from-url).
+ */
+export async function generateSkillFromUrl(args: {
+  url: string;
+  provider?: string | null;
+  model?: string | null;
+}): Promise<GeneratedSkillDraft> {
+  return invoke<GeneratedSkillDraft>("generate_skill_from_url", {
+    args: {
+      url: args.url,
+      provider: args.provider ?? null,
+      model: args.model ?? null,
+    },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Companion serve (Android remote host)
+// ---------------------------------------------------------------------------
+
+export interface CompanionServeStatus {
+  running: boolean;
+  healthy: boolean;
+  bind: string;
+  port: number;
+  url: string;
+  token: string;
+  tokenPath: string;
+  pid?: number | null;
+  message: string;
+}
+
+export async function companionServeStatus(): Promise<CompanionServeStatus> {
+  return invoke<CompanionServeStatus>("companion_serve_status");
+}
+
+export async function companionServeStart(args?: {
+  bind?: string;
+  port?: number;
+  project?: string | null;
+}): Promise<CompanionServeStatus> {
+  return invoke<CompanionServeStatus>("companion_serve_start", {
+    args: {
+      bind: args?.bind ?? null,
+      port: args?.port ?? null,
+      project: args?.project ?? null,
+    },
+  });
+}
+
+export async function companionServeStop(): Promise<CompanionServeStatus> {
+  return invoke<CompanionServeStatus>("companion_serve_stop");
 }
 
 export interface SshTargetDto {

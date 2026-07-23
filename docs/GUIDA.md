@@ -287,6 +287,9 @@ zelari-code [opzioni]
 | `--fix-path` | Windows: ripara prefix npm nel PATH utente |
 | `--print-config` / `--set-config` / `--set-key` / `--discover-models` | Helper config per Desktop / script |
 | `--print-mcp` / `--set-mcp` / `--remove-mcp` | Gestione `mcp.json` |
+| `--print-skills` / `--set-skill` / `--remove-skill` | Skill `SKILL.md` (user/project) |
+| `--generate-skill-from-url --url <https…>` | Bozza skill via modello attivo |
+| `serve` | Companion host (Android/Tailscale) — vedi [Desktop](#zelari-desktop) |
 | `--print-ssh-targets` / `--set-ssh-target` / `--remove-ssh-target` / `--test-ssh-target` | Target SSH |
 | `--print-ssh-pubkey --path <…>` | Mostra contenuto `.pub` (copia su server) |
 
@@ -363,12 +366,37 @@ La chat Desktop è la source of truth per la conversazione: history multi-turn v
 
 - **Provider** — API key, endpoint OpenAI-compatible, discover models  
 - **Updates** — aggiornamento **app** (Tauri / GitHub Releases) vs **CLI** (`npm install -g`)  
-- **MCP Extensions** — catalogo server comuni → scrive `mcp.json`  
-- **Connections (SSH)** — host per deploy/monitor (vedi [SSH](#ssh-deploy--monitor))  
+- **Extensions** — MCP catalog + **Skills** (crea/rimuovi `SKILL.md` user/project; import da URL col modello attivo)  
+- **Connections** — **Android companion** (start/stop `zelari-code serve`, copia URL/token) + SSH deploy/monitor  
+
+### Chat Desktop (v1.25)
+
+- **@file** — digita `@` per taggare file/cartelle del progetto (Open Folder); anche pulsante `@` nel file tree  
+- **Skills ★** — picker skill (builtin + user); si espande al Send come `/skill` in TUI  
+- Composer a larghezza piena della colonna chat  
+
+### Companion Android + `serve`
+
+L’agent resta sul PC; il telefono è un thin client sulla stessa rete Tailscale (o LAN).
+
+```bash
+# Host (PC) — usa il CLI monorepo o npm@1.25+
+npm run build:cli
+zelari-code serve --bind 100.x.y.z --port 7421 --project /path/to/repo
+# oppure Desktop → Settings → Connections → Start companion serve
+```
+
+- Token: `~/.zelari-code/companion.token`  
+- Health: `GET http://<host>:7421/health`  
+- App: [`apps/companion-android/`](../apps/companion-android/README.md) — URL `http://100.x.y.z:7421` + token  
+- **Non** usare `127.0.0.1` sul telefono (è il device, non il PC)
+
+ADR: [`docs/decisions/0015-companion-host-serve.md`](./decisions/0015-companion-host-serve.md).
 
 ### Primo avvio
 
-Se mancano Node o la CLI, appare la **Setup guide**. L’installer Desktop da solo non basta.
+Se mancano Node o la CLI, appare la **Setup guide**. L’installer Desktop da solo non basta.  
+Se usi il monorepo in dev, preferisci `npm run desktop:dev` (fa `build:cli`) o `ZELARI_CLI_PATH` verso `bin/zelari-code.js` — il npm globale può essere indietro e **non** avere `serve`.
 
 ### Sviluppo
 
@@ -376,6 +404,8 @@ Se mancano Node o la CLI, appare la **Setup guide**. L’installer Desktop da so
 npm run build
 npm run desktop:install
 npm run desktop:dev
+# Android companion debug APK
+npm run companion:android
 ```
 
 Override monorepo: `ZELARI_CLI_PATH` → path a `bin/zelari-code.js`.

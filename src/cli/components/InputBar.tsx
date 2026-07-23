@@ -42,7 +42,7 @@ function InputBarImpl({ value, onChange, onSubmit, disabled }: InputBarProps): R
         value={value}
         onChange={stableChange}
         onSubmit={stableSubmit}
-        placeholder={disabled ? '...' : 'Type a prompt or /skill <name>'}
+        placeholder={disabled ? '...' : 'Prompt, /skills, or @path'}
       />
     </Box>
   );

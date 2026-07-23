@@ -42,6 +42,13 @@ import {
   removeMcpServer,
   upsertMcpServer,
 } from "./mcp/mcpConfigIo.js";
+import {
+  listSkillsSnapshot,
+  upsertSkill,
+  removeSkill,
+  ensureBuiltinSkillsLoadedSync,
+} from "./skillConfigIo.js";
+import { generateSkillFromUrl } from "./generateSkillFromUrl.js";
 import { applyMcpPreset } from "./mcp/mcpPresets.js";
 import {
   listSshTargets,
@@ -202,9 +209,10 @@ async function shutdown(): Promise<void> {
  * these print to stdout and exit, leaving the TTY untouched.
  */
 function pickRootComponent(): {
-  kind: "wizard" | "app" | "headless" | "done";
+  kind: "wizard" | "app" | "headless" | "done" | "serve";
   element?: React.ReactElement;
   headlessOpts?: Parameters<typeof runHeadless>[0];
+  serveOpts?: import("./companion/serve.js").ServeOptions;
 } {
   const argv = process.argv.slice(2);
 
@@ -220,6 +228,42 @@ function pickRootComponent(): {
   }
   if (wantsPluginsInstall(argv)) {
     void runPluginsInstall(argv).then((code) => process.exit(code));
+    return { kind: "done" };
+  }
+  // Companion host (Android / remote). Must not use kind "done" — that
+  // returns from main() and on some Windows spawn paths the process exits
+  // before the async server fully roots on the event loop.
+  if (argv.includes("serve") || argv.includes("--serve")) {
+    // Sync parse only; dynamic import happens in main() so the serve
+    // promise is the last thing keeping the process alive.
+    const { parseServeFlags } = require("./companion/serve.js") as typeof import("./companion/serve.js");
+    return { kind: "serve", serveOpts: parseServeFlags(argv) ?? {} };
+  }
+  // URL → skill draft (Desktop skill form). MUST run before any Ink path —
+  // Desktop pipes stdin (no TTY); mounting the TUI throws "Raw mode is not supported".
+  if (argv.includes("--generate-skill-from-url")) {
+    void (async () => {
+      try {
+        const get = (flag: string) => {
+          const i = argv.indexOf(flag);
+          return i >= 0 && argv[i + 1] ? argv[i + 1] : undefined;
+        };
+        const url = get("--url");
+        if (!url) throw new Error("--url is required");
+        const draft = await generateSkillFromUrl({
+          url,
+          provider: get("--provider"),
+          model: get("--model"),
+        });
+        console.log(JSON.stringify({ ok: true, ...draft }, null, 2));
+        process.exit(0);
+      } catch (err) {
+        console.error(
+          `[zelari-code --generate-skill-from-url] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      }
+    })();
     return { kind: "done" };
   }
   if (argv.includes("--doctor") || argv.includes("doctor")) {
@@ -329,6 +373,12 @@ function pickRootComponent(): {
         "    --phase plan|build  Work phase (default: build)\n" +
         "    --provider <id>    Provider override (default: active)\n" +
         "    --model <id>       Model override (default: provider default)\n" +
+        "  serve               Companion host for Android/remote clients (Tailscale)\n" +
+        "    --bind <ip>       Listen address (default: 127.0.0.1; use Tailscale IP)\n" +
+        "    --port <n>        Port (default: 7421)\n" +
+        "    --token <secret>  Bearer token (default: ~/.zelari-code/companion.token)\n" +
+        "    --project <path>  Allowlisted project root (repeatable)\n" +
+        "    --save-projects   Persist --project list to companion.json\n" +
         "  --print-config      Print provider/model config as JSON (no secrets)\n" +
         "  --plugins-status    JSON status of optional plugins (Playwright, eslint, …)\n" +
         "  --plugins-install <id>  Install plugin (playwright also fetches Chromium)\n" +
@@ -358,6 +408,23 @@ function pickRootComponent(): {
         "    --cwd <path>      Required when scope=project\n" +
         "  --remove-mcp        Remove an MCP server entry\n" +
         "    --name <id> --scope user|project [--cwd <path>]\n" +
+        "  --print-skills      Print skills (builtin + user + project)\n" +
+        "    --cwd <path>      Project root for .zelari/skills\n" +
+        "  --set-skill         Add/update a SKILL.md skill\n" +
+        "    --name <id>       Skill id (required)\n" +
+        "    --description <t> One-line description (required)\n" +
+        "    --body <text>     Markdown instructions (required)\n" +
+        "    --category <c>    plan|refactor|debug|review|test|docs|ops|git|db|maint\n" +
+        "    --tools <csv>     Comma-separated required tools (optional)\n" +
+        "    --cost <l>        low|medium|high (default: medium)\n" +
+        "    --scope user|project  Default: user\n" +
+        "    --cwd <path>      Required when scope=project\n" +
+        "  --remove-skill      Remove a user/project SKILL.md\n" +
+        "    --name <id> --scope user|project [--cwd <path>]\n" +
+        "  --generate-skill-from-url  Fetch URL + draft skill via model (JSON)\n" +
+        "    --url <https://...>  Required\n" +
+        "    --provider <id>   Override active provider\n" +
+        "    --model <name>    Override model for the selected provider\n" +
         "  --print-ssh-targets Print SSH deploy/monitor targets\n" +
         "  --set-ssh-target    Upsert target (--json '{...}' or flags)\n" +
         "  --remove-ssh-target --id <id>\n" +
@@ -446,6 +513,86 @@ function pickRootComponent(): {
     } catch (err) {
       console.error(
         `[zelari-code --remove-mcp] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  // Skill config helpers (Desktop Extensions store — parity with MCP).
+  if (argv.includes("--print-skills")) {
+    try {
+      const cwdIdx = argv.indexOf("--cwd");
+      const cwd =
+        cwdIdx >= 0 && argv[cwdIdx + 1] ? argv[cwdIdx + 1] : process.cwd();
+      ensureBuiltinSkillsLoadedSync();
+      const snap = listSkillsSnapshot(cwd);
+      console.log(JSON.stringify(snap, null, 2));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --print-skills] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  if (argv.includes("--set-skill")) {
+    try {
+      const get = (flag: string) => {
+        const i = argv.indexOf(flag);
+        return i >= 0 && argv[i + 1] ? argv[i + 1] : undefined;
+      };
+      const name = get("--name");
+      const description = get("--description");
+      const body = get("--body");
+      const category = get("--category");
+      const toolsRaw = get("--tools");
+      const cost = get("--cost");
+      const scopeRaw = get("--scope") ?? "user";
+      const scope = scopeRaw === "project" ? "project" : "user";
+      const cwd = get("--cwd") ?? process.cwd();
+      if (!name) throw new Error("--name is required");
+      if (!description) throw new Error("--description is required");
+      if (!body) throw new Error("--body is required");
+      const tools = toolsRaw
+        ? toolsRaw.split(",").map((t) => t.trim()).filter(Boolean)
+        : undefined;
+      const result = upsertSkill({
+        scope,
+        name,
+        description,
+        body,
+        category,
+        tools,
+        cost,
+        projectRoot: cwd,
+      });
+      if (!result.ok) throw new Error(result.error);
+      console.log(JSON.stringify({ ok: true, path: result.path, name, scope }));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --set-skill] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
+  if (argv.includes("--remove-skill")) {
+    try {
+      const get = (flag: string) => {
+        const i = argv.indexOf(flag);
+        return i >= 0 && argv[i + 1] ? argv[i + 1] : undefined;
+      };
+      const name = get("--name");
+      const scopeRaw = get("--scope") ?? "user";
+      const scope = scopeRaw === "project" ? "project" : "user";
+      const cwd = get("--cwd") ?? process.cwd();
+      if (!name) throw new Error("--name is required");
+      const result = removeSkill({ scope, name, projectRoot: cwd });
+      if (!result.ok) throw new Error(result.error);
+      console.log(JSON.stringify({ ok: true, path: result.path, name, scope }));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --remove-skill] ${err instanceof Error ? err.message : String(err)}`,
       );
       process.exit(1);
     }
@@ -782,6 +929,21 @@ function loadUserSkills(): void {
 function main() {
   const picked = pickRootComponent();
   if (picked.kind === "done") return; // --version or --help printed + exited
+
+  // Companion host: block here (no Ink, no preflight hard-fail for remote).
+  if (picked.kind === "serve") {
+    void import("./companion/serve.js")
+      .then(({ runCompanionServe }) => runCompanionServe(picked.serveOpts ?? {}))
+      .then(() => process.exit(0))
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[zelari-code serve] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      });
+    return;
+  }
 
   // v1.4.0: verify node/git/bash BEFORE mounting the TUI or running a headless
   // task. Hard-fails on missing node (the agent cannot run npm/build without it),

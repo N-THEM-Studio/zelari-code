@@ -7,6 +7,9 @@ import { appendSystem } from '../hooks/messageHelpers.js';
 import { applySteerInterrupt } from '../hooks/steer.js';
 import type { ChatMessage } from '../components/ChatStream.js';
 import type { AgentHarness } from '@zelari/core/harness';
+import type { CodingSkillDefinition } from '@zelari/core/skills';
+import type { PickerRequest } from './provider.js';
+import { formatSkillList } from '../slashCommands.js';
 
 /**
  * Slash command handlers — skill invocation, stats, compare, council feedback,
@@ -17,6 +20,46 @@ export interface SkillSlashContext {
   setInput: (v: string) => void;
   setBusy: (v: boolean) => void;
   sessionId: string;
+}
+
+type OpenPicker = (req: PickerRequest) => void;
+
+/**
+ * `/skills` or `/skill` with no args — interactive SelectList of skills.
+ * Selection re-enters the slash pipeline as `/skill <id>`.
+ */
+export function handleSkillPicker(
+  ctx: SkillSlashContext,
+  skills: readonly CodingSkillDefinition[],
+  openPicker?: OpenPicker,
+  fallbackMessage?: string,
+): void {
+  if (!openPicker) {
+    appendSystem(
+      ctx.setMessages,
+      fallbackMessage ?? formatSkillList(skills),
+    );
+    return;
+  }
+  if (skills.length === 0) {
+    appendSystem(ctx.setMessages, '[skills] no skills registered');
+    return;
+  }
+  const items = [...skills]
+    .sort((a, b) => a.id.localeCompare(b.id))
+    .map((s) => ({
+      value: s.id,
+      label: s.name || s.id,
+      hint: [s.category, s.estimatedCost, s.description?.slice(0, 60)]
+        .filter(Boolean)
+        .join(' · '),
+    }));
+  openPicker({
+    kind: 'skill',
+    title: 'Select a skill',
+    items,
+    commandPrefix: '/skill',
+  });
 }
 
 export async function handleSkillStats(

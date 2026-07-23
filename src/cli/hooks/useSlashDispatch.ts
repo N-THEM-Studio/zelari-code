@@ -57,10 +57,12 @@ import {
 import {
   handleSkillStats,
   handleSkillCompare,
+  handleSkillPicker,
   handleCouncilFeedback,
   handleSteer,
   handleClearChat,
 } from '../slashHandlers/skills.js';
+import { expandAtMentions } from '../atMentions.js';
 
 /**
  * useSlashDispatch — router for every /command.
@@ -165,20 +167,29 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     // ── Unhandled: free-form prompt → dispatch to LLM ──
     // v0.7.9: routed by the shift+tab mode — 'council' sends the prompt
     // through the 6-member pipeline exactly like `/council <text>`.
+    // @path tags expand to [Tagged paths] file/dir context (Desktop parity).
     if (!result.handled) {
+      const expanded = expandAtMentions(value, process.cwd());
+      const promptText = expanded.text;
       appendUser(setMessages, value);
+      if (expanded.hits.length > 0) {
+        appendSystem(
+          setMessages,
+          `[tagged] ${expanded.hits.map((h) => h.path).join(', ')}`,
+        );
+      }
       setSessionActive(true);
       if (mode === 'zelari') {
         setInput('');
-        await dispatchZelariPrompt(value);
+        await dispatchZelariPrompt(promptText);
         return;
       }
       if (mode === 'council') {
         setInput('');
-        await dispatchCouncilPrompt(value);
+        await dispatchCouncilPrompt(promptText);
         return;
       }
-      await dispatchPrompt(value);
+      await dispatchPrompt(promptText);
       setInput('');
       return;
     }
@@ -578,7 +589,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       return;
     }
 
-    // ── Skill stats / compare ──
+    // ── Skill stats / compare / picker ──
     if (result.kind === 'skill_stats') {
       await handleSkillStats(skillCtx, result.skillStatsSkillId);
       setInput('');
@@ -586,6 +597,11 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     }
     if (result.kind === 'skill-compare') {
       await handleSkillCompare(skillCtx, result.compareIds, result.message);
+      setInput('');
+      return;
+    }
+    if (result.kind === 'skill_picker') {
+      handleSkillPicker(skillCtx, skills, params.openPicker, result.message);
       setInput('');
       return;
     }
@@ -598,9 +614,13 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
         ?? `[skill] ${result.expandedSkill.skillId} — prompt ready (dispatch lands in Phase 14.7)`;
       appendSystem(setMessages, sysMsg);
       setInput('');
+      const skillPrompt = expandAtMentions(
+        result.expandedSkill.prompt,
+        process.cwd(),
+      ).text;
       // v0.7.5: forward the skill's requiredTools so dispatchPrompt registers
       // the workspace stubs the skill's instructions rely on.
-      await dispatchPrompt(result.expandedSkill.prompt, {
+      await dispatchPrompt(skillPrompt, {
         requiredTools: result.expandedSkill.requiredTools,
       });
       return;
