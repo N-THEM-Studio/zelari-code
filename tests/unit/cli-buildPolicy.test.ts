@@ -63,9 +63,9 @@ describe('resolveAgentMissionToolBudget', () => {
 });
 
 describe('describeBuildPolicy', () => {
-  it('mentions agent default', () => {
+  it('mentions kraken default', () => {
     const s = describeBuildPolicy({});
-    expect(s).toMatch(/build@agent/);
+    expect(s).toMatch(/build@kraken/);
     expect(s).toMatch(/plan-only|ZELARI_COUNCIL_CAN_BUILD/);
   });
 

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.26.0] - 2026-07-23
+
 ### Added
 - **Kraken mode** — single-harness super-agent (rename of `agent`). Status bar / Desktop / `/mode` / `--mode kraken`. Legacy `agent` still accepted as alias.
 - **Kraken lead playbook** — parent orchestrates `task` tentacles (explore / general / verify) with Goal·Scope·Acceptance contracts.
@@ -14,11 +16,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Kraken model routing (K5)** — `ZELARI_KRAKEN_SUB_MODEL` / `_EXPLORE_MODEL` / `_VERIFY_MODEL` / `_GENERAL_MODEL` for cheaper tentacles.
 - **Kraken radio (K8)** — tentacle events in `.zelari/radio/<session>.jsonl`; slash `/kraken` shows status.
 - **Kraken worktree opt-in (K7)** — `ZELARI_KRAKEN_WORKTREE=1` isolates general tentacles under `.zelari/worktrees/`; `KEEP=1` retains branch.
+- **Worktree auto-merge (K7)** — on tentacle success, `mergeKrakenWorktree` squash-merges the worktree branch into the parent HEAD **before** cleanup, so isolated edits are never lost. Opt out with `ZELARI_KRAKEN_AUTO_MERGE=0`; `KEEP=1` disables both merge and cleanup.
+- **Kraken live tracking (K10)** — `krakenTentacleStart`/`End` radio events on every terminal path (spawn, error, success); StatusBar shows a live `tentacles 1↑ 2✓` chip (CLI + Desktop).
 - **Verify-hint footer (K4)** — after task general, result reminds parent to run verify; spawn counter resets each parent turn.
 
 ### Changed
 - Default dispatch mode label: **kraken** (was agent). Mission build path labeled `build@kraken`.
 - Zelari mission design stays on council; implementation slices still on the single harness (now Kraken identity).
+- `@zelari/core` devDependency aligned to release version (no more 1.24 → 1.25 drift).
 
 ## [1.25.0] - 2026-07-23
 

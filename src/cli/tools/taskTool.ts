@@ -32,8 +32,12 @@ import {
   formatWorktreeFooter,
   isKrakenWorktreeEnabled,
   shouldKeepWorktree,
+  mergeKrakenWorktree,
+  isKrakenWorktreeAutoMergeEnabled,
   type WorktreeHandle,
+  type WorktreeMergeResult,
 } from './krakenWorktree.js';
+import { krakenTentacleStart, krakenTentacleEnd } from './krakenLive.js';
 
 /** Sub-agent kinds (OpenCode-inspired). */
 export type TaskAgentKind = 'explore' | 'general' | 'verify';
@@ -320,6 +324,13 @@ export function createTaskTool(
         description: args.description,
         worktree: worktree?.path ?? null,
       });
+      // G1 (K10): track the tentacle in-process so StatusBar / Desktop can show
+      // "tentacles 1↑ 2✓" live during the parent turn.
+      const liveId = krakenTentacleStart({
+        agent,
+        description: args.description,
+        worktree: worktree?.path ?? null,
+      });
 
       let sub: SubAgentContext | null;
       try {
@@ -338,6 +349,7 @@ export function createTaskTool(
           ok: false,
           durationMs: Date.now() - started,
         });
+        krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
         return typedErr(
           `task: could not initialize sub-agent — ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -352,6 +364,7 @@ export function createTaskTool(
           ok: false,
           durationMs: Date.now() - started,
         });
+        krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
         return typedErr(
           'task: no provider configured for the sub-agent (set an API key / run /login).',
         );
@@ -389,6 +402,7 @@ export function createTaskTool(
         }
       } catch (err) {
         if (worktree) await cleanupKrakenWorktree(worktree);
+        krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
         return typedErr(
           `task: failed to start sub-agent — ${err instanceof Error ? err.message : String(err)}`,
         );
@@ -410,6 +424,7 @@ export function createTaskTool(
           durationMs,
           ok: false,
         });
+        krakenTentacleEnd(liveId, { ok: false, model: sub.model, detail: error, durationMs });
         return typedErr(
           `task: sub-agent (${agent}) produced no output${error ? ` (${error})` : ''}.`,
         );
@@ -418,13 +433,41 @@ export function createTaskTool(
       const kept = worktree ? shouldKeepWorktree() : false;
       let footer = '';
       if (worktree) {
-        footer += `\n${formatWorktreeFooter(worktree, { kept })}`;
-        if (!kept) await cleanupKrakenWorktree(worktree);
+        // G2: before cleanup, squash-merge the tentacle branch into the parent
+        // HEAD so the sub-agent's edits survive. Without this the worktree is
+        // removed and all edits are lost (the original gap).
+        let merge: WorktreeMergeResult | null = null;
+        if (!kept && isKrakenWorktreeAutoMergeEnabled()) {
+          try {
+            merge = await mergeKrakenWorktree(
+              worktree,
+              { message: `kraken: merge ${args.description.slice(0, 80)}` },
+            );
+          } catch (err) {
+            merge = {
+              ok: false,
+              merged: false,
+              committed: false,
+              message: `merge threw: ${err instanceof Error ? err.message : String(err)}`,
+            };
+          }
+        } else if (!kept) {
+          // auto-merge disabled — fall back to bare cleanup (old behavior)
+          await cleanupKrakenWorktree(worktree);
+        }
+        footer += `\n${formatWorktreeFooter(worktree, { kept, merge })}`;
       }
       if (agent === 'general') {
         footer += `\n${verifyHintForGeneral(args.acceptance)}`;
         g.__zelariLastGeneralAt = Date.now();
       }
+
+      krakenTentacleEnd(liveId, {
+        ok: true,
+        model: sub.model,
+        detail: result.slice(0, 160),
+        durationMs,
+      });
 
       appendKrakenRadio(parentCwd, sessionId, {
         kind: agent === 'general' ? 'verify_hint' : 'done',
