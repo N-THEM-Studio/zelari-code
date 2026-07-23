@@ -34,7 +34,7 @@ export function saveConversations(conversations: Conversation[]): void {
 function normalizeConv(c: Conversation): Conversation {
   return {
     ...c,
-    mode: c.mode === "council" || c.mode === "zelari" ? c.mode : "agent",
+    mode: c.mode === "council" || c.mode === "zelari" ? c.mode : "kraken",
     phase: c.phase === "plan" ? "plan" : "build",
     messages: Array.isArray(c.messages) ? c.messages : [],
     archived: !!c.archived,

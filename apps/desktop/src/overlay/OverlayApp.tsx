@@ -61,9 +61,7 @@ function readDefaults(): { mode: DispatchMode; phase: WorkPhase } {
     const mode =
       j.mode === "council" || j.mode === "zelari" || j.mode === "kraken"
         ? j.mode
-        : j.mode === "agent"
-          ? "kraken"
-          : "kraken";
+        : "kraken";
     const phase = j.phase === "plan" ? "plan" : "build";
     return { mode, phase };
   } catch {

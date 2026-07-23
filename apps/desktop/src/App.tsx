@@ -278,9 +278,7 @@ function loadDefaults(): { mode: DispatchMode; phase: WorkPhase } {
     const mode =
       p.mode === "council" || p.mode === "zelari" || p.mode === "kraken"
         ? p.mode
-        : p.mode === "agent"
-          ? "kraken"
-          : "kraken";
+        : "kraken";
     const phase = p.phase === "plan" ? "plan" : "build";
     return { mode, phase };
   } catch {
