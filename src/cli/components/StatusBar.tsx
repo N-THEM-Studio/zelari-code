@@ -4,7 +4,11 @@ import { formatDuration } from '../utils/duration.js';
 import { formatCost, formatTokens } from '../modelPricing.js';
 import { Spinner } from './Spinner.js';
 
-export type ChatMode = 'agent' | 'council' | 'zelari';
+/** Dispatch mode. `kraken` is the single-harness super-agent (legacy alias: agent). */
+export type ChatMode = 'kraken' | 'council' | 'zelari';
+/** @deprecated Use ChatMode; kept for external docs that still say "agent". */
+export type LegacyChatModeAlias = 'agent';
+
 export type WorkPhaseLabel = 'plan' | 'build';
 
 interface StatusBarProps {
@@ -61,7 +65,7 @@ export function StatusBar({
   sessionActive,
   queueCount = 0,
   busy = false,
-  mode = 'agent',
+  mode = 'kraken',
   phase = 'build',
   cwd,
   elapsedMs = null,
@@ -80,6 +84,11 @@ export function StatusBar({
         ? formatTokens(contextUsed)
         : null;
 
+  const modeLabel =
+    mode === 'council' ? 'council' : mode === 'zelari' ? 'zelari' : 'kraken';
+  const modeColor =
+    mode === 'council' ? 'magenta' : mode === 'zelari' ? 'green' : 'red';
+
   return (
     <Box paddingX={1} width="100%" justifyContent="space-between" gap={2}>
       {/* Left group shrinks (truncates) before the right one on narrow panes. */}
@@ -93,11 +102,8 @@ export function StatusBar({
           {phase === 'plan' ? '◇ plan' : '◆ build'}
         </Text>
         <Text dimColor> · </Text>
-        <Text
-          bold
-          color={mode === 'council' ? 'magenta' : mode === 'zelari' ? 'green' : 'cyan'}
-        >
-          {mode === 'council' ? 'council' : mode === 'zelari' ? 'zelari' : 'agent'}
+        <Text bold color={modeColor}>
+          {modeLabel}
         </Text>
         <Text dimColor> · </Text>
         <Text bold color="cyan">{provider}</Text>

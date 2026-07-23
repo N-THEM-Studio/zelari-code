@@ -273,16 +273,18 @@ function deriveHistoryFromChat(
 function loadDefaults(): { mode: DispatchMode; phase: WorkPhase } {
   try {
     const raw = localStorage.getItem(LS_DEFAULTS);
-    if (!raw) return { mode: "agent", phase: "build" };
+    if (!raw) return { mode: "kraken", phase: "build" };
     const p = JSON.parse(raw) as { mode?: string; phase?: string };
     const mode =
-      p.mode === "council" || p.mode === "zelari" || p.mode === "agent"
+      p.mode === "council" || p.mode === "zelari" || p.mode === "kraken"
         ? p.mode
-        : "agent";
+        : p.mode === "agent"
+          ? "kraken"
+          : "kraken";
     const phase = p.phase === "plan" ? "plan" : "build";
     return { mode, phase };
   } catch {
-    return { mode: "agent", phase: "build" };
+    return { mode: "kraken", phase: "build" };
   }
 }
 
@@ -1637,7 +1639,7 @@ export default function App() {
       if (mod && e.shiftKey && e.code === "KeyD") {
         e.preventDefault();
         e.stopPropagation();
-        const order: DispatchMode[] = ["agent", "council", "zelari"];
+        const order: DispatchMode[] = ["kraken", "council", "zelari"];
         const cur = modeRef.current;
         const next = order[(order.indexOf(cur) + 1) % order.length];
         setMode(next);

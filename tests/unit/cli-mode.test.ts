@@ -9,10 +9,10 @@ import type { CodingSkillDefinition } from '@zelari/core/skills';
 const skills: CodingSkillDefinition[] = [];
 
 describe('mode helper', () => {
-  it('cycles agent → council → zelari → agent (matches shift+tab)', () => {
-    expect(nextMode('agent')).toBe('council');
+  it('cycles kraken → council → zelari → kraken (matches shift+tab)', () => {
+    expect(nextMode('kraken')).toBe('council');
     expect(nextMode('council')).toBe('zelari');
-    expect(nextMode('zelari')).toBe('agent');
+    expect(nextMode('zelari')).toBe('kraken');
   });
 
   it('cycle order matches MODES', () => {
@@ -27,7 +27,8 @@ describe('mode helper', () => {
   });
 
   it('parseMode accepts known modes case-insensitively and rejects others', () => {
-    expect(parseMode('AGENT')).toBe('agent');
+    expect(parseMode('KRAKEN')).toBe('kraken');
+    expect(parseMode('AGENT')).toBe('kraken'); // legacy alias
     expect(parseMode(' council ')).toBe('council');
     expect(parseMode('zelari')).toBe('zelari');
     expect(parseMode('nope')).toBeNull();
@@ -38,10 +39,10 @@ describe('mode helper', () => {
     for (const m of MODES) expect(describeMode(m).length).toBeGreaterThan(0);
   });
 
-  it('describeMode reflects plan@council / build@agent experiment copy', () => {
-    expect(describeMode('agent')).toMatch(/implementer|single/i);
+  it('describeMode reflects plan@council / build@kraken experiment copy', () => {
+    expect(describeMode('kraken')).toMatch(/kraken|super-agent|implementer|lead/i);
     expect(describeMode('council')).toMatch(/plan|design/i);
-    expect(describeMode('zelari')).toMatch(/build@agent|plan@council/i);
+    expect(describeMode('zelari')).toMatch(/build@kraken|plan@council/i);
   });
 });
 
@@ -81,7 +82,8 @@ describe('/mode command (terminal-independent shift+tab fallback)', () => {
   it('/mode <name> sets the target directly', () => {
     expect(handleSlashCommand('/mode council', skills).modeTarget).toBe('council');
     expect(handleSlashCommand('/mode ZELARI', skills).modeTarget).toBe('zelari');
-    expect(handleSlashCommand('/mode agent', skills).modeTarget).toBe('agent');
+    expect(handleSlashCommand('/mode kraken', skills).modeTarget).toBe('kraken');
+    expect(handleSlashCommand('/mode agent', skills).modeTarget).toBe('kraken');
   });
 
   it('/mode <bad> returns an error message and no target', () => {

@@ -20,8 +20,8 @@ interface Props {
 
 function modeKicker(mode: DispatchMode): string {
   if (mode === "council") return "Council";
-  if (mode === "zelari") return "Mission";
-  return "Agent";
+  if (mode === "zelari") return "Zelari mission";
+  return "Kraken";
 }
 
 export function RunActivity({

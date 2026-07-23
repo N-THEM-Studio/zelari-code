@@ -115,7 +115,7 @@ export class RunManager {
     if (!prompt) return { ok: false, error: 'prompt is required' };
 
     const id = randomUUID();
-    const mode = (args.mode || 'agent').toLowerCase();
+    const mode = (args.mode || 'kraken').toLowerCase();
     const phase = (args.phase || 'build').toLowerCase();
     const run: CompanionRun = {
       id,
@@ -141,7 +141,7 @@ export class RunManager {
       '--output',
       'json',
       '--mode',
-      mode === 'council' || mode === 'zelari' ? mode : 'agent',
+      mode === 'council' || mode === 'zelari' ? mode : 'kraken',
       '--phase',
       phase === 'plan' ? 'plan' : 'build',
     ];

@@ -25,7 +25,7 @@ import type { AgentMessage } from '@zelari/core/harness';
 import { readFileSync } from 'node:fs';
 
 /** Dispatch mode for headless (mirrors TUI shift+tab modes). */
-export type HeadlessMode = ChatMode; // 'agent' | 'council' | 'zelari'
+export type HeadlessMode = ChatMode; // 'kraken' | 'council' | 'zelari'
 
 export interface HeadlessOptions {
   /** The user prompt. */
@@ -81,7 +81,7 @@ object per line) or as plain text (just the assistant message text).
 Options:
   --task <text>              Task prompt (required)
   --output json|plain        Output format (default: json)
-  --mode agent|council|zelari  Dispatch mode (default: agent)
+  --mode kraken|council|zelari  Dispatch mode (default: kraken; agent=alias)
   --council                  Alias for --mode council
   --phase plan|build         Work phase (default: build)
   --provider <id>            Provider override (default: active)
@@ -108,7 +108,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
 
   let task: string | undefined;
   let output: 'json' | 'plain' = 'json';
-  let mode: HeadlessMode = 'agent';
+  let mode: HeadlessMode = 'kraken';
   let phase: WorkPhase = 'build';
   let modeExplicit = false;
   let councilFlag = false;
@@ -142,7 +142,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       if (!parsed) {
         return {
           options: null,
-          error: `--mode requires 'agent', 'council', or 'zelari', got '${next ?? '(missing)'}'`,
+          error: `--mode requires 'kraken', 'council', or 'zelari' (agent=alias), got '${next ?? '(missing)'}'`,
         };
       }
       mode = parsed;

@@ -1,11 +1,13 @@
 /**
  * cli-singleAgentPrompt.test.ts — single-agent system prompt via
- * buildSystemPrompt(mode: 'agent') + SINGLE_AGENT_IDENTITY_MODULE.
+ * buildSystemPrompt(mode: 'kraken') + KRAKEN_IDENTITY_MODULE.
  */
 import { describe, it, expect } from "vitest";
 import {
   buildSystemPrompt,
   getAllTools,
+  KRAKEN_IDENTITY_MODULE,
+  KRAKEN_LEAD_PLAYBOOK_MODULE,
   SINGLE_AGENT_IDENTITY_MODULE,
 } from "@zelari/core/skills";
 
@@ -24,11 +26,11 @@ function buildSingleAgentPrompt(): string {
   return buildSystemPrompt(SINGLE_AGENT_ROLE, {
     tools: getAllTools(),
     toolNames: SINGLE_AGENT_ROLE.tools,
-    mode: "agent",
+    mode: "kraken",
     aiConfig: {
       enabledSkills: [],
       enabledTools: SINGLE_AGENT_ROLE.tools,
-      customPromptModules: [SINGLE_AGENT_IDENTITY_MODULE],
+      customPromptModules: [KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE],
       agentSkillConfigs: [],
     },
     workspaceContext: "# Workspace\nmain branch, 3 modified files",
@@ -36,13 +38,24 @@ function buildSingleAgentPrompt(): string {
   });
 }
 
-describe("single-agent prompt via buildSystemPrompt (agent pack)", () => {
+describe("kraken prompt via buildSystemPrompt (kraken pack)", () => {
   const prompt = buildSingleAgentPrompt();
 
-  it("uses the single-agent persona (NOT the council identity)", () => {
-    expect(prompt).toMatch(/Zelari Code/i);
+  it("uses the Kraken persona (NOT the council identity)", () => {
+    expect(prompt).toMatch(/Kraken/i);
+    expect(prompt).toMatch(/super-agent|senior/i);
     expect(prompt).not.toMatch(/member of an AI Council/i);
     expect(prompt).not.toMatch(/multi-agent system/i);
+  });
+
+  it("includes the Kraken lead playbook (task tentacles)", () => {
+    expect(prompt).toMatch(/Kraken Lead Playbook/i);
+    expect(prompt).toMatch(/\btask\b/);
+    expect(prompt).toMatch(/explore|general|verify/i);
+  });
+
+  it("keeps SINGLE_AGENT_IDENTITY_MODULE as deprecated alias of KRAKEN", () => {
+    expect(SINGLE_AGENT_IDENTITY_MODULE).toBe(KRAKEN_IDENTITY_MODULE);
   });
 
   it("does not include Vault / wikilink formatting noise", () => {
@@ -108,12 +121,12 @@ describe("single-agent prompt via buildSystemPrompt (agent pack)", () => {
     const withAgents = buildSystemPrompt(SINGLE_AGENT_ROLE, {
       tools: getAllTools(),
       toolNames: SINGLE_AGENT_ROLE.tools,
-      mode: "agent",
+      mode: "kraken",
       projectInstructions: "# Project rules\n- Always run tests",
       aiConfig: {
         enabledSkills: [],
         enabledTools: SINGLE_AGENT_ROLE.tools,
-        customPromptModules: [SINGLE_AGENT_IDENTITY_MODULE],
+        customPromptModules: [KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE],
         agentSkillConfigs: [],
       },
     });

@@ -58,7 +58,7 @@ describe("composeProjectContext", () => {
 
   it("includes product tree and epistemic banner", () => {
     const c = composeProjectContext({
-      mode: "agent",
+      mode: "kraken",
       cwd: dir,
       userMessage: "capisci il progetto",
     });
@@ -70,7 +70,7 @@ describe("composeProjectContext", () => {
 
   it("does not put plan text in ragContext", () => {
     const c = composeProjectContext({
-      mode: "agent",
+      mode: "kraken",
       cwd: dir,
       userMessage: "implement plan",
     });
@@ -113,7 +113,7 @@ describe("composeProjectContext", () => {
 
   it("does not inject full design doc bodies", () => {
     const c = composeProjectContext({
-      mode: "agent",
+      mode: "kraken",
       cwd: dir,
     });
     expect(c.workspaceContext).not.toContain("X".repeat(1000));

@@ -1,7 +1,7 @@
 import type { DispatchMode } from "../types";
 
 const MODES: { id: DispatchMode; label: string; hint: string }[] = [
-  { id: "agent", label: "Agent", hint: "Single LLM" },
+  { id: "kraken", label: "Kraken", hint: "Super-agent lead" },
   { id: "council", label: "Council", hint: "6 members" },
   { id: "zelari", label: "Zelari", hint: "Mission loop" },
 ];

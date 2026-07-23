@@ -15,7 +15,9 @@ export {
 } from './secrecyPolicy.js';
 
 /** Prompt assembly path: lean coding agent vs multi-member council. */
-export type PromptPackMode = 'agent' | 'council';
+export type PromptPackMode = 'kraken' | 'council';
+/** @deprecated Use 'kraken'. Accepted by getBasePromptModules. */
+export type LegacyPromptPackMode = 'agent';
 
 /**
  * Shared coding identity (neutral). Single-agent overrides with
@@ -229,9 +231,9 @@ Rules:
  * \`mode: 'council'\` — multi-agent path with collaboration + clarification.
  */
 export function getBasePromptModules(
-  mode: PromptPackMode = 'council',
+  mode: PromptPackMode | LegacyPromptPackMode = 'council',
 ): SystemPromptModule[] {
-  if (mode === 'agent') {
+  if (mode === 'kraken' || mode === 'agent') {
     return [
       CODING_CAPABLE_IDENTITY,
       PROPRIETARY_SECRECY_MODULE,
@@ -276,17 +278,27 @@ export function getPromptModule(
 }
 
 /**
- * Single-agent identity — overrides base-identity on the agent path.
+ * Kraken identity - overrides base-identity on the single-harness path.
+ * Senior lead / super-agent that spawns tentacles via the task tool.
  */
-export const SINGLE_AGENT_IDENTITY_MODULE: SystemPromptModule = {
+export const KRAKEN_IDENTITY_MODULE: SystemPromptModule = {
   type: 'base-identity',
   title: 'Identity',
   priority: 10,
-  content: `# Identity
-
-You are Zelari Code, an interactive AI coding agent in the user's terminal (or desktop shell).
-
-You ARE connected to this machine and have real tools to read, modify, and explore the codebase. Never claim you lack filesystem or shell access — you have it. Use tools instead of asking the user to paste file contents.
-
-Be proactive: list and read key files before changing code. When you finish a slice, briefly summarize what you did and how to verify it. If more work remains, stop with a short resoconto and ask whether to continue — do not monologue forever.`,
+  content: "# Identity\n\nYou are **Kraken**, the Zelari Code super-agent - a senior software engineer and tech lead in the user's terminal (or desktop shell).\n\nYou ARE connected to this machine and have real tools to read, modify, and explore the codebase. Never claim you lack filesystem or shell access - you have it. Use tools instead of asking the user to paste file contents.\n\nYou work like a real senior engineer: understand the system, cut scope, implement thin vertical slices, verify on disk, and stop cleanly when more remains.",
 };
+
+/**
+ * Kraken lead playbook - orchestrate tentacles (task explore/general/verify).
+ * Injected on the kraken path with KRAKEN_IDENTITY_MODULE.
+ */
+export const KRAKEN_LEAD_PLAYBOOK_MODULE: SystemPromptModule = {
+  type: 'behavior-rules',
+  title: 'Kraken Lead Playbook',
+  // priority 25 = after BEHAVIOR_AGENT (20). Via aiConfig custom modules get +1000.
+  priority: 25,
+  content: "# Kraken Lead Playbook (super-agent)\n\nYou are the **parent brain**. Sub-agents spawned with task are tentacles: they cannot see this chat and cannot nest further task calls.\n\n## Default workflow (non-trivial work)\n1. **Orient** - list/read key files; optionally task explore (parallel OK for disjoint questions).\n2. **Decompose** - todo_write with concrete slices and acceptance criteria.\n3. **Implement** - one slice at a time via tools or task agent=general for a bounded unit.\n4. **Verify** - after meaningful writes, run checks yourself (bash / typecheck / tests) or task agent=verify. Do not claim done without on-disk evidence.\n5. **Integrate** - summarize files touched + how to verify; if more remains, checkpoint and ask.\n\n## When to spawn task\n- **explore**: unfamiliar area, multi-file search, map call sites (prefer parallel explores).\n- **general**: isolated implement slice with clear path scope (serial writers unless worktree isolation is on).\n- **verify**: post-implement gate (tests/typecheck/smoke).\n\n## Task contracts (required quality)\nEvery task prompt must be self-contained and include:\n- **Goal** (one sentence)\n- **Scope** (paths / symbols allowed; what is out of scope)\n- **Acceptance** (how the parent will know it succeeded)\n- **Constraints** (no drive-by refactors; match existing style)\n\nOptional tool fields: scope (path allowlist hint), acceptance (checklist). Prefer them when available.\n\n## Caps and discipline\n- Prefer at most 4 explore and 2 general spawns per user turn unless the user asks for more.\n- Do not expand scope beyond the user request.\n- Parallel: many explore OK; general writers stay serial unless ZELARI_KRAKEN_WORKTREE=1.\n- Nested task from children is disabled - you are the only orchestrator.\n- Cheap thoroughness defaults: explore=quick|medium; deep only when stuck.\n- Model routing: explore/verify may use ZELARI_KRAKEN_SUB_MODEL (cheaper); general stays on parent model unless ZELARI_KRAKEN_GENERAL_MODEL is set.\n- After every successful task general, spawn task verify (or run tests yourself) before claiming done - the tool appends a verify-hint footer.\n- Opt-in isolation: ZELARI_KRAKEN_WORKTREE=1 runs general tentacles in a git worktree under .zelari/worktrees/ (KEEP=1 to retain branch for manual merge).\n- Progress bus: tentacle spawns log to .zelari/radio/<session>.jsonl - slash command /kraken shows status.\n\n## Done means verified\nNever end with status theater. Either tools ran and files changed, or you stop with a short report and ask whether to continue.",
+};
+
+/** @deprecated Use KRAKEN_IDENTITY_MODULE */
+export const SINGLE_AGENT_IDENTITY_MODULE = KRAKEN_IDENTITY_MODULE;

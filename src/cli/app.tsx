@@ -90,9 +90,9 @@ export function App(): React.ReactElement {
   // printed" index so the ANSI-cleared scrollback stays in sync). Also bumped
   // implicitly by a sessionId change (/new).
   const [clearEpoch, setClearEpoch] = useState(0);
-  // v0.7.9: dispatch mode for free-form prompts — 'agent' (single harness
+  // v0.7.9: dispatch mode — 'kraken' (single harness super-agent; legacy alias agent),
   // turn) or 'council' (6-member pipeline). Toggled with shift+tab.
-  const [mode, setMode] = useState<ChatMode>('agent');
+  const [mode, setMode] = useState<ChatMode>('kraken');
   // v1.8.0: work phase (plan | build) — React state mirrors phaseState module
   // so StatusBar re-renders when /plan or /build is used.
   const [phase, setPhaseUi] = useState<'plan' | 'build'>('build');

@@ -91,14 +91,14 @@ describe('FileDurableStateStore', () => {
 
     await expect(
       store.commit({
-        mode: 'agent',
+        mode: "kraken",
         label: 'bad',
         verification: { ok: false, ran: true },
       }),
     ).rejects.toThrow(/refused/);
 
     const soft = await store.commit({
-      mode: 'agent',
+      mode: "kraken",
       label: 'soft',
       verification: { ok: false, ran: true },
       force: true,
@@ -141,13 +141,13 @@ describe('FileDurableStateStore', () => {
     const store = new FileDurableStateStore();
     await store.init(root);
     const c1 = await store.commit({
-      mode: 'agent',
+      mode: "kraken",
       label: 'first',
       verification: { ok: true, ran: true },
       force: true,
     });
     const c2 = await store.commit({
-      mode: 'agent',
+      mode: "kraken",
       label: 'second',
       verification: { ok: true, ran: true },
       force: true,

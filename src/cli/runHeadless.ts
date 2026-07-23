@@ -5,7 +5,7 @@
  * stdout) or as plain text (just the assistant message body).
  *
  * Modes:
- *   - agent (default): one AgentHarness run
+ *   - kraken (default): one AgentHarness super-agent run (alias: agent)
  *   - council (`--mode council` / `--council`): 6-member pipeline
  *   - zelari (`--mode zelari`): autonomous multi-run mission
  *
@@ -35,15 +35,18 @@ import {
 import {
   buildSystemPrompt,
   getAllTools,
-  SINGLE_AGENT_IDENTITY_MODULE,
+  KRAKEN_IDENTITY_MODULE,
+  KRAKEN_LEAD_PLAYBOOK_MODULE,
   buildLanguagePolicyModuleFor,
 } from '@zelari/core/skills';
 import { envNumber } from './utils/envNumber.js';
 import { setPhase } from './phaseState.js';
 import { describePhase } from './phase.js';
 import { createStreamScrubber } from './utils/streamScrub.js';
+import { resetTaskSpawnCount } from './tools/taskTool.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
+  resetTaskSpawnCount();
   // Expand @path tags in the task prompt (Desktop/CLI parity). Best-effort —
   // already-inlined Desktop attachments are left alone if no @tokens remain.
   try {
@@ -110,7 +113,7 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     model,
   });
 
-  const mode = opts.mode ?? (opts.useCouncil ? 'council' : 'agent');
+  const mode = opts.mode ?? (opts.useCouncil ? 'council' : 'kraken');
 
   if (opts.output === 'json') {
     emitEvent({
@@ -260,7 +263,7 @@ async function runHeadlessSingle(
     const cwd = process.cwd();
     const durableState = await loadDurableContext(cwd);
     const composed = composeProjectContext({
-      mode: 'agent',
+      mode: 'kraken',
       cwd,
       userMessage: opts.task,
       includeLessons: false,
@@ -288,7 +291,7 @@ async function runHeadlessSingle(
       {
         tools: getAllTools(),
         toolNames,
-        mode: 'agent',
+        mode: 'kraken',
         projectInstructions: composed.projectInstructions || undefined,
         workspaceContext: agentWorkspace || undefined,
         // Plan lives in workspaceContext as draft ops — never as RAG.
@@ -297,7 +300,8 @@ async function runHeadlessSingle(
           enabledSkills: [],
           enabledTools: toolNames,
           customPromptModules: [
-            SINGLE_AGENT_IDENTITY_MODULE,
+            KRAKEN_IDENTITY_MODULE,
+            KRAKEN_LEAD_PLAYBOOK_MODULE,
             {
               type: 'language-policy',
               title: 'Response Language',

@@ -41,7 +41,7 @@ describe('proprietary secrecy policy', () => {
       {
         tools,
         toolNames: names,
-        mode: 'agent',
+        mode: 'kraken',
         aiConfig: {
           enabledSkills: [],
           enabledTools: names,

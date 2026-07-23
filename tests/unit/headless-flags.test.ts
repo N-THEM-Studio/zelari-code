@@ -26,7 +26,7 @@ describe('parseHeadlessFlags', () => {
     expect(r.options).toEqual({
       task: 'add tests',
       output: 'json',
-      mode: 'agent',
+      mode: 'kraken',
       phase: 'build',
       useCouncil: false,
       provider: undefined,
@@ -69,9 +69,11 @@ describe('parseHeadlessFlags', () => {
     expect(r.options?.mode).toBe('council');
   });
 
-  it('parses --mode agent|council|zelari', () => {
+  it('parses --mode kraken|council|zelari (agent alias)', () => {
+    expect(parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'kraken']).options?.mode)
+      .toBe('kraken');
     expect(parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'agent']).options?.mode)
-      .toBe('agent');
+      .toBe('kraken');
     expect(parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'council']).options)
       .toMatchObject({ mode: 'council', useCouncil: true });
     expect(parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'zelari']).options?.mode)
@@ -84,8 +86,8 @@ describe('parseHeadlessFlags', () => {
     expect(r.error).toMatch(/--mode requires/);
   });
 
-  it('errors when --council conflicts with --mode agent', () => {
-    const r = parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'agent', '--council']);
+  it('errors when --council conflicts with --mode kraken', () => {
+    const r = parseHeadlessFlags(['--headless', '--task', 'x', '--mode', 'kraken', '--council']);
     expect(r.options).toBeNull();
     expect(r.error).toMatch(/conflicts/);
   });

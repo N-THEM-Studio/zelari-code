@@ -368,7 +368,7 @@ function pickRootComponent(): {
         "  --headless          Run a single task without mounting the TUI\n" +
         "    --task <text>       Task prompt (required in headless mode)\n" +
         "    --output json|plain Output format (default: json)\n" +
-        "    --mode agent|council|zelari  Dispatch mode (default: agent)\n" +
+        "    --mode kraken|council|zelari  Dispatch mode (default: kraken; agent=alias)\n" +
         "    --council          Alias for --mode council\n" +
         "    --phase plan|build  Work phase (default: build)\n" +
         "    --provider <id>    Provider override (default: active)\n" +

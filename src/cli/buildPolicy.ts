@@ -67,7 +67,7 @@ export function describeBuildPolicy(
   const councilBuild = shouldAllowCouncilBuild(env);
   const parts = [
     viaAgent
-      ? 'zelari build@agent (default)'
+      ? 'zelari build@kraken (default)'
       : 'zelari build@council (legacy)',
     councilBuild
       ? 'council may implement'

@@ -30,7 +30,7 @@ describe('Council identity — de-branded (v0.7.2)', () => {
     const council = getBasePromptModules('council')
       .map((m) => m.content)
       .join('\n');
-    const agent = getBasePromptModules('agent')
+    const agent = getBasePromptModules('kraken')
       .map((m) => m.content)
       .join('\n');
     expect(council).toMatch(/---QUESTION---/);

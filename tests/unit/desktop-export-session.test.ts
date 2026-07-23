@@ -27,7 +27,7 @@ function conv(messages: ChatMessage[], partial: Partial<Conversation> = {}): Con
     messages,
     createdAt: 1_700_000_000_000,
     updatedAt: 1_700_000_300_000,
-    mode: "agent",
+    mode: "kraken",
     phase: "build",
     ...partial,
   };

@@ -1,5 +1,5 @@
 /**
- * phase — work phase orthogonal to dispatch mode (agent/council/zelari).
+ * phase — work phase orthogonal to dispatch mode (kraken/council/zelari).
  *
  *   plan  — explore + design only; no project-file writes (plan artifacts ok)
  *   build — full tools; implement (optionally from an existing plan)

@@ -141,6 +141,20 @@ vi.mock('@zelari/core/skills', () => ({
     priority: 10,
     content: 'identity',
   },
+  KRAKEN_IDENTITY_MODULE: {
+    type: 'base-identity',
+    title: 'Identity',
+    priority: 10,
+    content: 'identity',
+  },
+  KRAKEN_LEAD_PLAYBOOK_MODULE: {
+    type: 'behavior-rules',
+    title: 'Kraken Lead Playbook',
+    priority: 25,
+    content: 'playbook',
+  },
+  buildSystemPromptSplit: () => ({ stable: 'stub single-agent prompt', volatile: '' }),
+  systemMessagesFromSplit: (s) => (s.stable ? [{ role: 'system', content: s.stable }] : []),
   registerCustomTool: () => {},
   cliToolToEnhanced: () => ({ name: 'x', description: 'x', category: 'core', parameters: {}, execute: () => '' }),
   // v1.7.0 (agy audit L1): language-policy helpers. The real implementation

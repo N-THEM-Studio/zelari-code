@@ -1,7 +1,8 @@
 export type Role = "user" | "assistant" | "system" | "tool";
 
 /** Mirrors CLI shift+tab modes. */
-export type DispatchMode = "agent" | "council" | "zelari";
+/** Mirrors CLI shift+tab modes. `agent` is a legacy alias of `kraken`. */
+export type DispatchMode = "kraken" | "council" | "zelari";
 
 /** Mirrors CLI /plan /build phases. */
 export type WorkPhase = "plan" | "build";

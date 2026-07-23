@@ -24,6 +24,8 @@ import {
 import { handleCacheStats } from '../slashHandlers/cache.js';
 import { handleIndexBuild, handleIndexStatus } from '../slashHandlers/semantic.js';
 import { nextMode, describeMode } from '../mode.js';
+import { formatKrakenRadioStatus } from '../tools/krakenRadio.js';
+import type { ChatMode } from '../components/StatusBar.js';
 import { handleCompact } from '../slashHandlers/transcript.js';
 import { handleUpdateCheck, handleUpdatePerform } from '../slashHandlers/updater.js';
 import { handlePluginsList, handlePluginsInstall } from '../slashHandlers/plugins.js';
@@ -95,18 +97,18 @@ export interface SlashDispatchParams {
   /** v1.0: dispatch an autonomous Zelari mission (multi-run council loop). */
   dispatchZelariPrompt: (text: string) => Promise<void>;
   /**
-   * v0.7.9: dispatch mode for free-form (non-slash) prompts. 'agent' routes
+   * v0.7.9: dispatch mode for free-form (non-slash) prompts. 'kraken' routes
    * to dispatchPrompt (single LLM turn), 'council' to dispatchCouncilPrompt
    * (6-member pipeline), 'zelari' to dispatchZelariPrompt (autonomous mission).
    * Toggled from the App with shift+tab.
    */
-  mode?: 'agent' | 'council' | 'zelari';
+  mode?: ChatMode;
   /**
    * Setter for the dispatch mode — lets `/mode` change it (a terminal-
    * independent alternative to shift+tab). Same setter the App's shift+tab
    * handler uses.
    */
-  setMode?: React.Dispatch<React.SetStateAction<'agent' | 'council' | 'zelari'>>;
+  setMode?: React.Dispatch<React.SetStateAction<ChatMode>>;
   /**
    * v0.7.10: opens the interactive SelectList in the App (for /provider and
    * /model pickers). When absent, the handlers fall back to text summaries.
@@ -139,7 +141,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     setMessages, setInput, setBusy, setSessionId, setSessionActive, setProviderConfig,
     activeProviderSpec, activeModel, providerDefaults,
     harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt, dispatchZelariPrompt,
-    mode = 'agent', setMode,
+    mode = 'kraken', setMode,
   } = params;
 
   return useCallback(async (value: string): Promise<void> => {
@@ -537,6 +539,13 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     }
 
     // ── Plan / build phase (orthogonal to dispatch mode) ──
+    if (result.kind === 'kraken_status') {
+      const sid = (result.targetSessionId || sessionId || 'default').trim();
+      const cwd = process.cwd();
+      appendSystem(setMessages, formatKrakenRadioStatus(cwd, sid));
+      return;
+    }
+
     if (result.kind === 'phase_set' && result.phaseTarget) {
       const { setPhase } = await import('../phaseState.js');
       const { describePhase } = await import('../phase.js');

@@ -175,7 +175,7 @@ export function buildSystemPromptSplit(
     aiConfig,
     workspaceContext,
     ragContext,
-    mode = 'council',
+    mode = 'council', // 'kraken' | 'council' (| legacy 'agent')
     projectInstructions,
     includeWorkspaceInPrompt = true,
     durableStateContext,
@@ -267,7 +267,7 @@ export function buildSystemPromptSplit(
  * Prefers {@link buildSystemPromptSplit} and concatenates stable + volatile
  * for backward compatibility with callers that expect a single string.
  *
- * @param options.mode - \`agent\` (default for CLI single-agent) uses the lean
+ * @param options.mode - \`kraken\` (alias \`agent\`; default single-harness) uses the lean
  *   coding pack; \`council\` keeps collaboration + clarification modules.
  * @param options.projectInstructions - optional AGENTS.md / CLAUDE.md body.
  * @param options.includeWorkspaceInPrompt - when false, skip embedding

@@ -225,7 +225,7 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 | `/rollback [id\|latest]` | Restore a checkpoint (revert / restore files atomically) |
 | `/index` | Build / refresh the semantic search index |
 
-**TUI:** `shift+tab` cycles **agent** → **council** → **zelari** mode for free-form prompts. Use `/mode` when the terminal captures shift+tab. Work **phase** is orthogonal: `/plan` (no project writes) vs `/build` (full tools) — same axes as Desktop Mode / Phase bars.
+**TUI:** `shift+tab` cycles **kraken** → **council** → **zelari** mode for free-form prompts. Use `/mode` when the terminal captures shift+tab. Work **phase** is orthogonal: `/plan` (no project writes) vs `/build` (full tools) — same axes as Desktop Mode / Phase bars.
 
 ## Headless Mode
 
@@ -234,10 +234,10 @@ Run a single task without the TUI (CI/scripts/Desktop):
 ```bash
 zelari-code --headless --task "Explain src/cli/main.ts" --output plain
 zelari-code --headless --task "Design a REST API" --council --output json
-zelari-code --headless --mode agent --phase plan --task "Outline the change"
+zelari-code --headless --mode kraken --phase plan --task "Outline the change"
 ```
 
-Useful flags: `--mode agent|council|zelari`, `--phase plan|build`, `--provider`, `--model`, `--history-file` (multi-turn Desktop). See **[docs/GUIDA.md](./docs/GUIDA.md#modalità-headless-ciscript)** for exit codes and config helpers (`--print-config`, MCP, SSH).
+Useful flags: `--mode kraken|council|zelari (agent=alias)`, `--phase plan|build`, `--provider`, `--model`, `--history-file` (multi-turn Desktop). See **[docs/GUIDA.md](./docs/GUIDA.md#modalità-headless-ciscript)** for exit codes and config helpers (`--print-config`, MCP, SSH).
 
 ## Self-Update
 

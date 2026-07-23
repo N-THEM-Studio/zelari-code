@@ -192,10 +192,10 @@ Due assi indipendenti:
 | Mode × Phase | Tipico uso |
 |--------------|------------|
 | agent + plan | Esplora/progetta senza scrivere sul progetto |
-| agent + build | **Implementer di default** — tool completi |
+| kraken + build | **Implementer di default** — tool completi (alias legacy: agent) |
 | council + plan / design-phase | Piano e artifact in `.zelari/` (ruolo principale del multi-agente) |
 | council + build / implementation | Soft-gate: di default resta in design-phase; Lucifero implementa solo con `ZELARI_COUNCIL_CAN_BUILD=1` |
-| zelari | Missione: **design@council → build@agent** fino a completion |
+| zelari | Missione: **design@council → build@kraken** fino a completion |
 
 > **Esperimento (branch `experiment/plan-multiagent-build-agent`):** multi-agente = planning; agent singolo = build. Vedi variabili sotto.
 
@@ -248,7 +248,7 @@ La terza modalità (`⚡ zelari`) trasforma **un prompt libero** in una **missio
 2. Zelari costruisce un **mission brief** (intent, stack inferito, deliverable, assunzioni, out-of-scope, slice MVP) e lo mostra in chat.
 3. Confermi con `ok` (o imposti `ZELARI_MISSION_AUTO=1` per l'avvio automatico).
 4. Il loop gira: per i progetti greenfield prima **design-phase**, poi **implementation** a ripetizione. Tra un'iterazione e l'altra viene re-iniettato solo un contesto compatto (brief + hit di memoria), mai l'intero transcript.
-5. La missione termina con **successo** quando `completion.ok` è verde sullo slice MVP, oppure si **ferma** al raggiungimento del budget di **implementazioni** (`ZELARI_MISSION_MAX_ITER`, default 6). La **design-phase** iniziale (se prevista dal brief) è **fuori budget** e non consuma iterazioni. **Default esperimento:** le slice di **implementation** usano l’**agente singolo** (`build@agent`); la design-phase resta sul council. Con `ZELARI_BUILD_VIA_AGENT=0` (legacy) la prima implementation usa il council completo e dalle **implementation 2+** il roster è ridotto a **Minosse + Lucifero**. Stato salvato in `.zelari/mission-state.json`.
+5. La missione termina con **successo** quando `completion.ok` è verde sullo slice MVP, oppure si **ferma** al raggiungimento del budget di **implementazioni** (`ZELARI_MISSION_MAX_ITER`, default 6). La **design-phase** iniziale (se prevista dal brief) è **fuori budget** e non consuma iterazioni. **Default esperimento:** le slice di **implementation** usano l’**agente singolo** (`build@kraken`); la design-phase resta sul council. Con `ZELARI_BUILD_VIA_AGENT=0` (legacy) la prima implementation usa il council completo e dalle **implementation 2+** il roster è ridotto a **Minosse + Lucifero**. Stato salvato in `.zelari/mission-state.json`.
 
 **Variabili:**
 
@@ -327,7 +327,7 @@ zelari-code --headless --task "Progetta API REST per todo" --council --output js
   | jq 'select(.type=="message_delta") | .delta'
 
 # Plan-only (niente mutazioni)
-zelari-code --headless --mode agent --phase plan --task "Outline the refactor"
+zelari-code --headless --mode kraken --phase plan --task "Outline the refactor"
 
 # Provider esplicito (utile senza wizard/config)
 OPENAI_API_KEY=sk-... zelari-code --headless \
@@ -1200,6 +1200,28 @@ ZELARI_SHELL="C:\Program Files\Git\bin\bash.exe" zelari-code
 Vedi [MIGRATION.md](../MIGRATION.md) e `docs/decisions/0002-publish-zelari-core-to-npm.md` per `@zelari/core` e Trusted Publishing.
 
 ---
+
+
+
+## Kraken (super-agent) — tentacoli e env
+
+Il mode default **kraken** (ex `agent`) è un lead che spawna sub-agent via tool `task`.
+
+| Env / comando | Effetto |
+|---------------|---------|
+| `ZELARI_KRAKEN_MAX_TASK_SPAWNS` | Cap spawn `task` per turno parent (default 6); reset a ogni messaggio utente |
+| `ZELARI_KRAKEN_SUB_MODEL` | Modello economico per tentacoli explore/verify |
+| `ZELARI_KRAKEN_EXPLORE_MODEL` / `ZELARI_KRAKEN_VERIFY_MODEL` / `ZELARI_KRAKEN_GENERAL_MODEL` | Override per tipo |
+| `ZELARI_KRAKEN_GENERAL_USES_SUB=1` | Fa usare SUB_MODEL anche a general |
+| `ZELARI_KRAKEN_WORKTREE=1` | Isola `task` general in git worktree sotto `.zelari/worktrees/` |
+| `ZELARI_KRAKEN_WORKTREE_KEEP=1` | Non cancella worktree/branch a fine tentacolo (merge manuale) |
+| `ZELARI_KRAKEN_WORKTREE_AUTO_MERGE` | Previsto in modulo worktree (default on) ma **non ancora collegato** in `taskTool` — vedi `HANDOFF-kraken.md` |
+| `/kraken [sessionId]` | Mostra radio tentacoli (`.zelari/radio/<session>.jsonl`) |
+
+Dopo un `task` general il risultato include un **verify-hint**: il parent deve verificare (`bash` o `task` verify) prima di dichiarare done.
+
+> Gap noti (non bloccanti per il rename): live tracker UI (`krakenLive.ts`) non cablato; auto-merge worktree non invocato da `taskTool`. Dettaglio in [HANDOFF-kraken.md](../HANDOFF-kraken.md).
+
 
 ## Link utili
 

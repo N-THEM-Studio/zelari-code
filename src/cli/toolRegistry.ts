@@ -327,12 +327,16 @@ export function createBuiltinToolRegistry(
     !options.planMode;
   if (enableTask) {
     const taskTool = createTaskTool({
-      createSubAgentContext: async ({ agent }) => {
+      createSubAgentContext: async ({ agent, cwd: subCwd }) => {
         const cfg = await providerFromEnv();
         if (!cfg) return null;
+        const { resolveKrakenSubModel } = await import('./tools/krakenModel.js');
+        const model = resolveKrakenSubModel(agent, cfg.model);
+        const subCfg = { ...cfg, model };
         const subProfile = taskAgentToProfile(agent);
+        const subRoot = subCwd || root;
         const { registry: subRegistry } = createBuiltinToolRegistry({
-          root,
+          root: subRoot,
           audit,
           sessionId,
           profile: subProfile,
@@ -343,8 +347,8 @@ export function createBuiltinToolRegistry(
           permissionPolicy: defaultPermissionPolicy({ auto: true }),
         });
         return {
-          providerStream: openaiCompatibleProvider(cfg),
-          model: cfg.model,
+          providerStream: openaiCompatibleProvider(subCfg),
+          model,
           provider: 'openai-compatible',
           registry: subRegistry,
           tools: subRegistry.toOpenAITools().map((t) => ({
@@ -353,6 +357,7 @@ export function createBuiltinToolRegistry(
             parameters: t.function.parameters,
           })),
           agent,
+          cwd: subRoot,
         };
       },
     });

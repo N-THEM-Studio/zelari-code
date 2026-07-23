@@ -2,7 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { createTaskTool, type SubAgentContext, type SubAgentHarness } from '../../src/cli/tools/taskTool.js';
+import {
+  createTaskTool,
+  buildTaskUserPrompt,
+  maxTaskSpawnsPerTurn,
+  type SubAgentContext,
+  type SubAgentHarness,
+} from '../../src/cli/tools/taskTool.js';
 import { createBuiltinToolRegistry } from '../../src/cli/toolRegistry.js';
 import type { BrainEvent } from '@zelari/core/shared/events';
 import type { ToolContext } from '@zelari/core/harness/tools/toolTypes';
@@ -173,5 +179,43 @@ describe('createBuiltinToolRegistry — task tool + readOnly isolation', () => {
   it('respects enableTask:false in the full registry', () => {
     const { tools } = createBuiltinToolRegistry({ root, enableTask: false });
     expect(tools.map((t) => t.name)).not.toContain('task');
+  });
+});
+
+
+describe('Kraken task contract helpers', () => {
+  it('buildTaskUserPrompt appends scope and acceptance', () => {
+    const text = buildTaskUserPrompt({
+      prompt: 'Fix the parser',
+      scope: ['src/parser.ts'],
+      acceptance: ['typecheck passes'],
+    });
+    expect(text).toContain('Fix the parser');
+    expect(text).toMatch(/## Scope/);
+    expect(text).toContain('src/parser.ts');
+    expect(text).toMatch(/## Acceptance/);
+    expect(text).toContain('typecheck passes');
+  });
+
+  it('maxTaskSpawnsPerTurn defaults to 6 and honors env', () => {
+    const prev = process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS;
+    delete process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS;
+    expect(maxTaskSpawnsPerTurn()).toBe(6);
+    process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS = '3';
+    expect(maxTaskSpawnsPerTurn()).toBe(3);
+    if (prev === undefined) delete process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS;
+    else process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS = prev;
+  });
+
+  it('accepts scope + acceptance in schema', () => {
+    const tool = createTaskTool({ createSubAgentContext: async () => null });
+    expect(
+      tool.inputSchema.safeParse({
+        description: 'slice',
+        prompt: 'do it',
+        scope: ['src/a.ts'],
+        acceptance: ['tests green'],
+      }).success,
+    ).toBe(true);
   });
 });

@@ -66,7 +66,7 @@ describe('loadDurableContext', () => {
     const store = new FileDurableStateStore();
     await store.init(root);
     await store.commit({
-      mode: 'agent',
+      mode: "kraken",
       label: 'x',
       verification: { ok: true, ran: true },
       force: true,
@@ -83,7 +83,7 @@ describe('loadDurableContext', () => {
     const store = new FileDurableStateStore();
     await store.init(root);
     await store.commit({
-      mode: 'agent',
+      mode: "kraken",
       label: 'first',
       verification: { ok: true, ran: true },
       force: true,
@@ -94,7 +94,7 @@ describe('loadDurableContext', () => {
     clearDurableContextCache();
     const a = await loadDurableContext(root, { cacheMs: 60_000 });
     await store.commit({
-      mode: 'agent',
+      mode: "kraken",
       label: 'second',
       verification: { ok: true, ran: true },
       force: true,

@@ -512,7 +512,7 @@ export function SettingsView({
                       setMode(e.target.value as DispatchMode)
                     }
                   >
-                    <option value="agent">Agent — single LLM</option>
+                    <option value="kraken">Kraken — super-agent</option>
                     <option value="council">Council — 6 members</option>
                     <option value="zelari">Zelari — mission loop</option>
                   </select>

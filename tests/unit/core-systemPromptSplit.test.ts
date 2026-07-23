@@ -25,7 +25,7 @@ describe('buildSystemPromptSplit', () => {
     const split = buildSystemPromptSplit(agent, {
       tools,
       toolNames: [],
-      mode: 'agent',
+      mode: 'kraken',
       aiConfig: {
         enabledSkills: [],
         enabledTools: [],
@@ -51,7 +51,7 @@ describe('buildSystemPromptSplit', () => {
     const baseOpts = {
       tools,
       toolNames: [] as string[],
-      mode: 'agent' as const,
+      mode: 'kraken' as const,
       aiConfig: {
         enabledSkills: [] as string[],
         enabledTools: [] as string[],
@@ -86,7 +86,7 @@ describe('buildSystemPromptSplit', () => {
     const full = buildSystemPrompt(agent, {
       tools,
       toolNames: [],
-      mode: 'agent',
+      mode: 'kraken',
       workspaceContext: 'VOL_WS',
       aiConfig: {
         enabledSkills: [],

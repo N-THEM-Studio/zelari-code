@@ -19,7 +19,8 @@ import {
 } from "./workspaceSummary.js";
 import { buildLessonsSummary } from "./buildLessonsSummary.js";
 
-export type ComposeMode = "agent" | "council" | "zelari";
+/** Dispatch mode for context composition. `agent` kept as legacy alias of `kraken`. */
+export type ComposeMode = "kraken" | "council" | "zelari" | "agent";
 
 export interface ComposeProjectContextInput {
   mode: ComposeMode;
@@ -152,7 +153,7 @@ export function composeProjectContext(
   });
   const hint = buildZelariReadHint(cwd);
   const designIndex =
-    input.mode === "agent"
+    input.mode === "kraken" || input.mode === "agent"
       ? buildDesignIndex(cwd, designIndexMax)
       : // Council already writes design; still give a short index, not full docs.
         buildDesignIndex(cwd, designIndexMax);
@@ -202,7 +203,7 @@ export function composeProjectContext(
     (process.env.ZELARI_STATE !== "0" &&
       (input.mode === "council" ||
         input.mode === "zelari" ||
-        input.mode === "agent"));
+        input.mode === "kraken" || input.mode === "agent"));
   let durableRaw = input.durableState?.trim() ?? "";
   // Sync fallback only when async loadDurableContext was not used upstream.
   if (!durableRaw && wantDurable) {

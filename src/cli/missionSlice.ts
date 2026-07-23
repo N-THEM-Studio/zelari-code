@@ -1,6 +1,6 @@
 /**
  * missionSlice — shared helpers for Zelari mission implementation slices
- * that run on the **single-agent** harness (experiment: plan@council, build@agent).
+ * that run on the **single-agent** harness (experiment: plan@council, build@kraken).
  *
  * Pure counting helpers are unit-tested; the harness runner is used by
  * headless + TUI wiring.
@@ -13,7 +13,8 @@ import type { BrainEvent } from '@zelari/core/events';
 import {
   buildSystemPrompt,
   getAllTools,
-  SINGLE_AGENT_IDENTITY_MODULE,
+  KRAKEN_IDENTITY_MODULE,
+  KRAKEN_LEAD_PLAYBOOK_MODULE,
   buildLanguagePolicyModuleFor,
 } from '@zelari/core/skills';
 import {
@@ -194,7 +195,7 @@ export async function runAgentMissionSlice(
       {
         tools: getAllTools(),
         toolNames,
-        mode: 'agent',
+        mode: 'kraken',
         projectInstructions: deps.projectInstructions || undefined,
         workspaceContext: deps.workspaceContext || undefined,
         ragContext: undefined,
@@ -202,7 +203,8 @@ export async function runAgentMissionSlice(
           enabledSkills: [],
           enabledTools: toolNames,
           customPromptModules: [
-            SINGLE_AGENT_IDENTITY_MODULE,
+            KRAKEN_IDENTITY_MODULE,
+            KRAKEN_LEAD_PLAYBOOK_MODULE,
             {
               type: 'language-policy',
               title: 'Response Language',
@@ -335,7 +337,7 @@ export async function runAgentMissionSlice(
     !errored
   ) {
     deps.emit?.(
-      '[zelari] build@agent: 0 write — forcing implementation retry',
+      '[zelari] build@kraken: 0 write — forcing implementation retry',
     );
     const retryPrompt = buildImplementationWriteRetryPrompt(deps.slicePrompt);
     const retryMessages: AgentMessage[] = [
@@ -395,7 +397,7 @@ export async function runAgentMissionSlice(
   if (totalWrites === 0) {
     if (completionOk) {
       deps.emit?.(
-        '[zelari] build@agent: completion.ok overridden — 0 project writes (not done)',
+        '[zelari] build@kraken: completion.ok overridden — 0 project writes (not done)',
       );
     }
     completionOk = false;

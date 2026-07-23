@@ -214,7 +214,7 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
           return;
         }
         const prompt = String(body.prompt ?? body.task ?? '').trim();
-        const mode = String(body.mode ?? 'agent');
+        const mode = String(body.mode ?? 'kraken');
         const phase = String(body.phase ?? 'build');
         const cwdArg = body.cwd != null ? String(body.cwd) : body.projectId != null ? String(body.projectId) : null;
         const resolved = resolveProjectPath(projects, cwdArg);

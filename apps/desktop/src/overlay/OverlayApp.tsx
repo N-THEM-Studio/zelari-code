@@ -56,16 +56,18 @@ function getSpeechRecognitionCtor():
 function readDefaults(): { mode: DispatchMode; phase: WorkPhase } {
   try {
     const raw = localStorage.getItem(LS_DEFAULTS);
-    if (!raw) return { mode: "agent", phase: "build" };
+    if (!raw) return { mode: "kraken", phase: "build" };
     const j = JSON.parse(raw) as { mode?: string; phase?: string };
     const mode =
-      j.mode === "council" || j.mode === "zelari" || j.mode === "agent"
+      j.mode === "council" || j.mode === "zelari" || j.mode === "kraken"
         ? j.mode
-        : "agent";
+        : j.mode === "agent"
+          ? "kraken"
+          : "kraken";
     const phase = j.phase === "plan" ? "plan" : "build";
     return { mode, phase };
   } catch {
-    return { mode: "agent", phase: "build" };
+    return { mode: "kraken", phase: "build" };
   }
 }
 
@@ -515,7 +517,7 @@ export function OverlayApp() {
           aria-label="Mode"
           onChange={(e) => onModeChange(e.target.value as DispatchMode)}
         >
-          <option value="agent">agent</option>
+          <option value="kraken">kraken</option>
           <option value="council">council</option>
           <option value="zelari">zelari</option>
         </select>

@@ -18,13 +18,15 @@ import { resolveFailoverStream } from "../crossProviderFailover.js";
 import { resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
 import { PROVIDERS } from "../keyStore.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
+import { resetTaskSpawnCount } from "../tools/taskTool.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
 import { defaultPermissionPolicy } from "../safety/toolPermissions.js";
 import {
   buildSystemPromptSplit,
   systemMessagesFromSplit,
   getAllTools,
-  SINGLE_AGENT_IDENTITY_MODULE,
+  KRAKEN_IDENTITY_MODULE,
+  KRAKEN_LEAD_PLAYBOOK_MODULE,
   buildLanguagePolicyModuleFor,
 } from "@zelari/core/skills";
 import { hashStablePrompt } from "../state/fileStateStore.js";
@@ -177,6 +179,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         requiredTools?: readonly string[];
       },
     ) => {
+      // Kraken: fresh tentacle spawn budget each parent user turn.
+      resetTaskSpawnCount();
       // v0.4.3 audit fix: provider resolution + harness construction now
       // live INSIDE the try block. Previously, throws from providerFromEnv,
       // resolveFailoverStream, or createBuiltinToolRegistry happened
@@ -334,7 +338,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           );
           const durableState = await loadDurableContext(cwd);
           const composed = composeProjectContext({
-            mode: "agent",
+            mode: 'kraken',
             cwd,
             userMessage: userText,
             includeLessons: false,
@@ -440,7 +444,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // directives (anti-confabulation, act-don't-describe, output self-check,
         // clarification protocol, safety, formatting, tool-usage) to the 90%
         // path that previously got an inline array and missed them all. The
-        // SINGLE_AGENT_IDENTITY_MODULE overrides the council-flavored
+        // KRAKEN_IDENTITY_MODULE overrides the council-flavored
         // 'base-identity' module so the persona is "Zelari Code in the terminal",
         // not "member of an AI Council".
         const planPhaseBlock =
@@ -522,20 +526,21 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // v1.7.0: detect the user's language and inject the language-policy
           // module so the agent replies in the user's language. Honors
           // ZELARI_RESPONSE_LANG override (auto|it|en|fr|...). The module is
-          // appended to customPromptModules alongside SINGLE_AGENT_IDENTITY_MODULE
+          // appended to customPromptModules alongside KRAKEN_IDENTITY_MODULE + playbook
           // — it lives in priority space (5) so it sorts BEFORE the base-identity
           // module (10): the model sets language scaffolding before reading role text.
           const languageModule = buildLanguagePolicyModuleFor(userText);
           const split = buildSystemPromptSplit(singleAgentRole, {
             tools: getAllTools(),
             toolNames: toolListNames,
-            mode: "agent",
+            mode: 'kraken',
             projectInstructions: composedInstructions || undefined,
             aiConfig: {
               enabledSkills: [],
               enabledTools: toolListNames,
               customPromptModules: [
-                SINGLE_AGENT_IDENTITY_MODULE,
+                KRAKEN_IDENTITY_MODULE,
+                KRAKEN_LEAD_PLAYBOOK_MODULE,
                 languageModule,
               ],
               agentSkillConfigs: [],
@@ -552,7 +557,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // runnable even if the builder or catalog is unavailable.
           const languageModule = buildLanguagePolicyModuleFor(userText);
           const fallback = [
-            SINGLE_AGENT_IDENTITY_MODULE.content,
+            KRAKEN_IDENTITY_MODULE.content,
             languageModule.content,
             shellContextBlock,
             "# Available Tools",
@@ -1153,7 +1158,7 @@ async function dispatchCouncilPromptImpl(
         "[council] build soft-gate: implementation disabled for free-form council " +
           "(experiment: multi-agent = plan). Forced design-phase + plan tools. " +
           "Set ZELARI_COUNCIL_CAN_BUILD=1 to let Lucifero implement, " +
-          "or use mode agent/zelari for on-disk work.",
+          "or use mode kraken/zelari for on-disk work.",
         Date.now(),
       );
     }
@@ -1830,7 +1835,7 @@ async function runZelariMissionInTui(
   const buildViaAgent = shouldBuildViaAgent();
   if (buildViaAgent) {
     emit(
-      "[zelari] policy: design@council · build@agent (ZELARI_BUILD_VIA_AGENT; set=0 for legacy council impl)",
+      "[zelari] policy: design@council · build@kraken (ZELARI_BUILD_VIA_AGENT; set=0 for legacy council impl)",
     );
   }
 
@@ -1865,7 +1870,7 @@ async function runZelariMissionInTui(
           };
         }
 
-        // build@agent implementation slice
+        // build@kraken implementation slice
         const { runAgentMissionSlice } = await import("../missionSlice.js");
         // createBuiltinToolRegistry, openaiCompatibleProvider, providerFromEnv
         // already imported at module top.
@@ -1886,7 +1891,7 @@ async function runZelariMissionInTui(
         const envConfig = await providerFromEnv();
         if (!envConfig) {
           emit(
-            "[zelari] build@agent aborted: missing API key for active provider",
+            "[zelari] build@kraken aborted: missing API key for active provider",
           );
           return { completionOk: false, ran: false };
         }
@@ -1946,7 +1951,7 @@ async function runZelariMissionInTui(
                   (event as { toolName?: string }).toolName ?? "tool";
                 appendSystem(
                   setMessages,
-                  `[build@agent] → ${name}`,
+                  `[build@kraken] → ${name}`,
                   Date.now(),
                 );
               }
