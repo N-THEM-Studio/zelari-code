@@ -15,7 +15,14 @@ export type KrakenRadioKind =
   | 'progress'
   | 'done'
   | 'error'
-  | 'verify_hint';
+  | 'verify_hint'
+  // Graph engine (F3+) events — one node's lifecycle within a Kraken graph run.
+  | 'node_start'
+  | 'node_end'
+  | 'node_retry'
+  | 'node_fix'
+  | 'graph_converged'
+  | 'graph_failed';
 
 export interface KrakenRadioEvent {
   ts: string;

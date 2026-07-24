@@ -287,6 +287,12 @@ export interface TentacleSuccess {
   footer: string;
   /** Git worktree path if one was used, else null. */
   worktreePath: string | null;
+  /**
+   * Full worktree handle when one was created (regardless of deferMerge),
+   * else null. The graph executor (F3) uses this to merge/cleanup explicitly
+   * when `deferMerge` was requested.
+   */
+  worktreeHandle: WorktreeHandle | null;
 }
 
 /** Failed tentacle run. `error` is the exact message previously given to typedErr. */
@@ -313,6 +319,15 @@ export interface RunTentacleOptions {
   parentCwd: string;
   /** Session id used for radio JSONL correlation. */
   sessionId: string;
+  /**
+   * When true and a worktree was created for this tentacle, skip the
+   * auto-merge/cleanup step entirely and return the worktree handle so the
+   * caller (graph executor) can merge multiple tentacles' branches
+   * sequentially instead of racing concurrent merges into the same parent
+   * HEAD. Ignored when no worktree is used. Default false (current `task`
+   * tool behavior: merge immediately).
+   */
+  deferMerge?: boolean;
 }
 
 /**
@@ -468,7 +483,12 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
 
   const kept = worktree ? shouldKeepWorktree() : false;
   let footer = '';
-  if (worktree) {
+  if (worktree && opts.deferMerge && !kept) {
+    // Graph executor (F3) owns merge ordering — leave the worktree + branch
+    // in place; the caller merges (sequentially, across tentacles) and
+    // cleans up via the returned worktreeHandle.
+    footer += `\nworktree deferred: branch=${worktree.branch} path=${worktree.path} (executor merges)`;
+  } else if (worktree) {
     // G2: before cleanup, squash-merge the tentacle branch into the parent
     // HEAD so the sub-agent's edits survive. Without this the worktree is
     // removed and all edits are lost (the original gap).
@@ -525,6 +545,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     result,
     footer,
     worktreePath: worktree?.path ?? null,
+    worktreeHandle: worktree,
   };
 }
 
