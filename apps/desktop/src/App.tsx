@@ -25,6 +25,7 @@ import { MessageContent } from "./components/MessageContent";
 import { CopyButton } from "./components/CopyButton";
 import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
+import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
 import { RunActivity } from "./components/RunActivity";
@@ -335,6 +336,7 @@ export default function App() {
   const [running, setRunning] = useState(false);
   const [mode, setMode] = useState<DispatchMode>(defaults.mode);
   const [phase, setPhase] = useState<WorkPhase>(defaults.phase);
+  const [krakenGraph, setKrakenGraph] = useState(false);
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [cli, setCli] = useState<CliStatus | null>(null);
@@ -1519,7 +1521,7 @@ export default function App() {
     setDraft("");
     setAttachments([]);
     setRunning(true);
-    setStatusLine(`${mode} · ${phase} running…`);
+    setStatusLine(krakenGraph ? "kraken graph running…" : `${mode} · ${phase} running…`);
 
     setConversations((prev) =>
       prev.map((c) => {
@@ -1566,6 +1568,7 @@ export default function App() {
         // Replay rolling history so the headless agent/council keeps multi-turn
         // context (answers "procedi" / "sì" instead of amnesia).
         history: historyForRun,
+        krakenGraph: krakenGraph || undefined,
       });
     } catch (e) {
       setRunning(false);
@@ -2005,13 +2008,18 @@ export default function App() {
           <div className="topbar-right">
             <ModeToggle
               value={mode}
-              disabled={running}
+              disabled={running || krakenGraph}
               onChange={onModeChange}
             />
             <PhaseToggle
               value={phase}
               disabled={running}
               onChange={onPhaseChange}
+            />
+            <KrakenGraphToggle
+              value={krakenGraph}
+              disabled={running}
+              onChange={setKrakenGraph}
             />
             <div className="export-menu">
               <button

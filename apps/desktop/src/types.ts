@@ -105,6 +105,12 @@ export interface RunTaskArgs {
    * context across the per-message process boundary. Built from the
    * `history_snapshot` events emitted by the CLI. */
   history?: AgentMessageLite[];
+  /**
+   * When true, the prompt is planned + executed as a Kraken task graph
+   * (`--kraken-graph <prompt>`) instead of a normal `--task` dispatch —
+   * bypasses `mode` entirely. @since Kraken graph engine F6
+   */
+  krakenGraph?: boolean;
 }
 
 /**

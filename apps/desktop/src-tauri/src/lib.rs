@@ -1849,6 +1849,10 @@ struct RunTaskArgs {
     /// across the per-message process boundary. None/empty = stateless.
     #[serde(default)]
     history: Option<String>,
+    /// When true, dispatch via `--kraken-graph <prompt>` (plan + execute a
+    /// parallel task DAG) instead of `--task <prompt>` — bypasses `mode`.
+    #[serde(default)]
+    kraken_graph: bool,
 }
 
 fn default_mode() -> String {
@@ -1997,6 +2001,7 @@ fn run_task(
     let model = args.model;
     let cwd = args.cwd;
     let history = args.history;
+    let kraken_graph = args.kraken_graph;
 
     thread::spawn(move || {
         let result = spawn_headless(
@@ -2011,6 +2016,7 @@ fn run_task(
             model.as_deref(),
             cwd.as_deref(),
             history.as_deref(),
+            kraken_graph,
         );
 
         let (exit_code, cancelled) = match result {
@@ -2055,13 +2061,21 @@ fn spawn_headless(
     model: Option<&str>,
     cwd: Option<&str>,
     history: Option<&str>,
+    kraken_graph: bool,
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
 
-    cmd.arg("--headless")
-        .arg("--task")
-        .arg(prompt)
-        .arg("--output")
+    cmd.arg("--headless");
+    if kraken_graph {
+        // Plan + execute a Kraken task graph instead of a normal dispatch —
+        // `--kraken-graph` and `--task` are mutually exclusive on the CLI
+        // side (see src/cli/headless.ts); `--mode`/`--phase` are harmless
+        // to still pass, the graph path ignores them.
+        cmd.arg("--kraken-graph").arg(prompt);
+    } else {
+        cmd.arg("--task").arg(prompt);
+    }
+    cmd.arg("--output")
         .arg("json")
         .arg("--mode")
         .arg(mode)
