@@ -328,6 +328,9 @@ export interface RunTentacleOptions {
    * tool behavior: merge immediately).
    */
   deferMerge?: boolean;
+  /** Graph engine (F5): tag the live tentacle entry with its graph/node id. */
+  graphId?: string;
+  nodeId?: string;
 }
 
 /**
@@ -373,6 +376,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     agent,
     description: args.description,
     worktree: worktree?.path ?? null,
+    ...(opts.graphId ? { graphId: opts.graphId } : {}),
+    ...(opts.nodeId ? { nodeId: opts.nodeId } : {}),
   });
 
   let sub: SubAgentContext | null;

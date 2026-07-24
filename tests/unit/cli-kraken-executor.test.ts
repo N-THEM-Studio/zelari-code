@@ -11,6 +11,7 @@ import type {
   WorktreeHandle,
   WorktreeMergeResult,
 } from '../../src/cli/tools/krakenWorktree.js';
+import { resetKrakenGraphLive } from '../../src/cli/kraken/graphStatus.js';
 
 /** Compact node factory (mirrors packages/core/src/kraken/graph.test.ts). */
 function node(id: string, deps: string[] = [], over: Partial<TaskNode> = {}): TaskNode {
@@ -36,6 +37,10 @@ function fakeWorktreeHandle(id: string): WorktreeHandle {
 }
 
 describe('KrakenGraphExecutor', () => {
+  beforeEach(() => {
+    resetKrakenGraphLive();
+  });
+
   describe('parallel wave scheduling', () => {
     it('runs disjoint-scope general nodes concurrently and converges the fixture DAG', async () => {
       let inFlight = 0;

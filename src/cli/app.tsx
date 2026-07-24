@@ -19,6 +19,7 @@ import { useExecutionTimer } from './hooks/useExecutionTimer.js';
 import { shortenCwd } from './utils/paths.js';
 import { formatTodoStatusSummary } from './sessionTodos.js';
 import { formatKrakenLiveSummary } from './tools/krakenLive.js';
+import { formatKrakenGraphSummary } from './kraken/graphStatus.js';
 import '@zelari/core/skills/builtin/debugging';
 import '@zelari/core/skills/builtin/docs';
 import '@zelari/core/skills/builtin/git-ops';
@@ -322,6 +323,7 @@ export function App(): React.ReactElement {
             contextLimit={Number(process.env.ZELARI_CONTEXT_LIMIT) || 200_000}
             todoSummary={formatTodoStatusSummary()}
             krakenLive={formatKrakenLiveSummary() ?? undefined}
+            krakenGraph={formatKrakenGraphSummary() ?? undefined}
           />
         </Box>
         {sidebarOpen && (

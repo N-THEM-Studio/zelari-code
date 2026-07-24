@@ -45,6 +45,8 @@ interface StatusBarProps {
   todoSummary?: string | null;
   /** Kraken live tentacle summary chip (e.g. "tentacles 1↑ 2✓"). @since v1.26.0 */
   krakenLive?: string | null;
+  /** Kraken graph-run summary chip (e.g. "graph 3/8 · 2↑"). @since graph engine F5 */
+  krakenGraph?: string | null;
 }
 
 /**
@@ -79,6 +81,7 @@ export function StatusBar({
   contextLimit = 0,
   todoSummary = null,
   krakenLive = null,
+  krakenGraph = null,
 }: StatusBarProps): React.ReactElement {
   const ctxLabel =
     contextLimit > 0
@@ -149,6 +152,12 @@ export function StatusBar({
         {krakenLive ? (
           <>
             <Text color="magenta">{krakenLive}</Text>
+            <Text dimColor> · </Text>
+          </>
+        ) : null}
+        {krakenGraph ? (
+          <>
+            <Text color="magenta">{krakenGraph}</Text>
             <Text dimColor> · </Text>
           </>
         ) : null}

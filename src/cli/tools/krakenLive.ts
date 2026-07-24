@@ -19,6 +19,9 @@ export interface LiveTentacle {
   worktree?: string | null;
   ok?: boolean;
   detail?: string;
+  /** Graph engine (F5): which graph/node this tentacle belongs to, if any. */
+  graphId?: string;
+  nodeId?: string;
 }
 
 type G = {
@@ -53,6 +56,8 @@ export function krakenTentacleStart(info: {
   description: string;
   model?: string;
   worktree?: string | null;
+  graphId?: string;
+  nodeId?: string;
 }): string {
   const id = nextId();
   const row: LiveTentacle = {
@@ -63,6 +68,8 @@ export function krakenTentacleStart(info: {
     startedAt: Date.now(),
     model: info.model,
     worktree: info.worktree ?? null,
+    ...(info.graphId ? { graphId: info.graphId } : {}),
+    ...(info.nodeId ? { nodeId: info.nodeId } : {}),
   };
   const list = store();
   list.push(row);

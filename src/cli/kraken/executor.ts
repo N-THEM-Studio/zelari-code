@@ -19,12 +19,15 @@
  *   - optionally gates final convergence on `run_backtest` (Level 3) when
  *     `.zelari/world/checks.json` exists and ZELARI_SCHEMA_LOOP != '0'.
  *
- * Explicitly NOT this module's job (deferred to later phases):
- *   - planning a graph from a prompt (F4) or auto-injecting verify nodes —
- *     the executor only executes the graph it's given;
- *   - StatusBar / `/kraken graph` rendering (F5, beyond the radio events
- *     emitted here);
- *   - wiring into any slash command or `useChatTurn` (F6).
+ * Also drives the F5 observability surface: the graph-level live tracker
+ * in `./graphStatus.js` (start/update/end around the scheduling loop, for
+ * the StatusBar "graph x/y · n↑" chip) alongside the `graph_*`/`node_*`
+ * radio events emitted throughout.
+ *
+ * Explicitly NOT this module's job (deferred to F6):
+ *   - planning a graph from a prompt — that's `./planner.js` (F4); the
+ *     executor only executes the graph it's given;
+ *   - wiring into any slash command, headless flag, or `useChatTurn`.
  *
  * @since v0.10.x — Kraken graph engine (F3)
  */
@@ -52,6 +55,11 @@ import {
 } from '../tools/krakenWorktree.js';
 import { appendKrakenRadio } from '../tools/krakenRadio.js';
 import { runBacktest, type BacktestResult } from '../workspace/worldModel.js';
+import {
+  startKrakenGraphLive,
+  updateKrakenGraphLive,
+  endKrakenGraphLive,
+} from './graphStatus.js';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 
@@ -162,6 +170,8 @@ export class KrakenGraphExecutor {
     const maxIterations = Math.max(64, graph.nodes.size * 8);
     let iterations = 0;
 
+    startKrakenGraphLive(graph);
+
     while (!isSettled(graph)) {
       iterations += 1;
       if (iterations > maxIterations) {
@@ -194,6 +204,7 @@ export class KrakenGraphExecutor {
       for (let i = 0; i < wave.length; i++) {
         this.applyResult(graph, wave[i], results[i]);
       }
+      updateKrakenGraphLive(graph);
     }
 
     let backtest: BacktestResult | undefined;
@@ -216,6 +227,7 @@ export class KrakenGraphExecutor {
         ok: false,
       });
     }
+    endKrakenGraphLive(graph, converged);
 
     return {
       graph,
@@ -250,6 +262,8 @@ export class KrakenGraphExecutor {
       // Defer merge for writers so the executor controls merge ordering
       // (Correction 4); explore/verify never create a worktree.
       deferMerge: usesWorktree,
+      graphId: graph.id,
+      nodeId: node.id,
     });
 
     if (res.ok && usesWorktree) {
