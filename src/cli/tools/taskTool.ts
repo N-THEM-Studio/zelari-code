@@ -8,7 +8,14 @@
  *   - Optional git worktree for general when ZELARI_KRAKEN_WORKTREE=1
  *   - Radio JSONL under .zelari/radio/ for parent observability
  *
- * @since v0.7.x · typed agents v1.21.0 · Kraken contracts v1.x
+ * Structure (F2 — Kraken graph engine):
+ *   - `runTentacle()` is the standalone, exported core run (worktree + radio +
+ *     live + harness + merge + footer). It has NO spawn-cap so the graph
+ *     executor can drive many tentacles directly.
+ *   - The `task` tool's `execute` is a thin wrapper that applies the per-turn
+ *     spawn cap and maps the TentacleResult back to typedOk/typedErr.
+ *
+ * @since v0.7.x · typed agents v1.21.0 · Kraken contracts v1.x · graph F2
  */
 
 import { z } from 'zod';
@@ -238,7 +245,7 @@ type TaskArgs = z.infer<typeof TaskArgsSchema>;
  * Run a sub-agent to completion and return the text of its final assistant
  * message (the "conclusion"). Intermediate tool-call turns are discarded.
  */
-async function runSubAgent(
+export async function runSubAgent(
   harness: SubAgentHarness,
 ): Promise<{ result: string; error?: string }> {
   let current = '';
@@ -267,6 +274,260 @@ async function runSubAgent(
   return { result, ...(error ? { error } : {}) };
 }
 
+/** Successful tentacle run (raw conclusion + footer, no `[sub-agent:…]` prefix). */
+export interface TentacleSuccess {
+  ok: true;
+  agent: TaskAgentKind;
+  thoroughness: TaskThoroughness;
+  /** Model actually used by the sub-agent. */
+  model: string;
+  /** Raw sub-agent conclusion (no prefix, no footer). */
+  result: string;
+  /** Worktree + verify-hint footer (leading newline included), or ''. */
+  footer: string;
+  /** Git worktree path if one was used, else null. */
+  worktreePath: string | null;
+}
+
+/** Failed tentacle run. `error` is the exact message previously given to typedErr. */
+export interface TentacleFailure {
+  ok: false;
+  agent: TaskAgentKind;
+  error: string;
+}
+
+export type TentacleResult = TentacleSuccess | TentacleFailure;
+
+/** Inputs for a single tentacle run (shared by the `task` tool and the graph executor). */
+export interface RunTentacleOptions {
+  deps: TaskToolDeps;
+  args: {
+    description: string;
+    prompt: string;
+    scope?: string[];
+    acceptance?: string[];
+  };
+  agent: TaskAgentKind;
+  thoroughness: TaskThoroughness;
+  /** Parent working directory (worktrees are created relative to this). */
+  parentCwd: string;
+  /** Session id used for radio JSONL correlation. */
+  sessionId: string;
+}
+
+/**
+ * Run one Kraken tentacle end-to-end: optional worktree isolation, radio +
+ * live tracking, sub-agent harness run, worktree squash-merge, and footer
+ * assembly. Returns a discriminated result instead of a TypedResult so callers
+ * (the `task` tool wrapper, the graph executor) can react programmatically.
+ *
+ * Deliberately has NO spawn-cap: the per-turn cap is a `task`-tool policy
+ * applied by the wrapper; the graph executor budgets concurrency itself.
+ */
+export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleResult> {
+  const { deps, args, agent, thoroughness, parentCwd, sessionId } = opts;
+  const started = Date.now();
+  const g = globalThis as unknown as SpawnGlobal;
+
+  // Optional worktree isolation for general writers (K7).
+  let worktree: WorktreeHandle | null = null;
+  let effectiveCwd = parentCwd;
+  const wantWt =
+    agent === 'general' &&
+    deps.allowWorktree !== false &&
+    isKrakenWorktreeEnabled();
+  if (wantWt) {
+    try {
+      worktree = await createKrakenWorktree(parentCwd, args.description);
+      if (worktree) effectiveCwd = worktree.path;
+    } catch {
+      worktree = null;
+    }
+  }
+
+  appendKrakenRadio(parentCwd, sessionId, {
+    kind: 'spawn',
+    agent,
+    thoroughness,
+    description: args.description,
+    worktree: worktree?.path ?? null,
+  });
+  // G1 (K10): track the tentacle in-process so StatusBar / Desktop can show
+  // "tentacles 1↑ 2✓" live during the parent turn.
+  const liveId = krakenTentacleStart({
+    agent,
+    description: args.description,
+    worktree: worktree?.path ?? null,
+  });
+
+  let sub: SubAgentContext | null;
+  try {
+    sub = await deps.createSubAgentContext({
+      agent,
+      thoroughness,
+      cwd: effectiveCwd,
+    });
+  } catch (err) {
+    if (worktree) await cleanupKrakenWorktree(worktree);
+    appendKrakenRadio(parentCwd, sessionId, {
+      kind: 'error',
+      agent,
+      description: args.description,
+      detail: err instanceof Error ? err.message : String(err),
+      ok: false,
+      durationMs: Date.now() - started,
+    });
+    krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
+    return {
+      ok: false,
+      agent,
+      error: `task: could not initialize sub-agent — ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+  if (!sub) {
+    if (worktree) await cleanupKrakenWorktree(worktree);
+    appendKrakenRadio(parentCwd, sessionId, {
+      kind: 'error',
+      agent,
+      description: args.description,
+      detail: 'no provider',
+      ok: false,
+      durationMs: Date.now() - started,
+    });
+    krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
+    return {
+      ok: false,
+      agent,
+      error: 'task: no provider configured for the sub-agent (set an API key / run /login).',
+    };
+  }
+
+  const userContent = buildTaskUserPrompt({
+    prompt: args.prompt,
+    scope: args.scope,
+    acceptance: args.acceptance,
+  });
+  const maxToolCalls = maxToolCallsForThoroughness(thoroughness, agent);
+  const runCwd = sub.cwd || effectiveCwd;
+  const config: AgentHarnessConfig = {
+    model: sub.model,
+    provider: sub.provider,
+    messages: [
+      { role: 'system', content: systemPromptForAgent(agent) },
+      { role: 'user', content: userContent },
+    ],
+    tools: sub.tools,
+    toolRegistry: sub.registry,
+    providerStream: sub.providerStream,
+    cwd: runCwd,
+    maxToolCallsPerTurn: maxToolCalls,
+    maxToolLoopIterations: Math.max(12, maxToolCalls + 4),
+  };
+
+  let harness: SubAgentHarness;
+  try {
+    if (deps.harnessFactory) {
+      harness = deps.harnessFactory(config);
+    } else {
+      const { AgentHarness } = await import('@zelari/core/harness');
+      harness = new AgentHarness(config);
+    }
+  } catch (err) {
+    if (worktree) await cleanupKrakenWorktree(worktree);
+    krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
+    return {
+      ok: false,
+      agent,
+      error: `task: failed to start sub-agent — ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+
+  const { result, error } = await runSubAgent(harness);
+  const durationMs = Date.now() - started;
+
+  if (!result) {
+    if (worktree) await cleanupKrakenWorktree(worktree);
+    appendKrakenRadio(parentCwd, sessionId, {
+      kind: 'error',
+      agent,
+      thoroughness,
+      description: args.description,
+      detail: error ?? 'no output',
+      model: sub.model,
+      worktree: worktree?.path ?? null,
+      durationMs,
+      ok: false,
+    });
+    krakenTentacleEnd(liveId, { ok: false, model: sub.model, detail: error, durationMs });
+    return {
+      ok: false,
+      agent,
+      error: `task: sub-agent (${agent}) produced no output${error ? ` (${error})` : ''}.`,
+    };
+  }
+
+  const kept = worktree ? shouldKeepWorktree() : false;
+  let footer = '';
+  if (worktree) {
+    // G2: before cleanup, squash-merge the tentacle branch into the parent
+    // HEAD so the sub-agent's edits survive. Without this the worktree is
+    // removed and all edits are lost (the original gap).
+    let merge: WorktreeMergeResult | null = null;
+    if (!kept && isKrakenWorktreeAutoMergeEnabled()) {
+      try {
+        merge = await mergeKrakenWorktree(
+          worktree,
+          { message: `kraken: merge ${args.description.slice(0, 80)}` },
+        );
+      } catch (err) {
+        merge = {
+          ok: false,
+          merged: false,
+          committed: false,
+          message: `merge threw: ${err instanceof Error ? err.message : String(err)}`,
+        };
+      }
+    } else if (!kept) {
+      // auto-merge disabled — fall back to bare cleanup (old behavior)
+      await cleanupKrakenWorktree(worktree);
+    }
+    footer += `\n${formatWorktreeFooter(worktree, { kept, merge })}`;
+  }
+  if (agent === 'general') {
+    footer += `\n${verifyHintForGeneral(args.acceptance)}`;
+    g.__zelariLastGeneralAt = Date.now();
+  }
+
+  krakenTentacleEnd(liveId, {
+    ok: true,
+    model: sub.model,
+    detail: result.slice(0, 160),
+    durationMs,
+  });
+
+  appendKrakenRadio(parentCwd, sessionId, {
+    kind: agent === 'general' ? 'verify_hint' : 'done',
+    agent,
+    thoroughness,
+    description: args.description,
+    detail: result.slice(0, 240),
+    model: sub.model,
+    worktree: worktree?.path ?? null,
+    durationMs,
+    ok: true,
+  });
+
+  return {
+    ok: true,
+    agent,
+    thoroughness,
+    model: sub.model,
+    result,
+    footer,
+    worktreePath: worktree?.path ?? null,
+  };
+}
+
 /** Build the `task` tool from injected sub-agent deps. */
 export function createTaskTool(
   deps: TaskToolDeps,
@@ -287,7 +548,6 @@ export function createTaskTool(
     execute: async (args, ctx): Promise<TypedResult<{ result: string; agent: string }>> => {
       const agent: TaskAgentKind = args.agent ?? 'explore';
       const thoroughness: TaskThoroughness = args.thoroughness ?? 'medium';
-      const started = Date.now();
       const sessionId = ctx.sessionId || 'default';
       const parentCwd = ctx.cwd || process.cwd();
 
@@ -301,189 +561,24 @@ export function createTaskTool(
         );
       }
 
-      // Optional worktree isolation for general writers (K7).
-      let worktree: WorktreeHandle | null = null;
-      let effectiveCwd = parentCwd;
-      const wantWt =
-        agent === 'general' &&
-        deps.allowWorktree !== false &&
-        isKrakenWorktreeEnabled();
-      if (wantWt) {
-        try {
-          worktree = await createKrakenWorktree(parentCwd, args.description);
-          if (worktree) effectiveCwd = worktree.path;
-        } catch {
-          worktree = null;
-        }
-      }
-
-      appendKrakenRadio(parentCwd, sessionId, {
-        kind: 'spawn',
+      const res = await runTentacle({
+        deps,
+        args: {
+          description: args.description,
+          prompt: args.prompt,
+          scope: args.scope,
+          acceptance: args.acceptance,
+        },
         agent,
         thoroughness,
-        description: args.description,
-        worktree: worktree?.path ?? null,
-      });
-      // G1 (K10): track the tentacle in-process so StatusBar / Desktop can show
-      // "tentacles 1↑ 2✓" live during the parent turn.
-      const liveId = krakenTentacleStart({
-        agent,
-        description: args.description,
-        worktree: worktree?.path ?? null,
+        parentCwd,
+        sessionId,
       });
 
-      let sub: SubAgentContext | null;
-      try {
-        sub = await deps.createSubAgentContext({
-          agent,
-          thoroughness,
-          cwd: effectiveCwd,
-        });
-      } catch (err) {
-        if (worktree) await cleanupKrakenWorktree(worktree);
-        appendKrakenRadio(parentCwd, sessionId, {
-          kind: 'error',
-          agent,
-          description: args.description,
-          detail: err instanceof Error ? err.message : String(err),
-          ok: false,
-          durationMs: Date.now() - started,
-        });
-        krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
-        return typedErr(
-          `task: could not initialize sub-agent — ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-      if (!sub) {
-        if (worktree) await cleanupKrakenWorktree(worktree);
-        appendKrakenRadio(parentCwd, sessionId, {
-          kind: 'error',
-          agent,
-          description: args.description,
-          detail: 'no provider',
-          ok: false,
-          durationMs: Date.now() - started,
-        });
-        krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
-        return typedErr(
-          'task: no provider configured for the sub-agent (set an API key / run /login).',
-        );
-      }
-
-      const userContent = buildTaskUserPrompt({
-        prompt: args.prompt,
-        scope: args.scope,
-        acceptance: args.acceptance,
-      });
-      const maxToolCalls = maxToolCallsForThoroughness(thoroughness, agent);
-      const runCwd = sub.cwd || effectiveCwd;
-      const config: AgentHarnessConfig = {
-        model: sub.model,
-        provider: sub.provider,
-        messages: [
-          { role: 'system', content: systemPromptForAgent(agent) },
-          { role: 'user', content: userContent },
-        ],
-        tools: sub.tools,
-        toolRegistry: sub.registry,
-        providerStream: sub.providerStream,
-        cwd: runCwd,
-        maxToolCallsPerTurn: maxToolCalls,
-        maxToolLoopIterations: Math.max(12, maxToolCalls + 4),
-      };
-
-      let harness: SubAgentHarness;
-      try {
-        if (deps.harnessFactory) {
-          harness = deps.harnessFactory(config);
-        } else {
-          const { AgentHarness } = await import('@zelari/core/harness');
-          harness = new AgentHarness(config);
-        }
-      } catch (err) {
-        if (worktree) await cleanupKrakenWorktree(worktree);
-        krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
-        return typedErr(
-          `task: failed to start sub-agent — ${err instanceof Error ? err.message : String(err)}`,
-        );
-      }
-
-      const { result, error } = await runSubAgent(harness);
-      const durationMs = Date.now() - started;
-
-      if (!result) {
-        if (worktree) await cleanupKrakenWorktree(worktree);
-        appendKrakenRadio(parentCwd, sessionId, {
-          kind: 'error',
-          agent,
-          thoroughness,
-          description: args.description,
-          detail: error ?? 'no output',
-          model: sub.model,
-          worktree: worktree?.path ?? null,
-          durationMs,
-          ok: false,
-        });
-        krakenTentacleEnd(liveId, { ok: false, model: sub.model, detail: error, durationMs });
-        return typedErr(
-          `task: sub-agent (${agent}) produced no output${error ? ` (${error})` : ''}.`,
-        );
-      }
-
-      const kept = worktree ? shouldKeepWorktree() : false;
-      let footer = '';
-      if (worktree) {
-        // G2: before cleanup, squash-merge the tentacle branch into the parent
-        // HEAD so the sub-agent's edits survive. Without this the worktree is
-        // removed and all edits are lost (the original gap).
-        let merge: WorktreeMergeResult | null = null;
-        if (!kept && isKrakenWorktreeAutoMergeEnabled()) {
-          try {
-            merge = await mergeKrakenWorktree(
-              worktree,
-              { message: `kraken: merge ${args.description.slice(0, 80)}` },
-            );
-          } catch (err) {
-            merge = {
-              ok: false,
-              merged: false,
-              committed: false,
-              message: `merge threw: ${err instanceof Error ? err.message : String(err)}`,
-            };
-          }
-        } else if (!kept) {
-          // auto-merge disabled — fall back to bare cleanup (old behavior)
-          await cleanupKrakenWorktree(worktree);
-        }
-        footer += `\n${formatWorktreeFooter(worktree, { kept, merge })}`;
-      }
-      if (agent === 'general') {
-        footer += `\n${verifyHintForGeneral(args.acceptance)}`;
-        g.__zelariLastGeneralAt = Date.now();
-      }
-
-      krakenTentacleEnd(liveId, {
-        ok: true,
-        model: sub.model,
-        detail: result.slice(0, 160),
-        durationMs,
-      });
-
-      appendKrakenRadio(parentCwd, sessionId, {
-        kind: agent === 'general' ? 'verify_hint' : 'done',
-        agent,
-        thoroughness,
-        description: args.description,
-        detail: result.slice(0, 240),
-        model: sub.model,
-        worktree: worktree?.path ?? null,
-        durationMs,
-        ok: true,
-      });
-
+      if (!res.ok) return typedErr(res.error);
       return typedOk({
-        result: `[sub-agent:${agent}/${thoroughness} model=${sub.model}]\n${result}${footer}`,
-        agent,
+        result: `[sub-agent:${res.agent}/${res.thoroughness} model=${res.model}]\n${res.result}${res.footer}`,
+        agent: res.agent,
       });
     },
   };

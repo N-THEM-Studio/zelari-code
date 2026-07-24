@@ -26,3 +26,6 @@ export * from './memory/types.js';
 
 // Durable state contract (file-backed store lives in the CLI)
 export * from './state/index.js';
+
+// Kraken graph engine (pure DAG primitives; orchestration lives in the CLI)
+export * from './kraken/index.js';
