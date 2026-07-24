@@ -134,4 +134,23 @@ describe('parseHeadlessFlags', () => {
     const r = parseHeadlessFlags(['--headless', '--task', 'fix the bug in auth.ts']);
     expect(r.options?.task).toBe('fix the bug in auth.ts');
   });
+
+  it('parses --kraken-graph as an alternative to --task', () => {
+    const r = parseHeadlessFlags(['--headless', '--kraken-graph', 'fix the auth bug']);
+    expect(r.error).toBeUndefined();
+    expect(r.options?.krakenGraph).toBe('fix the auth bug');
+    expect(r.options?.task).toBe('');
+  });
+
+  it('errors when both --task and --kraken-graph are given', () => {
+    const r = parseHeadlessFlags(['--headless', '--task', 'x', '--kraken-graph', 'y']);
+    expect(r.options).toBeNull();
+    expect(r.error).toMatch(/mutually exclusive/);
+  });
+
+  it('errors when neither --task nor --kraken-graph is given', () => {
+    const r = parseHeadlessFlags(['--headless', '--output', 'json']);
+    expect(r.options).toBeNull();
+    expect(r.error).toMatch(/--headless requires/);
+  });
 });

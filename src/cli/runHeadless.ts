@@ -126,6 +126,10 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     );
   }
 
+  if (opts.krakenGraph) {
+    return runHeadlessKrakenGraph(opts, provider, model);
+  }
+
   if (mode === 'zelari') {
     return runHeadlessZelari(opts, provider, model, providerStream);
   }
@@ -133,6 +137,83 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     return runHeadlessCouncil(opts, provider, model, providerStream);
   }
   return runHeadlessSingle(opts, provider, model, providerStream);
+}
+
+/**
+ * `--kraken-graph <goal>`: plan (F4) + execute (F3) a Kraken task graph,
+ * bypassing the normal single-agent/council/zelari dispatch entirely.
+ * Gated by ZELARI_KRAKEN_GRAPH (kill-switch, default on).
+ */
+async function runHeadlessKrakenGraph(
+  opts: HeadlessOptions,
+  provider: string,
+  model: string,
+): Promise<number> {
+  const { isKrakenGraphEnabled, KrakenGraphExecutor } = await import('./kraken/executor.js');
+  if (!isKrakenGraphEnabled()) {
+    process.stderr.write('[zelari-code --headless] ZELARI_KRAKEN_GRAPH=0 — graph engine disabled\n');
+    return 1;
+  }
+
+  const prompt = (opts.krakenGraph ?? '').trim();
+  if (!prompt) {
+    process.stderr.write('[zelari-code --headless] --kraken-graph requires a non-empty goal\n');
+    return 1;
+  }
+
+  const { planTaskGraph } = await import('./kraken/planner.js');
+  const { formatKrakenGraphAscii } = await import('./kraken/graphStatus.js');
+  const { AuditLogger } = await import('./safety/auditLogger.js');
+  const { createKrakenSubAgentContextFactory } = await import('./toolRegistry.js');
+
+  const cwd = process.cwd();
+  const sessionId = crypto.randomUUID();
+  const log = (message: string): void => {
+    if (opts.output === 'json') {
+      emitEvent({ type: 'log', message });
+    } else {
+      process.stderr.write(`[zelari-code --headless] ${message}\n`);
+    }
+  };
+
+  try {
+    log(`planning kraken graph: ${prompt}`);
+    const graph = await planTaskGraph({ prompt, provider, model });
+    log(formatKrakenGraphAscii(graph));
+
+    const audit = new AuditLogger();
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: {
+        createSubAgentContext: createKrakenSubAgentContextFactory({ root: cwd, audit, sessionId }),
+      },
+      parentCwd: cwd,
+      sessionId,
+    });
+    const summary = await executor.execute(graph);
+    const finalAscii = formatKrakenGraphAscii(summary.graph);
+
+    if (opts.output === 'json') {
+      emitEvent({
+        type: 'agent_end',
+        reason: summary.converged ? 'completed' : 'error',
+        message: finalAscii,
+        converged: summary.converged,
+        failedNodeIds: summary.failedNodeIds,
+      });
+    } else {
+      process.stdout.write(`${finalAscii}\n`);
+    }
+
+    return summary.converged ? 0 : 3;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (opts.output === 'json') {
+      emitEvent({ type: 'error', severity: 'fatal', message, code: 'kraken_graph' });
+    } else {
+      process.stderr.write(`[zelari-code --headless] kraken graph failed: ${message}\n`);
+    }
+    return 2;
+  }
 }
 
 function planModeFromOpts(opts: HeadlessOptions): boolean {

@@ -8,7 +8,7 @@ export interface SlashCommandResult {
   /** Whether the command was recognized. */
   handled: boolean;
   /** Discriminated kind for what the caller should do. */
-  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'model_picker' | 'models_list' | 'models_refresh' | 'skill' | 'skill_picker' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'zelari' | 'provider' | 'provider_set' | 'provider_list' | 'provider_picker' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'checkpoint_create' | 'rollback' | 'rollback_list' | 'index_build' | 'index_status' | 'mode_set' | 'kraken_status' | 'phase_set' | 'view_plan' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage' | 'plugins_list' | 'plugins_install' | 'plugins_usage' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state_status' | 'state_commit' | 'state_show' | 'state_restore' | 'state_usage' | 'cache_stats';
+  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'model_picker' | 'models_list' | 'models_refresh' | 'skill' | 'skill_picker' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'zelari' | 'provider' | 'provider_set' | 'provider_list' | 'provider_picker' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'checkpoint_create' | 'rollback' | 'rollback_list' | 'index_build' | 'index_status' | 'mode_set' | 'kraken_status' | 'kraken_graph' | 'phase_set' | 'view_plan' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage' | 'plugins_list' | 'plugins_install' | 'plugins_usage' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state_status' | 'state_commit' | 'state_show' | 'state_restore' | 'state_usage' | 'cache_stats';
   /** Optional human-readable message (e.g. for `clear` or `help`). */
   message?: string;
   /** For `model`: the new model name. */
@@ -27,6 +27,8 @@ export interface SlashCommandResult {
   skillError?: string;
   /** For `resume`: the target session ID to load. */
   targetSessionId?: string;
+  /** For `kraken_graph`: the goal to plan + execute as a Kraken task graph. */
+  graphPrompt?: string;
   /** For `council`: the user prompt to dispatch to the council. */
   councilInput?: string;
   /** For `zelari`: the mission prompt to drive the autonomous loop. */
@@ -611,6 +613,14 @@ export function handleSlashCommand(
     }
 
     case 'kraken': {
+      // `/kraken graph <goal>` → plan + execute a Kraken task graph (F6)
+      if (args[0] === 'graph') {
+        return {
+          handled: true,
+          kind: 'kraken_graph',
+          graphPrompt: args.slice(1).join(' ').trim(),
+        };
+      }
       // `/kraken` [sessionId] → tentacle radio status (K8)
       const sessionArg = args.join(' ').trim();
       return {

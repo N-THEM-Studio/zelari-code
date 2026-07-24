@@ -83,6 +83,16 @@ export function resolveFixBudget(env: NodeJS.ProcessEnv = process.env): number {
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_FIX_BUDGET;
 }
 
+/**
+ * F6 kill-switch: the `/kraken graph` slash command and `--kraken-graph`
+ * headless flag both check this before planning/executing anything. On by
+ * default, like every other Kraken env toggle (only the literal '0' turns
+ * it off — see ZELARI_SCHEMA_LOOP / ZELARI_MEMORY / ZELARI_BROWSER).
+ */
+export function isKrakenGraphEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ZELARI_KRAKEN_GRAPH !== '0';
+}
+
 /** Whether the optional Level-3 world-model convergence gate should run. */
 export function isWorldModelGateEnabled(
   cwd: string,

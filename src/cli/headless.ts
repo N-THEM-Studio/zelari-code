@@ -65,6 +65,13 @@ export interface HeadlessOptions {
    * acquires a trigger lockfile. Used by cron/git-hook triggers (ADR-0014).
    */
   once?: boolean;
+  /**
+   * Plan + execute a Kraken task graph (F4 planner + F3 executor) instead
+   * of a normal single-agent/council/zelari dispatch. Mutually exclusive
+   * with `--task`. Gated by the ZELARI_KRAKEN_GRAPH kill-switch.
+   * @since Kraken graph engine F6
+   */
+  krakenGraph?: string;
 }
 
 export interface HeadlessParseResult {
@@ -89,6 +96,8 @@ Options:
   --history <json>           Prior turns (JSON AgentMessage[]) for multi-turn context
   --history-file <path>      Same as --history but read from a file (avoids Windows argv cap)
   --once                     Trigger mode: single cycle + lockfile (for cron/git hooks)
+  --kraken-graph <goal>      Plan + execute a Kraken task graph instead of --task
+                             (mutually exclusive with --task; ZELARI_KRAKEN_GRAPH=0 disables)
 
 Exit codes:
   0  completed
@@ -116,6 +125,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
   let model: string | undefined;
   let history: AgentMessage[] | undefined;
   let once = false;
+  let krakenGraph: string | undefined;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -233,6 +243,9 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       }
     } else if (arg === '--once') {
       once = true;
+    } else if (arg === '--kraken-graph') {
+      krakenGraph = argv[i + 1];
+      i++;
     }
   }
 
@@ -246,13 +259,16 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
     };
   }
 
-  if (!task || task.trim().length === 0) {
-    return { options: null, error: '--headless requires --task <prompt>' };
+  if (task && krakenGraph) {
+    return { options: null, error: '--task and --kraken-graph are mutually exclusive' };
+  }
+  if ((!task || task.trim().length === 0) && (!krakenGraph || krakenGraph.trim().length === 0)) {
+    return { options: null, error: '--headless requires --task <prompt> or --kraken-graph <goal>' };
   }
 
   return {
     options: {
-      task,
+      task: task ?? '',
       output,
       mode,
       phase,
@@ -261,6 +277,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       model,
       ...(history && history.length > 0 ? { history } : {}),
       ...(once ? { once: true } : {}),
+      ...(krakenGraph ? { krakenGraph } : {}),
     },
   };
 }

@@ -262,4 +262,18 @@ describe('/kraken slash', () => {
     expect(b.kind).toBe('kraken_status');
     expect(b.targetSessionId).toBe('my-sess');
   });
+
+  it('parses /kraken graph <goal> (F6)', () => {
+    const a = handleSlashCommand('/kraken graph fix the auth bug');
+    expect(a.handled).toBe(true);
+    expect(a.kind).toBe('kraken_graph');
+    expect(a.graphPrompt).toBe('fix the auth bug');
+  });
+
+  it('parses /kraken graph with no goal as an empty prompt', () => {
+    const a = handleSlashCommand('/kraken graph');
+    expect(a.handled).toBe(true);
+    expect(a.kind).toBe('kraken_graph');
+    expect(a.graphPrompt).toBe('');
+  });
 });

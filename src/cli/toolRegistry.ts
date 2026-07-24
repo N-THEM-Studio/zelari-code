@@ -28,7 +28,7 @@ import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPat
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
 import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
-import { createTaskTool, type TaskAgentKind } from './tools/taskTool.js';
+import { createTaskTool, type TaskAgentKind, type TaskToolDeps } from './tools/taskTool.js';
 import { createAskUserTool, type AskUserHandler } from './tools/askUser.js';
 import { createSkillTool } from './tools/skillTool.js';
 import { createTodoReadTool, createTodoWriteTool } from './tools/todoTools.js';
@@ -327,39 +327,7 @@ export function createBuiltinToolRegistry(
     !options.planMode;
   if (enableTask) {
     const taskTool = createTaskTool({
-      createSubAgentContext: async ({ agent, cwd: subCwd }) => {
-        const cfg = await providerFromEnv();
-        if (!cfg) return null;
-        const { resolveKrakenSubModel } = await import('./tools/krakenModel.js');
-        const model = resolveKrakenSubModel(agent, cfg.model);
-        const subCfg = { ...cfg, model };
-        const subProfile = taskAgentToProfile(agent);
-        const subRoot = subCwd || root;
-        const { registry: subRegistry } = createBuiltinToolRegistry({
-          root: subRoot,
-          audit,
-          sessionId,
-          profile: subProfile,
-          enableTask: false,
-          enableSkill: agent === 'general',
-          diagnostics: false,
-          lspProvider: null,
-          permissionPolicy: defaultPermissionPolicy({ auto: true }),
-        });
-        return {
-          providerStream: openaiCompatibleProvider(subCfg),
-          model,
-          provider: 'openai-compatible',
-          registry: subRegistry,
-          tools: subRegistry.toOpenAITools().map((t) => ({
-            name: t.function.name,
-            description: t.function.description,
-            parameters: t.function.parameters,
-          })),
-          agent,
-          cwd: subRoot,
-        };
-      },
+      createSubAgentContext: createKrakenSubAgentContextFactory({ root, audit, sessionId }),
     });
     registry.register(withPerm(taskTool));
     tools.push({
@@ -475,6 +443,55 @@ function taskAgentToProfile(agent: TaskAgentKind): 'explore' | 'verify' | 'gener
   if (agent === 'general') return 'general';
   if (agent === 'verify') return 'verify';
   return 'explore';
+}
+
+/**
+ * Build the `TaskToolDeps.createSubAgentContext` closure used by the `task`
+ * tool: resolves a cheap/strong sub-model, builds a profile-scoped
+ * registry (no nested `task`), and wraps it into a `SubAgentContext`.
+ * Exported so other Kraken orchestration entry points — the graph executor
+ * (F3) driven from the `/kraken graph` slash handler and headless flag
+ * (F6) — can build a `TaskToolDeps` without duplicating this wiring.
+ */
+export function createKrakenSubAgentContextFactory(opts: {
+  root: string;
+  audit: AuditLogger;
+  sessionId: string;
+}): TaskToolDeps['createSubAgentContext'] {
+  const { root, audit, sessionId } = opts;
+  return async ({ agent, cwd: subCwd }) => {
+    const cfg = await providerFromEnv();
+    if (!cfg) return null;
+    const { resolveKrakenSubModel } = await import('./tools/krakenModel.js');
+    const model = resolveKrakenSubModel(agent, cfg.model);
+    const subCfg = { ...cfg, model };
+    const subProfile = taskAgentToProfile(agent);
+    const subRoot = subCwd || root;
+    const { registry: subRegistry } = createBuiltinToolRegistry({
+      root: subRoot,
+      audit,
+      sessionId,
+      profile: subProfile,
+      enableTask: false,
+      enableSkill: agent === 'general',
+      diagnostics: false,
+      lspProvider: null,
+      permissionPolicy: defaultPermissionPolicy({ auto: true }),
+    });
+    return {
+      providerStream: openaiCompatibleProvider(subCfg),
+      model,
+      provider: 'openai-compatible',
+      registry: subRegistry,
+      tools: subRegistry.toOpenAITools().map((t) => ({
+        name: t.function.name,
+        description: t.function.description,
+        parameters: t.function.parameters,
+      })),
+      agent,
+      cwd: subRoot,
+    };
+  };
 }
 
 /**
