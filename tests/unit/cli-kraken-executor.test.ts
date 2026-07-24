@@ -360,4 +360,73 @@ describe('KrakenGraphExecutor', () => {
       expect(summary.backtest?.passed).toBe(2);
     });
   });
+
+  describe('node timeout', () => {
+    it('bounds a hung tentacle so execute() still resolves, without aborting an independent branch', async () => {
+      const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+        if (opts.args.description === 'hangs') {
+          // Simulates a stuck sub-agent (hung bash/network call): never resolves.
+          return new Promise<TentacleResult>(() => {});
+        }
+        return {
+          ok: true,
+          agent: opts.agent,
+          thoroughness: opts.thoroughness,
+          model: 'test-model',
+          result: 'done',
+          footer: '',
+          worktreePath: null,
+          worktreeHandle: null,
+        };
+      };
+
+      const graph = createGraph('timeout-test', [
+        node('hangs', [], { kind: 'general', maxRetries: 0, label: 'hangs' }),
+        node('fine', [], { kind: 'general', maxRetries: 0, label: 'fine' }),
+      ]);
+
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'test-session',
+        runTentacleFn,
+        nodeTimeoutMs: 20,
+        worldModelGate: false,
+      });
+
+      const summary = await executor.execute(graph);
+
+      expect(summary.converged).toBe(false);
+      expect(graph.nodes.get('hangs')?.status).toBe('error');
+      expect(graph.nodes.get('hangs')?.error).toMatch(/timed out/);
+      expect(graph.nodes.get('fine')?.status).toBe('done');
+    });
+
+    it('nodeTimeoutMs=0 disables the bound', async () => {
+      const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => ({
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: 'done',
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      });
+
+      const graph = createGraph('no-timeout', [node('g1', [], { kind: 'general', maxRetries: 0 })]);
+
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'test-session',
+        runTentacleFn,
+        nodeTimeoutMs: 0,
+        worldModelGate: false,
+      });
+
+      const summary = await executor.execute(graph);
+      expect(summary.converged).toBe(true);
+    });
+  });
 });

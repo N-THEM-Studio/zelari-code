@@ -102,32 +102,54 @@ export interface PlanTaskGraphOptions {
   llmClient?: PlannerLlmClient;
 }
 
-/** Strip ```json fences and extract the first balanced `{...}` object, tolerating trailing text. */
+/**
+ * Strip ```json fences, extract the first balanced `{...}` object (tolerating
+ * trailing text), and parse it — falling back to {@link repairLooseJson} when
+ * a strict parse fails. Some models emit JS-object-literal-ish output
+ * (unquoted keys, single-quoted strings, trailing commas) despite explicit
+ * "valid JSON only" instructions; repairing once here is cheaper and more
+ * reliable than relying solely on the retry-with-feedback loop for a mistake
+ * a model tends to repeat identically.
+ */
 export function extractJsonObject(text: string): unknown {
   const trimmed = text.trim();
   const fenced = /^```(?:json)?\s*([\s\S]*?)```$/i.exec(trimmed);
   const body = fenced ? fenced[1]!.trim() : trimmed;
   const balanced = extractBalancedJsonObject(body);
-  return JSON.parse(balanced ?? body);
+  const candidate = balanced ?? body;
+  try {
+    return JSON.parse(candidate);
+  } catch (err) {
+    try {
+      return JSON.parse(repairLooseJson(candidate));
+    } catch {
+      throw err instanceof Error ? err : new Error(String(err));
+    }
+  }
 }
 
-/** Find the first top-level `{...}` object by brace depth, ignoring braces inside strings. */
+/**
+ * Find the first top-level `{...}` object by brace depth, ignoring braces
+ * inside "double" or 'single' quoted strings (some models emit single-quoted
+ * strings despite JSON instructions — without tracking those too, a `}`
+ * inside one would prematurely close the balance count).
+ */
 function extractBalancedJsonObject(s: string): string | null {
   const start = s.indexOf('{');
   if (start < 0) return null;
   let depth = 0;
-  let inString = false;
+  let quote: '"' | "'" | null = null;
   let escape = false;
   for (let i = start; i < s.length; i++) {
     const ch = s[i];
-    if (inString) {
+    if (quote) {
       if (escape) escape = false;
       else if (ch === '\\') escape = true;
-      else if (ch === '"') inString = false;
+      else if (ch === quote) quote = null;
       continue;
     }
-    if (ch === '"') {
-      inString = true;
+    if (ch === '"' || ch === "'") {
+      quote = ch;
       continue;
     }
     if (ch === '{') depth += 1;
@@ -137,6 +159,120 @@ function extractBalancedJsonObject(s: string): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Best-effort repair for the JSON mistakes models make most often despite
+ * being told "valid JSON only": single-quoted strings (Python/JS-dict
+ * style), unquoted/bareword object keys (JS-object-literal style), and
+ * trailing commas before `}`/`]`. Deliberately permissive — this is a
+ * fallback tried only after a strict `JSON.parse` has already failed, not a
+ * general JSON5 parser.
+ */
+function repairLooseJson(s: string): string {
+  let out = '';
+  let i = 0;
+  const n = s.length;
+  while (i < n) {
+    const ch = s[i];
+    if (ch === '"') {
+      out += ch;
+      i += 1;
+      while (i < n) {
+        const c = s[i];
+        out += c;
+        i += 1;
+        if (c === '\\') {
+          if (i < n) {
+            out += s[i];
+            i += 1;
+          }
+          continue;
+        }
+        if (c === '"') break;
+      }
+      continue;
+    }
+    if (ch === "'") {
+      // Convert a single-quoted string to a double-quoted JSON string.
+      let value = '';
+      i += 1;
+      while (i < n) {
+        const c = s[i];
+        if (c === '\\' && i + 1 < n) {
+          value += s[i + 1] === "'" ? "'" : c + s[i + 1];
+          i += 2;
+          continue;
+        }
+        if (c === "'") {
+          i += 1;
+          break;
+        }
+        value += c;
+        i += 1;
+      }
+      out += `"${value.replace(/"/g, '\\"')}"`;
+      continue;
+    }
+    // Bare identifier immediately followed by `:` (optionally spaced) outside
+    // any string — quote it as a JSON object key.
+    if (/[A-Za-z_$]/.test(ch)) {
+      let j = i + 1;
+      while (j < n && /[A-Za-z0-9_$]/.test(s[j])) j += 1;
+      let k = j;
+      while (k < n && /\s/.test(s[k])) k += 1;
+      if (s[k] === ':') {
+        out += `"${s.slice(i, j)}"`;
+        i = j;
+        continue;
+      }
+      out += s.slice(i, j);
+      i = j;
+      continue;
+    }
+    out += ch;
+    i += 1;
+  }
+  return stripTrailingCommas(out);
+}
+
+/** Drop a `,` immediately before a closing `}`/`]` (string-aware). */
+function stripTrailingCommas(s: string): string {
+  let out = '';
+  let i = 0;
+  const n = s.length;
+  while (i < n) {
+    const ch = s[i];
+    if (ch === '"') {
+      out += ch;
+      i += 1;
+      while (i < n) {
+        const c = s[i];
+        out += c;
+        i += 1;
+        if (c === '\\') {
+          if (i < n) {
+            out += s[i];
+            i += 1;
+          }
+          continue;
+        }
+        if (c === '"') break;
+      }
+      continue;
+    }
+    if (ch === ',') {
+      let j = i + 1;
+      while (j < n && /\s/.test(s[j])) j += 1;
+      if (s[j] === '}' || s[j] === ']') {
+        i += 1; // drop the trailing comma
+        continue;
+      }
+    }
+    out += ch;
+    i += 1;
+  }
+  return out;
 }
 
 async function resolveLlm(opts: {

@@ -47,6 +47,7 @@ import {
   type RunTentacleOptions,
   type TentacleResult,
   type TaskToolDeps,
+  type TaskAgentKind,
 } from './tentacle.js';
 import {
   mergeKrakenWorktree,
@@ -81,6 +82,26 @@ export function resolveFixBudget(env: NodeJS.ProcessEnv = process.env): number {
   if (raw === undefined || raw === '') return DEFAULT_FIX_BUDGET;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n >= 0 ? n : DEFAULT_FIX_BUDGET;
+}
+
+/**
+ * Default wall-clock bound per tentacle run (ms). The graph executor calls
+ * `runTentacle` directly, bypassing the `task` tool's own `timeoutMs: 300_000`
+ * enforcement (that only applies when a parent AgentHarness invokes `task`
+ * as a tool-call) — so without an executor-level bound, one stuck sub-agent
+ * (a hung bash command, a stalled fetch) hangs `execute()` forever, which
+ * hangs the whole headless process (main.ts only calls `process.exit()`
+ * after `runHeadless()`'s promise resolves), which leaves the Desktop app's
+ * "running" state stuck permanently. Matches the task tool's own budget.
+ */
+export const DEFAULT_NODE_TIMEOUT_MS = 300_000;
+
+/** Set ZELARI_KRAKEN_NODE_TIMEOUT_MS=0 to disable (not recommended). */
+export function resolveNodeTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.ZELARI_KRAKEN_NODE_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return DEFAULT_NODE_TIMEOUT_MS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_NODE_TIMEOUT_MS;
 }
 
 /**
@@ -119,6 +140,8 @@ export interface KrakenGraphExecutorOptions {
   sessionId: string;
   maxParallel?: number;
   fixBudget?: number;
+  /** Wall-clock bound per tentacle run (ms). 0 disables. Default: resolveNodeTimeoutMs(). */
+  nodeTimeoutMs?: number;
   /** Force-enable/disable the Level-3 world-model gate (else auto-detected). */
   worldModelGate?: boolean;
   /** Injection points for tests — default to the real implementations. */
@@ -148,6 +171,7 @@ export class KrakenGraphExecutor {
   private readonly parentCwd: string;
   private readonly sessionId: string;
   private readonly maxParallel: number;
+  private readonly nodeTimeoutMs: number;
   private fixBudgetRemaining: number;
   private readonly worldModelGateOverride: boolean | undefined;
   private readonly runTentacleFn: (opts: RunTentacleOptions) => Promise<TentacleResult>;
@@ -165,6 +189,7 @@ export class KrakenGraphExecutor {
     this.parentCwd = opts.parentCwd;
     this.sessionId = opts.sessionId;
     this.maxParallel = opts.maxParallel ?? resolveMaxParallel();
+    this.nodeTimeoutMs = opts.nodeTimeoutMs ?? resolveNodeTimeoutMs();
     this.fixBudgetRemaining = opts.fixBudget ?? resolveFixBudget();
     this.worldModelGateOverride = opts.worldModelGate;
     this.runTentacleFn = opts.runTentacleFn ?? runTentacle;
@@ -257,29 +282,58 @@ export class KrakenGraphExecutor {
     }
 
     const usesWorktree = node.kind === 'general' || node.kind === 'fix';
-    const res = await this.runTentacleFn({
-      deps: this.deps,
-      args: {
-        description: node.label,
-        prompt: node.prompt,
-        scope: node.scope,
-        acceptance: node.acceptance,
-      },
-      agent: node.kind === 'fix' ? 'general' : node.kind,
-      thoroughness: 'medium',
-      parentCwd: this.parentCwd,
-      sessionId: this.sessionId,
-      // Defer merge for writers so the executor controls merge ordering
-      // (Correction 4); explore/verify never create a worktree.
-      deferMerge: usesWorktree,
-      graphId: graph.id,
-      nodeId: node.id,
-    });
+    const agent: TaskAgentKind = node.kind === 'fix' ? 'general' : node.kind;
+    const res = await this.withNodeTimeout(
+      this.runTentacleFn({
+        deps: this.deps,
+        args: {
+          description: node.label,
+          prompt: node.prompt,
+          scope: node.scope,
+          acceptance: node.acceptance,
+        },
+        agent,
+        thoroughness: 'medium',
+        parentCwd: this.parentCwd,
+        sessionId: this.sessionId,
+        // Defer merge for writers so the executor controls merge ordering
+        // (Correction 4); explore/verify never create a worktree.
+        deferMerge: usesWorktree,
+        graphId: graph.id,
+        nodeId: node.id,
+      }),
+      agent,
+    );
 
     if (res.ok && usesWorktree) {
       this.nodeRunState.set(node.id, { worktreeHandle: res.worktreeHandle });
     }
     return res;
+  }
+
+  /**
+   * Bound a tentacle run to `nodeTimeoutMs` wall-clock. On timeout, resolves
+   * to a synthetic `TentacleFailure` so the normal retry/fix/cascade-skip
+   * path handles it — this only bounds how long the EXECUTOR waits, it does
+   * not (cannot) forcibly cancel the underlying sub-agent run; the point is
+   * to guarantee `execute()` itself always settles so the caller's process
+   * can exit instead of hanging forever on one stuck node.
+   */
+  private withNodeTimeout(
+    promise: Promise<TentacleResult>,
+    agent: TaskAgentKind,
+  ): Promise<TentacleResult> {
+    if (this.nodeTimeoutMs <= 0) return promise;
+    const ms = this.nodeTimeoutMs;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<TentacleResult>((resolve) => {
+      timer = setTimeout(() => {
+        resolve({ ok: false, agent, error: `tentacle timed out after ${ms}ms` });
+      }, ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
   }
 
   /**

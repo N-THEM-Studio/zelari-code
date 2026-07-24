@@ -42,6 +42,34 @@ describe('extractJsonObject', () => {
   it('throws on text with no JSON object', () => {
     expect(() => extractJsonObject('no json here')).toThrow();
   });
+
+  it('repairs single-quoted strings (Python/JS-dict style)', () => {
+    expect(extractJsonObject(`{'nodes': [{'id': 'e1', 'kind': 'explore'}]}`)).toEqual({
+      nodes: [{ id: 'e1', kind: 'explore' }],
+    });
+  });
+
+  it('repairs unquoted / bareword object keys (JS-object-literal style)', () => {
+    expect(extractJsonObject(`{nodes: [{id: "e1", kind: "explore", deps: []}]}`)).toEqual({
+      nodes: [{ id: 'e1', kind: 'explore', deps: [] }],
+    });
+  });
+
+  it('repairs trailing commas before } and ]', () => {
+    expect(extractJsonObject(`{"nodes": [{"id": "e1", "deps": [],},],}`)).toEqual({
+      nodes: [{ id: 'e1', deps: [] }],
+    });
+  });
+
+  it('repairs a combination of all three mistakes at once', () => {
+    expect(
+      extractJsonObject(`{nodes: [{id: 'e1', kind: 'explore', deps: [],},]}`),
+    ).toEqual({ nodes: [{ id: 'e1', kind: 'explore', deps: [] }] });
+  });
+
+  it('does not mangle a double-quoted string containing an apostrophe', () => {
+    expect(extractJsonObject(`{"label": "it's fine"}`)).toEqual({ label: "it's fine" });
+  });
 });
 
 describe('buildGraphFromPlan', () => {
@@ -105,6 +133,17 @@ describe('planTaskGraph', () => {
     expect(graph.nodes.has('g1')).toBe(true);
     expect(graph.nodes.has('verify-g1')).toBe(true);
     expect(c.calls).toHaveLength(1);
+  });
+
+  it('succeeds on the first attempt even when the model emits loose JS-object-style JSON', async () => {
+    const c = client([
+      `{nodes: [{id: 'g1', kind: 'general', label: 'fix it', prompt: 'fix it', deps: [],},]}`,
+    ]);
+
+    const graph = await planTaskGraph({ prompt: 'fix the thing', llmClient: c });
+
+    expect(graph.nodes.has('g1')).toBe(true);
+    expect(c.calls).toHaveLength(1); // repaired in-place, no retry needed
   });
 
   it('retries once with corrective feedback after malformed JSON, then succeeds', async () => {
