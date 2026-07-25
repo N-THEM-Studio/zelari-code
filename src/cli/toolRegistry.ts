@@ -39,7 +39,12 @@ import { createSemanticTool } from './semantic/tools.js';
 import { createBrowserTool } from './browser/tools.js';
 import { createSshTools } from './ssh/tools.js';
 import { createWorldModelTools } from './workspace/worldModel.js';
-import { providerFromEnv, openaiCompatibleProvider } from './provider/openai-compatible.js';
+import {
+  providerFromEnv,
+  providerConfigFor,
+  openaiCompatibleProvider,
+} from './provider/openai-compatible.js';
+import type { ProviderName } from './keyStore.js';
 import {
   defaultPermissionPolicy,
   resolveToolPermission,
@@ -457,13 +462,28 @@ export function createKrakenSubAgentContextFactory(opts: {
   root: string;
   audit: AuditLogger;
   sessionId: string;
+  /**
+   * Explicit provider/model to anchor sub-agents to (e.g. the resolved
+   * --provider/--model of a `--kraken-graph` headless run, itself sourced
+   * from Desktop's provider/model selector). Without this, every tentacle
+   * silently used the persisted `provider.json` `activeProviderId` instead
+   * of whatever the caller actually selected — for the graph executor,
+   * where ~all real work happens in tentacles, that made the provider
+   * picker effectively a no-op. Falls back to `providerFromEnv()`'s
+   * persisted default when omitted, preserving the `task` tool's existing
+   * behavior exactly (it doesn't pass an override today).
+   */
+  provider?: string;
+  model?: string;
 }): TaskToolDeps['createSubAgentContext'] {
-  const { root, audit, sessionId } = opts;
+  const { root, audit, sessionId, provider: providerOverride, model: modelOverride } = opts;
   return async ({ agent, cwd: subCwd }) => {
-    const cfg = await providerFromEnv();
+    const cfg = providerOverride
+      ? await providerConfigFor(providerOverride as ProviderName)
+      : await providerFromEnv();
     if (!cfg) return null;
     const { resolveKrakenSubModel } = await import('./tools/krakenModel.js');
-    const model = resolveKrakenSubModel(agent, cfg.model);
+    const model = resolveKrakenSubModel(agent, modelOverride || cfg.model);
     const subCfg = { ...cfg, model };
     const subProfile = taskAgentToProfile(agent);
     const subRoot = subCwd || root;

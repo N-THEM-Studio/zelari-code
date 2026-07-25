@@ -184,7 +184,18 @@ async function runHeadlessKrakenGraph(
     const audit = new AuditLogger();
     const executor = new KrakenGraphExecutor({
       taskToolDeps: {
-        createSubAgentContext: createKrakenSubAgentContextFactory({ root: cwd, audit, sessionId }),
+        createSubAgentContext: createKrakenSubAgentContextFactory({
+          root: cwd,
+          audit,
+          sessionId,
+          // Anchor every tentacle to the SAME provider/model this run
+          // resolved (Desktop's selector, or --provider/--model), instead
+          // of the persisted provider.json default the factory falls back
+          // to otherwise — the graph executor is ~all tentacles, so without
+          // this the provider picker silently did nothing for Kraken Graph.
+          provider,
+          model,
+        }),
       },
       parentCwd: cwd,
       sessionId,
