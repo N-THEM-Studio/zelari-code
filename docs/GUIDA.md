@@ -1215,12 +1215,29 @@ Il mode default **kraken** (ex `agent`) è un lead che spawna sub-agent via tool
 | `ZELARI_KRAKEN_GENERAL_USES_SUB=1` | Fa usare SUB_MODEL anche a general |
 | `ZELARI_KRAKEN_WORKTREE=1` | Isola `task` general in git worktree sotto `.zelari/worktrees/` |
 | `ZELARI_KRAKEN_WORKTREE_KEEP=1` | Non cancella worktree/branch a fine tentacolo (merge manuale) |
-| `ZELARI_KRAKEN_WORKTREE_AUTO_MERGE` | Previsto in modulo worktree (default on) ma **non ancora collegato** in `taskTool` — vedi `HANDOFF-kraken.md` |
+| `ZELARI_KRAKEN_WORKTREE_AUTO_MERGE=0` | Disattiva lo squash-merge del worktree nel parent a fine tentacolo (default on) |
 | `/kraken [sessionId]` | Mostra radio tentacoli (`.zelari/radio/<session>.jsonl`) |
 
 Dopo un `task` general il risultato include un **verify-hint**: il parent deve verificare (`bash` o `task` verify) prima di dichiarare done.
 
-> Gap noti (non bloccanti per il rename): live tracker UI (`krakenLive.ts`) non cablato; auto-merge worktree non invocato da `taskTool`. Dettaglio in [HANDOFF-kraken.md](../HANDOFF-kraken.md).
+### Kraken Graph — DAG di tentacoli paralleli
+
+`/kraken graph <goal>` (o `--kraken-graph <goal>` in headless) fa pianificare a un LLM un DAG di
+task e lo esegue in parallelo dove gli scope sono disgiunti.
+
+| Env | Effetto |
+|-----|---------|
+| `ZELARI_KRAKEN_GRAPH=0` | Kill-switch: disabilita del tutto il graph engine |
+| `ZELARI_KRAKEN_MAX_PARALLEL` | Tentacoli concorrenti massimi |
+| `ZELARI_KRAKEN_FIX_BUDGET` | Numero di nodi `fix` ammessi prima del fallimento terminale |
+| `ZELARI_KRAKEN_NODE_TIMEOUT_MS` | Wall-clock per nodo (default 300000; `0` = nessun limite) |
+| `ZELARI_KRAKEN_PLANNER_MODEL` | Modello usato **solo** per il planning. Il planning è una singola completion strutturata senza tool use: puntarlo a un modello veloce non-reasoning evita i timeout tipici dei reasoning model |
+| `ZELARI_KRAKEN_PLANNER_TIMEOUT_MS` | Wall-clock della richiesta di planning (default 300000; `0` = nessun limite) |
+| `ZELARI_KRAKEN_PLANNER_MAX_TOKENS` | Budget token della risposta del planner (default 8192) |
+
+Se il planner va in timeout l'errore lo dice esplicitamente e **non** ritenta (il modello non ha
+risposto: ripetere raddoppierebbe solo l'attesa). Alza `ZELARI_KRAKEN_PLANNER_TIMEOUT_MS` oppure
+imposta `ZELARI_KRAKEN_PLANNER_MODEL`.
 
 
 ## Link utili

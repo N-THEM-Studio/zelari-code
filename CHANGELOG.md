@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.1] - 2026-07-25
+
+### Fixed
+- **Kraken planner timeouts** — the planning request had a hardcoded 90s ceiling that slow reasoning models blew past on a non-streaming call, surfacing as the opaque `failed to produce a valid task graph after 2 attempts — This operation was aborted`. The budget is now configurable via `ZELARI_KRAKEN_PLANNER_TIMEOUT_MS` (default 300s, matching `ZELARI_KRAKEN_NODE_TIMEOUT_MS`; `0` disables it), the error names the variable to raise, and transport failures (timeout, HTTP, network) no longer burn the corrective-feedback retry — re-asking a model that never answered only doubled the wait. New `ZELARI_KRAKEN_PLANNER_MODEL` points planning at a fast non-reasoning model without changing the main model.
+
+### Docs
+- `docs/GUIDA.md` gains a Kraken Graph env section and drops two stale Kraken notes (worktree auto-merge has been wired since 1.26.0; the correct opt-out is `ZELARI_KRAKEN_WORKTREE_AUTO_MERGE=0`, not `ZELARI_KRAKEN_AUTO_MERGE=0` as the 1.26.0 entry stated).
+
 ## [1.27.0] - 2026-07-25
 
 ### Added

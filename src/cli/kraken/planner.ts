@@ -30,8 +30,39 @@ import { getModelForProvider, getProviderConfig } from '../providerConfig.js';
 import { resolveApiKeyWithMeta, type ProviderName } from '../keyStore.js';
 import { resolveBaseUrl } from '../provider/openai-compatible.js';
 
-const LLM_TIMEOUT_MS = 90_000;
 const MAX_PLAN_ATTEMPTS = 2;
+
+/**
+ * Default wall-clock budget for the planner's (non-streaming) completion
+ * request. Matches the executor's `DEFAULT_NODE_TIMEOUT_MS`: a single graph
+ * node is already allowed 5 minutes, so capping the planning step at less
+ * made no sense — reasoning-capable models routinely spend well over a
+ * minute on chain-of-thought before emitting the JSON answer, and a
+ * non-streaming request shows nothing until it's done. Set
+ * ZELARI_KRAKEN_PLANNER_TIMEOUT_MS=0 to disable the timer entirely.
+ */
+const DEFAULT_LLM_TIMEOUT_MS = 300_000;
+
+function resolvePlannerTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.ZELARI_KRAKEN_PLANNER_TIMEOUT_MS;
+  if (raw === undefined || raw === '') return DEFAULT_LLM_TIMEOUT_MS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_LLM_TIMEOUT_MS;
+}
+
+/**
+ * A failure of the LLM *transport* (timeout, HTTP error, network error) as
+ * opposed to a malformed-but-received response. The retry-with-corrective-
+ * feedback loop in {@link planTaskGraph} only helps for the latter: re-asking
+ * a model that never answered just doubles the wait, with an even longer
+ * prompt than the one that already timed out.
+ */
+export class PlannerTransportError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PlannerTransportError';
+  }
+}
 
 /**
  * Default max_tokens for the planner's completion request. Complex/long
@@ -305,8 +336,18 @@ async function resolveLlm(opts: {
   if (!baseUrl) {
     throw new Error(`No base URL for provider '${active}'. Set a custom endpoint in Settings.`);
   }
+  // Precedence mirrors the tentacle model routing in `tools/krakenModel.ts`:
+  // an explicit caller override first (Desktop's picker / --model, see the
+  // provider-anchoring fix in 734766f), then the planner-specific env, then
+  // the persisted default. Planning is one structured completion with no tool
+  // use, so pointing it at a cheap non-reasoning model is usually the right
+  // call even when the main model is a slow reasoner.
   const model =
-    opts.model?.trim() || getModelForProvider(active) || process.env.ZELARI_MODEL || '';
+    opts.model?.trim() ||
+    process.env.ZELARI_KRAKEN_PLANNER_MODEL?.trim() ||
+    getModelForProvider(active) ||
+    process.env.ZELARI_MODEL ||
+    '';
   if (!model) {
     throw new Error(`No model selected for provider '${active}'`);
   }
@@ -320,31 +361,57 @@ async function createDefaultLlmClient(opts: {
   const llm = await resolveLlm(opts);
   return {
     async complete({ system, user }) {
+      const timeoutMs = resolvePlannerTimeoutMs();
       const controller = new AbortController();
-      const t = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+      let timedOut = false;
+      const t =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              timedOut = true;
+              controller.abort();
+            }, timeoutMs)
+          : undefined;
       try {
         const url = `${llm.baseUrl.replace(/\/$/, '')}/chat/completions`;
-        const res = await fetch(url, {
-          method: 'POST',
-          signal: controller.signal,
-          headers: {
-            'content-type': 'application/json',
-            authorization: `Bearer ${llm.apiKey}`,
-          },
-          body: JSON.stringify({
-            model: llm.model,
-            temperature: 0.2,
-            max_tokens: resolvePlannerMaxTokens(),
-            stream: false,
-            messages: [
-              { role: 'system', content: system },
-              { role: 'user', content: user },
-            ],
-          }),
-        });
+        let res: Response;
+        try {
+          res = await fetch(url, {
+            method: 'POST',
+            signal: controller.signal,
+            headers: {
+              'content-type': 'application/json',
+              authorization: `Bearer ${llm.apiKey}`,
+            },
+            body: JSON.stringify({
+              model: llm.model,
+              temperature: 0.2,
+              max_tokens: resolvePlannerMaxTokens(),
+              stream: false,
+              messages: [
+                { role: 'system', content: system },
+                { role: 'user', content: user },
+              ],
+            }),
+          });
+        } catch (err) {
+          // The raw AbortError ("This operation was aborted") says nothing
+          // about which budget ran out or how to raise it.
+          if (timedOut) {
+            throw new PlannerTransportError(
+              `Planner request timed out after ${Math.round(timeoutMs / 1000)}s (no response). ` +
+                `Raise ZELARI_KRAKEN_PLANNER_TIMEOUT_MS, or set ZELARI_KRAKEN_PLANNER_MODEL ` +
+                `to a faster non-reasoning model.`,
+            );
+          }
+          throw new PlannerTransportError(
+            `Planner request failed: ${err instanceof Error ? err.message : String(err)}`,
+          );
+        }
         if (!res.ok) {
           const errBody = await res.text().catch(() => '');
-          throw new Error(`LLM HTTP ${res.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`);
+          throw new PlannerTransportError(
+            `LLM HTTP ${res.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`,
+          );
         }
         const json = (await res.json()) as {
           choices?: Array<{
@@ -371,7 +438,7 @@ async function createDefaultLlmClient(opts: {
               : ''),
         );
       } finally {
-        clearTimeout(t);
+        if (t !== undefined) clearTimeout(t);
       }
     },
   };
@@ -458,7 +525,9 @@ export function buildGraphFromPlan(graphId: string, planned: PlannedNode[]): Tas
  * `TaskGraph`. Retries once with corrective feedback if the model's
  * response is malformed JSON, fails schema validation, or produces an
  * invalid graph (cycle, unknown dep, too many nodes); throws with the last
- * error after `MAX_PLAN_ATTEMPTS`.
+ * error after `MAX_PLAN_ATTEMPTS`. A {@link PlannerTransportError} (timeout,
+ * HTTP or network failure) is rethrown on the first attempt instead — see the
+ * catch block.
  */
 export async function planTaskGraph(opts: PlanTaskGraphOptions): Promise<TaskGraph> {
   const client =
@@ -482,6 +551,10 @@ export async function planTaskGraph(opts: PlanTaskGraphOptions): Promise<TaskGra
       }
       return graph;
     } catch (err) {
+      // A transport failure means the model never answered — corrective
+      // feedback has nothing to correct, and the retry would re-send an even
+      // longer prompt into the same wall. Surface it immediately.
+      if (err instanceof PlannerTransportError) throw err;
       lastError = err instanceof Error ? err.message : String(err);
       userMessage =
         `${userBase}\n\nYour previous response was invalid (${lastError}). ` +
