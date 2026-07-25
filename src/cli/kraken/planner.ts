@@ -33,6 +33,23 @@ import { resolveBaseUrl } from '../provider/openai-compatible.js';
 const LLM_TIMEOUT_MS = 90_000;
 const MAX_PLAN_ATTEMPTS = 2;
 
+/**
+ * Default max_tokens for the planner's completion request. Complex/long
+ * prompts against reasoning-capable models can burn most or all of a small
+ * budget on chain-of-thought before ever emitting the JSON answer, leaving
+ * `message.content` empty (finish_reason='length') — the retry loop alone
+ * can't fix that since it repeats the exact same truncation. Override with
+ * ZELARI_KRAKEN_PLANNER_MAX_TOKENS for especially large planning prompts.
+ */
+const DEFAULT_LLM_MAX_TOKENS = 8192;
+
+function resolvePlannerMaxTokens(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.ZELARI_KRAKEN_PLANNER_MAX_TOKENS;
+  if (raw === undefined || raw === '') return DEFAULT_LLM_MAX_TOKENS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : DEFAULT_LLM_MAX_TOKENS;
+}
+
 /** Default retry budget per auto-generated/planned node kind. */
 const DEFAULT_MAX_RETRIES: Record<TaskNodeKind, number> = {
   explore: 0,
@@ -317,7 +334,7 @@ async function createDefaultLlmClient(opts: {
           body: JSON.stringify({
             model: llm.model,
             temperature: 0.2,
-            max_tokens: 4096,
+            max_tokens: resolvePlannerMaxTokens(),
             stream: false,
             messages: [
               { role: 'system', content: system },
@@ -330,11 +347,29 @@ async function createDefaultLlmClient(opts: {
           throw new Error(`LLM HTTP ${res.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`);
         }
         const json = (await res.json()) as {
-          choices?: Array<{ message?: { content?: string } }>;
+          choices?: Array<{
+            message?: { content?: string; reasoning_content?: string };
+            finish_reason?: string;
+          }>;
         };
-        const text = json.choices?.[0]?.message?.content?.trim();
-        if (!text) throw new Error('Empty model response');
-        return text;
+        const choice = json.choices?.[0];
+        const text = choice?.message?.content?.trim();
+        if (text) return text;
+        // Some reasoning models put chain-of-thought in `reasoning_content`
+        // and can leave `content` empty if truncated (finish_reason='length')
+        // before ever emitting the JSON answer. Try to salvage a JSON object
+        // from the reasoning trace itself before giving up — it's often the
+        // last thing the model was writing when it ran out of budget.
+        const reasoning = choice?.message?.reasoning_content?.trim();
+        if (reasoning && extractBalancedJsonObject(reasoning)) return reasoning;
+        const reason = choice?.finish_reason;
+        throw new Error(
+          `Empty model response${reason ? ` (finish_reason=${reason})` : ''}` +
+            (reason === 'length'
+              ? ' — the model likely ran out of tokens before producing JSON;' +
+                ' raise ZELARI_KRAKEN_PLANNER_MAX_TOKENS or simplify the prompt.'
+              : ''),
+        );
       } finally {
         clearTimeout(t);
       }
