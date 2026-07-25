@@ -193,12 +193,25 @@ async function runHeadlessKrakenGraph(
     const finalAscii = formatKrakenGraphAscii(summary.graph);
 
     if (opts.output === 'json') {
+      // Desktop's chat transcript is built ONLY from a message_start ->
+      // message_delta -> message_end/agent_end sequence (assistantIdRef is
+      // set on message_start; agent_end never reads a `message` field on
+      // its own — see apps/desktop/src/App.tsx's onAgentEvent handler).
+      // Emitting bare log/agent_end events (the previous behavior) left the
+      // result completely invisible in the UI even though the graph ran
+      // and converged/failed correctly — it just looked like nothing
+      // happened. Match the same event shape every other dispatch path
+      // produces so this renders as a normal assistant reply.
+      emitEvent({ type: 'message_start' });
+      emitEvent({ type: 'message_delta', delta: finalAscii });
+      emitEvent({ type: 'message_end' });
+      emitEvent({ type: 'agent_end', reason: summary.converged ? 'completed' : 'error' });
       emitEvent({
-        type: 'agent_end',
-        reason: summary.converged ? 'completed' : 'error',
-        message: finalAscii,
-        converged: summary.converged,
-        failedNodeIds: summary.failedNodeIds,
+        type: 'history_snapshot',
+        messages: [
+          { role: 'user', content: prompt },
+          { role: 'assistant', content: finalAscii },
+        ],
       });
     } else {
       process.stdout.write(`${finalAscii}\n`);

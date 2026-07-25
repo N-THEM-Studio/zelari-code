@@ -72,6 +72,29 @@ vi.mock('../../src/cli/toolRegistry.js', () => ({
     },
     tools: [],
   })),
+  createKrakenSubAgentContextFactory: vi.fn(() => async () => null),
+}));
+
+const { plannerMock, executeMock } = vi.hoisted(() => ({
+  plannerMock: vi.fn(),
+  executeMock: vi.fn(),
+}));
+
+vi.mock('../../src/cli/kraken/planner.js', () => ({
+  planTaskGraph: (...args: unknown[]) => plannerMock(...args),
+}));
+
+vi.mock('../../src/cli/kraken/executor.js', () => ({
+  isKrakenGraphEnabled: () => true,
+  KrakenGraphExecutor: class {
+    execute(...args: unknown[]) {
+      return executeMock(...args);
+    }
+  },
+}));
+
+vi.mock('../../src/cli/safety/auditLogger.js', () => ({
+  AuditLogger: class {},
 }));
 
 // ─── Imports under test ──────────────────────────────────────────────────
@@ -113,6 +136,8 @@ function captureStderr(): { read(): string; restore(): void } {
 
 beforeEach(() => {
   harnessEvents.length = 0;
+  plannerMock.mockReset();
+  executeMock.mockReset();
   // runHeadless still calls registerMcpTools unless disabled — keep unit tests hermetic.
   process.env['ZELARI_MCP'] = '0';
 });
@@ -225,5 +250,113 @@ describe('runHeadless — single agent', () => {
     expect(text).toContain('bar');
     // agent_start is not a delta — should not appear in plain text
     expect(text).not.toContain('"type":"agent_start"');
+  });
+});
+
+describe('runHeadless — kraken graph', () => {
+  it('emits message_start -> message_delta -> message_end -> agent_end for a converged graph', async () => {
+    const fakeGraph = { id: 'g1', nodes: new Map() };
+    plannerMock.mockResolvedValue(fakeGraph);
+    executeMock.mockResolvedValue({
+      graph: fakeGraph,
+      converged: true,
+      failedNodeIds: [],
+      counts: {},
+    });
+
+    const out = captureStdout();
+    let code: number;
+    try {
+      code = await runHeadless({
+        task: '',
+        krakenGraph: 'fix the auth bug',
+        output: 'json',
+        useCouncil: false,
+      });
+    } finally {
+      out.restore();
+    }
+
+    expect(code).toBe(0);
+    const lines = out
+      .read()
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { type: string; delta?: string; reason?: string });
+    const types = lines.map((l) => l.type);
+
+    // The exact relative order matters: Desktop's chat transcript is built
+    // ONLY from this sequence (assistantIdRef is set on message_start;
+    // agent_end alone never surfaces a `message` field to the UI).
+    const idxStart = types.indexOf('message_start');
+    const idxDelta = types.indexOf('message_delta');
+    const idxEnd = types.indexOf('message_end');
+    const idxAgentEnd = types.indexOf('agent_end');
+    expect(idxStart).toBeGreaterThanOrEqual(0);
+    expect(idxDelta).toBeGreaterThan(idxStart);
+    expect(idxEnd).toBeGreaterThan(idxDelta);
+    expect(idxAgentEnd).toBeGreaterThan(idxEnd);
+
+    expect(lines[idxDelta].delta?.length ?? 0).toBeGreaterThan(0);
+    expect(lines[idxAgentEnd].reason).toBe('completed');
+  });
+
+  it('returns exit code 3 and agent_end reason=error when the graph does not converge', async () => {
+    const fakeGraph = { id: 'g1', nodes: new Map() };
+    plannerMock.mockResolvedValue(fakeGraph);
+    executeMock.mockResolvedValue({
+      graph: fakeGraph,
+      converged: false,
+      failedNodeIds: ['g1n'],
+      counts: {},
+    });
+
+    const out = captureStdout();
+    let code: number;
+    try {
+      code = await runHeadless({
+        task: '',
+        krakenGraph: 'fix the auth bug',
+        output: 'json',
+        useCouncil: false,
+      });
+    } finally {
+      out.restore();
+    }
+
+    expect(code).toBe(3);
+    const lines = out
+      .read()
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { type: string; reason?: string });
+    const agentEnd = lines.find((l) => l.type === 'agent_end');
+    expect(agentEnd?.reason).toBe('error');
+  });
+
+  it('returns exit code 2 and a visible error event when planning throws', async () => {
+    plannerMock.mockRejectedValue(new Error('LLM HTTP 500'));
+
+    const out = captureStdout();
+    let code: number;
+    try {
+      code = await runHeadless({
+        task: '',
+        krakenGraph: 'fix the auth bug',
+        output: 'json',
+        useCouncil: false,
+      });
+    } finally {
+      out.restore();
+    }
+
+    expect(code).toBe(2);
+    const lines = out
+      .read()
+      .split('\n')
+      .filter((l) => l.length > 0)
+      .map((l) => JSON.parse(l) as { type: string; message?: string });
+    const errorEvent = lines.find((l) => l.type === 'error');
+    expect(errorEvent?.message).toContain('LLM HTTP 500');
   });
 });
