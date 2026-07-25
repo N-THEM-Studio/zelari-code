@@ -4,10 +4,13 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.anathemastudio.zelari.companion.data.ChatMessage
+import com.anathemastudio.zelari.companion.data.ConfigPaths
 import com.anathemastudio.zelari.companion.data.ConnState
 import com.anathemastudio.zelari.companion.data.HistoryMessage
 import com.anathemastudio.zelari.companion.data.Prefs
 import com.anathemastudio.zelari.companion.data.ProjectDto
+import com.anathemastudio.zelari.companion.data.ProviderInfo
+import com.anathemastudio.zelari.companion.data.RunSummary
 import com.anathemastudio.zelari.companion.data.StartRunRequest
 import com.anathemastudio.zelari.companion.data.ZelariApi
 import com.google.gson.JsonObject
@@ -28,13 +31,22 @@ data class UiState(
     val hostVersion: String? = null,
     val projects: List<ProjectDto> = emptyList(),
     val projectId: String = "",
-    val mode: String = "agent",
+    val mode: String = "kraken",
     val phase: String = "build",
     val messages: List<ChatMessage> = emptyList(),
     val draft: String = "",
     val running: Boolean = false,
     val activeRunId: String? = null,
     val liveTool: String? = null,
+    val drawerOpen: Boolean = false,
+    val providers: List<ProviderInfo> = emptyList(),
+    val selectedProvider: String = "",
+    val selectedModel: String = "",
+    val customModel: String = "",
+    val sessions: List<RunSummary> = emptyList(),
+    val showSettings: Boolean = false,
+    val cliVersion: String = "",
+    val configPaths: ConfigPaths? = null,
 )
 
 class CompanionViewModel(app: Application) : AndroidViewModel(app) {
@@ -53,6 +65,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val project = prefs.projectId.first()
             val mode = prefs.mode.first()
             val phase = prefs.phase.first()
+            val provider = prefs.provider.first()
+            val model = prefs.model.first()
             _ui.update {
                 it.copy(
                     baseUrl = base,
@@ -60,6 +74,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                     projectId = project,
                     mode = mode,
                     phase = phase,
+                    selectedProvider = provider,
+                    selectedModel = model,
                 )
             }
             if (base.isNotBlank() && token.isNotBlank()) {
@@ -82,6 +98,81 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     fun setProject(id: String) {
         _ui.update { it.copy(projectId = id) }
         viewModelScope.launch { prefs.saveProject(id) }
+    }
+
+    fun toggleDrawer() = _ui.update { it.copy(drawerOpen = !it.drawerOpen) }
+    fun closeDrawer() = _ui.update { it.copy(drawerOpen = false) }
+
+    fun setProvider(id: String) {
+        val provider = _ui.value.providers.find { it.id == id }
+        val model = provider?.let { p ->
+            p.defaultModel.ifBlank { p.models.firstOrNull().orEmpty() }
+        }.orEmpty()
+        _ui.update { it.copy(selectedProvider = id, selectedModel = model) }
+        viewModelScope.launch { prefs.saveProviderModel(id, model) }
+    }
+
+    fun setModel(m: String) {
+        _ui.update { it.copy(selectedModel = m) }
+        viewModelScope.launch { prefs.saveProviderModel(_ui.value.selectedProvider, m) }
+    }
+
+    fun rerun(prompt: String) {
+        _ui.update { it.copy(draft = prompt, drawerOpen = false) }
+    }
+
+    fun setCustomModel(v: String) {
+        _ui.update { it.copy(customModel = v) }
+        viewModelScope.launch {
+            val effective = v.ifBlank { _ui.value.selectedModel }
+            prefs.saveProviderModel(_ui.value.selectedProvider, effective)
+        }
+    }
+
+    fun toggleSettings() = _ui.update { it.copy(showSettings = !it.showSettings) }
+    fun closeSettings() = _ui.update { it.copy(showSettings = false) }
+
+    private fun loadConfig() {
+        viewModelScope.launch {
+            try {
+                val cfg = api.config()
+                if (!cfg.ok) return@launch
+                val savedProvider = _ui.value.selectedProvider
+                val savedModel = _ui.value.selectedModel
+                val provider = savedProvider.ifBlank { cfg.activeProviderId }
+                val model = savedModel.ifBlank {
+                    cfg.modelByProvider[provider]
+                        ?: cfg.providers.find { it.id == provider }?.defaultModel.orEmpty()
+                }
+                _ui.update {
+                    it.copy(
+                        providers = cfg.providers,
+                        selectedProvider = provider,
+                        selectedModel = model,
+                        cliVersion = cfg.cliVersion,
+                        configPaths = cfg.configPaths,
+                    )
+                }
+            } catch (_: Exception) {
+                // config not critical — drawer will show empty pickers
+            }
+        }
+    }
+
+    fun loadSessions() {
+        viewModelScope.launch {
+            try {
+                val res = api.listRuns()
+                if (!res.ok) return@launch
+                val all = buildList {
+                    res.active?.let { add(it) }
+                    addAll(res.recent)
+                }
+                _ui.update { it.copy(sessions = all) }
+            } catch (_: Exception) {
+                // sessions not critical
+            }
+        }
     }
 
     fun connect(
@@ -116,6 +207,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                         projectId = pid.ifBlank { it.projectId },
                     )
                 }
+                loadConfig()
+                loadSessions()
             } catch (e: Exception) {
                 _ui.update {
                     it.copy(
@@ -169,6 +262,8 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                         phase = state.phase,
                         projectId = state.projectId.ifBlank { null },
                         history = history,
+                        provider = state.selectedProvider.ifBlank { null },
+                        model = state.customModel.ifBlank { state.selectedModel }.ifBlank { null },
                     ),
                 )
                 if (!res.ok || res.run == null) {

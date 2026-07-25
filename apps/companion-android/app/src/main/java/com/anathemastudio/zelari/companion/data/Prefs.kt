@@ -15,12 +15,16 @@ class Prefs(private val context: Context) {
     private val keyProject = stringPreferencesKey("project_id")
     private val keyMode = stringPreferencesKey("mode")
     private val keyPhase = stringPreferencesKey("phase")
+    private val keyProvider = stringPreferencesKey("provider")
+    private val keyModel = stringPreferencesKey("model")
 
     val baseUrl: Flow<String> = context.dataStore.data.map { it[keyBase] ?: "" }
     val token: Flow<String> = context.dataStore.data.map { it[keyToken] ?: "" }
     val projectId: Flow<String> = context.dataStore.data.map { it[keyProject] ?: "" }
-    val mode: Flow<String> = context.dataStore.data.map { it[keyMode] ?: "agent" }
+    val mode: Flow<String> = context.dataStore.data.map { it[keyMode] ?: "kraken" }
     val phase: Flow<String> = context.dataStore.data.map { it[keyPhase] ?: "build" }
+    val provider: Flow<String> = context.dataStore.data.map { it[keyProvider] ?: "" }
+    val model: Flow<String> = context.dataStore.data.map { it[keyModel] ?: "" }
 
     suspend fun saveConnection(baseUrl: String, token: String) {
         context.dataStore.edit {
@@ -37,6 +41,13 @@ class Prefs(private val context: Context) {
         context.dataStore.edit {
             it[keyMode] = mode
             it[keyPhase] = phase
+        }
+    }
+
+    suspend fun saveProviderModel(provider: String, model: String) {
+        context.dataStore.edit {
+            it[keyProvider] = provider
+            it[keyModel] = model
         }
     }
 }

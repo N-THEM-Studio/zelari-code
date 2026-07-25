@@ -67,6 +67,24 @@ class ZelariApi(
         }
     }
 
+    suspend fun config(): ConfigResponse = withContext(Dispatchers.IO) {
+        val req = authed(Request.Builder().url(url("/v1/config")).get()).build()
+        client.newCall(req).execute().use { res ->
+            val body = res.body?.string().orEmpty()
+            if (!res.isSuccessful) error("config HTTP ${res.code}: $body")
+            gson.fromJson(body, ConfigResponse::class.java)
+        }
+    }
+
+    suspend fun listRuns(): RunsResponse = withContext(Dispatchers.IO) {
+        val req = authed(Request.Builder().url(url("/v1/runs")).get()).build()
+        client.newCall(req).execute().use { res ->
+            val body = res.body?.string().orEmpty()
+            if (!res.isSuccessful) error("runs HTTP ${res.code}: $body")
+            gson.fromJson(body, RunsResponse::class.java)
+        }
+    }
+
     suspend fun startRun(body: StartRunRequest): StartRunResponse = withContext(Dispatchers.IO) {
         val json = gson.toJson(body)
         val req = authed(

@@ -26,6 +26,8 @@ data class StartRunRequest(
     val projectId: String? = null,
     val cwd: String? = null,
     val history: List<HistoryMessage>? = null,
+    val provider: String? = null,
+    val model: String? = null,
 )
 
 data class HistoryMessage(
@@ -55,6 +57,49 @@ data class ChatMessage(
     val role: String, // user | assistant | system | tool
     val content: String,
     val streaming: Boolean = false,
+)
+
+data class ConfigResponse(
+    val ok: Boolean = false,
+    val activeProviderId: String = "",
+    val modelByProvider: Map<String, String> = emptyMap(),
+    val providers: List<ProviderInfo> = emptyList(),
+    val cliVersion: String = "",
+    val configPaths: ConfigPaths? = null,
+)
+
+data class ConfigPaths(
+    val provider: String = "",
+    val keys: String = "",
+)
+
+data class ProviderInfo(
+    val id: String = "",
+    val displayName: String = "",
+    val hasKey: Boolean = false,
+    val envVar: String = "",
+    val models: List<String> = emptyList(),
+    val defaultModel: String = "",
+    val endpoint: String? = null,
+    val baseUrl: String? = null,
+)
+
+data class RunsResponse(
+    val ok: Boolean = false,
+    val active: RunSummary? = null,
+    val recent: List<RunSummary> = emptyList(),
+)
+
+data class RunSummary(
+    val id: String = "",
+    val status: String = "",
+    val mode: String = "",
+    val phase: String = "",
+    val cwd: String = "",
+    val createdAt: Long = 0,
+    val finishedAt: Long? = null,
+    val exitCode: Int? = null,
+    val promptPreview: String = "",
 )
 
 enum class ConnState {
