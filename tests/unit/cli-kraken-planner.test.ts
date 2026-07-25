@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   planTaskGraph,
   extractJsonObject,
+  stripReasoningBlocks,
   buildGraphFromPlan,
   type PlannerLlmClient,
 } from '../../src/cli/kraken/planner.js';
@@ -105,6 +106,63 @@ describe('extractJsonObject', () => {
     expect(parsed.nodes[0].prompt).toBe(
       `Build it.${NL}Rules:${NL}- keep the "quoted" name${NL}- use a${TAB}tab`,
     );
+  });
+
+  // Regression from a live run against MiniMax-M3: the model streams its
+  // chain-of-thought inside message.content wrapped in <think> tags, and
+  // sketches draft JSON while reasoning. The extractor picked up that
+  // fragment and the plan failed schema validation with
+  // 'nodes: expected array, received undefined'.
+  describe('reasoning blocks in content', () => {
+    const ANSWER = '{"nodes": [{"id": "g1", "kind": "general", "label": "x", "prompt": "y", "deps": []}]}';
+
+    it('ignores a draft object sketched inside a <think> block', () => {
+      const reply =
+        `<think>${NL}Let me sketch a node: {"id": "g-add", "kind": "general"}${NL}` +
+        `That looks right, now the full plan.${NL}</think>${NL}${NL}${ANSWER}`;
+
+      expect(extractJsonObject(reply, { requireKey: 'nodes' })).toEqual({
+        nodes: [{ id: 'g1', kind: 'general', label: 'x', prompt: 'y', deps: [] }],
+      });
+    });
+
+    it('skips a leading fragment even without think tags, when a key is required', () => {
+      const reply = `{"id": "g-add", "kind": "general"}${NL}${ANSWER}`;
+
+      expect(extractJsonObject(reply, { requireKey: 'nodes' })).toHaveProperty('nodes');
+    });
+
+    it('still returns the first object when no key is required', () => {
+      expect(extractJsonObject('{"a":1} {"b":2}')).toEqual({ a: 1 });
+    });
+
+    it('falls back to the first parseable object when none has the key', () => {
+      expect(extractJsonObject('{"a":1}', { requireKey: 'nodes' })).toEqual({ a: 1 });
+    });
+
+    it('unwraps an answer nested one level down', () => {
+      expect(extractJsonObject(`{"plan": ${ANSWER}}`, { requireKey: 'nodes' })).toEqual(
+        JSON.parse(ANSWER),
+      );
+      expect(extractJsonObject(`{"graph": ${ANSWER}}`, { requireKey: 'nodes' })).toEqual(
+        JSON.parse(ANSWER),
+      );
+    });
+
+    it('handles <thinking> and <reasoning> tags too', () => {
+      expect(
+        extractJsonObject(`<thinking>draft {"id":"x"}</thinking>${ANSWER}`, { requireKey: 'nodes' }),
+      ).toHaveProperty('nodes');
+      expect(
+        extractJsonObject(`<reasoning>draft {"id":"x"}</reasoning>${ANSWER}`, { requireKey: 'nodes' }),
+      ).toHaveProperty('nodes');
+    });
+
+    it('drops everything after an unterminated <think> tag', () => {
+      expect(stripReasoningBlocks(`${ANSWER}${NL}<think>still rambling {"id":"x"}`).trim()).toBe(
+        ANSWER,
+      );
+    });
   });
 
   it('leaves already-escaped sequences alone', () => {
@@ -237,12 +295,34 @@ describe('planTaskGraph', () => {
         nodes: [{ id: 'v1', kind: 'verify', label: 'nope', prompt: 'nope', deps: [] }],
       }),
       JSON.stringify({
-        nodes: [{ id: 'e1', kind: 'explore', label: 'ok', prompt: 'ok', deps: [] }],
+        nodes: [
+          { id: 'e1', kind: 'explore', label: 'ok', prompt: 'ok', deps: [] },
+          { id: 'g1', kind: 'general', label: 'work', prompt: 'work', deps: ['e1'] },
+        ],
       }),
     ]);
 
     const graph = await planTaskGraph({ prompt: 'goal', llmClient: c });
     expect(graph.nodes.has('e1')).toBe(true);
     expect(c.calls).toHaveLength(2);
+  });
+
+  // A plan of only read-only `explore` nodes would run, converge and report
+  // success without touching a file — observed for real on a "continua".
+  it('rejects an explore-only plan', async () => {
+    const c = client([
+      JSON.stringify({
+        nodes: [{ id: 'e1', kind: 'explore', label: 'look around', prompt: 'look', deps: [] }],
+      }),
+      JSON.stringify({
+        nodes: [{ id: 'g1', kind: 'general', label: 'work', prompt: 'work', deps: [] }],
+      }),
+    ]);
+
+    const graph = await planTaskGraph({ prompt: 'continua', llmClient: c });
+
+    expect(graph.nodes.has('g1')).toBe(true);
+    expect(c.calls).toHaveLength(2);
+    expect(c.calls[1]!.user).toMatch(/no "general" node/);
   });
 });

@@ -1232,6 +1232,7 @@ task e lo esegue in parallelo dove gli scope sono disgiunti.
 | `ZELARI_KRAKEN_FIX_BUDGET` | Numero di nodi `fix` ammessi prima del fallimento terminale |
 | `ZELARI_KRAKEN_NODE_TIMEOUT_MS` | Wall-clock per nodo, **tutti i tipi** (`0` = nessun limite). Se non impostata il budget dipende dal tipo: 300000 per `explore`/`verify`, 900000 per `general`/`fix` |
 | `ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS` | Wall-clock dei soli nodi che scrivono (`general`/`fix`), default 900000 |
+| `ZELARI_KRAKEN_CANCEL_GRACE_MS` | Attesa perché un tentacolo cancellato si smonti prima di dichiararlo inarrestabile (default 30000). Un nodo che non si ferma **non** viene ri-eseguito: due tentacoli sullo stesso scope corrompono il lavoro |
 | `ZELARI_KRAKEN_PLANNER_MODEL` | Modello usato **solo** per il planning. Il planning è una singola completion strutturata senza tool use: puntarlo a un modello veloce non-reasoning evita i timeout tipici dei reasoning model |
 | `ZELARI_KRAKEN_PLANNER_TIMEOUT_MS` | Wall-clock della richiesta di planning (default 300000; `0` = nessun limite) |
 | `ZELARI_KRAKEN_PLANNER_MAX_TOKENS` | Budget token della risposta del planner (default 8192) |
@@ -1239,6 +1240,13 @@ task e lo esegue in parallelo dove gli scope sono disgiunti.
 Se il planner va in timeout l'errore lo dice esplicitamente e **non** ritenta (il modello non ha
 risposto: ripetere raddoppierebbe solo l'attesa). Alza `ZELARI_KRAKEN_PLANNER_TIMEOUT_MS` oppure
 imposta `ZELARI_KRAKEN_PLANNER_MODEL`.
+
+**Ripresa fra run.** A fine esecuzione lo stato terminale del grafo viene salvato in
+`.zelari/kraken/last-graph.json`. Se il run precedente non è arrivato in fondo, la pianificazione
+successiva riceve un riepilogo di cosa è già fatto, cosa è fallito e cosa non è mai partito — così
+un "continua" pianifica il lavoro **rimanente** invece di ricominciare da zero. Un piano che non
+contiene alcun nodo `general` viene rifiutato: sarebbe di sola lettura e convergerebbe senza aver
+modificato nulla.
 
 
 ## Link utili

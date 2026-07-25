@@ -148,31 +148,132 @@ export interface PlanTaskGraphOptions {
   maxNodes?: number;
   /** Override the LLM transport (tests only) — default hits the real provider. */
   llmClient?: PlannerLlmClient;
+  /**
+   * Briefing about a previous, unfinished graph on this goal (see
+   * `graphMemory.formatSnapshotForPlanner`). Appended to the user prompt so a
+   * follow-up like "continua" plans the REMAINING work instead of starting
+   * over with no idea what already exists.
+   */
+  previousAttempt?: string;
 }
 
 /**
- * Strip ```json fences, extract the first balanced `{...}` object (tolerating
- * trailing text), and parse it — falling back to {@link repairLooseJson} when
- * a strict parse fails. Some models emit JS-object-literal-ish output
+ * Strip inline `<think>` blocks and ```json fences, then walk the balanced
+ * `{...}` objects in the reply and parse the first usable one — falling back
+ * to {@link repairLooseJson} when a strict parse fails. Pass `requireKey` to
+ * skip objects that lack it, which is what separates a draft fragment left in
+ * the model's reasoning from the actual answer. Some models emit
+ * JS-object-literal-ish output
  * (unquoted keys, single-quoted strings, trailing commas) despite explicit
  * "valid JSON only" instructions; repairing once here is cheaper and more
  * reliable than relying solely on the retry-with-feedback loop for a mistake
  * a model tends to repeat identically.
  */
-export function extractJsonObject(text: string): unknown {
-  const trimmed = text.trim();
-  const fenced = /^```(?:json)?\s*([\s\S]*?)```$/i.exec(trimmed);
-  const body = fenced ? fenced[1]!.trim() : trimmed;
-  const balanced = extractBalancedJsonObject(body);
-  const candidate = balanced ?? body;
+export function extractJsonObject(text: string, opts: { requireKey?: string } = {}): unknown {
+  const stripped = stripReasoningBlocks(text);
+  // Safety net: an unterminated `<think>` with the answer after it would be
+  // stripped away entirely. Stripping must never lose an answer we would
+  // otherwise have found, so fall back to the raw reply when it leaves
+  // nothing usable behind.
+  const usable = findJsonIn(stripped, opts);
+  if (usable) return usable.value;
+  const raw = findJsonIn(text, opts);
+  if (raw) return raw.value;
+
+  const body = bodyOf(stripped) || bodyOf(text);
   try {
-    return JSON.parse(candidate);
+    return JSON.parse(body);
   } catch (err) {
     try {
-      return JSON.parse(repairLooseJson(candidate));
+      return JSON.parse(repairLooseJson(body));
     } catch {
       throw err instanceof Error ? err : new Error(String(err));
     }
+  }
+}
+
+/** Strip a ```json fence, if the whole body is one. */
+function bodyOf(text: string): string {
+  const trimmed = text.trim();
+  const fenced = /^```(?:json)?\s*([\s\S]*?)```$/i.exec(trimmed);
+  return fenced ? fenced[1]!.trim() : trimmed;
+}
+
+/**
+ * Scan the balanced objects in `text` and return the first usable one:
+ * preferring an object carrying `requireKey`, else the first that parses.
+ */
+function findJsonIn(text: string, opts: { requireKey?: string }): { value: unknown } | null {
+  let firstParsed: { value: unknown } | null = null;
+
+  for (const candidate of balancedJsonObjects(bodyOf(text))) {
+    let value: unknown;
+    try {
+      value = JSON.parse(candidate);
+    } catch {
+      try {
+        value = JSON.parse(repairLooseJson(candidate));
+      } catch {
+        continue;
+      }
+    }
+    if (!opts.requireKey) return { value };
+    // Reasoning models sketch partial JSON while thinking, so the FIRST
+    // balanced object in the reply is often a fragment ({"id":"g-add",...})
+    // rather than the answer. Keep scanning for one that carries the key the
+    // caller actually needs; the first parseable object is the fallback.
+    if (value && typeof value === 'object' && opts.requireKey in (value as object)) {
+      return { value };
+    }
+    // Models sometimes wrap the answer one level down ({"plan": {"nodes": …}},
+    // {"graph": {"nodes": …}}). Unwrap rather than fail schema validation with
+    // a confusing "expected array, received undefined".
+    const unwrapped = unwrapKey(value, opts.requireKey);
+    if (unwrapped) return { value: unwrapped };
+    if (!firstParsed) firstParsed = { value };
+  }
+
+  return firstParsed;
+}
+
+/** Find a direct child object that carries `key`, one level down. */
+function unwrapKey(value: unknown, key: string): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object') return null;
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    if (child && typeof child === 'object' && key in (child as object)) {
+      return child as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+/**
+ * Remove inline chain-of-thought blocks. Several reasoning models (MiniMax-M3
+ * among them) put their thinking in `message.content` wrapped in `<think>`
+ * tags rather than in a separate `reasoning_content` field — and that thinking
+ * routinely contains draft JSON, which the extractor would otherwise pick up
+ * instead of the real answer.
+ */
+export function stripReasoningBlocks(text: string): string {
+  let out = text.replace(/<(think|thinking|reasoning)>[\s\S]*?<\/\1>/gi, '');
+  // An unterminated opening tag means the answer (if any) follows the last
+  // one; everything from that tag on is thinking, so there is nothing to keep
+  // unless a closing tag appeared earlier, which the replace above handled.
+  const openIdx = out.search(/<(think|thinking|reasoning)>/i);
+  if (openIdx >= 0) out = out.slice(0, openIdx);
+  return out;
+}
+
+/** Yield every top-level balanced `{...}` object in `s`, in order. */
+function* balancedJsonObjects(s: string): Generator<string> {
+  let from = 0;
+  while (from < s.length) {
+    const next = extractBalancedJsonObject(s.slice(from));
+    if (!next) return;
+    yield next;
+    const idx = s.indexOf(next, from);
+    if (idx < 0) return;
+    from = idx + next.length;
   }
 }
 
@@ -474,8 +575,9 @@ async function createDefaultLlmClient(opts: {
   };
 }
 
-function buildPlannerUserPrompt(prompt: string): string {
-  return `Goal:\n${prompt.trim()}\n\nReturn ONLY the JSON object described in the system prompt.`;
+function buildPlannerUserPrompt(prompt: string, previousAttempt?: string): string {
+  const prev = previousAttempt?.trim() ? `\n${previousAttempt.trim()}\n` : '';
+  return `Goal:\n${prompt.trim()}\n${prev}\nReturn ONLY the JSON object described in the system prompt.`;
 }
 
 function uniqueId(base: string, existing: Set<string>): string {
@@ -564,7 +666,7 @@ export async function planTaskGraph(opts: PlanTaskGraphOptions): Promise<TaskGra
     opts.llmClient ?? (await createDefaultLlmClient({ provider: opts.provider, model: opts.model }));
   const maxNodes = opts.maxNodes ?? DEFAULT_MAX_NODES;
   const graphId = opts.graphId ?? `kraken-${Date.now().toString(36)}`;
-  const userBase = buildPlannerUserPrompt(opts.prompt);
+  const userBase = buildPlannerUserPrompt(opts.prompt, opts.previousAttempt);
 
   let lastError: string | undefined;
   let userMessage = userBase;
@@ -572,8 +674,21 @@ export async function planTaskGraph(opts: PlanTaskGraphOptions): Promise<TaskGra
   for (let attempt = 1; attempt <= MAX_PLAN_ATTEMPTS; attempt++) {
     try {
       const text = await client.complete({ system: KRAKEN_PLANNER_SYSTEM_PROMPT, user: userMessage });
-      const parsedJson = extractJsonObject(text);
+      const parsedJson = extractJsonObject(text, { requireKey: 'nodes' });
       const validated = PlannedGraphSchema.parse(parsedJson);
+      // `explore` is read-only, so a plan made only of explore nodes cannot
+      // change anything — yet it would run, converge, and report success.
+      // Observed for real on a "continua" prompt: the model planned a single
+      // "assess current workspace state" node and the graph reported 1/1 done
+      // having touched nothing. Reject it here so the retry loop asks again
+      // with corrective feedback.
+      if (!validated.nodes.some((n) => n.kind === 'general')) {
+        throw new Error(
+          'the plan contains no "general" node, so it cannot change anything — ' +
+            'every node is read-only "explore". Include at least one "general" node ' +
+            'that performs the actual work.',
+        );
+      }
       const graph = buildGraphFromPlan(graphId, validated.nodes);
       const check = validateGraph(graph, { maxNodes });
       if (!check.ok) {

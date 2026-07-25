@@ -396,6 +396,9 @@ describe('KrakenGraphExecutor', () => {
         sessionId: 'test-session',
         runTentacleFn,
         nodeTimeoutMs: 20,
+        // This tentacle ignores the cancel signal too, so keep the unwind
+        // grace short — the point of the test is that execute() settles.
+        cancelGraceMs: 20,
         worldModelGate: false,
       });
 
@@ -500,6 +503,162 @@ describe('KrakenGraphExecutor', () => {
       await executor.execute(graph);
 
       expect(seen[0]?.agent).toBe('general');
+    });
+
+    /**
+     * Regression for the worst observed graph failure: g-ships blew its
+     * budget, the executor retried it and then spawned a fix node, and all
+     * three attempts wrote src/ships/ CONCURRENTLY — the original tentacle
+     * was never cancelled, it just stopped being waited on. The result was
+     * two parallel implementations of the same modules (Corvette.js and
+     * CorvetteShip.js, written a minute apart by different agents).
+     */
+    describe('cancellation on timeout', () => {
+      it('aborts the tentacle signal when the node budget is blown', async () => {
+        let sawAbort = false;
+        const runTentacleFn = (opts: RunTentacleOptions): Promise<TentacleResult> =>
+          new Promise<TentacleResult>((resolve) => {
+            opts.signal?.addEventListener('abort', () => {
+              sawAbort = true;
+              // A well-behaved tentacle unwinds when told to.
+              resolve({ ok: false, agent: opts.agent, error: 'cancelled', cancelled: true });
+            });
+          });
+
+        const graph = createGraph('cancel-test', [
+          node('g1', [], { kind: 'general', maxRetries: 0 }),
+        ]);
+
+        const executor = new KrakenGraphExecutor({
+          taskToolDeps: fakeTaskToolDeps,
+          parentCwd: '/tmp/repo',
+          sessionId: 'test-session',
+          runTentacleFn,
+          nodeTimeoutMs: 20,
+          worldModelGate: false,
+        });
+
+        await executor.execute(graph);
+
+        expect(sawAbort).toBe(true);
+        expect(graph.nodes.get('g1')?.status).toBe('error');
+      });
+
+      it('does NOT re-spawn a node whose previous run refused to stop', async () => {
+        let spawns = 0;
+        // Never resolves, never honours the abort — the pathological case.
+        const runTentacleFn = (_opts: RunTentacleOptions): Promise<TentacleResult> => {
+          spawns += 1;
+          return new Promise<TentacleResult>(() => {});
+        };
+
+        // maxRetries: 1 — the old code would have started a second concurrent
+        // writer here, plus a third via the fix node.
+        const graph = createGraph('no-respawn', [
+          node('g1', [], { kind: 'general', maxRetries: 1 }),
+        ]);
+
+        const executor = new KrakenGraphExecutor({
+          taskToolDeps: fakeTaskToolDeps,
+          parentCwd: '/tmp/repo',
+          sessionId: 'test-session',
+          runTentacleFn,
+          nodeTimeoutMs: 10,
+          cancelGraceMs: 10,
+          fixBudget: 2,
+          worldModelGate: false,
+        });
+
+        const summary = await executor.execute(graph);
+
+        expect(spawns).toBe(1);
+        expect(summary.converged).toBe(false);
+        expect(graph.nodes.get('g1')?.error).toMatch(/did not stop/);
+      });
+
+      it('keeps a result that succeeds just after the deadline', async () => {
+        // The tentacle finishes in the window between the timeout firing and
+        // the abort landing. Discarding that would throw away work already
+        // written to disk over a few milliseconds.
+        const runTentacleFn = (opts: RunTentacleOptions): Promise<TentacleResult> =>
+          new Promise<TentacleResult>((resolve) => {
+            setTimeout(
+              () =>
+                resolve({
+                  ok: true,
+                  agent: opts.agent,
+                  thoroughness: opts.thoroughness,
+                  model: 'test-model',
+                  result: 'landed late',
+                  footer: '',
+                  worktreePath: null,
+                  worktreeHandle: null,
+                }),
+              40,
+            );
+          });
+
+        const graph = createGraph('late-success', [
+          node('g1', [], { kind: 'general', maxRetries: 0 }),
+        ]);
+
+        const executor = new KrakenGraphExecutor({
+          taskToolDeps: fakeTaskToolDeps,
+          parentCwd: '/tmp/repo',
+          sessionId: 'test-session',
+          runTentacleFn,
+          nodeTimeoutMs: 10,
+          cancelGraceMs: 500,
+          worldModelGate: false,
+        });
+
+        const summary = await executor.execute(graph);
+
+        expect(summary.converged).toBe(true);
+        expect(graph.nodes.get('g1')?.status).toBe('done');
+        expect(graph.nodes.get('g1')?.result).toBe('landed late');
+      });
+
+      it('still retries when the run confirms it stopped', async () => {
+        let spawns = 0;
+        const runTentacleFn = (opts: RunTentacleOptions): Promise<TentacleResult> => {
+          spawns += 1;
+          if (spawns === 1) {
+            return new Promise<TentacleResult>((resolve) => {
+              opts.signal?.addEventListener('abort', () =>
+                resolve({ ok: false, agent: opts.agent, error: 'stopped', cancelled: true }),
+              );
+            });
+          }
+          return Promise.resolve({
+            ok: true,
+            agent: opts.agent,
+            thoroughness: opts.thoroughness,
+            model: 'test-model',
+            result: 'done',
+            footer: '',
+            worktreePath: null,
+            worktreeHandle: null,
+          });
+        };
+
+        const graph = createGraph('retry-ok', [node('g1', [], { kind: 'general', maxRetries: 1 })]);
+
+        const executor = new KrakenGraphExecutor({
+          taskToolDeps: fakeTaskToolDeps,
+          parentCwd: '/tmp/repo',
+          sessionId: 'test-session',
+          runTentacleFn,
+          nodeTimeoutMs: 20,
+          cancelGraceMs: 200,
+          worldModelGate: false,
+        });
+
+        const summary = await executor.execute(graph);
+
+        expect(spawns).toBe(2);
+        expect(summary.converged).toBe(true);
+      });
     });
   });
 });

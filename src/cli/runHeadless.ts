@@ -162,6 +162,7 @@ async function runHeadlessKrakenGraph(
   }
 
   const { planTaskGraph } = await import('./kraken/planner.js');
+  const { loadGraphSnapshot, formatSnapshotForPlanner } = await import('./kraken/graphMemory.js');
   const { formatKrakenGraphAscii } = await import('./kraken/graphStatus.js');
   const { AuditLogger } = await import('./safety/auditLogger.js');
   const { createKrakenSubAgentContextFactory } = await import('./toolRegistry.js');
@@ -178,7 +179,18 @@ async function runHeadlessKrakenGraph(
 
   try {
     log(`planning kraken graph: ${prompt}`);
-    const graph = await planTaskGraph({ prompt, provider, model });
+    // Resume context: if the last graph in this project stopped short, tell
+    // the planner what already exists and what still needs doing, so a
+    // follow-up ("continua") plans the remainder instead of starting over.
+    const previous = await loadGraphSnapshot(cwd);
+    const previousAttempt = formatSnapshotForPlanner(previous);
+    if (previousAttempt) log('resuming from the previous unfinished graph');
+    const graph = await planTaskGraph({
+      prompt,
+      provider,
+      model,
+      ...(previousAttempt ? { previousAttempt } : {}),
+    });
     log(formatKrakenGraphAscii(graph));
 
     const audit = new AuditLogger();
@@ -199,6 +211,7 @@ async function runHeadlessKrakenGraph(
       },
       parentCwd: cwd,
       sessionId,
+      goal: prompt,
     });
     const summary = await executor.execute(graph);
     const finalAscii = formatKrakenGraphAscii(summary.graph);

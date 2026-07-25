@@ -15,6 +15,7 @@ import type { ChatMessage } from '../components/ChatStream.js';
 import { AuditLogger } from '../safety/auditLogger.js';
 import { createKrakenSubAgentContextFactory } from '../toolRegistry.js';
 import { planTaskGraph } from '../kraken/planner.js';
+import { loadGraphSnapshot, formatSnapshotForPlanner } from '../kraken/graphMemory.js';
 import { KrakenGraphExecutor, isKrakenGraphEnabled } from '../kraken/executor.js';
 import { formatKrakenGraphAscii } from '../kraken/graphStatus.js';
 
@@ -52,13 +53,23 @@ export async function handleKrakenGraph(
   };
 
   try {
-    const graph = await planTaskGraph({ prompt, graphId: `kraken-${Date.now().toString(36)}` });
+    const previous = await loadGraphSnapshot(ctx.cwd);
+    const previousAttempt = formatSnapshotForPlanner(previous);
+    if (previousAttempt) {
+      appendSystem(ctx.setMessages, '[kraken] resuming from the previous unfinished graph');
+    }
+    const graph = await planTaskGraph({
+      prompt,
+      graphId: `kraken-${Date.now().toString(36)}`,
+      ...(previousAttempt ? { previousAttempt } : {}),
+    });
     appendSystem(ctx.setMessages, formatKrakenGraphAscii(graph));
 
     const executor = new KrakenGraphExecutor({
       taskToolDeps,
       parentCwd: ctx.cwd,
       sessionId: ctx.sessionId,
+      goal: prompt,
     });
     const summary = await executor.execute(graph);
 

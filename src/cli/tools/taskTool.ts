@@ -244,14 +244,32 @@ type TaskArgs = z.infer<typeof TaskArgsSchema>;
 /**
  * Run a sub-agent to completion and return the text of its final assistant
  * message (the "conclusion"). Intermediate tool-call turns are discarded.
+ *
+ * When `signal` aborts, the `for await` loop breaks, which calls `.return()`
+ * on the `AgentHarness.run()` async generator and unwinds it — the sub-agent
+ * stops before starting its next tool call, so it cannot keep writing files
+ * after the caller has given up on it. Reports `aborted: true` so callers can
+ * tell "the run stopped on request" from "the run finished on its own"; that
+ * distinction matters to the graph executor, which must not re-spawn a node
+ * onto a scope another tentacle may still be writing to.
  */
 export async function runSubAgent(
   harness: SubAgentHarness,
-): Promise<{ result: string; error?: string }> {
+  opts: { signal?: AbortSignal } = {},
+): Promise<{ result: string; error?: string; aborted?: boolean }> {
+  const { signal } = opts;
   let current = '';
   let lastCompleted = '';
   let error: string | undefined;
+  if (signal?.aborted) return { result: '', aborted: true };
   for await (const ev of harness.run()) {
+    if (signal?.aborted) {
+      return {
+        result: (lastCompleted || current).trim(),
+        ...(error ? { error } : {}),
+        aborted: true,
+      };
+    }
     switch (ev.type) {
       case 'message_start':
         current = '';
@@ -300,6 +318,13 @@ export interface TentacleFailure {
   ok: false;
   agent: TaskAgentKind;
   error: string;
+  /**
+   * True when the run stopped because its `signal` aborted, i.e. the sub-agent
+   * is confirmed to have unwound rather than still running somewhere. The
+   * graph executor uses this to decide whether re-running the node onto the
+   * same scope is safe.
+   */
+  cancelled?: boolean;
 }
 
 export type TentacleResult = TentacleSuccess | TentacleFailure;
@@ -331,6 +356,12 @@ export interface RunTentacleOptions {
   /** Graph engine (F5): tag the live tentacle entry with its graph/node id. */
   graphId?: string;
   nodeId?: string;
+  /**
+   * Cancels the sub-agent run. The graph executor aborts this when a node
+   * exceeds its wall-clock budget, so the tentacle stops instead of running on
+   * (and writing) while the executor retries the same scope.
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -462,8 +493,35 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     };
   }
 
-  const { result, error } = await runSubAgent(harness);
+  const { result, error, aborted } = await runSubAgent(harness, {
+    ...(opts.signal ? { signal: opts.signal } : {}),
+  });
   const durationMs = Date.now() - started;
+
+  if (aborted) {
+    // Cancelled by the caller (node timeout). Leave a worktree in place only
+    // if it would have been kept anyway — otherwise clean up, since no result
+    // is coming and an orphan worktree would linger.
+    if (worktree && !shouldKeepWorktree()) await cleanupKrakenWorktree(worktree);
+    appendKrakenRadio(parentCwd, sessionId, {
+      kind: 'error',
+      agent,
+      thoroughness,
+      description: args.description,
+      detail: 'cancelled: node timeout',
+      model: sub.model,
+      worktree: worktree?.path ?? null,
+      durationMs,
+      ok: false,
+    });
+    krakenTentacleEnd(liveId, {
+      ok: false,
+      model: sub.model,
+      detail: 'cancelled',
+      durationMs,
+    });
+    return { ok: false, agent, error: 'task: sub-agent cancelled (node timeout)', cancelled: true };
+  }
 
   if (!result) {
     if (worktree) await cleanupKrakenWorktree(worktree);

@@ -63,6 +63,7 @@ import {
 } from './graphStatus.js';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+import { saveGraphSnapshot, toGraphSnapshot } from './graphMemory.js';
 
 /** Default cap on concurrently-running tentacles across the whole graph. */
 export const DEFAULT_MAX_PARALLEL = 12;
@@ -110,6 +111,21 @@ export const DEFAULT_NODE_TIMEOUT_MS = 300_000;
  * cascade-skipped dependents with them.
  */
 export const DEFAULT_WRITER_NODE_TIMEOUT_MS = 900_000;
+
+/**
+ * How long to wait for a cancelled tentacle to actually unwind before
+ * declaring it unstoppable. Cancellation lands at the sub-agent's next event
+ * boundary, so this only needs to cover one in-flight provider chunk or tool
+ * call, not a whole turn.
+ */
+export const DEFAULT_CANCEL_GRACE_MS = 30_000;
+
+export function resolveCancelGraceMs(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.ZELARI_KRAKEN_CANCEL_GRACE_MS;
+  if (raw === undefined || raw === '') return DEFAULT_CANCEL_GRACE_MS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_CANCEL_GRACE_MS;
+}
 
 /**
  * Wall-clock bound for one tentacle. `ZELARI_KRAKEN_NODE_TIMEOUT_MS` overrides
@@ -170,6 +186,8 @@ export interface KrakenGraphExecutorOptions {
   parentCwd: string;
   /** Session id used for radio JSONL correlation. */
   sessionId: string;
+  /** Original goal text, recorded in the cross-run graph snapshot. */
+  goal?: string;
   maxParallel?: number;
   fixBudget?: number;
   /**
@@ -178,6 +196,11 @@ export interface KrakenGraphExecutorOptions {
    * a larger budget than readers).
    */
   nodeTimeoutMs?: number;
+  /**
+   * How long to wait for a cancelled tentacle to unwind before treating it as
+   * unstoppable (and therefore un-retryable). Default: resolveCancelGraceMs().
+   */
+  cancelGraceMs?: number;
   /** Force-enable/disable the Level-3 world-model gate (else auto-detected). */
   worldModelGate?: boolean;
   /** Injection points for tests — default to the real implementations. */
@@ -206,9 +229,11 @@ export class KrakenGraphExecutor {
   private readonly deps: TaskToolDeps;
   private readonly parentCwd: string;
   private readonly sessionId: string;
+  private readonly goal: string | undefined;
   private readonly maxParallel: number;
   /** Explicit all-kinds override; when undefined the budget is per-kind. */
   private readonly nodeTimeoutMs: number | undefined;
+  private readonly cancelGraceMs: number | undefined;
   private fixBudgetRemaining: number;
   private readonly worldModelGateOverride: boolean | undefined;
   private readonly runTentacleFn: (opts: RunTentacleOptions) => Promise<TentacleResult>;
@@ -225,8 +250,10 @@ export class KrakenGraphExecutor {
     this.deps = opts.taskToolDeps;
     this.parentCwd = opts.parentCwd;
     this.sessionId = opts.sessionId;
+    this.goal = opts.goal;
     this.maxParallel = opts.maxParallel ?? resolveMaxParallel();
     this.nodeTimeoutMs = opts.nodeTimeoutMs;
+    this.cancelGraceMs = opts.cancelGraceMs;
     this.fixBudgetRemaining = opts.fixBudget ?? resolveFixBudget();
     this.worldModelGateOverride = opts.worldModelGate;
     this.runTentacleFn = opts.runTentacleFn ?? runTentacle;
@@ -301,6 +328,13 @@ export class KrakenGraphExecutor {
     }
     endKrakenGraphLive(graph, converged);
 
+    // Cross-run memory: let the next planning pass see where this one stopped
+    // instead of replanning the whole goal blind.
+    await saveGraphSnapshot(
+      this.parentCwd,
+      toGraphSnapshot(graph, { goal: this.goal ?? graph.id, converged }),
+    );
+
     return {
       graph,
       converged,
@@ -320,6 +354,7 @@ export class KrakenGraphExecutor {
 
     const usesWorktree = node.kind === 'general' || node.kind === 'fix';
     const agent: TaskAgentKind = node.kind === 'fix' ? 'general' : node.kind;
+    const controller = new AbortController();
     const res = await this.withNodeTimeout(
       this.runTentacleFn({
         deps: this.deps,
@@ -338,8 +373,10 @@ export class KrakenGraphExecutor {
         deferMerge: usesWorktree,
         graphId: graph.id,
         nodeId: node.id,
+        signal: controller.signal,
       }),
       agent,
+      controller,
     );
 
     if (res.ok && usesWorktree) {
@@ -350,28 +387,70 @@ export class KrakenGraphExecutor {
 
   /**
    * Bound a tentacle run to its wall-clock budget (explicit `nodeTimeoutMs`
-   * option, else per-kind — writers get more than readers). On timeout, resolves
-   * to a synthetic `TentacleFailure` so the normal retry/fix/cascade-skip
-   * path handles it — this only bounds how long the EXECUTOR waits, it does
-   * not (cannot) forcibly cancel the underlying sub-agent run; the point is
-   * to guarantee `execute()` itself always settles so the caller's process
-   * can exit instead of hanging forever on one stuck node.
+   * option, else per-kind — writers get more than readers). On timeout the
+   * run is CANCELLED via its AbortSignal, then given `cancelGraceMs` to
+   * unwind. Cancellation lands at the sub-agent's next event boundary (an
+   * async generator only observes `.return()` when it next yields), so a run
+   * blocked on a slow provider call can outlive the grace period — that case
+   * resolves with `cancelled: false` and `applyResult` refuses to re-spawn
+   * the node, since a tentacle that may still be writing must not be joined
+   * by a second one on the same scope.
+   *
+   * Either way `execute()` always settles, so the caller's process can exit
+   * instead of hanging forever on one stuck node.
    */
-  private withNodeTimeout(
+  private async withNodeTimeout(
     promise: Promise<TentacleResult>,
     agent: TaskAgentKind,
+    controller?: AbortController,
   ): Promise<TentacleResult> {
     const ms = this.nodeTimeoutMs ?? resolveNodeTimeoutMs(process.env, agent);
     if (ms <= 0) return promise;
+
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<TentacleResult>((resolve) => {
-      timer = setTimeout(() => {
-        resolve({ ok: false, agent, error: `tentacle timed out after ${ms}ms` });
-      }, ms);
+    const TIMED_OUT = Symbol('timeout');
+    const timeout = new Promise<typeof TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => resolve(TIMED_OUT), ms);
     });
-    return Promise.race([promise, timeout]).finally(() => {
+
+    const raced = await Promise.race([promise, timeout]).finally(() => {
       if (timer) clearTimeout(timer);
     });
+    if (raced !== TIMED_OUT) return raced;
+
+    // Budget blown. Tell the tentacle to stop, then give it a bounded grace
+    // period to actually unwind — a run that has already been told to stop is
+    // safe to re-run, one that is still going is not (two agents writing the
+    // same scope is exactly the corruption this guards against).
+    controller?.abort();
+    const graceMs = this.cancelGraceMs ?? resolveCancelGraceMs();
+    let graceTimer: ReturnType<typeof setTimeout> | undefined;
+    const grace = new Promise<typeof TIMED_OUT>((resolve) => {
+      graceTimer = setTimeout(() => resolve(TIMED_OUT), graceMs);
+    });
+    const settled = await Promise.race([promise, grace]).finally(() => {
+      if (graceTimer) clearTimeout(graceTimer);
+    });
+
+    if (settled !== TIMED_OUT) {
+      // The run is over, so the scope is free and a retry/fix would be safe.
+      // If it actually SUCCEEDED — finishing in the window between the
+      // deadline and the abort landing — keep that result rather than
+      // discarding completed (and already written) work over a few ms.
+      if (settled.ok) return settled;
+      return { ...settled, cancelled: true };
+    }
+    // Did not stop in time. Report it as uncancelled so `applyResult` refuses
+    // to re-spawn this node — better one failed node than two concurrent
+    // writers on one directory.
+    return {
+      ok: false,
+      agent,
+      error:
+        `tentacle timed out after ${ms}ms and did not stop within ${graceMs}ms of being cancelled; ` +
+        `not retrying to avoid two tentacles writing the same scope`,
+      cancelled: false,
+    };
   }
 
   /**
@@ -443,6 +522,21 @@ export class KrakenGraphExecutor {
     }
 
     node.error = res.error;
+
+    // A run we could not confirm has stopped may still be writing this node's
+    // scope. Re-spawning would put two tentacles in the same directory — the
+    // failure mode that produced duplicate parallel implementations of the
+    // same modules. Fail terminally instead; dependents cascade-skip.
+    if (res.cancelled === false) {
+      node.status = 'error';
+      this.radio('node_end', {
+        description: node.label,
+        agent: node.kind,
+        detail: res.error,
+        ok: false,
+      });
+      return;
+    }
 
     if (node.retryCount < node.maxRetries) {
       node.retryCount += 1;

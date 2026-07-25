@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.28.0] - 2026-07-25
+
+### Fixed
+- **Kraken graph: timed-out tentacles kept running and writing** — the node timeout only bounded how long the executor *waited*; the sub-agent was never cancelled, so a retry (and then a fix node) spawned onto the same scope while the original was still editing. Observed for real: three tentacles wrote `src/ships/` concurrently and produced two parallel implementations of the same modules. `runSubAgent`/`runTentacle` now accept an `AbortSignal` — breaking the `for await` over `AgentHarness.run()` unwinds the generator — and the executor aborts on timeout, waits `ZELARI_KRAKEN_CANCEL_GRACE_MS` (default 30s) for the run to unwind, and refuses to re-spawn a node whose previous attempt could not be confirmed stopped.
+- **Kraken graph: a plan that cannot change anything reported success** — a "continua" prompt was planned as a single read-only `explore` node; the graph ran, converged and reported `1/1 done` having touched no file. The planner now rejects a plan with no `general` node and re-asks with corrective feedback.
+- **Kraken planner: draft JSON inside a model's `<think>` block was mistaken for the answer** — reasoning models such as MiniMax-M3 stream their chain-of-thought inside `message.content` wrapped in `<think>` tags, and sketch partial JSON while reasoning. The extractor took the first balanced `{...}` it found, so planning failed with `nodes: expected array, received undefined`. Reasoning blocks are now stripped, and the extractor walks every balanced object and picks the first one carrying the key the caller asked for.
+
+### Added
+- **Kraken graph: cross-run memory** — the last graph's terminal state is persisted to `.zelari/kraken/last-graph.json` and fed to the next planning pass as a "previous attempt" briefing (done / failed / never-ran, with scopes, and the goal it belonged to). A follow-up plans the remaining work instead of replanning the goal blind. New module `src/cli/kraken/graphMemory.ts`.
+
+### Verified
+End-to-end against MiniMax-M3 (the model these failures were first reported on): a fresh goal planned a 7-node DAG, ran two writers in parallel on disjoint scopes and converged 7/7 with code that runs; a follow-up `continua` on a deliberately unfinished graph planned only the 2 remaining nodes — instead of the single do-nothing `explore` node it used to produce — and converged 2/2.
+
 ## [1.27.2] - 2026-07-25
 
 ### Fixed

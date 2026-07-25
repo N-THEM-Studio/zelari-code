@@ -40,8 +40,14 @@ function jsonResponse(body: unknown, ok = true): Response {
   } as unknown as Response;
 }
 
+// Includes a `general` node on purpose: a plan made only of read-only
+// `explore` nodes is rejected by the planner, since it could never change
+// anything yet would still converge and report success.
 const VALID_GRAPH_JSON = JSON.stringify({
-  nodes: [{ id: 'e1', kind: 'explore', label: 'research', prompt: 'find stuff', deps: [] }],
+  nodes: [
+    { id: 'e1', kind: 'explore', label: 'research', prompt: 'find stuff', deps: [] },
+    { id: 'g1', kind: 'general', label: 'do the work', prompt: 'do it', deps: ['e1'] },
+  ],
 });
 
 describe('planTaskGraph — default LLM transport', () => {
@@ -184,6 +190,81 @@ describe('planTaskGraph — transport failures', () => {
     await planTaskGraph({ prompt: 'goal' });
 
     expect(seenSignal?.aborted).toBe(false);
+  });
+});
+
+/**
+ * Regression: a "continua" prompt was planned as a single read-only explore
+ * node. The graph ran, converged, reported "1/1 done" — and changed nothing.
+ */
+describe('planTaskGraph — a plan must be able to change something', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  const EXPLORE_ONLY = JSON.stringify({
+    nodes: [
+      { id: 'e1', kind: 'explore', label: 'Assess current workspace state', prompt: 'look', deps: [] },
+    ],
+  });
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('rejects an explore-only plan and asks again with corrective feedback', async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({ choices: [{ message: { content: EXPLORE_ONLY } }] }))
+      .mockResolvedValueOnce(jsonResponse({ choices: [{ message: { content: VALID_GRAPH_JSON } }] }));
+
+    const graph = await planTaskGraph({ prompt: 'continua' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const secondBody = JSON.parse(fetchMock.mock.calls[1][1].body as string);
+    expect(secondBody.messages[1].content).toMatch(/no "general" node/);
+    expect([...graph.nodes.values()].some((n) => n.kind === 'general')).toBe(true);
+  });
+
+  it('fails loudly rather than running a plan that cannot change anything', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ choices: [{ message: { content: EXPLORE_ONLY } }] }));
+
+    await expect(planTaskGraph({ prompt: 'continua' })).rejects.toThrow(/no "general" node/);
+  });
+});
+
+describe('planTaskGraph — resume context', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi
+      .fn()
+      .mockResolvedValue(jsonResponse({ choices: [{ message: { content: VALID_GRAPH_JSON } }] }));
+    vi.stubGlobal('fetch', fetchMock);
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('passes the previous-attempt briefing to the model', async () => {
+    await planTaskGraph({
+      prompt: 'continua',
+      previousAttempt: '## Previous attempt on this goal\nAlready completed:\n- ocean',
+    });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.messages[1].content).toMatch(/Previous attempt on this goal/);
+    expect(body.messages[1].content).toMatch(/ocean/);
+  });
+
+  it('omits the section entirely when there is no previous attempt', async () => {
+    await planTaskGraph({ prompt: 'build it' });
+
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    expect(body.messages[1].content).not.toMatch(/Previous attempt/);
   });
 });
 
