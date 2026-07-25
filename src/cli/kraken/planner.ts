@@ -212,11 +212,36 @@ function extractBalancedJsonObject(s: string): string | null {
 /**
  * Best-effort repair for the JSON mistakes models make most often despite
  * being told "valid JSON only": single-quoted strings (Python/JS-dict
- * style), unquoted/bareword object keys (JS-object-literal style), and
- * trailing commas before `}`/`]`. Deliberately permissive — this is a
- * fallback tried only after a strict `JSON.parse` has already failed, not a
- * general JSON5 parser.
+ * style), unquoted/bareword object keys (JS-object-literal style), trailing
+ * commas before `}`/`]`, and raw control characters inside string literals.
+ * That last one is the most common failure here by far: the planner asks for
+ * a self-contained multi-line `prompt` per node, so models routinely emit
+ * real newlines inside the string rather than `\n` escapes. Deliberately
+ * permissive — this is a fallback tried only after a strict `JSON.parse` has
+ * already failed, not a general JSON5 parser.
  */
+/**
+ * Escape a character that JSON forbids raw inside a string literal (anything
+ * below U+0020). Everything else is returned unchanged.
+ */
+function escapeJsonControlChar(c: string): string {
+  if (c >= ' ') return c;
+  switch (c) {
+    case '\n':
+      return '\\n';
+    case '\r':
+      return '\\r';
+    case '\t':
+      return '\\t';
+    case '\b':
+      return '\\b';
+    case '\f':
+      return '\\f';
+    default:
+      return `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`;
+  }
+}
+
 function repairLooseJson(s: string): string {
   let out = '';
   let i = 0;
@@ -228,15 +253,20 @@ function repairLooseJson(s: string): string {
       i += 1;
       while (i < n) {
         const c = s[i];
-        out += c;
         i += 1;
         if (c === '\\') {
+          out += c;
           if (i < n) {
             out += s[i];
             i += 1;
           }
           continue;
         }
+        // A raw control character inside a string literal — most often a real
+        // newline in a multi-line `prompt` — is illegal JSON. Escape it
+        // instead of copying it through, or the repair pass fails for the
+        // same reason the strict parse did.
+        out += escapeJsonControlChar(c);
         if (c === '"') break;
       }
       continue;
@@ -256,7 +286,7 @@ function repairLooseJson(s: string): string {
           i += 1;
           break;
         }
-        value += c;
+        value += escapeJsonControlChar(c);
         i += 1;
       }
       out += `"${value.replace(/"/g, '\\"')}"`;

@@ -96,12 +96,44 @@ export function resolveFixBudget(env: NodeJS.ProcessEnv = process.env): number {
  */
 export const DEFAULT_NODE_TIMEOUT_MS = 300_000;
 
-/** Set ZELARI_KRAKEN_NODE_TIMEOUT_MS=0 to disable (not recommended). */
-export function resolveNodeTimeoutMs(env: NodeJS.ProcessEnv = process.env): number {
+/**
+ * Writers get a much larger budget than readers. A `general` (or `fix`) node
+ * is a bounded but real coding task — scaffolding a project, adding a
+ * subsystem across several files — and 5 minutes is simply not enough for
+ * one, especially on a slow reasoning model. `explore` and `verify` nodes are
+ * read-only and quick, so they keep the tighter bound.
+ *
+ * Observed failure that prompted the split: a graph whose two largest general
+ * nodes ("project scaffold + ocean integration + shared core", "three ship
+ * classes + selection screen + sailing controller") both died on
+ * `tentacle timed out after 300000ms`, taking their fix nodes and four
+ * cascade-skipped dependents with them.
+ */
+export const DEFAULT_WRITER_NODE_TIMEOUT_MS = 900_000;
+
+/**
+ * Wall-clock bound for one tentacle. `ZELARI_KRAKEN_NODE_TIMEOUT_MS` overrides
+ * every kind (single knob, unchanged semantics: `0` disables);
+ * `ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS` overrides just the writer budget.
+ */
+export function resolveNodeTimeoutMs(
+  env: NodeJS.ProcessEnv = process.env,
+  agent?: TaskAgentKind,
+): number {
   const raw = env.ZELARI_KRAKEN_NODE_TIMEOUT_MS;
-  if (raw === undefined || raw === '') return DEFAULT_NODE_TIMEOUT_MS;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_NODE_TIMEOUT_MS;
+  if (raw !== undefined && raw !== '') {
+    const n = Number.parseInt(raw, 10);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  if (agent === 'general') {
+    const rawWriter = env.ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS;
+    if (rawWriter !== undefined && rawWriter !== '') {
+      const n = Number.parseInt(rawWriter, 10);
+      if (Number.isFinite(n) && n >= 0) return n;
+    }
+    return DEFAULT_WRITER_NODE_TIMEOUT_MS;
+  }
+  return DEFAULT_NODE_TIMEOUT_MS;
 }
 
 /**
@@ -140,7 +172,11 @@ export interface KrakenGraphExecutorOptions {
   sessionId: string;
   maxParallel?: number;
   fixBudget?: number;
-  /** Wall-clock bound per tentacle run (ms). 0 disables. Default: resolveNodeTimeoutMs(). */
+  /**
+   * Wall-clock bound per tentacle run (ms), applied to every node kind. 0
+   * disables. Omit to resolve per kind via `resolveNodeTimeoutMs` (writers get
+   * a larger budget than readers).
+   */
   nodeTimeoutMs?: number;
   /** Force-enable/disable the Level-3 world-model gate (else auto-detected). */
   worldModelGate?: boolean;
@@ -171,7 +207,8 @@ export class KrakenGraphExecutor {
   private readonly parentCwd: string;
   private readonly sessionId: string;
   private readonly maxParallel: number;
-  private readonly nodeTimeoutMs: number;
+  /** Explicit all-kinds override; when undefined the budget is per-kind. */
+  private readonly nodeTimeoutMs: number | undefined;
   private fixBudgetRemaining: number;
   private readonly worldModelGateOverride: boolean | undefined;
   private readonly runTentacleFn: (opts: RunTentacleOptions) => Promise<TentacleResult>;
@@ -189,7 +226,7 @@ export class KrakenGraphExecutor {
     this.parentCwd = opts.parentCwd;
     this.sessionId = opts.sessionId;
     this.maxParallel = opts.maxParallel ?? resolveMaxParallel();
-    this.nodeTimeoutMs = opts.nodeTimeoutMs ?? resolveNodeTimeoutMs();
+    this.nodeTimeoutMs = opts.nodeTimeoutMs;
     this.fixBudgetRemaining = opts.fixBudget ?? resolveFixBudget();
     this.worldModelGateOverride = opts.worldModelGate;
     this.runTentacleFn = opts.runTentacleFn ?? runTentacle;
@@ -312,7 +349,8 @@ export class KrakenGraphExecutor {
   }
 
   /**
-   * Bound a tentacle run to `nodeTimeoutMs` wall-clock. On timeout, resolves
+   * Bound a tentacle run to its wall-clock budget (explicit `nodeTimeoutMs`
+   * option, else per-kind — writers get more than readers). On timeout, resolves
    * to a synthetic `TentacleFailure` so the normal retry/fix/cascade-skip
    * path handles it — this only bounds how long the EXECUTOR waits, it does
    * not (cannot) forcibly cancel the underlying sub-agent run; the point is
@@ -323,8 +361,8 @@ export class KrakenGraphExecutor {
     promise: Promise<TentacleResult>,
     agent: TaskAgentKind,
   ): Promise<TentacleResult> {
-    if (this.nodeTimeoutMs <= 0) return promise;
-    const ms = this.nodeTimeoutMs;
+    const ms = this.nodeTimeoutMs ?? resolveNodeTimeoutMs(process.env, agent);
+    if (ms <= 0) return promise;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timeout = new Promise<TentacleResult>((resolve) => {
       timer = setTimeout(() => {

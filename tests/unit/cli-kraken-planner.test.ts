@@ -70,6 +70,49 @@ describe('extractJsonObject', () => {
   it('does not mangle a double-quoted string containing an apostrophe', () => {
     expect(extractJsonObject(`{"label": "it's fine"}`)).toEqual({ label: "it's fine" });
   });
+
+  // Regression: "Bad control character in string literal in JSON at position N".
+  // The planner asks each node for a self-contained multi-line `prompt`, so
+  // models emit real newlines inside the string instead of `\n` escapes —
+  // illegal JSON that the repair pass used to copy through verbatim.
+  const NL = String.fromCharCode(10);
+  const TAB = String.fromCharCode(9);
+
+  it('repairs a raw newline inside a double-quoted string', () => {
+    expect(extractJsonObject(`{"prompt": "Do this:${NL}- one${NL}- two"}`)).toEqual({
+      prompt: `Do this:${NL}- one${NL}- two`,
+    });
+  });
+
+  it('repairs a raw tab and carriage return inside a double-quoted string', () => {
+    expect(extractJsonObject(`{"prompt": "a${TAB}b\r\nc"}`)).toEqual({
+      prompt: `a${TAB}b\r\nc`,
+    });
+  });
+
+  it('repairs a raw newline inside a single-quoted string', () => {
+    expect(extractJsonObject(`{'prompt': 'line one${NL}line two'}`)).toEqual({
+      prompt: `line one${NL}line two`,
+    });
+  });
+
+  it('repairs raw newlines in a full multi-node graph, preserving escapes', () => {
+    const raw =
+      `{"nodes": [{"id": "g1", "kind": "general", "label": "x",` +
+      ` "prompt": "Build it.${NL}Rules:${NL}- keep the \\"quoted\\" name${NL}- use a\\ttab",` +
+      ` "deps": []}]}`;
+    const parsed = extractJsonObject(raw) as { nodes: Array<{ prompt: string }> };
+    expect(parsed.nodes[0].prompt).toBe(
+      `Build it.${NL}Rules:${NL}- keep the "quoted" name${NL}- use a${TAB}tab`,
+    );
+  });
+
+  it('leaves already-escaped sequences alone', () => {
+    expect(extractJsonObject('{"a": "line\\nbreak", "b": 1,}')).toEqual({
+      a: 'line\nbreak',
+      b: 1,
+    });
+  });
 });
 
 describe('buildGraphFromPlan', () => {

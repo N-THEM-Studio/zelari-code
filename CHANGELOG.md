@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.2] - 2026-07-25
+
+### Fixed
+- **Kraken planner: raw control characters in the model's JSON** — `Bad control character in string literal in JSON at position N`. The planner asks each node for a self-contained *multi-line* `prompt`, so models routinely emit real newlines inside the string instead of `\n` escapes — illegal JSON that the loose-JSON repair pass copied through verbatim, so both parse attempts failed identically. The repair pass now escapes every character below U+0020 inside string literals (single- and double-quoted), leaving already-escaped sequences untouched.
+- **Kraken graph: writer nodes timed out at 5 minutes** — `tentacle timed out after 300000ms` killed `general`/`fix` nodes doing real multi-file work (project scaffolds, subsystems), taking their dependents down as cascade skips. The wall-clock budget is now per node kind: 300s for read-only `explore`/`verify`, **900s** for writers. `ZELARI_KRAKEN_NODE_TIMEOUT_MS` still overrides every kind (unchanged semantics, `0` disables); `ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS` overrides just the writer budget.
+
 ## [1.27.1] - 2026-07-25
 
 ### Fixed

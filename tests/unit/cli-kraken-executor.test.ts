@@ -5,7 +5,12 @@ import {
   type TaskNodeKind,
   type TaskNodeStatus,
 } from '@zelari/core';
-import { KrakenGraphExecutor } from '../../src/cli/kraken/executor.js';
+import {
+  KrakenGraphExecutor,
+  resolveNodeTimeoutMs,
+  DEFAULT_NODE_TIMEOUT_MS,
+  DEFAULT_WRITER_NODE_TIMEOUT_MS,
+} from '../../src/cli/kraken/executor.js';
 import type { RunTentacleOptions, TentacleResult } from '../../src/cli/kraken/tentacle.js';
 import type {
   WorktreeHandle,
@@ -427,6 +432,74 @@ describe('KrakenGraphExecutor', () => {
 
       const summary = await executor.execute(graph);
       expect(summary.converged).toBe(true);
+    });
+
+    /**
+     * Regression: a real graph lost both of its largest `general` nodes to
+     * `tentacle timed out after 300000ms` — 5 minutes is a reader's budget,
+     * not enough for a node that scaffolds a project across many files.
+     */
+    describe('resolveNodeTimeoutMs — per-kind budgets', () => {
+      it('gives writers a larger default budget than readers', () => {
+        expect(resolveNodeTimeoutMs({}, 'general')).toBe(DEFAULT_WRITER_NODE_TIMEOUT_MS);
+        expect(resolveNodeTimeoutMs({}, 'explore')).toBe(DEFAULT_NODE_TIMEOUT_MS);
+        expect(resolveNodeTimeoutMs({}, 'verify')).toBe(DEFAULT_NODE_TIMEOUT_MS);
+        expect(DEFAULT_WRITER_NODE_TIMEOUT_MS).toBeGreaterThan(DEFAULT_NODE_TIMEOUT_MS);
+      });
+
+      it('keeps the no-agent default unchanged for existing callers', () => {
+        expect(resolveNodeTimeoutMs({})).toBe(DEFAULT_NODE_TIMEOUT_MS);
+      });
+
+      it('lets ZELARI_KRAKEN_NODE_TIMEOUT_MS override every kind', () => {
+        const env = { ZELARI_KRAKEN_NODE_TIMEOUT_MS: '1234' };
+        expect(resolveNodeTimeoutMs(env, 'general')).toBe(1234);
+        expect(resolveNodeTimeoutMs(env, 'explore')).toBe(1234);
+        expect(resolveNodeTimeoutMs({ ZELARI_KRAKEN_NODE_TIMEOUT_MS: '0' }, 'general')).toBe(0);
+      });
+
+      it('lets ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS override only writers', () => {
+        const env = { ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS: '77' };
+        expect(resolveNodeTimeoutMs(env, 'general')).toBe(77);
+        expect(resolveNodeTimeoutMs(env, 'explore')).toBe(DEFAULT_NODE_TIMEOUT_MS);
+      });
+
+      it('falls back to the default on an unparseable value', () => {
+        expect(resolveNodeTimeoutMs({ ZELARI_KRAKEN_NODE_TIMEOUT_MS: 'soon' }, 'general')).toBe(
+          DEFAULT_WRITER_NODE_TIMEOUT_MS,
+        );
+      });
+    });
+
+    it('applies the writer budget to a fix node (mapped to the general agent)', async () => {
+      const seen: Array<{ description: string; agent: string }> = [];
+      const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+        seen.push({ description: opts.args.description, agent: opts.agent });
+        return {
+          ok: true,
+          agent: opts.agent,
+          thoroughness: opts.thoroughness,
+          model: 'test-model',
+          result: 'done',
+          footer: '',
+          worktreePath: null,
+          worktreeHandle: null,
+        };
+      };
+
+      const graph = createGraph('fix-agent', [node('g1', [], { kind: 'fix', maxRetries: 0 })]);
+
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'test-session',
+        runTentacleFn,
+        worldModelGate: false,
+      });
+
+      await executor.execute(graph);
+
+      expect(seen[0]?.agent).toBe('general');
     });
   });
 });
