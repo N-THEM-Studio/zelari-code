@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.27.0] - 2026-07-25
+
+### Added
+- **Kraken Graph engine (F1-F6)** — DAG-based multi-tentacle planning and execution, replacing the single-parent-orchestrates-flat-tentacles model for complex goals: pure DAG primitives + scope-overlap parallelism policy (`packages/core/src/kraken`), a parallel/retry/fix/sequential-merge executor bounded by `ZELARI_KRAKEN_MAX_PARALLEL` / `ZELARI_KRAKEN_FIX_BUDGET`, an LLM planner that turns a goal into a validated task graph, StatusBar/ASCII graph observability, and end-to-end wiring via `/kraken graph <goal>` and the `--kraken-graph <goal>` headless flag. Gated by `ZELARI_KRAKEN_GRAPH`.
+- **Desktop: Kraken Graph toggle** — topbar control wires the `--kraken-graph` headless flag into Desktop's run pipeline; headless graph results now render as a normal assistant chat message.
+- **Companion Android: provider/model picker** — fetches host config (`/v1/config`) to list providers/models and passes an explicit provider/model on run start instead of relying on the host's persisted default; adds `/v1/runs` (active + recent) plumbing; default mode switches from `agent` to `kraken`.
+
+### Fixed
+- **Kraken Graph** — tentacle wall-clock time bounded (`ZELARI_KRAKEN_NODE_TIMEOUT_MS`, default 300s) so a hung sub-agent can no longer wedge the whole headless process; graph tentacles now inherit the caller's resolved provider/model instead of the persisted default; planner recovers loose/malformed LLM JSON (single quotes, bareword keys, trailing commas) and raised its `max_tokens` budget (4096 -> 8192, overridable) with a fallback to `reasoning_content` when a reasoning model truncates its JSON answer.
+
 ## [1.26.0] - 2026-07-23
 
 ### Added
