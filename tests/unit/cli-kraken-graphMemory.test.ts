@@ -139,4 +139,35 @@ describe('formatSnapshotForPlanner', () => {
     expect(out).toMatch(/- ships \[src\/ships\/\] — timed out/);
     expect(out).toMatch(/Never ran[\s\S]*- wiring/);
   });
+
+  it('briefs the planner on a converged run whose work was rejected', () => {
+    // Every node reached `done`, so the old early-return said nothing at all —
+    // and the next run treated rejected work as finished business.
+    const out = formatSnapshotForPlanner({
+      ...snapshot([{ id: 'g1', kind: 'general', label: 'ocean', status: 'done' }]),
+      converged: true,
+      unresolvedFindings: [
+        {
+          nodeId: 'g1',
+          label: 'ocean',
+          reason: 'fail',
+          findings: 'waves never animate\nmore detail',
+        },
+      ],
+    });
+
+    expect(out).toMatch(/1 rejected by review/);
+    expect(out).toMatch(/REJECTED by review[\s\S]*- ocean — waves never animate/);
+    // A rejected node must NOT also appear under "do NOT redo this work".
+    expect(out).not.toMatch(/do NOT redo this work:\n- ocean/);
+  });
+
+  it('still says nothing when a converged run had no findings', () => {
+    expect(
+      formatSnapshotForPlanner({
+        ...snapshot([{ id: 'a', kind: 'general', label: 'a', status: 'done' }]),
+        converged: true,
+      }),
+    ).toBe('');
+  });
 });

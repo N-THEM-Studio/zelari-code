@@ -163,7 +163,9 @@ async function runHeadlessKrakenGraph(
 
   const { planTaskGraph } = await import('./kraken/planner.js');
   const { loadGraphSnapshot, formatSnapshotForPlanner } = await import('./kraken/graphMemory.js');
-  const { formatKrakenGraphAscii } = await import('./kraken/graphStatus.js');
+  const { formatKrakenGraphAscii, formatKrakenGraphDigest } = await import(
+    './kraken/graphStatus.js'
+  );
   const { AuditLogger } = await import('./safety/auditLogger.js');
   const { createKrakenSubAgentContextFactory } = await import('./toolRegistry.js');
 
@@ -177,6 +179,18 @@ async function runHeadlessKrakenGraph(
     }
   };
 
+  // Ctrl-C used to SIGKILL the process mid-graph, leaving tentacles' worktrees
+  // and half-written files behind with no summary. The first SIGINT now asks
+  // the executor to stop: tentacles are cancelled, the graph settles, and the
+  // digest still prints. `once` means a second Ctrl-C falls through to Node's
+  // default handler and hard-exits, which is the right escape hatch.
+  const abort = new AbortController();
+  const onSigint = (): void => {
+    log('SIGINT — cancelling the graph; press Ctrl-C again to force quit');
+    abort.abort();
+  };
+  process.once('SIGINT', onSigint);
+
   try {
     log(`planning kraken graph: ${prompt}`);
     // Resume context: if the last graph in this project stopped short, tell
@@ -189,6 +203,7 @@ async function runHeadlessKrakenGraph(
       prompt,
       provider,
       model,
+      cwd,
       ...(previousAttempt ? { previousAttempt } : {}),
     });
     log(formatKrakenGraphAscii(graph));
@@ -212,9 +227,20 @@ async function runHeadlessKrakenGraph(
       parentCwd: cwd,
       sessionId,
       goal: prompt,
+      signal: abort.signal,
     });
     const summary = await executor.execute(graph);
-    const finalAscii = formatKrakenGraphAscii(summary.graph);
+    if (summary.cancelled) log('graph cancelled — partial results below');
+    // Topology answers "did it converge"; the digest answers "what did the
+    // eight tentacles actually do", which otherwise meant reading the radio
+    // JSONL by hand.
+    const finalAscii = `${formatKrakenGraphAscii(summary.graph)}\n\n${formatKrakenGraphDigest(
+      summary.graph,
+      {
+        durationsMs: summary.durationsMs,
+        unresolvedFindings: summary.unresolvedFindings,
+      },
+    )}`;
 
     if (opts.output === 'json') {
       // Desktop's chat transcript is built ONLY from a message_start ->
@@ -250,6 +276,8 @@ async function runHeadlessKrakenGraph(
       process.stderr.write(`[zelari-code --headless] kraken graph failed: ${message}\n`);
     }
     return 2;
+  } finally {
+    process.off('SIGINT', onSigint);
   }
 }
 

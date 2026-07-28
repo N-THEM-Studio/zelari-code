@@ -18,7 +18,7 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import type { TaskGraph, TaskNodeStatus } from '@zelari/core';
+import type { TaskGraph, TaskNodeStatus, UnresolvedFinding } from '@zelari/core';
 
 const SNAPSHOT_DIR = path.join('.zelari', 'kraken');
 const SNAPSHOT_FILE = 'last-graph.json';
@@ -39,7 +39,16 @@ export interface GraphSnapshot {
   finishedAt: string;
   converged: boolean;
   nodes: GraphSnapshotNode[];
+  /**
+   * Verify verdicts the run accepted without resolving. A converged graph is
+   * otherwise indistinguishable from a clean one, so the next planning pass
+   * would file rejected work under "already completed — do NOT redo".
+   */
+  unresolvedFindings?: UnresolvedFinding[];
 }
+
+/** Cap on stored findings text — the snapshot is a briefing, not a transcript. */
+const MAX_SNAPSHOT_FINDINGS_CHARS = 400;
 
 function snapshotPath(cwd: string): string {
   return path.join(cwd, SNAPSHOT_DIR, SNAPSHOT_FILE);
@@ -48,13 +57,22 @@ function snapshotPath(cwd: string): string {
 /** Reduce a live graph to the snapshot shape. */
 export function toGraphSnapshot(
   graph: TaskGraph,
-  opts: { goal: string; converged: boolean },
+  opts: {
+    goal: string;
+    converged: boolean;
+    unresolvedFindings?: UnresolvedFinding[];
+  },
 ): GraphSnapshot {
+  const unresolved = (opts.unresolvedFindings ?? []).map((u) => ({
+    ...u,
+    findings: u.findings.slice(0, MAX_SNAPSHOT_FINDINGS_CHARS),
+  }));
   return {
     graphId: graph.id,
     goal: opts.goal,
     finishedAt: new Date().toISOString(),
     converged: opts.converged,
+    ...(unresolved.length > 0 ? { unresolvedFindings: unresolved } : {}),
     nodes: [...graph.nodes.values()].map((n) => ({
       id: n.id,
       kind: n.kind,
@@ -102,7 +120,11 @@ export function formatSnapshotForPlanner(snapshot: GraphSnapshot | null): string
   const done = snapshot.nodes.filter((n) => n.status === 'done');
   const failed = snapshot.nodes.filter((n) => n.status === 'error');
   const skipped = snapshot.nodes.filter((n) => n.status === 'skipped');
-  if (failed.length === 0 && skipped.length === 0) return '';
+  const rejected = snapshot.unresolvedFindings ?? [];
+  // Work a reviewer rejected is unfinished business even though every node
+  // reached `done` — briefing the planner on a converged-but-rejected run is
+  // exactly the case this section exists for.
+  if (failed.length === 0 && skipped.length === 0 && rejected.length === 0) return '';
 
   const line = (n: GraphSnapshotNode): string =>
     `- ${n.label}${n.scope ? ` [${n.scope.join(', ')}]` : ''}${n.error ? ` — ${n.error}` : ''}`;
@@ -112,18 +134,36 @@ export function formatSnapshotForPlanner(snapshot: GraphSnapshot | null): string
   // different work. Naming it lets the model decide whether this is a
   // continuation or an unrelated request, instead of being told that somebody
   // else's failed nodes belong to the goal it was just given.
+  const rejectedIds = new Set(rejected.map((r) => r.nodeId));
+  const outcome = [
+    `${done.length} done`,
+    `${failed.length} failed`,
+    `${skipped.length} never ran`,
+    ...(rejected.length > 0 ? [`${rejected.length} rejected by review`] : []),
+  ].join(', ');
+
   const parts = [
     '',
     '## Previous unfinished task graph in this project',
     `Goal it was working on: "${snapshot.goal}"`,
-    `It did NOT finish (${done.length} done, ${failed.length} failed, ` +
-      `${skipped.length} never ran).`,
+    `It did NOT finish cleanly (${outcome}).`,
     '',
     'If that goal is unrelated to the one above, ignore this section entirely.',
     '',
   ];
-  if (done.length > 0) {
-    parts.push('Already completed — do NOT redo this work:', ...done.map(line), '');
+  // A rejected node is listed under its own heading, never under "do NOT redo".
+  const cleanlyDone = done.filter((n) => !rejectedIds.has(n.id));
+  if (cleanlyDone.length > 0) {
+    parts.push('Already completed — do NOT redo this work:', ...cleanlyDone.map(line), '');
+  }
+  if (rejected.length > 0) {
+    parts.push(
+      'Completed but REJECTED by review — the code exists, the defects do not fix themselves:',
+      ...rejected.map(
+        (r) => `- ${r.label} — ${r.findings.trim().split('\n')[0] ?? 'no detail'}`,
+      ),
+      '',
+    );
   }
   if (failed.length > 0) {
     parts.push('Failed — needs to be finished or repaired:', ...failed.map(line), '');

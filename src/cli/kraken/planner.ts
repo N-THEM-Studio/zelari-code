@@ -29,8 +29,28 @@ import {
 import { getModelForProvider, getProviderConfig } from '../providerConfig.js';
 import { resolveApiKeyWithMeta, type ProviderName } from '../keyStore.js';
 import { resolveBaseUrl } from '../provider/openai-compatible.js';
+import { buildWorkspaceSummary } from '../workspace/workspaceSummary.js';
 
 const MAX_PLAN_ATTEMPTS = 2;
+
+/**
+ * Char budget for the project listing handed to the planner.
+ *
+ * The planner is a one-shot completion that used to see the goal text and
+ * nothing else — so it invented directory layouts, and every `scope` it
+ * produced was a guess. Since scopes are what the executor uses to decide
+ * which writers may run in parallel, a hallucinated scope is not cosmetic:
+ * it makes the parallelism decision meaningless. Same budget the council
+ * path gives the same summary (`ZELARI_CTX_WORKSPACE_CHARS` default).
+ */
+const DEFAULT_PLANNER_WORKSPACE_CHARS = 3000;
+
+function resolvePlannerWorkspaceChars(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = env.ZELARI_KRAKEN_PLANNER_WORKSPACE_CHARS;
+  if (raw === undefined || raw === '') return DEFAULT_PLANNER_WORKSPACE_CHARS;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n >= 0 ? n : DEFAULT_PLANNER_WORKSPACE_CHARS;
+}
 
 /**
  * Default wall-clock budget for the planner's (non-streaming) completion
@@ -103,14 +123,26 @@ export const KRAKEN_PLANNER_SYSTEM_PROMPT = [
   '- kind "general": can edit files for one bounded, self-contained unit of work.',
   '- Do NOT emit "verify", "fix", or "merge" nodes — the executor adds those automatically.',
   '- "id" must be short, unique, kebab-case (e.g. "e1", "g-auth", "g-ui").',
-  '- "prompt" must be fully self-contained: the sub-agent sees ONLY this prompt, not this conversation.',
+  '- "prompt" must be self-contained: the sub-agent sees ONLY this prompt, not this conversation.',
   '- "deps" lists ids of nodes that must finish first (topological order); [] if none.',
+  '- A node DOES receive what its "deps" reported when they finished — the executor injects ' +
+    'their conclusions into its prompt. So write a dependent node as "using the findings above, …" ' +
+    'rather than duplicating the research its dependency will do.',
   '- When two "general" nodes touch disjoint parts of the codebase, give each a "scope" ' +
     '(path/glob allowlist) so they can run in parallel safely. If scopes might overlap, ' +
     'either omit scope (forces sequential execution) or add a dep between them.',
+  '- The user message includes a listing of the real project on disk. Build every "scope" ' +
+    'from paths that appear there (or new paths that clearly belong beside them) — an ' +
+    'invented path makes the parallelism decision meaningless, since scopes are exactly ' +
+    'what the executor uses to decide which writers may run at the same time.',
   '- Prefer one "explore" node feeding several parallel "general" nodes over one giant node.',
   '- Keep the graph small: most goals need 3-8 nodes total.',
-  '- "acceptance" (optional) lists concrete, checkable criteria for a "general" node.',
+  '- "acceptance" (optional) lists concrete, checkable criteria for a "general" node. ' +
+    'These are ENFORCED: the executor adds a verify tentacle that checks them on disk and can ' +
+    'send the work back for a rework round when they are not met. Write criteria a reader can ' +
+    'settle by opening a file or running a command ("exports slugify(input: string): string", ' +
+    '"npm test passes"), never subjective ones ("the code is elegant") — a criterion nobody can ' +
+    'check just burns a rework round.',
 ].join('\n');
 
 const PlannedNodeSchema = z.object({
@@ -155,6 +187,14 @@ export interface PlanTaskGraphOptions {
    * over with no idea what already exists.
    */
   previousAttempt?: string;
+  /**
+   * Project root whose real tree/stack/scripts are summarized into the
+   * planning prompt, so scopes name paths that exist. Omit to plan blind
+   * (tests, or a goal with no project yet).
+   */
+  cwd?: string;
+  /** Pre-built project listing, overriding the one derived from `cwd` (tests). */
+  workspace?: string;
 }
 
 /**
@@ -575,9 +615,40 @@ async function createDefaultLlmClient(opts: {
   };
 }
 
-function buildPlannerUserPrompt(prompt: string, previousAttempt?: string): string {
-  const prev = previousAttempt?.trim() ? `\n${previousAttempt.trim()}\n` : '';
-  return `Goal:\n${prompt.trim()}\n${prev}\nReturn ONLY the JSON object described in the system prompt.`;
+/**
+ * The project listing to plan against: an explicit override, else a summary
+ * derived from `cwd`. Best-effort — a summary is an optimization, and a goal
+ * that has no project yet (an empty directory) must still be plannable.
+ */
+function resolveWorkspaceListing(opts: PlanTaskGraphOptions): string | undefined {
+  if (opts.workspace !== undefined) return opts.workspace || undefined;
+  if (!opts.cwd) return undefined;
+  const maxChars = resolvePlannerWorkspaceChars();
+  if (maxChars <= 0) return undefined;
+  try {
+    return buildWorkspaceSummary(opts.cwd, { maxEntries: 24, maxChars }) || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export function buildPlannerUserPrompt(
+  prompt: string,
+  opts: { previousAttempt?: string; workspace?: string } = {},
+): string {
+  const parts = [`Goal:\n${prompt.trim()}`];
+  if (opts.workspace?.trim()) {
+    parts.push(
+      '',
+      '## The project this goal is about (real files on disk)',
+      opts.workspace.trim(),
+    );
+  }
+  if (opts.previousAttempt?.trim()) {
+    parts.push('', opts.previousAttempt.trim());
+  }
+  parts.push('', 'Return ONLY the JSON object described in the system prompt.');
+  return parts.join('\n');
 }
 
 function uniqueId(base: string, existing: Set<string>): string {
@@ -587,12 +658,62 @@ function uniqueId(base: string, existing: Set<string>): string {
   return `${base}-${i}`;
 }
 
+/** Cap on how much of the original task prompt is quoted into a verify node. */
+const MAX_VERIFY_TASK_PROMPT_CHARS = 1200;
+
+/**
+ * Build the prompt for the auto-injected `verify` node.
+ *
+ * The verify tentacle is a fresh sub-agent that sees only this text, so a bare
+ * "verify that <label> was done" gave it a three-word label and nothing else —
+ * no paths, no idea what was asked — and its pass/fail verdict was worth about
+ * as much. Restate the task, its scope and its acceptance criteria. What the
+ * writer actually reported is injected separately at run time by the executor
+ * (`buildUpstreamContext`), since it does not exist yet at planning time.
+ */
 function buildAutoVerifyPrompt(general: TaskNode): string {
-  const acc =
-    general.acceptance && general.acceptance.length > 0
-      ? `\n\nAcceptance criteria to check:\n${general.acceptance.map((a) => `- ${a}`).join('\n')}`
-      : '';
-  return `Verify the following work was completed correctly on disk: ${general.label}.${acc}`;
+  const taskPrompt =
+    general.prompt.length > MAX_VERIFY_TASK_PROMPT_CHARS
+      ? `${general.prompt.slice(0, MAX_VERIFY_TASK_PROMPT_CHARS)}\n… [truncated]`
+      : general.prompt;
+
+  const parts: string[] = [
+    `Verify on disk that this work was actually completed correctly: ${general.label}.`,
+    '',
+    '## The task that was carried out',
+    taskPrompt,
+  ];
+  if (general.scope && general.scope.length > 0) {
+    parts.push('', '## Paths the work was scoped to', ...general.scope.map((s) => `- ${s}`));
+  }
+  if (general.acceptance && general.acceptance.length > 0) {
+    parts.push(
+      '',
+      '## Acceptance criteria to check explicitly',
+      ...general.acceptance.map((a) => `- ${a}`),
+    );
+  }
+  parts.push(
+    '',
+    'Read the files involved rather than trusting any summary. Report the commands you ran ' +
+      'and every gap you found.',
+    '',
+    '## How to report your verdict',
+    'End your final message with a line of exactly this form, as the LAST line:',
+    '',
+    'VERDICT: PASS',
+    '',
+    'or',
+    '',
+    'VERDICT: FAIL',
+    '',
+    'This line is parsed. FAIL sends the work back to the tentacle that wrote it, together with ' +
+      'everything you write above the line — so state each gap concretely enough to be acted on ' +
+      '(file, what is wrong, what it should be). Only report FAIL for a real defect against the ' +
+      'task or its acceptance criteria: a rework round is expensive and there is only a small ' +
+      'number of them. Stylistic preferences are not a FAIL.',
+  );
+  return parts.join('\n');
 }
 
 /**
@@ -666,7 +787,11 @@ export async function planTaskGraph(opts: PlanTaskGraphOptions): Promise<TaskGra
     opts.llmClient ?? (await createDefaultLlmClient({ provider: opts.provider, model: opts.model }));
   const maxNodes = opts.maxNodes ?? DEFAULT_MAX_NODES;
   const graphId = opts.graphId ?? `kraken-${Date.now().toString(36)}`;
-  const userBase = buildPlannerUserPrompt(opts.prompt, opts.previousAttempt);
+  const workspace = resolveWorkspaceListing(opts);
+  const userBase = buildPlannerUserPrompt(opts.prompt, {
+    ...(opts.previousAttempt ? { previousAttempt: opts.previousAttempt } : {}),
+    ...(workspace ? { workspace } : {}),
+  });
 
   let lastError: string | undefined;
   let userMessage = userBase;

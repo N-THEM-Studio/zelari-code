@@ -8,15 +8,26 @@ import {
 import {
   KrakenGraphExecutor,
   resolveNodeTimeoutMs,
+  buildUpstreamContext,
+  thoroughnessForKind,
+  MAX_UPSTREAM_CHARS_PER_DEP,
+  MAX_UPSTREAM_CHARS_TOTAL,
   DEFAULT_NODE_TIMEOUT_MS,
   DEFAULT_WRITER_NODE_TIMEOUT_MS,
+  resolveFixBudget,
+  resolveGraphTimeoutMs,
+  resolveMaxReviewRounds,
 } from '../../src/cli/kraken/executor.js';
+import { buildGraphFromPlan } from '../../src/cli/kraken/planner.js';
 import type { RunTentacleOptions, TentacleResult } from '../../src/cli/kraken/tentacle.js';
 import type {
   WorktreeHandle,
   WorktreeMergeResult,
 } from '../../src/cli/tools/krakenWorktree.js';
-import { resetKrakenGraphLive } from '../../src/cli/kraken/graphStatus.js';
+import {
+  resetKrakenGraphLive,
+  getKrakenGraphLive,
+} from '../../src/cli/kraken/graphStatus.js';
 
 /** Compact node factory (mirrors packages/core/src/kraken/graph.test.ts). */
 function node(id: string, deps: string[] = [], over: Partial<TaskNode> = {}): TaskNode {
@@ -660,5 +671,1154 @@ describe('KrakenGraphExecutor', () => {
         expect(summary.converged).toBe(true);
       });
     });
+  });
+});
+
+describe('upstream context propagation', () => {
+  it('renders completed dependency results as a prompt section', () => {
+    const graph = createGraph('ctx', [
+      node('e1', [], { kind: 'explore', label: 'find auth', status: 'done', result: 'auth lives in src/auth/jwt.ts' }),
+      node('e2', [], { kind: 'explore', label: 'find db', status: 'done', result: 'db is sqlite' }),
+      node('g1', ['e1', 'e2'], { kind: 'general' }),
+    ]);
+
+    const ctx = buildUpstreamContext(graph, graph.nodes.get('g1')!);
+
+    expect(ctx).toContain('## Context from completed upstream tasks');
+    expect(ctx).toContain('### find auth (explore)');
+    expect(ctx).toContain('auth lives in src/auth/jwt.ts');
+    expect(ctx).toContain('### find db (explore)');
+    expect(ctx).toContain('db is sqlite');
+  });
+
+  it('includes a dependency scope in its heading', () => {
+    const graph = createGraph('ctx-scope', [
+      node('g1', [], { kind: 'general', label: 'A', scope: ['src/a'], status: 'done', result: 'wrote src/a/x.ts' }),
+      node('v1', ['g1'], { kind: 'verify' }),
+    ]);
+    expect(buildUpstreamContext(graph, graph.nodes.get('v1')!)).toContain(
+      '### A (general, scope: src/a)',
+    );
+  });
+
+  it('omits dependencies that are not done, produced nothing, or are unknown', () => {
+    const graph = createGraph('ctx-partial', [
+      node('e1', [], { kind: 'explore', status: 'error', result: 'never mind' }),
+      node('e2', [], { kind: 'explore', status: 'done', result: '   ' }),
+      node('g1', ['e1', 'e2', 'ghost'], { kind: 'general' }),
+    ]);
+    expect(buildUpstreamContext(graph, graph.nodes.get('g1')!)).toBe('');
+  });
+
+  it('truncates a single verbose dependency to the per-dep cap', () => {
+    const long = 'x'.repeat(MAX_UPSTREAM_CHARS_PER_DEP + 500);
+    const graph = createGraph('ctx-trunc', [
+      node('e1', [], { kind: 'explore', label: 'noisy', status: 'done', result: long }),
+      node('g1', ['e1'], { kind: 'general' }),
+    ]);
+
+    const ctx = buildUpstreamContext(graph, graph.nodes.get('g1')!);
+
+    expect(ctx).toContain(`truncated ${long.length}→${MAX_UPSTREAM_CHARS_PER_DEP} chars`);
+    expect(ctx.length).toBeLessThan(long.length);
+  });
+
+  it('stops at the total budget and names what it dropped', () => {
+    // A character that never occurs in the section's own prose, so counting it
+    // measures exactly the injected payload.
+    const blob = '§'.repeat(MAX_UPSTREAM_CHARS_PER_DEP);
+    const deps: TaskNode[] = [];
+    const ids: string[] = [];
+    // 4 deps x per-dep cap > total cap, so the last one cannot fit.
+    for (let i = 1; i <= 4; i++) {
+      deps.push(node(`e${i}`, [], { kind: 'explore', label: `dep ${i}`, status: 'done', result: blob }));
+      ids.push(`e${i}`);
+    }
+    const graph = createGraph('ctx-budget', [...deps, node('g1', ids, { kind: 'general' })]);
+
+    const ctx = buildUpstreamContext(graph, graph.nodes.get('g1')!);
+
+    expect(ctx).toContain('omitted for context budget: dep 4');
+    expect(ctx).not.toContain('### dep 4 (explore)');
+    // the injected blobs stay within the declared total budget
+    expect((ctx.match(/§/g) ?? []).length).toBe(MAX_UPSTREAM_CHARS_TOTAL);
+  });
+
+  it('feeds explore findings to the general node and the general result to its verify node', async () => {
+    const prompts: Record<string, string> = {};
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      prompts[opts.nodeId ?? '?'] = opts.args.prompt;
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: `${opts.nodeId} concluded something specific`,
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      };
+    };
+
+    const graph = buildGraphFromPlan('planner-shape', [
+      { id: 'e1', kind: 'explore', label: 'survey', prompt: 'survey the repo', deps: [] },
+      { id: 'g1', kind: 'general', label: 'build', prompt: 'build the thing', deps: ['e1'] },
+    ]);
+
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      worldModelGate: false,
+    });
+    const summary = await executor.execute(graph);
+
+    expect(summary.converged).toBe(true);
+    // the explore node itself has no deps -> unchanged prompt
+    expect(prompts['e1']).toBe('survey the repo');
+    // the general node receives the explore conclusion
+    expect(prompts['g1']).toContain('build the thing');
+    expect(prompts['g1']).toContain('## Context from completed upstream tasks');
+    expect(prompts['g1']).toContain('e1 concluded something specific');
+    // the auto-injected verify node receives what the writer reported
+    expect(prompts['verify-g1']).toContain('g1 concluded something specific');
+  });
+});
+
+describe('per-kind tool budget', () => {
+  it('gives writers a deeper budget than read-only kinds', () => {
+    expect(thoroughnessForKind('general')).toBe('deep');
+    expect(thoroughnessForKind('fix')).toBe('deep');
+    expect(thoroughnessForKind('explore')).toBe('medium');
+    expect(thoroughnessForKind('verify')).toBe('medium');
+  });
+
+  it('passes the per-kind thoroughness to the tentacle', async () => {
+    const seen: Record<string, string> = {};
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      seen[opts.nodeId ?? '?'] = opts.thoroughness;
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: 'ok',
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      };
+    };
+
+    const graph = createGraph('budget', [
+      node('e1', [], { kind: 'explore', maxRetries: 0 }),
+      node('g1', ['e1'], { kind: 'general', maxRetries: 0 }),
+      node('v1', ['g1'], { kind: 'verify', maxRetries: 0 }),
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(seen).toEqual({ e1: 'medium', g1: 'deep', v1: 'medium' });
+  });
+});
+
+describe('merge node source resolution', () => {
+  /** Fake runner that hands back a worktree handle for every writer node. */
+  const writerWorktreeRunner = async (opts: RunTentacleOptions): Promise<TentacleResult> => ({
+    ok: true,
+    agent: opts.agent,
+    thoroughness: opts.thoroughness,
+    model: 'test-model',
+    result: `${opts.nodeId} done`,
+    footer: '',
+    worktreePath: opts.agent === 'general' ? `/tmp/${opts.nodeId}` : null,
+    worktreeHandle: opts.agent === 'general' ? fakeWorktreeHandle(opts.nodeId ?? 'x') : null,
+  });
+
+  const noWorktreeRunner = async (opts: RunTentacleOptions): Promise<TentacleResult> => ({
+    ok: true,
+    agent: opts.agent,
+    thoroughness: opts.thoroughness,
+    model: 'test-model',
+    result: 'done',
+    footer: '',
+    worktreePath: null,
+    worktreeHandle: null,
+  });
+
+  it('merges the writers behind the verify nodes a planned merge depends on', async () => {
+    const merged: string[] = [];
+    const mergeFn = async (handle: WorktreeHandle): Promise<WorktreeMergeResult> => {
+      merged.push(handle.id);
+      return { ok: true, merged: true, committed: true, message: `merged ${handle.id}` };
+    };
+
+    // Exactly the shape planTaskGraph produces: merge -> verify-* -> general.
+    const graph = buildGraphFromPlan('planned-merge', [
+      { id: 'g1', kind: 'general', label: 'a', prompt: 'a', deps: [], scope: ['src/a'] },
+      { id: 'g2', kind: 'general', label: 'b', prompt: 'b', deps: [], scope: ['src/b'] },
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: writerWorktreeRunner,
+      mergeFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(summary.converged).toBe(true);
+    expect([...merged].sort()).toEqual(['g1', 'g2']);
+    expect(graph.nodes.get('merge')?.result).toContain('merged: ');
+  });
+
+  it('merges ancestor writers before the writers that depend on them', async () => {
+    const merged: string[] = [];
+    const mergeFn = async (handle: WorktreeHandle): Promise<WorktreeMergeResult> => {
+      merged.push(handle.id);
+      return { ok: true, merged: true, committed: true, message: 'ok' };
+    };
+
+    const graph = createGraph('ordered-merge', [
+      node('g1', [], { kind: 'general', maxRetries: 0 }),
+      node('g2', ['g1'], { kind: 'general', maxRetries: 0 }),
+      node('v1', ['g1'], { kind: 'verify', maxRetries: 0 }),
+      node('v2', ['g2'], { kind: 'verify', maxRetries: 0 }),
+      node('m1', ['v1', 'v2'], { kind: 'merge', maxRetries: 0 }),
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: writerWorktreeRunner,
+      mergeFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(merged).toEqual(['g1', 'g2']);
+  });
+
+  it('does not merge the same writer twice when two merge nodes cover it', async () => {
+    const merged: string[] = [];
+    const mergeFn = async (handle: WorktreeHandle): Promise<WorktreeMergeResult> => {
+      merged.push(handle.id);
+      return { ok: true, merged: true, committed: true, message: 'ok' };
+    };
+
+    const graph = createGraph('double-merge', [
+      node('g1', [], { kind: 'general', maxRetries: 0 }),
+      node('v1', ['g1'], { kind: 'verify', maxRetries: 0 }),
+      node('m1', ['v1'], { kind: 'merge', maxRetries: 0 }),
+      node('m2', ['v1'], { kind: 'merge', maxRetries: 0 }),
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: writerWorktreeRunner,
+      mergeFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(merged).toEqual(['g1']);
+  });
+
+  it('reports nothing to merge when worktree isolation produced no handles', async () => {
+    const merged: string[] = [];
+    const mergeFn = async (handle: WorktreeHandle): Promise<WorktreeMergeResult> => {
+      merged.push(handle.id);
+      return { ok: true, merged: true, committed: true, message: 'ok' };
+    };
+
+    const graph = buildGraphFromPlan('no-wt', [
+      { id: 'g1', kind: 'general', label: 'a', prompt: 'a', deps: [], scope: ['src/a'] },
+      { id: 'g2', kind: 'general', label: 'b', prompt: 'b', deps: [], scope: ['src/b'] },
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: noWorktreeRunner,
+      mergeFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(merged).toEqual([]);
+    expect(graph.nodes.get('merge')?.result).toBe('nothing to merge');
+  });
+});
+
+describe('repair reconciliation', () => {
+  it('converges when a spawned fix completes the work the failed node could not', async () => {
+    let firstAttempt = true;
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      if (opts.nodeId === 'g1' && firstAttempt) {
+        firstAttempt = false;
+        return { ok: false, agent: opts.agent, error: 'boom', cancelled: true };
+      }
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: `${opts.nodeId} ok`,
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      };
+    };
+
+    const graph = createGraph('repaired', [
+      node('g1', [], { kind: 'general', label: 'build', maxRetries: 0 }),
+      node('v1', ['g1'], { kind: 'verify', maxRetries: 0 }),
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      fixBudget: 1,
+      worldModelGate: false,
+    }).execute(graph);
+
+    const fixNode = [...graph.nodes.values()].find((n) => n.kind === 'fix');
+    expect(fixNode?.status).toBe('done');
+    // the repaired node reports the work as done, with provenance preserved
+    const g1 = graph.nodes.get('g1');
+    expect(g1?.status).toBe('done');
+    expect(g1?.result).toContain('repaired by "fix: build"');
+    expect(g1?.result).toContain('original failure: boom');
+    expect(g1?.error).toBeUndefined();
+    // the dependent, re-pointed at the fix, still runs
+    expect(graph.nodes.get('v1')?.status).toBe('done');
+    expect(summary.converged).toBe(true);
+    expect(summary.failedNodeIds).toEqual([]);
+  });
+
+  it('leaves the node failed when the fix itself fails', async () => {
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => ({
+      ok: false,
+      agent: opts.agent,
+      error: 'always fails',
+      cancelled: true,
+    });
+
+    const graph = createGraph('unrepaired', [
+      node('g1', [], { kind: 'general', label: 'build', maxRetries: 0 }),
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      fixBudget: 1,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(graph.nodes.get('g1')?.status).toBe('error');
+    expect(graph.nodes.get('g1')?.error).toBe('always fails');
+    expect(summary.converged).toBe(false);
+    expect(summary.failedNodeIds).toContain('g1');
+  });
+});
+
+describe('live graph status', () => {
+  it('publishes the running count while a wave is in flight', async () => {
+    resetKrakenGraphLive();
+    let runningWhileInFlight = 0;
+
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      runningWhileInFlight = Math.max(runningWhileInFlight, getKrakenGraphLive()?.running ?? 0);
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: 'done',
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      };
+    };
+
+    const graph = createGraph('live', [
+      node('g1', [], { kind: 'general', scope: ['src/a'], maxRetries: 0 }),
+      node('g2', [], { kind: 'general', scope: ['src/b'], maxRetries: 0 }),
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(runningWhileInFlight).toBe(2);
+    expect(getKrakenGraphLive()?.running).toBe(0);
+    expect(getKrakenGraphLive()?.done).toBe(2);
+  });
+});
+
+describe('verify runs where the work happened', () => {
+  const writerWorktree = async (opts: RunTentacleOptions): Promise<TentacleResult> => ({
+    ok: true,
+    agent: opts.agent,
+    thoroughness: opts.thoroughness,
+    model: 'test-model',
+    result: 'done',
+    footer: '',
+    worktreePath: opts.agent === 'general' ? `/tmp/${opts.nodeId}` : null,
+    worktreeHandle: opts.agent === 'general' ? fakeWorktreeHandle(opts.nodeId ?? 'x') : null,
+  });
+
+  it('points a verify tentacle at its writer worktree, not the parent tree', async () => {
+    const cwds: Record<string, string | undefined> = {};
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      cwds[opts.nodeId ?? '?'] = opts.cwdOverride;
+      return writerWorktree(opts);
+    };
+
+    const graph = buildGraphFromPlan('verify-cwd', [
+      { id: 'g1', kind: 'general', label: 'a', prompt: 'a', deps: [], scope: ['src/a'] },
+      { id: 'g2', kind: 'general', label: 'b', prompt: 'b', deps: [], scope: ['src/b'] },
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      mergeFn: async () => ({ ok: true, merged: true, committed: true, message: 'ok' }),
+      worldModelGate: false,
+    }).execute(graph);
+
+    // writers create their own worktree inside runTentacle -> never overridden
+    expect(cwds['g1']).toBeUndefined();
+    expect(cwds['g2']).toBeUndefined();
+    // each verify inspects the tree its writer actually wrote to
+    expect(cwds['verify-g1']).toBe(fakeWorktreeHandle('g1').path);
+    expect(cwds['verify-g2']).toBe(fakeWorktreeHandle('g2').path);
+  });
+
+  it('leaves verify in the parent tree when worktree isolation is off', async () => {
+    const cwds: Record<string, string | undefined> = {};
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      cwds[opts.nodeId ?? '?'] = opts.cwdOverride;
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: 'done',
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      };
+    };
+
+    const graph = buildGraphFromPlan('verify-no-wt', [
+      { id: 'g1', kind: 'general', label: 'a', prompt: 'a', deps: [] },
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(cwds['verify-g1']).toBeUndefined();
+  });
+
+  it('falls back to the parent tree when a verify spans two worktrees', async () => {
+    const cwds: Record<string, string | undefined> = {};
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      cwds[opts.nodeId ?? '?'] = opts.cwdOverride;
+      return writerWorktree(opts);
+    };
+
+    const graph = createGraph('verify-span', [
+      node('g1', [], { kind: 'general', scope: ['src/a'], maxRetries: 0 }),
+      node('g2', [], { kind: 'general', scope: ['src/b'], maxRetries: 0 }),
+      node('v1', ['g1', 'g2'], { kind: 'verify', maxRetries: 0 }),
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(cwds['v1']).toBeUndefined();
+  });
+});
+
+describe('rolling admission', () => {
+  const ok = (opts: RunTentacleOptions): TentacleResult => ({
+    ok: true,
+    agent: opts.agent,
+    thoroughness: opts.thoroughness,
+    model: 'test-model',
+    result: 'done',
+    footer: '',
+    worktreePath: null,
+    worktreeHandle: null,
+  });
+
+  it('starts a newly unblocked node without waiting for a slow one to finish', async () => {
+    let slowInFlight = false;
+    let startedWhileSlowRan = false;
+
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      const id = opts.nodeId ?? '';
+      if (id === 'g-slow') {
+        slowInFlight = true;
+        await new Promise((r) => setTimeout(r, 60));
+        slowInFlight = false;
+        return ok(opts);
+      }
+      if (id === 'g-after') {
+        // This node only became ready when e1 finished. Under a wave-at-a-time
+        // scheduler it could not start until g-slow had also finished.
+        startedWhileSlowRan = slowInFlight;
+        return ok(opts);
+      }
+      await new Promise((r) => setTimeout(r, 5));
+      return ok(opts);
+    };
+
+    const graph = createGraph('rolling', [
+      node('g-slow', [], { kind: 'general', scope: ['src/slow'], maxRetries: 0 }),
+      node('e1', [], { kind: 'explore', maxRetries: 0 }),
+      node('g-after', ['e1'], { kind: 'general', scope: ['src/after'], maxRetries: 0 }),
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(summary.converged).toBe(true);
+    expect(startedWhileSlowRan).toBe(true);
+  });
+
+  it('never exceeds the concurrency cap', async () => {
+    let inFlight = 0;
+    let peak = 0;
+
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight -= 1;
+      return ok(opts);
+    };
+
+    const graph = createGraph('cap', [
+      node('g1', [], { kind: 'general', scope: ['src/a'], maxRetries: 0 }),
+      node('g2', [], { kind: 'general', scope: ['src/b'], maxRetries: 0 }),
+      node('g3', [], { kind: 'general', scope: ['src/c'], maxRetries: 0 }),
+      node('g4', [], { kind: 'general', scope: ['src/d'], maxRetries: 0 }),
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      maxParallel: 2,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(summary.converged).toBe(true);
+    expect(peak).toBe(2);
+  });
+
+  it('still refuses to overlap writers whose scopes are not provably disjoint', async () => {
+    let inFlight = 0;
+    let peak = 0;
+
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight -= 1;
+      return ok(opts);
+    };
+
+    const graph = createGraph('overlap', [
+      node('g1', [], { kind: 'general', scope: ['src/a'], maxRetries: 0 }),
+      node('g2', [], { kind: 'general', scope: ['src/a/deep'], maxRetries: 0 }),
+      node('g3', [], { kind: 'general', maxRetries: 0 }),
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(peak).toBe(1);
+  });
+
+  it('turns an unexpected throw into a node failure instead of aborting the graph', async () => {
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      if (opts.nodeId === 'boom') throw new Error('kaboom');
+      return ok(opts);
+    };
+
+    const graph = createGraph('throwing', [
+      node('boom', [], { kind: 'general', scope: ['src/a'], maxRetries: 0 }),
+      node('fine', [], { kind: 'general', scope: ['src/b'], maxRetries: 0 }),
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      fixBudget: 0,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(summary.converged).toBe(false);
+    expect(summary.failedNodeIds).toEqual(['boom']);
+    expect(graph.nodes.get('boom')?.error).toContain('kaboom');
+    // the independent branch is unaffected
+    expect(graph.nodes.get('fine')?.status).toBe('done');
+  });
+});
+
+describe('graph cancellation', () => {
+  const okResult = (opts: RunTentacleOptions): TentacleResult => ({
+    ok: true,
+    agent: opts.agent,
+    thoroughness: opts.thoroughness,
+    model: 'test-model',
+    result: 'done',
+    footer: '',
+    worktreePath: null,
+    worktreeHandle: null,
+  });
+
+  it('stops a running graph, settles it, and reports cancelled', async () => {
+    const controller = new AbortController();
+    const started: string[] = [];
+
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      started.push(opts.nodeId ?? '?');
+      if (opts.nodeId === 'g1') {
+        // Cancel while this one is in flight, and unwind when told to.
+        controller.abort();
+        await new Promise<void>((resolve) => {
+          if (opts.signal?.aborted) return resolve();
+          opts.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        return { ok: false, agent: opts.agent, error: 'cancelled', cancelled: true };
+      }
+      return okResult(opts);
+    };
+
+    const graph = createGraph('cancel', [
+      node('g1', [], { kind: 'general', label: 'slow', maxRetries: 2 }),
+      node('v1', ['g1'], { kind: 'verify', maxRetries: 0 }),
+      node('later', ['v1'], { kind: 'general', maxRetries: 0 }),
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      signal: controller.signal,
+      fixBudget: 2,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(summary.cancelled).toBe(true);
+    expect(summary.converged).toBe(false);
+    // the in-flight node ends as an error, NOT retried and NOT repaired
+    expect(graph.nodes.get('g1')?.status).toBe('error');
+    expect(graph.nodes.get('g1')?.retryCount).toBe(0);
+    expect([...graph.nodes.values()].some((n) => n.kind === 'fix')).toBe(false);
+    // nodes that never started are skipped, so the graph settles
+    expect(graph.nodes.get('v1')?.status).toBe('skipped');
+    expect(graph.nodes.get('later')?.status).toBe('skipped');
+    expect(started).toEqual(['g1']);
+  });
+
+  it('runs nothing at all when the signal is already aborted', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const started: string[] = [];
+
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      started.push(opts.nodeId ?? '?');
+      return okResult(opts);
+    };
+
+    const graph = createGraph('pre-cancelled', [
+      node('g1', [], { kind: 'general', maxRetries: 0 }),
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      signal: controller.signal,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(started).toEqual([]);
+    expect(summary.cancelled).toBe(true);
+    expect(summary.converged).toBe(false);
+    expect(graph.nodes.get('g1')?.status).toBe('skipped');
+  });
+
+  it('reports cancelled=false and per-node durations for a normal run', async () => {
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      await new Promise((r) => setTimeout(r, 5));
+      return okResult(opts);
+    };
+
+    const graph = createGraph('timed', [
+      node('g1', [], { kind: 'general', maxRetries: 0 }),
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(summary.cancelled).toBe(false);
+    expect(summary.converged).toBe(true);
+    expect(summary.durationsMs['g1']).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Verify quality gate: a verify that RAN is not the same as work that PASSED.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('verify verdict gate', () => {
+  /** A tentacle runner whose verify nodes return a scripted verdict. */
+  function scripted(
+    verdictFor: (nodeId: string) => string,
+    onCall?: (opts: RunTentacleOptions) => void,
+  ) {
+    return async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      onCall?.(opts);
+      const id = opts.nodeId ?? '?';
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: opts.agent === 'verify' ? verdictFor(id) : `${id}: wrote the code`,
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      };
+    };
+  }
+
+  const plan = (id = 'gate'): ReturnType<typeof buildGraphFromPlan> =>
+    buildGraphFromPlan(id, [
+      { id: 'g1', kind: 'general', label: 'the work', prompt: 'do the work', deps: [] },
+    ]);
+
+  it('leaves the graph untouched when the verify passes', async () => {
+    const graph = plan('pass');
+    const before = graph.nodes.size;
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: scripted(() => 'checked it\n\nVERDICT: PASS'),
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(graph.nodes.size).toBe(before);
+    expect(summary.converged).toBe(true);
+    expect(summary.unresolvedFindings).toEqual([]);
+  });
+
+  it('spawns a rework + fresh verify when the verify fails', async () => {
+    const graph = plan('fail-then-pass');
+    const seen: string[] = [];
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: scripted(
+        (id) =>
+          id === 'verify-g1'
+            ? 'the error path is not handled\n\nVERDICT: FAIL'
+            : 'now correct\n\nVERDICT: PASS',
+        (opts) => seen.push(opts.nodeId ?? '?'),
+      ),
+      worldModelGate: false,
+    }).execute(graph);
+
+    const rework = graph.nodes.get('rework-g1-1');
+    expect(rework).toBeDefined();
+    expect(rework?.kind).toBe('fix');
+    expect(rework?.deps).toEqual(['verify-g1']);
+    // The rework must carry the reviewer's findings, or it redoes the work blind.
+    expect(rework?.prompt).toContain('the error path is not handled');
+    expect(rework?.prompt).toContain('do the work');
+
+    const reVerify = graph.nodes.get('verify-rework-g1-1');
+    expect(reVerify?.kind).toBe('verify');
+    expect(reVerify?.deps).toEqual(['rework-g1-1']);
+
+    expect(seen).toContain('rework-g1-1');
+    expect(seen).toContain('verify-rework-g1-1');
+    expect(summary.converged).toBe(true);
+    expect(summary.unresolvedFindings).toEqual([]);
+  });
+
+  it('inherits the writer scope and acceptance into the rework', async () => {
+    const graph = buildGraphFromPlan('inherit', [
+      {
+        id: 'g1',
+        kind: 'general',
+        label: 'scoped work',
+        prompt: 'do it',
+        deps: [],
+        scope: ['src/a'],
+        acceptance: ['exports foo()'],
+      },
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: scripted((id) =>
+        id === 'verify-g1' ? 'nope\n\nVERDICT: FAIL' : 'ok\n\nVERDICT: PASS',
+      ),
+      worldModelGate: false,
+    }).execute(graph);
+
+    const rework = graph.nodes.get('rework-g1-1');
+    expect(rework?.scope).toEqual(['src/a']);
+    expect(rework?.acceptance).toEqual(['exports foo()']);
+  });
+
+  it('repoints the merge node at the fresh verify so it cannot merge mid-rework', async () => {
+    const graph = buildGraphFromPlan('merge-repoint', [
+      { id: 'g1', kind: 'general', label: 'a', prompt: 'a', deps: [], scope: ['src/a'] },
+      { id: 'g2', kind: 'general', label: 'b', prompt: 'b', deps: [], scope: ['src/b'] },
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: scripted((id) =>
+        id === 'verify-g1' ? 'bad\n\nVERDICT: FAIL' : 'good\n\nVERDICT: PASS',
+      ),
+      mergeFn: async () => ({ ok: true, merged: true, committed: true, message: 'ok' }),
+      worldModelGate: false,
+    }).execute(graph);
+
+    const merge = [...graph.nodes.values()].find((n) => n.kind === 'merge');
+    expect(merge?.deps).toContain('verify-rework-g1-1');
+    expect(merge?.deps).not.toContain('verify-g1');
+    // The untouched branch keeps its original verify.
+    expect(merge?.deps).toContain('verify-g2');
+  });
+
+  it('runs the rework inside the writer worktree and does NOT open a second one', async () => {
+    // The regression this guards: a rework on its own branch is merged never or
+    // twice, stranding that round's work.
+    const calls: Array<{
+      id: string;
+      cwd?: string;
+      allowWorktree?: boolean;
+      deferMerge?: boolean;
+    }> = [];
+
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      calls.push({
+        id: opts.nodeId ?? '?',
+        cwd: opts.cwdOverride,
+        allowWorktree: (opts.deps as { allowWorktree?: boolean }).allowWorktree,
+        deferMerge: opts.deferMerge,
+      });
+      const isWriter = opts.agent === 'general' && !opts.nodeId?.startsWith('rework-');
+      const verifyText =
+        opts.nodeId === 'verify-g1'
+          ? 'bad\n\nVERDICT: FAIL'
+          : 'good\n\nVERDICT: PASS';
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: opts.agent === 'verify' ? verifyText : 'wrote it',
+        footer: '',
+        worktreePath: isWriter ? fakeWorktreeHandle(opts.nodeId ?? 'x').path : null,
+        worktreeHandle: isWriter ? fakeWorktreeHandle(opts.nodeId ?? 'x') : null,
+      };
+    };
+
+    const graph = plan('rework-wt');
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      worldModelGate: false,
+    }).execute(graph);
+
+    const rework = calls.find((c) => c.id === 'rework-g1-1');
+    expect(rework?.cwd).toBe(fakeWorktreeHandle('g1').path);
+    expect(rework?.allowWorktree).toBe(false);
+    // No worktree of its own -> nothing to defer-merge.
+    expect(rework?.deferMerge).toBe(false);
+    // The fresh verify inspects the same tree.
+    expect(calls.find((c) => c.id === 'verify-rework-g1-1')?.cwd).toBe(
+      fakeWorktreeHandle('g1').path,
+    );
+  });
+
+  it('accepts the work degraded once the rework budget is spent', async () => {
+    const graph = plan('budget');
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      // Every verify rejects, forever.
+      runTentacleFn: scripted(() => 'still broken\n\nVERDICT: FAIL'),
+      maxReviewRounds: 1,
+      worldModelGate: false,
+    }).execute(graph);
+
+    // Exactly one rework round, not an unbounded loop.
+    expect(graph.nodes.get('rework-g1-1')).toBeDefined();
+    expect(graph.nodes.get('rework-g1-2')).toBeUndefined();
+    // Degraded convergence: the work exists, with the verdict attached to it.
+    expect(summary.converged).toBe(true);
+    expect(summary.unresolvedFindings).toHaveLength(1);
+    expect(summary.unresolvedFindings[0].reason).toBe('fail');
+    expect(summary.unresolvedFindings[0].findings).toContain('still broken');
+    expect(graph.nodes.get('rework-g1-1')?.result).toContain('unresolved verify findings');
+  });
+
+  it('honours maxReviewRounds > 1', async () => {
+    const graph = plan('two-rounds');
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: scripted(() => 'nope\n\nVERDICT: FAIL'),
+      maxReviewRounds: 2,
+      worldModelGate: false,
+    }).execute(graph);
+
+    // Rounds are counted per lineage, not per node: the second round reworks
+    // the first rework but is still named (and budgeted) against g1. Counting
+    // per node reset the budget every round and chained reworks forever.
+    expect(graph.nodes.get('rework-g1-1')).toBeDefined();
+    expect(graph.nodes.get('rework-g1-2')).toBeDefined();
+    expect(graph.nodes.get('rework-g1-3')).toBeUndefined();
+  });
+
+  it('treats a missing verdict as non-blocking but reports it', async () => {
+    const graph = plan('no-trailer');
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: scripted(() => 'I looked at it and it seems fine'),
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(graph.nodes.get('rework-g1-1')).toBeUndefined();
+    expect(summary.converged).toBe(true);
+    expect(summary.unresolvedFindings).toHaveLength(1);
+    expect(summary.unresolvedFindings[0].reason).toBe('unknown');
+  });
+
+  it('does not spend the fix budget on rework rounds', async () => {
+    // A rejected-but-working node and a genuinely failing one: the failure must
+    // still get its repair even though a rework happened first.
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      const id = opts.nodeId ?? '?';
+      if (id === 'bad') {
+        return { ok: false, agent: opts.agent, error: 'bad always fails' };
+      }
+      const verifyText =
+        id === 'verify-g1' ? 'reject\n\nVERDICT: FAIL' : 'ok\n\nVERDICT: PASS';
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: opts.agent === 'verify' ? verifyText : 'wrote it',
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      };
+    };
+
+    const graph = buildGraphFromPlan('budget-split', [
+      {
+        id: 'g1',
+        kind: 'general',
+        label: 'rejected work',
+        prompt: 'a',
+        deps: [],
+        scope: ['src/a'],
+      },
+      { id: 'bad', kind: 'general', label: 'bad', prompt: 'b', deps: [], scope: ['src/b'] },
+    ]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn,
+      fixBudget: 1,
+      maxReviewRounds: 1,
+      mergeFn: async () => ({ ok: true, merged: true, committed: true, message: 'ok' }),
+      worldModelGate: false,
+    }).execute(graph);
+
+    // The rework happened...
+    expect(graph.nodes.get('rework-g1-1')).toBeDefined();
+    // ...and the unrelated failure still got its (separately budgeted) fix node.
+    expect([...graph.nodes.keys()].some((k) => k.startsWith('fix-bad-'))).toBe(true);
+  });
+
+  it('does not spawn a rework once the run is cancelled', async () => {
+    const controller = new AbortController();
+    const graph = plan('cancelled');
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: async (opts) => {
+        if (opts.agent === 'verify') controller.abort();
+        return {
+          ok: true,
+          agent: opts.agent,
+          thoroughness: opts.thoroughness,
+          model: 'test-model',
+          result: opts.agent === 'verify' ? 'no good\n\nVERDICT: FAIL' : 'wrote it',
+          footer: '',
+          worktreePath: null,
+          worktreeHandle: null,
+        };
+      },
+      signal: controller.signal,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(graph.nodes.get('rework-g1-1')).toBeUndefined();
+    expect(summary.cancelled).toBe(true);
+    // The verdict is still surfaced rather than lost with the cancellation.
+    expect(summary.unresolvedFindings).toHaveLength(1);
+  });
+});
+
+describe('fix budget scales with graph size', () => {
+  it('keeps 3 as the floor for a small graph', () => {
+    expect(resolveFixBudget({}, 0)).toBe(3);
+    expect(resolveFixBudget({}, 4)).toBe(3);
+  });
+
+  it('scales with the node count for a large graph', () => {
+    // A flat 3 meant the bigger the graph, the less repair it got.
+    expect(resolveFixBudget({}, 20)).toBe(10);
+    expect(resolveFixBudget({}, 7)).toBe(4);
+  });
+
+  it('lets an explicit env value win outright', () => {
+    expect(resolveFixBudget({ ZELARI_KRAKEN_FIX_BUDGET: '1' }, 20)).toBe(1);
+    expect(resolveFixBudget({ ZELARI_KRAKEN_FIX_BUDGET: '0' }, 20)).toBe(0);
+    // Garbage falls back to the scaled default, not to the garbage.
+    expect(resolveFixBudget({ ZELARI_KRAKEN_FIX_BUDGET: 'nope' }, 20)).toBe(10);
+  });
+});
+
+describe('whole-graph wall-clock budget', () => {
+  it('is disabled by default', () => {
+    expect(resolveGraphTimeoutMs({})).toBe(0);
+    expect(resolveMaxReviewRounds({})).toBe(1);
+  });
+
+  it('reads its env overrides', () => {
+    expect(resolveGraphTimeoutMs({ ZELARI_KRAKEN_GRAPH_TIMEOUT_MS: '5000' })).toBe(5000);
+    expect(resolveGraphTimeoutMs({ ZELARI_KRAKEN_GRAPH_TIMEOUT_MS: 'x' })).toBe(0);
+    expect(resolveMaxReviewRounds({ ZELARI_KRAKEN_MAX_REVIEW_ROUNDS: '3' })).toBe(3);
+    expect(resolveMaxReviewRounds({ ZELARI_KRAKEN_MAX_REVIEW_ROUNDS: '0' })).toBe(0);
+  });
+
+  it('cancels a run that outlives its budget, and still returns a summary', async () => {
+    const graph = createGraph('slow', [
+      node('g1', [], { kind: 'general', maxRetries: 0 }),
+      node('g2', ['g1'], { kind: 'general', maxRetries: 0 }),
+    ]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'test-session',
+      runTentacleFn: async (opts) => {
+        await new Promise((r) => setTimeout(r, 60));
+        return {
+          ok: true,
+          agent: opts.agent,
+          thoroughness: opts.thoroughness,
+          model: 'test-model',
+          result: 'done',
+          footer: '',
+          worktreePath: null,
+          worktreeHandle: null,
+        };
+      },
+      graphTimeoutMs: 20,
+      cancelGraceMs: 10,
+      worldModelGate: false,
+    }).execute(graph);
+
+    expect(summary.cancelled).toBe(true);
+    expect(summary.converged).toBe(false);
+    // The point of routing through the cancellation path: it still settles.
+    expect(graph.nodes.get('g2')?.status).toBe('skipped');
   });
 });

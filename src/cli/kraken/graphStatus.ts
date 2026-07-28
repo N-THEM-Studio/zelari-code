@@ -23,6 +23,7 @@ import {
   countByStatus,
   type TaskGraph,
   type TaskNodeStatus,
+  type UnresolvedFinding,
 } from '@zelari/core';
 
 const STATUS_ICON: Record<TaskNodeStatus, string> = {
@@ -56,6 +57,87 @@ export function formatKrakenGraphAscii(graph: TaskGraph): string {
 
   if (lines.length === 0) return summary;
   return [summary, ...lines].join('\n');
+}
+
+/** Human-readable wall-clock duration ("840ms", "42s", "3m20s"). */
+export function formatDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return '?';
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return s === 0 ? `${m}m` : `${m}m${s}s`;
+}
+
+/** Default cap on how much of a node's conclusion the digest shows. */
+export const DEFAULT_DIGEST_RESULT_CHARS = 200;
+
+export interface GraphDigestOptions {
+  /** Per-node wall clock, from `KrakenExecutionSummary.durationsMs`. */
+  durationsMs?: Record<string, number>;
+  maxResultChars?: number;
+  /**
+   * Verify verdicts left unaddressed, from
+   * `KrakenExecutionSummary.unresolvedFindings`. Rendered as a trailing
+   * section: a converged graph that a reviewer rejected still converged, and
+   * without this the two outcomes read identically.
+   */
+  unresolvedFindings?: UnresolvedFinding[];
+}
+
+/**
+ * One line per node: status, id, kind, duration, and the first line of what it
+ * concluded (or why it failed).
+ *
+ * The ASCII topology view answers "did it converge"; it cannot answer "what did
+ * these eight tentacles actually do", which previously required reading the
+ * radio JSONL by hand. Nodes are listed in topological order so the digest
+ * reads as the order the work happened in.
+ */
+export function formatKrakenGraphDigest(
+  graph: TaskGraph,
+  opts: GraphDigestOptions = {},
+): string {
+  const maxChars = opts.maxResultChars ?? DEFAULT_DIGEST_RESULT_CHARS;
+  const durations = opts.durationsMs ?? {};
+
+  const ordered = topoLevels(graph).flat();
+  // A node omitted from topoLevels (only possible for a cycle, which
+  // validateGraph rejects) must still be reported rather than vanish.
+  for (const id of graph.nodes.keys()) {
+    if (!ordered.includes(id)) ordered.push(id);
+  }
+
+  const lines: string[] = [];
+  for (const id of ordered) {
+    const n = graph.nodes.get(id);
+    if (!n) continue;
+    const took = durations[id] !== undefined ? `, ${formatDuration(durations[id])}` : '';
+    const detail = n.status === 'error' ? n.error : n.result;
+    const firstLine = (detail ?? '').trim().split('\n')[0] ?? '';
+    const body =
+      firstLine.length > maxChars ? `${firstLine.slice(0, maxChars)}…` : firstLine;
+    lines.push(
+      `[${STATUS_ICON[n.status]}] ${n.id} (${n.kind}${took})${body ? ` — ${body}` : ''}`,
+    );
+  }
+
+  const unresolved = opts.unresolvedFindings ?? [];
+  if (unresolved.length > 0) {
+    lines.push('', 'unresolved verify findings:');
+    for (const u of unresolved) {
+      const why =
+        u.reason === 'fail'
+          ? 'rejected, rework budget spent'
+          : 'no parseable verdict';
+      const detail = u.findings.trim().split('\n')[0]?.trim() ?? '';
+      const body = detail.length > maxChars ? `${detail.slice(0, maxChars)}…` : detail;
+      lines.push(`  ${u.nodeId} (${why})${body ? ` — ${body}` : ''}`);
+    }
+  }
+
+  return lines.join('\n');
 }
 
 // ─── Live graph-progress tracker (StatusBar / Desktop) ────────────────────

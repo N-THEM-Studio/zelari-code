@@ -342,6 +342,15 @@ export interface RunTentacleOptions {
   thoroughness: TaskThoroughness;
   /** Parent working directory (worktrees are created relative to this). */
   parentCwd: string;
+  /**
+   * Run the sub-agent in this directory instead of `parentCwd`, without making
+   * it the worktree/radio root. The graph executor uses it to run a `verify`
+   * tentacle inside the worktree its writer produced: verification happens
+   * before the merge node, so checking `parentCwd` meant checking a tree that
+   * did not yet contain the work being verified. Ignored when this tentacle
+   * creates a worktree of its own (writers).
+   */
+  cwdOverride?: string;
   /** Session id used for radio JSONL correlation. */
   sessionId: string;
   /**
@@ -380,7 +389,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
 
   // Optional worktree isolation for general writers (K7).
   let worktree: WorktreeHandle | null = null;
-  let effectiveCwd = parentCwd;
+  let effectiveCwd = opts.cwdOverride || parentCwd;
   const wantWt =
     agent === 'general' &&
     deps.allowWorktree !== false &&

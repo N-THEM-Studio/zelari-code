@@ -8,6 +8,8 @@ import {
   resetKrakenGraphLive,
   getKrakenGraphLive,
   formatKrakenGraphSummary,
+  formatKrakenGraphDigest,
+  formatDuration,
 } from '../../src/cli/kraken/graphStatus.js';
 
 function node(id: string, deps: string[] = [], over: Partial<TaskNode> = {}): TaskNode {
@@ -95,5 +97,96 @@ describe('live graph tracker', () => {
     startKrakenGraphLive(g1);
     updateKrakenGraphLive(g2); // no-op: not the tracked graph
     expect(getKrakenGraphLive()?.graphId).toBe('g1');
+  });
+});
+
+describe('formatDuration', () => {
+  it('scales the unit to the magnitude', () => {
+    expect(formatDuration(840)).toBe('840ms');
+    expect(formatDuration(42_000)).toBe('42s');
+    expect(formatDuration(200_000)).toBe('3m20s');
+    expect(formatDuration(180_000)).toBe('3m');
+  });
+
+  it('does not choke on nonsense input', () => {
+    expect(formatDuration(Number.NaN)).toBe('?');
+    expect(formatDuration(-1)).toBe('?');
+  });
+});
+
+describe('formatKrakenGraphDigest', () => {
+  it('reports each node with its kind, duration and conclusion, in topological order', () => {
+    const graph = createGraph('d', [
+      node('e1', [], { kind: 'explore', status: 'done', result: 'auth lives in src/auth' }),
+      node('g1', ['e1'], { kind: 'general', status: 'done', result: 'wrote 3 files\nmore detail' }),
+      node('v1', ['g1'], { kind: 'verify', status: 'error', error: 'tests failed' }),
+    ]);
+
+    const out = formatKrakenGraphDigest(graph, {
+      durationsMs: { e1: 800, g1: 42_000, v1: 5_000 },
+    });
+    const lines = out.split('\n');
+
+    expect(lines[0]).toBe('[✓] e1 (explore, 800ms) — auth lives in src/auth');
+    // only the first line of a multi-line conclusion
+    expect(lines[1]).toBe('[✓] g1 (general, 42s) — wrote 3 files');
+    // a failed node shows why, not its (absent) result
+    expect(lines[2]).toBe('[✗] v1 (verify, 5s) — tests failed');
+  });
+
+  it('omits the duration when none was recorded', () => {
+    const graph = createGraph('d2', [
+      node('g1', [], { kind: 'general', status: 'done', result: 'ok' }),
+    ]);
+    expect(formatKrakenGraphDigest(graph)).toBe('[✓] g1 (general) — ok');
+  });
+
+  it('renders a node that produced nothing without a dangling dash', () => {
+    const graph = createGraph('d3', [node('g1', [], { kind: 'general', status: 'skipped' })]);
+    expect(formatKrakenGraphDigest(graph)).toBe('[»] g1 (general)');
+  });
+
+  it('truncates a long conclusion', () => {
+    const graph = createGraph('d4', [
+      node('g1', [], { kind: 'general', status: 'done', result: 'x'.repeat(500) }),
+    ]);
+    const out = formatKrakenGraphDigest(graph, { maxResultChars: 10 });
+    expect(out).toBe(`[✓] g1 (general) — ${'x'.repeat(10)}…`);
+  });
+
+  it('is empty for an empty graph', () => {
+    expect(formatKrakenGraphDigest(createGraph('empty', []))).toBe('');
+  });
+
+  it('lists unresolved verify findings under the node lines', () => {
+    // A converged graph a reviewer rejected still converged — without this
+    // section it reads identically to a clean one.
+    const graph = createGraph('d5', [
+      node('g1', [], { kind: 'general', status: 'done', result: 'built it' }),
+    ]);
+    const out = formatKrakenGraphDigest(graph, {
+      unresolvedFindings: [
+        {
+          nodeId: 'g1',
+          label: 'g1',
+          reason: 'fail',
+          findings: 'the error path is still unhandled\nsecond line ignored',
+        },
+        { nodeId: 'g2', label: 'g2', reason: 'unknown', findings: '' },
+      ],
+    });
+    expect(out).toContain('unresolved verify findings:');
+    expect(out).toContain('g1 (rejected, rework budget spent) — the error path is still unhandled');
+    expect(out).not.toContain('second line ignored');
+    expect(out).toContain('g2 (no parseable verdict)');
+  });
+
+  it('omits the findings section when there are none', () => {
+    const graph = createGraph('d6', [
+      node('g1', [], { kind: 'general', status: 'done', result: 'ok' }),
+    ]);
+    expect(formatKrakenGraphDigest(graph, { unresolvedFindings: [] })).not.toContain(
+      'unresolved',
+    );
   });
 });

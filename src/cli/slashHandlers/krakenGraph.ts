@@ -17,7 +17,7 @@ import { createKrakenSubAgentContextFactory } from '../toolRegistry.js';
 import { planTaskGraph } from '../kraken/planner.js';
 import { loadGraphSnapshot, formatSnapshotForPlanner } from '../kraken/graphMemory.js';
 import { KrakenGraphExecutor, isKrakenGraphEnabled } from '../kraken/executor.js';
-import { formatKrakenGraphAscii } from '../kraken/graphStatus.js';
+import { formatKrakenGraphAscii, formatKrakenGraphDigest } from '../kraken/graphStatus.js';
 
 export interface KrakenGraphSlashContext {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
@@ -61,6 +61,7 @@ export async function handleKrakenGraph(
     const graph = await planTaskGraph({
       prompt,
       graphId: `kraken-${Date.now().toString(36)}`,
+      cwd: ctx.cwd,
       ...(previousAttempt ? { previousAttempt } : {}),
     });
     appendSystem(ctx.setMessages, formatKrakenGraphAscii(graph));
@@ -73,12 +74,18 @@ export async function handleKrakenGraph(
     });
     const summary = await executor.execute(graph);
 
+    const digest = formatKrakenGraphDigest(summary.graph, {
+      durationsMs: summary.durationsMs,
+      unresolvedFindings: summary.unresolvedFindings,
+    });
     appendSystem(
       ctx.setMessages,
-      `${formatKrakenGraphAscii(summary.graph)}\n\n` +
+      `${formatKrakenGraphAscii(summary.graph)}\n\n${digest}\n\n` +
         (summary.converged
           ? '[kraken] graph converged.'
-          : `[kraken] graph did not converge — failed: ${summary.failedNodeIds.join(', ') || 'none'}`),
+          : summary.cancelled
+            ? '[kraken] graph cancelled.'
+            : `[kraken] graph did not converge — failed: ${summary.failedNodeIds.join(', ') || 'none'}`),
     );
   } catch (err) {
     appendSystem(

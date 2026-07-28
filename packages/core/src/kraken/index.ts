@@ -7,3 +7,4 @@
 
 export * from './graph.js';
 export * from './conflict.js';
+export * from './verdict.js';

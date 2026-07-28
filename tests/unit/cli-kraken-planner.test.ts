@@ -1,9 +1,11 @@
 import { describe, it, expect } from 'vitest';
+import { parseVerifyVerdict } from '@zelari/core';
 import {
   planTaskGraph,
   extractJsonObject,
   stripReasoningBlocks,
   buildGraphFromPlan,
+  buildPlannerUserPrompt,
   type PlannerLlmClient,
 } from '../../src/cli/kraken/planner.js';
 
@@ -198,6 +200,67 @@ describe('buildGraphFromPlan', () => {
     expect(graph.nodes.get('g2')?.scope).toEqual(['src/b']);
   });
 
+  it('gives the auto-injected verify node the task, its scope and its acceptance', () => {
+    const graph = buildGraphFromPlan('g', [
+      {
+        id: 'g1',
+        kind: 'general',
+        label: 'add jwt auth',
+        prompt: 'Add JWT auth to the express server in src/auth.',
+        deps: [],
+        scope: ['src/auth'],
+        acceptance: ['tokens expire in 15m', 'refresh endpoint exists'],
+      },
+    ]);
+
+    const verify = graph.nodes.get('verify-g1');
+    expect(verify?.prompt).toContain('add jwt auth');
+    // the verify tentacle sees only this prompt, so it must restate the task
+    expect(verify?.prompt).toContain('Add JWT auth to the express server in src/auth.');
+    expect(verify?.prompt).toContain('## Paths the work was scoped to');
+    expect(verify?.prompt).toContain('- src/auth');
+    expect(verify?.prompt).toContain('## Acceptance criteria to check explicitly');
+    expect(verify?.prompt).toContain('- tokens expire in 15m');
+    expect(verify?.prompt).toContain('- refresh endpoint exists');
+  });
+
+  it('omits the optional verify sections when the general node has none', () => {
+    const graph = buildGraphFromPlan('g', [
+      { id: 'g1', kind: 'general', label: 'do thing', prompt: 'do thing', deps: [] },
+    ]);
+    const verify = graph.nodes.get('verify-g1');
+    expect(verify?.prompt).toContain('## The task that was carried out');
+    expect(verify?.prompt).not.toContain('## Paths the work was scoped to');
+    expect(verify?.prompt).not.toContain('## Acceptance criteria to check explicitly');
+  });
+
+  it('asks the verify node for a parseable VERDICT trailer', () => {
+    // Without the trailer the executor cannot tell "checked, it is wrong" from
+    // "checked, it is right" — the verdict text was never read at all.
+    const graph = buildGraphFromPlan('g', [
+      { id: 'g1', kind: 'general', label: 'do thing', prompt: 'do thing', deps: [] },
+    ]);
+    const prompt = graph.nodes.get('verify-g1')?.prompt ?? '';
+    expect(prompt).toContain('VERDICT: PASS');
+    expect(prompt).toContain('VERDICT: FAIL');
+    expect(prompt).toContain('as the LAST line');
+    // The trailer is only useful if FAIL carries actionable detail back.
+    expect(prompt).toContain('state each gap concretely');
+
+    // And it must survive the round trip through the parser.
+    expect(parseVerifyVerdict('checked it\n\nVERDICT: FAIL').verdict).toBe('fail');
+  });
+
+  it('truncates a very long task prompt quoted into the verify node', () => {
+    const long = 'z'.repeat(5000);
+    const graph = buildGraphFromPlan('g', [
+      { id: 'g1', kind: 'general', label: 'big', prompt: long, deps: [] },
+    ]);
+    const verify = graph.nodes.get('verify-g1');
+    expect(verify?.prompt).toContain('… [truncated]');
+    expect(verify!.prompt.length).toBeLessThan(long.length);
+  });
+
   it('avoids id collisions when an injected id already exists', () => {
     const graph = buildGraphFromPlan('g', [
       { id: 'g1', kind: 'general', label: 'a', prompt: 'a', deps: [] },
@@ -324,5 +387,57 @@ describe('planTaskGraph', () => {
     expect(graph.nodes.has('g1')).toBe(true);
     expect(c.calls).toHaveLength(2);
     expect(c.calls[1]!.user).toMatch(/no "general" node/);
+  });
+});
+
+describe('planner sees the project', () => {
+  const PLAN = '{"nodes": [{"id": "g1", "kind": "general", "label": "x", "prompt": "y", "deps": []}]}';
+
+  it('puts the project listing in the user prompt', () => {
+    const user = buildPlannerUserPrompt('add auth', {
+      workspace: '# Project: demo\n## Top-level files & directories\n- src/\n- tests/',
+    });
+    expect(user).toContain('Goal:\nadd auth');
+    expect(user).toContain('## The project this goal is about (real files on disk)');
+    expect(user).toContain('- src/');
+    expect(user).toContain('Return ONLY the JSON object');
+  });
+
+  it('orders goal, project, previous attempt, instruction', () => {
+    const user = buildPlannerUserPrompt('goal text', {
+      workspace: 'WORKSPACE_BLOCK',
+      previousAttempt: 'PREVIOUS_BLOCK',
+    });
+    expect(user.indexOf('goal text')).toBeLessThan(user.indexOf('WORKSPACE_BLOCK'));
+    expect(user.indexOf('WORKSPACE_BLOCK')).toBeLessThan(user.indexOf('PREVIOUS_BLOCK'));
+    expect(user.indexOf('PREVIOUS_BLOCK')).toBeLessThan(user.indexOf('Return ONLY'));
+  });
+
+  it('omits the section entirely when there is no project listing', () => {
+    const user = buildPlannerUserPrompt('add auth');
+    expect(user).not.toContain('The project this goal is about');
+    expect(user).toContain('Goal:\nadd auth');
+  });
+
+  it('forwards an explicit workspace listing through planTaskGraph', async () => {
+    const c = client([PLAN]);
+    await planTaskGraph({
+      prompt: 'add auth',
+      llmClient: c,
+      workspace: '# Project: demo\n- src/auth/',
+    });
+    expect(c.calls[0].user).toContain('- src/auth/');
+  });
+
+  it('plans blind when neither cwd nor workspace is given', async () => {
+    const c = client([PLAN]);
+    await planTaskGraph({ prompt: 'add auth', llmClient: c });
+    expect(c.calls[0].user).not.toContain('The project this goal is about');
+  });
+
+  it('tells the model to build scopes from real paths', async () => {
+    const c = client([PLAN]);
+    await planTaskGraph({ prompt: 'add auth', llmClient: c, workspace: '- src/' });
+    expect(c.calls[0].system).toContain('listing of the real project on disk');
   });
 });
