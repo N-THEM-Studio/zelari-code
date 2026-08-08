@@ -31,7 +31,7 @@
  * @since v1.31.x - Bennett's Razor UI surface (Slice N / desktop)
  */
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listDir, readProjectText } from "../agentClient";
 import { WeaknessBadge } from "./WeaknessBadge";
 
@@ -201,12 +201,104 @@ function parseWeaknessScore(text: string): number | null {
   return n;
 }
 
+/**
+ * Render an SVG overlay with one straight line per dependency edge.
+ * Anchors are at the geometric center of each node card; the SVG is
+ * positioned absolutely over the .kraken-graph-nodes container, so we
+ * can use container-relative coordinates without a full layout pass.
+ *
+ * Edges are drawn in `from upstream -> to dependent` direction (left
+ * -> right, since upstream nodes appear earlier in the table). The
+ * arrowhead is a small triangle at the dependent end.
+ *
+ * The function is intentionally re-rendered on every tick — the cost
+ * is `O(edges) * getBoundingClientRect`, which is ~rect reads that the
+ * browser has already cached. With < 200 nodes this stays sub-millisecond.
+ */
+function renderEdges(
+  nodes: readonly Node[],
+  refs: Map<string, HTMLDivElement | null>,
+): ReactNode {
+  if (nodes.length === 0) return null;
+  const container = refs.get("__container__");
+  if (!container) return null;
+  const cw = container.clientWidth;
+  const ch = container.clientHeight;
+  if (cw === 0 || ch === 0) return null;
+
+  // Compute center points in container-relative coordinates.
+  type Pt = { x: number; y: number };
+  const centers = new Map<string, Pt>();
+  for (const n of nodes) {
+    const el = refs.get(n.id);
+    if (!el) continue;
+    const r = el.getBoundingClientRect();
+    const cr = container.getBoundingClientRect();
+    centers.set(n.id, { x: r.left - cr.left + r.width / 2, y: r.top - cr.top + r.height / 2 });
+  }
+
+  // Edges: every (n, d) pair where d is upstream of n.
+  type Edge = { from: Pt; to: Pt; key: string };
+  const edges: Edge[] = [];
+  for (const n of nodes) {
+    for (const dep of n.deps) {
+      const from = centers.get(dep);
+      const to = centers.get(n.id);
+      if (!from || !to) continue;
+      edges.push({ from, to, key: `${dep}->${n.id}` });
+    }
+  }
+  if (edges.length === 0) return null;
+
+  return (
+    <svg
+      className="kraken-graph-edges"
+      width={cw}
+      height={ch}
+      viewBox={`0 0 ${cw} ${ch}`}
+      aria-hidden
+    >
+      <defs>
+        <marker
+          id="kraken-arrow"
+          viewBox="0 0 10 10"
+          refX="9"
+          refY="5"
+          markerWidth="6"
+          markerHeight="6"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+        </marker>
+      </defs>
+      <g className="kraken-edge-layer">
+        {edges.map((e) => (
+          <line
+            key={e.key}
+            x1={e.from.x}
+            y1={e.from.y}
+            x2={e.to.x}
+            y2={e.to.y}
+            className="kraken-edge"
+            markerEnd="url(#kraken-arrow)"
+          />
+        ))}
+      </g>
+    </svg>
+  );
+}
+
 export function KrakenGraphVisualizer({ cwd, open, onClose }: Props) {
   const [path, setPath] = useState<string | null>(null);
   const [body, setBody] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Node | null>(null);
   const resolvedCwdRef = useRef<string | null>(null);
+  // Map of node id -> bounding rect of the rendered card. Refreshed
+  // by useLayoutEffect after every render + when the panel resizes.
+  // Used to draw SVG edges (deps) between the card centers.
+  const nodeRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
+  const [layoutTick, setLayoutTick] = useState(0);
 
   // track resolvedCwdRef with a small wrapper so async race wins are safe
   // (re-uses the same pattern as WorkbenchLiveTail).
@@ -270,6 +362,33 @@ export function KrakenGraphVisualizer({ cwd, open, onClose }: Props) {
     }));
   }, [body]);
 
+  // Re-measure node positions after every render. The CSS grid lays
+  // the cards out, but we need the rendered rectangles to draw
+  // edges between centers. The tick state forces a re-render after
+  // the layout effect; we don't actually use the rects in this
+  // effect (we just kick the measurement).
+  useLayoutEffect(() => {
+    // The rects are read by renderEdges() via nodeRefs; we just need
+    // to make sure the browser has painted before the SVG draws.
+    // No-op body — the next render will read the live rects.
+  }, [nodes, selected, layoutTick]);
+
+  // Re-measure on resize / scroll. Cheap: O(n) rect reads, no
+  // re-render — we just bump a tick so the next render uses fresh
+  // positions.
+  useEffect(() => {
+    const container = nodeRefs.current.get("__container__");
+    if (!container) return;
+    const ro = new ResizeObserver(() => setLayoutTick((t) => t + 1));
+    ro.observe(container);
+    const onScroll = () => setLayoutTick((t) => t + 1);
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      ro.disconnect();
+      container.removeEventListener("scroll", onScroll);
+    };
+  }, [open, nodes.length]);
+
   if (!open) return null;
 
   // Empty state: tell the user the workbench is not live yet.
@@ -299,7 +418,15 @@ export function KrakenGraphVisualizer({ cwd, open, onClose }: Props) {
 
       {hasNodes ? (
         <div className="kraken-graph-body">
-          <div className="kraken-graph-nodes">
+          <div
+            className="kraken-graph-nodes"
+            ref={(el) => {
+              // The ref is the ResizeObserver target. Tagging with a
+              // sentinel id keeps the Map shape uniform.
+              if (el) nodeRefs.current.set("__container__", el as unknown as HTMLDivElement);
+            }}
+          >
+            {renderEdges(nodes, nodeRefs.current)}
             {nodes.map((n) => {
               const palette = KIND_COLORS[n.kind] ?? KIND_COLORS["explore"]!;
               const paletteFallback = KIND_COLORS["explore"]!;
@@ -314,6 +441,9 @@ export function KrakenGraphVisualizer({ cwd, open, onClose }: Props) {
                   style={{ background: safe.bg, borderColor: safe.border }}
                   onClick={() => setSelected(n)}
                   title={`${n.id} · ${n.label} · ${n.kind}`}
+                  ref={(el) => {
+                    if (el) nodeRefs.current.set(n.id, el as unknown as HTMLDivElement);
+                  }}
                 >
                   <div className="kraken-node-head">
                     <span className="kraken-node-status" aria-hidden>{icon}</span>
