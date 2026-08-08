@@ -176,6 +176,23 @@ export async function runCsvFanout(args: CsvFanoutArgs, deps: TaskToolDeps, opts
   const outputRecords: Record<string, string>[] = rows.map((r) => ({ ...r, status: 'pending', result: '', error: '' }));
   const outHeaders = [...headers, 'status', 'result', 'error'];
 
+  // Serialize atomic writes to the output CSV. Even with a random tmp
+  // suffix, N concurrent workers all rename-ing into the same target
+  // path can race on Windows (the destination is briefly locked by
+  // the rename, and a sibling rename fails with EPERM/EBUSY). Tail
+  // users only need the *latest* snapshot, so we serialize: the
+  // chain lets the next writer see the previous rename fully done
+  // before starting its own.
+  let writeChain: Promise<void> = Promise.resolve();
+  function queueWrite(contents: string): Promise<void> {
+    const next = writeChain.then(() => atomicWrite(absOut, contents));
+    // Swallow the chain's rejection so a single failed write doesn't
+    // poison the chain; the worker that initiated this write still
+    // sees the rejection at its own `await` below.
+    writeChain = next.catch(() => {});
+    return next;
+  }
+
   // Simple worker pool. Rows are claimed by index; the pool stops when
   // the next index >= rows.length.
   let nextIndex = 0;
@@ -215,9 +232,11 @@ export async function runCsvFanout(args: CsvFanoutArgs, deps: TaskToolDeps, opts
       // Atomic write of the result so a long batch can be observed mid-flight
       // by tailing the file. We rewrite the whole output on each row; the
       // expected sizes here are small enough (CSV with at most a few KB per
-      // row of LLM conclusion) that this is cheap.
+      // row of LLM conclusion) that this is cheap. Writes are serialized
+      // through `queueWrite` (see above) so N concurrent workers don't race
+      // the rename on the same target path.
       await fs.mkdir(path.dirname(absOut), { recursive: true });
-      await atomicWrite(absOut, serializeCsv(outHeaders, outputRecords));
+      await queueWrite(serializeCsv(outHeaders, outputRecords));
     }
   }
 
