@@ -5,6 +5,14 @@
   /* Dark: charcoal glass + soft white glass highlights */
   --bg: #0a0a0b;
   --bg-solid: #121214;
+  /* Height of the frameless titlebar (mirrors `.titlebar { height: 36px }`).
+     Any `position: fixed` panel that lives in the right rail — workbench
+     panel, Bennett's Razor modal backdrop — must start *below* this offset
+     so its own close (×) button doesn't overlap the OS window's
+     minimize/maximize/close controls. A click that lands on the OS close
+     button instead of the panel's × closes the whole app, which is the
+     worst possible UX. */
+  --titlebar-h: 36px;
   --bg-elevated: rgba(28, 28, 32, 0.72);
   /* Backwards-compatible alias — many existing rules (workbench-panel,
      razor-modal, weak-tip, etc.) reference --bg-elev, which used to be
@@ -4664,7 +4672,14 @@ kbd {
 
 .razor-modal-backdrop {
   position: fixed;
-  inset: 0;
+  /* Start below the frameless titlebar (same reason as .workbench-panel):
+     we don't want the dim/blur layer to cover the OS window controls,
+     and we want the modal centered in the *content* area, not in the
+     area that includes the titlebar (which would push the modal up). */
+  top: var(--titlebar-h);
+  right: 0;
+  bottom: 0;
+  left: 0;
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -4996,7 +5011,11 @@ kbd {
 
 .workbench-panel {
   position: fixed;
-  top: 0;
+  /* Start below the frameless titlebar so the panel's own × doesn't
+     overlap the OS window's minimize/maximize/close controls. Without
+     this offset a click that lands a few pixels high on the panel's
+     close button instead closes the whole app. */
+  top: var(--titlebar-h);
   right: 0;
   bottom: 0;
   width: 480px;
@@ -5030,6 +5049,11 @@ kbd {
   justify-content: space-between;
   padding: 14px 18px 10px;
   border-bottom: 1px solid var(--border);
+  /* Opaque fill — the parent panel is opaque, but the head used to inherit
+     the same `var(--bg-elev)` token with no own rule, so any future
+     change to the panel's background would silently leak into the head.
+     Pin it here so the panel reads as one solid block top-to-bottom. */
+  background: var(--bg-elev);
 }
 
 .workbench-panel-title {
@@ -5062,6 +5086,7 @@ kbd {
   font-size: 11.5px;
   color: var(--text-muted);
   font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  background: var(--bg-elev);
 }
 
 .workbench-meta-item {
@@ -5084,6 +5109,11 @@ kbd {
   padding: 14px 18px 18px;
   font-size: 13px;
   line-height: 1.55;
+  /* Opaque fill — see note on .workbench-panel-head. The body is the
+     longest section of the panel; an accidental transparent body would
+     make the user see the chat stream underneath and feel like the
+     panel isn't really there. */
+  background: var(--bg-elev);
 }
 
 .workbench-empty {
