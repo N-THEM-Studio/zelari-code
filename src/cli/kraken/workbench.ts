@@ -23,9 +23,10 @@
  *   ## Progress: <done>/<total> · <running>↑ · <errored>✗
  *
  *   ## Wave
- *   | id | label | kind | scope | status | verdict | weakness | model | duration |
- *   |----|-------|------|-------|--------|---------|----------|-------|----------|
- *   | t0001 | map auth | explore | src/auth | ✓ done | pass | 0.83 | grok-3-mini | 4s |
+ *   | id | label | kind | deps | scope | status | verdict | weakness | model | duration |
+ *   |----|-------|------|------|-------|--------|---------|----------|-------|----------|
+ *   | t0001 | map auth | explore |  | src/auth | done | pass | 0.83 | grok-3-mini | 4s |
+ *   | t0003 | auth fix | general | t0001, t0002 | src/auth | done | fail | 0.41 | grok | 3s |
  *   ...
  *
  *   ## Events (latest 30)
@@ -43,8 +44,14 @@
  * workbench now lets you see which you got, per node, in the same
  * Markdown file you already `tail -f`.
  *
+ * **v1.31.x (Slice N+2)**: a `deps` column is now part of the Wave
+ * table so the desktop graph visualizer (and any other consumer) can
+ * read dependency edges without needing the raw plan JSON. Cells list
+ * the upstream node ids comma-separated; empty when the node has no
+ * dependencies (root nodes).
+ *
  * @since Kraken v1.30.x — workflow script runtime (Pillar 3)
- * @since Kraken v1.31.x — verdict + weakness surfaced in workbench
+ * @since Kraken v1.31.x — verdict + weakness + deps in workbench
  */
 
 import { promises as fs } from 'node:fs';
@@ -65,6 +72,16 @@ export interface WorkbenchNode {
   startedAt?: string;
   endedAt?: string;
   error?: string;
+  /**
+   * Upstream node ids this node depends on. Empty for root nodes.
+   * Surfaced in the Wave table so consumers (e.g. the desktop graph
+   * visualizer) can render dependency edges without re-resolving the
+   * plan JSON. Population happens in {@link markEnd} from the caller's
+   * `deps` patch field.
+   *
+   * @since v1.31.x
+   */
+  deps?: string[];
   /**
    * Reviewer verdict for verify / spec / conformance nodes. Set when the
    * node's `findings` is parsed via `parsePersonaVerdict` on `markEnd`.
@@ -171,7 +188,7 @@ export class WorkbenchWriter {
     this.markDirty();
   }
 
-  markEnd(id: string, patch: { status: NodeStatus; durationMs?: number; error?: string; findings?: string }): void {
+  markEnd(id: string, patch: { status: NodeStatus; durationMs?: number; error?: string; findings?: string; deps?: string[] }): void {
     if (!this.enabled) return;
     const n = this.nodesById.get(id);
     if (!n) return;
@@ -193,6 +210,7 @@ export class WorkbenchWriter {
       status: patch.status,
       ...(patch.durationMs !== undefined ? { durationMs: patch.durationMs } : {}),
       ...(patch.error ? { error: patch.error.slice(0, 200) } : {}),
+      ...(Array.isArray(patch.deps) ? { deps: patch.deps } : {}),
       ...(verdict ? { verdict } : {}),
       ...(typeof weaknessScore === 'number' ? { weaknessScore } : {}),
       endedAt: new Date().toISOString(),
@@ -285,8 +303,8 @@ export class WorkbenchWriter {
 
     lines.push(`## Wave`);
     lines.push(``);
-    lines.push(`| id | label | kind | scope | status | verdict | weakness | model | duration |`);
-    lines.push(`|----|-------|------|-------|--------|---------|----------|-------|----------|`);
+    lines.push(`| id | label | kind | deps | scope | status | verdict | weakness | model | duration |`);
+    lines.push(`|----|-------|------|------|-------|--------|---------|----------|-------|----------|`);
     const sorted = [...this.nodesById.values()].sort((a, b) => a.id.localeCompare(b.id)).slice(0, MAX_NODES_IN_TABLE);
     for (const n of sorted) {
       const status = statusEmoji(n.status);
@@ -294,7 +312,8 @@ export class WorkbenchWriter {
       const dur = n.durationMs != null ? formatMs(n.durationMs) : '';
       const verdict = n.verdict ?? '';
       const weakness = typeof n.weaknessScore === 'number' ? n.weaknessScore.toFixed(2) : '';
-      lines.push(`| ${n.id} | ${n.label} | ${n.kind} | ${scope} | ${status} | ${verdict} | ${weakness} | ${n.model ?? ''} | ${dur} |`);
+      const deps = n.deps && n.deps.length > 0 ? n.deps.join(', ') : '';
+      lines.push(`| ${n.id} | ${n.label} | ${n.kind} | ${deps} | ${scope} | ${status} | ${verdict} | ${weakness} | ${n.model ?? ''} | ${dur} |`);
     }
     lines.push(``);
 

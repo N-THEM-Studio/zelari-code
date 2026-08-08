@@ -48,6 +48,7 @@ interface WaveRow {
   id: string;
   label: string;
   kind: string;
+  deps: string;
   scope: string;
   status: string;
   verdict: string;
@@ -60,6 +61,7 @@ interface Node {
   id: string;
   label: string;
   kind: string;
+  deps: string[];
   scope: string;
   status: string;
   verdict: string;
@@ -125,20 +127,33 @@ function parseWaveTable(md: string): WaveRow[] {
       if (header.includes("verdict") && header.includes("weakness")) {
         i += 2; // skip header + separator
         const rows: WaveRow[] = [];
+        // Header layout (v1.31.x+): id | label | kind | deps | scope | status | verdict | weakness | model | duration
+        // Pre-deps layout (legacy):    id | label | kind |      scope | status | verdict | weakness | model | duration
+        // Detect by the presence of the deps column header.
+        const hasDeps = header.includes("deps");
+        const idCol = 0;
+        const labelCol = 1;
+        const kindCol = 2;
+        const scopeCol = hasDeps ? 4 : 3;
+        const statusCol = hasDeps ? 5 : 4;
+        const verdictCol = hasDeps ? 6 : 5;
+        const weaknessCol = hasDeps ? 7 : 6;
+        const modelCol = hasDeps ? 8 : 7;
+        const durationCol = hasDeps ? 9 : 8;
+        const depsCol = hasDeps ? 3 : -1;
         while (i < lines.length && lines[i]!.includes("|") && lines[i]!.trim() !== "") {
           const cells = splitRow(lines[i]!);
-          // The render writes 9 columns in a fixed order; tolerate both
-          // a longer header and missing fields by index.
           rows.push({
-            id: cells[0] ?? "",
-            label: cells[1] ?? "",
-            kind: cells[2] ?? "",
-            scope: cells[3] ?? "",
-            status: cells[4] ?? "",
-            verdict: cells[5] ?? "",
-            weaknessScore: cells[6] ?? "",
-            model: cells[7] ?? "",
-            duration: cells[8] ?? "",
+            id: cells[idCol] ?? "",
+            label: cells[labelCol] ?? "",
+            kind: cells[kindCol] ?? "",
+            deps: depsCol >= 0 ? (cells[depsCol] ?? "") : "",
+            scope: cells[scopeCol] ?? "",
+            status: cells[statusCol] ?? "",
+            verdict: cells[verdictCol] ?? "",
+            weaknessScore: cells[weaknessCol] ?? "",
+            model: cells[modelCol] ?? "",
+            duration: cells[durationCol] ?? "",
           });
           i++;
         }
@@ -241,6 +256,10 @@ export function KrakenGraphVisualizer({ cwd, open, onClose }: Props) {
       id: r.id,
       label: r.label,
       kind: r.kind,
+      deps: r.deps
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s !== ""),
       scope: r.scope,
       status: r.status,
       verdict: r.verdict,
@@ -310,6 +329,19 @@ export function KrakenGraphVisualizer({ cwd, open, onClose }: Props) {
                   </div>
                   <div className="kraken-node-id">{n.id}</div>
                   <div className="kraken-node-label">{n.label}</div>
+                  {n.deps.length > 0 ? (
+                    <div
+                      className="kraken-node-deps"
+                      title={`depends on: ${n.deps.join(", ")}`}
+                    >
+                      <span className="kraken-node-deps-arrow" aria-hidden>←</span>
+                      <span className="kraken-node-deps-list">
+                        {n.deps.length <= 3
+                          ? n.deps.join(", ")
+                          : `${n.deps.slice(0, 2).join(", ")}, +${n.deps.length - 2}`}
+                      </span>
+                    </div>
+                  ) : null}
                   {n.scope ? (
                     <div className="kraken-node-scope" title={n.scope}>
                       {n.scope.length > 28 ? `${n.scope.slice(0, 28)}…` : n.scope}
@@ -344,6 +376,12 @@ export function KrakenGraphVisualizer({ cwd, open, onClose }: Props) {
                   <div className="kraken-side-row">
                     <span className="kraken-side-key">scope</span>
                     <code>{selected.scope}</code>
+                  </div>
+                ) : null}
+                {selected.deps.length > 0 ? (
+                  <div className="kraken-side-row">
+                    <span className="kraken-side-key">deps</span>
+                    <code>{selected.deps.join(", ")}</code>
                   </div>
                 ) : null}
                 <div className="kraken-side-row">

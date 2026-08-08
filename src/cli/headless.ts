@@ -72,6 +72,24 @@ export interface HeadlessOptions {
    * @since Kraken graph engine F6
    */
   krakenGraph?: string;
+  /**
+   * When true, the kraken-graph flow plans the graph, serializes it to
+   * `.zelari/radio/plan-<id>.json`, and exits 0 WITHOUT executing. Use
+   * `--run-plan <id>` afterwards to inspect / approve / execute the
+   * pre-flight plan manually. This is the first step of the "pre-flight
+   * plan review" UX (see ADR 013 follow-up). Defaults to false; enabled
+   * via env `ZELARI_KRAKEN_PLAN_ONLY=1`.
+   * @since v1.31.x
+   */
+  planOnly?: boolean;
+  /**
+   * When set, skips the planner and executes a pre-built plan loaded
+   * from `.zelari/radio/plan-<id>.json`. Pairs with `planOnly: true`:
+   * the typical flow is "plan only" → "user inspects" → "run plan".
+   * Set via env `ZELARI_KRAKEN_RUN_PLAN=<id>`.
+   * @since v1.31.x
+   */
+  runPlan?: string;
 }
 
 export interface HeadlessParseResult {
@@ -126,6 +144,12 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
   let history: AgentMessage[] | undefined;
   let once = false;
   let krakenGraph: string | undefined;
+  // Pre-flight plan review (Slice N+3): opt-in via env, with a CLI
+  // flag for symmetry. Both default to off.
+  let planOnly =
+    process.env.ZELARI_KRAKEN_PLAN_ONLY === '1' ||
+    process.env.ZELARI_KRAKEN_PLAN_ONLY === 'true';
+  let runPlan = process.env.ZELARI_KRAKEN_RUN_PLAN;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -246,6 +270,11 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
     } else if (arg === '--kraken-graph') {
       krakenGraph = argv[i + 1];
       i++;
+    } else if (arg === '--plan-only') {
+      planOnly = true;
+    } else if (arg === '--run-plan') {
+      runPlan = argv[i + 1];
+      i++;
     }
   }
 
@@ -278,6 +307,8 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       ...(history && history.length > 0 ? { history } : {}),
       ...(once ? { once: true } : {}),
       ...(krakenGraph ? { krakenGraph } : {}),
+      ...(planOnly ? { planOnly: true } : {}),
+      ...(runPlan ? { runPlan } : {}),
     },
   };
 }

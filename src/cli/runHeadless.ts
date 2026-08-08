@@ -44,6 +44,9 @@ import { setPhase } from './phaseState.js';
 import { describePhase } from './phase.js';
 import { createStreamScrubber } from './utils/streamScrub.js';
 import { resetTaskSpawnCount } from './tools/taskTool.js';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   resetTaskSpawnCount();
@@ -192,6 +195,37 @@ async function runHeadlessKrakenGraph(
   process.once('SIGINT', onSigint);
 
   try {
+    // ---- Pre-flight: run a pre-built plan from disk, skipping the planner.
+    let preflightGraph: import('@zelari/core').TaskGraph | undefined;
+    if (opts.runPlan && opts.runPlan.trim() !== '') {
+      const planPath = path.join(cwd, '.zelari', 'radio', `plan-${opts.runPlan}.json`);
+      log(`loading pre-flight plan: ${planPath}`);
+      let raw: string;
+      try {
+        raw = await fs.readFile(planPath, 'utf8');
+      } catch (e) {
+        log(`plan file not found: ${planPath} (${(e as Error).message})`);
+        return 1;
+      }
+      let planJson: { graphId?: string; nodes?: unknown[] };
+      try {
+        planJson = JSON.parse(raw);
+      } catch (e) {
+        log(`plan file is malformed JSON: ${(e as Error).message}`);
+        return 1;
+      }
+      if (!planJson || !Array.isArray(planJson.nodes)) {
+        log(`plan file is malformed: missing "nodes" array`);
+        return 1;
+      }
+      const { createGraph, validateGraph } = await import('@zelari/core');
+      const validated = createGraph(planJson.graphId ?? opts.runPlan, planJson.nodes as never);
+      validateGraph(validated);
+      preflightGraph = validated;
+      log(`pre-flight plan loaded (${validated.nodes.size} nodes); executing`);
+    }
+
+    // ---- Normal flow: plan, then optionally execute.
     log(`planning kraken graph: ${prompt}`);
     // Resume context: if the last graph in this project stopped short, tell
     // the planner what already exists and what still needs doing, so a
@@ -199,14 +233,34 @@ async function runHeadlessKrakenGraph(
     const previous = await loadGraphSnapshot(cwd);
     const previousAttempt = formatSnapshotForPlanner(previous);
     if (previousAttempt) log('resuming from the previous unfinished graph');
-    const graph = await planTaskGraph({
-      prompt,
-      provider,
-      model,
-      cwd,
-      ...(previousAttempt ? { previousAttempt } : {}),
-    });
+    const graph =
+      preflightGraph ??
+      (await planTaskGraph({
+        prompt,
+        provider,
+        model,
+        cwd,
+        ...(previousAttempt ? { previousAttempt } : {}),
+      }));
     log(formatKrakenGraphAscii(graph));
+
+    // ---- Plan-only mode: serialize and exit before executing.
+    if (opts.planOnly) {
+      const planId = randomUUID();
+      const planDir = path.join(cwd, '.zelari', 'radio');
+      const planPath = path.join(planDir, `plan-${planId}.json`);
+      await fs.mkdir(planDir, { recursive: true });
+      await fs.writeFile(planPath, JSON.stringify(graph, null, 2), 'utf8');
+      log(`plan-only: wrote ${planPath} (${graph.nodes.size} nodes)`);
+      log(
+        `re-run with ZELARI_KRAKEN_RUN_PLAN=${planId} to execute (or --run-plan <id> when the desktop wiring is in place)`,
+      );
+      if (opts.output === 'json') {
+        emitEvent({ type: 'log', message: `plan_only_id=${planId}` });
+        emitEvent({ type: 'log', message: `plan_only_path=${planPath}` });
+      }
+      return 0;
+    }
 
     const audit = new AuditLogger();
     const executor = new KrakenGraphExecutor({

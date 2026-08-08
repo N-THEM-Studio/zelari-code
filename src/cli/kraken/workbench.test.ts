@@ -108,10 +108,11 @@ describe('WorkbenchWriter', () => {
     const out = await w.flush();
     const body = await fs.readFile(out!, 'utf8');
     expect(body).toContain('| v-001 |');
-    // Header columns for verdict + weakness are present.
-    expect(body).toMatch(/\|\s*id\s*\|\s*label\s*\|\s*kind\s*\|\s*scope\s*\|\s*status\s*\|\s*verdict\s*\|\s*weakness\s*\|/);
+    // Header columns for deps + verdict + weakness are present.
+    // (v1.31.x+ renders the deps column between kind and scope.)
+    expect(body).toMatch(/\|\s*id\s*\|\s*label\s*\|\s*kind\s*\|\s*deps\s*\|\s*scope\s*\|\s*status\s*\|\s*verdict\s*\|\s*weakness\s*\|/);
     // Verdict cell shows pass.
-    expect(body).toMatch(/\|\s*v-001\s*\|[^|]+\|\s*verify\s*\|[^|]+\|[^|]+\|\s*pass\s*\|/);
+    expect(body).toMatch(/\|\s*v-001\s*\|[^|]+\|\s*verify\s*\|[^|]+\|[^|]+\|[^|]+\|\s*pass\s*\|/);
     // Weakness is a 2-decimal number in [0, 1].
     expect(body).toMatch(/\|\s*pass\s*\|\s*(0\.\d{2}|1\.00)\s*\|/);
   });
@@ -152,6 +153,48 @@ describe('WorkbenchWriter', () => {
     expect(weaknessCell).not.toBeNull();
     const weaknessValue = parseFloat(weaknessCell![1]);
     expect(weaknessValue).toBeLessThan(0.5);
+  });
+
+  it('surfaces a deps column in the Wave table (root nodes show empty)', async () => {
+    const writer = new WorkbenchWriter({ cwd: tmp, graphId: 'g-deps', goal: 'x' });
+    writer.setNodes([
+      { id: 't-001', kind: 'explore', label: 'a', status: 'pending' },
+      { id: 't-002', kind: 'general', label: 'b', status: 'pending' },
+    ]);
+    writer.markStart('t-001');
+    writer.markEnd('t-001', { status: 'done', durationMs: 10 });
+    writer.markStart('t-002');
+    writer.markEnd('t-002', {
+      status: 'done',
+      durationMs: 20,
+      deps: ['t-001'],
+    });
+    const out = await writer.flush();
+    const body = await fs.readFile(out!, 'utf8');
+    // Header has the new deps column.
+    expect(body).toMatch(/\|\s*id\s*\|\s*label\s*\|\s*kind\s*\|\s*deps\s*\|/);
+    // Root node: empty deps cell.
+    expect(body).toMatch(/\|\s*t-001\s*\|[^|]+\|\s*explore\s*\|\s*\|/);
+    // Dependent node: deps cell lists upstream id.
+    expect(body).toMatch(/\|\s*t-002\s*\|[^|]+\|\s*general\s*\|\s*t-001\s*\|/);
+  });
+
+  it('lists multi-dep nodes comma-separated', async () => {
+    const writer = new WorkbenchWriter({ cwd: tmp, graphId: 'g-mdep', goal: 'x' });
+    writer.setNodes([
+      { id: 'a', kind: 'explore', label: 'a', status: 'pending' },
+      { id: 'b', kind: 'explore', label: 'b', status: 'pending' },
+      { id: 'c', kind: 'general', label: 'c', status: 'pending' },
+    ]);
+    writer.markStart('a');
+    writer.markEnd('a', { status: 'done', durationMs: 5 });
+    writer.markStart('b');
+    writer.markEnd('b', { status: 'done', durationMs: 5 });
+    writer.markStart('c');
+    writer.markEnd('c', { status: 'done', durationMs: 5, deps: ['a', 'b'] });
+    const out = await writer.flush();
+    const body = await fs.readFile(out!, 'utf8');
+    expect(body).toMatch(/\|\s*c\s*\|[^|]+\|\s*general\s*\|\s*a,\s*b\s*\|/);
   });
 
   it('marks a parallel wave', async () => {

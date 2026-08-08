@@ -5375,6 +5375,35 @@ kbd {
   white-space: nowrap;
 }
 
+.kraken-node-deps {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
+  border-radius: 4px;
+  padding: 2px 5px;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kraken-node-deps-arrow {
+  font-weight: 800;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.kraken-node-deps-list {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .kraken-node-running {
   animation: kraken-pulse 1.4s ease-in-out infinite;
   border-style: dashed;
