@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.2] - 2026-08-08
+
+### Fixed
+- **Desktop: any `position: fixed` right-rail panel sat on top of the OS window controls** - the v1.30.1 alias fix closed the *transparent* part of the workbench bug, but a second issue was still open: both `.workbench-panel` and `.razor-modal-backdrop` had `top: 0` / `inset: 0`, so the workbench panel's own close (×) button overlapped the OS window's minimize/maximize/close controls on the frameless titlebar. A click that landed a few pixels high on the panel's × instead closed the whole Zelari app. Added `--titlebar-h: 36px` in `:root` and shifted both surfaces to start at `top: var(--titlebar-h)`. The razor modal is also now vertically centered in the *content* area, not in the area that includes the titlebar.
+- **Desktop: workbench panel still read as "transparent"** even with the alias fix, because `.workbench-panel-head`, `.workbench-panel-meta` and `.workbench-panel-body` inherited `transparent` from the parent and let the chat stream leak through. Pinned `background: var(--bg-elev)` on each so the panel reads as one solid block top-to-bottom and is robust against future tweaks that swap the parent background.
+
 ## [1.30.1] - 2026-08-08
 
 ### Fixed
