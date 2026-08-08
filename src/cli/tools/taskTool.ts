@@ -371,6 +371,13 @@ export interface RunTentacleOptions {
    * (and writing) while the executor retries the same scope.
    */
   signal?: AbortSignal;
+  /**
+   * Override the system prompt. Used by Pillar 2 persona kinds
+   * (`spec`, `conformance`) to inject the persona's specific prompt
+   * even when the host agent is `verify`. When unset, falls back to
+   * `systemPromptForAgent(agent)`.
+   */
+  systemPromptOverride?: string;
 }
 
 /**
@@ -473,7 +480,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     model: sub.model,
     provider: sub.provider,
     messages: [
-      { role: 'system', content: systemPromptForAgent(agent) },
+      { role: 'system', content: opts.systemPromptOverride ?? systemPromptForAgent(agent) },
       { role: 'user', content: userContent },
     ],
     tools: sub.tools,

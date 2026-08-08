@@ -113,6 +113,44 @@ export function resolveKrakenSubModel(
 }
 
 /**
+ * Per-persona model resolution (Pillar 2 / Slice I). Persona kinds
+ * (`spec`, `conformance`) route to the same underlying `verify` agent,
+ * but the user may want a different model for them (e.g. conformance is
+ * literal and benefits from a strong model; spec-reviewer is conservative
+ * and works fine with a cheap one). Env vars:
+ *
+ *   ZELARI_KRAKEN_SPEC_MODEL          — for `kind: 'spec'`
+ *   ZELARI_KRAKEN_CONFORMANCE_MODEL   — for `kind: 'conformance'`
+ *   ZELARI_KRAKEN_ORACLE_MODEL        — for `kind: 'oracle'` (future)
+ *
+ * Unset → fall back to the per-agent resolution above (`verify` model
+ * for both). This is conservative: spec and conformance get the same
+ * model as `verify` unless the user explicitly opts in.
+ */
+export function resolvePersonaModel(
+  kind: 'spec' | 'conformance' | 'oracle' | string,
+  parentModel: string,
+  env: NodeJS.ProcessEnv = process.env,
+  opts: ResolveKrakenModelOpts = {},
+): string {
+  const personaKey =
+    kind === 'spec'
+      ? 'ZELARI_KRAKEN_SPEC_MODEL'
+      : kind === 'conformance'
+        ? 'ZELARI_KRAKEN_CONFORMANCE_MODEL'
+        : kind === 'oracle'
+          ? 'ZELARI_KRAKEN_ORACLE_MODEL'
+          : '';
+  const specific = personaKey ? env[personaKey]?.trim() : undefined;
+  if (specific) return specific;
+  // Fall back to the `verify` resolution: all three personas are
+  // reviewer-style and share the same tool budget. This means a user
+  // who sets `ZELARI_KRAKEN_VERIFY_MODEL` gets the same model for all
+  // three unless they override per-persona.
+  return resolveKrakenSubModel('verify', parentModel, env, opts);
+}
+
+/**
  * Async resolve that loads discovery cache (ESM). Prefer this from toolRegistry.
  */
 export async function resolveKrakenSubModelAsync(

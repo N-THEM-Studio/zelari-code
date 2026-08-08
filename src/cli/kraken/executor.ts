@@ -742,7 +742,17 @@ export class KrakenGraphExecutor {
     // spawnReworkPair) — it must not open a second one on the same scope.
     const isRework = this.reworks.has(node.id);
     const usesWorktree = (node.kind === 'general' || node.kind === 'fix') && !isRework;
-    const agent: TaskAgentKind = node.kind === 'fix' ? 'general' : node.kind;
+    // Map script-runtime kinds onto the host's `TaskAgentKind`. Reviewer
+    // kinds (verify, spec, conformance) all run as 'verify' agents under
+    // the hood — the persona is enforced at the prompt level, not the
+    // runtime level. Pillar 2 will lift this once we have per-persona
+    // system prompt injection in `runTentacle`.
+    const agent: TaskAgentKind =
+      node.kind === 'fix'
+        ? 'general'
+        : node.kind === 'spec' || node.kind === 'conformance'
+          ? 'verify'
+          : node.kind;
     const controller = new AbortController();
     // Registered so a cancelled run can reach in and stop this tentacle
     // instead of waiting for it to finish on its own.

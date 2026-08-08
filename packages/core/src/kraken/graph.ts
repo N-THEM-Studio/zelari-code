@@ -9,8 +9,11 @@
  * @since v0.10.x — Kraken graph engine (F1)
  */
 
-/** What a graph node does. Mirrors taskTool kinds plus graph-only kinds. */
-export type TaskNodeKind = 'explore' | 'general' | 'verify' | 'fix' | 'merge';
+/** What a graph node does. Mirrors taskTool kinds plus graph-only kinds.
+ *  `spec` and `conformance` are the Pillar-2 spec-council personas: they
+ *  run as `verify` agents under the hood but with persona-specific
+ *  system prompts and verdict schemas. */
+export type TaskNodeKind = 'explore' | 'general' | 'verify' | 'fix' | 'merge' | 'spec' | 'conformance';
 
 /** Lifecycle state of a node within an executing graph. */
 export type TaskNodeStatus =

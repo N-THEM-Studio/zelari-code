@@ -26,6 +26,8 @@ import { handleIndexBuild, handleIndexStatus } from '../slashHandlers/semantic.j
 import { nextMode, describeMode } from '../mode.js';
 import { formatKrakenRadioStatus } from '../tools/krakenRadio.js';
 import { handleKrakenGraph } from '../slashHandlers/krakenGraph.js';
+import { handleKrakenFanout } from '../slashHandlers/krakenFanout.js';
+import { handleKrakenWorkbench } from '../slashHandlers/krakenWorkbench.js';
 import type { ChatMode } from '../components/StatusBar.js';
 import { handleCompact } from '../slashHandlers/transcript.js';
 import { handleUpdateCheck, handleUpdatePerform } from '../slashHandlers/updater.js';
@@ -550,6 +552,20 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     if (result.kind === 'kraken_graph') {
       const sid = (sessionId || 'default').trim();
       await handleKrakenGraph({ setMessages, cwd: process.cwd(), sessionId: sid }, result.graphPrompt ?? '');
+      return;
+    }
+
+    if (result.kind === 'kraken_fanout') {
+      const sid = (sessionId || 'default').trim();
+      await handleKrakenFanout(
+        { setMessages, cwd: process.cwd(), sessionId: sid },
+        result.fanoutArgs ?? '',
+      );
+      return;
+    }
+
+    if (result.kind === 'kraken_workbench') {
+      await handleKrakenWorkbench({ setMessages, cwd: process.cwd() });
       return;
     }
 
