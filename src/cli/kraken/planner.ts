@@ -108,6 +108,10 @@ const DEFAULT_MAX_RETRIES: Record<TaskNodeKind, number> = {
   verify: 1,
   fix: 0,
   merge: 0,
+  // Pillar 2 persona kinds: same retry budget as `verify` (the gate is
+  // the same — trailer-based).
+  spec: 1,
+  conformance: 1,
 };
 
 export const KRAKEN_PLANNER_SYSTEM_PROMPT = [
@@ -121,7 +125,7 @@ export const KRAKEN_PLANNER_SYSTEM_PROMPT = [
   'Rules:',
   '- kind "explore": read-only research (no edits). Use to gather context before edits.',
   '- kind "general": can edit files for one bounded, self-contained unit of work.',
-  '- Do NOT emit "verify", "fix", or "merge" nodes — the executor adds those automatically.',
+  '- Do NOT emit "verify", "spec", "conformance", "fix", or "merge" nodes — the executor adds those automatically based on the writer kind and the goal shape.',
   '- "id" must be short, unique, kebab-case (e.g. "e1", "g-auth", "g-ui").',
   '- "prompt" must be self-contained: the sub-agent sees ONLY this prompt, not this conversation.',
   '- "deps" lists ids of nodes that must finish first (topological order); [] if none.',
@@ -143,7 +147,91 @@ export const KRAKEN_PLANNER_SYSTEM_PROMPT = [
     'settle by opening a file or running a command ("exports slugify(input: string): string", ' +
     '"npm test passes"), never subjective ones ("the code is elegant") — a criterion nobody can ' +
     'check just burns a rework round.',
+  '',
+  '# Reviewer personas (Pillar 2 spec council)',
+  '',
+  'After every `general` node, the executor auto-injects a `verify` tentacle ' +
+    'that checks the `acceptance[]` criteria. For goals that have a written ' +
+    'spec or that must literally match the user prompt, the executor also ' +
+    'auto-injects two more personas:',
+  '  - `spec` (spec-reviewer) — compares the writer\'s output against a ' +
+    'written spec/plan, per requirement. Conservative: "reasonable but ' +
+    'different" is a FAIL.',
+  '  - `conformance` (conformance-reviewer) — compares the writer\'s output ' +
+    'against the USER\'S ORIGINAL VERBATIM PROMPT. Literal: "use session ' +
+    'cookies" is a FAIL when the prompt said "use JWT".',
+  '',
+  'You (the JSON planner) do NOT emit these directly; the executor decides ' +
+    'when to inject them. To hint that a node needs a `conformance` reviewer, ' +
+    'include the user\'s original ask verbatim in the `prompt`.',
 ].join('\n');
+
+/**
+ * Optional extension to the planner system prompt — Bennett's Razor
+ * (arXiv:2301.12987), a principled tie-breaker for "which plan should I
+ * emit when two would both work?". Bennett proves that the hypothesis
+ * with the *largest* extension (the one that "assumes the least") is
+ * the one most likely to generalise — 1.1×–5× the rate of MDL in his
+ * binary-arithmetic experiments.
+ *
+ * In planner terms: when two plans both cover the goal, prefer the one
+ * with narrower commitments (fewer pinned paths, fewer exact versions,
+ * fewer invariants about external state). It is a *tie-breaker*, not a
+ * goal: a plan too vague to act on is still useless.
+ *
+ * Opt-in via `ZELARI_KRAKEN_PLANNER_BENNETTS_RAZOR=1`. Default off in
+ * v1.31.x so existing plans aren't disturbed; promote to default-on
+ * once we have evidence the directive improves plan-success rate.
+ *
+ * See `.zelari/decisions/013-weakness-hypothesis-selection.md` for the
+ * full rationale and the Spec Council tie-breaker integration plan.
+ */
+const KRAKEN_PLANNER_BENNETTS_RAZOR_SECTION = [
+  '',
+  '# Bennett\'s Razor (tie-breaker)',
+  '',
+  'When two valid plans cover the goal, prefer the one that "assumes the least".',
+  'A plan is *more specific* when it pins exact paths, exact semver, exact function',
+  'signatures, or hard invariants about external state. A more general plan that',
+  'still satisfies the goal generalises better (Bennett, AGI 2023: 1.1×–5× the rate',
+  'of MDL in his experiments).',
+  '',
+  'Examples of the bias you should apply:',
+  '- "edit the user model" > "edit /src/models/user.ts and add a nullable email field"',
+  '  when the goal can be met either way.',
+  '- "use a stable sort" > "use Array.prototype.sort with a custom comparator" unless',
+  '  the user pinned the API.',
+  '- Prefer plans that touch fewer files and assume less about runtime versions.',
+  '',
+  'Hard constraint: do NOT weaken a plan below the bar in the name of weakness. The',
+  'goal must be reachable by following the plan as written; weakness is only a',
+  'tie-breaker among plans that do reach the goal.',
+].join('\n');
+
+/**
+ * Resolve whether Bennett's Razor should be appended to the planner
+ * system prompt. Opt-in via env var; default off in v1.31.x.
+ */
+function resolveBennettsRazorEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.ZELARI_KRAKEN_PLANNER_BENNETTS_RAZOR;
+  if (raw === undefined || raw === '') return false;
+  return raw === '1' || raw.toLowerCase() === 'true';
+}
+
+/**
+ * Build the planner system prompt, optionally appending Bennett's Razor
+ * directive. Pure: same env → same prompt, so test-snapshottable.
+ *
+ * Replaces the direct `KRAKEN_PLANNER_SYSTEM_PROMPT` reference at the
+ * `client.complete({ system: ... })` call site so existing tests that
+ * import the constant still see the un-augmented base.
+ */
+export function buildPlannerSystemPrompt(
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  if (!resolveBennettsRazorEnabled(env)) return KRAKEN_PLANNER_SYSTEM_PROMPT;
+  return KRAKEN_PLANNER_SYSTEM_PROMPT + '\n' + KRAKEN_PLANNER_BENNETTS_RAZOR_SECTION;
+}
 
 const PlannedNodeSchema = z.object({
   id: z
@@ -798,7 +886,7 @@ export async function planTaskGraph(opts: PlanTaskGraphOptions): Promise<TaskGra
 
   for (let attempt = 1; attempt <= MAX_PLAN_ATTEMPTS; attempt++) {
     try {
-      const text = await client.complete({ system: KRAKEN_PLANNER_SYSTEM_PROMPT, user: userMessage });
+      const text = await client.complete({ system: buildPlannerSystemPrompt(), user: userMessage });
       const parsedJson = extractJsonObject(text, { requireKey: 'nodes' });
       const validated = PlannedGraphSchema.parse(parsedJson);
       // `explore` is read-only, so a plan made only of explore nodes cannot
