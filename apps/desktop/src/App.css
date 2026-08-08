@@ -6,6 +6,12 @@
   --bg: #0a0a0b;
   --bg-solid: #121214;
   --bg-elevated: rgba(28, 28, 32, 0.72);
+  /* Backwards-compatible alias — many existing rules (workbench-panel,
+     razor-modal, weak-tip, etc.) reference --bg-elev, which used to be
+     the canonical name. Without this alias every one of them resolves
+     to `unset`, leaving the background fully transparent. Keep this
+     line; remove the call sites instead. */
+  --bg-elev: var(--bg-elevated);
   --sidebar: rgba(14, 14, 16, 0.78);
   --surface: rgba(255, 255, 255, 0.055);
   --surface-hover: rgba(255, 255, 255, 0.1);
@@ -89,6 +95,7 @@
   --bg: #ececee;
   --bg-solid: #f7f7f8;
   --bg-elevated: rgba(255, 255, 255, 0.82);
+  --bg-elev: var(--bg-elevated);
   --sidebar: rgba(250, 250, 252, 0.88);
   --surface: rgba(0, 0, 0, 0.04);
   --surface-hover: rgba(0, 0, 0, 0.07);
@@ -4994,7 +5001,15 @@ kbd {
   bottom: 0;
   width: 480px;
   max-width: 100vw;
-  z-index: 800;
+  /* Above .razor-modal-backdrop (1000) so the panel is always interactive,
+     even when a Bennett's Razor modal is open. `isolation: isolate` opens a
+     fresh stacking context so the fixed positioning is anchored to the
+     viewport even if an ancestor ever gains a transform / filter /
+     backdrop-filter (which would otherwise re-anchor `position: fixed`
+     to that ancestor and could let sibling content visually "leak"
+     over the panel). */
+  z-index: 1100;
+  isolation: isolate;
   display: flex;
   flex-direction: column;
   background: var(--bg-elev);
