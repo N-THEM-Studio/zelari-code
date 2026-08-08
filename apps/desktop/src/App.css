@@ -4606,4 +4606,909 @@ kbd {
   color: var(--text-muted);
 }
 
+/* ------------------------------------------------------------------ */
+/* Bennett's Razor explainer (desktop v1.31.x)                       */
+/*                                                                    */
+/* Inline pill next to the Kraken Graph toggle when graph mode is     */
+/* on, plus a click-to-open modal with the full paper context. The    */
+/* pill uses the same accent gradient as `.seg-btn.active` so it      */
+/* reads as "part of the graph mode" without competing for weight.    */
+/* ------------------------------------------------------------------ */
+
+.razor-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px 5px 10px;
+  margin-left: 4px;
+  border-radius: 99px;
+  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  transition: background 0.2s, border-color 0.2s, transform 0.15s;
+  white-space: nowrap;
+  user-select: none;
+}
+
+.razor-pill:hover {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
+  transform: translateY(-1px);
+}
+
+.razor-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.razor-pill-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.razor-pill-text {
+  /* Subtle italic so the pill reads as a "concept", not a button label. */
+  font-style: italic;
+}
+
+.razor-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(2px);
+  padding: 24px;
+  animation: razor-modal-fade 0.15s ease-out;
+}
+
+@keyframes razor-modal-fade {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.razor-modal {
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  max-width: 640px;
+  width: 100%;
+  max-height: 85vh;
+  overflow: auto;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
+  animation: razor-modal-pop 0.18s ease-out;
+}
+
+@keyframes razor-modal-pop {
+  from { transform: translateY(8px) scale(0.98); opacity: 0; }
+  to   { transform: translateY(0)    scale(1);    opacity: 1; }
+}
+
+.razor-modal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 22px 12px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-elev);
+  z-index: 1;
+}
+
+.razor-modal-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.razor-modal-icon {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.razor-modal-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.razor-modal-close {
+  font-size: 20px;
+  padding: 4px 10px;
+  line-height: 1;
+}
+
+.razor-modal-body {
+  padding: 18px 22px 20px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.razor-modal-body p,
+.razor-modal-body ul {
+  margin: 0 0 14px 0;
+}
+
+.razor-modal-body h3 {
+  margin: 20px 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text);
+}
+
+.razor-modal-body ul {
+  padding-left: 20px;
+}
+
+.razor-modal-body li {
+  margin-bottom: 6px;
+}
+
+.razor-modal-pull {
+  font-size: 15px;
+  color: var(--text);
+  padding: 12px 14px;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 0 6px 6px 0;
+  margin-bottom: 18px !important;
+}
+
+.razor-modal-body code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12.5px;
+  padding: 1px 5px;
+  background: var(--bg-elev-2, rgba(255, 255, 255, 0.06));
+  border-radius: 3px;
+  color: var(--text);
+}
+
+.razor-modal-foot {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.razor-paper-cite {
+  display: block;
+}
+
+.razor-paper-link {
+  margin-left: 6px;
+  color: var(--accent);
+  text-decoration: none;
+  font-weight: 600;
+  border-bottom: 1px dotted var(--accent);
+}
+
+.razor-paper-link:hover {
+  border-bottom-style: solid;
+}
+
+/* ------------------------------------------------------------------ */
+/* Weakness badge (desktop v1.31.x)                                  */
+/*                                                                    */
+/* Inline pill rendered by <WeaknessBadge> when a message contains a  */
+/* VERDICT: PASS|FAIL trailer. The pill shows the verdict + score,    */
+/* with a hover/focus tooltip explaining tight / medium / loose.      */
+/* Three color buckets keyed off the weakness score in [0, 1]:        */
+/*   tight   (w < 0.4) — green-tinted, the reviewer was specific     */
+/*   medium  (0.4-0.7) — amber, mixed                                  */
+/*   loose   (w >= 0.7) — red, the reviewer asserted very little      */
+/* ------------------------------------------------------------------ */
+
+.weakness-badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  /* Sit above the markdown body so the eye lands on it first. */
+  font-size: 12.5px;
+  color: var(--text-muted);
+}
+
+.weakness-badge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 6px;
+  border-radius: 99px;
+  border: 1px solid currentColor;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  cursor: default;
+  user-select: none;
+}
+
+.weakness-badge:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.weakness-verdict {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 2px 6px;
+  border-radius: 99px;
+  background: currentColor;
+  color: var(--bg-elev);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+}
+
+.weakness-verdict[data-verdict="pass"] {
+  /* inherits from .weakness-badge currentColor */
+}
+
+.weakness-verdict[data-verdict="fail"] {
+  /* same treatment; the bucket color carries the meaning */
+}
+
+.weakness-verdict[data-verdict="unknown"] {
+  opacity: 0.7;
+}
+
+.weakness-score {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.85;
+}
+
+.weakness-bucket {
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.weakness-tip {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 50;
+  display: block;
+  width: max-content;
+  max-width: 360px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  background: var(--bg-elev);
+  color: var(--text);
+  border: 1px solid var(--border);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.35);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: left;
+  white-space: normal;
+  font-style: normal;
+  font-weight: 400;
+  letter-spacing: 0;
+}
+
+.weakness-tip-formula {
+  display: block;
+  margin-top: 6px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+  opacity: 0.9;
+  font-style: italic;
+}
+
+.weakness-tip-paper {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.weakness-tip-paper a {
+  color: var(--accent);
+  text-decoration: none;
+  border-bottom: 1px dotted var(--accent);
+}
+
+.weakness-tip-paper a:hover {
+  border-bottom-style: solid;
+}
+
+/* Bucket colors. The .weakness-badge element's `color` carries the hue,
+   so the verdict chip, border, and tooltip border all stay in sync. */
+
+.weakness-badge.weakness-tight {
+  color: #2da567; /* green — specific, high-confidence */
+}
+.weakness-badge.weakness-medium {
+  color: #d99a2b; /* amber — mixed */
+}
+.weakness-badge.weakness-loose {
+  color: #c34a4a; /* red — vague, treat with care */
+}
+
+.app[data-theme="light"] .weakness-badge.weakness-tight {
+  color: #1f7d4d;
+}
+.app[data-theme="light"] .weakness-badge.weakness-medium {
+  color: #a66d12;
+}
+.app[data-theme="light"] .weakness-badge.weakness-loose {
+  color: #a83a3a;
+}
+
+/* ------------------------------------------------------------------ */
+/* Workbench live tail (desktop v1.31.x)                             */
+/*                                                                    */
+/* Side panel that opens from the topbar "Workbench" toggle and tails  */
+/* <cwd>/.zelari/radio/workbench-<id>.md on a 1.5s polling loop.      */
+/* Renders a tiny Markdown subset (H1-H3, paragraphs, lists, tables,  */
+/* fenced code) — no react-markdown dep.                              */
+/* ------------------------------------------------------------------ */
+
+.workbench-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 4px;
+  padding: 5px 12px;
+  border-radius: 99px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+}
+
+.workbench-toggle.active {
+  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.workbench-toggle-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+
+.workbench-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 480px;
+  max-width: 100vw;
+  z-index: 800;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-elev);
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  box-shadow: -16px 0 48px rgba(0, 0, 0, 0.35);
+  animation: workbench-panel-in 0.18s ease-out;
+}
+
+@keyframes workbench-panel-in {
+  from { transform: translateX(16px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+.workbench-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 18px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.workbench-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.workbench-panel-icon {
+  font-size: 18px;
+  line-height: 1;
+}
+
+.workbench-panel-close {
+  font-size: 18px;
+  padding: 2px 10px;
+  line-height: 1;
+}
+
+.workbench-panel-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 18px 10px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.workbench-meta-item {
+  white-space: nowrap;
+}
+
+.workbench-error {
+  margin: 10px 18px 0;
+  padding: 8px 12px;
+  background: color-mix(in srgb, #c34a4a 12%, transparent);
+  border-left: 3px solid #c34a4a;
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.workbench-panel-body {
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 14px 18px 18px;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.workbench-empty {
+  padding: 20px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+.workbench-empty code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  padding: 1px 5px;
+  background: var(--bg-elev-2, rgba(255, 255, 255, 0.06));
+  border-radius: 3px;
+}
+
+.workbench-panel-body .wb-h {
+  font-weight: 700;
+  margin: 16px 0 6px;
+  letter-spacing: -0.01em;
+}
+.workbench-panel-body .wb-h1 { font-size: 16px; }
+.workbench-panel-body .wb-h2 { font-size: 14px; color: var(--text); }
+.workbench-panel-body .wb-h3 { font-size: 13px; color: var(--text-secondary); }
+
+.workbench-panel-body .wb-p {
+  margin: 0 0 10px;
+  color: var(--text-secondary);
+}
+
+.workbench-panel-body .wb-li {
+  position: relative;
+  padding-left: 16px;
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+}
+.workbench-panel-body .wb-li::before {
+  content: "•";
+  position: absolute;
+  left: 0;
+  color: var(--text-muted);
+}
+
+.workbench-panel-body .wb-code {
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  background: var(--bg-elev-2, rgba(255, 255, 255, 0.04));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  white-space: pre-wrap;
+  color: var(--text-secondary);
+}
+
+.workbench-panel-body .wb-table-wrap {
+  margin: 0 0 12px;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.workbench-panel-body .wb-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.workbench-panel-body .wb-table th,
+.workbench-panel-body .wb-table td {
+  padding: 6px 10px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.workbench-panel-body .wb-table th {
+  background: var(--bg-elev-2, rgba(255, 255, 255, 0.04));
+  color: var(--text);
+  font-weight: 700;
+  font-size: 11.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.workbench-panel-body .wb-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* ------------------------------------------------------------------ */
+/* Workbench panel: tabs + Graph view (Slice N #1)                    */
+/*                                                                    */
+/* Two tabs in the side panel — "Graph" (default, node cards in a     */
+/* grid) and "Tail" (the original markdown rendering). The panel       */
+/* header + tabs are owned by WorkbenchPanel; the inner views are     */
+/* plain block children.                                              */
+/* ------------------------------------------------------------------ */
+
+.workbench-tail {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.workbench-panel-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 12px 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elev);
+}
+
+.workbench-tab {
+  appearance: none;
+  background: transparent;
+  border: none;
+  padding: 8px 14px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.workbench-tab:hover {
+  color: var(--text);
+}
+
+.workbench-tab.active {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+
+.workbench-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* KrakenGraphVisualizer — body, node grid, side detail card */
+
+.kraken-graph-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.kraken-graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.kraken-graph-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.kraken-graph-icon {
+  font-size: 16px;
+  line-height: 1;
+}
+
+.kraken-graph-close {
+  font-size: 16px;
+  padding: 2px 8px;
+  line-height: 1;
+}
+
+.kraken-graph-error {
+  margin: 10px 14px 0;
+  padding: 8px 12px;
+  background: color-mix(in srgb, #c34a4a 12%, transparent);
+  border-left: 3px solid #c34a4a;
+  border-radius: 0 4px 4px 0;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.kraken-graph-empty {
+  margin: 24px 18px;
+  padding: 18px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.kraken-graph-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.kraken-graph-nodes {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 14px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  align-content: start;
+  overflow: auto;
+}
+
+.kraken-node {
+  appearance: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border: 1px solid;
+  border-radius: 8px;
+  text-align: left;
+  cursor: pointer;
+  font-family: inherit;
+  color: var(--text);
+  transition: transform 0.12s, box-shadow 0.12s, border-color 0.12s;
+  min-width: 0;
+}
+
+.kraken-node:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.22);
+}
+
+.kraken-node:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.kraken-node-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+}
+
+.kraken-node-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+  border-radius: 50%;
+  background: var(--bg-elev-2, rgba(0, 0, 0, 0.18));
+}
+
+.kraken-node-kind {
+  flex: 1 1 auto;
+}
+
+.kraken-node-weakness {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  display: inline-block;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+
+.kraken-node-id {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.kraken-node-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.3;
+  /* Truncate gracefully on small widths */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.kraken-node-scope {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kraken-node-running {
+  animation: kraken-pulse 1.4s ease-in-out infinite;
+  border-style: dashed;
+}
+
+@keyframes kraken-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.0); }
+  50%      { box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.10); }
+}
+
+.kraken-node-error {
+  border-style: double;
+  border-width: 2px;
+}
+
+.kraken-node-skipped {
+  opacity: 0.55;
+}
+
+.kraken-graph-side {
+  width: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--bg-elev);
+  transition: width 0.18s ease-out;
+}
+
+.kraken-graph-side.is-open {
+  width: 280px;
+}
+
+.kraken-side-card {
+  padding: 14px 16px;
+}
+
+.kraken-side-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.kraken-side-kind {
+  font-size: 10.5px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+}
+
+.kraken-side-id {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.kraken-side-close {
+  font-size: 16px;
+  padding: 2px 8px;
+  line-height: 1;
+}
+
+.kraken-side-label {
+  margin: 0 0 10px;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.kraken-side-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  font-size: 12px;
+  margin-bottom: 6px;
+  min-width: 0;
+}
+
+.kraken-side-key {
+  flex: 0 0 60px;
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.kraken-side-row code,
+.kraken-side-row > span {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kraken-side-row-weakness {
+  flex-wrap: wrap;
+}
+
+.kraken-side-row-weakness .weakness-badge {
+  margin-top: 2px;
+}
+
+.kraken-side-empty {
+  padding: 30px 16px;
+  color: var(--text-muted);
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.kraken-side-empty-icon {
+  font-size: 22px;
+}
+
+.kraken-graph-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 14px;
+  border-top: 1px solid var(--border);
+  font-size: 11.5px;
+  color: var(--text-muted);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+}
+
+.kraken-graph-foot-sep {
+  opacity: 0.5;
+}
+
 

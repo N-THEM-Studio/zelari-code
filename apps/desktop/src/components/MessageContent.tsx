@@ -12,6 +12,7 @@ import {
   stripQuestionBlocks,
 } from "./parseClarification";
 import { ClarificationCard } from "./ClarificationCard";
+import { WeaknessBadge } from "./WeaknessBadge";
 
 type Block =
   | { kind: "heading"; level: number; text: string }
@@ -278,6 +279,11 @@ export function MessageContent({
 
   return (
     <div className={`md-content${streaming ? " is-streaming" : ""}`}>
+      {!streaming && raw.includes("VERDICT:") ? (
+        <div className="weakness-badge-row">
+          <WeaknessBadge text={raw} />
+        </div>
+      ) : null}
       {blocks.map((b, idx) => {
         switch (b.kind) {
           case "heading":

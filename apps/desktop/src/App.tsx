@@ -26,6 +26,8 @@ import { CopyButton } from "./components/CopyButton";
 import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
 import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
+import { BennettsRazorExplainer } from "./components/BennettsRazorExplainer";
+import { WorkbenchPanel } from "./components/WorkbenchPanel";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
 import { RunActivity } from "./components/RunActivity";
@@ -348,6 +350,7 @@ export default function App() {
   const [workdir, setWorkdir] = useState<string | null>(
     () => localStorage.getItem("zelari-desktop-workdir") || null,
   );
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [gitCollapsed, setGitCollapsed] = useState(
     () => localStorage.getItem("zelari-desktop-git-collapsed") === "1",
   );
@@ -2021,6 +2024,17 @@ export default function App() {
               disabled={running}
               onChange={setKrakenGraph}
             />
+            <BennettsRazorExplainer visible={krakenGraph} />
+            <button
+              type="button"
+              className={`btn-ghost workbench-toggle${workbenchOpen ? " active" : ""}`}
+              onClick={() => setWorkbenchOpen((v) => !v)}
+              title="Open the Kraken workbench live tail (the .zelari/radio/workbench-<id>.md file with the DAG table, verdicts and Bennett weakness scores)"
+              aria-pressed={workbenchOpen}
+            >
+              <span className="workbench-toggle-icon" aria-hidden>📋</span>
+              <span>Workbench</span>
+            </button>
             <div className="export-menu">
               <button
                 type="button"
@@ -2460,6 +2474,11 @@ export default function App() {
           });
           void attachWorkspacePath(hit);
         }}
+      />
+      <WorkbenchPanel
+        cwd={workdir}
+        open={workbenchOpen}
+        onClose={() => setWorkbenchOpen(false)}
       />
       </div>
       </div>
