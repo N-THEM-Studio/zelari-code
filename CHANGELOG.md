@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.1] - 2026-08-08
+
+### Fixed
+- **Desktop: Workbench panel opened behind the rest of the UI and read as transparent** - the side panel that hosts the Kraken graph visualizer and the live markdown tail had two overlapping defects:
+  1. `var(--bg-elev)` was referenced by 12+ selectors across the app (`.workbench-panel`, `.workbench-panel-tabs`, `.razor-modal`, the weakness tip, the kraken-graph side card, the `wb-*` blocks) but never defined anywhere - the canonical name is `--bg-elevated`. `var(--bg-elev)` with no fallback resolves to `unset`, so the background was fully transparent and the content underneath leaked through. Added a backwards-compatible alias `--bg-elev: var(--bg-elevated)` in both the dark and light theme blocks; every existing call site now picks up the right value. Follow-up can rename the call sites and drop the alias.
+  2. `.workbench-panel` sat at z-index 800 - just below the Bennett's Razor modal backdrop (1000), so opening the modal covered the panel. Bumped to 1100 and added `isolation: isolate` so the `position: fixed` is anchored to the viewport even if a future ancestor ever gains a `transform` / `filter` / `backdrop-filter` (which would otherwise re-anchor the fixed element to that ancestor and could let sibling content visually "leak" over the panel).
+
 ## [1.30.0] - 2026-08-08
 
 ### Added
