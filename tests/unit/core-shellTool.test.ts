@@ -119,8 +119,10 @@ describe('resolveShell — platform branching (v0.7.2)', () => {
     if (typeof r.shell === 'string') {
       expect(isWslBashPath(r.shell)).toBe(false);
     }
-    // Either a non-WSL bash (Git) or cmd.exe fallback.
-    if (r.via === 'cmd.exe') {
+    // Three valid fall-through targets when WSL is rejected: cmd.exe,
+    // PowerShell (ships with every modern Windows), or Git Bash if the
+    // user happens to have it. Only Git Bash counts as `isBash: true`.
+    if (r.via === 'cmd.exe' || r.isPowerShell) {
       expect(r.isBash).toBe(false);
     } else {
       expect(r.isBash).toBe(true);

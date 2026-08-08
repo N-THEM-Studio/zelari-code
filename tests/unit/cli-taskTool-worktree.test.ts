@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
@@ -181,10 +181,11 @@ describe('createTaskTool — G2 worktree auto-merge (K7)', () => {
     expect(res.ok).toBe(true);
     if (res.ok) {
       expect(res.value.result).toMatch(/worktree kept:/);
-      // Worktree dir still exists on disk.
+      // Worktree dir still exists on disk. Use readdirSync (cross-platform)
+      // — the previous `execFileSync('ls', …)` only worked on POSIX.
       const wtRoot = path.join(root, '.zelari', 'worktrees');
-      const dirs = execFileSync('ls', [wtRoot], { encoding: 'utf8' }).trim();
-      expect(dirs.length).toBeGreaterThan(0);
+      const entries = readdirSync(wtRoot);
+      expect(entries.length).toBeGreaterThan(0);
     }
   });
 });
