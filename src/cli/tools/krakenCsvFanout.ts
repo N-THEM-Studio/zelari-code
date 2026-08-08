@@ -28,6 +28,7 @@
 
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 import { runTentacle, type TaskAgentKind, type TaskThoroughness, type TaskToolDeps } from './taskTool.js';
 
@@ -238,9 +239,13 @@ export async function runCsvFanout(args: CsvFanoutArgs, deps: TaskToolDeps, opts
   };
 }
 
-/** Atomic write via tmp + rename so partial files are never visible. */
+/** Atomic write via tmp + rename so partial files are never visible.
+ *  The tmp filename carries a random hex suffix so concurrent writers
+ *  (multiple fan-out workers tailing the same output CSV) never
+ *  collide on the same tmp path — a collision would race the write
+ *  and rename and surface as ENOENT. */
 async function atomicWrite(file: string, contents: string): Promise<void> {
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+  const tmp = `${file}.${process.pid}.${Date.now()}.${randomBytes(6).toString('hex')}.tmp`;
   await fs.writeFile(tmp, contents, 'utf8');
   await fs.rename(tmp, file);
 }

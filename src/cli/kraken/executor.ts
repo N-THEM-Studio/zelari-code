@@ -1128,6 +1128,14 @@ export class KrakenGraphExecutor {
     const writer = this.writerBehind(verify, graph);
     if (!writer) return; // nothing to send back to
 
+    // Bennett's Razor meter (opt-in): when ZELARI_KRAKEN_WEAKNESS_METER=1,
+    // fire a non-blocking LLM call to refine the persona verdict with
+    // a principled weakness score. The result lands in the radio
+    // stream as `node_meter` so the desktop can surface a "tightly
+    // asserted PASS" vs "loosely claimed PASS" distinction. The local
+    // heuristic already produced a score; the meter just refines it.
+    void this.maybeRunWeaknessMeter(verify, verdict);
+
     if (verdict === 'unknown') {
       this.unresolved.push({
         nodeId: writer.id,
@@ -1346,7 +1354,14 @@ export class KrakenGraphExecutor {
   }
 
   private radio(
-    kind: 'node_start' | 'node_end' | 'node_retry' | 'node_fix' | 'graph_converged' | 'graph_failed',
+    kind:
+      | 'node_start'
+      | 'node_end'
+      | 'node_retry'
+      | 'node_fix'
+      | 'graph_converged'
+      | 'graph_failed'
+      | 'node_meter',
     fields: { description: string; agent?: string; detail?: string; ok?: boolean },
   ): void {
     appendKrakenRadio(this.parentCwd, this.sessionId, {
@@ -1355,6 +1370,52 @@ export class KrakenGraphExecutor {
       description: fields.description,
       ...(fields.detail !== undefined ? { detail: fields.detail } : {}),
       ...(fields.ok !== undefined ? { ok: fields.ok } : {}),
+    });
+  }
+
+  /**
+   * Bennett's Razor meter (Slice L/N+3 wiring): when the env flag is
+   * set, fire a non-blocking LLM call to refine the persona verdict's
+   * weakness score. The local heuristic already produced a score in
+   * `parsePersonaVerdict`; the meter just refines it. Results land in
+   * the radio stream as a `node_meter` event so the desktop / tail
+   * can surface the distinction between a "tightly asserted" PASS
+   * (specificity > 0.6) and a "loosely claimed" one (specificity < 0.3).
+   *
+   * No-op when:
+   *   - the meter is disabled (default)
+   *   - the result text is empty
+   *   - the meter call fails (silent: the local score is good enough)
+   *
+   * @since v1.31.x
+   */
+  private async maybeRunWeaknessMeter(
+    verify: TaskNode,
+    verdict: 'pass' | 'fail' | 'unknown',
+  ): Promise<void> {
+    // Lazy import: keep the executor's cold-start path fast and avoid
+    // a hard dep on the meter module's provider/key stack when the
+    // meter is disabled (which is the default).
+    const text = typeof verify.result === 'string' ? verify.result : '';
+    if (text.length === 0) return;
+    let meter: typeof import('./weaknessMeter.js').measureWeaknessViaLLM | undefined;
+    try {
+      ({ measureWeaknessViaLLM: meter } = await import('./weaknessMeter.js'));
+    } catch {
+      return;
+    }
+    if (!meter) return;
+    const outcome = await meter(text);
+    if (!outcome) return; // disabled or failed — silent
+    this.radio('node_meter', {
+      description: `meter: ${verify.id}`,
+      agent: 'weakness-meter',
+      detail: `v=${verdict} specificity=${outcome.meter.specificity.toFixed(2)} ` +
+        `weakness=${outcome.weakness.toFixed(2)} ` +
+        `model=${outcome.model} ` +
+        `dur=${outcome.durationMs}ms ` +
+        `assumptions=${outcome.meter.assumptions.length}`,
+      ok: true,
     });
   }
 }

@@ -16,13 +16,18 @@ export type KrakenRadioKind =
   | 'done'
   | 'error'
   | 'verify_hint'
-  // Graph engine (F3+) events — one node's lifecycle within a Kraken graph run.
+  // Graph engine (F3+) events - one node's lifecycle within a Kraken graph run.
   | 'node_start'
   | 'node_end'
   | 'node_retry'
   | 'node_fix'
   | 'graph_converged'
-  | 'graph_failed';
+  | 'graph_failed'
+  // Bennett's Razor weakness-meter refinement (Slice L/N+3 wiring).
+  // Emitted after a verify / spec / conformance verdict lands; the
+  // detail carries the LLM meter payload so the desktop can surface a
+  // "tightly asserted" vs "loosely claimed" distinction.
+  | 'node_meter';
 
 export interface KrakenRadioEvent {
   ts: string;
