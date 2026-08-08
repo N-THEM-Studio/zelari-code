@@ -12,10 +12,28 @@
  * a `VERDICT: PASS` / `VERDICT: FAIL` trailer; the executor parses it and, on
  * FAIL, spawns a bounded rework round.
  *
+ * **Pillar 2 extension (v1.30.x)**: `spec` and `conformance` personas emit
+ * the same trailer PLUS a per-requirement table in a JSON code block. The
+ * parser extracts both: the trailer is the gate, the table is the
+ * structured findings the executor can surface in the digest and feed
+ * into a follow-up `fix` node.
+ *
+ * **v1.31.x (Bennett's Razor)**: each parsed verdict now also carries a
+ * `weaknessScore` in `[0, 1]`, computed from the persona's free text via
+ * `weaknessFromVerdict` (see `./weakness.js`). 1.0 = "maximally general
+ * claim" (weak), 0.0 = "maximally specific claim" (strong). The gate
+ * (PASS/FAIL) is unchanged — weakness is metadata, surfaced in the
+ * workbench digest so the user can see whether a PASS was earned by a
+ * tightly-asserted reviewer or a loosely-claimed one.
+ *
  * No CLI dependencies (see CORREZIONE-1 in the engine plan).
  *
  * @since v1.28.x — verify quality gate
+ * @since v1.30.x — spec / conformance persona verdicts
+ * @since v1.31.x — weakness score on persona verdicts
  */
+
+import { weaknessScoreFromText } from './weakness.js';
 
 /**
  * What a verify node concluded.
@@ -96,6 +114,93 @@ export interface UnresolvedFinding {
   /** 'fail' → rework budget exhausted; 'unknown' → no parseable verdict. */
   reason: 'fail' | 'unknown';
   findings: string;
+}
+
+/** One row of the spec / conformance per-requirement table. */
+export interface RequirementVerdict {
+  requirement: string;
+  /** pass = satisfied, fail = violated, unknown = not assessed. */
+  met: 'pass' | 'fail' | 'unknown';
+  /** Path / line / output the reviewer cites as evidence. */
+  evidence?: string;
+}
+
+/** Structured verdict for `spec` and `conformance` personas.
+ *
+ *  The trailer (`VERDICT: PASS|FAIL`) is the gate; the `requirements` table
+ *  is the per-row reasoning the executor can surface and feed forward.
+ *  `weaknessScore` (Bennett 2023) is metadata: 1.0 = the reviewer asserted
+ *  very little (maximally weak / general), 0.0 = the reviewer pinned
+ *  specific paths, versions, or invariants. It does NOT change the gate,
+ *  but is surfaced in the workbench digest so a user can tell a tightly
+ *  earned PASS from a loosely claimed one. */
+export interface PersonaVerdict {
+  verdict: VerifyVerdict;
+  findings: string;
+  requirements: RequirementVerdict[];
+  /**
+   * Bennett-style weakness score in `[0, 1]`, computed from the persona's
+   * free text by `weaknessFromVerdict`. Higher = weaker = more general.
+   * `1` for the no-trailer case (a missing verdict asserts nothing) and
+   * for the all-empty case.
+   *
+   * @since v1.31.x
+   */
+  weaknessScore: number;
+}
+
+/** Extract the per-requirement JSON block (if any) from a `spec` or
+ *  `conformance` reply. The block is a ```json ... ``` fenced object
+ *  with a `requirements: [...]` array. */
+export function extractRequirementsBlock(text: string | undefined | null): RequirementVerdict[] {
+  if (typeof text !== 'string' || text.trim() === '') return [];
+  // Find the LAST ```json ... ``` block (LLMs sometimes emit the spec first,
+  // then the actual answer; we want the final one).
+  const re = /```json\s*([\s\S]*?)```/gi;
+  let m: RegExpExecArray | null;
+  let last: string | null = null;
+  while ((m = re.exec(text)) !== null) {
+    last = m[1];
+    if (m.index === re.lastIndex) re.lastIndex += 1;
+  }
+  if (!last) return [];
+  try {
+    const obj = JSON.parse(last) as { requirements?: unknown };
+    if (!obj || !Array.isArray(obj.requirements)) return [];
+    const out: RequirementVerdict[] = [];
+    for (const r of obj.requirements) {
+      if (!r || typeof r !== 'object') continue;
+      const row = r as Record<string, unknown>;
+      const req = typeof row.requirement === 'string' ? row.requirement : '';
+      const metRaw = typeof row.met === 'string' ? row.met.toLowerCase() : '';
+      const met: RequirementVerdict['met'] =
+        metRaw === 'pass' || metRaw === 'true' ? 'pass'
+        : metRaw === 'fail' || metRaw === 'false' ? 'fail'
+        : 'unknown';
+      const evidence = typeof row.evidence === 'string' ? row.evidence : undefined;
+      if (req) out.push({ requirement: req, met, ...(evidence ? { evidence } : {}) });
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/** Full parser for a `spec` or `conformance` reply: trailer + table. */
+export function parsePersonaVerdict(text: string | undefined | null): PersonaVerdict {
+  const base = parseVerifyVerdict(text);
+  return {
+    verdict: base.verdict,
+    findings: base.findings,
+    requirements: extractRequirementsBlock(text),
+    // Bennett's weakness = "how little the reviewer's free text asserts"
+    // (arXiv:2301.12987). `weaknessScoreFromText` is the weakness form
+    // (1.0 = maximally general / no claims; 0.0 = maximally specific).
+    // The verdict gate is the trailer; weakness is metadata surfaced in
+    // the workbench so a user can see whether a PASS was earned by a
+    // tightly-asserted or loosely-claimed reviewer.
+    weaknessScore: weaknessScoreFromText(text),
+  };
 }
 
 /** Trim and cap findings text, marking the cut so a reader knows it happened. */
