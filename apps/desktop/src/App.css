@@ -4700,18 +4700,27 @@ kbd {
      glass (0.72 alpha, no blur) lets the chat show straight through. Pin
      a near-opaque frost + blur here (same recipe as .sidebar). Child
      blocks that reference var(--bg-elev) (e.g. .razor-modal-head) inherit
-     this local value, so the whole modal reads as one solid surface. */
+     this local value, so the whole modal reads as one solid surface.
+     The modal is a flex column: the head is a fixed-height row OUTSIDE the
+     scroll area, so the × close button is always visible no matter how far
+     the body is scrolled. (A sticky head inside the scroll container broke
+     in WebView2 once backdrop-filter was added to the container — the head
+     scrolled away with the content and the modal became unclosable.) */
   --bg-elev: rgba(18, 18, 22, 0.95);
   background: var(--bg-elev);
   -webkit-backdrop-filter: blur(28px) saturate(160%);
   backdrop-filter: blur(28px) saturate(160%);
   color: var(--text);
+  display: flex;
+  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: 12px;
   max-width: 640px;
   width: 100%;
   max-height: 85vh;
-  overflow: auto;
+  /* Clip the scrolling body to the rounded corners; the body itself
+     owns the scrollbar. */
+  overflow: hidden;
   box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
   animation: razor-modal-pop 0.18s ease-out;
 }
@@ -4727,8 +4736,9 @@ kbd {
   justify-content: space-between;
   padding: 18px 22px 12px;
   border-bottom: 1px solid var(--border);
-  position: sticky;
-  top: 0;
+  /* Not sticky: the head lives above the scroll area, so the × never
+     leaves the viewport. */
+  flex-shrink: 0;
   background: var(--bg-elev);
   z-index: 1;
 }
@@ -4758,6 +4768,11 @@ kbd {
 }
 
 .razor-modal-body {
+  /* The scroll area: flex-1 + min-height:0 so it shrinks when the modal
+     hits max-height and scrolls instead of pushing the head away. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: 18px 22px 20px;
   font-size: 14px;
   line-height: 1.55;
