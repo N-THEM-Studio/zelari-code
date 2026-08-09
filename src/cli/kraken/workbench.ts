@@ -188,7 +188,18 @@ export class WorkbenchWriter {
     this.markDirty();
   }
 
-  markEnd(id: string, patch: { status: NodeStatus; durationMs?: number; error?: string; findings?: string; deps?: string[] }): void {
+  markEnd(
+    id: string,
+    patch: {
+      status: NodeStatus;
+      durationMs?: number;
+      error?: string;
+      findings?: string;
+      deps?: string[];
+      /** Model the tentacle actually ran on (from TentacleResult). */
+      model?: string;
+    },
+  ): void {
     if (!this.enabled) return;
     const n = this.nodesById.get(id);
     if (!n) return;
@@ -213,6 +224,7 @@ export class WorkbenchWriter {
       ...(Array.isArray(patch.deps) ? { deps: patch.deps } : {}),
       ...(verdict ? { verdict } : {}),
       ...(typeof weaknessScore === 'number' ? { weaknessScore } : {}),
+      ...(patch.model ? { model: patch.model } : {}),
       endedAt: new Date().toISOString(),
     });
     this.events.push({

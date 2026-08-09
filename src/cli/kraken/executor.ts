@@ -71,6 +71,7 @@ import {
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { saveGraphSnapshot, toGraphSnapshot } from './graphMemory.js';
+import { WorkbenchWriter, type WorkbenchNode } from './workbench.js';
 
 /** Default cap on concurrently-running tentacles across the whole graph. */
 export const DEFAULT_MAX_PARALLEL = 12;
@@ -431,6 +432,9 @@ export class KrakenGraphExecutor {
   ) => Promise<WorktreeMergeResult>;
   private readonly backtestFn: (cwd: string) => Promise<BacktestResult>;
 
+  /** Live workbench writer for this run (created once the graph starts). */
+  private wb: WorkbenchWriter | null = null;
+
   private readonly nodeRunState = new Map<string, NodeRunState>();
   /** fix node id → id of the failed node it was spawned to repair. */
   private readonly repairs = new Map<string, string>();
@@ -480,6 +484,48 @@ export class KrakenGraphExecutor {
     this.runTentacleFn = opts.runTentacleFn ?? runTentacle;
     this.mergeFn = opts.mergeFn ?? mergeKrakenWorktree;
     this.backtestFn = opts.backtestFn ?? runBacktest;
+  }
+
+  /** Map a graph node onto the workbench's node shape. */
+  private toWorkbenchNode(n: TaskNode): WorkbenchNode {
+    return {
+      id: n.id,
+      kind: n.kind,
+      label: n.label,
+      status: n.status,
+      ...(n.scope && n.scope.length > 0 ? { scope: n.scope } : {}),
+      ...(n.deps.length > 0 ? { deps: n.deps } : {}),
+    };
+  }
+
+  /**
+   * Create (once) and seed the live workbench writer for this graph. This is
+   * what makes the `.zelari/radio/workbench-<graphId>.md` file exist at all —
+   * the desktop graph/tail tabs read that file, and before this wiring
+   * nothing in the production flow ever constructed the writer, so the tabs
+   * stayed empty no matter how much the graph ran.
+   */
+  private initWorkbench(graph: TaskGraph): void {
+    if (this.wb) return;
+    this.wb = new WorkbenchWriter({
+      cwd: this.parentCwd,
+      graphId: graph.id,
+      goal: this.goal ?? graph.id,
+    });
+    this.wb.setNodes([...graph.nodes.values()].map((n) => this.toWorkbenchNode(n)));
+    this.wb.logEvent(`graph_start ${graph.id} (${graph.nodes.size} nodes)`);
+  }
+
+  /** Mark every skipped node in the workbench. Cheap and idempotent enough
+   *  to call after each cascade-skip pass. */
+  private syncWorkbenchSkipped(graph: TaskGraph): void {
+    for (const n of graph.nodes.values()) {
+      if (n.status === 'skipped') this.wb?.markEnd(n.id, { status: 'skipped' });
+    }
+  }
+
+  private isReviewerKind(kind: TaskNodeKind): boolean {
+    return kind === 'verify' || kind === 'spec' || kind === 'conformance';
   }
 
   /** Execute the graph in place (mutates node statuses) until it settles. */
@@ -537,6 +583,7 @@ export class KrakenGraphExecutor {
     const inFlight = new Map<string, Promise<SettledNode>>();
 
     startKrakenGraphLive(graph);
+    this.initWorkbench(graph);
 
     while (!isSettled(graph)) {
       iterations += 1;
@@ -561,6 +608,15 @@ export class KrakenGraphExecutor {
         // after the work had already settled.)
         for (const node of admitted) node.status = 'running';
         updateKrakenGraphLive(graph);
+        for (const node of admitted) {
+          this.wb?.markStart(node.id, {
+            kind: node.kind,
+            label: node.label,
+            ...(node.scope && node.scope.length > 0 ? { scope: node.scope } : {}),
+            ...(node.deps.length > 0 ? { deps: node.deps } : {}),
+          });
+        }
+        if (admitted.length > 0) this.wb?.markWave(admitted.map((n) => n.id));
         for (const node of admitted) inFlight.set(node.id, this.runNodeSafely(node, graph));
       }
 
@@ -568,12 +624,13 @@ export class KrakenGraphExecutor {
         // Nothing running and nothing admissible: the remaining pending nodes
         // are permanently blocked by a failed/skipped dependency (or by the
         // run being cancelled). Cascade skip them so the loop can terminate.
-        if (!this.skipBlockedNodes(graph)) {
-          // Nothing ready, nothing running, nothing to skip — should not
-          // happen for a validated DAG, but bail out rather than spin forever.
-          break;
+        if (this.skipBlockedNodes(graph)) {
+          this.syncWorkbenchSkipped(graph);
+          continue;
         }
-        continue;
+        // Nothing ready, nothing running, nothing to skip — should not
+        // happen for a validated DAG, but bail out rather than spin forever.
+        break;
       }
 
       // Settle ONE node at a time. Waiting for a whole wave meant a 15-minute
@@ -604,6 +661,7 @@ export class KrakenGraphExecutor {
       for (const n of graph.nodes.values()) {
         if (n.status === 'pending') n.status = 'skipped';
       }
+      this.syncWorkbenchSkipped(graph);
     }
 
     let backtest: BacktestResult | undefined;
@@ -629,6 +687,17 @@ export class KrakenGraphExecutor {
       });
     }
     endKrakenGraphLive(graph, converged);
+
+    // Final workbench snapshot: emit the outcome event and force a write so
+    // the desktop graph/tail tabs show the settled graph even if the process
+    // exits right after (the 500ms debounce alone could drop the last state).
+    this.wb?.logEvent(
+      converged
+        ? 'graph_converged'
+        : `graph_failed: ${this.aborted ? 'cancelled' : (failedNodeIds(graph).join(', ') || 'none')}`,
+    );
+    await this.wb?.flush();
+    this.wb?.close();
 
     // Cross-run memory: let the next planning pass see where this one stopped
     // instead of replanning the whole goal blind.
@@ -995,6 +1064,17 @@ export class KrakenGraphExecutor {
       node.status = 'done';
       node.result = res.result;
       this.radio('node_end', { description: node.label, agent: node.kind, ok: true });
+      this.wb?.markEnd(node.id, {
+        status: 'done',
+        durationMs: this.durationsMs.get(node.id),
+        // Reviewers surface verdict + Bennett weakness; writers don't.
+        ...(this.isReviewerKind(node.kind) &&
+        typeof node.result === 'string' &&
+        node.result.length > 0
+          ? { findings: node.result }
+          : {}),
+        ...(res.model && res.model !== 'n/a' ? { model: res.model } : {}),
+      });
       this.reconcileRepairedNode(graph, node);
       // A verify that RAN successfully is not the same thing as work that
       // PASSED. Read what it actually concluded.
@@ -1014,6 +1094,11 @@ export class KrakenGraphExecutor {
         detail: res.error,
         ok: false,
       });
+      this.wb?.markEnd(node.id, {
+        status: 'error',
+        error: res.error,
+        durationMs: this.durationsMs.get(node.id),
+      });
       return;
     }
 
@@ -1029,6 +1114,11 @@ export class KrakenGraphExecutor {
         detail: res.error,
         ok: false,
       });
+      this.wb?.markEnd(node.id, {
+        status: 'error',
+        error: res.error,
+        durationMs: this.durationsMs.get(node.id),
+      });
       return;
     }
 
@@ -1041,6 +1131,9 @@ export class KrakenGraphExecutor {
         detail: `retry ${node.retryCount}/${node.maxRetries}: ${res.error}`,
         ok: false,
       });
+      // Back to `pending` in the workbench too; the re-admission marks it
+      // running again.
+      this.wb?.markEnd(node.id, { status: 'pending' });
       return;
     }
 
@@ -1053,6 +1146,11 @@ export class KrakenGraphExecutor {
         agent: fixNode.kind,
         detail: `spawned to address failure of "${node.label}": ${res.error}`,
         ok: false,
+      });
+      this.wb?.markEnd(node.id, {
+        status: 'error',
+        error: res.error,
+        durationMs: this.durationsMs.get(node.id),
       });
       node.status = 'error';
       return;
@@ -1067,6 +1165,11 @@ export class KrakenGraphExecutor {
       agent: node.kind,
       detail: res.error,
       ok: false,
+    });
+    this.wb?.markEnd(node.id, {
+      status: 'error',
+      error: res.error,
+      durationMs: this.durationsMs.get(node.id),
     });
   }
 
@@ -1103,6 +1206,10 @@ export class KrakenGraphExecutor {
       agent: failed.kind,
       detail: `repaired by ${fixNode.id}`,
       ok: true,
+    });
+    this.wb?.markEnd(failed.id, {
+      status: 'done',
+      durationMs: this.durationsMs.get(failed.id),
     });
   }
 
@@ -1269,6 +1376,7 @@ export class KrakenGraphExecutor {
       maxRetries: verify.maxRetries,
     };
     graph.nodes.set(reVerifyId, reVerifyNode);
+    this.wb?.setNodes([this.toWorkbenchNode(reworkNode), this.toWorkbenchNode(reVerifyNode)]);
 
     // Whatever waited on the old verify (typically the merge node) must now
     // wait on the new one, or it would merge the branch mid-rework.
@@ -1310,6 +1418,7 @@ export class KrakenGraphExecutor {
       // no further retries — one fix attempt per failed node in v1
     };
     graph.nodes.set(fixId, fixNode);
+    this.wb?.setNodes([this.toWorkbenchNode(fixNode)]);
     this.repairs.set(fixId, failed.id);
 
     // Downstream dependents wait on the fix attempt INSTEAD of the failed
