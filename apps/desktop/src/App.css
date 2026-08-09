@@ -4696,7 +4696,15 @@ kbd {
 }
 
 .razor-modal {
+  /* The modal must be readable over the chat stream: the :root --bg-elev
+     glass (0.72 alpha, no blur) lets the chat show straight through. Pin
+     a near-opaque frost + blur here (same recipe as .sidebar). Child
+     blocks that reference var(--bg-elev) (e.g. .razor-modal-head) inherit
+     this local value, so the whole modal reads as one solid surface. */
+  --bg-elev: rgba(18, 18, 22, 0.95);
   background: var(--bg-elev);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(160%);
   color: var(--text);
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -5031,7 +5039,16 @@ kbd {
   isolation: isolate;
   display: flex;
   flex-direction: column;
+  /* Near-opaque frost: the :root --bg-elev (0.72 alpha, no blur) shows
+     the chat stream right through the panel — the user reads it as
+     "the panel isn't really there". Same recipe as .sidebar (blur 28px)
+     so the panel reads as solid while staying on-theme. All child
+     blocks (head / meta / body / tabs) reference var(--bg-elev) and
+     inherit this local value. */
+  --bg-elev: rgba(18, 18, 22, 0.95);
   background: var(--bg-elev);
+  -webkit-backdrop-filter: blur(28px) saturate(160%);
+  backdrop-filter: blur(28px) saturate(160%);
   color: var(--text);
   border-left: 1px solid var(--border);
   box-shadow: -16px 0 48px rgba(0, 0, 0, 0.35);
@@ -5041,6 +5058,13 @@ kbd {
 @keyframes workbench-panel-in {
   from { transform: translateX(16px); opacity: 0; }
   to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* Light theme: same frost recipe, near-white fill (mirrors the light
+   --bg-elevated, bumped to ~opaque so the chat never shows through). */
+.app[data-theme="light"] .workbench-panel,
+.app[data-theme="light"] .razor-modal {
+  --bg-elev: rgba(250, 250, 252, 0.96);
 }
 
 .workbench-panel-head {
