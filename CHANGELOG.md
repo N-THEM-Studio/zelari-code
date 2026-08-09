@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.4] - 2026-08-09
+
+### Fixed
+- **Desktop: the Bennett's Razor modal could not be closed once scrolled** - the v1.30.3 frost added `backdrop-filter` to `.razor-modal`, which is also the modal's scroll container; in WebView2 a backdrop-filter on a scroll container breaks `position: sticky` on its descendants, so the head row with the × close button scrolled away with the content and the modal became effectively unclosable. The modal is now a flex column: the head is a `flex-shrink: 0` row outside the scroll area (sticky removed) and `.razor-modal-body` owns the scrolling (`flex: 1 1 auto; min-height: 0; overflow-y: auto`). The × is always visible; the frost is unchanged.
+
 ## [1.30.3] - 2026-08-09
 
 ### Fixed
