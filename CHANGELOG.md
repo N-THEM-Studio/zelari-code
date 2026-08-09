@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.30.3] - 2026-08-09
+
+### Fixed
+- **Desktop: Workbench panel and Bennett's Razor modal still showed the chat through them** - the v1.30.1 alias fix made both surfaces resolve `--bg-elev` to `rgba(28, 28, 32, 0.72)`, a 72%-alpha glass with **no** backdrop blur, so the chat stream scrolling underneath stayed clearly visible through the panel and the modal. Every other overlay in the app (sidebar, glass capsules, cards) pairs its translucent fill with `backdrop-filter: blur(28px) saturate(160%)`, which frosts what is behind it; these two were the only surfaces missing the blur, so they read as broken. Both now pin a local `--bg-elev` (near-opaque `rgba(18, 18, 22, 0.95)`) plus the same `blur(28px) saturate(160%)` recipe as `.sidebar`; child blocks that reference the token (workbench head / meta / body / tabs, razor modal head) inherit it, so each surface reads as one solid block. Light theme mirrors it with a near-white fill (`rgba(250, 250, 252, 0.96)`).
+
 ## [1.30.2] - 2026-08-08
 
 ### Fixed
