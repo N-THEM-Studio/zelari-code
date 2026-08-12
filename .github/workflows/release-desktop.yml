@@ -17,6 +17,7 @@ permissions:
 
 jobs:
   desktop:
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -116,7 +117,7 @@ jobs:
       # settings (=> 403 "Resource not accessible by integration" when creating
       # the release). The PAT bypasses that; fall back to GITHUB_TOKEN if unset.
       - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
+        uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5  # pinned: exact commit @v0 resolves to (reproducible; avoid floating tag)
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
