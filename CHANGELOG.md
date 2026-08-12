@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.31.1] - 2026-08-12
+
+### Fixed
+- **MCP preset `qwen-mm-plugins` could not start** — the builtin preset ran bare `uvx qwen-mm-plugins-core`, which fails to resolve because the package is published only on GitHub (tag `qwen-mm-plugins-core-v1.0.1`), not on PyPI. The preset now emits the upstream installer's PEP 508 spec (`uvx --from "qwen-mm-plugins[core] @ git+https://github.com/QwenLM/Qwen-MM-Plugins.git@qwen-mm-plugins-core-v1.0.1" qwen-mm-plugins-core`) and sets `PYTHONIOENCODING=utf-8` to avoid the cp1252 crash on Windows when the server prints `✗` during `--check-system`. Verified on Windows: 72 packages installed, MCP stdio handshake + `tools/list` (read_image, media_info, read_video, ...) OK.
+- **`@` mention parser: POSIX absolute paths were dropped on Linux/CI** — `@/tmp/...` outside the project root now resolves, consistent with the Windows `@C:...` fix from v1.31.0. Regression-covered in `tests/unit/cli-atMentions.test.ts`.
+
 ## [1.31.0] - 2026-08-12
 
 ### Added

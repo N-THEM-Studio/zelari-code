@@ -129,3 +129,22 @@ jobs:
 
       - name: Publish zelari-code
         run: npm publish --access public
+
+  github-release:
+    name: Create GitHub Release
+    needs: publish-cli
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          NOTES="$(node -e "const s=require('fs').readFileSync('CHANGELOG.md','utf8');const m=s.match(new RegExp('## \\[' + process.argv[1].replace(/^v/,'') + '\\] - .*?(?=^## \\[|\\z)','ms'));console.log(m?m[0].trim():'See CHANGELOG.md')" "$TAG")"
+          gh release create "$TAG" --title "$TAG" --notes "$NOTES" --latest
