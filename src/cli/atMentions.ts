@@ -34,7 +34,6 @@ function isImagePath(abs: string): boolean {
 /** Match @path tokens: @foo, @foo/bar, @./x, @../y — not emails (word@word). */
 const AT_PATH_RE =
     /(^|[\s([{])@((?:\.{1,2}\/)?[A-Za-z0-9_.+-]+(?:[\\/][A-Za-z0-9_.+-]+)*)/g;
-/** Windows absolute paths: @C:\Users\me\pic.png (drive letter + backslashes). */
 /** Windows absolute paths: @C:\Users\me\pic.png (drive letter + backslashes).
  * Built via new RegExp so backslash semantics are unambiguous (no source escaping). */
 const BS_CHAR = String.fromCharCode(92);
@@ -42,6 +41,8 @@ const AT_WIN_ABS_RE = new RegExp(
   '(^|[' + BS_CHAR + 's([{])(@[A-Za-z]:[' + BS_CHAR + BS_CHAR + '/][^' + BS_CHAR + 's@]+)',
   'g',
 );
+/** POSIX absolute paths: @/tmp/pic.png or @/home/me/pic.png (outside-root images). */
+const AT_POSIX_ABS_RE = /(^|[\s([{])@(\/[^\s@]+)/g;
 
 export interface AtMentionHit {
   raw: string;
@@ -101,6 +102,7 @@ export function extractAtMentions(text: string): string[] {
   };
   collect(AT_PATH_RE);
   collect(AT_WIN_ABS_RE);
+  collect(AT_POSIX_ABS_RE);
   return out;
 }
 

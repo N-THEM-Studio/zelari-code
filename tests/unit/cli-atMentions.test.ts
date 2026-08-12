@@ -64,6 +64,12 @@ describe('atMentions', () => {
     }
   });
 
+  it('extracts POSIX absolute @paths (CI/Linux tmpdir)', () => {
+    expect(extractAtMentions('see @/tmp/zelari-outside-1/shot.jpg')).toEqual([
+      '/tmp/zelari-outside-1/shot.jpg',
+    ]);
+  });
+
   it('allows absolute image paths outside the project root', () => {
     const root = join(tmpdir(), `zelari-at-img-abs-${Date.now()}`);
     const outside = join(tmpdir(), `zelari-outside-${Date.now()}`);

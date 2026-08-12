@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Local-CLI provider** — `ZELARI_LOCAL_CLI=claude` (or any external agent CLI) drives the harness through an external CLI's `stream-json` protocol: zelari spawns the CLI in print mode, translates its events into `ProviderDelta`, and permission prompts flow back to the zelari broker. New modules: `src/cli/provider/localCli/claudeProvider.ts`, `claudeStreamJson.ts` (pure `buildClaudeInputLines` + `createClaudeStreamParser`).
 
 ### Fixed
-- **`@` mention parser: absolute Windows paths were dropped** — `@C:\...` was rejected because the drive-letter token contains `@` (the token collector discarded anything with `@` inside), and the Windows-absolute regex matched `/` but not `\`. Both fixed; `@C:/Users/.../image.jpg` and `@C:\Users\...\image.jpg` now resolve. Regression-covered in `tests/unit/cli-atMentions.test.ts` (5 tests).
+- **`@` mention parser: absolute Windows paths were dropped** — `@C:\...` was rejected because the drive-letter token contains `@` (the token collector discarded anything with `@` inside), and the Windows-absolute regex matched `/` but not `\`. Both fixed; `@C:/Users/.../image.jpg` and `@C:\Users\...\image.jpg` now resolve. POSIX absolute `@/tmp/...` paths also resolve, so outside-root images work on Linux/CI too. Regression-covered in `tests/unit/cli-atMentions.test.ts` (6 tests).
 - **Desktop drop-to-attach for images was a no-op** — `readFileAsAttachment` returned "binary — path only", so dropping an image produced a prompt with no pixels. Now reads images as base64 and emits `@<path>`.
 
 ### Changed
