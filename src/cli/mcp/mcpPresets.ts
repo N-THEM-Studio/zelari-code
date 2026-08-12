@@ -74,18 +74,25 @@ export function buildComposioPreset(): McpPreset {
  * The capability is selected at APPLY time through QWEN_MM_PLUGIN (default
  * `qwen-mm-plugins-core`); API keys pass through env, never argv.
  *
- * Windows: not validated upstream — prefer WSL2 (Ubuntu) and run the
- * upstream guided installer first: `bash install.sh`.
+ * The package is NOT published to PyPI — `uvx qwen-mm-plugins-core` fails to
+ * resolve. uvx needs a PEP 508 direct reference to the immutable GitHub
+ * release tag (mirrors upstream install.sh cap_spec / CAP_VERSIONS).
+ * PYTHONIOENCODING=utf-8 fixes a cp1252 UnicodeEncodeError on Windows
+ * consoles (the system-check table prints U+2717); native Windows is
+ * verified working.
  */
 export function buildQwenMmPreset(): McpPreset {
   const plugin = process.env.QWEN_MM_PLUGIN?.trim() || "qwen-mm-plugins-core";
+  const cap = plugin.replace(/^qwen-mm-plugins-/, "");
+  const spec = `qwen-mm-plugins[${cap}] @ git+https://github.com/QwenLM/Qwen-MM-Plugins.git@${plugin}-v1.0.1`;
   return {
     id: "qwen-mm-plugins",
     servers: {
       "qwen-mm-plugins": {
         command: "uvx",
-        args: [plugin],
+        args: ["--from", spec, plugin],
         env: {
+          PYTHONIOENCODING: "utf-8",
           ...(process.env.DASHSCOPE_API_KEY
             ? { DASHSCOPE_API_KEY: process.env.DASHSCOPE_API_KEY }
             : {}),
@@ -98,8 +105,8 @@ export function buildQwenMmPreset(): McpPreset {
     },
     notes: [
       "Qwen-MM-Plugins — multimodal capabilities (core / video-memory / video-edit / blender / freecad) as MCP tools.",
-      "Run the upstream guided installer first: curl -fsSL https://raw.githubusercontent.com/QwenLM/Qwen-MM-Plugins/main/install.sh | bash",
-      "Windows: use WSL2 (Ubuntu); native Windows is not validated upstream.",
+      "Installs via uvx from the GitHub release tag (qwen-mm-plugins-<cap>-v1.0.1); first launch downloads ~70 packages.",
+      "Windows: verified working natively with PYTHONIOENCODING=utf-8 (WSL2 also supported upstream).",
       "Pick a capability: export QWEN_MM_PLUGIN=qwen-mm-plugins-video-memory (default: qwen-mm-plugins-core).",
       "API keys read at apply time: DASHSCOPE_API_KEY, SERPER_API_KEY (native reading works without them).",
       "Blender/FreeCAD variants: start the host app before invoking tools.",
