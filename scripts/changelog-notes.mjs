@@ -14,6 +14,12 @@ import { fileURLToPath } from 'node:url';
 
 const FALLBACK = 'See CHANGELOG.md';
 
+// Resolve relative changelog paths against the repo root (this script's
+// directory parent), not `process.cwd()`. `vitest run --root ../..` in the
+// @zelari/core workspace keeps cwd = packages/core, so a bare
+// 'CHANGELOG.md' would otherwise ENOENT even though the file is at the root.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
 /**
  * @param {string} markdown
  * @param {string} tag  `v1.32.0` or `1.32.0`
@@ -35,7 +41,10 @@ export function extractChangelogNotes(markdown, tag) {
  * @returns {string}
  */
 export function extractChangelogNotesFromFile(changelogPath, tag) {
-  return extractChangelogNotes(fs.readFileSync(changelogPath, 'utf8'), tag);
+  const resolved = path.isAbsolute(changelogPath)
+    ? changelogPath
+    : path.resolve(REPO_ROOT, changelogPath);
+  return extractChangelogNotes(fs.readFileSync(resolved, 'utf8'), tag);
 }
 
 const invokedDirectly =
