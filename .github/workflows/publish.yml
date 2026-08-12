@@ -157,10 +157,33 @@ jobs:
 
       - name: Create GitHub Release
         env:
-          GH_TOKEN: ${{ github.token }}
+          # RELEASE_TOKEN: fine-grained PAT with "Contents: Read and write" —
+          # GITHUB_TOKEN can be forced read-only by org/repo Workflow permissions
+          # (403 "Resource not accessible by integration"); PAT bypasses that.
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
-          NOTES="$(node -e "const s=require('fs').readFileSync('CHANGELOG.md','utf8');const v=process.argv[1].replace(/^v/,'');const h='## ['+v+'] - ';const a=s.indexOf(h);const b=a<0?-1:s.indexOf('\n## [',a+h.length);console.log(a<0?'See CHANGELOG.md':s.slice(a,b<0?undefined:b).trim())" "$TAG")"
+          # Slice by heading text — never a RegExp. `1.32.0` lives inside `[…]`
+          # and YAML→bash→node -e quoting ate `\[`/`\]`/`\z`, producing
+          # `/## [1.32.0] - …(?=^## [|z)/` (Unterminated character class).
+          # Prefer scripts/changelog-notes.mjs when the checkout has it;
+          # fall back inline so workflow_dispatch from main still works
+          # against an older tag that lacks the file.
+          if [ -f scripts/changelog-notes.mjs ]; then
+            NOTES="$(node scripts/changelog-notes.mjs "$TAG")"
+          else
+            NOTES="$(TAG="$TAG" node <<'NODE'
+          const fs = require('fs');
+          const tag = process.env.TAG || '';
+          const v = tag.replace(/^v/i, '');
+          const s = fs.readFileSync('CHANGELOG.md', 'utf8');
+          const h = '## [' + v + '] - ';
+          const a = s.indexOf(h);
+          const b = a < 0 ? -1 : s.indexOf('\n## [', a + h.length);
+          console.log(a < 0 ? 'See CHANGELOG.md' : s.slice(a, b < 0 ? undefined : b).trim());
+          NODE
+          )"
+          fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "GitHub Release $TAG already exists; skipping"
           else

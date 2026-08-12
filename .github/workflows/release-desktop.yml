@@ -111,10 +111,14 @@ jobs:
             echo "TAURI_SIGNING_PRIVATE_KEY present — updater artifacts enabled"
           fi
 
+      # RELEASE_TOKEN: fine-grained PAT with "Contents: Read and write" on this repo.
+      # GITHUB_TOKEN may be forced read-only by org/repo "Workflow permissions"
+      # settings (=> 403 "Resource not accessible by integration" when creating
+      # the release). The PAT bypasses that; fall back to GITHUB_TOKEN if unset.
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:

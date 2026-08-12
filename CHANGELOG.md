@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **GitHub Release notes on tag push** — extracting the CHANGELOG section no longer builds a RegExp from `## [1.32.0]`. YAML/bash/`node -e` quoting dropped the `\[` escapes, so Node compiled `/## [1.32.0]…/` and died with `Unterminated character class`. Notes are now sliced by heading text (`scripts/changelog-notes.mjs`, inline fallback in `publish.yml`).
+
 ## [1.32.0] - 2026-08-12
 
 ### Added
