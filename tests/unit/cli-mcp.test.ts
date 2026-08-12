@@ -50,12 +50,15 @@ let serverScript: string;
 beforeAll(() => {
   // Hermetic: never merge the developer's ~/.zelari-code/mcp.json into fixtures.
   process.env['ZELARI_MCP_USER'] = '0';
+  // Project-scoped MCP is trust-gated; fixtures opt in explicitly.
+  process.env['ZELARI_FOLDER_TRUST'] = '1';
   dir = mkdtempSync(join(tmpdir(), 'mcp-test-'));
   serverScript = join(dir, 'fake-mcp.cjs');
   writeFileSync(serverScript, FAKE_SERVER);
 });
 afterAll(() => {
   delete process.env['ZELARI_MCP_USER'];
+  delete process.env['ZELARI_FOLDER_TRUST'];
   rmSync(dir, { recursive: true, force: true });
 });
 afterEach(() => {
@@ -129,6 +132,21 @@ describe('registerMcpTools', () => {
       expect(registered).toEqual([]);
     } finally {
       delete process.env['ZELARI_MCP'];
+    }
+  });
+
+  it('ignores project MCP config when the folder is not trusted', async () => {
+    process.env['ZELARI_FOLDER_TRUST'] = '0';
+    try {
+      const registry = new ToolRegistry();
+      const { registered, warnings } = await registerMcpTools(registry, join(dir, 'proj-b'));
+      expect(registered).toEqual([]);
+      expect(warnings).toEqual([
+        expect.stringContaining('folder not trusted'),
+      ]);
+    } finally {
+      process.env['ZELARI_FOLDER_TRUST'] = '1';
+      _resetMcpForTests();
     }
   });
 

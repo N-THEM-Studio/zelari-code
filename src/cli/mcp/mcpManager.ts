@@ -30,6 +30,7 @@ import {
   isCuaDisabled,
   isCuaMcpServerName,
 } from './mcpPresets.js';
+import { isFolderTrusted } from '../safety/folderTrust.js';
 
 interface McpConfigFile {
   mcpServers?: Record<string, McpServerConfig>;
@@ -57,9 +58,13 @@ const state: {
  * Sources (in order, later wins):
  *   1. ~/.zelari-code/mcp.json  — skipped when `ZELARI_MCP_USER=0` (tests /
  *      hermetic CI that must not see the developer's personal servers)
- *   2. <project>/.zelari/mcp.json
+ *   2. <project>/.zelari/mcp.json — skipped when `skipProjectMcp` is true
+ *      (v1.32.0 trust gate: project servers load only for trusted folders)
  */
-export function readMcpConfig(projectRoot: string = process.cwd()): Record<string, McpServerConfig> {
+export function readMcpConfig(
+  projectRoot: string = process.cwd(),
+  opts?: { skipProjectMcp?: boolean },
+): Record<string, McpServerConfig> {
   const merged: Record<string, McpServerConfig> = {};
   const paths: string[] = [];
   // Opt out of the user-global config so unit tests don't pick up real MCP
@@ -68,7 +73,9 @@ export function readMcpConfig(projectRoot: string = process.cwd()): Record<strin
   if (process.env['ZELARI_MCP_USER'] !== '0') {
     paths.push(join(homedir(), '.zelari-code', 'mcp.json'));
   }
-  paths.push(join(projectRoot, '.zelari', 'mcp.json')); // later = higher precedence
+  if (!opts?.skipProjectMcp) {
+    paths.push(join(projectRoot, '.zelari', 'mcp.json')); // later = higher precedence
+  }
   for (const p of paths) {
     if (!existsSync(p)) continue;
     try {
@@ -89,7 +96,16 @@ async function ensureLoaded(projectRoot: string): Promise<void> {
   if (state.loaded) return;
   state.loaded = true; // set FIRST — a throwing server must not cause retry storms
 
-  const servers = readMcpConfig(projectRoot);
+  // v1.32.0 trust gate: project .zelari/mcp.json loads only when the
+  // folder is trusted. User-global servers always load.
+  const trusted = isFolderTrusted(projectRoot);
+  if (!trusted && existsSync(join(projectRoot, '.zelari', 'mcp.json'))) {
+    state.warnings.push(
+      '[mcp] project .zelari/mcp.json ignored — folder not trusted ' +
+        '(run /trust or `zelari-code --trust` to enable project MCP)',
+    );
+  }
+  const servers = readMcpConfig(projectRoot, { skipProjectMcp: !trusted });
   for (const [name, cfg] of Object.entries(servers)) {
     if (cfg.enabled === false) continue;
     // Opt-out: ZELARI_CUA=0 skips Cua Driver MCP servers (desktop computer-use).

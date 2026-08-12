@@ -51,6 +51,8 @@ import {
   type PermissionAskHandler,
   type PermissionPolicy,
 } from './safety/toolPermissions.js';
+import { createDefaultLifecycleHooks } from './safety/lifecycleHooks.js';
+import type { LifecycleHookRunner } from '@zelari/core/harness';
 import type {
   ToolDefinition,
   TypedResult,
@@ -131,6 +133,12 @@ export interface CreateRegistryOptions {
   enableSkill?: boolean;
   /** Register session todo_write/todo_read (default true for full/plan parent). */
   enableTodos?: boolean;
+  /**
+   * v0.10.0 lifecycle hooks. Default: auto — global hooks always +
+   * project hooks when the folder is trusted (parent profiles only).
+   * Pass a runner to override; pass null to disable.
+   */
+  lifecycleHooks?: LifecycleHookRunner | null;
 }
 
 /**
@@ -178,6 +186,12 @@ export function createBuiltinToolRegistry(
 
   const registry = new ToolRegistry();
   const profile = options.profile ?? 'full';
+
+  // v0.10.0 P0: lifecycle hooks on parent registries. Sub-agent registries
+  // (explore/verify/general) skip hooks — the parent already gates them.
+  const isParent = !options.profile || options.profile === 'full';
+  const hooks = isParent ? (options.lifecycleHooks ?? createDefaultLifecycleHooks(root)) : null;
+  if (hooks) registry.setLifecycleHooks(hooks);
   // Read-only / plan / explore: observe only.
   // verify: observe + bash.
   // general: mutators but no nested task (handled below).

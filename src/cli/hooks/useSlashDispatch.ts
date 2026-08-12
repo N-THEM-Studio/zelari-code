@@ -22,6 +22,11 @@ import {
   handleStateRestore,
 } from '../slashHandlers/state.js';
 import { handleCacheStats } from '../slashHandlers/cache.js';
+import {
+  handleTrust,
+  handleTrustStatus,
+  handleUntrust,
+} from '../slashHandlers/trust.js';
 import { handleIndexBuild, handleIndexStatus } from '../slashHandlers/semantic.js';
 import { nextMode, describeMode } from '../mode.js';
 import { formatKrakenRadioStatus } from '../tools/krakenRadio.js';
@@ -508,6 +513,23 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
           sessionStats: params.sessionStats,
         });
       }
+      setInput('');
+      return;
+    }
+
+    // ── Folder trust (v0.10.0 P0) ──
+    if (result.kind === 'trust_status') {
+      handleTrustStatus({ setMessages }, result.trustPath ?? process.cwd());
+      setInput('');
+      return;
+    }
+    if (result.kind === 'trust_add') {
+      handleTrust({ setMessages }, result.trustPath ?? process.cwd());
+      setInput('');
+      return;
+    }
+    if (result.kind === 'trust_remove') {
+      handleUntrust({ setMessages }, result.trustPath ?? process.cwd());
       setInput('');
       return;
     }

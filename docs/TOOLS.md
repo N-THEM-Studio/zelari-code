@@ -110,6 +110,64 @@ zelari-code --set-mcp-preset cua
 Preferisci `browser_check` (Playwright) per **web**; Cua per **desktop nativo**.  
 Skill: `computer-use-cua` (`/skill computer-use-cua`). Doctor: `zelari-code --doctor` segnala se `cua-driver` manca dal PATH.
 
+## Folder trust (v1.32.0)
+
+Il progetto può auto-eseguire codice solo se la cartella è **fidata**. Il trust
+decide se vengono caricati MCP e lifecycle hook **project-scoped**
+(`<project>/.zelari/mcp.json`, `<project>/.zelari/hooks/`). La config
+user-global (`~/.zelari-code/…`) è **sempre** attiva.
+
+| Comando | Effetto |
+|---------|---------|
+| `/trust` | Mostra lo stato del trust per la cwd |
+| `/trust <path>` | Fida la cartella (default: cwd) |
+| `/trust remove <path>` | Revoca il trust |
+| `zelari-code --trust [path]` | Stessa operazione da CLI (headless/CI) |
+
+Persistence: `~/.zelari-code/trust.json`. Env override:
+
+| Env | Effetto |
+|-----|---------|
+| `ZELARI_FOLDER_TRUST=1` | Fida ogni cartella (CI / headless) |
+| `ZELARI_FOLDER_TRUST=<path>` | Fida esattamente quella cartella |
+| `ZELARI_FOLDER_TRUST=0` | Trust disabilitato (lockdown) |
+
+Quando una cartella non è fidata, `.zelari/mcp.json` e `.zelari/hooks/`
+vengono **ignorati** con un warning (`[mcp] project … ignored — folder not
+trusted`).
+
+## Lifecycle hooks (v1.32.0)
+
+Hook esterni (processo o HTTP) su eventi tool/sessione. **Fail-open**: un hook
+che crasha, va in timeout o risponde JSON invalido **non blocca mai** un tool —
+l’unico modo per bloccare è una decisione JSON esplicita.
+
+```json
+// ~/.zelari-code/hooks/deny-rm.json  (o <progetto>/.zelari/hooks/…)
+{
+  "name": "deny-rm",
+  "match": { "tools": ["bash"], "events": ["PreToolUse"] },
+  "command": "node deny-rm.mjs",
+  "timeoutMs": 5000
+}
+```
+
+- `match.tools`: glob stile Claude (`*` = qualsiasi tool); `Bash` e `bash`
+  matchano entrambi `bash` (alias-aware: `Read`→`read_file`, `shell`→`bash`, …).
+- `command` **oppure** `url` (HTTP POST). Il payload JSON va su stdin / body;
+  la decisione arriva su stdout / body: `{ "decision": "allow" }` oppure
+  `{ "decision": "deny", "reason": "…" }`.
+- Eventi: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`.
+- Directory: `~/.zelari-code/hooks/` (global, sempre attive) +
+  `<progetto>/.zelari/hooks/` (solo se la cartella è fidata).
+
+## inspect (v1.32.0)
+
+`zelari-code --inspect [--json]` — report unificato dell’ambiente progetto:
+versione, cwd, platform, phase/mode, config sources, skills, MCP (con stato
+trust), lifecycle hooks, plugins, AGENTS.md, trust. `--json` emette un report
+machine-readable con `schemaVersion` stabile per Desktop/script.
+
 ## Coerenza prompt ↔ esecuzione
 
 1. **`harnessToolBridge`**: builtin harness nel catalogo `getAllTools()` con schemi dagli zod reali.

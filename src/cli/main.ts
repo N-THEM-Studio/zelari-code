@@ -368,6 +368,36 @@ function pickRootComponent(): {
     console.error(`${red}✗${reset} ${result.error}`);
     process.exit(1);
   }
+  if (argv.includes("--inspect") || argv.includes("inspect")) {
+    // v1.32.0: unified environment inspection (config sources, skills,
+    // MCP, hooks, plugins, AGENTS.md, phase/mode, trust status).
+    // Runs BEFORE the TUI so it works on a broken/mixed project.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { runInspect } =
+      require("./commands/inspect.js") as typeof import("./commands/inspect.js");
+    const json = argv.includes("--json");
+    void runInspect({ json }).then((code) => process.exit(code));
+    return { kind: "done" };
+  }
+  if (argv.includes("--trust")) {
+    // v1.32.0: trust the cwd (or the given path) so project MCP +
+    // project hooks load. Companion to the /trust slash command.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { trustFolder } =
+      require("./safety/folderTrust.js") as typeof import("./safety/folderTrust.js");
+    const i = argv.indexOf("--trust");
+    const target = argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[i + 1] : process.cwd();
+    try {
+      const res = trustFolder(target);
+      console.log(JSON.stringify({ ok: true, path: res.path }));
+      process.exit(0);
+    } catch (err) {
+      console.error(
+        `[zelari-code --trust] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
   if (argv.includes("--help") || argv.includes("-h")) {
     // eslint-disable-next-line no-console
     console.log(
@@ -380,6 +410,9 @@ function pickRootComponent(): {
         "  --help, -h          Print this help and exit\n" +
         "  --doctor            Diagnose install health (shim, bundle, PATH, deps,\n" +
         "                      node/git/bash in the agent shell)\n" +
+        "  --inspect [--json]  Unified project inspection (config, skills, MCP,\n" +
+        "                      hooks, plugins, AGENTS.md, trust status)\n" +
+        "  --trust [path]      Trust the cwd (or path) so project MCP + hooks load\n" +
         "  --fix-path          Add the npm global prefix to the user PATH\n" +
         "                      (Windows only; fixes 'command not found' after install)\n" +
         "  --fix-budget        Set recommended ZELARI_MAX_TOOL_LOOP_HARD=180,\n" +

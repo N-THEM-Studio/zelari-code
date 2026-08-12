@@ -1,4 +1,5 @@
 import { zodToJsonSchema } from './zodBridge.js';
+import type { LifecycleHookRunner } from '../hooks/index.js';
 import { spillToolOutput } from './toolOutputSpill.js';
 import { typedErr, type ToolDefinition, type ToolContext, type TypedResult } from './toolTypes.js';
 
@@ -157,6 +158,8 @@ export function truncateToolResult(
 
 export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
+  /** v0.10.0: lifecycle hooks (PreToolUse/PostToolUse). Null = no hooks. */
+  private lifecycleHooks: LifecycleHookRunner | null = null;
 
   register<I, O>(def: ToolDefinition<I, O>): void {
     this.tools.set(def.name, def as ToolDefinition);
@@ -164,6 +167,15 @@ export class ToolRegistry {
 
   get(name: string): ToolDefinition | undefined {
     return this.tools.get(name);
+  }
+
+  /** v0.10.0: attach the fail-open lifecycle hook runner (null to disable). */
+  setLifecycleHooks(runner: LifecycleHookRunner | null): void {
+    this.lifecycleHooks = runner;
+  }
+
+  getLifecycleHooks(): LifecycleHookRunner | null {
+    return this.lifecycleHooks;
   }
 
   list(): string[] {
@@ -213,6 +225,21 @@ export class ToolRegistry {
       sessionId: options.sessionId ?? 'default',
     };
 
+    // v0.10.0: PreToolUse lifecycle hooks — fail-open; deny blocks the tool.
+    if (this.lifecycleHooks) {
+      try {
+        const pre = await this.lifecycleHooks.runPreToolUse(name, parsed.data, {
+          sessionId: ctx.sessionId,
+          cwd: ctx.cwd,
+        });
+        if (!pre.ok) {
+          return typedErr(`[hook:${pre.hookName ?? 'unknown'}] ${pre.reason ?? 'denied'}`);
+        }
+      } catch (hookErr) {
+        // Belt-and-suspenders: a throwing runner must never block the tool.
+      }
+    }
+
     try {
       const result = await Promise.race<TypedResult<O>>([
         tool.execute(parsed.data, ctx) as Promise<TypedResult<O>>,
@@ -242,6 +269,19 @@ export class ToolRegistry {
           if (typeof v.content === 'string') {
             v.content = truncateToolResult(v.content, { toolName: tName });
           }
+        }
+      }
+      // v0.10.0: PostToolUse lifecycle hooks — fail-open, never blocks.
+      if (this.lifecycleHooks) {
+        try {
+          await this.lifecycleHooks.runPostToolUse(name, parsed.data, result, {
+            sessionId: ctx.sessionId,
+            cwd: ctx.cwd,
+            ok: result.ok,
+            error: result.ok ? undefined : ('error' in result ? result.error : undefined),
+          });
+        } catch {
+          /* fail-open */
         }
       }
       return result;
