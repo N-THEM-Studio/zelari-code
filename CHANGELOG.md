@@ -5,9 +5,16 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.33.0] - 2026-08-12
+
+### Added
+- **Desktop Workbench <-> Kraken plan/build** — the Workbench gains `Plan` and `Tasks` tabs. With a Kraken graph active, `plan` runs the CLI in plan-only mode (`--plan-only`, writes a plan file and captures its id) and `build` executes the saved plan (`--run-plan <id>`); the `Tasks` tab renders the live session todo list (`pending`/`in_progress`/`completed`/`cancelled`).
+
+### Removed
+- **Bennett's Razor tooltip** — the "Bennett's Razor" pill and its explainer modal were removed from the Desktop app (component and CSS dropped).
 
 ### Fixed
+- **Kraken plan file serialization** — `plan-<id>.json` is now written as `{ id, nodes: [...] }`; previously `JSON.stringify` serialized the `TaskGraph.nodes` `Map` as `{}`, so `--run-plan` (which expects an array) failed.
 - **Desktop App updates 404** — a notes-only GitHub Release marked `--latest` hid `latest.json` (`/releases/latest/download/latest.json` → 404, Settings showed "Could not fetch a valid release JSON from the remote"). `publish.yml` now creates the CLI release with `--latest=false`; `release-desktop.yml` marks latest only after signed artifacts upload.
 - **GitHub Release notes on tag push** — extracting the CHANGELOG section no longer builds a RegExp from `## [1.32.0]`. YAML/bash/`node -e` quoting dropped the `\[` escapes, so Node compiled `/## [1.32.0]…/` and died with `Unterminated character class`. Notes are now sliced by heading text (`scripts/changelog-notes.mjs`, inline fallback in `publish.yml`).
 
