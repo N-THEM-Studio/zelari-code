@@ -5,6 +5,11 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.33.2] - 2026-08-12
+
+### Fixed
+- **Desktop release flakiness (Windows/Linux bundler)** — pinned `tauri-action` to the exact commit the floating `@v0` tag resolves to (reproducible builds, no silent breakage from the `action-v1.0.0` move) and added a 60-minute job timeout. Windows/Linux installer builds intermittently failed at the bundler tool download (NSIS/AppImage); re-running the failed jobs completes the release.
+
 ## [1.33.1] - 2026-08-12
 
 ### Fixed
