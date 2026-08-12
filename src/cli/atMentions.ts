@@ -8,14 +8,40 @@
  * the same @-tag semantics.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs';
-import { isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import type { AgentImage } from '@zelari/core/harness';
 
 const ATTACH_TEXT_MAX = 48_000;
 const ATTACH_FILE_MAX_BYTES = 512_000;
+/** Max image bytes loaded inline as a vision block (8 MB keeps requests sane). */
+const ATTACH_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Extension → MIME for images we can attach as vision content. */
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+  gif: 'image/gif',
+  webp: 'image/webp',
+  bmp: 'image/bmp',
+};
+
+function isImagePath(abs: string): boolean {
+  const ext = abs.split('.').pop()?.toLowerCase() ?? '';
+  return ext in IMAGE_MIME_BY_EXT;
+}
 
 /** Match @path tokens: @foo, @foo/bar, @./x, @../y — not emails (word@word). */
 const AT_PATH_RE =
-  /(^|[\s([{])@((?:\.{1,2}\/)?[A-Za-z0-9_.+-]+(?:[\\/][A-Za-z0-9_.+-]+)*)/g;
+    /(^|[\s([{])@((?:\.{1,2}\/)?[A-Za-z0-9_.+-]+(?:[\\/][A-Za-z0-9_.+-]+)*)/g;
+/** Windows absolute paths: @C:\Users\me\pic.png (drive letter + backslashes). */
+/** Windows absolute paths: @C:\Users\me\pic.png (drive letter + backslashes).
+ * Built via new RegExp so backslash semantics are unambiguous (no source escaping). */
+const BS_CHAR = String.fromCharCode(92);
+const AT_WIN_ABS_RE = new RegExp(
+  '(^|[' + BS_CHAR + 's([{])(@[A-Za-z]:[' + BS_CHAR + BS_CHAR + '/][^' + BS_CHAR + 's@]+)',
+  'g',
+);
 
 export interface AtMentionHit {
   raw: string;
@@ -24,6 +50,8 @@ export interface AtMentionHit {
   isDir: boolean;
   text?: string;
   note?: string;
+  /** Inline vision block when the mentioned file is an image. */
+  image?: AgentImage;
 }
 
 function isProbablyText(name: string, head: string): boolean {
@@ -50,18 +78,29 @@ function underRoot(abs: string, root: string): boolean {
 export function extractAtMentions(text: string): string[] {
   const out: string[] = [];
   const seen = new Set<string>();
-  AT_PATH_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = AT_PATH_RE.exec(text)) !== null) {
-    const token = (m[2] ?? '').trim();
-    if (!token || token.includes('@')) continue;
-    // Skip email-like leftovers: if the char before @ was word char, the
-    // regex already requires whitespace/start — good.
-    const key = token.replace(/\\/g, '/').toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    out.push(token);
-  }
+  const collect = (re: RegExp) => {
+    re.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(text)) !== null) {
+      // AT_WIN_ABS_RE captures the '@' inside group 2 — strip it so the
+      // token is the bare path (same shape as AT_PATH_RE tokens).
+      const token = (m[2] ?? '').trim().replace(/^@/, '');
+      if (!token || token.includes('@')) continue;
+      // Skip drive-letter leftovers of Windows absolute paths: the generic
+      // regex matches `@C` from `@C:\...` before AT_WIN_ABS_RE grabs it.
+      if (re === AT_PATH_RE && /^[a-zA-Z]$/.test(token) && text.charAt(m.index + m[0].length) === ':') {
+        continue;
+      }
+      // Skip email-like leftovers: if the char before @ was word char, the
+      // regex already requires whitespace/start — good.
+      const key = token.replace(/\\/g, '/').toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(token);
+    }
+  };
+  collect(AT_PATH_RE);
+  collect(AT_WIN_ABS_RE);
   return out;
 }
 
@@ -70,19 +109,9 @@ function resolveMention(
   cwd: string,
 ): AtMentionHit | null {
   const abs = isAbsolute(token) ? resolve(token) : resolve(cwd, token);
-  if (!underRoot(abs, cwd) && !isAbsolute(token)) {
-    // relative path that escapes cwd after resolve
-    if (!underRoot(abs, cwd)) {
-      return {
-        raw: token,
-        path: token,
-        absolute: abs,
-        isDir: false,
-        note: 'outside project root — skipped',
-      };
-    }
-  }
-  if (isAbsolute(token) && !underRoot(abs, cwd)) {
+  // Images referenced by absolute path outside the project root are allowed
+  // (read-only base64 load for vision) — everything else stays root-scoped.
+  if (!underRoot(abs, cwd) && !isImagePath(abs)) {
     return {
       raw: token,
       path: token,
@@ -129,6 +158,28 @@ function resolveMention(
       absolute: abs,
       isDir: false,
       note: `too large (${Math.round(st.size / 1024)} KB) — path only`,
+    };
+  }
+  const ext = abs.split('.').pop()?.toLowerCase() ?? '';
+  const mime = IMAGE_MIME_BY_EXT[ext];
+  if (mime) {
+    if (st.size > ATTACH_IMAGE_MAX_BYTES) {
+      return {
+        raw: token,
+        path: rel,
+        absolute: abs,
+        isDir: false,
+        note: `image too large (${Math.round(st.size / 1024)} KB) — path only`,
+      };
+    }
+    const dataBase64 = readFileSync(abs).toString('base64');
+    return {
+      raw: token,
+      path: rel,
+      absolute: abs,
+      isDir: false,
+      text: `[Immagine: ${rel}]`,
+      image: { mime, dataBase64, alt: basename(abs) },
     };
   }
   try {
@@ -184,6 +235,10 @@ export function expandAtMentions(
   }
   const blocks = hits.map((h) => {
     const label = h.path || h.raw;
+    if (h.image) {
+      const kb = Math.round((h.image.dataBase64.length * 3) / 4 / 1024);
+      return `--- Image: ${label} (${h.image.mime}, ~${kb} KB) ---`;
+    }
     if (h.text != null && h.text.length > 0) {
       return `--- File: ${label} ---\n${h.text}\n--- End file ---`;
     }

@@ -1,6 +1,9 @@
 /**
- * Named MCP presets for optional capabilities (Cua Driver, …).
+ * Named MCP presets for optional capabilities (Cua Driver, Composio Connect).
  * Does not vendor binaries — only writes ~/.zelari-code/mcp.json (or project).
+ *
+ * Presets are FACTORIES: env-dependent config (e.g. COMPOSIO_API_KEY) is read
+ * at apply time, never captured at module load.
  */
 
 import type { McpServerConfig } from "./mcpClient.js";
@@ -37,17 +40,91 @@ export const CUA_DRIVER_PRESET: McpPreset = {
   ],
 };
 
-const PRESETS: Record<string, McpPreset> = {
-  cua: CUA_DRIVER_PRESET,
-  "cua-driver": CUA_DRIVER_PRESET,
+/**
+ * Composio Connect MCP preset (composio.dev). 500+ app integrations exposed
+ * as MCP tools via `npx composio-mcp`. The API key passes through env
+ * (never written into argv/mcp.json args) and is read at APPLY time.
+ */
+export function buildComposioPreset(): McpPreset {
+  return {
+    id: "composio",
+    servers: {
+      composio: {
+        command: "npx",
+        args: ["-y", "composio-mcp@latest"],
+        env: process.env.COMPOSIO_API_KEY
+          ? { COMPOSIO_API_KEY: process.env.COMPOSIO_API_KEY }
+          : {},
+        enabled: true,
+      },
+    },
+    notes: [
+      "Composio Connect — 500+ app integrations (GitHub, Slack, Notion, ...) as MCP tools.",
+      "Set COMPOSIO_API_KEY before applying: export COMPOSIO_API_KEY=<key>",
+      "Connect apps at https://composio.dev — each connected account becomes a tool.",
+      "The key is stored in mcp.json env, never in argv.",
+      "Kill switch: disable the composio server in mcp.json or ZELARI_MCP=0",
+    ],
+  };
+}
+
+/**
+ * Qwen-MM-Plugins MCP preset (QwenLM/Qwen-MM-Plugins). Multimodal tools
+ * (vision, video, audio, 3D, web search) served over stdio via `uvx`.
+ * The capability is selected at APPLY time through QWEN_MM_PLUGIN (default
+ * `qwen-mm-plugins-core`); API keys pass through env, never argv.
+ *
+ * Windows: not validated upstream — prefer WSL2 (Ubuntu) and run the
+ * upstream guided installer first: `bash install.sh`.
+ */
+export function buildQwenMmPreset(): McpPreset {
+  const plugin = process.env.QWEN_MM_PLUGIN?.trim() || "qwen-mm-plugins-core";
+  return {
+    id: "qwen-mm-plugins",
+    servers: {
+      "qwen-mm-plugins": {
+        command: "uvx",
+        args: [plugin],
+        env: {
+          ...(process.env.DASHSCOPE_API_KEY
+            ? { DASHSCOPE_API_KEY: process.env.DASHSCOPE_API_KEY }
+            : {}),
+          ...(process.env.SERPER_API_KEY
+            ? { SERPER_API_KEY: process.env.SERPER_API_KEY }
+            : {}),
+        },
+        enabled: true,
+      },
+    },
+    notes: [
+      "Qwen-MM-Plugins — multimodal capabilities (core / video-memory / video-edit / blender / freecad) as MCP tools.",
+      "Run the upstream guided installer first: curl -fsSL https://raw.githubusercontent.com/QwenLM/Qwen-MM-Plugins/main/install.sh | bash",
+      "Windows: use WSL2 (Ubuntu); native Windows is not validated upstream.",
+      "Pick a capability: export QWEN_MM_PLUGIN=qwen-mm-plugins-video-memory (default: qwen-mm-plugins-core).",
+      "API keys read at apply time: DASHSCOPE_API_KEY, SERPER_API_KEY (native reading works without them).",
+      "Blender/FreeCAD variants: start the host app before invoking tools.",
+      "Kill switch: disable the qwen-mm-plugins server in mcp.json or ZELARI_MCP=0",
+    ],
+  };
+}
+
+const PRESETS: Record<string, () => McpPreset> = {
+  cua: () => CUA_DRIVER_PRESET,
+  "cua-driver": () => CUA_DRIVER_PRESET,
+  composio: buildComposioPreset,
+  "qwen-mm-plugins": buildQwenMmPreset,
+  "qwen-mm": buildQwenMmPreset,
 };
 
 export function listMcpPresetIds(): string[] {
-  return Object.keys(PRESETS).filter((k) => k === "cua"); // canonical ids only
+  return Object.keys(PRESETS).filter(
+    (k) => k === "cua" || k === "composio" || k === "qwen-mm-plugins",
+  ); // canonical ids only
 }
 
 export function getMcpPreset(id: string): McpPreset | null {
-  return PRESETS[id.trim().toLowerCase()] ?? null;
+  const factory = PRESETS[id.trim().toLowerCase()];
+  return factory ? factory() : null;
 }
 
 export function applyMcpPreset(opts: {

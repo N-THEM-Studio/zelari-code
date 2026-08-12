@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.31.0] - 2026-08-12
+
+### Added
+- **Native vision, no third-party APIs** — images travel to the active model as OpenAI-compatible `image_url` content blocks, using the same provider key as the text turn; no DashScope or other external vision service is involved. New `AgentImage` type + `images?` field on `AgentMessage` (`packages/core/src/core/AgentHarness.ts`); `modelSupportsVision()` recognizes vision-capable models (grok-4, glm-4.5v, qwen-vl, minimax-m2, gpt-4o, ...) with a `ZELARI_VISION=1/0` override, and a text fallback warns when the active model cannot take pixels. `@image.jpg` mentions in the CLI now inline the file as base64 (absolute Windows paths `@C:\...` work, and images outside the project root are allowed); the Desktop drop-to-attach reads images as base64 and emits `@<path>` so the attachment reaches the CLI. End-to-end verified with the real `grok-image-…` file on Desktop.
+- **Built-in skill: `qwen-mm-plugins-install-setup`** — the full Qwen-MM-Plugins guide (capabilities table, per-harness install commands, system deps, API-key config, usage, verification checklist) shipped as a builtin skill in `@zelari/core` (`packages/core/src/agents/skills/builtin/qwenMmPlugins.ts`), registered in `BUILTIN_SKILL_MODULES`.
+- **MCP integration presets: `composio` and `qwen-mm-plugins`** — `mcpPresets.ts` now exposes factory-built presets: `composio` (500+ app integrations via `npx composio-mcp`, key read at apply time) and `qwen-mm-plugins` (multimodal MCP tools via `uvx`, capability selected with `QWEN_MM_PLUGIN`, keys via env). New `/integrations` slash command lists presets + status.
+- **External-agent permission broker (OpenMausBot pattern)** — `zelari-code --permission-mcp <socket>` runs a standalone MCP stdio server; an external CLI (e.g. `claude --permission-prompt-tool "zelari-code --permission-mcp <socket>"`) forwards `approve`/`ask_user` requests to the parent zelari process over a local socket (`ZELARI_PERM_SOCKET`), routed through the existing TUI permission picker and policy (`defaultPermissionPolicy`, `resolveToolPermission`, session grants). New modules: `permissionBroker.ts`, `mcpPermissionServer.ts`, `permissionCli.ts`, `brokerHandlers.ts`, `usePermissionBroker.ts`. Zero new dependencies (`node:net` JSON-lines).
+- **Local-CLI provider** — `ZELARI_LOCAL_CLI=claude` (or any external agent CLI) drives the harness through an external CLI's `stream-json` protocol: zelari spawns the CLI in print mode, translates its events into `ProviderDelta`, and permission prompts flow back to the zelari broker. New modules: `src/cli/provider/localCli/claudeProvider.ts`, `claudeStreamJson.ts` (pure `buildClaudeInputLines` + `createClaudeStreamParser`).
+
+### Fixed
+- **`@` mention parser: absolute Windows paths were dropped** — `@C:\...` was rejected because the drive-letter token contains `@` (the token collector discarded anything with `@` inside), and the Windows-absolute regex matched `/` but not `\`. Both fixed; `@C:/Users/.../image.jpg` and `@C:\Users\...\image.jpg` now resolve. Regression-covered in `tests/unit/cli-atMentions.test.ts` (5 tests).
+- **Desktop drop-to-attach for images was a no-op** — `readFileAsAttachment` returned "binary — path only", so dropping an image produced a prompt with no pixels. Now reads images as base64 and emits `@<path>`.
+
+### Changed
+- **MCP presets are factories** — env-dependent config (`COMPOSIO_API_KEY`, `DASHSCOPE_API_KEY`, `SERPER_API_KEY`, `QWEN_MM_PLUGIN`) is read at apply time, never captured at module load.
+
+### Tests
+- New/updated suites: `cli-atMentions` (image inlining + Windows paths), `cli-vision-provider` (vision gate), `cli-mcpPresets` (composio/qwen-mm factories), `cli-permissionBroker`, `cli-mcpPermissionServer`, `cli-brokerHandlers`, `cli-localCliProvider`.
+
 ## [1.30.4] - 2026-08-09
 
 ### Fixed

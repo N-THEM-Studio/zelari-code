@@ -51,9 +51,21 @@ export {
 
 // --- Public types -----------------------------------------------------------
 
+/** Inline image sent to vision-capable providers (raw base64, no data: prefix). */
+export interface AgentImage {
+  /** MIME type, e.g. 'image/png'. */
+  mime: string;
+  /** Raw image bytes as base64. */
+  dataBase64: string;
+  /** Short label (filename or description) for non-vision fallback. */
+  alt?: string;
+}
+
 export interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
+  /** Vision input attached to this message (user turns). */
+  images?: AgentImage[];
   /** For tool messages: the tool call id this result corresponds to. */
   toolCallId?: string;
   /**

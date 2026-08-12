@@ -214,17 +214,29 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // a brand-new request even if compaction dropped the prior turn.
         const anchored = maybeAnchorShortAnswer(userText);
         const effectiveUserText = anchored ?? userText;
-        envConfig = await providerFromEnv();
-        if (!envConfig) {
-          // Name the ACTIVE provider — the old hardcoded "OPENAI_API_KEY not
-          // set" message told grok/glm/minimax users to export the wrong var.
-          const active = resolveActiveProvider();
-          const spec = PROVIDERS.find((p) => p.id === active);
-          appendSystem(
-            setMessages,
-            `No API key for the active provider "${active}". Set ${spec?.envVar ?? "the provider API key env var"} or run /login ${active}.`,
+        // Local-CLI provider (Slice B): opt-in via ZELARI_LOCAL_CLI=claude|codex|...
+        // No API key needed — the CLI is authenticated on its own. Permission
+        // prompts flow to the zelari broker via ZELARI_PERM_SOCKET (Slice A).
+        const localCli = (process.env.ZELARI_LOCAL_CLI ?? "").trim();
+        let localCliProvider: import("@zelari/core/harness").ProviderStreamFn | null = null;
+        if (localCli) {
+          const { createLocalCliProvider } = await import(
+            "../provider/localCli/claudeProvider.js",
           );
-          return;
+          localCliProvider = createLocalCliProvider({ cli: localCli });
+        } else {
+          envConfig = await providerFromEnv();
+          if (!envConfig) {
+            // Name the ACTIVE provider — the old hardcoded "OPENAI_API_KEY not
+            // set" message told grok/glm/minimax users to export the wrong var.
+            const active = resolveActiveProvider();
+            const spec = PROVIDERS.find((p) => p.id === active);
+            appendSystem(
+              setMessages,
+              `No API key for the active provider "${active}". Set ${spec?.envVar ?? "the provider API key env var"} or run /login ${active}.`,
+            );
+            return;
+          }
         }
         setBusy(true);
         const workPhase = getPhase();
@@ -285,27 +297,30 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           onPermissionAsk,
           permissionPolicy: defaultPermissionPolicy(),
         });
-        const baseProviderStream = openaiCompatibleProvider(envConfig);
-        const failoverResolution = await resolveFailoverStream({
-          failoverEnabled: process.env.ANATHEMA_FAILOVER !== "0",
-          envValue: process.env.ANATHEMA_FAILOVER_PROVIDER,
-          primaryProviderId: envConfig.providerId,
-          primary: baseProviderStream,
-          validProviderIds: PROVIDERS.map((p) => p.id),
-          lookupFallbackConfig: async (id) =>
-            providerConfigFor(id as ProviderName),
-          buildStream: (config) =>
-            openaiCompatibleProvider(
-              config as Parameters<typeof openaiCompatibleProvider>[0],
-            ),
-        });
-        if (failoverResolution.warning) {
-          // Surface in the chat instead of console.warn: writes that bypass
-          // Ink force a full repaint of the TUI frame (visible flicker).
-          appendSystem(setMessages, `[failover] ${failoverResolution.warning}`);
-        }
-        const providerStream: import("@zelari/core/harness").ProviderStreamFn =
-          failoverResolution.fallbackLabel
+        const baseProviderStream = localCliProvider ?? openaiCompatibleProvider(envConfig!);
+        let providerStream: import("@zelari/core/harness").ProviderStreamFn;
+        if (localCliProvider) {
+          providerStream = localCliProvider;
+        } else {
+          const failoverResolution = await resolveFailoverStream({
+            failoverEnabled: process.env.ANATHEMA_FAILOVER !== "0",
+            envValue: process.env.ANATHEMA_FAILOVER_PROVIDER,
+            primaryProviderId: envConfig!.providerId,
+            primary: baseProviderStream,
+            validProviderIds: PROVIDERS.map((p) => p.id),
+            lookupFallbackConfig: async (id) =>
+              providerConfigFor(id as ProviderName),
+            buildStream: (config) =>
+              openaiCompatibleProvider(
+                config as Parameters<typeof openaiCompatibleProvider>[0],
+              ),
+          });
+          if (failoverResolution.warning) {
+            // Surface in the chat instead of console.warn: writes that bypass
+            // Ink force a full repaint of the TUI frame (visible flicker).
+            appendSystem(setMessages, `[failover] ${failoverResolution.warning}`);
+          }
+          providerStream = failoverResolution.fallbackLabel
             ? providerFailover({
                 primary: baseProviderStream,
                 fallback: failoverResolution.fallback,
@@ -315,6 +330,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 primary: baseProviderStream,
                 fallback: failoverResolution.fallback,
               });
+        }
         const cwd = process.cwd();
         // v0.7.3: surface the council plan (if any) to the single agent too.
         // The plan lives in .zelari/plan.json but the agent had no idea it

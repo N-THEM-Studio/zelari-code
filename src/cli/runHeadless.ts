@@ -32,6 +32,7 @@ import {
   resolveHeadlessProvider,
   type HeadlessOptions,
 } from './headless.js';
+import { createLocalCliProvider } from './provider/localCli/claudeProvider.js';
 import {
   buildSystemPrompt,
   getAllTools,
@@ -56,9 +57,13 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     const { expandAtMentions } = await import('./atMentions.js');
     const task = typeof opts.task === 'string' ? opts.task : '';
     if (task.includes('@')) {
-      const { text } = expandAtMentions(task, process.cwd());
+      const { text, hits } = expandAtMentions(task, process.cwd());
       if (text !== task) {
         opts = { ...opts, task: text };
+      }
+      const images = hits.filter((h) => h.image).map((h) => h.image!);
+      if (images.length > 0) {
+        opts = { ...opts, images };
       }
     }
   } catch {
@@ -101,20 +106,60 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   // Apply work phase before any tool registry is built.
   setPhase(opts.phase ?? 'build');
 
-  const { provider, model } = resolveHeadlessProvider(opts);
-
-  const key = await resolveHeadlessKey(provider);
-  if ('error' in key) {
-    process.stderr.write(`[zelari-code --headless] ${key.error}\n`);
-    return 1;
+  // v1.30.0: external-agent permission broker (ZELARI_PERM_SOCKET). Serves
+  // `claude --permission-prompt-tool "zelari-code --permission-mcp <socket>"`
+  // with a policy-only handler: ZELARI_AUTO=1 auto-allows, otherwise ask
+  // resolves to deny (never hangs). Best-effort — a bind failure logs to
+  // stderr and the run continues.
+  let permBrokerStop: (() => Promise<void>) | null = null;
+  const permSocket = process.env.ZELARI_PERM_SOCKET?.trim();
+  if (permSocket) {
+    try {
+      const { startPermissionBroker } = await import('./mcp/permissionBroker.js');
+      const { createBrokerPermissionHandler } = await import('./mcp/brokerHandlers.js');
+      const h = await startPermissionBroker(permSocket, {
+        onPermission: createBrokerPermissionHandler({}),
+      });
+      permBrokerStop = h.stop;
+      process.stderr.write(
+        `[zelari-code] permission broker listening on ${permSocket}\n`,
+      );
+    } catch (err) {
+      process.stderr.write(
+        `[zelari-code] permission broker failed to start: ${
+          err instanceof Error ? err.message : String(err)
+        }\n`,
+      );
+    }
   }
-
-  const providerStream = openaiCompatibleProvider({
-    providerId: provider as 'minimax' | 'glm' | 'grok' | 'openai-compatible' | 'custom',
-    apiKey: key.apiKey,
-    baseUrl: key.baseUrl,
-    model,
+  process.once('exit', () => {
+    void permBrokerStop?.();
   });
+
+  const { provider: resolvedProvider, model } = resolveHeadlessProvider(opts);
+  let provider = resolvedProvider;
+
+  // Local-CLI provider (Slice B): opt-in via ZELARI_LOCAL_CLI=claude|codex|...
+  // No API key needed — the CLI is authenticated on its own. Permission
+  // prompts flow to the zelari broker via ZELARI_PERM_SOCKET (Slice A).
+  const localCli = (process.env.ZELARI_LOCAL_CLI ?? '').trim();
+  let providerStream;
+  if (localCli) {
+    provider = 'local-cli';
+    providerStream = createLocalCliProvider({ cli: localCli, model });
+  } else {
+    const key = await resolveHeadlessKey(provider);
+    if ('error' in key) {
+      process.stderr.write(`[zelari-code --headless] ${key.error}\n`);
+      return 1;
+    }
+    providerStream = openaiCompatibleProvider({
+      providerId: provider as 'minimax' | 'glm' | 'grok' | 'openai-compatible' | 'custom',
+      apiKey: key.apiKey,
+      baseUrl: key.baseUrl,
+      model,
+    });
+  }
 
   const mode = opts.mode ?? (opts.useCouncil ? 'council' : 'kraken');
 
@@ -691,7 +736,13 @@ async function runHeadlessSingle(
   const initialMessages: AgentMessage[] = [
     { role: 'system', content: systemPrompt },
     ...historySeed,
-    { role: 'user', content: effectiveTask },
+    {
+      role: 'user',
+      content: effectiveTask,
+      ...(opts.images && opts.images.length > 0
+        ? { images: opts.images }
+        : {}),
+    },
   ];
 
   let pass = await runSinglePass(initialMessages, sessionId);

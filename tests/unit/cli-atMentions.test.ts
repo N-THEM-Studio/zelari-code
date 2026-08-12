@@ -41,4 +41,43 @@ describe('atMentions', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('loads image attachments as base64 vision blocks', () => {
+    const root = join(tmpdir(), `zelari-at-img-${Date.now()}`);
+    mkdirSync(root, { recursive: true });
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    writeFileSync(join(root, 'pic.png'), png);
+    try {
+      const { text, hits } = expandAtMentions('Describe @pic.png', root);
+      expect(hits).toHaveLength(1);
+      expect(hits[0]?.image?.mime).toBe('image/png');
+      expect(hits[0]?.image?.dataBase64.length).toBeGreaterThan(10);
+      expect(hits[0]?.text).toContain('Immagine');
+      expect(text).toContain('--- Image: pic.png (image/png');
+      // The base64 payload must NOT be dumped into the prompt text.
+      expect(text).not.toContain('iVBORw0KG');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('allows absolute image paths outside the project root', () => {
+    const root = join(tmpdir(), `zelari-at-img-abs-${Date.now()}`);
+    const outside = join(tmpdir(), `zelari-outside-${Date.now()}`);
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(
+      join(outside, 'shot.jpg'),
+      Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]),
+    );
+    try {
+      const { hits } = expandAtMentions(`See @${outside}/shot.jpg`, root);
+      expect(hits[0]?.image?.mime).toBe('image/jpeg');
+      expect(hits[0]?.note).toBeUndefined();
+    } finally {
+      rmSync(outside, { recursive: true, force: true });
+    }
+  });
 });

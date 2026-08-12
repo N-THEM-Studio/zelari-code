@@ -37,6 +37,7 @@ import { SessionJsonlWriter } from '@zelari/core/harness';
 import { VERSION } from './main.js';
 import { useSession } from './hooks/useSession.js';
 import { useChatTurn } from './hooks/useChatTurn.js';
+import { usePermissionBroker } from './hooks/usePermissionBroker.js';
 import { useSlashDispatch } from './hooks/useSlashDispatch.js';
 import { nextMode } from './mode.js';
 import { useBatchedMessages } from './hooks/useBatchedMessages.js';
@@ -106,6 +107,10 @@ export function App(): React.ReactElement {
   const activeModel = providerConfig.modelByProvider[activeProviderSpec.id];
 
   const session = useSession();
+  // v1.30.0: external-agent permission broker (ZELARI_PERM_SOCKET). Serves
+  // `claude --permission-prompt-tool "zelari-code --permission-mcp <socket>"`
+  // through the existing picker. No-op when the env var is unset.
+  usePermissionBroker({ setPicker, setMessages: session.setMessages });
   const size = useTerminalSize();
   const gitChanges = useGitChanges();
   const cwd = useMemo(() => shortenCwd(process.cwd(), 32), []);

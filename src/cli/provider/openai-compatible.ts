@@ -13,7 +13,7 @@
  * Implements ProviderStreamFn (AsyncIterable<ProviderDelta>).
  */
 
-import type { ProviderStreamFn, ProviderDelta } from '@zelari/core/harness';
+import type { ProviderStreamFn, ProviderDelta, AgentImage } from '@zelari/core/harness';
 import type { ProviderName } from '../keyStore.js';
 import { resolveApiKeyWithMeta } from '../keyStore.js';
 import { getProviderConfig, getModelForProvider, getCustomEndpoint } from '../providerConfig.js';
@@ -180,6 +180,38 @@ export interface OpenAICompatibleConfig {
   providerId: ProviderName;
 }
 
+/** Model name hints that natively accept image inputs (OpenAI-compatible). */
+const VISION_MODEL_HINTS: readonly string[] = [
+  'grok-4', 'grok-3', 'grok-2-vision', 'grok-vision',
+  'glm-4v', 'glm-4.5v', 'glm-4.1v', 'glm-5v',
+  'qwen-vl', 'qwen2-vl', 'qwen2.5-vl', 'qwen3-vl',
+  'gpt-4o', 'gpt-4.1', 'gpt-4.5', 'gpt-4-vision', 'gpt-5',
+  'claude-3', 'claude-4', 'gemini-', 'gemini/',
+  'minimax-m1', 'minimax-m2', 'minimax-m3',
+  'deepseek-vl',
+];
+
+/**
+ * Does this model accept image inputs natively? No third-party vision API is
+ * involved: the pixels go straight to the model provider (grok / GLM /
+ * MiniMax / Qwen-VL / custom vision endpoints) as OpenAI `image_url` content
+ * blocks, using the same API key as the text turn.
+ *
+ * Override: ZELARI_VISION=1 (force on) / ZELARI_VISION=0 (force off).
+ */
+export function modelSupportsVision(model: string): boolean {
+  const force = process.env.ZELARI_VISION;
+  if (force === '1' || force === 'true' || force === 'on') return true;
+  if (force === '0' || force === 'false' || force === 'off') return false;
+  const m = model.toLowerCase();
+  return VISION_MODEL_HINTS.some((hint) => m.includes(hint));
+}
+
+/** Build a data: URI from an inline image block. */
+export function dataUriFromImage(img: AgentImage): string {
+  return `data:${img.mime};base64,${img.dataBase64}`;
+}
+
 /**
  * Default endpoints for each provider. `openai-compatible` defaults to
  * api.x.ai (backward compatibility); `custom` is empty and must be set
@@ -259,6 +291,8 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     // translate both into the shape OpenAI expects:
     //   - assistant with tool_calls: { role:'assistant', content, tool_calls:[{id,type:'function',function:{name,arguments}}] }
     //   - tool result: { role:'tool', tool_call_id, content }
+    // Resolve vision capability once per call (model may vary per call).
+    const vision = modelSupportsVision(params.model);
     const messages = params.messages.map((m) => {
       if (m.role === 'tool') {
         return {
@@ -299,6 +333,33 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
           role: 'assistant' as const,
           content: m.content ?? '',
           reasoning_content: m.reasoningContent,
+        };
+      }
+      // Vision: user turns may carry inline images. When the active model is
+      // vision-capable we send OpenAI content blocks (image_url data URI) —
+      // same provider key, no third-party API. Otherwise keep the text and
+      // annotate that pixels were NOT sent.
+      if (m.role === 'user' && m.images && m.images.length > 0) {
+        if (vision) {
+          return {
+            role: 'user' as const,
+            content: [
+              { type: 'text', text: m.content ?? '' },
+              ...m.images.map((img) => ({
+                type: 'image_url' as const,
+                image_url: { url: dataUriFromImage(img) },
+              })),
+            ],
+          };
+        }
+        const notes = m.images
+          .map((img) => `[Immagine allegata: ${img.alt ?? img.mime}]`)
+          .join('\n');
+        return {
+          role: 'user' as const,
+          content:
+            `${m.content ?? ''}\n\n${notes}\n\n` +
+            '(Il modello attivo non supporta input visivi: i pixel non sono stati inviati.)',
         };
       }
       return { role: m.role, content: m.content };

@@ -230,6 +230,30 @@ function pickRootComponent(): {
     void runPluginsInstall(argv).then((code) => process.exit(code));
     return { kind: "done" };
   }
+  // External-agent permission broker (OpenMausBot pattern): spawned by
+  // `claude --permission-prompt-tool "zelari-code --permission-mcp <socket>"`.
+  // Pure stdio JSON-RPC loop — must NOT mount Ink or run preflight. The
+  // dynamic import keeps the heavy TUI modules out of the child process's
+  // startup path until the flag is actually used.
+  if (argv.includes("--permission-mcp")) {
+    const i = argv.indexOf("--permission-mcp");
+    const socketPath = i >= 0 && argv[i + 1] ? argv[i + 1] : undefined;
+    if (!socketPath) {
+      // eslint-disable-next-line no-console
+      console.error("[zelari-code --permission-mcp] a socket path argument is required");
+      process.exit(1);
+    }
+    void import("./mcp/permissionCli.js")
+      .then(({ runPermissionCli }) => runPermissionCli(socketPath))
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[zelari-code --permission-mcp] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      });
+    return { kind: "done" };
+  }
   // Companion host (Android / remote). Must not use kind "done" — that
   // returns from main() and on some Windows spawn paths the process exits
   // before the async server fully roots on the event loop.
@@ -361,6 +385,8 @@ function pickRootComponent(): {
         "  --fix-budget        Set recommended ZELARI_MAX_TOOL_LOOP_HARD=180,\n" +
         "                      ZELARI_MAX_TOOL_LOOP_ITERATIONS=60, ZELARI_CONTEXT_LIMIT=400000\n" +
         "                      at User scope (prevents the agent stopping mid-task)\n" +
+        "  --permission-mcp <socket>  MCP stdio server for external agent permission prompts\n" +
+        "                      (spawned by claude --permission-prompt-tool)\n" +
         "  --skip-checks       Skip the boot-time prerequisite check\n" +
         "                      (alias for ZELARI_SKIP_PREFLIGHT=1)\n" +
         "  --no-wizard         Skip the first-run wizard\n" +

@@ -64,6 +64,7 @@ const BUILTIN_SKILL_MODULES = [
   '@zelari/core/skills/builtin/testing',
   '@zelari/core/skills/builtin/schema-loop',
   '@zelari/core/skills/builtin/computer-use-cua',
+  '@zelari/core/skills/builtin/qwen-mm-plugins',
 ] as const;
 
 let builtinsLoaded = false;

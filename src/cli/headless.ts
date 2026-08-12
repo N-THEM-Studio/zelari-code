@@ -21,7 +21,7 @@ import type { WorkPhase } from './phase.js';
 import { parsePhase } from './phase.js';
 import { parseMode } from './mode.js';
 import type { ChatMode } from './components/StatusBar.js';
-import type { AgentMessage } from '@zelari/core/harness';
+import type { AgentMessage, AgentImage } from '@zelari/core/harness';
 import { readFileSync } from 'node:fs';
 
 /** Dispatch mode for headless (mirrors TUI shift+tab modes). */
@@ -60,6 +60,8 @@ export interface HeadlessOptions {
    * @since v1.10.0
    */
   history?: AgentMessage[];
+  /** Inline images attached to this run (e.g. expanded from @img.png tags). */
+  images?: AgentImage[];
   /**
    * When true, forces a single-cycle run (ZELARI_MISSION_MAX_ITER=1) and
    * acquires a trigger lockfile. Used by cron/git-hook triggers (ADR-0014).

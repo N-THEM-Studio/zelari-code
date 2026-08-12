@@ -99,11 +99,43 @@ type PendingAttachment = {
   path?: string;
   text?: string;
   note?: string;
+  /** Inline vision block for dropped images (base64, sent as @path). */
+  image?: { mime: string; dataBase64: string };
 };
 
 function fileNativePath(f: File): string | undefined {
   const p = (f as File & { path?: string }).path;
   return typeof p === "string" && p.trim() ? p : undefined;
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      const comma = result.indexOf(",");
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function mimeFromName(name: string): string | undefined {
+  const m = /\.(png|jpe?g|gif|webp|bmp)$/i.exec(name);
+  if (!m) return undefined;
+  const ext = m[1].toLowerCase();
+  if (ext === "jpg") return "image/jpeg";
+  if (ext === "jpeg") return "image/jpeg";
+  return `image/${ext}`;
+}
+
+function isImageFile(file: File): boolean {
+  const t = (file.type || "").toLowerCase();
+  return (
+    t.startsWith("image/") ||
+    /\.(png|jpe?g|gif|webp|bmp)$/i.test(file.name)
+  );
 }
 
 function isProbablyText(file: File, head: string): boolean {
@@ -143,6 +175,18 @@ async function readFileAsAttachment(file: File): Promise<PendingAttachment> {
       note: `too large (${Math.round(file.size / 1024)} KB) — path only`,
     };
   }
+  if (isImageFile(file)) {
+    const dataBase64 = await fileToBase64(file);
+    const mime =
+      (file.type || "").toLowerCase() ||
+      mimeFromName(file.name) ||
+      "image/png";
+    return {
+      ...base,
+      text: `[Immagine: ${file.name}]`,
+      image: { mime, dataBase64 },
+    };
+  }
   try {
     const buf = await file.arrayBuffer();
     const bytes = new Uint8Array(buf);
@@ -176,6 +220,12 @@ function buildPromptWithAttachments(
   if (attachments.length === 0) return userText;
   const blocks = attachments.map((a) => {
     const label = a.path || a.name;
+    if (a.image) {
+      // Emit @path so the CLI's atMentions loader turns it into a vision
+      // content block; without a native path we only annotate the image.
+      const tag = a.path ? `@${a.path}` : "";
+      return `--- Image: ${label} (${a.image.mime}) ---\n${tag}`;
+    }
     if (a.text != null && a.text.length > 0) {
       return `--- File: ${label} ---\n${a.text}\n--- End file ---`;
     }
