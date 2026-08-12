@@ -38,6 +38,11 @@ export async function checkForDesktopUpdate(): Promise<{
     if (/not available|webview|plugin/i.test(msg)) {
       return { update: null, current };
     }
+    if (/valid release JSON|404|Not Found/i.test(msg)) {
+      throw new Error(
+        "Could not fetch latest.json from GitHub Releases. Desktop updates need signed installers on the latest release (Release Desktop workflow). The CLI still updates via npm i -g zelari-code.",
+      );
+    }
     throw e;
   }
 }

@@ -187,5 +187,10 @@ jobs:
           if gh release view "$TAG" >/dev/null 2>&1; then
             echo "GitHub Release $TAG already exists; skipping"
           else
-            gh release create "$TAG" --title "$TAG" --notes "$NOTES" --latest
+            # Do NOT mark this as GitHub "latest". Desktop auto-update polls
+            # /releases/latest/download/latest.json; a notes-only CLI release
+            # would 404 that file and break Settings → App updates until
+            # Release Desktop uploads signed artifacts. Desktop marks latest
+            # after latest.json is attached.
+            gh release create "$TAG" --title "$TAG" --notes "$NOTES" --latest=false
           fi

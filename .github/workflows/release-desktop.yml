@@ -144,3 +144,21 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: ''
+
+  # Only after every platform uploaded installers + latest.json.
+  # publish.yml creates the GitHub Release with --latest=false so a
+  # notes-only CLI release cannot 404 Desktop's updater endpoint.
+  mark-latest:
+    name: Mark release as latest
+    needs: desktop
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: gh release edit --latest
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN || github.token }}
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release edit "$TAG" --repo "${{ github.repository }}" --latest
+          echo "Marked $TAG as latest (updater: /releases/latest/download/latest.json)"
