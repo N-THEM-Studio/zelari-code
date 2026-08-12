@@ -1853,6 +1853,15 @@ struct RunTaskArgs {
     /// parallel task DAG) instead of `--task <prompt>` — bypasses `mode`.
     #[serde(default)]
     kraken_graph: bool,
+    /// When true, only plan the Kraken graph and write it to disk
+    /// (`.zelari/radio/plan-<id>.json`) without executing — the desktop
+    /// "plan" phase. Mutually exclusive with `run_plan`.
+    #[serde(default)]
+    plan_only: bool,
+    /// Execute a previously saved plan by id (`--run-plan <id>`). The desktop
+    /// "build" phase passes the id captured from the preceding plan-only run.
+    #[serde(default)]
+    run_plan: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -2002,6 +2011,8 @@ fn run_task(
     let cwd = args.cwd;
     let history = args.history;
     let kraken_graph = args.kraken_graph;
+    let plan_only = args.plan_only;
+    let run_plan = args.run_plan;
 
     thread::spawn(move || {
         let result = spawn_headless(
@@ -2017,6 +2028,8 @@ fn run_task(
             cwd.as_deref(),
             history.as_deref(),
             kraken_graph,
+            plan_only,
+            run_plan.as_deref(),
         );
 
         let (exit_code, cancelled) = match result {
@@ -2062,6 +2075,8 @@ fn spawn_headless(
     cwd: Option<&str>,
     history: Option<&str>,
     kraken_graph: bool,
+    plan_only: bool,
+    run_plan: Option<&str>,
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
 
@@ -2072,6 +2087,16 @@ fn spawn_headless(
         // side (see src/cli/headless.ts); `--mode`/`--phase` are harmless
         // to still pass, the graph path ignores them.
         cmd.arg("--kraken-graph").arg(prompt);
+        // Desktop "plan" phase: write the plan to disk and stop (no execution).
+        if plan_only {
+            cmd.arg("--plan-only");
+        }
+        // Desktop "build" phase after a plan-only run: execute the saved plan.
+        if let Some(id) = run_plan {
+            if !id.trim().is_empty() {
+                cmd.arg("--run-plan").arg(id);
+            }
+        }
     } else {
         cmd.arg("--task").arg(prompt);
     }

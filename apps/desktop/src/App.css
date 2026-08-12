@@ -7,7 +7,7 @@
   --bg-solid: #121214;
   /* Height of the frameless titlebar (mirrors `.titlebar { height: 36px }`).
      Any `position: fixed` panel that lives in the right rail — workbench
-     panel, Bennett's Razor modal backdrop — must start *below* this offset
+     panel — must start *below* this offset
      so its own close (×) button doesn't overlap the OS window's
      minimize/maximize/close controls. A click that lands on the OS close
      button instead of the panel's × closes the whole app, which is the
@@ -15,7 +15,7 @@
   --titlebar-h: 36px;
   --bg-elevated: rgba(28, 28, 32, 0.72);
   /* Backwards-compatible alias — many existing rules (workbench-panel,
-     razor-modal, weak-tip, etc.) reference --bg-elev, which used to be
+     weak-tip, etc.) reference --bg-elev, which used to be
      the canonical name. Without this alias every one of them resolves
      to `unset`, leaving the background fully transparent. Keep this
      line; remove the call sites instead. */
@@ -4622,228 +4622,6 @@ kbd {
 }
 
 /* ------------------------------------------------------------------ */
-/* Bennett's Razor explainer (desktop v1.31.x)                       */
-/*                                                                    */
-/* Inline pill next to the Kraken Graph toggle when graph mode is     */
-/* on, plus a click-to-open modal with the full paper context. The    */
-/* pill uses the same accent gradient as `.seg-btn.active` so it      */
-/* reads as "part of the graph mode" without competing for weight.    */
-/* ------------------------------------------------------------------ */
-
-.razor-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 12px 5px 10px;
-  margin-left: 4px;
-  border-radius: 99px;
-  border: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--text);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-  transition: background 0.2s, border-color 0.2s, transform 0.15s;
-  white-space: nowrap;
-  user-select: none;
-}
-
-.razor-pill:hover {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
-  border-color: color-mix(in srgb, var(--accent) 70%, transparent);
-  transform: translateY(-1px);
-}
-
-.razor-pill:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.razor-pill-icon {
-  font-size: 14px;
-  line-height: 1;
-}
-
-.razor-pill-text {
-  /* Subtle italic so the pill reads as a "concept", not a button label. */
-  font-style: italic;
-}
-
-.razor-modal-backdrop {
-  position: fixed;
-  /* Start below the frameless titlebar (same reason as .workbench-panel):
-     we don't want the dim/blur layer to cover the OS window controls,
-     and we want the modal centered in the *content* area, not in the
-     area that includes the titlebar (which would push the modal up). */
-  top: var(--titlebar-h);
-  right: 0;
-  bottom: 0;
-  left: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.55);
-  backdrop-filter: blur(2px);
-  padding: 24px;
-  animation: razor-modal-fade 0.15s ease-out;
-}
-
-@keyframes razor-modal-fade {
-  from { opacity: 0; }
-  to   { opacity: 1; }
-}
-
-.razor-modal {
-  /* The modal must be readable over the chat stream: the :root --bg-elev
-     glass (0.72 alpha, no blur) lets the chat show straight through. Pin
-     a near-opaque frost + blur here (same recipe as .sidebar). Child
-     blocks that reference var(--bg-elev) (e.g. .razor-modal-head) inherit
-     this local value, so the whole modal reads as one solid surface.
-     The modal is a flex column: the head is a fixed-height row OUTSIDE the
-     scroll area, so the × close button is always visible no matter how far
-     the body is scrolled. (A sticky head inside the scroll container broke
-     in WebView2 once backdrop-filter was added to the container — the head
-     scrolled away with the content and the modal became unclosable.) */
-  --bg-elev: rgba(18, 18, 22, 0.95);
-  background: var(--bg-elev);
-  -webkit-backdrop-filter: blur(28px) saturate(160%);
-  backdrop-filter: blur(28px) saturate(160%);
-  color: var(--text);
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  max-width: 640px;
-  width: 100%;
-  max-height: 85vh;
-  /* Clip the scrolling body to the rounded corners; the body itself
-     owns the scrollbar. */
-  overflow: hidden;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.4);
-  animation: razor-modal-pop 0.18s ease-out;
-}
-
-@keyframes razor-modal-pop {
-  from { transform: translateY(8px) scale(0.98); opacity: 0; }
-  to   { transform: translateY(0)    scale(1);    opacity: 1; }
-}
-
-.razor-modal-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 18px 22px 12px;
-  border-bottom: 1px solid var(--border);
-  /* Not sticky: the head lives above the scroll area, so the × never
-     leaves the viewport. */
-  flex-shrink: 0;
-  background: var(--bg-elev);
-  z-index: 1;
-}
-
-.razor-modal-title-wrap {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.razor-modal-icon {
-  font-size: 22px;
-  line-height: 1;
-}
-
-.razor-modal-title {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 700;
-  letter-spacing: -0.01em;
-}
-
-.razor-modal-close {
-  font-size: 20px;
-  padding: 4px 10px;
-  line-height: 1;
-}
-
-.razor-modal-body {
-  /* The scroll area: flex-1 + min-height:0 so it shrinks when the modal
-     hits max-height and scrolls instead of pushing the head away. */
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 18px 22px 20px;
-  font-size: 14px;
-  line-height: 1.55;
-  color: var(--text-secondary);
-}
-
-.razor-modal-body p,
-.razor-modal-body ul {
-  margin: 0 0 14px 0;
-}
-
-.razor-modal-body h3 {
-  margin: 20px 0 8px;
-  font-size: 13px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--text);
-}
-
-.razor-modal-body ul {
-  padding-left: 20px;
-}
-
-.razor-modal-body li {
-  margin-bottom: 6px;
-}
-
-.razor-modal-pull {
-  font-size: 15px;
-  color: var(--text);
-  padding: 12px 14px;
-  border-left: 3px solid var(--accent);
-  background: color-mix(in srgb, var(--accent) 8%, transparent);
-  border-radius: 0 6px 6px 0;
-  margin-bottom: 18px !important;
-}
-
-.razor-modal-body code {
-  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
-  font-size: 12.5px;
-  padding: 1px 5px;
-  background: var(--bg-elev-2, rgba(255, 255, 255, 0.06));
-  border-radius: 3px;
-  color: var(--text);
-}
-
-.razor-modal-foot {
-  margin-top: 22px;
-  padding-top: 14px;
-  border-top: 1px solid var(--border);
-  font-size: 12.5px;
-  color: var(--text-muted);
-}
-
-.razor-paper-cite {
-  display: block;
-}
-
-.razor-paper-link {
-  margin-left: 6px;
-  color: var(--accent);
-  text-decoration: none;
-  font-weight: 600;
-  border-bottom: 1px dotted var(--accent);
-}
-
-.razor-paper-link:hover {
-  border-bottom-style: solid;
-}
-
 /* ------------------------------------------------------------------ */
 /* Weakness badge (desktop v1.31.x)                                  */
 /*                                                                    */
@@ -5043,8 +4821,7 @@ kbd {
   bottom: 0;
   width: 480px;
   max-width: 100vw;
-  /* Above .razor-modal-backdrop (1000) so the panel is always interactive,
-     even when a Bennett's Razor modal is open. `isolation: isolate` opens a
+  /* `isolation: isolate` opens a
      fresh stacking context so the fixed positioning is anchored to the
      viewport even if an ancestor ever gains a transform / filter /
      backdrop-filter (which would otherwise re-anchor `position: fixed`
@@ -5077,8 +4854,7 @@ kbd {
 
 /* Light theme: same frost recipe, near-white fill (mirrors the light
    --bg-elevated, bumped to ~opaque so the chat never shows through). */
-.app[data-theme="light"] .workbench-panel,
-.app[data-theme="light"] .razor-modal {
+.app[data-theme="light"] .workbench-panel {
   --bg-elev: rgba(250, 250, 252, 0.96);
 }
 
@@ -5296,6 +5072,153 @@ kbd {
 .workbench-tab:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
+}
+
+/* Workbench panel: Plan + Tasks tabs (plan→build wiring) */
+
+.workbench-phase-badge {
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--text);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.workbench-empty {
+  padding: 22px 18px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+}
+
+.workbench-empty code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  padding: 1px 5px;
+  background: var(--bg-elev-2, rgba(255, 255, 255, 0.06));
+  border-radius: 3px;
+  color: var(--text);
+}
+
+.plan-view {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.plan-view-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  overflow-y: auto;
+  max-height: 180px;
+  flex-shrink: 0;
+}
+
+.plan-view-item {
+  appearance: none;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  padding: 8px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  cursor: pointer;
+  color: var(--text);
+  font-size: 12.5px;
+  text-align: left;
+}
+
+.plan-view-item:hover {
+  background: var(--surface-hover);
+}
+
+.plan-view-item.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.plan-view-item.is-malformed {
+  color: var(--text-muted);
+}
+
+.plan-view-id {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11.5px;
+}
+
+.plan-view-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.plan-view-nodes {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.plan-view-nodes-head,
+.plan-view-node {
+  display: grid;
+  grid-template-columns: 1.1fr 0.8fr 1.4fr 0.9fr;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
+.plan-view-nodes-head {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--border);
+}
+
+.plan-view-nodes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.plan-view-node {
+  border-bottom: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.plan-view-node-id {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-view-node-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.plan-view-node-deps {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
 }
 
 /* KrakenGraphVisualizer — body, node grid, side detail card */

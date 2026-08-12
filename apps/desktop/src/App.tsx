@@ -26,7 +26,7 @@ import { CopyButton } from "./components/CopyButton";
 import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
 import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
-import { BennettsRazorExplainer } from "./components/BennettsRazorExplainer";
+
 import { WorkbenchPanel } from "./components/WorkbenchPanel";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
@@ -422,6 +422,9 @@ export default function App() {
   const [liveToolLabel, setLiveToolLabel] = useState<string | null>(null);
   /** Session todos mirrored from todo_write / todo_read tool results. */
   const [sessionTodos, setSessionTodos] = useState<DesktopTodo[]>([]);
+  /** Plan id captured from the last `--plan-only` run; the next "build" phase
+   * in Kraken graph mode executes it via `--run-plan`. */
+  const [krakenPlanId, setKrakenPlanId] = useState<string | null>(null);
   /**
    * After assistant_text_loop, offer a one-click tool-only resume prompt.
    * Cleared when the user sends anything or starts a new chat.
@@ -707,6 +710,10 @@ export default function App() {
               ? (ev as { message: string }).message
               : "";
           if (msg) setStatusLine(msg.replace(/^\[.*?\]\s*/, "").slice(0, 140));
+          // Capture the plan id emitted by `--plan-only` so the next build
+          // phase can re-run it via `--run-plan`.
+          const planIdMatch = /plan_only_id=([0-9a-f-]+)/i.exec(msg);
+          if (planIdMatch) setKrakenPlanId(planIdMatch[1]);
           // Do not surface routine headless bootstrap lines in the chat UI
           // (mode/phase/provider line, MCP registration count, etc.).
           const hideFromChat =
@@ -1611,6 +1618,14 @@ export default function App() {
       const historyForRun =
         fromChat.length > 0 ? fromChat : fromSnap.slice(-16);
 
+      // Kraken graph plan→build wiring: the plan phase writes the plan to
+      // disk (`--plan-only`) and captures its id; the build phase re-runs it
+      // (`--run-plan`). Non-graph modes ignore these flags on the CLI side.
+      const planOnly = krakenGraph && phase === "plan";
+      const runPlan =
+        krakenGraph && phase === "build" ? (krakenPlanId ?? undefined) : undefined;
+      if (planOnly) setKrakenPlanId(null);
+
       await runTask({
         prompt,
         mode,
@@ -1622,6 +1637,8 @@ export default function App() {
         // context (answers "procedi" / "sì" instead of amnesia).
         history: historyForRun,
         krakenGraph: krakenGraph || undefined,
+        planOnly: planOnly || undefined,
+        runPlan,
       });
     } catch (e) {
       setRunning(false);
@@ -2074,7 +2091,7 @@ export default function App() {
               disabled={running}
               onChange={setKrakenGraph}
             />
-            <BennettsRazorExplainer visible={krakenGraph} />
+
             <button
               type="button"
               className={`btn-ghost workbench-toggle${workbenchOpen ? " active" : ""}`}
@@ -2529,6 +2546,9 @@ export default function App() {
         cwd={workdir}
         open={workbenchOpen}
         onClose={() => setWorkbenchOpen(false)}
+        phase={phase}
+        planId={krakenPlanId}
+        todos={sessionTodos}
       />
       </div>
       </div>

@@ -295,7 +295,15 @@ async function runHeadlessKrakenGraph(
       const planDir = path.join(cwd, '.zelari', 'radio');
       const planPath = path.join(planDir, `plan-${planId}.json`);
       await fs.mkdir(planDir, { recursive: true });
-      await fs.writeFile(planPath, JSON.stringify(graph, null, 2), 'utf8');
+      await fs.writeFile(
+        planPath,
+        JSON.stringify(
+          { id: graph.id, nodes: [...graph.nodes.values()] },
+          null,
+          2,
+        ),
+        'utf8',
+      );
       log(`plan-only: wrote ${planPath} (${graph.nodes.size} nodes)`);
       log(
         `re-run with ZELARI_KRAKEN_RUN_PLAN=${planId} to execute (or --run-plan <id> when the desktop wiring is in place)`,

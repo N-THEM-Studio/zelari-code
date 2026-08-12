@@ -111,6 +111,10 @@ export interface RunTaskArgs {
    * bypasses `mode` entirely. @since Kraken graph engine F6
    */
   krakenGraph?: boolean;
+  /** Kraken graph "plan" phase: write the plan to disk without executing. */
+  planOnly?: boolean;
+  /** Kraken graph "build" phase after plan: execute the saved plan by id. */
+  runPlan?: string;
 }
 
 /**
