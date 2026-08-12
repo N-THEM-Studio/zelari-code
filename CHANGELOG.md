@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.32.0] - 2026-08-12
+
+### Added
+- **Folder trust for project-scoped execution** — project MCP servers and lifecycle hooks now load only for trusted folders. Trust can be managed with `/trust`, `/trust remove`, or `zelari-code --trust`; the persisted store lives at `~/.zelari-code/trust.json`, with `ZELARI_FOLDER_TRUST` overrides for CI and lockdown. User-global MCP and hooks remain active.
+- **Lifecycle hooks** — `PreToolUse`, `PostToolUse`, `SessionStart`, and `SessionEnd` hooks can run local commands or HTTP endpoints. Hooks are fail-open on crashes, timeouts, and invalid responses; only an explicit deny decision blocks a tool call.
+- **Unified environment inspection** — `zelari-code --inspect [--json]` reports project configuration sources, skills, MCP status, lifecycle hooks, plugins, AGENTS.md, mode/phase, and folder trust.
+
+### Changed
+- **MCP startup security** — an untrusted project `.zelari/mcp.json` is ignored with an actionable warning instead of starting project-provided processes automatically.
+
+### Tests
+- Added lifecycle-hook coverage for allow, explicit deny, invalid output, process failure, timeout, HTTP hooks, matching, and execution order; MCP integration tests now cover the folder-trust gate.
+
 ## [1.31.1] - 2026-08-12
 
 ### Fixed
