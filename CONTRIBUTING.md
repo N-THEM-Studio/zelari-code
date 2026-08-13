@@ -8,7 +8,8 @@ Thanks for your interest in contributing. This monorepo ships:
 |---------|------|------|
 | `zelari-code` | repo root / `src/cli` | CLI + Ink TUI + headless entry |
 | `@zelari/core` | `packages/core` | MIT library: `AgentHarness`, council, skills, tools |
-| `@zelari/desktop` | `apps/desktop` | Optional Tauri shell (spawns CLI `--headless`) |
+| `@zelari/desktop` | `apps/desktop` | Optional Tauri 2 shell (spawns CLI `--headless`) |
+| companion | `apps/companion-android` | Thin Android client for `zelari-code serve` |
 
 ## Prerequisites
 
@@ -62,12 +63,13 @@ Only the package `exports` map is public. See `packages/core/package.json` and [
 ### Layout quick map
 
 ```
-src/cli/                 # TUI, providers, registry, workspace, headless
-packages/core/src/       # AgentHarness, council, roles, skills
-apps/desktop/            # Tauri UI
-tests/unit/              # Vitest
-docs/                    # User guide (IT), tools map, ADRs
-docs/plans/              # Historical design notes (may be outdated)
+src/cli/                   # TUI, providers, registry, workspace, headless, serve
+packages/core/src/         # AgentHarness, council, roles, 26 skills
+apps/desktop/              # Tauri 2 UI
+apps/companion-android/    # Android thin client
+tests/unit/                # Vitest
+docs/                      # User guide (IT), tools map, ADRs
+docs/plans/                # Historical design notes (may be outdated)
 ```
 
 ## Pull requests
@@ -90,7 +92,7 @@ docs/plans/              # Historical design notes (may be outdated)
 | [SECURITY.md](./SECURITY.md) | Vulnerability reporting |
 | [CHANGELOG.md](./CHANGELOG.md) | Release notes |
 
-`HANDOFF.md` and `docs/plans/*` are **historical** and not required reading for new contributors.
+`HANDOFF.md`, `HANDOFF-kraken.md`, `HANDOFF-v0.10.0.md` and `docs/plans/*` are **historical / superseded** and not required reading for new contributors. Current product state (1.34.x): `CHANGELOG.md` + `docs/GUIDA.md`.
 
 ## Code of conduct
 

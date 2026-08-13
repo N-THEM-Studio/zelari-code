@@ -42,7 +42,7 @@ By **[Anathema Studio](https://anathema-studio.com/)** ·
 
 📖 **[Full user guide (IT)](./docs/GUIDA.md)** — install, TUI, slash commands, council, skills, workspace, headless, MCP, Desktop.
 
-**Zelari Code** is an open-source **AI council coding agent** for the terminal: a multi-agent pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero), a single-agent mode for focused work, and optional **zelari** missions that loop until a deliverable is done. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok with OAuth, GLM/Z.AI, MiniMax, DeepSeek). The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (MIT).
+**Zelari Code** is an open-source **AI council coding agent** for the terminal: a multi-agent pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero), a **kraken** super-agent (default; aliases `agent`/`single`) that can spawn explore/general/verify tentacles, and optional **zelari** missions that loop until a deliverable is done. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (MIT). Current line: **1.34.0**.
 
 ```bash
 npm install -g zelari-code
@@ -205,11 +205,11 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 | `/provider`, `/provider <id>` | Show / switch LLM provider |
 | `/provider custom <url>` | Self-hosted endpoint (Ollama, LM Studio, …) |
 | `/model <name>`, `/models` | Set model / list discovered models |
-| `/skill <id> [input]` | Invoke a coding skill (23 built-in + SKILL.md) |
+| `/skill <id> [input]` | Invoke a coding skill (26 built-in + SKILL.md) |
 | `/skill-stats [id]` | Skill invocation stats |
 | `/skill-compare <id1> <id2>` | Compare two skills' stats |
 | `/council <input>` | Run the 6-member council pipeline |
-| `/zelari <input>` | Run an autonomous mission — multi-run council until the MVP slice is complete |
+| `/zelari <input>` | Run an autonomous mission — design@council then build@kraken until the MVP slice is complete |
 | `/council-feedback <id> <1-5>` | Rate a council member |
 | `/promote-member <id>` | Promote a council member to a skill |
 | `/sessions`, `/resume <id>`, `/new` | Session management |
@@ -219,13 +219,16 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 | `/steer <text>`, `/steer --interrupt <text>` | Queue follow-up during a run |
 | `/workspace …` | `.zelari/` artifacts + `AGENTS.MD` |
 | `/update`, `/update --yes` | Check / install CLI updates |
-| `/mode [agent\|council\|zelari]` | Switch dispatch mode (shift+tab fallback) |
+| `/mode [kraken\|council\|zelari]` | Switch dispatch mode (`agent`/`single` = kraken aliases) |
+| `/kraken [sessionId]` | Tentacle radio; `/kraken graph <goal>` runs a parallel DAG |
 | `/plan [goal]`, `/build [goal]` | Work phase: explore/design only vs implement (orthogonal to mode) |
+| `/trust [path]`, `/trust remove [path]` | Folder trust for project MCP + lifecycle hooks |
+| `/integrations` | MCP presets (`composio`, `qwen-mm-plugins`, `cua`) |
 | `/checkpoint [label]` | Snapshot the working tree (rollback target) |
 | `/rollback [id\|latest]` | Restore a checkpoint (revert / restore files atomically) |
 | `/index` | Build / refresh the semantic search index |
 
-**TUI:** `shift+tab` cycles **kraken** → **council** → **zelari** mode for free-form prompts. Use `/mode` when the terminal captures shift+tab. Work **phase** is orthogonal: `/plan` (no project writes) vs `/build` (full tools) — same axes as Desktop Mode / Phase bars.
+**TUI:** `shift+tab` cycles **kraken** → **council** → **zelari** for free-form prompts (`agent` is a kraken alias). Use `/mode` when the terminal captures shift+tab. Work **phase** is orthogonal: `/plan` (no project writes) vs `/build` (full tools) — same axes as Desktop Mode / Phase bars.
 
 ## Headless Mode
 
@@ -256,13 +259,14 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 ## Features
 
 - 🤖 **Multi-agent council** — 6 roles (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with feedback loops and member promotion
-- ⚡ **Zelari-mode** — autonomous multi-run missions: a free-form prompt is turned into a structured mission brief, then the council loops (design → implementation) until the MVP slice's `completion.ok` is green or the iteration budget runs out
+- 🐙 **Kraken super-agent** — default mode (aliases `agent`/`single`): lead that spawns `task` tentacles (`explore` / `general` / `verify`), optional git worktrees, and **Kraken Graph** (`/kraken graph`) for a parallel DAG
+- ⚡ **Zelari-mode** — autonomous multi-run missions: a free-form prompt becomes a mission brief, then **design@council → build@kraken** until the MVP slice's `completion.ok` is green or the iteration budget runs out
 - 🧠 **Project memory** — zero-dependency file-based recall (`.zelari/memory/`), fed into the council as RAG context between mission slices (opt-out with `ZELARI_MEMORY=0`)
-- ⇧⇥ **Agent/council/zelari mode switch** — `shift+tab` cycles free-form prompts between the single agent, the full council pipeline, and an autonomous mission (mode shown in the status line)
+- ⇧⇥ **Kraken/council/zelari mode switch** — `shift+tab` cycles free-form prompts between the kraken lead, the full council pipeline, and an autonomous mission (mode shown in the status line)
 - 🎨 **Rich TUI** — Ink + React: native-scrollback chat stream, input bar with status line below it (mode · provider · model · session · cwd · execution timer)
 - 🗂️ **Live git sidebar** — right-hand panel with working-tree changes (`+added`/`-removed` per file, refreshed every 4s; auto-hidden on narrow terminals)
 - ⏱️ **Execution timer** — elapsed time of the in-flight turn in the status line (`⏱ 12s`), frozen as `last 34s` when the run completes
-- 🧠 **Provider-agnostic** — OpenAI-compatible APIs (OpenAI, Together, Groq, custom), xAI Grok with OAuth refresh, GLM/Z.AI
+- 🧠 **Provider-agnostic** — OpenAI-compatible APIs (OpenAI, Together, Groq, custom), xAI Grok / ChatGPT / Anthropic OAuth, GLM/Z.AI, MiniMax, DeepSeek; optional `ZELARI_LOCAL_CLI=claude`
 - 🛠️ **Built-in tools** — filesystem (read/write/edit), shell (bash), search (grep), web fetch/search
 - 🧠 **LSP code intelligence** (`lsp_*` tools) — go-to-definition, find references, hover type, document symbols, rename symbol via real language servers (tsserver, pyright, …)
 - 🌲 **AST structural tools** (`ast_*` tools) — symbol outline + find-by-name via the TypeScript compiler API, no language server needed
@@ -271,35 +275,37 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 🔁 **Post-edit diagnostics loop** — after every `edit_file`/`write_file` the harness runs project lint/compile (`eslint`, `ruff`, LSP-pluggable) and surfaces the errors to the model in the same turn (opt out: `ZELARI_DIAGNOSTICS=0`)
 - 💾 **Prompt-cache accounting** — tracks prompt-cache hit rate per provider/model and surfaces it in the status bar (`cache 73%`) so you can see when a session is amortizing its prefix
 - 🧷 **Workspace checkpoints** — `/checkpoint [label]` + `/rollback [id|latest]` use git plumbing to snapshot the working tree (tracked + untracked) and restore it atomically; every zelari-mode mission takes one before starting
-- 🤝 **Sub-agent delegation** (`task` tool) — delegate a focused read-only research sub-task to an isolated sub-agent with its own fresh context, max 12 tool turns, no write/bash/recursion
-- 📚 **23 coding skills** (+ user `SKILL.md` from `.zelari/skills/`, `.claude/skills/`, …)
+- 🤝 **Sub-agent delegation** (`task` tool) — isolated tentacles: `explore` (read-only), `general` (bounded writes), `verify` (tests/checks); optional `scope[]` + `acceptance[]`; no nested `task`
+- 📚 **26 coding skills** (+ user `SKILL.md` from `.zelari/skills/`, `.claude/skills/`, …) including `schema-loop`, `computer-use-cua`, `qwen-mm-plugins-install-setup`
 - 🔄 **Cross-provider failover** — automatic retry with provider swap on transient errors
 - 📊 **Metrics + skill history** — fire-and-forget logging to `~/.tmp/zelari-code/`
 - 🗜️ **Session management** — JSONL transcripts, resume across restarts, compaction
 - 🌿 **Branch isolation** — session snapshots per branch
 - 🔌 **MCP** — external MCP servers via `.zelari/mcp.json` or `~/.zelari-code/mcp.json`; Desktop **Extensions** store for one-click install
 - 🔐 **SSH targets** — configure hosts for deploy/monitor (password, agent, or key); tools `ssh_status` / `ssh_run` with allowlist; `ZELARI_SSH=0` kill switch
-- 🖥️ **Zelari Desktop** — Tauri shell with chat UI, project tree, Settings, dual updates (app vs npm CLI), multi-turn history, optional overlay HUD
+- 🖥️ **Zelari Desktop** — Tauri 2 shell with chat UI, project tree, Settings (OAuth Sign in/Refresh/Sign out), Workbench Plan/Tasks, dual updates (app vs npm CLI), multi-turn history, optional overlay HUD
 - 📱 **Companion host + Android** — `zelari-code serve` (SSE over Tailscale/LAN) + Settings → Start companion serve; MVP app in `apps/companion-android/`
 - 🧩 **Skills store (Desktop)** — create/remove user & project `SKILL.md`; import skill from URL with the selected model; `/skills` picker in TUI
 - 📎 **@-tag paths** — tag workspace files/folders in Desktop composer and CLI prompts
-- ◇◆ **Plan / build phase** — `/plan` explores without project writes; `/build` implements with full tools (independent of agent/council/zelari mode)
+- ◇◆ **Plan / build phase** — `/plan` explores without project writes; `/build` implements with full tools (independent of kraken/council/zelari mode)
+- 🛡️ **Folder trust + lifecycle hooks** — project MCP/hooks load only for trusted folders (`/trust`, `zelari-code --inspect`); hooks are fail-open
+- 👁️ **Native vision** — `@image.jpg` (and Desktop drop-to-attach) inlines pixels to vision-capable models; no third-party vision API
 - 🆕 **Self-update** — `/update` slash command + silent registry check on startup
 
 ## Architecture
 
 ```
-zelari-code (CLI, MIT)
-├── src/cli/                  # Ink TUI, provider config, workspace, wizard, MCP
+zelari-code (CLI, MIT)  — v1.34.0
+├── src/cli/                  # Ink TUI, providers, workspace, wizard, MCP, SSH, serve
 │   ├── components/           # ChatStream, InputBar, Sidebar, StatusBar, …
-│   ├── slashHandlers/        # /provider, /workspace, /update, …
+│   ├── slashHandlers/        # /provider, /workspace, /kraken, /trust, …
 │   └── workspace/            # .zelari/ persistence + AGENTS.MD curation
-└── packages/core/            # @zelari/core (MIT, npm)
-    ├── core/                 # AgentHarness — provider-neutral agent loop
-    ├── agents/               # Council API, roles, 23 skills, tool schemas
-    ├── harness/tools/        # Tool registry + filesystem/shell/search/web
-    ├── events/               # BrainEvent contract
-    └── council/              # Run mode, tier banners
+├── packages/core/            # @zelari/core (MIT, npm)
+│   ├── core/                 # AgentHarness — provider-neutral agent loop
+│   ├── agents/               # Council API, roles, 26 skills, tool schemas
+│   └── council/              # Run mode, tier banners
+├── apps/desktop/             # Optional Tauri 2 shell (spawns CLI --headless)
+└── apps/companion-android/   # Thin client for `zelari-code serve`
 ```
 
 `AgentHarness` takes (model, provider, messages, tools) + a streaming function and yields `AsyncIterable<BrainEvent>`. Mixed tool batches run **segmented**: contiguous read-only calls in parallel, write/execute tools as serial barriers (opt out: `ZELARI_PARALLEL_TOOLS=0`). See [MIGRATION.md](./MIGRATION.md) for the package boundary.
@@ -313,6 +319,9 @@ zelari-code (CLI, MIT)
 | `OPENAI_BASE_URL` | Custom OpenAI-compatible endpoint |
 | `GLM_API_KEY` | GLM/Z.AI API key |
 | `GROK_API_KEY` | xAI Grok API key (alternative to OAuth) |
+| `CHATGPT_API_KEY` | ChatGPT API key (optional if using `/login chatgpt` OAuth) |
+| `ANTHROPIC_API_KEY` | Anthropic API key (optional if using `/login anthropic` OAuth) |
+| `ZELARI_LOCAL_CLI` | Drive the harness via an external CLI (`claude` stream-json) |
 | `DEEPSEEK_API_KEY` | DeepSeek API key (models auto-discovered; default `deepseek-v4-pro`) |
 | `MINIMAX_API_KEY` | MiniMax API key |
 | `ANATHEMA_DEV=1` | Disable silent update check on startup |
@@ -346,6 +355,11 @@ zelari-code (CLI, MIT)
 | `ZELARI_MAX_TOOL_LOOP_HARD` | Hard ceiling on tool-loop iterations |
 | `ZELARI_PROVIDER_TIMEOUT_MS` | Hard timeout on provider HTTP (default 5 min) |
 | `ZELARI_MISSION_MAX_STALL` | Zelari-mode: consecutive zero-write impl slices before stall |
+| `ZELARI_KRAKEN_WORKTREE=1` | Isolate `task` general tentacles in git worktrees |
+| `ZELARI_KRAKEN_GRAPH=0` | Disable Kraken Graph engine |
+| `ZELARI_FOLDER_TRUST` | `1` trust all / `0` lockdown / `<path>` trust one folder |
+| `ZELARI_VISION=0` | Disable native image inlining |
+| `ZELARI_SCHEMA_LOOP=0` | Disable world-model tools (`run_backtest`, …) |
 
 See **[docs/GUIDA.md](./docs/GUIDA.md#variabili-dambiente)** for the full list.
 
@@ -357,11 +371,16 @@ The CLI persists council output (decisions, risks, docs, plan, reviews) into a *
 
 ```
 .zelari/                      # auto-gitignored, per-project
-├── plan.md                   # phases / tasks / milestones (Markdown + YAML frontmatter)
+├── plan.md / plan.json       # phases / tasks / milestones
 ├── risks.md                  # risk register (live, ordered by severity)
-├── decisions/                # ADRs (Architecture Decision Records) — 001-<slug>.md
+├── decisions/                # ADRs — 001-<slug>.md
 ├── reviews/                  # Minosse verdict per council run
-└── docs/                     # doc drafts produced by the council
+├── docs/                     # doc drafts produced by the council
+├── memory/                   # file-based project memory (zelari missions)
+├── radio/                    # Kraken tentacle progress bus
+├── kraken/                   # last-graph.json (DAG resume)
+├── world/                    # schema-loop hypothesis / checks / timeline
+└── hooks/                    # project lifecycle hooks (trusted folders only)
 AGENTS.MD                     # committed at project root, auto-curated from .zelari/
 ```
 

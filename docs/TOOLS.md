@@ -1,4 +1,4 @@
-# Zelari Code — Tool & Skill Map (≥ 1.14)
+# Zelari Code — Tool & Skill Map (≥ 1.34)
 
 Mappa di tool, skill e sorgenti di estensione. Allineata al registry CLI
 (`src/cli/toolRegistry.ts`) e agli stub workspace.
@@ -16,7 +16,8 @@ Prodotto: [Anathema Studio](https://anathema-studio.com/) · CLI MIT.
 | `show_diff` / `apply_diff` | read/write | diff preview + patch |
 | `fetch_url` | network | http(s) only, HTML→testo, timeout + char cap |
 | `web_search` | network | DuckDuckGo HTML; `TAVILY_API_KEY` per Tavily |
-| `task` | read (sub-agent) | sub-agente isolato, registry read-only, no ricorsione |
+| `task` | read / write (`general`) | tentacolo isolato: `explore` (RO), `general` (write bounded), `verify`; no ricorsione |
+| `ask_user` | — | una domanda strutturata (scelte) quando un fatto manca |
 | `update_world_hypothesis` | write | `.zelari/world/hypothesis.md` (Schema-style notes) |
 | `set_world_checks` | write | `.zelari/world/checks.json` |
 | `run_backtest` | execute | certifica i check; non claim-done se red |
@@ -61,7 +62,7 @@ Alias: `searchRAG` → `searchDocuments` (via registry “Did you mean”).
 
 ## Plan phase vs build phase
 
-Ortogonale a mode `agent` | `council` | `zelari` (`/plan`, `/build`, `--phase`).
+Ortogonale a mode `kraken` | `council` | `zelari` (`/plan`, `/build`, `--phase`; `agent` = alias).
 
 | Phase | Comportamento registry |
 |-------|------------------------|
@@ -176,7 +177,8 @@ machine-readable con `schemaVersion` stabile per Desktop/script.
 
 ## Skills
 
-- Catalogo knowledge + coding skills in `@zelari/core` (`systemPromptFragment` + `requiredTools`)
+- Catalogo: **26** skill builtin in `@zelari/core` (`systemPromptFragment` + `requiredTools`)
+- Extra rispetto al set originale: `schema-loop`, `computer-use-cua`, `qwen-mm-plugins-install-setup`
 - User skills: `SKILL.md` sotto `.zelari/skills/`, `.claude/skills/`, …
 - Invocazione: `/skill <id>`; master switch via config `enabledSkills` / `enabledTools`
 

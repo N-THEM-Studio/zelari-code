@@ -1,8 +1,13 @@
-# Migration guide — zelari-code v0.5.0
+# Migration guide — `@zelari/core` import paths
 
-This guide covers the **only** breaking change in v0.5.0: the move
+> Current product line: **zelari-code / `@zelari/core` 1.34.x**.  
+> This file is **only** for library consumers who imported internal
+> `src/...` paths before v0.5.0. CLI users can ignore it.
+
+This guide covers the breaking change in v0.5.0: the move
 from internal `src/...` paths to the published **`@zelari/core`**
-package.
+package. Later minors (through 1.34) are additive on the public
+`exports` map — see `packages/core/package.json`.
 
 If you only use `zelari-code` as a CLI (no `import` statements in your
 own code), nothing changes for you — just run `zelari-code` as before.

@@ -116,7 +116,7 @@ npm run build
 
 | Control | Values | CLI flag |
 |---------|--------|----------|
-| **Mode** | Agent · Council · Zelari | `--mode agent\|council\|zelari` |
+| **Mode** | Kraken · Council · Zelari | `--mode kraken\|council\|zelari` (`agent` = alias) |
 | **Phase** | Plan · Build | `--phase plan\|build` |
 | **Provider / model** | from Settings / bar | `--provider` / `--model` |
 | **Open Folder** | workdir for this window | CLI `current_dir` |
@@ -140,6 +140,12 @@ Replies: light structured view (headings, lists, tables, code); tool calls as **
 ## Project panel
 
 **Files | Git** beside the chat — lazy directory tree under the open folder (Tauri `list_dir`).
+
+## Workbench (v1.33+)
+
+Tabs **Plan** and **Tasks**: with a Kraken graph active, Plan runs the CLI `--plan-only` and Build executes `--run-plan <id>`. Tasks shows the live session todo list.
+
+Provider Settings also expose **Sign in / Refresh token / Sign out** for Grok, ChatGPT, and Anthropic OAuth (v1.34).
 
 ## MCP Extensions
 
@@ -189,7 +195,7 @@ Public key is embedded in `src-tauri/tauri.conf.json` → `plugins.updater.pubke
 ## Non-goals
 
 - Full rewrite of `@zelari/core` in Rust
-- Computer-use / OS input injection (planned as opt-in later)
+- Replacing computer-use: Cua Driver is an **opt-in MCP** (`--set-mcp-preset cua`), not vendored in the Desktop binary
 - Replacing the Ink TUI CLI
 - Interactive full SSH terminal (OpenSSH tools + config only)
 

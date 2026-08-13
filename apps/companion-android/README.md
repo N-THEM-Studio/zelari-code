@@ -12,7 +12,7 @@ Phone (this app)  --Tailscale-->  PC: zelari-code serve  -->  headless agent
 
 - Connect with host URL + bearer token
 - Project picker (host allowlist)
-- Mode: agent / council / zelari
+- Mode: kraken / council / zelari (`agent` accepted as alias)
 - Phase: plan / build
 - Multi-turn chat + SSE event stream
 - Cancel active run
@@ -22,7 +22,7 @@ Phone (this app)  --Tailscale-->  PC: zelari-code serve  -->  headless agent
 
 | Piece | Notes |
 |-------|--------|
-| PC | `zelari-code` built, Tailscale up |
+| PC | `zelari-code` **≥ 1.25** (`serve` subcommand), Tailscale up |
 | Phone | Same Tailscale tailnet |
 | Android Studio | Ladybug+ / SDK 35, JDK 17+ |
 

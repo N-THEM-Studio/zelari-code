@@ -55,8 +55,11 @@ fix release when appropriate.
 - API keys live under `~/.tmp/zelari-code/` (and related env overrides) — never
   commit them
 - SSH secrets: `~/.zelari-code/ssh-secrets.json` (never paste into chat)
-- Kill switches: `ZELARI_SSH=0`, `ZELARI_MCP=0`, `ZELARI_BROWSER=0`, etc.
+- Kill switches: `ZELARI_SSH=0`, `ZELARI_MCP=0`, `ZELARI_BROWSER=0`, `ZELARI_FOLDER_TRUST=0`, etc.
 - Plan phase (`/plan` or `--phase plan`) blocks project-mutating tools
+- **Folder trust** (`/trust`, `~/.zelari-code/trust.json`): project-scoped MCP and lifecycle hooks load only for trusted folders. User-global MCP/hooks stay active. Untrusted `.zelari/mcp.json` is ignored.
+- Lifecycle hooks are **fail-open**: only an explicit JSON `deny` blocks a tool.
+- Companion `zelari-code serve` binds a LAN/Tailscale token (`~/.zelari-code/companion.token`) — do not expose `0.0.0.0` on the public internet.
 
 ## Disclosure preference
 

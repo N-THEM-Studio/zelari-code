@@ -1,4 +1,21 @@
-# HANDOFF — Kraken super-agent (WIP su main)
+# HANDOFF — Kraken super-agent
+
+> **📚 Historical / superseded (2026-08).** Snapshot taken while the tree was still **1.25.0**.  
+> Current product: **zelari-code 1.34.0**. Do **not** use the gap table below as a backlog.
+>
+> Already shipped after this note:
+> - **G1** live tentacle UI — Desktop Workbench Plan/Tasks (1.33)
+> - **G2** worktree auto-merge — `ZELARI_KRAKEN_WORKTREE_AUTO_MERGE` (default on, 1.26–1.28)
+> - **G5** release bump — 1.26 through **1.34.0**
+> - **G6** P0 safety — folder trust, lifecycle hooks, `--inspect` (**1.32.0**)
+> - Kraken Graph DAG, radio, model routing — 1.26–1.28
+>
+> Source of truth: [CHANGELOG.md](./CHANGELOG.md), [docs/GUIDA.md](./docs/GUIDA.md#kraken-super-agent--tentacoli-e-env).
+
+---
+
+> Original snapshot (kept for history):
+
 
 > Snapshot post-push del lavoro **Kraken** (rename `agent` → `kraken` + tentacoli).
 > Non è una release versionata: `package.json` resta **1.25.0**; le note vivono in `CHANGELOG` → `[Unreleased]`.

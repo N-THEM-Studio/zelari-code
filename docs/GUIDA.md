@@ -1,7 +1,7 @@
 # Zelari Code — Guida all'uso
 
-> **Versione documento:** 1.15.0  
-> CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri), council a 6 ruoli, slash commands, MCP, SSH e provider LLM agnostici.  
+> **Versione documento:** 1.34.0  
+> CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri 2), council a 6 ruoli, super-agent **kraken**, missioni **zelari**, slash commands, MCP, SSH e provider LLM agnostici (OAuth Grok / ChatGPT / Anthropic).  
 > Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **MIT**.
 
 ---
@@ -13,7 +13,7 @@
 3. [Installazione](#installazione)
 4. [Primo avvio e wizard](#primo-avvio-e-wizard)
 5. [Interfaccia TUI](#interfaccia-tui)
-6. [Modalità agent, council e zelari](#modalità-agent-e-council)
+6. [Modalità kraken, council e zelari](#modalità-agent-e-council)
 7. [Comandi da terminale (flags)](#comandi-da-terminale-flags)
 8. [Modalità headless (CI/script)](#modalità-headless-ciscript)
 9. [Zelari Desktop](#zelari-desktop)
@@ -26,7 +26,7 @@
 16. [SSH (deploy / monitor)](#ssh-deploy--monitor)
 17. [Sessioni e branch](#sessioni-e-branch)
 18. [Tool disponibili](#tool-disponibili)
-19. [Capability avanzate e novità 1.12–1.14](#capability-avanzate-e-novità-112114)
+19. [Capability avanzate e novità 1.26–1.34](#capability-avanzate-e-novità-112114)
 20. [File di configurazione](#file-di-configurazione)
 21. [Variabili d'ambiente](#variabili-dambiente)
 22. [Self-update](#self-update)
@@ -40,11 +40,12 @@
 **Zelari Code** è un agente di coding da terminale open source MIT di **[Anathema Studio](https://anathema-studio.com/)**. Pagina prodotto: [anathema-studio.com/zelari-code](https://anathema-studio.com/zelari-code). Offre:
 
 - Una **TUI** ricca con scrollback nativo, sidebar git e timer di esecuzione
-- Un **agente singolo** con tool filesystem, shell, ricerca e web
+- Un super-agent **kraken** (default; alias `agent`/`single`) con tentacoli `task` e **Kraken Graph**
 - Un **council** a 6 membri (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero)
-- **23 skill** builtin + skill personalizzate in formato `SKILL.md`
+- Missioni autonome **zelari** (design@council → build@kraken)
+- **26 skill** builtin + skill personalizzate in formato `SKILL.md`
 - Persistenza progetto in **`.zelari/`** e auto-curation di **`AGENTS.MD`**
-- Supporto **MCP**, **SSH targets**, **headless mode**, **Zelari Desktop** e **self-update**
+- Supporto **MCP**, **SSH targets**, **folder trust**, **lifecycle hooks**, **headless**, **Zelari Desktop**, **Companion Android** e **self-update**
 
 Il runtime condiviso è pubblicato come package npm [`@zelari/core`](https://www.npmjs.com/package/@zelari/core) (MIT).
 
@@ -57,7 +58,7 @@ Il runtime condiviso è pubblicato come package npm [`@zelari/core`](https://www
 | **Node.js** | **≥ 20 LTS** | Testato su 20.x e 22.x. Versioni precedenti mancano di `fetch` stabile, `AbortController.timeout`, e `node:test`. |
 | **npm** | **≥ 10** | Fornito con Node 20 LTS; testato con npm 10 e 11. |
 | **OS** | Linux, macOS, Windows 10/11 | Windows richiede Git Bash (auto-rilevato). |
-| **Account + API key** | 1 tra: xAI Grok, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | Grok supporta OAuth via `/login grok`. |
+| **Account + API key** | 1 tra: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth: `/login grok`, `/login chatgpt`, `/login anthropic`. |
 
 ### Dipendenze opzionali (capability avanzate)
 
@@ -123,7 +124,7 @@ zelari-code
 Al primo avvio (o se manca `provider.json`), parte un **wizard** in 5 step:
 
 1. **Welcome** — panoramica
-2. **Provider** — scegli tra `grok`, `minimax`, `glm`, `openai-compatible`
+2. **Provider** — scegli tra `grok`, `minimax`, `glm`, `deepseek`, `openai-compatible` (ChatGPT / Anthropic via `/login` dopo il wizard)
 3. **Model** — nome modello (Enter per il default)
 4. **API key** — `env` (variabile d'ambiente), `keystore` (salva in locale) o `skip`
 5. **Confirm** — riepilogo e commit
@@ -142,7 +143,7 @@ ZELARI_NO_WIZARD=1 zelari-code   # equivalente env di --no-wizard
 
 ## Interfaccia TUI
 
-### Layout (v0.7.x)
+### Layout
 
 ```
 ┌─────────────────────────────────────────────┬──────────┐
@@ -152,7 +153,7 @@ ZELARI_NO_WIZARD=1 zelari-code   # equivalente env di --no-wizard
 ├─────────────────────────────────────────────┤  -file   │
 │  > input bar                                │          │
 ├─────────────────────────────────────────────┴──────────┤
-│  ● ⏵ agent (shift+tab) · grok · grok-4 · sess · cwd  │
+│  ● ⏵ kraken (shift+tab) · grok · grok-4.5 · sess · cwd  │
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -164,7 +165,7 @@ ZELARI_NO_WIZARD=1 zelari-code   # equivalente env di --no-wizard
 
 | Tasto | Azione |
 |---|---|
-| **Shift+Tab** | Cicla modalità `agent` → `council` → `zelari` |
+| **Shift+Tab** | Cicla modalità `kraken` → `council` → `zelari` (`agent` = alias) |
 | **Ctrl+C** | Esci (flush metriche + chiusura MCP) |
 | Qualsiasi tasto | Salta lo splash screen iniziale (~2s) |
 
@@ -180,28 +181,28 @@ Saltato automaticamente su stdout non-TTY (pipe, CI) o terminali piccoli.
 
 ---
 
-## Modalità agent e council
+## Modalità kraken, council e zelari
 
 Due assi indipendenti:
 
 | Asse | Valori | Come |
 |------|--------|------|
-| **Mode** (dispatch) | `agent` · `council` · `zelari` | Shift+Tab o `/mode` |
+| **Mode** (dispatch) | `kraken` · `council` · `zelari` | Shift+Tab o `/mode` (`agent`/`single` = alias di kraken) |
 | **Phase** (lavoro) | `plan` · `build` | `/plan` · `/build` o `--phase` |
 
 | Mode × Phase | Tipico uso |
 |--------------|------------|
-| agent + plan | Esplora/progetta senza scrivere sul progetto |
-| kraken + build | **Implementer di default** — tool completi (alias legacy: agent) |
+| kraken + plan | Esplora/progetta senza scrivere sul progetto |
+| kraken + build | **Implementer di default** — tool completi + tentacoli `task` |
 | council + plan / design-phase | Piano e artifact in `.zelari/` (ruolo principale del multi-agente) |
 | council + build / implementation | Soft-gate: di default resta in design-phase; Lucifero implementa solo con `ZELARI_COUNCIL_CAN_BUILD=1` |
 | zelari | Missione: **design@council → build@kraken** fino a completion |
 
 > **Esperimento (branch `experiment/plan-multiagent-build-agent`):** multi-agente = planning; agent singolo = build. Vedi variabili sotto.
 
-### Agent (default)
+### Kraken (default)
 
-Un singolo harness LLM con accesso ai tool builtin (read/write/edit, bash, grep, web, …). Ideale per task puntuali: fix bug, refactor, spiegazioni.
+Super-agent (alias legacy `agent` / `single`): un lead che usa i tool builtin e può spawnare **tentacoli** via `task` (`explore` read-only, `general` con write, `verify` per test). Ideale per implementazione. Vedi [Kraken](#kraken-super-agent--tentacoli-e-env) in fondo alla guida.
 
 ### Council
 
@@ -309,7 +310,7 @@ zelari-code --headless --task "Spiega cosa fa src/cli/main.ts" --output json
 |---|---|---|
 | `--task <testo>` | *(obbligatorio)* | Prompt da eseguire |
 | `--output json\|plain` | `json` | `json` = NDJSON (un evento BrainEvent per riga); `plain` = solo testo assistant |
-| `--mode agent\|council\|zelari` | `agent` | Dispatch mode (preferito a `--council` legacy) |
+| `--mode kraken\|council\|zelari` | `kraken` | Dispatch mode (`agent`/`single` = alias; `--council` resta legacy) |
 | `--phase plan\|build` | `build` | In `plan` non muta il progetto (no write/edit/bash aggressivi) |
 | `--council` | off | Alias legacy → mode council |
 | `--provider <id>` | provider attivo | Override provider |
@@ -352,7 +353,7 @@ Shell **Tauri 2** opzionale (`apps/desktop/`): chat moderna che esegue `zelari-c
 
 | Controllo | Valori | Flag CLI |
 |---|---|---|
-| Mode | Agent · Council · Zelari | `--mode` |
+| Mode | Kraken · Council · Zelari | `--mode` (`agent` = alias) |
 | Phase | Plan · Build | `--phase` |
 | Provider / model | barra + Settings | `--provider` / `--model` |
 | Open Folder | directory di lavoro | cwd del processo CLI |
@@ -369,7 +370,7 @@ La chat Desktop è la source of truth per la conversazione: history multi-turn v
 - **Extensions** — MCP catalog + **Skills** (crea/rimuovi `SKILL.md` user/project; import da URL col modello attivo)  
 - **Connections** — **Android companion** (start/stop `zelari-code serve`, copia URL/token) + SSH deploy/monitor  
 
-### Chat Desktop (v1.25)
+### Chat Desktop
 
 - **@file** — digita `@` per taggare file/cartelle del progetto (Open Folder); anche pulsante `@` nel file tree  
 - **Skills ★** — picker skill (builtin + user); si espande al Send come `/skill` in TUI  
@@ -380,7 +381,7 @@ La chat Desktop è la source of truth per la conversazione: history multi-turn v
 L’agent resta sul PC; il telefono è un thin client sulla stessa rete Tailscale (o LAN).
 
 ```bash
-# Host (PC) — usa il CLI monorepo o npm@1.25+
+# Host (PC) — usa il CLI monorepo o npm@1.34+
 npm run build:cli
 zelari-code serve --bind 100.x.y.z --port 7421 --project /path/to/repo
 # oppure Desktop → Settings → Connections → Start companion serve
@@ -429,10 +430,15 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 
 | Comando | Descrizione |
 |---|---|
-| `/mode [agent\|council\|zelari]` | Forza la modalità di dispatch. Equivalente portabile di `shift+tab` (utile in terminali dove `shift+tab` è catturato). |
-| `shift+tab` (TUI) | Cicla `agent` → `council` → `zelari`. |
+| `/mode [kraken\|council\|zelari]` | Forza la modalità di dispatch (`agent`/`single` = alias di kraken). Equivalente portabile di `shift+tab`. |
+| `shift+tab` (TUI) | Cicla `kraken` → `council` → `zelari`. |
+| `/kraken [sessionId]` | Radio tentacoli (`.zelari/radio/`). |
+| `/kraken graph <goal>` | Pianifica ed esegue un DAG di tentacoli in parallelo. |
 | `/plan [goal]` | Entra in phase **plan** (no write/edit/bash sul progetto). Opzionale: invia subito `goal`. |
 | `/build [goal]` | Entra in phase **build** (tool completi). Opzionale: invia subito `goal`. |
+| `/trust [path]` | Mostra o fida una cartella (MCP + hook di progetto). |
+| `/trust remove [path]` | Revoca il trust. |
+| `/integrations` | Elenca preset MCP (`composio`, `qwen-mm-plugins`, `cua`). |
 
 #### Provider e modello
 
@@ -516,7 +522,7 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | `/workspace sync` | Ri-cura `AGENTS.MD` adesso |
 | `/workspace reset --yes` | Cancella `.zelari/` (**distruttivo**) |
 
-#### Checkpoint e rollback (v1.2.0)
+#### Checkpoint e rollback
 
 | Comando | Descrizione |
 |---|---|
@@ -524,7 +530,7 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | `/rollback [id\|latest]` | Ripristino atomico di un checkpoint: ripristina i file modificati, ricrea i cancellati, rimuove i creati dopo lo snapshot. Senza argomento elenca i checkpoint disponibili. |
 | `ZELARI_CHECKPOINT=0` | Disabilita checkpoint automatici nelle missioni. |
 
-#### Durable state + prompt cache (v1.17)
+#### Durable state + prompt cache
 
 Accumulo **verificato** di artefatti (Palmer *State, Not Tokens*) e ottimizzazione del **prefix cache** (AGNT Labs *Cache Wars*). Diverso da memory RAG (soft) e da git checkpoint (solo working tree).
 
@@ -682,7 +688,7 @@ ANATHEMA_FAILOVER=0 zelari-code                # disabilita failover
 
 ## Skills
 
-### Skill builtin (23)
+### Skill builtin (26)
 
 Invocabili con `/skill <id>`.
 
@@ -743,6 +749,14 @@ Invocabili con `/skill <id>`.
 | `commit-message` | Messaggio commit |
 | `pr-description` | Descrizione PR |
 | `ci-pipeline` | Pipeline CI |
+
+#### Harness / multimodal (`ops` + MCP)
+
+| ID | Nome |
+|---|---|
+| `schema-loop` | Ipotesi + check certificabili + `run_backtest` |
+| `computer-use-cua` | Computer-use su app native via Cua Driver MCP |
+| `qwen-mm-plugins-install-setup` | Setup Qwen-MM-Plugins (vision/video/audio) |
 
 ### Skill personalizzate (`SKILL.md`)
 
@@ -819,7 +833,12 @@ Directory **per-progetto** (auto-gitignored) dove il council persiste artefatti 
 ├── risks.md                # registro rischi
 ├── decisions/              # ADR (001-slug.md)
 ├── reviews/                # verdict Minosse
-└── docs/                   # bozze documenti (design tokens, IA, …)
+├── docs/                   # bozze documenti (design tokens, IA, …)
+├── memory/                 # memoria missioni zelari
+├── radio/                  # bus tentacoli Kraken
+├── kraken/                 # last-graph.json (resume DAG)
+├── world/                  # schema-loop (hypothesis / checks / timeline)
+└── hooks/                  # lifecycle hook di progetto (solo cartelle fidate)
 
 AGENTS.MD                   # alla root — auto-curato dal council
 ```
@@ -1001,16 +1020,20 @@ Mappa completa: [TOOLS.md](./TOOLS.md).
 
 ---
 
-## Capability avanzate e novità 1.12–1.14
+## Capability avanzate e novità 1.26–1.34
 
-Le capability “frontier” (LSP, AST, semantic, browser, diagnostics, `task`) restano il cuore agentico avanzato. Dalla **1.12** in poi si sono aggiunti soprattutto:
+Le capability “frontier” (LSP, AST, semantic, browser, diagnostics, `task`) restano. Dalla **1.26** alla **1.34** si sono aggiunti soprattutto:
 
-| Area | Cosa |
-|------|------|
-| **Desktop** | SSH Connections, MCP Extensions store, Project Files\|Git, multi-turn history, overlay HUD (◉), Setup CLI |
-| **Phase plan/build** | `/plan` `/build`, registry che blocca mutate in plan |
-| **Harness** | tool batch paralleli, budget tool-loop soft/hard, history seed multi-turn |
-| **Sicurezza prodotto** | policy di non-leak dei system prompt (feature, non licenza) |
+| Area | Cosa | Da |
+|------|------|----|
+| **Kraken** | Super-agent default, tentacoli `task`, worktree + auto-merge, radio, **Kraken Graph** DAG | 1.26–1.28 |
+| **Desktop Workbench** | Tab Plan / Tasks legati a `--plan-only` / `--run-plan` | 1.33 |
+| **Sicurezza** | Folder trust (`/trust`), lifecycle hooks fail-open, `--inspect` | 1.32 |
+| **Vision** | `@image.jpg` e drop Desktop → `image_url` nativo (stesso provider) | 1.31 |
+| **MCP presets** | `composio`, `qwen-mm-plugins`, `cua`; slash `/integrations` | 1.31 |
+| **Local CLI** | `ZELARI_LOCAL_CLI=claude` + permission broker MCP | 1.31 |
+| **OAuth** | `/login chatgpt`, `/login anthropic` + Desktop Sign in/Refresh/Sign out | 1.34 |
+| **Windows PATH** | Auto-repair prefix npm (`--fix-path`, postinstall) | ADR-011 |
 
 Changelog ufficiale: [CHANGELOG.md](../CHANGELOG.md).
 
@@ -1079,8 +1102,12 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 | `OPENAI_BASE_URL` | Endpoint custom |
 | `OPENAI_MODEL` | Modello default |
 | `GROK_API_KEY` | Key Grok (alternativa a OAuth) |
+| `CHATGPT_API_KEY` | Key ChatGPT (alternativa a OAuth) |
+| `ANTHROPIC_API_KEY` | Key Anthropic (alternativa a OAuth) |
+| `DEEPSEEK_API_KEY` | Key DeepSeek |
 | `GLM_API_KEY` | Key GLM/Z.AI |
 | `MINIMAX_API_KEY` | Key MiniMax |
+| `ZELARI_LOCAL_CLI` | Provider via CLI esterna (`claude`) |
 | `TAVILY_API_KEY` | Web search via Tavily |
 | `ANATHEMA_ACTIVE_PROVIDER` | Override provider attivo |
 | `ANATHEMA_FAILOVER=0` | Disabilita failover |
@@ -1168,7 +1195,7 @@ Vedi anche [CONTRIBUTING.md](../CONTRIBUTING.md).
 ```bash
 npm install
 npm run build:cli     # tsc + esbuild bundle
-npm test              # ~900+ test vitest
+npm test              # suite Vitest (centinaia di file in tests/unit)
 npm run typecheck
 npm run smoke         # verifica bin
 ```
@@ -1177,10 +1204,12 @@ npm run smoke         # verifica bin
 
 ```
 zelari-code/
-├── packages/core/     # @zelari/core — AgentHarness, council, skills, tools
-├── src/cli/           # TUI Ink, provider, workspace, wizard
-├── tests/unit/        # test Vitest
-└── docs/              # questa documentazione
+├── packages/core/            # @zelari/core — AgentHarness, council, 26 skills, tools
+├── src/cli/                  # TUI Ink, provider, workspace, wizard, serve
+├── apps/desktop/             # Zelari Desktop (Tauri 2)
+├── apps/companion-android/   # thin client per `zelari-code serve`
+├── tests/unit/               # test Vitest
+└── docs/                     # questa documentazione
 ```
 
 ---

@@ -1,7 +1,7 @@
 # Zelari Code — Handoff Opzione B (2026-07-03)
 
-> **📚 Historical / superseded — not required for contributors.**  
-> For open-source contribution use [CONTRIBUTING.md](./CONTRIBUTING.md),  
+> **📚 Historical / superseded (v0.7.8 Opzione B) — not required for contributors.**  
+> Current product: **zelari-code 1.34.0**. Use [CONTRIBUTING.md](./CONTRIBUTING.md),  
 > [CHANGELOG.md](./CHANGELOG.md), and [docs/GUIDA.md](./docs/GUIDA.md).  
 > Product identity: [Anathema Studio](https://anathema-studio.com/).
 

@@ -5,6 +5,11 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Docs sync to 1.34.0** — README, `docs/GUIDA.md`, `docs/TOOLS.md`, SECURITY, CONTRIBUTING, MIGRATION, Desktop/Companion READMEs, and a new `packages/core/README.md`. Historical `HANDOFF*.md` files marked superseded (Kraken G1/G2/G5/G6 and v0.10 P0 already shipped).
+
 ## [1.34.0] - 2026-08-13
 
 ### Added
