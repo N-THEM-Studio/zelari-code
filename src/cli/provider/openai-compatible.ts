@@ -15,7 +15,7 @@
 
 import type { ProviderStreamFn, ProviderDelta, AgentImage } from '@zelari/core/harness';
 import type { ProviderName } from '../keyStore.js';
-import { resolveApiKeyWithMeta } from '../keyStore.js';
+import { getOAuthToken, resolveApiKeyWithMeta } from '../keyStore.js';
 import { getProviderConfig, getModelForProvider, getCustomEndpoint } from '../providerConfig.js';
 
 /**
@@ -178,6 +178,9 @@ export interface OpenAICompatibleConfig {
   model: string;         // e.g. 'grok-4'
   signal?: AbortSignal;
   providerId: ProviderName;
+  /** ChatGPT OAuth account id (`ChatGPT-Account-Id`). */
+  accountId?: string;
+  extraHeaders?: Record<string, string>;
 }
 
 /** Model name hints that natively accept image inputs (OpenAI-compatible). */
@@ -227,6 +230,8 @@ export const PROVIDER_ENDPOINTS: Record<ProviderName, string> = {
   // DeepSeek global platform (OpenAI-compatible). Chat → /chat/completions,
   // discovery → /models against this same host.
   'deepseek': 'https://api.deepseek.com',
+  'chatgpt': 'https://chatgpt.com/backend-api/codex',
+  'anthropic': 'https://api.anthropic.com',
   'custom': '',
 };
 
@@ -772,6 +777,15 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
  *   - OPENAI_MODEL env override (always wins)
  *   - providerConfig.modelByProvider[providerId]
  */
+function extraFromStored(providerId: ProviderName): Pick<OpenAICompatibleConfig, 'accountId' | 'extraHeaders'> {
+  const stored = getOAuthToken(providerId);
+  if (!stored?.accountId) return {};
+  return {
+    accountId: stored.accountId,
+    extraHeaders: { 'ChatGPT-Account-Id': stored.accountId },
+  };
+}
+
 export async function providerFromEnv(): Promise<OpenAICompatibleConfig | null> {
   const providerId = resolveActiveProvider();
   const apiKey = await resolveApiKeyWithMeta(providerId);
@@ -781,6 +795,7 @@ export async function providerFromEnv(): Promise<OpenAICompatibleConfig | null> 
     baseUrl: resolveBaseUrl(providerId),
     model: getModelForProvider(providerId),
     providerId,
+    ...extraFromStored(providerId),
   };
 }
 
@@ -798,5 +813,6 @@ export async function providerConfigFor(providerId: ProviderName): Promise<OpenA
     baseUrl: resolveBaseUrl(providerId),
     model: getModelForProvider(providerId),
     providerId,
+    ...extraFromStored(providerId),
   };
 }

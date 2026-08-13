@@ -133,6 +133,32 @@ describe('modelDiscovery URL mapping (v3-U)', () => {
 
     expect(capturedUrl).toBe('https://api.x.ai/v1/models');
   });
+
+  it('hits chatgpt.com backend models for chatgpt', async () => {
+    let capturedUrl: string | undefined;
+    const fetchMock = (async (url: string | URL | Request) => {
+      capturedUrl = typeof url === 'string' ? url : url.toString();
+      return makeOpenAIMock([{ id: 'gpt-5.2-codex' }])('x');
+    }) as typeof fetch;
+
+    await discoverModelsForProvider('chatgpt', {
+      authToken: 'oauth-token',
+      fetchImpl: fetchMock,
+    });
+
+    expect(capturedUrl).toBe('https://chatgpt.com/backend-api/models');
+  });
+
+  it('falls back to a static catalog when anthropic /models fails', async () => {
+    const fetchMock = (async () =>
+      new Response('nope', { status: 401 })) as typeof fetch;
+    const entry = await discoverModelsForProvider('anthropic', {
+      authToken: 'oauth-token',
+      fetchImpl: fetchMock,
+    });
+    expect(entry.models.map((m) => m.id)).toContain('claude-sonnet-4-5');
+    expect(entry.lastError).toMatch(/HTTP 401/);
+  });
 });
 
 // ---------------------------------------------------------------------------

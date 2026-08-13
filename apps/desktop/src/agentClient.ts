@@ -34,6 +34,38 @@ export async function setApiKey(args: {
   return invoke("set_api_key", { args });
 }
 
+export interface OAuthActionResult {
+  ok?: boolean;
+  provider?: string;
+  phase?: "need_code" | "done";
+  authorizeUrl?: string;
+  message?: string;
+  masked?: string;
+  expiresAt?: number;
+  hasRefreshToken?: boolean;
+  error?: string;
+}
+
+export async function loginOAuth(args: {
+  provider: string;
+  code?: string;
+  noBrowser?: boolean;
+}): Promise<OAuthActionResult> {
+  return invoke("login_oauth", { args });
+}
+
+export async function refreshOAuth(args: {
+  provider: string;
+}): Promise<OAuthActionResult> {
+  return invoke("refresh_oauth", { args });
+}
+
+export async function logoutOAuth(args: {
+  provider: string;
+}): Promise<OAuthActionResult> {
+  return invoke("logout_oauth", { args });
+}
+
 export async function discoverModels(args: {
   provider?: string;
 }): Promise<DiscoverModelsResult> {

@@ -1,10 +1,11 @@
 import {
   getProviderSpec,
   setApiKey,
-  setOAuthToken,
   maskKey,
   resolveApiKeyWithMeta,
   getOAuthToken,
+  forceRefreshOAuth,
+  isOAuthProvider,
   PROVIDERS,
 } from '../keyStore.js';
 import { getRefreshImpl } from '../refreshRegistry.js';
@@ -45,7 +46,7 @@ export interface ProviderSlashContext {
 }
 
 const UNKNOWN_PROVIDER_MSG =
-  (id: string) => `[provider] unknown: ${id}. Available: openai-compatible, minimax, glm, grok, deepseek, custom`;
+  (id: string) => `[provider] unknown: ${id}. Available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, custom`;
 
 // ---------------------------------------------------------------------------
 // Interactive picker plumbing (v0.7.10) — /provider and /model with no args
@@ -85,7 +86,7 @@ export interface PickerRequest {
 export type OpenPicker = (req: PickerRequest) => void;
 
 /** Provider ids that support /v1/models discovery. */
-const DISCOVERABLE_PROVIDERS: readonly string[] = ['grok', 'glm', 'minimax', 'deepseek', 'openai-compatible'];
+const DISCOVERABLE_PROVIDERS: readonly string[] = ['grok', 'glm', 'minimax', 'deepseek', 'openai-compatible', 'chatgpt', 'anthropic'];
 
 export function handleProviderList(ctx: ProviderSlashContext): void {
   const list = getActiveProviderSpec();
@@ -93,7 +94,7 @@ export function handleProviderList(ctx: ProviderSlashContext): void {
   const epHint = customEp ? ` — custom endpoint: ${customEp}` : '';
   appendSystem(
     ctx.setMessages,
-    `[provider] current: ${list.displayName} (model: ${ctx.activeModel})${epHint} — available: openai-compatible, minimax, glm, grok, deepseek, custom`,
+    `[provider] current: ${list.displayName} (model: ${ctx.activeModel})${epHint} — available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, custom`,
   );
 }
 
@@ -169,9 +170,11 @@ export async function handleProviderRefresh(ctx: ProviderSlashContext, providerI
     return;
   }
   try {
-    const refreshed = await resolveApiKeyWithMeta(spec.id);
+    const refreshed = isOAuthProvider(spec.id)
+      ? (await forceRefreshOAuth(spec.id)) ?? (await resolveApiKeyWithMeta(spec.id))
+      : await resolveApiKeyWithMeta(spec.id);
     if (!refreshed) {
-      appendSystem(ctx.setMessages, `[provider refresh] ${spec.id}: no key configured (use /login ${spec.id} <key>)`);
+      appendSystem(ctx.setMessages, `[provider refresh] ${spec.id}: no key configured (use /login ${spec.id})`);
       return;
     }
     const expires = refreshed.expiresAt
@@ -260,10 +263,66 @@ export async function handleLoginKey(
 }
 
 export async function handleLoginOAuthGrok(ctx: ProviderSlashContext): Promise<void> {
-  const { runGrokOAuthFlow } = await import('../grokOAuth.js');
-  appendSystem(ctx.setMessages, '[login oauth] requesting device code from xAI...');
+  return handleLoginOAuth(ctx, 'grok');
+}
+
+export async function handleLoginOAuth(
+  ctx: ProviderSlashContext,
+  provider: string,
+  pasteCode?: string,
+): Promise<void> {
+  const { persistOAuthLogin, runLoginOAuth } = await import('../oauthDesktop.js');
   ctx.setBusy(true);
   try {
+    if (provider === 'anthropic' && !pasteCode) {
+      const started = await runLoginOAuth({ provider: 'anthropic' });
+      if (!started.ok) {
+        appendSystem(ctx.setMessages, `[login oauth error] ${started.error}`);
+        return;
+      }
+      appendSystem(
+        ctx.setMessages,
+        `[login oauth] Anthropic magic link opened.\n` +
+          `  ${started.authorizeUrl}\n` +
+          `Sign in, then paste the code here:\n` +
+          `  /login anthropic <CODE#STATE>`,
+      );
+      return;
+    }
+
+    if (provider === 'anthropic' && pasteCode) {
+      const result = await runLoginOAuth({ provider: 'anthropic', code: pasteCode });
+      if (!result.ok) {
+        appendSystem(ctx.setMessages, `[login oauth error] ${result.error}`);
+        return;
+      }
+      appendSystem(
+        ctx.setMessages,
+        `[login oauth] ✓ Anthropic authenticated (${result.masked}). Active provider switched — try a prompt now.`,
+      );
+      return;
+    }
+
+    if (provider === 'chatgpt') {
+      appendSystem(ctx.setMessages, '[login oauth] ChatGPT device login — open the URL and enter the code…');
+      const { runChatgptOAuthFlow } = await import('../chatgptOAuth.js');
+      const token = await runChatgptOAuthFlow({
+        onUserCode: (info) =>
+          appendSystem(
+            ctx.setMessages,
+            `[login oauth] Open ${info.verificationUri} and enter:\n  ${info.userCode}\n(Opening your browser…)`,
+          ),
+      });
+      await persistOAuthLogin('chatgpt', token);
+      appendSystem(
+        ctx.setMessages,
+        `[login oauth] ✓ ChatGPT authenticated (${maskKey(token.accessToken)}). Active provider switched — try a prompt now.`,
+      );
+      return;
+    }
+
+    appendSystem(ctx.setMessages, '[login oauth] requesting device code from xAI...');
+    const { runGrokOAuthFlow } = await import('../grokOAuth.js');
     const resultOAuth = await runGrokOAuthFlow({
       onUserCode: (info) =>
         appendSystem(
@@ -273,28 +332,13 @@ export async function handleLoginOAuthGrok(ctx: ProviderSlashContext): Promise<v
             `(Opening your browser automatically...)`,
         ),
     });
-    setOAuthToken('grok', {
-      apiKey: resultOAuth.accessToken,
-      ...(resultOAuth.expiresAt !== undefined ? { expiresAt: resultOAuth.expiresAt } : {}),
-      ...(resultOAuth.refreshToken ? { refreshToken: resultOAuth.refreshToken } : {}),
-    });
-    persistActiveProvider('grok');
-    if (!getModelForProvider('grok')) {
-      persistModelForProvider('grok', ctx.providerDefaults['grok'] ?? 'grok-4.5');
-    }
+    await persistOAuthLogin('grok', resultOAuth);
     const expiresHint = resultOAuth.expiresAt ? `, expires ${new Date(resultOAuth.expiresAt).toISOString()}` : '';
     const refreshHint = resultOAuth.refreshToken ? ', refresh token saved' : '';
     appendSystem(
       ctx.setMessages,
       `[login oauth] ✓ Grok authenticated via SuperGrok (token ${maskKey(resultOAuth.accessToken)}${expiresHint}${refreshHint}). Active provider switched to grok — try a prompt now.`,
     );
-    discoverModelsInBackground('grok', {
-      onError: (err) =>
-        appendSystem(
-          ctx.setMessages,
-          `[models] discovery failed for grok: ${err.message} (using static defaults)`,
-        ),
-    });
   } catch (err) {
     appendSystem(ctx.setMessages, `[login oauth error] ${err instanceof Error ? err.message : String(err)}`);
   } finally {

@@ -54,6 +54,15 @@ const PRICES_PER_MILLION: Record<
   'gpt-4-turbo':      { input: 10,   output: 30 },
   'o1-preview':       { input: 15,   output: 60 },
   'o1-mini':          { input: 3,    output: 12 },
+  'gpt-5.2':          { input: 1.75, output: 14 },
+  'gpt-5.2-codex':    { input: 1.75, output: 14 },
+  'gpt-5.1':          { input: 1.25, output: 10 },
+  'gpt-5.1-codex':    { input: 1.25, output: 10 },
+  'o3':               { input: 2,    output: 8 },
+  'o4-mini':          { input: 1.10, output: 4.40 },
+  'claude-opus-4-6':  { input: 15,   output: 75 },
+  'claude-sonnet-4-5': { input: 3,   output: 15 },
+  'claude-haiku-4-5': { input: 0.80, output: 4 },
 };
 
 /** Default rate for unknown models — assume a mid-tier provider. */

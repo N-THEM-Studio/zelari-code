@@ -187,7 +187,7 @@ export function handleSlashCommand(
       return {
         handled: true,
         kind: 'help',
-        message: `Available commands:\n  /login <provider> — authenticate with provider (grok, minimax, glm, custom)\n  /model — pick the active model from a list (auto-discovers, v0.7.10)\n  /model <name> — switch the active model directly\n  /model show — print the current model\n  /models — list discovered models for the active provider (v3-U)\n  /models refresh (or /discover) — re-discover models for the active provider\n  /provider — pick the active provider from a list (v0.7.10)\n  /provider <name> — switch the active provider directly\n  /provider custom <baseUrl> — point the active provider at a self-hosted endpoint (Ollama, LM Studio, vLLM, ...)\n  /provider custom clear — clear the custom endpoint override\n  /skill [name] [input] — list+pick a skill (no args) or invoke /skill <name>\n  /skills — interactive skill picker (same as /skill with no args)\n  /skill-stats [name] — show invocation stats (success rate, avg duration, total tokens)\n  /council <input> — invoke the multi-agent council on input\n  /zelari <input> — run an autonomous mission (multi-run council until the MVP slice is complete)\n  /council-feedback <memberId> <1-5> [note] — rate a council member for future ranking (Task I.2)
+        message: `Available commands:\n  /login <provider> — authenticate (OAuth: grok, chatgpt, anthropic; or /login <provider> <key>)\n  /model — pick the active model from a list (auto-discovers, v0.7.10)\n  /model <name> — switch the active model directly\n  /model show — print the current model\n  /models — list discovered models for the active provider (v3-U)\n  /models refresh (or /discover) — re-discover models for the active provider\n  /provider — pick the active provider from a list (v0.7.10)\n  /provider <name> — switch the active provider directly\n  /provider custom <baseUrl> — point the active provider at a self-hosted endpoint (Ollama, LM Studio, vLLM, ...)\n  /provider custom clear — clear the custom endpoint override\n  /skill [name] [input] — list+pick a skill (no args) or invoke /skill <name>\n  /skills — interactive skill picker (same as /skill with no args)\n  /skill-stats [name] — show invocation stats (success rate, avg duration, total tokens)\n  /council <input> — invoke the multi-agent council on input\n  /zelari <input> — run an autonomous mission (multi-run council until the MVP slice is complete)\n  /council-feedback <memberId> <1-5> [note] — rate a council member for future ranking (Task I.2)
   /promote-member <memberId> — promote a council member to a standalone skill (v3-K)
   /update [--yes|-y] — check for zelari-code updates; --yes performs the update (v3-N)\n  /plugins — list optional tool plugins (Playwright, eslint, ruff, LSP servers)\n  /plugins install <id> — install a plugin now (e.g. /plugins install eslint)\n  /integrations — list MCP integration presets (cua, composio, qwen-mm-plugins) + status\n  /steer <text> — enqueue a follow-up prompt on the active run (Task 18.2)\n  /steer --interrupt <text> — cancel current run + enqueue <text> for next dispatch (Task C.3.2)\n  /compact — compact the session transcript\n  /clear — clear the visible transcript (session is preserved)\n  /sessions — list past sessions\n  /resume <id> — load a past session\n  /branch <name> — snapshot the current session into a new branch\n  /branches — list branches\n  /checkout <name> — switch the active branch\n  /new — start a fresh session\n  /diff [--staged] — show uncommitted changes (or staged with --staged)\n  /undo [--yes] — revert working-tree changes (destructive! requires --yes)\n  /checkpoint [label] — snapshot the working tree as a restore point\n  /rollback [id|latest] — restore the working tree to a checkpoint (no arg: list)\n  /state status — durable state HEAD + recent commits\n  /state commit [label] — force a durable state commit (soft)\n  /state show [id] — show discoveries for HEAD or commit id\n  /state restore [id] [--no-tree] — set HEAD + optional git checkpoint restore\n  /cache stats — prompt-cache hit rate, premium vs cached, stable busts\n  /index [status] — build the semantic code index for semantic_search\n  /mode [kraken|council|zelari] — switch dispatch mode (same as shift+tab; agent=alias kraken)\n  /kraken [sessionId] — show Kraken tentacle radio (last spawns)\n  /trust [path] — trust a folder so project MCP + project hooks load\n  /trust remove [path] — revoke folder trust\n  /help — show this help\n  /exit — exit the CLI\n\n${formatSkillList(availableSkills)}`,
       };
@@ -201,13 +201,11 @@ export function handleSlashCommand(
     case 'login': {
       const provider = args[0];
       if (!provider) {
-        return { handled: true, kind: 'login', message: 'Usage: /login <provider> [key] (or /login <provider> for OAuth if supported)' };
+        return { handled: true, kind: 'login', message: 'Usage: /login <provider> [key] (or /login grok|chatgpt|anthropic for OAuth)' };
       }
       const key = args.slice(1).join(' ').trim();
       if (!key) {
-        // No key supplied: if provider supports OAuth, signal OAuth flow;
-        // otherwise, show env-var hint as before.
-        if (provider === 'grok') {
+        if (provider === 'grok' || provider === 'chatgpt' || provider === 'anthropic') {
           return { handled: true, kind: 'login_oauth', provider };
         }
         return {
@@ -216,6 +214,13 @@ export function handleSlashCommand(
           provider,
           message: `[login] no key supplied — set ${provider.toUpperCase()}_API_KEY env or pass the key: /login ${provider} <key>`,
         };
+      }
+      // Anthropic magic-link: paste CODE#STATE (does not look like sk-ant-...).
+      if (
+        (provider === 'anthropic' || provider === 'chatgpt' || provider === 'grok') &&
+        !/^(sk-|xai-|glm-|mm-)/i.test(key)
+      ) {
+        return { handled: true, kind: 'login_oauth', provider, loginKey: key };
       }
       return { handled: true, kind: 'login', provider, loginKey: key };
     }
@@ -260,14 +265,14 @@ export function handleSlashCommand(
         return {
           handled: true,
           kind: 'provider_picker',
-          message: 'Usage: /provider — pick from a list\n         /provider <name> — switch active provider\n         /provider list — print the current provider + available ids\n         /provider custom <baseUrl> — set custom base URL (Ollama, LM Studio, vLLM, ...)\n         /provider custom clear — clear the custom override\n         /provider <name> refresh — force token refresh (v3-F)\n         /provider <name> status — show key source, expiry, refresh impl (v3-F)\nAvailable: openai-compatible, minimax, glm, grok, deepseek, custom',
+          message: 'Usage: /provider — pick from a list\n         /provider <name> — switch active provider\n         /provider list — print the current provider + available ids\n         /provider custom <baseUrl> — set custom base URL (Ollama, LM Studio, vLLM, ...)\n         /provider custom clear — clear the custom override\n         /provider <name> refresh — force token refresh (v3-F)\n         /provider <name> status — show key source, expiry, refresh impl (v3-F)\nAvailable: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, custom',
         };
       }
       if (subcommand === 'list') {
         return {
           handled: true,
           kind: 'provider_list',
-          message: 'Usage: /provider <name> — switch active provider\nAvailable: openai-compatible, minimax, glm, grok, deepseek, custom',
+          message: 'Usage: /provider <name> — switch active provider\nAvailable: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, custom',
         };
       }
       if (subcommand === 'custom') {

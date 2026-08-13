@@ -42,8 +42,8 @@ import { createWorldModelTools } from './workspace/worldModel.js';
 import {
   providerFromEnv,
   providerConfigFor,
-  openaiCompatibleProvider,
 } from './provider/openai-compatible.js';
+import { buildProviderStream } from './provider/resolveStream.js';
 import type { ProviderName } from './keyStore.js';
 import {
   defaultPermissionPolicy,
@@ -513,9 +513,9 @@ export function createKrakenSubAgentContextFactory(opts: {
       permissionPolicy: defaultPermissionPolicy({ auto: true }),
     });
     return {
-      providerStream: openaiCompatibleProvider(subCfg),
+      providerStream: buildProviderStream(subCfg),
       model,
-      provider: 'openai-compatible',
+      provider: subCfg.providerId,
       registry: subRegistry,
       tools: subRegistry.toOpenAITools().map((t) => ({
         name: t.function.name,

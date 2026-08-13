@@ -25,6 +25,8 @@
  */
 
 import { refreshGrokToken, DEFAULT_GROK_OAUTH_CLIENT_ID } from './grokOAuth.js';
+import { refreshChatgptToken } from './chatgptOAuth.js';
+import { refreshAnthropicToken } from './anthropicOAuth.js';
 import type { ProviderName } from './keyStore.js';
 
 /**
@@ -41,6 +43,8 @@ export type RefreshImpl = (
   accessToken: string;
   expiresAt?: number;
   refreshToken?: string;
+  accountId?: string;
+  idToken?: string;
 }>;
 
 const registry = new Map<ProviderName, RefreshImpl>();
@@ -96,12 +100,20 @@ export const grokRefreshAdapter: RefreshImpl = async (
   return refreshGrokToken({ clientId, refreshToken });
 };
 
+export const chatgptRefreshAdapter: RefreshImpl = async (_providerId, refreshToken) => {
+  return refreshChatgptToken({ refreshToken });
+};
+
+export const anthropicRefreshAdapter: RefreshImpl = async (_providerId, refreshToken) => {
+  return refreshAnthropicToken({ refreshToken });
+};
+
 /**
  * Register the built-in default impls. Idempotent — calling multiple times
  * is a no-op once registered. Called at module init from keyStore.
  */
 export function registerDefaultRefreshImpls(): void {
-  if (!registry.has('grok')) {
-    registry.set('grok', grokRefreshAdapter);
-  }
+  if (!registry.has('grok')) registry.set('grok', grokRefreshAdapter);
+  if (!registry.has('chatgpt')) registry.set('chatgpt', chatgptRefreshAdapter);
+  if (!registry.has('anthropic')) registry.set('anthropic', anthropicRefreshAdapter);
 }

@@ -20,14 +20,24 @@ import {
   applySetConfig,
   applySetKey,
   parseDiscoverModelsFlags,
+  parseLoginOAuthFlags,
+  parseProviderOnlyFlag,
   parseSetConfigFlags,
   parseSetKeyFlags,
   printDesktopConfig,
   runDiscoverModels,
   wantsDiscoverModels,
+  wantsLoginOAuth,
+  wantsLogoutOAuth,
   wantsPrintConfig,
+  wantsRefreshOAuth,
   wantsSetKey,
 } from "./desktopConfig.js";
+import {
+  runLoginOAuth,
+  runLogoutOAuth,
+  runRefreshOAuth,
+} from "./oauthDesktop.js";
 import {
   runPluginsInstall,
   runPluginsStatus,
@@ -450,6 +460,14 @@ function pickRootComponent(): {
         "  --set-key           Store an API key (never printed back)\n" +
         "    --provider <id>    Provider id (required)\n" +
         "    --key <secret>     API key (required)\n" +
+        "  --login-oauth       Start subscription OAuth (grok, chatgpt, anthropic)\n" +
+        "    --provider <id>    grok | chatgpt | anthropic\n" +
+        "    --code <paste>    Anthropic magic-link code (CODE#STATE)\n" +
+        "    --no-browser      Do not open the system browser\n" +
+        "  --refresh-oauth     Force-refresh an OAuth access token\n" +
+        "    --provider <id>    grok | chatgpt | anthropic\n" +
+        "  --logout-oauth      Clear stored OAuth credentials\n" +
+        "    --provider <id>    grok | chatgpt | anthropic\n" +
         "  --discover-models   Refresh model list for a provider\n" +
         "    --provider <id>    Provider (default: active)\n" +
         "  --print-mcp         Print MCP server config (user + project)\n" +
@@ -876,6 +894,69 @@ function pickRootComponent(): {
       }),
     );
     process.exit(0);
+  }
+
+  if (wantsLoginOAuth(argv)) {
+    const parsed = parseLoginOAuthFlags(argv);
+    if (parsed.error || !parsed.request) {
+      console.error(
+        `[zelari-code --login-oauth] ${parsed.error ?? "invalid arguments"}`,
+      );
+      process.exit(1);
+    }
+    void runLoginOAuth(parsed.request)
+      .then((result) => {
+        console.log(JSON.stringify(result));
+        process.exit(result.ok ? 0 : 1);
+      })
+      .catch((err) => {
+        console.error(
+          JSON.stringify({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        process.exit(1);
+      });
+    return { kind: "done" };
+  }
+
+  if (wantsRefreshOAuth(argv)) {
+    const parsed = parseProviderOnlyFlag(argv, "--refresh-oauth");
+    if (parsed.error || !parsed.provider) {
+      console.error(
+        `[zelari-code --refresh-oauth] ${parsed.error ?? "invalid arguments"}`,
+      );
+      process.exit(1);
+    }
+    void runRefreshOAuth(parsed.provider)
+      .then((result) => {
+        console.log(JSON.stringify(result));
+        process.exit(result.ok ? 0 : 1);
+      })
+      .catch((err) => {
+        console.error(
+          JSON.stringify({
+            ok: false,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
+        process.exit(1);
+      });
+    return { kind: "done" };
+  }
+
+  if (wantsLogoutOAuth(argv)) {
+    const parsed = parseProviderOnlyFlag(argv, "--logout-oauth");
+    if (parsed.error || !parsed.provider) {
+      console.error(
+        `[zelari-code --logout-oauth] ${parsed.error ?? "invalid arguments"}`,
+      );
+      process.exit(1);
+    }
+    const result = runLogoutOAuth(parsed.provider);
+    console.log(JSON.stringify(result));
+    process.exit(result.ok ? 0 : 1);
   }
 
   if (wantsDiscoverModels(argv)) {

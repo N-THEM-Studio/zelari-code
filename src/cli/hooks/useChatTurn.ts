@@ -8,11 +8,11 @@ import { SessionJsonlWriter } from "@zelari/core/harness";
 import { MetricsLogger, getMetricsLogger } from "../metrics.js";
 import { calculateCost } from "../modelPricing.js";
 import {
-  openaiCompatibleProvider,
   providerFromEnv,
   providerConfigFor,
   resolveActiveProvider,
 } from "../provider/openai-compatible.js";
+import { buildProviderStream } from "../provider/resolveStream.js";
 import { providerFailover } from "../providerFailover.js";
 import { resolveFailoverStream } from "../crossProviderFailover.js";
 import { resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
@@ -297,7 +297,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           onPermissionAsk,
           permissionPolicy: defaultPermissionPolicy(),
         });
-        const baseProviderStream = localCliProvider ?? openaiCompatibleProvider(envConfig!);
+        const baseProviderStream = localCliProvider ?? buildProviderStream(envConfig!);
         let providerStream: import("@zelari/core/harness").ProviderStreamFn;
         if (localCliProvider) {
           providerStream = localCliProvider;
@@ -311,8 +311,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             lookupFallbackConfig: async (id) =>
               providerConfigFor(id as ProviderName),
             buildStream: (config) =>
-              openaiCompatibleProvider(
-                config as Parameters<typeof openaiCompatibleProvider>[0],
+              buildProviderStream(
+                config as Parameters<typeof buildProviderStream>[0],
               ),
           });
           if (failoverResolution.warning) {
@@ -1302,7 +1302,7 @@ async function dispatchCouncilPromptImpl(
       apiKey: envConfig.apiKey,
       model: envConfig.model,
       provider: "openai-compatible",
-      providerStream: openaiCompatibleProvider(envConfig),
+      providerStream: buildProviderStream(envConfig),
       sessionId,
       tools: councilToolRegistry,
       feedbackStore: councilFeedbackStore,
@@ -1953,7 +1953,7 @@ async function runZelariMissionInTui(
             projectRoot,
             model: envConfig.model,
             provider: "openai-compatible",
-            providerStream: openaiCompatibleProvider(envConfig),
+            providerStream: buildProviderStream(envConfig),
             toolRegistry,
             slicePrompt,
             ragContext: composed.ragContext ?? ragContext,

@@ -77,6 +77,10 @@ export interface DesktopProviderInfo {
   defaultModel: string;
   endpoint?: string | null;
   baseUrl?: string | null;
+  authKind?: "none" | "api_key" | "oauth";
+  expiresAt?: number | null;
+  hasRefreshToken?: boolean;
+  oauthSupported?: boolean;
 }
 
 export interface DesktopConfig {

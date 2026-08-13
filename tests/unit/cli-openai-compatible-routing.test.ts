@@ -54,11 +54,13 @@ describe('openai-compatible provider routing (Task 15.2)', () => {
     await fs.rm(process.env.ANATHEMA_PROVIDER_CONFIG_FILE ?? '', { force: true }).catch(() => {});
   });
 
-  it('PROVIDER_ENDPOINTS has entries for all 5 providers', () => {
+  it('PROVIDER_ENDPOINTS has entries for built-in providers', () => {
     expect(PROVIDER_ENDPOINTS['openai-compatible']).toBeDefined();
     expect(PROVIDER_ENDPOINTS.minimax).toBe('https://api.minimax.io/v1');
     expect(PROVIDER_ENDPOINTS.glm).toBe('https://api.z.ai/api/coding/paas/v4');
     expect(PROVIDER_ENDPOINTS.grok).toBe('https://api.x.ai/v1');
+    expect(PROVIDER_ENDPOINTS.chatgpt).toBe('https://chatgpt.com/backend-api/codex');
+    expect(PROVIDER_ENDPOINTS.anthropic).toBe('https://api.anthropic.com');
     expect(PROVIDER_ENDPOINTS.custom).toBeDefined();
   });
 

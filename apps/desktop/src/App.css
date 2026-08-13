@@ -3493,6 +3493,14 @@ button {
   font-size: 11.5px;
 }
 
+.oauth-url {
+  word-break: break-all;
+}
+
+.oauth-url a {
+  color: var(--accent, #7aa2ff);
+}
+
 
 .settings-card-head {
   display: flex;

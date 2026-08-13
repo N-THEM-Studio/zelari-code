@@ -56,7 +56,6 @@ import {
   handleProviderRefresh,
   handleProviderStatus,
   handleLoginKey,
-  handleLoginOAuthGrok,
   handleModelShow,
   handleModelSet,
   handleModelPicker,
@@ -307,8 +306,9 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       setInput('');
       return;
     }
-    if (result.kind === 'login_oauth' && result.provider === 'grok') {
-      await handleLoginOAuthGrok(providerCtx);
+    if (result.kind === 'login_oauth' && result.provider) {
+      const { handleLoginOAuth } = await import('../slashHandlers/provider.js');
+      await handleLoginOAuth(providerCtx, result.provider, result.loginKey);
       setInput('');
       return;
     }

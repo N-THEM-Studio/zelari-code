@@ -57,7 +57,7 @@ zelari-code
 | **npm** | **≥ 10** | Ships with Node 20 LTS; tested with npm 10 and 11. |
 | **OS** | Linux, macOS, Windows 10/11 | Tested on Pop!_OS 24.04, macOS 15, Windows 11. Windows requires Git Bash (auto-detected). |
 | **Disk** | ~50 MB for the CLI + `@zelari/core` | Models are not bundled — provider APIs are remote. |
-| **Account + API key** | 1 of: xAI Grok, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth Grok supported via `/login grok`. |
+| **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. |
 
 ### Optional (advanced tools)
 
@@ -201,7 +201,7 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 |---|---|
 | `/help` | List all commands + loaded skills |
 | `/exit` | Exit the CLI |
-| `/login <provider> [key]` | Set API key; `/login grok` starts OAuth |
+| `/login <provider> [key]` | Set API key; `/login grok\|chatgpt\|anthropic` starts OAuth |
 | `/provider`, `/provider <id>` | Show / switch LLM provider |
 | `/provider custom <url>` | Self-hosted endpoint (Ollama, LM Studio, …) |
 | `/model <name>`, `/models` | Set model / list discovered models |

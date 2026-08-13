@@ -48,6 +48,8 @@ const DEFAULTS: ProviderConfig = {
     'glm': 'glm-4.6',
     'grok': 'grok-4.5',
     'deepseek': 'deepseek-v4-pro',
+    'chatgpt': 'gpt-5.2-codex',
+    'anthropic': 'claude-sonnet-4-5',
     'custom': '',
   },
   customEndpoints: {},

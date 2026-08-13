@@ -13,6 +13,8 @@ import {
   PROVIDERS,
   resolveApiKey,
   getKeyStorePath,
+  getOAuthToken,
+  isOAuthProvider,
   setApiKey,
   maskKey,
   type ProviderName,
@@ -45,6 +47,12 @@ export interface DesktopProviderInfo {
   endpoint?: string | null;
   /** Effective base URL (custom or builtin). */
   baseUrl?: string | null;
+  /** How the stored credential was obtained. */
+  authKind?: 'none' | 'api_key' | 'oauth';
+  /** Epoch ms when the OAuth access token expires. */
+  expiresAt?: number | null;
+  hasRefreshToken?: boolean;
+  oauthSupported?: boolean;
 }
 
 export interface DesktopConfigSnapshot {
@@ -69,6 +77,74 @@ export function wantsSetKey(argv: readonly string[]): boolean {
 
 export function wantsDiscoverModels(argv: readonly string[]): boolean {
   return argv.includes('--discover-models');
+}
+
+export function wantsLoginOAuth(argv: readonly string[]): boolean {
+  return argv.includes('--login-oauth');
+}
+
+export function wantsRefreshOAuth(argv: readonly string[]): boolean {
+  return argv.includes('--refresh-oauth');
+}
+
+export function wantsLogoutOAuth(argv: readonly string[]): boolean {
+  return argv.includes('--logout-oauth');
+}
+
+export interface LoginOAuthRequest {
+  provider: string;
+  code?: string;
+  noBrowser?: boolean;
+}
+
+export function parseLoginOAuthFlags(argv: readonly string[]): {
+  request: LoginOAuthRequest | null;
+  error?: string;
+} {
+  if (!argv.includes('--login-oauth')) return { request: null };
+  let provider: string | undefined;
+  let code: string | undefined;
+  let noBrowser = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === '--provider') {
+      provider = argv[i + 1];
+      i++;
+    } else if (arg === '--code') {
+      code = argv[i + 1];
+      i++;
+    } else if (arg === '--no-browser') {
+      noBrowser = true;
+    }
+  }
+  if (!provider || provider.trim().length === 0) {
+    return { request: null, error: '--login-oauth requires --provider <id>' };
+  }
+  return {
+    request: {
+      provider: provider.trim(),
+      code: code?.trim() || undefined,
+      noBrowser: noBrowser || undefined,
+    },
+  };
+}
+
+export function parseProviderOnlyFlag(
+  argv: readonly string[],
+  flag: '--refresh-oauth' | '--logout-oauth',
+): { provider: string | null; error?: string; present: boolean } {
+  if (!argv.includes(flag)) return { provider: null, present: false };
+  let provider: string | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--provider') {
+      provider = argv[i + 1];
+      i++;
+    }
+  }
+  if (!provider || provider.trim().length === 0) {
+    return { provider: null, present: true, error: `${flag} requires --provider <id>` };
+  }
+  return { provider: provider.trim(), present: true };
 }
 
 export interface SetConfigRequest {
@@ -228,15 +304,22 @@ export function buildDesktopConfigSnapshot(): DesktopConfigSnapshot {
     }
     const custom = getCustomEndpoint(p.id as ProviderName);
     const builtin = p.baseUrl ?? null;
+    const stored = getOAuthToken(p.id);
+    const hasKey = !!resolveApiKey(p.id);
+    const oauth = Boolean(stored?.refreshToken || stored?.expiresAt);
     return {
       id: p.id,
       displayName: p.displayName,
-      hasKey: !!resolveApiKey(p.id),
+      hasKey,
       envVar: p.envVar,
       models,
       defaultModel,
       endpoint: custom ?? null,
       baseUrl: custom ?? builtin,
+      authKind: !hasKey ? 'none' : oauth ? 'oauth' : 'api_key',
+      expiresAt: stored?.expiresAt ?? null,
+      hasRefreshToken: Boolean(stored?.refreshToken),
+      oauthSupported: isOAuthProvider(p.id),
     };
   });
 
@@ -344,6 +427,8 @@ const DISCOVERABLE: DiscoveryProviderId[] = [
   'minimax',
   'deepseek',
   'openai-compatible',
+  'chatgpt',
+  'anthropic',
 ];
 
 /** Fetch and cache models; print JSON result. */

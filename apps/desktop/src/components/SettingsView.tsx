@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { setApiKey, setAppConfig } from "../agentClient";
+import {
+  loginOAuth,
+  logoutOAuth,
+  refreshOAuth,
+  setApiKey,
+  setAppConfig,
+} from "../agentClient";
 import type { CliStatus, DesktopConfig, DispatchMode, WorkPhase } from "../types";
 import { getAppVersion } from "../updater";
 import { CliUpdateSection } from "./CliUpdateSection";
@@ -198,6 +204,9 @@ export function SettingsView({
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [appVersion, setAppVersion] = useState("…");
+  const [oauthBusy, setOauthBusy] = useState(false);
+  const [oauthCode, setOauthCode] = useState("");
+  const [oauthUrl, setOauthUrl] = useState<string | null>(null);
 
   useEffect(() => {
     void getAppVersion().then(setAppVersion);
@@ -218,6 +227,8 @@ export function SettingsView({
   useEffect(() => {
     const p = providers.find((x) => x.id === provider);
     setEndpoint(p?.endpoint ?? "");
+    setOauthUrl(null);
+    setOauthCode("");
   }, [provider, providers]);
 
   const selectTab = (id: SettingsTab) => {
@@ -284,6 +295,99 @@ export function SettingsView({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
+    }
+  };
+
+  const oauthSupported =
+    Boolean(active?.oauthSupported) ||
+    provider === "grok" ||
+    provider === "chatgpt" ||
+    provider === "anthropic";
+
+  const formatExpiry = (ms?: number | null) => {
+    if (!ms) return null;
+    const delta = ms - Date.now();
+    if (delta <= 0) return "expired";
+    const min = Math.round(delta / 60_000);
+    if (min < 90) return `expires in ${min}m`;
+    const hr = Math.round(min / 60);
+    return `expires in ${hr}h`;
+  };
+
+  const runOAuthLogin = async (code?: string) => {
+    setOauthBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const r = await loginOAuth({ provider, code });
+      if (r.ok === false && r.error) {
+        setError(r.error);
+        return;
+      }
+      if (r.phase === "need_code") {
+        setOauthUrl(r.authorizeUrl ?? null);
+        setMessage(
+          r.message ??
+            "Sign in in the browser, then paste the code below.",
+        );
+        if (r.authorizeUrl) {
+          try {
+            const { openUrl } = await import("@tauri-apps/plugin-opener");
+            await openUrl(r.authorizeUrl);
+          } catch {
+            /* URL is shown in the form */
+          }
+        }
+        return;
+      }
+      setOauthUrl(null);
+      setOauthCode("");
+      setMessage(r.message ?? `Signed in to ${provider}.`);
+      await onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const runOAuthRefresh = async () => {
+    setOauthBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const r = await refreshOAuth({ provider });
+      if (r.ok === false && r.error) {
+        setError(r.error);
+        return;
+      }
+      setMessage(r.message ?? `Refreshed ${provider} token.`);
+      await onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOauthBusy(false);
+    }
+  };
+
+  const runOAuthLogout = async () => {
+    setOauthBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const r = await logoutOAuth({ provider });
+      if (r.ok === false && r.error) {
+        setError(r.error);
+        return;
+      }
+      setOauthUrl(null);
+      setOauthCode("");
+      setMessage(r.message ?? `Signed out of ${provider}.`);
+      await onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setOauthBusy(false);
     }
   };
 
@@ -417,14 +521,108 @@ export function SettingsView({
                   />
                 </label>
 
+                {oauthSupported && (
+                  <>
+                    <h3 className="settings-subhead">Account login (OAuth)</h3>
+                    <p className="muted">
+                      Subscription login — not an API key. Grok and ChatGPT
+                      open a device/magic-link page; Anthropic asks you to
+                      paste the code after signing in.
+                    </p>
+                    {active?.hasKey && active.authKind === "oauth" ? (
+                      <p className="ok-inline">
+                        Signed in to {active.displayName}
+                        {formatExpiry(active.expiresAt)
+                          ? ` — ${formatExpiry(active.expiresAt)}`
+                          : ""}
+                        {active.hasRefreshToken ? " · refresh token saved" : ""}.
+                      </p>
+                    ) : active?.hasKey ? (
+                      <p className="ok-inline">
+                        API key on file for {active.displayName}. You can still
+                        switch to OAuth below.
+                      </p>
+                    ) : (
+                      <p className="warn">Not signed in for this provider.</p>
+                    )}
+                    {oauthUrl && (
+                      <p className="muted oauth-url">
+                        Open:{" "}
+                        <a href={oauthUrl} target="_blank" rel="noreferrer">
+                          {oauthUrl}
+                        </a>
+                      </p>
+                    )}
+                    {provider === "anthropic" && (
+                      <label className="field">
+                        <span>Paste magic-link code (CODE#STATE)</span>
+                        <input
+                          type="text"
+                          autoComplete="off"
+                          placeholder="Paste the code from the Anthropic page"
+                          value={oauthCode}
+                          onChange={(e) => setOauthCode(e.target.value)}
+                        />
+                      </label>
+                    )}
+                    <div className="settings-actions inline">
+                      <button
+                        type="button"
+                        className="btn-send"
+                        disabled={oauthBusy || saving}
+                        onClick={() => void runOAuthLogin()}
+                      >
+                        {oauthBusy
+                          ? "Waiting…"
+                          : active?.hasKey && active.authKind === "oauth"
+                            ? "Sign in again"
+                            : `Sign in with ${active?.displayName ?? provider}`}
+                      </button>
+                      {provider === "anthropic" && (
+                        <button
+                          type="button"
+                          className="btn-send"
+                          disabled={oauthBusy || saving || !oauthCode.trim()}
+                          onClick={() => void runOAuthLogin(oauthCode.trim())}
+                        >
+                          Complete sign-in
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={
+                          oauthBusy || saving || !active?.hasRefreshToken
+                        }
+                        onClick={() => void runOAuthRefresh()}
+                      >
+                        Refresh token
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={oauthBusy || saving || !active?.hasKey}
+                        onClick={() => void runOAuthLogout()}
+                      >
+                        Sign out
+                      </button>
+                    </div>
+                  </>
+                )}
+
                 <h3 className="settings-subhead">API key</h3>
                 <p className="muted">
                   Stored in CLI keystore (never shown again). Env var:{" "}
                   <code>{active?.envVar ?? "—"}</code>
+                  {oauthSupported
+                    ? " — optional if you use OAuth above."
+                    : ""}
                 </p>
                 {active?.hasKey ? (
                   <p className="ok-inline">
-                    Key on file for {active.displayName}.
+                    {active.authKind === "oauth"
+                      ? `OAuth token on file for ${active.displayName}.`
+                      : `Key on file for ${active.displayName}.`}
                   </p>
                 ) : (
                   <p className="warn">No key for this provider yet.</p>
@@ -451,11 +649,6 @@ export function SettingsView({
                     Save key
                   </button>
                 </div>
-                {provider === "grok" && (
-                  <p className="muted" style={{ marginTop: 10 }}>
-                    Grok OAuth: use CLI <code>/login grok</code> for device flow.
-                  </p>
-                )}
 
                 <h3 className="settings-subhead">Custom endpoint</h3>
                 <p className="muted">

@@ -26,7 +26,15 @@ import {
 // and this seeds it with the built-in defaults (Grok).
 registerDefaultRefreshImpls();
 
-export type ProviderName = 'minimax' | 'glm' | 'grok' | 'deepseek' | 'openai-compatible' | 'custom';
+export type ProviderName =
+  | 'minimax'
+  | 'glm'
+  | 'grok'
+  | 'deepseek'
+  | 'openai-compatible'
+  | 'custom'
+  | 'chatgpt'
+  | 'anthropic';
 
 export interface ProviderSpec {
   /** Stable id used in storage + slash commands. */
@@ -45,7 +53,30 @@ export const PROVIDERS: readonly ProviderSpec[] = [
   { id: 'glm', displayName: 'GLM / Z.AI', envVar: 'GLM_API_KEY', baseUrl: 'https://api.z.ai/api/coding/paas/v4' },
   { id: 'grok', displayName: 'xAI Grok', envVar: 'GROK_API_KEY', baseUrl: 'https://api.x.ai/v1' },
   { id: 'deepseek', displayName: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com' },
+  { id: 'chatgpt', displayName: 'ChatGPT (OAuth)', envVar: 'CHATGPT_API_KEY', baseUrl: 'https://chatgpt.com/backend-api/codex' },
+  { id: 'anthropic', displayName: 'Anthropic Claude (OAuth)', envVar: 'ANTHROPIC_API_KEY', baseUrl: 'https://api.anthropic.com' },
 ] as const;
+
+/** Providers that support subscription OAuth (no API key required). */
+export const OAUTH_PROVIDER_IDS: readonly ProviderName[] = [
+  'grok',
+  'chatgpt',
+  'anthropic',
+];
+
+export function isOAuthProvider(id: string): id is ProviderName {
+  return (OAUTH_PROVIDER_IDS as readonly string[]).includes(id);
+}
+
+/** True when the string looks like a vendor API key (not an OAuth paste-code). */
+export function looksLikeApiKey(key: string): boolean {
+  return /^(sk-|xai-|glm-|mm-)/i.test(key.trim());
+}
+
+/** Comma-separated provider ids for help / error strings. */
+export function formatProviderIds(): string {
+  return PROVIDERS.map((p) => p.id).join(', ');
+}
 
 export function getKeyStorePath(): string {
   return process.env.ANATHEMA_KEYSTORE_FILE
@@ -71,6 +102,10 @@ export interface StoredKey {
   expiresAt?: number;
   /** Refresh token (set after OAuth flow if provider supports it). */
   refreshToken?: string;
+  /** ChatGPT account id from the id_token (`ChatGPT-Account-Id` header). */
+  accountId?: string;
+  /** Raw OIDC id_token when the provider returned one. */
+  idToken?: string;
 }
 
 interface StoredKeys {
@@ -96,6 +131,12 @@ function normalizeProviderEntry(raw: unknown): StoredKey | null {
       }
       if (typeof r.refreshToken === 'string' && r.refreshToken.length > 0) {
         out.refreshToken = r.refreshToken;
+      }
+      if (typeof r.accountId === 'string' && r.accountId.length > 0) {
+        out.accountId = r.accountId;
+      }
+      if (typeof r.idToken === 'string' && r.idToken.length > 0) {
+        out.idToken = r.idToken;
       }
       return out;
     }
@@ -156,10 +197,15 @@ export function getStoredApiKey(providerId: string): string | null {
  * Store an OAuth token (apiKey + optional expiresAt + optional refreshToken)
  * for a provider. Overwrites any existing entry.
  */
-export function setOAuthToken(
-  providerId: string,
-  token: { apiKey: string; expiresAt?: number; refreshToken?: string },
-): void {
+export type OAuthTokenInput = {
+  apiKey: string;
+  expiresAt?: number;
+  refreshToken?: string;
+  accountId?: string;
+  idToken?: string;
+};
+
+export function setOAuthToken(providerId: string, token: OAuthTokenInput): void {
   const store = readStore();
   const entry: StoredKey = { apiKey: token.apiKey };
   if (typeof token.expiresAt === 'number' && Number.isFinite(token.expiresAt)) {
@@ -167,6 +213,12 @@ export function setOAuthToken(
   }
   if (typeof token.refreshToken === 'string' && token.refreshToken.length > 0) {
     entry.refreshToken = token.refreshToken;
+  }
+  if (typeof token.accountId === 'string' && token.accountId.length > 0) {
+    entry.accountId = token.accountId;
+  }
+  if (typeof token.idToken === 'string' && token.idToken.length > 0) {
+    entry.idToken = token.idToken;
   }
   store.providers[providerId] = entry;
   writeStore(store);
@@ -244,6 +296,8 @@ export async function resolveApiKeyWithMeta(
         // Provider did NOT rotate the refresh_token — keep the old one.
         next.refreshToken = stored.refreshToken;
       }
+      next.accountId = refreshed.accountId ?? stored.accountId;
+      next.idToken = refreshed.idToken ?? stored.idToken;
       // Update store in-place. We call readStore/writeStore indirectly via
       // setOAuthToken's shape: but we need to avoid clobbering other fields.
       // setOAuthToken accepts the same shape, so use it.
@@ -283,7 +337,30 @@ export type RefreshImpl = (providerId: string, refreshToken: string) => Promise<
   accessToken: string;
   expiresAt?: number;
   refreshToken?: string;
+  accountId?: string;
+  idToken?: string;
 }>;
+
+/**
+ * Force a refresh-token exchange even when the access token is not near
+ * expiry. Used by Desktop Settings and `/provider <id> refresh`.
+ */
+export async function forceRefreshOAuth(
+  providerId: string,
+  options: { refreshImpl?: RefreshImpl } = {},
+): Promise<StoredKey | null> {
+  const stored = getOAuthToken(providerId);
+  if (!stored?.refreshToken) return stored;
+  const refreshImpl = options.refreshImpl ?? defaultRefreshImpl;
+  const refreshed = await refreshImpl(providerId, stored.refreshToken);
+  const next: StoredKey = { apiKey: refreshed.accessToken };
+  if (refreshed.expiresAt !== undefined) next.expiresAt = refreshed.expiresAt;
+  next.refreshToken = refreshed.refreshToken ?? stored.refreshToken;
+  next.accountId = refreshed.accountId ?? stored.accountId;
+  next.idToken = refreshed.idToken ?? stored.idToken;
+  setOAuthToken(providerId, next);
+  return next;
+}
 
 /**
  * Default refresh impl: looks up the provider in the refresh registry.

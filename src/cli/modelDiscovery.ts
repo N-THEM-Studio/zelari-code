@@ -26,7 +26,14 @@ import path from 'node:path';
 // Types
 // ---------------------------------------------------------------------------
 
-export type ProviderId = 'grok' | 'glm' | 'minimax' | 'deepseek' | 'openai-compatible';
+export type ProviderId =
+  | 'grok'
+  | 'glm'
+  | 'minimax'
+  | 'deepseek'
+  | 'openai-compatible'
+  | 'chatgpt'
+  | 'anthropic';
 
 export interface DiscoveredModel {
   /** Model id (e.g. 'grok-4-fast-reasoning', 'glm-4.6'). */
@@ -58,6 +65,8 @@ export interface ModelsRegistry {
   minimax?: ProviderModelsEntry;
   deepseek?: ProviderModelsEntry;
   'openai-compatible'?: ProviderModelsEntry;
+  chatgpt?: ProviderModelsEntry;
+  anthropic?: ProviderModelsEntry;
 }
 
 export interface DiscoverOptions {
@@ -91,6 +100,25 @@ const PROVIDER_BASE_URLS: Record<ProviderId, string> = {
   // Must match PROVIDER_ENDPOINTS in provider/openai-compatible.ts (chat host).
   'deepseek': 'https://api.deepseek.com',
   'openai-compatible': 'https://api.x.ai/v1',
+  'chatgpt': 'https://chatgpt.com/backend-api/codex',
+  'anthropic': 'https://api.anthropic.com/v1',
+};
+
+/** Static catalogs used when the live /models call is empty or unauthorized. */
+const STATIC_FALLBACKS: Partial<Record<ProviderId, DiscoveredModel[]>> = {
+  chatgpt: [
+    { id: 'gpt-5.2-codex', displayName: 'GPT-5.2 Codex' },
+    { id: 'gpt-5.2', displayName: 'GPT-5.2' },
+    { id: 'gpt-5.1-codex', displayName: 'GPT-5.1 Codex' },
+    { id: 'gpt-5.1', displayName: 'GPT-5.1' },
+    { id: 'o3', displayName: 'o3' },
+    { id: 'o4-mini', displayName: 'o4-mini' },
+  ],
+  anthropic: [
+    { id: 'claude-opus-4-6', displayName: 'Claude Opus 4.6' },
+    { id: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5' },
+    { id: 'claude-haiku-4-5', displayName: 'Claude Haiku 4.5' },
+  ],
 };
 
 /**
@@ -215,12 +243,35 @@ async function resolveAuthToken(
   if (options.authToken) return options.authToken;
   // Late import: keyStore uses node:fs/promises, no Electron deps.
   const { resolveApiKeyWithMeta, getOAuthToken } = await import('./keyStore.js');
-  if (provider === 'grok') {
-    const oauth = getOAuthToken('grok');
+  if (provider === 'grok' || provider === 'chatgpt' || provider === 'anthropic') {
+    const oauth = getOAuthToken(provider);
     if (oauth?.apiKey) return oauth.apiKey;
   }
   const resolved = await resolveApiKeyWithMeta(provider);
   return resolved?.apiKey;
+}
+
+async function resolveDiscoveryHeaders(
+  provider: ProviderId,
+  authToken: string | undefined,
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (!authToken) return headers;
+  if (provider === 'anthropic') {
+    headers.Authorization = `Bearer ${authToken}`;
+    headers['x-api-key'] = authToken;
+    headers['anthropic-version'] = '2023-06-01';
+    headers['anthropic-beta'] = 'oauth-2025-04-20';
+    return headers;
+  }
+  headers.Authorization = `Bearer ${authToken}`;
+  if (provider === 'chatgpt') {
+    const { getOAuthToken } = await import('./keyStore.js');
+    const accountId = getOAuthToken('chatgpt')?.accountId;
+    if (accountId) headers['ChatGPT-Account-Id'] = accountId;
+    headers['OpenAI-Beta'] = 'responses=experimental';
+  }
+  return headers;
 }
 
 // ---------------------------------------------------------------------------
@@ -236,6 +287,27 @@ interface OpenAIModelsResponse {
     owned_by?: string;
     [extra: string]: unknown;
   }>;
+}
+
+function parseAnthropicModelsResponse(json: unknown): DiscoveredModel[] {
+  if (!json || typeof json !== 'object') return [];
+  const data = (json as { data?: unknown }).data;
+  if (!Array.isArray(data)) return [];
+  const models: DiscoveredModel[] = [];
+  for (const m of data) {
+    if (!m || typeof m !== 'object') continue;
+    const rec = m as Record<string, unknown>;
+    if (typeof rec.id !== 'string') continue;
+    const out: DiscoveredModel = { id: rec.id };
+    if (typeof rec.display_name === 'string') out.displayName = rec.display_name;
+    if (typeof rec.created_at === 'string') {
+      const ts = Date.parse(rec.created_at);
+      if (Number.isFinite(ts)) out.created = Math.floor(ts / 1000);
+    }
+    models.push(out);
+  }
+  models.sort((a, b) => a.id.localeCompare(b.id));
+  return models;
 }
 
 function parseOpenAIModelsResponse(json: unknown, baseUrl: string): DiscoveredModel[] {
@@ -276,16 +348,22 @@ export async function discoverModelsForProvider(
       'no_base_url'
     );
   }
-  const url = `${baseUrl.replace(/\/$/, '')}/models`;
+  const url =
+    provider === 'chatgpt'
+      ? 'https://chatgpt.com/backend-api/models'
+      : `${baseUrl.replace(/\/$/, '')}/models`;
   const authToken = await resolveAuthToken(provider, options);
 
   const fetchImpl = options.fetchImpl ?? fetch;
-  let response: Response;
+  let response: Response | undefined;
   try {
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (authToken) headers.Authorization = `Bearer ${authToken}`;
+    const headers = await resolveDiscoveryHeaders(provider, authToken);
     response = await fetchImpl(url, { method: 'GET', headers });
   } catch (err) {
+    const fallback = STATIC_FALLBACKS[provider];
+    if (fallback) {
+      return cacheFallback(provider, baseUrl, fallback, options, `network: ${err instanceof Error ? err.message : String(err)}`);
+    }
     throw new ModelDiscoveryError(
       `Network error contacting ${url}: ${err instanceof Error ? err.message : String(err)}`,
       'network_error'
@@ -294,6 +372,10 @@ export async function discoverModelsForProvider(
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
+    const fallback = STATIC_FALLBACKS[provider];
+    if (fallback) {
+      return cacheFallback(provider, baseUrl, fallback, options, `HTTP ${response.status}: ${body.slice(0, 80)}`);
+    }
     throw new ModelDiscoveryError(
       `HTTP ${response.status} from ${url}: ${body.slice(0, 200)}`,
       `http_${response.status}`
@@ -304,14 +386,25 @@ export async function discoverModelsForProvider(
   try {
     json = await response.json();
   } catch (err) {
+    const fallback = STATIC_FALLBACKS[provider];
+    if (fallback) {
+      return cacheFallback(provider, baseUrl, fallback, options, 'invalid_json');
+    }
     throw new ModelDiscoveryError(
       `Invalid JSON from ${url}: ${err instanceof Error ? err.message : String(err)}`,
       'invalid_json'
     );
   }
 
-  const models = parseOpenAIModelsResponse(json, baseUrl);
+  const models =
+    provider === 'anthropic'
+      ? parseAnthropicModelsResponse(json)
+      : parseOpenAIModelsResponse(json, baseUrl);
   if (models.length === 0) {
+    const fallback = STATIC_FALLBACKS[provider];
+    if (fallback) {
+      return cacheFallback(provider, baseUrl, fallback, options, 'empty_response');
+    }
     throw new ModelDiscoveryError(
       `Provider ${provider} returned 0 models — refusing to overwrite cache`,
       'empty_response'
@@ -332,6 +425,29 @@ export async function discoverModelsForProvider(
     }, file);
   }
 
+  return entry;
+}
+
+async function cacheFallback(
+  provider: ProviderId,
+  baseUrl: string,
+  models: DiscoveredModel[],
+  options: DiscoverOptions,
+  lastError: string,
+): Promise<ProviderModelsEntry> {
+  const entry: ProviderModelsEntry = {
+    models,
+    fetchedAt: Date.now(),
+    baseUrl,
+    lastError,
+  };
+  if (!options.skipCacheWrite) {
+    const file = getModelsFilePath();
+    await readModifyWriteRegistry((current) => {
+      current[provider] = entry;
+      return current;
+    }, file);
+  }
   return entry;
 }
 

@@ -438,9 +438,9 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 
 | Comando | Descrizione |
 |---|---|
-| `/login <provider> [key]` | Autentica un provider; senza key avvia OAuth per `grok` |
+| `/login <provider> [key]` | Autentica un provider; senza key avvia OAuth per `grok`, `chatgpt`, `anthropic` |
 | `/provider` | Picker interattivo dei provider (↑/↓ + invio, esc annulla) |
-| `/provider <id>` | Cambia provider (`openai-compatible`, `grok`, `minimax`, `glm`, `deepseek`) |
+| `/provider <id>` | Cambia provider (`openai-compatible`, `grok`, `chatgpt`, `anthropic`, `minimax`, `glm`, `deepseek`) |
 | `/provider list` | Mostra provider attivo e disponibili (testo) |
 | `/provider custom <url>` | Endpoint custom (Ollama, LM Studio, vLLM, DeepSeek, …) |
 | `/provider custom clear` | Rimuove override endpoint |
@@ -571,6 +571,8 @@ Accumulo **verificato** di artefatti (Palmer *State, Not Tokens*) e ottimizzazio
 |---|---|---|---|
 | `openai-compatible` | OpenAI-compatible | `OPENAI_API_KEY` | OpenAI, Together, Groq, endpoint custom |
 | `grok` | xAI Grok | `GROK_API_KEY` | OAuth via `/login grok` (RFC 8628) |
+| `chatgpt` | ChatGPT (abbonamento) | `CHATGPT_API_KEY` | OAuth magic-link / device: `/login chatgpt` |
+| `anthropic` | Claude Pro/Max | `ANTHROPIC_API_KEY` | OAuth magic-link: `/login anthropic` poi incolla `CODE#STATE` |
 | `minimax` | MiniMax | `MINIMAX_API_KEY` | Base URL: `https://api.minimax.io/v1` (endpoint internazionale) |
 | `glm` | GLM / Z.AI | `GLM_API_KEY` | Base URL: `https://api.z.ai/api/coding/paas/v4` (GLM Coding Plan). Per l'API pay-per-token: `/provider custom https://api.z.ai/api/paas/v4`. L'id provider è `glm`, non `zai`. |
 
@@ -594,6 +596,8 @@ zelari-code
 ```
 /login openai-compatible sk-your-key-here
 /login grok                    # avvia OAuth device flow
+/login chatgpt                 # ChatGPT subscription (device / magic link)
+/login anthropic               # apre claude.ai; poi /login anthropic CODE#STATE
 /model grok-4
 /provider grok
 ```
@@ -630,12 +634,40 @@ export OPENAI_BASE_URL=https://forgeai.dotlabstudios.com/v1
 > norma `openai-compatible`); non esiste un provider selezionabile chiamato
 > `custom`.
 
-### OAuth Grok
+### OAuth Grok / ChatGPT / Anthropic
+
+**Grok** (device flow RFC 8628):
 
 1. `/login grok` (senza key)
 2. Compare un codice e un URL di verifica
 3. Apri l'URL, inserisci il codice, autorizza
 4. Il token (access + refresh) viene salvato in `keys.json`
+
+**ChatGPT** (subscription, non API key):
+
+1. `/login chatgpt`
+2. Apri l'URL, inserisci il user code, autorizza
+3. Token + `ChatGPT-Account-Id` salvati; i modelli si scoprono da Codex
+
+**Anthropic** (magic link / paste-code):
+
+1. `/login anthropic` apre `claude.ai/oauth/authorize`
+2. Dopo il login la pagina mostra un codice (`CODE#STATE`)
+3. `/login anthropic <codice>`
+
+Refresh forzato: `/provider grok refresh` (o `chatgpt` / `anthropic`).
+Dalla Desktop app: Impostazioni → Provider → **Refresh token**.
+
+CLI / Desktop:
+
+```
+zelari-code --login-oauth --provider grok
+zelari-code --login-oauth --provider chatgpt
+zelari-code --login-oauth --provider anthropic
+zelari-code --login-oauth --provider anthropic --code 'CODE#STATE'
+zelari-code --refresh-oauth --provider grok
+zelari-code --logout-oauth --provider chatgpt
+```
 
 ### Failover cross-provider
 

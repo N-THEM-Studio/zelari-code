@@ -27,7 +27,6 @@ import { buildImplementationWriteRetryPrompt } from '@zelari/core/council';
 import { createBuiltinToolRegistry } from './toolRegistry.js';
 import {
   emitEvent,
-  openaiCompatibleProvider,
   resolveHeadlessKey,
   resolveHeadlessProvider,
   type HeadlessOptions,
@@ -153,8 +152,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       process.stderr.write(`[zelari-code --headless] ${key.error}\n`);
       return 1;
     }
-    providerStream = openaiCompatibleProvider({
-      providerId: provider as 'minimax' | 'glm' | 'grok' | 'openai-compatible' | 'custom',
+    const { buildProviderStream } = await import('./provider/resolveStream.js');
+    providerStream = buildProviderStream({
+      providerId: provider as import('./keyStore.js').ProviderName,
       apiKey: key.apiKey,
       baseUrl: key.baseUrl,
       model,

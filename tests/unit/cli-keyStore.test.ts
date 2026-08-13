@@ -34,12 +34,14 @@ describe('keyStore', () => {
     await fs.rm(testStore, { force: true });
   });
 
-  it('PROVIDERS list contains the 4 expected providers', () => {
+  it('PROVIDERS list contains built-in providers including OAuth ones', () => {
     const ids = PROVIDERS.map((p) => p.id);
     expect(ids).toContain('openai-compatible');
     expect(ids).toContain('minimax');
     expect(ids).toContain('glm');
     expect(ids).toContain('grok');
+    expect(ids).toContain('chatgpt');
+    expect(ids).toContain('anthropic');
   });
 
   it('getProviderSpec() returns the spec for known providers, undefined for unknown', () => {

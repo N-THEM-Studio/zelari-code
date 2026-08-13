@@ -828,6 +828,83 @@ fn set_api_key(args: SetKeyArgs) -> Result<serde_json::Value, String> {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct LoginOAuthArgs {
+    provider: String,
+    code: Option<String>,
+    #[serde(default)]
+    no_browser: bool,
+}
+
+#[tauri::command]
+fn login_oauth(args: LoginOAuthArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let provider = args.provider.trim();
+    if provider.is_empty() {
+        return Err("provider is required".into());
+    }
+    let mut argv: Vec<String> = vec![
+        "--login-oauth".into(),
+        "--provider".into(),
+        provider.to_string(),
+    ];
+    if let Some(code) = args
+        .code
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        argv.push("--code".into());
+        argv.push(code.to_string());
+    }
+    if args.no_browser {
+        argv.push("--no-browser".into());
+    }
+    let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
+    let raw = run_cli_capture(&node, &cli, &refs)?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid login-oauth JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderOnlyArgs {
+    provider: String,
+}
+
+#[tauri::command]
+fn refresh_oauth(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let provider = args.provider.trim();
+    if provider.is_empty() {
+        return Err("provider is required".into());
+    }
+    let raw = run_cli_capture(
+        &node,
+        &cli,
+        &["--refresh-oauth", "--provider", provider],
+    )?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid refresh-oauth JSON:\n{raw}"))
+}
+
+#[tauri::command]
+fn logout_oauth(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let provider = args.provider.trim();
+    if provider.is_empty() {
+        return Err("provider is required".into());
+    }
+    let raw = run_cli_capture(
+        &node,
+        &cli,
+        &["--logout-oauth", "--provider", provider],
+    )?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid logout-oauth JSON:\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct DiscoverArgs {
     provider: Option<String>,
 }
@@ -2486,6 +2563,9 @@ pub fn run() {
             get_app_config,
             set_app_config,
             set_api_key,
+            login_oauth,
+            refresh_oauth,
+            logout_oauth,
             discover_models,
             check_cli_update,
             update_cli,
