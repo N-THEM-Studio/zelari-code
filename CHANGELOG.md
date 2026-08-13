@@ -5,6 +5,16 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.34.0] - 2026-08-13
+
+### Added
+- **ChatGPT and Anthropic subscription OAuth** — `/login chatgpt` runs the Codex device/magic-link flow; `/login anthropic` opens the Claude magic-link page, then `/login anthropic CODE#STATE` completes it. Tokens (access + refresh, plus ChatGPT account id) live in `keys.json`. API keys remain optional (`sk-…`).
+- **Desktop Settings OAuth** — Provider tab can Sign in / Refresh token / Sign out for Grok, ChatGPT, and Anthropic. New CLI flags: `--login-oauth`, `--refresh-oauth`, `--logout-oauth`.
+- **Model discovery for ChatGPT and Anthropic** — live `/models` after OAuth, with static fallbacks (`gpt-5.2-codex`, `claude-sonnet-4-5`, …). Chat routes ChatGPT through the Codex Responses API and Anthropic through Messages.
+
+### Changed
+- **`/provider <id> refresh`** now force-refreshes OAuth tokens even when they are not near expiry (same as Desktop Refresh token).
+
 ## [1.33.2] - 2026-08-12
 
 ### Fixed
