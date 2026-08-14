@@ -6,7 +6,7 @@
 ## Overview
 
 **Zelari Code** — AI council coding agent CLI + `@zelari/core` + optional Tauri Desktop.  
-Maintained by [Anathema Studio](https://anathema-studio.com/). Monorepo MIT.  
+Maintained by [Anathema Studio](https://anathema-studio.com/). Monorepo Apache-2.0. First principles: [`PRINCIPLES.md`](./PRINCIPLES.md) (P1–P6).  
 User docs: `README.md`, `docs/GUIDA.md`, `docs/TOOLS.md`. Contribute: `CONTRIBUTING.md`.
 
 ## Tech Stack

@@ -425,6 +425,7 @@ See [`docs/plans/2026-07-01-council-workspace-cli-stubs.md`](./docs/plans/2026-0
 
 | Doc | Description |
 |---|---|
+| [PRINCIPLES.md](./PRINCIPLES.md) | First principles (P1–P6) + enforcement map |
 | [docs/GUIDA.md](./docs/GUIDA.md) | **Full user guide** (Italian) |
 | [docs/TOOLS.md](./docs/TOOLS.md) | Tool map (builtin, workspace, MCP, SSH, plan phase) |
 | [docs/media/](./docs/media/) | English marketing stills + trailer |
