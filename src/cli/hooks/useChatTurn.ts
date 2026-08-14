@@ -34,6 +34,7 @@ import {
   parseClarificationRequest,
   cleanAgentContent,
 } from "@zelari/core";
+import { createStreamScrubber } from "./streamScrub.js";
 import {
   appendOrExtendStreamingAssistant,
   appendSystem,
@@ -638,11 +639,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // v1.35: scrub at render cadence, not per delta. cleanAgentContent
         // runs ~35 regex passes over the full accumulated buffer, so at
         // 50-200 deltas/sec long streams scrubbed quadratically — while the
-        // throttled commit only renders once per 16ms. Null forces a fresh
-        // scrub on the first delta of each message (leading edge stays
-        // latency-free); message_end resets it together with streamContent.
-        let scrubbedDisplay: string | null = null;
-        let lastScrubAt = 0;
+        // throttled commit only renders once per 16ms.
+        const streamScrub = createStreamScrubber(16);
         // tool_execution_end doesn't carry toolName — remember it from the
         // matching start event (keyed by toolCallId) for metrics.
         const toolNameById = new Map<string, string>();
@@ -657,13 +655,18 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           for await (const event of harness.run()) {
             if (event.type === "message_end") {
               if (event.usage) realUsage = event.usage;
-              // Message boundary: drain buffered deltas, then seal the streamed
-              // bubble so the next message starts fresh instead of merging.
+              // Message boundary: seal with a full scrub so the last tokens
+              // inside the 16ms window are not dropped, then drain + reset.
+              if (streamContent) {
+                const sealed = streamScrub.finalize(streamContent);
+                if (useLiveModel) setStreaming(commitStreaming, sealed, event.ts);
+                else appendOrExtendStreamingAssistant(commitStreaming, sealed, event.ts);
+              }
               flushStreaming();
               if (useLiveModel) finalizeStreaming(setMessages, setLive!);
               else finalizeStreamingAssistant(setMessages);
               streamContent = "";
-              scrubbedDisplay = null;
+              streamScrub.reset();
             }
             if (event.type === "queue_update") {
               setQueueCount(harness.queueLength);
@@ -734,12 +737,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // private reasoning never flashes in the TUI (full scrub also
               // runs on turn end). v1.35: re-scrub at most once per 16ms —
               // matches the throttled render cadence below.
-              const scrubNow = scrubbedDisplay === null || Date.now() - lastScrubAt >= 16;
-              if (scrubNow) {
-                lastScrubAt = Date.now();
-                scrubbedDisplay = cleanAgentContent(streamContent);
-              }
-              const displayContent = scrubbedDisplay;
+              const displayContent = streamScrub.next(streamContent);
               // Route through the throttled setter so per-token deltas (50-200/sec)
               // coalesce into ≤60 renders/sec instead of flickering the TUI.
               if (useLiveModel) {
@@ -785,6 +783,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // Drain buffered deltas FIRST so the text streamed before the
               // call renders above the tool line, not below it — then seal
               // that bubble: it's complete once the model starts calling tools.
+              if (streamContent) {
+                const sealed = streamScrub.finalize(streamContent);
+                if (useLiveModel) setStreaming(commitStreaming, sealed, event.ts);
+                else appendOrExtendStreamingAssistant(commitStreaming, sealed, event.ts);
+              }
               flushStreaming();
               if (useLiveModel) {
                 finalizeStreaming(setMessages, setLive!);
@@ -809,7 +812,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // next delta starts a fresh bubble instead of re-showing (and
               // duplicating) the text already printed above the tool line.
               streamContent = "";
-              scrubbedDisplay = null;
+              streamScrub.reset();
             } else if (event.type === "tool_execution_end") {
               if (useLiveModel) {
                 completeTool(
@@ -1272,6 +1275,7 @@ async function dispatchCouncilPromptImpl(
   // `streamContent` in dispatchPrompt.
   let streamContent = "";
   let streamMemberId: string | null = null;
+  const streamScrub = createStreamScrubber(16);
   // v0.7.3: council members legitimately need more than the core default of
   // 5 tool calls per turn (a planner creating 8 tasks got 3 of them skipped
   // with "[skipped] maxToolCallsPerTurn reached"). Same env override as the
@@ -1415,11 +1419,13 @@ async function dispatchCouncilPromptImpl(
     })) {
       if (councilAborted) {
         // Drain remaining events silently after the abort decision.
-        if (writerRef.current) await writerRef.current.append(event);
+        if (writerRef.current) void writerRef.current.append(event);
         continue;
       }
       if (writerRef.current) {
-        await writerRef.current.append(event);
+        // Same batching as the single-agent path: fire-and-forget per event,
+        // flush at the turn boundary in `finally`.
+        void writerRef.current.append(event);
       }
       if (event.type === "council_mode") {
         councilRunMode = event.runMode;
@@ -1431,60 +1437,44 @@ async function dispatchCouncilPromptImpl(
       } else if (event.type === "message_delta") {
         // Coalesce streaming assistant content through the throttled setter so
         // per-token deltas don't flicker the TUI (same as dispatchPrompt).
-        if (useLiveModel) {
-          // v0.7.3: accumulate in the local `streamContent` (NOT via liveRef —
-          // stale under the throttle, see the accumulator comment above) and
-          // always push the FULL content: dropped intermediate commits are
-          // then harmless because the last one supersedes them.
-          const memberId = event.memberId ?? null;
-          if (memberId !== streamMemberId) {
-            // Member boundary without a message_end (defensive): seal the
-            // previous member's bubble before starting the new one.
-            flushStreaming();
-            finalizeStreaming(setMessages, setLive!);
-            streamContent = "";
-            streamMemberId = memberId;
-          }
-          streamContent += event.delta;
-          setStreaming(
-            commitStreaming,
-            cleanAgentContent(streamContent),
-            event.ts,
-            {
-              ...(event.memberId ? { memberId: event.memberId } : {}),
-              ...(event.memberName ? { memberName: event.memberName } : {}),
-            },
-          );
-        } else {
-          // Legacy single-array fallback. Extend the trailing streaming bubble
-          // only when it belongs to the SAME member — otherwise one specialist's
-          // text would be appended to (and attributed to) the previous one.
-          commitStreaming((prev) => {
-            const last = prev[prev.length - 1];
-            if (
-              last &&
-              last.role === "assistant" &&
-              last.id.startsWith("streaming-") &&
-              (last.memberId ?? null) === (event.memberId ?? null)
-            ) {
-              const nextContent = cleanAgentContent(last.content + event.delta);
-              return [
-                ...prev.slice(0, -1),
-                { ...last, content: nextContent },
-              ];
+        // v0.7.3: accumulate in the local `streamContent` (NOT via liveRef —
+        // stale under the throttle) and always push the FULL content.
+        // v1.35: scrub at 16ms, not per delta (council path used to re-run
+        // cleanAgentContent on every token).
+        const memberId = event.memberId ?? null;
+        if (memberId !== streamMemberId) {
+          if (streamContent) {
+            const sealed = streamScrub.finalize(streamContent);
+            if (useLiveModel) {
+              setStreaming(commitStreaming, sealed, event.ts, {
+                ...(streamMemberId ? { memberId: streamMemberId } : {}),
+              });
+            } else {
+              appendOrExtendStreamingAssistant(commitStreaming, sealed, event.ts);
             }
-            return [
-              ...prev,
-              {
-                id: `streaming-${crypto.randomUUID()}`,
-                role: "assistant",
-                content: cleanAgentContent(event.delta),
-                ts: event.ts,
-                ...(event.memberId ? { memberId: event.memberId } : {}),
-                ...(event.memberName ? { memberName: event.memberName } : {}),
-              },
-            ];
-          });
+          }
+          flushStreaming();
+          if (useLiveModel) finalizeStreaming(setMessages, setLive!);
+          else finalizeStreamingAssistant(setMessages);
+          streamContent = "";
+          streamScrub.reset();
+          streamMemberId = memberId;
+        }
+        streamContent += event.delta;
+        const displayContent = streamScrub.next(streamContent);
+        const memberCtx = {
+          ...(event.memberId ? { memberId: event.memberId } : {}),
+          ...(event.memberName ? { memberName: event.memberName } : {}),
+        };
+        if (useLiveModel) {
+          setStreaming(commitStreaming, displayContent, event.ts, memberCtx);
+        } else {
+          appendOrExtendStreamingAssistant(
+            commitStreaming,
+            displayContent,
+            event.ts,
+            memberCtx,
+          );
         }
       } else if (event.type === "message_end") {
         // Member/turn boundary: drain buffered deltas and seal the bubble so
@@ -1495,10 +1485,22 @@ async function dispatchCouncilPromptImpl(
             chairmanSynthesisText = streamContent;
           }
         }
+        if (streamContent) {
+          const sealed = streamScrub.finalize(streamContent);
+          if (useLiveModel) {
+            setStreaming(commitStreaming, sealed, event.ts, {
+              ...(event.memberId ? { memberId: event.memberId } : {}),
+              ...(event.memberName ? { memberName: event.memberName } : {}),
+            });
+          } else {
+            appendOrExtendStreamingAssistant(commitStreaming, sealed, event.ts);
+          }
+        }
         flushStreaming();
         if (useLiveModel) finalizeStreaming(setMessages, setLive!);
         else finalizeStreamingAssistant(setMessages);
         streamContent = "";
+        streamScrub.reset();
         streamMemberId = null;
         membersCompleted++;
       } else if (event.type === "tool_execution_start") {
@@ -1513,6 +1515,16 @@ async function dispatchCouncilPromptImpl(
         }
         // Drain buffered deltas first so ordering matches reality, and seal
         // the pre-tool bubble (complete once the member starts calling tools).
+        if (streamContent) {
+          const sealed = streamScrub.finalize(streamContent);
+          if (useLiveModel) {
+            setStreaming(commitStreaming, sealed, Date.now(), {
+              ...(streamMemberId ? { memberId: streamMemberId } : {}),
+            });
+          } else {
+            appendOrExtendStreamingAssistant(commitStreaming, sealed, Date.now());
+          }
+        }
         flushStreaming();
         if (useLiveModel) {
           finalizeStreaming(setMessages, setLive!);
@@ -1535,6 +1547,7 @@ async function dispatchCouncilPromptImpl(
         }
         // The pre-tool bubble is sealed: the next delta starts a fresh one.
         streamContent = "";
+        streamScrub.reset();
       } else if (event.type === "tool_execution_end") {
         if (useLiveModel) {
           completeTool(
@@ -1818,7 +1831,17 @@ async function dispatchCouncilPromptImpl(
           councilUsage.completionTokens,
         totalCostUsd: prev.totalCostUsd + memberCostUsd,
       }));
+      getMetricsLogger().record({
+        kind: "run",
+        sessionId,
+        provider: envConfig.providerId,
+        model: envConfig.model,
+        tokens: councilUsage.promptTokens + councilUsage.completionTokens,
+        costUsd: memberCostUsd,
+        ok: !councilAborted && !chairmanErrored,
+      });
     }
+    await (writerRef.current as { flush?: () => Promise<void> } | null)?.flush?.();
     setBusy(false);
   }
 

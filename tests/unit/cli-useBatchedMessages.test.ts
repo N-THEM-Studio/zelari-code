@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useState, useRef, useCallback } from 'react';
 import { useBatchedMessages } from '../../src/cli/hooks/useBatchedMessages.js';
+import { createStreamScrubber } from '../../src/cli/hooks/streamScrub.js';
 import type { ChatMessage } from '../../src/cli/components/ChatStream.js';
 
 /** Build a minimal ChatMessage for assertions. */
@@ -189,5 +190,42 @@ describe('useBatchedMessages', () => {
     // cleanup). We can't read commitCount post-unmount, so assert no throw.
     expect(() => vi.advanceTimersByTime(100)).not.toThrow();
     expect(callsBefore).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe('createStreamScrubber (WS2c — scrub at render cadence)', () => {
+  it('scrubs think tags on the first call (leading edge)', () => {
+    const s = createStreamScrubber(16);
+    const out = s.next('visible <think>secret</think> text', 1_000);
+    expect(out).toContain('visible');
+    expect(out).toContain('text');
+    expect(out).not.toContain('secret');
+    expect(out).not.toContain('<think>');
+  });
+
+  it('does not re-scrub inside the 16ms window', () => {
+    const s = createStreamScrubber(16);
+    const first = s.next('hello <think>a</think>', 1_000);
+    const second = s.next('hello <think>a</think> MORE', 1_005);
+    expect(second).toBe(first);
+    expect(second).not.toContain('MORE');
+  });
+
+  it('re-scrubs once the interval elapses', () => {
+    const s = createStreamScrubber(16);
+    s.next('hello <think>a</think>', 1_000);
+    const later = s.next('hello <think>a</think> MORE', 1_016);
+    expect(later).toContain('MORE');
+    expect(later).not.toContain('a');
+  });
+
+  it('finalize() always scrubs the latest raw buffer', () => {
+    const s = createStreamScrubber(16);
+    s.next('stale <think>x</think>', 1_000);
+    const sealed = s.finalize('final <think>hidden</think> ok');
+    expect(sealed).toContain('final');
+    expect(sealed).toContain('ok');
+    expect(sealed).not.toContain('hidden');
+    expect(sealed).not.toContain('stale');
   });
 });
