@@ -130,7 +130,20 @@ export function resolveShell(forceReResolve = false): ResolvedShell {
     return memoized;
   }
 
-  // win32: try to find a real bash first.
+  // win32: an explicit ZELARI_SHELL pointing at PowerShell must win over
+  // auto-detected Git Bash (doc order: override first, then bash probe).
+  const psOverride = acceptPowerShellPath(process.env.ZELARI_SHELL);
+  if (psOverride) {
+    memoized = {
+      shell: psOverride,
+      via: `powershell (${psOverride})`,
+      isBash: false,
+      isPowerShell: true,
+    };
+    return memoized;
+  }
+
+  // Then try to find a real bash.
   const bashFound = resolveBashWindows();
   if (bashFound) {
     memoized = { shell: bashFound, via: `bash (${bashFound})`, isBash: true, isPowerShell: false };

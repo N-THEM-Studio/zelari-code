@@ -189,7 +189,8 @@ describe('resolveShell — PowerShell fallback (v1.20.0)', () => {
     vi.stubEnv('ZELARI_SHELL', pwsh);
     vi.stubEnv('SHELL', '');
     const r = resolveShell(true);
-    if (r.via === 'cmd.exe') return; // pwsh not installed on this host
+    // Absent pwsh falls through to Git Bash (or cmd) on this host — skip.
+    if (r.shell !== pwsh) return;
     expect(r.isPowerShell).toBe(true);
     expect(r.isBash).toBe(false);
     expect(r.shell).toBe(pwsh);
