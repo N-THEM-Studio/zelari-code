@@ -4,7 +4,9 @@ import {
   cancelRun,
   checkCliUpdate,
   extractDelta,
+  extractToolCallId,
   extractToolName,
+  extractToolResult,
   getAppConfig,
   getCliStatus,
   getPluginsStatus,
@@ -30,10 +32,11 @@ import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
 import { WorkbenchPanel } from "./components/WorkbenchPanel";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
-import { RunActivity } from "./components/RunActivity";
+import { RunActivity, type LiveToolStep } from "./components/RunActivity";
 import { SessionTodosPanel } from "./components/SessionTodosPanel";
 import {
-  parseTodoToolResult,
+  mergeDesktopTodos,
+  parseTodosFromUnknown,
   type DesktopTodo,
 } from "./sessionTodosUi";
 import { ReplyAccordion } from "./components/ReplyAccordion";
@@ -420,6 +423,9 @@ export default function App() {
   );
   /** Live tool activity line (no per-tool cards in the stream). */
   const [liveToolLabel, setLiveToolLabel] = useState<string | null>(null);
+  /** This-turn tool steps for the live feed (end events omit toolName). */
+  const [liveSteps, setLiveSteps] = useState<LiveToolStep[]>([]);
+  const pendingToolNamesRef = useRef<Map<string, string>>(new Map());
   /** Session todos mirrored from todo_write / todo_read tool results. */
   const [sessionTodos, setSessionTodos] = useState<DesktopTodo[]>([]);
   /** Plan id captured from the last `--plan-only` run; the next "build" phase
@@ -1059,35 +1065,67 @@ export default function App() {
 
         if (ev.type === "tool_execution_start") {
           const name = extractToolName(ev);
+          const callId = extractToolCallId(ev) ?? `anon-${toolCountRef.current}`;
           const anyEv = ev as { args?: Record<string, unknown> };
           const toolSummary = summarizeToolArgs(name, anyEv.args);
           toolCountRef.current += 1;
-          // Do not append tool cards — rotate a single live activity line.
+          pendingToolNamesRef.current.set(callId, name);
+          // Do not append tool cards — rotate a single live activity line
+          // plus a persistent this-turn step list.
           if (toolLabelClearRef.current) {
             clearTimeout(toolLabelClearRef.current);
             toolLabelClearRef.current = null;
           }
           setLiveToolLabel(friendlyToolLabel(name, toolSummary));
-          // Keep assistantId — post-tool text continues in the same accordion.
+          setLiveSteps((prev) => [
+            ...prev,
+            { id: callId, name, summary: toolSummary, status: "running" },
+          ]);
+          // todo_write args already carry the list — paint it immediately.
+          if (name === "todo_write") {
+            const parsed = parseTodosFromUnknown(anyEv.args);
+            if (parsed) {
+              const merge = anyEv.args?.merge === true;
+              setSessionTodos((prev) =>
+                merge ? mergeDesktopTodos(prev, parsed) : parsed,
+              );
+            }
+          }
           return;
         }
 
         if (ev.type === "tool_execution_end") {
+          const callId = extractToolCallId(ev);
+          const endName =
+            (callId && pendingToolNamesRef.current.get(callId)) ||
+            extractToolName(ev);
+          if (callId) pendingToolNamesRef.current.delete(callId);
           // Brief hold, then fade back to thinking phrases.
           if (toolLabelClearRef.current) clearTimeout(toolLabelClearRef.current);
           toolLabelClearRef.current = setTimeout(() => {
             setLiveToolLabel(null);
             toolLabelClearRef.current = null;
           }, 900);
-          // Mirror session todos from headless agent tools (in-process store
-          // is not shared across Desktop's per-message CLI spawns).
-          const endName = extractToolName(ev);
+          const isErr = !!(ev as { isError?: boolean }).isError;
+          setLiveSteps((prev) =>
+            prev.map((s) =>
+              callId && s.id === callId
+                ? { ...s, status: isErr ? "error" : "done" }
+                : s,
+            ),
+          );
+          // End events omit toolName — look it up from the start event.
+          // The in-process CLI todo store is not shared across Desktop's
+          // per-message CLI spawns, so we mirror from the tool payload.
           if (
             (endName === "todo_write" || endName === "todo_read") &&
-            typeof ev.result === "string" &&
-            !ev.isError
+            !isErr
           ) {
-            const parsed = parseTodoToolResult(ev.result);
+            const raw =
+              typeof (ev as { result?: unknown }).result === "string"
+                ? (ev as { result: string }).result
+                : extractToolResult(ev) || (ev as { result?: unknown }).result;
+            const parsed = parseTodosFromUnknown(raw);
             if (parsed) setSessionTodos(parsed);
           }
           return;
@@ -1151,6 +1189,7 @@ export default function App() {
         setRunning(false);
         setLiveToolLabel(null);
         setLiveMemberName(null);
+        pendingToolNamesRef.current.clear();
         if (toolLabelClearRef.current) {
           clearTimeout(toolLabelClearRef.current);
           toolLabelClearRef.current = null;
@@ -1573,6 +1612,8 @@ export default function App() {
     hasAssistantTextRef.current = false;
     toolCountRef.current = 0;
     setLiveToolLabel(null);
+    setLiveSteps([]);
+    pendingToolNamesRef.current.clear();
     setLiveMemberName(null);
     setFollowStream(true);
     followStreamRef.current = true;
@@ -2253,6 +2294,7 @@ export default function App() {
                       liveMemberName || activeMemberRef.current.name || null
                     }
                     toolLabel={liveToolLabel}
+                    steps={liveSteps}
                   />
                 )}
               </div>

@@ -15,6 +15,20 @@ export interface DesktopTodo {
   status: DesktopTodoStatus;
 }
 
+/** Accept a JSON string, a `{ todos: [...] }` object, or `todo_write` args. */
+export function parseTodosFromUnknown(value: unknown): DesktopTodo[] | null {
+  if (value == null) return null;
+  if (typeof value === "string") return parseTodoToolResult(value);
+  if (typeof value === "object") {
+    try {
+      return parseTodoToolResult(JSON.stringify(value));
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 export function parseTodoToolResult(result: string | undefined | null): DesktopTodo[] | null {
   if (!result || typeof result !== "string") return null;
   const text = result.trim();
@@ -73,6 +87,20 @@ function normalizeStatus(s: string | undefined): DesktopTodoStatus {
     return v;
   }
   return "pending";
+}
+
+/** Upsert `incoming` onto `prev` by id (todo_write merge=true). */
+export function mergeDesktopTodos(
+  prev: DesktopTodo[],
+  incoming: DesktopTodo[],
+): DesktopTodo[] {
+  const out = [...prev];
+  for (const t of incoming) {
+    const i = out.findIndex((x) => x.id === t.id);
+    if (i >= 0) out[i] = t;
+    else out.push(t);
+  }
+  return out;
 }
 
 export function formatDesktopTodoSummary(todos: DesktopTodo[]): string | null {

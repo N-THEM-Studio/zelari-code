@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
 import {
   parseTodoToolResult,
+  parseTodosFromUnknown,
+  mergeDesktopTodos,
   formatDesktopTodoSummary,
 } from '../../apps/desktop/src/sessionTodosUi.js';
 
@@ -38,5 +40,29 @@ describe('desktop sessionTodosUi', () => {
   it('returns null for empty/garbage', () => {
     expect(parseTodoToolResult('')).toBeNull();
     expect(parseTodoToolResult('hello world')).toBeNull();
+  });
+
+  it('parses todo_write args objects (live start event)', () => {
+    const todos = parseTodosFromUnknown({
+      todos: [{ id: 'a', content: 'Read file', status: 'in_progress' }],
+      merge: false,
+    });
+    expect(todos).toEqual([
+      { id: 'a', content: 'Read file', status: 'in_progress' },
+    ]);
+  });
+
+  it('merges incoming todos by id', () => {
+    const merged = mergeDesktopTodos(
+      [
+        { id: 'a', content: 'Old', status: 'pending' },
+        { id: 'b', content: 'Keep', status: 'pending' },
+      ],
+      [{ id: 'a', content: 'New', status: 'completed' }],
+    );
+    expect(merged).toEqual([
+      { id: 'a', content: 'New', status: 'completed' },
+      { id: 'b', content: 'Keep', status: 'pending' },
+    ]);
   });
 });

@@ -1,6 +1,7 @@
 /**
  * Live run stage: fixed kicker (Council / Agent / Mission) + rotating body
- * with soft fade (thinking phrases, tools, member names).
+ * with soft fade (thinking phrases, tools, member names) and a running
+ * tool-step feed so the user can see what the agent is doing.
  */
 import { useEffect, useState } from "react";
 import type { DispatchMode } from "../types";
@@ -9,6 +10,13 @@ import {
   THINKING_PHRASES,
 } from "./toolLabels";
 
+export interface LiveToolStep {
+  id: string;
+  name: string;
+  summary: string;
+  status: "running" | "done" | "error";
+}
+
 interface Props {
   running: boolean;
   mode: DispatchMode;
@@ -16,6 +24,8 @@ interface Props {
   memberName?: string | null;
   /** Current tool activity line (friendly English) */
   toolLabel?: string | null;
+  /** This-turn tool calls (newest last). */
+  steps?: LiveToolStep[];
 }
 
 function modeKicker(mode: DispatchMode): string {
@@ -29,6 +39,7 @@ export function RunActivity({
   mode,
   memberName,
   toolLabel,
+  steps = [],
 }: Props) {
   const phrases =
     mode === "council" ? COUNCIL_THINKING_PHRASES : THINKING_PHRASES;
@@ -95,6 +106,28 @@ export function RunActivity({
             <div className="run-activity-sub">{line.sub}</div>
           ) : null}
         </div>
+        {steps.length > 0 ? (
+          <ol className="run-activity-steps" aria-label="Live tool activity">
+            {steps.slice(-8).map((s) => (
+              <li
+                key={s.id}
+                className={`run-activity-step is-${s.status}`}
+              >
+                <span className="run-activity-step-mark" aria-hidden>
+                  {s.status === "running"
+                    ? "▶"
+                    : s.status === "error"
+                      ? "✗"
+                      : "✓"}
+                </span>
+                <span className="run-activity-step-name">{s.name}</span>
+                {s.summary ? (
+                  <span className="run-activity-step-sum">{s.summary}</span>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        ) : null}
       </div>
     </div>
   );
