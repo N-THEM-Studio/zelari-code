@@ -12,7 +12,7 @@
  * reveals user prompts. This matches v3-C's privacy stance for the
  * history log.
  *
- * Storage: `~/.tmp/anathema-coder/skill-cache.json` (override via
+ * Storage: `~/.tmp/zelari-code/skill-cache.json` (override via
  * `ANATHEMA_SKILL_CACHE_FILE` env var). Bounded size: callers should
  * purge periodically; the file grows by entry size, no rotation.
  *
@@ -59,7 +59,7 @@ export function computeInputHash(skillId: string, input: string): string {
 }
 
 export interface SkillCacheOptions {
-  /** File path. Defaults to env `ANATHEMA_SKILL_CACHE_FILE` then `~/.tmp/anathema-coder/skill-cache.json`. */
+  /** File path. Defaults to env `ANATHEMA_SKILL_CACHE_FILE` then `~/.tmp/zelari-code/skill-cache.json`. */
   file?: string;
   /** Default TTL in ms for entries without an explicit expiresAt. Default 24h. */
   defaultTtlMs?: number;

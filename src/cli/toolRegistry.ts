@@ -52,6 +52,7 @@ import {
   type PermissionPolicy,
 } from './safety/toolPermissions.js';
 import { createDefaultLifecycleHooks } from './safety/lifecycleHooks.js';
+import { withResultCache } from './toolResultCache.js';
 import type { LifecycleHookRunner } from '@zelari/core/harness';
 import type {
   ToolDefinition,
@@ -168,11 +169,31 @@ export function createBuiltinToolRegistry(
   const diagnosticsOn = options.diagnostics ?? process.env.ZELARI_DIAGNOSTICS !== '0';
   const withDiag = <I extends Record<string, unknown>, O>(t: ToolDefinition<I, O>) =>
     diagnosticsOn ? wrapWithDiagnostics(t, root, options.diagnosticsRunner) : t;
-  const safeReadFile = wrapWithSandbox(readFileTool, ['path'], root, audit, sessionId);
+  // Cache sits inside the sandbox wrap so permission + path checks still
+  // run on every call; only the disk/search work is skipped on a hit.
+  const safeReadFile = wrapWithSandbox(
+    withResultCache(readFileTool, { kind: 'stat' }),
+    ['path'],
+    root,
+    audit,
+    sessionId,
+  );
   const safeWriteFile = withDiag(wrapWithSandbox(writeFileTool, ['path'], root, audit, sessionId));
   const safeEditFile = withDiag(wrapWithSandbox(editFileTool, ['path'], root, audit, sessionId));
-  const safeGrepContent = wrapWithSandbox(grepContentTool, ['path'], root, audit, sessionId);
-  const safeListFiles = wrapWithSandbox(listFilesTool, ['path'], root, audit, sessionId);
+  const safeGrepContent = wrapWithSandbox(
+    withResultCache(grepContentTool, { kind: 'ttl' }),
+    ['path'],
+    root,
+    audit,
+    sessionId,
+  );
+  const safeListFiles = wrapWithSandbox(
+    withResultCache(listFilesTool, { kind: 'ttl' }),
+    ['path'],
+    root,
+    audit,
+    sessionId,
+  );
   const safeShowDiff = wrapWithSandbox(showDiffTool, ['path'], root, audit, sessionId);
   const safeApplyDiff = withDiag(wrapWithSandbox(applyDiffTool, ['path'], root, audit, sessionId));
 
