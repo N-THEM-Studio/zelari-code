@@ -13,7 +13,7 @@
  * Implements ProviderStreamFn (AsyncIterable<ProviderDelta>).
  */
 
-import type { ProviderStreamFn, ProviderDelta, AgentImage } from '@zelari/core/harness';
+import type { ProviderStreamFn, ProviderDelta, AgentImage, AgentMessage } from '@zelari/core/harness';
 import type { ProviderName } from '../keyStore.js';
 import { getOAuthToken, resolveApiKeyWithMeta } from '../keyStore.js';
 import { getProviderConfig, getModelForProvider, getCustomEndpoint } from '../providerConfig.js';

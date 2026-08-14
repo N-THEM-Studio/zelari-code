@@ -413,7 +413,7 @@ export const showDiffTool: ToolDefinition<ShowDiffArgs, ShowDiffResult> = {
           oldStart = ol + 1;
           newStart = nl + 1;
         }
-        const hunkOps: typeof rawOps = [];
+        const hunkOps: Array<{ kind: ' ' | '-' | '+'; text: string }> = [];
         for (let q = start; q < k; q++) hunkOps.push(rawOps[q]);
         let nonChangeStreak = 0;
         while (k < rawOps.length) {

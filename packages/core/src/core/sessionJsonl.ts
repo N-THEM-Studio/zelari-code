@@ -82,6 +82,7 @@ export class SessionJsonlWriter {
     if (!this.dirEnsured) {
       this.dirEnsured = fs
         .mkdir(path.dirname(this.filePath), { recursive: true })
+        .then(() => undefined)
         .catch((err) => {
           // Allow a later append to retry the mkdir after a failure.
           this.dirEnsured = null;
