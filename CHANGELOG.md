@@ -5,7 +5,17 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.36.0] - 2026-08-14
+
+### Added
+- **DeepSeek context caching (thinking wire + V4 pricing)** — `thinking` / `reasoning_effort` sent explicitly for DeepSeek (default `high`, kill `ZELARI_DEEPSEEK_THINKING=off`); assistant `reasoning_content` is passed back only on tool-call turns (DeepSeek otherwise ignores and bills it); V4 prices corrected (flash cache hit `$0.0028`; pro `$0.435` in / `$0.87` out / `$0.003625` cache hit).
+- **Stable prompt prefix for cache-friendly providers** — headless now emits two `system` blocks (stable identity + tools, then volatile workspace/RAG); tool schemas (`body.tools`) and the `AVAILABLE TOOLS` block are sorted canonically so the cached prefix no longer busts when tool registration order changes.
+- **Tool-result prune on compaction** — oversized `role: 'tool'` results are truncated in place (head + marker + tail) before turns are dropped, preserving the append-only cache prefix. Tunable via `ZELARI_TOOL_RESULT_MAX_CHARS` / `ZELARI_TOOL_RESULT_TAIL_CHARS`.
+- **Context budget aligned to DeepSeek v4** — `deepseek-v4-*` models default to 1M-token context (was 400k).
+
+### Fixed
+- **Desktop session todos reset every message** — the per-message headless process is now seeded with the prior todo list (`--todos <json>`), so the Tasks panel persists across turns.
+- **Empty `todo_read` wiped the Tasks panel** — empty todo lists now parse as `null` instead of a truthy empty array.
 
 ## [1.35.1] - 2026-08-14
 
