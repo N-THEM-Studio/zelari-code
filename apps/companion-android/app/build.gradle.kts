@@ -12,8 +12,8 @@ android {
         applicationId = "com.anathemastudio.zelari.companion"
         minSdk = 26
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.35.0"
+        versionCode = 3
+        versionName = "1.35.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

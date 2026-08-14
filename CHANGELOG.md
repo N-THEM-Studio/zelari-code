@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.35.1] - 2026-08-14
+
+### Fixed
+- **Desktop session todos never appeared** — `tool_execution_end` does not carry `toolName`, so the UI never recognized `todo_write` / `todo_read`. Names are now tracked from start events; the task list paints from `todo_write` args immediately and refreshes from the tool result.
+- **Desktop live work was a fading thinking line** — the run card now keeps a this-turn tool feed (`read_file`, `write_file`, …) so you can see what the agent is doing while it runs.
+- **Companion APK manifest merge** — removed a conflicting `CaptureActivity` `screenOrientation` override that blocked `assembleDebug`.
+
 ## [1.35.0] - 2026-08-14
 
 ### Added
