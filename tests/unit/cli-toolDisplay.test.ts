@@ -85,6 +85,27 @@ vi.mock('../../src/cli/metrics.js', () => ({
   getMetricsLogger: vi.fn(() => ({ record: recordSpy })),
 }));
 
+vi.mock('../../src/cli/mcp/mcpManager.js', () => ({
+  registerMcpTools: vi.fn(async () => ({ warnings: [] })),
+}));
+
+vi.mock('../../src/cli/state/loadDurableContext.js', () => ({
+  loadDurableContext: vi.fn(async () => null),
+}));
+
+vi.mock('../../src/cli/workspace/composeContext.js', () => ({
+  composeProjectContext: vi.fn(() => ({
+    workspaceContext: '',
+    projectInstructions: '',
+    ragContext: '',
+    warnings: [],
+  })),
+}));
+
+vi.mock('../../src/cli/workspace/planDetect.js', () => ({
+  hasWorkspacePlan: vi.fn(() => false),
+}));
+
 vi.mock('../../src/cli/modelPricing.js', () => ({
   calculateCost: vi.fn(() => 0.0001),
 }));
