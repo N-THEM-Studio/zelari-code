@@ -61,6 +61,8 @@ import {
   handleModelPicker,
   handleModelsList,
   handleModelsRefresh,
+  handleEffortShow,
+  handleEffortSet,
   type PickerRequest,
 } from '../slashHandlers/provider.js';
 import {
@@ -326,6 +328,16 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     }
     if (result.kind === 'model_show') {
       handleModelShow(providerCtx);
+      setInput('');
+      return;
+    }
+    if (result.kind === 'effort_set' && result.effortSpec) {
+      handleEffortSet(providerCtx, result.effortSpec);
+      setInput('');
+      return;
+    }
+    if (result.kind === 'effort_show') {
+      handleEffortShow(providerCtx);
       setInput('');
       return;
     }

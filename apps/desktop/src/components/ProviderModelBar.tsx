@@ -9,6 +9,7 @@ interface Props {
   disabled?: boolean;
   onProviderChange: (id: string) => void;
   onModelChange: (id: string) => void;
+  onThinkingChange: (spec: string) => void;
   onConfigRefresh?: (cfg: DesktopConfig) => void;
   onStatus?: (msg: string) => void;
 }
@@ -42,6 +43,7 @@ export function ProviderModelBar({
   disabled,
   onProviderChange,
   onModelChange,
+  onThinkingChange,
   onConfigRefresh,
   onStatus,
 }: Props) {
@@ -52,6 +54,28 @@ export function ProviderModelBar({
     : model
       ? [model]
       : [];
+
+  const thinkingValue = active?.thinking ?? "auto";
+  const cap = active?.thinkingCapability;
+  const thinkingOptions: { value: string; label: string }[] = [
+    { value: "auto", label: "Auto" },
+    { value: "off", label: "Off" },
+  ];
+  if (cap?.effort) {
+    thinkingOptions.push(
+      { value: "low", label: "Low" },
+      { value: "medium", label: "Medium" },
+      { value: "high", label: "High" },
+    );
+  }
+  if (cap?.budget) {
+    thinkingOptions.push(
+      { value: "budget:4000", label: "4k tokens" },
+      { value: "budget:8000", label: "8k tokens" },
+      { value: "budget:16000", label: "16k tokens" },
+      { value: "budget:32000", label: "32k tokens" },
+    );
+  }
 
   const [discovering, setDiscovering] = useState(false);
   const lastDiscoverByProvider = useRef<Record<string, number>>({});
@@ -187,6 +211,24 @@ export function ProviderModelBar({
           {!models.length && (
             <option value="">{discovering ? "Loading…" : "—"}</option>
           )}
+        </select>
+        <select
+          className="toolbar-select toolbar-select-thinking"
+          value={thinkingValue}
+          disabled={disabled}
+          aria-label="Thinking effort"
+          title="Thinking effort"
+          onChange={(e) => onThinkingChange(e.target.value)}
+        >
+          {!thinkingOptions.some((o) => o.value === thinkingValue) &&
+            thinkingValue && (
+              <option value={thinkingValue}>{thinkingValue}</option>
+            )}
+          {thinkingOptions.map((o) => (
+            <option key={o.value} value={o.value}>
+              {o.label}
+            </option>
+          ))}
         </select>
         <button
           type="button"

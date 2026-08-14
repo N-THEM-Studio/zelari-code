@@ -872,6 +872,7 @@ struct SetConfigArgs {
     provider: Option<String>,
     model: Option<String>,
     endpoint: Option<String>,
+    thinking: Option<String>,
     #[serde(default)]
     endpoint_clear: bool,
 }
@@ -908,12 +909,21 @@ fn set_app_config(args: SetConfigArgs) -> Result<serde_json::Value, String> {
         argv.push("--endpoint".into());
         argv.push(ep.to_string());
     }
+    if let Some(t) = args
+        .thinking
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        argv.push("--thinking".into());
+        argv.push(t.to_string());
+    }
     if args.endpoint_clear {
         argv.push("--endpoint-clear".into());
     }
     if argv.len() == 1 {
         return Err(
-            "set_app_config requires provider, model, endpoint, and/or endpointClear".into(),
+            "set_app_config requires provider, model, endpoint, thinking, and/or endpointClear".into(),
         );
     }
     let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();

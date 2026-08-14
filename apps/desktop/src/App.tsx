@@ -1440,6 +1440,20 @@ export default function App() {
     );
   };
 
+  const onThinkingChange = async (spec: string) => {
+    if (!provider) return;
+    setStatusLine(`Setting thinking effort for ${provider}…`);
+    try {
+      await setAppConfig({ provider, thinking: spec });
+      await refreshConfig();
+      setStatusLine(`Thinking effort: ${spec}`);
+    } catch (e) {
+      setStatusLine(
+        e instanceof Error ? e.message : "Failed to set thinking effort",
+      );
+    }
+  };
+
   const addFiles = useCallback(async (files: FileList | File[]) => {
     const list = Array.from(files).filter((f) => f && f.size >= 0);
     if (list.length === 0) return;
@@ -2103,6 +2117,7 @@ export default function App() {
                 disabled={running}
                 onProviderChange={onProviderChange}
                 onModelChange={onModelChange}
+                onThinkingChange={onThinkingChange}
                 onConfigRefresh={setConfig}
                 onStatus={setStatusLine}
               />

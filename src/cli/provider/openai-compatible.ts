@@ -16,7 +16,8 @@
 import type { ProviderStreamFn, ProviderDelta, AgentImage, AgentMessage } from '@zelari/core/harness';
 import type { ProviderName } from '../keyStore.js';
 import { getOAuthToken, resolveApiKeyWithMeta } from '../keyStore.js';
-import { getProviderConfig, getModelForProvider, getCustomEndpoint } from '../providerConfig.js';
+import { getProviderConfig, getModelForProvider, getCustomEndpoint, getThinkingForProvider } from '../providerConfig.js';
+import { translateOpenAiCompatibleThinking, type ThinkingSpec } from '../thinking.js';
 
 /**
  * v1.5.2: transient-HTTP retry. A single 429/5xx/network failure used to flip
@@ -178,6 +179,8 @@ export interface OpenAICompatibleConfig {
   model: string;         // e.g. 'grok-4'
   signal?: AbortSignal;
   providerId: ProviderName;
+  /** Per-provider thinking-effort spec (ADR-0017); undefined = 'auto'. */
+  thinking?: ThinkingSpec;
   /** ChatGPT OAuth account id (`ChatGPT-Account-Id`). */
   accountId?: string;
   extraHeaders?: Record<string, string>;
@@ -429,14 +432,22 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       stream_options: { include_usage: true },
     };
 
-    // DeepSeek thinking mode (v4): default reasoning ON with effort "high".
-    // dsh serialize wire shape: thinking: { type } + reasoning_effort. The
-    // effort 'off' is never sent — it maps to thinking: { type: 'disabled' }.
-    // Kill switch: ZELARI_DEEPSEEK_THINKING=off (title/compact budgets).
-    if (config.providerId === 'deepseek') {
+    // Unified thinking-effort selection (ADR-0017). `config.thinking` carries
+    // the per-provider ThinkingSpec persisted in provider.json (default
+    // 'auto'). 'auto' leaves the provider default; for DeepSeek that means
+    // preserving the existing env-driven behavior below.
+    const thinkingSpec: ThinkingSpec = config.thinking ?? 'auto';
+    if (config.providerId === 'deepseek' && thinkingSpec === 'auto') {
       const thinking = resolveDeepSeekThinking();
       if (thinking.thinking) body.thinking = { type: thinking.thinking };
       if (thinking.reasoningEffort) body.reasoning_effort = thinking.reasoningEffort;
+    } else if (thinkingSpec !== 'auto') {
+      const t = translateOpenAiCompatibleThinking(config.providerId, thinkingSpec);
+      if (t.degraded) {
+        console.warn(`[thinking] ${t.note ?? 'unsupported'} — falling back to provider default.`);
+      } else {
+        Object.assign(body, t.patch);
+      }
     }
 
     // Only advertise tools when at least one is available. Many providers
@@ -845,6 +856,7 @@ export async function providerFromEnv(): Promise<OpenAICompatibleConfig | null> 
     baseUrl: resolveBaseUrl(providerId),
     model: getModelForProvider(providerId),
     providerId,
+    thinking: getThinkingForProvider(providerId),
     ...extraFromStored(providerId),
   };
 }
@@ -863,6 +875,7 @@ export async function providerConfigFor(providerId: ProviderName): Promise<OpenA
     baseUrl: resolveBaseUrl(providerId),
     model: getModelForProvider(providerId),
     providerId,
+    thinking: getThinkingForProvider(providerId),
     ...extraFromStored(providerId),
   };
 }

@@ -81,6 +81,8 @@ export interface DesktopProviderInfo {
   expiresAt?: number | null;
   hasRefreshToken?: boolean;
   oauthSupported?: boolean;
+  thinking?: string;
+  thinkingCapability?: { effort?: boolean; budget?: boolean };
 }
 
 export interface DesktopConfig {

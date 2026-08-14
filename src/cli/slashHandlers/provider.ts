@@ -19,7 +19,10 @@ import {
   setCustomEndpoint,
   clearCustomEndpoint,
   getCustomEndpoint,
+  getThinkingForProvider,
+  setThinkingForProvider,
 } from '../providerConfig.js';
+import { parseThinkingSpec, stringifyThinkingSpec, isValidThinkingInput, thinkingCapabilityFor } from '../thinking.js';
 import {
   discoverModelsInBackground,
   discoverModelsForProvider,
@@ -362,6 +365,43 @@ export function handleModelSet(ctx: ProviderSlashContext, model: string): void {
     appendSystem(ctx.setMessages, `[model] set: ${id} → ${model}`);
   } catch (err) {
     appendSystem(ctx.setMessages, `[model error] ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/** /effort (no args) — show the current thinking-effort spec + valid options. */
+export function handleEffortShow(ctx: ProviderSlashContext): void {
+  const id = ctx.activeProviderSpec.id;
+  const cap = thinkingCapabilityFor(id);
+  const current = stringifyThinkingSpec(getThinkingForProvider(id));
+  const options = [
+    'auto',
+    'off',
+    ...(cap.effort ? ['low', 'medium', 'high'] : []),
+    ...(cap.budget ? ['budget:<tokens>'] : []),
+  ];
+  appendSystem(
+    ctx.setMessages,
+    `[effort] ${ctx.activeProviderSpec.displayName}: ${current} — options: ${options.join(', ')}`,
+  );
+}
+
+/** /effort <spec> — persist the thinking-effort spec for the active provider. */
+export function handleEffortSet(ctx: ProviderSlashContext, raw: string): void {
+  const id = ctx.activeProviderSpec.id;
+  if (!isValidThinkingInput(raw)) {
+    appendSystem(
+      ctx.setMessages,
+      `[effort] invalid spec "${raw}" — use auto | off | low | medium | high | budget:<tokens>`,
+    );
+    return;
+  }
+  const spec = parseThinkingSpec(raw);
+  try {
+    setThinkingForProvider(id, spec);
+    ctx.setProviderConfig(getProviderConfig() as never);
+    appendSystem(ctx.setMessages, `[effort] ${ctx.activeProviderSpec.displayName} → ${stringifyThinkingSpec(spec)}`);
+  } catch (err) {
+    appendSystem(ctx.setMessages, `[effort error] ${err instanceof Error ? err.message : String(err)}`);
   }
 }
 

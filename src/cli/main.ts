@@ -457,6 +457,7 @@ function pickRootComponent(): {
         "    --model <id>       Set model for that provider\n" +
         "    --endpoint <url>   Custom OpenAI-compatible base URL\n" +
         "    --endpoint-clear   Remove custom endpoint override\n" +
+        "    --thinking <spec>  Thinking effort (auto|off|low|medium|high|budget:N)\n" +
         "  --set-key           Store an API key (never printed back)\n" +
         "    --provider <id>    Provider id (required)\n" +
         "    --key <secret>     API key (required)\n" +

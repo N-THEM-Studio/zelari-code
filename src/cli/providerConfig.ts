@@ -23,6 +23,7 @@ import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync } fr
 import path from 'node:path';
 import os from 'node:os';
 import { PROVIDERS, type ProviderName, type ProviderSpec } from './keyStore.js';
+import { parseThinkingSpec, stringifyThinkingSpec, type ThinkingSpec } from './thinking.js';
 
 /** Persisted provider config (the on-disk shape). */
 export interface ProviderConfig {
@@ -30,6 +31,12 @@ export interface ProviderConfig {
   activeProviderId: ProviderName;
   /** Per-provider default model. Always contains an entry for every provider. */
   modelByProvider: Record<ProviderName, string>;
+  /**
+   * Per-provider thinking-effort spec (ADR-0017), stored as a canonical
+   * string: 'auto' | 'off' | 'low' | 'medium' | 'high' | 'budget:<tokens>'.
+   * Always contains an entry for every provider.
+   */
+  thinkingByProvider: Record<ProviderName, string>;
   /**
    * Custom base URLs keyed by provider id (Task A3, v3-A).
    * Lets users point `openai-compatible` or `custom` at any self-hosted
@@ -51,6 +58,16 @@ const DEFAULTS: ProviderConfig = {
     'chatgpt': 'gpt-5.2-codex',
     'anthropic': 'claude-sonnet-4-5',
     'custom': '',
+  },
+  thinkingByProvider: {
+    'openai-compatible': 'auto',
+    'minimax': 'auto',
+    'glm': 'auto',
+    'grok': 'auto',
+    'deepseek': 'auto',
+    'chatgpt': 'auto',
+    'anthropic': 'auto',
+    'custom': 'auto',
   },
   customEndpoints: {},
 };
@@ -76,6 +93,7 @@ export function getProviderConfig(): ProviderConfig {
         stored = {
           activeProviderId: parsed.activeProviderId as ProviderName,
           modelByProvider: { ...DEFAULTS.modelByProvider, ...parsed.modelByProvider },
+          thinkingByProvider: { ...DEFAULTS.thinkingByProvider, ...parsed.thinkingByProvider },
           customEndpoints: mergeCustomEndpoints(parsed.customEndpoints),
         };
       }
@@ -86,6 +104,7 @@ export function getProviderConfig(): ProviderConfig {
   const base: ProviderConfig = stored ?? {
     ...DEFAULTS,
     modelByProvider: { ...DEFAULTS.modelByProvider },
+    thinkingByProvider: { ...DEFAULTS.thinkingByProvider },
     customEndpoints: { ...DEFAULTS.customEndpoints },
   };
   // Apply env overrides last so they always win.
@@ -198,6 +217,23 @@ export function getModelForProvider(id: ProviderName): string {
   return config.modelByProvider[id] ?? DEFAULTS.modelByProvider[id] ?? '';
 }
 
+/** Return the parsed thinking-effort spec for a provider (default 'auto'). */
+export function getThinkingForProvider(id: ProviderName): ThinkingSpec {
+  const config = getProviderConfig();
+  return parseThinkingSpec(config.thinkingByProvider[id]);
+}
+
+/** Persist a thinking-effort spec for a provider (canonical string form). */
+export function setThinkingForProvider(id: ProviderName, spec: ThinkingSpec): void {
+  const found = PROVIDERS.find((p) => p.id === id);
+  if (!found) {
+    throw new Error(`Unknown provider id: "${id}". Available: ${PROVIDERS.map((p) => p.id).join(', ')}`);
+  }
+  const config = getProviderConfig();
+  config.thinkingByProvider[id] = stringifyThinkingSpec(spec);
+  writeProviderConfig(config);
+}
+
 export function getActiveProvider(): ProviderSpec {
   const config = getProviderConfig();
   const spec = PROVIDERS.find((p) => p.id === config.activeProviderId);
@@ -222,6 +258,7 @@ export async function loadProviderConfig(): Promise<ProviderConfig> {
       return {
         activeProviderId: parsed.activeProviderId as ProviderName,
         modelByProvider: { ...DEFAULTS.modelByProvider, ...parsed.modelByProvider },
+        thinkingByProvider: { ...DEFAULTS.thinkingByProvider, ...parsed.thinkingByProvider },
         customEndpoints: mergeCustomEndpoints(parsed.customEndpoints),
       };
     }
@@ -231,6 +268,7 @@ export async function loadProviderConfig(): Promise<ProviderConfig> {
   return {
     ...DEFAULTS,
     modelByProvider: { ...DEFAULTS.modelByProvider },
+    thinkingByProvider: { ...DEFAULTS.thinkingByProvider },
     customEndpoints: { ...DEFAULTS.customEndpoints },
   };
 }

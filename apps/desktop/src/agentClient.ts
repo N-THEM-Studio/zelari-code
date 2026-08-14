@@ -23,6 +23,7 @@ export async function setAppConfig(args: {
   model?: string;
   endpoint?: string;
   endpointClear?: boolean;
+  thinking?: string;
 }): Promise<{ ok?: boolean; message?: string }> {
   return invoke("set_app_config", { args });
 }

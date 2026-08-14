@@ -3,6 +3,7 @@
  */
 import type { ProviderDelta, ProviderStreamFn, AgentMessage } from '@zelari/core/harness';
 import type { OpenAICompatibleConfig } from './openai-compatible.js';
+import { translateResponsesThinking } from '../thinking.js';
 
 function headers(config: OpenAICompatibleConfig): Record<string, string> {
   const h: Record<string, string> = {
@@ -68,6 +69,14 @@ export function chatgptResponsesProvider(config: OpenAICompatibleConfig): Provid
         description: t.description,
         parameters: t.parameters,
       }));
+    }
+
+    // Unified thinking-effort selection (ADR-0017).
+    const thinkingSpec = config.thinking ?? 'auto';
+    if (thinkingSpec !== 'auto') {
+      const t = translateResponsesThinking(thinkingSpec);
+      if (t.degraded) console.warn(`[thinking] ${t.note ?? 'unsupported'} — falling back to provider default.`);
+      else Object.assign(body, t.patch);
     }
 
     const base = config.baseUrl.replace(/\/$/, '');

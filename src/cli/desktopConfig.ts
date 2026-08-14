@@ -24,6 +24,7 @@ import {
   getProviderConfigPath,
   setActiveProviderId,
   setModelForProvider,
+  setThinkingForProvider,
   setCustomEndpoint,
   clearCustomEndpoint,
   getCustomEndpoint,
@@ -35,6 +36,11 @@ import {
   type ProviderId as DiscoveryProviderId,
 } from './modelDiscovery.js';
 import { getCurrentVersion } from './updater.js';
+import {
+  parseThinkingSpec,
+  isValidThinkingInput,
+  thinkingCapabilityFor,
+} from './thinking.js';
 
 export interface DesktopProviderInfo {
   id: string;
@@ -53,6 +59,10 @@ export interface DesktopProviderInfo {
   expiresAt?: number | null;
   hasRefreshToken?: boolean;
   oauthSupported?: boolean;
+  /** Current thinking-effort spec (canonical string). */
+  thinking?: string;
+  /** Which thinking controls this provider supports. */
+  thinkingCapability?: { effort?: boolean; budget?: boolean };
 }
 
 export interface DesktopConfigSnapshot {
@@ -152,6 +162,7 @@ export interface SetConfigRequest {
   model?: string;
   endpoint?: string;
   endpointClear?: boolean;
+  thinking?: string;
 }
 
 export interface SetConfigParseResult {
@@ -171,6 +182,7 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
   let provider: string | undefined;
   let model: string | undefined;
   let endpoint: string | undefined;
+  let thinking: string | undefined;
   let endpointClear = false;
 
   for (let i = 0; i < argv.length; i++) {
@@ -184,16 +196,19 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
     } else if (arg === '--endpoint') {
       endpoint = argv[i + 1];
       i++;
+    } else if (arg === '--thinking') {
+      thinking = argv[i + 1];
+      i++;
     } else if (arg === '--endpoint-clear') {
       endpointClear = true;
     }
   }
 
-  if (!provider && !model && !endpoint && !endpointClear) {
+  if (!provider && !model && !endpoint && !endpointClear && !thinking) {
     return {
       request: null,
       error:
-        '--set-config requires --provider, --model, --endpoint, and/or --endpoint-clear',
+        '--set-config requires --provider, --model, --endpoint, --thinking, and/or --endpoint-clear',
     };
   }
 
@@ -209,6 +224,9 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
   if (endpoint && endpointClear) {
     return { request: null, error: '--endpoint and --endpoint-clear conflict' };
   }
+  if (thinking !== undefined && !isValidThinkingInput(thinking)) {
+    return { request: null, error: `invalid --thinking value '${thinking}'` };
+  }
 
   return {
     request: {
@@ -216,6 +234,7 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
       model: model?.trim(),
       endpoint: endpoint?.trim(),
       endpointClear: endpointClear || undefined,
+      thinking: thinking?.trim().toLowerCase(),
     },
   };
 }
@@ -320,6 +339,8 @@ export function buildDesktopConfigSnapshot(): DesktopConfigSnapshot {
       expiresAt: stored?.expiresAt ?? null,
       hasRefreshToken: Boolean(stored?.refreshToken),
       oauthSupported: isOAuthProvider(p.id),
+      thinking: config.thinkingByProvider[p.id] ?? 'auto',
+      thinkingCapability: thinkingCapabilityFor(p.id),
     };
   });
 
@@ -375,6 +396,9 @@ export function applySetConfig(
 
     if (req.model) {
       setModelForProvider(targetProvider, req.model);
+    }
+    if (req.thinking) {
+      setThinkingForProvider(targetProvider, parseThinkingSpec(req.thinking));
     }
 
     const after = getProviderConfig();

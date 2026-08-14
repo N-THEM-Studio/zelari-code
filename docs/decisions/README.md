@@ -19,6 +19,8 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 | 0008 | Monorepo MIT per rilascio open source (Anathema Studio) | ⚠️ Sostituito | 2026-07-15    | 2026-07-15 (→ ADR-0009) |
 | 0009 | Licenza Apache-2.0 per l'intero monorepo | ✅ Accettato | 2026-08-13    | 2026-08-13 |
 | 0010 | Manifesto dei principi primi (PRINCIPLES.md, P1–P6) | ✅ Accettato | 2026-08-13    | 2026-08-13 |
+| 0016 | Log di sessione event-sourced come unica fonte di verità | 📝 Proposto | da confermare | — |
+| 0017 | Selezione unificata del "thinking effort" per tutti i provider | 📝 Proposto | da confermare | — |
 
 ## Formato
 

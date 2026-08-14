@@ -4,6 +4,7 @@
 import type { ProviderDelta, ProviderStreamFn, AgentMessage } from '@zelari/core/harness';
 import type { OpenAICompatibleConfig } from './openai-compatible.js';
 import { resolvePromptCacheTtl } from '../hooks/chatStats.js';
+import { translateAnthropicThinking } from '../thinking.js';
 
 const ANTHROPIC_VERSION = '2023-06-01';
 const ANTHROPIC_BETA = 'oauth-2025-04-20';
@@ -128,6 +129,14 @@ export function anthropicMessagesProvider(config: OpenAICompatibleConfig): Provi
         description: t.description,
         input_schema: t.parameters,
       }));
+    }
+
+    // Unified thinking-effort selection (ADR-0017).
+    const thinkingSpec = config.thinking ?? 'auto';
+    if (thinkingSpec !== 'auto') {
+      const t = translateAnthropicThinking(thinkingSpec);
+      if (t.degraded) console.warn(`[thinking] ${t.note ?? 'unsupported'} — falling back to provider default.`);
+      else Object.assign(body, t.patch);
     }
 
     const base = config.baseUrl.replace(/\/$/, '').replace(/\/v1$/, '');
