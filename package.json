@@ -29,7 +29,7 @@
   "scripts": {
     "build": "npm run build --workspace=@zelari/core && tsc -p tsconfig.json && node scripts/bundle-cli.mjs",
     "build:cli": "npm run build --workspace=@zelari/core && tsc -p tsconfig.json && node scripts/bundle-cli.mjs",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck": "npm run build --workspace=@zelari/core && tsc --noEmit -p tsconfig.json",
     "pretest": "npm run build --workspace=@zelari/core",
     "test": "vitest run",
     "test:watch": "vitest",

@@ -77,7 +77,7 @@ See `.zelari/decisions/` for full ADRs (context/decision/consequences).
 `npm run test` — vitest run
 `npm run verify:principles` — node scripts/verify-principles.mjs
 `npm run test:watch` — vitest
-`npm run typecheck` — tsc --noEmit -p tsconfig.json
+`npm run typecheck` — npm run build --workspace=@zelari/core && tsc --noEmit -p tsconfig.json
 
 <!-- zelari:auto:end section="build" -->
 
