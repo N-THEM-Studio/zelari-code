@@ -117,7 +117,11 @@ export function getToolDescriptions(
   registry: Map<string, EnhancedToolDefinition>
 ): string {
   const lines: string[] = ['AVAILABLE TOOLS (use ONLY these exact names):'];
-  for (const name of toolNames) {
+  // Canonical lexicographic order keeps the tool block byte-stable across
+  // sessions regardless of registry insertion order (MCP/skill tools connect
+  // in varying order) — critical for prompt-cache prefix hits.
+  const orderedNames = [...toolNames].sort((a, b) => a.localeCompare(b));
+  for (const name of orderedNames) {
     const tool = registry.get(name);
     if (!tool) continue;
     // parameters may be either ToolParameter[] (builtin) or a plain JSON

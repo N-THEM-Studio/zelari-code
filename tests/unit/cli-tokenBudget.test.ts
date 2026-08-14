@@ -4,6 +4,7 @@ import {
   estimateHistoryTokens,
   applyBudgetPolicy,
   resolveContextLimit,
+  defaultContextLimitForModel,
 } from '../../src/cli/budget/tokenBudget.js';
 import type { AgentMessage } from '@zelari/core/harness';
 
@@ -33,6 +34,28 @@ describe('tokenBudget', () => {
   it('resolveContextLimit honors env', () => {
     process.env.ZELARI_CONTEXT_LIMIT = '50000';
     expect(resolveContextLimit()).toBe(50000);
+  });
+
+  it('defaultContextLimitForModel: deepseek-v4 → 1M, others → 400k', () => {
+    expect(defaultContextLimitForModel('deepseek-v4-pro')).toBe(1_000_000);
+    expect(defaultContextLimitForModel('deepseek-v4-flash')).toBe(1_000_000);
+    expect(defaultContextLimitForModel('grok-4')).toBe(400_000);
+    expect(defaultContextLimitForModel(undefined)).toBe(400_000);
+  });
+
+  it('resolveContextLimit is model-aware when env is unset', () => {
+    expect(resolveContextLimit('deepseek-v4-pro')).toBe(1_000_000);
+    expect(resolveContextLimit('grok-4')).toBe(400_000);
+  });
+
+  it('resolveContextLimit: env override wins over model default', () => {
+    process.env.ZELARI_CONTEXT_LIMIT = '50000';
+    expect(resolveContextLimit('deepseek-v4-pro')).toBe(50000);
+  });
+
+  it('applyBudgetPolicy reports 1M context limit for deepseek-v4', () => {
+    const policy = applyBudgetPolicy([], 'build', { model: 'deepseek-v4-pro' });
+    expect(policy.contextLimit).toBe(1_000_000);
   });
 
   it('warns at ~70% occupancy', () => {

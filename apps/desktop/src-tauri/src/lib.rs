@@ -2049,6 +2049,10 @@ struct RunTaskArgs {
     /// across the per-message process boundary. None/empty = stateless.
     #[serde(default)]
     history: Option<String>,
+    /// JSON-encoded session todo list replayed across the per-message
+    /// process boundary so `todo_read` returns the prior state (not empty).
+    #[serde(default)]
+    todos: Option<String>,
     /// When true, dispatch via `--kraken-graph <prompt>` (plan + execute a
     /// parallel task DAG) instead of `--task <prompt>` — bypasses `mode`.
     #[serde(default)]
@@ -2210,6 +2214,7 @@ fn run_task(
     let model = args.model;
     let cwd = args.cwd;
     let history = args.history;
+    let todos = args.todos;
     let kraken_graph = args.kraken_graph;
     let plan_only = args.plan_only;
     let run_plan = args.run_plan;
@@ -2227,6 +2232,7 @@ fn run_task(
             model.as_deref(),
             cwd.as_deref(),
             history.as_deref(),
+            todos.as_deref(),
             kraken_graph,
             plan_only,
             run_plan.as_deref(),
@@ -2274,6 +2280,7 @@ fn spawn_headless(
     model: Option<&str>,
     cwd: Option<&str>,
     history: Option<&str>,
+    todos: Option<&str>,
     kraken_graph: bool,
     plan_only: bool,
     run_plan: Option<&str>,
@@ -2346,6 +2353,12 @@ fn spawn_headless(
     } else {
         None
     };
+
+    if let Some(t) = todos {
+        if !t.is_empty() {
+            cmd.arg("--todos").arg(t);
+        }
+    }
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 

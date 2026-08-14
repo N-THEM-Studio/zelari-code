@@ -296,6 +296,30 @@ export function resolveBaseUrl(providerId: ProviderName): string {
  * args each time. Image-bearing user messages are excluded because their
  * mapping depends on the per-call vision capability of the active model.
  */
+/**
+ * DeepSeek thinking-mode wire options (v4 models).
+ *
+ * DeepSeek reasons by default. The wire shape (dsh serialize.ts) is:
+ *   - ON:  thinking: { type: 'enabled' } + reasoning_effort: 'high'|'max'
+ *   - OFF: thinking: { type: 'disabled' } (the effort 'off' is never sent)
+ *
+ * Kill switch (title/compact budgets where reasoning is pure overhead):
+ *   ZELARI_DEEPSEEK_THINKING=off|disabled|0|false  → disabled
+ * Effort: ZELARI_DEEPSEEK_REASONING_EFFORT=high|max (default high).
+ */
+function resolveDeepSeekThinking(): { thinking?: 'enabled' | 'disabled'; reasoningEffort?: 'high' | 'max' } {
+  const raw = (process.env.ZELARI_DEEPSEEK_THINKING ?? '').trim().toLowerCase();
+  if (raw === 'off' || raw === 'disabled' || raw === '0' || raw === 'false') {
+    return { thinking: 'disabled' };
+  }
+  const effort = (process.env.ZELARI_DEEPSEEK_REASONING_EFFORT ?? 'high').trim().toLowerCase();
+  if (effort === 'high' || effort === 'max') {
+    return { thinking: 'enabled', reasoningEffort: effort };
+  }
+  // Unknown effort → disabled (defensive: never send an illegal wire value).
+  return { thinking: 'disabled' };
+}
+
 const messageMappingCache = new WeakMap<AgentMessage, Record<string, unknown>>();
 
 function mapAgentMessage(m: AgentMessage, vision: boolean): Record<string, unknown> {
@@ -327,17 +351,14 @@ function mapAgentMessage(m: AgentMessage, vision: boolean): Record<string, unkno
     }
     return msg;
   }
-  // Assistant text-only turns may still carry reasoning_content for
-  // multi-turn continuity on some providers; include when present.
-  if (
-    m.role === 'assistant' &&
-    m.reasoningContent &&
-    m.reasoningContent.length > 0
-  ) {
+  // Assistant text-only turns: drop reasoning_content. DeepSeek (and other
+  // OpenAI-compatible thinking-mode providers) ignore it on plain turns but
+  // still bill the tokens — dsh serialize does the same (passback only on
+  // tool-call turns). Keep content as '' (never null) to avoid HTTP 400.
+  if (m.role === 'assistant') {
     return {
       role: 'assistant' as const,
       content: m.content ?? '',
-      reasoning_content: m.reasoningContent,
     };
   }
   // Vision: user turns may carry inline images. When the active model is
@@ -408,10 +429,26 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       stream_options: { include_usage: true },
     };
 
+    // DeepSeek thinking mode (v4): default reasoning ON with effort "high".
+    // dsh serialize wire shape: thinking: { type } + reasoning_effort. The
+    // effort 'off' is never sent — it maps to thinking: { type: 'disabled' }.
+    // Kill switch: ZELARI_DEEPSEEK_THINKING=off (title/compact budgets).
+    if (config.providerId === 'deepseek') {
+      const thinking = resolveDeepSeekThinking();
+      if (thinking.thinking) body.thinking = { type: thinking.thinking };
+      if (thinking.reasoningEffort) body.reasoning_effort = thinking.reasoningEffort;
+    }
+
     // Only advertise tools when at least one is available. Many providers
     // reject an empty `tools: []` with HTTP 400, so we omit the key entirely.
     if (params.tools && params.tools.length > 0) {
-      body.tools = params.tools.map((t) => ({
+      // Canonical lexicographic tool order keeps the `tools` schema
+      // byte-stable regardless of registry order — avoids busting the cache
+      // prefix when MCP/skill tools connect in a different order.
+      const orderedTools = [...params.tools].sort((a, b) =>
+        a.name.localeCompare(b.name),
+      );
+      body.tools = orderedTools.map((t) => ({
         type: 'function',
         function: {
           name: t.name,

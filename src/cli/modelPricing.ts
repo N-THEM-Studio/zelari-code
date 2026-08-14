@@ -43,11 +43,11 @@ const PRICES_PER_MILLION: Record<
   'MiniMax-M2.5':     { input: 0.20, output: 1.10 },
   'MiniMax-M2':       { input: 0.20, output: 1.10 },
   'MiniMax-M2-her':   { input: 0.30, output: 1.20 },
-  // DeepSeek (global platform) — estimated list prices; override via
-  // ANATHEMA_PRICE_DEEPSEEK_V4_FLASH / ANATHEMA_PRICE_DEEPSEEK_V4_PRO.
-  // DeepSeek prompt-cache hits are ~10× cheaper than a cache miss.
-  'deepseek-v4-flash': { input: 0.14, output: 0.28, cachedInput: 0.014 },
-  'deepseek-v4-pro':   { input: 0.55, output: 2.19, cachedInput: 0.055 },
+  // DeepSeek (global platform) — official list prices (2026-08), override
+  // via ANATHEMA_PRICE_DEEPSEEK_V4_FLASH / ANATHEMA_PRICE_DEEPSEEK_V4_PRO.
+  // Prompt-cache HIT rates are ~100× cheaper than a miss (server-side cache).
+  'deepseek-v4-flash': { input: 0.14, output: 0.28, cachedInput: 0.0028 },
+  'deepseek-v4-pro':   { input: 0.435, output: 0.87, cachedInput: 0.003625 },
   // OpenAI (for openai-compatible fallback)
   'gpt-4o':           { input: 2.50, output: 10 },
   'gpt-4o-mini':      { input: 0.15, output: 0.60 },

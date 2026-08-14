@@ -93,9 +93,14 @@ export async function runTask(args: RunTaskArgs): Promise<string> {
   // Rust expects `history` as a JSON string (Option<String>) that it forwards
   // verbatim to the CLI as `--history <json>`. The desktop works in typed
   // arrays; serialize here so the boundary stays clean.
-  const payload = args.history
-    ? { ...args, history: JSON.stringify(args.history) }
-    : { ...args, history: undefined };
+  const payload = {
+    ...args,
+    history: args.history ? JSON.stringify(args.history) : undefined,
+    todos:
+      args.todos && args.todos.length > 0
+        ? JSON.stringify(args.todos)
+        : undefined,
+  };
   return invoke<string>("run_task", { args: payload });
 }
 

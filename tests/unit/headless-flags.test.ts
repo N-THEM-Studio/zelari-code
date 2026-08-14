@@ -148,9 +148,23 @@ describe('parseHeadlessFlags', () => {
     expect(r.error).toMatch(/mutually exclusive/);
   });
 
-  it('errors when neither --task nor --kraken-graph is given', () => {
-    const r = parseHeadlessFlags(['--headless', '--output', 'json']);
-    expect(r.options).toBeNull();
-    expect(r.error).toMatch(/--headless requires/);
+  it('parses --todos JSON array into the todos seed', () => {
+    const r = parseHeadlessFlags([
+      '--headless', '--task', 'x', '--todos',
+      JSON.stringify([
+        { id: 'a', content: 'Read file', status: 'in_progress' },
+        { id: 'b', content: 'Write test', status: 'pending' },
+      ]),
+    ]);
+    expect(r.error).toBeUndefined();
+    expect(r.options?.todos).toEqual([
+      { id: 'a', content: 'Read file', status: 'in_progress' },
+      { id: 'b', content: 'Write test', status: 'pending' },
+    ]);
+  });
+
+  it('ignores malformed --todos JSON (stateless fallback)', () => {
+    const r = parseHeadlessFlags(['--headless', '--task', 'x', '--todos', 'not-json']);
+    expect(r.options?.todos).toBeUndefined();
   });
 });

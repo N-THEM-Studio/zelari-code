@@ -42,6 +42,15 @@ describe('desktop sessionTodosUi', () => {
     expect(parseTodoToolResult('hello world')).toBeNull();
   });
 
+  it('returns null for an empty todos list (todo_read on a fresh process)', () => {
+    // A fresh headless process has no in-process todos; todo_read returns
+    // { todos: [], formatted: '(no todos)' }. This must NOT be treated as
+    // "clear the panel" — null keeps the mirrored Desktop todos intact.
+    const raw = JSON.stringify({ todos: [], formatted: '(no todos)' });
+    expect(parseTodoToolResult(raw)).toBeNull();
+    expect(parseTodosFromUnknown({ todos: [] })).toBeNull();
+  });
+
   it('parses todo_write args objects (live start event)', () => {
     const todos = parseTodosFromUnknown({
       todos: [{ id: 'a', content: 'Read file', status: 'in_progress' }],

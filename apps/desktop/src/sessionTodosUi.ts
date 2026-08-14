@@ -43,13 +43,17 @@ export function parseTodoToolResult(result: string | undefined | null): DesktopT
         todos?: Array<{ id?: string; content?: string; status?: string }>;
       };
       if (Array.isArray(obj.todos)) {
-        return obj.todos
+        const mapped = obj.todos
           .filter((t) => t && typeof t.content === "string")
           .map((t, i) => ({
             id: String(t.id ?? `t${i + 1}`),
             content: String(t.content).slice(0, 500),
             status: normalizeStatus(t.status),
           }));
+        // Empty list = "no info", not "clear": a fresh headless process
+        // (Desktop spawns one per message) has no in-process todos, so a
+        // todo_read result of [] must not wipe the mirrored panel.
+        return mapped.length > 0 ? mapped : null;
       }
     }
   } catch {

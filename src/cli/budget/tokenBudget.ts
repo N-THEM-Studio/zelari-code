@@ -65,13 +65,25 @@ export function estimateHistoryTokens(messages: readonly AgentMessage[]): number
   return n;
 }
 
-export function resolveContextLimit(): number {
+/**
+ * Model-aware default context window. DeepSeek v4 ships a 1M context
+ * (docs: 1M ctx, 384K max out) — treating it as 400k forces premature
+ * compaction that rewrites the history prefix and busts the server-side
+ * prefix cache. ZELARI_CONTEXT_LIMIT always wins when set.
+ */
+export function defaultContextLimitForModel(model?: string): number {
+  if (model && /^deepseek-v4(\.|-|$)/i.test(model)) return 1_000_000;
+  return 400_000;
+}
+
+export function resolveContextLimit(model?: string): number {
   // v1.20.0: raised default from 200k → 400k so the rolling history can
   // hold a full multi-step turn (build + smoke + verify + JSON updates)
   // without triggering HARD 95% compaction mid-work. The 85%/95% clamps
   // in applyBudgetPolicy still fire when genuinely needed.
+  // v1.35.x: model-aware default — DeepSeek v4 uses 1M.
   return envNumber(process.env.ZELARI_CONTEXT_LIMIT, {
-    default: 400_000,
+    default: defaultContextLimitForModel(model),
     min: 4_000,
     max: 2_000_000,
   });
@@ -116,9 +128,9 @@ function occupancyOf(
 export function applyBudgetPolicy(
   history: readonly AgentMessage[],
   phase: WorkPhase,
-  opts?: { sessionTokens?: number },
+  opts?: { sessionTokens?: number; model?: string },
 ): BudgetPolicy {
-  const contextLimit = resolveContextLimit();
+  const contextLimit = resolveContextLimit(opts?.model);
   const sessionExtra = opts?.sessionTokens ?? 0;
   const warnings: string[] = [];
   let { historyTurns, maxToolLoopIterations } = phaseKnobs(phase);
@@ -190,9 +202,9 @@ export function applyBudgetPolicy(
 export async function applyBudgetPolicyAsync(
   history: readonly AgentMessage[],
   phase: WorkPhase,
-  opts?: { sessionTokens?: number; signal?: AbortSignal },
+  opts?: { sessionTokens?: number; signal?: AbortSignal; model?: string },
 ): Promise<BudgetPolicy> {
-  const contextLimit = resolveContextLimit();
+  const contextLimit = resolveContextLimit(opts?.model);
   const sessionExtra = opts?.sessionTokens ?? 0;
   const warnings: string[] = [];
   let { historyTurns, maxToolLoopIterations } = phaseKnobs(phase);

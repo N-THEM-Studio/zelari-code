@@ -109,6 +109,10 @@ export interface RunTaskArgs {
    * context across the per-message process boundary. Built from the
    * `history_snapshot` events emitted by the CLI. */
   history?: AgentMessageLite[];
+  /** Session todo list mirrored from todo_write/todo_read, replayed to the
+   * CLI so the fresh per-message process keeps multi-turn tasks (todo_read
+   * returns the prior state instead of empty). */
+  todos?: Array<{ id: string; content: string; status: string }>;
   /**
    * When true, the prompt is planned + executed as a Kraken task graph
    * (`--kraken-graph <prompt>`) instead of a normal `--task` dispatch —

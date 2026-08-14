@@ -23,6 +23,7 @@ import { parseMode } from './mode.js';
 import type { ChatMode } from './components/StatusBar.js';
 import type { AgentMessage, AgentImage } from '@zelari/core/harness';
 import { readFileSync } from 'node:fs';
+import type { SessionTodoStatus } from './sessionTodos.js';
 
 /** Dispatch mode for headless (mirrors TUI shift+tab modes). */
 export type HeadlessMode = ChatMode; // 'kraken' | 'council' | 'zelari'
@@ -60,6 +61,12 @@ export interface HeadlessOptions {
    * @since v1.10.0
    */
   history?: AgentMessage[];
+  /**
+   * Session todo list replayed by the Desktop across the per-message process
+   * boundary, so `todo_read` returns the prior state instead of empty.
+   * `writeSessionTodos` normalizes id/content/status. @since v1.35.x
+   */
+  todos?: Array<{ id?: string; content: string; status?: SessionTodoStatus }>;
   /** Inline images attached to this run (e.g. expanded from @img.png tags). */
   images?: AgentImage[];
   /**
@@ -144,6 +151,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
   let provider: string | undefined;
   let model: string | undefined;
   let history: AgentMessage[] | undefined;
+  let todos: Array<{ id?: string; content: string; status?: SessionTodoStatus }> | undefined;
   let once = false;
   let krakenGraph: string | undefined;
   // Pre-flight plan review (Slice N+3): opt-in via env, with a CLI
@@ -267,6 +275,32 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
         }
         i++;
       }
+    } else if (arg === '--todos') {
+      // JSON array of { id?, content, status? } — the Desktop replays the
+      // mirrored todo list here so the fresh process keeps multi-turn tasks.
+      const next = argv[i + 1];
+      if (next) {
+        try {
+          const parsed = JSON.parse(next) as unknown;
+          if (Array.isArray(parsed)) {
+            todos = parsed
+              .filter(
+                (t): t is { id?: unknown; content?: unknown; status?: unknown } =>
+                  !!t &&
+                  typeof t === 'object' &&
+                  typeof (t as { content?: unknown }).content === 'string',
+              )
+              .map((t) => ({
+                id: typeof t.id === 'string' ? t.id : undefined,
+                content: String(t.content).slice(0, 500),
+                status: t.status as SessionTodoStatus | undefined,
+              }));
+          }
+        } catch {
+          // Swallow: stale/incompatible todos degrade to empty (stateless).
+        }
+        i++;
+      }
     } else if (arg === '--once') {
       once = true;
     } else if (arg === '--kraken-graph') {
@@ -307,6 +341,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       provider,
       model,
       ...(history && history.length > 0 ? { history } : {}),
+      ...(todos && todos.length > 0 ? { todos } : {}),
       ...(once ? { once: true } : {}),
       ...(krakenGraph ? { krakenGraph } : {}),
       ...(planOnly ? { planOnly: true } : {}),

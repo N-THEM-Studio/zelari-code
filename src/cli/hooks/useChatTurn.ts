@@ -17,6 +17,7 @@ import { providerFailover } from "../providerFailover.js";
 import { resolveFailoverStream } from "../crossProviderFailover.js";
 import { resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
 import { PROVIDERS } from "../keyStore.js";
+import { getActiveModel } from "../providerConfig.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
 import { resetTaskSpawnCount } from "../tools/taskTool.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
@@ -204,7 +205,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // v1.8.0 / v1.21.0: budget-aware compact (phase + occupancy).
         // Async path may LLM-summarize dropped turns when context is tight.
         compactInPlace();
-        const budget = await applyBudgetPolicyAsync(getHistory(), getPhase());
+        const budget = await applyBudgetPolicyAsync(getHistory(), getPhase(), {
+          model: getActiveModel(),
+        });
         setHistory(budget.history);
         for (const w of budget.warnings) {
           appendSystem(setMessages, w, Date.now());
@@ -1134,7 +1137,9 @@ async function dispatchCouncilPromptImpl(
   setBusy(true);
   // v1.8.0 / v1.21.0: compact shared history + budget + short-answer anchor.
   compactInPlace();
-  const councilBudget = await applyBudgetPolicyAsync(getHistory(), getPhase());
+  const councilBudget = await applyBudgetPolicyAsync(getHistory(), getPhase(), {
+    model: envConfig.model,
+  });
   setHistory(councilBudget.history);
   for (const w of councilBudget.warnings) {
     appendSystem(setMessages, w, Date.now());

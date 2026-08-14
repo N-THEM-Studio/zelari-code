@@ -1677,6 +1677,7 @@ export default function App() {
         // Replay rolling history so the headless agent/council keeps multi-turn
         // context (answers "procedi" / "sì" instead of amnesia).
         history: historyForRun,
+        todos: sessionTodos,
         krakenGraph: krakenGraph || undefined,
         planOnly: planOnly || undefined,
         runPlan,

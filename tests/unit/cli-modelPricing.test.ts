@@ -85,13 +85,13 @@ describe('modelPricing (Task B.1.3)', () => {
     });
 
     describe('prompt caching', () => {
-      it('bills cached prompt tokens at the model cachedInput rate (deepseek 10x cheaper)', () => {
-        // deepseek-v4-pro: input 0.55, cachedInput 0.055. 1M prompt all cached
-        // + 0 completion → 1M * 0.055/1M = 0.055 (vs 0.55 uncached).
+      it('bills cached prompt tokens at the model cachedInput rate (deepseek cache hits ~100x cheaper)', () => {
+        // deepseek-v4-pro: input 0.435, cachedInput 0.003625. 1M prompt all
+        // cached + 0 completion → 1M * 0.003625/1M = 0.003625 (vs 0.435 uncached).
         const cached = calculateCost('deepseek-v4-pro', 1_000_000, 0, 1_000_000);
-        expect(cached).toBeCloseTo(0.055, 6);
+        expect(cached).toBeCloseTo(0.003625, 6);
         const uncached = calculateCost('deepseek-v4-pro', 1_000_000, 0, 0);
-        expect(uncached).toBeCloseTo(0.55, 6);
+        expect(uncached).toBeCloseTo(0.435, 6);
         expect(cached).toBeLessThan(uncached);
       });
 
@@ -101,15 +101,15 @@ describe('modelPricing (Task B.1.3)', () => {
       });
 
       it('mixes cached + uncached prompt tokens correctly', () => {
-        // deepseek-v4-pro: 1M prompt, 400k cached → 600k*0.55 + 400k*0.055 per 1M
-        // = 0.33 + 0.022 = 0.352.
-        expect(calculateCost('deepseek-v4-pro', 1_000_000, 0, 400_000)).toBeCloseTo(0.352, 6);
+        // deepseek-v4-pro: 1M prompt, 400k cached → 600k*0.435 + 400k*0.003625
+        // per 1M = 0.261 + 0.00145 = 0.26245.
+        expect(calculateCost('deepseek-v4-pro', 1_000_000, 0, 400_000)).toBeCloseTo(0.26245, 6);
       });
 
       it('clamps cached tokens to at most promptTokens', () => {
         // cached (2M) > prompt (1M): clamp to 1M cached → same as fully cached.
         const clamped = calculateCost('deepseek-v4-pro', 1_000_000, 0, 2_000_000);
-        expect(clamped).toBeCloseTo(0.055, 6);
+        expect(clamped).toBeCloseTo(0.003625, 6);
       });
 
       it('ignores negative / non-finite cached values (bills all prompt as uncached)', () => {

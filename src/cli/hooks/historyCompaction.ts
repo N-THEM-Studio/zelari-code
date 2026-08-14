@@ -57,6 +57,8 @@ export interface CompactHistoryResult {
   compacted: boolean;
   messagesRemoved: number;
   summary: string;
+  /** Tool results pruned in-place (head/tail) to preserve the cache prefix. */
+  prunedToolResults?: number;
 }
 
 /**
@@ -140,6 +142,84 @@ function findValidCutIndex(messages: readonly AgentMessage[], naiveCut: number):
 }
 
 /**
+ * Tool-result prune limits + result metadata (cache-aware compaction).
+ */
+
+export interface ToolResultPruneOptions {
+  /** Max chars retained for a single tool result body (head + tail). Default 8000 (ZELARI_TOOL_RESULT_MAX_CHARS). */
+  maxChars?: number;
+  /** Chars preserved from the tail (errors / final output usually live at the end). Default 1000 (ZELARI_TOOL_RESULT_TAIL_CHARS). */
+  tailChars?: number;
+}
+
+export interface ToolResultPruneStats {
+  /** Number of tool messages whose content was truncated. */
+  pruned: number;
+  /** Total chars omitted across all pruned tool messages. */
+  charsOmitted: number;
+}
+
+function resolvePruneLimits(opts?: ToolResultPruneOptions): {
+  maxChars: number;
+  tailChars: number;
+} {
+  const maxChars =
+    opts?.maxChars ??
+    envNumber(process.env.ZELARI_TOOL_RESULT_MAX_CHARS, { default: 8000, min: 256 });
+  const rawTail =
+    opts?.tailChars ??
+    envNumber(process.env.ZELARI_TOOL_RESULT_TAIL_CHARS, { default: 1000, min: 0 });
+  // Never keep more tail than the whole budget (avoids headChars < 0).
+  const tailChars = Math.min(rawTail, maxChars);
+  return { maxChars, tailChars };
+}
+
+/**
+ * Truncate oversized `role:'tool'` result bodies in-place (head + tail),
+ * preserving message order and `toolCallId`. This shrinks the token
+ * footprint WITHOUT dropping messages, so the append-only server-side
+ * prefix cache (DeepSeek/GLM/Qwen) keeps hitting across the tool loop.
+ * Returns the SAME array reference when nothing changed (cheap compare).
+ *
+ * @since v1.35.x — cache-aware compaction (dsh compaction-tool-result-pruner).
+ */
+export function pruneToolResults(
+  messages: readonly AgentMessage[],
+  opts?: ToolResultPruneOptions,
+): AgentMessage[] {
+  return pruneToolResultsDetailed(messages, opts).messages;
+}
+
+export function pruneToolResultsDetailed(
+  messages: readonly AgentMessage[],
+  opts?: ToolResultPruneOptions,
+): { messages: AgentMessage[]; stats: ToolResultPruneStats } {
+  const { maxChars, tailChars } = resolvePruneLimits(opts);
+  const headChars = maxChars - tailChars;
+  const stats: ToolResultPruneStats = { pruned: 0, charsOmitted: 0 };
+  let changed = false;
+  const out = messages.map((m) => {
+    if (m.role !== "tool") return m;
+    const body = m.content ?? "";
+    if (body.length <= maxChars) return m;
+    const head = headChars > 0 ? body.slice(0, headChars) : "";
+    const tail = tailChars > 0 ? body.slice(-tailChars) : "";
+    const omitted = body.length - head.length - tail.length;
+    changed = true;
+    stats.pruned += 1;
+    stats.charsOmitted += omitted;
+    return {
+      ...m,
+      content: [head, "…[pruned " + omitted + " chars]…", tail].join(String.fromCharCode(10)),
+    };
+  });
+  return {
+    messages: changed ? out : (messages as AgentMessage[]),
+    stats,
+  };
+}
+
+/**
  * Compact a rolling-history `AgentMessage[]` when it exceeds the cap.
  *
  * Returns the SAME array reference (unmutated) when no compaction is needed,
@@ -187,7 +267,8 @@ export function compactHistoryDetailed(
   }
 
   const droppedMsgs = messages.slice(0, cut);
-  const kept = messages.slice(cut);
+  const pruned = pruneToolResultsDetailed(messages.slice(cut));
+  const kept = pruned.messages;
   const summaryText = extractiveHistorySummary(droppedMsgs);
   const summary: AgentMessage = {
     role: "system",
@@ -198,6 +279,7 @@ export function compactHistoryDetailed(
     compacted: true,
     messagesRemoved: cut,
     summary: summary.content,
+    prunedToolResults: pruned.stats.pruned,
   };
 }
 
@@ -229,12 +311,14 @@ export async function compactHistoryAsync(
     // keep extractive
   }
 
-  const kept = messages.slice(cut);
+  const pruned = pruneToolResultsDetailed(messages.slice(cut));
+  const kept = pruned.messages;
   const summary: AgentMessage = { role: "system", content: summaryText };
   return {
     messages: [summary, ...kept],
     compacted: true,
     messagesRemoved: cut,
     summary: summaryText,
+    prunedToolResults: pruned.stats.pruned,
   };
 }
