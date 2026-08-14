@@ -43,6 +43,7 @@ import {
 export {
   collapseLoopedAssistantText,
   detectAssistantTextLoop,
+  detectAssistantTextLoopWindow,
   normalizeLoopUnit,
   isStatusTheaterUnit,
   TEXT_LOOP_RECOVERY_SYSTEM,

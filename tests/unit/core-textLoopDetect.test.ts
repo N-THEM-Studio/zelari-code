@@ -5,6 +5,7 @@ import { describe, it, expect } from 'vitest';
 import {
   AgentHarness,
   detectAssistantTextLoop,
+  detectAssistantTextLoopWindow,
   collapseLoopedAssistantText,
   normalizeLoopUnit,
   TEXT_LOOP_RECOVERY_SYSTEM,
@@ -88,6 +89,37 @@ describe('detectAssistantTextLoop', () => {
     const unit =
       'Bene. dungeon.js fatto. Aggiorno todo e procedo con inventory.js ora.';
     expect(detectAssistantTextLoop(unit)).toEqual({ looping: false });
+  });
+});
+
+describe('detectAssistantTextLoopWindow', () => {
+  it('matches the full detector on short text', () => {
+    const unit =
+      'Bene. dungeon.js fatto. Aggiorno todo e procedo con inventory.js ora.';
+    const text = [unit, unit].join('\n\n');
+    expect(detectAssistantTextLoopWindow(text)).toEqual(detectAssistantTextLoop(text));
+  });
+
+  it('still detects a loop that lives in the tail of a long stream', () => {
+    const prefix = 'unique-prefix-line\n'.repeat(2_000); // ~38k chars
+    const unit =
+      'Bene. dungeon.js fatto. Aggiorno todo e procedo con inventory.js ora.';
+    const text = prefix + [unit, unit, unit].join('\n\n');
+    const hit = detectAssistantTextLoopWindow(text);
+    expect(hit.looping).toBe(true);
+  });
+
+  it('does not scan a loop that only exists in the dropped head', () => {
+    const unit =
+      'Bene. dungeon.js fatto. Aggiorno todo e procedo con inventory.js ora.';
+    const loop = [unit, unit, unit].join('\n\n');
+    const tail = Array.from(
+      { length: 400 },
+      (_, i) => `unique-suffix-${i}-${'x'.repeat(40)}`,
+    ).join('\n');
+    const text = loop + '\n\n' + tail;
+    expect(text.length).toBeGreaterThan(20_000);
+    expect(detectAssistantTextLoopWindow(text)).toEqual({ looping: false });
   });
 });
 

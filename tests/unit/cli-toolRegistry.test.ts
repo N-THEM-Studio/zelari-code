@@ -1,4 +1,6 @@
 import { describe, it, expect } from 'vitest';
+import { z } from 'zod';
+import { typedOk } from '@zelari/core/harness/tools/toolTypes';
 import { createBuiltinToolRegistry } from '../../src/cli/toolRegistry.js';
 
 describe('createBuiltinToolRegistry (Task A1)', () => {
@@ -73,5 +75,22 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
     expect(r1).not.toBe(r2);
     // Same tool names but different instances
     expect(r1.list()).toEqual(r2.list());
+  });
+
+  it('memoizes toOpenAITools() until register() invalidates the cache', () => {
+    const { registry } = createBuiltinToolRegistry({ lspProvider: null });
+    const first = registry.toOpenAITools();
+    const second = registry.toOpenAITools();
+    expect(second).toBe(first);
+    registry.register({
+      name: 'dummy_memo_tool',
+      description: 'cache invalidation probe',
+      permissions: ['read'],
+      inputSchema: z.object({ x: z.string() }),
+      execute: async () => typedOk('ok'),
+    });
+    const third = registry.toOpenAITools();
+    expect(third).not.toBe(first);
+    expect(third.some((t) => t.function.name === 'dummy_memo_tool')).toBe(true);
   });
 });

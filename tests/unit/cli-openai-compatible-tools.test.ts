@@ -181,6 +181,36 @@ describe('openaiCompatibleProvider — SSE tool_calls parsing (Task A1)', () => 
     expect(finishReason).toBe('tool_calls');
   });
 
+  it('parses brace-laden args once at flush, not on every closing brace', async () => {
+    // Content contains many `}` fragments. The old incremental heuristic
+    // re-parsed the whole buffer on every fragment ending in `}`.
+    const pieces = [
+      '{"path":"/tmp/x","content":"aaa}',
+      '}bbb}',
+      '}ccc"}',
+    ];
+    const chunks = [
+      `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_braces","function":{"name":"write_file","arguments":${JSON.stringify(pieces[0])}}}]}}]}\n\n`,
+      `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":${JSON.stringify(pieces[1])}}}]}}]}\n\n`,
+      `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":${JSON.stringify(pieces[2])}}}]}}]}\n\n`,
+      'data: [DONE]\n\n',
+    ];
+    mockFetchWithSseChunks(chunks);
+    const provider = openaiCompatibleProvider({
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.example.com/v1',
+      model: 'gpt-test',
+      providerId: 'openai-compatible',
+    });
+    const toolCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+    for await (const d of provider({ messages: [], model: 'gpt-test', provider: 'openai-compatible', tools: [] })) {
+      if (d.kind === 'tool_call') toolCalls.push({ name: d.toolName, args: d.args });
+    }
+    expect(toolCalls).toHaveLength(1);
+    expect(toolCalls[0]!.name).toBe('write_file');
+    expect(toolCalls[0]!.args).toEqual({ path: '/tmp/x', content: 'aaa}}bbb}}ccc' });
+  });
+
   it('upgrades finish_reason stop→tool_calls when tools were emitted', async () => {
     mockFetchWithSseChunks([
       'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"tc_5","function":{"name":"read_file","arguments":"{\\"path\\":\\"a.ts\\"}"}}]}}]}\n\n',

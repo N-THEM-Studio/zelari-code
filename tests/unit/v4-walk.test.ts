@@ -2,7 +2,15 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { walk, matchesAny, filterByInclude, DEFAULT_EXCLUDES, type FileEntry } from '@zelari/core/harness/tools/builtin/_walk';
+import {
+  walk,
+  matchesAny,
+  filterByInclude,
+  compileGlobs,
+  matchesAnyCompiled,
+  DEFAULT_EXCLUDES,
+  type FileEntry,
+} from '@zelari/core/harness/tools/builtin/_walk';
 
 let tmpRoot: string;
 
@@ -51,6 +59,17 @@ describe('_walk', () => {
     it('handles ** (recursive wildcard)', () => {
       expect(matchesAny('a/b/c.ts', ['**/*.ts'])).toBe(true);
       expect(matchesAny('a/b/c.ts', ['a/**/*.ts'])).toBe(true);
+    });
+  });
+
+  describe('compileGlobs / matchesAnyCompiled', () => {
+    it('precompiled regexes match the same names as matchesAny', () => {
+      const patterns = ['*.ts', 'node_modules', '**/*.map'];
+      const compiled = compileGlobs(patterns);
+      expect(compiled).toHaveLength(patterns.length);
+      for (const name of ['foo.ts', 'foo.js', 'node_modules', 'src/a.map']) {
+        expect(matchesAnyCompiled(name, compiled)).toBe(matchesAny(name, patterns));
+      }
     });
   });
 

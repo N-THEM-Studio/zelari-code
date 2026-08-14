@@ -91,6 +91,36 @@ describe('show_diff (v0.4.0)', () => {
     expect(r.unchanged).toBe(false);
     expect(r.added).toBe(1); // only 'hello' is new; '' matches context
   });
+
+  it('diffs a small edit in a 5k-line file without blowing the LCS cap', async () => {
+    const lines = Array.from({ length: 5000 }, (_, i) => `line-${i}`);
+    await fs.writeFile(path.join(tmpRoot, 'big.txt'), lines.join('\n'));
+    const proposed = lines.slice();
+    proposed[2500] = 'CHANGED';
+    const r = unwrap(
+      await runShow({
+        path: 'big.txt',
+        proposedContent: proposed.join('\n'),
+      }),
+    );
+    expect(r.unchanged).toBe(false);
+    expect(r.added).toBe(1);
+    expect(r.removed).toBe(1);
+    expect(r.diff).toContain('CHANGED');
+  });
+
+  it('returns a guided error when the changed region exceeds the LCS cell cap', async () => {
+    const a = Array.from({ length: 2500 }, (_, i) => `old-${i}`).join('\n');
+    const b = Array.from({ length: 2500 }, (_, i) => `new-${i}`).join('\n');
+    await fs.writeFile(path.join(tmpRoot, 'wide.txt'), a);
+    const r = await runShow({
+      path: 'wide.txt',
+      proposedContent: b,
+    });
+    expect(r.ok).toBe(false);
+    const err = typeof r.error === 'string' ? r.error : (r.error as { message?: string } | undefined)?.message;
+    expect(err).toMatch(/Diff too large|LCS cell cap/i);
+  });
 });
 
 describe('apply_diff (v0.4.0)', () => {
