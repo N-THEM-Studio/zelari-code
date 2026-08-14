@@ -5,6 +5,13 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.37.0] - 2026-08-14
+
+### Added
+- **Unified thinking-effort selection** — new `/effort` slash command sets reasoning depth for every supported model: `auto` / `off` / `low` / `medium` / `high` (OpenAI & xAI `reasoning_effort`) and `budget:<tokens>` (Anthropic `budget_tokens`). Persisted per provider in `provider.json`; unsupported combinations degrade to `auto` with a warning instead of erroring.
+- **Desktop thinking-effort selector** — a Thinking-effort dropdown in the model bar, with provider-aware options exposed via `--print-config` (`thinkingCapability`) and persisted through `--set-config --thinking <spec>`.
+- **ADR-0016 & ADR-0017** — architecture decisions for an event-sourced session log and the unified thinking-effort control.
+
 ## [1.36.0] - 2026-08-14
 
 ### Added
