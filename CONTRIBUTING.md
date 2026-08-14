@@ -92,7 +92,7 @@ docs/plans/                # Historical design notes (may be outdated)
 | [SECURITY.md](./SECURITY.md) | Vulnerability reporting |
 | [CHANGELOG.md](./CHANGELOG.md) | Release notes |
 
-`HANDOFF.md`, `HANDOFF-kraken.md`, `HANDOFF-v0.10.0.md` and `docs/plans/*` are **historical / superseded** and not required reading for new contributors. Current product state (1.34.x): `CHANGELOG.md` + `docs/GUIDA.md`.
+`HANDOFF.md`, `HANDOFF-kraken.md`, `HANDOFF-v0.10.0.md` and `docs/plans/*` are **historical / superseded** and not required reading for new contributors. Current product state (1.35.x): `CHANGELOG.md` + `docs/GUIDA.md`.
 
 ## Code of conduct
 

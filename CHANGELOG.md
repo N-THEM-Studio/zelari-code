@@ -7,11 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.35.0] - 2026-08-14
+
+### Added
+- **Companion QR pairing** — Desktop Settings → Connections → **Mobile connection** starts `zelari-code serve` bound for Tailscale/LAN (`0.0.0.0`), detects the PC Tailscale IPv4 (`100.64–127.x`), and shows a QR (`zelari://pair?url=…&token=…`). The Android companion scans it (camera), fills URL + token, and connects. Loopback addresses (`127.0.0.1` / `localhost`) are rejected on the phone with a clear explanation.
+- **Anthropic prompt cache breakpoints** — the Anthropic provider sends `cache_control` on the stable system block and the last conversation message; `ZELARI_PROMPT_CACHE_TTL=1h` adds the extended-cache beta header. Cache read/creation tokens fold into usage (`cachedPromptTokens`).
+- **Read-only tool-result cache** — `withResultCache` wraps `read_file` (invalidated on mtime+size), `grep_content`, and `list_files` (5 min TTL). Kill switch `ZELARI_TOOL_CACHE=0`, cap 200 entries, skip payloads over 256KB.
+
 ### Changed
-- **License: MIT → Apache-2.0** — the entire monorepo (CLI, `@zelari/core`, Desktop, Companion) moves to the Apache License 2.0; secrecy policy reframed as "open runtime, protected experience" without weakening the hard rules ([ADR-0009](docs/decisions/0009-apache-2-0-license.md)).
-- **First-principles manifesto** — new `PRINCIPLES.md` ratifies the six first principles (Verificabilità, Determinismo del controllo, Sovranità dell'utente, Runtime aperto, Leggerezza, Orchestrazione giusta) with an enforcement map; previous conventions demoted to derivations ([ADR-0010](docs/decisions/0010-first-principles-manifesto.md)).
-- **First-principles CI gate** — new `scripts/verify-principles.mjs` (`npm run verify:principles`) mechanically checks the enforceable principles (Apache-2.0 coherence, heavy-dep blacklist, `@zelari/core` runtime allowlist, Zod per builtin tool, hooks choke-point, manifesto linkage) and `.github/workflows/ci.yml` runs typecheck + tests + principles as a merge gate on every PR.
-- **Docs sync to 1.34.0** — README, `docs/GUIDA.md`, `docs/TOOLS.md`, SECURITY, CONTRIBUTING, MIGRATION, Desktop/Companion READMEs, and a new `packages/core/README.md`. Historical `HANDOFF*.md` files marked superseded (Kraken G1/G2/G5/G6 and v0.10 P0 already shipped).
+- **Prompt/token cost path** — tool JSON schemas are memoized on the registry; OpenAI-compatible message mapping is incremental (`WeakMap`); council `member_cost` folds into StatusBar session stats and metrics `run` records now include `tokens` / `costUsd`.
+- **Streaming CPU** — tool-call args parse once at flush; text-loop detection scans a bounded tail; `cleanAgentContent` runs at 16ms (including council); session JSONL batches appends (32 events / 250ms) with turn-end `flush()`.
+- **Lifecycle hooks** — hook JSON is reloaded only when file mtime/size changes, not on a 30s TTL.
+- **Diff / walk** — LCS trims common prefix/suffix and refuses regions over 4M cells; exclude globs are compiled once per walk; `read_file` splits the file once.
+- **Desktop companion bind** — default listen address for Mobile connection is `0.0.0.0` (phone/Tailscale/LAN), not `127.0.0.1`.
+- **License: MIT → Apache-2.0** — the entire monorepo (CLI, `@zelari/core`, Desktop, Companion) is Apache-2.0 ([ADR-0009](docs/decisions/0009-apache-2-0-license.md)).
+- **First-principles manifesto + CI gate** — `PRINCIPLES.md` (P1–P6) and `npm run verify:principles` on every PR ([ADR-0010](docs/decisions/0010-first-principles-manifesto.md)).
+
+### Fixed
+- **`ZELARI_SHELL=powershell.exe` lost to Git Bash** — an explicit PowerShell override now wins over auto-detected Git Bash.
+- **Typecheck after the v1.35 batch** — `SessionJsonlWriter.ensureDir` maps `mkdir` to `void`; `show_diff` hunk ops use an explicit type; OpenAI mapper imports `AgentMessage`.
 
 ## [1.34.0] - 2026-08-13
 
