@@ -1,6 +1,6 @@
 # ADR-0008: Monorepo MIT license for open-source release
 
-- **Status:** ✅ Accettato
+- **Status:** ⚠️ Sostituito da [ADR-0009](./0009-apache-2-0-license.md) (2026-08-13)
 - **Date:** 2026-07-15
 - **Deciders:** Anathema Studio
 - **Related:** ADR-0002 (publish `@zelari/core` MIT), dual-license era

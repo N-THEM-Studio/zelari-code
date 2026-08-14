@@ -7,7 +7,7 @@ Thanks for your interest in contributing. This monorepo ships:
 | Package | Path | Role |
 |---------|------|------|
 | `zelari-code` | repo root / `src/cli` | CLI + Ink TUI + headless entry |
-| `@zelari/core` | `packages/core` | MIT library: `AgentHarness`, council, skills, tools |
+| `@zelari/core` | `packages/core` | Apache-2.0 library: `AgentHarness`, council, skills, tools |
 | `@zelari/desktop` | `apps/desktop` | Optional Tauri 2 shell (spawns CLI `--headless`) |
 | companion | `apps/companion-android` | Thin Android client for `zelari-code serve` |
 
@@ -100,4 +100,4 @@ Participation is governed by [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
 
 ## License
 
-By contributing, you agree that your contributions are licensed under the **MIT License** (see [LICENSE](./LICENSE)). Copyright holder: Anathema Studio — https://anathema-studio.com/
+By contributing, you agree that your contributions are licensed under the **Apache License 2.0** (see [LICENSE](./LICENSE)). Copyright holder: Anathema Studio — https://anathema-studio.com/

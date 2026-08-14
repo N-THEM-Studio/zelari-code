@@ -111,4 +111,4 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## License
 
-MIT — same monorepo as zelari-code.
+Apache-2.0 — same monorepo as zelari-code.

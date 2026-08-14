@@ -26,7 +26,7 @@
 > AI Council coding agent CLI — multi-agent orchestration with slash commands, provider-agnostic LLM streaming, and self-update.
 
 ![Version](https://img.shields.io/npm/v/zelari-code)
-![License](https://img.shields.io/badge/license-MIT-green)
+![License](https://img.shields.io/badge/license-Apache--2.0-blue)
 ![Node](https://img.shields.io/node/v/zelari-code)
 
 By **[Anathema Studio](https://anathema-studio.com/)** ·
@@ -42,7 +42,7 @@ By **[Anathema Studio](https://anathema-studio.com/)** ·
 
 📖 **[Full user guide (IT)](./docs/GUIDA.md)** — install, TUI, slash commands, council, skills, workspace, headless, MCP, Desktop.
 
-**Zelari Code** is an open-source **AI council coding agent** for the terminal: a multi-agent pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero), a **kraken** super-agent (default; aliases `agent`/`single`) that can spawn explore/general/verify tentacles, and optional **zelari** missions that loop until a deliverable is done. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (MIT). Current line: **1.34.0**.
+**Zelari Code** is an open-source **AI council coding agent** for the terminal: a multi-agent pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero), a **kraken** super-agent (default; aliases `agent`/`single`) that can spawn explore/general/verify tentacles, and optional **zelari** missions that loop until a deliverable is done. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (Apache-2.0). Current line: **1.34.0**.
 
 ```bash
 npm install -g zelari-code
@@ -295,12 +295,12 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 ## Architecture
 
 ```
-zelari-code (CLI, MIT)  — v1.34.0
+zelari-code (CLI, Apache-2.0)  — v1.34.0
 ├── src/cli/                  # Ink TUI, providers, workspace, wizard, MCP, SSH, serve
 │   ├── components/           # ChatStream, InputBar, Sidebar, StatusBar, …
 │   ├── slashHandlers/        # /provider, /workspace, /kraken, /trust, …
 │   └── workspace/            # .zelari/ persistence + AGENTS.MD curation
-├── packages/core/            # @zelari/core (MIT, npm)
+├── packages/core/            # @zelari/core (Apache-2.0, npm)
 │   ├── core/                 # AgentHarness — provider-neutral agent loop
 │   ├── agents/               # Council API, roles, 26 skills, tool schemas
 │   └── council/              # Run mode, tier banners
@@ -462,9 +462,9 @@ npm run typecheck
 - [Product page](https://anathema-studio.com/zelari-code) (IT: [zelari-codice](https://anathema-studio.com/zelari-codice)) — Anathema Studio
 - [GitHub repository](https://github.com/N-THEM-Studio/zelari-code)
 - [npm: zelari-code](https://www.npmjs.com/package/zelari-code) — CLI
-- [npm: @zelari/core](https://www.npmjs.com/package/@zelari/core) — reusable runtime (MIT)
+- [npm: @zelari/core](https://www.npmjs.com/package/@zelari/core) — reusable runtime (Apache-2.0)
 - [Site docs](https://anathema-studio.com/zelari-code/docs) (IT: [documentazione](https://anathema-studio.com/zelari-codice/documentazione))
 
 ## License
 
-[MIT](./LICENSE) © 2026 [Anathema Studio](https://anathema-studio.com/).
+[Apache-2.0](./LICENSE) © 2026 [Anathema Studio](https://anathema-studio.com/).

@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **License: MIT → Apache-2.0** — the entire monorepo (CLI, `@zelari/core`, Desktop, Companion) moves to the Apache License 2.0; secrecy policy reframed as "open runtime, protected experience" without weakening the hard rules ([ADR-0009](docs/decisions/0009-apache-2-0-license.md)).
+- **First-principles manifesto** — new `PRINCIPLES.md` ratifies the six first principles (Verificabilità, Determinismo del controllo, Sovranità dell'utente, Runtime aperto, Leggerezza, Orchestrazione giusta) with an enforcement map; previous conventions demoted to derivations ([ADR-0010](docs/decisions/0010-first-principles-manifesto.md)).
+- **First-principles CI gate** — new `scripts/verify-principles.mjs` (`npm run verify:principles`) mechanically checks the enforceable principles (Apache-2.0 coherence, heavy-dep blacklist, `@zelari/core` runtime allowlist, Zod per builtin tool, hooks choke-point, manifesto linkage) and `.github/workflows/ci.yml` runs typecheck + tests + principles as a merge gate on every PR.
 - **Docs sync to 1.34.0** — README, `docs/GUIDA.md`, `docs/TOOLS.md`, SECURITY, CONTRIBUTING, MIGRATION, Desktop/Companion READMEs, and a new `packages/core/README.md`. Historical `HANDOFF*.md` files marked superseded (Kraken G1/G2/G5/G6 and v0.10 P0 already shipped).
 
 ## [1.34.0] - 2026-08-13

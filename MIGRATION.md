@@ -140,5 +140,5 @@ open an issue with the label `migration`. We will:
 - Product: [anathema-studio.com](https://anathema-studio.com/)
 - Read the [CHANGELOG](CHANGELOG.md) (start at the v0.5.0 section) for
   the full list of what changed in the monorepo extraction release.
-  Monorepo license is **MIT** as of the open-source packaging work
-  ([ADR-0008](docs/decisions/0008-monorepo-mit-oss.md)).
+  Monorepo license is **Apache-2.0** since [ADR-0009](docs/decisions/0009-apache-2-0-license.md)
+  (originally MIT per [ADR-0008](docs/decisions/0008-monorepo-mit-oss.md), superseded).

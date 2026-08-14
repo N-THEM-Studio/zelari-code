@@ -1,6 +1,6 @@
 # `@zelari/core`
 
-Reusable runtime for [Zelari Code](https://github.com/N-THEM-Studio/zelari-code) — **MIT**.
+Reusable runtime for [Zelari Code](https://github.com/N-THEM-Studio/zelari-code) — **Apache-2.0**.
 
 Current version: **1.34.0** (kept in lockstep with the `zelari-code` CLI).
 
@@ -49,4 +49,4 @@ npm test
 
 ## License
 
-MIT © [Anathema Studio](https://anathema-studio.com/).
+Apache-2.0 © [Anathema Studio](https://anathema-studio.com/).

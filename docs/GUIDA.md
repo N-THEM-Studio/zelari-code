@@ -2,7 +2,7 @@
 
 > **Versione documento:** 1.34.0  
 > CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri 2), council a 6 ruoli, super-agent **kraken**, missioni **zelari**, slash commands, MCP, SSH e provider LLM agnostici (OAuth Grok / ChatGPT / Anthropic).  
-> Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **MIT**.
+> Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **Apache-2.0**.
 
 ---
 
@@ -37,7 +37,7 @@
 
 ## Cos'è Zelari Code
 
-**Zelari Code** è un agente di coding da terminale open source MIT di **[Anathema Studio](https://anathema-studio.com/)**. Pagina prodotto: [anathema-studio.com/zelari-code](https://anathema-studio.com/zelari-code). Offre:
+**Zelari Code** è un agente di coding da terminale open source (Apache-2.0) di **[Anathema Studio](https://anathema-studio.com/)**. Pagina prodotto: [anathema-studio.com/zelari-code](https://anathema-studio.com/zelari-code). Offre:
 
 - Una **TUI** ricca con scrollback nativo, sidebar git e timer di esecuzione
 - Un super-agent **kraken** (default; alias `agent`/`single`) con tentacoli `task` e **Kraken Graph**
@@ -47,7 +47,7 @@
 - Persistenza progetto in **`.zelari/`** e auto-curation di **`AGENTS.MD`**
 - Supporto **MCP**, **SSH targets**, **folder trust**, **lifecycle hooks**, **headless**, **Zelari Desktop**, **Companion Android** e **self-update**
 
-Il runtime condiviso è pubblicato come package npm [`@zelari/core`](https://www.npmjs.com/package/@zelari/core) (MIT).
+Il runtime condiviso è pubblicato come package npm [`@zelari/core`](https://www.npmjs.com/package/@zelari/core) (Apache-2.0).
 
 ---
 
@@ -1317,4 +1317,4 @@ modificato nulla.
 - [Anathema Studio](https://anathema-studio.com/) — home
 - [Repository GitHub](https://github.com/N-THEM-Studio/zelari-code) · [Releases](https://github.com/N-THEM-Studio/zelari-code/releases)
 - [npm: zelari-code](https://www.npmjs.com/package/zelari-code) · [npm: @zelari/core](https://www.npmjs.com/package/@zelari/core)
-- [CONTRIBUTING](../CONTRIBUTING.md) · [SECURITY](../SECURITY.md) · [LICENSE (MIT)](../LICENSE)
+- [CONTRIBUTING](../CONTRIBUTING.md) · [SECURITY](../SECURITY.md) · [LICENSE (Apache-2.0)](../LICENSE)

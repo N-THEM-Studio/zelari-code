@@ -1,6 +1,6 @@
 # Documentazione Zelari Code
 
-Documentazione per **zelari-code 1.34.x** (monorepo MIT — [Anathema Studio](https://anathema-studio.com/)).
+Documentazione per **zelari-code 1.34.x** (monorepo Apache-2.0 — [Anathema Studio](https://anathema-studio.com/)).
 
 | Documento | Contenuto |
 |---|---|
@@ -10,7 +10,7 @@ Documentazione per **zelari-code 1.34.x** (monorepo MIT — [Anathema Studio](ht
 | **[../MIGRATION.md](../MIGRATION.md)** | Migrazione da ≤ 0.4.x a `@zelari/core` (solo consumer della libreria) |
 | **[../CONTRIBUTING.md](../CONTRIBUTING.md)** | Setup monorepo, PR, convenzioni |
 | **[../SECURITY.md](../SECURITY.md)** | Segnalazione vulnerabilità |
-| **[decisions/](./decisions/)** | Architecture Decision Records (incl. ADR-0008 MIT OSS, ADR-0011 Windows PATH) |
+| **[decisions/](./decisions/)** | Architecture Decision Records (incl. ADR-0009 Apache-2.0, ADR-0010 first principles) |
 | **[plans/](./plans/)** | *Internal / historical* design notes — **non** source of truth del prodotto |
 | **[media/](./media/)** | English marketing stills + ~30s trailer |
 

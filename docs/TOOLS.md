@@ -3,7 +3,7 @@
 Mappa di tool, skill e sorgenti di estensione. Allineata al registry CLI
 (`src/cli/toolRegistry.ts`) e agli stub workspace.
 
-Prodotto: [Anathema Studio](https://anathema-studio.com/) · CLI MIT.
+Prodotto: [Anathema Studio](https://anathema-studio.com/) · CLI Apache-2.0.
 
 ## Tool builtin (harness) — disponibili ovunque
 

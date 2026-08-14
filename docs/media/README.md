@@ -35,6 +35,6 @@ Rebuild: `ffmpeg -f concat -safe 0 -i trailer/concat-list.txt -c copy trailer/ze
 - Multi-agent council coding agent CLI  
 - Modes: agent / council / zelari; phases: plan / build  
 - Optional Desktop shell  
-- MIT open source · `npm install -g zelari-code`  
+- Apache-2.0 open source · `npm install -g zelari-code`  
 
 Do **not** invent star counts, download numbers, or benchmark scores in captions.
