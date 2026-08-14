@@ -14,6 +14,7 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { readdirSync, statSync } from 'node:fs';
 import { LifecycleHookRunner } from '@zelari/core/harness';
 import { isFolderTrusted } from './folderTrust.js';
 
@@ -28,16 +29,64 @@ export function projectHooksDir(projectRoot: string): string {
 }
 
 /**
+ * Snapshot hook dirs so we reload only when a `*.json` file is added,
+ * removed, or rewritten. Directory mtime alone misses in-place edits on
+ * Windows; per-file mtime+size is cheap compared to re-reading contents.
+ */
+export function fingerprintHookDirs(dirs: readonly string[]): string {
+  const parts: string[] = [];
+  for (const dir of dirs) {
+    let names: string[];
+    try {
+      names = readdirSync(dir).filter((f) => f.endsWith('.json')).sort();
+    } catch {
+      parts.push(`${dir}:missing`);
+      continue;
+    }
+    if (names.length === 0) {
+      try {
+        parts.push(`${dir}:empty:${statSync(dir).mtimeMs}`);
+      } catch {
+        parts.push(`${dir}:empty`);
+      }
+      continue;
+    }
+    for (const name of names) {
+      const full = join(dir, name);
+      try {
+        const st = statSync(full);
+        parts.push(`${full}:${st.mtimeMs}:${st.size}`);
+      } catch {
+        parts.push(`${full}:gone`);
+      }
+    }
+  }
+  return parts.join('\0');
+}
+
+/**
  * Create the runner with the standard dir layout:
  * global hooks always; project hooks only when `projectRoot` is trusted.
  *
- * v1.35: this runs on every user turn and used to re-stat both hook dirs
- * with sync fs calls each time. Hook definitions change rarely, so the
- * built runner is cached per dir-pair for a short window (staleness bound
- * = TTL). Single-slot cache: the CLI runs with one cwd per process.
+ * v1.35: this runs on every user turn and used to readdir+readFile both
+ * hook dirs with sync fs each time. The built runner is cached until the
+ * hook-file fingerprint changes. Single-slot cache: one cwd per process.
  */
-const RUNNER_CACHE_TTL_MS = 30_000;
-let runnerCache: { key: string; runner: LifecycleHookRunner; expiresAt: number } | null = null;
+let runnerCache: { fingerprint: string; runner: LifecycleHookRunner } | null = null;
+
+/** Build (or reuse) a runner from an explicit dir list. Exported for tests. */
+export function createLifecycleHooksFromDirs(dirs: readonly string[]): LifecycleHookRunner {
+  const fingerprint = fingerprintHookDirs(dirs);
+  if (runnerCache && runnerCache.fingerprint === fingerprint) {
+    return runnerCache.runner;
+  }
+  const runner = new LifecycleHookRunner();
+  for (const dir of dirs) {
+    runner.loadDir(dir);
+  }
+  runnerCache = { fingerprint, runner };
+  return runner;
+}
 
 export function createDefaultLifecycleHooks(
   projectRoot: string = process.cwd(),
@@ -46,17 +95,7 @@ export function createDefaultLifecycleHooks(
   if (isFolderTrusted(projectRoot)) {
     dirs.push(projectHooksDir(projectRoot));
   }
-  const key = dirs.join('\0');
-  const now = Date.now();
-  if (runnerCache && runnerCache.key === key && runnerCache.expiresAt > now) {
-    return runnerCache.runner;
-  }
-  const runner = new LifecycleHookRunner();
-  for (const dir of dirs) {
-    runner.loadDir(dir);
-  }
-  runnerCache = { key, runner, expiresAt: now + RUNNER_CACHE_TTL_MS };
-  return runner;
+  return createLifecycleHooksFromDirs(dirs);
 }
 
 /** Drop the cached runner (tests + /hooks reload flows). */
