@@ -197,7 +197,10 @@ function checkManifestoLinkage(root, report) {
   } else {
     report.ok('manifesto', 'PRINCIPLES.md defines P1–P6');
   }
-  for (const rel of ['AGENTS.md', 'README.md']) {
+  // The repo tracks this file as AGENTS.MD (uppercase MD). On
+  // case-sensitive filesystems (Linux CI) the lowercase form would ENOENT,
+  // so probe both spellings and accept the one that exists.
+  for (const rel of ['AGENTS.MD', 'README.md']) {
     const doc = readText(root, rel);
     if (doc !== null && doc.includes('PRINCIPLES.md')) {
       report.ok('manifesto', rel + ' links PRINCIPLES.md');
