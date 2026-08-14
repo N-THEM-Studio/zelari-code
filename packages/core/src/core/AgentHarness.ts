@@ -35,6 +35,7 @@ import { ToolRegistry } from './tools/registry.js';
 import {
   collapseLoopedAssistantText,
   detectAssistantTextLoop,
+  detectAssistantTextLoopWindow,
   TEXT_LOOP_RECOVERY_SYSTEM,
   TEXT_LOOP_RECOVERY_USER_PROMPT,
 } from './textLoopDetect.js';
@@ -876,7 +877,10 @@ export class AgentHarness {
             turnText.length - lastLoopCheckLen >= 48
           ) {
             lastLoopCheckLen = turnText.length;
-            const loopHit = detectAssistantTextLoop(turnText);
+            // Bounded tail scan: repeats must end at the text's end, so a
+            // window suffix is equivalent and keeps this O(window), not
+            // O(full stream) per check.
+            const loopHit = detectAssistantTextLoopWindow(turnText);
             if (loopHit.looping) {
               const loopErr = createBrainEvent('error', this.sessionId, {
                 severity: 'recoverable',

@@ -160,9 +160,17 @@ export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
   /** v0.10.0: lifecycle hooks (PreToolUse/PostToolUse). Null = no hooks. */
   private lifecycleHooks: LifecycleHookRunner | null = null;
+  /**
+   * Memoized toOpenAITools() result, invalidated on register(). The zod →
+   * JSON-schema conversion is recursive and runs for ~20 tools twice per
+   * user turn plus once per spawned sub-agent — callers treat the returned
+   * array and its objects as immutable (providers wrap, never mutate).
+   */
+  private openAIToolsCache: Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> | null = null;
 
   register<I, O>(def: ToolDefinition<I, O>): void {
     this.tools.set(def.name, def as ToolDefinition);
+    this.openAIToolsCache = null;
   }
 
   get(name: string): ToolDefinition | undefined {
@@ -291,9 +299,10 @@ export class ToolRegistry {
     }
   }
 
-  /** Return all tool definitions in OpenAI function-calling format. */
+  /** Return all tool definitions in OpenAI function-calling format (memoized). */
   toOpenAITools(): Array<{ type: 'function'; function: { name: string; description: string; parameters: Record<string, unknown> } }> {
-    return Array.from(this.tools.values()).map((t) => ({
+    if (this.openAIToolsCache) return this.openAIToolsCache;
+    this.openAIToolsCache = Array.from(this.tools.values()).map((t) => ({
       type: 'function' as const,
       function: {
         name: t.name,
@@ -301,6 +310,7 @@ export class ToolRegistry {
         parameters: t.jsonSchema ?? zodToJsonSchema(t.inputSchema),
       },
     }));
+    return this.openAIToolsCache;
   }
 }
 

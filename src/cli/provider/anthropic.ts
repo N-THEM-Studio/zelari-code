@@ -3,23 +3,29 @@
  */
 import type { ProviderDelta, ProviderStreamFn, AgentMessage } from '@zelari/core/harness';
 import type { OpenAICompatibleConfig } from './openai-compatible.js';
+import { resolvePromptCacheTtl } from '../hooks/chatStats.js';
 
 const ANTHROPIC_VERSION = '2023-06-01';
 const ANTHROPIC_BETA = 'oauth-2025-04-20';
+/** Required to activate the extended (1h) prompt-cache TTL. */
+const ANTHROPIC_BETA_EXTENDED_CACHE_TTL = 'extended-cache-ttl-2025-04-11';
 
-function authHeaders(apiKey: string): Record<string, string> {
+function authHeaders(apiKey: string, longCacheTtl: boolean): Record<string, string> {
+  const beta = longCacheTtl
+    ? `${ANTHROPIC_BETA},${ANTHROPIC_BETA_EXTENDED_CACHE_TTL}`
+    : ANTHROPIC_BETA;
   return {
     'Content-Type': 'application/json',
     Accept: 'application/json',
     'anthropic-version': ANTHROPIC_VERSION,
-    'anthropic-beta': ANTHROPIC_BETA,
+    'anthropic-beta': beta,
     Authorization: `Bearer ${apiKey}`,
     'x-api-key': apiKey,
   };
 }
 
 function splitMessages(messages: AgentMessage[]): {
-  system: string;
+  systemParts: string[];
   rest: Array<Record<string, unknown>>;
 } {
   const systemParts: string[] = [];
@@ -58,19 +64,64 @@ function splitMessages(messages: AgentMessage[]): {
     }
     rest.push({ role: m.role, content: m.content ?? '' });
   }
-  return { system: systemParts.join('\n\n'), rest };
+  return { systemParts, rest };
+}
+
+/**
+ * Tag the last content block of a message with `cache_control` — the
+ * rolling conversation breakpoint. Anthropic caches the longest previously
+ * seen prefix ending at a breakpoint, so each turn's final message extends
+ * the cached prefix instead of re-billing the whole transcript.
+ */
+function withRollingCacheBreakpoint(
+  msg: Record<string, unknown>,
+  cacheControl: Record<string, unknown>,
+): Record<string, unknown> {
+  const content = msg.content;
+  if (typeof content === 'string') {
+    return { ...msg, content: [{ type: 'text', text: content, cache_control: cacheControl }] };
+  }
+  if (Array.isArray(content) && content.length > 0) {
+    const blocks = content.slice();
+    const last = blocks[blocks.length - 1] as Record<string, unknown>;
+    blocks[blocks.length - 1] = { ...last, cache_control: cacheControl };
+    return { ...msg, content: blocks };
+  }
+  return msg;
 }
 
 export function anthropicMessagesProvider(config: OpenAICompatibleConfig): ProviderStreamFn {
   return async function* (params): AsyncIterable<ProviderDelta> {
-    const { system, rest } = splitMessages(params.messages);
+    const { systemParts, rest } = splitMessages(params.messages);
+
+    // Explicit prompt-cache breakpoints (Anthropic-only mechanism; the
+    // OpenAI-compatible path relies on automatic server-side caching).
+    // Two breakpoints of the four allowed:
+    //   1. last STABLE system block — caches tools + stable prompt prefix.
+    //      systemMessagesFromSplit emits [stable, volatile?] in that order,
+    //      so with 2+ system messages the stable boundary is the penultimate.
+    //   2. last conversation message — rolling prefix over the transcript.
+    const ttlPref = resolvePromptCacheTtl();
+    const cacheControl: Record<string, unknown> =
+      ttlPref === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
+
     const body: Record<string, unknown> = {
       model: params.model,
       max_tokens: 16_384,
-      messages: rest,
+      messages:
+        rest.length > 0
+          ? rest.map((m, i) => (i === rest.length - 1 ? withRollingCacheBreakpoint(m, cacheControl) : m))
+          : rest,
       stream: true,
     };
-    if (system) body.system = system;
+    if (systemParts.length > 0) {
+      const stableIdx = systemParts.length >= 2 ? systemParts.length - 2 : 0;
+      body.system = systemParts.map((text, i) =>
+        i === stableIdx
+          ? { type: 'text', text, cache_control: cacheControl }
+          : { type: 'text', text },
+      );
+    }
     if (params.tools && params.tools.length > 0) {
       body.tools = params.tools.map((t) => ({
         name: t.name,
@@ -85,7 +136,7 @@ export function anthropicMessagesProvider(config: OpenAICompatibleConfig): Provi
     try {
       response = await fetch(url, {
         method: 'POST',
-        headers: authHeaders(config.apiKey),
+        headers: authHeaders(config.apiKey, ttlPref === '1h'),
         body: JSON.stringify(body),
         signal: params.signal,
       });
@@ -107,6 +158,14 @@ export function anthropicMessagesProvider(config: OpenAICompatibleConfig): Provi
     let buffer = '';
     let currentTool: { id: string; name: string; argsJson: string } | null = null;
     let emittedTool = false;
+    // Prompt-side usage arrives on `message_start` (input + cache fields);
+    // completion tokens arrive later on `message_delta.usage`. Held here so
+    // the single emitted usage delta reports the full picture.
+    let startUsage: {
+      inputTokens: number;
+      cacheReadTokens: number;
+      cacheCreationTokens: number;
+    } | null = null;
 
     const flushTool = function* (): Generator<ProviderDelta> {
       if (!currentTool?.name) return;
@@ -165,17 +224,39 @@ export function anthropicMessagesProvider(config: OpenAICompatibleConfig): Provi
             }
           } else if (type === 'content_block_stop') {
             yield* flushTool();
+          } else if (type === 'message_start') {
+            const usage = (ev.message as { usage?: Record<string, unknown> } | undefined)?.usage;
+            if (usage) {
+              const num = (v: unknown): number =>
+                typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : 0;
+              startUsage = {
+                inputTokens: num(usage.input_tokens),
+                cacheReadTokens: num(usage.cache_read_input_tokens),
+                cacheCreationTokens: num(usage.cache_creation_input_tokens),
+              };
+            }
           } else if (type === 'message_delta') {
             const usage = (ev.usage ?? (ev.delta as { usage?: unknown } | undefined)?.usage) as
               | { input_tokens?: number; output_tokens?: number }
               | undefined;
             if (usage) {
+              // Anthropic reports uncached input separately from cache
+              // read/creation tokens; promptTokens must include all three to
+              // match the OpenAI-compatible path (where prompt_tokens already
+              // contains cached tokens) so cost accounting stays consistent.
+              const uncachedInput =
+                startUsage?.inputTokens ?? (usage.input_tokens ?? 0);
+              const cacheRead = startUsage?.cacheReadTokens ?? 0;
+              const cacheCreation = startUsage?.cacheCreationTokens ?? 0;
+              const promptTokens = uncachedInput + cacheRead + cacheCreation;
+              const completionTokens = usage.output_tokens ?? 0;
               yield {
                 kind: 'usage',
                 usage: {
-                  promptTokens: usage.input_tokens ?? 0,
-                  completionTokens: usage.output_tokens ?? 0,
-                  totalTokens: (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
+                  promptTokens,
+                  completionTokens,
+                  totalTokens: promptTokens + completionTokens,
+                  ...(cacheRead > 0 ? { cachedPromptTokens: cacheRead } : {}),
                 },
               };
             }

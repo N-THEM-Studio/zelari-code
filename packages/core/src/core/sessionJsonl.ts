@@ -9,6 +9,14 @@
  * for jsdom tests. The main-process caller passes `<userData>/sessions` as
  * `baseDir`; tests pass a temp dir.
  *
+ * v1.35 batching: the streaming hot path emits `message_delta` events at
+ * 50-200/sec, and the old per-event `mkdir` + `appendFile` + inline await
+ * serialized the render loop with three syscalls per token. Events are now
+ * line-buffered and flushed in one `appendFile` when either threshold is
+ * hit (32 events / 64KB), on a 250ms cadence, or on an explicit
+ * {@link SessionJsonlWriter.flush} at turn boundaries. Ordering is
+ * preserved by chaining; the crash window shrinks to the un-flushed tail.
+ *
  * @see docs/plans/2026-06-28-zelari-code.md (Task 12.3)
  */
 
@@ -23,7 +31,14 @@ export interface SessionJsonlOptions {
   baseDir?: string;
   /** Optional logger callback (defaults to console.error). */
   onError?: (message: string) => void;
+  /** Flush cadence in ms (tests can pass 0-style small values). */
+  flushIntervalMs?: number;
 }
+
+/** Batched flush thresholds. */
+const MAX_PENDING_EVENTS = 32;
+const MAX_PENDING_BYTES = 64 * 1024;
+const DEFAULT_FLUSH_INTERVAL_MS = 250;
 
 /**
  * Append-only JSONL writer for a single session.
@@ -31,20 +46,30 @@ export interface SessionJsonlOptions {
  * One JSON object per line, shape:
  *   {"ts": <epoch-ms>, "sessionId": "<uuid>", "event": { ...BrainEvent }}
  *
- * The writer is line-buffered: every `append()` flushes synchronously
- * to ensure no events are lost on crash. Uses O_APPEND for atomicity.
- *
  * Malformed lines on read are skipped (with a warning) so the file is
  * always recoverable via `readSession()`.
  */
 export class SessionJsonlWriter {
   private readonly filePath: string;
   private readonly onError: (msg: string) => void;
+  private readonly flushIntervalMs: number;
+  private pending: string[] = [];
+  private pendingBytes = 0;
+  /** Chained append promise — preserves on-disk write order. */
+  private writeChain: Promise<void> = Promise.resolve();
+  /** Resolves when the currently queued batch has been written. */
+  private flushDeferred: { promise: Promise<void>; resolve: () => void } | null = null;
+  private dirEnsured: Promise<void> | null = null;
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  /** append() calls still queueing their line (awaiting ensureDir). */
+  private inFlightAppends = 0;
+  private idleWaiters: Array<() => void> = [];
 
   constructor(sessionId: string, options: SessionJsonlOptions = {}) {
     const baseDir = options.baseDir ?? defaultBaseDir();
     this.filePath = path.join(baseDir, `${sessionId}.jsonl`);
     this.onError = options.onError ?? console.error;
+    this.flushIntervalMs = options.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS;
   }
 
   /** Absolute path to the session JSONL file. */
@@ -52,24 +77,133 @@ export class SessionJsonlWriter {
     return this.filePath;
   }
 
-  /** Append a BrainEvent as one JSON line. Creates the file + parent dirs if missing. */
+  /** Ensure the parent directory exists — once per writer lifetime. */
+  private ensureDir(): Promise<void> {
+    if (!this.dirEnsured) {
+      this.dirEnsured = fs
+        .mkdir(path.dirname(this.filePath), { recursive: true })
+        .catch((err) => {
+          // Allow a later append to retry the mkdir after a failure.
+          this.dirEnsured = null;
+          throw err;
+        });
+    }
+    return this.dirEnsured;
+  }
+
+  /**
+   * Queue a BrainEvent as one JSON line. Resolves once the batch containing
+   * this event has been written (threshold, cadence, or flush()) — callers
+   * on the per-token hot path fire-and-forget instead of awaiting inline.
+   */
   async append(event: BrainEvent): Promise<void> {
+    // The in-flight window covers only the queueing phase (before any
+    // durability wait): flush() must not deadlock on an append that is
+    // itself waiting for the flush's drain.
+    this.inFlightAppends++;
+    let durability: Promise<void> = Promise.resolve();
     try {
-      await fs.mkdir(path.dirname(this.filePath), { recursive: true });
-      const line = JSON.stringify({
-        ts: event.ts,
-        sessionId: event.sessionId,
-        event,
-      }) + '\n';
-      await fs.appendFile(this.filePath, line, { encoding: 'utf-8', mode: 0o644 });
-    } catch (err) {
-      this.onError(`[sessionJsonl] failed to append event to ${this.filePath}: ${err instanceof Error ? err.message : String(err)}`);
+      try {
+        await this.ensureDir();
+        const line =
+          JSON.stringify({
+            ts: event.ts,
+            sessionId: event.sessionId,
+            event,
+          }) + '\n';
+        this.pending.push(line);
+        this.pendingBytes += line.length;
+        if (
+          this.pending.length >= MAX_PENDING_EVENTS ||
+          this.pendingBytes >= MAX_PENDING_BYTES
+        ) {
+          durability = this.drain();
+        } else {
+          durability = this.scheduleFlush();
+        }
+      } catch (err) {
+        this.onError(`[sessionJsonl] failed to append event to ${this.filePath}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    } finally {
+      this.inFlightAppends--;
+      if (this.inFlightAppends === 0) {
+        const waiters = this.idleWaiters;
+        this.idleWaiters = [];
+        for (const w of waiters) w();
+      }
+    }
+    return durability;
+  }
+
+  /** Resolve when no append() is still mid-queueing. */
+  private async waitIdle(): Promise<void> {
+    while (this.inFlightAppends > 0) {
+      await new Promise<void>((r) => this.idleWaiters.push(r));
     }
   }
 
-  /** Close the writer (no-op currently, but reserved for future buffered mode). */
+  /**
+   * Arm the cadence timer; resolve when the batch queued so far has been
+   * written (not merely when older writes settle).
+   */
+  private scheduleFlush(): Promise<void> {
+    if (this.pending.length > 0 && !this.flushDeferred) {
+      let resolve!: () => void;
+      const promise = new Promise<void>((r) => {
+        resolve = r;
+      });
+      this.flushDeferred = { promise, resolve };
+    }
+    if (this.flushTimer === null && this.pending.length > 0) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = null;
+        void this.drain();
+      }, this.flushIntervalMs);
+      // Never hold the event loop open just for a pending transcript flush.
+      this.flushTimer.unref?.();
+    }
+    return this.flushDeferred ? this.flushDeferred.promise : this.writeChain;
+  }
+
+  /** Write all pending lines in one appendFile, chained in order. */
+  private drain(): Promise<void> {
+    const settle = () => {
+      this.flushDeferred?.resolve();
+      this.flushDeferred = null;
+    };
+    if (this.pending.length === 0) {
+      settle();
+      return this.writeChain;
+    }
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    const batch = this.pending.join('');
+    this.pending = [];
+    this.pendingBytes = 0;
+    this.writeChain = this.writeChain
+      .then(() => fs.appendFile(this.filePath, batch, { encoding: 'utf-8', mode: 0o644 }))
+      .catch((err) => {
+        this.onError(`[sessionJsonl] failed to append event to ${this.filePath}: ${err instanceof Error ? err.message : String(err)}`);
+      })
+      .finally(settle);
+    return this.writeChain;
+  }
+
+  /**
+   * Flush any buffered events and resolve when durable. Call at turn boundaries.
+   * Waits for in-flight append() calls to finish queueing first, so a flush
+   * fired right after an event cannot miss it.
+   */
+  async flush(): Promise<void> {
+    await this.waitIdle();
+    await this.drain();
+  }
+
+  /** Close the writer: cancel the cadence timer and flush the tail. */
   async close(): Promise<void> {
-    // No buffered state to flush yet.
+    await this.flush();
   }
 }
 

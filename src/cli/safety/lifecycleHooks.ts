@@ -30,19 +30,38 @@ export function projectHooksDir(projectRoot: string): string {
 /**
  * Create the runner with the standard dir layout:
  * global hooks always; project hooks only when `projectRoot` is trusted.
+ *
+ * v1.35: this runs on every user turn and used to re-stat both hook dirs
+ * with sync fs calls each time. Hook definitions change rarely, so the
+ * built runner is cached per dir-pair for a short window (staleness bound
+ * = TTL). Single-slot cache: the CLI runs with one cwd per process.
  */
+const RUNNER_CACHE_TTL_MS = 30_000;
+let runnerCache: { key: string; runner: LifecycleHookRunner; expiresAt: number } | null = null;
+
 export function createDefaultLifecycleHooks(
   projectRoot: string = process.cwd(),
 ): LifecycleHookRunner {
-  const runner = new LifecycleHookRunner();
   const dirs = [globalHooksDir()];
   if (isFolderTrusted(projectRoot)) {
     dirs.push(projectHooksDir(projectRoot));
   }
+  const key = dirs.join('\0');
+  const now = Date.now();
+  if (runnerCache && runnerCache.key === key && runnerCache.expiresAt > now) {
+    return runnerCache.runner;
+  }
+  const runner = new LifecycleHookRunner();
   for (const dir of dirs) {
     runner.loadDir(dir);
   }
+  runnerCache = { key, runner, expiresAt: now + RUNNER_CACHE_TTL_MS };
   return runner;
+}
+
+/** Drop the cached runner (tests + /hooks reload flows). */
+export function resetLifecycleHookCache(): void {
+  runnerCache = null;
 }
 
 /**

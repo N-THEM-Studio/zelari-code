@@ -53,26 +53,69 @@ function lcsTable(a: string[], b: string[]): number[][] {
   return dp;
 }
 
-function buildHunks(a: string[], b: string[]): Hunk[] {
-  const dp = lcsTable(a, b);
+/**
+ * Cap on LCS DP cells, (m+1)×(n+1). ~4M cells ≈ 32MB of number arrays —
+ * without it a 5k-line file diff allocates a ~200MB matrix.
+ */
+const LCS_MAX_CELLS = 4_000_000;
+
+/**
+ * Compute the full op sequence (' ' context / '-' remove / '+' add) between
+ * two line arrays, or null when the changed region is too large for the
+ * quadratic DP.
+ *
+ * Common prefix/suffix line runs are trimmed first, so a small edit inside a
+ * large file reduces the DP to just the edited region (the standard
+ * optimization that keeps whole-file diffs cheap).
+ */
+function diffOps(a: string[], b: string[]): Array<{ kind: ' ' | '-' | '+'; text: string }> | null {
+  let lo = 0;
+  while (lo < a.length && lo < b.length && a[lo] === b[lo]) lo++;
+  let hiA = a.length;
+  let hiB = b.length;
+  while (hiA > lo && hiB > lo && a[hiA - 1] === b[hiB - 1]) {
+    hiA--;
+    hiB--;
+  }
+  const midA = a.slice(lo, hiA);
+  const midB = b.slice(lo, hiB);
+  if ((midA.length + 1) * (midB.length + 1) > LCS_MAX_CELLS) return null;
+
   const ops: Array<{ kind: ' ' | '-' | '+'; text: string }> = [];
-  let i = a.length;
-  let j = b.length;
-  while (i > 0 && j > 0) {
-    if (a[i - 1] === b[j - 1]) {
-      ops.push({ kind: ' ', text: a[i - 1] });
-      i--; j--;
-    } else if (dp[i - 1][j] >= dp[i][j - 1]) {
-      ops.push({ kind: '-', text: a[i - 1] });
-      i--;
-    } else {
-      ops.push({ kind: '+', text: b[j - 1] });
-      j--;
+  for (let k = 0; k < lo; k++) ops.push({ kind: ' ', text: a[k] });
+  if (midA.length > 0 || midB.length > 0) {
+    const dp = lcsTable(midA, midB);
+    const segStart = ops.length;
+    let i = midA.length;
+    let j = midB.length;
+    while (i > 0 && j > 0) {
+      if (midA[i - 1] === midB[j - 1]) {
+        ops.push({ kind: ' ', text: midA[i - 1] });
+        i--; j--;
+      } else if (dp[i - 1][j] >= dp[i][j - 1]) {
+        ops.push({ kind: '-', text: midA[i - 1] });
+        i--;
+      } else {
+        ops.push({ kind: '+', text: midB[j - 1] });
+        j--;
+      }
+    }
+    while (i > 0) { ops.push({ kind: '-', text: midA[i - 1] }); i--; }
+    while (j > 0) { ops.push({ kind: '+', text: midB[j - 1] }); j--; }
+    // The backtrack emitted the middle segment in reverse order.
+    for (let l = ops.length - 1, r = segStart; l > r; l--, r++) {
+      const tmp = ops[l]!;
+      ops[l] = ops[r]!;
+      ops[r] = tmp;
     }
   }
-  while (i > 0) { ops.push({ kind: '-', text: a[i - 1] }); i--; }
-  while (j > 0) { ops.push({ kind: '+', text: b[j - 1] }); j--; }
-  ops.reverse();
+  for (let k = hiA; k < a.length; k++) ops.push({ kind: ' ', text: a[k] });
+  return ops;
+}
+
+function buildHunks(a: string[], b: string[]): Hunk[] | null {
+  const ops = diffOps(a, b);
+  if (ops === null) return null;
   return groupIntoHunks(ops);
 }
 
@@ -341,18 +384,17 @@ export const showDiffTool: ToolDefinition<ShowDiffArgs, ShowDiffResult> = {
       const b = args.proposedContent.split('\n');
       // Re-implement groupIntoHunks with custom CONTEXT for show_diff
       const CONTEXT = args.contextLines;
-      const rawOps: Array<{ kind: ' ' | '-' | '+'; text: string }> = [];
-      // Inline LCS — duplicated to honor custom CONTEXT (groupIntoHunks hard-codes 3).
-      const dp = lcsTable(a, b);
-      let i = a.length, j = b.length;
-      while (i > 0 && j > 0) {
-        if (a[i - 1] === b[j - 1]) { rawOps.push({ kind: ' ', text: a[i - 1] }); i--; j--; }
-        else if (dp[i - 1][j] >= dp[i][j - 1]) { rawOps.push({ kind: '-', text: a[i - 1] }); i--; }
-        else { rawOps.push({ kind: '+', text: b[j - 1] }); j--; }
+      // Guarded + prefix/suffix-trimmed LCS (see diffOps): a small edit in a
+      // large file diffs only the changed region instead of allocating a
+      // whole-file DP matrix.
+      const rawOps = diffOps(a, b);
+      if (rawOps === null) {
+        return typedErr(
+          `Diff too large: the changed region between current and proposed content exceeds the ` +
+            `LCS cell cap (${LCS_MAX_CELLS} cells). Read the file in line ranges and diff smaller ` +
+            `sections, or apply the edit with edit_file/apply_diff instead.`,
+        );
       }
-      while (i > 0) { rawOps.push({ kind: '-', text: a[i - 1] }); i--; }
-      while (j > 0) { rawOps.push({ kind: '+', text: b[j - 1] }); j--; }
-      rawOps.reverse();
 
       // Group with custom CONTEXT
       const hunks: Hunk[] = [];

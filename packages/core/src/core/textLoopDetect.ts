@@ -211,6 +211,28 @@ export function detectAssistantTextLoop(text: string): TextLoopHit {
 }
 
 /**
+ * Tail window for the streaming hot path. The detector only matches repeats
+ * that end at the text's end, so a bounded suffix is sufficient; this keeps
+ * the per-~48-char check O(window) instead of rescanning the whole
+ * accumulated turn (which made long streams quadratic).
+ */
+const STREAM_SCAN_TAIL = 16_384;
+
+/**
+ * Bounded-window variant of {@link detectAssistantTextLoop} for the
+ * per-delta streaming check. `detectAssistantTextLoop` itself stays
+ * full-text because `collapseLoopedAssistantText` needs exact sealing.
+ */
+export function detectAssistantTextLoopWindow(text: string): TextLoopHit {
+  if (text.length <= STREAM_SCAN_TAIL) return detectAssistantTextLoop(text);
+  let tail = text.slice(text.length - STREAM_SCAN_TAIL);
+  // Cut on a newline so the first chunk in the window is not a partial.
+  const nl = tail.indexOf('\n');
+  if (nl >= 0) tail = tail.slice(nl + 1);
+  return detectAssistantTextLoop(tail);
+}
+
+/**
  * Keep the first two occurrences of a looped unit; drop the rest.
  * Used when sealing the assistant transcript so the next turn is not polluted.
  */

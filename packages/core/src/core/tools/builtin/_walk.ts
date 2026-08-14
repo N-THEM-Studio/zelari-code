@@ -83,6 +83,18 @@ export function matchesAny(name: string, patterns: string[]): boolean {
   return false;
 }
 
+/** Pre-compile glob patterns once per walk (patterns × entries otherwise). */
+export function compileGlobs(patterns: string[]): RegExp[] {
+  return patterns.map(globToRegex);
+}
+
+export function matchesAnyCompiled(name: string, regexes: RegExp[]): boolean {
+  for (const re of regexes) {
+    if (re.test(name)) return true;
+  }
+  return false;
+}
+
 export const DEFAULT_EXCLUDES = [
   'node_modules',
   '.git',
@@ -115,6 +127,22 @@ export async function walk(
   entries: FileEntry[],
   signal: AbortSignal | undefined,
 ): Promise<void> {
+  // Compile the exclude globs once for the whole tree — the recursive
+  // walker below tests them against every directory entry, and rebuilding
+  // a RegExp per pattern per entry dominated list_files/grep_content cost
+  // on large trees.
+  await walkInner(dir, baseRel, depth, maxDepth, compileGlobs(exclude), entries, signal);
+}
+
+async function walkInner(
+  dir: string,
+  baseRel: string,
+  depth: number,
+  maxDepth: number,
+  excludeRegexes: RegExp[],
+  entries: FileEntry[],
+  signal: AbortSignal | undefined,
+): Promise<void> {
   if (depth > maxDepth) return;
   if (signal?.aborted) return;
   let dirents: import('node:fs').Dirent[];
@@ -125,7 +153,7 @@ export async function walk(
   }
   if (signal?.aborted) return;
   for (const dirent of dirents) {
-    if (matchesAny(dirent.name, exclude)) continue;
+    if (matchesAnyCompiled(dirent.name, excludeRegexes)) continue;
     const rel = baseRel ? `${baseRel}/${dirent.name}` : dirent.name;
     const isDir = dirent.isDirectory();
     entries.push({
@@ -133,7 +161,7 @@ export async function walk(
       type: isDir ? 'directory' : dirent.isFile() ? 'file' : 'other',
     });
     if (isDir && depth < maxDepth) {
-      await walk(path.join(dir, dirent.name), rel, depth + 1, maxDepth, exclude, entries, signal);
+      await walkInner(path.join(dir, dirent.name), rel, depth + 1, maxDepth, excludeRegexes, entries, signal);
     }
   }
 }

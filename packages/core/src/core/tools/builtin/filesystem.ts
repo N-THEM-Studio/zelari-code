@@ -31,9 +31,12 @@ export const readFileTool: ToolDefinition<ReadFileArgs, ReadFileResult> = {
       const absPath = path.isAbsolute(args.path) ? args.path : path.join(ctx.cwd, args.path);
       const buf = await fs.readFile(absPath, { encoding: 'utf-8', signal: ctx.signal } as never);
       const content = typeof buf === 'string' ? buf : buf.toString('utf-8');
+      const allLines = content.split('\n');
       const truncated = content.length > args.maxBytes ? content.slice(0, args.maxBytes) : content;
-      const lines = truncated.split('\n');
-      const totalLines = content.split('\n').length;
+      // Re-split only in the rare truncation case; totalLines must always
+      // describe the FULL file, not the truncated view.
+      const lines = truncated === content ? allLines : truncated.split('\n');
+      const totalLines = allLines.length;
       const start = args.startLine ?? 0;
       const end = Math.min(args.endLine ?? lines.length, lines.length);
       return typedOk({

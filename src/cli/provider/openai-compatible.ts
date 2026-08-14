@@ -287,6 +287,89 @@ export function resolveBaseUrl(providerId: ProviderName): string {
   return PROVIDER_ENDPOINTS[providerId];
 }
 
+/**
+ * Identity-keyed memo of AgentMessage → OpenAI wire-format mapping.
+ * The harness treats messages as append-only within a run (compaction
+ * rebuilds arrays with fresh objects), so each message object maps exactly
+ * once and every subsequent provider call — one per tool-loop iteration —
+ * reuses the cached form instead of re-stringifying every past tool-call's
+ * args each time. Image-bearing user messages are excluded because their
+ * mapping depends on the per-call vision capability of the active model.
+ */
+const messageMappingCache = new WeakMap<AgentMessage, Record<string, unknown>>();
+
+function mapAgentMessage(m: AgentMessage, vision: boolean): Record<string, unknown> {
+  if (m.role === 'tool') {
+    return {
+      role: 'tool' as const,
+      tool_call_id: m.toolCallId,
+      content: m.content,
+    };
+  }
+  if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+    // DeepSeek thinking mode: when an assistant turn issued tool_calls,
+    // `reasoning_content` MUST be echoed on every subsequent request or
+    // the API returns HTTP 400. Other providers ignore the extra field.
+    const msg: Record<string, unknown> = {
+      role: 'assistant' as const,
+      content: m.content ?? '',
+      tool_calls: m.toolCalls.map((tc) => ({
+        id: tc.id,
+        type: 'function' as const,
+        function: {
+          name: tc.name,
+          arguments: JSON.stringify(tc.args ?? {}),
+        },
+      })),
+    };
+    if (m.reasoningContent && m.reasoningContent.length > 0) {
+      msg.reasoning_content = m.reasoningContent;
+    }
+    return msg;
+  }
+  // Assistant text-only turns may still carry reasoning_content for
+  // multi-turn continuity on some providers; include when present.
+  if (
+    m.role === 'assistant' &&
+    m.reasoningContent &&
+    m.reasoningContent.length > 0
+  ) {
+    return {
+      role: 'assistant' as const,
+      content: m.content ?? '',
+      reasoning_content: m.reasoningContent,
+    };
+  }
+  // Vision: user turns may carry inline images. When the active model is
+  // vision-capable we send OpenAI content blocks (image_url data URI) —
+  // same provider key, no third-party API. Otherwise keep the text and
+  // annotate that pixels were NOT sent.
+  if (m.role === 'user' && m.images && m.images.length > 0) {
+    if (vision) {
+      return {
+        role: 'user' as const,
+        content: [
+          { type: 'text', text: m.content ?? '' },
+          ...m.images.map((img) => ({
+            type: 'image_url' as const,
+            image_url: { url: dataUriFromImage(img) },
+          })),
+        ],
+      };
+    }
+    const notes = m.images
+      .map((img) => `[Immagine allegata: ${img.alt ?? img.mime}]`)
+      .join('\n');
+    return {
+      role: 'user' as const,
+      content:
+        `${m.content ?? ''}\n\n${notes}\n\n` +
+        '(Il modello attivo non supporta input visivi: i pixel non sono stati inviati.)',
+    };
+  }
+  return { role: m.role, content: m.content };
+}
+
 export function openaiCompatibleProvider(config: OpenAICompatibleConfig): ProviderStreamFn {
   return async function* (params): AsyncIterable<ProviderDelta> {
     // Map the provider-neutral AgentMessage[] into the OpenAI chat format.
@@ -295,79 +378,18 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     // toolCalls: [{id,name,args}] } (see AgentHarness accumulation). Here we
     // translate both into the shape OpenAI expects:
     //   - assistant with tool_calls: { role:'assistant', content, tool_calls:[{id,type:'function',function:{name,arguments}}] }
-    //   - tool result: { role:'tool', tool_call_id, content }
+    //   - tool result: { role: 'tool', tool_call_id, content }
     // Resolve vision capability once per call (model may vary per call).
     const vision = modelSupportsVision(params.model);
     const messages = params.messages.map((m) => {
-      if (m.role === 'tool') {
-        return {
-          role: 'tool' as const,
-          tool_call_id: m.toolCallId,
-          content: m.content,
-        };
+      const cacheable = !(m.role === 'user' && m.images && m.images.length > 0);
+      if (cacheable) {
+        const cached = messageMappingCache.get(m);
+        if (cached) return cached;
       }
-      if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
-        // DeepSeek thinking mode: when an assistant turn issued tool_calls,
-        // `reasoning_content` MUST be echoed on every subsequent request or
-        // the API returns HTTP 400. Other providers ignore the extra field.
-        const msg: Record<string, unknown> = {
-          role: 'assistant' as const,
-          content: m.content ?? '',
-          tool_calls: m.toolCalls.map((tc) => ({
-            id: tc.id,
-            type: 'function' as const,
-            function: {
-              name: tc.name,
-              arguments: JSON.stringify(tc.args ?? {}),
-            },
-          })),
-        };
-        if (m.reasoningContent && m.reasoningContent.length > 0) {
-          msg.reasoning_content = m.reasoningContent;
-        }
-        return msg;
-      }
-      // Assistant text-only turns may still carry reasoning_content for
-      // multi-turn continuity on some providers; include when present.
-      if (
-        m.role === 'assistant' &&
-        m.reasoningContent &&
-        m.reasoningContent.length > 0
-      ) {
-        return {
-          role: 'assistant' as const,
-          content: m.content ?? '',
-          reasoning_content: m.reasoningContent,
-        };
-      }
-      // Vision: user turns may carry inline images. When the active model is
-      // vision-capable we send OpenAI content blocks (image_url data URI) —
-      // same provider key, no third-party API. Otherwise keep the text and
-      // annotate that pixels were NOT sent.
-      if (m.role === 'user' && m.images && m.images.length > 0) {
-        if (vision) {
-          return {
-            role: 'user' as const,
-            content: [
-              { type: 'text', text: m.content ?? '' },
-              ...m.images.map((img) => ({
-                type: 'image_url' as const,
-                image_url: { url: dataUriFromImage(img) },
-              })),
-            ],
-          };
-        }
-        const notes = m.images
-          .map((img) => `[Immagine allegata: ${img.alt ?? img.mime}]`)
-          .join('\n');
-        return {
-          role: 'user' as const,
-          content:
-            `${m.content ?? ''}\n\n${notes}\n\n` +
-            '(Il modello attivo non supporta input visivi: i pixel non sono stati inviati.)',
-        };
-      }
-      return { role: m.role, content: m.content };
+      const mapped = mapAgentMessage(m, vision);
+      if (cacheable) messageMappingCache.set(m, mapped);
+      return mapped;
     });
 
     const body: Record<string, unknown> = {
@@ -698,6 +720,13 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
             // OpenAI tool_calls are streamed incrementally — accumulate args
             // per index and emit a tool_call delta when the args JSON closes.
             if (Array.isArray(delta?.tool_calls)) {
+              // Accumulate args fragments only — parsing happens once at
+              // flush time (finish_reason / [DONE] / stream end). The old
+              // heuristic re-parsed the whole accumulated buffer on every
+              // fragment ending in `}`, which is O(n²) for brace-laden
+              // args (e.g. write_file content containing JSON). The
+              // harness executes tools only on finish, so deferring the
+              // parse has no behavioral effect.
               for (const tc of delta.tool_calls) {
                 const idx = tc.index ?? 0;
                 const existing = toolCallAccumulator.get(idx) ?? {
@@ -709,22 +738,6 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
                 if (tc.function?.name) existing.name = tc.function.name;
                 if (tc.function?.arguments) existing.argsJson += tc.function.arguments;
                 toolCallAccumulator.set(idx, existing);
-                // Heuristic: when argsJson parses as a complete JSON object, emit.
-                // Do NOT emit on empty args mid-stream (name often arrives first;
-                // empty `{}` is flushed on finish/[DONE] instead).
-                if (existing.argsJson.trim().endsWith('}')) {
-                  const parsedArgs = tryParseArgs(existing.argsJson);
-                  if (parsedArgs !== null && existing.name) {
-                    toolCallAccumulator.delete(idx);
-                    emittedToolCall = true;
-                    yield {
-                      kind: 'tool_call',
-                      toolCallId: existing.id || `tc-${idx}`,
-                      toolName: existing.name,
-                      args: parsedArgs,
-                    };
-                  }
-                }
               }
             }
             // Final chunk: flush any leftover complete tool calls, then surface

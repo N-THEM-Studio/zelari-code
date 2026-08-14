@@ -635,6 +635,14 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // full accumulated turn text, duplicating everything said before the
         // tool ran.
         let streamContent = "";
+        // v1.35: scrub at render cadence, not per delta. cleanAgentContent
+        // runs ~35 regex passes over the full accumulated buffer, so at
+        // 50-200 deltas/sec long streams scrubbed quadratically — while the
+        // throttled commit only renders once per 16ms. Null forces a fresh
+        // scrub on the first delta of each message (leading edge stays
+        // latency-free); message_end resets it together with streamContent.
+        let scrubbedDisplay: string | null = null;
+        let lastScrubAt = 0;
         // tool_execution_end doesn't carry toolName — remember it from the
         // matching start event (keyed by toolCallId) for metrics.
         const toolNameById = new Map<string, string>();
@@ -655,12 +663,17 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               if (useLiveModel) finalizeStreaming(setMessages, setLive!);
               else finalizeStreamingAssistant(setMessages);
               streamContent = "";
+              scrubbedDisplay = null;
             }
             if (event.type === "queue_update") {
               setQueueCount(harness.queueLength);
             }
             if (writerRef.current) {
-              await writerRef.current.append(event);
+              // v1.35: the JSONL writer batches per-token events internally
+              // (thresholds + 250ms cadence); awaiting each append here used
+              // to serialize the render loop with mkdir+appendFile per delta.
+              // Turn boundaries below call flush() so the tail is durable.
+              void writerRef.current.append(event);
             }
             if (event.type === "agent_end") {
               metrics.record({
@@ -670,6 +683,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 model: envConfig.model,
                 latencyMs: event.durationMs,
                 ok: event.reason === "stop",
+                // v1.35: real usage landed on message_end (which precedes
+                // agent_end), so historical spend can be aggregated from
+                // metrics.jsonl — previously these fields were always absent.
+                ...(realUsage
+                  ? {
+                      tokens: realUsage.totalTokens,
+                      costUsd: calculateCost(
+                        envConfig.model,
+                        realUsage.promptTokens,
+                        realUsage.completionTokens,
+                        realUsage.cachedPromptTokens ?? 0,
+                      ),
+                    }
+                  : {}),
               });
             } else if (event.type === "error") {
               metrics.record({
@@ -691,13 +718,28 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 ok: !event.isError,
               });
             }
+            // Turn-boundary events: make the batched transcript tail durable
+            // immediately instead of waiting out the 250ms cadence. Optional
+            // call: test writers may implement append() only.
+            if (
+              (event.type === "agent_end" || event.type === "error") &&
+              writerRef.current
+            ) {
+              await (writerRef.current as { flush?: () => Promise<void> }).flush?.();
+            }
             if (event.type === "message_delta") {
               assistantContent += event.delta;
               streamContent += event.delta;
               // v1.8.1: hide <think>… from the live bubble while streaming so
               // private reasoning never flashes in the TUI (full scrub also
-              // runs on turn end).
-              const displayContent = cleanAgentContent(streamContent);
+              // runs on turn end). v1.35: re-scrub at most once per 16ms —
+              // matches the throttled render cadence below.
+              const scrubNow = scrubbedDisplay === null || Date.now() - lastScrubAt >= 16;
+              if (scrubNow) {
+                lastScrubAt = Date.now();
+                scrubbedDisplay = cleanAgentContent(streamContent);
+              }
+              const displayContent = scrubbedDisplay;
               // Route through the throttled setter so per-token deltas (50-200/sec)
               // coalesce into ≤60 renders/sec instead of flickering the TUI.
               if (useLiveModel) {
@@ -767,6 +809,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // next delta starts a fresh bubble instead of re-showing (and
               // duplicating) the text already printed above the tool line.
               streamContent = "";
+              scrubbedDisplay = null;
             } else if (event.type === "tool_execution_end") {
               if (useLiveModel) {
                 completeTool(
@@ -795,6 +838,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           flushStreaming();
           if (useLiveModel) finalizeStreaming(setMessages, setLive!);
           else finalizeStreamingAssistant(setMessages);
+          // Durability point: flush the batched JSONL tail before the turn
+          // ends (optional call — test writers may implement append() only).
+          await (writerRef.current as { flush?: () => Promise<void> } | null)?.flush?.();
           // v1.6.0: snapshot this turn's tail (assistant text + tool_calls +
           // tool results that harness.run() appended) so the NEXT turn sees
           // them as history. The seed we passed was
@@ -1069,6 +1115,7 @@ async function dispatchCouncilPromptImpl(
     setLive,
     liveRef,
     setPicker,
+    setSessionStats,
   } = deps;
   const useLiveModel = !!(setLive && liveRef);
   const envConfig = await providerFromEnv();
@@ -1256,6 +1303,9 @@ async function dispatchCouncilPromptImpl(
   let councilAborted = false;
   let chairmanErrored = false;
   let luciferWriteCount = 0;
+  // v1.35: accumulate member usage so the StatusBar/session cost reflects
+  // the whole council, not just the single-agent path.
+  const councilUsage = { promptTokens: 0, completionTokens: 0 };
   let councilRunMode: "implementation" | "design-phase" = "implementation";
   // v1.0: slice outcome reported back to the Zelari mission loop.
   let sliceCompletionOk = false;
@@ -1508,6 +1558,8 @@ async function dispatchCouncilPromptImpl(
         if (event.cost.memberId === "lucifer" && event.cost.errored) {
           chairmanErrored = true;
         }
+        councilUsage.promptTokens += event.cost.promptTokens;
+        councilUsage.completionTokens += event.cost.completionTokens;
       } else if (event.type === "error") {
         if (event.memberId === "lucifer" || event.memberName === "Lucifero") {
           chairmanErrored = true;
@@ -1747,6 +1799,25 @@ async function dispatchCouncilPromptImpl(
         "[agents.md] skipped — council produced no output",
         Date.now(),
       );
+    }
+    // v1.35: fold accumulated council member usage into session stats so
+    // cost/tokens shown by the StatusBar include every member's run (the
+    // events carry no model per member, so the active turn model prices it).
+    if (councilUsage.promptTokens > 0 || councilUsage.completionTokens > 0) {
+      const memberCostUsd = calculateCost(
+        envConfig.model,
+        councilUsage.promptTokens,
+        councilUsage.completionTokens,
+        0,
+      );
+      setSessionStats((prev) => ({
+        ...prev,
+        totalTokens:
+          prev.totalTokens +
+          councilUsage.promptTokens +
+          councilUsage.completionTokens,
+        totalCostUsd: prev.totalCostUsd + memberCostUsd,
+      }));
     }
     setBusy(false);
   }
