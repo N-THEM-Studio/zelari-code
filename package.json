@@ -35,6 +35,7 @@
     "test:watch": "vitest",
     "smoke": "node bin/zelari-code.js --version",
     "verify:council": "npm run build --workspace=@zelari/core && node scripts/verify-council.mjs",
+    "verify:principles": "node scripts/verify-principles.mjs",
     "desktop:install": "npm install --prefix apps/desktop",
     "desktop:dev": "npm run build:cli && npm run tauri:dev --prefix apps/desktop",
     "companion:android": "cd apps/companion-android && .\\gradlew.bat assembleDebug",

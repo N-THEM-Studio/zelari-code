@@ -75,6 +75,7 @@ See `.zelari/decisions/` for full ADRs (context/decision/consequences).
 `npm run prepublishOnly` — node scripts/prepublish.mjs
 `npm run smoke` — node bin/zelari-code.js --version
 `npm run test` — vitest run
+`npm run verify:principles` — node scripts/verify-principles.mjs
 `npm run test:watch` — vitest
 `npm run typecheck` — tsc --noEmit -p tsconfig.json
 

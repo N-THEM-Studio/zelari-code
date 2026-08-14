@@ -1,0 +1,5 @@
+# Keep shebang-bearing ESM scripts on LF line endings in Windows checkouts.
+# vite-node/vitest mis-handles shebang + CRLF and throws
+# "SyntaxError: Invalid or unexpected token" when tests import such .mjs files.
+# The committed blobs are already LF; this prevents autocrlf from re-introducing CRLF.
+*.mjs text eol=lf
