@@ -10,6 +10,7 @@ Phone (this app)  --Tailscale-->  PC: zelari-code serve  -->  headless agent
 
 ## Features (MVP)
 
+- **Scan QR** from Zelari Desktop (URL + token in one step)
 - Connect with host URL + bearer token
 - Project picker (host allowlist)
 - Mode: kraken / council / zelari (`agent` accepted as alias)
@@ -79,9 +80,16 @@ Install:
 adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-## 3. In the app
+## 3. Pair from Zelari Desktop (recommended)
 
-1. **Host URL** — e.g. `http://100.64.0.12:7421` (no trailing slash required)
+1. PC: **Settings → Connections → Mobile connection**
+2. Bind **phone / Tailscale / LAN** (`0.0.0.0`), start serve
+3. Phone + PC on the **same Tailscale tailnet**
+4. In the app tap **Scan QR from Desktop**
+
+Manual fallback:
+
+1. **Host URL** — the **Phone URL** shown in Desktop (`http://100.x.y.z:7421`), never `127.0.0.1`
 2. **Token** — contents of `companion.token`
 3. **Connect**
 4. Pick project → mode/phase → send prompts
@@ -104,7 +112,6 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 
 ## Roadmap
 
-- QR pairing (host shows QR with URL+token)
 - Skills picker / @path remote
 - Push notification when run completes
 - Play Store packaging

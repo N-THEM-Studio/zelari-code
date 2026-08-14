@@ -1,6 +1,7 @@
 package com.anathemastudio.zelari.companion.ui
 
 import android.text.format.DateUtils
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -30,6 +31,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.ClearAll
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -77,6 +79,8 @@ import com.anathemastudio.zelari.companion.data.ChatMessage
 import com.anathemastudio.zelari.companion.data.ConnState
 import com.anathemastudio.zelari.companion.data.ProviderInfo
 import com.anathemastudio.zelari.companion.data.RunSummary
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -177,6 +181,10 @@ fun CompanionApp(vm: CompanionViewModel) {
             onToken = vm::setToken,
             onConnect = {
                 vm.connect()
+                showConnect = false
+            },
+            onScanPayload = { raw ->
+                vm.applyPairingPayload(raw)
                 showConnect = false
             },
         )
@@ -777,7 +785,12 @@ private fun ConnectSheet(
     onBaseUrl: (String) -> Unit,
     onToken: (String) -> Unit,
     onConnect: () -> Unit,
+    onScanPayload: (String) -> Unit,
 ) {
+    val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
+        val contents = result.contents
+        if (!contents.isNullOrBlank()) onScanPayload(contents)
+    }
     Box(
         Modifier
             .fillMaxSize()
@@ -794,11 +807,34 @@ private fun ConnectSheet(
                 Text("Connect to host", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "Run on PC:\nzelari-code serve --bind <tailscale-ip> --project <repo>\nThen paste URL + token.",
+                    "On the PC: Zelari Desktop → Settings → Connections → Mobile connection.\nStart serve, then scan the QR. Same Tailscale tailnet on both devices.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Spacer(Modifier.height(14.dp))
+                Button(
+                    onClick = {
+                        val opts = ScanOptions()
+                            .setDesiredBarcodeFormats(ScanOptions.QR_CODE)
+                            .setPrompt("Scan the QR from Zelari Desktop")
+                            .setBeepEnabled(false)
+                            .setOrientationLocked(true)
+                        scanLauncher.launch(opts)
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = state.conn != ConnState.Connecting,
+                ) {
+                    Icon(Icons.Default.QrCodeScanner, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Scan QR from Desktop")
+                }
                 Spacer(Modifier.height(16.dp))
+                Text(
+                    "Or paste manually",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = state.baseUrl,
                     onValueChange = onBaseUrl,

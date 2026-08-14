@@ -29,7 +29,7 @@ const TABS: { id: SettingsTab; label: string; hint: string }[] = [
   { id: "provider", label: "Provider", hint: "Model, API key, endpoint" },
   { id: "defaults", label: "Defaults", hint: "Mode & phase for new chats" },
   { id: "extensions", label: "Extensions", hint: "MCP servers, skills & store" },
-  { id: "connections", label: "Connections", hint: "SSH, Android companion" },
+  { id: "connections", label: "Connections", hint: "Mobile QR, SSH" },
   { id: "updates", label: "Updates", hint: "Desktop app & CLI package" },
   { id: "system", label: "System", hint: "Paths, versions, shortcuts" },
 ];

@@ -3904,6 +3904,50 @@ kbd {
   color: var(--text-secondary);
 }
 
+.companion-qr-panel {
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+.companion-qr-card {
+  flex: 0 0 auto;
+  padding: 8px;
+  background: #fff;
+  border-radius: 12px;
+  line-height: 0;
+}
+
+.companion-qr-card img {
+  display: block;
+  width: 220px;
+  height: 220px;
+}
+
+.companion-qr-placeholder {
+  width: 220px;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #666;
+  font-size: 12px;
+}
+
+.companion-qr-meta {
+  min-width: 0;
+  flex: 1;
+}
+
+@media (max-width: 720px) {
+  .companion-qr-panel {
+    flex-direction: column;
+  }
+}
+
 .warn {
   font-size: 12.5px;
   color: var(--warning);

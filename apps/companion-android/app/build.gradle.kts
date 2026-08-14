@@ -65,6 +65,8 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
     implementation("com.google.code.gson:gson:2.11.0")
+    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("com.journeyapps:zxing-android-embedded:4.3.0")
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

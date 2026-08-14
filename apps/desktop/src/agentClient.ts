@@ -395,6 +395,9 @@ export interface CompanionServeStatus {
   bind: string;
   port: number;
   url: string;
+  /** Best phone URL (Tailscale IPv4 when detected). */
+  phoneUrl?: string;
+  tailscaleIp?: string | null;
   token: string;
   tokenPath: string;
   pid?: number | null;

@@ -49,7 +49,7 @@ impl Default for CompanionServeState {
     fn default() -> Self {
         Self {
             child: Mutex::new(None),
-            bind: Mutex::new("127.0.0.1".into()),
+            bind: Mutex::new("0.0.0.0".into()),
             port: Mutex::new(7421),
         }
     }
@@ -63,11 +63,134 @@ struct CompanionServeStatus {
     bind: String,
     port: u16,
     url: String,
+    /// Best URL for the phone (Tailscale IPv4 when detected).
+    phone_url: String,
+    /// Tailscale CGNAT IPv4 (`tailscale ip -4`), if any.
+    tailscale_ip: Option<String>,
     /// Full token for QR/pairing (local only). Empty if missing.
     token: String,
     token_path: String,
     pid: Option<u32>,
     message: String,
+}
+
+fn is_cgnat_ipv4(ip: &str) -> bool {
+    let parts: Vec<u32> = ip.split('.').filter_map(|s| s.parse().ok()).collect();
+    parts.len() == 4 && parts[0] == 100 && (64..=127).contains(&parts[1])
+}
+
+fn tailscale_cli_ipv4() -> Option<String> {
+    let bins: Vec<String> = {
+        #[cfg(windows)]
+        {
+            vec![
+                "tailscale".into(),
+                r"C:\Program Files\Tailscale\tailscale.exe".into(),
+                r"C:\Program Files (x86)\Tailscale\tailscale.exe".into(),
+            ]
+        }
+        #[cfg(not(windows))]
+        {
+            vec!["tailscale".into(), "/usr/bin/tailscale".into()]
+        }
+    };
+    for bin in bins {
+        let mut cmd = Command::new(&bin);
+        cmd.args(["ip", "-4"]);
+        #[cfg(windows)]
+        {
+            cmd.creation_flags(CREATE_NO_WINDOW);
+        }
+        if let Ok(out) = cmd.stdout(Stdio::piped()).stderr(Stdio::null()).output() {
+            if !out.status.success() {
+                continue;
+            }
+            if let Some(ip) = String::from_utf8_lossy(&out.stdout)
+                .lines()
+                .map(str::trim)
+                .find(|l| is_cgnat_ipv4(l))
+            {
+                return Some(ip.to_string());
+            }
+        }
+    }
+    None
+}
+
+fn cgnat_ipv4_from_system() -> Option<String> {
+    #[cfg(windows)]
+    {
+        let mut cmd = Command::new("ipconfig");
+        cmd.creation_flags(CREATE_NO_WINDOW);
+        let out = cmd.output().ok()?;
+        for token in String::from_utf8_lossy(&out.stdout).split_whitespace() {
+            let t = token.trim_end_matches([',', ':']);
+            if is_cgnat_ipv4(t) {
+                return Some(t.to_string());
+            }
+        }
+        None
+    }
+    #[cfg(not(windows))]
+    {
+        for (bin, args) in [
+            ("ip", &["-4", "-o", "addr", "show"][..]),
+            ("hostname", &["-I"][..]),
+        ] {
+            let Ok(out) = Command::new(bin).args(args).output() else {
+                continue;
+            };
+            if !out.status.success() {
+                continue;
+            }
+            for token in String::from_utf8_lossy(&out.stdout).split(|c: char| {
+                c.is_whitespace() || c == '/' || c == ','
+            }) {
+                if is_cgnat_ipv4(token) {
+                    return Some(token.to_string());
+                }
+            }
+        }
+        None
+    }
+}
+
+fn detect_tailscale_ipv4() -> Option<String> {
+    tailscale_cli_ipv4().or_else(cgnat_ipv4_from_system)
+}
+
+fn companion_status_from(
+    bind: String,
+    port: u16,
+    pid: Option<u32>,
+    running: bool,
+    healthy: bool,
+    message: String,
+) -> CompanionServeStatus {
+    let tailscale_ip = detect_tailscale_ipv4();
+    let loopback_host = if bind == "0.0.0.0" || bind == "::" {
+        "127.0.0.1"
+    } else {
+        bind.as_str()
+    };
+    let url = format!("http://{loopback_host}:{port}");
+    let phone_url = tailscale_ip
+        .as_ref()
+        .map(|ip| format!("http://{ip}:{port}"))
+        .unwrap_or_else(|| url.clone());
+    CompanionServeStatus {
+        running,
+        healthy,
+        bind,
+        port,
+        url,
+        phone_url,
+        tailscale_ip,
+        token: read_companion_token(),
+        token_path: companion_token_path().display().to_string(),
+        pid,
+        message,
+    }
 }
 
 fn zelari_home_dir() -> PathBuf {
@@ -2394,13 +2517,6 @@ fn companion_serve_status(state: State<'_, Arc<CompanionServeState>>) -> Compani
     let healthy = companion_health_ok(&bind, port);
     let tracked = pid.is_some();
     let running = tracked || healthy;
-    let host = if bind == "0.0.0.0" || bind == "::" {
-        "127.0.0.1"
-    } else {
-        bind.as_str()
-    };
-    let url = format!("http://{host}:{port}");
-    let token = read_companion_token();
     let message = if healthy {
         "Companion serve is reachable".into()
     } else if tracked {
@@ -2408,17 +2524,7 @@ fn companion_serve_status(state: State<'_, Arc<CompanionServeState>>) -> Compani
     } else {
         "Companion serve is stopped".into()
     };
-    CompanionServeStatus {
-        running,
-        healthy,
-        bind,
-        port,
-        url,
-        token,
-        token_path: companion_token_path().display().to_string(),
-        pid,
-        message,
-    }
+    companion_status_from(bind, port, pid, running, healthy, message)
 }
 
 #[tauri::command]
@@ -2454,7 +2560,7 @@ fn companion_serve_start(
         .as_ref()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "127.0.0.1".into());
+        .unwrap_or_else(|| "0.0.0.0".into());
     let port = args.port.unwrap_or(7421);
     if port == 0 {
         return Err("Invalid port".into());
@@ -2510,27 +2616,18 @@ fn companion_serve_start(
         }
     }
 
-    let token = read_companion_token();
-    let host = if bind == "0.0.0.0" || bind == "::" {
-        "127.0.0.1"
-    } else {
-        bind.as_str()
-    };
-    Ok(CompanionServeStatus {
-        running: true,
-        healthy,
-        bind: bind.clone(),
+    Ok(companion_status_from(
+        bind,
         port,
-        url: format!("http://{host}:{port}"),
-        token,
-        token_path: companion_token_path().display().to_string(),
-        pid: Some(pid),
-        message: if healthy {
+        Some(pid),
+        true,
+        healthy,
+        if healthy {
             "Companion serve started".into()
         } else {
             "Process launched; /health not ready yet — retry Status".into()
         },
-    })
+    ))
 }
 
 #[tauri::command]

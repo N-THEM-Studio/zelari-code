@@ -368,7 +368,7 @@ La chat Desktop è la source of truth per la conversazione: history multi-turn v
 - **Provider** — API key, endpoint OpenAI-compatible, discover models  
 - **Updates** — aggiornamento **app** (Tauri / GitHub Releases) vs **CLI** (`npm install -g`)  
 - **Extensions** — MCP catalog + **Skills** (crea/rimuovi `SKILL.md` user/project; import da URL col modello attivo)  
-- **Connections** — **Android companion** (start/stop `zelari-code serve`, copia URL/token) + SSH deploy/monitor  
+- **Connections** — **Mobile connection** (start `zelari-code serve`, QR pairing Tailscale) + SSH deploy/monitor  
 
 ### Chat Desktop
 
@@ -383,14 +383,14 @@ L’agent resta sul PC; il telefono è un thin client sulla stessa rete Tailscal
 ```bash
 # Host (PC) — usa il CLI monorepo o npm@1.34+
 npm run build:cli
-zelari-code serve --bind 100.x.y.z --port 7421 --project /path/to/repo
-# oppure Desktop → Settings → Connections → Start companion serve
+zelari-code serve --bind 0.0.0.0 --port 7421 --project /path/to/repo
+# oppure Desktop → Settings → Connections → Mobile connection → Start
 ```
 
 - Token: `~/.zelari-code/companion.token`  
 - Health: `GET http://<host>:7421/health`  
-- App: [`apps/companion-android/`](../apps/companion-android/README.md) — URL `http://100.x.y.z:7421` + token  
-- **Non** usare `127.0.0.1` sul telefono (è il device, non il PC)
+- App: [`apps/companion-android/`](../apps/companion-android/README.md) — tap **Scan QR from Desktop**  
+- **Non** usare `127.0.0.1` sul telefono (è il device, non il PC). Serve l’IP Tailscale `100.x`
 
 ADR: [`docs/decisions/0015-companion-host-serve.md`](./decisions/0015-companion-host-serve.md).
 

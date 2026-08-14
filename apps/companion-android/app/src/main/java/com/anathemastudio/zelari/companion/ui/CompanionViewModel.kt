@@ -13,6 +13,10 @@ import com.anathemastudio.zelari.companion.data.ProviderInfo
 import com.anathemastudio.zelari.companion.data.RunSummary
 import com.anathemastudio.zelari.companion.data.StartRunRequest
 import com.anathemastudio.zelari.companion.data.ZelariApi
+import com.anathemastudio.zelari.companion.data.describeConnectFailure
+import com.anathemastudio.zelari.companion.data.isLoopbackHost
+import com.anathemastudio.zelari.companion.data.normalizeHostUrl
+import com.anathemastudio.zelari.companion.data.parsePairingPayload
 import com.google.gson.JsonObject
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -175,25 +179,43 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    fun applyPairingPayload(raw: String) {
+        val parsed = parsePairingPayload(raw)
+        if (parsed == null) {
+            appendSystem("QR not recognized. Scan the QR from Zelari Desktop → Connections → Mobile connection.")
+            return
+        }
+        val token = parsed.token.ifBlank { _ui.value.token }
+        _ui.update { it.copy(baseUrl = parsed.url, token = token) }
+        connect(parsed.url, token)
+    }
+
     fun connect(
         baseUrl: String = _ui.value.baseUrl,
         token: String = _ui.value.token,
         silent: Boolean = false,
     ) {
         viewModelScope.launch {
+            val url = normalizeHostUrl(baseUrl)
             _ui.update {
                 it.copy(
                     conn = ConnState.Connecting,
                     statusLine = "Connecting…",
-                    baseUrl = baseUrl,
+                    baseUrl = url,
                     token = token,
                 )
             }
             try {
-                api.update(baseUrl, token)
+                if (isLoopbackHost(url)) {
+                    throw IllegalArgumentException(
+                        "127.0.0.1 / localhost is this phone, not your PC. " +
+                            "Scan the Desktop QR or paste the Tailscale IP (100.x) shown there.",
+                    )
+                }
+                api.update(url, token)
                 val health = api.health()
                 val projects = api.projects()
-                prefs.saveConnection(baseUrl, token)
+                prefs.saveConnection(url, token)
                 val pid = _ui.value.projectId.ifBlank {
                     projects.projects.firstOrNull()?.id.orEmpty()
                 }
@@ -210,14 +232,15 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 loadConfig()
                 loadSessions()
             } catch (e: Exception) {
+                val detail = describeConnectFailure(url, e)
                 _ui.update {
                     it.copy(
                         conn = ConnState.Error,
-                        statusLine = e.message ?: "Connection failed",
+                        statusLine = detail,
                     )
                 }
                 if (!silent) {
-                    appendSystem("Connect failed: ${e.message}")
+                    appendSystem("Connect failed: $detail")
                 }
             }
         }

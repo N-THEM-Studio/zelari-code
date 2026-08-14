@@ -374,7 +374,8 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
       `  Auth    Authorization: Bearer <token>\n` +
       `  ${tokenHint}\n` +
       `  Projects (${projects.length}): ${projects.map((p) => p.id).join(', ')}\n` +
-      `  Phone   use http://<PC-LAN-or-Tailscale-IP>:${port}  (not 127.0.0.1 on the phone)\n` +
+      `  Phone   scan the QR in Zelari Desktop → Connections → Mobile connection\n` +
+      `          or open http://<PC-Tailscale-IP>:${port}  (never 127.0.0.1 on the phone)\n` +
       `  Stop    Ctrl+C  (keep this window open)\n\n`,
   );
 
