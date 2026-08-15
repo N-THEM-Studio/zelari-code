@@ -34,6 +34,7 @@ import { hashStablePrompt } from "../state/fileStateStore.js";
 import {
   parseClarificationRequest,
   cleanAgentContent,
+  createBrainEvent,
 } from "@zelari/core";
 import { createStreamScrubber } from "./streamScrub.js";
 import {
@@ -66,6 +67,11 @@ import { envNumber } from "../utils/envNumber.js";
 import { getPhase } from "../phaseState.js";
 import { describePhase } from "../phase.js";
 import { applyBudgetPolicyAsync } from "../budget/tokenBudget.js";
+import {
+  recordRequestSnapshot,
+  recordRequestUsage,
+  getRequestSnapshotWithUsage,
+} from "../budget/requestSnapshotStore.js";
 
 /**
  * useChatTurn — owns the chat-turn lifecycle (single prompt dispatch +
@@ -195,24 +201,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       // v1.6.0: length of the history seed actually passed to the harness.
       // Captured here (after compaction) so the finally block can slice off
       // exactly the seed and keep only this turn's newly-appended tail.
+      // v1.36.0: historySeedLen stays as the conversation-seed length (no
+      // system constant baked in) — the finally block now slices off
+      // `systemMessages.length` + historySeedLen + 1 (user) using the
+      // ACTUAL system prefix count (1 or 2 depending on the builder), not
+      // the old hardcoded 1.
       let historySeedLen = 0;
+      // v1.36.0: system prefix count captured at seed-build time.
+      let systemPrefixLen = 0;
       // v1.6.0: set true only after the stream loop completes without
       // throwing, so the finally snapshot is skipped on error (a failed
       // turn — provider 500, abort — must not pollute rolling history
       // with a partial assistant tail).
       let turnSucceeded = false;
       try {
-        // v1.8.0 / v1.21.0: budget-aware compact (phase + occupancy).
-        // Async path may LLM-summarize dropped turns when context is tight.
-        compactInPlace();
-        const budget = await applyBudgetPolicyAsync(getHistory(), getPhase(), {
-          model: getActiveModel(),
-        });
-        setHistory(budget.history);
-        for (const w of budget.warnings) {
-          appendSystem(setMessages, w, Date.now());
-        }
-        historySeedLen = getHistory().length;
         // Short-answer anchor: if the user is replying to a ---QUESTION---,
         // rewrite the user message so the model cannot treat "full"/"2" as
         // a brand-new request even if compaction dropped the prior turn.
@@ -336,6 +338,47 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               });
         }
         const cwd = process.cwd();
+
+        // v1.36.0 (P6): compactInPlace() REMOVED from the hot path — it
+        // rewrote history BEFORE measuring, busting the cache prefix every
+        // turn. The budget pipeline below owns compaction now
+        // (prune → remeasure → replay) and only rewrites when occupancy
+        // actually demands it.
+        const budget = await applyBudgetPolicyAsync(getHistory(), getPhase(), {
+          model: getActiveModel(),
+          sessionId,
+          // v1.36.0: envelope for full-request metering + cache-aware
+          // compaction replay (last warm prefix + provider usage anchor).
+          requestSnapshot: getRequestSnapshotWithUsage(sessionId),
+          providerStream,
+        });
+        setHistory(budget.history);
+        for (const w of budget.warnings) {
+          appendSystem(setMessages, w, Date.now());
+        }
+        // v1.36.0 (P15): durable session_compacted event on the JSONL log —
+        // cache telemetry rides along (fingerprints, size delta, reuse flag).
+        if ((budget.messagesRemoved ?? 0) > 0) {
+          const envelope = getRequestSnapshotWithUsage(sessionId);
+          const compactionEvent = createBrainEvent('session_compacted', sessionId, {
+            summary: budget.compactSummary ?? '',
+            messagesRemoved: budget.messagesRemoved ?? 0,
+            ...(envelope
+              ? {
+                  sourceRequestFingerprint: envelope.snapshot.requestFingerprint,
+                  headerFingerprint: envelope.snapshot.headerFingerprint,
+                }
+              : {}),
+            ...(budget.contextPressureTokens !== undefined
+              ? { sourceEstimatedTokens: budget.contextPressureTokens }
+              : {}),
+            ...(budget.cacheReuseExpected !== undefined
+              ? { cacheReuseExpected: budget.cacheReuseExpected }
+              : {}),
+          });
+          void writerRef.current?.append(compactionEvent);
+        }
+        historySeedLen = getHistory().length;
         // v0.7.3: surface the council plan (if any) to the single agent too.
         // The plan lives in .zelari/plan.json but the agent had no idea it
         // existed — users had to paste task-file paths by hand. Best-effort:
@@ -589,6 +632,13 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           systemMessages = [{ role: "system", content: fallback }];
         }
 
+        // v1.36.0: capture the ACTUAL system prefix length (1 from the
+        // fallback builder, 2 from the stable/volatile split) — the finally
+        // snapshot slices on this, fixing the off-by-one that leaked the
+        // current user message into rolling history when 2 system messages
+        // were present.
+        systemPrefixLen = systemMessages.length;
+
         // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
         // The council sets 5; the single-prompt path previously set NONE, so a
         // flailing model could loop for the full MAX_TOOL_LOOP_ITERATIONS (12)
@@ -607,7 +657,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         });
         const harness = new AgentHarness({
           model: envConfig.model,
-          provider: "openai-compatible",
+          // v1.36.0 (P0.2): real provider identity — the harness used to
+          // hardcode "openai-compatible" (the transport family) so snapshots
+          // and telemetry mislabeled deepseek/glm/minimax routing.
+          provider: envConfig.providerId,
           messages: [
             ...systemMessages,
             // v1.8.0: shared rolling history (agent/council/zelari) so short
@@ -626,6 +679,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           cwd,
           maxToolCallsPerTurn,
           maxToolLoopIterations,
+          // v1.36.0: routed-request snapshots feed the meter (occupancy) and
+          // the cache-aware compaction replay (last warm prefix).
+          onRequestSnapshot: (snap) => recordRequestSnapshot(sessionId, snap),
           ...(maxToolLoopHardCap > 0 ? { maxToolLoopHardCap } : {}),
         });
         harnessRef.current = harness;
@@ -658,6 +714,16 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           for await (const event of harness.run()) {
             if (event.type === "message_end") {
               if (event.usage) realUsage = event.usage;
+              // v1.36.0: bind provider usage to the last routed snapshot so
+              // the next meter run can anchor the header to ground truth.
+              if (event.usage) {
+                recordRequestUsage(sessionId, {
+                  promptTokens: event.usage.promptTokens,
+                  completionTokens: event.usage.completionTokens,
+                  totalTokens: event.usage.totalTokens,
+                  cachedPromptTokens: event.usage.cachedPromptTokens,
+                });
+              }
               // Message boundary: seal with a full scrub so the last tokens
               // inside the 16ms window are not dropped, then drain + reset.
               if (streamContent) {
@@ -858,24 +924,29 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             const h = harnessRef.current;
             if (h && turnSucceeded) {
               const all = h.getMessages();
-              const seedLen = 1 /*system*/ + historySeedLen + 1 /*user*/;
+              // v1.36.0 (P0.1): slice off the REAL seed =
+              // [..systemMessages (1 or 2), ...historySeed, user]. The old
+              // hardcoded "1 system" dropped the current user message from
+              // rolling history whenever the builder emitted 2 system
+              // messages (stable + volatile) and corrupted the cache prefix.
+              const seedLen = systemPrefixLen + historySeedLen + 1 /*user*/;
               if (all.length > seedLen) {
                 // Provider history: KEEP <think> (MiniMax-M3 interleaved tool
                 // use requires full assistant content) and KEEP ---QUESTION---
                 // so short answers bind. Still strip MiniMax XML tool dumps
                 // and proprietary leaks via cleanAgentContent.
                 appendMessages(
-                  all.slice(seedLen).map((m) =>
-                    m.role === "assistant" && m.content
-                      ? {
-                          ...m,
-                          content: cleanAgentContent(m.content, {
-                            stripQuestion: false,
-                            stripThink: false,
-                          }),
-                        }
-                      : m,
-                  ),
+                  all.slice(seedLen).map((m) => {
+                    if (m.role !== "assistant" || !m.content) return m;
+                    // v1.36.0: no-op-safe — only REPLACE when the cleaner
+                    // changed something, so the common case keeps
+                    // byte-identical history objects (warm prefix).
+                    const cleaned = cleanAgentContent(m.content, {
+                      stripQuestion: false,
+                      stripThink: false,
+                    });
+                    return cleaned === m.content ? m : { ...m, content: cleaned };
+                  }),
                 );
               }
             }
