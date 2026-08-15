@@ -32,6 +32,7 @@ import {
 } from './providerConfig.js';
 import {
   getCachedModels,
+  getStaticFallbackModels,
   discoverModelsForProvider,
   type ProviderId as DiscoveryProviderId,
 } from './modelDiscovery.js';
@@ -317,6 +318,11 @@ export function buildDesktopConfigSnapshot(): DesktopConfigSnapshot {
   const providers: DesktopProviderInfo[] = PROVIDERS.map((p) => {
     const cached = getCachedModels(p.id as never);
     const models = cached?.models.map((m) => m.id) ?? [];
+    if (models.length === 0) {
+      for (const m of getStaticFallbackModels(p.id as DiscoveryProviderId)) {
+        if (!models.includes(m.id)) models.push(m.id);
+      }
+    }
     const defaultModel = config.modelByProvider[p.id] ?? '';
     if (defaultModel && !models.includes(defaultModel)) {
       models.unshift(defaultModel);

@@ -104,7 +104,11 @@ const PROVIDER_BASE_URLS: Record<ProviderId, string> = {
   'anthropic': 'https://api.anthropic.com/v1',
 };
 
-/** Static catalogs used when the live /models call is empty or unauthorized. */
+/**
+ * Built-in catalogs for the picker when live `/models` has never succeeded.
+ * Discovery itself still throws on error (v3-U: never overwrite cache with
+ * a guessed list). Desktop/CLI merge these in-memory only.
+ */
 const STATIC_FALLBACKS: Partial<Record<ProviderId, DiscoveredModel[]>> = {
   chatgpt: [
     { id: 'gpt-5.6-codex', displayName: 'GPT-5.6 Codex' },
@@ -133,6 +137,11 @@ const STATIC_FALLBACKS: Partial<Record<ProviderId, DiscoveredModel[]>> = {
     { id: 'glm-4.6', displayName: 'GLM-4.6' },
   ],
 };
+
+/** In-memory catalog for UI pickers. Empty when the provider has no static list. */
+export function getStaticFallbackModels(provider: ProviderId): DiscoveredModel[] {
+  return STATIC_FALLBACKS[provider] ? [...STATIC_FALLBACKS[provider]!] : [];
+}
 
 /**
  * Resolve the base URL for a discovery call, mirroring chat's `resolveBaseUrl`
@@ -373,10 +382,6 @@ export async function discoverModelsForProvider(
     const headers = await resolveDiscoveryHeaders(provider, authToken);
     response = await fetchImpl(url, { method: 'GET', headers });
   } catch (err) {
-    const fallback = STATIC_FALLBACKS[provider];
-    if (fallback) {
-      return cacheFallback(provider, baseUrl, fallback, options, `network: ${err instanceof Error ? err.message : String(err)}`);
-    }
     throw new ModelDiscoveryError(
       `Network error contacting ${url}: ${err instanceof Error ? err.message : String(err)}`,
       'network_error'
@@ -385,10 +390,6 @@ export async function discoverModelsForProvider(
 
   if (!response.ok) {
     const body = await response.text().catch(() => '');
-    const fallback = STATIC_FALLBACKS[provider];
-    if (fallback) {
-      return cacheFallback(provider, baseUrl, fallback, options, `HTTP ${response.status}: ${body.slice(0, 80)}`);
-    }
     throw new ModelDiscoveryError(
       `HTTP ${response.status} from ${url}: ${body.slice(0, 200)}`,
       `http_${response.status}`
@@ -399,10 +400,6 @@ export async function discoverModelsForProvider(
   try {
     json = await response.json();
   } catch (err) {
-    const fallback = STATIC_FALLBACKS[provider];
-    if (fallback) {
-      return cacheFallback(provider, baseUrl, fallback, options, 'invalid_json');
-    }
     throw new ModelDiscoveryError(
       `Invalid JSON from ${url}: ${err instanceof Error ? err.message : String(err)}`,
       'invalid_json'
@@ -414,10 +411,6 @@ export async function discoverModelsForProvider(
       ? parseAnthropicModelsResponse(json)
       : parseOpenAIModelsResponse(json, baseUrl);
   if (models.length === 0) {
-    const fallback = STATIC_FALLBACKS[provider];
-    if (fallback) {
-      return cacheFallback(provider, baseUrl, fallback, options, 'empty_response');
-    }
     throw new ModelDiscoveryError(
       `Provider ${provider} returned 0 models — refusing to overwrite cache`,
       'empty_response'
@@ -438,29 +431,6 @@ export async function discoverModelsForProvider(
     }, file);
   }
 
-  return entry;
-}
-
-async function cacheFallback(
-  provider: ProviderId,
-  baseUrl: string,
-  models: DiscoveredModel[],
-  options: DiscoverOptions,
-  lastError: string,
-): Promise<ProviderModelsEntry> {
-  const entry: ProviderModelsEntry = {
-    models,
-    fetchedAt: Date.now(),
-    baseUrl,
-    lastError,
-  };
-  if (!options.skipCacheWrite) {
-    const file = getModelsFilePath();
-    await readModifyWriteRegistry((current) => {
-      current[provider] = entry;
-      return current;
-    }, file);
-  }
   return entry;
 }
 

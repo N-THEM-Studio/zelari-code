@@ -24,6 +24,7 @@ import {
   pickDefaultModel,
   ModelDiscoveryError,
   getModelsFilePath,
+  getStaticFallbackModels,
 } from '../../src/cli/modelDiscovery.js';
 import { setApiKey, setOAuthToken, clearApiKey } from '../../src/cli/keyStore.js';
 import { setCustomEndpoint, clearCustomEndpoint } from '../../src/cli/providerConfig.js';
@@ -149,15 +150,23 @@ describe('modelDiscovery URL mapping (v3-U)', () => {
     expect(capturedUrl).toBe('https://chatgpt.com/backend-api/models');
   });
 
-  it('falls back to a static catalog when anthropic /models fails', async () => {
+  it('throws ModelDiscoveryError when anthropic /models fails (does not write fallback cache)', async () => {
     const fetchMock = (async () =>
       new Response('nope', { status: 401 })) as typeof fetch;
-    const entry = await discoverModelsForProvider('anthropic', {
-      authToken: 'oauth-token',
-      fetchImpl: fetchMock,
-    });
-    expect(entry.models.map((m) => m.id)).toContain('claude-sonnet-4-5');
-    expect(entry.lastError).toMatch(/HTTP 401/);
+    await expect(
+      discoverModelsForProvider('anthropic', {
+        authToken: 'oauth-token',
+        fetchImpl: fetchMock,
+      }),
+    ).rejects.toMatchObject({ code: 'http_401' });
+    expect(getCachedModels('anthropic', testFile)).toBeUndefined();
+  });
+
+  it('exposes an in-memory static catalog for pickers without touching cache', () => {
+    const ids = getStaticFallbackModels('anthropic').map((m) => m.id);
+    expect(ids).toContain('claude-sonnet-4-6');
+    expect(ids).toContain('claude-opus-4-7');
+    expect(getCachedModels('anthropic', testFile)).toBeUndefined();
   });
 });
 
