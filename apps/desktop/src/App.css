@@ -481,7 +481,7 @@ button {
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
-  margin: 4px 0 0 4px;
+  margin: 6px 0 6px 6px;
   padding: 0;
   overflow: hidden;
 }
@@ -813,9 +813,9 @@ button {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 4px 8px 4px 10px;
-  min-height: 40px;
+  gap: 10px;
+  padding: 5px 10px 5px 12px;
+  min-height: 42px;
   border-radius: 999px;
   border-bottom: none;
   flex-shrink: 0;
@@ -838,14 +838,14 @@ button {
 }
 
 .topbar-title {
-  font-weight: 500;
-  font-size: 12px;
-  letter-spacing: -0.01em;
-  color: var(--text-muted);
+  font-weight: 550;
+  font-size: 12.5px;
+  letter-spacing: -0.015em;
+  color: var(--text-secondary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 140px;
+  max-width: 180px;
 }
 
 .model-chip {
@@ -4183,20 +4183,7 @@ kbd {
   white-space: nowrap;
 }
 
-/* ── Export + shortcuts ── */
-.export-menu {
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  margin-left: 2px;
-}
-
-.export-menu .btn-ghost {
-  font-size: 11.5px;
-  padding: 4px 8px;
-  color: var(--text-muted);
-}
-
+/* ── Composer shortcuts ── */
 .composer-shortcuts {
   color: var(--text-muted);
   font-size: 11px;

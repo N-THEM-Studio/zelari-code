@@ -5,6 +5,17 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.38.0] - 2026-08-15
+
+### Added
+- **ChatGPT Codex device OAuth** — start/poll uses Codex JSON (`device_auth_id` + `user_code`) instead of RFC 8628 form-urlencoded, which was returning HTTP 400.
+
+### Changed
+- **Desktop chrome** — slightly tighter glass topbar; session list stays archive/delete only.
+
+### Removed
+- **Desktop Workbench toggle** and **Export MD / JSON** buttons from the topbar and session list (in-chat todos remain).
+
 ## [1.37.0] - 2026-08-14
 
 ### Added
@@ -1317,6 +1328,7 @@ See [MIGRATION.md](MIGRATION.md). Summary: import paths changed, the
 tool itself is wire-compatible for the CLI use case.
 
 ## [Unreleased]
+
 
 ## [1.22.1] - 2026-07-21
 

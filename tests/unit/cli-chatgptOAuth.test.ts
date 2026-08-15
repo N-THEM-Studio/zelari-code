@@ -4,9 +4,11 @@ import {
   extractChatgptAccountId,
   refreshChatgptToken,
   runChatgptDeviceFlow,
+  startChatgptDeviceAuth,
   ChatgptOAuthError,
   CHATGPT_DEVICE_CODE_URL,
   CHATGPT_DEVICE_TOKEN_URL,
+  CHATGPT_DEVICE_VERIFY_URL,
   CHATGPT_TOKEN_URL,
 } from '../../src/cli/chatgptOAuth.js';
 
@@ -29,23 +31,32 @@ describe('chatgptOAuth', () => {
     expect(extractChatgptAccountId(jwt)).toBe('acct-1');
   });
 
-  it('runChatgptDeviceFlow polls then exchanges the authorization_code', async () => {
-    const calls: string[] = [];
-    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+  it('runChatgptDeviceFlow posts JSON client_id then polls device_auth_id', async () => {
+    const calls: Array<{ url: string; body: string; contentType: string }> = [];
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = typeof url === 'string' ? url : url.toString();
-      calls.push(u);
+      const body = String(init?.body ?? '');
+      const headers = init?.headers as Record<string, string> | undefined;
+      const contentType = headers?.['Content-Type'] ?? headers?.['content-type'] ?? '';
+      calls.push({ url: u, body, contentType });
       if (u === CHATGPT_DEVICE_CODE_URL) {
         return jsonResp({
-          device_code: 'dev',
+          device_auth_id: 'dev-auth',
           user_code: 'ABCD',
-          verification_uri: 'https://auth.openai.com/device',
-          verification_uri_complete: 'https://auth.openai.com/device?user_code=ABCD',
+          interval: '5',
         });
       }
       if (u === CHATGPT_DEVICE_TOKEN_URL) {
-        return jsonResp({ authorization_code: 'auth-code' });
+        return jsonResp({
+          authorization_code: 'auth-code',
+          code_challenge: 'ch',
+          code_verifier: 'server-verifier',
+        });
       }
       if (u === CHATGPT_TOKEN_URL) {
+        expect(body).toContain('grant_type=authorization_code');
+        expect(body).toContain('code=auth-code');
+        expect(body).toContain('code_verifier=server-verifier');
         return jsonResp({
           access_token: 'at-1',
           refresh_token: 'rt-1',
@@ -59,6 +70,7 @@ describe('chatgptOAuth', () => {
     const result = await runChatgptDeviceFlow({
       fetchImpl: fetchMock,
       sleepImpl: async () => undefined,
+      onUserCode: async () => undefined,
       openBrowserImpl: async (url) => {
         seen.push(url);
       },
@@ -66,8 +78,84 @@ describe('chatgptOAuth', () => {
     expect(result.accessToken).toBe('at-1');
     expect(result.refreshToken).toBe('rt-1');
     expect(result.expiresAt).toBeGreaterThan(Date.now());
-    expect(seen[0]).toContain('user_code=ABCD');
-    expect(calls).toContain(CHATGPT_DEVICE_CODE_URL);
+    expect(seen[0]).toBe(`${CHATGPT_DEVICE_VERIFY_URL}?user_code=ABCD`);
+
+    const start = calls.find((c) => c.url === CHATGPT_DEVICE_CODE_URL);
+    expect(start?.contentType).toBe('application/json');
+    expect(JSON.parse(start!.body)).toEqual({
+      client_id: 'app_EMoamEEZ73f0CkXaXp7hrann',
+    });
+
+    const poll = calls.find((c) => c.url === CHATGPT_DEVICE_TOKEN_URL);
+    expect(poll?.contentType).toBe('application/json');
+    expect(JSON.parse(poll!.body)).toEqual({
+      device_auth_id: 'dev-auth',
+      user_code: 'ABCD',
+    });
+  });
+
+  it('treats device-token 403 as authorization_pending', async () => {
+    let polls = 0;
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (u === CHATGPT_DEVICE_CODE_URL) {
+        return jsonResp({ device_auth_id: 'dev', user_code: 'ZZ', interval: 1 });
+      }
+      if (u === CHATGPT_DEVICE_TOKEN_URL) {
+        polls += 1;
+        if (polls === 1) return jsonResp({}, 403);
+        return jsonResp({ authorization_code: 'c', code_verifier: 'v' });
+      }
+      return jsonResp({ access_token: 'at' });
+    }) as unknown as typeof fetch;
+
+    const result = await runChatgptDeviceFlow({
+      fetchImpl: fetchMock,
+      sleepImpl: async () => undefined,
+      onUserCode: async () => undefined,
+      openBrowserImpl: async () => undefined,
+    });
+    expect(result.accessToken).toBe('at');
+    expect(polls).toBe(2);
+  });
+
+  it('startChatgptDeviceAuth returns user_code without polling', async () => {
+    const fetchMock = vi.fn(async (url: string | URL | Request) => {
+      const u = typeof url === 'string' ? url : url.toString();
+      if (u === CHATGPT_DEVICE_CODE_URL) {
+        return jsonResp({
+          device_auth_id: 'dev-auth',
+          user_code: 'WXYZ',
+          interval: 7,
+        });
+      }
+      return jsonResp({ error: 'should-not-poll' }, 500);
+    }) as unknown as typeof fetch;
+    const session = await startChatgptDeviceAuth({ fetchImpl: fetchMock });
+    expect(session).toMatchObject({
+      deviceAuthId: 'dev-auth',
+      userCode: 'WXYZ',
+      interval: 7,
+    });
+    expect(session.verificationUri).toContain('user_code=WXYZ');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('includes OpenAI error body in device-code HTTP 400', async () => {
+    const fetchMock = vi.fn(async () =>
+      jsonResp({ error: { message: 'invalid client_id' } }, 400),
+    ) as unknown as typeof fetch;
+    await expect(
+      runChatgptDeviceFlow({
+        fetchImpl: fetchMock,
+        sleepImpl: async () => undefined,
+        onUserCode: async () => undefined,
+        openBrowserImpl: async () => undefined,
+      }),
+    ).rejects.toMatchObject({
+      name: 'ChatgptOAuthError',
+      message: expect.stringContaining('invalid client_id'),
+    });
   });
 
   it('refreshChatgptToken posts refresh_token grant', async () => {

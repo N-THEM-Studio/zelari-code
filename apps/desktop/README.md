@@ -141,9 +141,9 @@ Replies: light structured view (headings, lists, tables, code); tool calls as **
 
 **Files | Git** beside the chat — lazy directory tree under the open folder (Tauri `list_dir`).
 
-## Workbench (v1.33+)
+## Session tasks
 
-Tabs **Plan** and **Tasks**: with a Kraken graph active, Plan runs the CLI `--plan-only` and Build executes `--run-plan <id>`. Tasks shows the live session todo list.
+Session tasks from the agent appear as the in-chat todos chip / panel. The topbar Workbench drawer and Export MD/JSON buttons were removed.
 
 Provider Settings also expose **Sign in / Refresh token / Sign out** for Grok, ChatGPT, and Anthropic OAuth (v1.34).
 

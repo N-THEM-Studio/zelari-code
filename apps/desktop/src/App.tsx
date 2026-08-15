@@ -19,17 +19,13 @@ import {
   summarizeToolArgs,
 } from "./agentClient";
 import { loadConversations, saveConversations } from "./chatStorage";
-import {
-  cleanAssistantContent,
-  hasExportableMessages,
-} from "./exportSession";
+import { cleanAssistantContent } from "./exportSession";
 import { MessageContent } from "./components/MessageContent";
 import { CopyButton } from "./components/CopyButton";
 import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
 import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
 
-import { WorkbenchPanel } from "./components/WorkbenchPanel";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
 import { RunActivity, type LiveToolStep } from "./components/RunActivity";
@@ -59,10 +55,6 @@ import {
   type SkillEntryDto,
   type WorkspaceHit,
 } from "./agentClient";
-import {
-  exportConversationJsonToFolder,
-  exportConversationMarkdownToFolder,
-} from "./components/exportChat";
 import {
   PluginInstallBanner,
   type PluginInstallError,
@@ -403,7 +395,6 @@ export default function App() {
   const [workdir, setWorkdir] = useState<string | null>(
     () => localStorage.getItem("zelari-desktop-workdir") || null,
   );
-  const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [gitCollapsed, setGitCollapsed] = useState(
     () => localStorage.getItem("zelari-desktop-git-collapsed") === "1",
   );
@@ -1848,48 +1839,6 @@ export default function App() {
     }
   };
 
-  const exportChatMd = async (conv: Conversation | undefined) => {
-    if (!conv) {
-      setStatusLine("Nessuna chat da esportare");
-      return;
-    }
-    try {
-      const result = await exportConversationMarkdownToFolder(conv);
-      if (result) {
-        setStatusLine(`Esportato MD: ${result.path}`);
-        try {
-          const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
-          await revealItemInDir(result.path);
-        } catch {
-          /* reveal is best-effort */
-        }
-      }
-    } catch (e) {
-      setStatusLine(e instanceof Error ? e.message : String(e));
-    }
-  };
-
-  const exportChatJson = async (conv: Conversation | undefined) => {
-    if (!conv) {
-      setStatusLine("Nessuna chat da esportare");
-      return;
-    }
-    try {
-      const result = await exportConversationJsonToFolder(conv);
-      if (result) {
-        setStatusLine(`Esportato JSON: ${result.path}`);
-        try {
-          const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
-          await revealItemInDir(result.path);
-        } catch {
-          /* reveal is best-effort */
-        }
-      }
-    } catch (e) {
-      setStatusLine(e instanceof Error ? e.message : String(e));
-    }
-  };
-
   const messages = active?.messages ?? [];
   const empty = messages.length === 0;
 
@@ -2043,14 +1992,6 @@ export default function App() {
                 </span>
               </button>
               <div className="session-actions">
-                <button
-                  type="button"
-                  title="Export Markdown… (choose folder)"
-                  disabled={!hasExportableMessages(c)}
-                  onClick={() => void exportChatMd(c)}
-                >
-                  MD
-                </button>
                 {c.archived ? (
                   <button
                     type="button"
@@ -2149,36 +2090,6 @@ export default function App() {
               onChange={setKrakenGraph}
             />
 
-            <button
-              type="button"
-              className={`btn-ghost workbench-toggle${workbenchOpen ? " active" : ""}`}
-              onClick={() => setWorkbenchOpen((v) => !v)}
-              title="Open the Kraken workbench live tail (the .zelari/radio/workbench-<id>.md file with the DAG table, verdicts and Bennett weakness scores)"
-              aria-pressed={workbenchOpen}
-            >
-              <span className="workbench-toggle-icon" aria-hidden>📋</span>
-              <span>Workbench</span>
-            </button>
-            <div className="export-menu">
-              <button
-                type="button"
-                className="btn-ghost"
-                disabled={!active}
-                onClick={() => void exportChatMd(active)}
-                title="Esporta chat in Markdown (scegli cartella)"
-              >
-                Export MD
-              </button>
-              <button
-                type="button"
-                className="btn-ghost"
-                disabled={!active}
-                onClick={() => void exportChatJson(active)}
-                title="Esporta chat in JSON (scegli cartella)"
-              >
-                JSON
-              </button>
-            </div>
             <button
               type="button"
               className="btn-ghost topbar-folder"
@@ -2599,14 +2510,6 @@ export default function App() {
           });
           void attachWorkspacePath(hit);
         }}
-      />
-      <WorkbenchPanel
-        cwd={workdir}
-        open={workbenchOpen}
-        onClose={() => setWorkbenchOpen(false)}
-        phase={phase}
-        planId={krakenPlanId}
-        todos={sessionTodos}
       />
       </div>
       </div>
