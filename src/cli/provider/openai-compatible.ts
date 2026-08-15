@@ -416,6 +416,13 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       return mapped;
     });
 
+    // v1.36.0 (P3): per-request generation knobs. The compaction replay
+    // passes purpose:'compaction' + temperature 0.1 + maxTokens so the
+    // summarizer request differs from a conversation request ONLY in
+    // sampling params — the cached prefix (system+tools+conversation) stays
+    // byte-identical. Conversation calls leave `generation` undefined and
+    // keep the historical defaults below.
+    const generation = params.generation;
     const body: Record<string, unknown> = {
       // Use `params.model` (per-call override from AgentHarness, e.g. for
       // `agentModels` config) rather than the closed-over `config.model`
@@ -423,7 +430,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       model: params.model,
       messages,
       stream: true,
-      temperature: 0.7,
+      temperature: generation?.temperature ?? 0.7,
       // Task G.4.2 — request the provider to send real token usage in
       // the final chunk (gated by `stream_options.include_usage` on the
       // OpenAI-compatible API). Providers that don't honor this (some
@@ -431,6 +438,9 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       // the harness will fall back to the ~4-char/token approximation.
       stream_options: { include_usage: true },
     };
+    if (typeof generation?.maxTokens === 'number' && generation.maxTokens > 0) {
+      body.max_tokens = generation.maxTokens;
+    }
 
     // Unified thinking-effort selection (ADR-0017). `config.thinking` carries
     // the per-provider ThinkingSpec persisted in provider.json (default
