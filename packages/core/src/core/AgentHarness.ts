@@ -33,6 +33,11 @@ import {
 } from '../shared/events.js';
 import { ToolRegistry } from './tools/registry.js';
 import {
+  createRoutedRequestSnapshot,
+  type RoutedRequestSnapshot,
+  type ProviderGenerationOptions,
+} from './requestSnapshot.js';
+import {
   collapseLoopedAssistantText,
   detectAssistantTextLoop,
   detectAssistantTextLoopWindow,
@@ -167,6 +172,15 @@ export interface AgentHarnessConfig {
    */
   maxToolLoopHardCap?: number;
   /**
+   * v1.36.0 cache upgrade: invoked right before EVERY providerStream call
+   * with a deterministic snapshot of the routed request (provider, model,
+   * system prefix, canonical tools, fingerprints). Consumers store the last
+   * snapshot (requestSnapshotStore) and reuse it for cache-aware compaction
+   * replay and occupancy metering. Must never throw into the request path —
+   * the harness guards it in try/catch.
+   */
+  onRequestSnapshot?: (snapshot: RoutedRequestSnapshot, generation?: ProviderGenerationOptions) => void;
+  /**
    * Optional council-member identity, propagated to every event the
    * harness emits (`agent_start`, `agent_end`, `message_start`,
    * `message_delta`, `message_end`). When set, the event stream
@@ -187,6 +201,14 @@ export type ProviderStreamFn = (params: {
   provider: string;
   tools: AgentToolSpec[];
   signal?: AbortSignal;
+  /**
+   * v1.36.0: optional generation knobs (purpose/temperature/maxTokens).
+   * Providers that understand them apply them; others ignore them. Used by
+   * the compaction replay (purpose: 'compaction', temperature 0.1) so the
+   * summarizer request differs from a conversation request ONLY in sampling
+   * params — never in the cached prefix.
+   */
+  generation?: ProviderGenerationOptions;
 }) => AsyncIterable<ProviderDelta>;
 
 /** Provider-neutral streaming delta (one chunk from a provider). */
@@ -784,6 +806,27 @@ export class AgentHarness {
   }
 
   /**
+   * v1.36.0: capture a deterministic snapshot of the routed request just
+   * before it goes out. Never throws into the request path.
+   */
+  private emitSnapshot(tools: AgentToolSpec[], generation?: ProviderGenerationOptions): void {
+    if (!this.config.onRequestSnapshot) return;
+    try {
+      this.config.onRequestSnapshot(
+        createRoutedRequestSnapshot({
+          messages: this.config.messages,
+          model: this.config.model,
+          provider: this.config.provider,
+          tools,
+        }),
+        generation,
+      );
+    } catch {
+      // Snapshots are observability — a failure must never break the turn.
+    }
+  }
+
+  /**
    * Run a single provider turn for the current message buffer.
    * Streams from the provider, dispatches deltas to events, executes
    * any tool calls (if a registry was provided). Yields each
@@ -804,6 +847,7 @@ export class AgentHarness {
     usageRef: { value: UsageBreakdown | null },
   ): AsyncIterable<BrainEvent> {
     try {
+      this.emitSnapshot(this.config.tools);
       const stream = this.config.providerStream({
         messages: this.config.messages,
         model: this.config.model,
@@ -1260,6 +1304,7 @@ export class AgentHarness {
     // a throwaway config override is not possible (config is readonly), so we
     // call the providerStream directly with tools: [].
     try {
+      this.emitSnapshot([]);
       const stream = this.config.providerStream({
         messages: this.config.messages,
         model: this.config.model,

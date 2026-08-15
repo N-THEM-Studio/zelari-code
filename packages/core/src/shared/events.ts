@@ -204,6 +204,18 @@ export interface BrainSessionCompactedEvent extends BrainEventBase {
   type: 'session_compacted';
   summary: string;
   messagesRemoved: number;
+  /** v1.36.0 cache telemetry: fingerprint of the request that was compacted. */
+  sourceRequestFingerprint?: string;
+  /** Fingerprint of the stable header (provider+model+system+tools). */
+  headerFingerprint?: string;
+  /** Estimated tokens of the dropped prefix. */
+  sourceEstimatedTokens?: number;
+  /** Estimated tokens of the replacement checkpoint message. */
+  replacementEstimatedTokens?: number;
+  /** Tool results pruned in place during the same compaction. */
+  prunedToolResults?: number;
+  /** False when the summarizer ran on a different provider/model (no KV reuse). */
+  cacheReuseExpected?: boolean;
 }
 
 // --- Errors -----------------------------------------------------------------
