@@ -18,6 +18,7 @@ import type { AgentMessage } from '@zelari/core/harness';
 import { clearSessionPermissionGrants } from '../safety/toolPermissions.js';
 import { clearSessionTodos } from '../sessionTodos.js';
 import { compactHistory } from './historyCompaction.js';
+import { clearAllRequestSnapshots } from '../budget/requestSnapshotStore.js';
 
 /** Snapshot of the last assistant clarifying question (for short-answer anchoring). */
 export interface LastClarification {
@@ -56,6 +57,9 @@ export function appendMessages(msgs: readonly AgentMessage[]): void {
 export function clearHistory(): void {
   history = [];
   lastClarification = null;
+  // v1.36.0: routed-request snapshots are conversation-scoped — a cleared
+  // session must not replay a stale warm prefix.
+  clearAllRequestSnapshots();
   // Session todos + permission grants are conversation-scoped.
   clearSessionTodos();
   clearSessionPermissionGrants();

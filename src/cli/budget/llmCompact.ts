@@ -1,32 +1,55 @@
 /**
- * Optional LLM pass for history compaction summaries.
- * Falls back to null on any failure so callers use extractive summary.
+ * LLM compaction via CACHE-AWARE PREFIX REPLAY (v1.36.0, P9).
  *
- * Disable with ZELARI_LLM_COMPACT=0.
+ * Pre-1.36 this module built a COLD request: its own COMPACT_SYSTEM, a
+ * flattened transcript, and a raw fetch to the chat-completions endpoint.
+ * That request diverged from the live conversation from token 0 — zero
+ * prompt-cache reuse — and the rewritten history invalidated the warm
+ * prefix for the NEXT conversation turn too.
  *
- * @since v1.21.0
+ * The replay approach sends:
+ *
+ *   SYSTEM(original) + TOOLS(original) + DROPPED PREFIX + COMPACTION_INSTRUCTION
+ *
+ * so everything up to the trailing instruction is byte-identical to the
+ * previous routed request and hits the provider prefix cache (DeepSeek/
+ * OpenAI/GLM bill cached tokens at ~1/10). Tools stay advertised even
+ * though the summarizer must not call them: removing them would change
+ * the prefix token sequence and kill cache reuse.
+ *
+ * Fallback: any failure → null → caller uses the extractive summary.
+ * Disable entirely with ZELARI_LLM_COMPACT=0.
+ *
+ * @since v1.21.0 (cold-request version)
+ * @updated v1.36.0 — replay-based, providerStream-routed
  */
-import {
-  getModelForProvider,
-  getProviderConfig,
-  getCustomEndpoint,
-} from '../providerConfig.js';
-import { resolveApiKeyWithMeta } from '../keyStore.js';
-import {
-  PROVIDER_ENDPOINTS,
-  type OpenAICompatibleConfig,
-} from '../provider/openai-compatible.js';
-import type { ProviderName } from '../keyStore.js';
 
-const COMPACT_SYSTEM = `You compress earlier turns of a coding-agent session into a dense continuity brief.
-Output plain text (no markdown fences) with these sections:
-1) Goal — what the user wants
-2) Decisions — choices already made
-3) Done — completed work / files changed
-4) Open — remaining tasks / blockers
-5) Constraints — important rules the agent must keep
+import type {
+  AgentMessage,
+  AgentToolSpec,
+  ProviderStreamFn,
+} from '@zelari/core/harness';
 
-Be factual and concise. Max ~400 words. Do not invent work that was not present.`;
+export const COMPACTION_INSTRUCTION = `
+You are now acting as a compaction engine for this coding-agent session.
+
+Condense the conversation ABOVE into a compact checkpoint sufficient to continue the task.
+
+Preserve:
+- user's goal and evolving intent
+- decisions already made
+- exact file paths and identifiers
+- code changes already completed
+- commands/errors that still matter
+- constraints
+- unfinished work
+- the single most likely next action
+
+Do not call tools.
+Do not mention this summarization request.
+Output only the checkpoint.
+Be concise.
+`.trim();
 
 export function isLlmCompactEnabled(): boolean {
   const v = process.env.ZELARI_LLM_COMPACT?.trim().toLowerCase();
@@ -35,97 +58,110 @@ export function isLlmCompactEnabled(): boolean {
   return true;
 }
 
-/**
- * Ask the active provider for a continuity summary.
- * Returns null if disabled, no key, or request fails.
- */
-export async function llmSummarizeHistory(input: {
-  extractive: string;
-  droppedTranscript: string;
+/** Explicit model override for the summarizer (ZELARI_COMPACT_MODEL). */
+export function compactModelOverride(): string | undefined {
+  const v = process.env.ZELARI_COMPACT_MODEL?.trim();
+  return v ? v : undefined;
+}
+
+export interface LlmSummarizeReplayInput {
+  /** Provider stream of the ACTIVE conversation (failover-wrapped is fine). */
+  providerStream: ProviderStreamFn;
+  provider: string;
+  model: string;
+  /** Original system prefix of the request being compacted. */
+  systemMessages: readonly AgentMessage[];
+  /** Original tool schemas (kept for prefix stability — must not be called). */
+  tools: readonly AgentToolSpec[];
+  /** The message prefix that is about to be dropped. */
+  droppedMessages: readonly AgentMessage[];
   signal?: AbortSignal;
-}): Promise<string | null> {
-  if (!isLlmCompactEnabled()) return null;
-  if (!input.droppedTranscript.trim()) return null;
+  /** When set (ZELARI_COMPACT_MODEL), replay runs on another model → no KV reuse. */
+  overrideModel?: string;
+}
 
-  let config: OpenAICompatibleConfig | null = null;
-  try {
-    config = await resolveCompactProviderConfig();
-  } catch {
-    return null;
+export interface LlmSummarizeReplayResult {
+  summary: string | null;
+  /** Model actually used. */
+  model: string;
+  /**
+   * False when an override model forced a different sequence — the replay
+   * still works, but the provider cache cannot be reused (documented
+   * trade-off, DSH-style).
+   */
+  cacheReuseExpected: boolean;
+}
+
+/** Hard ceiling so a stuck summarizer can't hang the dispatch loop. */
+const REPLAY_TIMEOUT_MS = 60_000;
+
+/**
+ * Summarize `droppedMessages` by replaying the ORIGINAL request prefix and
+ * appending the compaction instruction as the final user message.
+ *
+ * Returns `summary: null` when disabled, empty, failed, or when the model
+ * emitted a tool call (the summarizer must never act — only condense).
+ */
+export async function llmSummarizeHistoryReplay(
+  input: LlmSummarizeReplayInput,
+): Promise<LlmSummarizeReplayResult> {
+  const override = input.overrideModel ?? compactModelOverride();
+  const model = override ?? input.model;
+  const cacheReuseExpected = !override;
+
+  if (!isLlmCompactEnabled()) return { summary: null, model, cacheReuseExpected };
+  if (input.droppedMessages.length === 0) {
+    return { summary: null, model, cacheReuseExpected };
   }
-  if (!config) return null;
 
-  const model =
-    process.env.ZELARI_COMPACT_MODEL?.trim() || config.model;
+  // Replay = original prefix + instruction tail. The prefix must be
+  // byte-identical to the previous routed request for cache reuse.
+  const messages: AgentMessage[] = [
+    ...input.systemMessages,
+    ...input.droppedMessages,
+    {
+      role: 'user',
+      content: COMPACTION_INSTRUCTION,
+    },
+  ];
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 45_000);
+  const timeout = setTimeout(() => controller.abort(), REPLAY_TIMEOUT_MS);
   const onOuterAbort = () => controller.abort();
   input.signal?.addEventListener('abort', onOuterAbort, { once: true });
 
   try {
-    const url = `${config.baseUrl.replace(/\/$/, '')}/chat/completions`;
-    const res = await fetch(url, {
-      method: 'POST',
+    let text = '';
+    let emittedToolCall = false;
+
+    for await (const delta of input.providerStream({
+      provider: input.provider,
+      model,
+      messages,
+      // Tools stay advertised: dropping them would change the prefix token
+      // sequence and destroy cache reuse (explicit DSH decision). They are
+      // sorted canonically (same discipline as the live routed request and
+      // the snapshot fingerprints) so the replay prefix is byte-identical.
+      tools: [...input.tools].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)),
       signal: controller.signal,
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${config.apiKey}`,
-      },
-      body: JSON.stringify({
-        model,
+      generation: {
+        purpose: 'compaction',
         temperature: 0.1,
-        max_tokens: 900,
-        stream: false,
-        messages: [
-          { role: 'system', content: COMPACT_SYSTEM },
-          {
-            role: 'user',
-            content:
-              `Extractive sketch (may be incomplete):\n${input.extractive.slice(0, 2_500)}\n\n` +
-              `Transcript of dropped turns:\n${input.droppedTranscript}`,
-          },
-        ],
-      }),
-    });
-    if (!res.ok) return null;
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const text = json.choices?.[0]?.message?.content?.trim();
-    if (!text) return null;
-    return (
-      '[history-summary · llm]\n' +
-      text +
-      '\n\nContinue from the recent messages below; honor decisions already made above.'
-    );
+        maxTokens: 900,
+      },
+    })) {
+      if (delta.kind === 'text') text += delta.delta;
+      if (delta.kind === 'tool_call') emittedToolCall = true;
+    }
+
+    if (emittedToolCall) return { summary: null, model, cacheReuseExpected };
+    if (!text.trim()) return { summary: null, model, cacheReuseExpected };
+
+    return { summary: text.trim(), model, cacheReuseExpected };
   } catch {
-    return null;
+    return { summary: null, model, cacheReuseExpected };
   } finally {
     clearTimeout(timeout);
     input.signal?.removeEventListener('abort', onOuterAbort);
   }
-}
-
-async function resolveCompactProviderConfig(): Promise<OpenAICompatibleConfig | null> {
-  const active = getProviderConfig().activeProviderId as ProviderName;
-  const meta = await resolveApiKeyWithMeta(active);
-  const apiKey = meta?.apiKey;
-  if (!apiKey) return null;
-
-  const custom = getCustomEndpoint(active);
-  let baseUrl =
-    custom ||
-    (active === 'openai-compatible' || active === 'custom'
-      ? process.env.OPENAI_BASE_URL ?? PROVIDER_ENDPOINTS[active]
-      : PROVIDER_ENDPOINTS[active]);
-  if (!baseUrl) return null;
-
-  const model = getModelForProvider(active);
-  return {
-    apiKey,
-    baseUrl,
-    model,
-    providerId: active,
-  };
 }

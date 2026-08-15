@@ -19,8 +19,11 @@ import { envNumber } from '../utils/envNumber.js';
 import {
   compactHistoryAsync,
   compactHistoryDetailed,
+  pruneToolResultsDetailed,
   type CompactHistoryResult,
 } from '../hooks/historyCompaction.js';
+import type { RoutedRequestSnapshot, ProviderStreamFn, AgentToolSpec } from '@zelari/core/harness';
+import type { StoredRequestUsage } from './requestSnapshotStore.js';
 
 export interface BudgetPolicy {
   /** Possibly compacted history. */
@@ -44,6 +47,15 @@ export interface BudgetPolicy {
   compactSummary?: string;
   /** Messages removed by compaction this policy application. */
   messagesRemoved?: number;
+  /**
+   * v1.36.0: full-request pressure (header + conversation + reserved
+   * output). Present only when a request snapshot anchored the meter.
+   */
+  contextPressureTokens?: number;
+  /** v1.36.0: true when the compaction replayed the original prefix. */
+  cacheReuseExpected?: boolean;
+  /** v1.36.0: human-readable cache telemetry line (fingerprints/occupancy). */
+  cacheMetricsLine?: string;
 }
 
 /** Rough chars→tokens (OpenAI-ish). */
@@ -199,25 +211,115 @@ export function applyBudgetPolicy(
  * Async budget policy: at ≥85% occupancy uses optional LLM continuity brief
  * (ZELARI_LLM_COMPACT, default on), falling back to extractive summary.
  */
+/**
+ * Envelope for the v1.36.0 cache-aware pipeline. All fields optional so
+ * legacy callers (council path, tests) keep working unchanged.
+ */
+export interface BudgetPolicyEnvelope {
+  sessionTokens?: number;
+  signal?: AbortSignal;
+  model?: string;
+  sessionId?: string;
+  /** Last routed request snapshot + provider usage (requestSnapshotStore). */
+  requestSnapshot?: {
+    snapshot: RoutedRequestSnapshot;
+    usage?: StoredRequestUsage;
+  } | null;
+  /** Provider stream for cache-aware compaction replay. */
+  providerStream?: ProviderStreamFn;
+}
+
+/** Reserved output headroom factored into context pressure (v1.36.0). */
+const RESERVED_OUTPUT_TOKENS = 8_192;
+
+/**
+ * Async budget policy — v1.36.0 pipeline (P6/P7):
+ *
+ *   measure → 70–85% warn
+ *          → ≥80% prune oversized tool results → remeasure
+ *          → ≥85% compactHistoryAsync(force, replay) → remeasure
+ *          → ≥95% emergency hard trim → send
+ *
+ * Measuring uses the FULL request surface (system + tools schema +
+ * conversation + reasoning) when a snapshot anchors it; otherwise it falls
+ * back to the legacy history-only estimate. Pruning BEFORE summarizing
+ * avoids an LLM compaction call entirely when two oversized read_file /
+ * grep results were the whole problem (DSH prune-remeasure lesson).
+ *
+ * cachedPromptTokens are NEVER subtracted from pressure: cached or not,
+ * the provider still holds the whole prefix in the context window.
+ */
 export async function applyBudgetPolicyAsync(
   history: readonly AgentMessage[],
   phase: WorkPhase,
-  opts?: { sessionTokens?: number; signal?: AbortSignal; model?: string },
+  opts?: BudgetPolicyEnvelope,
 ): Promise<BudgetPolicy> {
   const contextLimit = resolveContextLimit(opts?.model);
   const sessionExtra = opts?.sessionTokens ?? 0;
   const warnings: string[] = [];
   let { historyTurns, maxToolLoopIterations } = phaseKnobs(phase);
 
+  const envelope = opts?.requestSnapshot ?? null;
+  // v1.36.0 (case 12): when only the providerStream is available (no routed
+  // snapshot yet — first turn, tests), synthesize a DEGRADED replay base so
+  // the summarizer still runs on a cold minimal prefix: no cache reuse, but
+  // LLM compaction proceeds instead of being silently skipped. The METER
+  // stays anchored to real snapshots only (a degraded envelope would add
+  // RESERVED_OUTPUT_TOKENS pressure that was never measured).
+  const replayBase: {
+    provider: string;
+    model: string;
+    systemMessages: readonly AgentMessage[];
+    tools: readonly AgentToolSpec[];
+  } | null = envelope
+    ? {
+        provider: envelope.snapshot.provider,
+        model: envelope.snapshot.model,
+        systemMessages: envelope.snapshot.systemMessages,
+        tools: envelope.snapshot.tools,
+      }
+    : opts?.providerStream
+      ? { provider: 'local', model: opts?.model ?? 'unknown', systemMessages: [], tools: [] }
+      : null;
+
+  // Full-request meter (anchored when snapshot+usage are available).
+  const headerTokens = envelope
+    ? estimateSystemTokensLite(envelope.snapshot.systemMessages) +
+      estimateToolSchemaTokensLite(envelope.snapshot.tools)
+    : 0;
+  const convTokensOf = (h: readonly AgentMessage[]) =>
+    estimateConversationTokensLite(h);
+
   let hist = history as AgentMessage[];
-  let { estimated, occupancy } = occupancyOf(hist, sessionExtra, contextLimit);
+  let estimated = envelope
+    ? headerTokens + convTokensOf(hist) + RESERVED_OUTPUT_TOKENS
+    : estimateHistoryTokens(hist) + sessionExtra;
+  let occupancy = Math.min(1, estimated / contextLimit);
   let compactSummary = '';
   let messagesRemoved = 0;
+  let cacheReuseExpected: boolean | undefined;
+  let prunedTotal = 0;
 
   if (occupancy >= 0.7 && occupancy < 0.85) {
     warnings.push(
-      `[budget] context ~${Math.round(occupancy * 100)}% full (${estimated + sessionExtra}/${contextLimit} tok est.) — consider /compact or shorter replies.`,
+      `[budget] context ~${Math.round(occupancy * 100)}% full (${estimated}/${contextLimit} tok full-request est.) — consider /compact or shorter replies.`,
     );
+  }
+
+  // ── ≥80%: prune oversized tool results, then REMEASURE ──────────────────
+  if (occupancy >= 0.8) {
+    const pruned = pruneToolResultsDetailed(hist);
+    if (pruned.stats.pruned > 0) {
+      hist = pruned.messages;
+      prunedTotal += pruned.stats.pruned;
+      estimated = envelope
+        ? headerTokens + convTokensOf(hist) + RESERVED_OUTPUT_TOKENS
+        : estimateHistoryTokens(hist) + sessionExtra;
+      occupancy = Math.min(1, estimated / contextLimit);
+      warnings.push(
+        `[budget] pruned ${pruned.stats.pruned} oversized tool result(s) → ${Math.round(occupancy * 100)}% (${estimated} tok).`,
+      );
+    }
   }
 
   const fold = (r: CompactHistoryResult, label: string, forcedTurns: number) => {
@@ -225,15 +327,23 @@ export async function applyBudgetPolicyAsync(
     if (r.compacted) {
       messagesRemoved += r.messagesRemoved;
       if (r.summary) compactSummary = r.summary;
+      if (r.cacheReuseExpected !== undefined) {
+        cacheReuseExpected = r.cacheReuseExpected;
+      }
     }
-    ({ estimated, occupancy } = occupancyOf(hist, sessionExtra, contextLimit));
+    estimated = envelope
+      ? headerTokens + convTokensOf(hist) + RESERVED_OUTPUT_TOKENS
+      : estimateHistoryTokens(hist) + sessionExtra;
+    occupancy = Math.min(1, estimated / contextLimit);
     warnings.push(
-      `[budget] ${label} at ${forcedTurns === 2 ? '95%' : '85%'} — kept ~${forcedTurns} turns (${estimated} tok history est.` +
+      `[budget] ${label} — kept ~${forcedTurns} turns (${estimated} tok est.` +
         (r.messagesRemoved ? `, removed ${r.messagesRemoved} msgs` : '') +
-        `).`,
+        (r.cacheReuseExpected === false ? ', cache reuse NOT expected (model override)' : '') +
+        ').',
     );
   };
 
+  // ── ≥85% after pruning: cache-aware compaction (replay when possible) ───
   if (occupancy >= 0.85) {
     const forcedTurns = Math.max(1, Math.floor(historyTurns / 2));
     historyTurns = forcedTurns;
@@ -241,36 +351,112 @@ export async function applyBudgetPolicyAsync(
       maxToolLoopIterations,
       phase === 'plan' ? 24 : 40,
     );
-    const r = await compactHistoryAsync(hist, {
-      maxMessages: forcedTurns * 4,
+    let r = await compactHistoryAsync(hist, {
+      maxMessages: Math.max(2, forcedTurns * 4),
+      force: true,
       signal: opts?.signal,
+      ...(replayBase
+        ? { requestSnapshot: replayBase, providerStream: opts?.providerStream }
+        : {}),
     });
-    const label = r.summary.includes('· llm') ? 'llm-compact' : 'auto-compact';
+    // Few-but-huge histories may not shrink on the first window: retry
+    // with a minimal window so token pressure always wins (test case 20).
+    if (!r.compacted) {
+      r = await compactHistoryAsync(hist, {
+        maxMessages: 2,
+        force: true,
+        signal: opts?.signal,
+        ...(replayBase
+          ? { requestSnapshot: replayBase, providerStream: opts?.providerStream }
+          : {}),
+      });
+    }
+    const label = r.cacheReuseExpected === false ? 'llm-compact (model override)' : 'auto-compact';
     fold(r, label, forcedTurns);
   }
 
+  // ── ≥95%: emergency hard trim ────────────────────────────────────────────
   if (occupancy >= 0.95) {
     const hard = await compactHistoryAsync(hist, {
-      maxMessages: 8,
+      maxMessages: 2,
+      force: true,
       signal: opts?.signal,
     });
-    fold(hard, hard.summary.includes('· llm') ? 'llm-compact' : 'auto-compact', 2);
+    fold(hard, hard.summary.includes('· llm') ? 'llm-compact' : 'HARD trim', 2);
     historyTurns = 2;
     maxToolLoopIterations = Math.min(maxToolLoopIterations, 16);
     warnings.push(
-      `[budget] HARD context pressure (≥95%) — prefer /clear or a new session if quality drops.`,
+      '[budget] HARD context pressure (≥95%) — prefer /clear or a new session if quality drops.',
     );
   }
+
+  const cacheMetricsLine = envelope
+    ? [
+        'compaction meter:',
+        `provider/model: ${envelope.snapshot.provider}/${envelope.snapshot.model}`,
+        `headerFingerprint: ${envelope.snapshot.headerFingerprint.slice(0, 12)}`,
+        `occupancy: ${Math.round(occupancy * 100)}% (${estimated}/${contextLimit})`,
+        ...(envelope.usage?.cachedPromptTokens !== undefined
+          ? [`cachedPromptTokens: ${envelope.usage.cachedPromptTokens}`]
+          : []),
+        ...(cacheReuseExpected !== undefined
+          ? [`cacheReuseExpected: ${cacheReuseExpected}`]
+          : []),
+      ].join(' | ')
+    : undefined;
 
   return {
     history: hist,
     warnings,
     maxToolLoopIterations,
     historyTurns,
-    estimatedHistoryTokens: estimated,
+    estimatedHistoryTokens: envelope ? convTokensOf(hist) : estimated,
     contextLimit,
     occupancy,
     compactSummary: compactSummary || undefined,
     messagesRemoved: messagesRemoved || undefined,
+    ...(envelope ? { contextPressureTokens: estimated } : {}),
+    ...(cacheReuseExpected !== undefined ? { cacheReuseExpected } : {}),
+    ...(cacheMetricsLine ? { cacheMetricsLine } : {}),
   };
+}
+
+// ── Local estimators (requestMeter-lite, no import cycle) ───────────────────
+
+function estimateSystemTokensLite(
+  systemMessages: readonly AgentMessage[],
+): number {
+  let n = 0;
+  for (const m of systemMessages) n += 4 + Math.ceil((m.content ?? '').length / 4);
+  return n;
+}
+
+function estimateToolSchemaTokensLite(
+  tools: readonly { name: string; description?: string; parameters?: unknown }[],
+): number {
+  let n = 0;
+  for (const t of tools) {
+    n += Math.ceil((t.name ?? '').length / 4);
+    n += Math.ceil((t.description ?? '').length / 4);
+    n += Math.ceil(JSON.stringify(t.parameters ?? {}).length / 4);
+  }
+  return n + tools.length * 4;
+}
+
+function estimateConversationTokensLite(
+  messages: readonly AgentMessage[],
+): number {
+  let n = 0;
+  for (const m of messages) {
+    n += 4 + Math.ceil((m.content ?? '').length / 4);
+    if (m.toolCalls) {
+      for (const tc of m.toolCalls) {
+        n += Math.ceil(tc.name.length / 4) + Math.ceil(tc.id.length / 4);
+        n += Math.ceil(JSON.stringify(tc.args ?? {}).length / 4);
+      }
+    }
+    if (m.reasoningContent) n += Math.ceil(m.reasoningContent.length / 4);
+    if (m.toolCallId) n += Math.ceil(m.toolCallId.length / 4);
+  }
+  return n;
 }

@@ -25,15 +25,25 @@
  * @since v1.6.0
  */
 
-import type { AgentMessage } from "@zelari/core/harness";
+import type { AgentMessage, AgentToolSpec } from "@zelari/core/harness";
 import {
   extractiveHistorySummary,
   formatDroppedForLlm,
 } from "../budget/historySummary.js";
-import { llmSummarizeHistory } from "../budget/llmCompact.js";
+import {
+  llmSummarizeHistoryReplay,
+  type LlmSummarizeReplayResult,
+} from "../budget/llmCompact.js";
 import { envNumber } from "../utils/envNumber.js";
 
 export interface CompactHistoryOptions {
+  /**
+   * v1.36.0 (P8): bypass the `2 × maxMessages` message-count gate. The
+   * occupancy-driven budget pipeline calls with force when TOKEN pressure
+   * is high even with few (huge) messages. Default false preserves the
+   * legacy amortized behavior for count-based callers.
+   */
+  force?: boolean;
   /**
    * Max number of messages to keep after compaction. When the accumulator
    * exceeds `2 * maxMessages`, the oldest messages are dropped (subject to
@@ -59,6 +69,10 @@ export interface CompactHistoryResult {
   summary: string;
   /** Tool results pruned in-place (head/tail) to preserve the cache prefix. */
   prunedToolResults?: number;
+  /** v1.36.0: replayed the original prefix → provider cache reuse expected. */
+  cacheReuseExpected?: boolean;
+  /** v1.36.0: replay diverged from the original prefix (telemetry only). */
+  replayExactPrefix?: boolean;
 }
 
 /**
@@ -83,6 +97,12 @@ export function resolveMaxMessages(opts?: CompactHistoryOptions): number {
     turns = Math.min(turns, 3);
   }
   if (turns <= 0) return 0;
+  // v1.36.0 (P8/case 20): occupancy-driven callers (force=true) pass a
+  // PRECISE message window — honor it literally instead of rounding through
+  // the turns×4 amortization, which would inflate a small window (2 → 4)
+  // and refuse to drop anything. The ×4 rounding stays for the count-gated
+  // legacy path where it amortizes compaction across turns.
+  if (opts?.force && opts?.maxMessages) return Math.max(1, opts.maxMessages);
   return turns * 4;
 }
 
@@ -235,6 +255,28 @@ export function compactHistory(
 }
 
 /**
+ * v1.36.0 (P12): the compaction checkpoint is a USER message, not a new
+ * system policy block. The system prompt stays stable (1–2 messages, byte
+ * identical across turns) so the provider prefix cache keeps hitting; the
+ * checkpoint replaces the dropped conversation as model-visible user
+ * context. This is the same surface pattern used by DSH-style harnesses.
+ */
+const CHECKPOINT_WRAPPER_PREFIX =
+  'This is an automatically generated checkpoint of earlier conversation. ' +
+  'Treat it as established context and continue directly.';
+
+export function buildCheckpointMessage(summaryText: string): AgentMessage {
+  return {
+    role: 'user',
+    content:
+      CHECKPOINT_WRAPPER_PREFIX +
+      '\n\n<compacted-summary>\n' +
+      summaryText +
+      '\n</compacted-summary>',
+  };
+}
+
+/**
  * Same as compactHistory but returns metadata (removed count + summary text).
  */
 export function compactHistoryDetailed(
@@ -246,7 +288,9 @@ export function compactHistoryDetailed(
     return { messages: [], compacted: true, messagesRemoved: messages.length, summary: "" };
   }
   // Trigger at 2× cap so we don't compact on every single turn (amortize).
-  if (messages.length <= maxMessages * 2) {
+  // v1.36.0 (P8): occupancy-driven callers pass force=true so high TOKEN
+  // pressure compacts even when the message COUNT is low.
+  if (messages.length <= maxMessages * 2 && !opts?.force) {
     return {
       messages: messages as AgentMessage[],
       compacted: false,
@@ -255,7 +299,7 @@ export function compactHistoryDetailed(
     };
   }
 
-  const naiveCut = messages.length - maxMessages;
+  const naiveCut = Math.max(0, messages.length - maxMessages);
   const cut = findValidCutIndex(messages, naiveCut);
   if (cut === 0) {
     return {
@@ -270,10 +314,9 @@ export function compactHistoryDetailed(
   const pruned = pruneToolResultsDetailed(messages.slice(cut));
   const kept = pruned.messages;
   const summaryText = extractiveHistorySummary(droppedMsgs);
-  const summary: AgentMessage = {
-    role: "system",
-    content: summaryText || `${COMPACT_MARKER} ${cut} earlier message(s) dropped.`,
-  };
+  const summary = buildCheckpointMessage(
+    summaryText || `${COMPACT_MARKER} ${cut} earlier message(s) dropped.`,
+  );
   return {
     messages: [summary, ...kept],
     compacted: true,
@@ -289,7 +332,22 @@ export function compactHistoryDetailed(
  */
 export async function compactHistoryAsync(
   messages: readonly AgentMessage[],
-  opts?: CompactHistoryOptions & { signal?: AbortSignal },
+  opts?: CompactHistoryOptions & {
+    signal?: AbortSignal;
+    /**
+     * v1.36.0 (P10): last routed request snapshot — the replay base. When
+     * present (with providerStream) the summarizer replays the ORIGINAL
+     * system prefix + tool schemas + dropped prefix and appends the
+     * compaction instruction, so the provider prefix cache keeps hitting.
+     */
+    requestSnapshot?: {
+      provider: string;
+      model: string;
+      systemMessages: readonly AgentMessage[];
+      tools: readonly AgentToolSpec[];
+    } | null;
+    providerStream?: import('@zelari/core/harness').ProviderStreamFn;
+  },
 ): Promise<CompactHistoryResult> {
   const base = compactHistoryDetailed(messages, opts);
   if (!base.compacted || base.messagesRemoved === 0) return base;
@@ -297,28 +355,63 @@ export async function compactHistoryAsync(
   const cut = base.messagesRemoved;
   const droppedMsgs = messages.slice(0, cut);
   const extractive = extractiveHistorySummary(droppedMsgs);
-  const droppedTranscript = formatDroppedForLlm(droppedMsgs);
 
   let summaryText = extractive;
-  try {
-    const llm = await llmSummarizeHistory({
-      extractive,
-      droppedTranscript,
-      signal: opts?.signal,
-    });
-    if (llm && llm.trim().length > 40) summaryText = llm.trim();
-  } catch {
-    // keep extractive
+  let cacheReuseExpected: boolean | undefined;
+  let replayExactPrefix: boolean | undefined;
+
+  const canReplay = !!(opts?.providerStream && opts?.requestSnapshot);
+
+  if (canReplay) {
+    try {
+      const replay = await llmSummarizeHistoryReplay({
+        providerStream: opts!.providerStream!,
+        provider: opts!.requestSnapshot!.provider,
+        model: opts!.requestSnapshot!.model,
+        systemMessages: opts!.requestSnapshot!.systemMessages,
+        tools: opts!.requestSnapshot!.tools as import('@zelari/core/harness').AgentToolSpec[],
+        droppedMessages: droppedMsgs,
+        signal: opts?.signal,
+      });
+      cacheReuseExpected = replay.cacheReuseExpected;
+      if (replay.summary && replay.summary.trim().length > 40) {
+        // P13: a summary that does not shrink the source is a failed
+        // compaction — keep the (much smaller) extractive sketch instead.
+        const sourceTokens = roughTokens(droppedMsgs);
+        const summaryTok = Math.ceil(replay.summary.length / 4);
+        if (summaryTok < sourceTokens) {
+          summaryText = replay.summary.trim();
+        }
+      }
+    } catch {
+      // keep extractive
+    }
   }
 
   const pruned = pruneToolResultsDetailed(messages.slice(cut));
   const kept = pruned.messages;
-  const summary: AgentMessage = { role: "system", content: summaryText };
+  const summary = buildCheckpointMessage(summaryText);
   return {
     messages: [summary, ...kept],
     compacted: true,
     messagesRemoved: cut,
     summary: summaryText,
     prunedToolResults: pruned.stats.pruned,
+    cacheReuseExpected,
+    replayExactPrefix,
   };
+}
+
+/** Rough chars/4 token estimate over content + tool args (local, no cycle). */
+function roughTokens(msgs: readonly AgentMessage[]): number {
+  let n = 0;
+  for (const m of msgs) {
+    n += Math.ceil((m.content ?? '').length / 4);
+    if (m.toolCalls) {
+      for (const tc of m.toolCalls) {
+        n += Math.ceil(JSON.stringify(tc.args ?? {}).length / 4);
+      }
+    }
+  }
+  return Math.max(1, n);
 }
