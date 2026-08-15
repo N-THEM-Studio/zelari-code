@@ -64,10 +64,14 @@ describe('compactHistoryDetailed continuity summary', () => {
     expect(result.compacted).toBe(true);
     expect(result.messagesRemoved).toBeGreaterThan(0);
     expect(result.summary).toMatch(/history-summary|compacted/i);
-    expect(result.messages[0]?.role).toBe('system');
+    // v1.36.0 (P12): the compaction checkpoint is a USER message wrapped in
+    // <compacted-summary>, not a new system policy block — the system prefix
+    // stays byte-stable for provider cache reuse.
+    expect(result.messages[0]?.role).toBe('user');
+    expect(result.messages[0]?.content).toContain('<compacted-summary>');
     expect(result.messages[0]?.content).toMatch(/User goals|history-summary|compacted/i);
     // same API as compactHistory
     const same = compactHistory(msgs, { maxMessages: 8 });
-    expect(same[0]?.role).toBe('system');
+    expect(same[0]?.role).toBe('user');
   });
 });

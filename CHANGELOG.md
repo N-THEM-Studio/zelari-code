@@ -5,6 +5,22 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.42.0] - 2026-08-15
+
+### Fixed (context & cache upgrade)
+- **Rolling-history off-by-one with two system messages** — `seedLen` assumed exactly 1 system prefix; with stable+volatile system prompts the current user message leaked into the rolling history and got compacted away. The seed now derives from the actual `systemMessages.length`.
+- **AgentHarness snapshots reported the transport family instead of the provider** — `provider: "openai-compatible"` hardcoded; now carries the real routed provider id (e.g. `deepseek`).
+- **Few-but-huge histories never compacted under token pressure** — the `2 × maxMessages` count gate blocked occupancy-driven compaction; `force: true` now bypasses it and honors the requested window literally (`resolveMaxMessages`), with the naive cut clamped at 0.
+
+### Added
+- **Routed request snapshots + deterministic fingerprints** (`@zelari/core/harness`): `createRoutedRequestSnapshot` records provider/model/system prefix/canonical (lex-sorted) tool schemas + conversation with SHA-256 `headerFingerprint`/`requestFingerprint`; `compareReplayPrefix` (telemetry-only) reports prefix divergence. `AgentHarnessConfig.onRequestSnapshot` emits at both routing sites.
+- **Full-request meter with provider-usage anchoring** (`src/cli/budget/requestMeter.ts`): measures system + tool schemas + `reasoningContent` + `toolCallId` + role overhead, anchors the stable header to provider-reported `promptTokens` when the header fingerprint matches, and never subtracts `cachedPromptTokens` from context pressure. `requestSnapshotStore` (per-session, `/clear`-aware) keeps the last snapshot + usage.
+- **Cache-aware compaction via prefix replay** (`src/cli/budget/llmCompact.ts` rewritten): the summarizer request is `SYSTEM(original) + TOOLS(original, sorted) + DROPPED PREFIX + COMPACTION_INSTRUCTION` routed through the live `providerStream` — byte-identical prefix up to the trailing instruction, so the provider KV/prefix cache keeps hitting (cached tokens ≈ 1/10 cost). Accidental tool calls reject the summary; `ZELARI_COMPACT_MODEL` forces a different model and marks `cacheReuseExpected: false`.
+- **Prune → remeasure → summarize pipeline** (`applyBudgetPolicyAsync`): ≥80% prunes oversized tool results in place (cache-preserving) and remeasures BEFORE calling the summarizer; ≥85% compacts with force+replay (retry with minimal window for few-but-huge cases); ≥95% emergency hard trim. Summaries that don't shrink the dropped source are rejected (P13).
+- **Checkpoint-as-user (P12)**: the compaction summary is now a `user` message wrapped in `<compacted-summary>` instead of a new `system` block — the system prefix stays byte-stable across turns for cache reuse.
+- **`session_compacted` event** extended with fingerprints, estimated sizes, pruned count, and `cacheReuseExpected`; cache telemetry line surfaced in budget warnings.
+- **Regression suite** `tests/unit/cli-context-cache-upgrade.test.ts` (26 cases covering the spec's 22 mandatory checks).
+
 ## [1.41.0] - 2026-08-15
 
 ### Fixed

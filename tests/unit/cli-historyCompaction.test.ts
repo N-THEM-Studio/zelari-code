@@ -98,7 +98,11 @@ describe("historyCompaction (v1.6.0)", () => {
       // resolveMaxMessages(opts) divides opts.maxMessages by 4 → turns=2 → 8.
       const result = compactHistory(msgs, opts);
       expect(result.length).toBeLessThan(msgs.length);
-      expect(result[0].role).toBe("system");
+      // v1.36.0 (P12): the checkpoint is a USER message wrapped in
+      // <compacted-summary>, not a new system policy block — the system
+      // prefix stays byte-stable for provider cache reuse.
+      expect(result[0].role).toBe("user");
+      expect(result[0].content).toContain("<compacted-summary>");
       // v1.21+: extractive continuity summary (still history-related).
       expect(result[0].content).toMatch(/\[history/);
       // The kept tail should be the most recent messages.
