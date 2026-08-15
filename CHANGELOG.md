@@ -5,6 +5,15 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.40.0] - 2026-08-15
+
+### Fixed
+- **Desktop thinking picker ignored the selected model** — options are now computed from the toolbar model, so Grok 4.6 shows xHigh immediately and DeepSeek shows High/Max (no more silent Low/Medium/High fallback).
+- **Toolbar model change was not persisted** — switching provider/model now writes `provider.json` so the next snapshot and the next turn use the same model.
+
+### Changed
+- Default models: Grok / OpenAI-compatible → `grok-4.6`, ChatGPT → `gpt-5.6-codex`, Anthropic → `claude-sonnet-4-6`.
+
 ## [1.39.0] - 2026-08-15
 
 ### Added

@@ -49,14 +49,14 @@ export interface ProviderConfig {
 const DEFAULTS: ProviderConfig = {
   activeProviderId: 'openai-compatible',
   modelByProvider: {
-    // grok-4.5: flagship; reasoning_effort defaults to "high" on the xAI API
-    'openai-compatible': 'grok-4.5',
+    // grok-4.6: flagship; native reasoning_effort includes xhigh
+    'openai-compatible': 'grok-4.6',
     'minimax': 'MiniMax-M2.5',
     'glm': 'glm-4.6',
-    'grok': 'grok-4.5',
+    'grok': 'grok-4.6',
     'deepseek': 'deepseek-v4-pro',
-    'chatgpt': 'gpt-5.2-codex',
-    'anthropic': 'claude-sonnet-4-5',
+    'chatgpt': 'gpt-5.6-codex',
+    'anthropic': 'claude-sonnet-4-6',
     'custom': '',
   },
   thinkingByProvider: {

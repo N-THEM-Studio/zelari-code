@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { discoverModels, getAppConfig } from "../agentClient";
+import { thinkingSelectOptions } from "../thinkingCapability";
 import type { DesktopConfig } from "../types";
 
 interface Props {
@@ -56,34 +57,7 @@ export function ProviderModelBar({
       : [];
 
   const thinkingValue = active?.thinking ?? "auto";
-  const cap = active?.thinkingCapability;
-  const thinkingOptions: { value: string; label: string }[] = [
-    { value: "auto", label: "Auto" },
-    { value: "off", label: "Off" },
-  ];
-  const effortLevels = cap?.efforts?.length
-    ? cap.efforts
-    : cap?.effort
-      ? (["low", "medium", "high"] as const)
-      : [];
-  const EFFORT_LABELS: Record<string, string> = {
-    low: "Low",
-    medium: "Medium",
-    high: "High",
-    xhigh: "xHigh",
-    max: "Max",
-  };
-  for (const level of effortLevels) {
-    thinkingOptions.push({ value: level, label: EFFORT_LABELS[level] ?? level });
-  }
-  if (cap?.budget) {
-    thinkingOptions.push(
-      { value: "budget:4000", label: "4k tokens" },
-      { value: "budget:8000", label: "8k tokens" },
-      { value: "budget:16000", label: "16k tokens" },
-      { value: "budget:32000", label: "32k tokens" },
-    );
-  }
+  const thinkingOptions = thinkingSelectOptions(provider, model);
 
   const [discovering, setDiscovering] = useState(false);
   const lastDiscoverByProvider = useRef<Record<string, number>>({});

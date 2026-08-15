@@ -33,9 +33,9 @@ export interface OAuthActionResult {
 }
 
 const DEFAULT_MODELS: Partial<Record<ProviderName, string>> = {
-  grok: 'grok-4.5',
-  chatgpt: 'gpt-5.2-codex',
-  anthropic: 'claude-sonnet-4-5',
+  grok: 'grok-4.6',
+  chatgpt: 'gpt-5.6-codex',
+  anthropic: 'claude-sonnet-4-6',
 };
 
 export async function persistOAuthLogin(

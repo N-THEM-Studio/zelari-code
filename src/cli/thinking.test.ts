@@ -5,6 +5,7 @@ import {
   isValidThinkingInput,
   thinkingCapabilityFor,
   effortLevelsFor,
+  thinkingSelectOptions,
   clampEffort,
   translateOpenAiCompatibleThinking,
   translateResponsesThinking,
@@ -81,6 +82,28 @@ describe('thinkingCapabilityFor / effortLevelsFor', () => {
     expect(thinkingCapabilityFor('anthropic', 'claude-sonnet-4-6').budget).toBe(true);
     expect(thinkingCapabilityFor('glm', 'glm-5.3').budget).toBe(false);
     expect(thinkingCapabilityFor('glm', 'glm-5.3').effort).toBe(true);
+  });
+});
+
+describe('thinkingSelectOptions', () => {
+  it('shows xHigh for grok-4.6 and not grok-4.5', () => {
+    const v46 = thinkingSelectOptions('grok', 'grok-4.6').map((o) => o.value);
+    const v45 = thinkingSelectOptions('grok', 'grok-4.5').map((o) => o.value);
+    expect(v46).toEqual(['auto', 'off', 'low', 'medium', 'high', 'xhigh']);
+    expect(v45).toEqual(['auto', 'off', 'low', 'medium', 'high']);
+  });
+
+  it('shows Max (not Low/Medium) for DeepSeek regardless of model id', () => {
+    const v = thinkingSelectOptions('deepseek', 'deepseek-v4-flash').map((o) => o.value);
+    expect(v).toEqual(['auto', 'off', 'high', 'max']);
+    expect(v).not.toContain('low');
+    expect(v).not.toContain('medium');
+  });
+
+  it('shows xHigh+Max for gpt-5.6-codex', () => {
+    const v = thinkingSelectOptions('chatgpt', 'gpt-5.6-codex').map((o) => o.value);
+    expect(v).toContain('xhigh');
+    expect(v).toContain('max');
   });
 });
 

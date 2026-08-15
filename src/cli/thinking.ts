@@ -18,32 +18,40 @@
  */
 
 import type { ProviderName } from './keyStore.js';
+import {
+  type ThinkingEffort,
+  type ThinkingCapability,
+  THINKING_EFFORTS,
+  thinkingCapabilityFor,
+  effortLevelsFor,
+  grokHasXhigh,
+  gptHasXhigh,
+  gptHasMax,
+  claudeHasMax,
+  claudeHasXhigh,
+  glmHasEffortScale,
+  thinkingSelectOptions,
+} from './thinkingCapability.js';
 
-export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
-
-export const THINKING_EFFORTS: readonly ThinkingEffort[] = [
-  'low',
-  'medium',
-  'high',
-  'xhigh',
-  'max',
-];
+export type { ThinkingEffort, ThinkingCapability };
+export {
+  THINKING_EFFORTS,
+  thinkingCapabilityFor,
+  effortLevelsFor,
+  grokHasXhigh,
+  gptHasXhigh,
+  gptHasMax,
+  claudeHasMax,
+  claudeHasXhigh,
+  glmHasEffortScale,
+  thinkingSelectOptions,
+};
 
 export type ThinkingSpec =
   | 'auto'
   | { kind: 'off' }
   | { kind: 'effort'; effort: ThinkingEffort }
   | { kind: 'budget'; budgetTokens: number };
-
-/** Which thinking controls a provider/model supports. Empty = only 'auto'. */
-export interface ThinkingCapability {
-  effort?: boolean;
-  budget?: boolean;
-  /** Native effort levels for this provider + model (subset of ThinkingEffort). */
-  efforts?: ThinkingEffort[];
-}
-
-const BASE_EFFORTS: ThinkingEffort[] = ['low', 'medium', 'high'];
 
 /**
  * Capability table (per ADR-0017). Effort = reasoning_effort enum; budget =
@@ -52,123 +60,14 @@ const BASE_EFFORTS: ThinkingEffort[] = ['low', 'medium', 'high'];
  */
 export const PROVIDER_THINKING_CAPABILITY: Record<ProviderName, ThinkingCapability> = {
   'openai-compatible': { effort: true },
-  'grok': { effort: true },
-  'chatgpt': { effort: true },
-  'anthropic': { budget: true },
-  'glm': { budget: true },
-  'deepseek': { effort: true },
-  'minimax': { effort: true },
-  'custom': { effort: true },
+  grok: { effort: true },
+  chatgpt: { effort: true },
+  anthropic: { budget: true },
+  glm: { budget: true },
+  deepseek: { effort: true },
+  minimax: { effort: true },
+  custom: { effort: true },
 };
-
-export function thinkingCapabilityFor(
-  id: ProviderName,
-  model?: string,
-): ThinkingCapability {
-  const base = PROVIDER_THINKING_CAPABILITY[id] ?? {};
-  const efforts = effortLevelsFor(id, model);
-  const budget = supportsBudget(id, model);
-  return {
-    ...base,
-    effort: efforts.length > 0 || base.effort,
-    budget,
-    efforts: efforts.length > 0 ? efforts : undefined,
-  };
-}
-
-/** Native effort enum values this (provider, model) accepts on the wire. */
-export function effortLevelsFor(id: ProviderName, model?: string): ThinkingEffort[] {
-  const m = (model ?? '').trim();
-  switch (id) {
-    case 'grok':
-    case 'openai-compatible':
-    case 'custom':
-      if (grokHasXhigh(m)) return [...BASE_EFFORTS, 'xhigh'];
-      return [...BASE_EFFORTS];
-    case 'chatgpt':
-      if (gptHasMax(m)) return [...BASE_EFFORTS, 'xhigh', 'max'];
-      if (gptHasXhigh(m)) return [...BASE_EFFORTS, 'xhigh'];
-      return [...BASE_EFFORTS];
-    case 'deepseek':
-      return ['high', 'max'];
-    case 'minimax':
-      return [...BASE_EFFORTS];
-    case 'glm':
-      if (glmHasEffortScale(m)) return ['low', 'high', 'max'];
-      return [];
-    case 'anthropic':
-      if (claudeHasXhigh(m)) return ['high', 'xhigh', 'max'];
-      if (claudeHasMax(m)) return ['high', 'max'];
-      return [];
-    default:
-      return [];
-  }
-}
-
-function supportsBudget(id: ProviderName, model?: string): boolean {
-  if (id === 'anthropic') return true;
-  if (id === 'glm') return !glmHasEffortScale(model);
-  return Boolean(PROVIDER_THINKING_CAPABILITY[id]?.budget);
-}
-
-export function grokHasXhigh(model: string): boolean {
-  const v = parseDottedVersion(model, /grok[-_]?(\d+)(?:[.-](\d+))?/i);
-  if (!v) return false;
-  return v.major > 4 || (v.major === 4 && v.minor >= 6);
-}
-
-export function gptHasXhigh(model: string): boolean {
-  const v = parseDottedVersion(model, /gpt[-_]?(\d+)(?:[.-](\d+))?/i);
-  if (!v) return false;
-  return v.major > 5 || (v.major === 5 && v.minor >= 4);
-}
-
-export function gptHasMax(model: string): boolean {
-  const v = parseDottedVersion(model, /gpt[-_]?(\d+)(?:[.-](\d+))?/i);
-  if (!v) return false;
-  return v.major > 5 || (v.major === 5 && v.minor >= 6);
-}
-
-export function claudeHasMax(model: string): boolean {
-  const v = parseClaudeVersion(model);
-  if (!v) return false;
-  return v.major > 4 || (v.major === 4 && v.minor >= 6);
-}
-
-export function claudeHasXhigh(model: string): boolean {
-  const v = parseClaudeVersion(model);
-  if (!v) return false;
-  if (v.major >= 5) return true;
-  return v.major === 4 && v.minor >= 7;
-}
-
-export function glmHasEffortScale(model?: string): boolean {
-  const v = parseDottedVersion(model ?? '', /glm[-_]?(\d+)(?:[.-](\d+))?/i);
-  if (!v) return false;
-  return v.major >= 5;
-}
-
-function parseDottedVersion(
-  model: string,
-  re: RegExp,
-): { major: number; minor: number } | null {
-  const m = re.exec(model);
-  if (!m) return null;
-  return {
-    major: Number.parseInt(m[1], 10),
-    minor: m[2] ? Number.parseInt(m[2], 10) : 0,
-  };
-}
-
-function parseClaudeVersion(model: string): { major: number; minor: number } | null {
-  // claude-sonnet-4-6 / claude-opus-4.7 / claude-sonnet-5
-  const m = /claude-(?:sonnet|opus|haiku)[-_]?(\d+)(?:[.-](\d+))?/i.exec(model);
-  if (!m) return null;
-  return {
-    major: Number.parseInt(m[1], 10),
-    minor: m[2] ? Number.parseInt(m[2], 10) : 0,
-  };
-}
 
 const EFFORT_RANK: Record<ThinkingEffort, number> = {
   low: 1,

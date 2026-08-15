@@ -1411,7 +1411,7 @@ export default function App() {
     );
   };
 
-  const onProviderChange = (id: string) => {
+  const onProviderChange = async (id: string) => {
     setProvider(id);
     const p = config?.providers.find((x) => x.id === id);
     const nextModel =
@@ -1422,13 +1422,33 @@ export default function App() {
         c.id === activeId ? { ...c, provider: id, model: nextModel } : c,
       ),
     );
+    try {
+      await setAppConfig({
+        provider: id,
+        ...(nextModel ? { model: nextModel } : {}),
+      });
+      await refreshConfig();
+    } catch (e) {
+      setStatusLine(
+        e instanceof Error ? e.message : "Failed to persist provider",
+      );
+    }
   };
 
-  const onModelChange = (id: string) => {
+  const onModelChange = async (id: string) => {
     setModel(id);
     setConversations((prev) =>
       prev.map((c) => (c.id === activeId ? { ...c, model: id } : c)),
     );
+    if (!provider) return;
+    try {
+      await setAppConfig({ provider, model: id });
+      await refreshConfig();
+    } catch (e) {
+      setStatusLine(
+        e instanceof Error ? e.message : "Failed to persist model",
+      );
+    }
   };
 
   const onThinkingChange = async (spec: string) => {
