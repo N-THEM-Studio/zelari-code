@@ -51,7 +51,7 @@ export interface SlashCommandResult {
   customEndpoint?: string;
   /** For `provider_custom`: true if the user wants to clear the custom endpoint. */
   customClear?: boolean;
-  /** For `effort_set`: the thinking-effort spec (auto|off|low|medium|high|budget:N). */
+  /** For `effort_set`: the thinking-effort spec (auto|off|low|medium|high|xhigh|max|budget:N). */
   effortSpec?: string;
   /** For `steer`: the user prompt to enqueue on the active harness. */
   steerText?: string;

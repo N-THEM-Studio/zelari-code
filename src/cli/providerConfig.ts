@@ -33,7 +33,7 @@ export interface ProviderConfig {
   modelByProvider: Record<ProviderName, string>;
   /**
    * Per-provider thinking-effort spec (ADR-0017), stored as a canonical
-   * string: 'auto' | 'off' | 'low' | 'medium' | 'high' | 'budget:<tokens>'.
+   * string: 'auto' | 'off' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'budget:<tokens>'.
    * Always contains an entry for every provider.
    */
   thinkingByProvider: Record<ProviderName, string>;

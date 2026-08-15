@@ -62,7 +62,7 @@ export interface DesktopProviderInfo {
   /** Current thinking-effort spec (canonical string). */
   thinking?: string;
   /** Which thinking controls this provider supports. */
-  thinkingCapability?: { effort?: boolean; budget?: boolean };
+  thinkingCapability?: { effort?: boolean; budget?: boolean; efforts?: Array<'low' | 'medium' | 'high' | 'xhigh' | 'max'> };
 }
 
 export interface DesktopConfigSnapshot {
@@ -340,7 +340,7 @@ export function buildDesktopConfigSnapshot(): DesktopConfigSnapshot {
       hasRefreshToken: Boolean(stored?.refreshToken),
       oauthSupported: isOAuthProvider(p.id),
       thinking: config.thinkingByProvider[p.id] ?? 'auto',
-      thinkingCapability: thinkingCapabilityFor(p.id),
+      thinkingCapability: thinkingCapabilityFor(p.id, defaultModel),
     };
   });
 

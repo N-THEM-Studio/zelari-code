@@ -1,24 +1,33 @@
 /**
  * thinking — unified "thinking effort" selection for all providers.
  *
- * ADR-0017. A single `ThinkingSpec` abstraction is translated, per provider,
- * into the vendor-specific request parameters that control how much the model
- * reasons before answering:
+ * ADR-0017. A single `ThinkingSpec` abstraction is translated, per provider
+ * (and, when known, per model), into the vendor-specific request parameters
+ * that control how much the model reasons before answering:
  *
- *   - OpenAI / xAI → `reasoning_effort` enum (low/medium/high).
- *   - Anthropic / GLM → `thinking` block (enabled + budget_tokens, or disabled).
+ *   - OpenAI / xAI → `reasoning_effort` enum (low/medium/high/xhigh).
+ *   - ChatGPT Responses → `reasoning.effort` (low/medium/high/xhigh/max).
+ *   - Anthropic → `thinking` budget block, or `output_config.effort` on 4.6+.
+ *   - GLM-4.x → `thinking` budget block; GLM-5.x → `reasoning_effort` + toggle.
  *   - DeepSeek → `thinking` toggle + `reasoning_effort` (high/max).
- *   - OpenAI Responses (ChatGPT) → `reasoning.effort`.
  *
  * Any unsupported combination degrades to `'auto'` (no parameter sent → the
  * provider default) with a `degraded: true` flag + a human-readable `note`,
- * never an error. This keeps the UI honest and the wire safe even as vendor
- * APIs drift.
+ * never an error. Levels that exist on the family but not on this model are
+ * *clamped* to the nearest native value (still sent) instead of dropped.
  */
 
 import type { ProviderName } from './keyStore.js';
 
-export type ThinkingEffort = 'low' | 'medium' | 'high';
+export type ThinkingEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export const THINKING_EFFORTS: readonly ThinkingEffort[] = [
+  'low',
+  'medium',
+  'high',
+  'xhigh',
+  'max',
+];
 
 export type ThinkingSpec =
   | 'auto'
@@ -26,16 +35,20 @@ export type ThinkingSpec =
   | { kind: 'effort'; effort: ThinkingEffort }
   | { kind: 'budget'; budgetTokens: number };
 
-/** Which thinking controls a provider supports. Empty = only 'auto'. */
+/** Which thinking controls a provider/model supports. Empty = only 'auto'. */
 export interface ThinkingCapability {
   effort?: boolean;
   budget?: boolean;
+  /** Native effort levels for this provider + model (subset of ThinkingEffort). */
+  efforts?: ThinkingEffort[];
 }
+
+const BASE_EFFORTS: ThinkingEffort[] = ['low', 'medium', 'high'];
 
 /**
  * Capability table (per ADR-0017). Effort = reasoning_effort enum; budget =
- * budget_tokens block. DeepSeek exposes an effort enum (high/max) + a toggle,
- * so it is `effort` here; GLM takes an Anthropic-style `thinking` budget block.
+ * budget_tokens block. Extra native levels (xhigh/max) are model-gated via
+ * `effortLevelsFor`.
  */
 export const PROVIDER_THINKING_CAPABILITY: Record<ProviderName, ThinkingCapability> = {
   'openai-compatible': { effort: true },
@@ -48,8 +61,159 @@ export const PROVIDER_THINKING_CAPABILITY: Record<ProviderName, ThinkingCapabili
   'custom': { effort: true },
 };
 
-export function thinkingCapabilityFor(id: ProviderName): ThinkingCapability {
-  return PROVIDER_THINKING_CAPABILITY[id] ?? {};
+export function thinkingCapabilityFor(
+  id: ProviderName,
+  model?: string,
+): ThinkingCapability {
+  const base = PROVIDER_THINKING_CAPABILITY[id] ?? {};
+  const efforts = effortLevelsFor(id, model);
+  const budget = supportsBudget(id, model);
+  return {
+    ...base,
+    effort: efforts.length > 0 || base.effort,
+    budget,
+    efforts: efforts.length > 0 ? efforts : undefined,
+  };
+}
+
+/** Native effort enum values this (provider, model) accepts on the wire. */
+export function effortLevelsFor(id: ProviderName, model?: string): ThinkingEffort[] {
+  const m = (model ?? '').trim();
+  switch (id) {
+    case 'grok':
+    case 'openai-compatible':
+    case 'custom':
+      if (grokHasXhigh(m)) return [...BASE_EFFORTS, 'xhigh'];
+      return [...BASE_EFFORTS];
+    case 'chatgpt':
+      if (gptHasMax(m)) return [...BASE_EFFORTS, 'xhigh', 'max'];
+      if (gptHasXhigh(m)) return [...BASE_EFFORTS, 'xhigh'];
+      return [...BASE_EFFORTS];
+    case 'deepseek':
+      return ['high', 'max'];
+    case 'minimax':
+      return [...BASE_EFFORTS];
+    case 'glm':
+      if (glmHasEffortScale(m)) return ['low', 'high', 'max'];
+      return [];
+    case 'anthropic':
+      if (claudeHasXhigh(m)) return ['high', 'xhigh', 'max'];
+      if (claudeHasMax(m)) return ['high', 'max'];
+      return [];
+    default:
+      return [];
+  }
+}
+
+function supportsBudget(id: ProviderName, model?: string): boolean {
+  if (id === 'anthropic') return true;
+  if (id === 'glm') return !glmHasEffortScale(model);
+  return Boolean(PROVIDER_THINKING_CAPABILITY[id]?.budget);
+}
+
+export function grokHasXhigh(model: string): boolean {
+  const v = parseDottedVersion(model, /grok[-_]?(\d+)(?:[.-](\d+))?/i);
+  if (!v) return false;
+  return v.major > 4 || (v.major === 4 && v.minor >= 6);
+}
+
+export function gptHasXhigh(model: string): boolean {
+  const v = parseDottedVersion(model, /gpt[-_]?(\d+)(?:[.-](\d+))?/i);
+  if (!v) return false;
+  return v.major > 5 || (v.major === 5 && v.minor >= 4);
+}
+
+export function gptHasMax(model: string): boolean {
+  const v = parseDottedVersion(model, /gpt[-_]?(\d+)(?:[.-](\d+))?/i);
+  if (!v) return false;
+  return v.major > 5 || (v.major === 5 && v.minor >= 6);
+}
+
+export function claudeHasMax(model: string): boolean {
+  const v = parseClaudeVersion(model);
+  if (!v) return false;
+  return v.major > 4 || (v.major === 4 && v.minor >= 6);
+}
+
+export function claudeHasXhigh(model: string): boolean {
+  const v = parseClaudeVersion(model);
+  if (!v) return false;
+  if (v.major >= 5) return true;
+  return v.major === 4 && v.minor >= 7;
+}
+
+export function glmHasEffortScale(model?: string): boolean {
+  const v = parseDottedVersion(model ?? '', /glm[-_]?(\d+)(?:[.-](\d+))?/i);
+  if (!v) return false;
+  return v.major >= 5;
+}
+
+function parseDottedVersion(
+  model: string,
+  re: RegExp,
+): { major: number; minor: number } | null {
+  const m = re.exec(model);
+  if (!m) return null;
+  return {
+    major: Number.parseInt(m[1], 10),
+    minor: m[2] ? Number.parseInt(m[2], 10) : 0,
+  };
+}
+
+function parseClaudeVersion(model: string): { major: number; minor: number } | null {
+  // claude-sonnet-4-6 / claude-opus-4.7 / claude-sonnet-5
+  const m = /claude-(?:sonnet|opus|haiku)[-_]?(\d+)(?:[.-](\d+))?/i.exec(model);
+  if (!m) return null;
+  return {
+    major: Number.parseInt(m[1], 10),
+    minor: m[2] ? Number.parseInt(m[2], 10) : 0,
+  };
+}
+
+const EFFORT_RANK: Record<ThinkingEffort, number> = {
+  low: 1,
+  medium: 2,
+  high: 3,
+  xhigh: 4,
+  max: 5,
+};
+
+/**
+ * Clamp a requested effort to the nearest native level for this model.
+ * Returns the original value when it is already native.
+ */
+export function clampEffort(
+  id: ProviderName,
+  model: string | undefined,
+  requested: ThinkingEffort,
+): { effort: ThinkingEffort; clamped: boolean; note?: string } {
+  const native = effortLevelsFor(id, model);
+  if (native.includes(requested)) {
+    return { effort: requested, clamped: false };
+  }
+  if (native.length === 0) {
+    return {
+      effort: requested,
+      clamped: true,
+      note: `thinking '${requested}' is not supported for provider "${id}"`,
+    };
+  }
+  const want = EFFORT_RANK[requested];
+  let best = native[0];
+  let bestDist = Math.abs(EFFORT_RANK[best] - want);
+  for (const level of native) {
+    const dist = Math.abs(EFFORT_RANK[level] - want);
+    if (dist < bestDist || (dist === bestDist && EFFORT_RANK[level] > EFFORT_RANK[best])) {
+      best = level;
+      bestDist = dist;
+    }
+  }
+  const label = model ? `${id}/${model}` : id;
+  return {
+    effort: best,
+    clamped: true,
+    note: `'${requested}' is not native on ${label} — using '${best}'`,
+  };
 }
 
 /** Canonical string form used for persistence + CLI/slash surfaces. */
@@ -65,7 +229,9 @@ export function parseThinkingSpec(raw: string | null | undefined): ThinkingSpec 
   const s = (raw ?? '').trim().toLowerCase();
   if (!s || s === 'auto') return 'auto';
   if (s === 'off') return { kind: 'off' };
-  if (s === 'low' || s === 'medium' || s === 'high') return { kind: 'effort', effort: s };
+  if ((THINKING_EFFORTS as readonly string[]).includes(s)) {
+    return { kind: 'effort', effort: s as ThinkingEffort };
+  }
   const m = /^budget:(\d+)$/.exec(s);
   if (m) {
     const n = Number.parseInt(m[1], 10);
@@ -77,7 +243,8 @@ export function parseThinkingSpec(raw: string | null | undefined): ThinkingSpec 
 /** Strict validity check for interactive surfaces (distinguishes 'auto' from garbage). */
 export function isValidThinkingInput(raw: string): boolean {
   const s = raw.trim().toLowerCase();
-  if (s === 'auto' || s === 'off' || s === 'low' || s === 'medium' || s === 'high') return true;
+  if (s === 'auto' || s === 'off') return true;
+  if ((THINKING_EFFORTS as readonly string[]).includes(s)) return true;
   return /^budget:\d+$/.test(s) && Number.parseInt(s.slice(7), 10) > 0;
 }
 
@@ -86,12 +253,20 @@ export interface ThinkingTranslateResult {
   patch: Record<string, unknown>;
   /** True when the requested kind was unsupported and we degraded to 'auto'. */
   degraded: boolean;
-  /** Human-readable reason for degradation (for warnings). */
+  /** Human-readable reason for degradation / clamp (for warnings). */
   note?: string;
 }
 
 function degrade(note: string): ThinkingTranslateResult {
   return { patch: {}, degraded: true, note };
+}
+
+function withClampNote(
+  patch: Record<string, unknown>,
+  clamped: boolean,
+  note?: string,
+): ThinkingTranslateResult {
+  return { patch, degraded: false, note: clamped ? note : undefined };
 }
 
 /**
@@ -102,33 +277,51 @@ function degrade(note: string): ThinkingTranslateResult {
 export function translateOpenAiCompatibleThinking(
   providerId: ProviderName,
   spec: ThinkingSpec,
+  model?: string,
 ): ThinkingTranslateResult {
   if (spec === 'auto') return { patch: {}, degraded: false };
-  const cap = thinkingCapabilityFor(providerId);
+  const cap = thinkingCapabilityFor(providerId, model);
   switch (spec.kind) {
     case 'off':
-      // Providers with a thinking toggle disable it; effort-enum providers
-      // have no true "off" — degrade to the cheapest effort instead.
       if (providerId === 'deepseek' || providerId === 'glm') {
         return { patch: { thinking: { type: 'disabled' } }, degraded: false };
       }
       if (cap.effort) return { patch: { reasoning_effort: 'low' }, degraded: false };
       return degrade(`thinking 'off' is not supported for provider "${providerId}"`);
-    case 'effort':
-      if (!cap.effort) {
+    case 'effort': {
+      if (!cap.effort && !cap.efforts?.length) {
         return degrade(`thinking 'effort' is not supported for provider "${providerId}"`);
       }
+      const resolved = clampEffort(providerId, model, spec.effort);
       if (providerId === 'deepseek') {
-        // DeepSeek only distinguishes high/max; collapse low/medium → high.
-        return {
-          patch: {
+        return withClampNote(
+          {
             thinking: { type: 'enabled' },
-            reasoning_effort: spec.effort === 'high' ? 'max' : 'high',
+            reasoning_effort: resolved.effort === 'max' ? 'max' : 'high',
           },
-          degraded: false,
-        };
+          resolved.clamped,
+          resolved.note,
+        );
       }
-      return { patch: { reasoning_effort: spec.effort }, degraded: false };
+      if (providerId === 'glm') {
+        if (!glmHasEffortScale(model)) {
+          return degrade(`thinking 'effort' is not supported for GLM ${model || '4.x'} — use budget:N`);
+        }
+        return withClampNote(
+          {
+            thinking: { type: 'enabled' },
+            reasoning_effort: resolved.effort,
+          },
+          resolved.clamped,
+          resolved.note,
+        );
+      }
+      return withClampNote(
+        { reasoning_effort: resolved.effort },
+        resolved.clamped,
+        resolved.note,
+      );
+    }
     case 'budget':
       if (!cap.budget) {
         return degrade(`thinking 'budget' is not supported for provider "${providerId}"`);
@@ -141,21 +334,33 @@ export function translateOpenAiCompatibleThinking(
 }
 
 /** OpenAI Responses adapter (chatgpt). */
-export function translateResponsesThinking(spec: ThinkingSpec): ThinkingTranslateResult {
+export function translateResponsesThinking(
+  spec: ThinkingSpec,
+  model?: string,
+): ThinkingTranslateResult {
   if (spec === 'auto') return { patch: {}, degraded: false };
   switch (spec.kind) {
     case 'off':
       // Responses API has no hard off; 'minimal' is the cheapest effort.
       return { patch: { reasoning: { effort: 'minimal' } }, degraded: false };
-    case 'effort':
-      return { patch: { reasoning: { effort: spec.effort } }, degraded: false };
+    case 'effort': {
+      const resolved = clampEffort('chatgpt', model, spec.effort);
+      return withClampNote(
+        { reasoning: { effort: resolved.effort } },
+        resolved.clamped,
+        resolved.note,
+      );
+    }
     case 'budget':
-      return degrade('thinking "budget" is not supported for chatgpt — use low/medium/high');
+      return degrade('thinking "budget" is not supported for chatgpt — use low/medium/high/xhigh/max');
   }
 }
 
 /** Anthropic Messages adapter. */
-export function translateAnthropicThinking(spec: ThinkingSpec): ThinkingTranslateResult {
+export function translateAnthropicThinking(
+  spec: ThinkingSpec,
+  model?: string,
+): ThinkingTranslateResult {
   if (spec === 'auto') return { patch: {}, degraded: false };
   switch (spec.kind) {
     case 'off':
@@ -165,7 +370,17 @@ export function translateAnthropicThinking(spec: ThinkingSpec): ThinkingTranslat
         patch: { thinking: { type: 'enabled', budget_tokens: spec.budgetTokens } },
         degraded: false,
       };
-    case 'effort':
-      return degrade('thinking "effort" is not supported for anthropic — use budget:N');
+    case 'effort': {
+      const levels = effortLevelsFor('anthropic', model);
+      if (levels.length === 0) {
+        return degrade('thinking "effort" is not supported for this Claude model — use budget:N');
+      }
+      const resolved = clampEffort('anthropic', model, spec.effort);
+      return withClampNote(
+        { output_config: { effort: resolved.effort } },
+        resolved.clamped,
+        resolved.note,
+      );
+    }
   }
 }

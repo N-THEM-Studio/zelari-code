@@ -134,7 +134,7 @@ export function anthropicMessagesProvider(config: OpenAICompatibleConfig): Provi
     // Unified thinking-effort selection (ADR-0017).
     const thinkingSpec = config.thinking ?? 'auto';
     if (thinkingSpec !== 'auto') {
-      const t = translateAnthropicThinking(thinkingSpec);
+      const t = translateAnthropicThinking(thinkingSpec, config.model);
       if (t.degraded) console.warn(`[thinking] ${t.note ?? 'unsupported'} — falling back to provider default.`);
       else Object.assign(body, t.patch);
     }

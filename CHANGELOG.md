@@ -5,6 +5,14 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.39.0] - 2026-08-15
+
+### Added
+- **Native xhigh / max thinking levels** — `/effort xhigh` and `/effort max` (plus Desktop Thinking dropdown) on models that accept them natively: grok-4.6 (`xhigh`), GPT-5.4 (`xhigh`), GPT-5.6 (`xhigh`+`max`), DeepSeek V4 (`max`), Claude Sonnet 4.6 (`max`), Claude Opus 4.7+ (`xhigh`+`max`), GLM-5.x (`max`). Other models keep low/medium/high (or budget tokens) and clamp instead of 400.
+
+### Changed
+- Desktop thinking picker is now **per-model** (`thinkingCapability.efforts` from `--print-config`), not a fixed Low/Medium/High list.
+
 ## [1.38.0] - 2026-08-15
 
 ### Added

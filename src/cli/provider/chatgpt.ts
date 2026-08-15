@@ -74,7 +74,7 @@ export function chatgptResponsesProvider(config: OpenAICompatibleConfig): Provid
     // Unified thinking-effort selection (ADR-0017).
     const thinkingSpec = config.thinking ?? 'auto';
     if (thinkingSpec !== 'auto') {
-      const t = translateResponsesThinking(thinkingSpec);
+      const t = translateResponsesThinking(thinkingSpec, config.model);
       if (t.degraded) console.warn(`[thinking] ${t.note ?? 'unsupported'} — falling back to provider default.`);
       else Object.assign(body, t.patch);
     }

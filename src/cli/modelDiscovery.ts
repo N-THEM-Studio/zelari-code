@@ -107,6 +107,9 @@ const PROVIDER_BASE_URLS: Record<ProviderId, string> = {
 /** Static catalogs used when the live /models call is empty or unauthorized. */
 const STATIC_FALLBACKS: Partial<Record<ProviderId, DiscoveredModel[]>> = {
   chatgpt: [
+    { id: 'gpt-5.6-codex', displayName: 'GPT-5.6 Codex' },
+    { id: 'gpt-5.6', displayName: 'GPT-5.6' },
+    { id: 'gpt-5.4', displayName: 'GPT-5.4' },
     { id: 'gpt-5.2-codex', displayName: 'GPT-5.2 Codex' },
     { id: 'gpt-5.2', displayName: 'GPT-5.2' },
     { id: 'gpt-5.1-codex', displayName: 'GPT-5.1 Codex' },
@@ -115,9 +118,19 @@ const STATIC_FALLBACKS: Partial<Record<ProviderId, DiscoveredModel[]>> = {
     { id: 'o4-mini', displayName: 'o4-mini' },
   ],
   anthropic: [
+    { id: 'claude-opus-4-7', displayName: 'Claude Opus 4.7' },
     { id: 'claude-opus-4-6', displayName: 'Claude Opus 4.6' },
+    { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
     { id: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5' },
     { id: 'claude-haiku-4-5', displayName: 'Claude Haiku 4.5' },
+  ],
+  grok: [
+    { id: 'grok-4.6', displayName: 'Grok 4.6' },
+    { id: 'grok-4.5', displayName: 'Grok 4.5' },
+  ],
+  glm: [
+    { id: 'glm-5.3', displayName: 'GLM-5.3' },
+    { id: 'glm-4.6', displayName: 'GLM-4.6' },
   ],
 };
 

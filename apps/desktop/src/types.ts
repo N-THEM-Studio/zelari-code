@@ -82,7 +82,11 @@ export interface DesktopProviderInfo {
   hasRefreshToken?: boolean;
   oauthSupported?: boolean;
   thinking?: string;
-  thinkingCapability?: { effort?: boolean; budget?: boolean };
+  thinkingCapability?: {
+    effort?: boolean;
+    budget?: boolean;
+    efforts?: Array<"low" | "medium" | "high" | "xhigh" | "max">;
+  };
 }
 
 export interface DesktopConfig {

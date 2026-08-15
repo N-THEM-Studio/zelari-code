@@ -371,12 +371,12 @@ export function handleModelSet(ctx: ProviderSlashContext, model: string): void {
 /** /effort (no args) — show the current thinking-effort spec + valid options. */
 export function handleEffortShow(ctx: ProviderSlashContext): void {
   const id = ctx.activeProviderSpec.id;
-  const cap = thinkingCapabilityFor(id);
+  const cap = thinkingCapabilityFor(id, ctx.activeModel);
   const current = stringifyThinkingSpec(getThinkingForProvider(id));
   const options = [
     'auto',
     'off',
-    ...(cap.effort ? ['low', 'medium', 'high'] : []),
+    ...(cap.efforts ?? (cap.effort ? ['low', 'medium', 'high'] : [])),
     ...(cap.budget ? ['budget:<tokens>'] : []),
   ];
   appendSystem(
@@ -391,7 +391,7 @@ export function handleEffortSet(ctx: ProviderSlashContext, raw: string): void {
   if (!isValidThinkingInput(raw)) {
     appendSystem(
       ctx.setMessages,
-      `[effort] invalid spec "${raw}" — use auto | off | low | medium | high | budget:<tokens>`,
+      `[effort] invalid spec "${raw}" — use auto | off | low | medium | high | xhigh | max | budget:<tokens>`,
     );
     return;
   }

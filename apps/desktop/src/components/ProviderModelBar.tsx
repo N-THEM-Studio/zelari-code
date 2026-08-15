@@ -61,12 +61,20 @@ export function ProviderModelBar({
     { value: "auto", label: "Auto" },
     { value: "off", label: "Off" },
   ];
-  if (cap?.effort) {
-    thinkingOptions.push(
-      { value: "low", label: "Low" },
-      { value: "medium", label: "Medium" },
-      { value: "high", label: "High" },
-    );
+  const effortLevels = cap?.efforts?.length
+    ? cap.efforts
+    : cap?.effort
+      ? (["low", "medium", "high"] as const)
+      : [];
+  const EFFORT_LABELS: Record<string, string> = {
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    xhigh: "xHigh",
+    max: "Max",
+  };
+  for (const level of effortLevels) {
+    thinkingOptions.push({ value: level, label: EFFORT_LABELS[level] ?? level });
   }
   if (cap?.budget) {
     thinkingOptions.push(

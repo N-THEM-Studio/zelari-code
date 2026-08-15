@@ -442,7 +442,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       if (thinking.thinking) body.thinking = { type: thinking.thinking };
       if (thinking.reasoningEffort) body.reasoning_effort = thinking.reasoningEffort;
     } else if (thinkingSpec !== 'auto') {
-      const t = translateOpenAiCompatibleThinking(config.providerId, thinkingSpec);
+      const t = translateOpenAiCompatibleThinking(config.providerId, thinkingSpec, config.model);
       if (t.degraded) {
         console.warn(`[thinking] ${t.note ?? 'unsupported'} — falling back to provider default.`);
       } else {
