@@ -208,6 +208,21 @@ async function readFileAsAttachment(file: File): Promise<PendingAttachment> {
   }
 }
 
+/**
+ * Tauri invoke() rejections are plain strings, not Error instances — the old
+ * `e instanceof Error ? … : "fallback"` pattern silently dropped the real CLI
+ * stderr (e.g. `invalid --thinking value 'xhigh'` from an outdated CLI).
+ */
+function errText(e: unknown, fallback: string): string {
+  if (typeof e === "string" && e.trim()) return e.trim();
+  if (e instanceof Error && e.message) return e.message;
+  if (e && typeof e === "object" && "message" in e) {
+    const m = (e as { message?: unknown }).message;
+    if (typeof m === "string" && m.trim()) return m;
+  }
+  return fallback;
+}
+
 function buildPromptWithAttachments(
   userText: string,
   attachments: PendingAttachment[],
@@ -524,7 +539,7 @@ export default function App() {
     } catch (e) {
       setCli(null);
       setStatusLine(
-        e instanceof Error ? e.message : "Failed to query CLI status",
+        errText(e, "Failed to query CLI status"),
       );
     } finally {
       setCliStatusLoading(false);
@@ -545,7 +560,7 @@ export default function App() {
       );
     } catch (e) {
       setStatusLine(
-        e instanceof Error ? e.message : "Failed to load provider config",
+        errText(e, "Failed to load provider config"),
       );
     }
   }, []);
@@ -1430,7 +1445,7 @@ export default function App() {
       await refreshConfig();
     } catch (e) {
       setStatusLine(
-        e instanceof Error ? e.message : "Failed to persist provider",
+        errText(e, "Failed to persist provider"),
       );
     }
   };
@@ -1446,7 +1461,7 @@ export default function App() {
       await refreshConfig();
     } catch (e) {
       setStatusLine(
-        e instanceof Error ? e.message : "Failed to persist model",
+        errText(e, "Failed to persist model"),
       );
     }
   };
@@ -1459,9 +1474,12 @@ export default function App() {
       await refreshConfig();
       setStatusLine(`Thinking effort: ${spec}`);
     } catch (e) {
-      setStatusLine(
-        e instanceof Error ? e.message : "Failed to set thinking effort",
-      );
+      let msg = errText(e, "Failed to set thinking effort");
+      if (/invalid --thinking/i.test(msg)) {
+        msg +=
+          " — installed CLI is older than the app. Update it (Settings → CLI package) or run: npm i -g zelari-code@latest";
+      }
+      setStatusLine(msg);
     }
   };
 

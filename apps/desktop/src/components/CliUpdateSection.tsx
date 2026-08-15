@@ -1,6 +1,18 @@
 import { useCallback, useEffect, useState } from "react";
+import { getVersion } from "@tauri-apps/api/app";
 import { checkCliUpdate, updateCli, type CliUpdateCheck } from "../agentClient";
 import type { CliStatus } from "../types";
+
+/** Numeric semver-ish compare: negative when a < b. */
+function cmpSemver(a: string, b: string): number {
+  const pa = a.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const pb = b.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d;
+  }
+  return 0;
+}
 
 interface Props {
   cli: CliStatus | null;
@@ -12,6 +24,13 @@ export function CliUpdateSection({ cli, onCliRefreshed }: Props) {
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    getVersion()
+      .then((v) => setAppVersion(v))
+      .catch(() => setAppVersion(null));
+  }, []);
 
   const runCheck = useCallback(async () => {
     setBusy(true);
@@ -77,6 +96,16 @@ export function CliUpdateSection({ cli, onCliRefreshed }: Props) {
           <code>{cli?.cliPath ?? "—"}</code>
         </dd>
       </dl>
+
+      {installed && appVersion && cmpSemver(installed, appVersion) < 0 && (
+        <p className="warn">
+          CLI v{installed} is older than this app (v{appVersion}). Features
+          shipped after your CLI version — e.g. <strong>xHigh/Max</strong>{" "}
+          thinking efforts — are rejected with{" "}
+          <code>invalid --thinking value</code>. Use “Update CLI” below or run{" "}
+          <code>npm i -g zelari-code@latest</code>.
+        </p>
+      )}
 
       {info?.updateAvailable && (
         <p className="warn">

@@ -5,6 +5,15 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.41.0] - 2026-08-15
+
+### Fixed
+- **Desktop swallowed real CLI errors** - Tauri `invoke` rejections are plain strings, so `e instanceof Error` fallbacks discarded the CLI stderr. New `errText()` surfaces the actual message for provider/model/thinking persistence and CLI status (e.g. `invalid --thinking value 'xhigh'`).
+- **“Failed to set thinking effort” with no explanation** - when the installed CLI rejects a thinking value (older CLI vs newer app), the status line now tells you exactly that and how to fix it (`npm i -g zelari-code@latest`).
+
+### Added
+- **Settings CLI/app version mismatch warning** - “CLI package (npm)” card now compares the installed CLI version against the app version and warns when the CLI is older (the root cause of missing xHigh/Max rejections), with a one-click Update CLI.
+
 ## [1.40.0] - 2026-08-15
 
 ### Fixed
