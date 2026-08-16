@@ -5703,3 +5703,34 @@ kbd {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.45; }
 }
+
+/* Phase groups inside workspace project tasks (plan.json phases[]). */
+.live-tasks-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+.live-tasks-phase {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 2px 0 1px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.live-tasks-phase-count {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.7;
+}
+
+.live-tasks-phase-list {
+  gap: 2px;
+}

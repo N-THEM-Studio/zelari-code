@@ -26,6 +26,14 @@ export interface LiveTask {
   content: string;
   status: LiveTaskStatus;
   source: LiveTaskSource;
+  /**
+   * Workspace-plan phase metadata (project tasks only, ADR-0018).
+   * Absent on session tasks and on plans without `phases[]`; drives the
+   * phase grouping of the Project panel.
+   */
+  phaseId?: string;
+  phaseLabel?: string;
+  phaseOrder?: number;
 }
 
 /**

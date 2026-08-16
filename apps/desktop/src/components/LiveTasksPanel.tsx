@@ -1,5 +1,6 @@
 import type { LiveTask } from "../liveTasks/types";
 import { SessionTodosPanel } from "./SessionTodosPanel";
+import { groupProjectTasks } from "../liveTasks/workspacePlan";
 
 interface Props {
   tasks: LiveTask[];
@@ -26,11 +27,14 @@ function projectSummary(tasks: LiveTask[]): string | null {
  * Two independent sections: session tasks (todo_write mirror of THIS
  * conversation) and workspace project tasks (`.zelari/plan.json`,
  * shared by every conversation on the same cwd - ADR-0018). Project
- * tasks have no "Clear": they are durable workspace state, not chat
- * scratch space.
+ * tasks are grouped under their plan phase (P0 → Release ordering comes
+ * from `phases[].order`), so a normalized plan reads as a sequenced
+ * roadmap instead of a flat wall of tasks. Project tasks have no
+ * "Clear": they are durable workspace state, not chat scratch space.
  */
 export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
   const project = projectTasks ?? [];
+  const groups = groupProjectTasks(project);
   if (!tasks.length && !project.length) return null;
   return (
     <>
@@ -48,24 +52,40 @@ export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
               </span>
             ) : null}
           </div>
-          <ul className="session-todos-list">
-            {project.map((t) => (
-              <li key={t.id} className={`session-todo status-${t.status}`}>
-                <span className="session-todo-mark" aria-hidden>
-                  {t.status === "completed"
-                    ? "V"
-                    : t.status === "in_progress"
-                      ? "?"
-                      : t.status === "cancelled"
-                        ? "-"
-                        : t.status === "blocked"
-                          ? "!"
-                          : "•"}
-                </span>
-                <span className="session-todo-text">{t.content}</span>
-              </li>
+          <div className="live-tasks-groups">
+            {groups.map((g) => (
+              <section
+                key={g.key}
+                className="live-tasks-phase-group"
+                aria-label={`Fase ${g.label}`}
+              >
+                <div className="live-tasks-phase">
+                  <span className="live-tasks-phase-name">{g.label}</span>
+                  <span className="live-tasks-phase-count">
+                    {g.tasks.length}
+                  </span>
+                </div>
+                <ul className="session-todos-list live-tasks-phase-list">
+                  {g.tasks.map((t) => (
+                    <li key={t.id} className={`session-todo status-${t.status}`}>
+                      <span className="session-todo-mark" aria-hidden>
+                        {t.status === "completed"
+                          ? "V"
+                          : t.status === "in_progress"
+                            ? "?"
+                            : t.status === "cancelled"
+                              ? "-"
+                              : t.status === "blocked"
+                                ? "!"
+                                : "•"}
+                      </span>
+                      <span className="session-todo-text">{t.content}</span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
             ))}
-          </ul>
+          </div>
         </div>
       ) : null}
     </>

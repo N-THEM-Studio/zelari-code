@@ -591,6 +591,17 @@ export default function App() {
     if (!activeCwd) return;
     void reloadWorkspaceTasks(activeCwd);
   }, [activeCwd, reloadWorkspaceTasks]);
+  // Stale-snapshot guard: `.zelari/plan.json` can change while the
+  // window is unfocused (CLI council runs, manual normalizations).
+  // Re-read the active workspace plan on focus so the Project panel
+  // never lags behind the file on disk.
+  useEffect(() => {
+    const onFocus = () => {
+      if (activeCwd) void reloadWorkspaceTasks(activeCwd);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [activeCwd, reloadWorkspaceTasks]);
 
   /** Run registry: multiplexed runs across conversations (M2). */
   const runCoordinator = useRunCoordinator();
