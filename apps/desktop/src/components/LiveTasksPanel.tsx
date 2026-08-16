@@ -34,12 +34,20 @@ function projectSummary(tasks: LiveTask[]): string | null {
  */
 export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
   const project = projectTasks ?? [];
-  const groups = groupProjectTasks(project);
-  if (!tasks.length && !project.length) return null;
+  // Completed/cancelled project tasks drop out of the panel: once marked
+  // done they are history, not live state, and a fully closed plan hides
+  // the Project section entirely instead of leaving a giant wall of
+  // checked items. The summary keeps counting them so "plan 18/18" still
+  // reads correctly while active work remains.
+  const active = project.filter(
+    (t) => t.status !== "completed" && t.status !== "cancelled",
+  );
+  const groups = groupProjectTasks(active);
+  if (!tasks.length && !active.length) return null;
   return (
     <>
       <SessionTodosPanel todos={tasks} onClear={onClear} />
-      {project.length > 0 ? (
+      {active.length > 0 ? (
         <div
           className="session-todos-panel live-tasks-project"
           aria-label="Workspace project tasks"
