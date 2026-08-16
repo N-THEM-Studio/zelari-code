@@ -114,6 +114,7 @@ object per line) or as plain text (just the assistant message text).
 
 Options:
   --task <text>              Task prompt (required)
+  --task-file <path>         Same as --task but read from a file (avoids Windows argv cap)
   --output json|plain        Output format (default: json)
   --mode kraken|council|zelari  Dispatch mode (default: kraken; agent=alias)
   --council                  Alias for --mode council
@@ -125,6 +126,7 @@ Options:
   --once                     Trigger mode: single cycle + lockfile (for cron/git hooks)
   --kraken-graph <goal>      Plan + execute a Kraken task graph instead of --task
                              (mutually exclusive with --task; ZELARI_KRAKEN_GRAPH=0 disables)
+  --kraken-graph-file <path> Same as --kraken-graph but read from a file
 
 Exit codes:
   0  completed
@@ -177,6 +179,22 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       }
     } else if (arg === '--task') {
       task = argv[i + 1];
+      i++;
+    } else if (arg === '--task-file') {
+      // File-backed variant of --task: the desktop spills long prompts to
+      // a temp file because Windows CreateProcess caps the command line at
+      // ~32KB (os error 206) and a long first message overflows it.
+      // Unreadable/empty file leaves `task` undefined so the validation
+      // below reports "requires --task" instead of a silent empty run.
+      const next = argv[i + 1];
+      if (next) {
+        try {
+          const fromFile = readFileSync(next, 'utf-8');
+          if (fromFile.trim()) task = fromFile;
+        } catch {
+          // Missing/unreadable — validation below handles it.
+        }
+      }
       i++;
     } else if (arg === '--council') {
       councilFlag = true;
@@ -305,6 +323,19 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       once = true;
     } else if (arg === '--kraken-graph') {
       krakenGraph = argv[i + 1];
+      i++;
+    } else if (arg === '--kraken-graph-file') {
+      // File-backed variant of --kraken-graph (same Windows argv cap as
+      // --task-file). Last flag wins, mirroring --task/--task-file.
+      const next = argv[i + 1];
+      if (next) {
+        try {
+          const fromFile = readFileSync(next, 'utf-8');
+          if (fromFile.trim()) krakenGraph = fromFile;
+        } catch {
+          // Missing/unreadable — leave as-is.
+        }
+      }
       i++;
     } else if (arg === '--plan-only') {
       planOnly = true;

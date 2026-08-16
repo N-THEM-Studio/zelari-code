@@ -2423,13 +2423,37 @@ fn spawn_headless(
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
 
+    // Long prompts overflow Windows' ~32KB CreateProcess command-line
+    // ceiling (os error 206), exactly like multi-turn history used to.
+    // Spill the prompt to a temp file and pass --task-file /
+    // --kraken-graph-file; short prompts stay inline. Best-effort: on
+    // write failure we fall back to the inline flag and let the spawn
+    // surface the error.
+    const PROMPT_FILE_THRESHOLD: usize = 8_000;
+    let task_file: Option<PathBuf> = if prompt.len() > PROMPT_FILE_THRESHOLD {
+        let file_name = format!(
+            "zelari-task-{}.txt",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        );
+        let path = std::env::temp_dir().join(file_name);
+        fs::write(&path, prompt).ok().map(|_| path)
+    } else {
+        None
+    };
+
     cmd.arg("--headless");
     if kraken_graph {
         // Plan + execute a Kraken task graph instead of a normal dispatch —
         // `--kraken-graph` and `--task` are mutually exclusive on the CLI
         // side (see src/cli/headless.ts); `--mode`/`--phase` are harmless
         // to still pass, the graph path ignores them.
-        cmd.arg("--kraken-graph").arg(prompt);
+        match task_file {
+            Some(ref p) => cmd.arg("--kraken-graph-file").arg(p),
+            None => cmd.arg("--kraken-graph").arg(prompt),
+        };
         // Desktop "plan" phase: write the plan to disk and stop (no execution).
         if plan_only {
             cmd.arg("--plan-only");
@@ -2441,7 +2465,10 @@ fn spawn_headless(
             }
         }
     } else {
-        cmd.arg("--task").arg(prompt);
+        match task_file {
+            Some(ref p) => cmd.arg("--task-file").arg(p),
+            None => cmd.arg("--task").arg(prompt),
+        };
     }
     cmd.arg("--output")
         .arg("json")
@@ -2637,8 +2664,11 @@ fn spawn_headless(
 
     let _ = err_thread.join();
     let _ = out_thread.join();
-    // Clean up the history tempfile (best-effort; never fail the run on cleanup).
+    // Clean up the history/prompt tempfiles (best-effort; never fail the run).
     if let Some(ref p) = history_file {
+        let _ = fs::remove_file(p);
+    }
+    if let Some(ref p) = task_file {
         let _ = fs::remove_file(p);
     }
     match child.try_wait() {
