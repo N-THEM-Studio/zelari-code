@@ -21,6 +21,7 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 | 0010 | Manifesto dei principi primi (PRINCIPLES.md, P1–P6) | ✅ Accettato | 2026-08-13    | 2026-08-13 |
 | 0016 | Log di sessione event-sourced come unica fonte di verità | 📝 Proposto | da confermare | — |
 | 0017 | Selezione unificata del "thinking effort" per tutti i provider | 📝 Proposto | da confermare | — |
+| 0018 | Contratto workspace task store su `.zelari/plan.json` (tool `task_*`) | ✅ Accettato | slice 3a implementata (v1.43.0) | — |
 
 ## Formato
 
