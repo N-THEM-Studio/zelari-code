@@ -25,7 +25,9 @@ export type BrainEventType =
   | 'session_compacted'
   | 'error'
   | 'member_cost'
-  | 'council_mode';
+  | 'council_mode'
+  | 'task_update'
+  | 'task_snapshot';
 
 /** Fields shared by every event. */
 export interface BrainEventBase {
@@ -262,6 +264,50 @@ export interface BrainCouncilModeEvent extends BrainEventBase {
   runMode: 'implementation' | 'design-phase';
 }
 
+// --- Workspace / session tasks (ADR-0018 slice 3b) -------------------------
+
+/** Canonical task status across session todos and workspace plan tasks. */
+export type BrainTaskStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'completed'
+  | 'cancelled'
+  | 'blocked';
+
+/**
+ * Where a task lives: volatile per-session todos (`todo_write`) or the
+ * durable workspace plan store (`task_create`/`task_update` on
+ * `.zelari/plan.json`). `blocked` only ever occurs on workspace tasks.
+ */
+export type BrainTaskSource = 'session_todo' | 'workspace_plan';
+
+/** Provider-neutral task payload shared by update and snapshot events. */
+export interface BrainTaskPayload {
+  id: string;
+  title: string;
+  status: BrainTaskStatus;
+  phaseId?: string;
+  priority?: string;
+}
+
+/**
+ * A single task was created or mutated. Emitted right after the durable
+ * write succeeded, so frontends can update optimistically without parsing
+ * tool arguments or re-reading the store.
+ */
+export interface BrainTaskUpdateEvent extends BrainEventBase {
+  type: 'task_update';
+  source: BrainTaskSource;
+  task: BrainTaskPayload;
+}
+
+/** Full task list snapshot (e.g. after `task_list` / `todo_read`). */
+export interface BrainTaskSnapshotEvent extends BrainEventBase {
+  type: 'task_snapshot';
+  source: BrainTaskSource;
+  tasks: BrainTaskPayload[];
+}
+
 /** Discriminated union of every event the brain can emit. */
 export type BrainEvent =
   | BrainAgentStartEvent
@@ -277,7 +323,9 @@ export type BrainEvent =
   | BrainSessionCompactedEvent
   | BrainErrorEvent
   | BrainMemberCostEvent
-  | BrainCouncilModeEvent;
+  | BrainCouncilModeEvent
+  | BrainTaskUpdateEvent
+  | BrainTaskSnapshotEvent;
 
 /**
  * Map from a {@link BrainEventType} discriminator to its concrete event type.
@@ -342,6 +390,14 @@ export function isBrainMemberCostEvent(e: BrainEvent): e is BrainMemberCostEvent
 
 export function isBrainCouncilModeEvent(e: BrainEvent): e is BrainCouncilModeEvent {
   return e.type === 'council_mode';
+}
+
+export function isBrainTaskUpdateEvent(e: BrainEvent): e is BrainTaskUpdateEvent {
+  return e.type === 'task_update';
+}
+
+export function isBrainTaskSnapshotEvent(e: BrainEvent): e is BrainTaskSnapshotEvent {
+  return e.type === 'task_snapshot';
 }
 
 // --- Constructor ------------------------------------------------------------
