@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.44.0] - 2026-08-16
+
+### Added
+- **Post-council plan drift check** - `postCouncilHook` now runs a deterministic `plan.json <-> canonical` reconciliation after every council run: duplicate milestones, phases/tasks resurrected under retired slugs (canonical blocklist), canonical phases missing from the plan and tasks outside any known phase are reported as findings (errors/warnings) in `.zelari/drift-report.json`; fail-open by design (never throws, skip with `ZELARI_DRIFT_CHECK=0`).
+- **Phase-grouped Project panel (Desktop)** - workspace project tasks render under their plan phase headers (`P0 -> Release` ordering from `phases[].order`) with per-phase counts, instead of a flat wall of tasks; the plan parser preserves `phaseId` / `phaseLabel` / `phaseOrder` from both the ADR-0018 envelope and the legacy nested `phases[].tasks[]` layout, and sorts by phase order so the panel always shows the plan's intended sequencing.
+
+### Changed
+- Desktop re-reads `.zelari/plan.json` of the active workspace on window focus, so plan normalizations performed while the app is open appear without a restart (previously re-read only at startup, workspace switch and run-finished).
 ## [1.43.0] - 2026-08-16
 
 ### Added
