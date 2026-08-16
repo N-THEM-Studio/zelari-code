@@ -1,3 +1,5 @@
+import type { LiveTask } from "./liveTasks/types";
+
 export type Role = "user" | "assistant" | "system" | "tool";
 
 /** Mirrors CLI shift+tab modes. */
@@ -52,8 +54,14 @@ export interface Conversation {
   phase: WorkPhase;
   provider?: string;
   model?: string;
+  /** Working directory bound to this conversation (per-chat workspace).
+   * Undefined = inherit the Tauri process cwd. Legacy chats are migrated
+   * from the old global `zelari-desktop-workdir` key on load. */
+  cwd?: string;
   archived?: boolean;
   archivedAt?: number;
+  /** Session tasks (todo_write/todo_read mirror) scoped to this chat. */
+  sessionTasks?: LiveTask[];
   /** Rolling provider-side history snapshot emitted by the CLI. Replayed on
    * the next runTask so the headless agent keeps multi-turn context. */
   history?: AgentMessageLite[];
@@ -111,6 +119,9 @@ export interface RunTaskArgs {
   /** Working directory chosen via "Open Folder". When set, the CLI agent runs
    * inside it. Undefined = inherit the Tauri process cwd. */
   cwd?: string;
+  /** Conversation this run belongs to (multi-chat). Echoed by the host on
+   * every event envelope so the UI can route deltas to the right chat. */
+  conversationId?: string;
   /** JSON-encoded prior conversation turns, so the agent keeps multi-turn
    * context across the per-message process boundary. Built from the
    * `history_snapshot` events emitted by the CLI. */

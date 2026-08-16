@@ -29,12 +29,26 @@ import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
 import { RunActivity, type LiveToolStep } from "./components/RunActivity";
-import { SessionTodosPanel } from "./components/SessionTodosPanel";
+import { LiveTasksPanel } from "./components/LiveTasksPanel";
+import { parseTodosFromUnknown } from "./sessionTodosUi";
 import {
-  mergeDesktopTodos,
-  parseTodosFromUnknown,
-  type DesktopTodo,
-} from "./sessionTodosUi";
+  applySessionTasks,
+  applyWorkspaceSnapshot,
+  applyWorkspaceUpdate,
+  brainTaskToLive,
+  clearSessionTasks,
+  loadWorkspaceTasks,
+  mergeSessionTasks,
+  normalizeCwdKey,
+  toSessionTasks,
+  toTodoPayload,
+} from "./liveTasks";
+import type { LiveTask } from "./liveTasks";
+import { readRunEnvelope } from "./runs/types";
+import {
+  unseenResultsByConversation,
+  useRunCoordinator,
+} from "./runs";
 import { ReplyAccordion } from "./components/ReplyAccordion";
 import { friendlyToolLabel } from "./components/toolLabels";
 import { scrubDisplayText } from "./components/scrubDisplayText";
@@ -362,6 +376,7 @@ function newConversation(
   phase: WorkPhase,
   provider?: string,
   model?: string,
+  cwd?: string,
 ): Conversation {
   const now = Date.now();
   return {
@@ -374,8 +389,19 @@ function newConversation(
     phase,
     provider,
     model,
+    cwd: cwd || undefined,
     archived: false,
   };
+}
+
+interface TurnCtx {
+  assistantId: string | null;
+  member: { name?: string; id?: string };
+  tokens: { prompt: number; completion: number; total: number };
+  startedAt: number;
+  toolCount: number;
+  hasAssistantText: boolean;
+  pendingToolNames: Map<string, string>;
 }
 
 export default function App() {
@@ -395,7 +421,16 @@ export default function App() {
     () => conversations.find((c) => !c.archived)?.id ?? conversations[0].id,
   );
   const [draft, setDraft] = useState("");
-  const [running, setRunning] = useState(false);
+  /** Per-conversation live run UI (M2 multiplexing), keyed by conversation. */
+  const [liveToolLabelByConv, setLiveToolLabelByConv] = useState<
+    Record<string, string | null>
+  >({});
+  const [liveStepsByConv, setLiveStepsByConv] = useState<
+    Record<string, LiveToolStep[]>
+  >({});
+  const [liveMemberNameByConv, setLiveMemberNameByConv] = useState<
+    Record<string, string | null>
+  >({});
   const [mode, setMode] = useState<DispatchMode>(defaults.mode);
   const [phase, setPhase] = useState<WorkPhase>(defaults.phase);
   const [krakenGraph, setKrakenGraph] = useState(false);
@@ -404,9 +439,9 @@ export default function App() {
   const [cli, setCli] = useState<CliStatus | null>(null);
   const [config, setConfig] = useState<DesktopConfig | null>(null);
   const [statusLine, setStatusLine] = useState("Connecting…");
-  // Working folder chosen via "Open Folder". Global to the app (one window =
-  // one folder, like VSCode). Persisted across restarts. Null = inherit the
-  // Tauri process cwd.
+  // Last opened workspace (persisted). Since M1 the effective folder is
+  // per-conversation (Conversation.cwd); this remains the default for new
+  // chats and the legacy migration source. Null = inherit process cwd.
   const [workdir, setWorkdir] = useState<string | null>(
     () => localStorage.getItem("zelari-desktop-workdir") || null,
   );
@@ -428,12 +463,7 @@ export default function App() {
     null,
   );
   /** Live tool activity line (no per-tool cards in the stream). */
-  const [liveToolLabel, setLiveToolLabel] = useState<string | null>(null);
-  /** This-turn tool steps for the live feed (end events omit toolName). */
-  const [liveSteps, setLiveSteps] = useState<LiveToolStep[]>([]);
-  const pendingToolNamesRef = useRef<Map<string, string>>(new Map());
-  /** Session todos mirrored from todo_write / todo_read tool results. */
-  const [sessionTodos, setSessionTodos] = useState<DesktopTodo[]>([]);
+  /** Session tasks live on each Conversation (sessionTasks, liveTasks module). */
   /** Plan id captured from the last `--plan-only` run; the next "build" phase
    * in Kraken graph mode executes it via `--run-plan`. */
   const [krakenPlanId, setKrakenPlanId] = useState<string | null>(null);
@@ -442,8 +472,7 @@ export default function App() {
    * Cleared when the user sends anything or starts a new chat.
    */
   const [textLoopRecovery, setTextLoopRecovery] = useState(false);
-  const [liveMemberName, setLiveMemberName] = useState<string | null>(null);
-  const toolLabelClearRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   /** When true, chat auto-scrolls with the stream; user scroll-up detaches. */
   const [followStream, setFollowStream] = useState(true);
   const followStreamRef = useRef(true);
@@ -466,26 +495,37 @@ export default function App() {
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const assistantIdRef = useRef<string | null>(null);
-  const activeMemberRef = useRef<{ name?: string; id?: string }>({});
-  const turnTokensRef = useRef({
-    prompt: 0,
-    completion: 0,
-    total: 0,
-  });
+  /** Per-conversation turn context (M2): replaces the single-run refs so
+   * concurrent background runs cannot contaminate each other's stats. */
+  const turnsRef = useRef<Map<string, TurnCtx>>(new Map());
+  const turnFor = (convId: string): TurnCtx => {
+    let t = turnsRef.current.get(convId);
+    if (!t) {
+      t = {
+        assistantId: null,
+        member: {},
+        tokens: { prompt: 0, completion: 0, total: 0 },
+        startedAt: 0,
+        toolCount: 0,
+        hasAssistantText: false,
+        pendingToolNames: new Map(),
+      };
+      turnsRef.current.set(convId, t);
+    }
+    return t;
+  };
   const activeIdRef = useRef(activeId);
   activeIdRef.current = activeId;
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
-  const runStartedAtRef = useRef<number>(0);
-  const toolCountRef = useRef(0);
-  const hasAssistantTextRef = useRef(false);
+  const toolLabelTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
   const modeRef = useRef(mode);
   const phaseRef = useRef(phase);
   modeRef.current = mode;
   phaseRef.current = phase;
-  const runningRef = useRef(running);
-  runningRef.current = running;
+
 
   // Persist chats
   useEffect(() => {
@@ -522,11 +562,93 @@ export default function App() {
     [conversations, activeId],
   );
 
+  /** Workspace of the active conversation (per-chat cwd, M1). */
+  const activeCwd = active?.cwd ?? null;
+  /** Session tasks of the active conversation (todo_write mirror). */
+  const sessionTasks = active?.sessionTasks ?? [];
+  /**
+   * Workspace project tasks per cwd (`.zelari/plan.json`, ADR-0018).
+   * Keyed by normalized cwd so every conversation on the same workspace
+   * shares the same project list. Runtime-only: never persisted.
+   */
+  const [workspaceTasksByCwd, setWorkspaceTasksByCwd] = useState<
+    Record<string, LiveTask[]>
+  >({});
+  const projectTasks = activeCwd
+    ? workspaceTasksByCwd[normalizeCwdKey(activeCwd)] ?? []
+    : [];
+  /** Re-read plan.json of a workspace (initial load + reconciliation). */
+  const reloadWorkspaceTasks = useCallback(async (cwd: string) => {
+    const tasks = await loadWorkspaceTasks(cwd);
+    setWorkspaceTasksByCwd((prev) =>
+      applyWorkspaceSnapshot(prev, normalizeCwdKey(cwd), tasks),
+    );
+  }, []);
+  // M3: surface project tasks of the open workspace immediately and on
+  // every workspace switch (repo with plan.json -> tasks shown with no
+  // run in flight; app restart -> re-read from plan.json).
+  useEffect(() => {
+    if (!activeCwd) return;
+    void reloadWorkspaceTasks(activeCwd);
+  }, [activeCwd, reloadWorkspaceTasks]);
+
+  /** Run registry: multiplexed runs across conversations (M2). */
+  const runCoordinator = useRunCoordinator();
+  /** Composer/Stop state is per-conversation now, never global. */
+  const running = runCoordinator.isRunning(active?.id ?? "");
+  const liveToolLabel = liveToolLabelByConv[active?.id ?? ""] ?? null;
+  const liveSteps = liveStepsByConv[active?.id ?? ""] ?? [];
+  const liveMemberName = liveMemberNameByConv[active?.id ?? ""] ?? null;
+  const runningRef = useRef(running);
+  runningRef.current = running;
+
+  const setLiveToolLabelFor = useCallback(
+    (convId: string, v: string | null) => {
+      setLiveToolLabelByConv((prev) => ({ ...prev, [convId]: v }));
+    },
+    [],
+  );
+  const setLiveStepsFor = useCallback(
+    (
+      convId: string,
+      updater:
+        | LiveToolStep[]
+        | ((prev: LiveToolStep[]) => LiveToolStep[]),
+    ) => {
+      setLiveStepsByConv((prev) => ({
+        ...prev,
+        [convId]:
+          typeof updater === "function"
+            ? updater(prev[convId] ?? [])
+            : updater,
+      }));
+    },
+    [],
+  );
+  const setLiveMemberNameFor = useCallback(
+    (convId: string, v: string | null) => {
+      setLiveMemberNameByConv((prev) => ({ ...prev, [convId]: v }));
+    },
+    [],
+  );
+  const clearToolLabelTimer = useCallback((convId: string) => {
+    const t = toolLabelTimersRef.current.get(convId);
+    if (t) {
+      clearTimeout(t);
+      toolLabelTimersRef.current.delete(convId);
+    }
+  }, []);
+
   const visibleSessions = useMemo(() => {
     return conversations.filter((c) =>
       sessionFilter === "archived" ? c.archived : !c.archived,
     );
   }, [conversations, sessionFilter]);
+
+  const unseenByConv = useMemo(
+    () => unseenResultsByConversation(runCoordinator.state),
+    [runCoordinator.state],
+  );
 
   const refreshCli = useCallback(async () => {
     try {
@@ -714,14 +836,58 @@ export default function App() {
     (async () => {
       const u1 = await onAgentEvent((ev) => {
         if (cancelled) return;
-        const convId = activeIdRef.current;
+        // M2 invariant: run events carry their own conversation identity;
+        // activeIdRef is only a legacy fallback for un-enveloped events.
+        const convId =
+          readRunEnvelope(ev).conversationId ?? activeIdRef.current;
+        // M3 (ADR-0018): first-class workspace task events route by the
+        // run envelope's cwd - never by the currently open chat - so a
+        // task_update of a background run never contaminates another
+        // workspace's panel.
+        if (ev.type === "task_update" || ev.type === "task_snapshot") {
+          const taskEv = ev as {
+            source?: unknown;
+            task?: unknown;
+            tasks?: unknown;
+          };
+          if (taskEv.source === "workspace_plan") {
+            const envCwd =
+              readRunEnvelope(ev).cwd ??
+              conversationsRef.current.find((c) => c.id === convId)?.cwd;
+            if (envCwd) {
+              const cwdKey = normalizeCwdKey(envCwd);
+              if (ev.type === "task_update") {
+                const live = taskEv.task
+                  ? brainTaskToLive(taskEv.task)
+                  : null;
+                if (live) {
+                  setWorkspaceTasksByCwd((prev) =>
+                    applyWorkspaceUpdate(prev, cwdKey, live),
+                  );
+                }
+              } else if (Array.isArray(taskEv.tasks)) {
+                const lives = (taskEv.tasks as unknown[])
+                  .map((t) => brainTaskToLive(t))
+                  .filter((t): t is LiveTask => t !== null);
+                setWorkspaceTasksByCwd((prev) =>
+                  applyWorkspaceSnapshot(prev, cwdKey, lives),
+                );
+              }
+            }
+          }
+          return;
+        }
+        const turn = turnFor(convId);
+        const setStatusLineIfActive = (s: string) => {
+          if (convId === activeIdRef.current) setStatusLine(s);
+        };
 
         if (ev.type === "log") {
           const msg =
             typeof (ev as { message?: string }).message === "string"
               ? (ev as { message: string }).message
               : "";
-          if (msg) setStatusLine(msg.replace(/^\[.*?\]\s*/, "").slice(0, 140));
+          if (msg) setStatusLineIfActive(msg.replace(/^\[.*?\]\s*/, "").slice(0, 140));
           // Capture the plan id emitted by `--plan-only` so the next build
           // phase can re-run it via `--run-plan`.
           const planIdMatch = /plan_only_id=([0-9a-f-]+)/i.exec(msg);
@@ -820,21 +986,21 @@ export default function App() {
           name?: string;
           id?: string;
         }) => {
-          const prev = activeMemberRef.current;
+          const prev = turn.member;
           const hasNext = Boolean(next.name || next.id);
           if (!hasNext) return;
           const changed =
             Boolean(prev.name || prev.id) && !isSameMember(prev, next);
-          activeMemberRef.current = {
+          turn.member = {
             name: next.name ?? prev.name,
             id: next.id ?? prev.id,
           };
           if (next.name) {
-            setLiveMemberName(next.name);
-            setStatusLine(`${next.name} speaking…`);
+            setLiveMemberNameFor(convId, next.name);
+            setStatusLineIfActive(`${next.name} speaking…`);
           }
           if (changed) {
-            const prevAid = assistantIdRef.current;
+            const prevAid = turn.assistantId;
             if (prevAid) {
               setConversations((prevC) =>
                 prevC.map((c) =>
@@ -852,7 +1018,7 @@ export default function App() {
               );
             }
             // Force a new accordion for the new member
-            assistantIdRef.current = null;
+            turn.assistantId = null;
           }
         };
 
@@ -896,14 +1062,14 @@ export default function App() {
             if (cost.name || cost.id) {
               switchToMember({ name: cost.name, id: cost.id });
             }
-            turnTokensRef.current.prompt += cost.promptTokens ?? 0;
-            turnTokensRef.current.completion += cost.completionTokens ?? 0;
-            turnTokensRef.current.total += cost.totalTokens ?? 0;
+            turn.tokens.prompt += cost.promptTokens ?? 0;
+            turn.tokens.completion += cost.completionTokens ?? 0;
+            turn.tokens.total += cost.totalTokens ?? 0;
             const who = cost.name ?? "member";
             const tok = cost.totalTokens ?? 0;
             if (tok > 0) {
-              setStatusLine(
-                `${who} · ${tok.toLocaleString()} tokens (turn ${turnTokensRef.current.total.toLocaleString()})`,
+              setStatusLineIfActive(
+                `${who} · ${tok.toLocaleString()} tokens (turn ${turn.tokens.total.toLocaleString()})`,
               );
             }
           }
@@ -919,7 +1085,7 @@ export default function App() {
         if (ev.type === "message_delta") {
           const delta = extractDelta(ev);
           if (!delta) return;
-          hasAssistantTextRef.current = true;
+          turn.hasAssistantText = true;
           const evMember = ev as {
             memberName?: string;
             memberId?: string;
@@ -932,15 +1098,12 @@ export default function App() {
             });
           }
           const memberName =
-            evMember.memberName ?? activeMemberRef.current.name;
-          const memberId = evMember.memberId ?? activeMemberRef.current.id;
-          if (memberName) setLiveMemberName(memberName);
+            evMember.memberName ?? turn.member.name;
+          const memberId = evMember.memberId ?? turn.member.id;
+          if (memberName) setLiveMemberNameFor(convId, memberName);
           // Text is streaming — clear tool line so member focus shows.
-          if (toolLabelClearRef.current) {
-            clearTimeout(toolLabelClearRef.current);
-            toolLabelClearRef.current = null;
-          }
-          setLiveToolLabel(null);
+          clearToolLabelTimer(convId);
+          setLiveToolLabelFor(convId, null);
 
           const matchesMember = (m: ChatMessage) => {
             if (m.role !== "assistant") return false;
@@ -954,13 +1117,13 @@ export default function App() {
             prev.map((c) => {
               if (c.id !== convId) return c;
               const messages = [...c.messages];
-              let aid: string | null = assistantIdRef.current;
+              let aid: string | null = turn.assistantId;
               const open = aid ? messages.find((m) => m.id === aid) : undefined;
 
               // Open bubble is a different member → close it for a new card
               if (open && !matchesMember(open)) {
                 aid = null;
-                assistantIdRef.current = null;
+                turn.assistantId = null;
               }
 
               // Resume only the *current turn* assistant card:
@@ -977,10 +1140,10 @@ export default function App() {
                   matchesMember(last)
                 ) {
                   aid = last.id;
-                  assistantIdRef.current = aid;
+                  turn.assistantId = aid;
                 } else {
                   aid = uid("asst");
-                  assistantIdRef.current = aid;
+                  turn.assistantId = aid;
                   messages.push({
                     id: aid,
                     role: "assistant",
@@ -1018,7 +1181,7 @@ export default function App() {
         }
 
         if (ev.type === "message_end" || ev.type === "agent_end") {
-          const aid = assistantIdRef.current;
+          const aid = turn.assistantId;
           const usage =
             ev.type === "message_end"
               ? (ev as { usage?: {
@@ -1028,9 +1191,9 @@ export default function App() {
                 } }).usage
               : undefined;
           if (usage) {
-            turnTokensRef.current.prompt += usage.promptTokens ?? 0;
-            turnTokensRef.current.completion += usage.completionTokens ?? 0;
-            turnTokensRef.current.total +=
+            turn.tokens.prompt += usage.promptTokens ?? 0;
+            turn.tokens.completion += usage.completionTokens ?? 0;
+            turn.tokens.total +=
               usage.totalTokens ??
               (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0);
           }
@@ -1071,19 +1234,16 @@ export default function App() {
 
         if (ev.type === "tool_execution_start") {
           const name = extractToolName(ev);
-          const callId = extractToolCallId(ev) ?? `anon-${toolCountRef.current}`;
+          const callId = extractToolCallId(ev) ?? `anon-${turn.toolCount}`;
           const anyEv = ev as { args?: Record<string, unknown> };
           const toolSummary = summarizeToolArgs(name, anyEv.args);
-          toolCountRef.current += 1;
-          pendingToolNamesRef.current.set(callId, name);
+          turn.toolCount += 1;
+          turn.pendingToolNames.set(callId, name);
           // Do not append tool cards — rotate a single live activity line
           // plus a persistent this-turn step list.
-          if (toolLabelClearRef.current) {
-            clearTimeout(toolLabelClearRef.current);
-            toolLabelClearRef.current = null;
-          }
-          setLiveToolLabel(friendlyToolLabel(name, toolSummary));
-          setLiveSteps((prev) => [
+          clearToolLabelTimer(convId);
+          setLiveToolLabelFor(convId, friendlyToolLabel(name, toolSummary));
+          setLiveStepsFor(convId, (prev) => [
             ...prev,
             { id: callId, name, summary: toolSummary, status: "running" },
           ]);
@@ -1092,8 +1252,12 @@ export default function App() {
             const parsed = parseTodosFromUnknown(anyEv.args);
             if (parsed) {
               const merge = anyEv.args?.merge === true;
-              setSessionTodos((prev) =>
-                merge ? mergeDesktopTodos(prev, parsed) : parsed,
+              setConversations((prev) =>
+                applySessionTasks(prev, convId, (prevTasks) =>
+                  merge
+                    ? mergeSessionTasks(prevTasks, toSessionTasks(parsed))
+                    : toSessionTasks(parsed),
+                ),
               );
             }
           }
@@ -1103,17 +1267,20 @@ export default function App() {
         if (ev.type === "tool_execution_end") {
           const callId = extractToolCallId(ev);
           const endName =
-            (callId && pendingToolNamesRef.current.get(callId)) ||
+            (callId && turn.pendingToolNames.get(callId)) ||
             extractToolName(ev);
-          if (callId) pendingToolNamesRef.current.delete(callId);
+          if (callId) turn.pendingToolNames.delete(callId);
           // Brief hold, then fade back to thinking phrases.
-          if (toolLabelClearRef.current) clearTimeout(toolLabelClearRef.current);
-          toolLabelClearRef.current = setTimeout(() => {
-            setLiveToolLabel(null);
-            toolLabelClearRef.current = null;
-          }, 900);
+          clearToolLabelTimer(convId);
+          toolLabelTimersRef.current.set(
+            convId,
+            setTimeout(() => {
+              setLiveToolLabelFor(convId, null);
+              toolLabelTimersRef.current.delete(convId);
+            }, 900),
+          );
           const isErr = !!(ev as { isError?: boolean }).isError;
-          setLiveSteps((prev) =>
+          setLiveStepsFor(convId, (prev) =>
             prev.map((s) =>
               callId && s.id === callId
                 ? { ...s, status: isErr ? "error" : "done" }
@@ -1132,7 +1299,11 @@ export default function App() {
                 ? (ev as { result: string }).result
                 : extractToolResult(ev) || (ev as { result?: unknown }).result;
             const parsed = parseTodosFromUnknown(raw);
-            if (parsed) setSessionTodos(parsed);
+            if (parsed) {
+              setConversations((prev) =>
+                applySessionTasks(prev, convId, toSessionTasks(parsed)),
+              );
+            }
           }
           return;
         }
@@ -1149,7 +1320,7 @@ export default function App() {
               : undefined;
           if (code === "assistant_text_loop") {
             setTextLoopRecovery(true);
-            setStatusLine(
+            setStatusLineIfActive(
               "Text loop stopped — use “Continue with tools” (inspect disk → one write).",
             );
           }
@@ -1181,36 +1352,46 @@ export default function App() {
       if (cancelled) u1();
       else unsubs.push(u1);
 
-      const u2 = await onAgentStderr((line) => {
+      const u2 = await onAgentStderr((payload) => {
         if (cancelled) return;
-        if (/error|fail|missing|no api key/i.test(line)) {
-          setStatusLine(line);
+        const convId = payload.conversationId ?? activeIdRef.current;
+        if (
+          convId === activeIdRef.current &&
+          /error|fail|missing|no api key/i.test(payload.line)
+        ) {
+          setStatusLine(payload.line);
         }
       });
       if (cancelled) u2();
       else unsubs.push(u2);
 
-      const u3 = await onRunFinished(({ exitCode, cancelled: wasCancelled }) => {
+      const u3 = await onRunFinished((payload) => {
         if (cancelled) return;
-        setRunning(false);
-        setLiveToolLabel(null);
-        setLiveMemberName(null);
-        pendingToolNamesRef.current.clear();
-        if (toolLabelClearRef.current) {
-          clearTimeout(toolLabelClearRef.current);
-          toolLabelClearRef.current = null;
-        }
-        const durationMs = Date.now() - (runStartedAtRef.current || Date.now());
-        const tools = toolCountRef.current;
-        const tokens = turnTokensRef.current;
-        const aid = assistantIdRef.current;
-        assistantIdRef.current = null;
-        activeMemberRef.current = {};
+        const { exitCode, cancelled: wasCancelled } = payload;
+        const convId = payload.conversationId ?? activeIdRef.current;
+        const turn = turnsRef.current.get(convId) ?? turnFor(convId);
+        const isActiveConv = convId === activeIdRef.current;
+        runCoordinator.finished(
+          { ...payload, conversationId: convId },
+          activeIdRef.current,
+        );
+        // M3: plan.json is the source of truth once the run settles -
+        // re-read it to reconcile optimistic task updates (ADR-0018).
+        if (payload.cwd) void reloadWorkspaceTasks(payload.cwd);
+        setLiveToolLabelFor(convId, null);
+        setLiveMemberNameFor(convId, null);
+        clearToolLabelTimer(convId);
+        const durationMs = Date.now() - (turn.startedAt || Date.now());
+        const tools = turn.toolCount;
+        const tokens = turn.tokens;
+        const aid = turn.assistantId;
+        turn.assistantId = null;
+        turn.member = {};
 
         // Attach light stats to last assistant message
         setConversations((prev) =>
           prev.map((c) => {
-            if (c.id !== activeIdRef.current) return c;
+            if (c.id !== convId) return c;
             const messages = [...c.messages];
             const targetId =
               aid ??
@@ -1256,11 +1437,11 @@ export default function App() {
           tokens.total > 0
             ? ` · ${tokens.total.toLocaleString()} tokens`
             : "";
-        if (wasCancelled) setStatusLine("Run cancelled");
+        if (wasCancelled && isActiveConv) setStatusLine("Run cancelled");
         else if (exitCode === 0) {
           // Detect incomplete-looking finals (many tools, little clean prose)
           const lastAsst = [...(conversationsRef.current.find(
-            (x) => x.id === activeIdRef.current,
+            (x) => x.id === convId,
           )?.messages ?? [])]
             .reverse()
             .find((m) => m.role === "assistant");
@@ -1269,14 +1450,19 @@ export default function App() {
           }).length;
           const thin =
             tools >= 12 && cleanLen > 0 && cleanLen < 400;
-          setStatusLine(
-            thin
-              ? `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools${tokPart} · reply looks thin — try “continue”`
-              : `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools${tokPart}`,
-          );
-        } else setStatusLine(`Finished with exit code ${exitCode}${tokPart}`);
+          if (isActiveConv) {
+            setStatusLine(
+              thin
+                ? `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools${tokPart} · reply looks thin — try “continue”`
+                : `Completed · ${(durationMs / 1000).toFixed(1)}s · ${tools} tools${tokPart}`,
+            );
+          }
+        } else if (isActiveConv) {
+          setStatusLine(`Finished with exit code ${exitCode}${tokPart}`);
+        }
         setGitRefreshKey((k) => k + 1);
         void refreshCli();
+        turnsRef.current.delete(convId);
       });
       if (cancelled) u3();
       else unsubs.push(u3);
@@ -1291,7 +1477,7 @@ export default function App() {
 
   const refreshPlugins = useCallback(async () => {
     try {
-      const snap = await getPluginsStatus(workdir ?? undefined);
+      const snap = await getPluginsStatus(activeCwd ?? undefined);
       setPluginRows(
         (snap.plugins ?? []).map((p) => ({
           id: p.id,
@@ -1305,12 +1491,12 @@ export default function App() {
       // Older CLI without --plugins-status — ignore silently.
       setPluginRows([]);
     }
-  }, [workdir]);
+  }, [activeCwd]);
 
   useEffect(() => {
     setPluginBannerDismissed(false);
     void refreshPlugins();
-  }, [workdir, refreshPlugins]);
+  }, [activeCwd, refreshPlugins]);
 
   const onInstallPlugin = useCallback(
     async (id: string) => {
@@ -1318,7 +1504,7 @@ export default function App() {
       setPluginError(null);
       setStatusLine(`Installing plugin ${id}…`);
       try {
-        const res = await installPlugin(id, workdir ?? undefined);
+        const res = await installPlugin(id, activeCwd ?? undefined);
         if (res.ok) {
           setStatusLine(
             res.message ||
@@ -1339,21 +1525,24 @@ export default function App() {
         setInstallingPluginId(null);
       }
     },
-    [workdir, refreshPlugins],
+    [activeCwd, refreshPlugins],
   );
 
   const startNewChat = () => {
     setFollowStream(true);
     followStreamRef.current = true;
-    if (running) return;
-    const c = newConversation(mode, phase, provider, model);
+    const c = newConversation(
+      mode,
+      phase,
+      provider,
+      model,
+      activeCwd ?? workdir ?? undefined,
+    );
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
     setSessionFilter("active");
     setDraft("");
-    setSessionTodos([]);
     setTextLoopRecovery(false);
-    assistantIdRef.current = null;
     taRef.current?.focus();
   };
 
@@ -1516,7 +1705,7 @@ export default function App() {
       try {
         const res = await readProjectText({
           path: hit.absolute || hit.path,
-          cwd: workdir,
+          cwd: activeCwd,
         });
         const att: PendingAttachment = {
           id: uid("att"),
@@ -1538,7 +1727,7 @@ export default function App() {
         setStatusLine(e instanceof Error ? e.message : String(e));
       }
     },
-    [workdir],
+    [activeCwd],
   );
 
   const onPickMention = useCallback(
@@ -1617,6 +1806,8 @@ export default function App() {
   );
 
   const send = async (text?: string) => {
+    const convId = active.id;
+    const turn = turnFor(convId);
     const fromSpeech = [draft, speech.interim].filter(Boolean).join(" ").trim();
     let base = (text ?? fromSpeech).trim();
     if ((!base && attachments.length === 0 && !pendingSkill) || running) return;
@@ -1650,21 +1841,21 @@ export default function App() {
       createdAt: Date.now(),
     };
 
-    assistantIdRef.current = null;
-    activeMemberRef.current = {};
-    hasAssistantTextRef.current = false;
-    toolCountRef.current = 0;
-    setLiveToolLabel(null);
-    setLiveSteps([]);
-    pendingToolNamesRef.current.clear();
-    setLiveMemberName(null);
+    turn.assistantId = null;
+    turn.member = {};
+    turn.hasAssistantText = false;
+    turn.toolCount = 0;
+    setLiveToolLabelFor(convId, null);
+    setLiveStepsFor(convId, []);
+    turn.pendingToolNames.clear();
+    setLiveMemberNameFor(convId, null);
     setFollowStream(true);
     followStreamRef.current = true;
-    turnTokensRef.current = { prompt: 0, completion: 0, total: 0 };
-    runStartedAtRef.current = Date.now();
+    turn.tokens = { prompt: 0, completion: 0, total: 0 };
+    turn.startedAt = Date.now();
     setDraft("");
     setAttachments([]);
-    setRunning(true);
+    runCoordinator.request(convId, activeCwd ?? undefined);
     setStatusLine(krakenGraph ? "kraken graph running…" : `${mode} · ${phase} running…`);
 
     setConversations((prev) =>
@@ -1710,23 +1901,29 @@ export default function App() {
         krakenGraph && phase === "build" ? (krakenPlanId ?? undefined) : undefined;
       if (planOnly) setKrakenPlanId(null);
 
-      await runTask({
+      const runId = await runTask({
         prompt,
         mode,
         phase,
         provider: provider || undefined,
         model: model || undefined,
-        cwd: workdir ?? undefined,
+        cwd: activeCwd ?? undefined,
+        conversationId: convId,
         // Replay rolling history so the headless agent/council keeps multi-turn
         // context (answers "procedi" / "sì" instead of amnesia).
         history: historyForRun,
-        todos: sessionTodos,
+        todos: toTodoPayload(live?.sessionTasks ?? []),
         krakenGraph: krakenGraph || undefined,
         planOnly: planOnly || undefined,
         runPlan,
       });
+      runCoordinator.started({
+        runId,
+        conversationId: convId,
+        cwd: activeCwd ?? undefined,
+      });
     } catch (e) {
-      setRunning(false);
+      runCoordinator.dispatchFailed(convId);
       const msg = e instanceof Error ? e.message : String(e);
       setStatusLine(msg);
       setConversations((prev) =>
@@ -1751,8 +1948,10 @@ export default function App() {
   };
 
   const onStop = async () => {
+    const rid = runCoordinator.state.runIdByConversation[active?.id ?? ""];
+    if (!rid) return;
     try {
-      await cancelRun();
+      await cancelRun({ runId: rid });
       setStatusLine("Cancelling…");
     } catch (e) {
       setStatusLine(e instanceof Error ? e.message : String(e));
@@ -1767,29 +1966,24 @@ export default function App() {
 
       if (e.key === "Escape" && runningRef.current) {
         e.preventDefault();
-        void cancelRun()
-          .then(() => setStatusLine("Cancelling…"))
-          .catch((err) =>
-            setStatusLine(err instanceof Error ? err.message : String(err)),
-          );
+        void onStop();
         return;
       }
       if (mod && !e.shiftKey && e.code === "KeyN") {
         e.preventDefault();
-        if (!runningRef.current) {
-          const c = newConversation(
-            modeRef.current,
-            phaseRef.current,
-            provider,
-            model,
-          );
-          setConversations((prev) => [c, ...prev]);
-          setActiveId(c.id);
-          setSessionFilter("active");
-          setDraft("");
-          assistantIdRef.current = null;
-          taRef.current?.focus();
-        }
+        const c = newConversation(
+          modeRef.current,
+          phaseRef.current,
+          provider,
+          model,
+          conversationsRef.current.find((x) => x.id === activeIdRef.current)
+            ?.cwd,
+        );
+        setConversations((prev) => [c, ...prev]);
+        setActiveId(c.id);
+        setSessionFilter("active");
+        setDraft("");
+        taRef.current?.focus();
         return;
       }
       if (mod && e.shiftKey && e.code === "KeyD") {
@@ -1869,7 +2063,16 @@ export default function App() {
     try {
       const selected = await open({ directory: true, multiple: false });
       if (typeof selected === "string") {
+        // Persist as "last opened workspace" AND bind it to the active
+        // conversation, so each chat keeps its own folder (M1).
         setWorkdir(selected);
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === activeId
+              ? { ...c, cwd: selected, updatedAt: Date.now() }
+              : c,
+          ),
+        );
         setStatusLine(`Cartella: ${selected}`);
       }
     } catch (e) {
@@ -2015,16 +2218,32 @@ export default function App() {
                 type="button"
                 className="session-item"
                 onClick={() => {
-                  if (!running) {
-                    setActiveId(c.id);
-                    setMode(c.mode);
-                    setPhase(c.phase);
-                    if (c.provider) setProvider(c.provider);
-                    if (c.model) setModel(c.model);
-                  }
+                  runCoordinator.markSeen(c.id);
+                  setActiveId(c.id);
+                  setMode(c.mode);
+                  setPhase(c.phase);
+                  if (c.provider) setProvider(c.provider);
+                  if (c.model) setModel(c.model);
                 }}
               >
                 <span className="session-title">{c.title}</span>
+                {runCoordinator.isRunning(c.id) ? (
+                  <span
+                    className="session-run-badge"
+                    title="Run in corso"
+                    aria-label="Run in corso"
+                  >
+                    ●
+                  </span>
+                ) : unseenByConv[c.id] ? (
+                  <span
+                    className="session-run-badge is-done"
+                    title="Run completata"
+                    aria-label="Run completata"
+                  >
+                    ✓
+                  </span>
+                ) : null}
                 <span className="session-meta">
                   {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
                 </span>
@@ -2104,10 +2323,10 @@ export default function App() {
             <div className="topbar-title" title={active?.title ?? "Zelari"}>
               {active?.title ?? "Zelari"}
             </div>
-            {sessionTodos.length > 0 ? (
+            {sessionTasks.length > 0 ? (
               <span className="todo-chip" title="Session tasks from agent">
-                {sessionTodos.filter((t) => t.status === "completed").length}/
-                {sessionTodos.length} todos
+                {sessionTasks.filter((t) => t.status === "completed").length}/
+                {sessionTasks.length} todos
               </span>
             ) : null}
           </div>
@@ -2131,24 +2350,26 @@ export default function App() {
             <button
               type="button"
               className="btn-ghost topbar-folder"
-              disabled={running}
               onClick={() => void pickFolder()}
               title={
-                workdir
-                  ? `${workdir} — click per cambiare cartella`
+                activeCwd
+                  ? `${activeCwd} — click per cambiare cartella`
                   : "Apri una cartella di lavoro"
               }
             >
-              📁 {workdir ? workdir.replace(/.*[\\/]/, "") : "Folder"}
+              📁 {activeCwd ? activeCwd.replace(/.*[\\/]/, "") : "Folder"}
             </button>
           </div>
         </header>
 
         <div className="chat-scroll-shell">
-          {sessionTodos.length > 0 ? (
-            <SessionTodosPanel
-              todos={sessionTodos}
-              onClear={() => setSessionTodos([])}
+          {sessionTasks.length > 0 || projectTasks.length > 0 ? (
+            <LiveTasksPanel
+              tasks={sessionTasks}
+              projectTasks={projectTasks}
+              onClear={() =>
+                setConversations((prev) => clearSessionTasks(prev, active.id))
+              }
             />
           ) : null}
           <div className="chat-scroll" ref={scrollRef}>
@@ -2256,7 +2477,9 @@ export default function App() {
                     running={running}
                     mode={mode}
                     memberName={
-                      liveMemberName || activeMemberRef.current.name || null
+                      liveMemberName ||
+                turnsRef.current.get(active?.id ?? "")?.member.name ||
+                null
                     }
                     toolLabel={liveToolLabel}
                     steps={liveSteps}
@@ -2369,7 +2592,7 @@ export default function App() {
           <div className="composer-stack">
           {mention && (
             <MentionPopup
-              cwd={workdir}
+              cwd={activeCwd}
               query={mention.query}
               open
               onPick={onPickMention}
@@ -2529,14 +2752,14 @@ export default function App() {
         </div>
         <SkillPicker
           open={skillPickerOpen}
-          workdir={workdir}
+          workdir={activeCwd}
           onClose={() => setSkillPickerOpen(false)}
           onSelect={onSelectSkill}
         />
       </main>
 
       <ProjectPanel
-        cwd={workdir}
+        cwd={activeCwd}
         refreshKey={gitRefreshKey}
         collapsed={gitCollapsed}
         onToggle={() => setGitCollapsed((v) => !v)}

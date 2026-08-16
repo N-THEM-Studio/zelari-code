@@ -2,8 +2,12 @@
  * Local chat persistence for Zelari Desktop (localStorage only).
  */
 import type { Conversation } from "./types";
+import { sanitizeTasks } from "./liveTasks/normalize";
 
 const KEY = "zelari-desktop-chats-v1";
+/** Legacy global folder key (pre per-conversation cwd). App keeps it as
+ * the "last opened workspace" default; here it is only a migration source. */
+const LEGACY_WORKDIR_KEY = "zelari-desktop-workdir";
 
 export function loadConversations(): Conversation[] | null {
   try {
@@ -11,7 +15,10 @@ export function loadConversations(): Conversation[] | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Conversation[];
     if (!Array.isArray(parsed)) return null;
-    return parsed.map(normalizeConv);
+    // Legacy migration: the old app had ONE global folder - stamp it on
+    // every conversation that lacks its own cwd.
+    const legacyCwd = localStorage.getItem(LEGACY_WORKDIR_KEY) || null;
+    return parsed.map((c) => normalizeConv(c, legacyCwd));
   } catch {
     return null;
   }
@@ -31,12 +38,20 @@ export function saveConversations(conversations: Conversation[]): void {
   }
 }
 
-function normalizeConv(c: Conversation): Conversation {
+function normalizeConv(
+  c: Conversation,
+  legacyCwd: string | null,
+): Conversation {
   return {
     ...c,
     mode: c.mode === "council" || c.mode === "zelari" ? c.mode : "kraken",
     phase: c.phase === "plan" ? "plan" : "build",
     messages: Array.isArray(c.messages) ? c.messages : [],
     archived: !!c.archived,
+    cwd:
+      typeof c.cwd === "string" && c.cwd.trim()
+        ? c.cwd
+        : legacyCwd ?? undefined,
+    sessionTasks: sanitizeTasks(c.sessionTasks),
   };
 }

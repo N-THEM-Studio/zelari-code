@@ -147,8 +147,13 @@ export async function installPlugin(
   });
 }
 
-export async function cancelRun(): Promise<void> {
-  return invoke("cancel_run");
+/** Cancel one run (by id) or every active run when no id is given. */
+export async function cancelRun(args?: {
+  runId?: string;
+}): Promise<{ cancelled: number }> {
+  return invoke<{ cancelled: number }>("cancel_run", {
+    args: args ?? {},
+  });
 }
 
 export async function getGitStatus(args?: {
@@ -503,25 +508,34 @@ export async function onAgentEvent(
   return listen<AgentEvent>("agent-event", (e) => handler(e.payload));
 }
 
+export interface AgentStderrPayload {
+  line: string;
+  runId?: string;
+  conversationId?: string;
+  cwd?: string;
+}
+
 export async function onAgentStderr(
-  handler: (line: string) => void,
+  handler: (payload: AgentStderrPayload) => void,
 ): Promise<UnlistenFn> {
-  return listen<{ line: string }>("agent-stderr", (e) =>
-    handler(e.payload.line),
+  return listen<AgentStderrPayload>("agent-stderr", (e) =>
+    handler(e.payload),
   );
 }
 
+export interface RunFinishedPayload {
+  runId: string;
+  conversationId?: string;
+  cwd?: string;
+  exitCode: number;
+  cancelled: boolean;
+}
+
 export async function onRunFinished(
-  handler: (payload: {
-    runId: string;
-    exitCode: number;
-    cancelled: boolean;
-  }) => void,
+  handler: (payload: RunFinishedPayload) => void,
 ): Promise<UnlistenFn> {
   return listen("run-finished", (e) =>
-    handler(
-      e.payload as { runId: string; exitCode: number; cancelled: boolean },
-    ),
+    handler(e.payload as RunFinishedPayload),
   );
 }
 

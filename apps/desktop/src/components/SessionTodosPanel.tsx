@@ -1,8 +1,8 @@
-import type { DesktopTodo } from "../sessionTodosUi";
 import { formatDesktopTodoSummary } from "../sessionTodosUi";
 
 interface Props {
-  todos: DesktopTodo[];
+  /** Structurally widened: renders both DesktopTodo and LiveTask rows. */
+  todos: Array<{ id: string; content: string; status: string }>;
   onClear?: () => void;
 }
 

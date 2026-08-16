@@ -23,19 +23,119 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Shared cancel flag for the active headless run (single-flight for v0.1).
-struct RunState {
-    cancel: AtomicBool,
-    running: AtomicBool,
+/// Max concurrent runs across all workspaces.
+const MAX_PARALLEL_RUNS: usize = 4;
+
+/// One active (or just-finished) headless run.
+#[derive(Clone)]
+struct RunEntry {
+    run_id: String,
+    /// Kept for diagnostics / future per-conversation queries.
+    #[allow(dead_code)]
+    conversation_id: String,
+    /// Normalized workspace key (canonical, lowercased, forward slashes). */
+    cwd: String,
+    cancel: Arc<AtomicBool>,
 }
 
-impl Default for RunState {
+/// Multi-run registry (replaces the v0.1 single-flight RunState).
+/// Policy: max ONE active run per cwd - two CLI processes writing the
+/// same tree would race on plan.json and source files - plus a global
+/// MAX_PARALLEL_RUNS cap.
+struct RunRegistry {
+    runs: Mutex<Vec<RunEntry>>,
+}
+
+impl Default for RunRegistry {
     fn default() -> Self {
         Self {
-            cancel: AtomicBool::new(false),
-            running: AtomicBool::new(false),
+            runs: Mutex::new(Vec::new()),
         }
     }
+}
+
+impl RunRegistry {
+    fn register(
+        &self,
+        run_id: &str,
+        conversation_id: &str,
+        cwd: &str,
+    ) -> Result<Arc<AtomicBool>, String> {
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        if runs.iter().any(|r| r.cwd == cwd) {
+            return Err(
+                "Another build run is already modifying this workspace. Wait for it to finish or cancel it first."
+                    .into(),
+            );
+        }
+        if runs.len() >= MAX_PARALLEL_RUNS {
+            return Err(format!(
+                "Too many concurrent runs (max {MAX_PARALLEL_RUNS}). Wait for a background run to finish."
+            ));
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        runs.push(RunEntry {
+            run_id: run_id.to_string(),
+            conversation_id: conversation_id.to_string(),
+            cwd: cwd.to_string(),
+            cancel: Arc::clone(&cancel),
+        });
+        Ok(cancel)
+    }
+
+    fn remove(&self, run_id: &str) {
+        let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        runs.retain(|r| r.run_id != run_id);
+    }
+
+    /// Cancel one run (by id) or every active run (legacy no-arg call).
+    fn cancel(&self, run_id: Option<&str>) -> usize {
+        let runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        let targets: Vec<&RunEntry> = match run_id {
+            Some(id) if !id.is_empty() && !id.starts_with("pending:") => {
+                runs.iter().filter(|r| r.run_id == id).collect()
+            }
+            _ => runs.iter().collect(),
+        };
+        for t in &targets {
+            t.cancel.store(true, Ordering::SeqCst);
+        }
+        targets.len()
+    }
+}
+
+/// Normalize a workspace path into a comparison key: canonicalize when
+/// possible (symlinks, Windows 8.3), forward slashes, lowercase (case-
+/// insensitive filesystems: Windows/macOS).
+fn normalize_cwd(cwd: Option<&str>) -> String {
+    let raw = cwd.unwrap_or("").trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+    match Path::new(raw).canonicalize() {
+        Ok(c) => c.to_string_lossy().replace('\\', "/").to_lowercase(),
+        Err(_) => raw.replace('\\', "/").to_lowercase(),
+    }
+}
+
+/// Per-run identity stamped on EVERY emitted event so the frontend can
+/// route without guessing which chat is visible (multi-chat M2).
+#[derive(Clone)]
+struct RunEnvelopeCtx {
+    run_id: String,
+    /// Kept for diagnostics / future per-conversation queries.
+    #[allow(dead_code)]
+    conversation_id: String,
+    cwd: String,
+}
+
+fn enveloped(mut value: serde_json::Value, ctx: &RunEnvelopeCtx) -> serde_json::Value {
+    if let Some(obj) = value.as_object_mut() {
+        obj.insert("runId".into(), serde_json::json!(ctx.run_id));
+        obj.insert("conversationId".into(), serde_json::json!(ctx.conversation_id));
+        obj.insert("cwd".into(), serde_json::json!(ctx.cwd));
+    }
+    value
 }
 
 /// Background `zelari-code serve` process for Android companion.
@@ -288,6 +388,10 @@ struct CliStatus {
 #[serde(rename_all = "camelCase")]
 struct RunStarted {
     run_id: String,
+    /// Kept for diagnostics / future per-conversation queries.
+    #[allow(dead_code)]
+    conversation_id: String,
+    cwd: String,
     prompt: String,
     mode: String,
     phase: String,
@@ -297,6 +401,10 @@ struct RunStarted {
 #[serde(rename_all = "camelCase")]
 struct RunFinished {
     run_id: String,
+    /// Kept for diagnostics / future per-conversation queries.
+    #[allow(dead_code)]
+    conversation_id: String,
+    cwd: String,
     exit_code: i32,
     cancelled: bool,
 }
@@ -1137,13 +1245,24 @@ fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-fn cancel_run(state: State<'_, Arc<RunState>>) -> Result<(), String> {
-    if state.running.load(Ordering::SeqCst) {
-        state.cancel.store(true, Ordering::SeqCst);
-        Ok(())
-    } else {
+fn cancel_run(
+    state: State<'_, Arc<RunRegistry>>,
+    args: Option<CancelRunArgs>,
+) -> Result<usize, String> {
+    let n = state.cancel(args.and_then(|a| a.run_id).as_deref());
+    if n == 0 {
         Err("No active run".into())
+    } else {
+        Ok(n)
     }
+}
+
+#[derive(Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct CancelRunArgs {
+    /// Cancel exactly this run; omit to cancel every active run (legacy).
+    #[serde(default)]
+    run_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -2049,6 +2168,10 @@ struct RunTaskArgs {
     provider: Option<String>,
     #[serde(default)]
     model: Option<String>,
+    /// Conversation the run belongs to (multi-chat desktop). Stamped on
+    /// every emitted event so the frontend can route without guessing.
+    #[serde(default)]
+    conversation_id: Option<String>,
     /// Optional working directory chosen via "Open Folder". When set, the
     /// headless CLI is spawned inside it (current_dir) so the agent operates
     /// on the user-selected project. None = inherit the Tauri process cwd.
@@ -2170,34 +2293,20 @@ fn plugins_install(args: PluginsInstallArgs) -> Result<serde_json::Value, String
 #[tauri::command]
 fn run_task(
     app: AppHandle,
-    state: State<'_, Arc<RunState>>,
+    state: State<'_, Arc<RunRegistry>>,
     args: RunTaskArgs,
 ) -> Result<String, String> {
-    if state.running.swap(true, Ordering::SeqCst) {
-        return Err("A task is already running. Cancel it first.".into());
-    }
-    state.cancel.store(false, Ordering::SeqCst);
-
     let prompt = args.prompt.trim().to_string();
     if prompt.is_empty() {
-        state.running.store(false, Ordering::SeqCst);
         return Err("Prompt is empty".into());
     }
 
     let mode = normalize_mode(&args.mode, args.council);
     let phase = normalize_phase(&args.phase);
 
-    let node = find_node().ok_or_else(|| {
-        state.running.store(false, Ordering::SeqCst);
-        "Node.js not found on PATH".to_string()
-    })?;
-    let cli = match resolve_cli_entry() {
-        Ok(p) => p,
-        Err(e) => {
-            state.running.store(false, Ordering::SeqCst);
-            return Err(e);
-        }
-    };
+    let node =
+        find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
 
     let run_id = format!(
         "run-{}",
@@ -2206,18 +2315,24 @@ fn run_task(
             .map(|d| d.as_millis())
             .unwrap_or(0)
     );
+    let conversation_id = args.conversation_id.clone().unwrap_or_default();
+    let cwd_norm = normalize_cwd(args.cwd.as_deref());
+    // Policy: max ONE active run per workspace (cwd) + global cap.
+    let cancel_flag = state.register(&run_id, &conversation_id, &cwd_norm)?;
 
     let _ = app.emit(
         "run-started",
         RunStarted {
             run_id: run_id.clone(),
+            conversation_id: conversation_id.clone(),
+            cwd: cwd_norm.clone(),
             prompt: prompt.clone(),
             mode: mode.clone(),
             phase: phase.clone(),
         },
     );
 
-    let run_state = Arc::clone(&state);
+    let registry = Arc::clone(&state);
     let app_handle = app.clone();
     let run_id_thread = run_id.clone();
     let provider = args.provider;
@@ -2229,10 +2344,17 @@ fn run_task(
     let plan_only = args.plan_only;
     let run_plan = args.run_plan;
 
+    let env_ctx = RunEnvelopeCtx {
+        run_id: run_id.clone(),
+        conversation_id: conversation_id.clone(),
+        cwd: cwd_norm.clone(),
+    };
+
     thread::spawn(move || {
         let result = spawn_headless(
             &app_handle,
-            &run_state,
+            &cancel_flag,
+            &env_ctx,
             &node,
             &cli,
             &prompt,
@@ -2249,30 +2371,33 @@ fn run_task(
         );
 
         let (exit_code, cancelled) = match result {
-            Ok(code) => (code, run_state.cancel.load(Ordering::SeqCst)),
+            Ok(code) => (code, cancel_flag.load(Ordering::SeqCst)),
             Err(err) => {
                 let _ = app_handle.emit(
                     "agent-event",
-                    serde_json::json!({
-                        "type": "error",
-                        "message": err,
-                        "runId": run_id_thread,
-                    }),
+                    enveloped(
+                        serde_json::json!({
+                            "type": "error",
+                            "message": err,
+                        }),
+                        &env_ctx,
+                    ),
                 );
-                (2, run_state.cancel.load(Ordering::SeqCst))
+                (2, cancel_flag.load(Ordering::SeqCst))
             }
         };
 
         let _ = app_handle.emit(
             "run-finished",
             RunFinished {
-                run_id: run_id_thread,
+                run_id: run_id_thread.clone(),
+                conversation_id: env_ctx.conversation_id.clone(),
+                cwd: env_ctx.cwd.clone(),
                 exit_code,
                 cancelled,
             },
         );
-        run_state.running.store(false, Ordering::SeqCst);
-        run_state.cancel.store(false, Ordering::SeqCst);
+        registry.remove(&run_id_thread);
     });
 
     Ok(run_id)
@@ -2280,7 +2405,8 @@ fn run_task(
 
 fn spawn_headless(
     app: &AppHandle,
-    state: &RunState,
+    cancel: &AtomicBool,
+    envelope: &RunEnvelopeCtx,
     node: &Path,
     cli: &Path,
     prompt: &str,
@@ -2387,6 +2513,7 @@ fn spawn_headless(
 
     // Drain stderr on a side thread (never block the NDJSON reader).
     let app_err = app.clone();
+    let ctx_err = envelope.clone();
     let err_thread = thread::spawn(move || {
         let reader = BufReader::new(stderr);
         for line in reader.lines().flatten() {
@@ -2394,7 +2521,15 @@ fn spawn_headless(
             if trimmed.is_empty() {
                 continue;
             }
-            let _ = app_err.emit("agent-stderr", serde_json::json!({ "line": trimmed }));
+            let _ = app_err.emit(
+                "agent-stderr",
+                serde_json::json!({
+                    "line": trimmed,
+                    "runId": ctx_err.run_id,
+                    "conversationId": ctx_err.conversation_id,
+                    "cwd": ctx_err.cwd,
+                }),
+            );
         }
     });
 
@@ -2420,7 +2555,7 @@ fn spawn_headless(
 
     let mut cancelled = false;
     loop {
-        if state.cancel.load(Ordering::SeqCst) {
+        if cancel.load(Ordering::SeqCst) {
             cancelled = true;
             kill_child_tree(&mut child);
             break;
@@ -2434,15 +2569,18 @@ fn spawn_headless(
                 }
                 match serde_json::from_str::<serde_json::Value>(trimmed) {
                     Ok(value) => {
-                        let _ = app.emit("agent-event", value);
+                        let _ = app.emit("agent-event", enveloped(value, envelope));
                     }
                     Err(_) => {
                         let _ = app.emit(
                             "agent-event",
-                            serde_json::json!({
-                                "type": "log",
-                                "message": trimmed,
-                            }),
+                            enveloped(
+                                serde_json::json!({
+                                    "type": "log",
+                                    "message": trimmed,
+                                }),
+                                envelope,
+                            ),
                         );
                     }
                 }
@@ -2450,10 +2588,13 @@ fn spawn_headless(
             Ok(Err(e)) => {
                 let _ = app.emit(
                     "agent-event",
-                    serde_json::json!({
-                        "type": "error",
-                        "message": format!("stdout read error: {e}"),
-                    }),
+                    enveloped(
+                        serde_json::json!({
+                            "type": "error",
+                            "message": format!("stdout read error: {e}"),
+                        }),
+                        envelope,
+                    ),
                 );
                 break;
             }
@@ -2468,7 +2609,7 @@ fn spawn_headless(
                                 continue;
                             }
                             if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                                let _ = app.emit("agent-event", value);
+                                let _ = app.emit("agent-event", enveloped(value, envelope));
                             }
                         }
                     }
@@ -2676,7 +2817,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .manage(Arc::new(RunState::default()))
+        .manage(Arc::new(RunRegistry::default()))
         .manage(Arc::new(CompanionServeState::default()))
         .invoke_handler(tauri::generate_handler![
             get_cli_status,

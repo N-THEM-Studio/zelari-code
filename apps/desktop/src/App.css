@@ -4166,6 +4166,23 @@ kbd {
   color: #f0c14b;
 }
 
+.session-todo.status-blocked .session-todo-mark {
+  color: #e2694f;
+}
+
+.session-todo.status-blocked .session-todo-text {
+  color: #e2a58f;
+}
+
+/* Workspace project tasks section (ADR-0018) sits under session tasks. */
+.live-tasks-project {
+  margin-top: -4px;
+}
+
+.live-tasks-project .session-todos-title {
+  color: var(--accent, #7aa2f7);
+}
+
 .session-todo-mark {
   flex-shrink: 0;
   width: 1.1em;
@@ -5666,3 +5683,23 @@ kbd {
 }
 
 
+
+/* --- M2 run badges (sidebar) --- */
+.session-run-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--accent, #7aa2f7);
+  animation: run-pulse 1.6s ease-in-out infinite;
+}
+.session-run-badge.is-done {
+  color: #9ece6a;
+  animation: none;
+}
+@keyframes run-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}

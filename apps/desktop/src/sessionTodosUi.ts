@@ -107,7 +107,9 @@ export function mergeDesktopTodos(
   return out;
 }
 
-export function formatDesktopTodoSummary(todos: DesktopTodo[]): string | null {
+export function formatDesktopTodoSummary(
+  todos: Array<{ id: string; content: string; status: string }>,
+): string | null {
   if (!todos.length) return null;
   const done = todos.filter(
     (t) => t.status === "completed" || t.status === "cancelled",
