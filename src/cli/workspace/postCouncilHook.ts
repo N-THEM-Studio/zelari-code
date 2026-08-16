@@ -29,6 +29,7 @@ import type {
 } from "@zelari/core/council";
 import { updateAgentsMd } from "./agentsMd.js";
 import { runBuiltinCompleteDesign } from "./completeDesign.js";
+import { runPlanDriftCheck, type PlanDriftResult } from "./planDriftCheck.js";
 import { runProjectSmoke, type ProjectSmokeResult } from "./projectSmoke.js";
 import type { WorkspaceContext } from "./types.js";
 
@@ -75,6 +76,8 @@ export interface PostCouncilHookResult {
   smoke?: ProjectSmokeResult;
   /** v0.9.0 — aggregated completion artifact. */
   completion?: CompletionHookResult;
+  /** v0.10 — plan.json ↔ canonical drift check (P1.5 governance). */
+  driftCheck?: PlanDriftResult;
 }
 
 /** Result of Step 6 completion.json write. */
@@ -266,6 +269,8 @@ export async function runImplementationVerificationHook(
  *   1. AGENTS.MD auto-maintenance (can be skipped via ZELARI_AGENTS_MD=0).
  *   2. complete-design post-processor (design-phase only, can be skipped
  *      via ZELARI_COMPLETE_DESIGN=0).
+ *   2b. plan drift-check — plan.json ↔ canonical doc reconciliation
+ *      (can be skipped via ZELARI_DRIFT_CHECK=0).
  *   3. implementation verification (implementation only, ZELARI_VERIFY=0).
  *   4. project smoke — npm run typecheck|test|build (ZELARI_SMOKE=0).
  *   5. lessons capture from verification FAILs.
@@ -312,6 +317,9 @@ export async function runPostCouncilHook(
 
   // ── Step 2: complete-design post-processor ───────────────────────────
   const completeDesign = await runCompleteDesignPostProcessor(ctx, options);
+
+  // ── Step 2b: plan drift-check (plan.json ↔ canonical) ────────────────
+  const driftCheck = await runPlanDriftCheck(ctx.rootDir);
 
   // ── Step 3: implementation verification ──────────────────────────────
   let verification = await runImplementationVerificationHook(ctx, options);
@@ -430,6 +438,7 @@ export async function runPostCouncilHook(
     ran:
       agentsMdResult.ran ||
       completeDesign.ran ||
+      driftCheck.ran ||
       verification.ran ||
       lessons.ran ||
       smoke.ran ||
@@ -443,5 +452,6 @@ export async function runPostCouncilHook(
     lessons,
     smoke,
     completion: completionHook,
+    driftCheck,
   };
 }

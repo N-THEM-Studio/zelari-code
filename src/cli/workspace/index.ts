@@ -60,6 +60,10 @@ export {
   runPostCouncilHook,
   runImplementationVerificationHook,
 } from "./postCouncilHook.js";
+
+// Plan drift check — plan.json ↔ canonical doc reconciliation (v0.10).
+export { runPlanDriftCheck } from "./planDriftCheck.js";
+export type { PlanDriftResult, DriftFinding } from "./planDriftCheck.js";
 export type {
   HookResult,
   PostCouncilHookOptions,
