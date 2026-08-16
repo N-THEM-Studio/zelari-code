@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.45.0] - 2026-08-16
+
+### Added
+- **`--task-file` headless flag (CLI + Desktop bridge)** - `zelari-code --task-file <path>` (and `--kraken-graph-file <path>`) reads the headless prompt from a file instead of argv; the Desktop Rust bridge spills prompts larger than 8 KB to a `zelari-task-*.txt` temp file (best-effort cleanup at end of run, inline fallback if the spill fails), fixing Windows `CreateProcess` os error 206 ("filename or extension is too long") on long first messages - the same mitigation already adopted for `--history-file`.
+- **Unit tests for headless flag parsing** - `src/cli/headless.test.ts` covers file reads, last-flag-wins precedence, missing/empty file validation errors and `--task`/`--kraken-graph` mutual exclusion (8 cases).
+
+### Fixed
+- **Live Tasks panel declutter (Desktop)** - completed and cancelled project tasks no longer render in the Live Tasks panel: empty phase groups collapse automatically, and the whole Project section (or the panel itself) disappears when nothing is active. The plan summary line keeps counting closed tasks, so progress numbers stay accurate.
+
 ## [1.44.0] - 2026-08-16
 
 ### Added
