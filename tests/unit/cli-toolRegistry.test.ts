@@ -27,6 +27,9 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
       'ssh_run',
       'ssh_status',
       'task',
+      'task_create',
+      'task_list',
+      'task_update',
       'todo_read',
       'todo_write',
       'update_world_hypothesis',
@@ -60,7 +63,8 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
     const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
-    expect(openAITools).toHaveLength(25);
+    // 25 builtins + 3 ADR-0018 plan-task tools (task_create/update/list).
+    expect(openAITools).toHaveLength(28);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);

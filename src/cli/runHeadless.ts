@@ -455,6 +455,20 @@ async function runHeadlessSingle(
   // ZELARI_PERMISSION_*=deny for hard lockdown.
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     planMode: planModeFromOpts(opts),
+    // ADR-0018 3b: upgrade plan-task domain events to first-class NDJSON
+    // BrainEvents. Rust envelopes every stdout line with runId/conversationId,
+    // so task events ride the same multiplexed channel as the rest.
+    onTaskEvent: (ev) => {
+      if (opts.output !== 'json') return;
+      emitEvent({
+        type: ev.type,
+        id: crypto.randomUUID(),
+        ts: Date.now(),
+        sessionId,
+        source: ev.source,
+        ...(ev.type === 'task_update' ? { task: ev.task } : { tasks: ev.tasks }),
+      });
+    },
     permissionPolicy: {
       read: 'allow',
       write: 'allow',

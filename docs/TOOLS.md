@@ -60,6 +60,21 @@ Usati soprattutto dal **council** (sempre registrati lì). Agente singolo: su sk
 
 Alias: `searchRAG` → `searchDocuments` (via registry “Did you mean”).
 
+
+### Workspace plan tasks (ADR-0018, v1.43.0)
+
+Store durevole dei task di progetto in `.zelari/plan.json` (envelope `schemaVersion`/`counter`/`tasks`), condiviso tra agente singolo, council e Desktop Live Tasks. Distinti dai session todo (`todo_write`/`todo_read`, volatili per sessione).
+
+| Tool | Perm | Note |
+|------|------|------|
+| **`task_create`** | write | Crea task `pending` con id `t<N>` sequenziale; `title`, `priority?`, `phaseId?`, `notes?` |
+| **`task_update`** | write | Aggiorna per `id`: `status?` (`pending|in_progress|completed|cancelled|blocked`), `title?`, `priority?`, `phaseId?`, `notes?`, `appendNote?`. Errore `PLAN_TASK_NOT_FOUND` su id assente. Accetta anche id council |
+| **`task_list`** | read | Snapshot filtrabile (`status?`, `phaseId?`) + conteggio done/total. Include task council e `t<N>` |
+
+Coesistenza col council: `done` viene normalizzato in lettura a `completed` (e il writer council accetta entrambi in input); gli id `t<N>` non collidono con gli id `<phaseId>-<slug>-<N>`; i campi root estranei al contratto (`phases`, `milestones`, metadati) sono preservati in pass-through; write atomica tmp+rename con backup `plan.json.bak`.
+
+Registrazione: profilo `full` e `planMode` (mai readOnly/explore/verify/general). Hardening futuro: lock file cross-process.
+
 ## Plan phase vs build phase
 
 Ortogonale a mode `kraken` | `council` | `zelari` (`/plan`, `/build`, `--phase`; `agent` = alias).

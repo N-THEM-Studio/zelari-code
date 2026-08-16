@@ -32,6 +32,10 @@ import { createTaskTool, type TaskAgentKind, type TaskToolDeps } from './tools/t
 import { createAskUserTool, type AskUserHandler } from './tools/askUser.js';
 import { createSkillTool } from './tools/skillTool.js';
 import { createTodoReadTool, createTodoWriteTool } from './tools/todoTools.js';
+import {
+  createPlanTaskTools,
+  type PlanTaskEventSink,
+} from './tools/planTaskTools.js';
 import { createLspTools } from './lsp/tools.js';
 import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { createAstTools } from './ast/tools.js';
@@ -134,6 +138,20 @@ export interface CreateRegistryOptions {
   enableSkill?: boolean;
   /** Register session todo_write/todo_read (default true for full/plan parent). */
   enableTodos?: boolean;
+  /**
+   * Register the durable workspace plan-task tools (task_create/task_update/
+   * task_list on .zelari/plan.json, ADR-0018). Default: enabled for the full
+   * profile and in planMode (the plan is the plan-phase domain). Never
+   * readOnly/explore/verify/general.
+   */
+  enablePlanTasks?: boolean;
+  /**
+   * Optional sink for first-class task events (task_update / task_snapshot,
+   * ADR-0018 3b) emitted by the plan-task tools after durable writes. The
+   * headless runner wires it to the NDJSON stream so the Desktop Live Tasks
+   * panel needs no tool parsing.
+   */
+  onTaskEvent?: PlanTaskEventSink;
   /**
    * v0.10.0 lifecycle hooks. Default: auto — global hooks always +
    * project hooks when the folder is trusted (parent profiles only).
@@ -275,6 +293,24 @@ export function createBuiltinToolRegistry(
   if (todoWrite) registry.register(todoWrite);
   if (todoRead) registry.register(todoRead);
 
+  // Durable workspace plan tasks (ADR-0018) - .zelari/plan.json store shared
+  // with the council stubs. Full build agent + plan phase only.
+  const enablePlanTasks =
+    options.enablePlanTasks !== false &&
+    options.readOnly !== true &&
+    (profile === 'full' || options.planMode === true) &&
+    profile !== 'explore' &&
+    profile !== 'verify' &&
+    profile !== 'general';
+  const planTaskToolsWrapped = (
+    enablePlanTasks
+      ? createPlanTaskTools({ projectRoot: root, onTaskEvent: options.onTaskEvent })
+      : []
+  ).map((t) => withPerm(t));
+  for (const t of planTaskToolsWrapped) {
+    registry.register(t);
+  }
+
   const summary = [
     safeReadFile,
     safeGrepContent,
@@ -288,6 +324,7 @@ export function createBuiltinToolRegistry(
     ...(skillTool ? [skillTool] : []),
     ...(todoWrite ? [todoWrite] : []),
     ...(todoRead ? [todoRead] : []),
+    ...(planTaskToolsWrapped.length > 0 ? planTaskToolsWrapped : []),
   ];
   const tools: BuiltinToolSummary[] = summary.map((t) => ({
     name: t.name,

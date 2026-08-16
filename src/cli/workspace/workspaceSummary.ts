@@ -144,7 +144,13 @@ export function buildPlanSummary(
   ];
 
   // Open (pending/in_progress/blocked) tasks first; done tasks are counted only.
-  const open = tasks.filter((t) => t.status !== "done");
+  // ADR-0018: accept both vocabularies — council writes `done`, the task_*
+  // store writes `completed`/`cancelled` (both are closed). The string cast
+  // widens the legacy PlanFrontmatter status union on purpose.
+  const open = tasks.filter((t) => {
+    const s = t.status as string | undefined;
+    return s !== "done" && s !== "completed" && s !== "cancelled";
+  });
   const done = tasks.length - open.length;
 
   const userMessage = options?.userMessage?.trim();

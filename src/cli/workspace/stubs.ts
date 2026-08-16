@@ -63,6 +63,12 @@ interface PlanSummary {
   phases: PlanFrontmatter[];
   tasks: PlanFrontmatter[];
   milestones: PlanFrontmatter[];
+  /**
+   * v1.43 (ADR-0018): unknown plan.json root fields (schemaVersion, counter,
+   * future extensions) preserved in pass-through across the
+   * readPlan → writePlan cycle. Canonical fields below always win on write.
+   */
+  root?: Record<string, unknown>;
 }
 
 /** Path of the machine-readable plan store (source of truth since v0.7.3). */
@@ -83,11 +89,15 @@ function readPlan(ctx: WorkspaceContext): PlanSummary {
     try {
       const parsed = JSON.parse(
         readFileSync(jsonPath, "utf8"),
-      ) as Partial<PlanSummary>;
+      ) as Partial<PlanSummary> & Record<string, unknown>;
+      // ADR-0018: keep unknown root fields (schemaVersion/counter/…) so the
+      // next writePlan round-trips them for the task_* tool store.
+      const { phases, tasks, milestones, ...root } = parsed;
       return {
-        phases: Array.isArray(parsed.phases) ? parsed.phases : [],
-        tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
-        milestones: Array.isArray(parsed.milestones) ? parsed.milestones : [],
+        phases: Array.isArray(phases) ? phases : [],
+        tasks: Array.isArray(tasks) ? tasks : [],
+        milestones: Array.isArray(milestones) ? milestones : [],
+        root,
       };
     } catch {
       // Corrupt plan.json — fall through to the legacy migration read.
@@ -120,7 +130,21 @@ function writePlan(ctx: WorkspaceContext, summary: PlanSummary): void {
   const jsonPath = planJsonPath(ctx);
   mkdirSync(dirname(jsonPath), { recursive: true });
   const tmp = jsonPath + ".tmp-" + process.pid;
-  writeFileSync(tmp, JSON.stringify(summary, null, 2), "utf8");
+  // ADR-0018: spread pass-through root fields first; canonical arrays win.
+  writeFileSync(
+    tmp,
+    JSON.stringify(
+      {
+        ...(summary.root ?? {}),
+        phases: summary.phases,
+        tasks: summary.tasks,
+        milestones: summary.milestones,
+      },
+      null,
+      2,
+    ),
+    "utf8",
+  );
   renameSync(tmp, jsonPath);
 
   const mdPath = workspaceFile(ctx.rootDir, "plan");
@@ -374,6 +398,8 @@ export function readPlanSummary(ctx: WorkspaceContext): {
   phases: PlanFrontmatter[];
   tasks: PlanFrontmatter[];
   milestones: PlanFrontmatter[];
+  /** ADR-0018 pass-through root fields (schemaVersion, counter, …). */
+  root?: Record<string, unknown>;
 } {
   return readPlan(ctx);
 }
