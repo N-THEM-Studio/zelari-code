@@ -5,6 +5,25 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [1.43.0] - 2026-08-16
+
+### Added
+- **Workspace task store + task tools (ADR-0018)** - `task_create` / `task_update` / `task_list` operate on the canonical `.zelari/plan.json` envelope (schemaVersion + counter) with atomic tmp+rename writes, `.bak` backup and defensive caps; enabled on the `full` profile and plan mode; coexists with council plan writes (root fields preserved, `done`/`completed` dual vocabulary normalized both ways).
+- **First-class task brain events** - `task_update` / `task_snapshot` in `@zelari/core/events` carry `BrainTaskPayload` (5 canonical statuses, session-todo vs workspace-plan source) with type guards; the CLI emits them on the headless NDJSON channel only after durable writes succeed.
+- **Concurrent multi-run desktop** - Rust `RunRegistry` replaces the single-flight `RunState`: max one active run per workspace (canonicalized cwd key) and up to `MAX_PARALLEL_RUNS = 4` global runs; `cancel_run` accepts a specific `runId`.
+- **Run-event envelope** - every `agent-event`, `agent-stderr`, `run-started` and `run-finished` now carries `runId` + `conversationId` + `cwd`; the frontend routes by envelope, never by active chat, so background runs keep writing to their own conversation while you chat elsewhere.
+- **Workspace-aware conversations** - each conversation keeps its own `cwd` (legacy `zelari-desktop-workdir` value migrated on load) and its own session todos; files, git and mentions follow the selected conversation's workspace.
+- **Unified Live Tasks panel** - session todos and workspace project tasks in one surface; project tasks parsed from `plan.json` (ADR-0018 envelope and council legacy shapes), updated optimistically from `task_update` events and reconciled from disk on `run-finished`; `blocked` status rendered for workspace tasks.
+
+### Changed
+- Desktop no longer blocks new chats, chat switching or opening folders while a run is active; the composer is disabled only when the *current* conversation has an active run. The sidebar shows per-conversation running and unseen-completion badges.
+
+### Fixed
+- **Cross-chat event contamination** - agent events were routed through the active conversation id (`activeIdRef`); every event is now attributed by its run envelope (test-grade invariant: no `activeIdRef` in the event path).
+- **Legacy `done` tasks rendered as pending** - the desktop plan parser now normalizes council `done` to `completed` (caught by the 59-task real-plan fixture).
+- **Council `writePlan` dropped the task-store envelope** - unknown root fields (`schemaVersion`, `counter`) are now preserved on every plan write, so the two writers can share one file.
+
 ## [1.42.0] - 2026-08-15
 
 ### Fixed (context & cache upgrade)
