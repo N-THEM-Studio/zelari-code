@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.47.2] - 2026-08-17
+
+### Fixed
+- **DeepSeek HTTP 400 on tool catalog** — strict OpenAI-compatible validators (DeepSeek) require every `function.parameters` schema to be `type: "object"` at the root. `inspect_command` (1.46.0) was the first registry tool with a Zod union at the root of its input schema, so `zodToJsonSchema()` emitted `{anyOf:[…]}` with no root type and every DeepSeek run failed with `schema must be a JSON Schema of 'type: "object"', got 'type: null'`.
+  - `zodToJsonSchema()` now guarantees an object root: unions of object branches are flattened (union of properties, `required` = intersection, discriminator literals collapse into an `enum`); unions with non-object branches pass through untouched.
+  - `inspect_command` ships an explicit flattened `jsonSchema` (11-operation enum derived from the Zod union, per-operation optional params); runtime validation still runs on the Zod discriminated union.
+  - The council catalog (`harnessToolBridge`) now prefers `tool.jsonSchema`, so union tools no longer degrade to `properties: {}`.
+  - Regression tests assert every tool across all registry profiles (readOnly / planMode / full) serializes with `parameters.type === 'object'`.
+
 ## [1.47.1] - 2026-08-17
 
 ### Fixed
