@@ -262,11 +262,17 @@ describe('lsp tools in the registry', () => {
     }
   });
 
-  it('are omitted from a read-only (sub-agent) registry', () => {
+  it('are available in a read-only (sub-agent) registry - WS4: LSP is read-only', () => {
     const root = mkdtempSync(path.join(tmpdir(), 'lsp-ro-'));
     try {
       const { tools } = createBuiltinToolRegistry({ root, readOnly: true, lspProvider: fakeProvider() });
-      expect(tools.map((t) => t.name)).not.toContain('go_to_definition');
+      // v0.10.0 WS4 (piano par.8): the !readOnly gate was removed - all five LSP
+      // tools are permissions: ['read'] (rename_symbol is preview-only), so a
+      // read-only sub-agent keeps the full navigation ladder ast -> lsp -> grep
+      // -> read_file. ZELARI_LSP=0 and lspProvider: null remain the off-switches
+      // (covered by the test above).
+      expect(tools.map((t) => t.name)).toContain('go_to_definition');
+      expect(tools.map((t) => t.name)).toContain('find_references');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

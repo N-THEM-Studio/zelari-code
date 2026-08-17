@@ -9,6 +9,11 @@
  *
  * Positions are exposed to the model as 1-based `line`/`column` (what editors
  * show) and converted to LSP's 0-based coordinates internally.
+ *
+ * WS4 EMPTY ≠ DEGRADED: when the provider reports no language server for the
+ * file (`serverStatusFor` → 'unavailable'), every tool adds an explicit
+ * `degraded` field to its result. An empty array stays an empty array, but it
+ * is never silently presented as evidence about the symbol.
  */
 
 import { z } from 'zod';
@@ -24,6 +29,21 @@ function fmtLocation(loc: Location, relativeTo?: string): string {
   const line = (loc.range?.start?.line ?? 0) + 1;
   const col = (loc.range?.start?.character ?? 0) + 1;
   return `${rel}:${line}:${col}`;
+}
+
+/**
+ * Degraded-provider note (WS4). Call AFTER the provider method, so the
+ * lazily-spawned manager has had a chance to record the failure.
+ * Providers without `serverStatusFor` (older fakes/tests) never degrade.
+ */
+function degradedNote(provider: LspProvider, file: string): string | undefined {
+  if (provider.serverStatusFor?.(file) !== 'unavailable') return undefined;
+  return (
+    'LSP_PROVIDER_DEGRADED: no language server is available for this file ' +
+    '(server not installed or failed to start) — an empty result here is NOT ' +
+    'evidence about the symbol; fall back to ast_outline/find_symbol, ' +
+    'grep_content or read_file.'
+  );
 }
 
 const PosArgs = z.object({
@@ -44,9 +64,11 @@ export function createLspTools(provider: LspProvider, root: string = process.cwd
     execute: async (args) => {
       const a = args as z.infer<typeof PosArgs>;
       const locs = await provider.definition(a.path, a.line - 1, a.column - 1);
+      const degraded = degradedNote(provider, a.path);
       return typedOk({
         definitions: locs.map((l) => fmtLocation(l, root)),
         count: locs.length,
+        ...(degraded ? { degraded } : {}),
       });
     },
   };
@@ -62,9 +84,11 @@ export function createLspTools(provider: LspProvider, root: string = process.cwd
     execute: async (args) => {
       const a = args as z.infer<typeof PosArgs>;
       const locs = await provider.references(a.path, a.line - 1, a.column - 1);
+      const degraded = degradedNote(provider, a.path);
       return typedOk({
         references: locs.map((l) => fmtLocation(l, root)),
         count: locs.length,
+        ...(degraded ? { degraded } : {}),
       });
     },
   };
@@ -79,7 +103,13 @@ export function createLspTools(provider: LspProvider, root: string = process.cwd
     execute: async (args) => {
       const a = args as z.infer<typeof PosArgs>;
       const text = await provider.hover(a.path, a.line - 1, a.column - 1);
-      return typedOk({ hover: text ?? '(no hover information)' });
+      const degraded = degradedNote(provider, a.path);
+      return typedOk({
+        // Degraded + no text → the note replaces the neutral message:
+        // "(no hover information)" would be a fake-empty under a dead server.
+        hover: text ?? degraded ?? '(no hover information)',
+        ...(degraded ? { degraded } : {}),
+      });
     },
   };
 
@@ -95,9 +125,11 @@ export function createLspTools(provider: LspProvider, root: string = process.cwd
     execute: async (args) => {
       const a = args as { path: string };
       const symbols = await provider.documentSymbols(a.path);
+      const degraded = degradedNote(provider, a.path);
       return typedOk({
         symbols: symbols.map((s) => `${s.kind} ${s.name} (line ${s.line})`),
         count: symbols.length,
+        ...(degraded ? { degraded } : {}),
       });
     },
   };
@@ -116,12 +148,18 @@ export function createLspTools(provider: LspProvider, root: string = process.cwd
     execute: async (args) => {
       const a = args as z.infer<typeof PosArgs> & { newName: string };
       const result = await provider.rename(a.path, a.line - 1, a.column - 1, a.newName);
+      const degraded = degradedNote(provider, a.path);
       if (!result) {
-        return typedOk({ preview: 'no rename available at this position (symbol not found or not renameable)' });
+        return typedOk({
+          preview:
+            degraded ??
+            'no rename available at this position (symbol not found or not renameable)',
+        });
       }
       return typedOk({
         totalEdits: result.totalEdits,
         files: result.files.map((f) => `${relativePosix(root, f.file)} (${f.count} edit${f.count === 1 ? '' : 's'})`),
+        ...(degraded ? { degraded } : {}),
       });
     },
   };

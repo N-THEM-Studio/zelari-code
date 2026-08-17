@@ -41,6 +41,13 @@ export interface LspProvider {
   hover(file: string, line: number, character: number): Promise<string | null>;
   documentSymbols(file: string): Promise<SymbolInfo[]>;
   rename(file: string, line: number, character: number, newName: string): Promise<RenameResult | null>;
+  /**
+   * WS4 EMPTY ≠ DEGRADED: optional provider diagnostics. 'unavailable' when
+   * no language server exists for the file (no server spec, missing binary,
+   * failed spawn). Tools surface this as an explicit degraded field
+   * instead of a silently empty result.
+   */
+  serverStatusFor?(file: string): 'available' | 'unavailable';
   dispose(): void;
 }
 
@@ -301,6 +308,16 @@ export class LspManager implements LspProvider {
       },
       null,
     );
+  }
+
+  /** See LspProvider.serverStatusFor (WS4). Call AFTER a provider method:
+   *  the server entry is lazily created on first use, so the status is only
+   *  meaningful once the manager has served that language once. */
+  serverStatusFor(file: string): 'available' | 'unavailable' {
+    const cmd = resolveServerCommand(file, this.cwd);
+    if (!cmd) return 'unavailable';
+    // undefined = never spawned (cannot happen after a call); null = spawn failed.
+    return this.servers.get(cmd.language) === null ? 'unavailable' : 'available';
   }
 
   dispose(): void {
