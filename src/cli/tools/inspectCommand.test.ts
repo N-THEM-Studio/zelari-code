@@ -1,10 +1,12 @@
 import { mkdtemp, writeFile, readdir, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, it, expect, afterAll } from 'vitest';
 import {
   createInspectCommandTool,
   buildInspectCommand,
+  resolveNodeModuleBin,
   runSpawn,
   type InspectOperation,
 } from './inspectCommand.js';
@@ -28,8 +30,12 @@ import { defaultPermissionPolicy } from '../safety/toolPermissions.js';
  * byte-for-byte unchanged (zero new *.tsbuildinfo).
  */
 
-const repoRoot = path.resolve(); // vitest runs with cwd = project root
-const tscPath = path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
+// This file lives at <repo>/src/cli/tools/… — do NOT use path.resolve() (cwd
+// is packages/core under `npm test --workspace=@zelari/core`, which is what
+// the publish workflow runs).
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+const tscPath = resolveNodeModuleBin(repoRoot, path.join('typescript', 'bin', 'tsc'))
+  ?? path.join(repoRoot, 'node_modules', 'typescript', 'bin', 'tsc');
 const fixtures: string[] = [];
 
 afterAll(async () => {
@@ -51,6 +57,20 @@ function buildOk(op: InspectOperation, root = repoRoot) {
   if (!r.ok) throw new Error(`expected ok, got: ${r.reason}`);
   return r;
 }
+
+describe('resolveNodeModuleBin — hoisted monorepo walk-up', () => {
+  it('finds root-hoisted typescript from a nested package dir', () => {
+    const nested = path.join(repoRoot, 'packages', 'core');
+    const fromNested = resolveNodeModuleBin(nested, path.join('typescript', 'bin', 'tsc'));
+    const fromRoot = resolveNodeModuleBin(repoRoot, path.join('typescript', 'bin', 'tsc'));
+    expect(fromNested).toBe(fromRoot);
+    expect(fromNested).toBeTruthy();
+  });
+
+  it('returns undefined when nothing is found', () => {
+    expect(resolveNodeModuleBin(tmpdir(), path.join('definitely-not-a-pkg', 'bin', 'x'))).toBeUndefined();
+  });
+});
 
 describe('buildInspectCommand — pure argv builder', () => {
   it('git_status plain and --short', () => {

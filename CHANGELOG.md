@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.46.1] - 2026-08-17
+
+### Fixed
+- **`inspect_command` typecheck on hoisted monorepos** — resolve `typescript/bin/tsc` (and `npm-cli.js`) by walking up from the workspace root, not assuming `<cwd>/node_modules`. The publish job `npm test --workspace=@zelari/core` runs with cwd `packages/core`, where TypeScript is not installed locally; 1.46.0 failed four S3.5 fixtures with a false `TYPESCRIPT_UNAVAILABLE`. Tests now pin the repo root via `import.meta.url`.
+
 ## [1.46.0] - 2026-08-17
 
 ### Added

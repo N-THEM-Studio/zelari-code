@@ -22,7 +22,7 @@
 
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { promises as fs } from 'node:fs';
+import { existsSync, promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
@@ -83,10 +83,26 @@ export interface BuildCtx {
   root: string;
   /** Working directory for relative-path resolution. */
   cwd: string;
-  /** Override the tsc launcher (tests). Default: <root>/node_modules/typescript/bin/tsc. */
+  /** Override the tsc launcher (tests). Default: walk-up from root/cwd. */
   tscPath?: string;
-  /** Override the npm-cli.js launcher (tests). Default: <root>/node_modules/npm/bin/npm-cli.js. */
+  /** Override the npm-cli.js launcher (tests). Default: walk-up from root. */
   npmCliPath?: string;
+}
+
+/**
+ * Resolve a hoisted monorepo binary (`typescript/bin/tsc`, `npm/bin/npm-cli.js`).
+ * Walks from `start` toward the filesystem root so `npm test --workspace=@zelari/core`
+ * (cwd = packages/core) still finds the root-hoisted toolchain.
+ */
+export function resolveNodeModuleBin(start: string, rel: string): string | undefined {
+  let dir = path.resolve(start);
+  for (;;) {
+    const candidate = path.join(dir, 'node_modules', rel);
+    if (existsSync(candidate)) return candidate;
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
 }
 
 /** Free-string args that must never be interpretable as flags. */
@@ -159,7 +175,10 @@ export function buildInspectCommand(op: InspectOperation, ctx: BuildCtx): BuiltI
     case 'npm_ls':
     case 'npm_outdated':
     case 'npm_view': {
-      const npmCli = ctx.npmCliPath ?? path.join(ctx.root, 'node_modules', 'npm', 'bin', 'npm-cli.js');
+      const npmCli =
+        ctx.npmCliPath ??
+        resolveNodeModuleBin(ctx.root, path.join('npm', 'bin', 'npm-cli.js')) ??
+        path.join(ctx.root, 'node_modules', 'npm', 'bin', 'npm-cli.js');
       if (op.operation === 'npm_view') {
         const err = rejectFlagLike('package', op.package);
         if (err) return { ok: false, reason: err };
@@ -180,7 +199,10 @@ export function buildInspectCommand(op: InspectOperation, ctx: BuildCtx): BuiltI
         ok: true,
         command: process.execPath,
         argv: [
-          ctx.tscPath ?? path.join(ctx.root, 'node_modules', 'typescript', 'bin', 'tsc'),
+          ctx.tscPath ??
+            resolveNodeModuleBin(ctx.root, path.join('typescript', 'bin', 'tsc')) ??
+            resolveNodeModuleBin(ctx.cwd, path.join('typescript', 'bin', 'tsc')) ??
+            path.join(ctx.root, 'node_modules', 'typescript', 'bin', 'tsc'),
           '--noEmit',
           // S3.5 primary mechanism: redirect, never disable — composite forces
           // incremental (TS#30661), so --incremental false would break on the
@@ -347,7 +369,7 @@ export function createInspectCommandTool(rootOrDeps: string | { root: string; ts
         } catch {
           return typedErr(
             `TYPESCRIPT_UNAVAILABLE: no TypeScript compiler at ${tsc} — inspect_command typecheck ` +
-              'uses the project toolchain (node <root>/node_modules/typescript/bin/tsc) and refuses to ' +
+              'uses the project toolchain (walk-up to node_modules/typescript/bin/tsc) and refuses to ' +
               'guess. Install dependencies or fall back to read_file/grep_content.',
           );
         }
