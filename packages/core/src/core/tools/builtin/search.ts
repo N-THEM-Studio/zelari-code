@@ -5,6 +5,8 @@ import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
 import {
   walk,
   filterByInclude,
+  compileGlobs,
+  matchesAnyCompiled,
   DEFAULT_EXCLUDES,
   type FileEntry,
 } from './_walk.js';
@@ -100,6 +102,68 @@ interface GrepResult {
   filesSearched: number;
   /** Total files in tree (for recursive mode; 1 for single-file). */
   filesInTree: number;
+  /** Files seen by the walker BEFORE the include filter (recursive mode; 1 for single-file). */
+  filesWalked: number;
+  /** Effective include globs after coercion (echo — confirms silent repairs). */
+  effectiveInclude: string[];
+  /** Effective exclude globs after coercion. */
+  effectiveExclude: string[];
+  /**
+   * Non-fatal diagnostics for the caller: empty include scope
+   * (SEARCH_EMPTY_SCOPE sentinel), suspicious non-recursive glob,
+   * coerced or deprecated input (DEPRECATED_INPUT sentinel).
+   * Multiple diagnostics are joined with '; '.
+   */
+  warning?: string;
+}
+
+/** True when at least one include glob uses the recursive `**` form. */
+function hasRecursiveGlob(include: string[]): boolean {
+  return include.some((g) => g.includes('**'));
+}
+
+/**
+ * Scope diagnostics for recursive mode (WS1 — grep_content auto-diagnostico).
+ *
+ * Evidence-based on purpose: a narrow-but-intentional filter must NOT warn.
+ *   1. `SEARCH_EMPTY_SCOPE` — the walker saw files but the include globs
+ *      matched none (the classic one-segment-vs-double-star glob trap).
+ *      Model-facing sentinel: the caller must not read "empty scope" as
+ *      "pattern not found".
+ *   2. Non-recursive glob dropped files that the double-star variant of the
+ *      same glob would have matched → milder hint with a recursive-glob example.
+ */
+function scopeWarnings(allEntries: FileEntry[], include: string[], matched: number): string[] {
+  const warnings: string[] = [];
+  const filesWalked = allEntries.filter((e) => e.type === 'file').length;
+  if (filesWalked === 0) return warnings;
+
+  if (matched === 0) {
+    warnings.push(
+      `SEARCH_EMPTY_SCOPE: include globs matched 0 of ${filesWalked} files walked — ` +
+        `'*' matches only one path segment; use '**/<glob>' for recursive matching. ` +
+        `Do not interpret this result as "pattern not found".`,
+    );
+    return warnings;
+  }
+
+  if (hasRecursiveGlob(include) || matched >= filesWalked) return warnings;
+
+  // Would the recursive variant of the SAME globs have matched more files?
+  // ('**/' + g matches everything g matches, so wouldMatch >= matched holds
+  //  by construction — the check below only fires on real evidence.)
+  const recursiveRegexes = compileGlobs(include.map((g) => `**/${g}`));
+  const wouldMatch = allEntries.filter(
+    (e) => e.type === 'file' && matchesAnyCompiled(e.name, recursiveRegexes),
+  ).length;
+  if (wouldMatch > matched) {
+    warnings.push(
+      `include globs matched ${matched} of ${filesWalked} files walked — ` +
+        `'*' matches only one path segment; a '**/*.ts'-style recursive glob ` +
+        `would have matched ${wouldMatch - matched} more file(s) in subdirectories`,
+    );
+  }
+  return warnings;
 }
 
 async function searchFile(
@@ -159,8 +223,11 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
     'Regex search for content in a file OR recursively in a directory. ' +
     'When path is a directory, include/exclude globs filter which files are searched ' +
     '(default: all files, excluding node_modules/dist/.git/etc.). ' +
+    'Glob semantics: "*" matches ONE path segment only ("*.ts" does NOT match "sub/file.ts"); ' +
+    'use "**" for recursive matching ("**/*.ts" matches at any depth). ' +
     'include/exclude accept a single glob string (e.g. "*.ts") OR an array of globs. ' +
-    'Returns matches with line numbers and surrounding context.',
+    'Returns matches with line numbers and context, plus filesWalked/filesInTree counts ' +
+    'and a warning when the include globs matched suspiciously few files.',
   permissions: ['read'],
   timeoutMs: 30000,
   inputSchema: GrepContentArgsSchema,
@@ -169,8 +236,19 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
       const absRoot = path.isAbsolute(args.path) ? args.path : path.join(ctx.cwd, args.path);
       const regex = new RegExp(args.pattern, 'gm');
       // Coerce model-friendly string|string[] into string[] for the walker.
-      const include = coerceStringList(args.include, ['*']);
+      const rawInclude = args.include;
+      const include = coerceStringList(rawInclude, ['*']);
       const exclude = coerceStringList(args.exclude, DEFAULT_EXCLUDES);
+      const warnings: string[] = [];
+      if (Array.isArray(rawInclude) && rawInclude.length === 0) {
+        // v1.46 deprecation window: accepted + loud. v1.47: min(1) → INVALID_ARGUMENT.
+        warnings.push(
+          'DEPRECATED_INPUT: empty include array — omit the field instead; ' +
+            'this will become INVALID_ARGUMENT (planned v1.47). Fell back to ["*"]',
+        );
+      } else if (typeof rawInclude === 'string') {
+        warnings.push(`include coerced from bare string to ${JSON.stringify(include)}`);
+      }
 
       // ── Single-file mode ────────────────────────────────────────
       if (!(await isDirectory(absRoot))) {
@@ -181,6 +259,10 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
           truncated: single.truncated,
           filesSearched: 1,
           filesInTree: 1,
+          filesWalked: 1,
+          effectiveInclude: include,
+          effectiveExclude: exclude,
+          ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
         });
       }
 
@@ -188,6 +270,8 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
       const allEntries: FileEntry[] = [];
       await walk(absRoot, '', 0, args.maxDepth, exclude, allEntries, ctx.signal);
       const matchedFiles = filterByInclude(allEntries, include);
+      const filesWalked = allEntries.filter((e) => e.type === 'file').length;
+      warnings.push(...scopeWarnings(allEntries, include, matchedFiles.length));
 
       const allMatches: GrepMatch[] = [];
       let totalMatches = 0;
@@ -220,6 +304,10 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
         truncated,
         filesSearched,
         filesInTree: matchedFiles.length,
+        filesWalked,
+        effectiveInclude: include,
+        effectiveExclude: exclude,
+        ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
       });
     } catch (err) {
       return typedErr(err instanceof Error ? err.message : String(err));
