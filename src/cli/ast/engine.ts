@@ -10,9 +10,13 @@
  * wrapped) edit path — instead of fragile whole-file string matching.
  *
  * `typescript` is loaded lazily via dynamic import and kept OUT of the CLI
- * bundle (it's ~7MB, marked external in bundle-cli.mjs). Everything here is
- * best-effort: if `typescript` can't be loaded, the file can't be read, or it
- * isn't a TS/JS file, the functions return empty/null rather than throwing.
+ * bundle (it's ~7MB, marked external in bundle-cli.mjs).
+ *
+ * Loud degradation (v0.10.0 "loud tool errors"): `parseFileSymbolsDiag` is
+ * the primary entry point and returns a DISCRIMINATED result, so an empty
+ * outcome can never be confused with an unavailable backend. The legacy
+ * `parseFileSymbols`/`astOutline`/`findSymbol` helpers remain as quiet
+ * compatibility wrappers (empty/null on any non-ok status).
  */
 
 import { readFile } from 'node:fs/promises';
@@ -43,6 +47,38 @@ export interface AstSymbolWithText extends AstSymbol {
   text: string;
 }
 
+/**
+ * Machine-readable fallback hint attached to non-ok parse results.
+ * It is a HINT for the model — never auto-executed by the engine.
+ */
+export type AstRecommendedFallback = 'grep_content' | 'read_file';
+
+/**
+ * Machine-readable diagnostic fields carried by EVERY non-ok variant of
+ * {@link ParseFileSymbolsResult} (rev.2: the info must not live only in the
+ * human-facing `note` string of the tool result).
+ */
+interface AstDiagBase {
+  /** Absolute path the engine actually looked at (when resolution happened). */
+  resolvedPath?: string;
+  /** True when a retry / fallback could still produce a real answer. */
+  recoverable: boolean;
+  /** Suggested next tool to try. Hint only — never auto-executed. */
+  recommendedFallback?: AstRecommendedFallback;
+}
+
+/**
+ * Discriminated parse outcome. EMPTY ≠ DEGRADED: a non-ok status always says
+ * WHY the symbol list is missing.
+ */
+export type ParseFileSymbolsResult =
+  | { status: 'ok'; symbols: AstSymbolWithText[] }
+  | ({ status: 'unsupported-extension'; extension: string } & AstDiagBase)
+  | ({ status: 'typescript-unavailable' } & AstDiagBase)
+  | ({ status: 'file-not-found'; resolvedPath: string } & AstDiagBase)
+  | ({ status: 'read-error'; resolvedPath: string; message: string } & AstDiagBase)
+  | ({ status: 'parse-error'; resolvedPath: string; message: string } & AstDiagBase);
+
 const TS_EXTENSIONS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs']);
 
 /** True if this file's extension is one the TS compiler API can parse. */
@@ -61,27 +97,82 @@ function loadTs(): Promise<typeof import('typescript') | null> {
   return tsPromise;
 }
 
+function errMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
 /**
  * Parse a TS/JS file into its top-level + nested declarations (with exact
- * source text). Returns [] for unsupported files, read errors, or when the
- * TypeScript compiler API is unavailable.
+ * source text), reporting WHY on every failure path.
+ *
+ * Relative paths resolve against `cwd ?? process.cwd()` (same rule as
+ * grep_content, see core builtin search.ts). Read errors distinguish ENOENT
+ * (`file-not-found`, reports the resolved absolute path) from anything else
+ * (`read-error`, propagates the message); a failing `createSourceFile`
+ * surfaces as `parse-error`.
  */
-export async function parseFileSymbols(file: string): Promise<AstSymbolWithText[]> {
-  if (!isAstSupported(file)) return [];
+export async function parseFileSymbolsDiag(
+  file: string,
+  cwd?: string,
+): Promise<ParseFileSymbolsResult> {
+  const resolvedPath = path.isAbsolute(file)
+    ? file
+    : path.join(cwd ?? process.cwd(), file);
+
+  const extension = path.extname(resolvedPath).toLowerCase();
+  if (!TS_EXTENSIONS.has(extension)) {
+    return {
+      status: 'unsupported-extension',
+      extension: extension || '(none)',
+      resolvedPath,
+      recoverable: false,
+      recommendedFallback: 'read_file',
+    };
+  }
+
   const ts = await loadTs();
-  if (!ts) return [];
+  if (!ts) {
+    return {
+      status: 'typescript-unavailable',
+      resolvedPath,
+      recoverable: true,
+      recommendedFallback: 'read_file',
+    };
+  }
+
   let text: string;
   try {
-    text = await readFile(file, 'utf8');
-  } catch {
-    return [];
+    text = await readFile(resolvedPath, 'utf8');
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === 'ENOENT') {
+      return {
+        status: 'file-not-found',
+        resolvedPath,
+        recoverable: false,
+        recommendedFallback: 'grep_content',
+      };
+    }
+    return {
+      status: 'read-error',
+      resolvedPath,
+      message: errMessage(err),
+      recoverable: true,
+      recommendedFallback: 'read_file',
+    };
   }
 
   let source: import('typescript').SourceFile;
   try {
-    source = ts.createSourceFile(path.basename(file), text, ts.ScriptTarget.Latest, true);
-  } catch {
-    return [];
+    source = ts.createSourceFile(path.basename(resolvedPath), text, ts.ScriptTarget.Latest, true);
+  } catch (err) {
+    return {
+      status: 'parse-error',
+      resolvedPath,
+      message: errMessage(err),
+      recoverable: false,
+      recommendedFallback: 'read_file',
+    };
   }
 
   const out: AstSymbolWithText[] = [];
@@ -138,21 +229,33 @@ export async function parseFileSymbols(file: string): Promise<AstSymbolWithText[
   };
 
   visit(source);
-  return out;
+  return { status: 'ok', symbols: out };
 }
 
-/** Outline: all declarations in a file (no source text). */
+/**
+ * Compatibility wrapper over {@link parseFileSymbolsDiag}: same quiet
+ * contract as before (empty array on any non-ok status). New callers should
+ * prefer the diag version.
+ */
+export async function parseFileSymbols(file: string): Promise<AstSymbolWithText[]> {
+  const r = await parseFileSymbolsDiag(file);
+  return r.status === 'ok' ? r.symbols : [];
+}
+
+/** Outline: all declarations in a file (no source text). Quiet on failure. */
 export async function astOutline(file: string): Promise<AstSymbol[]> {
-  const symbols = await parseFileSymbols(file);
-  return symbols.map(({ text: _text, ...rest }) => rest);
+  const r = await parseFileSymbolsDiag(file);
+  if (r.status !== 'ok') return [];
+  return r.symbols.map(({ text: _text, ...rest }) => rest);
 }
 
 /**
  * Find a named declaration and return its exact source text + range. When
  * several declarations share a name (overloads, a method and a function),
- * returns the first by source order.
+ * returns the first by source order. Quiet (null) on any non-ok status.
  */
 export async function findSymbol(file: string, name: string): Promise<AstSymbolWithText | null> {
-  const symbols = await parseFileSymbols(file);
-  return symbols.find((s) => s.name === name) ?? null;
+  const r = await parseFileSymbolsDiag(file);
+  if (r.status !== 'ok') return null;
+  return r.symbols.find((s) => s.name === name) ?? null;
 }
