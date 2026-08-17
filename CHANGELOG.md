@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.46.0] - 2026-08-17
+
+### Added
+- **`inspect_command` (plan / read-only / explore)** — typed, no-shell inspector (`git_status` / `git_log` / `git_diff` / `git_show` / `git_branch_current` / `git_ls_files`, `typecheck`, `node_version`, `npm_ls` / `npm_outdated` / `npm_view`). The tool builds argv and `spawn`s with `shell: false`; `typecheck` redirects `tsBuildInfoFile` to a temp dir and guards the workspace so `composite` / `incremental` projects cannot leave `.tsbuildinfo` behind. Kill-switch: `ZELARI_INSPECT_COMMAND=0`.
+- **LSP navigation in plan mode** — all five LSP tools (`go_to_definition`, `find_references`, `hover_type`, `document_symbols`, `rename_symbol` preview) are `permissions: ['read']`, so plan/explore keep the full ladder `ast → lsp → grep → read_file`. Missing servers surface an explicit degraded status instead of a silent empty result.
+- **Observation Integrity (P1 / ADR-0019)** — a negative conclusion requires a completed, sufficiently scoped observation. EMPTY is evidence; DEGRADED / ERROR are not; TRUNCATED is partial only. The same rule is in the plan-mode banner and the Kraken explore prompt.
+
+### Fixed
+- **`ast_outline` silent empties** — `createAstTools(root)` now sandboxes paths against the workspace root (same root LSP already received). `parseFileSymbolsResult` reports a typed status (`ok` / `unsupported` / `typescript-unavailable` / `file-not-found` / `read-error` / `parse-error`); only a successful parse of a file with no declarations is EMPTY.
+- **`grep_content` empty-scope masquerading as "not found"** — results now include `filesWalked` / `filesSearched` / effective filters. Zero files selected emits `SEARCH_EMPTY_SCOPE` ("Do not interpret this result as pattern not found"). Explicit `include: []` emits `DEPRECATED_INPUT` (accepted in 1.46; rejected in 1.47).
+
+### Changed
+- Plan-mode banner lists `inspect_command` and the Observation Integrity rule so agents refuse to conclude "does not exist" from degraded or zero-scope tool results.
+
 ## [1.45.0] - 2026-08-16
 
 ### Added
