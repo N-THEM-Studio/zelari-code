@@ -21,7 +21,16 @@ Un candidato è un *principio primo* — non una convenzione — se supera tre t
 
 **Perché è primo.** È il principio più profondo: *non fidarti di un'asserzione non verificata — inclusa la tua*. Ha generato l'evidence ladder (claimed→grep→tool→build), il lint di onestà sulle synthesis, la review di Minosse, il conformance reviewer letterale. Un audit esterno trovò 4 bug runtime che 759 test non vedevano (ADR-0007).
 
+> **Invariante P1 · OBSERVATION INTEGRITY** ([ADR-0019](docs/decisions/0019-observation-integrity-p1-clause.md), v1.46)
+> A negative conclusion requires a successful and sufficiently scoped observation.
+> EMPTY is evidence. DEGRADED is not evidence. ERROR is not evidence.
+> TRUNCATED is partial evidence only.
+>
+> *Non fidarti di un'asserzione non verificata* include i **falsi vuoti**: un risultato vuoto da un'osservazione degradata, mal scopingata o con backend assente è un'asserzione non verificata, non una prova di assenza.
+
 **Come è garantito.** Meccanismi deterministici (`honesty.ts`, tier ranking, microGate) + gate di processo (audit indipendente sulle release non banali). *Forte sul deterministico; il resto è mitigato, non garantito.*
+
+**Come è garantito (observation integrity).** v1.46 (ADR-0019): status discriminati e sentinel nei tool di osservazione — `grep_content` (`SEARCH_EMPTY_SCOPE`, `DEPRECATED_INPUT`, `filesWalked`), ast/LSP (`file-not-found` con path guardato, `typescript-unavailable`, `read-error`), `inspect_command` (`degraded` + `artifactsWritten`, `unsupported_project_shape`) — più la regola epistemica nei prompt plan/kraken. EMPTY non viene mai fabbricato dal degradato.
 
 ### P2 · Determinismo del controllo (Deterministic control)
 

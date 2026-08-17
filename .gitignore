@@ -34,3 +34,6 @@ apps/companion-android/captures/
 
 # ZCode agent session workspace (per-machine, NOT committed)
 .zcode/
+
+# Local scratch (release notes, one-off bump scripts) — never committed
+.tmp/

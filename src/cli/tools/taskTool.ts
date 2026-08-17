@@ -94,6 +94,10 @@ export interface TaskToolDeps {
 const EXPLORE_PROMPT = [
   'You are a focused EXPLORE tentacle of Kraken (parent super-agent).',
   'READ-ONLY tools only (read, list, grep, fetch). No edits, no shell.',
+  'OBSERVATION INTEGRITY: negative evidence is valid only from a completed',
+  'observation. Never conclude that code/symbols/files do not exist from',
+  'degraded results, zero files examined, or unavailable backends - report',
+  'the degraded status instead and widen the observation.',
   'Gather only what you need, then STOP with a concise conclusion:',
   'file paths, symbols, line refs, and how things connect. No large dumps.',
   'Respect any Scope / Acceptance sections in the user prompt.',

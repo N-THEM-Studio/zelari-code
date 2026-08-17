@@ -517,6 +517,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 "You are in PLAN mode. Explore and design only.",
                 "- Do NOT implement production code or run destructive shell commands.",
                 "- write_file / edit_file / bash / apply_diff are unavailable.",
+                "- inspect_command IS available: allowlisted read-only inspector (no shell). Use it for git_status/git_log/git_diff/git_show/git_branch_current/git_ls_files/typecheck/node_version/npm_ls/npm_outdated/npm_view - it turns claims into execution-verified observations.",
+                "- OBSERVATION INTEGRITY: negative evidence is valid only from a completed observation. Never conclude that code/symbols/files do not exist from degraded results, zero files examined, or unavailable backends (grep_content SEARCH_EMPTY_SCOPE, ast/LSP degraded status, inspect_command unsupported shapes).",
                 "- Produce a clear plan, ask clarifying questions (---QUESTION---), use workspace plan tools when relevant.",
                 "- When the plan is ready, tell the user to run /build to implement.",
               ].join("\n")
