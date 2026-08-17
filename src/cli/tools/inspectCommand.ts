@@ -67,6 +67,45 @@ export const inspectInputSchema = z.discriminatedUnion('operation', [
 
 export type InspectOperation = z.infer<typeof inspectInputSchema>;
 
+/**
+ * Provider-facing JSON Schema for `inspect_command` (v1.47.2).
+ *
+ * `inspectInputSchema` is a discriminated union on `operation`; Zod 4
+ * serializes that as a root `anyOf` with NO `type` — strict providers
+ * (DeepSeek first, live report 2026-08-17) reject function schemas whose
+ * root is not `type: "object"` with HTTP 400
+ * `schema must be a JSON Schema of 'type: "object"', got 'type: null'`.
+ * `ToolRegistry.toOpenAITools()` prefers this explicit flattened object
+ * (operation menu enum + per-operation optional params) over converting the
+ * union. Argument VALIDATION still runs against the strict union above, so
+ * per-operation requirements (`ref`, `package`) are enforced at execution
+ * time, not by this (deliberately looser) schema.
+ */
+const INSPECT_OPERATIONS: string[] = inspectInputSchema.options.map(
+  (variant) => (variant.shape as { operation: { value: string } }).operation.value,
+);
+
+export const inspectJsonSchema: Record<string, unknown> = {
+  type: 'object',
+  properties: {
+    operation: {
+      type: 'string',
+      enum: INSPECT_OPERATIONS,
+      description: 'Inspection to run — pick from the menu instead of writing a command.',
+    },
+    short: { type: 'boolean', description: 'git_status only: --short form.' },
+    limit: { type: 'integer', minimum: 1, maximum: 200, description: 'git_log only: max commits (default 20).' },
+    oneline: { type: 'boolean', description: 'git_log only: one line per commit.' },
+    staged: { type: 'boolean', description: 'git_diff only: staged changes.' },
+    path: { type: 'string', description: 'git_diff only: limit the diff to this path.' },
+    ref: { type: 'string', description: 'git_show only (required there): commit or ref to show.' },
+    project: { type: 'string', description: 'typecheck only: subdirectory containing tsconfig.json.' },
+    package: { type: 'string', description: 'npm_view only (required there): package name.' },
+  },
+  required: ['operation'],
+  additionalProperties: false,
+};
+
 export type BuiltInspect =
   | {
       ok: true;
@@ -357,6 +396,7 @@ export function createInspectCommandTool(rootOrDeps: string | { root: string; ts
     permissions: ['read'],
     timeoutMs: 90_000,
     inputSchema: inspectInputSchema,
+    jsonSchema: inspectJsonSchema,
     execute: async (input, ctx) => {
       const op = input as InspectOperation;
       const cwd = ctx?.cwd ?? deps.root;

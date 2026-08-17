@@ -45,7 +45,11 @@ const HARNESS_TOOLS: HarnessToolDefinition<never, unknown>[] = [
 ] as unknown as HarnessToolDefinition<never, unknown>[];
 
 function toEnhanced(tool: HarnessToolDefinition<never, unknown>): EnhancedToolDefinition {
-  const schema = zodToJsonSchema(tool.inputSchema) as {
+  // v1.47.2: prefer an explicit tool.jsonSchema (verbatim provider schema,
+  // e.g. inspect_command's flattened operation menu) over converting the
+  // inputSchema — zodToJsonSchema now guarantees an object root even for
+  // union inputSchemas, so union tools no longer degrade to properties:{}.
+  const schema = (tool.jsonSchema ?? zodToJsonSchema(tool.inputSchema)) as {
     type?: string;
     properties?: Record<string, unknown>;
     required?: string[];
