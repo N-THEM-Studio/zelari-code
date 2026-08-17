@@ -252,18 +252,41 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
 
       // ── Single-file mode ────────────────────────────────────────
       if (!(await isDirectory(absRoot))) {
+        // searchFile swallows read errors (unreadable file -> skip), so an
+        // explicit existence check is required to report FILE_NOT_FOUND.
+        // Ground Truth: explicit failure, no silent empty-result fallback.
+        let exists = true;
+        try {
+          await fs.stat(absRoot);
+        } catch {
+          exists = false;
+        }
+        if (!exists) {
+          return typedErr(
+            `grep_content: file not found: ${args.path} (FILE_NOT_FOUND). ` +
+              'Search the parent directory instead, or fix the path.',
+            { status: 'failed', warnings: ['FILE_NOT_FOUND'] },
+          );
+        }
         const single = await searchFile(absRoot, args.path, regex, args.contextLines, args.maxMatches);
-        return typedOk({
-          matches: single.matches,
-          totalMatches: single.total,
-          truncated: single.truncated,
-          filesSearched: 1,
-          filesInTree: 1,
-          filesWalked: 1,
-          effectiveInclude: include,
-          effectiveExclude: exclude,
-          ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
-        });
+        return typedOk(
+          {
+            matches: single.matches,
+            totalMatches: single.total,
+            truncated: single.truncated,
+            filesSearched: 1,
+            filesInTree: 1,
+            filesWalked: 1,
+            effectiveInclude: include,
+            effectiveExclude: exclude,
+            ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
+          },
+          {
+            status: single.truncated ? 'partial' : 'complete',
+            counts: { filesWalked: 1, matches: single.total },
+            ...(single.truncated ? { truncated: true } : {}),
+          },
+        );
       }
 
       // ── Recursive (directory) mode ──────────────────────────────
@@ -298,17 +321,34 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
         allMatches.push(...result.matches);
       }
 
-      return typedOk({
-        matches: allMatches,
-        totalMatches,
-        truncated,
-        filesSearched,
-        filesInTree: matchedFiles.length,
-        filesWalked,
-        effectiveInclude: include,
-        effectiveExclude: exclude,
-        ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
-      });
+      // Ground Truth: distinguish empty-scope from complete-zero-matches
+      // without dropping HEAD's filesWalked / effectiveInclude / warning payload.
+      // Payload.warning keeps the long model-facing text from scopeWarnings;
+      // meta.warnings keeps short sentinels for status consumers.
+      const metaWarnings: string[] = [];
+      if (filesWalked === 0) metaWarnings.push('TREE_EMPTY');
+      else if (matchedFiles.length === 0) metaWarnings.push('SEARCH_EMPTY_SCOPE');
+      const status =
+        metaWarnings.length > 0 ? 'empty' : truncated ? 'partial' : 'complete';
+      return typedOk(
+        {
+          matches: allMatches,
+          totalMatches,
+          truncated,
+          filesSearched,
+          filesInTree: matchedFiles.length,
+          filesWalked,
+          effectiveInclude: include,
+          effectiveExclude: exclude,
+          ...(warnings.length > 0 ? { warning: warnings.join('; ') } : {}),
+        },
+        {
+          status,
+          counts: { filesWalked, matches: totalMatches },
+          ...(metaWarnings.length > 0 ? { warnings: metaWarnings } : {}),
+          ...(truncated ? { truncated: true } : {}),
+        },
+      );
     } catch (err) {
       return typedErr(err instanceof Error ? err.message : String(err));
     }

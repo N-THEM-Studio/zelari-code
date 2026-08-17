@@ -19,6 +19,7 @@ import { clearSessionPermissionGrants } from '../safety/toolPermissions.js';
 import { clearSessionTodos } from '../sessionTodos.js';
 import { compactHistory } from './historyCompaction.js';
 import { clearAllRequestSnapshots } from '../budget/requestSnapshotStore.js';
+import { applySessionSurface } from './observationStore.js';
 
 /** Snapshot of the last assistant clarifying question (for short-answer anchoring). */
 export interface LastClarification {
@@ -38,19 +39,20 @@ export function getHistory(): readonly AgentMessage[] {
 
 /** Replace history after compaction / hydrate. */
 export function setHistory(messages: readonly AgentMessage[]): void {
-  history = [...messages];
+  const projected = applySessionSurface(messages);
+  history = projected === messages ? [...messages] : projected;
 }
 
 /** Compact in place using the same rules as the agent loop. */
 export function compactInPlace(cwd: string = process.cwd()): void {
   const durableStatePresent = existsSync(join(cwd, '.zelari', 'state', 'HEAD.json'));
-  history = compactHistory(history, { durableStatePresent });
+  history = applySessionSurface(compactHistory(history, { durableStatePresent }));
 }
 
 /** Append messages (e.g. this turn's assistant+tool tail). */
 export function appendMessages(msgs: readonly AgentMessage[]): void {
   if (msgs.length === 0) return;
-  history = history.concat(msgs);
+  history = applySessionSurface(history.concat(msgs));
 }
 
 /** Drop everything ( /clear, /new ). */
@@ -72,7 +74,8 @@ export function serializeHistory(): AgentMessage[] {
 
 /** Hydrate from session restore. */
 export function hydrateHistory(messages: readonly AgentMessage[]): void {
-  history = [...messages];
+  const projected = applySessionSurface(messages);
+  history = projected === messages ? [...messages] : projected;
 }
 
 export function getLastClarification(): LastClarification | null {

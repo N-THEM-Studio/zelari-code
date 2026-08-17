@@ -5,7 +5,9 @@ import type { ChatMessage } from "../components/ChatStream.js";
 import { AgentHarness } from "@zelari/core/harness";
 import type { AgentMessage } from "@zelari/core/harness";
 import { SessionJsonlWriter } from "@zelari/core/harness";
+import { ingestLiveEvent } from "./observationStore.js";
 import { MetricsLogger, getMetricsLogger } from "../metrics.js";
+import type { BrainContextMetricsEvent } from "@zelari/core/events";
 import { calculateCost } from "../modelPricing.js";
 import {
   providerFromEnv,
@@ -706,6 +708,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // matching start event (keyed by toolCallId) for metrics.
         const toolNameById = new Map<string, string>();
         const metrics: MetricsLogger = getMetricsLogger();
+        // Fase M: last log-only context_metrics event (arrives before agent_end).
+        let lastGrowth: BrainContextMetricsEvent | null = null;
         let realUsage: {
           promptTokens: number;
           completionTokens: number;
@@ -748,6 +752,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // to serialize the render loop with mkdir+appendFile per delta.
               // Turn boundaries below call flush() so the tail is durable.
               void writerRef.current.append(event);
+              if (sessionId) ingestLiveEvent(sessionId, event);
+            }
+            if (event.type === "context_metrics") {
+              lastGrowth = event;
             }
             if (event.type === "agent_end") {
               metrics.record({
@@ -757,6 +765,17 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 model: envConfig.model,
                 latencyMs: event.durationMs,
                 ok: event.reason === "stop",
+                // Fase M: context-growth counters (log-only event, folded here).
+                ...(lastGrowth
+                  ? {
+                      toolRoundTrips: lastGrowth.toolRoundTrips,
+                      intermediateToolBytes: lastGrowth.intermediateToolBytes,
+                      requests: lastGrowth.requests,
+                      historyBytesAtRequest: lastGrowth.historyBytesLast,
+                      historyBytesPeak: lastGrowth.historyBytesPeak,
+                      cacheHitTokens: lastGrowth.cacheHitTokens,
+                    }
+                  : {}),
                 // v1.35: real usage landed on message_end (which precedes
                 // agent_end), so historical spend can be aggregated from
                 // metrics.jsonl — previously these fields were always absent.
@@ -1498,12 +1517,14 @@ async function dispatchCouncilPromptImpl(
       if (councilAborted) {
         // Drain remaining events silently after the abort decision.
         if (writerRef.current) void writerRef.current.append(event);
+        if (sessionId) ingestLiveEvent(sessionId, event);
         continue;
       }
       if (writerRef.current) {
         // Same batching as the single-agent path: fire-and-forget per event,
         // flush at the turn boundary in `finally`.
         void writerRef.current.append(event);
+        if (sessionId) ingestLiveEvent(sessionId, event);
       }
       if (event.type === "council_mode") {
         councilRunMode = event.runMode;
@@ -2134,6 +2155,7 @@ async function runZelariMissionInTui(
             emit,
             onEvent: async (event) => {
               if (writerRef.current) await writerRef.current.append(event);
+              if (sessionId) ingestLiveEvent(sessionId, event);
               if (event.type === "tool_execution_start") {
                 const name =
                   (event as { toolName?: string }).toolName ?? "tool";

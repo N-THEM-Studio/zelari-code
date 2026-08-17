@@ -18,6 +18,7 @@ import type { ProviderName } from '../keyStore.js';
 import { getOAuthToken, resolveApiKeyWithMeta } from '../keyStore.js';
 import { getProviderConfig, getModelForProvider, getCustomEndpoint, getThinkingForProvider } from '../providerConfig.js';
 import { translateOpenAiCompatibleThinking, type ThinkingSpec } from '../thinking.js';
+import { capabilitiesFor } from './capabilities.js';
 
 /**
  * v1.5.2: transient-HTTP retry. A single 429/5xx/network failure used to flip
@@ -430,7 +431,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       model: params.model,
       messages,
       stream: true,
-      temperature: generation?.temperature ?? 0.7,
+      temperature: generation?.temperature ?? capabilitiesFor(params.model).sampling.temperature,
       // Task G.4.2 — request the provider to send real token usage in
       // the final chunk (gated by `stream_options.include_usage` on the
       // OpenAI-compatible API). Providers that don't honor this (some

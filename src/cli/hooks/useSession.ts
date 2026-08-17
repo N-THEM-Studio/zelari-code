@@ -9,8 +9,10 @@ import {
   ensureSessionDir,
   listSessions,
   loadSessionEvents,
+  getSessionBaseDir,
 } from '../sessionManager.js';
 import { SessionJsonlWriter } from '@zelari/core/harness';
+import { invalidateObservationIndex } from './observationStore.js';
 import type { ChatMessage } from '../components/ChatStream.js';
 import { eventsToMessages } from './eventsToMessages.js';
 import { EMPTY_LIVE, type LiveState } from './chatState.js';
@@ -92,7 +94,7 @@ export function useSession(): UseSessionResult {
         setCurrentSessionId(id);
       }
       if (cancelled) return;
-      writerRef.current = new SessionJsonlWriter(id);
+      writerRef.current = new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() });
       setSessionId(id);
       // Restored messages are historical (immutable) → go straight into
       // finalized, printed once into native scrollback on resume. Same
@@ -146,7 +148,8 @@ export function useSession(): UseSessionResult {
         const id = newSessionId();
         setCurrentSessionId(id);
         writerRef.current?.close();
-        writerRef.current = new SessionJsonlWriter(id);
+        invalidateObservationIndex();
+        writerRef.current = new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() });
         setSessionId(id);
         resetTranscript();
         setSessionActive(false);

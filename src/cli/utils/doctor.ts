@@ -39,6 +39,11 @@ import {
   checkAgentBash,
   type PrereqResult,
 } from "./prereqChecks.js";
+import { getMetricsLogger, readMetrics } from "../metrics.js";
+import {
+  formatContextGrowthSummary,
+  summarizeContextGrowth,
+} from "./contextGrowthSummary.js";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -411,6 +416,30 @@ function checkCuaDriver(): CheckResult {
  * detectMissingPlugins (dynamic import + async detection). The single caller
  * in main.ts awaits the result.
  */
+/**
+ * Fase M: context-growth summary over the metrics tail. Informational:
+ * OK with aggregate lines when instrumented runs exist, WARN pointing at
+ * the metrics file otherwise (fresh installs, or all runs pre-Fase-M).
+ */
+async function checkContextGrowth(): Promise<CheckResult> {
+  try {
+    const logger = getMetricsLogger();
+    const records = await readMetrics(logger.filePath);
+    const summary = summarizeContextGrowth(
+      records.filter(r => r.kind === "run"),
+    );
+    if (!summary) {
+      return WARN(
+        `no instrumented runs yet (${logger.filePath}) — run a session, then re-check`,
+      );
+    }
+    const lines = formatContextGrowthSummary(summary);
+    return OK(lines.join("\n\n         "));
+  } catch (err) {
+    return WARN(`metrics unreadable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 export async function runDoctor(): Promise<boolean> {
   const pkg = readPackageJson();
   const pkgName = pkg?.name ?? "zelari-code";
@@ -434,6 +463,10 @@ export async function runDoctor(): Promise<boolean> {
     // WARNS when the recommended ZELARI_* caps are unset/overridden, so users
     // learn why the agent stops mid-task without completing. Points to --fix-budget.
     { name: "budget", run: () => checkBudget() },
+    // --- context-growth metrics (Fase M, 2026-07 plan) ---
+    // Informational aggregate over metrics.jsonl: tool round-trips,
+    // intermediate tool bytes, history@request size, cache-hit tokens.
+    { name: "context growth", run: () => checkContextGrowth() },
     // --- optional tool plugins (v1.5.0) ---
     // Playwright / eslint / ruff / LSP servers. WARN-only (never critical):
     // these power edge features that degrade silently when absent. Surfaced

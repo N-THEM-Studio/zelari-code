@@ -39,14 +39,37 @@ export const readFileTool: ToolDefinition<ReadFileArgs, ReadFileResult> = {
       const totalLines = allLines.length;
       const start = args.startLine ?? 0;
       const end = Math.min(args.endLine ?? lines.length, lines.length);
-      return typedOk({
-        path: absPath,
-        content: lines.slice(start, end).join('\n'),
-        totalLines,
-        readLines: { start, end: end - 1 },
-        sizeBytes: content.length,
-      });
+      // Ground Truth: complete vs maxBytes-truncated vs empty-file; caps explicit.
+      const wasTruncated = truncated !== content;
+      const empty = content.length === 0;
+      const status = empty ? 'empty' : wasTruncated ? 'partial' : 'complete';
+      const warnings: string[] = [];
+      if (empty) warnings.push('EMPTY_FILE');
+      if (wasTruncated) warnings.push('MAX_BYTES_TRUNCATED');
+      return typedOk(
+        {
+          path: absPath,
+          content: lines.slice(start, end).join('\n'),
+          totalLines,
+          readLines: { start, end: end - 1 },
+          sizeBytes: content.length,
+        },
+        {
+          status,
+          counts: { bytes: content.length, lines: totalLines },
+          ...(warnings.length > 0 ? { warnings } : {}),
+          ...(wasTruncated ? { truncated: true } : {}),
+        },
+      );
     } catch (err) {
+      const code = (err as NodeJS.ErrnoException)?.code;
+      if (code === 'ENOENT') {
+        // Ground Truth: named failure instead of a raw ENOENT dump.
+        return typedErr(
+          `read_file: file not found: ${args.path} (FILE_NOT_FOUND).`,
+          { status: 'failed', warnings: ['FILE_NOT_FOUND'] },
+        );
+      }
       return typedErr(err instanceof Error ? err.message : String(err));
     }
   },

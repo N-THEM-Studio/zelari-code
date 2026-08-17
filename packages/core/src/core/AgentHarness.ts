@@ -29,9 +29,18 @@ import {
   type BrainMessageEndEvent,
   type BrainQueueUpdateEvent,
   type BrainToolExecutionEndEvent,
+    type BrainContextMetricsEvent,
   type UsageBreakdown,
 } from '../shared/events.js';
 import { ToolRegistry } from './tools/registry.js';
+import { metaFooter } from './tools/toolTypes.js';
+import {
+  type ContextGrowthStats,
+  emptyContextGrowthStats,
+  recordRequest,
+  recordToolResult,
+  recordUsage,
+} from './contextGrowth.js';
 import {
   createRoutedRequestSnapshot,
   type RoutedRequestSnapshot,
@@ -259,6 +268,9 @@ export class AgentHarness {
    */
   private textToolReentries = 0;
 
+  /** Fase M: per-run context-growth counters (reset on every run()). */
+  private growth: ContextGrowthStats = emptyContextGrowthStats();
+
   constructor(config: AgentHarnessConfig) {
     this.config = config;
     this.eventBus = config.eventBus;
@@ -452,6 +464,8 @@ export class AgentHarness {
         } else {
           resultStr = result.error;
         }
+        // Ground Truth: append diagnostic footer (no-op for clean results).
+        resultStr += metaFooter(result.meta);
         return {
           content: resultStr,
           isError: !result.ok,
@@ -468,6 +482,7 @@ export class AgentHarness {
       p: (typeof pending)[number],
       r: { content: string; isError: boolean; durationMs: number; cacheKey?: string },
     ) => {
+      recordToolResult(this.growth, r.content);
       const endEvent = createBrainEvent('tool_execution_end', this.sessionId, {
         toolCallId: p.toolCallId,
         result: r.content,
@@ -586,6 +601,7 @@ export class AgentHarness {
     this.toolCallCache = new Map();
     this.toolCallCounts = new Map();
     this.textToolReentries = 0;
+    this.growth = emptyContextGrowthStats();
 
     // Emit agent_start
     const startEvent: BrainAgentStartEvent = createBrainEvent('agent_start', this.sessionId, {
@@ -793,6 +809,14 @@ export class AgentHarness {
       turns++;
     }
 
+    // Fase M: snapshot context-growth counters as a log-only event —
+    // emitted BEFORE agent_end so consumers can correlate the two.
+    const growthEvent = createBrainEvent('context_metrics', this.sessionId, {
+      ...this.growth,
+    }) as BrainContextMetricsEvent;
+    this.emit(growthEvent);
+    yield growthEvent;
+
     // Emit agent_end
     const agentEnd: BrainAgentEndEvent = createBrainEvent('agent_end', this.sessionId, {
       reason: hadError ? 'error' : this.cancelled ? 'cancelled' : 'completed',
@@ -848,6 +872,7 @@ export class AgentHarness {
   ): AsyncIterable<BrainEvent> {
     try {
       this.emitSnapshot(this.config.tools);
+      recordRequest(this.growth, this.config.messages);
       const stream = this.config.providerStream({
         messages: this.config.messages,
         model: this.config.model,
@@ -1142,10 +1167,13 @@ export class AgentHarness {
                   resultStr = result.error;
                   isError = true;
                 }
+                // Ground Truth: append diagnostic footer (no-op for clean results).
+                resultStr += metaFooter(result.meta);
               } catch (err) {
                 resultStr = err instanceof Error ? err.message : String(err);
                 isError = true;
               }
+              recordToolResult(this.growth, resultStr);
               const endEv = createBrainEvent('tool_execution_end', this.sessionId, {
                 toolCallId,
                 result: resultStr,
@@ -1243,6 +1271,7 @@ export class AgentHarness {
           // consumers wanting real-time token counts hook the message_end
           // and read `event.usage`.
           usageRef.value = delta.usage;
+          recordUsage(this.growth, delta.usage);
         }
       }
     } catch (err) {
@@ -1303,6 +1332,7 @@ export class AgentHarness {
     // invocation. We re-enter runSingleTurn but with an empty tools list via
     // a throwaway config override is not possible (config is readonly), so we
     // call the providerStream directly with tools: [].
+    recordRequest(this.growth, this.config.messages);
     try {
       this.emitSnapshot([]);
       const stream = this.config.providerStream({
@@ -1324,6 +1354,7 @@ export class AgentHarness {
           this.emit(deltaEvent);
           yield deltaEvent;
         } else if (delta.kind === 'usage') {
+        recordUsage(this.growth, delta.usage);
           usageRef.value = delta.usage;
         } else if (delta.kind === 'finish') {
           finishRef.value = delta.reason;

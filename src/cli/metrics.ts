@@ -51,6 +51,14 @@ export interface MetricsRecord {
   toolName?: string;
   /** Tool call id (for `kind: 'tool'` records). */
   toolCallId?: string;
+
+    /** Fase M: context-growth per-run counters (attached to `kind: 'run'`). */
+    toolRoundTrips?: number;
+    intermediateToolBytes?: number;
+    requests?: number;
+    historyBytesAtRequest?: number;
+    historyBytesPeak?: number;
+    cacheHitTokens?: number;
 }
 
 export class MetricsLogger {
@@ -61,6 +69,11 @@ export class MetricsLogger {
     this.file = file ?? process.env.ANATHEMA_METRICS_FILE
       ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'metrics.jsonl');
     mkdirSync(path.dirname(this.file), { recursive: true });
+  }
+
+  /** Metrics file path — doctor/summary readers use this. */
+  get filePath(): string {
+    return this.file;
   }
 
   /** Fire-and-forget record append. */

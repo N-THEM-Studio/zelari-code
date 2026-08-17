@@ -1,10 +1,32 @@
 import type { ZodSchema } from 'zod';
 
 
+/**
+ * Ground Truth diagnostic envelope for observe tools (2026-07 plan, Fase 0).
+ *
+ * Every read-only observation tool (grep_content, list_files, read_file) fills
+ * this deterministically so that callers — and the model itself — can tell
+ * apart "complete with 0 matches" from "empty scope" from "truncated" from
+ * "failed", without re-reading the payload.
+ *
+ * Warning codes are stable, greppable identifiers (never free prose):
+ *  - SEARCH_EMPTY_SCOPE  include/exclude globs matched 0 files in a non-empty tree
+ *  - TREE_EMPTY          the target directory exists but walked 0 entries
+ *  - FILE_NOT_FOUND      the target file does not exist (no silent fallback)
+ *  - EMPTY_FILE          the file exists but has 0 bytes
+ *  - MAX_BYTES_TRUNCATED payload cut by the maxBytes cap (explicit, never silent)
+ */
+export interface ToolResultMeta {
+  status: 'complete' | 'partial' | 'empty' | 'failed';
+  counts?: { filesWalked?: number; matches?: number; bytes?: number; lines?: number };
+  warnings?: string[];
+  truncated?: boolean;
+}
+
 /** Discriminated union for tool execution results. */
 export type TypedResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: string };
+  | { ok: true; value: T; meta?: ToolResultMeta }
+  | { ok: false; error: string; meta?: ToolResultMeta };
 
 /** Tool permission categories. The CLI prompts the user before invoking
  *  tools with write/execute/network permissions. */
@@ -54,10 +76,32 @@ export interface AuditEntry {
 }
 
 /** Helper: wrap a thrown error into TypedResult. */
-export function typedOk<T>(value: T): TypedResult<T> {
-  return { ok: true, value };
+export function typedOk<T>(value: T, meta?: ToolResultMeta): TypedResult<T> {
+  return meta ? { ok: true, value, meta } : { ok: true, value };
 }
 
-export function typedErr<T = never>(error: string): TypedResult<T> {
-  return { ok: false, error };
+export function typedErr<T = never>(error: string, meta?: ToolResultMeta): TypedResult<T> {
+  return meta ? { ok: false, error, meta } : { ok: false, error };
+}
+
+/**
+ * Compact one-line diagnostic footer appended to the model-facing tool result
+ * string when the observation is NOT clean-complete. Returns '' for a clean
+ * complete observation (no noise) and for absent meta (pre-Fase-0 tools).
+ *
+ * Deterministic by construction: same meta → same footer, byte-identical —
+ * safe for prefix caching (Fase 2 relies on this).
+ */
+export function metaFooter(meta?: ToolResultMeta): string {
+  if (!meta) return '';
+  if (meta.status === 'complete' && !meta.truncated && !meta.warnings?.length) return '';
+  const parts: string[] = [`status=${meta.status}`];
+  const c = meta.counts;
+  if (c?.filesWalked !== undefined) parts.push(`filesWalked=${c.filesWalked}`);
+  if (c?.matches !== undefined) parts.push(`matches=${c.matches}`);
+  if (c?.lines !== undefined) parts.push(`lines=${c.lines}`);
+  if (c?.bytes !== undefined) parts.push(`bytes=${c.bytes}`);
+  if (meta.truncated) parts.push('truncated=true');
+  if (meta.warnings?.length) parts.push(`warnings=${meta.warnings.join(',')}`);
+  return `\n[observation ${parts.join(' ')}]`;
 }

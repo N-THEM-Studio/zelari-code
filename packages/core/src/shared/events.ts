@@ -27,7 +27,8 @@ export type BrainEventType =
   | 'member_cost'
   | 'council_mode'
   | 'task_update'
-  | 'task_snapshot';
+  | 'task_snapshot'
+  | 'context_metrics';
 
 /** Fields shared by every event. */
 export interface BrainEventBase {
@@ -325,7 +326,8 @@ export type BrainEvent =
   | BrainMemberCostEvent
   | BrainCouncilModeEvent
   | BrainTaskUpdateEvent
-  | BrainTaskSnapshotEvent;
+  | BrainTaskSnapshotEvent
+  | BrainContextMetricsEvent;
 
 /**
  * Map from a {@link BrainEventType} discriminator to its concrete event type.
@@ -333,6 +335,35 @@ export type BrainEvent =
  * `Extract<BrainEvent, { type: ... }>` dance.
  */
 export type BrainEventOf<T extends BrainEventType> = Extract<BrainEvent, { type: T }>;
+
+// --- Context-growth metrics (Fase M) ----------------------------------------
+
+/**
+ * Per-run context-growth metrics, emitted once at the end of a run, right
+ * before `agent_end`. Log-only by design: it is NEVER rendered into the
+ * model-facing message history — consumers persist it (session JSONL,
+ * metrics.jsonl) or display it (doctor, /cache).
+ *
+ * Makes the "context-growth avoidance" thesis falsifiable: what entered
+ * the context (tool bytes), how big the request surface was, and how much
+ * of it the provider prefix cache actually absorbed.
+ */
+export interface BrainContextMetricsEvent extends BrainEventBase {
+  type: 'context_metrics';
+  /** Tool executions completed this run (round-trips). */
+  toolRoundTrips: number;
+  /** UTF-8 bytes of tool results appended to model history this run. */
+  intermediateToolBytes: number;
+  /** LLM requests issued this run (>= 1; grows with the tool loop). */
+  requests: number;
+  /** UTF-8 bytes of the serialized messages array at the LAST request. */
+  historyBytesLast: number;
+  /** Max historyBytesLast across all requests this run. */
+  historyBytesPeak: number;
+  /** Prompt tokens served from the provider prefix cache this run. */
+  cacheHitTokens: number;
+}
+
 
 // --- Type guards ------------------------------------------------------------
 
@@ -398,6 +429,10 @@ export function isBrainTaskUpdateEvent(e: BrainEvent): e is BrainTaskUpdateEvent
 
 export function isBrainTaskSnapshotEvent(e: BrainEvent): e is BrainTaskSnapshotEvent {
   return e.type === 'task_snapshot';
+}
+
+export function isBrainContextMetricsEvent(e: BrainEvent): e is BrainContextMetricsEvent {
+  return e.type === 'context_metrics';
 }
 
 // --- Constructor ------------------------------------------------------------

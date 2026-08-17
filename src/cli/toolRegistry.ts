@@ -37,6 +37,8 @@ import {
   type PlanTaskEventSink,
 } from './tools/planTaskTools.js';
 import { createInspectCommandTool } from './tools/inspectCommand.js';
+import { createObserveBatchTool } from './tools/observeBatch.js';
+import { createRetrieveObservationTool } from './tools/retrieveObservation.js';
 import { createLspTools } from './lsp/tools.js';
 import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { createAstTools } from './ast/tools.js';
@@ -254,6 +256,37 @@ export function createBuiltinToolRegistry(
   registry.register(withPerm(safeShowDiff));
   registry.register(withPerm(safeFetchUrl));
   registry.register(withPerm(safeWebSearch));
+
+  // observe_batch — N read-only observations in one round-trip (2026-07
+  // context-growth plan, Fase 1). Registered in BOTH full and read-only
+  // registries; reuses the sandbox+permission+cache-wrapped tools above.
+  // Kill switch ZELARI_OBSERVE_BATCH=0 (A/B against the Fase M baseline).
+  const observeBatchTool =
+    process.env.ZELARI_OBSERVE_BATCH !== '0'
+      ? withPerm(
+          createObserveBatchTool({
+            tools: {
+              read_file: safeReadFile,
+              grep_content: safeGrepContent,
+              list_files: safeListFiles,
+            },
+          }),
+        )
+      : null;
+  if (observeBatchTool) {
+    registry.register(observeBatchTool);
+  }
+
+  // retrieve_observation — rematerialize a projected tool result by seq
+  // (2026-07 context-growth plan, Fase 2). Read-only; both registries.
+  const retrieveObservationTool =
+    process.env.ZELARI_SESSION_SURFACE !== '0'
+      ? withPerm(createRetrieveObservationTool())
+      : null;
+  if (retrieveObservationTool) {
+    registry.register(retrieveObservationTool);
+  }
+
   // Mutating tools — full/general only.
   if (allowMutators) {
     registry.register(withPerm(safeWriteFile));
@@ -319,6 +352,8 @@ export function createBuiltinToolRegistry(
     safeShowDiff,
     safeFetchUrl,
     safeWebSearch,
+    ...(observeBatchTool ? [observeBatchTool] : []),
+    ...(retrieveObservationTool ? [retrieveObservationTool] : []),
     ...(allowMutators ? [safeWriteFile, safeEditFile, safeApplyDiff] : []),
     ...(allowBash ? [safeBash] : []),
     ...(askUserTool ? [askUserTool] : []),

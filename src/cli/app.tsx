@@ -34,6 +34,8 @@ import {
   getActiveProvider as getActiveProviderSpec,
 } from './providerConfig.js';
 import { SessionJsonlWriter } from '@zelari/core/harness';
+import { getSessionBaseDir } from './sessionManager.js';
+import { invalidateObservationIndex } from './hooks/observationStore.js';
 import { VERSION } from './main.js';
 import { useSession } from './hooks/useSession.js';
 import { useChatTurn } from './hooks/useChatTurn.js';
@@ -172,7 +174,8 @@ export function App(): React.ReactElement {
   // /new callback: close the old writer, open a new one for the new id.
   const onNewSession = useCallback((id: string) => {
     void session.writerRef.current?.close();
-    session.writerRef.current = new SessionJsonlWriter(id);
+    invalidateObservationIndex();
+    session.writerRef.current = new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() });
   }, [session.writerRef]);
 
   // /exit callback: flush the writer, then exit. 50ms lets the Ink render

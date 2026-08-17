@@ -53,7 +53,18 @@ export const listFilesTool: ToolDefinition<ListFilesArgs, ListFilesResult> = {
       });
       const MAX_ENTRIES = 500;
       const truncated = entries.length > MAX_ENTRIES;
-      return typedOk({ dir: target, entries: truncated ? entries.slice(0, MAX_ENTRIES) : entries, truncated });
+      // Ground Truth: empty dir vs truncated listing vs complete, with full counts.
+      const warnings = entries.length === 0 ? ['DIR_EMPTY'] : [];
+      const status = entries.length === 0 ? 'empty' : truncated ? 'partial' : 'complete';
+      return typedOk(
+        { dir: target, entries: truncated ? entries.slice(0, MAX_ENTRIES) : entries, truncated },
+        {
+          status,
+          counts: { filesWalked: entries.length },
+          ...(warnings.length > 0 ? { warnings } : {}),
+          ...(truncated ? { truncated: true } : {}),
+        },
+      );
     } catch (err) {
       return typedErr(err instanceof Error ? err.message : String(err));
     }

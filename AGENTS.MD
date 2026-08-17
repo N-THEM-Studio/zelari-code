@@ -56,7 +56,7 @@ See `.zelari/decisions/` for full ADRs (context/decision/consequences).
 <!-- zelari:auto:start section="conventions" -->
 <!-- Zelari Code defaults -->
 
-- One tool definition per file in `src/main/core/tools/builtin/`
+- One tool definition per file in `packages/core/src/core/tools/builtin/` (CLI factories in `src/cli/tools/`)
 - Async-first; never block the event loop
 - Zod schemas for all LLM tool args
 - Single-task atomic commits; no batching

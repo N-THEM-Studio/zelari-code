@@ -24,6 +24,8 @@ import {
 } from '../hooks/historyCompaction.js';
 import type { RoutedRequestSnapshot, ProviderStreamFn, AgentToolSpec } from '@zelari/core/harness';
 import type { StoredRequestUsage } from './requestSnapshotStore.js';
+import { applySessionSurface } from '../hooks/observationStore.js';
+import { capabilitiesFor } from '../provider/capabilities.js';
 
 export interface BudgetPolicy {
   /** Possibly compacted history. */
@@ -84,8 +86,7 @@ export function estimateHistoryTokens(messages: readonly AgentMessage[]): number
  * prefix cache. ZELARI_CONTEXT_LIMIT always wins when set.
  */
 export function defaultContextLimitForModel(model?: string): number {
-  if (model && /^deepseek-v4(\.|-|$)/i.test(model)) return 1_000_000;
-  return 400_000;
+  return capabilitiesFor(model).contextWindow;
 }
 
 export function resolveContextLimit(model?: string): number {
@@ -143,6 +144,8 @@ export function applyBudgetPolicy(
   opts?: { sessionTokens?: number; model?: string },
 ): BudgetPolicy {
   const contextLimit = resolveContextLimit(opts?.model);
+  const compact = capabilitiesFor(opts?.model).compaction;
+
   const sessionExtra = opts?.sessionTokens ?? 0;
   const warnings: string[] = [];
   let { historyTurns, maxToolLoopIterations } = phaseKnobs(phase);
@@ -152,13 +155,13 @@ export function applyBudgetPolicy(
   let compactSummary = '';
   let messagesRemoved = 0;
 
-  if (occupancy >= 0.7 && occupancy < 0.85) {
+  if (occupancy >= compact.warnAt && occupancy < compact.compactAt) {
     warnings.push(
       `[budget] context ~${Math.round(occupancy * 100)}% full (${estimated + sessionExtra}/${contextLimit} tok est.) — consider /compact or shorter replies.`,
     );
   }
 
-  if (occupancy >= 0.85) {
+  if (occupancy >= compact.compactAt) {
     const forcedTurns = Math.max(1, Math.floor(historyTurns / 2));
     historyTurns = forcedTurns;
     maxToolLoopIterations = Math.min(
@@ -166,7 +169,7 @@ export function applyBudgetPolicy(
       phase === 'plan' ? 24 : 40,
     );
     const r = compactHistoryDetailed(hist, { maxMessages: forcedTurns * 4 });
-    hist = r.messages;
+    hist = applySessionSurface(r.messages);
     if (r.compacted) {
       messagesRemoved += r.messagesRemoved;
       if (r.summary) compactSummary = r.summary;
@@ -179,9 +182,9 @@ export function applyBudgetPolicy(
     );
   }
 
-  if (occupancy >= 0.95) {
+  if (occupancy >= compact.hardAt) {
     const hard = compactHistoryDetailed(hist, { maxMessages: 8 });
-    hist = hard.messages;
+    hist = applySessionSurface(hard.messages);
     if (hard.compacted) {
       messagesRemoved += hard.messagesRemoved;
       if (hard.summary) compactSummary = hard.summary;
@@ -255,6 +258,8 @@ export async function applyBudgetPolicyAsync(
   opts?: BudgetPolicyEnvelope,
 ): Promise<BudgetPolicy> {
   const contextLimit = resolveContextLimit(opts?.model);
+  const compact = capabilitiesFor(opts?.model).compaction;
+
   const sessionExtra = opts?.sessionTokens ?? 0;
   const warnings: string[] = [];
   let { historyTurns, maxToolLoopIterations } = phaseKnobs(phase);
@@ -300,7 +305,7 @@ export async function applyBudgetPolicyAsync(
   let cacheReuseExpected: boolean | undefined;
   let prunedTotal = 0;
 
-  if (occupancy >= 0.7 && occupancy < 0.85) {
+  if (occupancy >= compact.warnAt && occupancy < compact.compactAt) {
     warnings.push(
       `[budget] context ~${Math.round(occupancy * 100)}% full (${estimated}/${contextLimit} tok full-request est.) — consider /compact or shorter replies.`,
     );
@@ -323,7 +328,7 @@ export async function applyBudgetPolicyAsync(
   }
 
   const fold = (r: CompactHistoryResult, label: string, forcedTurns: number) => {
-    hist = r.messages;
+    hist = applySessionSurface(r.messages);
     if (r.compacted) {
       messagesRemoved += r.messagesRemoved;
       if (r.summary) compactSummary = r.summary;
@@ -344,7 +349,7 @@ export async function applyBudgetPolicyAsync(
   };
 
   // ── ≥85% after pruning: cache-aware compaction (replay when possible) ───
-  if (occupancy >= 0.85) {
+  if (occupancy >= compact.compactAt) {
     const forcedTurns = Math.max(1, Math.floor(historyTurns / 2));
     historyTurns = forcedTurns;
     maxToolLoopIterations = Math.min(
@@ -376,7 +381,7 @@ export async function applyBudgetPolicyAsync(
   }
 
   // ── ≥95%: emergency hard trim ────────────────────────────────────────────
-  if (occupancy >= 0.95) {
+  if (occupancy >= compact.hardAt) {
     const hard = await compactHistoryAsync(hist, {
       maxMessages: 2,
       force: true,
