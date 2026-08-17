@@ -81,9 +81,20 @@ Ortogonale a mode `kraken` | `council` | `zelari` (`/plan`, `/build`, `--phase`;
 
 | Phase | Comportamento registry |
 |-------|------------------------|
-| **plan** | Bloccati: `write_file`, `edit_file`, `apply_diff`, `bash` (+ spesso `task`). Workspace plan/docs tools **consentiti** |
+| **plan** | Bloccati: `write_file`, `edit_file`, `apply_diff`, `bash` (+ spesso `task`). Disponibile `inspect_command` (v0.10.0, ispettore read-only allowlistato). Workspace plan/docs tools **consentiti** |
 | **build** | Tool completi (sandbox + blocklist restano) |
 
+## inspect_command (v0.10.0)
+
+Ispettore di comandi **read-only, allowlistato, senza shell** — registrato esattamente dove `bash` non c'è: sessioni `plan`, sub-agent read-only ed `explore` (full/verify mantengono `bash`).
+
+- **API a menu, non pseudo-shell**: input = discriminated union su `operation` — `git_status`, `git_log` (`limit`, `oneline`), `git_diff` (`staged`, `path`), `git_show` (`ref`), `git_branch_current`, `git_ls_files`, `typecheck` (`project`), `node_version`, `npm_ls`, `npm_outdated`, `npm_view` (`package`).
+- Il tool **costruisce argv internamente** e usa `spawn(..., { shell: false })`: niente tokenizer, metacaratteri o injection da quoting per costruzione. Flag forzati su `git diff/show`: `--no-ext-diff --no-textconv`.
+- `inspectionClass` in ogni risultato: `git-inspection` | `project-code-execution` (typecheck esegue la toolchain del progetto) | `env-info`.
+- **typecheck (S3.5 artifact safety)**: `tsc --noEmit` con `--tsBuildInfoFile` rediretto in `<tmp>/zelari-inspect/<hash>` (il redirect prevale sul tsconfig, funziona anche su progetti `composite`/`incremental`), guard pre/post (`git status --porcelain` + scan `**/*.tsbuildinfo`): qualsiasi delta → `status: "degraded"` + `artifactsWritten` + cleanup. Rifiuto compiler-level su shape non supportate → `status: "unsupported_project_shape"`, mai finto vuoto.
+- Output cap 8 KB, timeout 85 s interni / 90 s tool-level.
+- Windows: `typecheck` lancia `node <root>/node_modules/typescript/bin/tsc` (loud `TYPESCRIPT_UNAVAILABLE` se assente); `npm_*` usano `npm-cli.js` via node.
+- Kill-switch: `ZELARI_INSPECT_COMMAND=0`.
 ## Parallel tool batch (harness)
 
 Su un finish multi-`tool_call`, `AgentHarness` segmenta in emission order:

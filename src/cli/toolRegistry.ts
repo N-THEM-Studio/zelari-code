@@ -36,6 +36,7 @@ import {
   createPlanTaskTools,
   type PlanTaskEventSink,
 } from './tools/planTaskTools.js';
+import { createInspectCommandTool } from './tools/inspectCommand.js';
 import { createLspTools } from './lsp/tools.js';
 import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { createAstTools } from './ast/tools.js';
@@ -332,10 +333,24 @@ export function createBuiltinToolRegistry(
     permissions: t.permissions ?? [],
   }));
 
+  // inspect_command — allowlisted no-shell inspector (git status/log/diff/
+  // show, tsc --noEmit with S3.5 artifact safety) registered exactly where
+  // bash is NOT: readOnly subagents, planMode sessions and the explore
+  // profile. Full/verify keep the real bash. Kill-switch: ZELARI_INSPECT_COMMAND=0.
+  if (readOnly && process.env.ZELARI_INSPECT_COMMAND !== '0') {
+    const inspectTool = createInspectCommandTool(root);
+    registry.register(withPerm(inspectTool));
+    tools.push({
+      name: inspectTool.name,
+      description: inspectTool.description,
+      permissions: inspectTool.permissions ?? [],
+    });
+  }
+
   // AST structural tools (ast_outline, find_symbol) — read-only, so available
   // in BOTH the full registry and read-only sub-agents. Gated by ZELARI_AST.
   if (process.env.ZELARI_AST !== '0') {
-    for (const t of createAstTools()) {
+    for (const t of createAstTools(root)) {
       registry.register(t);
       tools.push({ name: t.name, description: t.description, permissions: t.permissions ?? [] });
     }
@@ -415,10 +430,13 @@ export function createBuiltinToolRegistry(
   }
 
   // LSP navigation tools (go_to_definition, find_references, hover_type,
-  // document_symbols, rename_symbol). Full registry only, gated by
-  // ZELARI_LSP. Backed by a shared, lazily-spawned language-server manager —
-  // the servers start on first use and degrade silently when not installed.
-  if (!readOnly && process.env.ZELARI_LSP !== '0' && options.lspProvider !== null) {
+  // document_symbols, rename_symbol). Full + plan (read-only) registry,
+  // gated by ZELARI_LSP. All five tools are permissions: ['read']
+  // (rename_symbol is preview-only), so plan sessions keep the full
+  // navigation ladder ast → lsp → grep → read_file.
+  // The shared manager degrades into an explicit degraded field in tool
+  // results when a server is not installed (EMPTY is never silently faked).
+  if (process.env.ZELARI_LSP !== '0' && options.lspProvider !== null) {
     const lspTools = options.lspProvider
       ? createLspTools(options.lspProvider, root)
       : createLspTools(getSharedLspManager(root), root);
