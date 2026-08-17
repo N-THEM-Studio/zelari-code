@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.47.0] - 2026-08-17
+
+### Added
+- **Ground Truth observation meta** — `read_file` / `grep_content` / `list_files` now carry a typed `meta.status` (`complete` / `empty` / `partial` / `failed`) plus counts and short sentinels (`SEARCH_EMPTY_SCOPE`, `TREE_EMPTY`, `FILE_NOT_FOUND`, `DIR_EMPTY`, `EMPTY_FILE`). A completed search with zero matches is no longer confused with an empty scope. The AgentHarness appends a deterministic one-line footer only for non-clean observations.
+- **Context-growth metrics (log-only)** — `BrainContextMetricsEvent` (`context_metrics`) is emitted once per run before `agent_end`: tool round-trips, UTF-8 bytes of tool results that entered history, history surface at request time, cache-hit tokens. Folded into `metrics.jsonl` and surfaced by `zelari-code --doctor`. Never rendered into the model-facing prompt.
+- **`observe_batch`** — up to 8 independent read-only observations (`read_file` / `grep_content` / `list_files`) in one round-trip. Default `resultMode: evidence` keeps only deterministic evidence (counts, ranges, top matches) in context. Failures isolate; 48 KB aggregate cap; kill-switch `ZELARI_OBSERVE_BATCH=0`.
+- **SessionSurface + `retrieve_observation`** — cold or oversized tool results project to a stable stub (`OBSERVATION ref=#N …`) while the JSONL log stays the source of truth. `retrieve_observation` rematerializes on demand. Stubs never expand (prefix-cache safe). Kill-switch `ZELARI_SESSION_SURFACE=0`.
+- **Provider harness profiles** — `capabilitiesFor(model)` is the single model-aware policy object (context window, compaction thresholds, sampling). `deepseek-v4*` keeps the existing 1M window + priced cache; every other model stays on the default 400k profile. No DeepSeek-only product logic.
+
+### Changed
+- Compaction thresholds and default temperature now read from the harness profile instead of scattered literals. Per-request `generation.temperature` still wins (compaction replay stays at 0.1).
+
 ## [1.46.1] - 2026-08-17
 
 ### Fixed
