@@ -6,6 +6,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.47.1] - 2026-08-17
+
+### Fixed
+- **Publish CI** — `observe_batch` integration test now pins the repo root via `import.meta.url` so `npm test --workspace=@zelari/core` (cwd `packages/core`) does not resolve `src/cli/tools` against the core package. Same pattern as `inspect_command` in 1.46.1.
+
 ## [1.47.0] - 2026-08-17
 
 ### Added

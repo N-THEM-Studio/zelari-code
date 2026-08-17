@@ -6,6 +6,8 @@
  * evidence/raw modes, aggregate cap with explicit truncation, per-op
  * timeout, Ground Truth batch meta.
  */
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
 import { describe, it, expect, afterEach } from 'vitest';
 import { z } from 'zod';
 import {
@@ -22,6 +24,10 @@ import { typedOk, typedErr, type ToolContext, type ToolDefinition } from '@zelar
 
 /* eslint-disable-next-line @typescript-eslint/no-explicit-any */
 type AnyTool = ToolDefinition<any, any>;
+
+// Pin repo root: npm test --workspace=@zelari/core runs with cwd packages/core
+// (same as the publish workflow). Do NOT use process.cwd() / path.resolve().
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 
 function fakeCtx(): ToolContext {
   return {
@@ -287,18 +293,20 @@ describe('observe_batch result modes + caps', () => {
 describe('observe_batch integration (real registry + real builtins)', () => {
   it('runs real read-only tools through the wrapped registry and projects evidence', async () => {
     const { createBuiltinToolRegistry } = await import('../toolRegistry.js');
-    const { registry } = createBuiltinToolRegistry({ lspProvider: null });
+    const { registry } = createBuiltinToolRegistry({ lspProvider: null, root: repoRoot });
     expect(registry.list().includes('observe_batch')).toBe(true);
 
+    const toolsDir = path.join(repoRoot, 'src', 'cli', 'tools');
+    const pkgJson = path.join(repoRoot, 'package.json');
     const res = await registry.invoke('observe_batch', {
       operations: [
-        { id: 'l', tool: 'list_files', args: { path: 'src/cli/tools', maxDepth: 1 } },
+        { id: 'l', tool: 'list_files', args: { path: toolsDir, maxDepth: 1 } },
         {
           id: 'g',
           tool: 'grep_content',
-          args: { pattern: 'observe_batch', path: 'src/cli/tools', include: ['*.ts'], contextLines: 0, maxMatches: 3 },
+          args: { pattern: 'observe_batch', path: toolsDir, include: ['*.ts'], contextLines: 0, maxMatches: 3 },
         },
-        { id: 'r', tool: 'read_file', args: { path: 'package.json', startLine: 1, endLine: 5 } },
+        { id: 'r', tool: 'read_file', args: { path: pkgJson, startLine: 1, endLine: 5 } },
       ],
     });
     expect(res.ok).toBe(true);
