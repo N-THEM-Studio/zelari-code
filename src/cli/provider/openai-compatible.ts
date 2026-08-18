@@ -118,24 +118,50 @@ function isTimeoutAbortMessage(msg: string): boolean {
 
 /**
  * Read one stream chunk with idle + absolute max timeouts.
- * Resets the idle timer whenever a chunk arrives (active streams never die
- * just because the turn is long).
+ *
+ * The idle timer measures silence since the last *useful* delta (content
+ * actually emitted to the harness), NOT since the last TCP chunk. Providers
+ * behind Cloudflare-style gateways send SSE keep-alive frames (blank lines,
+ * `: ping`, `data:` with no choices) on a fixed interval; resetting the timer
+ * on those made a stalled model look "alive" forever — observed with grok-4.6:
+ * process hung 20+ min, socket ESTABLISHED, zero tokens emitted, 5-min idle
+ * timeout never firing because keep-alives kept resetting it. Measuring from
+ * the last useful delta makes the timeout fire even when keep-alives flow.
  */
-async function readChunkWithTimeout(
+/** @internal exported for unit testing */
+export async function readChunkWithTimeout(
   reader: ReadableStreamDefaultReader<Uint8Array>,
-  opts: { idleMs: number; deadlineMs: number; signal?: AbortSignal },
+  opts: {
+    idleMs: number;
+    deadlineMs: number;
+    signal?: AbortSignal;
+    /** Timestamp (ms) of the last delta actually emitted to the harness. */
+    lastUsefulAt: () => number;
+  },
 ): Promise<ReadableStreamReadResult<Uint8Array>> {
   if (opts.signal?.aborted) {
     throw new Error('aborted');
   }
-  const remaining = opts.deadlineMs - Date.now();
+  const now = Date.now();
+  const remaining = opts.deadlineMs - now;
   if (remaining <= 0) {
     throw new Error(
       `Provider stream exceeded max duration (${Math.round(PROVIDER_STREAM_MAX_MS / 1000)}s). ` +
         `Raise ZELARI_PROVIDER_STREAM_MAX_MS if needed.`,
     );
   }
-  const waitMs = Math.min(opts.idleMs, remaining);
+  const idleElapsed = now - opts.lastUsefulAt();
+  if (idleElapsed >= opts.idleMs) {
+    // Even if keep-alive frames keep arriving, no CONTENT has been produced
+    // for idleMs — the model/gateway is stalled. Fail fast instead of
+    // letting the socket keep the process alive forever.
+    throw new Error(
+      `Provider stream idle for ${Math.round(idleElapsed / 1000)}s ` +
+        `(no content tokens — keep-alive frames don't count). The model/gateway stalled — ` +
+        `try again or switch model. Override with ZELARI_PROVIDER_STREAM_IDLE_MS.`,
+    );
+  }
+  const waitMs = Math.min(opts.idleMs - idleElapsed, remaining);
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
   let onAbort: (() => void) | undefined;
   try {
@@ -626,6 +652,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
         if (args === null) continue; // incomplete JSON — leave dropped
         toolCallAccumulator.delete(idx);
         emittedToolCall = true;
+        markUseful();
         yield {
           kind: 'tool_call',
           toolCallId: existing.id || `tc-${idx}`,
@@ -637,6 +664,13 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     };
 
     const streamDeadline = Date.now() + PROVIDER_STREAM_MAX_MS;
+    // Timestamp of the last delta that actually produced harness-visible
+    // content (text/thinking/tool_call/usage). Updated on every useful
+    // emission so SSE keep-alive frames cannot reset the idle budget.
+    let lastUsefulAt = Date.now();
+    const markUseful = (): void => {
+      lastUsefulAt = Date.now();
+    };
     try {
       while (true) {
         let chunk: ReadableStreamReadResult<Uint8Array>;
@@ -645,6 +679,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
             idleMs: PROVIDER_STREAM_IDLE_MS,
             deadlineMs: streamDeadline,
             signal: params.signal,
+            lastUsefulAt: () => lastUsefulAt,
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
@@ -732,6 +767,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
                   ? parsed.usage.total_tokens
                   : promptTokens + completionTokens;
               const cachedPromptTokens = parseCachedPromptTokens(parsed.usage);
+              markUseful();
               yield {
                 kind: 'usage',
                 usage: {
@@ -743,6 +779,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
               };
             }
             if (typeof delta?.content === 'string' && delta.content.length > 0) {
+              markUseful();
               yield { kind: 'text', delta: delta.content };
             }
             // Chain-of-thought / reasoning channel. GLM, DeepSeek, Qwen and
@@ -755,6 +792,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
               (delta as { reasoning_content?: unknown })?.reasoning_content ??
               (delta as { reasoning?: unknown })?.reasoning;
             if (typeof reasoning === 'string' && reasoning.length > 0) {
+              markUseful();
               yield { kind: 'thinking', delta: reasoning };
             }
             // MiniMax-M3 reasoning_split format: reasoning_details[{text}]
@@ -768,10 +806,14 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
                 if (t.startsWith(reasoningDetailsBuf)) {
                   const piece = t.slice(reasoningDetailsBuf.length);
                   reasoningDetailsBuf = t;
-                  if (piece.length > 0) yield { kind: 'thinking', delta: piece };
+                  if (piece.length > 0) {
+                    markUseful();
+                    yield { kind: 'thinking', delta: piece };
+                  }
                 } else {
                   // Non-cumulative chunk — treat as a fresh delta.
                   reasoningDetailsBuf += t;
+                  markUseful();
                   yield { kind: 'thinking', delta: t };
                 }
               }
@@ -803,6 +845,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
             // finish_reason (especially 'tool_calls' for the harness loop).
             if (choice?.finish_reason) {
               yield* flushToolAccumulator();
+              markUseful();
               const reason =
                 choice.finish_reason === 'stop' && emittedToolCall
                   ? 'tool_calls'
