@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.48.0] - 2026-08-18
+
+### Fixed
+- **Unattended-build deadlocks (Grok "stuck working" with no errors)** — grok-4.6 is trained (grok-build style) to call `ask_user` mid-task; the tool-loop blocked forever on the picker promise while the TUI kept showing the generic `working` spinner. Every blocking wait is now bounded and visible:
+  - `ask_user` clarification pickers (kraken + council paths in `useChatTurn`) are wrapped by `askUserTimeout` — default 5 minutes, tunable via `ZELARI_ASK_USER_TIMEOUT_MS` (`0` disables). On timeout the loop continues with a documented assumption note instead of hanging.
+  - `createPermissionAskHandler` applies the same bound to every permission picker it creates (kraken / council / zelari / broker callers all inherit it). On timeout the request is denied with an explanatory note and the tool remains re-runnable.
+  - `usePermissionBroker` external-agent question waits are bounded too — an unseen question can no longer orphan a turn.
+  - `LiveRegion` renders an explicit "waiting for YOUR answer" banner with elapsed seconds whenever a picker is pending, replacing the silent spinner (wired in `app.tsx` via `pickerSince`).
+- **Grok OAuth refresh hang** — `refreshGrokToken` now uses `AbortSignal.timeout(30s)`: a stalled `auth.x.ai` response becomes a visible, recoverable error instead of an infinite pending promise (previously indistinguishable from a dead model).
+
+### Added
+- `src/cli/hooks/askUserTimeout.ts` — shared bounded-wait helper (`ZELARI_ASK_USER_TIMEOUT_MS`, default `300000`, `0` = off) used by all ask-user / permission paths.
+
 ## [1.47.2] - 2026-08-17
 
 ### Fixed
