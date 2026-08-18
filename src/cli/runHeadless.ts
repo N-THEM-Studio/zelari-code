@@ -18,6 +18,7 @@ import { AgentHarness, type ProviderStreamFn } from '@zelari/core/harness';
 import type { AgentMessage, AgentToolSpec } from '@zelari/core/harness';
 import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import { cleanAgentContent } from '@zelari/core';
+import { createBrainEvent } from '@zelari/core/events';
 import {
   buildAgentUserWithHistory,
   buildCouncilTaskWithHistory,
@@ -25,6 +26,11 @@ import {
 } from './hooks/conversationContext.js';
 import { buildImplementationWriteRetryPrompt } from '@zelari/core/council';
 import { createBuiltinToolRegistry } from './toolRegistry.js';
+import { KrakenTurnRuntime } from './kraken/turnRuntime.js';
+import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from './kraken/candidateRegistry.js';
+import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from './kraken/metrics.js';
+import { buildKrakenRepairPrompt, evaluateKrakenCompletionGate } from './kraken/completionGate.js';
+import { krakenSelectionPlaybook } from './kraken/selectionPlaybook.js';
 import {
   emitEvent,
   resolveHeadlessKey,
@@ -450,11 +456,23 @@ async function runHeadlessSingle(
   providerStream: ProviderStreamFn,
 ): Promise<number> {
   const sessionId = crypto.randomUUID();
+  // Fase 3 (ADR-0020): fresh per-run candidate registry (each headless run
+  // is one process, so per-run == per-turn here).
+  resetKrakenCandidates();
+  resetKrakenTurnMetrics();
   // Headless / Desktop: no interactive permission UI — auto-allow "ask" rules
   // unless the user set an explicit deny. Override with ZELARI_AUTO=0 and
   // ZELARI_PERMISSION_*=deny for hard lockdown.
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     planMode: planModeFromOpts(opts),
+    // Fase 1 (ADR-0020): anchor tentacles to the provider/model THIS run
+    // resolved (--provider/--model opts or Desktop's selector), mirroring
+    // what the kraken-graph path already does for its executor.
+    subAgentProvider: provider,
+    subAgentModel: model,
+    // Fase 4 (ADR-0020): kraken_select on the parent registry for kraken
+    // runs with the alpha selection flag on (default off = unchanged).
+    krakenSelect: opts.mode === 'kraken' && isKrakenSelectionEnabled(),
     // ADR-0018 3b: upgrade plan-task domain events to first-class NDJSON
     // BrainEvents. Rust envelopes every stdout line with runId/conversationId,
     // so task events ride the same multiplexed channel as the rest.
@@ -579,6 +597,7 @@ async function runHeadlessSingle(
           customPromptModules: [
             KRAKEN_IDENTITY_MODULE,
             KRAKEN_LEAD_PLAYBOOK_MODULE,
+            ...krakenSelectionPlaybook(opts.mode === 'kraken'),
             {
               type: 'language-policy',
               title: 'Response Language',
@@ -686,6 +705,7 @@ async function runHeadlessSingle(
 
     try {
       for await (const event of harness.run()) {
+        progressRuntime.observe(event);
         if (event.type === 'message_start') {
           scrub.reset();
         }
@@ -771,6 +791,21 @@ async function runHeadlessSingle(
     };
   }
 
+  // Fase 2 (ADR-0020): per-turn progress projection. Observes the SAME
+  // BrainEvent stream the NDJSON emitter sees and projects phase changes as
+  // sparse `kraken_progress` events (json output only; the Desktop parser
+  // ignores unknown event types by design until its card ships).
+  const progressRuntime = new KrakenTurnRuntime({
+    mode: planModeFromOpts(opts) ? 'plan' : 'build',
+    sessionId,
+    loadCheckTotal: () => krakenRequiredChecks().length,
+    loadChecksPassed: () => krakenChecksPassed(),
+    onProgress: (ev) => {
+      if (opts.output === 'json') emitEvent(ev);
+    },
+  });
+  progressRuntime.beginTurn();
+
   const initialMessages: AgentMessage[] = [
     ...systemMessages,
     ...historySeed,
@@ -821,6 +856,7 @@ async function runHeadlessSingle(
       ...retryMessages,
       { role: 'user', content: retryPrompt },
     ];
+    progressRuntime.beginPass();
     const retry = await runSinglePass(withSystem, `${sessionId}-write-retry`);
     // Prefer retry outcome; merge streamed text so the UI sees both passes.
     pass = {
@@ -829,6 +865,61 @@ async function runHeadlessSingle(
       successfulWrites: pass.successfulWrites + retry.successfulWrites,
       emittedWrites: pass.emittedWrites + retry.emittedWrites,
     };
+  }
+
+  // Fase 8 (ADR-0020): completion gate — a BUILD turn that used selection
+  // cannot cleanly finish while required checks are unresolved (fail OR
+  // unknown — a degraded observation is never proof). One automatic
+  // repair pass (budget = 1, structural), reusing the same recovery
+  // shape as the write-retry above instead of a second recovery system.
+  if (
+    pass.finalReason === 'completed' &&
+    pass.exitCode === 0 &&
+    opts.mode === 'kraken' &&
+    isKrakenSelectionEnabled() &&
+    !planModeFromOpts(opts)
+  ) {
+    const gate = evaluateKrakenCompletionGate('build');
+    if (gate.blocked) {
+      const repairPrompt = buildKrakenRepairPrompt(gate);
+      if (opts.output === 'json') {
+        emitEvent({
+          type: 'log',
+          message:
+            `[headless] Kraken BUILD: ${gate.failedChecks.length} failed / ${gate.unknownChecks.length} unknown required checks — forcing repair pass`,
+        });
+      } else {
+        process.stderr.write(
+          '[zelari-code --headless] Kraken BUILD: required checks unresolved — forcing repair pass\n',
+        );
+      }
+      // Same continuation shape as the write-retry: full prior messages
+      // plus a hard user directive, so the model sees what it already did.
+      const withSystem: AgentMessage[] = [
+        ...systemMessages,
+        ...pass.messages.filter((m) => m.role !== 'system'),
+        { role: 'user', content: repairPrompt },
+      ];
+      progressRuntime.beginPass(true);
+      markRepairTriggered();
+      const repair = await runSinglePass(withSystem, `${sessionId}-check-repair`);
+      pass = {
+        ...repair,
+        textBuffer: [...pass.textBuffer, ...repair.textBuffer],
+        successfulWrites: pass.successfulWrites + repair.successfulWrites,
+        emittedWrites: pass.emittedWrites + repair.emittedWrites,
+      };
+      if (!evaluateKrakenCompletionGate('build').blocked) markRepairSucceeded();
+    }
+  }
+
+  progressRuntime.finish(pass.finalReason);
+
+  // Fase 10: one metrics event per turn — only when selection actually ran
+  // (null snapshot on plain turns ⇒ nothing emitted, zero overhead).
+  const turnMetrics = collectKrakenTurnMetrics();
+  if (turnMetrics && opts.output === 'json') {
+    emitEvent(createBrainEvent('kraken_metrics', sessionId, { metrics: turnMetrics }));
   }
 
   if (opts.output === 'plain' && pass.textBuffer.length > 0) {

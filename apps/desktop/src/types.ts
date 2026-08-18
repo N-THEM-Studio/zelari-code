@@ -101,6 +101,9 @@ export interface DesktopConfig {
   activeProviderId: string;
   modelByProvider: Record<string, string>;
   providers: DesktopProviderInfo[];
+  /** Kraken selection verifier override. null = inherit
+   * (same as current model — the recommended default). */
+  krakenVerifier?: { provider: string; model: string } | null;
   cliVersion: string;
   configPaths: {
     provider: string;

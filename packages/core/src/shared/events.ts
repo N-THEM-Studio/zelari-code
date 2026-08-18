@@ -28,7 +28,9 @@ export type BrainEventType =
   | 'council_mode'
   | 'task_update'
   | 'task_snapshot'
-  | 'context_metrics';
+  | 'context_metrics'
+  | 'kraken_progress'
+  | 'kraken_metrics';
 
 /** Fields shared by every event. */
 export interface BrainEventBase {
@@ -309,6 +311,93 @@ export interface BrainTaskSnapshotEvent extends BrainEventBase {
   tasks: BrainTaskPayload[];
 }
 
+// --- Kraken turn progress (ADR-0020, Fase 2) --------------------------------
+
+/**
+ * User-facing phase of one standard-Kraken parent turn, derived by
+ * projection from tool activity (KrakenTurnRuntime) — the model never
+ * self-reports progress. `planning` is the plan-phase counterpart of
+ * `implementing`.
+ */
+export type KrakenProgressPhase =
+  | 'understanding'
+  | 'exploring'
+  | 'selecting'
+  | 'planning'
+  | 'implementing'
+  | 'verifying'
+  | 'repairing'
+  | 'completed';
+
+/** Counters + phase for one Kraken turn (plain JSON, renderer-safe). */
+export interface KrakenProgressPayload {
+  phase: KrakenProgressPhase;
+  /** Work phase of the turn: the `planning`/`implementing` label follows this. */
+  mode: 'plan' | 'build';
+  /** Tentacles spawned this turn (all kinds). */
+  tentacles: number;
+  /** Explore tentacles seen (candidate counter for the UI). */
+  exploreTentacles: number;
+  /** Verify tentacles seen. */
+  verifyTentacles: number;
+  /** Successful mutating tool calls this turn (write/edit/apply_diff). */
+  writes: number;
+  /** Epoch ms when the current phase was entered (elapsed display). */
+  phaseEnteredAt: number;
+  /**
+   * Required checks registered for this turn (Fase 6: kraken_select
+   * output). Absent until a selection produces checks — additive and
+   * optional, so older consumers keep parsing the payload fine.
+   */
+  checkTotal?: number;
+  /**
+   * Required checks explicitly PASSED so far (Fase 7: verify
+   * tentacle structured report). Only `pass` counts — `unknown`
+   * never does. Absent until the first verify tentacle reports.
+   */
+  checksPassed?: number;
+}
+
+/**
+ * A Kraken turn changed user-facing phase. Emitted ONLY on change (sparse);
+ * counters ride the payload. Consumers without a Kraken card ignore it
+ * safely — additive by design, like task_update/task_snapshot (ADR-0018 3b).
+ */
+export interface BrainKrakenProgressEvent extends BrainEventBase {
+  type: 'kraken_progress';
+  progress: KrakenProgressPayload;
+}
+
+/**
+ * Turn-level Kraken selection metrics (Fase 10, ADR-0020 §58). Emitted ONCE
+ * per turn — only when the turn actually used the selection flow (null
+ * snapshot on plain turns ⇒ no event ⇒ simple tasks pay zero overhead).
+ * Consumers without a Kraken card ignore it safely (additive by design).
+ */
+export interface KrakenMetricsPayload {
+  selectionUsed: boolean;
+  candidateCount: number;
+  /** Provider-reported total tokens across candidate tentacles (0 if none reported). */
+  candidateTokens: number;
+  /** Provider-reported tokens for the judging call (absent if not reported). */
+  selectionTokens?: number;
+  /** Wall-clock ms of the judging call. */
+  selectionLatencyMs?: number;
+  selectionFallback: boolean;
+  selectionFallbackReason?: string;
+  needsMoreEvidence: boolean;
+  verificationPass: number;
+  verificationFail: number;
+  verificationUnknown: number;
+  repairTriggered: boolean;
+  repairSucceeded: boolean;
+}
+
+export interface BrainKrakenMetricsEvent extends BrainEventBase {
+  type: 'kraken_metrics';
+  metrics: KrakenMetricsPayload;
+}
+
 /** Discriminated union of every event the brain can emit. */
 export type BrainEvent =
   | BrainAgentStartEvent
@@ -327,7 +416,9 @@ export type BrainEvent =
   | BrainCouncilModeEvent
   | BrainTaskUpdateEvent
   | BrainTaskSnapshotEvent
-  | BrainContextMetricsEvent;
+  | BrainContextMetricsEvent
+  | BrainKrakenProgressEvent
+  | BrainKrakenMetricsEvent;
 
 /**
  * Map from a {@link BrainEventType} discriminator to its concrete event type.
@@ -433,6 +524,14 @@ export function isBrainTaskSnapshotEvent(e: BrainEvent): e is BrainTaskSnapshotE
 
 export function isBrainContextMetricsEvent(e: BrainEvent): e is BrainContextMetricsEvent {
   return e.type === 'context_metrics';
+}
+
+export function isBrainKrakenProgressEvent(e: BrainEvent): e is BrainKrakenProgressEvent {
+  return e.type === 'kraken_progress';
+}
+
+export function isBrainKrakenMetricsEvent(e: BrainEvent): e is BrainKrakenMetricsEvent {
+  return e.type === 'kraken_metrics';
 }
 
 // --- Constructor ------------------------------------------------------------

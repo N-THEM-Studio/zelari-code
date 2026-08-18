@@ -45,6 +45,18 @@ import {
   type WorktreeMergeResult,
 } from './krakenWorktree.js';
 import { krakenTentacleStart, krakenTentacleEnd } from './krakenLive.js';
+import type { UsageBreakdown } from '@zelari/core/events';
+import {
+  candidateInstructions,
+  isKrakenSelectionEnabled,
+  krakenRequiredChecks,
+  parseCandidateReport,
+  registerCandidate,
+  reserveCandidateSlot,
+  setKrakenCheckResults,
+} from '../kraken/candidateRegistry.js';
+import { allUnknownCheckResults, parseVerifyReport } from '../kraken/verifyReport.js';
+import { recordCandidateTokens } from '../kraken/metrics.js';
 
 /** Sub-agent kinds (OpenCode-inspired). */
 export type TaskAgentKind = 'explore' | 'general' | 'verify';
@@ -91,6 +103,17 @@ export interface TaskToolDeps {
   allowWorktree?: boolean;
 }
 
+/**
+ * Policy limiting which sub-agent kinds a `task` tool may spawn (Fase 1,
+ * ADR-0020). Plan mode registers the tool with `allowedAgents: ['explore']`
+ * so PLAN can parallelize research without ever gaining write/execute
+ * tentacles; BUILD keeps the unrestricted default.
+ */
+export interface TaskToolPolicy {
+  /** Allowed sub-agent kinds. Default: explore + general + verify. */
+  allowedAgents?: readonly TaskAgentKind[];
+}
+
 const EXPLORE_PROMPT = [
   'You are a focused EXPLORE tentacle of Kraken (parent super-agent).',
   'READ-ONLY tools only (read, list, grep, fetch). No edits, no shell.',
@@ -119,6 +142,15 @@ const VERIFY_PROMPT = [
   'targeted checks over full suite when possible.',
   'Report: pass/fail, commands run, key output, and gaps vs Acceptance criteria.',
   'If Acceptance criteria are listed, check each one explicitly.',
+  'End your final message with ONE <verify-report> block per acceptance',
+  'criterion (required checks included), in this exact shape:',
+  '<verify-report>',
+  'check: <criterion text as given>',
+  'status: pass | fail | unknown',
+  'note: <one line of evidence (command + outcome)>',
+  '</verify-report>',
+  'Use status=unknown when you could NOT determine the outcome (degraded',
+  'tool, timeout, inconclusive evidence) — never guess pass.',
 ].join('\n');
 
 type SpawnGlobal = {
@@ -173,6 +205,34 @@ export function buildTaskUserPrompt(args: {
     parts.push('', '## Acceptance criteria', ...args.acceptance.map((a) => `- ${a}`));
   }
   return parts.join('\n');
+}
+
+/**
+ * Fase 6 (ADR-0020): BUILD dynamic checks. When kraken_select selected a
+ * candidate this turn, its requiredChecks become proof obligations of
+ * every verify tentacle — appended to the parent's acceptance (deduped,
+ * case-insensitive) or the whole acceptance when the parent provided
+ * none. Explore/general are never touched; verify is PLAN-rejected
+ * (Fase 1), so this path is BUILD-only by construction. No flag gate
+ * needed: a verdict can only exist when the selection tool ran.
+ */
+export function withKrakenRequiredChecks(
+  agent: TaskAgentKind,
+  acceptance?: string[],
+): string[] | undefined {
+  if (agent !== 'verify') return acceptance;
+  const required = krakenRequiredChecks();
+  if (required.length === 0) return acceptance;
+  const seen = new Set((acceptance ?? []).map((a) => a.trim().toLowerCase()));
+  const merged = [...(acceptance ?? [])];
+  for (const check of required) {
+    const key = check.trim().toLowerCase();
+    if (!seen.has(key)) {
+      seen.add(key);
+      merged.push(check);
+    }
+  }
+  return merged;
 }
 
 export function systemPromptForAgent(agent: TaskAgentKind): string {
@@ -243,6 +303,18 @@ const TaskArgsSchema = z.object({
     ),
 });
 
+const TaskPurposeSchema = z
+  .enum(['candidate'])
+  .optional()
+  .describe(
+    'Mark this explore tentacle as one CANDIDATE hypothesis (alpha: requires ' +
+      'ZELARI_KRAKEN_SELECTION=1). Forces agent=explore, structured report.',
+  );
+
+const TaskArgsWithPurposeSchema = TaskArgsSchema.extend({
+  purpose: TaskPurposeSchema,
+});
+
 type TaskArgs = z.infer<typeof TaskArgsSchema>;
 
 /**
@@ -260,11 +332,12 @@ type TaskArgs = z.infer<typeof TaskArgsSchema>;
 export async function runSubAgent(
   harness: SubAgentHarness,
   opts: { signal?: AbortSignal } = {},
-): Promise<{ result: string; error?: string; aborted?: boolean }> {
+): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown }> {
   const { signal } = opts;
   let current = '';
   let lastCompleted = '';
   let error: string | undefined;
+  let usage: UsageBreakdown | undefined;
   if (signal?.aborted) return { result: '', aborted: true };
   for await (const ev of harness.run()) {
     if (signal?.aborted) {
@@ -283,6 +356,24 @@ export async function runSubAgent(
         break;
       case 'message_end':
         if (current.trim()) lastCompleted = current;
+        // Fase 10: capture provider-reported usage (summed across the
+        // sub-agent's tool-loop turns) so candidate token costs are real,
+        // never approximated.
+        if (ev.usage) {
+          usage = usage
+            ? {
+                promptTokens: usage.promptTokens + ev.usage.promptTokens,
+                completionTokens: usage.completionTokens + ev.usage.completionTokens,
+                totalTokens: usage.totalTokens + ev.usage.totalTokens,
+                ...((usage.cachedPromptTokens ?? 0) + (ev.usage.cachedPromptTokens ?? 0) > 0
+                  ? {
+                      cachedPromptTokens:
+                        (usage.cachedPromptTokens ?? 0) + (ev.usage.cachedPromptTokens ?? 0),
+                    }
+                  : {}),
+              }
+            : ev.usage;
+        }
         current = '';
         break;
       case 'error':
@@ -293,7 +384,7 @@ export async function runSubAgent(
     }
   }
   const result = (lastCompleted || current).trim();
-  return { result, ...(error ? { error } : {}) };
+  return { result, ...(error ? { error } : {}), ...(usage ? { usage } : {}) };
 }
 
 /** Successful tentacle run (raw conclusion + footer, no `[sub-agent:…]` prefix). */
@@ -307,6 +398,12 @@ export interface TentacleSuccess {
   result: string;
   /** Worktree + verify-hint footer (leading newline included), or ''. */
   footer: string;
+  /**
+   * Provider-reported token usage summed across the sub-agent's turns
+   * (Fase 10 metrics). Absent when the provider reports none — never
+   * approximated.
+   */
+  usage?: UsageBreakdown;
   /** Git worktree path if one was used, else null. */
   worktreePath: string | null;
   /**
@@ -476,7 +573,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   const userContent = buildTaskUserPrompt({
     prompt: args.prompt,
     scope: args.scope,
-    acceptance: args.acceptance,
+    acceptance: withKrakenRequiredChecks(agent, args.acceptance),
   });
   const maxToolCalls = maxToolCallsForThoroughness(thoroughness, agent);
   const runCwd = sub.cwd || effectiveCwd;
@@ -513,7 +610,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     };
   }
 
-  const { result, error, aborted } = await runSubAgent(harness, {
+  const { result, error, aborted, usage } = await runSubAgent(harness, {
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   const durationMs = Date.now() - started;
@@ -627,6 +724,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     model: sub.model,
     result,
     footer,
+    ...(usage ? { usage } : {}),
     worktreePath: worktree?.path ?? null,
     worktreeHandle: worktree,
   };
@@ -635,7 +733,30 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
 /** Build the `task` tool from injected sub-agent deps. */
 export function createTaskTool(
   deps: TaskToolDeps,
-): ToolDefinition<TaskArgs, { result: string; agent: string }> {
+  policy: TaskToolPolicy = {},
+): ToolDefinition<TaskArgs & { purpose?: 'candidate' }, { result: string; agent: string }> {
+  const allowedAgents: readonly TaskAgentKind[] =
+    policy.allowedAgents ?? ['explore', 'general', 'verify'];
+  const restricted =
+    policy.allowedAgents !== undefined &&
+    !(
+      policy.allowedAgents.includes('explore') &&
+      policy.allowedAgents.includes('general') &&
+      policy.allowedAgents.includes('verify')
+    );
+  // When restricted, narrow the zod enum too so conforming providers cannot
+  // emit a disallowed kind (belt) on top of the execute-time gate (braces).
+  const inputSchema = restricted
+    ? TaskArgsSchema.extend({
+        agent: z
+          .enum(allowedAgents as unknown as [TaskAgentKind, ...TaskAgentKind[]])
+          .optional()
+          .describe(
+            `Sub-agent type. In this mode ONLY ${allowedAgents.join('|')} is allowed ` +
+              '(plan-safe read-only tentacles).',
+          ),
+      })
+    : TaskArgsSchema;
   return {
     name: 'task',
     description:
@@ -645,12 +766,45 @@ export function createTaskTool(
       '- agent=general: can edit files for one bounded unit of work\n' +
       '- agent=verify: read + bash to run tests/checks\n' +
       'Provide a fully self-contained `prompt` (sub-agent cannot see this conversation). ' +
-      'Optional scope[] + acceptance[] contracts. After general, follow up with verify.',
+      'Optional scope[] + acceptance[] contracts. After general, follow up with verify.' +
+      (restricted
+        ? `\nRESTRICTED in this mode: only agent=${allowedAgents.join('|')} is allowed.`
+        : ''),
     permissions: ['read', 'network', 'write', 'execute'],
     timeoutMs: 300_000,
-    inputSchema: TaskArgsSchema,
+    inputSchema,
     execute: async (args, ctx): Promise<TypedResult<{ result: string; agent: string }>> => {
       const agent: TaskAgentKind = args.agent ?? 'explore';
+      let candidateSlot = 0;
+      // Fase 1 (ADR-0020): policy gate BEFORE the spawn budget — a rejected
+      // kind must not consume the per-turn tentacle budget.
+      if (!allowedAgents.includes(agent)) {
+        return typedErr(
+          `task: agent=${agent} is not allowed in this mode. Allowed: ${allowedAgents.join(', ')} ` +
+            '(plan-safe read-only tentacles). Re-issue with an allowed agent kind.',
+        );
+      }
+      // Fase 3 (ADR-0020): candidate contract — explore-only, flag-gated,
+      // capped per turn. Checked BEFORE the spawn budget (same rule as the
+      // policy gate: a rejected candidate must not consume the budget).
+      const isCandidate = args.purpose === 'candidate';
+      if (isCandidate) {
+        if (!isKrakenSelectionEnabled()) {
+          return typedErr(
+            'task: purpose=candidate requires ZELARI_KRAKEN_SELECTION=1 (alpha feature). ' +
+              'Spawn a plain explore tentacle instead.',
+          );
+        }
+        if (agent !== 'explore') {
+          return typedErr(
+            'task: purpose=candidate forces agent=explore (candidates are read-only ' +
+              'in v1 — zero candidate implementations, ADR-0020).',
+          );
+        }
+        const slot = reserveCandidateSlot();
+        if ('error' in slot) return typedErr(slot.error);
+        candidateSlot = slot.index;
+      }
       const thoroughness: TaskThoroughness = args.thoroughness ?? 'medium';
       const sessionId = ctx.sessionId || 'default';
       const parentCwd = ctx.cwd || process.cwd();
@@ -677,8 +831,71 @@ export function createTaskTool(
         thoroughness,
         parentCwd,
         sessionId,
+        // Fase 1 (ADR-0020): propagate the parent turn's cancellation signal
+        // so cancel/timeout unwinds the tentacle instead of letting it run on.
+        ...(ctx.signal ? { signal: ctx.signal } : {}),
+        ...(isCandidate
+          ? {
+              systemPromptOverride:
+                systemPromptForAgent('explore') +
+                '\n\n' +
+                candidateInstructions(candidateSlot),
+            }
+          : {}),
       });
 
+      // Fase 3 (ADR-0020): register the structured report (malformed reports
+      // are preserved as degraded evidence, never dropped). The parent still
+      // sees the full conclusion text including the <candidate-report> block.
+      if (isCandidate) {
+        // Fase 10: real provider-reported tokens (0 when unreported/failed).
+        recordCandidateTokens(res.ok ? res.usage?.totalTokens ?? 0 : 0);
+        if (res.ok) {
+          const parsed = parseCandidateReport(res.result);
+          registerCandidate(
+            parsed.ok
+              ? {
+                  status: 'ok' as const,
+                  index: candidateSlot,
+                  description: args.description,
+                  report: parsed.report,
+                  raw: res.result,
+                }
+              : {
+                  status: 'malformed' as const,
+                  index: candidateSlot,
+                  description: args.description,
+                  error: parsed.error,
+                  raw: res.result,
+                },
+          );
+        } else {
+          // Failed tentacle: the slot is consumed and tracked as malformed
+          // (no report arrived — degraded by definition).
+          registerCandidate({
+            status: 'malformed' as const,
+            index: candidateSlot,
+            description: args.description,
+            error: res.error,
+            raw: '',
+          });
+        }
+      }
+      // Fase 7 (ADR-0020): structured verification — the verify tentacle
+      // reports pass/fail/unknown per required check. A failed tentacle or
+      // a missing block leaves checks `unknown`: a degraded observation is
+      // never proof. Only runs when a selection exists this turn (required
+      // checks come from a `selected` verdict — Fase 6 routing).
+      if (agent === 'verify') {
+        const required = krakenRequiredChecks();
+        if (required.length > 0) {
+          setKrakenCheckResults(
+            res.ok
+              ? parseVerifyReport(res.result, required)
+              : allUnknownCheckResults(required, `verify tentacle failed: ${res.error}`),
+          );
+        }
+      }
       if (!res.ok) return typedErr(res.error);
       return typedOk({
         result: `[sub-agent:${res.agent}/${res.thoroughness} model=${res.model}]\n${res.result}${res.footer}`,

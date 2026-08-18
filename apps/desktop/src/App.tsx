@@ -29,6 +29,14 @@ import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
 import { RunActivity, type LiveToolStep } from "./components/RunActivity";
+import {
+  KrakenProgressCard,
+  readKrakenProgress,
+  readKrakenMetrics,
+  type KrakenProgressView,
+  type KrakenMetricsView,
+} from "./components/KrakenProgressCard";
+
 import { LiveTasksPanel } from "./components/LiveTasksPanel";
 import { parseTodosFromUnknown } from "./sessionTodosUi";
 import {
@@ -404,6 +412,12 @@ interface TurnCtx {
   pendingToolNames: Map<string, string>;
 }
 
+/** Kraken selection card state: live progress + end-of-turn metrics. */
+interface KrakenCardState {
+  progress?: KrakenProgressView;
+  metrics?: KrakenMetricsView;
+}
+
 export default function App() {
   const defaults = useMemo(() => loadDefaults(), []);
   const [view, setView] = useState<AppView>("chat");
@@ -427,6 +441,10 @@ export default function App() {
   >({});
   const [liveStepsByConv, setLiveStepsByConv] = useState<
     Record<string, LiveToolStep[]>
+  >({});
+  /** Kraken selection card (kraken_progress / kraken_metrics), per conv. */
+  const [krakenCardByConv, setKrakenCardByConv] = useState<
+    Record<string, KrakenCardState>
   >({});
   const [liveMemberNameByConv, setLiveMemberNameByConv] = useState<
     Record<string, string | null>
@@ -609,6 +627,7 @@ export default function App() {
   const running = runCoordinator.isRunning(active?.id ?? "");
   const liveToolLabel = liveToolLabelByConv[active?.id ?? ""] ?? null;
   const liveSteps = liveStepsByConv[active?.id ?? ""] ?? [];
+  const krakenCard = krakenCardByConv[active?.id ?? ""];
   const liveMemberName = liveMemberNameByConv[active?.id ?? ""] ?? null;
   const runningRef = useRef(running);
   runningRef.current = running;
@@ -1188,6 +1207,27 @@ export default function App() {
               };
             }),
           );
+          return;
+        }
+
+        if (ev.type === "kraken_progress") {
+          const p = readKrakenProgress(ev);
+          if (p) {
+            setKrakenCardByConv((prev) => ({
+              ...prev,
+              [convId]: { ...(prev[convId] ?? {}), progress: p },
+            }));
+          }
+          return;
+        }
+        if (ev.type === "kraken_metrics") {
+          const m = readKrakenMetrics(ev);
+          if (m) {
+            setKrakenCardByConv((prev) => ({
+              ...prev,
+              [convId]: { ...(prev[convId] ?? {}), metrics: m },
+            }));
+          }
           return;
         }
 
@@ -1858,6 +1898,7 @@ export default function App() {
     turn.toolCount = 0;
     setLiveToolLabelFor(convId, null);
     setLiveStepsFor(convId, []);
+    setKrakenCardByConv((prev) => ({ ...prev, [convId]: {} }));
     turn.pendingToolNames.clear();
     setLiveMemberNameFor(convId, null);
     setFollowStream(true);
@@ -2496,6 +2537,12 @@ export default function App() {
                     steps={liveSteps}
                   />
                 )}
+                {krakenCard ? (
+                  <KrakenProgressCard
+                    progress={krakenCard.progress ?? null}
+                    metrics={krakenCard.metrics ?? null}
+                  />
+                ) : null}
               </div>
             )}
           </div>

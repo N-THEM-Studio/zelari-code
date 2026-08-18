@@ -983,6 +983,10 @@ struct SetConfigArgs {
     thinking: Option<String>,
     #[serde(default)]
     endpoint_clear: bool,
+    verifier_provider: Option<String>,
+    verifier_model: Option<String>,
+    #[serde(default)]
+    verifier_clear: bool,
 }
 
 #[tauri::command]
@@ -1029,9 +1033,30 @@ fn set_app_config(args: SetConfigArgs) -> Result<serde_json::Value, String> {
     if args.endpoint_clear {
         argv.push("--endpoint-clear".into());
     }
+    if let Some(vp) = args
+        .verifier_provider
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        argv.push("--verifier-provider".into());
+        argv.push(vp.to_string());
+    }
+    if let Some(vm) = args
+        .verifier_model
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        argv.push("--verifier-model".into());
+        argv.push(vm.to_string());
+    }
+    if args.verifier_clear {
+        argv.push("--verifier-clear".into());
+    }
     if argv.len() == 1 {
         return Err(
-            "set_app_config requires provider, model, endpoint, thinking, and/or endpointClear".into(),
+            "set_app_config requires provider, model, endpoint, thinking, verifier provider+model, verifierClear, and/or endpointClear".into(),
         );
     }
     let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();

@@ -27,6 +27,8 @@ import {
   setThinkingForProvider,
   setCustomEndpoint,
   clearCustomEndpoint,
+  setKrakenVerifier,
+  clearKrakenVerifier,
   getCustomEndpoint,
   type ProviderConfig,
 } from './providerConfig.js';
@@ -67,9 +69,14 @@ export interface DesktopProviderInfo {
 }
 
 export interface DesktopConfigSnapshot {
+  /**
+   * Kraken selection verifier override (Fase 9). null = inherit
+   * (same as current model — the default and the recommendation).
+   */
   activeProviderId: string;
   modelByProvider: Record<string, string>;
   providers: DesktopProviderInfo[];
+  krakenVerifier: { provider: string; model: string } | null;
   cliVersion: string;
   configPaths: {
     provider: string;
@@ -163,6 +170,11 @@ export interface SetConfigRequest {
   model?: string;
   endpoint?: string;
   endpointClear?: boolean;
+  /** Kraken verifier override — both fields required together. */
+  verifierProvider?: string;
+  verifierModel?: string;
+  /** Remove the override (back to inherit). */
+  verifierClear?: boolean;
   thinking?: string;
 }
 
@@ -185,6 +197,9 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
   let endpoint: string | undefined;
   let thinking: string | undefined;
   let endpointClear = false;
+  let verifierProvider: string | undefined;
+  let verifierModel: string | undefined;
+  let verifierClear = false;
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -202,14 +217,23 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
       i++;
     } else if (arg === '--endpoint-clear') {
       endpointClear = true;
+    } else if (arg === '--verifier-provider') {
+      verifierProvider = argv[i + 1];
+      i++;
+    } else if (arg === '--verifier-model') {
+      verifierModel = argv[i + 1];
+      i++;
+    } else if (arg === '--verifier-clear') {
+      verifierClear = true;
     }
   }
 
-  if (!provider && !model && !endpoint && !endpointClear && !thinking) {
+  if (!provider && !model && !endpoint && !endpointClear && !thinking
+    && !verifierProvider && !verifierModel && !verifierClear) {
     return {
       request: null,
       error:
-        '--set-config requires --provider, --model, --endpoint, --thinking, and/or --endpoint-clear',
+        '--set-config requires --provider, --model, --endpoint, --thinking, --verifier-provider + --verifier-model, --verifier-clear, and/or --endpoint-clear',
     };
   }
 
@@ -221,6 +245,21 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
   }
   if (endpoint !== undefined && endpoint.trim().length === 0) {
     return { request: null, error: '--endpoint cannot be empty' };
+  }
+  if (verifierClear && (verifierProvider || verifierModel)) {
+    return { request: null, error: '--verifier-clear conflicts with --verifier-provider/--verifier-model' };
+  }
+  if (
+    (verifierProvider !== undefined && verifierModel === undefined) ||
+    (verifierProvider === undefined && verifierModel !== undefined)
+  ) {
+    return { request: null, error: '--verifier-provider and --verifier-model must be used together' };
+  }
+  if (verifierProvider !== undefined && verifierProvider.trim().length === 0) {
+    return { request: null, error: '--verifier-provider cannot be empty' };
+  }
+  if (verifierModel !== undefined && verifierModel.trim().length === 0) {
+    return { request: null, error: '--verifier-model cannot be empty' };
   }
   if (endpoint && endpointClear) {
     return { request: null, error: '--endpoint and --endpoint-clear conflict' };
@@ -236,6 +275,9 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
       endpoint: endpoint?.trim(),
       endpointClear: endpointClear || undefined,
       thinking: thinking?.trim().toLowerCase(),
+      verifierProvider: verifierProvider?.trim(),
+      verifierModel: verifierModel?.trim(),
+      verifierClear: verifierClear || undefined,
     },
   };
 }
@@ -354,6 +396,7 @@ export function buildDesktopConfigSnapshot(): DesktopConfigSnapshot {
     activeProviderId: config.activeProviderId,
     modelByProvider: { ...config.modelByProvider },
     providers,
+    krakenVerifier: config.krakenVerifier ?? null,
     cliVersion: getCurrentVersion(),
     configPaths: {
       provider: getProviderConfigPath(),
@@ -407,14 +450,30 @@ export function applySetConfig(
       setThinkingForProvider(targetProvider, parseThinkingSpec(req.thinking));
     }
 
+    if (req.verifierClear) {
+      clearKrakenVerifier();
+    }
+    if (req.verifierProvider && req.verifierModel) {
+      const existsV = PROVIDERS.some((p) => p.id === req.verifierProvider);
+      if (!existsV) {
+        return {
+          ok: false,
+          error: `unknown verifier provider '${req.verifierProvider}'. Available: ${PROVIDERS.map((p) => p.id).join(', ')}`,
+        };
+      }
+      setKrakenVerifier(req.verifierProvider, req.verifierModel);
+    }
+
     const after = getProviderConfig();
+    const vf = after.krakenVerifier;
     const ep = getCustomEndpoint(after.activeProviderId as ProviderName);
     return {
       ok: true,
       message:
         `activeProvider=${after.activeProviderId} ` +
         `model=${after.modelByProvider[after.activeProviderId]}` +
-        (ep ? ` endpoint=${ep}` : ''),
+        (ep ? ` endpoint=${ep}` : '') +
+        (vf ? ` verifier=${vf.provider}/${vf.model}` : ' verifier=inherit'),
     };
   } catch (err) {
     return {

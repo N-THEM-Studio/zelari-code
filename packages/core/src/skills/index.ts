@@ -8,10 +8,11 @@ export * from '../agents/toolSchemas.js';
 export * from '../agents/advancedTools.js';
 export * from '../agents/vaultTools.js';
 export { cliToolToEnhanced } from '../agents/harnessToolBridge.js';
-export type { EnhancedToolDefinition } from '../types/systemTypes.js';
+export type { EnhancedToolDefinition, SystemPromptModule } from '../types/systemTypes.js';
 export {
   KRAKEN_IDENTITY_MODULE,
   KRAKEN_LEAD_PLAYBOOK_MODULE,
+  KRAKEN_SELECTION_PLAYBOOK_MODULE,
   SINGLE_AGENT_IDENTITY_MODULE,
   getBasePromptModules,
   CODING_PRACTICES_MODULE,

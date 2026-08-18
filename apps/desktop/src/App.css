@@ -5734,3 +5734,71 @@ kbd {
 .live-tasks-phase-list {
   gap: 2px;
 }
+
+/* ── Kraken selection card (kraken_progress / kraken_metrics) ── */
+.kraken-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 520px;
+  padding: 12px 18px;
+  border-radius: 16px;
+  background: linear-gradient(160deg, rgba(255,255,255,0.07), rgba(255,255,255,0.02));
+  border: 1px solid rgba(255,255,255,0.1);
+  font-size: 12.5px;
+  color: rgba(255,255,255,0.85);
+}
+.app[data-theme="light"] .kraken-card {
+  background: linear-gradient(160deg, rgba(15,20,30,0.04), rgba(15,20,30,0.01));
+  border-color: rgba(15,20,30,0.1);
+  color: rgba(20,25,35,0.85);
+}
+.kraken-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.kraken-card-kicker {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.kraken-card-phase {
+  font-weight: 600;
+}
+.kraken-card-phase.is-live { display: inline-flex; align-items: center; gap: 7px; }
+.kraken-card-dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: #5aa9ff;
+  animation: kraken-pulse 1.6s ease-in-out infinite;
+}
+@keyframes kraken-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+.kraken-card-phase.is-done { opacity: 0.75; }
+.kraken-card-mode {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255,255,255,0.18);
+  opacity: 0.7;
+}
+.app[data-theme="light"] .kraken-card-mode { border-color: rgba(15,20,30,0.2); }
+.kraken-card-chips, .kraken-metric-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+}
+.kraken-chip { opacity: 0.85; }
+.kraken-chip strong { font-weight: 650; }
+.kraken-card-metrics {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px dashed rgba(255,255,255,0.12);
+}
+.app[data-theme="light"] .kraken-card-metrics { border-top-color: rgba(15,20,30,0.12); }

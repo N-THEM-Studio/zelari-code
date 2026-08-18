@@ -21,7 +21,12 @@ import { resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
 import { PROVIDERS } from "../keyStore.js";
 import { getActiveModel } from "../providerConfig.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
+import { KrakenTurnRuntime } from "../kraken/turnRuntime.js";
 import { resetTaskSpawnCount } from "../tools/taskTool.js";
+import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from "../kraken/candidateRegistry.js";
+import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from "../kraken/metrics.js";
+import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
+import { buildKrakenRepairPrompt, evaluateKrakenCompletionGate } from "../kraken/completionGate.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
 import { armPickerTimeout, askUserTimeoutMs } from "./askUserTimeout.js";
 import { defaultPermissionPolicy } from "../safety/toolPermissions.js";
@@ -192,6 +197,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
     ) => {
       // Kraken: fresh tentacle spawn budget each parent user turn.
       resetTaskSpawnCount();
+      // Fase 3 (ADR-0020): fresh per-turn candidate registry.
+      resetKrakenCandidates();
+      resetKrakenTurnMetrics();
       // v0.4.3 audit fix: provider resolution + harness construction now
       // live INSIDE the try block. Previously, throws from providerFromEnv,
       // resolveFailoverStream, or createBuiltinToolRegistry happened
@@ -199,7 +207,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       // rejected promise escaped unhandled (useSlashDispatch doesn't
       // try/catch its await either). The user saw a hang with no
       // feedback instead of an actionable error message.
-      let envConfig: Awaited<ReturnType<typeof providerFromEnv>>;
+      let envConfig: Awaited<ReturnType<typeof providerFromEnv>> | undefined;
       let harness: AgentHarness;
       // v1.6.0: length of the history seed actually passed to the harness.
       // Captured here (after compaction) so the finally block can slice off
@@ -321,10 +329,35 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           : undefined;
         const { registry: toolRegistry } = createBuiltinToolRegistry({
           planMode: workPhase === "plan",
+          // Fase 1 (ADR-0020): anchor tentacles to THIS turn's resolved
+          // provider/model so the TUI selection governs sub-agents too.
+          ...(envConfig
+            ? {
+                subAgentProvider: envConfig.providerId,
+                subAgentModel: envConfig.model,
+                // Fase 4 (ADR-0020): kraken_select rides the same alpha
+                // flag as candidate spawning (default off = unchanged).
+                krakenSelect: isKrakenSelectionEnabled(),
+              }
+            : {}),
           onAskUser,
           onPermissionAsk,
           permissionPolicy: defaultPermissionPolicy(),
         });
+        // Fase 2 (ADR-0020): per-turn progress projection (sparse phase events).
+        // The dedicated UI chip ships with the selection phases; for now the
+        // events ride the same JSONL writer + live region channel as the rest.
+        const progressRuntime = new KrakenTurnRuntime({
+          mode: workPhase === "plan" ? "plan" : "build",
+          sessionId,
+          loadCheckTotal: () => krakenRequiredChecks().length,
+          loadChecksPassed: () => krakenChecksPassed(),
+          onProgress: (ev) => {
+            if (writerRef.current) void writerRef.current.append(ev);
+            if (sessionId) ingestLiveEvent(sessionId, ev);
+          },
+        });
+        progressRuntime.beginTurn();
         const baseProviderStream = localCliProvider ?? buildProviderStream(envConfig!);
         let providerStream: import("@zelari/core/harness").ProviderStreamFn;
         if (localCliProvider) {
@@ -628,6 +661,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               customPromptModules: [
                 KRAKEN_IDENTITY_MODULE,
                 KRAKEN_LEAD_PLAYBOOK_MODULE,
+                ...krakenSelectionPlaybook(true),
                 languageModule,
               ],
               agentSkillConfigs: [],
@@ -714,6 +748,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // Total assistant output across the whole turn — feeds the token/cost
         // estimate fallback in computeSessionStatsDelta.
         let assistantContent = "";
+        // Fase 8 (ADR-0020): completion-gate budget — one automatic
+        // repair pass per turn (structural: this flag never resets mid-turn).
+        let krakenRepairEnqueued = false;
         // Display buffer for the CURRENT streamed message only. Reset on every
         // message_end: without this, the post-tool-call message re-rendered the
         // full accumulated turn text, duplicating everything said before the
@@ -738,6 +775,43 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         } | null = null;
         try {
           for await (const event of harness.run()) {
+            progressRuntime.observe(event);
+            if (event.type === "agent_end") {
+              // Fase 8 (ADR-0020): completion gate — evaluate BEFORE finish
+              // so a repair pass replaces the transient `completed` phase.
+              // The repair prompt rides the harness queue: run() drains it
+              // inside this SAME for-await loop, so streaming, history and
+              // the finally block are shared with the first pass.
+              let krakenSuppressFinish = false;
+              if (
+                event.reason === "completed" &&
+                !krakenRepairEnqueued &&
+                isKrakenSelectionEnabled() &&
+                workPhase === "build"
+              ) {
+                const krakenGate = evaluateKrakenCompletionGate("build");
+                if (krakenGate.blocked) {
+                  krakenRepairEnqueued = true; // budget = 1, structural
+                  markRepairTriggered();
+                  harness.enqueue(buildKrakenRepairPrompt(krakenGate));
+                  appendSystem(
+                    setMessages,
+                    `[kraken] required checks unresolved (${krakenGate.passed}/${krakenGate.total} passed) — automatic repair pass`,
+                    Date.now(),
+                  );
+                  progressRuntime.beginPass(true);
+                  krakenSuppressFinish = true;
+                }
+              }
+              if (
+                event.reason === "completed" &&
+                krakenRepairEnqueued &&
+                !evaluateKrakenCompletionGate("build").blocked
+              ) {
+                markRepairSucceeded(); // repair pass resolved every blocking check
+              }
+              if (!krakenSuppressFinish) progressRuntime.finish(event.reason);
+            }
             if (event.type === "message_end") {
               if (event.usage) realUsage = event.usage;
               // v1.36.0: bind provider usage to the last routed snapshot so
@@ -943,6 +1017,15 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 );
               }
             }
+          }
+          // Fase 10: one metrics event per turn — only when selection ran.
+          const turnMetrics = collectKrakenTurnMetrics();
+          if (turnMetrics) {
+            const metricsEvent = createBrainEvent("kraken_metrics", sessionId, {
+              metrics: turnMetrics,
+            });
+            if (writerRef.current) void writerRef.current.append(metricsEvent);
+            if (sessionId) ingestLiveEvent(sessionId, metricsEvent);
           }
           turnSucceeded = true;
         } finally {

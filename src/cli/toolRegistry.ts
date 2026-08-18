@@ -29,6 +29,7 @@ import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.j
 import { AuditLogger } from './safety/auditLogger.js';
 import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
 import { createTaskTool, type TaskAgentKind, type TaskToolDeps } from './tools/taskTool.js';
+import { createKrakenSelectTool } from './tools/krakenSelectTool.js';
 import { createAskUserTool, type AskUserHandler } from './tools/askUser.js';
 import { createSkillTool } from './tools/skillTool.js';
 import { createTodoReadTool, createTodoWriteTool } from './tools/todoTools.js';
@@ -51,6 +52,7 @@ import {
   providerConfigFor,
 } from './provider/openai-compatible.js';
 import { buildProviderStream } from './provider/resolveStream.js';
+import { getKrakenVerifierOverride } from './providerConfig.js';
 import type { ProviderName } from './keyStore.js';
 import {
   defaultPermissionPolicy,
@@ -104,13 +106,36 @@ export interface CreateRegistryOptions {
   /** Register the `task` sub-agent tool (default true unless readOnly). */
   enableTask?: boolean;
   /**
+   * Fase 1 (ADR-0020): anchor the sub-agents spawned by `task` to this
+   * provider/model (the resolved provider/model of the CURRENT turn).
+   * Without this, tentacles silently fall back to the persisted
+   * provider.json default, which can diverge from what the user selected.
+   */
+  subAgentProvider?: string;
+  subAgentModel?: string;
+  /**
+   * Register the plan-safe explore-only `task` tool when planMode is on
+   * (default true). Set false to restore the pre-ADR-0020 behaviour of
+   * omitting `task` entirely from the plan registry.
+   */
+  planExploreTask?: boolean;
+  /**
+   * Fase 4 (ADR-0020): register `kraken_select` on the PARENT Kraken
+   * registry. Callers set it only for kraken runs with the alpha
+   * selection flag on; tentacle profiles never pass it, so sub-agents
+   * can never nest a selection call.
+   */
+  krakenSelect?: boolean;
+  /**
    * LSP navigation provider. Omit to use the shared, real language-server
    * manager; pass a fake in tests; pass `null` to disable the LSP tools.
    */
   lspProvider?: LspProvider | null;
   /**
-   * v1.8.0 plan phase: omit mutating builtins (write/edit/bash/apply_diff)
-   * and the task tool. Workspace plan tools can still be registered by the
+   * v1.8.0 plan phase: omit mutating builtins (write/edit/bash/apply_diff).
+   * Fase 1 (ADR-0020): the `task` tool now STAYS available in plan,
+   * restricted to explore-only (read-only) tentacles — see planExploreTask.
+   * Workspace plan tools can still be registered by the
    * caller. Equivalent to a soft read-only for project files.
    */
   planMode?: boolean;
@@ -444,23 +469,68 @@ export function createBuiltinToolRegistry(
     }
   }
 
-  // The `task` sub-agent tool — parent full registry only (not plan/explore/verify/general).
-  // Sub-agents get a profile-specific registry and never nest another `task`.
+  // The `task` sub-agent tool — parent full registry only (not explore/verify/general
+  // sub-agents). Sub-agents get a profile-specific registry and never nest another
+  // `task`. Fase 1 (ADR-0020): PLAN keeps the `task` tool restricted to
+  // explore-only (plan-safe) tentacles unless planExploreTask=false; the explore
+  // profile is read-only, so PLAN gains parallel research without write/execute reach.
   const enableTask =
     options.enableTask !== false &&
-    !readOnly &&
+    options.readOnly !== true &&
     !verifyMode &&
     profile === 'full' &&
-    !options.planMode;
+    (!options.planMode || options.planExploreTask !== false);
   if (enableTask) {
-    const taskTool = createTaskTool({
-      createSubAgentContext: createKrakenSubAgentContextFactory({ root, audit, sessionId }),
-    });
+    const taskTool = createTaskTool(
+      {
+        createSubAgentContext: createKrakenSubAgentContextFactory({
+          root,
+          audit,
+          sessionId,
+          ...(options.subAgentProvider ? { provider: options.subAgentProvider } : {}),
+          ...(options.subAgentModel ? { model: options.subAgentModel } : {}),
+        }),
+      },
+      options.planMode === true ? { allowedAgents: ['explore'] } : undefined,
+    );
     registry.register(withPerm(taskTool));
     tools.push({
       name: taskTool.name,
       description: taskTool.description,
       permissions: taskTool.permissions ?? [],
+    });
+  }
+
+  // Fase 4 (ADR-0020): `kraken_select` — parent Kraken ONLY. Gated on
+  // enableTask (full profile, not read-only, not verifyMode) AND the
+  // explicit krakenSelect option, so tentacles/council/zelari never see
+  // it. The verifier defaults to the EXACT parent provider/model
+  // (subAgentProvider/subAgentModel of this turn/run).
+  if (options.krakenSelect === true && enableTask) {
+    const selectTool = createKrakenSelectTool({
+      loadParentIdentity: async () => {
+        const cfg = options.subAgentProvider
+          ? await providerConfigFor(options.subAgentProvider as ProviderName)
+          : await providerFromEnv();
+        if (!cfg) return null;
+        return {
+          provider: cfg.providerId,
+          model: options.subAgentModel || cfg.model,
+        };
+      },
+      loadStream: async (provider) => {
+        const cfg = await providerConfigFor(provider as ProviderName);
+        return cfg ? buildProviderStream(cfg) : null;
+      },
+      // Fase 9 (ADR-0020): persisted verifier override (provider.json
+      // `krakenVerifier`). undefined = inherit the EXACT parent model.
+      loadVerifierOverride: () => getKrakenVerifierOverride(),
+    });
+    registry.register(withPerm(selectTool));
+    tools.push({
+      name: selectTool.name,
+      description: selectTool.description,
+      permissions: selectTool.permissions ?? [],
     });
   }
 

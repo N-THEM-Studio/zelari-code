@@ -198,6 +198,9 @@ export function SettingsView({
   const [mode, setMode] = useState<DispatchMode>(defaultMode);
   const [phase, setPhase] = useState<WorkPhase>(defaultPhase);
   const [customModel, setCustomModel] = useState("");
+  const [verifierMode, setVerifierMode] = useState<"inherit" | "custom">("inherit");
+  const [verifierProvider, setVerifierProvider] = useState("");
+  const [verifierModel, setVerifierModel] = useState("");
   const [endpoint, setEndpoint] = useState("");
   const [apiKey, setApiKeyInput] = useState("");
   const [saving, setSaving] = useState(false);
@@ -218,6 +221,15 @@ export function SettingsView({
     setModel(config.modelByProvider[config.activeProviderId] ?? "");
     const p = config.providers.find((x) => x.id === config.activeProviderId);
     setEndpoint(p?.endpoint ?? "");
+    if (config?.krakenVerifier) {
+      setVerifierMode("custom");
+      setVerifierProvider(config.krakenVerifier.provider);
+      setVerifierModel(config.krakenVerifier.model);
+    } else {
+      setVerifierMode("inherit");
+      setVerifierProvider("");
+      setVerifierModel("");
+    }
   }, [config]);
 
   const providers = config?.providers ?? [];
@@ -274,6 +286,41 @@ export function SettingsView({
       }
       await setAppConfig({ provider, endpoint: url });
       setMessage(`Endpoint saved for ${provider}.`);
+      await onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveVerifier = async () => {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      if (!verifierProvider || !verifierModel) {
+        setError("Pick a verifier provider and model.");
+        return;
+      }
+      await setAppConfig({ verifierProvider, verifierModel });
+      setMessage(`Kraken verifier set to ${verifierProvider} / ${verifierModel}.`);
+      await onRefresh();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const clearVerifier = async () => {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      await setAppConfig({ verifierClear: true });
+      setVerifierMode("inherit");
+      setMessage("Kraken verifier inherits the current model.");
       await onRefresh();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -520,6 +567,106 @@ export function SettingsView({
                     onChange={(e) => setCustomModel(e.target.value)}
                   />
                 </label>
+
+                <h3 className="settings-subhead">Kraken — Verification model</h3>
+                <p className="muted">
+                  Model that judges candidate hypotheses during Kraken
+                  selection. Persists to CLI <code>provider.json</code>.
+                </p>
+                <label className="field">
+                  <span>Verification model</span>
+                  <select
+                    value={verifierMode}
+                    onChange={(e) => {
+                      const v = e.target.value as "inherit" | "custom";
+                      setVerifierMode(v);
+                      if (v === "custom" && !verifierProvider && providers.length > 0) {
+                        const first = providers[0];
+                        setVerifierProvider(first.id);
+                        setVerifierModel(
+                          first.defaultModel || first.models[0] || "",
+                        );
+                      }
+                    }}
+                  >
+                    <option value="inherit">
+                      Same as current model (recommended)
+                    </option>
+                    <option value="custom">Custom provider + model…</option>
+                  </select>
+                </label>
+                {verifierMode === "custom" && (
+                  <>
+                    <label className="field">
+                      <span>Verifier provider</span>
+                      <select
+                        value={verifierProvider}
+                        onChange={(e) => {
+                          const id = e.target.value;
+                          setVerifierProvider(id);
+                          const p = providers.find((x) => x.id === id);
+                          setVerifierModel(
+                            p?.defaultModel || p?.models[0] || "",
+                          );
+                        }}
+                      >
+                        {providers.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.displayName}
+                            {p.hasKey ? "" : " — no API key"}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="field">
+                      <span>Verifier model</span>
+                      <select
+                        value={verifierModel}
+                        onChange={(e) => setVerifierModel(e.target.value)}
+                      >
+                        {(providers.find((x) => x.id === verifierProvider)?.models ?? []).map(
+                          (m) => (
+                            <option key={m} value={m}>
+                              {m}
+                            </option>
+                          ),
+                        )}
+                        {verifierModel &&
+                          !(providers.find((x) => x.id === verifierProvider)?.models ?? []).includes(
+                            verifierModel,
+                          ) && <option value={verifierModel}>{verifierModel}</option>}
+                      </select>
+                    </label>
+                    <div className="settings-actions inline">
+                      <button
+                        type="button"
+                        className="btn-ghost"
+                        disabled={saving || !verifierProvider || !verifierModel}
+                        onClick={() => void saveVerifier()}
+                      >
+                        {saving ? "Saving…" : "Save verifier"}
+                      </button>
+                    </div>
+                  </>
+                )}
+                {verifierMode === "inherit" && config?.krakenVerifier && (
+                  <div className="settings-actions inline">
+                    <button
+                      type="button"
+                      className="btn-ghost"
+                      disabled={saving}
+                      onClick={() => void clearVerifier()}
+                    >
+                      {saving ? "Saving…" : "Reset to inherit"}
+                    </button>
+                  </div>
+                )}
+                {config?.krakenVerifier && (
+                  <p className="muted">
+                    Current override: {config.krakenVerifier.provider} /{" "}
+                    {config.krakenVerifier.model}
+                  </p>
+                )}
 
                 {oauthSupported && (
                   <>

@@ -44,6 +44,14 @@ export interface ProviderConfig {
    * Empty string = use built-in default for that provider.
    */
   customEndpoints: Partial<Record<ProviderName, string>>;
+  /**
+   * Kraken selection verifier override (Fase 9, ADR-0020).
+   * ABSENT = `inherit` — the verifier uses the exact current run model
+   * (the only default). Old config files without this field therefore
+   * resolve to inherit automatically. Both provider AND model are
+   * required; anything partial/unknown is dropped by the merge.
+   */
+  krakenVerifier?: { provider: ProviderName; model: string };
 }
 
 const DEFAULTS: ProviderConfig = {
@@ -95,6 +103,7 @@ export function getProviderConfig(): ProviderConfig {
           modelByProvider: { ...DEFAULTS.modelByProvider, ...parsed.modelByProvider },
           thinkingByProvider: { ...DEFAULTS.thinkingByProvider, ...parsed.thinkingByProvider },
           customEndpoints: mergeCustomEndpoints(parsed.customEndpoints),
+          krakenVerifier: mergeKrakenVerifier(parsed.krakenVerifier),
         };
       }
     } catch {
@@ -182,6 +191,55 @@ export function clearCustomEndpoint(id: ProviderName): void {
   const config = getProviderConfig();
   if (!(id in config.customEndpoints)) return; // no-op
   delete config.customEndpoints[id];
+  writeProviderConfig(config);
+}
+
+/**
+ * Sanitize a parsed `krakenVerifier` blob. Drops anything that is not a
+ * complete, valid override (both provider+model, known provider,
+ * non-empty model) so a hand-edited/corrupt file falls back to inherit
+ * instead of breaking verifier resolution.
+ */
+function mergeKrakenVerifier(
+  raw: { provider?: unknown; model?: unknown } | undefined,
+): { provider: ProviderName; model: string } | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const provider = typeof raw.provider === 'string' ? raw.provider.trim() : '';
+  const model = typeof raw.model === 'string' ? raw.model.trim() : '';
+  if (!provider || !model) return undefined;
+  if (!PROVIDERS.some((p) => p.id === provider)) return undefined;
+  return { provider: provider as ProviderName, model };
+}
+
+/**
+ * Persisted verifier override, or undefined = inherit (default).
+ * Structurally compatible with KrakenVerifierOverride (verifier.ts).
+ */
+export function getKrakenVerifierOverride():
+  | { provider: ProviderName; model: string }
+  | undefined {
+  return getProviderConfig().krakenVerifier;
+}
+
+/** Set an explicit Kraken verifier (both provider and model required). */
+export function setKrakenVerifier(provider: string, model: string): void {
+  const spec: ProviderSpec | undefined = PROVIDERS.find((p) => p.id === provider);
+  if (!spec) {
+    throw new Error(`Unknown provider id: "${provider}". Available: ${PROVIDERS.map((p) => p.id).join(', ')}`);
+  }
+  if (!model || model.trim().length === 0) {
+    throw new Error('Verifier model cannot be empty. Use clearKrakenVerifier() to inherit.');
+  }
+  const config = getProviderConfig();
+  config.krakenVerifier = { provider: provider as ProviderName, model: model.trim() };
+  writeProviderConfig(config);
+}
+
+/** Remove the verifier override — back to `inherit` (same as current model). */
+export function clearKrakenVerifier(): void {
+  const config = getProviderConfig();
+  if (!config.krakenVerifier) return; // no-op
+  delete config.krakenVerifier;
   writeProviderConfig(config);
 }
 
