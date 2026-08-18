@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [1.48.1] - 2026-08-18
+
+### Fixed
+- **Grok stream stall — SSE keep-alives defeated the idle timeout** — `readChunkWithTimeout` reset the idle timer on *every* TCP chunk, including keep-alive frames (blank lines / `: ping` / `data:` with no choices) that Cloudflare-style gateways send periodically. A stalled model (grok-4.6 observed: process alive, socket ESTABLISHED, zero tokens for 20+ minutes) looked "alive" forever because each keep-alive restarted the 5-minute idle budget — the timeout never fired.
+  - The idle budget now measures silence since the last **useful** delta (text / thinking / tool_call / usage), not since the last network byte. `markUseful()` stamps every content emission; keep-alive frames no longer count.
+  - Fails fast with a clear error ("no content tokens — keep-alive frames don't count") after `ZELARI_PROVIDER_STREAM_IDLE_MS` (default 5 min) of content silence; the absolute cap `ZELARI_PROVIDER_STREAM_MAX_MS` is unchanged.
+  - Regression tests cover both directions: keep-alive-only streams time out; active content streams never false-timeout.
+
 ## [1.48.0] - 2026-08-18
 
 ### Fixed
