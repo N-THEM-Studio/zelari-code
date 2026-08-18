@@ -29,6 +29,7 @@ import {
 } from "../mcp/brokerHandlers.js";
 import { createPermissionAskHandler, type SetPicker } from "./permissionPicker.js";
 import { appendSystem } from "./messageHelpers.js";
+import { armPickerTimeout, askUserTimeoutMs } from "./askUserTimeout.js";
 
 export function usePermissionBroker(opts: {
   setPicker: SetPicker;
@@ -63,12 +64,27 @@ export function usePermissionBroker(opts: {
           return;
         }
         let settled = false;
+        let cancelWaitTimeout: (() => void) | undefined;
         const finish = (value: string | null) => {
           if (settled) return;
           settled = true;
+          cancelWaitTimeout?.();
           setPicker(null);
           resolve(value);
         };
+        // v1.47.x: timeout so an unseen external-agent question cannot block
+        // the broker client forever. Knob: ZELARI_ASK_USER_TIMEOUT_MS.
+        const waitTimeoutMs = askUserTimeoutMs();
+        cancelWaitTimeout = armPickerTimeout(() => {
+          appendSystem(
+            setMessages,
+            `[external agent] nessuna risposta entro ${Math.round(
+              waitTimeoutMs / 1000,
+            )}s — richiesta annullata.`,
+            Date.now(),
+          );
+          finish(null);
+        }, waitTimeoutMs);
         appendSystem(
           setMessages,
           `[external agent] ${req.question}\n→ ${choices.join(" · ")}`,

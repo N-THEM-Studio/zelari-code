@@ -482,6 +482,11 @@ export async function refreshGrokToken(options: {
         client_id: options.clientId,
         refresh_token: options.refreshToken,
       }).toString(),
+      // v1.47.x: hard 30s cap. A hung auth socket used to freeze the whole
+      // turn on "working" forever with no error (the refresh promise never
+      // settled). A visible failure is strictly better: callers fall back
+      // to the current token and surface the error.
+      signal: AbortSignal.timeout(30_000),
     });
   } catch (err) {
     throw new GrokOAuthError(

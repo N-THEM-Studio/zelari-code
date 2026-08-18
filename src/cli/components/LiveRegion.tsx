@@ -17,6 +17,14 @@ interface LiveRegionProps {
   busy: boolean;
   /** Elapsed ms of the in-flight run — shown by the working indicator. */
   elapsedMs?: number | null;
+  /**
+   * v1.47.x: a promise-backed clarification picker (ask_user / permission)
+   * is open — the run is paused on the USER, not on the model. Renders an
+   * unmissable banner instead of the misleading "working" spinner.
+   */
+  waitingForUser?: boolean;
+  /** Epoch ms when the picker opened (drives the "waiting since" counter). */
+  waitingSinceMs?: number;
 }
 
 /**
@@ -35,13 +43,21 @@ interface LiveRegionProps {
 /** Cap concurrent tool lines so resize + many tools never blow the viewport. */
 const MAX_LIVE_TOOLS = 4;
 
-export function LiveRegion({ live, busy, elapsedMs = null }: LiveRegionProps): React.ReactElement | null {
+export function LiveRegion({
+  live,
+  busy,
+  elapsedMs = null,
+  waitingForUser = false,
+  waitingSinceMs = 0,
+}: LiveRegionProps) {
   const { streaming, runningTools } = live;
 
   // v0.7.10: `busy` keeps the region alive so the animated WorkingIndicator
   // shows between dispatch and the first streamed token / tool call. (The
   // old check dropped `busy`, which made the fallback line dead code.)
-  if (!streaming && runningTools.length === 0 && !busy) return null;
+  if (!streaming && runningTools.length === 0 && !busy && !waitingForUser) {
+    return null;
+  }
 
   const visibleTools = runningTools.slice(0, MAX_LIVE_TOOLS);
   const hiddenTools = runningTools.length - visibleTools.length;
@@ -65,7 +81,16 @@ export function LiveRegion({ live, busy, elapsedMs = null }: LiveRegionProps): R
       {hiddenTools > 0 ? (
         <Text dimColor>  … +{hiddenTools} more tools</Text>
       ) : null}
-      {busy && runningTools.length === 0 && !streaming && (
+      {waitingForUser && (
+        <Text color="yellow" bold>
+          ⏸ In attesa della TUA risposta
+          {waitingSinceMs > 0
+            ? ` (${Math.floor(Math.max(0, Date.now() - waitingSinceMs) / 1000)}s)`
+            : ''}
+          {' — ↑/↓ + Invio · Esc = annulla'}
+        </Text>
+      )}
+      {busy && runningTools.length === 0 && !streaming && !waitingForUser && (
         <WorkingIndicator elapsedMs={elapsedMs} />
       )}
     </Box>

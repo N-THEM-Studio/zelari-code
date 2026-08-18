@@ -106,6 +106,13 @@ export function App(): React.ReactElement {
   // v0.7.10: interactive picker (/provider, /model). While open it replaces
   // the InputBar so ink-text-input never competes for arrow keys.
   const [picker, setPicker] = useState<PickerRequest | null>(null);
+  // v1.47.x: when the picker opened — drives LiveRegion's "waiting for user"
+  // banner so a pending ask_user/permission ask is visible, not a dead spinner.
+  const [pickerSince, setPickerSince] = useState(0);
+  useEffect(() => {
+    if (picker) setPickerSince((s) => (s > 0 ? s : Date.now()));
+    else setPickerSince(0);
+  }, [picker]);
 
   const activeProviderSpec = getActiveProviderSpec();
   const activeModel = providerConfig.modelByProvider[activeProviderSpec.id];
@@ -297,7 +304,13 @@ export function App(): React.ReactElement {
         {/* v0.7.9: the status line moved BELOW the input box (no more bar
             above it) and shows the execution timer instead of tokens/cost. */}
         <Box flexDirection="column" flexGrow={1} paddingX={1}>
-          <LiveRegion live={session.live} busy={busy} elapsedMs={timer.elapsedMs} />
+          <LiveRegion
+            live={session.live}
+            busy={busy}
+            elapsedMs={timer.elapsedMs}
+            waitingForUser={picker !== null}
+            waitingSinceMs={pickerSince}
+          />
           {picker ? (
             <SelectList
               title={picker.title}

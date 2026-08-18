@@ -10,6 +10,7 @@ import {
   grantSessionTool,
   type PermissionAskHandler,
 } from '../safety/toolPermissions.js';
+import { armPickerTimeout, askUserTimeoutMs } from './askUserTimeout.js';
 import type { PickerRequest } from '../slashHandlers/provider.js';
 
 export type SetPicker = (req: PickerRequest | null) => void;
@@ -40,13 +41,29 @@ export function createPermissionAskHandler(opts: {
         Date.now(),
       );
       let settled = false;
+      // v1.47.x: an unseen permission ask used to block the tool-loop forever
+      // (silent "working" hang, no error). Timeout denies with a note; the
+      // tool can be re-run. Knob: ZELARI_ASK_USER_TIMEOUT_MS (0 disables).
+      const askTimeoutMs = askUserTimeoutMs();
+      let cancelAskTimeout: () => void = () => undefined;
       const finish = (ok: boolean, note?: string) => {
         if (settled) return;
         settled = true;
+        cancelAskTimeout();
         setPicker(null);
         if (note) appendSystem?.(note, Date.now());
         resolve(ok);
       };
+      cancelAskTimeout = armPickerTimeout(
+        () =>
+          finish(
+            false,
+            `[permission] ask for "${req.toolName}" timed out after ${Math.round(
+              askTimeoutMs / 1000,
+            )}s — denied (tool can be re-run). Knob: ZELARI_ASK_USER_TIMEOUT_MS.`,
+          ),
+        askTimeoutMs,
+      );
 
       const items: Array<{ value: string; label: string }> = [
         { value: 'allow', label: 'Allow once' },

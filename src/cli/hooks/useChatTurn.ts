@@ -23,6 +23,7 @@ import { getActiveModel } from "../providerConfig.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
 import { resetTaskSpawnCount } from "../tools/taskTool.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
+import { armPickerTimeout, askUserTimeoutMs } from "./askUserTimeout.js";
 import { defaultPermissionPolicy } from "../safety/toolPermissions.js";
 import {
   buildSystemPromptSplit,
@@ -277,12 +278,31 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   Date.now(),
                 );
                 let settled = false;
+                // v1.47.x: an unseen question must not hang the build forever
+                // (silent "working", no error) — resolve null (documented
+                // assumption path) after the timeout. Knob: ZELARI_ASK_USER_TIMEOUT_MS.
+                const askTimeoutMs = askUserTimeoutMs();
+                let cancelAskTimeout: () => void = () => undefined;
                 const finish = (value: string | null) => {
                   if (settled) return;
                   settled = true;
+                  cancelAskTimeout();
                   setPicker(null);
                   resolve(value);
                 };
+                cancelAskTimeout = armPickerTimeout(
+                  () => {
+                    appendSystem(
+                      setMessages,
+                      `[ask_user] nessuna risposta entro ${Math.round(
+                        askTimeoutMs / 1000,
+                      )}s — proseguo con assunzione documentata (ZELARI_ASK_USER_TIMEOUT_MS).`,
+                      Date.now(),
+                    );
+                    finish(null);
+                  },
+                  askTimeoutMs,
+                );
                 setPicker({
                   kind: "clarification",
                   title: req.question,
@@ -1285,12 +1305,30 @@ async function dispatchCouncilPromptImpl(
             Date.now(),
           );
           let settled = false;
+          // v1.47.x: same guard as the kraken path — council questions cannot
+          // hang the member turn forever. Knob: ZELARI_ASK_USER_TIMEOUT_MS.
+          const askTimeoutMs = askUserTimeoutMs();
+          let cancelAskTimeout: () => void = () => undefined;
           const finish = (value: string | null) => {
             if (settled) return;
             settled = true;
+            cancelAskTimeout();
             setPicker(null);
             resolve(value);
           };
+          cancelAskTimeout = armPickerTimeout(
+            () => {
+              appendSystem(
+                setMessages,
+                `[council ask_user] nessuna risposta entro ${Math.round(
+                  askTimeoutMs / 1000,
+                )}s — il membro prosegue con assunzione documentata (ZELARI_ASK_USER_TIMEOUT_MS).`,
+                Date.now(),
+              );
+              finish(null);
+            },
+            askTimeoutMs,
+          );
           setPicker({
             kind: "clarification",
             title: req.question,
