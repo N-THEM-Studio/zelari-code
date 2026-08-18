@@ -5,6 +5,23 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.49.0] - 2026-08-18
+
+### Added
+- **Kraken Verified Selection (ADR-0020, Fasi 0-10)** — adaptive path selection for Kraken turns, behind `ZELARI_KRAKEN_SELECTION=1` (default off; when off the behavior is byte-identical to previous releases):
+  - **Plan-safe candidate contracts** — explore/task tentacles are write-gated in plan mode (cap 3 candidates, `kraken_select` runs once, no blend).
+  - **`kraken_select` tool** — a dedicated verifier (default = the parent Kraken model, override via `--verifier-provider`/`--verifier-model`/`--verifier-clear`, absent config = inherit) judges candidates with structured verdicts and `needs_more_evidence`; never throws — 0/1 usable candidates short-circuit without an LLM call.
+  - **Adaptive playbook** — simple requests go direct, ambiguous ones spawn 2-3 candidates, required checks route into the plan's verification section (PLAN) or the verify tentacle's automatic Acceptance (BUILD).
+  - **Structured verify reports** — verify tentacles report `<verify-report>` blocks per required check; `unknown ≠ pass`, `checksPassed` tracked in the `kraken_progress` projection.
+  - **Completion/repair gate** — `fail`/`unknown` checks block a clean BUILD completion; max 1 automatic repair pass (headless retry + TUI enqueue), no second recovery system.
+  - **Metrics** — `kraken_metrics` NDJSON event with `selection_used`, `candidate_count`/`candidate_tokens` (real usage deltas), `selection_tokens`/`latency`, fallback reasons, `needs_more_evidence`, verification pass/fail/unknown, `repair_triggered`/`repair_succeeded`. Turns without selection emit nothing (zero overhead).
+- **Desktop Kraken progress/metrics card** (`KrakenProgressCard`) — renders the live `kraken_progress` phase (explore/verify/writes/checks chips, selecting/repairing phases) and the end-of-turn `kraken_metrics` summary; defensive readers ignore unknown payload fields and never throw on CLI/Desktop version drift.
+- **Desktop Settings — "Kraken — Verification model"** — "Same as current model (recommended)" default, optional custom provider+model override, reset to inherit; persisted via the existing `--set-config` CLI flags.
+
+### Changed
+- `KrakenProgressPhase` union now includes `selecting` and `repairing`; `KrakenProgressPayload` carries optional `checkTotal`/`checksPassed` (additive — Desktop parsers are defensive by design).
+
+
 
 ## [1.48.1] - 2026-08-18
 
