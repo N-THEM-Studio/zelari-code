@@ -5,6 +5,32 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [2.0.0-alpha.5] - 2026-08-19
+
+### Alpha exit plan — what is left for 2.0
+
+Zelari 2.0 is in alpha. The 2.0 architecture is in the tree (`@zelari/core` session spine, runtime seams/profiles, deterministic verification with advisory LLM verifier, mission state), but leaving alpha is gated on explicit criteria:
+
+- **C1–C3 (blocking, Exit-1):** the Session event log must become the single source of truth for the model context. Progress: `@zelari/core/session` now exports the single `derivedToAgentMessages()` adapter (E1.1), and the headless hot path (kraken/council/zelari in `runHeadless.ts`) seeds prior turns from the spine via `seedHeadlessModelHistory()` — legacy `--history` is a one-shot import into a fresh log (or the declared fallback when the spine is degraded/disabled), not the model-context brain (E1.2). The TUI loop derives from the spine on the same shared policy (E1.3). Replay determinism and the model-visible⟺logged invariant are now CI-gated by `src/cli/sessionReplayInvariant.test.ts` (E1.6/E1.7, `npm run test:session`). Remaining: Desktop resume-from-spine (E1.4), 1.x sessionManager read-only deprecation (E1.5), dual-write closure ADR (E1.8). Kill-switch `ZELARI_SESSION_SPINE=0` keeps the legacy behavior for emergency/debug.
+- **C6 (Exit-2):** strict/mission completion requires deterministic verification evidence from the session; the LLM verifier stays advisory and can never flip CompletionPolicy.
+- **C4/C5/C7/C8 (Exit-3):** coherent versions/README/docs, verifier config round-trip, CI matrix, aligned documentation.
+
+Explicitly NOT alpha-exit criteria (post-2.0 or experimental flags): best-of-N/logprob selection, experimental code-mode, remote sandboxes, new council roles.
+
+### Fixed
+
+- `src/cli/providerConfig.ts`: `loadProviderConfig()` (async) now delegates to the same merge/env logic as `getProviderConfig()` (shared `mergeStoredProviderConfig` + `applyEnvOverrides`). Previously a dedicated `krakenVerifier` override survived a sync read but was silently dropped by any async load, and the async fallback ignored `ANATHEMA_ACTIVE_PROVIDER`/`OPENAI_MODEL` env overrides (Exit-0 E0.1). Round-trip parity is covered by `src/cli/providerConfig.test.ts` (E0.2).
+
+### Changed
+
+- **E1.6/E1.7 — replay determinism + model-visible⟺logged are a CI gate (Exit-1).** New `src/cli/sessionReplayInvariant.test.ts` (6 tests) proves on a scripted multi-turn run (legacy import → live turn with streamed reply, tool call/result, compaction): the whole history reconstructs from `events.jsonl` alone via a fresh `SessionSpineMirror.adopt` (cross-process resume, gap-free seq); two replays derive deep-equal; the seed is the documented semantic-equal mapping (compacted→user, orphan tool results dropped, `<think>` preserved); every derived message traces back to a MODEL_SURFACE event by `seq` (forward P1 invariant); every surface event either derives or is excluded by declared policy (`tool.call` without `includeToolCalls`); the next-turn harness history rebuilds from the spine with zero process memory. New `npm run test:session` script runs the full session gate (9 files / 56 tests: core session suite + CLI spine/headless/history-seed/replay-invariant); the CI `Tests` step is labeled accordingly.
+- **E1.2 — headless model context is spine-derived (Exit-1).** All three headless modes (`runHeadlessSingle`/`runHeadlessCouncil`/`runHeadlessZelari`) now seed prior turns through `seedHeadlessModelHistory()` (`src/cli/headlessSpine.ts`): a fresh spine log imports legacy `--history` one-shot as `user.message`/`assistant.message` events, then history is derived (`deriveMessages` → `derivedToAgentMessages`); a resumed session derives from the log and ignores new legacy input (spine wins over the 1.x rolling JSON). `opts.history` no longer feeds harness messages directly. New `SessionSpineMirror.assistantMessage()`/`flush()`/`derivedPriorTurns()` support the path; covered by `src/cli/headlessHistorySeed.test.ts` (import, resume precedence, kill-switch fallback, event order invariant).
+- **E1.3 — the TUI chat loop builds the model context from the spine too (Exit-1).** `useChatTurn.dispatchPrompt` now derives the prior-turn seed via the shared `derivedModelSeed()` policy (`src/cli/headlessSpine.ts`) BEFORE logging the current user prompt, and feeds it to the `AgentHarness` messages (was `...getHistory()`, the in-process 1.x rolling store). `historySeedLen` tracks the actual seed so the finally-snapshot slice stays coherent. The rolling store remains the declared fallback (degraded/disabled spine, or a spine log still empty while the store carries replayed 1.x history) and keeps feeding render + budget heuristics. Shared seed policy: user/assistant pass through (assistant scrubbed, `<think>`/`---QUESTION---` preserved), compacted summaries map to a user message (the 1.x store convention), orphan tool results are dropped (providers reject unpaired `role:'tool'`).
+- README.md no longer hardcodes a CLI line version (was stale at "Current line: 1.35.1" while the package is 2.0.0-alpha.x) — the npm version badge is the live source; `docs/GUIDA.md` "Versione documento" now tracks the package version (Exit-0 E0.3).
+- `scripts/verify-versions.mjs` additionally fails on hardcoded versions in README.md and on a `docs/GUIDA.md` "Versione documento" that drifts from `package.json` (Exit-0 E0.4).
+
 ## [2.0.0-alpha.4] - 2026-08-19
 
 Channel-aware CLI/Dekstop updater: pre-release builds now track their matching npm dist-tag (`alpha`/`beta`/`next`) instead of being pinned to the older stable `latest`. This fixes the Desktop showing "CLI is up to date (v1.49.0)" while the 2.0 alpha CLI sits on the `alpha` tag — the check, the "Update CLI" button, `/update` and the status line all derive the channel from the running version.
