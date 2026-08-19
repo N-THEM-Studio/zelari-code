@@ -9,9 +9,16 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+// Source-level gate: resolve against THIS file, never process.cwd() — the
+// core workspace runs `vitest run --root ../..` with cwd=packages/core, and
+// a cwd-relative path would ENOENT there. From src/cli (and the compiled
+// dist/cli twin, same depth) `../..` is always the repo root.
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 function readCli(rel: string): string {
-  return readFileSync(path.join(process.cwd(), 'src', 'cli', rel), 'utf8');
+  return readFileSync(path.join(REPO_ROOT, 'src', 'cli', rel), 'utf8');
 }
 
 describe('ADR-0024 — legacy context isolation', () => {
@@ -54,7 +61,7 @@ describe('strict done gate enforcement (E2.2)', () => {
 
   it('the strict BUILD policy excludes verifier-llm evidence (LLM score alone is not done)', () => {
     const policy = readFileSync(
-      path.join(process.cwd(), 'packages', 'core', 'src', 'verification', 'completionPolicy.ts'),
+      path.join(REPO_ROOT, 'packages', 'core', 'src', 'verification', 'completionPolicy.ts'),
       'utf8',
     );
     expect(policy).toContain('STRICT_BUILD_POLICY');
