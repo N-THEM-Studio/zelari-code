@@ -29,3 +29,18 @@ export * from './state/index.js';
 
 // Kraken graph engine (pure DAG primitives; orchestration lives in the CLI)
 export * from './kraken/index.js';
+
+// Session spine — append-only log, replay, fork/resume (ADR-0016/0021)
+export * from './session/index.js';
+
+// Runtime execution seams + versioned profiles (ADR-0022)
+export * from './runtime/index.js';
+
+// Deterministic verification + completion policy + optional verifier (ADR-0023)
+export * from './verification/index.js';
+
+// Mission state derived from the session spine (2.0 Phase 4)
+export * from './mission/index.js';
+
+// Experimental flags registry (2.0 Phase 5 — all OFF by default)
+export * from './experimental.js';

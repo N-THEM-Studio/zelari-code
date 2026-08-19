@@ -13,6 +13,7 @@ import {
 } from '../sessionManager.js';
 import { SessionJsonlWriter } from '@zelari/core/harness';
 import { invalidateObservationIndex } from './observationStore.js';
+import { wrapSessionWriter, type SpineMirroringWriter } from '../sessionSpine.js';
 import type { ChatMessage } from '../components/ChatStream.js';
 import { eventsToMessages } from './eventsToMessages.js';
 import { EMPTY_LIVE, type LiveState } from './chatState.js';
@@ -46,7 +47,8 @@ export interface UseSessionResult {
   resetTranscript: () => void;
   sessionActive: boolean;
   setSessionActive: (v: boolean) => void;
-  writerRef: React.MutableRefObject<SessionJsonlWriter | null>;
+  /** 1.x sidecar writer dual-writing onto the 2.0 session spine. */
+  writerRef: React.MutableRefObject<SpineMirroringWriter | null>;
   handleSessionKind: (kind: 'session' | 'resume' | 'new', targetSessionId?: string) => Promise<string>;
 }
 
@@ -94,8 +96,21 @@ export function useSession(): UseSessionResult {
         setCurrentSessionId(id);
       }
       if (cancelled) return;
-      writerRef.current = new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() });
+      writerRef.current = await wrapSessionWriter(new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() }), id);
       setSessionId(id);
+      // 2.0 spine: surface the dual-write state on resume (best-effort).
+      const spine = writerRef.current?.spine;
+      if (spine?.status === 'active' && spine.resumedFromSeq !== undefined && restoredMessages.length > 0) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: 'system',
+            content: `[spine] resumed at seq ${spine.resumedFromSeq} — .zelari/sessions/${id.slice(0, 8)}…`,
+            ts: Date.now(),
+          },
+        ]);
+      }
       // Restored messages are historical (immutable) → go straight into
       // finalized, printed once into native scrollback on resume. Same
       // behavior as Claude Code on session resume.
@@ -149,7 +164,7 @@ export function useSession(): UseSessionResult {
         setCurrentSessionId(id);
         writerRef.current?.close();
         invalidateObservationIndex();
-        writerRef.current = new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() });
+        writerRef.current = await wrapSessionWriter(new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() }), id);
         setSessionId(id);
         resetTranscript();
         setSessionActive(false);

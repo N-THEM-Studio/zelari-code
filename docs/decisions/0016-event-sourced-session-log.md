@@ -1,7 +1,7 @@
 # ADR-0016 — Log di sessione event-sourced come unica fonte di verità
 
-**Status:** Proposto
-**Date:** da confermare
+**Status:** Accepted
+**Date:** 2026-08-19 (ratificato; proposto 2026-08-18)
 
 ## Contesto
 
@@ -67,10 +67,36 @@ Regole operative:
 - Costo di replay per sessioni lunghe — mitigato da snapshot di compaction + cursore.
 - L'assert farà emergere deriva latente preesistente (bene, ma richiede pulizia prima di abilitarlo).
 
+## Ratifica (2026-08-19) — decisioni integrate
+
+1. **Location (era TODO aperto):** le sessioni vivono a livello progetto in
+   `<workspaceRoot>/.zelari/sessions/<sessionId>/events.jsonl`, con override via env
+   `ZELARI_SESSIONS_DIR` (test/CI/Desktop multi-cwd). Il percorso legacy
+   `~/.tmp/zelari-code/sessions/` (sidecar `sessionJsonl.ts`) resta leggibile ma
+   è read-only compat: nessuna nuova scrittura sul sidecar da parte della spine.
+2. **Single writer con ownership lock:** `<sessionDir>/writer.lock` creato con
+   `flag:'wx'` contiene `{ownership, pid, ts}`; un secondo writer riceve
+   `SessionLogLockedError`. Takeover consentito solo su lock stantio
+   (`staleLockMs`, default 10 minuti).
+3. **`seq` monotona senza buchi:** parte da 1, incrementata dal writer dopo la
+   validazione Zod dell'envelope; il replay riporta `corrupt-line`, `seq-gap`,
+   `seq-duplicate`, `seq-nonmonotonic` come `ReplayIssue` senza mai crashare.
+4. **`SCHEMA_VERSION = 1`** nell'envelope di ogni riga; migrazioni meccaniche
+   documentate in `MIGRATION.md`.
+5. **Surface vs state events:** `isModelSurfaceEvent` è l'unico predicato che
+   decide cosa entra in `deriveMessages`; tutto il resto (task, note, mission,
+   verification) è state-event derivabile ma non model-visible di default.
+6. **Lineage:** `forkSession` copia gli eventi fino a `fromSeq` in una nuova
+   sessione e appende `session.forked {parentSessionId, parentSeq}`;
+   `resumeSession` riapre il log e appende `session.resumed`.
+7. **Coesistenza con `plan.json` (ADR-0018):** il file resta store cross-session;
+   la spine logga le transizioni `task.created`/`task.updated` per-sessione. Il
+   file è l'indice, il log la timeline.
+
 ## TODO
 
-- [ ] Definire lo schema `SessionEvent` v1 con `SCHEMA_VERSION`.
-- [ ] Introdurre il writer singolo `appendEvent()` e il reader `replaySession()`.
+- [x] Definire lo schema `SessionEvent` v1 con `SCHEMA_VERSION`.
+- [x] Introdurre il writer singolo `appendEvent()` e il reader `replaySession()` (`packages/core/src/session/`).
 - [ ] Cablare l'assert "model-visible ⟺ logged" nell'assemblaggio messaggi (solo dev/CI).
 - [ ] Migrare i consumer: `eventsToMessages`, `compaction`, `traceStore`, telemetria, `restoreState`.
 - [ ] Trattare i checkpoint git come puntatori nominati nella timeline del log.

@@ -4,7 +4,6 @@ import { useState, useRef, useCallback } from "react";
 import type { ChatMessage } from "../components/ChatStream.js";
 import { AgentHarness } from "@zelari/core/harness";
 import type { AgentMessage } from "@zelari/core/harness";
-import { SessionJsonlWriter } from "@zelari/core/harness";
 import { ingestLiveEvent } from "./observationStore.js";
 import { MetricsLogger, getMetricsLogger } from "../metrics.js";
 import type { BrainContextMetricsEvent } from "@zelari/core/events";
@@ -26,7 +25,9 @@ import { resetTaskSpawnCount } from "../tools/taskTool.js";
 import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from "../kraken/candidateRegistry.js";
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from "../kraken/metrics.js";
 import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
-import { buildKrakenRepairPrompt, evaluateKrakenCompletionGate } from "../kraken/completionGate.js";
+import { buildKrakenRepairPrompt } from "../kraken/completionGate.js";
+import { evaluateStrictBuildGate, strictGateEventPayload } from "../kraken/verificationBridge.js";
+import type { SpineMirroringWriter } from "../sessionSpine.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
 import { armPickerTimeout, askUserTimeoutMs } from "./askUserTimeout.js";
 import { defaultPermissionPolicy } from "../safety/toolPermissions.js";
@@ -107,7 +108,7 @@ import {
  */
 export interface UseChatTurnParams {
   sessionId: string;
-  writerRef: React.MutableRefObject<SessionJsonlWriter | null>;
+  writerRef: React.MutableRefObject<SpineMirroringWriter | null>;
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   /**
    * Throttled setter for the streaming hot-path. In the v0.7.0 live-region
@@ -231,6 +232,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // a brand-new request even if compaction dropped the prior turn.
         const anchored = maybeAnchorShortAnswer(userText);
         const effectiveUserText = anchored ?? userText;
+        // 2.0 spine: the user prompt is model-visible — log it (the 1.x JSONL never did).
+        writerRef.current?.spine?.userMessage(effectiveUserText);
         // Local-CLI provider (Slice B): opt-in via ZELARI_LOCAL_CLI=claude|codex|...
         // No API key needed — the CLI is authenticated on its own. Permission
         // prompts flow to the zelari broker via ZELARI_PERM_SOCKET (Slice A).
@@ -789,7 +792,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 isKrakenSelectionEnabled() &&
                 workPhase === "build"
               ) {
-                const krakenGate = evaluateKrakenCompletionGate("build");
+                const strictGate = evaluateStrictBuildGate("build");
+                const krakenGate = strictGate.gate;
+                writerRef.current?.spine?.verificationRun(strictGateEventPayload(strictGate));
                 if (krakenGate.blocked) {
                   krakenRepairEnqueued = true; // budget = 1, structural
                   markRepairTriggered();
@@ -806,7 +811,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               if (
                 event.reason === "completed" &&
                 krakenRepairEnqueued &&
-                !evaluateKrakenCompletionGate("build").blocked
+                !evaluateStrictBuildGate("build").blocked
               ) {
                 markRepairSucceeded(); // repair pass resolved every blocking check
               }

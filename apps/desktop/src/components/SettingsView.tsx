@@ -7,6 +7,11 @@ import {
   setAppConfig,
 } from "../agentClient";
 import type { CliStatus, DesktopConfig, DispatchMode, WorkPhase } from "../types";
+import {
+  EXECUTION_PROFILES,
+  type DesktopPrefs,
+  type ExecutionProfile,
+} from "../desktopPrefs";
 import { getAppVersion } from "../updater";
 import { CliUpdateSection } from "./CliUpdateSection";
 import { UpdateSection } from "./UpdateSection";
@@ -27,7 +32,7 @@ const LS_TAB = "zelari-desktop-settings-tab";
 
 const TABS: { id: SettingsTab; label: string; hint: string }[] = [
   { id: "provider", label: "Provider", hint: "Model, API key, endpoint" },
-  { id: "defaults", label: "Defaults", hint: "Mode & phase for new chats" },
+  { id: "defaults", label: "Defaults", hint: "Mode, phase & 2.0 profile" },
   { id: "extensions", label: "Extensions", hint: "MCP servers, skills & store" },
   { id: "connections", label: "Connections", hint: "Mobile QR, SSH" },
   { id: "updates", label: "Updates", hint: "Desktop app & CLI package" },
@@ -174,8 +179,10 @@ interface Props {
     model: string;
     defaultMode: DispatchMode;
     defaultPhase: WorkPhase;
+    prefs: DesktopPrefs;
   }) => Promise<void>;
   onRefresh: () => Promise<void>;
+  prefs: DesktopPrefs;
 }
 
 export function SettingsView({
@@ -189,6 +196,7 @@ export function SettingsView({
   onBack,
   onSave,
   onRefresh,
+  prefs,
 }: Props) {
   const [tab, setTab] = useState<SettingsTab>(() => loadTab());
   const [provider, setProvider] = useState(config?.activeProviderId ?? "");
@@ -198,6 +206,9 @@ export function SettingsView({
   const [mode, setMode] = useState<DispatchMode>(defaultMode);
   const [phase, setPhase] = useState<WorkPhase>(defaultPhase);
   const [customModel, setCustomModel] = useState("");
+  const [profile, setProfile] = useState<ExecutionProfile>(prefs.profile);
+  const [strictDone, setStrictDone] = useState(prefs.strictDone);
+  const [bonAlpha, setBonAlpha] = useState(prefs.bonAlpha);
   const [verifierMode, setVerifierMode] = useState<"inherit" | "custom">("inherit");
   const [verifierProvider, setVerifierProvider] = useState("");
   const [verifierModel, setVerifierModel] = useState("");
@@ -214,6 +225,12 @@ export function SettingsView({
   useEffect(() => {
     void getAppVersion().then(setAppVersion);
   }, []);
+
+  useEffect(() => {
+    setProfile(prefs.profile);
+    setStrictDone(prefs.strictDone);
+    setBonAlpha(prefs.bonAlpha);
+  }, [prefs]);
 
   useEffect(() => {
     if (!config) return;
@@ -263,6 +280,7 @@ export function SettingsView({
         model: finalModel,
         defaultMode: mode,
         defaultPhase: phase,
+        prefs: { profile, strictDone, bonAlpha },
       });
       setMessage("Saved provider, model & chat defaults.");
       setCustomModel("");
@@ -570,8 +588,10 @@ export function SettingsView({
 
                 <h3 className="settings-subhead">Kraken — Verification model</h3>
                 <p className="muted">
-                  Model that judges candidate hypotheses during Kraken
-                  selection. Persists to CLI <code>provider.json</code>.
+                  Optional LLM judge for Kraken selection (inherit or dedicated
+                  provider/model). Advisory only — never a done signal and never
+                  a substitute for the deterministic gate. Persists to CLI{" "}
+                  <code>provider.json</code>.
                 </p>
                 <label className="field">
                   <span>Verification model</span>
@@ -873,10 +893,53 @@ export function SettingsView({
                     </option>
                   </select>
                 </label>
+                <h3 className="settings-subhead">Execution profile (2.0)</h3>
+                <p className="muted">
+                  Capability set recorded on the session spine. Default follows
+                  the chat mode; override here for every new run.
+                </p>
+                <label className="field">
+                  <span>Profile</span>
+                  <select
+                    value={profile}
+                    onChange={(e) =>
+                      setProfile(e.target.value as ExecutionProfile)
+                    }
+                  >
+                    {EXECUTION_PROFILES.map((id) => (
+                      <option key={id} value={id}>
+                        {id}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field field-check">
+                  <input
+                    type="checkbox"
+                    checked={strictDone}
+                    onChange={(e) => setStrictDone(e.target.checked)}
+                  />
+                  <span>
+                    Strict BUILD gate — unknown ≠ pass, no done without evidence
+                    (<code>--strict-done</code>)
+                  </span>
+                </label>
+                <label className="field field-check">
+                  <input
+                    type="checkbox"
+                    checked={bonAlpha}
+                    onChange={(e) => setBonAlpha(e.target.checked)}
+                  />
+                  <span>
+                    Best-of-N alpha (N=3, experimental) — never flips the
+                    deterministic gate
+                  </span>
+                </label>
                 <p className="muted settings-tip">
                   Tip: cycle mode with{" "}
                   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>, phase with{" "}
-                  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>.
+                  <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>. Click Save
+                  provider / defaults to persist profile and gates.
                 </p>
               </section>
           )}

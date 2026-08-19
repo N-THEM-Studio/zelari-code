@@ -2224,6 +2224,15 @@ struct RunTaskArgs {
     /// "build" phase passes the id captured from the preceding plan-only run.
     #[serde(default)]
     run_plan: Option<String>,
+    /// Capability profile forwarded as `--profile <id>` (ADR-0022).
+    #[serde(default)]
+    profile: Option<String>,
+    /// Evidence gate: `--strict-done`.
+    #[serde(default)]
+    strict_done: bool,
+    /// Experimental Best-of-N: sets ZELARI_EXPERIMENTAL=bon on the child.
+    #[serde(default)]
+    bon_alpha: bool,
 }
 
 fn default_mode() -> String {
@@ -2368,6 +2377,9 @@ fn run_task(
     let kraken_graph = args.kraken_graph;
     let plan_only = args.plan_only;
     let run_plan = args.run_plan;
+    let profile = args.profile;
+    let strict_done = args.strict_done;
+    let bon_alpha = args.bon_alpha;
 
     let env_ctx = RunEnvelopeCtx {
         run_id: run_id.clone(),
@@ -2393,6 +2405,9 @@ fn run_task(
             kraken_graph,
             plan_only,
             run_plan.as_deref(),
+            profile.as_deref(),
+            strict_done,
+            bon_alpha,
         );
 
         let (exit_code, cancelled) = match result {
@@ -2445,6 +2460,9 @@ fn spawn_headless(
     kraken_graph: bool,
     plan_only: bool,
     run_plan: Option<&str>,
+    profile: Option<&str>,
+    strict_done: bool,
+    bon_alpha: bool,
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
 
@@ -2501,6 +2519,28 @@ fn spawn_headless(
         .arg(mode)
         .arg("--phase")
         .arg(phase);
+
+    if let Some(profile) = profile {
+        if !profile.trim().is_empty() {
+            cmd.arg("--profile").arg(profile);
+        }
+    }
+    if strict_done {
+        cmd.arg("--strict-done");
+    }
+    if bon_alpha {
+        // Additive: keep any inherited experimental flags and add `bon`.
+        let existing = std::env::var("ZELARI_EXPERIMENTAL").unwrap_or_default();
+        let mut flags: Vec<String> = existing
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if !flags.iter().any(|f| f.eq_ignore_ascii_case("bon")) {
+            flags.push("bon".into());
+        }
+        cmd.env("ZELARI_EXPERIMENTAL", flags.join(","));
+    }
 
     if let Some(p) = provider {
         if !p.is_empty() {

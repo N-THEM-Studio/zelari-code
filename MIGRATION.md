@@ -142,3 +142,31 @@ open an issue with the label `migration`. We will:
   the full list of what changed in the monorepo extraction release.
   Monorepo license is **Apache-2.0** since [ADR-0009](docs/decisions/0009-apache-2-0-license.md)
   (originally MIT per [ADR-0008](docs/decisions/0008-monorepo-mit-oss.md), superseded).
+
+## v2.0.0-alpha.0 — Zelari 2.0 spine (additive, non-breaking)
+
+The 2.0 pre-release adds four new `@zelari/core` subpath exports and keeps every
+1.x path working unchanged:
+
+- `@zelari/core/session` — event-sourced session log (ADR-0016/0021). Default
+  location `<workspaceRoot>/.zelari/sessions/<id>/events.jsonl`, override
+  `ZELARI_SESSIONS_DIR`. Envelope `{"schemaVersion":1,...}` — bumping
+  `SESSION_SCHEMA_VERSION` is a documented, mechanical migration.
+- `@zelari/core/runtime` — execution seams + profiles (ADR-0022):
+  `minimal/v1`, `kraken/v1`, `council/v1`, `mission/v1`.
+- `@zelari/core/verification` — Criterion/EvidenceRef/VerificationResult,
+  deterministic engine, `CompletionPolicy` (strict), criteria pack v1,
+  VerifierService (alpha, advisory-only).
+- `@zelari/core/mission` — `deriveMissionState` from the spine.
+
+Migration notes:
+
+1. **Library consumers**: nothing is removed or renamed — additive only.
+2. **Versioning**: root `zelari-code` and `@zelari/core` release in lockstep;
+   the root devDependency must match the workspace version exactly
+   (`npm run verify:versions` enforces it in CI).
+3. **Session schema migrations** (future): when `SESSION_SCHEMA_VERSION` bumps,
+   replay of older logs still works — readers are schema-aware and report
+   `schema-mismatch` issues instead of crashing.
+
+See `docs/SESSION-FORMAT-2.0.md` for the on-disk format and verifier config.

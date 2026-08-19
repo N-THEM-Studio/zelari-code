@@ -21,7 +21,7 @@ import type { WorkPhase } from './phase.js';
 import { parsePhase } from './phase.js';
 import { parseMode } from './mode.js';
 import type { ChatMode } from './components/StatusBar.js';
-import type { AgentMessage, AgentImage } from '@zelari/core/harness';
+import type { AgentMessage, AgentImage } from '@zelari/core/harness';import { resolveProfile } from '@zelari/core/runtime';
 import { readFileSync } from 'node:fs';
 import type { SessionTodoStatus } from './sessionTodos.js';
 
@@ -75,6 +75,28 @@ export interface HeadlessOptions {
    */
   once?: boolean;
   /**
+   * Capability profile id (ADR-0022): minimal/v1 | kraken/v1 | council/v1 | mission/v1.
+   * Validated at parse time; defaults by mode in runHeadless.
+   */
+  profile?: string;
+  /**
+   * Resume an existing 2.0 spine session (continues seq, no new session.started).
+   * @since 2.0.0-alpha.0
+   */
+  resumeSessionId?: string;
+  /**
+   * After the run, write a portable session export (`zelari-session-export/1`)
+   * to this path (`-` = stdout after NDJSON).
+   * @since 2.0.0-alpha.0
+   */
+  exportSessionPath?: string;
+  /**
+   * Enable the ADR-0023 strict BUILD completion gate for this process
+   * (`ZELARI_STRICT_DONE=1`). Default off for 1.x compat.
+   * @since 2.0.0-alpha.0
+   */
+  strictDone?: boolean;
+  /**
    * Plan + execute a Kraken task graph (F4 planner + F3 executor) instead
    * of a normal single-agent/council/zelari dispatch. Mutually exclusive
    * with `--task`. Gated by the ZELARI_KRAKEN_GRAPH kill-switch.
@@ -124,6 +146,11 @@ Options:
   --history <json>           Prior turns (JSON AgentMessage[]) for multi-turn context
   --history-file <path>      Same as --history but read from a file (avoids Windows argv cap)
   --once                     Trigger mode: single cycle + lockfile (for cron/git hooks)
+  --profile <id>             Capability profile: minimal/v1 | kraken/v1 | council/v1 | mission/v1
+                             (default by --mode; recorded in the session spine header)
+  --resume <sessionId>       Continue an existing 2.0 spine session (seq continues)
+  --export-session <path>    Write zelari-session-export/1 JSON after the run (- = stdout)
+  --strict-done              Enable ADR-0023 evidence gate (ZELARI_STRICT_DONE=1)
   --kraken-graph <goal>      Plan + execute a Kraken task graph instead of --task
                              (mutually exclusive with --task; ZELARI_KRAKEN_GRAPH=0 disables)
   --kraken-graph-file <path> Same as --kraken-graph but read from a file
@@ -134,6 +161,22 @@ Exit codes:
   2  runtime error (provider failure, council exception)
   3  agent run errored
 `;
+
+/**
+ * Default capability profile for a headless mode (ADR-0022).
+ * Explicit --profile always wins; the default keeps harness deltas
+ * comparable (same task, same profile, same tool manifest).
+ */
+export function defaultProfileForMode(mode: 'kraken' | 'council' | 'zelari'): string {
+  switch (mode) {
+    case 'council':
+      return 'council/v1';
+    case 'zelari':
+      return 'mission/v1';
+    default:
+      return 'kraken/v1';
+  }
+}
 
 /**
  * Parse argv for --headless options. Returns null options when
@@ -155,6 +198,10 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
   let history: AgentMessage[] | undefined;
   let todos: Array<{ id?: string; content: string; status?: SessionTodoStatus }> | undefined;
   let once = false;
+  let profile: string | undefined;
+  let resumeSessionId: string | undefined;
+  let exportSessionPath: string | undefined;
+  let strictDone = false;
   let krakenGraph: string | undefined;
   // Pre-flight plan review (Slice N+3): opt-in via env, with a CLI
   // flag for symmetry. Both default to off.
@@ -321,6 +368,37 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       }
     } else if (arg === '--once') {
       once = true;
+    } else if (arg === '--profile') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        return { options: null, error: `--profile requires a profile id (e.g. kraken/v1), got '${next ?? '(missing)'}'` };
+      }
+      try {
+        resolveProfile(next);
+      } catch (err) {
+        return {
+          options: null,
+          error: err instanceof Error ? err.message : String(err),
+        };
+      }
+      profile = next;
+      i++;
+    } else if (arg === '--resume') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        return { options: null, error: `--resume requires a session id, got '${next ?? '(missing)'}'` };
+      }
+      resumeSessionId = next;
+      i++;
+    } else if (arg === '--export-session') {
+      const next = argv[i + 1];
+      if (!next || next.startsWith('--')) {
+        return { options: null, error: `--export-session requires a path (or - for stdout), got '${next ?? '(missing)'}'` };
+      }
+      exportSessionPath = next;
+      i++;
+    } else if (arg === '--strict-done') {
+      strictDone = true;
     } else if (arg === '--kraken-graph') {
       krakenGraph = argv[i + 1];
       i++;
@@ -374,6 +452,10 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       ...(history && history.length > 0 ? { history } : {}),
       ...(todos && todos.length > 0 ? { todos } : {}),
       ...(once ? { once: true } : {}),
+      ...(profile ? { profile } : {}),
+      ...(resumeSessionId ? { resumeSessionId } : {}),
+      ...(exportSessionPath ? { exportSessionPath } : {}),
+      ...(strictDone ? { strictDone: true } : {}),
       ...(krakenGraph ? { krakenGraph } : {}),
       ...(planOnly ? { planOnly: true } : {}),
       ...(runPlan ? { runPlan } : {}),

@@ -131,6 +131,18 @@ export interface ZelariMissionDeps {
    * Does not change runSlice wiring — the caller still injects the runner.
    */
   buildViaAgent?: boolean;
+  /**
+   * Optional 2.0 spine hook: record `mission.phase` transitions so
+   * deriveMissionState can reconstruct design → build → verification → done.
+   * Interrupt is the ABSENCE of session.ended (caller must not close the
+   * spine as completed when the process is aborted).
+   */
+  onMissionPhase?: (phase: 'design' | 'build' | 'verification' | 'done', note?: string) => void;
+  /**
+   * Optional hook after each persisted mission-state.json write. The host
+   * can project deriveMissionState from the live spine here.
+   */
+  onStatePersisted?: (state: MissionState) => void | Promise<void>;
 }
 
 /**
@@ -286,7 +298,12 @@ export async function runZelariMission(
   };
 
   await deps.memory.init(deps.projectRoot);
-  await writeMissionState(deps.projectRoot, state);
+  const persist = async (): Promise<void> => {
+    await writeMissionState(deps.projectRoot, state);
+    await deps.onStatePersisted?.(state);
+  };
+  deps.onMissionPhase?.('design', 'mission-start');
+  await persist();
 
   const stateStore =
     deps.stateStore ?? (await getStateStore(deps.projectRoot, deps.env ?? process.env));
@@ -327,6 +344,9 @@ export async function runZelariMission(
 
   while (true) {
     const runMode: CouncilRunMode = pendingDesign ? 'design-phase' : 'implementation';
+    if (runMode === 'implementation') {
+      deps.onMissionPhase?.('build', `impl-${implStep + 1}`);
+    }
     if (runMode === 'implementation') {
       if (implStep >= maxIter) break;
       implStep++;
@@ -384,7 +404,7 @@ export async function runZelariMission(
     } catch (err) {
       state.status = 'error';
       state.updatedAt = now().toISOString();
-      await writeMissionState(deps.projectRoot, state);
+      await persist();
       deps.emit(
         `[zelari] errore allo step ${step}: ${err instanceof Error ? err.message : String(err)}`,
       );
@@ -449,7 +469,8 @@ export async function runZelariMission(
     // Design is free: clear the flag and continue into implementation budget.
     if (runMode === 'design-phase') {
       pendingDesign = false;
-      await writeMissionState(deps.projectRoot, state);
+      deps.onMissionPhase?.('build', 'design-complete');
+      await persist();
       continue;
     }
 
@@ -504,7 +525,8 @@ export async function runZelariMission(
     // Success only when an IMPLEMENTATION slice completes (and wrote if counted).
     if (completionOk) {
       state.status = 'success';
-      await writeMissionState(deps.projectRoot, state);
+      deps.onMissionPhase?.('done', 'mvp-green');
+      await persist();
       deps.emit(
         `[zelari] ✓ missione completata — slice MVP verde all'implementazione ${implStep}/${maxIter} (step ${step}).`,
       );
@@ -523,7 +545,7 @@ export async function runZelariMission(
       if (maxStall > 0 && noWriteStreak >= maxStall) {
         state.status = 'stalled';
         state.updatedAt = now().toISOString();
-        await writeMissionState(deps.projectRoot, state);
+        await persist();
         deps.emit(
           `[zelari] fermata: ${noWriteStreak} iterazioni di implementation senza ` +
             'scrivere alcun file (il modello dichiara "fatto" ma non produce il ' +
@@ -541,7 +563,7 @@ export async function runZelariMission(
     ) {
       state.status = 'stopped';
       state.updatedAt = now().toISOString();
-      await writeMissionState(deps.projectRoot, state);
+      await persist();
       const reason =
         maxCost !== undefined && cumulativeCostUsd >= maxCost
           ? `budget USD ${formatCost(cumulativeCostUsd)} ≥ ${formatCost(maxCost)}`
@@ -554,12 +576,12 @@ export async function runZelariMission(
       return state;
     }
 
-    await writeMissionState(deps.projectRoot, state);
+    await persist();
   }
 
   state.status = 'stopped';
   state.updatedAt = now().toISOString();
-  await writeMissionState(deps.projectRoot, state);
+  await persist();
   deps.emit(
     `[zelari] fermata dopo ${maxIter} implementazioni senza completamento verde` +
       (designFirst ? ' (design-phase esclusa dal budget)' : '') +

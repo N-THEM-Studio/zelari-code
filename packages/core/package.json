@@ -1,6 +1,6 @@
 {
   "name": "@zelari/core",
-  "version": "1.49.0",
+  "version": "2.0.0-alpha.0",
   "description": "Zelari Code core library — provider-neutral agent loop (AgentHarness), multi-agent council orchestration, and built-in skills. Used by the zelari-code CLI; consumable by other agent frontends.",
   "author": "Anathema Studio <https://anathema-studio.com/>",
   "license": "Apache-2.0",
@@ -119,6 +119,22 @@
     "./harness/tools/builtin/web": {
       "types": "./dist/core/tools/builtin/web.d.ts",
       "default": "./dist/core/tools/builtin/web.js"
+    },
+    "./session": {
+      "types": "./dist/session/index.d.ts",
+      "default": "./dist/session/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "default": "./dist/runtime/index.js"
+    },
+    "./verification": {
+      "types": "./dist/verification/index.d.ts",
+      "default": "./dist/verification/index.js"
+    },
+    "./mission": {
+      "types": "./dist/mission/index.d.ts",
+      "default": "./dist/mission/index.js"
     }
   },
   "files": [

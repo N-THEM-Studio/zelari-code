@@ -5802,3 +5802,48 @@ kbd {
   border-top: 1px dashed rgba(255,255,255,0.12);
 }
 .app[data-theme="light"] .kraken-card-metrics { border-top-color: rgba(15,20,30,0.12); }
+
+/* ── Desktop 2.0 verification status + prefs ── */
+.verification-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 12px 4px;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: linear-gradient(160deg, rgba(52,199,123,0.06), rgba(255,255,255,0.02));
+  font-size: 12.5px;
+}
+.verification-card[data-verdict="BLOCKED"] {
+  background: linear-gradient(160deg, rgba(224,90,90,0.08), rgba(255,255,255,0.02));
+}
+.verification-card[data-verdict="REPAIR_REQUIRED"] {
+  background: linear-gradient(160deg, rgba(224,168,60,0.08), rgba(255,255,255,0.02));
+}
+.verification-card-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.verification-card-kicker {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.verification-card-verdict { font-weight: 600; }
+.verification-card-summary,
+.verification-card-counts,
+.verification-card-list {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.field-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.field-check input { margin-top: 3px; }

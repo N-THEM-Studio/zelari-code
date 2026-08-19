@@ -1,0 +1,344 @@
+/**
+ * sessionSpine — CLI dual-write bridge onto the 2.0 session spine (ADR-0016/0021).
+ *
+ * The 1.x JSONL sidecar (BrainEvent log) stays the transcript of record for
+ * the current render path; every model-surface event is ALSO mirrored into
+ * `<workspace>/.zelari/sessions/<sessionId>/events.jsonl` so that:
+ *
+ *   - `deriveMessages()` becomes a real, replayable history path (P1:
+ *     model-visible ⟺ logged — including user prompts, which the 1.x log
+ *     never recorded);
+ *   - resume/fork/lineage/export work off the spine;
+ *   - verification + mission state events land in the same log.
+ *
+ * Failure discipline (the "declared discrete fallback"): a spine error NEVER
+ * breaks the turn — the mirror marks itself degraded, warns once on stderr
+ * and stops writing. `ZELARI_SESSION_SPINE=0` disables the mirror entirely.
+ */
+import type { BrainEvent } from '@zelari/core/events';
+import type { SessionJsonlWriter } from '@zelari/core/harness';
+import {
+  SessionLogWriter,
+  SessionLogLockedError,
+  resolveSessionsDir,
+  readSessionLog,
+  buildProjection,
+  deriveMessages,
+  type SessionEventInput,
+  type SessionProjection,
+  type DerivedMessage,
+} from '@zelari/core/session';
+import { ACTOR_AGENT, ACTOR_SYSTEM, ACTOR_USER } from '@zelari/core/session';
+import path from 'node:path';
+
+/** Kill switch — default ON in the 2.0 alpha. */
+export function spineEnabled(): boolean {
+  return process.env.ZELARI_SESSION_SPINE !== '0';
+}
+
+/** The narrow writer surface the TUI loop actually uses. */
+export interface SessionWriterLike {
+  append(ev: BrainEvent): void | Promise<void>;
+  flush?(): Promise<void>;
+  close(): void | Promise<void>;
+  readonly path?: string;
+}
+
+export type SpineStatus = 'active' | 'disabled' | 'locked' | 'degraded' | 'closed';
+
+/** Map one BrainEvent onto a spine event; null when not spine-relevant. */
+export function mapBrainEventToSpine(ev: BrainEvent): SessionEventInput | null {
+  switch (ev.type) {
+    case 'tool_execution_start':
+      return {
+        kind: 'tool.call',
+        actor: ACTOR_AGENT,
+        data: { tool: ev.toolName, args: ev.args ?? {}, callId: ev.toolCallId },
+      };
+    case 'tool_execution_end':
+      return {
+        kind: 'tool.result',
+        actor: { type: 'tool' },
+        data: {
+          callId: ev.toolCallId,
+          output: ev.result,
+          ok: !ev.isError,
+          durationMs: ev.durationMs,
+        },
+      };
+    case 'session_compacted':
+      return {
+        kind: 'session.compacted',
+        actor: ACTOR_SYSTEM,
+        data: { summary: (ev as { summary?: unknown }).summary ?? '' },
+      };
+    case 'agent_start':
+      return {
+        kind: 'note',
+        actor: ACTOR_SYSTEM,
+        data: {
+          note: 'agent_start',
+          model: ev.model,
+          provider: ev.provider,
+          ...(ev.memberName ? { member: ev.memberName } : {}),
+        },
+      };
+    default:
+      // message deltas are coalesced at message_end by the mirror;
+      // ui/progress/metrics events are not part of the spine vocabulary.
+      return null;
+  }
+}
+
+export interface SpineMirrorOptions {
+  /** Explicit sessions base dir (tests). */
+  baseDir?: string;
+  now?: () => number;
+  /** Suppress the one-time degraded warning (tests). */
+  quiet?: boolean;
+  /**
+   * Extra fields merged into the first `session.started` / `session.resumed`
+   * data payload (profile id, workspace, tool-manifest hash).
+   */
+  extraStarted?: Record<string, unknown>;
+}
+
+const MAX_STREAM_BUFFERS = 32;
+
+/**
+ * Owns the spine writer for one session. All appends are serialized; every
+ * public method swallows errors (degrade-and-stop) — the spine must never
+ * take the interactive loop down with it.
+ */
+export class SessionSpineMirror {
+  private writer: SessionLogWriter | null = null;
+  private chain: Promise<void> = Promise.resolve();
+  private readonly streamBuffers = new Map<string, string>();
+  private warned = false;
+  status: SpineStatus = 'disabled';
+  /** Seq the log continued from when adopting an existing session. */
+  resumedFromSeq: number | undefined;
+  readonly sessionsDir: string;
+
+  private constructor(
+    readonly sessionId: string,
+    private readonly options: SpineMirrorOptions,
+  ) {
+    this.sessionsDir = resolveSessionsDir({ baseDir: options.baseDir });
+  }
+
+  /**
+   * Adopt a 1.x sessionId into the spine: continue the seq when the log
+   * already exists (resume), otherwise start fresh with `session.started`.
+   * Returns the mirror (never throws — check `.status`).
+   */
+  static async adopt(sessionId: string, options: SpineMirrorOptions = {}): Promise<SessionSpineMirror> {
+    const mirror = new SessionSpineMirror(sessionId, options);
+    if (!spineEnabled()) return mirror;
+    try {
+      const sessionDir = path.join(mirror.sessionsDir, sessionId);
+      const report = await readSessionLog(path.join(sessionDir, 'events.jsonl'));
+      const existed = report.events.length > 0 || report.issues.length > 0;
+      const lastSeq = report.events[report.events.length - 1]?.seq ?? 0;
+      mirror.writer = await SessionLogWriter.open(sessionDir, sessionId, lastSeq + 1, {
+        now: options.now,
+      });
+      mirror.resumedFromSeq = existed ? lastSeq : undefined;
+      await mirror.append({
+        kind: existed ? 'session.resumed' : 'session.started',
+        actor: ACTOR_SYSTEM,
+        data: {
+          reason: existed ? 'host-resume' : 'host-bootstrap',
+          bridge: 'cli-dual-write',
+          continuedFromSeq: existed ? lastSeq : undefined,
+          replayIssues: report.issues.length || undefined,
+          ...options.extraStarted,
+        },
+      });
+      mirror.status = 'active';
+    } catch (err) {
+      if (err instanceof SessionLogLockedError) {
+        mirror.status = 'locked';
+      } else {
+        mirror.status = 'degraded';
+        mirror.warnOnce(err);
+      }
+      mirror.writer = null;
+    }
+    return mirror;
+  }
+
+  /** Log the user prompt — the P1 gap the 1.x log never closed. */
+  userMessage(text: string): void {
+    void this.append({ kind: 'user.message', actor: ACTOR_USER, data: { text } });
+  }
+
+  /** Mirror one BrainEvent (coalescing message deltas until message_end). */
+  mirrorBrainEvent(ev: BrainEvent): void {
+    if (this.status !== 'active' || !this.writer) return;
+    if (ev.type === 'message_delta') {
+      const key = ev.messageId;
+      const prev = this.streamBuffers.get(key) ?? '';
+      this.streamBuffers.set(key, prev + ev.delta);
+      return;
+    }
+    if (ev.type === 'message_end') {
+      const text = this.streamBuffers.get(ev.messageId);
+      this.streamBuffers.delete(ev.messageId);
+      if (this.streamBuffers.size > MAX_STREAM_BUFFERS) {
+        this.streamBuffers.clear(); // defensive — bounded memory
+      }
+      // The buffered text is the full body; when the buffer is missing
+      // (e.g. mirror started mid-stream) fall back to nothing rather than
+      // logging a truncated claim.
+      if (text !== undefined && text.length > 0) {
+        void this.append({
+          kind: 'assistant.message',
+          actor: ACTOR_AGENT,
+          data: {
+            text,
+            messageId: ev.messageId,
+            finishReason: ev.finishReason,
+            ...(ev.memberName ? { member: ev.memberName } : {}),
+          },
+        });
+      }
+      return;
+    }
+    const mapped = mapBrainEventToSpine(ev);
+    if (mapped) void this.append(mapped);
+  }
+
+  /** Append a `verification.run` event (machine-readable completion evidence). */
+  verificationRun(payload: Record<string, unknown>): void {
+    void this.append({ kind: 'verification.run', actor: ACTOR_SYSTEM, data: payload });
+  }
+
+  /** Append a `mission.phase` transition (Fase 4 mission reliability). */
+  missionPhase(phase: string, note?: string): void {
+    void this.append({
+      kind: 'mission.phase',
+      actor: ACTOR_SYSTEM,
+      data: { phase, ...(note ? { note } : {}) },
+    });
+  }
+
+  note(text: string, data?: Record<string, unknown>): void {
+    void this.append({ kind: 'note', actor: ACTOR_SYSTEM, data: { note: text, ...data } });
+  }
+
+  private append(input: SessionEventInput): Promise<void> {
+    if (!this.writer || this.status === 'closed') return Promise.resolve();
+    this.chain = this.chain
+      .then(() => this.writer!.append(input))
+      .then(() => undefined)
+      .catch((err) => {
+        this.status = 'degraded';
+        this.writer = null;
+        this.warnOnce(err);
+      });
+    return this.chain;
+  }
+
+  private warnOnce(err: unknown): void {
+    if (this.warned || this.options.quiet) return;
+    this.warned = true;
+    const msg = err instanceof Error ? err.message : String(err);
+    try {
+      process.stderr.write(
+        `[zelari] session spine degraded for ${this.sessionId.slice(0, 8)}…: ${msg} (transcript continues on the 1.x log)\n`,
+      );
+    } catch {
+      /* stderr gone — nothing more to do */
+    }
+  }
+
+  /** Flush pending appends; append `session.ended` and release the lock. */
+  async close(reason = 'host-exit'): Promise<void> {
+    if (this.status === 'active' && this.writer) {
+      await this.append({ kind: 'session.ended', actor: ACTOR_SYSTEM, data: { reason } });
+    }
+    await this.chain;
+    const writer = this.writer;
+    this.writer = null;
+    if (this.status !== 'closed') this.status = 'closed';
+    if (writer) await writer.close().catch(() => undefined);
+  }
+
+  /**
+   * Release the lock WITHOUT appending `session.ended`.
+   * Used on SIGINT / abort so deriveMissionState can project
+   * `interrupted: true` and a later adopt continues the seq.
+   */
+  async release(): Promise<void> {
+    await this.chain;
+    const writer = this.writer;
+    this.writer = null;
+    if (this.status === 'active') this.status = 'closed';
+    if (writer) await writer.close().catch(() => undefined);
+  }
+}
+
+/** Writer that dual-writes: 1.x sidecar + spine mirror. */
+export class SpineMirroringWriter implements SessionWriterLike {
+  constructor(
+    private readonly inner: SessionJsonlWriter,
+    public readonly spine: SessionSpineMirror | null,
+  ) {}
+
+  get path(): string | undefined {
+    return this.inner.path;
+  }
+
+  append(ev: BrainEvent): void | Promise<void> {
+    const result = this.inner.append(ev);
+    this.spine?.mirrorBrainEvent(ev);
+    return result;
+  }
+
+  async flush(): Promise<void> {
+    await this.inner.flush?.();
+  }
+
+  async close(): Promise<void> {
+    await this.inner.close();
+    await this.spine?.close();
+  }
+}
+
+/**
+ * Bootstrap the dual-write writer for a TUI session: opens the spine mirror
+ * (best-effort) and wraps the 1.x writer so the chat loop needs no changes.
+ */
+export async function wrapSessionWriter(
+  inner: SessionJsonlWriter,
+  sessionId: string,
+  options: SpineMirrorOptions = {},
+): Promise<SpineMirroringWriter> {
+  const spine = await SessionSpineMirror.adopt(sessionId, options);
+  return new SpineMirroringWriter(inner, spine.status === 'active' ? spine : null);
+}
+
+export interface SpineResumeContext {
+  projection: SessionProjection;
+  /** deriveMessages() over the replayed log — the canonical 2.0 history. */
+  derived: DerivedMessage[];
+}
+
+/**
+ * Replay the spine for resume UX (headless + TUI status line). Returns null
+ * when the session has no spine log yet.
+ */
+export async function resumeSpineContext(
+  sessionId: string,
+  baseDir?: string,
+): Promise<SpineResumeContext | null> {
+  const sessionsDir = resolveSessionsDir({ baseDir });
+  const eventsPath = path.join(sessionsDir, sessionId, 'events.jsonl');
+  const report = await readSessionLog(eventsPath).catch(() => null);
+  if (!report || (report.events.length === 0 && report.issues.length === 0)) return null;
+  return {
+    projection: buildProjection(report.events, report.issues),
+    derived: deriveMessages(report.events),
+  };
+}

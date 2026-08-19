@@ -5,6 +5,27 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-alpha.0] - 2026-08-19
+
+First 2.0 pre-release: the reconstructability + verifiability spine lands in `@zelari/core` (Phases 0–2 plus the deterministic verification contract of Phase 3A; CLI/Desktop surfaces keep working unchanged on the 1.x paths). Full plan: `.zelari/plans/2026-08-18-zelari-2.0-verifica-e-piano-implementazione.md`.
+
+### Added
+- **Session spine (ADR-0016 ratified, ADR-0021)** — `@zelari/core/session`: append-only JSONL log with `schemaVersion`, monotonic `seq`, single-writer ownership lock (stale-lock takeover), replay validation (corrupt lines / gaps / duplicates reported, never fatal), `deriveMessages` as the single model-history path, fork/resume lineage, portable session export. Default location `.zelari/sessions/<id>/events.jsonl`, override via `ZELARI_SESSIONS_DIR`.
+- **Execution seams + profiles (ADR-0022)** — `@zelari/core/runtime`: `WorkspaceProvider` (local + git worktree, path-jailed), `FsProvider`/`ShellProvider` (node + in-memory impls for tests), `SubagentProvider` seam, `ExecutionContext` bundle, and versioned profiles `minimal/v1`, `kraken/v1`, `council/v1`, `mission/v1` with `toolManifestHash`.
+- **Deterministic verification (ADR-0023)** — `@zelari/core/verification`: `Criterion` / `EvidenceRef` (tier + sha256 digest) / `VerificationResult` (`pass|fail|unknown`, `unknown ≠ pass` everywhere), `VerificationEngine` (command/file checks, zero LLM), `CompletionPolicy` → `PASS | REPAIR_REQUIRED | BLOCKED` (a clean "done" without sufficient evidence is blocked), Zelari Coding Criteria Pack v1, false-done metrics.
+- **Optional VerifierService (Phase 3B, alpha)** — `@zelari/core/verification/verifier`: enable/disable, `inherit | fixed` model selection reusing the 1.49 `--verifier-provider/--verifier-model` channel semantics, effective provider/model always logged, progress score labeled `experimental`, hypothesis ranking, BoN N=3 primitive with **declared discrete fallback**; verifier output is advisory and can never flip `CompletionPolicy` (no P2 bypass).
+- **Mission state from the spine (Phase 4, core)** — `@zelari/core/mission`: `deriveMissionState` projects `design → build → verification → done`, progress and replan counts from the session log; resume = reopen the log.
+- **Experimental flags registry (Phase 5)** — `@zelari/core/experimental`: `ZELARI_EXPERIMENTAL` CSV gate (`bon`, `remote-sandbox`, `e2b-provider`, `generated-orchestration`, `nested-delegation`), all OFF by default.
+- **Host CLI on the session spine** — headless dual-write (`--profile`, `--resume`, `--export-session`, `--strict-done`, `zelari-code --session-export`), TUI observe path, mission `mission.phase` + interrupt without `session.ended`.
+- **Desktop 2.0 surface** — Settings: execution profile, strict BUILD gate, experimental BoN; chat: deterministic `verification_run` card (source/tier explicit, never a %); Tauri spawn forwards `--profile` / `--strict-done` / `ZELARI_EXPERIMENTAL=bon`.
+- **Version coherence gate** — `npm run verify:versions` + CI step: root version === `@zelari/core` version, exact devDep match, CHANGELOG entry required.
+
+### Fixed
+- Version drift: root devDependency `@zelari/core` was `1.48.1` while the workspace package was `1.49.0` (registry-copy split-brain risk). Both now move in lockstep at `2.0.0-alpha.0`, enforced by the new gate.
+
+### Notes
+- Naming deviations from the plan §3A.1 due to pre-existing council barrel exports: the evidence tier type ships as `EvidenceRefTier` (was `EvidenceTier`) and the session listing entry as `SessionListEntry` (was `SessionSummary`). Semantics unchanged.
+
 ## [1.49.0] - 2026-08-18
 
 ### Added

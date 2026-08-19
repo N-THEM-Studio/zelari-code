@@ -55,6 +55,12 @@ import { writeSessionTodos } from './sessionTodos.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { evaluateStrictBuildGate, strictGateEventPayload } from './kraken/verificationBridge.js';
+import {
+  openHeadlessSpine,
+  resolveHeadlessProfileId,
+  type HeadlessSpineHandle,
+} from './headlessSpine.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   resetTaskSpawnCount();
@@ -63,6 +69,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   // (todo_read then returns the prior state instead of empty).
   if (opts.todos && opts.todos.length > 0) {
     writeSessionTodos(opts.todos, { merge: false });
+  }
+  if (opts.strictDone) {
+    process.env.ZELARI_STRICT_DONE = '1';
   }
   // Expand @path tags in the task prompt (Desktop/CLI parity). Best-effort —
   // already-inlined Desktop attachments are left alone if no @tokens remain.
@@ -176,15 +185,17 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   }
 
   const mode = opts.mode ?? (opts.useCouncil ? 'council' : 'kraken');
+  const profileId = resolveHeadlessProfileId(mode, opts.profile);
 
   if (opts.output === 'json') {
     emitEvent({
       type: 'log',
-      message: `[headless] mode=${mode} phase=${opts.phase ?? 'build'} provider=${provider} model=${model}`,
+      message: `[headless] mode=${mode} phase=${opts.phase ?? 'build'} profile=${profileId} provider=${provider} model=${model}`,
     });
   } else {
     process.stderr.write(
-      `[zelari-code --headless] mode=${mode} phase=${describePhase(opts.phase ?? 'build')}\n`,
+      `[zelari-code --headless] mode=${mode} phase=${describePhase(opts.phase ?? 'build')} profile=${profileId}
+`,
     );
   }
 
@@ -456,6 +467,14 @@ async function runHeadlessSingle(
   providerStream: ProviderStreamFn,
 ): Promise<number> {
   const sessionId = crypto.randomUUID();
+
+  const spine = await openHeadlessSpine({
+    sessionId: opts.resumeSessionId ?? sessionId,
+    mode: opts.mode,
+    profile: opts.profile,
+    workspace: process.cwd(),
+  });
+  if (opts.task) spine.userMessage(opts.task);
   // Fase 3 (ADR-0020): fresh per-run candidate registry (each headless run
   // is one process, so per-run == per-turn here).
   resetKrakenCandidates();
@@ -706,6 +725,7 @@ async function runHeadlessSingle(
     try {
       for await (const event of harness.run()) {
         progressRuntime.observe(event);
+        spine.observe(event);
         if (event.type === 'message_start') {
           scrub.reset();
         }
@@ -879,8 +899,14 @@ async function runHeadlessSingle(
     isKrakenSelectionEnabled() &&
     !planModeFromOpts(opts)
   ) {
-    const gate = evaluateKrakenCompletionGate('build');
-    if (gate.blocked) {
+    const strictGate = evaluateStrictBuildGate('build');
+    const gate = strictGate.gate;
+    const verificationPayload = strictGateEventPayload(strictGate);
+    spine.verificationRun(verificationPayload);
+    if (opts.output === 'json') {
+      emitEvent({ type: 'verification_run', ...verificationPayload });
+    }
+    if (strictGate.blocked) {
       const repairPrompt = buildKrakenRepairPrompt(gate);
       if (opts.output === 'json') {
         emitEvent({
@@ -909,7 +935,13 @@ async function runHeadlessSingle(
         successfulWrites: pass.successfulWrites + repair.successfulWrites,
         emittedWrites: pass.emittedWrites + repair.emittedWrites,
       };
-      if (!evaluateKrakenCompletionGate('build').blocked) markRepairSucceeded();
+      const after = evaluateStrictBuildGate('build');
+      const afterPayload = strictGateEventPayload(after);
+      spine.verificationRun(afterPayload);
+      if (opts.output === 'json') {
+        emitEvent({ type: 'verification_run', ...afterPayload });
+      }
+      if (!after.blocked) markRepairSucceeded();
     }
   }
 
@@ -973,6 +1005,22 @@ async function runHeadlessSingle(
     }
   }
 
+  try {
+    await spine.close(pass.finalReason === 'error' ? 'error' : 'completed');
+  } catch { /* spine never fails the run */ }
+  if (opts.exportSessionPath) {
+    try {
+      const json = await spine.exportJson();
+      if (json) {
+        if (opts.exportSessionPath === '-') process.stdout.write(json + '\n');
+        else {
+          await fs.mkdir(path.dirname(opts.exportSessionPath), { recursive: true }).catch(() => undefined);
+          await fs.writeFile(opts.exportSessionPath, json, 'utf8');
+        }
+      }
+    } catch { /* export is best-effort */ }
+  }
+
   if (pass.finalReason === 'error') return 3;
   return pass.exitCode;
 }
@@ -1017,6 +1065,14 @@ async function runHeadlessCouncil(
 ): Promise<number> {
   const { dispatchCouncil } = await import('./councilDispatcher.js');
   const sessionId = crypto.randomUUID();
+
+  const spine = await openHeadlessSpine({
+    sessionId: opts.resumeSessionId ?? sessionId,
+    mode: opts.mode,
+    profile: opts.profile,
+    workspace: process.cwd(),
+  });
+  if (opts.task) spine.userMessage(opts.task);
   // Experiment: free-form council+build soft-gated to design-phase unless
   // ZELARI_COUNCIL_CAN_BUILD=1. Also strip project mutators (planMode tools).
   const { shouldAllowCouncilBuild } = await import('./buildPolicy.js');
@@ -1100,6 +1156,7 @@ async function runHeadlessCouncil(
         scrub.reset();
         currentAssistantText = '';
       }
+      spine.observe(event);
       if (event.type === 'message_delta' && typeof event.delta === 'string') {
         const cleanDelta = scrub.push(event.delta);
         if (cleanDelta.length > 0) currentAssistantText += cleanDelta;
@@ -1148,6 +1205,21 @@ async function runHeadlessCouncil(
       /* non-fatal */
     }
   }
+  try {
+    await spine.close(exitCode === 0 ? 'completed' : 'error');
+  } catch { /* spine never fails the run */ }
+  if (opts.exportSessionPath) {
+    try {
+      const json = await spine.exportJson();
+      if (json) {
+        if (opts.exportSessionPath === '-') process.stdout.write(json + '\n');
+        else {
+          await fs.mkdir(path.dirname(opts.exportSessionPath), { recursive: true }).catch(() => undefined);
+          await fs.writeFile(opts.exportSessionPath, json, 'utf8');
+        }
+      }
+    } catch { /* export is best-effort */ }
+  }
   return exitCode;
 }
 
@@ -1161,6 +1233,16 @@ async function runHeadlessZelari(
   providerStream: ProviderStreamFn,
 ): Promise<number> {
   const projectRoot = process.cwd();
+
+  const sessionId = opts.resumeSessionId ?? crypto.randomUUID();
+  const spine = await openHeadlessSpine({
+    sessionId,
+    mode: 'zelari',
+    profile: opts.profile ?? 'mission/v1',
+    workspace: projectRoot,
+  });
+  if (opts.task) spine.userMessage(opts.task);
+  spine.missionPhase('design', 'mission-start');
   const { buildMissionBrief } = await import('@zelari/core/council');
   const { hasWorkspacePlan } = await import('./workspace/planDetect.js');
   const { getMemoryBackend } = await import('./memory/fileBackend.js');
@@ -1241,6 +1323,7 @@ async function runHeadlessZelari(
       memory,
       emit,
       buildViaAgent,
+      onMissionPhase: (phase, note) => spine.missionPhase(phase, note),
       runSlice: async ({
         userMessage: slicePrompt,
         runMode,
@@ -1468,8 +1551,13 @@ async function runHeadlessZelari(
     });
 
     if (state.status === 'error') exitCode = exitCode || 3;
-    else if (state.status === 'success') exitCode = 0;
-    else if (state.status === 'stalled' || state.status === 'stopped') exitCode = exitCode || 0;
+    else if (state.status === 'success') {
+      exitCode = 0;
+      spine.missionPhase('done', 'mission-success');
+    } else if (state.status === 'stalled' || state.status === 'stopped') {
+      exitCode = exitCode || 0;
+      spine.missionPhase('verification', `mission-${state.status}`);
+    }
   } catch (err) {
     process.stderr.write(
       `[zelari-code --headless] zelari error: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -1481,6 +1569,22 @@ async function runHeadlessZelari(
       await releaseLock(projectRoot);
     }
     await memory.close().catch(() => undefined);
+    try {
+      if (exitCode === 0) await spine.close('completed');
+      else await spine.close(exitCode === 2 ? 'error' : 'stopped');
+    } catch { /* spine never fails the run */ }
+    if (opts.exportSessionPath) {
+      try {
+        const json = await spine.exportJson();
+        if (json) {
+          if (opts.exportSessionPath === '-') process.stdout.write(json + '\n');
+          else {
+            await fs.mkdir(path.dirname(opts.exportSessionPath), { recursive: true }).catch(() => undefined);
+            await fs.writeFile(opts.exportSessionPath, json, 'utf8');
+          }
+        }
+      } catch { /* export is best-effort */ }
+    }
   }
 
   if (opts.output === 'json') {
@@ -1501,3 +1605,5 @@ async function runHeadlessZelari(
 
   return exitCode;
 }
+
+

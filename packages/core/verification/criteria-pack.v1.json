@@ -1,0 +1,52 @@
+{
+  "$schema": "zelari-coding-criteria-pack",
+  "id": "zelari-coding/v1",
+  "description": "Zelari Coding Criteria Pack v1 — default evidence contract for coding tasks. Runtime truth is packages/core/src/verification/criteriaPack.v1.ts; this file is the versioned, reviewable definition.",
+  "categories": [
+    {
+      "category": "correctness",
+      "criteria": [
+        {
+          "id": "correctness.specification",
+          "text": "The test suite passes — behavior matches the specification.",
+          "required": true,
+          "check": { "kind": "command", "command": "<testCommand>", "timeoutMs": 600000 }
+        },
+        {
+          "id": "correctness.observable-output",
+          "text": "The project builds successfully (observable output artifact).",
+          "required": true,
+          "check": { "kind": "command", "command": "<buildCommand>", "timeoutMs": 600000 }
+        },
+        {
+          "id": "correctness.error-signals",
+          "text": "Static checks (typecheck) pass with no new errors.",
+          "required": true,
+          "check": { "kind": "command", "command": "<typecheckCommand>", "timeoutMs": 600000 }
+        }
+      ]
+    },
+    {
+      "category": "quality",
+      "criteria": [
+        {
+          "id": "quality.scope-discipline",
+          "text": "No unrelated files changed (minimal diff discipline).",
+          "required": false,
+          "check": { "kind": "command", "command": "<scopeCommand|null>", "note": "null leaves the criterion unknown (advisory)" }
+        }
+      ]
+    },
+    {
+      "category": "evidence",
+      "criteria": [
+        {
+          "id": "evidence.verification-quality",
+          "text": "Verification evidence is traceable to the original tool output.",
+          "required": false,
+          "check": { "kind": "none", "reason": "advisory: audited via EvidenceRef digests on the session spine" }
+        }
+      ]
+    }
+  ]
+}

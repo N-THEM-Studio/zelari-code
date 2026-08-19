@@ -35,7 +35,11 @@ User docs: `README.md`, `docs/GUIDA.md`, `docs/TOOLS.md`. Contribute: `CONTRIBUT
 See `.zelari/decisions/` for full ADRs (context/decision/consequences).
 
 **Accepted:**
-- **011-windows-path-auto-fix** _(accepted)_ — Auto-fix the npm global prefix missing from the user PATH on Windows, both at install time (`scripts/postinstall.mjs` → `scripts/repair-path.mjs`) and at runtime (`zelari-code --fix-path` → `src/cli/utils/fixPath.ts`). Scope is HKCU ("User"), never HKLM; idempotent exact-entry match; opt-out via `ZELARI_NO_PATH_REPAIR=1`. `zelari-code --doctor` now points users at `--fix-path`. Residual limits: GPO PATH resets, SYSTEM-scope installs, and non-standard node managers (nvm-windows/scoop/volta) remain out of reach.
+- **0016-event-sourced-session-log** _(accepted 2026-08-19)_ — session spine: append-only JSONL, single writer + ownership lock, monotonic `seq`, `SCHEMA_VERSION`, tolerant replay, `deriveMessages` as the only model-history path. Location: `.zelari/sessions/` (env `ZELARI_SESSIONS_DIR`).
+- **0021-session-spine-contract** _(accepted)_ — public contract of the spine v1 (envelope, writer, replay, projection, lineage, export).
+- **0022-execution-seams-profiles** _(accepted)_ — WorkspaceProvider/FsProvider/ShellProvider/SubagentProvider seams + versioned profiles (`minimal/v1`, `kraken/v1`, `council/v1`, `mission/v1`).
+- **0023-deterministic-verification-completion** _(accepted)_ — Criterion/EvidenceRef/VerificationResult evidence contract, `unknown ≠ pass`, CompletionPolicy `PASS|REPAIR_REQUIRED|BLOCKED`, criteria pack v1, VerifierService advisory-only.
+- **011-windows-path-auto-fix**- **011-windows-path-auto-fix** _(accepted)_ — Auto-fix the npm global prefix missing from the user PATH on Windows, both at install time (`scripts/postinstall.mjs` → `scripts/repair-path.mjs`) and at runtime (`zelari-code --fix-path` → `src/cli/utils/fixPath.ts`). Scope is HKCU ("User"), never HKLM; idempotent exact-entry match; opt-out via `ZELARI_NO_PATH_REPAIR=1`. `zelari-code --doctor` now points users at `--fix-path`. Residual limits: GPO PATH resets, SYSTEM-scope installs, and non-standard node managers (nvm-windows/scoop/volta) remain out of reach.
 
 **Proposed:**
 - **001-new-decision** _(proposed)_
@@ -76,6 +80,7 @@ See `.zelari/decisions/` for full ADRs (context/decision/consequences).
 `npm run smoke` — node bin/zelari-code.js --version
 `npm run test` — vitest run
 `npm run verify:principles` — node scripts/verify-principles.mjs
+`npm run verify:versions` — node scripts/verify-versions.mjs
 `npm run test:watch` — vitest
 `npm run typecheck` — npm run build --workspace=@zelari/core && tsc --noEmit -p tsconfig.json
 

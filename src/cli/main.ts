@@ -442,6 +442,11 @@ function pickRootComponent(): {
         "    --phase plan|build  Work phase (default: build)\n" +
         "    --provider <id>    Provider override (default: active)\n" +
         "    --model <id>       Model override (default: provider default)\n" +
+        "    --profile <id>     Capability profile (minimal/v1|kraken/v1|council/v1|mission/v1)\n" +
+        "    --resume <id>      Continue a 2.0 spine session\n" +
+        "    --export-session <path>  Write zelari-session-export/1 after the run\n" +
+        "    --strict-done      Evidence-based BUILD completion gate\n" +
+        "  --session-export <id>  Print a portable 2.0 session export (no LLM)\n" +
         "  serve               Companion host for Android/remote clients (Tailscale)\n" +
         "    --bind <ip>       Listen address (default: 127.0.0.1; use Tailscale IP)\n" +
         "    --port <n>        Port (default: 7421)\n" +
@@ -997,6 +1002,33 @@ function pickRootComponent(): {
     return { kind: "done" };
   }
 
+  // 2.0 session export (no LLM, no TUI).
+  if (argv.includes("--session-export")) {
+    const i = argv.indexOf("--session-export");
+    const sessionId = i >= 0 && argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[i + 1] : undefined;
+    if (!sessionId) {
+      console.error("[zelari-code --session-export] a session id is required");
+      process.exit(1);
+    }
+    void import("./headlessSpine.js")
+      .then(({ exportSessionById }) => exportSessionById(sessionId))
+      .then((res) => {
+        if (!res.ok) {
+          console.error(`[zelari-code --session-export] ${res.error}`);
+          process.exit(1);
+        }
+        process.stdout.write(res.json + "\n");
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error(
+          `[zelari-code --session-export] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      });
+    return { kind: "done" };
+  }
+
   // Headless mode: short-circuit TUI entirely. Must be checked BEFORE
   // the wizard branch so users can run scripted tasks on a fresh
   // install (no provider.json yet) by passing --provider + env var.
@@ -1151,3 +1183,5 @@ function main() {
 }
 
 main();
+
+

@@ -36,6 +36,16 @@ import {
   type KrakenProgressView,
   type KrakenMetricsView,
 } from "./components/KrakenProgressCard";
+import {
+  VerificationStatusCard,
+  readVerificationRun,
+  type VerificationRunView,
+} from "./components/VerificationStatusCard";
+import {
+  loadDesktopPrefs,
+  saveDesktopPrefs,
+  type DesktopPrefs,
+} from "./desktopPrefs";
 
 import { LiveTasksPanel } from "./components/LiveTasksPanel";
 import { parseTodosFromUnknown } from "./sessionTodosUi";
@@ -379,6 +389,10 @@ function saveDefaults(mode: DispatchMode, phase: WorkPhase) {
   }
 }
 
+function loadPrefs(): DesktopPrefs {
+  return loadDesktopPrefs();
+}
+
 function newConversation(
   mode: DispatchMode,
   phase: WorkPhase,
@@ -418,6 +432,10 @@ interface KrakenCardState {
   metrics?: KrakenMetricsView;
 }
 
+interface VerificationCardState {
+  run?: VerificationRunView;
+}
+
 export default function App() {
   const defaults = useMemo(() => loadDefaults(), []);
   const [view, setView] = useState<AppView>("chat");
@@ -446,6 +464,10 @@ export default function App() {
   const [krakenCardByConv, setKrakenCardByConv] = useState<
     Record<string, KrakenCardState>
   >({});
+  const [verificationByConv, setVerificationByConv] = useState<
+    Record<string, VerificationCardState>
+  >({});
+  const [prefs, setPrefs] = useState<DesktopPrefs>(() => loadPrefs());
   const [liveMemberNameByConv, setLiveMemberNameByConv] = useState<
     Record<string, string | null>
   >({});
@@ -1230,6 +1252,16 @@ export default function App() {
           }
           return;
         }
+        if (ev.type === "verification_run") {
+          const run = readVerificationRun(ev);
+          if (run) {
+            setVerificationByConv((prev) => ({
+              ...prev,
+              [convId]: { run },
+            }));
+          }
+          return;
+        }
 
         if (ev.type === "message_end" || ev.type === "agent_end") {
           const aid = turn.assistantId;
@@ -1899,6 +1931,7 @@ export default function App() {
     setLiveToolLabelFor(convId, null);
     setLiveStepsFor(convId, []);
     setKrakenCardByConv((prev) => ({ ...prev, [convId]: {} }));
+    setVerificationByConv((prev) => ({ ...prev, [convId]: {} }));
     turn.pendingToolNames.clear();
     setLiveMemberNameFor(convId, null);
     setFollowStream(true);
@@ -1968,6 +2001,9 @@ export default function App() {
         krakenGraph: krakenGraph || undefined,
         planOnly: planOnly || undefined,
         runPlan,
+        profile: prefs.profile,
+        strictDone: prefs.strictDone || undefined,
+        bonAlpha: prefs.bonAlpha || undefined,
       });
       runCoordinator.started({
         runId,
@@ -2160,6 +2196,7 @@ export default function App() {
             cli={cli}
             defaultMode={defaultMode}
             defaultPhase={defaultPhase}
+            prefs={prefs}
             workdir={workdir}
             theme={theme}
             onThemeChange={onThemeChange}
@@ -2176,6 +2213,8 @@ export default function App() {
               setDefaultMode(args.defaultMode);
               setDefaultPhase(args.defaultPhase);
               saveDefaults(args.defaultMode, args.defaultPhase);
+              saveDesktopPrefs(args.prefs);
+              setPrefs(args.prefs);
               setProvider(args.provider);
               setModel(args.model);
               setMode(args.defaultMode);
@@ -2541,6 +2580,11 @@ export default function App() {
                   <KrakenProgressCard
                     progress={krakenCard.progress ?? null}
                     metrics={krakenCard.metrics ?? null}
+                  />
+                ) : null}
+                {verificationByConv[active?.id ?? ""]?.run ? (
+                  <VerificationStatusCard
+                    run={verificationByConv[active?.id ?? ""].run ?? null}
                   />
                 ) : null}
               </div>

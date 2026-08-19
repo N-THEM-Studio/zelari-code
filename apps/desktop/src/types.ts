@@ -143,6 +143,12 @@ export interface RunTaskArgs {
   planOnly?: boolean;
   /** Kraken graph "build" phase after plan: execute the saved plan by id. */
   runPlan?: string;
+  /** Capability profile (ADR-0022): minimal/v1 | kraken/v1 | council/v1 | mission/v1. */
+  profile?: string;
+  /** Evidence-based BUILD completion gate (`--strict-done` / ZELARI_STRICT_DONE=1). */
+  strictDone?: boolean;
+  /** Experimental Best-of-N (sets ZELARI_EXPERIMENTAL=bon on the spawned CLI). */
+  bonAlpha?: boolean;
 }
 
 /**

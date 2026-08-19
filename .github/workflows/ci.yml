@@ -34,3 +34,6 @@ jobs:
 
       - name: Verify first principles (PRINCIPLES.md)
         run: npm run verify:principles
+
+      - name: Version coherence (root vs @zelari/core vs devDep)
+        run: npm run verify:versions
