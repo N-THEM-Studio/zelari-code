@@ -7,7 +7,7 @@
  * sufficient evidence is blockable by construction: unknown ≠ pass.
  */
 
-import type { Criterion, VerificationResult } from './types.js';
+import type { Criterion, EvidenceRefTier, VerificationResult } from './types.js';
 
 export type CompletionVerdict = 'PASS' | 'REPAIR_REQUIRED' | 'BLOCKED';
 
@@ -15,9 +15,31 @@ export interface CompletionPolicy {
   mode: 'strict';
   /** Criterion ids gating completion; '*' = every criterion with required:true. */
   required: '*' | string[];
+  /**
+   * Evidence tiers that may satisfy a criterion (E2.2). Undefined = every tier
+   * is admissible (legacy behaviour). The strict BUILD gate admits only
+   * deterministic tiers: an advisory LLM score alone is never proof of done
+   * (PRINCIPLES P1 — trust tool/terminal output, not narration).
+   */
+  admissibleTiers?: readonly EvidenceRefTier[];
 }
 
 export const STRICT_ALL_POLICY: CompletionPolicy = { mode: 'strict', required: '*' };
+
+/** Tiers produced by deterministic observation: tools, commands, fs, humans. */
+export const DETERMINISTIC_EVIDENCE_TIERS: readonly EvidenceRefTier[] = [
+  'tool-output',
+  'command-output',
+  'fs-observation',
+  'human',
+];
+
+/** Strict BUILD/mission completion: every required criterion, deterministic evidence only. */
+export const STRICT_BUILD_POLICY: CompletionPolicy = {
+  mode: 'strict',
+  required: '*',
+  admissibleTiers: DETERMINISTIC_EVIDENCE_TIERS,
+};
 
 export interface UnsatisfiedCriterion {
   id: string;
@@ -74,6 +96,16 @@ export function evaluateCompletion(
         id,
         status: 'unknown',
         reason: 'pass without evidence refs — not acceptable for completion',
+      });
+      continue;
+    }
+    const admissible = policy.admissibleTiers;
+    if (admissible && !result.evidence.some((e) => admissible.includes(e.tier))) {
+      const tiers = [...new Set(result.evidence.map((e) => e.tier))].join(', ');
+      unsatisfied.push({
+        id,
+        status: 'unknown',
+        reason: `pass with inadmissible evidence tiers only (${tiers}) — not acceptable for completion`,
       });
       continue;
     }

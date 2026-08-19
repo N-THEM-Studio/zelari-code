@@ -43,3 +43,27 @@ describe('ADR-0024 — legacy context isolation', () => {
     }
   });
 });
+
+describe('strict done gate enforcement (E2.2)', () => {
+  it('headless kraken BUILD enforces the strict verdict on the run outcome', () => {
+    const src = readCli('runHeadless.ts');
+    expect(src).toContain('strictGateExitCode(after)');
+    expect(src).toMatch(/strictExit !== 0 \? 'stopped' : 'completed'/);
+    expect(src).toMatch(/if \(strictExit !== 0\) return strictExit;/);
+  });
+
+  it('the strict BUILD policy excludes verifier-llm evidence (LLM score alone is not done)', () => {
+    const policy = readFileSync(
+      path.join(process.cwd(), 'packages', 'core', 'src', 'verification', 'completionPolicy.ts'),
+      'utf8',
+    );
+    expect(policy).toContain('STRICT_BUILD_POLICY');
+    const tiersBlock = policy.slice(
+      policy.indexOf('DETERMINISTIC_EVIDENCE_TIERS'),
+      policy.indexOf('STRICT_BUILD_POLICY'),
+    );
+    expect(tiersBlock).toContain("'tool-output'");
+    expect(tiersBlock).not.toContain("'verifier-llm'");
+    expect(policy).toMatch(/admissibleTiers/);
+  });
+});

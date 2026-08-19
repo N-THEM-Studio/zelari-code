@@ -33,6 +33,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `@zelari/core/verification` exports `sessionEvidence`: `parseVerificationRunPayload` / `lastVerificationRun` / `snapshotToCompletionEvaluation` reconstruct a CompletionEvaluation from `verification.run` events in the session log alone — no in-process registry — so hosts, mission retries and audits can confirm why a turn finished (P1 applied to the decision itself). Discipline: missing/malformed → null (no evidence, never a pass); non-strict records are readable snapshots but never admissible as completion evidence; unknown verdicts degrade to BLOCKED.
 - `SessionSpineMirror.lastVerificationRun()` (and the headless handle delegation) exposes the last strict verification record of the current session; `evaluateStrictBuildGateFromSession(mode, snapshot)` in the kraken bridge rebuilds the strict gate evaluation from it. Round-trip covered by `verificationBridge.session.test.ts` (evaluate → payload → spine append → replay → same verdict, blockers add up, missing record = open-not-pass).
 
+### Changed — Exit-2/E2.2: strict done gate enforces the run outcome (deterministic evidence only)
+
+- **Completion policy tiers (core):** `CompletionPolicy` gains `admissibleTiers`; `STRICT_BUILD_POLICY` (used by the kraken strict gate) admits only deterministic tiers (`tool-output`, `command-output`, `fs-observation`, `human`). A criterion whose passing evidence is `verifier-llm`-only is `unknown` — an advisory LLM score alone is never proof of done (P1; Exit-2 criterion "score LLM da solo non basta"). The default policy keeps every tier admissible (legacy behaviour unchanged).
+- **Headless enforcement:** when `ZELARI_STRICT_DONE=1` and the completion gate is still blocked after the automatic repair pass, the kraken BUILD run now closes non-success — dedicated `STRICT_DONE_EXIT_CODE = 4` (distinct from transport `3` and usage `2`), spine session status `stopped` instead of `completed`, and an explicit NDJSON log line with the verdict summary. A "done" claim without sufficient evidence can no longer exit 0 in strict mode.
+- **TUI:** after the repair pass, an unresolved strict gate surfaces `[kraken] strict done: … turn is NOT verified-complete` instead of passing silently.
+- **Tests:** core policy tier cases (LLM-only blocks, mixed passes, default unchanged), bridge `strictGateExitCode` (strict blocked → 4, open → 0, strict-off legacy blocked → 0), and the `legacyContextIsolation` architectural gate now asserts the headless exit-path wiring.
+
 ## [2.0.0-alpha.5] - 2026-08-19
 
 ### Alpha exit plan — what is left for 2.0

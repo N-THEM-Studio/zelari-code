@@ -839,6 +839,17 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 !evaluateStrictBuildGate("build").blocked
               ) {
                 markRepairSucceeded(); // repair pass resolved every blocking check
+              } else if (event.reason === "completed" && krakenRepairEnqueued) {
+                const still = evaluateStrictBuildGate("build");
+                if (still.blocked) {
+                  appendSystem(
+                    setMessages,
+                    `[kraken] strict done: evidence still incomplete after repair (${
+                      still.evaluation?.unsatisfied.length ?? "?"
+                    } unresolved) — turn is NOT verified-complete`,
+                    Date.now(),
+                  );
+                }
               }
               if (!krakenSuppressFinish) progressRuntime.finish(event.reason);
             }

@@ -55,7 +55,7 @@ import { writeSessionTodos } from './sessionTodos.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { evaluateStrictBuildGate, strictGateEventPayload } from './kraken/verificationBridge.js';
+import { evaluateStrictBuildGate, strictGateEventPayload, strictGateExitCode } from './kraken/verificationBridge.js';
 import {
   openHeadlessSpine,
   resolveHeadlessProfileId,
@@ -879,7 +879,11 @@ async function runHeadlessSingle(
     };
   }
 
-  // Fase 8 (ADR-0020): completion gate — a BUILD turn that used selection
+  // E2.2: when strict mode is on and the gate stays blocked after the repair
+  // pass, the run closes non-success (dedicated exit code + session status).
+  let strictExit = 0;
+
+  // Fase 8 (ADR-0020): completion gate — a BUILD turn that used selection  // Fase 8 (ADR-0020): completion gate — a BUILD turn that used selection
   // cannot cleanly finish while required checks are unresolved (fail OR
   // unknown — a degraded observation is never proof). One automatic
   // repair pass (budget = 1, structural), reusing the same recovery
@@ -934,6 +938,14 @@ async function runHeadlessSingle(
         emitEvent({ type: 'verification_run', ...afterPayload });
       }
       if (!after.blocked) markRepairSucceeded();
+      else {
+        strictExit = strictGateExitCode(after);
+        const gateMsg =
+          `[headless] Kraken BUILD: strict completion gate still blocked after repair pass — ` +
+          `closing non-success (exit ${strictExit}): ${after.summary}`;
+        if (opts.output === 'json') emitEvent({ type: 'log', message: gateMsg });
+        else process.stderr.write(`[zelari-code --headless] ${gateMsg}\n`);
+      }
     }
   }
 
@@ -998,7 +1010,8 @@ async function runHeadlessSingle(
   }
 
   try {
-    await spine.close(pass.finalReason === 'error' ? 'error' : 'completed');
+    const closeStatus = pass.finalReason === 'error' ? 'error' : strictExit !== 0 ? 'stopped' : 'completed';
+    await spine.close(closeStatus);
   } catch { /* spine never fails the run */ }
   if (opts.exportSessionPath) {
     try {
@@ -1014,6 +1027,8 @@ async function runHeadlessSingle(
   }
 
   if (pass.finalReason === 'error') return 3;
+  // E2.2: strict done gate — a blocked verdict overrides a clean pass exit.
+  if (strictExit !== 0) return strictExit;
   return pass.exitCode;
 }
 

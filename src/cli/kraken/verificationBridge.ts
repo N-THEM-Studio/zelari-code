@@ -18,7 +18,7 @@ import { evaluateKrakenCompletionGate, type KrakenCompletionGate } from './compl
 import type { KrakenCheckResult } from './verifyReport.js';
 import {
   evaluateCompletion,
-  STRICT_ALL_POLICY,
+  STRICT_BUILD_POLICY,
   type CompletionEvaluation,
   snapshotToCompletionEvaluation,
   type SessionVerificationRunSnapshot,
@@ -154,7 +154,7 @@ export function evaluateStrictBuildGate(mode: 'plan' | 'build'): StrictBuildGate
   }
   const checks = krakenRequiredChecks();
   const contract = krakenResultsToContract(checks, getKrakenCheckResults());
-  const evaluation = evaluateCompletion(contract.criteria, contract.results, STRICT_ALL_POLICY);
+  const evaluation = evaluateCompletion(contract.criteria, contract.results, STRICT_BUILD_POLICY);
   const blocked = gate.blocked || evaluation.verdict !== 'PASS';
   return {
     gate,
@@ -169,7 +169,19 @@ export function evaluateStrictBuildGate(mode: 'plan' | 'build'): StrictBuildGate
   };
 }
 
-/** Machine-readable record for the session spine `verification.run` event. */
+/**
+ * E2.2 exit code for a strict-mode turn whose completion gate is still blocked
+ * after the automatic repair pass: the run must NOT close as success.
+ * Distinct from transport errors (3) and usage errors (2).
+ */
+export const STRICT_DONE_EXIT_CODE = 4;
+
+/** Pure: strict blocked → dedicated exit code; anything else → keep the pass outcome. */
+export function strictGateExitCode(evaluation: StrictBuildGateEvaluation): number {
+  return evaluation.strict && evaluation.blocked ? STRICT_DONE_EXIT_CODE : 0;
+}
+
+/** Machine-readable record for the session spine `verification.run` event. *//** Machine-readable record for the session spine `verification.run` event. */
 export function strictGateEventPayload(evaluation: StrictBuildGateEvaluation): Record<string, unknown> {
   return {
     engine: 'kraken-legacy+completion-policy',

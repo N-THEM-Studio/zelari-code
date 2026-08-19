@@ -11,6 +11,7 @@ import {
   krakenResultsToContract,
   strictDoneEnabled,
   strictGateEventPayload,
+  strictGateExitCode,
 } from './verificationBridge.js';
 import {
   resetKrakenCandidates,
@@ -148,5 +149,38 @@ describe('strictGateEventPayload', () => {
     expect(payload).toMatchObject({ strict: true, engine: 'kraken-legacy+completion-policy' });
     expect(payload.legacy).toMatchObject({ total: 2 });
     expect(payload.evidence).not.toBeNull();
+  });
+});
+
+describe('strictGateExitCode (E2.2 — blocked strict done closes non-success)', () => {
+  it('strict on + blocked after repair → dedicated exit code 4', () => {
+    process.env.ZELARI_STRICT_DONE = '1';
+    selectWithChecks(CHECKS);
+    setKrakenCheckResults([
+      { check: CHECKS[0], status: 'pass', note: 'vitest 41/41' },
+      { check: CHECKS[1], status: 'unknown' },
+    ]);
+    const evaluation = evaluateStrictBuildGate('build');
+    expect(evaluation.blocked).toBe(true);
+    expect(strictGateExitCode(evaluation)).toBe(4);
+  });
+
+  it('strict on + evidence complete → 0 (run outcome unchanged)', () => {
+    process.env.ZELARI_STRICT_DONE = '1';
+    selectWithChecks([CHECKS[0]]);
+    setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 41/41' }]);
+    const evaluation = evaluateStrictBuildGate('build');
+    expect(evaluation.blocked).toBe(false);
+    expect(strictGateExitCode(evaluation)).toBe(0);
+  });
+
+  it('strict off + legacy blocked → 0 (enforcement is strict-only)', () => {
+    delete process.env.ZELARI_STRICT_DONE;
+    selectWithChecks(CHECKS);
+    setKrakenCheckResults([{ check: CHECKS[0], status: 'fail', note: 'red' }]);
+    const evaluation = evaluateStrictBuildGate('build');
+    expect(evaluation.blocked).toBe(true);
+    expect(evaluation.strict).toBe(false);
+    expect(strictGateExitCode(evaluation)).toBe(0);
   });
 });

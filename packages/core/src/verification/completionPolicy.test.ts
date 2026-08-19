@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateCompletion, strictBuildGate, STRICT_ALL_POLICY } from './completionPolicy.js';
+import { evaluateCompletion, strictBuildGate, STRICT_ALL_POLICY, STRICT_BUILD_POLICY } from './completionPolicy.js';
 import { codingCriteriaPack, ZELARI_CODING_PACK_ID } from './criteriaPack.v1.js';
 import { computeFalseDoneRate, verifiedSolveRate, verificationCostRatio } from './metrics.js';
 import type { Criterion, VerificationResult } from './types.js';
@@ -110,5 +110,40 @@ describe('metrics', () => {
     expect(verifiedSolveRate(samples)).toBe(0.25);
     expect(verificationCostRatio(250, 1000)).toBe(0.25);
     expect(verificationCostRatio(100, 0)).toBeNull();
+  });
+});
+
+describe('admissible evidence tiers (E2.2 — an LLM score alone is not done)', () => {
+  const llmOnly = (id: string): VerificationResult => ({
+    ...result(id, 'pass'),
+    evidence: [{ tier: 'verifier-llm', ref: 'llm-score', capturedAt: 0 }],
+  });
+
+  it('STRICT_BUILD_POLICY: verifier-llm-only evidence blocks completion', () => {
+    const evaluation = evaluateCompletion([crit('a')], [llmOnly('a')], STRICT_BUILD_POLICY);
+    expect(evaluation.verdict).toBe('BLOCKED');
+    expect(evaluation.unsatisfied[0]).toMatchObject({ id: 'a', status: 'unknown' });
+    expect(evaluation.unsatisfied[0].reason).toContain('verifier-llm');
+    expect(evaluation.evidenceComplete).toBe(false);
+  });
+
+  it('STRICT_BUILD_POLICY: deterministic evidence passes', () => {
+    const evaluation = evaluateCompletion([crit('a')], [result('a', 'pass')], STRICT_BUILD_POLICY);
+    expect(evaluation.verdict).toBe('PASS');
+  });
+
+  it('mixed evidence passes when at least one tier is deterministic', () => {
+    const mixed: VerificationResult = {
+      ...result('a', 'pass'),
+      evidence: [
+        { tier: 'verifier-llm', ref: 'llm-score', capturedAt: 0 },
+        { tier: 'command-output', ref: 'npm test', capturedAt: 0 },
+      ],
+    };
+    expect(evaluateCompletion([crit('a')], [mixed], STRICT_BUILD_POLICY).verdict).toBe('PASS');
+  });
+
+  it('default policy keeps every tier admissible (legacy behaviour)', () => {
+    expect(evaluateCompletion([crit('a')], [llmOnly('a')]).verdict).toBe('PASS');
   });
 });
