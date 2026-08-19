@@ -85,45 +85,66 @@ export function getProviderConfigPath(): string {
     ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'provider.json');
 }
 
-/** Return the resolved ProviderConfig (env override > on-disk > defaults). */
-export function getProviderConfig(): ProviderConfig {
-  // Env override for active provider (used by tests + CI).
-  const envActive = process.env.ANATHEMA_ACTIVE_PROVIDER;
-  const envModel = process.env.OPENAI_MODEL;
-  const file = getProviderConfigPath();
-  let stored: ProviderConfig | null = null;
-  if (existsSync(file)) {
-    try {
-      const raw = readFileSync(file, 'utf-8');
-      const parsed = JSON.parse(raw) as Partial<ProviderConfig>;
-      if (parsed && typeof parsed === 'object' && typeof parsed.activeProviderId === 'string'
-        && parsed.modelByProvider && typeof parsed.modelByProvider === 'object') {
-        stored = {
-          activeProviderId: parsed.activeProviderId as ProviderName,
-          modelByProvider: { ...DEFAULTS.modelByProvider, ...parsed.modelByProvider },
-          thinkingByProvider: { ...DEFAULTS.thinkingByProvider, ...parsed.thinkingByProvider },
-          customEndpoints: mergeCustomEndpoints(parsed.customEndpoints),
-          krakenVerifier: mergeKrakenVerifier(parsed.krakenVerifier),
-        };
-      }
-    } catch {
-      // Corrupt file — fall through to defaults.
-    }
+/**
+ * Sanitize a parsed (partial) on-disk config blob into a full ProviderConfig,
+ * or clone the defaults when the blob is unusable. Shared by the sync
+ * (getProviderConfig) and async (loadProviderConfig) paths so the two can
+ * never diverge again (Exit-0 E0.1: the async path used to silently drop
+ * krakenVerifier and skip env overrides on the fallback).
+ */
+function mergeStoredProviderConfig(parsed: Partial<ProviderConfig> | null | undefined): ProviderConfig {
+  if (parsed && typeof parsed === 'object' && typeof parsed.activeProviderId === 'string'
+    && parsed.modelByProvider && typeof parsed.modelByProvider === 'object') {
+    return {
+      activeProviderId: parsed.activeProviderId as ProviderName,
+      modelByProvider: { ...DEFAULTS.modelByProvider, ...parsed.modelByProvider },
+      thinkingByProvider: { ...DEFAULTS.thinkingByProvider, ...parsed.thinkingByProvider },
+      customEndpoints: mergeCustomEndpoints(parsed.customEndpoints),
+      krakenVerifier: mergeKrakenVerifier(parsed.krakenVerifier),
+    };
   }
-  const base: ProviderConfig = stored ?? {
+  return cloneDefaults();
+}
+
+/** Deep-enough clone of DEFAULTS (nested records are copied, never shared). */
+function cloneDefaults(): ProviderConfig {
+  return {
     ...DEFAULTS,
     modelByProvider: { ...DEFAULTS.modelByProvider },
     thinkingByProvider: { ...DEFAULTS.thinkingByProvider },
     customEndpoints: { ...DEFAULTS.customEndpoints },
   };
-  // Apply env overrides last so they always win.
+}
+
+/**
+ * Apply env overrides (ANATHEMA_ACTIVE_PROVIDER, OPENAI_MODEL) on top of a
+ * resolved config — always last, so env wins over both file and defaults.
+ * Shared by sync and async paths (Exit-0 E0.1).
+ */
+function applyEnvOverrides(config: ProviderConfig): ProviderConfig {
+  const envActive = process.env.ANATHEMA_ACTIVE_PROVIDER;
+  const envModel = process.env.OPENAI_MODEL;
   if (envActive && PROVIDERS.some((p) => p.id === envActive)) {
-    base.activeProviderId = envActive as ProviderName;
+    config.activeProviderId = envActive as ProviderName;
   }
   if (envModel && envModel.trim().length > 0) {
-    base.modelByProvider[base.activeProviderId] = envModel;
+    config.modelByProvider[config.activeProviderId] = envModel;
   }
-  return base;
+  return config;
+}
+
+/** Return the resolved ProviderConfig (env override > on-disk > defaults). */
+export function getProviderConfig(): ProviderConfig {
+  const file = getProviderConfigPath();
+  let parsed: Partial<ProviderConfig> | null = null;
+  if (existsSync(file)) {
+    try {
+      parsed = JSON.parse(readFileSync(file, 'utf-8')) as Partial<ProviderConfig>;
+    } catch {
+      // Corrupt file — fall through to defaults.
+    }
+  }
+  return applyEnvOverrides(mergeStoredProviderConfig(parsed));
 }
 
 function writeProviderConfig(config: ProviderConfig): void {
@@ -305,28 +326,19 @@ export function getActiveModel(): string {
   return config.modelByProvider[config.activeProviderId] ?? DEFAULTS.modelByProvider[config.activeProviderId] ?? '';
 }
 
-/** Async variant of getProviderConfig (used by tests + CLI startup). */
+/**
+ * Async variant of getProviderConfig (used by tests + CLI startup).
+ * Delegates to the exact same merge/env logic as the sync path (Exit-0 E0.1):
+ * round-trip parity is guaranteed — krakenVerifier, custom endpoints and
+ * env overrides survive an async load exactly like a sync one.
+ */
 export async function loadProviderConfig(): Promise<ProviderConfig> {
   const file = getProviderConfigPath();
+  let parsed: Partial<ProviderConfig> | null = null;
   try {
-    const raw = await fs.readFile(file, 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<ProviderConfig>;
-    if (parsed && typeof parsed === 'object' && typeof parsed.activeProviderId === 'string'
-      && parsed.modelByProvider && typeof parsed.modelByProvider === 'object') {
-      return {
-        activeProviderId: parsed.activeProviderId as ProviderName,
-        modelByProvider: { ...DEFAULTS.modelByProvider, ...parsed.modelByProvider },
-        thinkingByProvider: { ...DEFAULTS.thinkingByProvider, ...parsed.thinkingByProvider },
-        customEndpoints: mergeCustomEndpoints(parsed.customEndpoints),
-      };
-    }
+    parsed = JSON.parse(await fs.readFile(file, 'utf-8')) as Partial<ProviderConfig>;
   } catch {
-    // ENOENT or JSON parse failure — fall back.
+    // ENOENT or JSON parse failure — fall back to defaults.
   }
-  return {
-    ...DEFAULTS,
-    modelByProvider: { ...DEFAULTS.modelByProvider },
-    thinkingByProvider: { ...DEFAULTS.thinkingByProvider },
-    customEndpoints: { ...DEFAULTS.customEndpoints },
-  };
+  return applyEnvOverrides(mergeStoredProviderConfig(parsed));
 }

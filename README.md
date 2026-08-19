@@ -42,7 +42,7 @@ By **[Anathema Studio](https://anathema-studio.com/)** ·
 
 📖 **[Full user guide (IT)](./docs/GUIDA.md)** — install, TUI, slash commands, council, skills, workspace, headless, MCP, Desktop.
 
-**Zelari Code** is an open-source **AI council coding agent** for the terminal: a multi-agent pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero), a **kraken** super-agent (default; aliases `agent`/`single`) that can spawn explore/general/verify tentacles, and optional **zelari** missions that loop until a deliverable is done. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (Apache-2.0). Current line: **1.35.1**.
+**Zelari Code** is an open-source **AI council coding agent** for the terminal: a multi-agent pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero), a **kraken** super-agent (default; aliases `agent`/`single`) that can spawn explore/general/verify tentacles, and optional **zelari** missions that loop until a deliverable is done. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (Apache-2.0).
 
 ```bash
 npm install -g zelari-code
@@ -295,7 +295,7 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 ## Architecture
 
 ```
-zelari-code (CLI, Apache-2.0)  — v1.35.1
+zelari-code (CLI, Apache-2.0)
 ├── src/cli/                  # Ink TUI, providers, workspace, wizard, MCP, SSH, serve
 │   ├── components/           # ChatStream, InputBar, Sidebar, StatusBar, …
 │   ├── slashHandlers/        # /provider, /workspace, /kraken, /trust, …
