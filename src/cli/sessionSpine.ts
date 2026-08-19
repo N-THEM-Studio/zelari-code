@@ -173,6 +173,37 @@ export class SessionSpineMirror {
     void this.append({ kind: 'user.message', actor: ACTOR_USER, data: { text } });
   }
 
+  /**
+   * Log an assistant message outside the streaming path — legacy
+   * `--history` import (Exit-1/E1.2). Same event shape the message_end
+   * coalescer emits, so deriveMessages() treats both identically.
+   */
+  assistantMessage(text: string, extra?: Record<string, unknown>): void {
+    void this.append({
+      kind: 'assistant.message',
+      actor: ACTOR_AGENT,
+      data: { text, ...extra },
+    });
+  }
+
+  /** Await all pending appends (import → derive read-back needs this). */
+  async flush(): Promise<void> {
+    await this.chain;
+  }
+
+  /**
+   * Derive prior-turn model context from the on-disk log. Null when the
+   * log is missing/empty — callers decide whether that means "fresh".
+   */
+  async derivedPriorTurns(): Promise<DerivedMessage[] | null> {
+    if (this.status !== 'active' && this.status !== 'closed') return null;
+    const report = await readSessionLog(
+      path.join(this.sessionsDir, this.sessionId, 'events.jsonl'),
+    ).catch(() => null);
+    if (!report || report.events.length === 0) return null;
+    return deriveMessages(report.events);
+  }
+
   /** Mirror one BrainEvent (coalescing message deltas until message_end). */
   mirrorBrainEvent(ev: BrainEvent): void {
     if (this.status !== 'active' || !this.writer) return;

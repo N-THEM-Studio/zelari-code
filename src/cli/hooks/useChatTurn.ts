@@ -28,6 +28,7 @@ import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
 import { buildKrakenRepairPrompt } from "../kraken/completionGate.js";
 import { evaluateStrictBuildGate, strictGateEventPayload } from "../kraken/verificationBridge.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
+import { derivedModelSeed } from "../headlessSpine.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
 import { armPickerTimeout, askUserTimeoutMs } from "./askUserTimeout.js";
 import { defaultPermissionPolicy } from "../safety/toolPermissions.js";
@@ -233,7 +234,26 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         const anchored = maybeAnchorShortAnswer(userText);
         const effectiveUserText = anchored ?? userText;
         // 2.0 spine: the user prompt is model-visible — log it (the 1.x JSONL never did).
-        writerRef.current?.spine?.userMessage(effectiveUserText);
+        // Exit-1/E1.3: the model context is spine-derived — the same canonical
+        // path as headless (seedHeadlessModelHistory / derivedModelSeed).
+        // Derive BEFORE the current user prompt is logged so the seed
+        // excludes this turn. The in-process rolling store stays the
+        // declared fallback (degraded/disabled spine, or a spine log still
+        // empty while the store carries replayed 1.x history) and keeps
+        // feeding render + budget heuristics.
+        let historyForModel: readonly AgentMessage[];
+        {
+          const mirror = writerRef.current?.spine ?? null;
+          let spineSeed: readonly AgentMessage[] | null = null;
+          if (mirror && mirror.status === "active") {
+            const derived = await mirror.derivedPriorTurns();
+            if (derived && derived.length > 0) {
+              spineSeed = derivedModelSeed(derived);
+            }
+          }
+          historyForModel = spineSeed ?? getHistory();
+        }
+                writerRef.current?.spine?.userMessage(effectiveUserText);
         // Local-CLI provider (Slice B): opt-in via ZELARI_LOCAL_CLI=claude|codex|...
         // No API key needed — the CLI is authenticated on its own. Permission
         // prompts flow to the zelari broker via ZELARI_PERM_SOCKET (Slice A).
@@ -436,7 +456,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           });
           void writerRef.current?.append(compactionEvent);
         }
-        historySeedLen = getHistory().length;
+        historySeedLen = historyForModel.length;
         // v0.7.3: surface the council plan (if any) to the single agent too.
         // The plan lives in .zelari/plan.json but the agent had no idea it
         // existed — users had to paste task-file paths by hand. Best-effort:
@@ -727,7 +747,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             // v1.8.0: shared rolling history (agent/council/zelari) so short
             // answers bind to prior ---QUESTION--- blocks. Possibly empty
             // when ZELARI_HISTORY_TURNS=0.
-            ...getHistory(),
+            ...historyForModel,
             { role: "user", content: effectiveUserText },
           ],
           tools: toolRegistry.toOpenAITools().map((t) => ({

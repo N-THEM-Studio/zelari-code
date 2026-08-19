@@ -1,17 +1,24 @@
 /**
  * headlessSpine — attach the 2.0 session spine to a headless run.
  *
- * Dual-write is best-effort (same degrade-and-stop as the TUI mirror).
+ * Dual-write is best-effort (same degrade-and-stop as the TUI mirror), but
+ * since Exit-1/E1.2 the spine is also the *source* of the headless model
+ * context: `seedHeadlessModelHistory()` imports legacy `--history` one-shot
+ * into a fresh log and derives prior turns from events.
  * Profile is recorded on `session.started` so same-task / same-profile
  * harness deltas stay comparable (ADR-0022). Interrupt (SIGINT / abort)
  * releases the lock WITHOUT `session.ended` so deriveMissionState can
  * project `interrupted: true` and resume can continue the seq.
  */
 import type { BrainEvent } from '@zelari/core/events';
+import type { AgentMessage } from '@zelari/core/harness';
+import { cleanAgentContent } from '@zelari/core';
 import {
   exportSessionJson,
   SessionStore,
   resolveSessionsDir,
+  derivedToAgentMessages,
+  type DerivedMessage,
 } from '@zelari/core/session';
 import { deriveMissionState } from '@zelari/core/mission';
 import { resolveProfile, toolManifestHash } from '@zelari/core/runtime';
@@ -143,4 +150,109 @@ export async function missionStateFromSpine(
   } catch {
     return null;
   }
+}
+
+export interface HeadlessHistorySeed {
+  /** Prior-turn model context: what the harness seeds as history. */
+  history: AgentMessage[];
+  /** How many legacy messages were written into the spine this call. */
+  importedCount: number;
+  /** Where the seed came from. */
+  source: 'spine' | 'spine-import' | 'legacy-fallback';
+}
+
+/**
+ * Exit-1/E1.2 — the session spine is the model-context source of truth.
+ *
+ * Call this BEFORE `handle.userMessage(task)` so the derived history
+ * excludes the current turn.
+ *
+ * - Fresh log + legacy `--history` → import each turn as spine events
+ *   (one-shot migration), then derive from events.
+ * - Existing log (resume) → derive from events; legacy input is ignored
+ *   (spine wins over the 1.x rolling JSON).
+ * - Degraded / disabled spine (ZELARI_SESSION_SPINE=0) → declared discrete
+ *   fallback to the filtered legacy seed, i.e. the pre-spine behavior.
+ */
+export async function seedHeadlessModelHistory(
+  handle: HeadlessSpineHandle,
+  legacy?: readonly AgentMessage[],
+): Promise<HeadlessHistorySeed> {
+  const mirror = handle.spine;
+  const legacySeed = filterLegacySeed(legacy);
+  if (mirror.status !== 'active') {
+    return { history: legacySeed, importedCount: 0, source: 'legacy-fallback' };
+  }
+  const existing = await mirror.derivedPriorTurns();
+  if (existing && existing.length > 0) {
+    return { history: derivedModelSeed(existing), importedCount: 0, source: 'spine' };
+  }
+  if (legacySeed.length === 0) {
+    return { history: [], importedCount: 0, source: 'spine' };
+  }
+  for (const m of legacySeed) {
+    if (m.role === 'user') {
+      mirror.userMessage(m.content);
+    } else {
+      mirror.assistantMessage(m.content, { imported: 'legacy-history' });
+    }
+  }
+  await mirror.flush();
+  const derived = (await mirror.derivedPriorTurns()) ?? [];
+  return {
+    history: derivedModelSeed(derived),
+    importedCount: legacySeed.length,
+    source: 'spine-import',
+  };
+}
+
+/** Same seed policy as the pre-spine path: user/assistant, scrubbed, non-empty. */
+function filterLegacySeed(legacy?: readonly AgentMessage[]): AgentMessage[] {
+  return (legacy ?? [])
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) =>
+      m.role === 'assistant' && m.content
+        ? {
+            role: 'assistant' as const,
+            content: cleanAgentContent(m.content, {
+              stripQuestion: false,
+              stripThink: false,
+            }),
+          }
+        : { role: m.role as 'user' | 'assistant', content: m.content ?? '' },
+    )
+    .filter((m) => (m.content ?? '').trim().length > 0);
+}
+
+/**
+ * DerivedMessage[] → harness seed (Exit-1 shared policy, headless + TUI).
+ *
+ * - user/assistant pass through (assistant scrubbed with the binding
+ *   policy: keep <think> and ---QUESTION--- blocks);
+ * - compacted summaries (system role) map to a user message — the 1.x
+ *   store's own convention — so pre-compaction context survives without
+ *   a mid-stream system message;
+ * - tool results are dropped: derived results carry no paired assistant
+ *   tool_calls block (deriveMessages default), which providers reject.
+ */
+export function derivedModelSeed(derived: readonly DerivedMessage[]): AgentMessage[] {
+  return derivedToAgentMessages(derived)
+    .map((m) =>
+      m.role === 'system'
+        ? { role: 'user' as const, content: m.content }
+        : m,
+    )
+    .map((m) =>
+      m.role === 'assistant' && m.content
+        ? {
+            role: 'assistant' as const,
+            content: cleanAgentContent(m.content, {
+              stripQuestion: false,
+              stripThink: false,
+            }),
+          }
+        : m,
+    )
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .filter((m) => (m.content ?? '').trim().length > 0);
 }

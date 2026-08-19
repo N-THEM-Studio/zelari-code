@@ -59,6 +59,7 @@ import { evaluateStrictBuildGate, strictGateEventPayload } from './kraken/verifi
 import {
   openHeadlessSpine,
   resolveHeadlessProfileId,
+  seedHeadlessModelHistory,
   type HeadlessSpineHandle,
 } from './headlessSpine.js';
 
@@ -474,6 +475,11 @@ async function runHeadlessSingle(
     profile: opts.profile,
     workspace: process.cwd(),
   });
+  // Exit-1/E1.2: the session spine is the model-context source of truth.
+  // Legacy `--history` is imported one-shot into a fresh log; prior turns
+  // are then derived from events. The 1.x rolling history no longer feeds
+  // the harness messages directly (degraded spine falls back to it).
+  const seededHistory = await seedHeadlessModelHistory(spine, opts.history);
   if (opts.task) spine.userMessage(opts.task);
   // Fase 3 (ADR-0020): fresh per-run candidate registry (each headless run
   // is one process, so per-run == per-turn here).
@@ -646,31 +652,13 @@ async function runHeadlessSingle(
     ];
   }
 
-  // v1.10.0: multi-turn context for the desktop. Each desktop message spawns
-  // a fresh headless process, so without seeding prior turns the agent has
-  // amnesia and treats "procedi" / "sì" as brand-new requests. The desktop
-  // passes the rolling history via --history <json>; we scrub it (strip
-  // <think> tags but KEEP ---QUESTION--- blocks so short answers can bind),
-  // then seed the harness as [system, ...history, {user: task}].
-  //
-  // Prefer user/assistant only in the seed: tool call tails from prior
-  // processes often fail provider validation or blow the slice budget and
-  // drop the actual plan text (Desktop plan→build amnesia).
-  // Preserve <think> for MiniMax-M3 multi-turn tool use (provider history).
-  const historySeed: AgentMessage[] = (opts.history ?? [])
-    .filter((m) => m.role === 'user' || m.role === 'assistant')
-    .map((m) =>
-      m.role === 'assistant' && m.content
-        ? {
-            role: 'assistant' as const,
-            content: cleanAgentContent(m.content, {
-              stripQuestion: false,
-              stripThink: false,
-            }),
-          }
-        : { role: m.role as 'user' | 'assistant', content: m.content ?? '' },
-    )
-    .filter((m) => (m.content ?? '').trim().length > 0);
+  // Exit-1/E1.2: prior turns come from the session spine (see
+  // seedHeadlessModelHistory above) — user/assistant only, assistant
+  // content scrubbed with cleanAgentContent(stripQuestion: false,
+  // stripThink: false) so ---QUESTION--- blocks and <think> survive for
+  // multi-turn binding. The legacy --history JSON is only the one-shot
+  // import source (or the declared fallback when the spine is degraded).
+  const historySeed: AgentMessage[] = seededHistory.history;
 
   // Short continues ("procedi", "conferma", phase plan→build) re-anchor the
   // prior assistant output into the user message — module lastClarification
@@ -1072,6 +1060,11 @@ async function runHeadlessCouncil(
     profile: opts.profile,
     workspace: process.cwd(),
   });
+  // Exit-1/E1.2: the session spine is the model-context source of truth.
+  // Legacy `--history` is imported one-shot into a fresh log; prior turns
+  // are then derived from events. The 1.x rolling history no longer feeds
+  // the harness messages directly (degraded spine falls back to it).
+  const seededHistory = await seedHeadlessModelHistory(spine, opts.history);
   if (opts.task) spine.userMessage(opts.task);
   // Experiment: free-form council+build soft-gated to design-phase unless
   // ZELARI_COUNCIL_CAN_BUILD=1. Also strip project mutators (planMode tools).
@@ -1098,17 +1091,9 @@ async function runHeadlessCouncil(
   // Multi-turn: Desktop passes --history, but council used to ignore it →
   // "procedi" looked like a brand-new empty request. Inject prior transcript
   // into the user task and emit history_snapshot for the next turn.
-  const historySeed: AgentMessage[] = (opts.history ?? []).map((m) =>
-    m.role === 'assistant' && m.content
-      ? {
-          ...m,
-          content: cleanAgentContent(m.content, {
-            stripQuestion: false,
-            stripThink: false,
-          }),
-        }
-      : m,
-  );
+  // Exit-1/E1.2: spine-derived prior turns (legacy --history is the
+  // one-shot import source, not the model-context brain).
+  const historySeed: AgentMessage[] = seededHistory.history;
   const effectiveTask = buildCouncilTaskWithHistory(opts.task, historySeed);
 
   let exitCode = 0;
@@ -1241,6 +1226,11 @@ async function runHeadlessZelari(
     profile: opts.profile ?? 'mission/v1',
     workspace: projectRoot,
   });
+  // Exit-1/E1.2: the session spine is the model-context source of truth.
+  // Legacy `--history` is imported one-shot into a fresh log; prior turns
+  // are then derived from events. The 1.x rolling history no longer feeds
+  // the harness messages directly (degraded spine falls back to it).
+  const seededHistory = await seedHeadlessModelHistory(spine, opts.history);
   if (opts.task) spine.userMessage(opts.task);
   spine.missionPhase('design', 'mission-start');
   const { buildMissionBrief } = await import('@zelari/core/council');
@@ -1276,17 +1266,9 @@ async function runHeadlessZelari(
     }
   };
 
-  const historySeed: AgentMessage[] = (opts.history ?? []).map((m) =>
-    m.role === 'assistant' && m.content
-      ? {
-          ...m,
-          content: cleanAgentContent(m.content, {
-            stripQuestion: false,
-            stripThink: false,
-          }),
-        }
-      : m,
-  );
+  // Exit-1/E1.2: spine-derived prior turns (legacy --history is the
+  // one-shot import source, not the model-context brain).
+  const historySeed: AgentMessage[] = seededHistory.history;
   const missionTask = buildCouncilTaskWithHistory(opts.task, historySeed);
 
   // Surface the brief once so the desktop UI is not blank.

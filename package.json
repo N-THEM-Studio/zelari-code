@@ -33,6 +33,7 @@
     "pretest": "npm run build --workspace=@zelari/core",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:session": "vitest run packages/core/src/session src/cli/sessionSpine.test.ts src/cli/headlessSpine.test.ts src/cli/headlessHistorySeed.test.ts src/cli/sessionReplayInvariant.test.ts",
     "smoke": "node bin/zelari-code.js --version",
     "verify:council": "npm run build --workspace=@zelari/core && node scripts/verify-council.mjs",
     "verify:principles": "node scripts/verify-principles.mjs",
