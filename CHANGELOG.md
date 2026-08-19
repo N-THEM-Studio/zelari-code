@@ -5,6 +5,18 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-alpha.1] - 2026-08-19
+
+Second 2.0 pre-release: Linux CI fixes for the runtime seams (path jail + shell timeout process-group kill) and the version-lockstep bump that makes the publish/release-desktop tag pipeline green again.
+
+### Fixed
+- **Path jail on POSIX** — WorkspaceProvider.resolve now treats backslash as a path separator on every OS (shared resolveJailed helper used by LocalWorkspace and WorktreeWorkspace). Previously `..\file` stayed *inside* the jail on Linux (backslash is an ordinary filename char there), letting relative paths smuggle out of the workspace root. Regression test: providers.test.ts "treats backslash as a separator on every OS (no POSIX smuggle)".
+- **Shell timeout left orphan processes on POSIX** — NodeShellProvider now spawns detached (own process group) on non-Windows and killTree sends SIGKILL to the whole group (process.kill(-pid)), so `sh -c "sleep 30"` no longer leaves the grandchild sleep running after the timeout. Regression test: "timeout kills the whole POSIX process group, not just the shell".
+- **package-lock.json version drift** — the lockfile still carried 1.49.0 after the 2.0.0-alpha.0 bump, which could break `npm ci` in CI. Regenerated in lockstep.
+
+### Changed
+- Lockstep bump to 2.0.0-alpha.1 (root zelari-code, @zelari/core, apps/desktop, devDependency exact match, lockfile).
+
 ## [2.0.0-alpha.0] - 2026-08-19
 
 First 2.0 pre-release: the reconstructability + verifiability spine lands in `@zelari/core` (Phases 0–2 plus the deterministic verification contract of Phase 3A; CLI/Desktop surfaces keep working unchanged on the 1.x paths). Full plan: `.zelari/plans/2026-08-18-zelari-2.0-verifica-e-piano-implementazione.md`.

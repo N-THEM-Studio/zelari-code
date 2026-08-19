@@ -10,7 +10,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { WorkspacePathEscapeError, type WorkspaceProvider } from './providers.js';
+import { resolveJailed, type WorkspaceProvider } from './providers.js';
 
 export interface WorktreeOptions {
   id?: string;
@@ -57,12 +57,7 @@ export class WorktreeWorkspace implements WorkspaceProvider {
   }
 
   resolve(rel: string): string {
-    const absolute = path.resolve(this.root, rel);
-    const root = path.resolve(this.root);
-    if (absolute !== root && !absolute.startsWith(root + path.sep)) {
-      throw new WorkspacePathEscapeError(root, rel);
-    }
-    return absolute;
+    return resolveJailed(this.root, rel);
   }
 
   /** Files changed in this worktree vs the base (git status --porcelain). */

@@ -16,6 +16,14 @@ describe('LocalWorkspace (path jail)', () => {
     expect(() => ws.resolve('../outside.txt')).toThrow(WorkspacePathEscapeError);
     expect(() => ws.resolve('..\\outside.txt')).toThrow(WorkspacePathEscapeError);
   });
+
+  it('treats backslash as a separator on every OS (no POSIX smuggle)', () => {
+    const ws = new LocalWorkspace(path.resolve('/repo'));
+    expect(ws.resolve('src\\a.ts')).toBe(path.resolve('/repo/src/a.ts'));
+    expect(() => ws.resolve('..\\..\\etc\\passwd')).toThrow(WorkspacePathEscapeError);
+    expect(() => ws.resolve('..\\outside.txt')).toThrow(WorkspacePathEscapeError);
+    expect(() => ws.resolve('sub\\..\\..\\escape.txt')).toThrow(WorkspacePathEscapeError);
+  });
 });
 
 describe('MemoryFsProvider / MemoryShellProvider', () => {
@@ -69,6 +77,18 @@ describe('Node providers (real fs/shell, jailed)', () => {
       { timeoutMs: 500 },
     );
     expect(result.timedOut).toBe(true);
+  });
+
+  it('timeout kills the whole POSIX process group, not just the shell', async () => {
+    if (process.platform === 'win32') return; // covered by taskkill path
+    const ws = new LocalWorkspace(process.cwd());
+    const shell = new NodeShellProvider(ws);
+    const result = await shell.exec('sleep 30', { timeoutMs: 400 });
+    expect(result.timedOut).toBe(true);
+    // Give the SIGKILL a moment to land, then prove no `sleep 30` survives.
+    await new Promise((r) => setTimeout(r, 300));
+    const ps = await shell.exec("ps -eo pid=,args= | grep '[s]leep 30' | wc -l", { timeoutMs: 5_000 });
+    expect(ps.stdout.trim()).toBe('0');
   });
 });
 

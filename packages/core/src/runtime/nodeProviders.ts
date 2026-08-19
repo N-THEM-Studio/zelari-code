@@ -15,14 +15,22 @@ const LIST_MAX_DEPTH = 12;
 /**
  * Kill a spawned command including its children. On Windows `child.kill()`
  * only signals cmd.exe — the actual command keeps running. `taskkill /T /F`
- * tears down the whole tree.
+ * tears down the whole tree. On POSIX the child is spawned detached (own
+ * process group) so `process.kill(-pid, ...)` kills the whole group —
+ * `child.kill()` alone would leave grandchildren (e.g. `sleep`) running.
  */
 function killTree(child: import('node:child_process').ChildProcess): void {
-  if (process.platform === 'win32' && typeof child.pid === 'number') {
+  if (typeof child.pid !== 'number') return;
+  if (process.platform === 'win32') {
     spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { shell: false, windowsHide: true });
     return;
   }
-  child.kill('SIGKILL');
+  try {
+    process.kill(-child.pid, 'SIGKILL');
+  } catch {
+    // Group already gone — fall back to signaling the leader directly.
+    child.kill('SIGKILL');
+  }
 }
 
 export class NodeFsProvider implements FsProvider {
@@ -86,7 +94,13 @@ export class NodeShellProvider implements ShellProvider {
     const args = isWindows ? ['/d', '/s', '/c', command] : ['-c', command];
 
     return await new Promise<ShellResult>((resolve) => {
-      const child = spawn(file, args, { cwd, shell: false, windowsHide: true });
+      const child = spawn(file, args, {
+        cwd,
+        shell: false,
+        windowsHide: true,
+        // POSIX: own process group so the timeout can kill grandchildren too.
+        detached: !isWindows,
+      });
       let stdout = '';
       let stderr = '';
       let timedOut = false;

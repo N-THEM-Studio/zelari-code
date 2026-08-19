@@ -31,6 +31,21 @@ export interface WorkspaceProvider {
   dispose?(): Promise<void>;
 }
 
+/**
+ * Treat backslash as a path separator on every OS before resolving, so a
+ * relative path like `..\file` cannot smuggle out of the jail on POSIX
+ * (where `\` is an ordinary filename character).
+ */
+export function resolveJailed(root: string, rel: string): string {
+  const normalized = rel.split('\\').join('/');
+  const absolute = path.resolve(root, normalized);
+  const rootAbs = path.resolve(root);
+  if (absolute !== rootAbs && !absolute.startsWith(rootAbs + path.sep)) {
+    throw new WorkspacePathEscapeError(rootAbs, rel);
+  }
+  return absolute;
+}
+
 /** Path-jailed local workspace directory. */
 export class LocalWorkspace implements WorkspaceProvider {
   readonly kind = 'local' as const;
@@ -38,12 +53,7 @@ export class LocalWorkspace implements WorkspaceProvider {
   constructor(readonly root: string) {}
 
   resolve(rel: string): string {
-    const absolute = path.resolve(this.root, rel);
-    const root = path.resolve(this.root);
-    if (absolute !== root && !absolute.startsWith(root + path.sep)) {
-      throw new WorkspacePathEscapeError(root, rel);
-    }
-    return absolute;
+    return resolveJailed(this.root, rel);
   }
 }
 
