@@ -22,6 +22,7 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 | 0016 | Log di sessione event-sourced come unica fonte di verità | 📝 Proposto | da confermare | — |
 | 0017 | Selezione unificata del "thinking effort" per tutti i provider | 📝 Proposto | da confermare | — |
 | 0018 | Contratto workspace task store su `.zelari/plan.json` (tool `task_*`) | ✅ Accettato | slice 3a implementata (v1.43.0) | — |
+| 0024 | Chiusura del dual-write: spine come unica sorgente del contesto modello | ✅ Accettato | 2026-08-19 | 2026-08-19 |
 
 ## Formato
 

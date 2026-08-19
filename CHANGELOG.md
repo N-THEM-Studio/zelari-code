@@ -7,13 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added — Exit-1/E1.4: Desktop resume-from-spine
+
+- Headless dispatch (kraken/council/zelari) emits a `session_started` NDJSON event
+  (sessionId + spine status) right after opening the session spine
+  (`sessionStartedEvent()` in `src/cli/headlessSpine.ts`), so hosts can capture
+  the session id on turn 1 and resume the same event log on every following turn.
+- Desktop: `RunTaskArgs.sessionId` is forwarded by the Rust host as
+  `--resume <id>`; `Conversation.sessionId` is captured from `session_started`
+  and persisted per chat (`apps/desktop` types/App). `--history` remains the
+  one-shot import for fresh logs and the declared fallback for degraded/disabled
+  spines — no longer the primary multi-turn brain.
+- Contract tests: `src/cli/headlessSessionEvent.test.ts` (announce, resume
+  round-trip continues the same log/seq, kill-switch announces `disabled`).
+
+### Changed — Exit-1/E1.5+E1.8: legacy context quarantined (single-source spine)
+
+- **E1.5 — the budget pipeline measures the spine-derived model history, not the 1.x store.** Both TUI paths (`useChatTurn.ts`) now feed `applyBudgetPolicyAsync` with the spine-derived seed: the single-agent path measures `historyForModel` (and a compaction replay replaces the current turn's seed, so the model sees exactly what was measured), while the council path derives `councilHistory` from the mirror first. `compactInPlace()` is removed from the council hot path (v1.36 parity with the single-agent path — it rewrote history before measuring and busted the cache prefix), and a compaction on the council path now emits the durable `session_compacted` event (previously store-only: the compaction boundary was invisible to the spine and the derived history drifted from the store).
+- **E1.5 — `src/cli/sessionManager.ts` is deprecated as a model-context source** (header contract): it remains 1.x UI persistence (session list, `/resume` marker, branch marker) and a read-only migration source. It never participates in `deriveMessages`.
+- **E1.8 — ADR-0024 closes the dual-write question:** `docs/decisions/0024-single-write-model-context.md` records that the session spine is the only model-context source on every hot path, the 1.x store/sidecar are a mirrored export/UI surface during the alpha (removal evaluated at 2.0.0-rc), the discrete fallback stays the turn-safety policy, and `ZELARI_SESSION_SPINE=0` is emergency-only. The `sessionSpine.ts` header now states the post-E1.x contract.
+- **Architectural gate:** new `src/cli/legacyContextIsolation.test.ts` (in `npm run test:session`) encodes the Exit-1 grep criteria as CI — no `applyBudgetPolicyAsync(getHistory())`, `opts.history` only inside `seedHeadlessModelHistory` calls, spine modules never import `sessionManager`, no second history brain on the headless path.
+
 ## [2.0.0-alpha.5] - 2026-08-19
 
 ### Alpha exit plan — what is left for 2.0
 
 Zelari 2.0 is in alpha. The 2.0 architecture is in the tree (`@zelari/core` session spine, runtime seams/profiles, deterministic verification with advisory LLM verifier, mission state), but leaving alpha is gated on explicit criteria:
 
-- **C1–C3 (blocking, Exit-1):** the Session event log must become the single source of truth for the model context. Progress: `@zelari/core/session` now exports the single `derivedToAgentMessages()` adapter (E1.1), and the headless hot path (kraken/council/zelari in `runHeadless.ts`) seeds prior turns from the spine via `seedHeadlessModelHistory()` — legacy `--history` is a one-shot import into a fresh log (or the declared fallback when the spine is degraded/disabled), not the model-context brain (E1.2). The TUI loop derives from the spine on the same shared policy (E1.3). Replay determinism and the model-visible⟺logged invariant are now CI-gated by `src/cli/sessionReplayInvariant.test.ts` (E1.6/E1.7, `npm run test:session`). Remaining: Desktop resume-from-spine (E1.4), 1.x sessionManager read-only deprecation (E1.5), dual-write closure ADR (E1.8). Kill-switch `ZELARI_SESSION_SPINE=0` keeps the legacy behavior for emergency/debug.
+- **C1–C3 (blocking, Exit-1):** the Session event log must become the single source of truth for the model context. Progress: `@zelari/core/session` now exports the single `derivedToAgentMessages()` adapter (E1.1), and the headless hot path (kraken/council/zelari in `runHeadless.ts`) seeds prior turns from the spine via `seedHeadlessModelHistory()` — legacy `--history` is a one-shot import into a fresh log (or the declared fallback when the spine is degraded/disabled), not the model-context brain (E1.2). The TUI loop derives from the spine on the same shared policy (E1.3). Replay determinism and the model-visible⟺logged invariant are now CI-gated by `src/cli/sessionReplayInvariant.test.ts` (E1.6/E1.7, `npm run test:session`). The Desktop now captures `session_started` and resumes the conversation spine via `--resume <id>` (E1.4; Rust host + `Conversation.sessionId`). Remaining: 1.x sessionManager read-only deprecation (E1.5), dual-write closure ADR (E1.8). Kill-switch `ZELARI_SESSION_SPINE=0` keeps the legacy behavior for emergency/debug.
 - **C6 (Exit-2):** strict/mission completion requires deterministic verification evidence from the session; the LLM verifier stays advisory and can never flip CompletionPolicy.
 - **C4/C5/C7/C8 (Exit-3):** coherent versions/README/docs, verifier config round-trip, CI matrix, aligned documentation.
 

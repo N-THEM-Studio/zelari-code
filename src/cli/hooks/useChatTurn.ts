@@ -63,7 +63,6 @@ import {
 } from "./chatState.js";
 import {
   getHistory,
-  compactInPlace,
   appendMessages,
   clearHistory,
   setLastClarification,
@@ -422,7 +421,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // turn. The budget pipeline below owns compaction now
         // (prune → remeasure → replay) and only rewrites when occupancy
         // actually demands it.
-        const budget = await applyBudgetPolicyAsync(getHistory(), getPhase(), {
+        // E1.5 (ADR-0024): the budget pipeline measures the spine-derived
+        // model history, not the 1.x store — compaction decisions apply to
+        // exactly what the model is about to see.
+        const budget = await applyBudgetPolicyAsync(historyForModel, getPhase(), {
           model: getActiveModel(),
           sessionId,
           // v1.36.0: envelope for full-request metering + cache-aware
@@ -456,6 +458,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           });
           void writerRef.current?.append(compactionEvent);
         }
+        // E1.5: if the pipeline compacted, the replayed history replaces
+        // this turn's seed so the model sees exactly what was measured.
+        historyForModel = budget.history;
         historySeedLen = historyForModel.length;
         // v0.7.3: surface the council plan (if any) to the single agent too.
         // The plan lives in .zelari/plan.json but the agent had no idea it
@@ -1355,14 +1360,35 @@ async function dispatchCouncilPromptImpl(
     return { completionOk: false, ran: false };
   }
   setBusy(true);
-  // v1.8.0 / v1.21.0: compact shared history + budget + short-answer anchor.
-  compactInPlace();
-  const councilBudget = await applyBudgetPolicyAsync(getHistory(), getPhase(), {
+  // v1.36 parity + E1.5 (ADR-0024): compactInPlace() removed from the hot
+  // path — the budget pipeline owns compaction (prune → remeasure → replay)
+  // and now measures the spine-derived model history, not the 1.x store.
+  let councilHistory: readonly AgentMessage[] = getHistory();
+  {
+    const mirror = writerRef.current?.spine ?? null;
+    if (mirror && mirror.status === "active") {
+      const derived = await mirror.derivedPriorTurns();
+      if (derived && derived.length > 0) {
+        councilHistory = derivedModelSeed(derived);
+      }
+    }
+  }
+  const councilBudget = await applyBudgetPolicyAsync(councilHistory, getPhase(), {
     model: envConfig.model,
   });
   setHistory(councilBudget.history);
   for (const w of councilBudget.warnings) {
     appendSystem(setMessages, w, Date.now());
+  }
+  // E1.5: compaction must be visible on the spine too (model-visible ⟺
+  // logged) — same durable event as the single-agent path.
+  if ((councilBudget.messagesRemoved ?? 0) > 0) {
+    void writerRef.current?.append(
+      createBrainEvent("session_compacted", sessionId, {
+        summary: councilBudget.compactSummary ?? "",
+        messagesRemoved: councilBudget.messagesRemoved ?? 0,
+      }),
+    );
   }
   const anchored = maybeAnchorShortAnswer(text);
   const effectiveText = anchored ?? text;

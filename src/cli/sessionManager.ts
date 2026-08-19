@@ -12,6 +12,13 @@
  *   - load a session's events from JSONL
  *
  * Pure node:fs — no Electron deps, browser-importable for jsdom tests.
+
+ *
+ * E1.5 (ADR-0024): NOT a model-context source anymore. The harness seed on
+ * every hot path derives from the 2.0 session spine (`deriveMessages()`).
+ * This module is persistence for the 1.x UI surface (session list, /resume
+ * marker, branch marker) and a read-only migration source. Do not wire it
+ * back into prompt construction.
  *
  * @see docs/plans/2026-06-28-zelari-code.md (Task 14.10)
  */

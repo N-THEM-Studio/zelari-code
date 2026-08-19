@@ -1,19 +1,23 @@
 /**
- * sessionSpine — CLI dual-write bridge onto the 2.0 session spine (ADR-0016/0021).
+ * sessionSpine — bridge onto the 2.0 session spine (ADR-0016/0021/0024).
  *
- * The 1.x JSONL sidecar (BrainEvent log) stays the transcript of record for
- * the current render path; every model-surface event is ALSO mirrored into
- * `<workspace>/.zelari/sessions/<sessionId>/events.jsonl` so that:
+ * As of 2.0.0-alpha.5 the spine is the ONLY source of the model context on
+ * every hot path (headless kraken/council/zelari + TUI single/council): the
+ * harness seed is derived via `deriveMessages()` from
+ * `<workspace>/.zelari/sessions/<sessionId>/events.jsonl` (P1: model-visible
+ * ⟺ logged — including user prompts, which the 1.x log never recorded).
+ * Resume/fork/lineage/export and verification + mission state events live in
+ * the same log.
  *
- *   - `deriveMessages()` becomes a real, replayable history path (P1:
- *     model-visible ⟺ logged — including user prompts, which the 1.x log
- *     never recorded);
- *   - resume/fork/lineage/export work off the spine;
- *   - verification + mission state events land in the same log.
+ * The 1.x JSONL sidecar (BrainEvent log) and the in-process rolling store
+ * remain as a mirrored export/UI surface during the alpha (ADR-0024): they
+ * feed render plus the declared discrete fallback, and are scheduled for
+ * removal at 2.0.0-rc.
  *
  * Failure discipline (the "declared discrete fallback"): a spine error NEVER
  * breaks the turn — the mirror marks itself degraded, warns once on stderr
- * and stops writing. `ZELARI_SESSION_SPINE=0` disables the mirror entirely.
+ * and stops writing; the model seed falls back to the 1.x store.
+ * `ZELARI_SESSION_SPINE=0` is an emergency/debug kill switch only.
  */
 import type { BrainEvent } from '@zelari/core/events';
 import type { SessionJsonlWriter } from '@zelari/core/harness';
