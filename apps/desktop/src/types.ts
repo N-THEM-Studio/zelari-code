@@ -62,6 +62,12 @@ export interface Conversation {
   archivedAt?: number;
   /** Session tasks (todo_write/todo_read mirror) scoped to this chat. */
   sessionTasks?: LiveTask[];
+  /** 2.0 spine session owned by this conversation (E1.4). Captured from the
+   * CLI `session_started` event on turn 1; passed back as --resume <id> on
+   * every following runTask so the model context is derived from the spine
+   * event log instead of replaying the 1.x history snapshot. */
+  sessionId?: string;
+
   /** Rolling provider-side history snapshot emitted by the CLI. Replayed on
    * the next runTask so the headless agent keeps multi-turn context. */
   history?: AgentMessageLite[];
@@ -125,6 +131,10 @@ export interface RunTaskArgs {
   /** Conversation this run belongs to (multi-chat). Echoed by the host on
    * every event envelope so the UI can route deltas to the right chat. */
   conversationId?: string;
+  /** 2.0 spine session to resume (E1.4): forwarded as --resume <id>; the
+   * CLI derives model context from the event log. */
+  sessionId?: string;
+
   /** JSON-encoded prior conversation turns, so the agent keeps multi-turn
    * context across the per-message process boundary. Built from the
    * `history_snapshot` events emitted by the CLI. */
@@ -182,6 +192,9 @@ export interface UsageBreakdown {
 
 /** Subset of BrainEvent shapes we care about for the chat UI. */
 export type AgentEvent =
+  | { type: "session_started"; sessionId?: string; spine?: string }
+
+
   | {
       type: "message_delta";
       delta?: string;

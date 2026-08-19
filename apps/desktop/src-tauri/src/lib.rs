@@ -2232,6 +2232,12 @@ struct RunTaskArgs {
     /// process boundary so `todo_read` returns the prior state (not empty).
     #[serde(default)]
     todos: Option<String>,
+    /// 2.0 spine session id to resume (`--resume <id>`): the CLI continues
+    /// the same event log and derives model context from it (ADR-0016/0021).
+    /// The desktop captures it from the `session_started` NDJSON event on
+    /// turn 1 and replays it on every following turn of the conversation.
+    #[serde(default)]
+    session_id: Option<String>,
     /// When true, dispatch via `--kraken-graph <prompt>` (plan + execute a
     /// parallel task DAG) instead of `--task <prompt>` — bypasses `mode`.
     #[serde(default)]
@@ -2395,6 +2401,7 @@ fn run_task(
     let cwd = args.cwd;
     let history = args.history;
     let todos = args.todos;
+    let session_id = args.session_id;
     let kraken_graph = args.kraken_graph;
     let plan_only = args.plan_only;
     let run_plan = args.run_plan;
@@ -2423,6 +2430,7 @@ fn run_task(
             cwd.as_deref(),
             history.as_deref(),
             todos.as_deref(),
+            session_id.as_deref(),
             kraken_graph,
             plan_only,
             run_plan.as_deref(),
@@ -2478,6 +2486,7 @@ fn spawn_headless(
     cwd: Option<&str>,
     history: Option<&str>,
     todos: Option<&str>,
+    session_id: Option<&str>,
     kraken_graph: bool,
     plan_only: bool,
     run_plan: Option<&str>,
@@ -2606,6 +2615,16 @@ fn spawn_headless(
     if let Some(t) = todos {
         if !t.is_empty() {
             cmd.arg("--todos").arg(t);
+        }
+    }
+
+    // E1.4: resume the 2.0 spine session so model context comes from the
+    // event log (deriveMessages) instead of replaying 1.x --history JSON.
+    // History stays as fallback: the CLI ignores it when the log exists
+    // and falls back to it only when the spine is degraded/disabled.
+    if let Some(sid) = session_id {
+        if !sid.trim().is_empty() {
+            cmd.arg("--resume").arg(sid.trim());
         }
     }
 

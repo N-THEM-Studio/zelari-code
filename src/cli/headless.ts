@@ -56,7 +56,10 @@ export interface HeadlessOptions {
    * Prior conversation turns, so the desktop (which spawns a fresh headless
    * process per message) can preserve multi-turn context. Each invocation
    * seeds the harness with `[system, ...history, {user: task}]` and emits a
-   * `history_snapshot` event at end-of-turn for the caller to replay next time.
+   * `history_snapshot` event at end-of-turn for the caller to replay next
+   * time. E1.4: hosts that captured the `session_started` event resume the
+   * spine instead (`--resume <id>`) — this history is then the one-shot
+   * import for a fresh log and the declared fallback for degraded spines.
    * Parsed from `--history <json>`; invalid JSON is ignored (stateless fallback).
    * @since v1.10.0
    */

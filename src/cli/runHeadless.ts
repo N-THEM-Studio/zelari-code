@@ -60,6 +60,7 @@ import {
   openHeadlessSpine,
   resolveHeadlessProfileId,
   seedHeadlessModelHistory,
+  sessionStartedEvent,
   type HeadlessSpineHandle,
 } from './headlessSpine.js';
 
@@ -480,6 +481,9 @@ async function runHeadlessSingle(
   // are then derived from events. The 1.x rolling history no longer feeds
   // the harness messages directly (degraded spine falls back to it).
   const seededHistory = await seedHeadlessModelHistory(spine, opts.history);
+  // E1.4: advertise the spine session id so hosts (Desktop) resume the
+  // same event log next turn instead of replaying 1.x history JSON.
+  emitEvent(sessionStartedEvent(spine));
   if (opts.task) spine.userMessage(opts.task);
   // Fase 3 (ADR-0020): fresh per-run candidate registry (each headless run
   // is one process, so per-run == per-turn here).
@@ -1065,6 +1069,9 @@ async function runHeadlessCouncil(
   // are then derived from events. The 1.x rolling history no longer feeds
   // the harness messages directly (degraded spine falls back to it).
   const seededHistory = await seedHeadlessModelHistory(spine, opts.history);
+  // E1.4: advertise the spine session id so hosts (Desktop) resume the
+  // same event log next turn instead of replaying 1.x history JSON.
+  emitEvent(sessionStartedEvent(spine));
   if (opts.task) spine.userMessage(opts.task);
   // Experiment: free-form council+build soft-gated to design-phase unless
   // ZELARI_COUNCIL_CAN_BUILD=1. Also strip project mutators (planMode tools).
@@ -1231,6 +1238,9 @@ async function runHeadlessZelari(
   // are then derived from events. The 1.x rolling history no longer feeds
   // the harness messages directly (degraded spine falls back to it).
   const seededHistory = await seedHeadlessModelHistory(spine, opts.history);
+  // E1.4: advertise the spine session id so hosts (Desktop) resume the
+  // same event log next turn instead of replaying 1.x history JSON.
+  emitEvent(sessionStartedEvent(spine));
   if (opts.task) spine.userMessage(opts.task);
   spine.missionPhase('design', 'mission-start');
   const { buildMissionBrief } = await import('@zelari/core/council');

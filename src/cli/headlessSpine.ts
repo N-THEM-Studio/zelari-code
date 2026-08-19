@@ -43,6 +43,27 @@ export interface HeadlessSpineHandle {
   exportJson(): Promise<string | null>;
 }
 
+/**
+ * E1.4 (ADR-0016/0021): the NDJSON event hosts consume to learn which 2.0
+ * spine session this run owns. The Desktop captures it on turn 1 and resumes
+ * the same event log (`--resume <id>`) on every following turn, so the model
+ * context is derived from the spine instead of replaying 1.x `--history`.
+ *
+ * Pure factory (no `headless.ts` import) to keep the module graph acyclic;
+ * callers pass the result to their own `emitEvent`.
+ */
+export function sessionStartedEvent(handle: HeadlessSpineHandle): {
+  type: 'session_started';
+  sessionId: string;
+  spine: string;
+} {
+  return {
+    type: 'session_started',
+    sessionId: handle.sessionId,
+    spine: handle.spine.status,
+  };
+}
+
 export function resolveHeadlessProfileId(
   mode: HeadlessMode | undefined,
   explicit?: string,

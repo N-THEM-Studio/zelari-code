@@ -979,6 +979,23 @@ export default function App() {
         // v1.10.0: collect rolling history for the next runTask. Prefer
         // user/assistant pairs only (tool tails blow the budget and caused
         // plan→build amnesia). Merge with chat-derived when richer.
+        // E1.4: capture the 2.0 spine session id emitted at run start; the
+        // next runTask resumes the same event log (--resume) so multi-turn
+        // context comes from the spine instead of the 1.x history replay.
+        if (ev.type === "session_started") {
+          const sid = (ev as { sessionId?: string }).sessionId;
+          if (sid && sid.trim().length > 0) {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === convId && c.sessionId !== sid
+                  ? { ...c, sessionId: sid }
+                  : c,
+              ),
+            );
+          }
+          return;
+        }
+
         if (ev.type === "history_snapshot") {
           const msgs = (ev as { messages?: AgentMessageLite[] }).messages;
           if (Array.isArray(msgs)) {
@@ -1997,6 +2014,10 @@ export default function App() {
         // Replay rolling history so the headless agent/council keeps multi-turn
         // context (answers "procedi" / "sì" instead of amnesia).
         history: historyForRun,
+        // E1.4: resume the conversation spine (--resume <id>); history
+        // above stays as fallback for legacy chats and degraded spines.
+        sessionId: live?.sessionId,
+
         todos: toTodoPayload(live?.sessionTasks ?? []),
         krakenGraph: krakenGraph || undefined,
         planOnly: planOnly || undefined,
