@@ -23,6 +23,7 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 | 0017 | Selezione unificata del "thinking effort" per tutti i provider | 📝 Proposto | da confermare | — |
 | 0018 | Contratto workspace task store su `.zelari/plan.json` (tool `task_*`) | ✅ Accettato | slice 3a implementata (v1.43.0) | — |
 | 0024 | Chiusura del dual-write: spine come unica sorgente del contesto modello | ✅ Accettato | 2026-08-19 | 2026-08-19 |
+| 0025 | Default strict done divisi per superficie (Kraken opt-in, mission ON) | ✅ Accettato | 2026-08-20 | 2026-08-20 |
 
 ## Formato
 
