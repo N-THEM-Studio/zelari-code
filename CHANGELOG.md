@@ -11,6 +11,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **docs: handoff 2.0-alpha** — `HANDOFF-2.0-alpha.md` mappa lo stato dell'exit plan (Exit-0/1 complete, Exit-2 parziale) e la guida per riprendere il lavoro.
 
+## [2.0.0-alpha.7] - 2026-08-20
+
+### Added — Exit-2: native Verification 2.0 in the Kraken/mission path
+
+- **Verifier advisory lock tests (Exit-2.3)**: `src/cli/kraken/verifierAdvisoryLock.test.ts`
+  locks the composition contract end-to-end — deterministic evidence stays the only
+  completion authority: unknown/fail + LLM CONFIRMED → BLOCKED/REPAIR_REQUIRED with the
+  review downgraded to advisory; PASS + LLM REJECTED → verdict untouched, exit 0.
+- **Native criteria pack in the strict path (Exit-2.4)**: `src/cli/kraken/nativeVerification.ts`
+  binds `zelari-coding/v1` criteria to the repo's real npm scripts (env-overridable,
+  timeout-clamped) and merges engine results into the same `evaluateCompletion` —
+  opt-in during the alpha via `ZELARI_VERIFY_PACK=1`.
+- **Event-backed evidence (Exit-2 P1)**: new spine kind `verification.evidence`; the core
+  engine emits raw observations (command, exit code, sha256 digest, output tails) and
+  anchors each deterministic `EvidenceRef` to the spine `seq`. New
+  `requireEventBackedEvidence` policy flag (default off in alpha, RC gate) +
+  `eventBackedEvidenceComplete` metric; unanchored verifier notes can no longer pose as
+  tool output when the flag is on.
+- **Mission continuation policy (Exit-2.5)**: `packages/core/src/mission/continuationPolicy.ts`
+  — advisory by construction (`goalRewrite:false`, `doneByScore:false` literals); required
+  criteria incomplete → always `continue`; budget exhausted → `hold-for-user` (never done).
+  Wired as spine kind `mission.progress` (state-only, not model surface); the mission loop
+  records advice but never obeys it — deterministic rules stay the only authority.
+- **ADR-0025 — strict done defaults per surface**: missions close under the strict evidence
+  gate by default (opt-out `ZELARI_MISSION_STRICT=0` / `--no-strict-done`); Kraken keeps the
+  1.x-compatible opt-in (`ZELARI_STRICT_DONE=1`). A blocked mission "success" now exits 4 and
+  records `mission-strict-blocked` instead of a clean zero. Lock tests in
+  `src/cli/kraken/strictDefaults.test.ts`.
+
+### Fixed
+
+- `criteriaPack.v1`: `options.X ?? default` ignored the documented `null` ("criterion without
+  check"); `null` now disables the criterion, `undefined` keeps the default.
 ## [2.0.0-alpha.6] - 2026-08-19
 
 ### Added — Exit-1/E1.4: Desktop resume-from-spine
