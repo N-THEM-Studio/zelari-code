@@ -28,6 +28,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **E1.8 — ADR-0024 closes the dual-write question:** `docs/decisions/0024-single-write-model-context.md` records that the session spine is the only model-context source on every hot path, the 1.x store/sidecar are a mirrored export/UI surface during the alpha (removal evaluated at 2.0.0-rc), the discrete fallback stays the turn-safety policy, and `ZELARI_SESSION_SPINE=0` is emergency-only. The `sessionSpine.ts` header now states the post-E1.x contract.
 - **Architectural gate:** new `src/cli/legacyContextIsolation.test.ts` (in `npm run test:session`) encodes the Exit-1 grep criteria as CI — no `applyBudgetPolicyAsync(getHistory())`, `opts.history` only inside `seedHeadlessModelHistory` calls, spine modules never import `sessionManager`, no second history brain on the headless path.
 
+### Added — Exit-2/E2.1: completion verdict readable back from the session spine
+
+- `@zelari/core/verification` exports `sessionEvidence`: `parseVerificationRunPayload` / `lastVerificationRun` / `snapshotToCompletionEvaluation` reconstruct a CompletionEvaluation from `verification.run` events in the session log alone — no in-process registry — so hosts, mission retries and audits can confirm why a turn finished (P1 applied to the decision itself). Discipline: missing/malformed → null (no evidence, never a pass); non-strict records are readable snapshots but never admissible as completion evidence; unknown verdicts degrade to BLOCKED.
+- `SessionSpineMirror.lastVerificationRun()` (and the headless handle delegation) exposes the last strict verification record of the current session; `evaluateStrictBuildGateFromSession(mode, snapshot)` in the kraken bridge rebuilds the strict gate evaluation from it. Round-trip covered by `verificationBridge.session.test.ts` (evaluate → payload → spine append → replay → same verdict, blockers add up, missing record = open-not-pass).
+
 ## [2.0.0-alpha.5] - 2026-08-19
 
 ### Alpha exit plan — what is left for 2.0

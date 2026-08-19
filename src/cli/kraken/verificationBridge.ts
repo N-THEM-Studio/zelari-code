@@ -20,6 +20,8 @@ import {
   evaluateCompletion,
   STRICT_ALL_POLICY,
   type CompletionEvaluation,
+  snapshotToCompletionEvaluation,
+  type SessionVerificationRunSnapshot,
   type Criterion,
   type EvidenceRef,
   type VerificationResult,
@@ -187,5 +189,34 @@ export function strictGateEventPayload(evaluation: StrictBuildGateEvaluation): R
         }
       : null,
     summary: evaluation.summary,
+  };
+}
+
+/**
+ * E2.1 (ADR-0023 × ADR-0021): reconstruct the strict build gate verdict from
+ * the session spine alone — no in-process registry. For hosts, mission
+ * retries and audits: a turn's decision must be confirmable from its log.
+ * A missing snapshot is "no verification evidence" (open, never pass); a
+ * non-strict snapshot is not admissible. Blockers add up — the caller
+ * combines this with its own current-process gate.
+ */
+export function evaluateStrictBuildGateFromSession(
+  mode: 'plan' | 'build',
+  snapshot: SessionVerificationRunSnapshot | null,
+): StrictBuildGateEvaluation {
+  // Legacy view of THIS process (usually empty on a resumed host).
+  const gate = evaluateKrakenCompletionGate(mode);
+  const evaluation = snapshot ? snapshotToCompletionEvaluation(snapshot) : null;
+  const blocked = evaluation ? evaluation.verdict !== 'PASS' : false;
+  return {
+    gate,
+    strict: evaluation !== null,
+    evaluation,
+    blocked,
+    summary: evaluation
+      ? blocked
+        ? `blocked (strict ${evaluation.verdict} from session log seq=${snapshot?.seq}): ${evaluation.summary}`
+        : `open (strict PASS from session log seq=${snapshot?.seq}): ${evaluation.summary}`
+      : 'open (no strict verification record in session log)',
   };
 }

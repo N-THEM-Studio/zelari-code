@@ -33,6 +33,10 @@ import {
   type DerivedMessage,
 } from '@zelari/core/session';
 import { ACTOR_AGENT, ACTOR_SYSTEM, ACTOR_USER } from '@zelari/core/session';
+import {
+  lastVerificationRun as lastVerificationRunFromLog,
+  type SessionVerificationRunSnapshot,
+} from '@zelari/core/verification';
 import path from 'node:path';
 
 /** Kill switch — default ON in the 2.0 alpha. */
@@ -206,6 +210,20 @@ export class SessionSpineMirror {
     ).catch(() => null);
     if (!report || report.events.length === 0) return null;
     return deriveMessages(report.events);
+  }
+
+  /**
+   * E2.1 (ADR-0023 × ADR-0021): last recognizable strict verification record
+   * in this session's log — the completion verdict is reconstructible from
+   * the spine alone (null when degraded/disabled or no record).
+   */
+  async lastVerificationRun(): Promise<SessionVerificationRunSnapshot | null> {
+    if (this.status !== 'active' && this.status !== 'closed') return null;
+    const report = await readSessionLog(
+      path.join(this.sessionsDir, this.sessionId, 'events.jsonl'),
+    ).catch(() => null);
+    if (!report) return null;
+    return lastVerificationRunFromLog(report.events);
   }
 
   /** Mirror one BrainEvent (coalescing message deltas until message_end). */

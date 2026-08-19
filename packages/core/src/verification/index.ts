@@ -5,6 +5,7 @@
 export * from './types.js';
 export * from './engine.js';
 export * from './completionPolicy.js';
+export * from './sessionEvidence.js';
 export * from './criteriaPack.v1.js';
 export * from './metrics.js';
 export * from './verifier.js';

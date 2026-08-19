@@ -23,6 +23,7 @@ import {
 import { deriveMissionState } from '@zelari/core/mission';
 import { resolveProfile, toolManifestHash } from '@zelari/core/runtime';
 import { SessionSpineMirror, type SpineMirrorOptions } from './sessionSpine.js';
+import type { SessionVerificationRunSnapshot } from '@zelari/core/verification';
 import { defaultProfileForMode, type HeadlessMode } from './headless.js';
 
 export interface HeadlessSpineHandle {
@@ -33,6 +34,8 @@ export interface HeadlessSpineHandle {
   observe(ev: unknown): void;
   userMessage(text: string): void;
   verificationRun(payload: Record<string, unknown>): void;
+  /** E2.1: last strict verification record from the spine log (null when none/degraded). */
+  lastVerificationRun(): Promise<SessionVerificationRunSnapshot | null>;
   missionPhase(phase: string, note?: string): void;
   note(text: string, data?: Record<string, unknown>): void;
   /** Clean end: append session.ended + release lock. */
@@ -116,6 +119,9 @@ export async function openHeadlessSpine(opts: {
     },
     verificationRun(payload: Record<string, unknown>): void {
       spine.verificationRun(payload);
+    },
+    lastVerificationRun(): Promise<SessionVerificationRunSnapshot | null> {
+      return spine.lastVerificationRun();
     },
     missionPhase(phase: string, note?: string): void {
       spine.missionPhase(phase, note);
