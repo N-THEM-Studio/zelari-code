@@ -5,6 +5,13 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-alpha.2] - 2026-08-19
+
+Release-pipeline hardening: the tag now carries the full lockstep version bump (root, core, desktop, tauri.conf, Cargo.toml/Cargo.lock, lockfile) so publish/desktop workflows verify cleanly; workflow fix for prerelease dist-tag carried over from alpha.1.
+
+### Changed
+- Lockstep bump to 2.0.0-alpha.2 across root zelari-code, @zelari/core, apps/desktop, tauri.conf.json, Cargo.toml/Cargo.lock and package-lock.json.
+
 ## [2.0.0-alpha.1] - 2026-08-19
 
 Second 2.0 pre-release: Linux CI fixes for the runtime seams (path jail + shell timeout process-group kill) and the version-lockstep bump that makes the publish/release-desktop tag pipeline green again.
