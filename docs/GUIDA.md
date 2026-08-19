@@ -25,6 +25,9 @@
 15. [MCP (Model Context Protocol)](#mcp-model-context-protocol)
 16. [SSH (deploy / monitor)](#ssh-deploy--monitor)
 17. [Sessioni e branch](#sessioni-e-branch)
+17a. [Host, Profile e Phase (2.0)](#host-profile-e-phase-2-0)  
+17b. [Session spine 2.0 (canonica)](#session-spine-20-canonica)  
+17c. [Verifica deterministica, Strict Done e Verifier LLM (2.0)](#verifica-deterministica-strict-done-e-verifier-llm-2-0)  
 18. [Tool disponibili](#tool-disponibili)
 19. [Capability avanzate e novità 1.26–1.34](#capability-avanzate-e-novità-112114)
 20. [File di configurazione](#file-di-configurazione)
@@ -316,6 +319,13 @@ zelari-code --headless --task "Spiega cosa fa src/cli/main.ts" --output json
 | `--provider <id>` | provider attivo | Override provider |
 | `--model <nome>` | modello del provider | Override modello |
 | `--history-file <path>` | — | Storia multi-turno (JSON) usata dalla Desktop |
+| `--task-file <path>` | — | Come `--task` ma da file (evita il limite argv di Windows) |
+| `--once` | off | Modalità trigger: singolo ciclo + lockfile (cron / git hook) |
+| `--profile <id>` | per `--mode` | Profilo di capability: `minimal/v1` \| `kraken/v1` \| `council/v1` \| `mission/v1`. Registrato nell'header della session spine |
+| `--resume <sessionId>` | — | Riprende una sessione spine 2.0 (la numerazione `seq` prosegue) |
+| `--export-session <path>` | — | Scrive un export `zelari-session-export/1` JSON al termine (`-` = stdout) |
+| `--strict-done` | off (kraken) | Attiva l'evidence gate ADR-0023. Le mission lo hanno **di default** (ADR-0025) |
+| `--no-strict-done` | — | Opt-out del gate strict per le mission (`ZELARI_MISSION_STRICT=0`) |
 
 ### Esempi
 
@@ -334,6 +344,12 @@ zelari-code --headless --mode kraken --phase plan --task "Outline the refactor"
 OPENAI_API_KEY=sk-... zelari-code --headless \
   --provider openai-compatible --model grok-4 \
   --task "Review package.json"
+
+# Riprendi una sessione spine (il contesto deriva da events.jsonl, non da --history)
+zelari-code --headless --resume <sessionId> --task "Procedi con il refactor"
+
+# Esporta la sessione per replay/analisi offline (zelari-session-export/1)
+zelari-code --headless --task "..." --export-session session.json
 ```
 
 ### Exit code headless
@@ -344,6 +360,46 @@ OPENAI_API_KEY=sk-... zelari-code --headless \
 | `1` | Errore utente (flag mancanti, API key assente) |
 | `2` | Errore runtime (provider, eccezione council) |
 | `3` | Run agente terminato con errore |
+| `4` | Strict evidence gate bloccato (ADR-0023/0025): dettagli nell'evento `verification.run` della session spine |
+
+---
+
+## Host, Profile e Phase (2.0)
+
+La separazione concettuale del runtime 2.0 (ADR-0022): **chi** esegue, **con quali capability**, **in quale fase**.
+
+### Host
+
+| Host | Come si attiva | Note |
+|---|---|---|
+| TUI | `zelari-code` (default) | Ink + React, scrollback nativo |
+| headless | `--headless --task ...` | NDJSON o plain text; per CI/script/Desktop |
+| Desktop | app Tauri 2 | pilotata via canale headless + `serve` |
+| serve | `/serve` | API locale per la Companion Android |
+
+L'host **non** cambia le capability dell'agente: cambia solo la superficie di I/O. Il model context deriva sempre dalla session spine.
+
+### Profile
+
+Il profilo è un **manifest dichiarativo di capability** (upper bound) versionato:
+
+| Profilo | Default di mode | Contenuto |
+|---|---|---|
+| `minimal/v1` | — | Harness essenziale (read-only + task) |
+| `kraken/v1` | `kraken` | Harness + workspace write/edit/bash + tentacoli |
+| `council/v1` | `council` | Set esteso per il flusso council |
+| `mission/v1` | `zelari` | Set delle missioni autonome |
+
+Il default dipende da `--mode`; `--profile <id>` vince sempre. L'header della session spine registra il profilo e il `toolManifestHash` del set dichiarato: run diversi sullo stesso task/profilo restano confrontabili (stesso manifest ⇒ stesso hash).
+
+### Phase
+
+| Fase | Effetto runtime |
+|---|---|
+| `build` (default) | Capability complete del profilo |
+| `plan` | I tool **mutatori** (`write_file`, `edit_file`, `apply_diff`, `bash`, …) vengono strippati dal registry; restano i task tool in sola lettura |
+
+Il profilo dichiara il limite massimo, la fase restringe al momento dell'esecuzione: per questo `council+plan` non espone `write_file` benché `council/v1` lo dichiari.
 
 ---
 
@@ -941,6 +997,8 @@ Kill switch: `ZELARI_SSH=0`.
 
 ## Sessioni e branch
 
+> **Legacy 1.x (compat).** Questi comandi gestiscono le superfici di compat della 1.x. Dal 2.0 il contesto del modello è derivato **solo** dalla [Session spine 2.0](#session-spine-20-canonica): `--resume` headless e l'export `--export-session` sostituiscono lo snapshot di history per riprendere una sessione.
+
 ### Sessioni
 
 Ogni conversazione è persistita come JSONL in `~/.tmp/zelari-code/sessions/<id>.jsonl`.
@@ -963,6 +1021,94 @@ I branch isolano snapshot di sessioni (non sono branch git):
 ```
 
 > Dopo `/checkout`, esci con `/exit` e rilancia `zelari-code`.
+
+---
+
+## Session spine 2.0 (canonica)
+
+La **session spine** (ADR-0016/0021) è il log event-sourced che dal 2.0 è la **unica** source of truth del contesto del modello, su ogni hot path (headless kraken/council/zelari + TUI):
+
+```
+Session log (append-only JSONL)
+    ↓ deriveMessages()
+derivedToAgentMessages()
+    ↓
+model context (AgentHarness)
+```
+
+- **Dove:** `<workspace>/.zelari/sessions/<sessionId>/events.jsonl` (override di test con `ZELARI_SESSIONS_DIR`)
+- **Garanzie:** append-only con single-writer lock, `seq` monotono, `SCHEMA_VERSION`, replay tollerante (un evento sconosciuto diventa un issue, non un crash)
+- **Invariant:** ciò che il modello vede ⟺ ciò che è loggato — prompt utente inclusi, cosa che il log 1.x non registrava mai
+- **Eventi di stato oltre al modello:** `verification.run` / `verification.evidence`, `mission.progress`, lineage (`session.forked`), `session.started` con profilo + manifest hash
+
+### Resume
+
+```bash
+zelari-code --headless --resume <sessionId> --task "secondo turno"
+```
+
+La numerazione `seq` prosegue nello stesso log; nessuno snapshot di history da ricostruire a mano.
+
+### Export
+
+```bash
+zelari-code --headless --task "..." --export-session out.json   # oppure - per stdout
+```
+
+Produce un documento `zelari-session-export/1`: proiezione completa, trajectory, lineage e `forkParent`. Un reader fresco può rigiocarlo e ottenere la stessa traiettoria semantica.
+
+### Fork (API core)
+
+Il fork è un'API programmatica di `@zelari/core/session` (`forkSession(store, id, { fromSeq })`): copia la traiettoria fino a `fromSeq` in un nuovo sessionId e registra l'evento `session.forked` con la lineage. In alpha.7 non è un flag CLI; l'export lo espone come `forkParent`.
+
+### Legacy mirror (transitorio)
+
+Il sidecar BrainEvent 1.x e lo store in-process restano **solo** come superficie di export/UI durante l'alpha (ADR-0024). Non sono source of truth: la loro rimozione è pianificata per `2.0.0-rc`.
+
+---
+
+## Verifica deterministica, Strict Done e Verifier LLM (2.0)
+
+Il contratto di completamento 2.0 (ADR-0023/0025): **deterministico batte narrativo**.
+
+### VerificationEngine ed evidence event-backed
+
+Un criterion produce un check deterministico (exit code, digest sha256 dell'output, osservazioni fs). Ogni osservazione emette un evento `verification.evidence` nella spine e l'`EvidenceRef` ne registra il `seq`: l'evidence è **ancorata all'evento reale**, non alla frase di un agente.
+
+Tier deterministiche (event-backed): `tool-output`, `command-output`, `fs-observation`. La narrazione (`claimed`) da sola non passa mai un gate.
+
+### Criteria pack v1
+
+Con `ZELARI_VERIFY_PACK=1` (in aggiunta al gate strict) il criteria pack v1 esegue per davvero i check di progetto — typecheck, test, build — usando gli script npm reali del repo, e fonde i risultati nello stesso gate:
+
+```bash
+zelari-code --headless --task "ship F3" --strict-done   # kraken, opt-in
+ZELARI_VERIFY_PACK=1 zelari-code --headless --task "ship" --strict-done
+```
+
+### CompletionPolicy e Strict Done
+
+`PASS | REPAIR_REQUIRED | BLOCKED` — `unknown ≠ pass`: un criterion required senza evidenza è **BLOCKED**, non successo.
+
+| Superficie | Default | Flag |
+|---|---|---|
+| Kraken (TUI + headless) | **off** (opt-in) | `--strict-done` / `ZELARI_STRICT_DONE=1` |
+| Mission `zelari` | **ON** (ADR-0025) | opt-out: `--no-strict-done` / `ZELARI_MISSION_STRICT=0` |
+
+Gate bloccato ⇒ exit code **`4`** e stato sessione stopped, con l'evento `verification.run` che contiene criteria, status e blocker.
+
+### Verifier LLM (advisory)
+
+Il verifier LLM è **opt-in e advisory**: aggiunge informazione, mai autorità.
+
+- **Lock garantito da test:** un criterion deterministico UNKNOWN/FAIL con verifier CONFIRMED resta **BLOCKED**; un PASS deterministico con verifier REJECTED resta **PASS** (la review è visibile come rischio, non riscrive il verdetto)
+- **Modello:** "Same as current model" (inherit) o provider+model dedicato — si configura in **Desktop → Settings → Kraken** (persistito; il modello effettivo è registrato nell'evento `verification.run` come `effectiveModel`)
+- **Stato alpha:** la selezione persistita è risolta dal runtime e il contratto è locked; l'invocazione del verifier nel normale lifecycle è il wiring residuo del piano 2.0
+
+### Mission progress (advisory) e Best-of-N (alpha)
+
+- Ogni slice di missione emette `mission.progress` con una raccomandazione (`continue` / `wind-down` / `hold-for-user`): il loop **non la esegue** — mai early-stop con criterion required incompleti, mai done da score, mai rewrite del goal
+- Best-of-N è una superficie alpha (switch in Desktop): non fa parte del contratto di completamento
 
 ---
 
@@ -1159,6 +1305,15 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 | `ZELARI_CHECKPOINT` | `1` | `0` disabilita i checkpoint automatici in zelari-mode |
 | `ZELARI_STATE` | `1` | `0` disabilita durable state (`.zelari/state/`) |
 | `ZELARI_CTX_DURABLE_CHARS` | `3000` | max chars durable state nel volatile prompt |
+
+### Session spine e verifica 2.0
+
+| Variabile | Default | Effetto |
+|---|---|---|
+| `ZELARI_STRICT_DONE` | `0` | `1` = evidence gate strict su kraken/TUI/headless (ADR-0025) |
+| `ZELARI_MISSION_STRICT` | `1` | `0` = opt-out del gate strict mission (default ON) |
+| `ZELARI_VERIFY_PACK` | `0` | `1` = criteria pack v1 nativo (typecheck/test/build reali) nel gate strict |
+| `ZELARI_SESSIONS_DIR` | `<workspace>/.zelari/sessions` | Override della directory della session spine (test/CI) |
 
 ### Path override (test/CI)
 
