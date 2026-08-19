@@ -46,12 +46,13 @@ export async function handleUpdateCheck(
 export async function handleUpdatePerform(
   ctx: UpdaterSlashContext,
 ): Promise<void> {
-  appendSystem(
-    ctx.setMessages,
-    "[update] running `npm install -g zelari-code@latest`...",
-  );
   try {
-    const { performUpdate } = await import("../updater.js");
+    const { performUpdate, distTagForVersion, getCurrentVersion } = await import("../updater.js");
+    const tag = distTagForVersion(getCurrentVersion());
+    appendSystem(
+      ctx.setMessages,
+      `[update] running \`npm install -g zelari-code@${tag}\`...`,
+    );
     const res = await performUpdate();
     if (res.ok) {
       // v1.4.0: after a successful update, re-run the prerequisite probes so

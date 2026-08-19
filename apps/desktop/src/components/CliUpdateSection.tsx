@@ -89,6 +89,8 @@ export function CliUpdateSection({ cli, onCliRefreshed }: Props) {
         <dd>
           <code>
             {info?.npmLatest ? `v${info.npmLatest}` : busy ? "…" : "—"}
+            {" "}
+            <span className="muted">({info?.channel ?? "latest"} channel)</span>
           </code>
         </dd>
         <dt>Path</dt>

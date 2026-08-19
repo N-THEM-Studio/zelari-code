@@ -79,6 +79,7 @@ export async function discoverModels(args: {
 export interface CliUpdateCheck {
   installed?: string | null;
   npmLatest?: string | null;
+  channel?: string;
   updateAvailable: boolean;
   message: string;
 }

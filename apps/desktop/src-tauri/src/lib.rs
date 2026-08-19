@@ -539,16 +539,34 @@ fn cmp_semver(a: &str, b: &str) -> i32 {
     }
 }
 
-/// Fetch latest zelari-code version from npm (via Node fetch — no extra Rust dep).
-fn fetch_npm_latest_cli(node: &Path) -> Result<String, String> {
+/// Map an app version to the npm dist-tag channel it should track.
+/// Pre-release builds (e.g. `2.0.0-alpha.3`) follow their matching dist-tag
+/// (`alpha`), stable builds follow `latest`. This keeps the Desktop's CLI
+/// update on the same channel as the Desktop itself.
+fn dist_tag_for(version: &str) -> &'static str {
+    if version.contains("-alpha.") {
+        "alpha"
+    } else if version.contains("-beta.") {
+        "beta"
+    } else if version.contains("-next.") {
+        "next"
+    } else {
+        "latest"
+    }
+}
+
+/// Fetch the current zelari-code version for a dist-tag from npm
+/// (via Node fetch — no extra Rust dep).
+fn fetch_npm_latest_cli(node: &Path, tag: &str) -> Result<String, String> {
     let script = r#"
-fetch('https://registry.npmjs.org/zelari-code/latest')
+fetch('https://registry.npmjs.org/zelari-code/' + process.env.ZELARI_NPM_TAG)
   .then(r => { if (!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
   .then(j => { if (!j.version) throw new Error('no version'); process.stdout.write(String(j.version)); })
   .catch(e => { process.stderr.write(String(e && e.message || e)); process.exit(1); });
 "#;
     let mut cmd = Command::new(node);
     cmd.arg("-e").arg(script);
+    cmd.env("ZELARI_NPM_TAG", tag);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     {
@@ -577,6 +595,7 @@ fetch('https://registry.npmjs.org/zelari-code/latest')
 struct CliUpdateCheck {
     installed: Option<String>,
     npm_latest: Option<String>,
+    channel: String,
     update_available: bool,
     message: String,
 }
@@ -589,7 +608,8 @@ fn check_cli_update() -> Result<CliUpdateCheck, String> {
         .and_then(|cli| read_cli_version(&node, &cli))
         .map(|v| normalize_semver(&v));
 
-    let npm_latest = fetch_npm_latest_cli(&node)?;
+    let channel = dist_tag_for(env!("CARGO_PKG_VERSION"));
+    let npm_latest = fetch_npm_latest_cli(&node, channel)?;
 
     let update_available = match &installed {
         Some(cur) => cmp_semver(cur, &npm_latest) < 0,
@@ -598,15 +618,16 @@ fn check_cli_update() -> Result<CliUpdateCheck, String> {
 
     let message = match &installed {
         Some(cur) if update_available => {
-            format!("CLI is v{cur}; npm latest is v{npm_latest}. Use Update CLI to upgrade.")
+            format!("CLI is v{cur}; npm {channel} is v{npm_latest}. Use Update CLI to upgrade.")
         }
-        Some(cur) => format!("CLI is up to date (v{cur})."),
+        Some(cur) => format!("CLI is up to date (v{cur}) on npm {channel}."),
         None => format!("CLI not found. Install with: npm i -g zelari-code@{npm_latest}"),
     };
 
     Ok(CliUpdateCheck {
         installed,
         npm_latest: Some(npm_latest),
+        channel: channel.to_string(),
         update_available,
         message,
     })
@@ -628,7 +649,7 @@ fn update_cli(args: UpdateCliArgs) -> Result<serde_json::Value, String> {
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or("latest");
+        .unwrap_or_else(|| dist_tag_for(env!("CARGO_PKG_VERSION")));
     let pkg = format!("zelari-code@{ver}");
 
     // Prefer: node <npm-cli.js> install -g … (avoids broken .cmd shims on Windows)

@@ -15,6 +15,8 @@ import {
   performUpdate,
   resolveBundledNpmCli,
   REGISTRY_URL,
+  distTagForVersion,
+  registryUrlForTag,
 } from '../../src/cli/updater';
 import type { spawn as SpawnType } from 'node:child_process';
 
@@ -38,6 +40,20 @@ describe('getCurrentVersion', () => {
     const version = getCurrentVersion();
     expect(version).toMatch(/^\d+\.\d+\.\d+/);
     expect(version).not.toBe('0.0.0');
+  });
+});
+
+describe('distTagForVersion / registryUrlForTag', () => {
+  it('maps pre-release versions to their dist-tag channel', () => {
+    expect(distTagForVersion('2.0.0-alpha.3')).toBe('alpha');
+    expect(distTagForVersion('2.0.0-beta.1')).toBe('beta');
+    expect(distTagForVersion('2.0.0-next.0')).toBe('next');
+    expect(distTagForVersion('1.49.0')).toBe('latest');
+  });
+
+  it('builds a channel-aware registry URL', () => {
+    expect(registryUrlForTag('alpha')).toBe('https://registry.npmjs.org/zelari-code/alpha');
+    expect(registryUrlForTag('latest')).toBe('https://registry.npmjs.org/zelari-code/latest');
   });
 });
 
@@ -165,14 +181,17 @@ describe('checkForUpdate', () => {
 });
 
 describe('performUpdate', () => {
-  it('spawns npm install -g zelari-code@latest and captures exit code 0', async () => {
+  it('spawns npm install -g zelari-code@<channel> and captures exit code 0 (default channel)', async () => {
     // Fake spawn: emits a stdout chunk + exits 0.
     // v0.7.9 (DEP0190 fix): on win32 performUpdate passes a single
     // pre-quoted command string + shell:true; on POSIX command + args array.
     // Normalize both shapes before asserting.
     const fakeSpawn = ((cmd: string, args: string[] | object) => {
       const argv = Array.isArray(args) ? [cmd, ...args] : cmd.split(' ');
-      expect(argv).toEqual(['npm', 'install', '-g', 'zelari-code@latest']);
+      // Default channel is derived from the running version (this build is
+      // 2.0.0-alpha.x → `alpha`). A stable build would use `latest`.
+      const tag = distTagForVersion(getCurrentVersion());
+      expect(argv).toEqual(['npm', 'install', '-g', `zelari-code@${tag}`]);
 
       const fake = new EventEmitter() as unknown as ReturnType<typeof SpawnType> & {
         stdout: EventEmitter;
@@ -192,6 +211,29 @@ describe('performUpdate', () => {
     expect(result.ok).toBe(true);
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain('added 1 package');
+  });
+
+  it('honors an explicit channel override (latest)', async () => {
+    let seen: string[] = [];
+    const fakeSpawn = ((cmd: string, args: string[] | object) => {
+      const argv = Array.isArray(args) ? [cmd, ...args] : cmd.split(' ');
+      seen = argv;
+      const fake = new EventEmitter() as unknown as ReturnType<typeof SpawnType> & {
+        stdout: EventEmitter;
+        stderr: EventEmitter;
+      };
+      fake.stdout = new EventEmitter();
+      fake.stderr = new EventEmitter();
+      setImmediate(() => {
+        fake.stdout.emit('data', Buffer.from('added 1 package in 2s'));
+        fake.emit('close', 0);
+      });
+      return fake;
+    }) as unknown as typeof SpawnType;
+
+    const result = await performUpdate('zelari-code', fakeSpawn, undefined, 'latest');
+    expect(result.ok).toBe(true);
+    expect(seen).toEqual(['npm', 'install', '-g', 'zelari-code@latest']);
   });
 
   it('returns ok=false on npm exit code != 0', async () => {
@@ -242,7 +284,7 @@ describe('performUpdate', () => {
         : fakeChild('added 1 package in 2s', 0);
     }) as unknown as typeof SpawnType;
 
-    const result = await performUpdate('zelari-code', fakeSpawn, () => '/fake/npm-cli.js');
+    const result = await performUpdate('zelari-code', fakeSpawn, () => '/fake/npm-cli.js', 'latest');
 
     expect(calls).toBe(2);
     expect(result.ok).toBe(true);

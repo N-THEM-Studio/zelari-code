@@ -3,14 +3,18 @@
  *
  * Functions:
  *   - getCurrentVersion(): reads bundled package.json
- *   - checkForUpdate(): fetches https://registry.npmjs.org/zelari-code/latest,
+ *   - checkForUpdate(): fetches the registry for the channel matching the
+ *     current version (pre-release → `alpha`/`beta`/`next`, stable → `latest`),
  *     compares semver, returns { currentVersion, latestVersion, updateAvailable }
  *   - performUpdate(): spawns `npm install -g zelari-code@latest`,
  *     captures stdout/stderr, returns { ok, output, error? }
  *
  * All network + spawn operations are injectable for testing (see tests).
  *
- * Channel: `latest` only (locked per user decision, v3-N).
+ * Channel: derived from the current version — `latest` for stable releases,
+ * `alpha` / `beta` / `next` when the running version is a pre-release
+ * (v2.0.0-alpha.x → `alpha`). This keeps pre-release users on the matching
+ * npm dist-tag instead of pinning them to the older stable `latest`.
  * No self-restart: caller is expected to display "please restart manually".
  *
  * @see docs/plans/2026-06-30-anathema-coder-v3-N.md
@@ -138,6 +142,23 @@ export function compareSemver(a: string, b: string): -1 | 0 | 1 {
 export const REGISTRY_URL = 'https://registry.npmjs.org/zelari-code/latest';
 
 /**
+ * Map a running version to the npm dist-tag it should track.
+ * - `2.x.y-alpha.N` / `2.x.y-beta.N` / `2.x.y-next.N` → `alpha` / `beta` / `next`
+ * - anything else → `latest`
+ */
+export function distTagForVersion(version: string): string {
+  if (version.includes('-alpha.')) return 'alpha';
+  if (version.includes('-beta.')) return 'beta';
+  if (version.includes('-next.')) return 'next';
+  return 'latest';
+}
+
+/** Registry URL for a specific dist-tag (defaults to the running version's channel). */
+export function registryUrlForTag(tag: string = distTagForVersion(getCurrentVersion())): string {
+  return `https://registry.npmjs.org/zelari-code/${tag}`;
+}
+
+/**
  * Fetch the latest version from the npm registry.
  * Injectable `fetcher` for tests (defaults to global fetch with 5s timeout).
  */
@@ -175,7 +196,10 @@ export async function checkForUpdate(
   registryUrl?: string,
 ): Promise<UpdateCheckResult> {
   const currentVersion = getCurrentVersion();
-  const latest = await fetchLatestVersion(fetcher, registryUrl);
+  // Channel-aware default: pre-release versions check their dist-tag
+  // (e.g. `alpha`), stable versions check `latest`.
+  const url = registryUrl ?? registryUrlForTag();
+  const latest = await fetchLatestVersion(fetcher, url);
 
   if ('error' in latest) {
     return {
@@ -195,7 +219,8 @@ export async function checkForUpdate(
 }
 
 /**
- * Spawn `npm install -g <package>@latest` and stream output.
+ * Spawn `npm install -g <package>@<channel>` (channel defaults to the
+ * running version's dist-tag) and stream output.
  * Injectable `executor` for tests.
  *
  * On Windows, `spawn('npm', ...)` fails with ENOENT because npm is a .cmd
@@ -207,8 +232,10 @@ export async function performUpdate(
   packageName = 'zelari-code',
   executor: typeof spawn = spawn,
   resolveNpmCli: (execPath?: string) => string | null = resolveBundledNpmCli,
+  channel?: string,
 ): Promise<UpdatePerformResult> {
-  const args = ['install', '-g', `${packageName}@latest`];
+  const tag = channel ?? distTagForVersion(getCurrentVersion());
+  const args = ['install', '-g', `${packageName}@${tag}`];
 
   // Attempt 1: the PATH-resolved `npm` (shell on Windows for the .cmd shim).
   const primary = await runNpm(executor, args, 'shim');

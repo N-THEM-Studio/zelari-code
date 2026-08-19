@@ -5,6 +5,17 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0-alpha.4] - 2026-08-19
+
+Channel-aware CLI/Dekstop updater: pre-release builds now track their matching npm dist-tag (`alpha`/`beta`/`next`) instead of being pinned to the older stable `latest`. This fixes the Desktop showing "CLI is up to date (v1.49.0)" while the 2.0 alpha CLI sits on the `alpha` tag — the check, the "Update CLI" button, `/update` and the status line all derive the channel from the running version.
+
+### Changed
+- `src/cli/updater.ts`: `distTagForVersion()` + `registryUrlForTag()`; `checkForUpdate()` and `performUpdate()` default to the channel matching the current version (pre-release → its dist-tag, stable → `latest`); explicit `channel` override for `performUpdate`.
+- `src/cli/slashHandlers/updater.ts`: `/update` now reports and installs the channel-aware tag.
+- Desktop `lib.rs`: `dist_tag_for()` + `fetch_npm_latest_cli(node, tag)`; `check_cli_update` compares against the channel of the app version and returns `channel`; `update_cli` defaults to the app's channel instead of `latest`.
+- Desktop UI: `CliUpdateSection` shows the active channel and the matching install command; status line in `App.tsx` shows `npm <channel> v<version>`.
+- Lockstep bump to 2.0.0-alpha.4 (root, core, desktop, tauri.conf, Cargo.toml/Cargo.lock, package-lock).
+
 ## [2.0.0-alpha.3] - 2026-08-19
 
 Release-pipeline fix for the Windows desktop build (MSI bundler rejects non-numeric prerelease ids; NSIS-only on Windows) carried over from alpha.2, with the full lockstep version bump so the tag matches every manifest.

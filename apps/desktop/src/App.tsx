@@ -763,7 +763,7 @@ export default function App() {
           const r = await checkCliUpdate();
           if (r.updateAvailable && r.installed && r.npmLatest) {
             setStatusLine(
-              `CLI is v${r.installed} (npm latest v${r.npmLatest}) — Settings → Updates`,
+              `CLI is v${r.installed} (npm ${r.channel ?? "latest"} v${r.npmLatest}) — Settings → Updates`,
             );
           }
         } catch {
