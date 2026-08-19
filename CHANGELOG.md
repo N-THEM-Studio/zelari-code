@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **docs: handoff 2.0-alpha** — `HANDOFF-2.0-alpha.md` mappa lo stato dell'exit plan (Exit-0/1 complete, Exit-2 parziale) e la guida per riprendere il lavoro.
+
+## [2.0.0-alpha.6] - 2026-08-19
+
 ### Added — Exit-1/E1.4: Desktop resume-from-spine
 
 - Headless dispatch (kraken/council/zelari) emits a `session_started` NDJSON event
