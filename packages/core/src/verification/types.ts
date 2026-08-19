@@ -79,7 +79,11 @@ export const EvidenceTierSchema = z.enum([
 export type EvidenceRefTier = z.infer<typeof EvidenceTierSchema>;
 
 export const EvidenceRefSchema = z.object({
-  /** Seq of the originating session event, when the evidence is logged. */
+  /**
+   * Seq of the originating session event. Required (by policy) for
+   * event-backed tiers on the 2.0 path: evidence without a session anchor
+   * is narration, not traceable output (F3 / ADR-0023 §5).
+   */
   seq: z.number().int().positive().optional(),
   tier: EvidenceTierSchema,
   /** Human-readable pointer: command line, file path, tool call id… */
@@ -89,6 +93,28 @@ export const EvidenceRefSchema = z.object({
   digest: z.string().optional(),
 });
 export type EvidenceRef = z.infer<typeof EvidenceRefSchema>;
+
+/**
+ * Tiers that capture raw tool/command/fs observations: in the 2.0 path their
+ * evidence is complete only when event-backed — EvidenceRef.seq must anchor
+ * to the session event that captured the output (F3 / §5: "the note is
+ * never the tool output").
+ */
+export const EVENT_BACKED_EVIDENCE_TIERS: readonly EvidenceRefTier[] = [
+  'tool-output',
+  'command-output',
+  'fs-observation',
+];
+
+/**
+ * True when the ref may count as traceable evidence: advisory tiers
+ * (verifier-llm, human) never require a session event; event-backed tiers
+ * require a positive EvidenceRef.seq.
+ */
+export function isEventBackedEvidence(ref: EvidenceRef): boolean {
+  if (!EVENT_BACKED_EVIDENCE_TIERS.includes(ref.tier)) return true;
+  return typeof ref.seq === 'number' && ref.seq > 0;
+}
 
 export const VerificationStatusSchema = z.enum(['pass', 'fail', 'unknown']);
 export type VerificationStatus = z.infer<typeof VerificationStatusSchema>;

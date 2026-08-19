@@ -141,6 +141,9 @@ export function snapshotToCompletionEvaluation(
     satisfied: [...snap.satisfied],
     unsatisfied,
     evidenceComplete: snap.evidenceComplete && unsatisfied.length === 0 && verdict === 'PASS',
+    // F3: snapshot summaries do not carry per-ref seq — event-backedness is
+    // auditable from the raw spine events (verification.evidence), unknown here.
+    eventBackedEvidenceComplete: false,
     summary: snap.summary,
   };
 }

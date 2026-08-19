@@ -31,6 +31,8 @@ export interface MissionState {
   interrupted: boolean;
   /** Direct fork parent (full chain via lineageOf on the store). */
   forkParent?: string;
+  /** F4: last advisory continuation record (never authority). */
+  lastAdvice?: { seq: number; recommendation: string; rationale: string };
 }
 
 function progressFrom(lastVerification: VerificationRunSummary | undefined): MissionProgress {
@@ -80,6 +82,7 @@ export function deriveMissionState(projection: SessionProjection): MissionState 
     lastSeq: projection.lastSeq,
     interrupted: projection.lastSeq > 0 && projection.endedAt === undefined,
     forkParent: projection.fork?.parentSessionId,
+    lastAdvice: projection.missionAdvice[projection.missionAdvice.length - 1],
   };
 }
 

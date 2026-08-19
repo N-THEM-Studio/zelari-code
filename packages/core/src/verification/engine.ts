@@ -6,6 +6,12 @@
  * timeout) is honestly `unknown`. Every result carries EvidenceRef with a
  * sha256 digest of the captured output, and a `verification.run` event is
  * appended to the session spine when an emitter is configured.
+ *
+ * F3 (ADR-0023 §5): every executed observation is ALSO appended as a single
+ * `verification.evidence` state event (command line, exit code, digest,
+ * output tails) and, when the emitter resolves to the appended envelope, the
+ * assigned seq anchors the EvidenceRef — evidence is traceable to the
+ * session event that captured it, not to a narrated summary.
  */
 
 import { createHash } from 'node:crypto';
@@ -19,7 +25,11 @@ export interface VerificationServices {
 }
 
 export interface VerificationEngineOptions {
-  /** Session spine emitter (ExecutionContext.appendSessionEvent). */
+  /**
+   * Session spine emitter (ExecutionContext.appendSessionEvent). May resolve
+   * to the appended envelope (or any `{ seq }`) — the seq anchors the
+   * EvidenceRef; a void/absent result leaves the ref unanchored.
+   */
   emit?: (input: SessionEventInput) => Promise<unknown>;
   now?: () => number;
   sha256?: (input: string) => string;
@@ -46,7 +56,10 @@ export class VerificationEngine {
       results.push(await this.evaluateOne(criterion));
     }
     if (this.options.emit) {
-      await this.options.emit({
+      // Degrade-and-stop discipline: a failing spine must never fail
+      // verification — the results stand, the run summary is simply not logged.
+      try {
+        await this.options.emit({
         kind: 'verification.run',
         actor: { type: 'system', role: 'verification' },
         data: {
@@ -55,12 +68,43 @@ export class VerificationEngine {
           results: results.map((r) => ({
             criterionId: r.criterionId,
             status: r.status,
-            evidence: r.evidence.map((e) => ({ tier: e.tier, ref: e.ref, digest: e.digest })),
+            evidence: r.evidence.map((e) => ({
+              tier: e.tier,
+              ref: e.ref,
+              digest: e.digest,
+              ...(e.seq !== undefined ? { seq: e.seq } : {}),
+            })),
           })),
         },
-      });
+        });
+      } catch {
+        /* spine unreachable — results stand, summary not logged */
+      }
     }
     return results;
+  }
+
+  /**
+   * F3: append one `verification.evidence` state event with the raw
+   * observation and resolve to its session seq when the emitter returns it.
+   * Spine failures degrade to `undefined` — an unreachable log must never
+   * fail verification, it only leaves the evidence unanchored.
+   */
+  private async emitEvidence(data: Record<string, unknown>): Promise<number | undefined> {
+    if (!this.options.emit) return undefined;
+    try {
+      const out = await this.options.emit({
+        kind: 'verification.evidence',
+        actor: { type: 'system', role: 'verification' },
+        data,
+      });
+      if (out && typeof out === 'object' && typeof (out as { seq?: unknown }).seq === 'number') {
+        return (out as { seq: number }).seq;
+      }
+      return undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   private async evaluateOne(criterion: Criterion): Promise<VerificationResult> {
@@ -110,12 +154,24 @@ export class VerificationEngine {
       return done({ status: 'unknown', evidence: [], detail: 'shell provider unavailable' });
     }
     const result = await shell.exec(check.command, { timeoutMs: check.timeoutMs });
+    const digest = sha256(result.stdout);
+    // F3: the raw observation lands on the spine; its seq anchors the ref.
+    const seq = await this.emitEvidence({
+      observation: 'command',
+      command: check.command,
+      exitCode: result.exitCode,
+      timedOut: result.timedOut,
+      digest,
+      stdoutTail: tail(result.stdout),
+      stderrTail: tail(result.stderr),
+    });
     const evidence: EvidenceRef[] = [
       {
         tier: 'command-output',
         ref: `${check.command} → exit ${result.exitCode ?? 'signal'}`,
         capturedAt: Date.now(),
-        digest: sha256(result.stdout),
+        digest,
+        ...(seq !== undefined ? { seq } : {}),
       },
     ];
     if (result.timedOut) {
@@ -139,8 +195,27 @@ export class VerificationEngine {
     return done({ status: 'pass', evidence });
   }
 
-  private fsEvidence(path: string, content: string, sha256: (s: string) => string): EvidenceRef {
-    return { tier: 'fs-observation', ref: path, capturedAt: Date.now(), digest: sha256(content) };
+  /**
+   * F3: the fs observation is logged to the spine (path, existence, optional
+   * content digest) and the returned ref carries the event seq when the
+   * emitter resolved one.
+   */
+  private async fsEvidence(
+    observation: string,
+    path: string,
+    sha256?: (s: string) => string,
+    content?: string,
+    extra: Record<string, unknown> = {},
+  ): Promise<EvidenceRef> {
+    const digest = sha256 && content !== undefined ? sha256(content) : undefined;
+    const seq = await this.emitEvidence({ observation, path, ...extra, ...(digest ? { digest } : {}) });
+    return {
+      tier: 'fs-observation',
+      ref: path,
+      capturedAt: Date.now(),
+      ...(digest ? { digest } : {}),
+      ...(seq !== undefined ? { seq } : {}),
+    };
   }
 
   private async evalFileExists(
@@ -151,9 +226,15 @@ export class VerificationEngine {
     const fs = this.services.fs;
     if (!fs) return done({ status: 'unknown', evidence: [], detail: 'fs provider unavailable' });
     const exists = await fs.exists(check.path);
-    if (!exists) return done({ status: 'fail', evidence: [], detail: `file not found: ${check.path}` });
+    if (!exists) {
+      await this.emitEvidence({ observation: 'file-exists', path: check.path, exists: false });
+      return done({ status: 'fail', evidence: [], detail: `file not found: ${check.path}` });
+    }
     const content = await fs.readFile(check.path).catch(() => '');
-    return done({ status: 'pass', evidence: [this.fsEvidence(check.path, content, sha256)] });
+    return done({
+      status: 'pass',
+      evidence: [await this.fsEvidence('file-exists', check.path, sha256, content, { exists: true })],
+    });
   }
 
   private async evalFileAbsent(
@@ -163,9 +244,14 @@ export class VerificationEngine {
     const fs = this.services.fs;
     if (!fs) return done({ status: 'unknown', evidence: [], detail: 'fs provider unavailable' });
     const exists = await fs.exists(check.path);
-    return exists
-      ? done({ status: 'fail', evidence: [], detail: `file still present: ${check.path}` })
-      : done({ status: 'pass', evidence: [{ tier: 'fs-observation', ref: check.path, capturedAt: Date.now() }] });
+    if (exists) {
+      await this.emitEvidence({ observation: 'file-absent', path: check.path, exists: true });
+      return done({ status: 'fail', evidence: [], detail: `file still present: ${check.path}` });
+    }
+    return done({
+      status: 'pass',
+      evidence: [await this.fsEvidence('file-absent', check.path, undefined, undefined, { exists: false })],
+    });
   }
 
   private async evalFileContains(
@@ -179,9 +265,10 @@ export class VerificationEngine {
     try {
       content = await fs.readFile(check.path);
     } catch {
+      await this.emitEvidence({ observation: 'file-contains', path: check.path, readable: false });
       return done({ status: 'fail', evidence: [], detail: `file not readable: ${check.path}` });
     }
-    const evidence = [this.fsEvidence(check.path, content, sha256)];
+    const evidence = [await this.fsEvidence('file-contains', check.path, sha256, content)];
     let hit: boolean;
     try {
       hit = new RegExp(check.pattern, 'm').test(content);

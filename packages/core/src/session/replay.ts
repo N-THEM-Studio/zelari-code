@@ -111,6 +111,8 @@ export interface SessionProjection {
   toolResults: number;
   verifications: VerificationRunSummary[];
   missionPhases: Array<{ seq: number; phase: string }>;
+  /** F4: advisory continuation advice records (mission.progress events). */
+  missionAdvice: Array<{ seq: number; recommendation: string; rationale: string }>;
   replans: number;
   issues: ReplayIssue[];
 }
@@ -145,6 +147,7 @@ export function buildProjection(events: readonly SessionEventEnvelope[], issues:
     toolResults: 0,
     verifications: [],
     missionPhases: [],
+    missionAdvice: [],
     replans: 0,
     issues,
   };
@@ -179,6 +182,14 @@ export function buildProjection(events: readonly SessionEventEnvelope[], issues:
         break;
       case 'mission.replan':
         projection.replans += 1;
+        break;
+      case 'mission.progress':
+        projection.missionAdvice.push({
+          seq: e.seq,
+          recommendation: String(e.data.recommendation ?? ''),
+          rationale: String(e.data.rationale ?? ''),
+        });
+        break;
         break;
     }
   }

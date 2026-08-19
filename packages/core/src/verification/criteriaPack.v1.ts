@@ -30,6 +30,8 @@ export interface CriteriaPack {
 
 export function codingCriteriaPack(options: CodingPackOptions = {}): CriteriaPack {
   const timeoutMs = options.commandTimeoutMs ?? 600_000;
+  /** undefined = use default; null = explicitly unbound (no deterministic check). */
+  const withDefault = (o: string | null | undefined, d: string): string | null => (o === undefined ? d : o);
   const command = (command: string | null | undefined): Criterion['check'] =>
     command ? { kind: 'command', command, timeoutMs } : undefined;
 
@@ -39,21 +41,21 @@ export function codingCriteriaPack(options: CodingPackOptions = {}): CriteriaPac
       text: 'Static checks (typecheck) pass with no new errors.',
       source: 'criteria-pack',
       required: true,
-      check: command(options.typecheckCommand ?? 'npm run typecheck'),
+      check: command(withDefault(options.typecheckCommand, 'npm run typecheck')),
     },
     {
       id: 'correctness.specification',
       text: 'The test suite passes — behavior matches the specification.',
       source: 'criteria-pack',
       required: true,
-      check: command(options.testCommand ?? 'npm run test'),
+      check: command(withDefault(options.testCommand, 'npm run test')),
     },
     {
       id: 'correctness.observable-output',
       text: 'The project builds successfully (observable output artifact).',
       source: 'criteria-pack',
       required: true,
-      check: command(options.buildCommand ?? 'npm run build'),
+      check: command(withDefault(options.buildCommand, 'npm run build')),
     },
     {
       id: 'quality.scope-discipline',

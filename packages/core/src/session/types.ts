@@ -47,7 +47,14 @@ export const SESSION_EVENT_KINDS = [
   'council.member',
   'mission.phase',
   'mission.replan',
+  // F4 (doc §6 advisory continuation): driver → host advice record. State-only
+  // (never model-surface): the recommendation must not feed the model loop.
+  'mission.progress',
   'verification.run',
+  // F3 (ADR-0023 §5 evidence traceability): per-observation state event —
+  // the session-log anchor EvidenceRef.seq points at (command output, fs
+  // observation, digest). Not model-surface. Schema review per ADR-0021.
+  'verification.evidence',
   'note',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];

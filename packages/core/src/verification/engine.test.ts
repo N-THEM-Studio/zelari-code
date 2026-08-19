@@ -96,9 +96,11 @@ describe('VerificationEngine (deterministic, zero LLM)', () => {
       [{ id: 'a', text: 'ok', source: 'task', required: true, check: { kind: 'command', command: 'ok' } }],
       { packId: 'zelari-coding/v1' },
     );
-    expect(emitted).toHaveLength(1);
-    expect(emitted[0]?.kind).toBe('verification.run');
-    const data = emitted[0]?.data as { source: string; packId?: string; results: unknown[] };
+    // F3: the observation lands first (verification.evidence), then the run summary.
+    expect(emitted).toHaveLength(2);
+    expect(emitted[0]?.kind).toBe('verification.evidence');
+    expect(emitted[1]?.kind).toBe('verification.run');
+    const data = emitted[1]?.data as { source: string; packId?: string; results: unknown[] };
     expect(data.source).toBe('deterministic-engine');
     expect(data.packId).toBe('zelari-coding/v1');
     expect(data.results).toHaveLength(1);

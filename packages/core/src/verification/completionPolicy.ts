@@ -7,7 +7,13 @@
  * sufficient evidence is blockable by construction: unknown ≠ pass.
  */
 
-import type { Criterion, EvidenceRefTier, VerificationResult } from './types.js';
+import {
+  isEventBackedEvidence,
+  type Criterion,
+  type EvidenceRef,
+  type EvidenceRefTier,
+  type VerificationResult,
+} from './types.js';
 
 export type CompletionVerdict = 'PASS' | 'REPAIR_REQUIRED' | 'BLOCKED';
 
@@ -22,6 +28,13 @@ export interface CompletionPolicy {
    * (PRINCIPLES P1 — trust tool/terminal output, not narration).
    */
   admissibleTiers?: readonly EvidenceRefTier[];
+  /**
+   * F3 (ADR-0023 §5): when true, admissible evidence must ALSO be
+   * event-backed — EvidenceRef.seq anchored to a session event. Off by
+   * default during the alpha (legacy bridge notes are not yet
+   * event-backed); scheduled to become the strict default at RC.
+   */
+  requireEventBackedEvidence?: boolean;
 }
 
 export const STRICT_ALL_POLICY: CompletionPolicy = { mode: 'strict', required: '*' };
@@ -53,6 +66,11 @@ export interface CompletionEvaluation {
   unsatisfied: UnsatisfiedCriterion[];
   /** True when every required criterion passed with evidence. */
   evidenceComplete: boolean;
+  /**
+   * F3 observability: true when every satisfied criterion has at least one
+   * admissible evidence ref that is event-backed (seq anchored).
+   */
+  eventBackedEvidenceComplete: boolean;
   summary: string;
 }
 
@@ -75,6 +93,7 @@ export function evaluateCompletion(
   const order = new Map(criteria.map((c, i) => [c.id, i]));
   const satisfied: string[] = [];
   const unsatisfied: UnsatisfiedCriterion[] = [];
+  let unbackedSatisfied = false; // F3: satisfied without event-backed evidence
 
   const ids = [...requiredIds].sort((a, b) => (order.get(a) ?? 0) - (order.get(b) ?? 0));
   for (const id of ids) {
@@ -100,7 +119,8 @@ export function evaluateCompletion(
       continue;
     }
     const admissible = policy.admissibleTiers;
-    if (admissible && !result.evidence.some((e) => admissible.includes(e.tier))) {
+    const tierOk = (e: EvidenceRef): boolean => !admissible || admissible.includes(e.tier);
+    if (!result.evidence.some(tierOk)) {
       const tiers = [...new Set(result.evidence.map((e) => e.tier))].join(', ');
       unsatisfied.push({
         id,
@@ -109,7 +129,18 @@ export function evaluateCompletion(
       });
       continue;
     }
+    // F3: admissible evidence must also be traceable when the policy demands it.
+    const backed = result.evidence.filter(tierOk).some(isEventBackedEvidence);
+    if (policy.requireEventBackedEvidence && !backed) {
+      unsatisfied.push({
+        id,
+        status: 'unknown',
+        reason: 'pass without event-backed evidence — no EvidenceRef.seq anchored to a session event',
+      });
+      continue;
+    }
     satisfied.push(id);
+    if (!backed) unbackedSatisfied = true;
   }
 
   const verdict: CompletionVerdict =
@@ -124,6 +155,7 @@ export function evaluateCompletion(
     satisfied,
     unsatisfied,
     evidenceComplete: unsatisfied.length === 0,
+    eventBackedEvidenceComplete: unsatisfied.length === 0 && !unbackedSatisfied,
     summary:
       verdict === 'PASS'
         ? `complete: ${satisfied.length}/${ids.length} required criteria pass with evidence`
