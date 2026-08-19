@@ -15,7 +15,11 @@ Second 2.0 pre-release: Linux CI fixes for the runtime seams (path jail + shell 
 - **package-lock.json version drift** — the lockfile still carried 1.49.0 after the 2.0.0-alpha.0 bump, which could break `npm ci` in CI. Regenerated in lockstep.
 
 ### Changed
-- Lockstep bump to 2.0.0-alpha.1 (root zelari-code, @zelari/core, apps/desktop, devDependency exact match, lockfile).
+- Lockstep bump to 2.0.0-alpha.1
+
+### Fixed (workflow)
+- **npm publish of prereleases failed** — npm requires an explicit `--tag` for prerelease versions (`2.0.0-alpha.*`); the publish workflow called `npm publish` without one, so every alpha/beta tag failed at the publish step after tests passed. `publish.yml` now derives the dist-tag from the version (`alpha` / `beta` / `next` / `latest`) for both `@zelari/core` and the CLI. Reproduced locally: `npm publish --dry-run` fails without `--tag`, succeeds with it.
+- **Desktop release version drift** — the desktop job verifies tag == package.json == tauri.conf.json == Cargo.toml; only package.json was bumped to alpha.1. Aligned `tauri.conf.json`, `Cargo.toml` and `Cargo.lock` to 2.0.0-alpha.1. (root zelari-code, @zelari/core, apps/desktop, devDependency exact match, lockfile).
 
 ## [2.0.0-alpha.0] - 2026-08-19
 

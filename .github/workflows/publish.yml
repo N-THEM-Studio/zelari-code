@@ -73,7 +73,13 @@ jobs:
           if npm view "@zelari/core@$VERSION" version >/dev/null 2>&1; then
             echo "@zelari/core@$VERSION is already published; skipping"
           else
-            npm publish --workspace=@zelari/core --access public
+            DIST_TAG="latest"
+            case "$VERSION" in
+              *-alpha*) DIST_TAG="alpha" ;;
+              *-beta*) DIST_TAG="beta" ;;
+              *-rc.*) DIST_TAG="next" ;;
+            esac
+            npm publish --workspace=@zelari/core --access public --tag "$DIST_TAG"
           fi
 
   publish-cli:
@@ -141,7 +147,13 @@ jobs:
           if npm view "zelari-code@$VERSION" version >/dev/null 2>&1; then
             echo "zelari-code@$VERSION is already published; skipping"
           else
-            npm publish --access public
+            DIST_TAG="latest"
+            case "$VERSION" in
+              *-alpha*) DIST_TAG="alpha" ;;
+              *-beta*) DIST_TAG="beta" ;;
+              *-rc.*) DIST_TAG="next" ;;
+            esac
+            npm publish --access public --tag "$DIST_TAG"
           fi
 
   github-release:
