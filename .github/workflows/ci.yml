@@ -10,6 +10,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Full gate, single platform: typecheck + full suite + principles + versions.
+  # (Exit-3.5: full suite stays on Ubuntu + Node 24; platform variance is
+  # covered by the smoke matrix below.)
   verify:
     name: Typecheck · Tests · Principles
     runs-on: ubuntu-latest
@@ -37,3 +40,43 @@ jobs:
 
       - name: Version coherence (root vs @zelari/core vs devDep)
         run: npm run verify:versions
+
+  # Exit-3.5 multi-OS smoke: Zelari touches platform-sensitive surfaces
+  # (shell, paths, process groups, signals, worktrees, session locks), so
+  # core/session/runtime/verification/mission + CLI spine tests and the
+  # bundled binary must run on every supported OS and Node line
+  # (engines: >=20). Desktop build smoke lives in release-desktop.yml.
+  smoke:
+    name: Smoke · ${{ matrix.os }} · Node ${{ matrix.node }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        node: ['20', '24']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build @zelari/core
+        run: npm run build --workspace=@zelari/core
+
+      - name: Core session/runtime/verification/mission + CLI spine smoke
+        run: npx vitest run packages/core/src/session packages/core/src/runtime packages/core/src/verification packages/core/src/mission src/cli/sessionSpine.test.ts src/cli/headlessSpine.test.ts src/cli/headlessSessionEvent.test.ts src/cli/sessionReplayInvariant.test.ts
+
+      - name: CLI bundle + bin smoke (--version)
+        run: |
+          npx tsc -p tsconfig.json
+          node scripts/bundle-cli.mjs
+          node bin/zelari-code.js --version
