@@ -120,7 +120,7 @@ const MAX_STREAM_BUFFERS = 32;
  */
 export class SessionSpineMirror {
   private writer: SessionLogWriter | null = null;
-  private chain: Promise<void> = Promise.resolve();
+  private chain: Promise<number | null> = Promise.resolve(null);
   private readonly streamBuffers = new Map<string, string>();
   private warned = false;
   status: SpineStatus = 'disabled';
@@ -276,21 +276,55 @@ export class SessionSpineMirror {
     });
   }
 
+  /**
+   * F4 (doc §6): append an advisory continuation record. State-only — the
+   * recommendation must never feed the model loop or rewrite the goal.
+   */
+  missionProgress(advice: {
+    recommendation: string;
+    rationale: string;
+    blockers?: string[];
+    trend?: { tier: string; value: number | null };
+    iteration?: number;
+  }): void {
+    void this.append({
+      kind: 'mission.progress',
+      actor: ACTOR_SYSTEM,
+      data: {
+        recommendation: advice.recommendation,
+        rationale: advice.rationale,
+        ...(advice.blockers ? { blockers: advice.blockers } : {}),
+        ...(advice.trend ? { trend: advice.trend } : {}),
+        ...(advice.iteration !== undefined ? { iteration: advice.iteration } : {}),
+      },
+    });
+  }
+
   note(text: string, data?: Record<string, unknown>): void {
     void this.append({ kind: 'note', actor: ACTOR_SYSTEM, data: { note: text, ...data } });
   }
 
-  private append(input: SessionEventInput): Promise<void> {
-    if (!this.writer || this.status === 'closed') return Promise.resolve();
+  private append(input: SessionEventInput): Promise<number | null> {
+    if (!this.writer || this.status === 'closed') return Promise.resolve(null);
     this.chain = this.chain
       .then(() => this.writer!.append(input))
-      .then(() => undefined)
+      .then((envelope) => envelope.seq)
       .catch((err) => {
         this.status = 'degraded';
         this.writer = null;
         this.warnOnce(err);
+        return null;
       });
     return this.chain;
+  }
+
+  /**
+   * F3 (ADR-0023 §5): append one spine event and resolve to its assigned
+   * seq — the anchor EvidenceRef.seq points at. Null when degraded or
+   * disabled: callers must treat null as "not traceable", never as failure.
+   */
+  appendEvent(input: SessionEventInput): Promise<number | null> {
+    return this.append(input);
   }
 
   private warnOnce(err: unknown): void {

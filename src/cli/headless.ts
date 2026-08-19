@@ -95,7 +95,8 @@ export interface HeadlessOptions {
   exportSessionPath?: string;
   /**
    * Enable the ADR-0023 strict BUILD completion gate for this process
-   * (`ZELARI_STRICT_DONE=1`). Default off for 1.x compat.
+   * (`ZELARI_STRICT_DONE=1`). Default off for 1.x compat. Missions run
+   * the gate by default (ADR-0025); `ZELARI_MISSION_STRICT=0` opts out.
    * @since 2.0.0-alpha.0
    */
   strictDone?: boolean;
@@ -154,6 +155,8 @@ Options:
   --resume <sessionId>       Continue an existing 2.0 spine session (seq continues)
   --export-session <path>    Write zelari-session-export/1 JSON after the run (- = stdout)
   --strict-done              Enable ADR-0023 evidence gate (ZELARI_STRICT_DONE=1)
+                             Missions run the gate by default (ADR-0025);
+                             opt out with ZELARI_MISSION_STRICT=0 or --no-strict-done
   --kraken-graph <goal>      Plan + execute a Kraken task graph instead of --task
                              (mutually exclusive with --task; ZELARI_KRAKEN_GRAPH=0 disables)
   --kraken-graph-file <path> Same as --kraken-graph but read from a file
@@ -402,6 +405,12 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       i++;
     } else if (arg === '--strict-done') {
       strictDone = true;
+    } else if (arg === '--no-strict-done') {
+      // ADR-0025: explicit opt-out for surfaces where strict is the default
+      // (mission). Sets the same env the runtime reads, so parse and run
+      // stay in sync without a second flag plumbing path.
+      strictDone = false;
+      process.env.ZELARI_MISSION_STRICT = '0';
     } else if (arg === '--kraken-graph') {
       krakenGraph = argv[i + 1];
       i++;

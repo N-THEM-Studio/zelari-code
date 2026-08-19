@@ -49,14 +49,14 @@ afterEach(() => {
 });
 
 describe('krakenResultsToContract', () => {
-  it('maps every required check to a required criterion with a stable id', () => {
+  it('maps every required check to a required criterion with a stable id', async () => {
     const contract = krakenResultsToContract(CHECKS, [], 1000);
     expect(contract.criteria).toHaveLength(2);
     expect(contract.criteria.every((c) => c.required && c.source === 'kraken-selection')).toBe(true);
     expect(contract.results.every((r) => r.status === 'unknown' && r.source === 'verify-agent')).toBe(true);
   });
 
-  it('a pass WITH a note carries evidence; a pass WITHOUT a note does not', () => {
+  it('a pass WITH a note carries evidence; a pass WITHOUT a note does not', async () => {
     const results: KrakenCheckResult[] = [
       { check: CHECKS[0], status: 'pass', note: 'vitest 41/41' },
       { check: CHECKS[1], status: 'pass' },
@@ -67,7 +67,7 @@ describe('krakenResultsToContract', () => {
     expect(contract.results[1].evidence).toHaveLength(0);
   });
 
-  it('tolerates lightly reworded check text (containment matching)', () => {
+  it('tolerates lightly reworded check text (containment matching)', async () => {
     const results: KrakenCheckResult[] = [
       { check: 'Session survives concurrent REFRESH (reworded)', status: 'pass', note: 'x' },
     ];
@@ -78,7 +78,7 @@ describe('krakenResultsToContract', () => {
 });
 
 describe('evaluateStrictBuildGate', () => {
-  it('strict off (default): mirrors the legacy gate exactly', () => {
+  it('strict off (default): mirrors the legacy gate exactly', async () => {
     delete process.env.ZELARI_STRICT_DONE;
     expect(strictDoneEnabled()).toBe(false);
     selectWithChecks(CHECKS);
@@ -86,65 +86,65 @@ describe('evaluateStrictBuildGate', () => {
       { check: CHECKS[0], status: 'pass', note: 'ok' },
       { check: CHECKS[1], status: 'fail', note: 'assert' },
     ]);
-    const evaluation = evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build');
     expect(evaluation.strict).toBe(false);
     expect(evaluation.evaluation).toBeNull();
     expect(evaluation.blocked).toBe(true);
   });
 
-  it('strict on + all pass with notes → PASS', () => {
+  it('strict on + all pass with notes → PASS', async () => {
     process.env.ZELARI_STRICT_DONE = '1';
     selectWithChecks(CHECKS);
     setKrakenCheckResults([
       { check: CHECKS[0], status: 'pass', note: 'vitest 41/41' },
       { check: CHECKS[1], status: 'pass', note: 'curl 401' },
     ]);
-    const evaluation = evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build');
     expect(evaluation.strict).toBe(true);
     expect(evaluation.evaluation!.verdict).toBe('PASS');
     expect(evaluation.blocked).toBe(false);
   });
 
-  it('strict on + pass WITHOUT evidence → BLOCKED (false-done guard)', () => {
+  it('strict on + pass WITHOUT evidence → BLOCKED (false-done guard)', async () => {
     process.env.ZELARI_STRICT_DONE = '1';
     selectWithChecks(CHECKS);
     setKrakenCheckResults([
       { check: CHECKS[0], status: 'pass', note: 'vitest 41/41' },
       { check: CHECKS[1], status: 'pass' }, // no note → no evidence
     ]);
-    const evaluation = evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build');
     expect(evaluation.evaluation!.verdict).toBe('BLOCKED');
     expect(evaluation.blocked).toBe(true);
     expect(evaluation.evaluation!.unsatisfied[0].status).toBe('unknown');
     expect(evaluation.evaluation!.unsatisfied[0].reason).toContain('without evidence');
   });
 
-  it('strict on + legacy fail → REPAIR_REQUIRED (fail wins over unknown)', () => {
+  it('strict on + legacy fail → REPAIR_REQUIRED (fail wins over unknown)', async () => {
     process.env.ZELARI_STRICT_DONE = '1';
     selectWithChecks(CHECKS);
     setKrakenCheckResults([
       { check: CHECKS[0], status: 'fail', note: 'assert false' },
       { check: CHECKS[1], status: 'unknown' },
     ]);
-    const evaluation = evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build');
     expect(evaluation.evaluation!.verdict).toBe('REPAIR_REQUIRED');
     expect(evaluation.blocked).toBe(true);
   });
 
-  it('PLAN turns and turns without selection stay open', () => {
+  it('PLAN turns and turns without selection stay open', async () => {
     process.env.ZELARI_STRICT_DONE = '1';
-    expect(evaluateStrictBuildGate('plan').blocked).toBe(false);
+    expect((await evaluateStrictBuildGate('plan')).blocked).toBe(false);
     resetKrakenCandidates();
-    expect(evaluateStrictBuildGate('build').blocked).toBe(false);
+    expect((await evaluateStrictBuildGate('build')).blocked).toBe(false);
   });
 });
 
 describe('strictGateEventPayload', () => {
-  it('is JSON-serializable and carries both gate layers', () => {
+  it('is JSON-serializable and carries both gate layers', async () => {
     process.env.ZELARI_STRICT_DONE = '1';
     selectWithChecks(CHECKS);
     setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'n' }]);
-    const payload = strictGateEventPayload(evaluateStrictBuildGate('build'));
+    const payload = strictGateEventPayload(await evaluateStrictBuildGate('build'));
     expect(() => JSON.stringify(payload)).not.toThrow();
     expect(payload).toMatchObject({ strict: true, engine: 'kraken-legacy+completion-policy' });
     expect(payload.legacy).toMatchObject({ total: 2 });
@@ -153,32 +153,32 @@ describe('strictGateEventPayload', () => {
 });
 
 describe('strictGateExitCode (E2.2 — blocked strict done closes non-success)', () => {
-  it('strict on + blocked after repair → dedicated exit code 4', () => {
+  it('strict on + blocked after repair → dedicated exit code 4', async () => {
     process.env.ZELARI_STRICT_DONE = '1';
     selectWithChecks(CHECKS);
     setKrakenCheckResults([
       { check: CHECKS[0], status: 'pass', note: 'vitest 41/41' },
       { check: CHECKS[1], status: 'unknown' },
     ]);
-    const evaluation = evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build');
     expect(evaluation.blocked).toBe(true);
     expect(strictGateExitCode(evaluation)).toBe(4);
   });
 
-  it('strict on + evidence complete → 0 (run outcome unchanged)', () => {
+  it('strict on + evidence complete → 0 (run outcome unchanged)', async () => {
     process.env.ZELARI_STRICT_DONE = '1';
     selectWithChecks([CHECKS[0]]);
     setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 41/41' }]);
-    const evaluation = evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build');
     expect(evaluation.blocked).toBe(false);
     expect(strictGateExitCode(evaluation)).toBe(0);
   });
 
-  it('strict off + legacy blocked → 0 (enforcement is strict-only)', () => {
+  it('strict off + legacy blocked → 0 (enforcement is strict-only)', async () => {
     delete process.env.ZELARI_STRICT_DONE;
     selectWithChecks(CHECKS);
     setKrakenCheckResults([{ check: CHECKS[0], status: 'fail', note: 'red' }]);
-    const evaluation = evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build');
     expect(evaluation.blocked).toBe(true);
     expect(evaluation.strict).toBe(false);
     expect(strictGateExitCode(evaluation)).toBe(0);

@@ -26,7 +26,7 @@ import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, res
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from "../kraken/metrics.js";
 import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
 import { buildKrakenRepairPrompt } from "../kraken/completionGate.js";
-import { evaluateStrictBuildGate, strictGateEventPayload } from "../kraken/verificationBridge.js";
+import { evaluateStrictBuildGate, strictGateEventPayload, type StrictGateOptions } from "../kraken/verificationBridge.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
 import { derivedModelSeed } from "../headlessSpine.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
@@ -811,13 +811,16 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // inside this SAME for-await loop, so streaming, history and
               // the finally block are shared with the first pass.
               let krakenSuppressFinish = false;
+              // F3: forward engine verification events (verification.evidence/run) onto the spine.
+              const krakenSpineEmit: NonNullable<StrictGateOptions["emit"]> = (input) =>
+                writerRef.current?.spine?.appendEvent(input) ?? Promise.resolve(null);
               if (
                 event.reason === "completed" &&
                 !krakenRepairEnqueued &&
                 isKrakenSelectionEnabled() &&
                 workPhase === "build"
               ) {
-                const strictGate = evaluateStrictBuildGate("build");
+                const strictGate = await evaluateStrictBuildGate("build", { emit: krakenSpineEmit });
                 const krakenGate = strictGate.gate;
                 writerRef.current?.spine?.verificationRun(strictGateEventPayload(strictGate));
                 if (krakenGate.blocked) {
@@ -836,11 +839,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               if (
                 event.reason === "completed" &&
                 krakenRepairEnqueued &&
-                !evaluateStrictBuildGate("build").blocked
+                !((await evaluateStrictBuildGate("build", { emit: krakenSpineEmit })).blocked)
               ) {
                 markRepairSucceeded(); // repair pass resolved every blocking check
               } else if (event.reason === "completed" && krakenRepairEnqueued) {
-                const still = evaluateStrictBuildGate("build");
+                const still = await evaluateStrictBuildGate("build", { emit: krakenSpineEmit });
                 if (still.blocked) {
                   appendSystem(
                     setMessages,

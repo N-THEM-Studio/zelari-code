@@ -895,7 +895,7 @@ async function runHeadlessSingle(
     isKrakenSelectionEnabled() &&
     !planModeFromOpts(opts)
   ) {
-    const strictGate = evaluateStrictBuildGate('build');
+    const strictGate = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input) });
     const gate = strictGate.gate;
     const verificationPayload = strictGateEventPayload(strictGate);
     spine.verificationRun(verificationPayload);
@@ -931,7 +931,7 @@ async function runHeadlessSingle(
         successfulWrites: pass.successfulWrites + repair.successfulWrites,
         emittedWrites: pass.emittedWrites + repair.emittedWrites,
       };
-      const after = evaluateStrictBuildGate('build');
+      const after = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input) });
       const afterPayload = strictGateEventPayload(after);
       spine.verificationRun(afterPayload);
       if (opts.output === 'json') {
@@ -1331,6 +1331,14 @@ async function runHeadlessZelari(
       emit,
       buildViaAgent,
       onMissionPhase: (phase, note) => spine.missionPhase(phase, note),
+      onMissionProgress: (advice, iteration) =>
+        spine.missionProgress({
+          recommendation: advice.recommendation,
+          rationale: advice.rationale,
+          blockers: advice.blockers,
+          ...(advice.trend ? { trend: advice.trend } : {}),
+          iteration,
+        }),
       runSlice: async ({
         userMessage: slicePrompt,
         runMode,
@@ -1559,8 +1567,26 @@ async function runHeadlessZelari(
 
     if (state.status === 'error') exitCode = exitCode || 3;
     else if (state.status === 'success') {
-      exitCode = 0;
-      spine.missionPhase('done', 'mission-success');
+      // ADR-0025: missions close under the strict evidence gate by default
+      // (opt-out: ZELARI_MISSION_STRICT=0). A blocked gate never exits 0 —
+      // the mission "success" becomes the strict exit code and the spine
+      // records mission-strict-blocked instead of mission-success.
+      const missionGate = await evaluateStrictBuildGate('build', {
+        emit: (input) => spine.appendEvent(input),
+        surface: 'mission',
+      });
+      const missionVerificationPayload = strictGateEventPayload(missionGate);
+      spine.verificationRun(missionVerificationPayload);
+      if (opts.output === 'json') {
+        emitEvent({ type: 'verification_run', ...missionVerificationPayload });
+      }
+      if (missionGate.blocked) {
+        exitCode = strictGateExitCode(missionGate);
+        spine.missionPhase('verification', 'mission-strict-blocked');
+      } else {
+        exitCode = 0;
+        spine.missionPhase('done', 'mission-success');
+      }
     } else if (state.status === 'stalled' || state.status === 'stopped') {
       exitCode = exitCode || 0;
       spine.missionPhase('verification', `mission-${state.status}`);

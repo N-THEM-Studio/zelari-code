@@ -12,10 +12,20 @@
  * them. A legacy-blocked turn stays blocked; a legacy-open turn can become
  * blocked only when strict evaluation is enabled AND the evidence contract
  * is not satisfied.
+ *
+ * F2 (Exit-2.4): when the native criteria pack is enabled
+ * (ZELARI_VERIFY_PACK=1), the Zelari Coding Criteria Pack v1 joins the SAME
+ * CompletionPolicy evaluation with real deterministic checks (typecheck/
+ * test/build commands) executed through the core VerificationEngine —
+ * see nativeVerification.ts. The pack is additive evidence; it can only add
+ * blockers, never remove them, exactly like the rest of the strict layer.
  */
 import { getKrakenCheckResults, krakenRequiredChecks } from './candidateRegistry.js';
 import { evaluateKrakenCompletionGate, type KrakenCompletionGate } from './completionGate.js';
 import type { KrakenCheckResult } from './verifyReport.js';
+import { evaluateNativePack, type NativePackEvaluation } from './nativeVerification.js';
+import type { ShellProvider } from '@zelari/core/runtime';
+import type { SessionEventInput } from '@zelari/core/session';
 import {
   evaluateCompletion,
   STRICT_BUILD_POLICY,
@@ -27,8 +37,19 @@ import {
   type VerificationResult,
 } from '@zelari/core/verification';
 
-/** Strict done gate — opt-in during the alpha (default off for compat). */
-export function strictDoneEnabled(): boolean {
+/**
+ * Strict done gate defaults (ADR-0025): per-surface.
+ * - `kraken` (default): opt-in via `ZELARI_STRICT_DONE=1|true`, else off (1.x compat).
+ * - `mission`: ON by default; explicit opt-out via `ZELARI_MISSION_STRICT=0|false`.
+ */
+export type StrictDoneSurface = 'kraken' | 'mission';
+
+export function strictDoneEnabled(surface: StrictDoneSurface = 'kraken'): boolean {
+  if (surface === 'mission') {
+    const v = process.env.ZELARI_MISSION_STRICT;
+    if (v === '0' || v === 'false') return false;
+    return true;
+  }
   const v = process.env.ZELARI_STRICT_DONE;
   return v === '1' || v === 'true';
 }
@@ -123,15 +144,44 @@ export function krakenResultsToContract(
   return { criteria, results: verifications };
 }
 
-/** Combined outcome: legacy gate + (optional) strict evidence evaluation. */
+/** Combined outcome: legacy gate + strict evidence evaluation (selection contract + native criteria pack). */
 export interface StrictBuildGateEvaluation {
   gate: KrakenCompletionGate;
   strict: boolean;
   evaluation: CompletionEvaluation | null;
+  /**
+   * F2 (Exit-2.4): native Zelari Coding Criteria Pack results evaluated by
+   * the core VerificationEngine in this process. Null when the pack is
+   * disabled (default during the alpha), the repo binds no deterministic
+   * command, or the evaluation is reconstructed from the session log.
+   */
+  native?: NativePackEvaluation | null;
   /** True when the turn may NOT cleanly finish (either gate blocks). */
   blocked: boolean;
   /** One-line machine-readable summary for logging/NDJSON. */
   summary: string;
+}
+
+/** Host/test seam for the native pack evaluation (default: real NodeShellProvider). */
+export interface StrictGateOptions {
+  /** Workspace root for package.json detection and command cwd. */
+  cwd?: string;
+  /** Env snapshot override (tests); defaults to process.env. */
+  env?: Record<string, string | undefined>;
+  /** Shell seam (tests inject a stub); defaults to the core NodeShellProvider. */
+  shell?: ShellProvider;
+  /**
+   * F3 (ADR-0023 §5): forward engine verification events
+   * (`verification.evidence` / `verification.run`) onto the session spine;
+   * the appended seq anchors the EvidenceRefs.
+   */
+  emit?: (input: SessionEventInput) => Promise<unknown>;
+  /**
+   * ADR-0025: which surface's defaults apply. `kraken` (default) keeps the
+   * opt-in env gate; `mission` defaults the strict evidence gate ON with
+   * opt-out via `ZELARI_MISSION_STRICT=0`.
+   */
+  surface?: StrictDoneSurface;
 }
 
 /**
@@ -139,13 +189,17 @@ export interface StrictBuildGateEvaluation {
  * and the turn registered required checks, the evidence contract is evaluated
  * as well and the verdicts merged (blockers add up).
  */
-export function evaluateStrictBuildGate(mode: 'plan' | 'build'): StrictBuildGateEvaluation {
+export async function evaluateStrictBuildGate(
+  mode: 'plan' | 'build',
+  options: StrictGateOptions = {},
+): Promise<StrictBuildGateEvaluation> {
   const gate = evaluateKrakenCompletionGate(mode);
-  if (!gate.selectionUsed || gate.total === 0 || !strictDoneEnabled()) {
+  if (!gate.selectionUsed || gate.total === 0 || !strictDoneEnabled(options.surface ?? 'kraken')) {
     return {
       gate,
       strict: false,
       evaluation: null,
+      native: null,
       blocked: gate.blocked,
       summary: gate.blocked
         ? `blocked: ${gate.failedChecks.length} failed, ${gate.unknownChecks.length} unknown`
@@ -154,18 +208,29 @@ export function evaluateStrictBuildGate(mode: 'plan' | 'build'): StrictBuildGate
   }
   const checks = krakenRequiredChecks();
   const contract = krakenResultsToContract(checks, getKrakenCheckResults());
-  const evaluation = evaluateCompletion(contract.criteria, contract.results, STRICT_BUILD_POLICY);
+  // F2: native criteria pack (opt-in) — real commands via the core engine.
+  // A pack failure degrades to the legacy contract only; it never un-blocks.
+  const native = await evaluateNativePack({
+    cwd: options.cwd,
+    env: options.env,
+    shell: options.shell,
+    emit: options.emit,
+  }).catch((): null => null);
+  const allCriteria = [...contract.criteria, ...(native?.criteria ?? [])];
+  const allResults = [...contract.results, ...(native?.results ?? [])];
+  const evaluation = evaluateCompletion(allCriteria, allResults, STRICT_BUILD_POLICY);
   const blocked = gate.blocked || evaluation.verdict !== 'PASS';
   return {
     gate,
     strict: true,
     evaluation,
+    native,
     blocked,
     summary: blocked
       ? `blocked (strict ${evaluation?.verdict ?? 'n/a'}): ${gate.passed}/${gate.total} legacy-pass, evidence ${
           evaluation?.evidenceComplete ? 'complete' : 'incomplete'
         }`
-      : `open (strict PASS): ${evaluation?.satisfied.length ?? 0}/${gate.total} criteria pass with evidence`,
+      : `open (strict PASS): ${evaluation?.satisfied.length ?? 0}/${allCriteria.length} criteria pass with evidence`,
   };
 }
 
@@ -181,10 +246,10 @@ export function strictGateExitCode(evaluation: StrictBuildGateEvaluation): numbe
   return evaluation.strict && evaluation.blocked ? STRICT_DONE_EXIT_CODE : 0;
 }
 
-/** Machine-readable record for the session spine `verification.run` event. *//** Machine-readable record for the session spine `verification.run` event. */
+/** Machine-readable record for the session spine `verification.run` event. */
 export function strictGateEventPayload(evaluation: StrictBuildGateEvaluation): Record<string, unknown> {
   return {
-    engine: 'kraken-legacy+completion-policy',
+    engine: evaluation.native ? 'kraken-legacy+completion-policy+criteria-pack' : 'kraken-legacy+completion-policy',
     strict: evaluation.strict,
     verdict: evaluation.evaluation?.verdict ?? (evaluation.blocked ? 'BLOCKED' : 'PASS'),
     legacy: {
@@ -198,6 +263,19 @@ export function strictGateEventPayload(evaluation: StrictBuildGateEvaluation): R
           satisfied: evaluation.evaluation.satisfied,
           unsatisfied: evaluation.evaluation.unsatisfied,
           complete: evaluation.evaluation.evidenceComplete,
+        }
+      : null,
+    // F2: deterministic pack results — real command evidence, replayable.
+    native: evaluation.native
+      ? {
+          packId: evaluation.native.packId,
+          criteria: evaluation.native.criteria.map((c) => ({ id: c.id, required: c.required })),
+          results: evaluation.native.results.map((r) => ({
+            criterionId: r.criterionId,
+            status: r.status,
+            evidence: r.evidence.map((e) => ({ tier: e.tier, ref: e.ref, digest: e.digest, ...(e.seq !== undefined ? { seq: e.seq } : {}) })),
+            detail: r.detail,
+          })),
         }
       : null,
     summary: evaluation.summary,
@@ -224,6 +302,7 @@ export function evaluateStrictBuildGateFromSession(
     gate,
     strict: evaluation !== null,
     evaluation,
+    native: null, // session replay carries the payload, not in-process results
     blocked,
     summary: evaluation
       ? blocked

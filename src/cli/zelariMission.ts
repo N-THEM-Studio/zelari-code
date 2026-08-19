@@ -16,6 +16,11 @@ import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { DurableStateStore, MemoryBackend } from '@zelari/core';
 import type { CouncilRunMode, MissionBrief } from '@zelari/core/council';
+import {
+  evaluateMissionContinuation,
+  type MissionContinuationAdvice,
+  type MissionProgress,
+} from '@zelari/core/mission';
 import { formatMemoryHits } from './memory/fileBackend.js';
 import { createCheckpoint } from './checkpoint/checkpointManager.js';
 import { getStateStore } from './state/fileStateStore.js';
@@ -138,6 +143,13 @@ export interface ZelariMissionDeps {
    * spine as completed when the process is aborted).
    */
   onMissionPhase?: (phase: 'design' | 'build' | 'verification' | 'done', note?: string) => void;
+  /**
+   * F4 (doc §6 advisory continuation): called after each implementation
+   * slice with the continuation ADVICE. The loop keeps its own deterministic
+   * rules (success / budget / stall); the advice is recorded, never obeyed —
+   * no goal rewrite, no done-by-score, no early-stop on incomplete criteria.
+   */
+  onMissionProgress?: (advice: MissionContinuationAdvice, iteration: number) => void;
   /**
    * Optional hook after each persisted mission-state.json write. The host
    * can project deriveMissionState from the live spine here.
@@ -521,6 +533,23 @@ export async function runZelariMission(
         deps.emit(`[zelari] state commit skipped: ${commitRes.error}`);
       }
     }
+
+    // F4: advisory continuation record. Deterministic mission progress = the
+    // MVP slice criterion (completion gate + writes when reported). Verifier
+    // trend is not yet available per-slice — the policy API accepts it and
+    // hosts can pass it once mission slices emit verification.run (F2 gate).
+    const missionProgress: MissionProgress = {
+      criteriaTotal: 1,
+      criteriaPassed: completionOk ? 1 : 0,
+      ratio: completionOk ? 1 : 0,
+      evidenceComplete:
+        completionOk && (typeof result.writeCount === 'number' ? result.writeCount > 0 : true),
+    };
+    const advice = evaluateMissionContinuation({
+      progress: missionProgress,
+      budget: { iterationsUsed: implStep, iterationsMax: maxIter },
+    });
+    deps.onMissionProgress?.(advice, step);
 
     // Success only when an IMPLEMENTATION slice completes (and wrote if counted).
     if (completionOk) {

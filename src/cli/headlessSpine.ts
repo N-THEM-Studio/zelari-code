@@ -19,6 +19,7 @@ import {
   resolveSessionsDir,
   derivedToAgentMessages,
   type DerivedMessage,
+  type SessionEventInput,
 } from '@zelari/core/session';
 import { deriveMissionState } from '@zelari/core/mission';
 import { resolveProfile, toolManifestHash } from '@zelari/core/runtime';
@@ -34,9 +35,22 @@ export interface HeadlessSpineHandle {
   observe(ev: unknown): void;
   userMessage(text: string): void;
   verificationRun(payload: Record<string, unknown>): void;
+  /**
+   * F3 (ADR-0023 §5): append one spine event and resolve its assigned seq
+   * (null when degraded/disabled) — the anchor EvidenceRef.seq points at.
+   */
+  appendEvent(input: SessionEventInput): Promise<number | null>;
   /** E2.1: last strict verification record from the spine log (null when none/degraded). */
   lastVerificationRun(): Promise<SessionVerificationRunSnapshot | null>;
   missionPhase(phase: string, note?: string): void;
+  /** F4: advisory continuation record (state-only spine event). */
+  missionProgress(advice: {
+    recommendation: string;
+    rationale: string;
+    blockers?: string[];
+    trend?: { tier: string; value: number | null };
+    iteration?: number;
+  }): void;
   note(text: string, data?: Record<string, unknown>): void;
   /** Clean end: append session.ended + release lock. */
   close(reason?: string): Promise<void>;
@@ -120,11 +134,23 @@ export async function openHeadlessSpine(opts: {
     verificationRun(payload: Record<string, unknown>): void {
       spine.verificationRun(payload);
     },
+    appendEvent(input: SessionEventInput): Promise<number | null> {
+      return spine.appendEvent(input);
+    },
     lastVerificationRun(): Promise<SessionVerificationRunSnapshot | null> {
       return spine.lastVerificationRun();
     },
     missionPhase(phase: string, note?: string): void {
       spine.missionPhase(phase, note);
+    },
+    missionProgress(advice: {
+      recommendation: string;
+      rationale: string;
+      blockers?: string[];
+      trend?: { tier: string; value: number | null };
+      iteration?: number;
+    }): void {
+      spine.missionProgress(advice);
     },
     note(text: string, data?: Record<string, unknown>): void {
       spine.note(text, data);
