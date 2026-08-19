@@ -22,9 +22,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Windows: MSI bundler rejects non-numeric semver pre-release ids
+          # ("must be numeric-only ... for msi target"); NSIS accepts them, so
+          # windows builds only the NSIS installer.
           - platform: windows-latest
+            tauri_args: '--bundles nsis'
           - platform: macos-latest
+            tauri_args: ''
           - platform: ubuntu-22.04
+            tauri_args: ''
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -144,7 +150,7 @@ jobs:
             If that secret is missing, installers still ship but in-app update may be unavailable.
           releaseDraft: false
           prerelease: false
-          args: ''
+          args: ${{ matrix.tauri_args }}
 
   # Only after every platform uploaded installers + latest.json.
   # publish.yml creates the GitHub Release with --latest=false so a

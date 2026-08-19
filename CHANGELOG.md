@@ -12,6 +12,9 @@ Release-pipeline hardening: the tag now carries the full lockstep version bump (
 ### Changed
 - Lockstep bump to 2.0.0-alpha.2 across root zelari-code, @zelari/core, apps/desktop, tauri.conf.json, Cargo.toml/Cargo.lock and package-lock.json.
 
+### Fixed (workflow)
+- **Windows desktop build failed on the MSI target** — Tauri's MSI bundler rejects non-numeric semver pre-release ids (`2.0.0-alpha.2` → "optional pre-release identifier in app version must be numeric-only and cannot be greater than 65535 for msi target"); macOS (DMG) and Linux (AppImage/deb) accept them, which is why only `desktop (windows-latest)` failed. Reproduced locally with `npx tauri build`. Fix: the release-desktop matrix now builds Windows with `--bundles nsis` only (NSIS accepts pre-release versions) while macOS/ubuntu keep `args: ""`.
+
 ## [2.0.0-alpha.1] - 2026-08-19
 
 Second 2.0 pre-release: Linux CI fixes for the runtime seams (path jail + shell timeout process-group kill) and the version-lockstep bump that makes the publish/release-desktop tag pipeline green again.
