@@ -53,8 +53,8 @@ zelari-code
 
 | Requirement | Version | Notes |
 |---|---|---|
-| **Node.js** | **≥ 20 LTS** | Earlier versions lack stable `fetch`, `AbortController.timeout`, and `node:test`. Works on 20.x and 22.x. |
-| **npm** | **≥ 10** | Ships with Node 20 LTS; tested with npm 10 and 11. |
+| **Node.js** | **≥ 24 LTS** | CI tests Node 24 only; Node 20 was dropped from the matrix (the dependency tree requires it). |
+| **npm** | **≥ 10** | Ships with Node 24 LTS; tested with npm 10 and 11. |
 | **OS** | Linux, macOS, Windows 10/11 | Tested on Pop!_OS 24.04, macOS 15, Windows 11. Windows requires Git Bash (auto-detected). |
 | **Disk** | ~50 MB for the CLI + `@zelari/core` | Models are not bundled — provider APIs are remote. |
 | **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. |

@@ -24,7 +24,7 @@
   ],
   "preferGlobal": true,
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=24.0.0"
   },
   "scripts": {
     "build": "npm run build --workspace=@zelari/core && tsc -p tsconfig.json && node scripts/bundle-cli.mjs",

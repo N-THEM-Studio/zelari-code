@@ -13,7 +13,7 @@ Thanks for your interest in contributing. This monorepo ships:
 
 ## Prerequisites
 
-- **Node.js ≥ 20**
+- **Node.js ≥ 24**
 - **npm ≥ 10**
 - **Git** (and on Windows, **Git Bash** for the agent `bash` tool)
 - Optional: Rust + Tauri deps only if you touch Desktop
