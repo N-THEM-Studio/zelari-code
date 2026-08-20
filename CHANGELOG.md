@@ -5,8 +5,46 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.0] - 2026-08-20
 
+### Added
+
+- **2.1 T4 — advisory verifier in the lifecycle**: `VerifierService` review is now
+  wired into the normal headless Kraken completion path (after the strict gate and
+  the repair pass). Opt-in: dedicated `verifier` in `provider.json` or
+  `ZELARI_VERIFIER_REVIEW=1` (`=0` forces off). Advisory-only by construction:
+  it can never flip a deterministic verdict (`REJECTED` cannot block a `PASS`,
+  `CONFIRMED` cannot unblock a `REPAIR_REQUIRED`); results land as
+  `verification.run.verifier.advisory` on the session spine.
+- **2.1 T6 — native criteria pack standalone**: `ZELARI_VERIFY_PACK` no longer
+  requires Kraken Selection nor strict-done; guarded against empty-PASS. Headless
+  and TUI share the same condition.
+- **2.1 T5 — original-tool-backed evidence provenance**: verify-tentacle evidence
+  anchors to the RAW tool executions captured at run time
+  (`observation: 'tool-result'`, sha256 digest, `provenance:
+  'tentacle-tool-capture'`) instead of re-emitting the agent's note. Notes without
+  a matching capture fall back to the explicitly-marked deprecated path
+  (`provenance: 'note-fallback'`); `verification.run` events carry an
+  `evidence.provenance` counter.
+- **ADR-0027 / ADR-0028**: strict Kraken stays opt-in in the CLI; the adaptive
+  native-pack default moves to the host (Desktop preference), keeping CLI/CI
+  deterministic.
+
+### Changed
+
+- **BREAKING**: Node.js `>= 24` is now required (`engines` in `zelari-code` and
+  `@zelari/core`): the CI matrix dropped Node 20 because the dependency tree no
+  longer installs cleanly on it.
+- Documentation aligned with the stable line: prerequisites tables
+  (README/GUIDA/CONTRIBUTING) and stale "alpha" wording removed from the 2.0 guide.
+
+### Removed
+
+- **2.1 T9 — `history_snapshot` COMPAT MIRROR removed (BREAKING)**: the CLI no
+  longer emits end-of-turn `history_snapshot` events (task, council, mission and
+  kraken-graph surfaces). The session spine (`--resume <id>`) is the canonical
+  multi-turn context; Desktop derives fallback history from its chat UI. The
+  zero-write BUILD warning survives as a plain `log` event.
 ## [2.0.1] - 2026-08-20
 
 ### Fixed
