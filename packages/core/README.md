@@ -14,7 +14,7 @@ Provider-neutral **agent loop** (`AgentHarness`), **6-member council** orchestra
 npm install @zelari/core
 ```
 
-Requires **Node.js ≥ 20**. Runtime dependency: `zod` only.
+Requires **Node.js ≥ 24**. Runtime dependency: `zod` only.
 
 ## Public API
 

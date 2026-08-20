@@ -54,7 +54,7 @@ zelari-code
 | Requirement | Version | Notes |
 |---|---|---|
 | **Node.js** | **≥ 24 LTS** | CI tests Node 24 only; Node 20 was dropped from the matrix (the dependency tree requires it). |
-| **npm** | **≥ 10** | Ships with Node 24 LTS; tested with npm 10 and 11. |
+| **npm** | **≥ 11.7** | Required to reproduce the workspace lockfile; use the version pinned by `packageManager`. |
 | **OS** | Linux, macOS, Windows 10/11 | Tested on Pop!_OS 24.04, macOS 15, Windows 11. Windows requires Git Bash (auto-detected). |
 | **Disk** | ~50 MB for the CLI + `@zelari/core` | Models are not bundled — provider APIs are remote. |
 | **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. |
@@ -97,10 +97,10 @@ npm run desktop:dev           # Tauri dev window
 # npm run desktop:build       # MSI / NSIS / DMG / AppImage
 ```
 
-See [apps/desktop/README.md](./apps/desktop/README.md) and **[docs/GUIDA.md](./docs/GUIDA.md)** (Desktop, MCP, SSH). Requires Rust + Node ≥ 20.
+See [apps/desktop/README.md](./apps/desktop/README.md) and **[docs/GUIDA.md](./docs/GUIDA.md)** (Desktop, MCP, SSH). Requires Rust + Node ≥ 24.
 
 **Prerequisites:**
-- **Node.js ≥ 20** — required. Without it the agent cannot run `npm`/`tsc`/builds, so zelari-code refuses to boot.
+- **Node.js ≥ 24** — required. Without it the agent cannot run `npm`/`tsc`/builds, so zelari-code refuses to boot.
 - **Git** — recommended. Without it, `/diff`, `/undo` and the git sidebar are disabled. Install from <https://git-scm.com>.
 - **Git Bash** (Windows only) — recommended. The agent's `bash` tool needs real POSIX semantics (`ls`, `which`, `$VAR`, `&&`). Ships with Git for Windows.
 

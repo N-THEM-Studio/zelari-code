@@ -80,6 +80,16 @@ function checkLicenseCoherence(root, report) {
   } else {
     report.ok('license', 'LICENSE is Apache-2.0');
   }
+  const coreLicenseText = readText(root, 'packages/core/LICENSE');
+  const normalizeLicense = (text) => text?.replace(/\r\n/g, '\n').trimEnd();
+  if (normalizeLicense(coreLicenseText) !== normalizeLicense(licenseText)) {
+    report.error(
+      'license',
+      'packages/core/LICENSE must exactly match the root Apache-2.0 LICENSE (P4)',
+    );
+  } else {
+    report.ok('license', 'packages/core/LICENSE matches root Apache-2.0 text');
+  }
   for (const rel of PRODUCT_PACKAGES) {
     const pkg = readJson(root, rel);
     if (pkg === null) {

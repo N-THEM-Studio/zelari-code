@@ -17,7 +17,7 @@ and streams NDJSON BrainEvents into the window.
 
 If Node or the CLI is missing, Desktop shows a **Setup** overlay:
 
-1. **Node.js ≥ 20** on PATH ([nodejs.org](https://nodejs.org/) LTS)
+1. **Node.js ≥ 24** on PATH ([nodejs.org](https://nodejs.org/) LTS)
 2. **Install CLI** — one-click `npm install -g zelari-code` (when Node is present), or run the command manually
 3. **API key** — Settings → Provider
 
@@ -25,7 +25,7 @@ You can also use Settings → **Updates** → **Update CLI** later. Monorepo dev
 
 ## Requirements
 
-- Node.js ≥ 20
+- Node.js ≥ 24
 - Rust toolchain (for Tauri)
 - On Windows: MSVC build tools / WebView2 (usually preinstalled on Win10/11)
 - A working Zelari CLI (monorepo build **or** global install)

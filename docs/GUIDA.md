@@ -59,7 +59,7 @@ Il runtime condiviso è pubblicato come package npm [`@zelari/core`](https://www
 | Requisito | Versione | Note |
 |---|---|---|
 | **Node.js** | **≥ 24 LTS** | Testato solo su Node 24 in CI; Node 20 è stata rimossa dalla matrix (l'albero dipendenze lo richiede). |
-| **npm** | **≥ 10** | Fornito con Node 24 LTS; testato con npm 10 e 11. |
+| **npm** | **≥ 11.7** | Necessario per riprodurre il lockfile del workspace; usa la versione fissata da `packageManager`. |
 | **OS** | Linux, macOS, Windows 10/11 | Windows richiede Git Bash (auto-rilevato). |
 | **Account + API key** | 1 tra: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth: `/login grok`, `/login chatgpt`, `/login anthropic`. |
 
@@ -90,7 +90,7 @@ zelari-code --version
 
 Gli installer da [GitHub Releases](https://github.com/N-THEM-Studio/zelari-code/releases) **non** installano la CLI globale. Dopo l’installer (o in dev):
 
-1. Node.js ≥ 20 sul PATH  
+1. Node.js ≥ 24 sul PATH
 2. `npm install -g zelari-code` (o **Settings → Update CLI** nella Desktop)  
 3. API key in Settings → Provider  
 

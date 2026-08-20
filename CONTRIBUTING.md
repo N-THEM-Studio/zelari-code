@@ -14,7 +14,7 @@ Thanks for your interest in contributing. This monorepo ships:
 ## Prerequisites
 
 - **Node.js ≥ 24**
-- **npm ≥ 10**
+- **npm ≥ 11.7** (the workspace lockfile is pinned for this resolver line)
 - **Git** (and on Windows, **Git Bash** for the agent `bash` tool)
 - Optional: Rust + Tauri deps only if you touch Desktop
 

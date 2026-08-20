@@ -24,11 +24,14 @@
   ],
   "preferGlobal": true,
   "engines": {
-    "node": ">=24.0.0"
+    "node": ">=24.0.0",
+    "npm": ">=11.7.0"
   },
+  "packageManager": "npm@11.7.0",
   "scripts": {
-    "build": "npm run build --workspace=@zelari/core && tsc -p tsconfig.json && node scripts/bundle-cli.mjs",
-    "build:cli": "npm run build --workspace=@zelari/core && tsc -p tsconfig.json && node scripts/bundle-cli.mjs",
+    "clean": "node scripts/clean-dist.mjs",
+    "build": "npm run clean && npm run build --workspace=@zelari/core && tsc -p tsconfig.json && node scripts/bundle-cli.mjs",
+    "build:cli": "npm run clean && npm run build --workspace=@zelari/core && tsc -p tsconfig.json && node scripts/bundle-cli.mjs",
     "typecheck": "npm run build --workspace=@zelari/core && tsc --noEmit -p tsconfig.json",
     "pretest": "npm run build --workspace=@zelari/core",
     "test": "vitest run",

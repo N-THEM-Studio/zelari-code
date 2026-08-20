@@ -51,7 +51,7 @@
 ## CI/security
 
 - [x] OS matrix minima — `ci.yml`: verify (ubuntu Node 24) + smoke 3 OS × Node 20/24 (F10)
-- [x] Node versions supportate testate — matrix Node **24** (3 OS); gamba Windows verificata localmente. **Node 20 rimosso dalla matrix**: il suo npm 10.x e npm ≥11.7 calcolano ideal-tree inconciliabili per il peer esbuild di vite 8 (`^0.27||^0.28` vs root `^0.25` → nessun lockfile soddisfa entrambi), e Node 20 è deprecato sui runner GitHub. `engines` resta `>=20` ma il supporto testato è Node 24 (stato pre-F10 ripristinato)
+- [x] Node versions supportate testate — matrix Node **24** (3 OS); gamba Windows verificata localmente. **Node 20 rimosso dalla matrix**: il suo npm 10.x e npm ≥11.7 calcolano ideal-tree inconciliabili per il peer esbuild di vite 8 (`^0.27||^0.28` vs root `^0.25` → nessun lockfile soddisfa entrambi), e Node 20 è deprecato sui runner GitHub. `engines.node` richiede ora `>=24` e `engines.npm` `>=11.7`.
 - [x] dependency alerts triaggiati — `docs/security/dependency-triage-2.0.0-alpha.7.md`: 3 high dev-only → fix → `found 0 vulnerabilities` (F12)
 - [x] principles/version/typecheck/tests verdi — locale: 3451/3451 pass + tsc exit 0 + verify:principles + verify:versions
 - [ ] **run CI reale su GitHub**: run #46–49 rossi in "Install dependencies" — **root cause trovata e fixata**: npm ≥11.7 risolve i peer `@emnapi/core|runtime@^1.7.1` di `@napi-rs/wasm-runtime` al latest 1.11.3 (mancava l'entry top-level nel lockfile, potato dal `npm audit fix` di F12); fix `330ce83` (entry emnapi ri-aggiunte a mano, verificate con npm 11.6.2 + npm@11). Run #50: **verify ubuntu Node 24 ✅ + smoke macos Node 24 ✅**, job Node 20 rossi (npm 10 → `Missing esbuild@0.28.2`) → Node 20 drop + run #51 da confermare

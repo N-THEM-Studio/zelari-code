@@ -147,7 +147,7 @@
     "node": ">=24.0.0"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "node ../../scripts/clean-dist.mjs packages/core/dist packages/core/tsconfig.tsbuildinfo && tsc -p tsconfig.json",
     "build:watch": "tsc -p tsconfig.json --watch",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run --root ../..",

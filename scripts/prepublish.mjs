@@ -45,6 +45,12 @@ function run(label, file, args) {
   console.log(`[prepublish] ✓ ${label} ok`);
 }
 
+// Start from a clean emit tree. TypeScript does not remove outputs for source
+// files that were deleted or newly excluded, and npm publishes the whole
+// `dist/` directory. Without this step, stale compiled tests can leak into a
+// release made from a long-lived local checkout.
+run('clean', path.join(pkgRoot, 'scripts', 'clean-dist.mjs'), []);
+
 // 0. Build @zelari/core FIRST.
 // The root typecheck resolves `@zelari/core/*` subpaths to the emitted
 // .d.ts files under packages/core/dist/ (via tsconfig `paths`). On a

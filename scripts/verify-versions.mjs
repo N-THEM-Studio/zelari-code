@@ -35,6 +35,8 @@ const corePkg = readJson('packages/core/package.json');
 const rootVersion = rootPkg.version;
 const coreVersion = corePkg.version;
 const devDepVersion = rootPkg.devDependencies?.['@zelari/core'];
+const requiredNpm = '>=11.7.0';
+const requiredPackageManager = 'npm@11.7.0';
 
 if (rootVersion !== coreVersion) {
   failures.push(
@@ -48,6 +50,20 @@ if (devDepVersion !== coreVersion) {
     `root devDependencies["@zelari/core"] must be the exact workspace version: ` +
       `expected "${coreVersion}", found "${devDepVersion}". A non-matching range ` +
       `resolves to a registry copy instead of the workspace link (split-brain).`,
+  );
+}
+
+if (rootPkg.engines?.npm !== requiredNpm) {
+  failures.push(
+    `package.json engines.npm must be "${requiredNpm}" because older npm versions ` +
+      `cannot reproduce the workspace lockfile; found "${rootPkg.engines?.npm ?? '<missing>'}".`,
+  );
+}
+
+if (rootPkg.packageManager !== requiredPackageManager) {
+  failures.push(
+    `package.json packageManager must pin "${requiredPackageManager}"; ` +
+      `found "${rootPkg.packageManager ?? '<missing>'}".`,
   );
 }
 
