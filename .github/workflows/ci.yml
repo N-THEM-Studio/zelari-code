@@ -44,8 +44,11 @@ jobs:
   # Exit-3.5 multi-OS smoke: Zelari touches platform-sensitive surfaces
   # (shell, paths, process groups, signals, worktrees, session locks), so
   # core/session/runtime/verification/mission + CLI spine tests and the
-  # bundled binary must run on every supported OS and Node line
-  # (engines: >=20). Desktop build smoke lives in release-desktop.yml.
+  # bundled binary must run on every supported OS. Node line: 24 only —
+  # Node 20 dropped: npm 10.x and npm >=11.7 compute irreconcilable ideal
+  # trees for vite 8's peer esbuild (^0.27||^0.28 vs root ^0.25), and
+  # Node 20 is deprecated on GitHub-hosted runners. Desktop build smoke
+  # lives in release-desktop.yml.
   smoke:
     name: Smoke · ${{ matrix.os }} · Node ${{ matrix.node }}
     runs-on: ${{ matrix.os }}
@@ -56,7 +59,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
-        node: ['20', '24']
+        node: ['24']
     steps:
       - uses: actions/checkout@v4
 
