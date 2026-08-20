@@ -27,7 +27,19 @@ jobs:
           node-version: '24'
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        shell: bash
+        run: |
+          set +e
+          echo "node=$(node -v) npm=$(npm -v) cwd=$(pwd)"
+          npm ci --no-audit --no-fund > /tmp/npm-ci.log 2>&1
+          code=$?
+          if [ $code -ne 0 ]; then
+            msg=$(tail -c 3000 /tmp/npm-ci.log | tr '\r\n' '  ' | sed 's/%/%25/g; s/:/%3A/g; s/,/%2C/g')
+            echo "::error title=npm ci failed (exit $code)::$msg"
+          else
+            tail -5 /tmp/npm-ci.log
+          fi
+          exit $code
 
       - name: Typecheck
         run: npm run typecheck
@@ -67,7 +79,19 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci --no-audit --no-fund
+        shell: bash
+        run: |
+          set +e
+          echo "node=$(node -v) npm=$(npm -v) cwd=$(pwd)"
+          npm ci --no-audit --no-fund > /tmp/npm-ci.log 2>&1
+          code=$?
+          if [ $code -ne 0 ]; then
+            msg=$(tail -c 3000 /tmp/npm-ci.log | tr '\r\n' '  ' | sed 's/%/%25/g; s/:/%3A/g; s/,/%2C/g')
+            echo "::error title=npm ci failed (exit $code)::$msg"
+          else
+            tail -5 /tmp/npm-ci.log
+          fi
+          exit $code
 
       - name: Build @zelari/core
         run: npm run build --workspace=@zelari/core
