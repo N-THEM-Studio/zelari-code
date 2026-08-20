@@ -1,6 +1,6 @@
 # Migration guide — `@zelari/core` import paths
 
-> Current product line: **zelari-code / `@zelari/core` 2.0.0-alpha.7**.  
+> Current product line: **zelari-code / `@zelari/core` 2.0.0**.  
 > This file is **only** for library consumers who imported internal
 > `src/...` paths before v0.5.0. CLI users can ignore it.
 
@@ -246,9 +246,12 @@ it. Consumers comparing sessions should compare both fields.
   confused with a tool output.
 - **CompletionPolicy is the only completion authority**: `PASS` /
   `REPAIR_REQUIRED` / `BLOCKED`. Strict defaults are frozen in
-  [ADR-0025](docs/decisions/0025-strict-done-defaults.md): Kraken opt-in
-  (`ZELARI_STRICT_DONE=1` / `--strict-done`), Mission ON by default
-  (`ZELARI_MISSION_STRICT=0` / `--no-strict-done` to opt out).
+  [ADR-0025](docs/decisions/0025-strict-done-defaults.md) /
+  [ADR-0026](docs/decisions/0026-rc-defaults-event-backed-and-strict.md):
+  Kraken opt-in (`ZELARI_STRICT_DONE=1` / `--strict-done`), Mission ON by
+  default (`ZELARI_MISSION_STRICT=0` / `--no-strict-done` to opt out).
+  `STRICT_BUILD_POLICY` requires event-backed evidence (`EvidenceRef.seq`)
+  since 2.0.0; unanchored notes no longer satisfy the gate.
 - **Verifier LLM is advisory-only** (`inherit | fixed`): it can add risk,
   never flip a deterministic verdict (locked by regression tests since
   alpha.7).

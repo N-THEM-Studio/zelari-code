@@ -7,9 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-20
+
+Zelari Code 2.0 is out of alpha.
+
 ### Changed
 
-- **docs: handoff 2.0-alpha** — `HANDOFF-2.0-alpha.md` mappa lo stato dell'exit plan (Exit-0/1 complete, Exit-2 parziale) e la guida per riprendere il lavoro.
+- **Event-backed evidence is now the strict default (ADR-0026).**
+  `STRICT_BUILD_POLICY.requireEventBackedEvidence` is `true`. A `pass` whose
+  only evidence is an unanchored note (no `EvidenceRef.seq`) is **BLOCKED**.
+  Production hosts already pass a spine `emit`; `anchorSelectionEvidence()`
+  stamps `verification.evidence` events so those notes remain valid. Callers
+  that evaluate the policy without an emitter must either inject `emit` or
+  set `requireEventBackedEvidence: false`.
+- **Kraken strict-done stays opt-in** (`--strict-done` / `ZELARI_STRICT_DONE=1`).
+  Mission stays default ON (`ZELARI_MISSION_STRICT=0` to opt out). Turning
+  Kraken strict ON by default would exit 4 on every 1.x-style task whose only
+  evidence is a verify-tentacle note — rejected for 2.0.0, revisit in 2.1.
+
+### Added
+
+- ADR-0026 (`docs/decisions/0026-rc-defaults-event-backed-and-strict.md`).
+- Lock test: notes without a spine emitter cannot satisfy the 2.0 gate.
 
 ## [2.0.0-alpha.8] - 2026-08-20
 

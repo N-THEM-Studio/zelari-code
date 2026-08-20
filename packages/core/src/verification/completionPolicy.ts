@@ -29,10 +29,10 @@ export interface CompletionPolicy {
    */
   admissibleTiers?: readonly EvidenceRefTier[];
   /**
-   * F3 (ADR-0023 §5): when true, admissible evidence must ALSO be
-   * event-backed — EvidenceRef.seq anchored to a session event. Off by
-   * default during the alpha (legacy bridge notes are not yet
-   * event-backed); scheduled to become the strict default at RC.
+   * F3 / 2.0 (ADR-0026): when true, admissible evidence must ALSO be
+   * event-backed — EvidenceRef.seq anchored to a session event. On by
+   * default in STRICT_BUILD_POLICY since 2.0.0; set false to restore the
+   * alpha behaviour (unanchored notes may still satisfy the gate).
    */
   requireEventBackedEvidence?: boolean;
 }
@@ -47,11 +47,12 @@ export const DETERMINISTIC_EVIDENCE_TIERS: readonly EvidenceRefTier[] = [
   'human',
 ];
 
-/** Strict BUILD/mission completion: every required criterion, deterministic evidence only. */
+/** Strict BUILD/mission completion: every required criterion, deterministic + event-backed evidence. */
 export const STRICT_BUILD_POLICY: CompletionPolicy = {
   mode: 'strict',
   required: '*',
   admissibleTiers: DETERMINISTIC_EVIDENCE_TIERS,
+  requireEventBackedEvidence: true,
 };
 
 export interface UnsatisfiedCriterion {

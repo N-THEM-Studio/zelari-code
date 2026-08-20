@@ -1,6 +1,6 @@
 # RC Checklist — Zelari Code 2.0
 
-> Stato: **in corso** — ultimo aggiornamento: alpha.8 (`v2.0.0-alpha.8`, commit `7a58ae9`).
+> Stato: **chiusa per 2.0.0** — ultimo aggiornamento: `v2.0.0` (ADR-0026).
 > Mappa i criteri §19 di `Zelari_2.0_Alpha6_Stato_e_Cosa_Manca.md` su evidenza reale
 > (commit, test, file). Ogni riga ha: stato, evidenza, azione residua se non chiusa.
 
@@ -16,16 +16,16 @@
 - [x] criteria pack realmente usato — `ZELARI_VERIFY_PACK=1` → `evaluateNativePack` nel gate Kraken (F2, `src/cli/kraken/nativeVerification.ts`)
 - [x] verifier advisory lock test — `verifierAdvisoryLock.test.ts` 3/3: unknown+CONFIRMED→BLOCKED, fail+CONFIRMED→REPAIR_REQUIRED+downgrade, PASS+REJECTED→PASS intatto (F1)
 - [x] evidence refs a tool/session events — `EvidenceRef.seq` → evento spine `verification.evidence` con comando/exit/digest (F3, `packages/core/src/verification/evidenceEventBacked.test.ts`)
-- [x] strict completion behavior definito — ADR-0025: Kraken opt-in / Mission ON di default; exit 4 (F5)
-- [x] false-done test suite — lock test + gate legacy unknown→BLOCKED verificato (F1/F5); suite `packages/core/src/verification` + `src/cli/kraken`
-- [ ] **GATE RC**: `requireEventBackedEvidence` → default ON nel `STRICT_BUILD_POLICY` (ora OFF in alpha, flag già implementato e testato F3) — da attivare nella PR di RC
+- [x] strict completion behavior definito — ADR-0025 + ADR-0026: Kraken opt-in / Mission ON; event-backed required; exit 4
+- [x] false-done test suite — lock test + gate unknown→BLOCKED + unanchored notes→BLOCKED (F1/F5/ADR-0026)
+- [x] **GATE RC**: `requireEventBackedEvidence` ON in `STRICT_BUILD_POLICY` (ADR-0026); `anchorSelectionEvidence()` ancora le note quando c'è `emit`
 
 ## Profiles/runtime
 
 - [x] profile smoke matrix — `src/cli/profileMatrix.test.ts` 9/9: minimal/kraken/council/mission × plan/build, manifest hash in session.started, plan strippa mutatori (F7)
 - [x] plan/build capability tests — `PLAN_BLOCKED_TOOLS` applicato al registry; invarianti source-asserted (F7)
 - [x] worktree isolation smoke — coperto dal subset CI smoke (session/runtime su 3 OS, F10); smoke dedicato worktree in `packages/core/src/runtime` incluso nella matrix
-- [ ] **default Kraken strict**: rivalutare opt-in → configurabile/ON dopo la prima RC-verifica (punto di decisione in ADR-0025, sezione "Revisit at RC")
+- [x] **default Kraken strict**: **resta opt-in** (ADR-0026) — ON ovunque romperebbe il costo baseline 1.x; da rivalutare in 2.1 se il pack nativo diventa default
 
 ## Mission
 
@@ -62,5 +62,4 @@
 ## Verdetto
 
 Exit-2 (Verification 2.0 nativa) e Exit-3 (surface/docs/CI) sono **chiuse e committate**.
-La RC può partire quando: (1) CI verde su GitHub (run #47+), (2) gate `requireEventBackedEvidence` ON,
-(3) decisione default Kraken strict, (4) triage dependabot graph-wide firmato.
+**2.0.0 pubblica i default RC.** Residuo non bloccante: dependabot graph-wide (apps/desktop, mcps) e e2e mission completo (backlog 2.1).

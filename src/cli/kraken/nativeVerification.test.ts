@@ -28,6 +28,11 @@ import { resetKrakenCandidates, setKrakenCheckResults, setKrakenSelection } from
 
 const CHECKS = ['session survives concurrent refresh'];
 
+function emitSeq(): (input: unknown) => Promise<{ seq: number }> {
+  let n = 1;
+  return async () => ({ seq: n++ });
+}
+
 function selectWithChecks(checks: string[]): void {
   resetKrakenCandidates();
   setKrakenSelection({
@@ -172,6 +177,7 @@ describe('evaluateStrictBuildGate × native pack (F2 lock)', () => {
     setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }]);
     const gate = await evaluateStrictBuildGate('build', {
       env: packEnv(),
+      emit: emitSeq(),
       shell: stubShell({
         [TYPECHECK]: { exit: 2, stderr: 'TS2345: argument of type...' },
         [TEST]: { exit: 0, stdout: '58 passed' },
@@ -191,6 +197,7 @@ describe('evaluateStrictBuildGate × native pack (F2 lock)', () => {
     setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }]);
     const gate = await evaluateStrictBuildGate('build', {
       env: packEnv(),
+      emit: emitSeq(),
       shell: stubShell({
         [TYPECHECK]: { exit: 0 },
         [TEST]: { exit: 0, stdout: '58 passed' },
@@ -209,7 +216,7 @@ describe('evaluateStrictBuildGate × native pack (F2 lock)', () => {
   it('pack disabled (default) → native null and identical legacy-only verdict', async () => {
     selectWithChecks(CHECKS);
     setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }]);
-    const gate = await evaluateStrictBuildGate('build', { env: {}, shell: stubShell({}) });
+    const gate = await evaluateStrictBuildGate('build', { env: {}, emit: emitSeq(), shell: stubShell({}) });
     expect(gate.native).toBeNull();
     expect(gate.evaluation!.verdict).toBe('PASS');
     expect(strictGateEventPayload(gate).engine).toBe('kraken-legacy+completion-policy');
@@ -226,7 +233,7 @@ describe('evaluateStrictBuildGate × native pack (F2 lock)', () => {
         return { exitCode: 0, stdout: '', stderr: '', durationMs: 1, timedOut: false };
       },
     };
-    const gate = await evaluateStrictBuildGate('build', { env: packEnv(), shell: timeoutShell });
+    const gate = await evaluateStrictBuildGate('build', { env: packEnv(), emit: emitSeq(), shell: timeoutShell });
     expect(gate.evaluation!.verdict).toBe('BLOCKED'); // unknown ≠ pass
     expect(gate.blocked).toBe(true);
   });

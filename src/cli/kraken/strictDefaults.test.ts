@@ -20,6 +20,11 @@ import {
 
 const CHECKS = ['mission slice keeps the spine replayable', 'export round-trips'];
 
+function emitSeq(): (input: unknown) => Promise<{ seq: number }> {
+  let n = 1;
+  return async () => ({ seq: n++ });
+}
+
 function selectWithChecks(checks: string[]): void {
   resetKrakenCandidates();
   setKrakenSelection({
@@ -142,10 +147,10 @@ describe('evaluateStrictBuildGate surface wiring (ADR-0025)', () => {
       setKrakenCheckResults([
         { check: CHECKS[0], status: 'pass', note: 'spine replay ok (stub)' },
       ]);
-      const gate = await evaluateStrictBuildGate('build', { surface: 'mission' });
+      const gate = await evaluateStrictBuildGate('build', { surface: 'mission', emit: emitSeq() });
       expect(gate.strict).toBe(true);
       expect(gate.native).toBeNull();
-      expect(gate.blocked).toBe(false); // pass with evidence → PASS
+      expect(gate.blocked).toBe(false); // pass with event-backed note → PASS
     });
   });
 });

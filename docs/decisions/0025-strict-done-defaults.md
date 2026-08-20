@@ -77,7 +77,5 @@ dall'escape hatch e dal messaggio spine `mission-strict-blocked`).
 - [x] Gate mission al wind-down in `runHeadless.ts` (exit 4 + evento spine)
 - [x] Help `--strict-done` aggiornato con il default mission
 - [x] Lock test dei default (`strictDefaults.test.ts`)
-- [ ] RC: rivalutare il default Kraken con la matrice di profile smoke (Exit-3.2)
-- [ ] RC: `requireEventBackedEvidence` a ON nel `STRICT_BUILD_POLICY` (nota F3 —
-      oggi le EvidenceRef deterministiche hanno `seq`, ma l'ancoraggio completo
-      resta flag-gated per non rompere i bridge legacy)
+- [x] RC: rivalutare il default Kraken — **resta opt-in** (ADR-0026)
+- [x] RC: `requireEventBackedEvidence` a ON nel `STRICT_BUILD_POLICY` (ADR-0026)

@@ -115,9 +115,10 @@ describe('CompletionPolicy.requireEventBackedEvidence', () => {
     evaluatedAt: 1,
     durationMs: 0,
   });
-  const strictEventBacked: CompletionPolicy = {
+  const strictEventBacked: CompletionPolicy = STRICT_BUILD_POLICY;
+  const alphaCompat: CompletionPolicy = {
     ...STRICT_BUILD_POLICY,
-    requireEventBackedEvidence: true,
+    requireEventBackedEvidence: false,
   };
 
   it('anchored pass → PASS, eventBackedEvidenceComplete=true', () => {
@@ -133,8 +134,15 @@ describe('CompletionPolicy.requireEventBackedEvidence', () => {
     expect(evaluation.eventBackedEvidenceComplete).toBe(false);
   });
 
-  it('flag off (alpha default) → unanchored pass still PASS, but the metric reports it', () => {
+  it('2.0 default (flag on) → unanchored pass is BLOCKED', () => {
     const evaluation = evaluateCompletion([criterion], [result(evidence())], STRICT_BUILD_POLICY);
+    expect(evaluation.verdict).toBe('BLOCKED');
+    expect(evaluation.unsatisfied[0].reason).toContain('event-backed');
+    expect(evaluation.eventBackedEvidenceComplete).toBe(false);
+  });
+
+  it('explicit opt-out restores alpha behaviour (unanchored pass still PASS)', () => {
+    const evaluation = evaluateCompletion([criterion], [result(evidence())], alphaCompat);
     expect(evaluation.verdict).toBe('PASS');
     expect(evaluation.eventBackedEvidenceComplete).toBe(false);
   });

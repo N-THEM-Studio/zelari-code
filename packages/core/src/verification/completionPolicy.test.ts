@@ -9,7 +9,7 @@ function result(criterionId: string, status: VerificationResult['status'], evide
     criterionId,
     status,
     source: 'deterministic-engine',
-    evidence: Array.from({ length: evidenceCount }, () => ({ tier: 'command-output' as const, ref: 'cmd', capturedAt: 0 })),
+    evidence: Array.from({ length: evidenceCount }, () => ({ tier: 'command-output' as const, ref: 'cmd', capturedAt: 0, seq: 1 })),
     evaluatedAt: 0,
     durationMs: 5,
   };
@@ -137,7 +137,7 @@ describe('admissible evidence tiers (E2.2 — an LLM score alone is not done)', 
       ...result('a', 'pass'),
       evidence: [
         { tier: 'verifier-llm', ref: 'llm-score', capturedAt: 0 },
-        { tier: 'command-output', ref: 'npm test', capturedAt: 0 },
+        { tier: 'command-output', ref: 'npm test', capturedAt: 0, seq: 1 },
       ],
     };
     expect(evaluateCompletion([crit('a')], [mixed], STRICT_BUILD_POLICY).verdict).toBe('PASS');

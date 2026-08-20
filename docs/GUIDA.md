@@ -1,6 +1,6 @@
 # Zelari Code — Guida all'uso
 
-> **Versione documento:** 2.0.0-alpha.8
+> **Versione documento:** 2.0.0
 > CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri 2), council a 6 ruoli, super-agent **kraken**, missioni **zelari**, slash commands, MCP, SSH e provider LLM agnostici (OAuth Grok / ChatGPT / Anthropic).  
 > Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **Apache-2.0**.
 
@@ -1092,8 +1092,10 @@ ZELARI_VERIFY_PACK=1 zelari-code --headless --task "ship" --strict-done
 
 | Superficie | Default | Flag |
 |---|---|---|
-| Kraken (TUI + headless) | **off** (opt-in) | `--strict-done` / `ZELARI_STRICT_DONE=1` |
+| Kraken (TUI + headless) | **off** (opt-in, ADR-0026) | `--strict-done` / `ZELARI_STRICT_DONE=1` |
 | Mission `zelari` | **ON** (ADR-0025) | opt-out: `--no-strict-done` / `ZELARI_MISSION_STRICT=0` |
+
+Quando lo strict è attivo, un `pass` conta solo se l'evidenza è **event-backed** (`EvidenceRef.seq` ancorato a un evento `verification.evidence` sulla spine). Una nota del verify tentacle senza emitter di sessione è **BLOCKED** (ADR-0026).
 
 Gate bloccato ⇒ exit code **`4`** e stato sessione stopped, con l'evento `verification.run` che contiene criteria, status e blocker.
 

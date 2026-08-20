@@ -22,6 +22,12 @@ import type { KrakenCheckResult } from './verifyReport.js';
 
 const CHECKS = ['session survives concurrent refresh', 'rotated cookie rejects the old token'];
 
+/** Fake spine emitter that stamps sequential seq so notes become event-backed. */
+function emitSeq(): (input: unknown) => Promise<{ seq: number }> {
+  let n = 1;
+  return async () => ({ seq: n++ });
+}
+
 function selectWithChecks(checks: string[]): void {
   resetKrakenCandidates();
   setKrakenSelection({
@@ -99,10 +105,22 @@ describe('evaluateStrictBuildGate', () => {
       { check: CHECKS[0], status: 'pass', note: 'vitest 41/41' },
       { check: CHECKS[1], status: 'pass', note: 'curl 401' },
     ]);
-    const evaluation = await evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build', { emit: emitSeq() });
     expect(evaluation.strict).toBe(true);
     expect(evaluation.evaluation!.verdict).toBe('PASS');
     expect(evaluation.blocked).toBe(false);
+  });
+
+  it('strict on + notes without spine emit → BLOCKED (event-backed required)', async () => {
+    process.env.ZELARI_STRICT_DONE = '1';
+    selectWithChecks(CHECKS);
+    setKrakenCheckResults([
+      { check: CHECKS[0], status: 'pass', note: 'vitest 41/41' },
+      { check: CHECKS[1], status: 'pass', note: 'curl 401' },
+    ]);
+    const evaluation = await evaluateStrictBuildGate('build'); // no emit → unanchored
+    expect(evaluation.evaluation!.verdict).toBe('BLOCKED');
+    expect(evaluation.evaluation!.unsatisfied[0].reason).toContain('event-backed');
   });
 
   it('strict on + pass WITHOUT evidence → BLOCKED (false-done guard)', async () => {
@@ -112,7 +130,7 @@ describe('evaluateStrictBuildGate', () => {
       { check: CHECKS[0], status: 'pass', note: 'vitest 41/41' },
       { check: CHECKS[1], status: 'pass' }, // no note → no evidence
     ]);
-    const evaluation = await evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build', { emit: emitSeq() });
     expect(evaluation.evaluation!.verdict).toBe('BLOCKED');
     expect(evaluation.blocked).toBe(true);
     expect(evaluation.evaluation!.unsatisfied[0].status).toBe('unknown');
@@ -126,7 +144,7 @@ describe('evaluateStrictBuildGate', () => {
       { check: CHECKS[0], status: 'fail', note: 'assert false' },
       { check: CHECKS[1], status: 'unknown' },
     ]);
-    const evaluation = await evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build', { emit: emitSeq() });
     expect(evaluation.evaluation!.verdict).toBe('REPAIR_REQUIRED');
     expect(evaluation.blocked).toBe(true);
   });
@@ -144,7 +162,7 @@ describe('strictGateEventPayload', () => {
     process.env.ZELARI_STRICT_DONE = '1';
     selectWithChecks(CHECKS);
     setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'n' }]);
-    const payload = strictGateEventPayload(await evaluateStrictBuildGate('build'));
+    const payload = strictGateEventPayload(await evaluateStrictBuildGate('build', { emit: emitSeq() }));
     expect(() => JSON.stringify(payload)).not.toThrow();
     expect(payload).toMatchObject({ strict: true, engine: 'kraken-legacy+completion-policy' });
     expect(payload.legacy).toMatchObject({ total: 2 });
@@ -160,7 +178,7 @@ describe('strictGateExitCode (E2.2 — blocked strict done closes non-success)',
       { check: CHECKS[0], status: 'pass', note: 'vitest 41/41' },
       { check: CHECKS[1], status: 'unknown' },
     ]);
-    const evaluation = await evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build', { emit: emitSeq() });
     expect(evaluation.blocked).toBe(true);
     expect(strictGateExitCode(evaluation)).toBe(4);
   });
@@ -169,7 +187,7 @@ describe('strictGateExitCode (E2.2 — blocked strict done closes non-success)',
     process.env.ZELARI_STRICT_DONE = '1';
     selectWithChecks([CHECKS[0]]);
     setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 41/41' }]);
-    const evaluation = await evaluateStrictBuildGate('build');
+    const evaluation = await evaluateStrictBuildGate('build', { emit: emitSeq() });
     expect(evaluation.blocked).toBe(false);
     expect(strictGateExitCode(evaluation)).toBe(0);
   });

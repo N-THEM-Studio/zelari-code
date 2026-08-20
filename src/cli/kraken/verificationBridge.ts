@@ -144,6 +144,44 @@ export function krakenResultsToContract(
   return { criteria, results: verifications };
 }
 
+/**
+ * 2.0 (ADR-0026): stamp EvidenceRef.seq on selection-contract notes by
+ * appending a `verification.evidence` event. Without an emitter the refs
+ * stay unanchored and STRICT_BUILD_POLICY (requireEventBackedEvidence)
+ * will BLOCK — that is the RC false-done guard, not a test-only quirk.
+ */
+export async function anchorSelectionEvidence(
+  results: VerificationResult[],
+  emit?: (input: SessionEventInput) => Promise<unknown>,
+): Promise<void> {
+  if (!emit) return;
+  for (const r of results) {
+    for (const ev of r.evidence) {
+      if (ev.seq !== undefined) continue;
+      if (ev.tier === 'verifier-llm' || ev.tier === 'human') continue;
+      try {
+        const appended = await emit({
+          kind: 'verification.evidence',
+          actor: { type: 'system', role: 'verification' },
+          data: {
+            observation: 'verify-report-note',
+            criterionId: r.criterionId,
+            ref: ev.ref,
+            tier: ev.tier,
+          },
+        });
+        const seq =
+          appended && typeof appended === 'object' && 'seq' in appended
+            ? Number((appended as { seq: unknown }).seq)
+            : NaN;
+        if (Number.isFinite(seq) && seq > 0) ev.seq = seq;
+      } catch {
+        // degrade-and-stop: leave unanchored; policy will BLOCK if required
+      }
+    }
+  }
+}
+
 /** Combined outcome: legacy gate + strict evidence evaluation (selection contract + native criteria pack). */
 export interface StrictBuildGateEvaluation {
   gate: KrakenCompletionGate;
@@ -208,6 +246,7 @@ export async function evaluateStrictBuildGate(
   }
   const checks = krakenRequiredChecks();
   const contract = krakenResultsToContract(checks, getKrakenCheckResults());
+  await anchorSelectionEvidence(contract.results, options.emit);
   // F2: native criteria pack (opt-in) — real commands via the core engine.
   // A pack failure degrades to the legacy contract only; it never un-blocks.
   const native = await evaluateNativePack({

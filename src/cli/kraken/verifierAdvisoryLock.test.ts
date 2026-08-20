@@ -36,6 +36,11 @@ import {
 
 const CHECKS = ['typecheck passes', 'suite verde'];
 
+function emitSeq(): (input: unknown) => Promise<{ seq: number }> {
+  let n = 1;
+  return async () => ({ seq: n++ });
+}
+
 function selectWithChecks(): void {
   resetKrakenCandidates();
   setKrakenSelection({
@@ -101,7 +106,7 @@ describe('Exit-2.3 lock: verifier LLM active cannot change the completion author
       summary: 'done: all green',
       results: currentContract().results,
     });
-    const gate = await evaluateStrictBuildGate('build');
+    const gate = await evaluateStrictBuildGate('build', { emit: emitSeq() });
 
     // The review itself may say "confirmed" — it is advisory information only.
     expect(review.verdict).toBe('confirmed');
@@ -140,7 +145,7 @@ describe('Exit-2.3 lock: verifier LLM active cannot change the completion author
       summary: 'done: mostly green',
       results: currentContract().results,
     });
-    const gate = await evaluateStrictBuildGate('build');
+    const gate = await evaluateStrictBuildGate('build', { emit: emitSeq() });
 
     // The service itself refuses to confirm over a failed deterministic check.
     expect(review.verdict).toBe('unknown');
@@ -166,7 +171,7 @@ describe('Exit-2.3 lock: verifier LLM active cannot change the completion author
       summary: 'done: all green',
       results: currentContract().results,
     });
-    const gate = await evaluateStrictBuildGate('build');
+    const gate = await evaluateStrictBuildGate('build', { emit: emitSeq() });
 
     // The rejection is real, recorded, and advisory — it cannot dirty a
     // deterministic strict PASS (no false-block from narration either).
