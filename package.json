@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
-    "@zelari/core": "2.0.0",
+    "@zelari/core": "2.0.1",
     "@types/node": "^25.3.0",
     "@types/react": "^19.0.10",
     "esbuild": "^0.25.0",
