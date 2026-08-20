@@ -11,6 +11,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **docs: handoff 2.0-alpha** — `HANDOFF-2.0-alpha.md` mappa lo stato dell'exit plan (Exit-0/1 complete, Exit-2 parziale) e la guida per riprendere il lavoro.
 
+## [2.0.0-alpha.8] - 2026-08-20
+
+### Added - Exit-3: product surface, docs, portability and hardening
+
+- **Desktop verifier round-trip smoke (Exit-3.1)**: `src/cli/kraken/verifierResolution.ts`
+  bridges the persisted Desktop override (`provider.json` → `krakenVerifier`) into the
+  VerifierService 2.0 `ModelSelection` (`inherit | fixed`); `verifierRoundTrip.test.ts`
+  drives the full §9 chain through the real `--set-config` channel - Inherit (A → A),
+  Dedicated (A+B → B), Reset (B → clear → A) - and asserts the effective model logged
+  in the spine `verification.run` event.
+- **Profile smoke matrix (Exit-3.2)**: `src/cli/profileMatrix.test.ts` - 6 cells
+  (minimal/kraken/council/mission × plan/build) × 3 legs (profile loader, session
+  metadata with `toolManifestHash`, capability gate on the real tool registry: plan
+  strips mutators). Source-assertion invariants: council+plan, mission = build-only.
+- **GUIDA 2.0 (Exit-3.3)**: `docs/GUIDA.md` +155 lines - Host/Profile/Phase, Session
+  spine canonical path (deriveMessages → derivedToAgentMessages), resume/export/fork
+  (fork documented honestly as core API, no CLI flag in alpha), deterministic
+  verification + Strict Done defaults (ADR-0025) + LLM verifier advisory with wiring
+  status declared, legacy session/history marked compatibility-only.
+- **MIGRATION 2.0 (Exit-3.4)**: `MIGRATION.md` rewritten for the 2.0 line - the
+  fundamental shift (consumer-provided history → append events → deriveMessages →
+  AgentHarness), resume/fork/lineage, profile metadata, verification contract with
+  event-backed EvidenceRef, honest alpha breaking changes (mission strict ON → exit 4).
+- **CI multi-OS (Exit-3.5)**: `.github/workflows/ci.yml` gains a smoke matrix
+  3 OS × Node 20/24 (session/runtime/verification core + CLI spine + bundle + bin
+  --version); the full verify gate stays on Ubuntu/Node 24.
+- **Headless e2e session smoke (Exit-3.6)**: `src/cli/headlessE2eSession.test.ts`
+  drives the real `runHeadless` pipeline (kraken + council) with a deterministic
+  provider stub - run → session_started → resume (same log, monotonic seq) → export →
+  fresh replay → identical deriveMessages trajectory on three independent sources.
+- **Dependency triage (§15)**: `npm audit fix` → 0 vulnerabilities (nanoid/postcss via
+  vitest→vite, undici via jsdom - all dev-only, unreachable in the shipped bundle);
+  `docs/security/dependency-triage-2.0.0-alpha.7.md` is the signed snapshot.
+- **Cleanup (§16)**: removed 3 of 5 `@ts-nocheck` (TUI 1.x hooks) with the one type
+  fix they were hiding; `history_snapshot` emit sites now carry explicit
+  COMPAT MIRROR (ADR-0024) markers.
+
+### Changed
+
+- Local test parity: node_modules was stale (vitest 2.1.9 vs declared ^4.1.9); after
+  resync the suite collects 52 previously-invisible files under tests/unit/ - the
+  full suite is now 341 files / 3451 tests on vitest 4.1.9. Two cold-start timeouts
+  raised (cli-toolDisplay first importer → 30s; kraken e2e → 90s).
+
 ## [2.0.0-alpha.7] - 2026-08-20
 
 ### Added — Exit-2: native Verification 2.0 in the Kraken/mission path
