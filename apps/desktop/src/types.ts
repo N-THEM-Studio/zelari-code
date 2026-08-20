@@ -157,6 +157,12 @@ export interface RunTaskArgs {
   profile?: string;
   /** Evidence-based BUILD completion gate (`--strict-done` / ZELARI_STRICT_DONE=1). */
   strictDone?: boolean;
+  /** Mission evidence gate (default on; ZELARI_MISSION_STRICT). */
+  missionStrict?: boolean;
+  /** Native criteria pack (ZELARI_VERIFY_PACK). */
+  verifyPack?: boolean;
+  /** Advisory verifier override; undefined preserves automatic model selection. */
+  verifierReview?: boolean;
   /** Experimental Best-of-N (sets ZELARI_EXPERIMENTAL=bon on the spawned CLI). */
   bonAlpha?: boolean;
 }

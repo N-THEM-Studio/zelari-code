@@ -123,6 +123,11 @@ npm run build
 
 Settings (⚙) reads `zelari-code --print-config` and writes via `--set-config`.
 
+Under **Settings → Defaults → Verification & experiments**, Desktop persists
+and applies the Kraken strict gate, Mission strict gate, native criteria pack,
+advisory verifier mode (automatic/on/off), and experimental Best-of-N to every
+new run, including runs started from the floating overlay.
+
 Also supported from Settings / CLI:
 
 | Action | CLI |

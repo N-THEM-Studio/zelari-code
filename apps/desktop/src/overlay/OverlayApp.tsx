@@ -19,6 +19,7 @@ import {
   OVERLAY_MIN_HEIGHT,
 } from "../overlayWindow";
 import type { DispatchMode, WorkPhase } from "../types";
+import { loadDesktopPrefs } from "../desktopPrefs";
 
 /** Mic is manual toggle only: click on → listen, click off → stop (no auto-send). */
 type MicState = "off" | "listening" | "agent_working";
@@ -313,6 +314,7 @@ export function OverlayApp() {
         const model =
           cfg.modelByProvider[provider] ||
           cfg.providers.find((p) => p.id === provider)?.defaultModel;
+        const prefs = loadDesktopPrefs();
 
         writeDefaults(mode, phase);
         await runTask({
@@ -322,6 +324,12 @@ export function OverlayApp() {
           provider: provider || undefined,
           model: model || undefined,
           cwd: workdir || undefined,
+          profile: prefs.profile,
+          strictDone: prefs.strictDone,
+          missionStrict: prefs.missionStrict,
+          verifyPack: prefs.verifyPack,
+          verifierReview: prefs.verifierReview ?? undefined,
+          bonAlpha: prefs.bonAlpha,
         });
       } catch (e) {
         submitLock.current = false;

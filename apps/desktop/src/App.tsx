@@ -1985,8 +1985,11 @@ export default function App() {
         planOnly: planOnly || undefined,
         runPlan,
         profile: prefs.profile,
-        strictDone: prefs.strictDone || undefined,
-        bonAlpha: prefs.bonAlpha || undefined,
+        strictDone: prefs.strictDone,
+        missionStrict: prefs.missionStrict,
+        verifyPack: prefs.verifyPack,
+        verifierReview: prefs.verifierReview ?? undefined,
+        bonAlpha: prefs.bonAlpha,
       });
       runCoordinator.started({
         runId,

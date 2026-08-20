@@ -132,7 +132,10 @@ struct RunEnvelopeCtx {
 fn enveloped(mut value: serde_json::Value, ctx: &RunEnvelopeCtx) -> serde_json::Value {
     if let Some(obj) = value.as_object_mut() {
         obj.insert("runId".into(), serde_json::json!(ctx.run_id));
-        obj.insert("conversationId".into(), serde_json::json!(ctx.conversation_id));
+        obj.insert(
+            "conversationId".into(),
+            serde_json::json!(ctx.conversation_id),
+        );
         obj.insert("cwd".into(), serde_json::json!(ctx.cwd));
     }
     value
@@ -243,9 +246,9 @@ fn cgnat_ipv4_from_system() -> Option<String> {
             if !out.status.success() {
                 continue;
             }
-            for token in String::from_utf8_lossy(&out.stdout).split(|c: char| {
-                c.is_whitespace() || c == '/' || c == ','
-            }) {
+            for token in String::from_utf8_lossy(&out.stdout)
+                .split(|c: char| c.is_whitespace() || c == '/' || c == ',')
+            {
                 if is_cgnat_ipv4(token) {
                     return Some(token.to_string());
                 }
@@ -694,7 +697,12 @@ fn update_cli(args: UpdateCliArgs) -> Result<serde_json::Value, String> {
         let dir = node.parent().map(|p| p.to_path_buf());
         let mut candidates = Vec::new();
         if let Some(d) = dir {
-            candidates.push(d.join("node_modules").join("npm").join("bin").join("npm-cli.js"));
+            candidates.push(
+                d.join("node_modules")
+                    .join("npm")
+                    .join("bin")
+                    .join("npm-cli.js"),
+            );
             candidates.push(
                 d.join("..")
                     .join("lib")
@@ -904,10 +912,10 @@ fn spawn_cli_base(node: &Path, cli: &Path, cwd: Option<&Path>) -> Command {
     // extra shells (a common UV_HANDLE_CLOSING trigger on Windows).
     c.env("ZELARI_SKIP_PREFLIGHT", "1");
     c.env("ANATHEMA_DEV", "1"); // no background update check mid-stream
-    // When the user picks a working folder (Open Folder), the spawned CLI
-    // must run inside it so process.cwd() reflects the chosen project. All
-    // CLI subsystems (workspace, council, mission, lsp, safety) read cwd
-    // directly, so a single current_dir() here aligns everything.
+                                // When the user picks a working folder (Open Folder), the spawned CLI
+                                // must run inside it so process.cwd() reflects the chosen project. All
+                                // CLI subsystems (workspace, council, mission, lsp, safety) read cwd
+                                // directly, so a single current_dir() here aligns everything.
     if let Some(dir) = cwd {
         c.current_dir(dir);
     }
@@ -948,9 +956,7 @@ fn run_cli_capture(node: &Path, cli: &Path, args: &[&str]) -> Result<String, Str
         cmd.arg(a);
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = cmd
-        .output()
-        .map_err(format_cli_spawn_err)?;
+    let output = cmd.output().map_err(format_cli_spawn_err)?;
     let out = String::from_utf8_lossy(&output.stdout).to_string();
     let err = String::from_utf8_lossy(&output.stderr).to_string();
 
@@ -1026,9 +1032,7 @@ fn get_app_config() -> Result<serde_json::Value, String> {
     // Prefer tolerant JSON extraction (CLI may print warnings on stderr/stdout
     // mix on Windows); full-string parse first, then line scan.
     parse_cli_json_stdout(&raw).ok_or_else(|| {
-        format!(
-            "Failed to load provider config (invalid --print-config JSON).\n{raw}"
-        )
+        format!("Failed to load provider config (invalid --print-config JSON).\n{raw}")
     })
 }
 
@@ -1203,11 +1207,7 @@ fn refresh_oauth(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
     if provider.is_empty() {
         return Err("provider is required".into());
     }
-    let raw = run_cli_capture(
-        &node,
-        &cli,
-        &["--refresh-oauth", "--provider", provider],
-    )?;
+    let raw = run_cli_capture(&node, &cli, &["--refresh-oauth", "--provider", provider])?;
     parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid refresh-oauth JSON:\n{raw}"))
 }
 
@@ -1219,11 +1219,7 @@ fn logout_oauth(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
     if provider.is_empty() {
         return Err("provider is required".into());
     }
-    let raw = run_cli_capture(
-        &node,
-        &cli,
-        &["--logout-oauth", "--provider", provider],
-    )?;
+    let raw = run_cli_capture(&node, &cli, &["--logout-oauth", "--provider", provider])?;
     parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid logout-oauth JSON:\n{raw}"))
 }
 
@@ -1287,12 +1283,14 @@ fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
         cmd.arg(a);
     }
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = cmd
-        .output()
-        .map_err(|e| {
-            let msg = format_cli_spawn_err(e);
-            msg.replacen("Failed to spawn zelari-code", "Failed to spawn discover-models", 1)
-        })?;
+    let output = cmd.output().map_err(|e| {
+        let msg = format_cli_spawn_err(e);
+        msg.replacen(
+            "Failed to spawn zelari-code",
+            "Failed to spawn discover-models",
+            1,
+        )
+    })?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
 
@@ -1417,47 +1415,48 @@ fn get_git_status(args: GitStatusArgs) -> Result<GitStatusDto, String> {
     let mut by_path: std::collections::BTreeMap<String, GitFileChangeDto> =
         std::collections::BTreeMap::new();
 
-    let parse_numstat = |out: &str, map: &mut std::collections::BTreeMap<String, GitFileChangeDto>| {
-        for line in out.lines() {
-            if line.trim().is_empty() {
-                continue;
+    let parse_numstat =
+        |out: &str, map: &mut std::collections::BTreeMap<String, GitFileChangeDto>| {
+            for line in out.lines() {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() < 3 {
+                    continue;
+                }
+                let added = if parts[0] == "-" {
+                    None
+                } else {
+                    parts[0].parse::<i64>().ok()
+                };
+                let removed = if parts[1] == "-" {
+                    None
+                } else {
+                    parts[1].parse::<i64>().ok()
+                };
+                let mut path = parts[2..].join("\t");
+                // Collapse rename "old => new"
+                if let Some(idx) = path.rfind(" => ") {
+                    path = path[idx + 4..].to_string();
+                }
+                let entry = map.entry(path.clone()).or_insert(GitFileChangeDto {
+                    path: path.clone(),
+                    added: Some(0),
+                    removed: Some(0),
+                    untracked: false,
+                });
+                entry.untracked = false;
+                entry.added = match (entry.added, added) {
+                    (Some(a), Some(b)) => Some(a + b),
+                    (None, _) | (_, None) => None,
+                };
+                entry.removed = match (entry.removed, removed) {
+                    (Some(a), Some(b)) => Some(a + b),
+                    (None, _) | (_, None) => None,
+                };
             }
-            let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() < 3 {
-                continue;
-            }
-            let added = if parts[0] == "-" {
-                None
-            } else {
-                parts[0].parse::<i64>().ok()
-            };
-            let removed = if parts[1] == "-" {
-                None
-            } else {
-                parts[1].parse::<i64>().ok()
-            };
-            let mut path = parts[2..].join("\t");
-            // Collapse rename "old => new"
-            if let Some(idx) = path.rfind(" => ") {
-                path = path[idx + 4..].to_string();
-            }
-            let entry = map.entry(path.clone()).or_insert(GitFileChangeDto {
-                path: path.clone(),
-                added: Some(0),
-                removed: Some(0),
-                untracked: false,
-            });
-            entry.untracked = false;
-            entry.added = match (entry.added, added) {
-                (Some(a), Some(b)) => Some(a + b),
-                (None, _) | (_, None) => None,
-            };
-            entry.removed = match (entry.removed, removed) {
-                (Some(a), Some(b)) => Some(a + b),
-                (None, _) | (_, None) => None,
-            };
-        }
-    };
+        };
 
     if let Some(u) = git_output(&cwd, &["diff", "--numstat"]) {
         parse_numstat(&u, &mut by_path);
@@ -1629,7 +1628,10 @@ fn search_workspace(args: SearchWorkspaceArgs) -> Result<SearchWorkspaceDto, Str
                 continue;
             }
             // Skip other hidden dirs at top-level of each walk step
-            if name.starts_with('.') && name != ".zelari" && name != ".claude" && name != ".opencode"
+            if name.starts_with('.')
+                && name != ".zelari"
+                && name != ".claude"
+                && name != ".opencode"
             {
                 continue;
             }
@@ -1800,7 +1802,12 @@ fn print_mcp(args: PrintMcpArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv = vec!["--print-mcp".to_string()];
-    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(cwd) = args
+        .cwd
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--cwd".into());
         argv.push(cwd.to_string());
     }
@@ -1845,7 +1852,12 @@ fn set_mcp(args: SetMcpArgs) -> Result<serde_json::Value, String> {
         argv.push("--args".into());
         argv.push(serde_json::to_string(&a).map_err(|e| e.to_string())?);
     }
-    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(cwd) = args
+        .cwd
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--cwd".into());
         argv.push(cwd.to_string());
     }
@@ -1875,7 +1887,12 @@ fn remove_mcp(args: RemoveMcpArgs) -> Result<serde_json::Value, String> {
         "--scope".into(),
         args.scope.unwrap_or_else(|| "user".into()),
     ];
-    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(cwd) = args
+        .cwd
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--cwd".into());
         argv.push(cwd.to_string());
     }
@@ -1896,7 +1913,12 @@ fn print_skills(args: PrintSkillsArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv = vec!["--print-skills".to_string()];
-    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(cwd) = args
+        .cwd
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--cwd".into());
         argv.push(cwd.to_string());
     }
@@ -1952,7 +1974,12 @@ fn set_skill(args: SetSkillArgs) -> Result<serde_json::Value, String> {
         argv.push("--cost".into());
         argv.push(cost);
     }
-    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(cwd) = args
+        .cwd
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--cwd".into());
         argv.push(cwd.to_string());
     }
@@ -1982,7 +2009,12 @@ fn remove_skill(args: RemoveSkillArgs) -> Result<serde_json::Value, String> {
         "--scope".into(),
         args.scope.unwrap_or_else(|| "user".into()),
     ];
-    if let Some(cwd) = args.cwd.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(cwd) = args
+        .cwd
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--cwd".into());
         argv.push(cwd.to_string());
     }
@@ -2011,11 +2043,21 @@ fn generate_skill_from_url(args: GenerateSkillFromUrlArgs) -> Result<serde_json:
         "--url".into(),
         args.url,
     ];
-    if let Some(p) = args.provider.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(p) = args
+        .provider
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--provider".into());
         argv.push(p.to_string());
     }
-    if let Some(m) = args.model.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    if let Some(m) = args
+        .model
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         argv.push("--model".into());
         argv.push(m.to_string());
     }
@@ -2044,11 +2086,7 @@ struct SetSshTargetArgs {
 fn set_ssh_target(args: SetSshTargetArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
-    let raw = run_cli_capture(
-        &node,
-        &cli,
-        &["--set-ssh-target", "--json", &args.json],
-    )?;
+    let raw = run_cli_capture(&node, &cli, &["--set-ssh-target", "--json", &args.json])?;
     parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid --set-ssh-target JSON:\n{raw}"))
 }
 
@@ -2074,19 +2112,13 @@ fn test_ssh_target(args: SshIdArgs) -> Result<serde_json::Value, String> {
     let mut cmd = spawn_cli_base(&node, &cli, None);
     cmd.arg("--test-ssh-target").arg("--id").arg(&args.id);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = cmd
-        .output()
-        .map_err(format_cli_spawn_err)?;
+    let output = cmd.output().map_err(format_cli_spawn_err)?;
     let out = String::from_utf8_lossy(&output.stdout).to_string();
     if let Some(v) = parse_cli_json_stdout(&out) {
         return Ok(v);
     }
     let err = String::from_utf8_lossy(&output.stderr).to_string();
-    Err(if !err.trim().is_empty() {
-        err
-    } else {
-        out
-    })
+    Err(if !err.trim().is_empty() { err } else { out })
 }
 
 #[derive(Deserialize)]
@@ -2102,19 +2134,13 @@ fn print_ssh_pubkey(args: PrintSshPubkeyArgs) -> Result<serde_json::Value, Strin
     let mut cmd = spawn_cli_base(&node, &cli, None);
     cmd.arg("--print-ssh-pubkey").arg("--path").arg(&args.path);
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-    let output = cmd
-        .output()
-        .map_err(format_cli_spawn_err)?;
+    let output = cmd.output().map_err(format_cli_spawn_err)?;
     let out = String::from_utf8_lossy(&output.stdout).to_string();
     if let Some(v) = parse_cli_json_stdout(&out) {
         return Ok(v);
     }
     let err = String::from_utf8_lossy(&output.stderr).to_string();
-    Err(if !err.trim().is_empty() {
-        err
-    } else {
-        out
-    })
+    Err(if !err.trim().is_empty() { err } else { out })
 }
 
 /// Write UTF-8 text to an absolute path chosen by the user (e.g. chat export).
@@ -2160,7 +2186,12 @@ fn list_dir(args: ListDirArgs) -> Result<ListDirDto, String> {
 
     let root_canon = fs::canonicalize(&root).unwrap_or(root.clone());
 
-    let target = match args.path.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()) {
+    let target = match args
+        .path
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
         Some(p) => PathBuf::from(p),
         None => root.clone(),
     };
@@ -2294,6 +2325,15 @@ struct RunTaskArgs {
     /// Evidence gate: `--strict-done`.
     #[serde(default)]
     strict_done: bool,
+    /// Mission/Zelari evidence gate. Missions are strict by default.
+    #[serde(default = "default_true")]
+    mission_strict: bool,
+    /// Native criteria pack (typecheck/test/build when available).
+    #[serde(default)]
+    verify_pack: bool,
+    /// Advisory verifier override. None preserves CLI automatic selection.
+    #[serde(default)]
+    verifier_review: Option<bool>,
     /// Experimental Best-of-N: sets ZELARI_EXPERIMENTAL=bon on the child.
     #[serde(default)]
     bon_alpha: bool,
@@ -2304,6 +2344,9 @@ fn default_mode() -> String {
 }
 fn default_phase() -> String {
     "build".into()
+}
+fn default_true() -> bool {
+    true
 }
 
 fn normalize_mode(mode: &str, council: bool) -> String {
@@ -2402,8 +2445,7 @@ fn run_task(
     let mode = normalize_mode(&args.mode, args.council);
     let phase = normalize_phase(&args.phase);
 
-    let node =
-        find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
 
     let run_id = format!(
@@ -2444,6 +2486,9 @@ fn run_task(
     let run_plan = args.run_plan;
     let profile = args.profile;
     let strict_done = args.strict_done;
+    let mission_strict = args.mission_strict;
+    let verify_pack = args.verify_pack;
+    let verifier_review = args.verifier_review;
     let bon_alpha = args.bon_alpha;
 
     let env_ctx = RunEnvelopeCtx {
@@ -2473,6 +2518,9 @@ fn run_task(
             run_plan.as_deref(),
             profile.as_deref(),
             strict_done,
+            mission_strict,
+            verify_pack,
+            verifier_review,
             bon_alpha,
         );
 
@@ -2529,6 +2577,9 @@ fn spawn_headless(
     run_plan: Option<&str>,
     profile: Option<&str>,
     strict_done: bool,
+    mission_strict: bool,
+    verify_pack: bool,
+    verifier_review: Option<bool>,
     bon_alpha: bool,
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
@@ -2595,19 +2646,23 @@ fn spawn_headless(
     if strict_done {
         cmd.arg("--strict-done");
     }
-    if bon_alpha {
-        // Additive: keep any inherited experimental flags and add `bon`.
-        let existing = std::env::var("ZELARI_EXPERIMENTAL").unwrap_or_default();
-        let mut flags: Vec<String> = existing
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if !flags.iter().any(|f| f.eq_ignore_ascii_case("bon")) {
-            flags.push("bon".into());
-        }
-        cmd.env("ZELARI_EXPERIMENTAL", flags.join(","));
+    // Desktop settings are authoritative in both directions. Explicit `0`
+    // prevents an inherited shell environment from silently re-enabling a
+    // switch that the user turned off in the UI.
+    cmd.env("ZELARI_STRICT_DONE", if strict_done { "1" } else { "0" });
+    cmd.env(
+        "ZELARI_MISSION_STRICT",
+        if mission_strict { "1" } else { "0" },
+    );
+    cmd.env("ZELARI_VERIFY_PACK", if verify_pack { "1" } else { "0" });
+    if let Some(enabled) = verifier_review {
+        cmd.env("ZELARI_VERIFIER_REVIEW", if enabled { "1" } else { "0" });
     }
+    let experimental = desktop_experimental_flags(
+        &std::env::var("ZELARI_EXPERIMENTAL").unwrap_or_default(),
+        bon_alpha,
+    );
+    cmd.env("ZELARI_EXPERIMENTAL", experimental);
 
     if let Some(p) = provider {
         if !p.is_empty() {
@@ -2667,9 +2722,7 @@ fn spawn_headless(
 
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
-    let mut child = cmd
-        .spawn()
-        .map_err(format_cli_spawn_err)?;
+    let mut child = cmd.spawn().map_err(format_cli_spawn_err)?;
 
     let stdout = child
         .stdout
@@ -2823,6 +2876,18 @@ fn spawn_headless(
     }
 }
 
+fn desktop_experimental_flags(existing: &str, bon_alpha: bool) -> String {
+    let mut flags: Vec<String> = existing
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("bon"))
+        .collect();
+    if bon_alpha {
+        flags.push("bon".into());
+    }
+    flags.join(",")
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct CompanionServeStartArgs {
@@ -2838,11 +2903,7 @@ struct CompanionServeStartArgs {
 #[tauri::command]
 fn companion_serve_status(state: State<'_, Arc<CompanionServeState>>) -> CompanionServeStatus {
     reap_dead_companion(&state);
-    let bind = state
-        .bind
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clone();
+    let bind = state.bind.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let port = *state.port.lock().unwrap_or_else(|e| e.into_inner());
     let pid = state
         .child
@@ -3044,10 +3105,7 @@ mod tests {
 
     #[test]
     fn unwrap_resolves_npm_cmd_shim_layout() {
-        let dir = std::env::temp_dir().join(format!(
-            "zelari-unwrap-test-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("zelari-unwrap-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let js_dir = dir.join("node_modules").join("zelari-code").join("bin");
         fs::create_dir_all(&js_dir).unwrap();
@@ -3075,10 +3133,7 @@ mod tests {
 
     #[test]
     fn unwrap_parses_cmd_shim_when_layout_differs() {
-        let dir = std::env::temp_dir().join(format!(
-            "zelari-unwrap-parse-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(format!("zelari-unwrap-parse-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         // JS not under node_modules/… — only reachable via parse.
@@ -3122,5 +3177,25 @@ node "{}" %*"#,
         assert_eq!(cmp_semver("2.0.0-alpha.7", "2.0.0-beta.1"), -1);
         assert_eq!(cmp_semver("1.46.1", "2.0.0"), -1);
         assert_eq!(cmp_semver("v2.0.0-alpha.6", "zelari-code v2.0.0"), -1);
+    }
+
+    #[test]
+    fn desktop_run_defaults_keep_missions_strict_and_verifier_automatic() {
+        let args: RunTaskArgs = serde_json::from_value(serde_json::json!({
+            "prompt": "test"
+        }))
+        .unwrap();
+        assert!(args.mission_strict);
+        assert!(!args.strict_done);
+        assert!(!args.verify_pack);
+        assert_eq!(args.verifier_review, None);
+    }
+
+    #[test]
+    fn desktop_bon_switch_adds_and_removes_only_bon() {
+        assert_eq!(desktop_experimental_flags("foo, BON,bar", false), "foo,bar");
+        assert_eq!(desktop_experimental_flags("foo,bar", true), "foo,bar,bon");
+        assert_eq!(desktop_experimental_flags("bon", true), "bon");
+        assert_eq!(desktop_experimental_flags("", false), "");
     }
 }

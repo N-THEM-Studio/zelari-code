@@ -208,6 +208,11 @@ export function SettingsView({
   const [customModel, setCustomModel] = useState("");
   const [profile, setProfile] = useState<ExecutionProfile>(prefs.profile);
   const [strictDone, setStrictDone] = useState(prefs.strictDone);
+  const [missionStrict, setMissionStrict] = useState(prefs.missionStrict);
+  const [verifyPack, setVerifyPack] = useState(prefs.verifyPack);
+  const [verifierReview, setVerifierReview] = useState(
+    prefs.verifierReview,
+  );
   const [bonAlpha, setBonAlpha] = useState(prefs.bonAlpha);
   const [verifierMode, setVerifierMode] = useState<"inherit" | "custom">("inherit");
   const [verifierProvider, setVerifierProvider] = useState("");
@@ -229,6 +234,9 @@ export function SettingsView({
   useEffect(() => {
     setProfile(prefs.profile);
     setStrictDone(prefs.strictDone);
+    setMissionStrict(prefs.missionStrict);
+    setVerifyPack(prefs.verifyPack);
+    setVerifierReview(prefs.verifierReview);
     setBonAlpha(prefs.bonAlpha);
   }, [prefs]);
 
@@ -280,7 +288,14 @@ export function SettingsView({
         model: finalModel,
         defaultMode: mode,
         defaultPhase: phase,
-        prefs: { profile, strictDone, bonAlpha },
+        prefs: {
+          profile,
+          strictDone,
+          missionStrict,
+          verifyPack,
+          verifierReview,
+          bonAlpha,
+        },
       });
       setMessage("Saved provider, model & chat defaults.");
       setCustomModel("");
@@ -913,6 +928,11 @@ export function SettingsView({
                     ))}
                   </select>
                 </label>
+                <h3 className="settings-subhead">Verification & experiments</h3>
+                <p className="muted">
+                  These switches are saved locally and applied to every new
+                  run, including the floating overlay.
+                </p>
                 <label className="field field-check">
                   <input
                     type="checkbox"
@@ -920,9 +940,56 @@ export function SettingsView({
                     onChange={(e) => setStrictDone(e.target.checked)}
                   />
                   <span>
-                    Strict BUILD gate — unknown ≠ pass, no done without evidence
-                    (<code>--strict-done</code>)
+                    Kraken strict gate — unknown ≠ pass, no done without
+                    evidence
                   </span>
+                </label>
+                <label className="field field-check">
+                  <input
+                    type="checkbox"
+                    checked={missionStrict}
+                    onChange={(e) => setMissionStrict(e.target.checked)}
+                  />
+                  <span>
+                    Mission strict gate — enabled by default for Zelari
+                    missions
+                  </span>
+                </label>
+                <label className="field field-check">
+                  <input
+                    type="checkbox"
+                    checked={verifyPack}
+                    onChange={(e) => setVerifyPack(e.target.checked)}
+                  />
+                  <span>
+                    Native criteria pack — run project typecheck, tests and
+                    build when available
+                  </span>
+                </label>
+                <label className="field">
+                  <span>Advisory verifier review</span>
+                  <select
+                    value={
+                      verifierReview === null
+                        ? "auto"
+                        : verifierReview
+                          ? "on"
+                          : "off"
+                    }
+                    onChange={(e) =>
+                      setVerifierReview(
+                        e.target.value === "auto"
+                          ? null
+                          : e.target.value === "on",
+                      )
+                    }
+                  >
+                    <option value="auto">
+                      Automatic — enabled by a dedicated verifier model
+                    </option>
+                    <option value="on">Always on</option>
+                    <option value="off">Always off</option>
+                  </select>
                 </label>
                 <label className="field field-check">
                   <input
@@ -939,7 +1006,8 @@ export function SettingsView({
                   Tip: cycle mode with{" "}
                   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>, phase with{" "}
                   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>P</kbd>. Click Save
-                  provider / defaults to persist profile and gates.
+                  provider / defaults to persist profile, gates and
+                  experiments.
                 </p>
               </section>
           )}

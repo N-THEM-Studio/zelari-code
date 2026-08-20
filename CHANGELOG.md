@@ -5,6 +5,26 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-08-20
+
+### Added
+
+- **Desktop verification controls**: Settings → Defaults now exposes persistent
+  controls for the Kraken strict gate, Mission strict gate, native criteria
+  pack, advisory verifier (automatic/on/off), and experimental Best-of-N.
+- **Overlay parity**: the floating Desktop overlay applies the same execution
+  profile, verification gates, verifier preference, and experiment settings as
+  the main chat.
+
+### Fixed
+
+- **Authoritative Desktop switches**: disabling a gate or Best-of-N now
+  explicitly overrides inherited process environment variables instead of
+  allowing them to silently re-enable the feature.
+- **Preference migration**: existing Desktop settings retain their previous
+  profile, strict-gate and Best-of-N choices while adopting safe defaults for
+  the new controls.
+
 ## [2.1.2] - 2026-08-20
 
 ### Fixed

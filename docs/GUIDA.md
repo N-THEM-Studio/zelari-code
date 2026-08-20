@@ -1,6 +1,6 @@
 # Zelari Code — Guida all'uso
 
-> **Versione documento:** 2.1.2
+> **Versione documento:** 2.2.0
 > CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri 2), council a 6 ruoli, super-agent **kraken**, missioni **zelari**, slash commands, MCP, SSH e provider LLM agnostici (OAuth Grok / ChatGPT / Anthropic).  
 > Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **Apache-2.0**.
 
@@ -422,6 +422,7 @@ La chat Desktop è la source of truth per la conversazione: history multi-turn v
 ### Settings
 
 - **Provider** — API key, endpoint OpenAI-compatible, discover models  
+- **Defaults → Verification & experiments** — interruttori persistenti per Strict Kraken, Strict Mission, criteria pack nativo e Best-of-N; il Verifier advisory può essere Automatico, sempre attivo o sempre disattivo
 - **Updates** — aggiornamento **app** (Tauri / GitHub Releases) vs **CLI** (`npm install -g`)  
 - **Extensions** — MCP catalog + **Skills** (crea/rimuovi `SKILL.md` user/project; import da URL col modello attivo)  
 - **Connections** — **Mobile connection** (start `zelari-code serve`, QR pairing Tailscale) + SSH deploy/monitor  

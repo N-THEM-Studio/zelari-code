@@ -1,5 +1,5 @@
 /**
- * Desktop 2.0 execution prefs (profile, strict-done, experimental BoN).
+ * Desktop execution prefs (profile, verification gates, experiments).
  *
  * Persisted in localStorage so Settings and the composer stay in lockstep.
  * Pure helpers — unit-tested under tests/unit/desktop-prefs.test.ts.
@@ -15,9 +15,19 @@ export const EXECUTION_PROFILES = [
 
 export type ExecutionProfile = (typeof EXECUTION_PROFILES)[number];
 
+/** `null` preserves the CLI's automatic verifier-selection behaviour. */
+export type VerifierReviewPreference = boolean | null;
+
 export interface DesktopPrefs {
   profile: ExecutionProfile;
+  /** Strict evidence gate for Kraken runs (off by default). */
   strictDone: boolean;
+  /** Strict evidence gate for Mission/Zelari runs (on by default). */
+  missionStrict: boolean;
+  /** Run the native typecheck/test/build criteria pack. */
+  verifyPack: boolean;
+  /** Advisory verifier: null = automatic, boolean = explicit override. */
+  verifierReview: VerifierReviewPreference;
   /** Experimental Best-of-N (N=3). Requires ZELARI_EXPERIMENTAL=bon on the CLI. */
   bonAlpha: boolean;
 }
@@ -25,6 +35,9 @@ export interface DesktopPrefs {
 export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   profile: "kraken/v1",
   strictDone: false,
+  missionStrict: true,
+  verifyPack: false,
+  verifierReview: null,
   bonAlpha: false,
 };
 
@@ -44,6 +57,13 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
       ? r.profile
       : DEFAULT_DESKTOP_PREFS.profile,
     strictDone: r.strictDone === true,
+    missionStrict:
+      typeof r.missionStrict === "boolean"
+        ? r.missionStrict
+        : DEFAULT_DESKTOP_PREFS.missionStrict,
+    verifyPack: r.verifyPack === true,
+    verifierReview:
+      typeof r.verifierReview === "boolean" ? r.verifierReview : null,
     bonAlpha: r.bonAlpha === true,
   };
 }

@@ -34,13 +34,36 @@ describe("normalizeDesktopPrefs", () => {
       normalizeDesktopPrefs({
         profile: "minimal/v1",
         strictDone: true,
+        missionStrict: false,
+        verifyPack: true,
+        verifierReview: false,
         bonAlpha: "yes",
         extra: 1,
       }),
     ).toEqual({
       profile: "minimal/v1",
       strictDone: true,
+      missionStrict: false,
+      verifyPack: true,
+      verifierReview: false,
       bonAlpha: false,
+    });
+  });
+
+  it("migrates old saved prefs without changing runtime defaults", () => {
+    expect(
+      normalizeDesktopPrefs({
+        profile: "kraken/v1",
+        strictDone: true,
+        bonAlpha: true,
+      }),
+    ).toEqual({
+      profile: "kraken/v1",
+      strictDone: true,
+      missionStrict: true,
+      verifyPack: false,
+      verifierReview: null,
+      bonAlpha: true,
     });
   });
 });
@@ -55,13 +78,23 @@ describe("load/saveDesktopPrefs", () => {
       },
     };
     saveDesktopPrefs(
-      { profile: "council/v1", strictDone: true, bonAlpha: true },
+      {
+        profile: "council/v1",
+        strictDone: true,
+        missionStrict: false,
+        verifyPack: true,
+        verifierReview: true,
+        bonAlpha: true,
+      },
       storage,
     );
     expect(bag[DESKTOP_PREFS_KEY]).toContain("council/v1");
     expect(loadDesktopPrefs(storage)).toEqual({
       profile: "council/v1",
       strictDone: true,
+      missionStrict: false,
+      verifyPack: true,
+      verifierReview: true,
       bonAlpha: true,
     });
   });
