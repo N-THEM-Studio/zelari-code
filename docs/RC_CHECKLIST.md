@@ -40,6 +40,7 @@
 - [x] dedicated verifier smoke — Primary A + override B → effective B anche con sessione su A (F6)
 - [x] reset/fallback smoke — clear override → di nuovo inherit A (F6)
 - [x] persistenza/reload — canale reale `applySetConfig` → `provider.json` → fresh disk read → risoluzione (F6)
+- [x] Desktop shell 2.0.0 lockstep — `apps/desktop` package.json + tauri.conf.json + Cargo.toml/lock; Settings → App updates follows `/releases/latest`; Update CLI follows npm `latest`
 
 ## Docs
 

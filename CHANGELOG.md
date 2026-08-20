@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Zelari Code 2.0 is out of alpha.
 
+### Desktop
+
+- Desktop shell (`@zelari/desktop`, Tauri `zelari-desktop`) is now **2.0.0**
+  in lockstep with the CLI. Settings → App updates tracks GitHub
+  `/releases/latest` (signed installers). Settings → Update CLI follows
+  the npm `latest` dist-tag.
+
 ### Changed
 
 - **Event-backed evidence is now the strict default (ADR-0026).**
