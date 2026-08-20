@@ -137,7 +137,7 @@ export interface RunTaskArgs {
 
   /** JSON-encoded prior conversation turns, so the agent keeps multi-turn
    * context across the per-message process boundary. Built from the
-   * `history_snapshot` events emitted by the CLI. */
+   * chat UI (2.1 T9: CLI history_snapshot removed); degraded-spine fallback. */
   history?: AgentMessageLite[];
   /** Session todo list mirrored from todo_write/todo_read, replayed to the
    * CLI so the fresh per-message process keeps multi-turn tasks (todo_read
@@ -263,7 +263,6 @@ export type AgentEvent =
     }
   | { type: "error"; message?: string; error?: string }
   | { type: "log"; message?: string }
-  | { type: "history_snapshot"; messages: AgentMessageLite[] }
   | { type: string; [key: string]: unknown };
 
 export interface GitFileChange {

@@ -323,9 +323,9 @@ function formatTime(ts: number): string {
 /**
  * Multi-turn history for headless runs — derived from the chat UI.
  *
- * The chat transcript is the source of truth: CLI history_snapshot can be
- * tool-heavy, racey on process exit, or missing after a plan→build phase
- * switch, which previously caused "no previous context" amnesia.
+ * The chat transcript is the source of truth (2.1 T9: the CLI history_snapshot
+ * event was removed — the spine via --resume and the chat UI carry the
+ * multi-turn context).
  *
  * Keep user + assistant only. Long assistant bodies keep the TAIL (plan
  * summaries / synthesis usually sit at the end). Excludes the user message
@@ -992,44 +992,6 @@ export default function App() {
                   : c,
               ),
             );
-          }
-          return;
-        }
-
-        if (ev.type === "history_snapshot") {
-          const msgs = (ev as { messages?: AgentMessageLite[] }).messages;
-          if (Array.isArray(msgs)) {
-            const clean = msgs
-              .filter(
-                (m) =>
-                  m &&
-                  (m.role === "user" || m.role === "assistant") &&
-                  typeof m.content === "string" &&
-                  m.content.trim().length > 0,
-              )
-              .map((m) => ({
-                role: m.role as "user" | "assistant",
-                content:
-                  m.content.length > 12_000
-                    ? `…${m.content.slice(-11_999)}`
-                    : m.content,
-              }));
-            if (clean.length > 0) {
-              setConversations((prev) =>
-                prev.map((c) => {
-                  if (c.id !== convId) return c;
-                  const fromChat = deriveHistoryFromChat(c.messages, "");
-                  const merged = [...(c.history ?? []), ...clean].slice(-24);
-                  // Chat UI wins when it already has full assistant text
-                  const history =
-                    fromChat.length >= merged.length &&
-                    fromChat.some((m) => m.role === "assistant")
-                      ? fromChat
-                      : merged;
-                  return { ...c, history };
-                }),
-              );
-            }
           }
           return;
         }
