@@ -20,6 +20,10 @@ jobs:
     timeout-minutes: 60
     strategy:
       fail-fast: false
+      # tauri-action reads, merges, and replaces the shared latest.json asset.
+      # Concurrent platform uploads can race and leave Windows out of the
+      # updater manifest (or fail while another job replaces the asset).
+      max-parallel: 1
       matrix:
         include:
           # Windows: MSI bundler rejects non-numeric semver pre-release ids

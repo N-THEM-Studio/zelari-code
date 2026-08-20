@@ -54,7 +54,7 @@
 - [x] Node versions supportate testate — matrix Node **24** (3 OS); gamba Windows verificata localmente. **Node 20 rimosso dalla matrix**: il suo npm 10.x e npm ≥11.7 calcolano ideal-tree inconciliabili per il peer esbuild di vite 8 (`^0.27||^0.28` vs root `^0.25` → nessun lockfile soddisfa entrambi), e Node 20 è deprecato sui runner GitHub. `engines.node` richiede ora `>=24` e `engines.npm` `>=11.7`.
 - [x] dependency alerts triaggiati — `docs/security/dependency-triage-2.0.0-alpha.7.md`: 3 high dev-only → fix → `found 0 vulnerabilities` (F12)
 - [x] principles/version/typecheck/tests verdi — gate locale completo e prepublish verde su Node 24/npm 11.7
-- [x] **CI reale su GitHub** — commit `b5837fd` verde; install npm 11.7 e smoke Node 24 confermati nella matrix corrente
+- [x] **CI reale su GitHub** — commit `811f6dd` verde; install npm 11.7 e smoke Node 24 confermati nella matrix corrente
 - [ ] **Dependabot graph-wide** — audit locali root e Desktop a zero; elenco GitHub da confermare con un token autorizzato agli alert di sicurezza (API attuale: 403)
 - [x] macOS runner — il successivo workflow Desktop `v2.1.0` e la CI corrente hanno completato correttamente; failure infrastrutturale #46 superata
 
