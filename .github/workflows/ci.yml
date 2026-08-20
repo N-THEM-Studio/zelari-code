@@ -27,21 +27,7 @@ jobs:
           node-version: '24'
 
       - name: Install dependencies
-        shell: bash
-        run: |
-          set +e
-          esc() { sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g; s/:/%3A/g; s/,/%2C/g'; }
-          echo "node=$(node -v) npm=$(npm -v)"
-          npm ci > /tmp/npm-plain.log 2>&1
-          pcode=$?
-          echo "plain exit=$pcode"
-          if [ $pcode -ne 0 ]; then head -c 1400 /tmp/npm-plain.log | tr '\r\n' '  ' | esc | sed 's/^/::error title=PLAIN npm ci::$/'; fi
-          npm ci --no-audit --no-fund > /tmp/npm-flag.log 2>&1
-          fcode=$?
-          echo "flagged exit=$fcode"
-          if [ $fcode -ne 0 ]; then head -c 1400 /tmp/npm-flag.log | tr '\r\n' '  ' | esc | sed 's/^/::error title=FLAGGED npm ci::$/'; fi
-          if [ $pcode -ne 0 ]; then exit $pcode; fi
-          exit $fcode
+        run: npm ci --no-audit --no-fund
 
       - name: Typecheck
         run: npm run typecheck
@@ -81,21 +67,7 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        shell: bash
-        run: |
-          set +e
-          esc() { sed 's/%/%25/g; s/\r/%0D/g; s/\n/%0A/g; s/:/%3A/g; s/,/%2C/g'; }
-          echo "node=$(node -v) npm=$(npm -v)"
-          npm ci > /tmp/npm-plain.log 2>&1
-          pcode=$?
-          echo "plain exit=$pcode"
-          if [ $pcode -ne 0 ]; then head -c 1400 /tmp/npm-plain.log | tr '\r\n' '  ' | esc | sed 's/^/::error title=PLAIN npm ci::$/'; fi
-          npm ci --no-audit --no-fund > /tmp/npm-flag.log 2>&1
-          fcode=$?
-          echo "flagged exit=$fcode"
-          if [ $fcode -ne 0 ]; then head -c 1400 /tmp/npm-flag.log | tr '\r\n' '  ' | esc | sed 's/^/::error title=FLAGGED npm ci::$/'; fi
-          if [ $pcode -ne 0 ]; then exit $pcode; fi
-          exit $fcode
+        run: npm ci --no-audit --no-fund
 
       - name: Build @zelari/core
         run: npm run build --workspace=@zelari/core
