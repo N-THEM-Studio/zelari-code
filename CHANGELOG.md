@@ -5,6 +5,21 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-08-20
+
+### Fixed
+
+- **Deterministic release installs**: require npm `>=11.7.0`, pin the workspace
+  package manager, and verify both constraints before publishing.
+- **Clean npm artifacts**: remove stale TypeScript output before builds and
+  pre-publish checks, and exclude compiled test files from the CLI package.
+- **License coherence**: `@zelari/core` now ships the same Apache-2.0 license as
+  the monorepo, enforced by the principles gate.
+- **Desktop development dependencies**: update transitive `postcss` and `nanoid`
+  versions to resolve the two outstanding high-severity audit findings.
+- **Repository hygiene**: remove accidental binary/temp installer artifacts and
+  keep the retained upgrade specifications under `docs/plans/`.
+
 ## [2.1.0] - 2026-08-20
 
 ### Added
