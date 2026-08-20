@@ -390,6 +390,8 @@ async function runHeadlessKrakenGraph(
       emitEvent({ type: 'message_delta', delta: finalAscii });
       emitEvent({ type: 'message_end' });
       emitEvent({ type: 'agent_end', reason: summary.converged ? 'completed' : 'error' });
+      // COMPAT MIRROR (ADR-0024): the session spine is the canonical context;
+      // history_snapshot is one-shot legacy-host replay only (F13 cleanup, doc §8).
       emitEvent({
         type: 'history_snapshot',
         messages: [
@@ -964,6 +966,7 @@ async function runHeadlessSingle(
   process.stdout.write('');
 
   // v1.10.0: emit a history_snapshot so the desktop can replay this turn.
+  // COMPAT MIRROR (ADR-0024): session spine is canonical — see emit sites below.
   // Include the user turn + final assistant text (user/assistant only).
   if (pass.finalReason !== 'error' && opts.output === 'json') {
     try {
@@ -1002,6 +1005,8 @@ async function runHeadlessSingle(
           : []),
       ];
       if (snapshot.length > 0) {
+        // COMPAT MIRROR (ADR-0024): the session spine is the canonical context;
+        // history_snapshot is one-shot legacy-host replay only (F13 cleanup, doc §8).
         emitEvent({ type: 'history_snapshot', messages: snapshot });
       }
     } catch {
@@ -1207,6 +1212,8 @@ async function runHeadlessCouncil(
           ? ([{ role: 'assistant', content: lastAssistantText }] as AgentMessage[])
           : []),
       ];
+      // COMPAT MIRROR (ADR-0024): the session spine is the canonical context;
+      // history_snapshot is one-shot legacy-host replay only (F13 cleanup, doc §8).
       emitEvent({ type: 'history_snapshot', messages: snapshot });
     } catch {
       /* non-fatal */
@@ -1622,6 +1629,8 @@ async function runHeadlessZelari(
 
   if (opts.output === 'json') {
     try {
+      // COMPAT MIRROR (ADR-0024): the session spine is the canonical context;
+      // history_snapshot is one-shot legacy-host replay only (F13 cleanup, doc §8).
       emitEvent({
         type: 'history_snapshot',
         messages: [

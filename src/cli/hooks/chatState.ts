@@ -1,5 +1,3 @@
-// @ts-nocheck — shares the pre-existing strict-mode type narrowing carried
-// over from useSession/useChatTurn. Runtime is correct.
 import type { ChatMessage } from "../components/ChatStream.js";
 import {
   formatToolSummary,

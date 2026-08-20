@@ -1,5 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode type narrowing issues carried over
-// from app.tsx. Runtime is correct; tighten signatures in a follow-up.
 import { useState, useRef, useCallback, useEffect } from 'react';
 import {
   getCurrentSessionId,
@@ -57,7 +55,7 @@ export function useSession(): UseSessionResult {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [live, setLive] = useState<LiveState>(EMPTY_LIVE);
   const [sessionActive, setSessionActive] = useState(false);
-  const writerRef = useRef<SessionJsonlWriter | null>(null);
+  const writerRef = useRef<SpineMirroringWriter | null>(null);
 
   // Mirror `live` into a ref so non-reactive callbacks (the AgentHarness event
   // loop in useChatTurn) can read the current pending-tools snapshot without
