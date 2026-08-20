@@ -513,26 +513,63 @@ fn normalize_semver(raw: &str) -> String {
     token.trim().trim_start_matches('v').to_string()
 }
 
-fn parse_semver(raw: &str) -> Option<(u64, u64, u64)> {
+fn parse_semver(raw: &str) -> Option<((u64, u64, u64), Option<String>)> {
     let s = normalize_semver(raw);
-    let core = s.split('-').next().unwrap_or(&s);
+    let (core, pre) = match s.split_once('-') {
+        Some((c, p)) => (c, Some(p.to_string())),
+        None => (s.as_str(), None),
+    };
     let mut parts = core.split('.');
     let major = parts.next()?.parse().ok()?;
     let minor = parts.next()?.parse().ok()?;
     let patch = parts.next()?.parse().ok()?;
-    Some((major, minor, patch))
+    Some(((major, minor, patch), pre))
 }
 
-/// -1 if a < b, 0 equal, 1 if a > b
+/// SemVer 2.0.0 precedence: 1.0.0-alpha < 1.0.0. Same core + both
+/// prerelease → identifier compare (numeric vs ASCII, longer wins).
+fn cmp_prerelease(a: &str, b: &str) -> i32 {
+    let pa: Vec<&str> = a.split('.').collect();
+    let pb: Vec<&str> = b.split('.').collect();
+    let n = pa.len().max(pb.len());
+    for i in 0..n {
+        match (pa.get(i), pb.get(i)) {
+            (None, Some(_)) => return -1,
+            (Some(_), None) => return 1,
+            (Some(x), Some(y)) => {
+                let xn = x.parse::<u64>().ok();
+                let yn = y.parse::<u64>().ok();
+                match (xn, yn) {
+                    (Some(xi), Some(yi)) if xi != yi => {
+                        return if xi < yi { -1 } else { 1 };
+                    }
+                    (Some(_), None) => return -1,
+                    (None, Some(_)) => return 1,
+                    _ if *x != *y => return if *x < *y { -1 } else { 1 },
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    0
+}
+
+/// -1 if a < b, 0 equal, 1 if a > b. Release > matching prerelease.
 fn cmp_semver(a: &str, b: &str) -> i32 {
     match (parse_semver(a), parse_semver(b)) {
         (Some(x), Some(y)) => {
-            if x < y {
+            if x.0 < y.0 {
                 -1
-            } else if x > y {
+            } else if x.0 > y.0 {
                 1
             } else {
-                0
+                match (&x.1, &y.1) {
+                    (None, None) => 0,
+                    (Some(_), None) => -1,
+                    (None, Some(_)) => 1,
+                    (Some(pa), Some(pb)) => cmp_prerelease(pa, pb),
+                }
             }
         }
         _ => 0,
@@ -3069,5 +3106,21 @@ node "{}" %*"#,
         let msg = format_cli_spawn_err("batch file arguments are invalid");
         assert!(msg.contains("JS entry"));
         assert!(msg.contains("ZELARI_CLI_PATH"));
+    }
+
+    #[test]
+    fn cmp_semver_release_outranks_matching_prerelease() {
+        assert_eq!(cmp_semver("2.0.0-alpha.6", "2.0.0"), -1);
+        assert_eq!(cmp_semver("2.0.0", "2.0.0-alpha.6"), 1);
+        assert_eq!(cmp_semver("2.0.0", "2.0.0"), 0);
+        assert_eq!(cmp_semver("2.0.0-alpha.6", "2.0.0-alpha.6"), 0);
+    }
+
+    #[test]
+    fn cmp_semver_prerelease_order() {
+        assert_eq!(cmp_semver("2.0.0-alpha.6", "2.0.0-alpha.7"), -1);
+        assert_eq!(cmp_semver("2.0.0-alpha.7", "2.0.0-beta.1"), -1);
+        assert_eq!(cmp_semver("1.46.1", "2.0.0"), -1);
+        assert_eq!(cmp_semver("v2.0.0-alpha.6", "zelari-code v2.0.0"), -1);
     }
 }
