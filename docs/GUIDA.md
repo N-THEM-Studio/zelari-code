@@ -58,8 +58,8 @@ Il runtime condiviso è pubblicato come package npm [`@zelari/core`](https://www
 
 | Requisito | Versione | Note |
 |---|---|---|
-| **Node.js** | **≥ 20 LTS** | Testato su 20.x e 22.x. Versioni precedenti mancano di `fetch` stabile, `AbortController.timeout`, e `node:test`. |
-| **npm** | **≥ 10** | Fornito con Node 20 LTS; testato con npm 10 e 11. |
+| **Node.js** | **≥ 24 LTS** | Testato solo su Node 24 in CI; Node 20 è stata rimossa dalla matrix (l'albero dipendenze lo richiede). |
+| **npm** | **≥ 10** | Fornito con Node 24 LTS; testato con npm 10 e 11. |
 | **OS** | Linux, macOS, Windows 10/11 | Windows richiede Git Bash (auto-rilevato). |
 | **Account + API key** | 1 tra: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth: `/login grok`, `/login chatgpt`, `/login anthropic`. |
 
@@ -1059,11 +1059,11 @@ Produce un documento `zelari-session-export/1`: proiezione completa, trajectory,
 
 ### Fork (API core)
 
-Il fork è un'API programmatica di `@zelari/core/session` (`forkSession(store, id, { fromSeq })`): copia la traiettoria fino a `fromSeq` in un nuovo sessionId e registra l'evento `session.forked` con la lineage. In alpha.7 non è un flag CLI; l'export lo espone come `forkParent`.
+Il fork è un'API programmatica di `@zelari/core/session` (`forkSession(store, id, { fromSeq })`): copia la traiettoria fino a `fromSeq` in un nuovo sessionId e registra l'evento `session.forked` con la lineage. Non è un flag CLI; l'export lo espone come `forkParent`.
 
 ### Legacy mirror (transitorio)
 
-Il sidecar BrainEvent 1.x e lo store in-process restano **solo** come superficie di export/UI durante l'alpha (ADR-0024). Non sono source of truth: la loro rimozione è pianificata per `2.0.0-rc`.
+Il sidecar BrainEvent 1.x e lo store in-process restano **solo** come superficie di export/UI di compatibilità (ADR-0024, "COMPAT MIRROR"). Non sono source of truth: la loro rimozione è pianificata per una 2.x successiva, dopo la migrazione di Desktop.
 
 ---
 
@@ -1079,11 +1079,11 @@ Tier deterministiche (event-backed): `tool-output`, `command-output`, `fs-observ
 
 ### Criteria pack v1
 
-Con `ZELARI_VERIFY_PACK=1` (in aggiunta al gate strict) il criteria pack v1 esegue per davvero i check di progetto — typecheck, test, build — usando gli script npm reali del repo, e fonde i risultati nello stesso gate:
+Con `ZELARI_VERIFY_PACK=1` il criteria pack v1 esegue per davvero i check di progetto — typecheck, test, build — usando gli script npm reali del repo, e fonde i risultati nello stesso gate. Dalla 2.1 il pack è un gate **indipendente**: non richiede `--strict-done` né la Kraken Selection — basta il flag, anche su un turno kraken "semplice":
 
 ```bash
 zelari-code --headless --task "ship F3" --strict-done   # kraken, opt-in
-ZELARI_VERIFY_PACK=1 zelari-code --headless --task "ship" --strict-done
+ZELARI_VERIFY_PACK=1 zelari-code --headless --task "ship"   # pack standalone: strict implicito
 ```
 
 ### CompletionPolicy e Strict Done
@@ -1105,12 +1105,12 @@ Il verifier LLM è **opt-in e advisory**: aggiunge informazione, mai autorità.
 
 - **Lock garantito da test:** un criterion deterministico UNKNOWN/FAIL con verifier CONFIRMED resta **BLOCKED**; un PASS deterministico con verifier REJECTED resta **PASS** (la review è visibile come rischio, non riscrive il verdetto)
 - **Modello:** "Same as current model" (inherit) o provider+model dedicato — si configura in **Desktop → Settings → Kraken** (persistito; il modello effettivo è registrato nell'evento `verification.run` come `effectiveModel`)
-- **Stato alpha:** la selezione persistita è risolta dal runtime e il contratto è locked; l'invocazione del verifier nel normale lifecycle è il wiring residuo del piano 2.0
+- **Stato (2.1):** la selezione persistita è risolta dal runtime e il contratto è locked; l'invocazione advisory è ora attiva nel lifecycle headless kraken — opt-in: modello dedicato configurato (Desktop → Settings → Kraken) oppure `ZELARI_VERIFIER_REVIEW=1`; il risultato entra nell'evento `verification.run` (`verifier.advisory`) e mai nel verdetto
 
-### Mission progress (advisory) e Best-of-N (alpha)
+### Mission progress (advisory) e Best-of-N (sperimentale)
 
 - Ogni slice di missione emette `mission.progress` con una raccomandazione (`continue` / `wind-down` / `hold-for-user`): il loop **non la esegue** — mai early-stop con criterion required incompleti, mai done da score, mai rewrite del goal
-- Best-of-N è una superficie alpha (switch in Desktop): non fa parte del contratto di completamento
+- Best-of-N è una superficie sperimentale (switch in Desktop): non fa parte del contratto di completamento
 
 ---
 
@@ -1314,7 +1314,8 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 |---|---|---|
 | `ZELARI_STRICT_DONE` | `0` | `1` = evidence gate strict su kraken/TUI/headless (ADR-0025) |
 | `ZELARI_MISSION_STRICT` | `1` | `0` = opt-out del gate strict mission (default ON) |
-| `ZELARI_VERIFY_PACK` | `0` | `1` = criteria pack v1 nativo (typecheck/test/build reali) nel gate strict |
+| `ZELARI_VERIFY_PACK` | `0` | `1` = criteria pack v1 nativo (typecheck/test/build reali) — gate indipendente: non richiede strict-done né Kraken Selection |
+| `ZELARI_VERIFIER_REVIEW` | `0` | `1` = verifier LLM advisory dopo il gate (headless kraken); `0` forza off anche con modello dedicato |
 | `ZELARI_SESSIONS_DIR` | `<workspace>/.zelari/sessions` | Override della directory della session spine (test/CI) |
 
 ### Path override (test/CI)

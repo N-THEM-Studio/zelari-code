@@ -25,6 +25,8 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 | 0024 | Chiusura del dual-write: spine come unica sorgente del contesto modello | ✅ Accettato | 2026-08-19 | 2026-08-19 |
 | 0025 | Default strict done divisi per superficie (Kraken opt-in, mission ON) | ✅ Accettato | 2026-08-20 | 2026-08-20 |
 | 0026 | Default RC: evidence event-backed ON, Kraken strict resta opt-in | ✅ Accettato | 2026-08-20 | 2026-08-20 |
+| 0027 | Strict Kraken default 2.1: resta opt-in CLI, host decide via pack | ✅ Accettato | 2026-08-20 | 2026-08-20 |
+| 0028 | Native criteria pack adattivo: CLI esplicito, default a carico dell'host | ✅ Accettato | 2026-08-20 | 2026-08-20 |
 
 ## Formato
 
