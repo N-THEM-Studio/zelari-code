@@ -56,6 +56,8 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { evaluateStrictBuildGate, strictGateEventPayload, strictGateExitCode } from './kraken/verificationBridge.js';
+import { nativePackEnabled } from './kraken/nativeVerification.js';
+import { runAdvisoryVerifierReview } from './kraken/verifierLifecycle.js';
 import {
   openHeadlessSpine,
   resolveHeadlessProfileId,
@@ -390,15 +392,6 @@ async function runHeadlessKrakenGraph(
       emitEvent({ type: 'message_delta', delta: finalAscii });
       emitEvent({ type: 'message_end' });
       emitEvent({ type: 'agent_end', reason: summary.converged ? 'completed' : 'error' });
-      // COMPAT MIRROR (ADR-0024): the session spine is the canonical context;
-      // history_snapshot is one-shot legacy-host replay only (F13 cleanup, doc §8).
-      emitEvent({
-        type: 'history_snapshot',
-        messages: [
-          { role: 'user', content: prompt },
-          { role: 'assistant', content: finalAscii },
-        ],
-      });
     } else {
       process.stdout.write(`${finalAscii}\n`);
     }
@@ -885,7 +878,32 @@ async function runHeadlessSingle(
   // pass, the run closes non-success (dedicated exit code + session status).
   let strictExit = 0;
 
-  // Fase 8 (ADR-0020): completion gate — a BUILD turn that used selection  // Fase 8 (ADR-0020): completion gate — a BUILD turn that used selection
+  // 2.1 T4: verifier review deps — the loader resolves the EFFECTIVE
+  // identity (a fixed override may live on another provider; inherit = the
+  // run's own provider+model, whose stream is already built).
+  const verifierReviewDeps = {
+    session: { provider, model },
+    loadStream: async (providerId: string, modelId: string) => {
+      if (providerId === provider) return providerStream;
+      try {
+        const key = await resolveHeadlessKey(providerId);
+        if ('error' in key) return null;
+        const { buildProviderStream } = await import('./provider/resolveStream.js');
+        return buildProviderStream({
+          providerId: providerId as import('./keyStore.js').ProviderName,
+          apiKey: key.apiKey,
+          baseUrl: key.baseUrl,
+          model: modelId,
+        });
+      } catch {
+        return null;
+      }
+    },
+    emit: (input: import('@zelari/core/session').SessionEventInput) => spine.appendEvent(input),
+  };
+
+  // Fase 8 (ADR-0020 × 2.1 T6): completion gate — a BUILD turn that used
+  // selection OR enabled the native criteria pack (ZELARI_VERIFY_PACK)
   // cannot cleanly finish while required checks are unresolved (fail OR
   // unknown — a degraded observation is never proof). One automatic
   // repair pass (budget = 1, structural), reusing the same recovery
@@ -894,10 +912,15 @@ async function runHeadlessSingle(
     pass.finalReason === 'completed' &&
     pass.exitCode === 0 &&
     opts.mode === 'kraken' &&
-    isKrakenSelectionEnabled() &&
+    (isKrakenSelectionEnabled() || nativePackEnabled()) &&
     !planModeFromOpts(opts)
   ) {
     const strictGate = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input) });
+    // 2.1 T4: opt-in advisory verifier review (dedicated model configured in
+    // provider.json, or ZELARI_VERIFIER_REVIEW=1). Advisory only — it can
+    // neither un-block nor block the turn; it lands in the verification.run
+    // payload and as its own spine event. Never fails the parent run.
+    await runAdvisoryVerifierReview(strictGate, verifierReviewDeps).catch((): void => undefined);
     const gate = strictGate.gate;
     const verificationPayload = strictGateEventPayload(strictGate);
     spine.verificationRun(verificationPayload);
@@ -934,6 +957,7 @@ async function runHeadlessSingle(
         emittedWrites: pass.emittedWrites + repair.emittedWrites,
       };
       const after = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input) });
+      await runAdvisoryVerifierReview(after, verifierReviewDeps).catch((): void => undefined);
       const afterPayload = strictGateEventPayload(after);
       spine.verificationRun(afterPayload);
       if (opts.output === 'json') {
@@ -965,53 +989,11 @@ async function runHeadlessSingle(
   }
   process.stdout.write('');
 
-  // v1.10.0: emit a history_snapshot so the desktop can replay this turn.
-  // COMPAT MIRROR (ADR-0024): session spine is canonical — see emit sites below.
-  // Include the user turn + final assistant text (user/assistant only).
-  if (pass.finalReason !== 'error' && opts.output === 'json') {
-    try {
-      const all = pass.messages;
-      // Prefer the last non-empty assistant message as the turn summary.
-      let lastAsst = '';
-      for (let i = all.length - 1; i >= 0; i--) {
-        const m = all[i];
-        if (m?.role === 'assistant' && (m.content ?? '').trim()) {
-          lastAsst = cleanAgentContent(m.content, {
-            stripQuestion: false,
-            stripThink: false,
-          });
-          break;
-        }
-      }
-      if (!lastAsst.trim() && pass.textBuffer.length > 0) {
-        lastAsst = pass.textBuffer.join('').trim();
-      }
-      // Note if delivery gate still failed so the next turn can re-try.
-      if (wantWrites && pass.successfulWrites === 0) {
-        lastAsst =
-          (lastAsst ? `${lastAsst}\n\n` : '') +
-          '[zelari] WARNING: BUILD turn ended with zero successful file writes. ' +
-          'The planned changes may still need to be applied on disk.';
-        emitEvent({
-          type: 'log',
-          message:
-            '[headless] BUILD warning: still zero successful writes after retry',
-        });
-      }
-      const snapshot: AgentMessage[] = [
-        { role: 'user', content: opts.task },
-        ...(lastAsst
-          ? ([{ role: 'assistant', content: lastAsst }] as AgentMessage[])
-          : []),
-      ];
-      if (snapshot.length > 0) {
-        // COMPAT MIRROR (ADR-0024): the session spine is the canonical context;
-        // history_snapshot is one-shot legacy-host replay only (F13 cleanup, doc §8).
-        emitEvent({ type: 'history_snapshot', messages: snapshot });
-      }
-    } catch {
-      // Non-fatal: a snapshot failure must never break the run.
-    }
+  // F13 cleanup (2.1 T9): history_snapshot emission removed — the session
+  // spine is the canonical model context (ADR-0024); hosts resume via
+  // --resume <sessionId> (E1.4). Keep only the zero-write warning signal.
+  if (pass.finalReason !== 'error' && opts.output === 'json' && wantWrites && pass.successfulWrites === 0) {
+    emitEvent({ type: 'log', message: '[headless] BUILD warning: still zero successful writes after retry' });
   }
 
   try {
@@ -1117,7 +1099,8 @@ async function runHeadlessCouncil(
 
   // Multi-turn: Desktop passes --history, but council used to ignore it →
   // "procedi" looked like a brand-new empty request. Inject prior transcript
-  // into the user task and emit history_snapshot for the next turn.
+  // into the user task (2.1 T9: the history_snapshot emission is gone; the
+  // spine carries the transcript).
   // Exit-1/E1.2: spine-derived prior turns (legacy --history is the
   // one-shot import source, not the model-context brain).
   const historySeed: AgentMessage[] = seededHistory.history;
@@ -1204,21 +1187,6 @@ async function runHeadlessCouncil(
   }
 
   // Desktop multi-turn: append this turn so the next "procedi" has context.
-  if (opts.output === 'json') {
-    try {
-      const snapshot: AgentMessage[] = [
-        { role: 'user', content: opts.task },
-        ...(lastAssistantText
-          ? ([{ role: 'assistant', content: lastAssistantText }] as AgentMessage[])
-          : []),
-      ];
-      // COMPAT MIRROR (ADR-0024): the session spine is the canonical context;
-      // history_snapshot is one-shot legacy-host replay only (F13 cleanup, doc §8).
-      emitEvent({ type: 'history_snapshot', messages: snapshot });
-    } catch {
-      /* non-fatal */
-    }
-  }
   try {
     await spine.close(exitCode === 0 ? 'completed' : 'error');
   } catch { /* spine never fails the run */ }
@@ -1627,23 +1595,6 @@ async function runHeadlessZelari(
     }
   }
 
-  if (opts.output === 'json') {
-    try {
-      // COMPAT MIRROR (ADR-0024): the session spine is the canonical context;
-      // history_snapshot is one-shot legacy-host replay only (F13 cleanup, doc §8).
-      emitEvent({
-        type: 'history_snapshot',
-        messages: [
-          { role: 'user', content: opts.task },
-          ...(lastMissionAssistant
-            ? ([{ role: 'assistant', content: lastMissionAssistant }] as AgentMessage[])
-            : []),
-        ],
-      });
-    } catch {
-      /* non-fatal */
-    }
-  }
 
   return exitCode;
 }

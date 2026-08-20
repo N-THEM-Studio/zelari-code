@@ -55,7 +55,7 @@ import {
   reserveCandidateSlot,
   setKrakenCheckResults,
 } from '../kraken/candidateRegistry.js';
-import { allUnknownCheckResults, parseVerifyReport } from '../kraken/verifyReport.js';
+import { allUnknownCheckResults, parseVerifyReport, type TentacleToolTrace } from '../kraken/verifyReport.js';
 import { recordCandidateTokens } from '../kraken/metrics.js';
 
 /** Sub-agent kinds (OpenCode-inspired). */
@@ -329,15 +329,32 @@ type TaskArgs = z.infer<typeof TaskArgsSchema>;
  * distinction matters to the graph executor, which must not re-spawn a node
  * onto a scope another tentacle may still be writing to.
  */
+/** Bounded tentacle tool trace (2.1 T5): ring size + output excerpt cap. */
+const TOOL_TRACE_RING = 24;
+const TOOL_TRACE_OUTPUT_MAX = 600;
+
+/** Best-effort command/path hint from tool args, for note→tool matching. */
+function toolCommandHint(args: Record<string, unknown> | undefined): string | undefined {
+  if (!args) return undefined;
+  for (const key of ['command', 'cmd', 'script', 'pattern', 'path', 'query', 'url']) {
+    const v = args[key];
+    if (typeof v === 'string' && v.trim()) return v.trim().slice(0, 160);
+  }
+  return undefined;
+}
+
 export async function runSubAgent(
   harness: SubAgentHarness,
   opts: { signal?: AbortSignal } = {},
-): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown }> {
+): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[] }> {
   const { signal } = opts;
   let current = '';
   let lastCompleted = '';
   let error: string | undefined;
   let usage: UsageBreakdown | undefined;
+  /** toolCallId → { tool, command } captured at tool_execution_start. */
+  const pendingTools = new Map<string, { tool: string; command?: string }>();
+  const toolTrace: TentacleToolTrace[] = [];
   if (signal?.aborted) return { result: '', aborted: true };
   for await (const ev of harness.run()) {
     if (signal?.aborted) {
@@ -345,7 +362,29 @@ export async function runSubAgent(
         result: (lastCompleted || current).trim(),
         ...(error ? { error } : {}),
         aborted: true,
+        ...(toolTrace.length > 0 ? { toolTrace } : {}),
       };
+    }
+    // 2.1 T5 (original-tool-backed evidence): capture the tentacle's raw tool
+    // executions mechanically, at execution time — the verify-report note is
+    // the agent's claim; this is what the process actually observed.
+    if (ev.type === 'tool_execution_start') {
+      pendingTools.set(ev.toolCallId, { tool: ev.toolName, command: toolCommandHint(ev.args) });
+    } else if (ev.type === 'tool_execution_end') {
+      const started = pendingTools.get(ev.toolCallId);
+      pendingTools.delete(ev.toolCallId);
+      toolTrace.push({
+        tool: started?.tool ?? 'unknown',
+        callId: ev.toolCallId,
+        ok: !ev.isError,
+        ...(started?.command ? { command: started.command } : {}),
+        output: String(ev.result ?? '').slice(0, TOOL_TRACE_OUTPUT_MAX),
+        durationMs: ev.durationMs,
+        endedAt: Date.now(),
+      });
+      if (toolTrace.length > TOOL_TRACE_RING) {
+        toolTrace.splice(0, toolTrace.length - TOOL_TRACE_RING);
+      }
     }
     switch (ev.type) {
       case 'message_start':
@@ -384,7 +423,13 @@ export async function runSubAgent(
     }
   }
   const result = (lastCompleted || current).trim();
-  return { result, ...(error ? { error } : {}), ...(usage ? { usage } : {}) };
+  return {
+    result,
+    ...(error ? { error } : {}),
+    ...(usage ? { usage } : {}),
+    ...(toolTrace.length > 0 ? { toolTrace } : {}),
+  };
+
 }
 
 /** Successful tentacle run (raw conclusion + footer, no `[sub-agent:…]` prefix). */
@@ -404,6 +449,12 @@ export interface TentacleSuccess {
    * approximated.
    */
   usage?: UsageBreakdown;
+  /**
+   * 2.1 T5: raw tool executions captured during the run (bounded ring,
+   * output excerpts). The verify-report path stores them with the check
+   * results so the strict gate can anchor evidence to real tool output.
+   */
+  toolTrace?: TentacleToolTrace[];
   /** Git worktree path if one was used, else null. */
   worktreePath: string | null;
   /**
@@ -610,7 +661,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     };
   }
 
-  const { result, error, aborted, usage } = await runSubAgent(harness, {
+  const { result, error, aborted, usage, toolTrace } = await runSubAgent(harness, {
     ...(opts.signal ? { signal: opts.signal } : {}),
   });
   const durationMs = Date.now() - started;
@@ -725,6 +776,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     result,
     footer,
     ...(usage ? { usage } : {}),
+    ...(toolTrace && toolTrace.length > 0 ? { toolTrace } : {}),
     worktreePath: worktree?.path ?? null,
     worktreeHandle: worktree,
   };
@@ -893,6 +945,7 @@ export function createTaskTool(
             res.ok
               ? parseVerifyReport(res.result, required)
               : allUnknownCheckResults(required, `verify tentacle failed: ${res.error}`),
+            res.ok ? res.toolTrace : undefined,
           );
         }
       }

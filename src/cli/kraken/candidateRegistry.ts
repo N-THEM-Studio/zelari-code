@@ -68,7 +68,7 @@ export function isKrakenSelectionEnabled(): boolean {
 }
 
 import type { KrakenSelectionVerdict } from './verifier.js';
-import type { KrakenCheckResult } from './verifyReport.js';
+import type { KrakenCheckResult, TentacleToolTrace } from './verifyReport.js';
 
 type CandidateGlobal = {
   __zelariKrakenCandidates?: CandidateEntry[];
@@ -76,6 +76,8 @@ type CandidateGlobal = {
   __zelariKrakenSelection?: KrakenSelectionVerdict | null;
   /** Fase 7: per-check results of the LATEST verify tentacle this turn. */
   __zelariKrakenCheckResults?: KrakenCheckResult[] | null;
+  /** 2.1 T5: raw tool executions captured by that same verify tentacle. */
+  __zelariVerifyToolTrace?: TentacleToolTrace[] | null;
 };
 
 function store(): CandidateEntry[] {
@@ -90,6 +92,7 @@ export function resetKrakenCandidates(): void {
   g.__zelariKrakenCandidates = [];
   g.__zelariKrakenSelection = null;
   g.__zelariKrakenCheckResults = null;
+  g.__zelariVerifyToolTrace = null;
 }
 
 /** Store the kraken_select verdict for this turn (Fase 6/8 consume it). */
@@ -124,9 +127,15 @@ export function krakenRequiredChecks(): string[] {
  * turn has required checks — a later tentacle replaces earlier results
  * (the runtime counter follows the latest verification state).
  */
-export function setKrakenCheckResults(results: KrakenCheckResult[]): void {
+export function setKrakenCheckResults(
+  results: KrakenCheckResult[],
+  toolTrace?: readonly TentacleToolTrace[],
+): void {
   const g = globalThis as unknown as CandidateGlobal;
   g.__zelariKrakenCheckResults = results;
+  // 2.1 T5: keep the raw tool executions alongside the notes so the strict
+  // gate can anchor evidence to real tool output instead of re-emitted notes.
+  g.__zelariVerifyToolTrace = toolTrace ? [...toolTrace] : null;
 }
 
 /**
@@ -137,6 +146,17 @@ export function getKrakenCheckResults(): KrakenCheckResult[] | null {
   const g = globalThis as unknown as CandidateGlobal;
   const results = g.__zelariKrakenCheckResults;
   return results ? [...results] : null;
+}
+
+/**
+ * 2.1 T5: raw tool executions captured by the latest verify tentacle this
+ * turn (null when none ran or the tentacle executed no tools). Consumed by
+ * the verification bridge to anchor EvidenceRefs to real tool output.
+ */
+export function getLastVerifyToolTrace(): TentacleToolTrace[] | null {
+  const g = globalThis as unknown as CandidateGlobal;
+  const trace = g.__zelariVerifyToolTrace;
+  return trace ? [...trace] : null;
 }
 
 /**

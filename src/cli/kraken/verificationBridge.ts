@@ -20,10 +20,11 @@
  * see nativeVerification.ts. The pack is additive evidence; it can only add
  * blockers, never remove them, exactly like the rest of the strict layer.
  */
-import { getKrakenCheckResults, krakenRequiredChecks } from './candidateRegistry.js';
+import { createHash } from 'node:crypto';
+import { getKrakenCheckResults, krakenRequiredChecks, getLastVerifyToolTrace } from './candidateRegistry.js';
 import { evaluateKrakenCompletionGate, type KrakenCompletionGate } from './completionGate.js';
-import type { KrakenCheckResult } from './verifyReport.js';
-import { evaluateNativePack, type NativePackEvaluation } from './nativeVerification.js';
+import type { KrakenCheckResult, TentacleToolTrace } from './verifyReport.js';
+import { evaluateNativePack, nativePackEnabled, type NativePackEvaluation } from './nativeVerification.js';
 import type { ShellProvider } from '@zelari/core/runtime';
 import type { SessionEventInput } from '@zelari/core/session';
 import {
@@ -35,6 +36,7 @@ import {
   type Criterion,
   type EvidenceRef,
   type VerificationResult,
+  type VerifierReview,
 } from '@zelari/core/verification';
 
 /**
@@ -150,21 +152,106 @@ export function krakenResultsToContract(
  * stay unanchored and STRICT_BUILD_POLICY (requireEventBackedEvidence)
  * will BLOCK — that is the RC false-done guard, not a test-only quirk.
  */
+/** Provenance outcome of one anchoring pass (2.1 T5 measurement). */
+export interface EvidenceAnchoringCounts {
+  /** EvidenceRefs anchored to a captured tool execution (pattern A). */
+  toolResultAnchored: number;
+  /** EvidenceRefs anchored to a re-emitted verify-report note (pattern B, deprecated). */
+  noteFallback: number;
+}
+
+function sha256Hex(input: string): string {
+  return createHash('sha256').update(input).digest('hex');
+}
+
+/**
+ * Best-effort match of a verify-report note to a captured tool execution:
+ * 1. command-hint overlap (the note cites the command it ran), then
+ * 2. distinctive output overlap (counts like "41/41" appear in the raw
+ *    tool output the process captured).
+ * Most recent execution wins — later tools are the likeliest source of
+ * the evidence the verify tentacle is reporting on.
+ */
+export function matchNoteToToolTrace(
+  note: string,
+  trace: readonly TentacleToolTrace[],
+): TentacleToolTrace | null {
+  const n = normalize(note);
+  if (!n) return null;
+  for (let i = trace.length - 1; i >= 0; i--) {
+    const t = trace[i]!;
+    const cmd = t.command ? normalize(t.command) : '';
+    if (cmd.length >= 4 && (n.includes(cmd) || cmd.includes(n))) return t;
+  }
+  for (let i = trace.length - 1; i >= 0; i--) {
+    const t = trace[i]!;
+    const out = normalize(t.output);
+    if (!out) continue;
+    if (n.length >= 8 && out.includes(n)) return t;
+    const fragments = n.match(/\S*\d[\d.,/%]*\S*/g) ?? [];
+    for (const raw of fragments) {
+      const frag = raw.replace(/[.,;:]+$/, '');
+      if (frag.length >= 3 && out.includes(frag)) return t;
+    }
+  }
+  return null;
+}
+
 export async function anchorSelectionEvidence(
   results: VerificationResult[],
   emit?: (input: SessionEventInput) => Promise<unknown>,
-): Promise<void> {
-  if (!emit) return;
+  toolTrace?: readonly TentacleToolTrace[],
+): Promise<EvidenceAnchoringCounts> {
+  const counts: EvidenceAnchoringCounts = { toolResultAnchored: 0, noteFallback: 0 };
+  if (!emit) return counts;
   for (const r of results) {
     for (const ev of r.evidence) {
       if (ev.seq !== undefined) continue;
       if (ev.tier === 'verifier-llm' || ev.tier === 'human') continue;
       try {
+        // 2.1 T5 pattern A (original-tool-backed): match the note to a RAW
+        // tool execution captured at run time, and anchor the EvidenceRef to
+        // an event that carries the tool output + digest — not the note.
+        const match =
+          toolTrace && toolTrace.length > 0 ? matchNoteToToolTrace(ev.ref, toolTrace) : null;
+        if (match) {
+          const digest = sha256Hex(match.output);
+          const appended = await emit({
+            kind: 'verification.evidence',
+            actor: { type: 'system', role: 'verification' },
+            data: {
+              observation: 'tool-result',
+              provenance: 'tentacle-tool-capture',
+              criterionId: r.criterionId,
+              tool: match.tool,
+              callId: match.callId,
+              ok: match.ok,
+              digest,
+              outputTail: match.output.slice(0, 240),
+              note: ev.ref,
+              ...(match.command ? { command: match.command } : {}),
+            },
+          });
+          const toolSeq =
+            appended && typeof appended === 'object' && 'seq' in appended
+              ? Number((appended as { seq: unknown }).seq)
+              : NaN;
+          if (Number.isFinite(toolSeq) && toolSeq > 0) {
+            ev.seq = toolSeq;
+            ev.digest = digest;
+            ev.ref = `${match.tool}${match.command ? ` ${match.command}` : ''} → ${match.ok ? 'ok' : 'error'} @seq`;
+            counts.toolResultAnchored += 1;
+          }
+          continue;
+        }
+        // Pattern B (deprecated fallback): no captured execution matches the
+        // note — re-emit the note itself, explicitly marked as note-backed.
         const appended = await emit({
           kind: 'verification.evidence',
           actor: { type: 'system', role: 'verification' },
           data: {
             observation: 'verify-report-note',
+            provenance: 'note-fallback',
             criterionId: r.criterionId,
             ref: ev.ref,
             tier: ev.tier,
@@ -174,12 +261,16 @@ export async function anchorSelectionEvidence(
           appended && typeof appended === 'object' && 'seq' in appended
             ? Number((appended as { seq: unknown }).seq)
             : NaN;
-        if (Number.isFinite(seq) && seq > 0) ev.seq = seq;
+        if (Number.isFinite(seq) && seq > 0) {
+          ev.seq = seq;
+          counts.noteFallback += 1;
+        }
       } catch {
         // degrade-and-stop: leave unanchored; policy will BLOCK if required
       }
     }
   }
+  return counts;
 }
 
 /** Combined outcome: legacy gate + strict evidence evaluation (selection contract + native criteria pack). */
@@ -194,6 +285,23 @@ export interface StrictBuildGateEvaluation {
    * command, or the evaluation is reconstructed from the session log.
    */
   native?: NativePackEvaluation | null;
+  /**
+   * Flat VerificationResult list backing the evaluation (selection contract
+   * + native pack). Set whenever the strict path runs; consumed by the
+   * advisory verifier review (verifierLifecycle.ts).
+   */
+  results?: VerificationResult[];
+  /**
+   * 2.1 T4: advisory LLM review attached by the lifecycle wiring —
+   * informational only, NEVER authoritative for verdict/blocked.
+   */
+  review?: VerifierReview | null;
+  /**
+   * 2.1 T5: how the selection-contract evidence was anchored — refs tied to
+   * captured tool executions (pattern A) vs re-emitted notes (pattern B,
+   * deprecated). Measurement hook for the 2.1 provenance migration.
+   */
+  anchoring?: EvidenceAnchoringCounts;
   /** True when the turn may NOT cleanly finish (either gate blocks). */
   blocked: boolean;
   /** One-line machine-readable summary for logging/NDJSON. */
@@ -232,7 +340,13 @@ export async function evaluateStrictBuildGate(
   options: StrictGateOptions = {},
 ): Promise<StrictBuildGateEvaluation> {
   const gate = evaluateKrakenCompletionGate(mode);
-  if (!gate.selectionUsed || gate.total === 0 || !strictDoneEnabled(options.surface ?? 'kraken')) {
+  // 2.1 T6: the native criteria pack is INDEPENDENT of Kraken selection —
+  // ZELARI_VERIFY_PACK=1 evaluates the pack even on turns that never ran
+  // kraken_select. Selection criteria join the same evaluation when present.
+  const strictOn = strictDoneEnabled(options.surface ?? 'kraken');
+  const nativeOn = nativePackEnabled(options.env ?? process.env);
+  const selectionAvailable = gate.selectionUsed && gate.total > 0;
+  if ((!selectionAvailable && !nativeOn) || (!strictOn && !nativeOn)) {
     return {
       gate,
       strict: false,
@@ -244,9 +358,15 @@ export async function evaluateStrictBuildGate(
         : 'open',
     };
   }
-  const checks = krakenRequiredChecks();
-  const contract = krakenResultsToContract(checks, getKrakenCheckResults());
-  await anchorSelectionEvidence(contract.results, options.emit);
+  const checks = selectionAvailable ? krakenRequiredChecks() : [];
+  const contract = selectionAvailable
+    ? krakenResultsToContract(checks, getKrakenCheckResults())
+    : { criteria: [], results: [] };
+  const anchoring = await anchorSelectionEvidence(
+    contract.results,
+    options.emit,
+    getLastVerifyToolTrace() ?? undefined,
+  );
   // F2: native criteria pack (opt-in) — real commands via the core engine.
   // A pack failure degrades to the legacy contract only; it never un-blocks.
   const native = await evaluateNativePack({
@@ -257,16 +377,34 @@ export async function evaluateStrictBuildGate(
   }).catch((): null => null);
   const allCriteria = [...contract.criteria, ...(native?.criteria ?? [])];
   const allResults = [...contract.results, ...(native?.results ?? [])];
+  // Pack enabled but nothing bound (and no selection contract) → nothing to
+  // evaluate: stay non-strict rather than certify an empty PASS.
+  if (allCriteria.length === 0) {
+    return {
+      gate,
+      strict: false,
+      evaluation: null,
+      native,
+      results: allResults,
+      blocked: gate.blocked,
+      summary: gate.blocked
+        ? `blocked: ${gate.failedChecks.length} failed, ${gate.unknownChecks.length} unknown`
+        : 'open (native pack bound no command)',
+    };
+  }
   const evaluation = evaluateCompletion(allCriteria, allResults, STRICT_BUILD_POLICY);
   const blocked = gate.blocked || evaluation.verdict !== 'PASS';
+  const legacyPart = selectionAvailable ? `${gate.passed}/${gate.total} legacy-pass, ` : 'no selection contract, ';
   return {
     gate,
     strict: true,
+    results: allResults,
+    anchoring,
     evaluation,
     native,
     blocked,
     summary: blocked
-      ? `blocked (strict ${evaluation?.verdict ?? 'n/a'}): ${gate.passed}/${gate.total} legacy-pass, evidence ${
+      ? `blocked (strict ${evaluation?.verdict ?? 'n/a'}): ${legacyPart}evidence ${
           evaluation?.evidenceComplete ? 'complete' : 'incomplete'
         }`
       : `open (strict PASS): ${evaluation?.satisfied.length ?? 0}/${allCriteria.length} criteria pass with evidence`,
@@ -302,6 +440,7 @@ export function strictGateEventPayload(evaluation: StrictBuildGateEvaluation): R
           satisfied: evaluation.evaluation.satisfied,
           unsatisfied: evaluation.evaluation.unsatisfied,
           complete: evaluation.evaluation.evidenceComplete,
+          provenance: evaluation.anchoring ?? null,
         }
       : null,
     // F2: deterministic pack results — real command evidence, replayable.
@@ -315,6 +454,18 @@ export function strictGateEventPayload(evaluation: StrictBuildGateEvaluation): R
             evidence: r.evidence.map((e) => ({ tier: e.tier, ref: e.ref, digest: e.digest, ...(e.seq !== undefined ? { seq: e.seq } : {}) })),
             detail: r.detail,
           })),
+        }
+      : null,
+    // 2.1 T4: advisory verifier review (opt-in) — informational, never
+    // authoritative: verdict/blocked above come from the deterministic policy.
+    verifier: evaluation.review
+      ? {
+          verdict: evaluation.review.verdict,
+          score: evaluation.review.score ?? null,
+          rationale: evaluation.review.rationale ?? null,
+          fallback: evaluation.review.fallback ?? null,
+          effectiveModel: evaluation.review.effectiveModel,
+          advisory: true,
         }
       : null,
     summary: evaluation.summary,

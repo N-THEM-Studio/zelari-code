@@ -27,6 +27,7 @@ import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, res
 import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
 import { buildKrakenRepairPrompt } from "../kraken/completionGate.js";
 import { evaluateStrictBuildGate, strictGateEventPayload, type StrictGateOptions } from "../kraken/verificationBridge.js";
+import { nativePackEnabled } from "../kraken/nativeVerification.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
 import { derivedModelSeed } from "../headlessSpine.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
@@ -817,7 +818,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               if (
                 event.reason === "completed" &&
                 !krakenRepairEnqueued &&
-                isKrakenSelectionEnabled() &&
+                (isKrakenSelectionEnabled() || nativePackEnabled()) &&
                 workPhase === "build"
               ) {
                 const strictGate = await evaluateStrictBuildGate("build", { emit: krakenSpineEmit });

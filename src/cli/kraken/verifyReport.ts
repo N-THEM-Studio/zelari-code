@@ -124,6 +124,27 @@ export function parseVerifyReport(
  * All-unknown results for a verify tentacle that never produced a usable
  * conclusion (failure, abort, empty output). Degraded ≠ proof of anything.
  */
+/**
+ * One tool execution captured mechanically from a tentacle run (2.1 T5
+ * provenance): the RAW tool output as the process saw it, not the agent's
+ * note about it. Used to anchor verify-report evidence to real tool output.
+ */
+export interface TentacleToolTrace {
+  tool: string;
+  callId: string;
+  ok: boolean;
+  /** Best-effort command/path hint extracted from the call args. */
+  command?: string;
+  /** Bounded output excerpt (raw tool result, not the agent's note). */
+  output: string;
+  durationMs?: number;
+  endedAt?: number;
+}
+
+/**
+ * All-unknown results for a verify tentacle that never produced a usable
+ * conclusion (failure, abort, empty output). Degraded ≠ proof of anything.
+ */
 export function allUnknownCheckResults(
   requiredChecks: readonly string[],
   reason: string,
