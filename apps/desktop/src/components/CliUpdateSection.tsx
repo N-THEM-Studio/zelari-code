@@ -1,18 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 import { checkCliUpdate, updateCli, type CliUpdateCheck } from "../agentClient";
+import { cmpSemver, resolveCliUpdateStatus } from "../cliUpdateStatus";
 import type { CliStatus } from "../types";
-
-/** Numeric semver-ish compare: negative when a < b. */
-function cmpSemver(a: string, b: string): number {
-  const pa = a.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
-  const pb = b.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
-  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d;
-  }
-  return 0;
-}
 
 interface Props {
   cli: CliStatus | null;
@@ -71,6 +61,7 @@ export function CliUpdateSection({ cli, onCliRefreshed }: Props) {
     (cli?.cliVersion
       ? cli.cliVersion.replace(/^zelari-code\s+v?/i, "").replace(/^v/, "")
       : null);
+  const presentation = resolveCliUpdateStatus(info, installed);
 
   return (
     <section className="settings-card">
@@ -109,13 +100,13 @@ export function CliUpdateSection({ cli, onCliRefreshed }: Props) {
         </p>
       )}
 
-      {info?.updateAvailable && (
+      {presentation.updateAvailable && (
         <p className="warn">
-          {info.message}
+          {presentation.message}
         </p>
       )}
-      {info && !info.updateAvailable && installed && (
-        <p className="ok-inline">{info.message}</p>
+      {presentation.upToDate && installed && (
+        <p className="ok-inline">{presentation.message}</p>
       )}
       {error && <p className="error-banner">{error}</p>}
       {log && (
@@ -134,7 +125,7 @@ export function CliUpdateSection({ cli, onCliRefreshed }: Props) {
         <button
           type="button"
           className="btn-send"
-          disabled={busy || (info != null && !info.updateAvailable && !!installed)}
+          disabled={busy || (info != null && !presentation.updateAvailable && !!installed)}
           onClick={() => void runUpdate()}
           title="Runs: npm install -g zelari-code@&lt;latest&gt;"
         >
