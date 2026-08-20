@@ -199,7 +199,10 @@ async function runModeChain(mode: 'kraken' | 'council'): Promise<void> {
 describe('Exit-3.6 — headless session e2e smoke (run → resume → export → replay)', () => {
   it('kraken: full chain preserves the semantic trajectory', async () => {
     await runModeChain('kraken');
-  }, 30_000);
+    // 90s: the kraken chain cold-imports the whole headless pipeline in-process;
+    // under full-suite parallel load (341 files on vitest 4) 30s proved too
+    // tight — in isolation the whole file runs in ~11s.
+  }, 90_000);
 
   it('council: full chain preserves the semantic trajectory', async () => {
     await runModeChain('council');

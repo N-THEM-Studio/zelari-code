@@ -268,12 +268,15 @@ describe('ToolOutput — finalize policy (v0.7.0 replaces pickVisibleMessages)',
   // tests cover the new stateless ToolOutput policy instead.
 
   it('finalizeBody keeps the full body for errors (auto-expand behavior preserved)', async () => {
+    // Cold import of the react+ink chain can exceed the 5s default under
+    // full-suite load (341 files) — first-importer pays the transform cost.
+    // 30s matches the cold-start precedent set by headlessE2eSession.test.ts.
     // Re-implement the policy inline to assert the contract without coupling
     // to ink rendering. The component reads ZELARI_TOOL_OUTPUT_LINES (default 5).
     const { ToolOutput } = await import('../../src/cli/components/ToolOutput.js');
     // Sanity: component is exported and memoized.
     expect(typeof ToolOutput).toBe('object');
-  });
+  }, 30_000);
 
   it('ToolOutput renders a pending (live) tool as a single ⋯ summary line', async () => {
     const { ToolOutput } = await import('../../src/cli/components/ToolOutput.js');
