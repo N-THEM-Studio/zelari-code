@@ -64,13 +64,14 @@ describe('strict done gate enforcement (E2.2)', () => {
       path.join(REPO_ROOT, 'packages', 'core', 'src', 'verification', 'completionPolicy.ts'),
       'utf8',
     );
-    expect(policy).toContain('STRICT_BUILD_POLICY');
+    expect(policy).toContain('export const STRICT_BUILD_POLICY');
     const tiersBlock = policy.slice(
       policy.indexOf('DETERMINISTIC_EVIDENCE_TIERS'),
-      policy.indexOf('STRICT_BUILD_POLICY'),
+      policy.indexOf('export const STRICT_BUILD_POLICY'),
     );
     expect(tiersBlock).toContain("'tool-output'");
     expect(tiersBlock).not.toContain("'verifier-llm'");
     expect(policy).toMatch(/admissibleTiers/);
+    expect(policy).toMatch(/requireEventBackedEvidence:\s*true/);
   });
 });
