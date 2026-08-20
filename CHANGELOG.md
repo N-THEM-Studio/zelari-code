@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-20
+
+### Fixed
+
+- **Desktop Settings → Update CLI** no longer reports "CLI is up to date"
+  when the installed CLI is a prerelease (`2.0.0-alpha.4`) and npm `latest`
+  is a newer release (`2.0.0`). SemVer comparison now treats prerelease as
+  older than release, so "Update CLI" becomes available and the message
+  explains the upgrade path.
+
 ## [2.0.0] - 2026-08-20
 
 Zelari Code 2.0 is out of alpha.
