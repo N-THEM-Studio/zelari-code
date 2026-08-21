@@ -50,6 +50,7 @@ import {
 } from '@zelari/core';
 import {
   runTentacle,
+  TASK_TOOL_TIMEOUT_MS,
   type RunTentacleOptions,
   type TentacleResult,
   type TaskToolDeps,
@@ -147,13 +148,12 @@ export function resolveGraphTimeoutMs(env: NodeJS.ProcessEnv = process.env): num
 
 /**
  * Default wall-clock bound per tentacle run (ms). The graph executor calls
- * `runTentacle` directly, bypassing the `task` tool's own `timeoutMs: 300_000`
- * enforcement (that only applies when a parent AgentHarness invokes `task`
- * as a tool-call) — so without an executor-level bound, one stuck sub-agent
- * (a hung bash command, a stalled fetch) hangs `execute()` forever, which
+ * `runTentacle` directly, bypassing the `task` tool wrapper — so without an
+ * executor-level bound, one stuck sub-agent hangs `execute()` forever, which
  * hangs the whole headless process (main.ts only calls `process.exit()`
  * after `runHeadless()`'s promise resolves), which leaves the Desktop app's
- * "running" state stuck permanently. Matches the task tool's own budget.
+ * "running" state stuck permanently. Explore/verify keep this tighter budget;
+ * writers use DEFAULT_WRITER_NODE_TIMEOUT_MS (same as TASK_TOOL_TIMEOUT_MS).
  */
 export const DEFAULT_NODE_TIMEOUT_MS = 300_000;
 
@@ -168,9 +168,11 @@ export const DEFAULT_NODE_TIMEOUT_MS = 300_000;
  * nodes ("project scaffold + ocean integration + shared core", "three ship
  * classes + selection screen + sailing controller") both died on
  * `tentacle timed out after 300000ms`, taking their fix nodes and four
- * cascade-skipped dependents with them.
+ * cascade-skipped dependents with them. The `task` tool wrapper used to
+ * enforce the same 5-minute cap, so a parent-spawned general tentacle could
+ * time out while still writing — keep this identical to TASK_TOOL_TIMEOUT_MS.
  */
-export const DEFAULT_WRITER_NODE_TIMEOUT_MS = 900_000;
+export const DEFAULT_WRITER_NODE_TIMEOUT_MS = TASK_TOOL_TIMEOUT_MS;
 
 /**
  * How long to wait for a cancelled tentacle to actually unwind before

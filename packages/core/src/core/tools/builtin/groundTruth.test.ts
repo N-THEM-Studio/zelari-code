@@ -162,6 +162,51 @@ describe('read_file ground truth meta', () => {
       expect(r.meta?.truncated).toBe(true);
     }
   });
+
+  it('applies startLine/endLine on the full file, then maxBytes on the slice', async () => {
+    const lines = Array.from({ length: 200 }, (_, i) => `L${String(i).padStart(3, '0')}`);
+    await fs.writeFile(path.join(tmpDir, 'long.txt'), lines.join('\n'));
+    const r = await readFileTool.execute(
+      { path: 'long.txt', startLine: 150, endLine: 155, maxBytes: 80 },
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.content).toContain('L150');
+      expect(r.value.content).toContain('L154');
+      expect(r.value.content).not.toContain('L000');
+      expect(r.value.readLines).toEqual({ start: 150, end: 154 });
+      expect(r.meta?.status).toBe('complete');
+    }
+  });
+
+  it('MAX_BYTES_TRUNCATED applies to the selected range, not the file prefix', async () => {
+    const body = Array.from(
+      { length: 80 },
+      (_, i) => `LINE_${String(i).padStart(3, '0')}_xxxxxxxxxxxxxxxx`,
+    ).join('\n');
+    await fs.writeFile(path.join(tmpDir, 'wide.txt'), body);
+    const r = await readFileTool.execute(
+      { path: 'wide.txt', startLine: 40, endLine: 50, maxBytes: 40 },
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.content.startsWith('LINE_040')).toBe(true);
+      expect(r.value.content).not.toContain('LINE_000');
+      expect(r.meta?.warnings).toContain('MAX_BYTES_TRUNCATED');
+    }
+  });
+
+  it('LINE_RANGE_EMPTY when startLine is past EOF', async () => {
+    const r = await readFileTool.execute({ path: 'alpha.ts', startLine: 99, maxBytes: 1000 }, ctx);
+    expect(r.ok).toBe(true);
+    if (r.ok) {
+      expect(r.value.content).toBe('');
+      expect(r.meta?.status).toBe('empty');
+      expect(r.meta?.warnings).toContain('LINE_RANGE_EMPTY');
+    }
+  });
 });
 
 describe('list_files ground truth meta', () => {

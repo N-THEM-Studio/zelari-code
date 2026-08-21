@@ -5,8 +5,18 @@ import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
 
 const ReadFileArgsSchema = z.object({
   path: z.string().min(1),
-  startLine: z.number().int().nonnegative().optional(),
-  endLine: z.number().int().positive().optional(),
+  startLine: z
+    .number()
+    .int()
+    .nonnegative()
+    .optional()
+    .describe('0-based first line to include. Range is applied to the full file before maxBytes.'),
+  endLine: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Exclusive 0-based end line. Omit to read through EOF (still capped by maxBytes).'),
   maxBytes: z.number().int().positive().max(10_000_000).default(1_000_000),
 });
 
@@ -22,8 +32,12 @@ interface ReadFileResult {
 
 export const readFileTool: ToolDefinition<ReadFileArgs, ReadFileResult> = {
   name: 'read_file',
-  description: 'Read a file with optional line range. Returns content + metadata. Use before edit_file.',
+  description:
+    'Read a file with optional 0-based line range (endLine exclusive). ' +
+    'maxBytes caps the selected range, not a prefix of the file. ' +
+    'Returns content + metadata. Use before edit_file.',
   permissions: ['read'],
+  sideEffect: 'none',
   timeoutMs: 5000,
   inputSchema: ReadFileArgsSchema,
   execute: async (args, ctx) => {
@@ -32,26 +46,29 @@ export const readFileTool: ToolDefinition<ReadFileArgs, ReadFileResult> = {
       const buf = await fs.readFile(absPath, { encoding: 'utf-8', signal: ctx.signal } as never);
       const content = typeof buf === 'string' ? buf : buf.toString('utf-8');
       const allLines = content.split('\n');
-      const truncated = content.length > args.maxBytes ? content.slice(0, args.maxBytes) : content;
-      // Re-split only in the rare truncation case; totalLines must always
-      // describe the FULL file, not the truncated view.
-      const lines = truncated === content ? allLines : truncated.split('\n');
       const totalLines = allLines.length;
       const start = args.startLine ?? 0;
-      const end = Math.min(args.endLine ?? lines.length, lines.length);
-      // Ground Truth: complete vs maxBytes-truncated vs empty-file; caps explicit.
-      const wasTruncated = truncated !== content;
+      const endExclusive = Math.min(args.endLine ?? totalLines, totalLines);
       const empty = content.length === 0;
-      const status = empty ? 'empty' : wasTruncated ? 'partial' : 'complete';
+      const rangeEmpty = !empty && (start >= totalLines || endExclusive <= start);
+      const selected = rangeEmpty ? [] : allLines.slice(start, endExclusive);
+      let text = selected.join('\n');
+      const wasTruncated = text.length > args.maxBytes;
+      if (wasTruncated) text = text.slice(0, args.maxBytes);
+      const returnedLines = text.length === 0 ? 0 : text.split('\n').length;
+      const readEnd = returnedLines === 0 ? Math.max(0, start - 1) : start + returnedLines - 1;
+      // Ground Truth: complete vs maxBytes-truncated vs empty-file; caps explicit.
+      const status = empty || rangeEmpty ? 'empty' : wasTruncated ? 'partial' : 'complete';
       const warnings: string[] = [];
       if (empty) warnings.push('EMPTY_FILE');
+      if (rangeEmpty) warnings.push('LINE_RANGE_EMPTY');
       if (wasTruncated) warnings.push('MAX_BYTES_TRUNCATED');
       return typedOk(
         {
           path: absPath,
-          content: lines.slice(start, end).join('\n'),
+          content: text,
           totalLines,
-          readLines: { start, end: end - 1 },
+          readLines: { start, end: readEnd },
           sizeBytes: content.length,
         },
         {
@@ -92,6 +109,7 @@ export const writeFileTool: ToolDefinition<WriteFileArgs, WriteFileResult> = {
   name: 'write_file',
   description: 'Write or create a file. Use createDirs=true to auto-create parent directories.',
   permissions: ['write'],
+  sideEffect: 'local',
   timeoutMs: 10000,
   inputSchema: WriteFileArgsSchema,
   execute: async (args, ctx) => {
@@ -126,6 +144,7 @@ export const editFileTool: ToolDefinition<EditFileArgs, EditFileResult> = {
   name: 'edit_file',
   description: 'Replace exact string match in a file. Idempotent: returns 0 occurrences if no match.',
   permissions: ['write'],
+  sideEffect: 'local',
   timeoutMs: 10000,
   inputSchema: EditFileArgsSchema,
   execute: async (args, ctx) => {

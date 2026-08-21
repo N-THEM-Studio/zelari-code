@@ -3710,6 +3710,25 @@ button {
   cursor: not-allowed;
 }
 
+.gauntlet-chip {
+  border-color: rgba(200, 16, 46, 0.4);
+  background: rgba(200, 16, 46, 0.1);
+}
+
+.gauntlet-badge {
+  display: inline-block;
+  margin: 0 8px 6px 0;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #fff;
+  background: linear-gradient(135deg, #c8102e, #a3122a);
+  vertical-align: middle;
+}
+
 .pending-skill-chip {
   display: flex;
   align-items: center;

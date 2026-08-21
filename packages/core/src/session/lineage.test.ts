@@ -28,6 +28,24 @@ describe('SessionStore + lineage', () => {
     await fs.rm(store.dir, { recursive: true, force: true });
   });
 
+  it('resume classifies a dangling mutating tool call as inspect-first', async () => {
+    const store = await tmpStore();
+    const { sessionId, writer } = await store.create();
+    await writer.append({
+      kind: 'tool.call',
+      actor: { type: 'agent' },
+      data: { callId: 'w1', tool: 'write_file' },
+    });
+    await writer.close();
+    const resumed = await resumeSession(store, sessionId);
+    expect(resumed.projection.interruptedTools).toEqual([]);
+    const kinds = (await store.read(sessionId)).events.map((e) => e.kind);
+    expect(kinds).toContain('tool.interrupted');
+    expect(kinds).toContain('session.resumed');
+    await resumed.writer.close();
+    await fs.rm(store.dir, { recursive: true, force: true });
+  });
+
   it('resume continues the seq and marks session.resumed', async () => {
     const store = await tmpStore();
     const { sessionId, writer } = await store.create();

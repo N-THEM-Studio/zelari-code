@@ -108,5 +108,30 @@ describe('buildProjection', () => {
       evidenceCount: 1,
     });
     expect(projection.verifications[0]?.complete).toBe(false);
+    expect(projection.interruptedTools).toEqual([]);
+  });
+
+  it('classifies a dangling mutating call on the projection', () => {
+    const events: SessionEventEnvelope[] = [
+      JSON.parse(env(1, 'session.started')),
+      {
+        schemaVersion: 1,
+        sessionId: 's',
+        seq: 2,
+        ts: 2,
+        kind: 'tool.call',
+        actor: { type: 'agent' },
+        data: { callId: 'w1', tool: 'write_file' },
+      },
+    ];
+    const projection = buildProjection(events);
+    expect(projection.interruptedTools).toEqual([
+      expect.objectContaining({
+        callId: 'w1',
+        tool: 'write_file',
+        retrySafety: 'inspect-first',
+        state: 'started-outcome-unknown',
+      }),
+    ]);
   });
 });

@@ -33,6 +33,7 @@ import {
   type UsageBreakdown,
 } from '../shared/events.js';
 import { ToolRegistry } from './tools/registry.js';
+import { classifyToolConcurrency } from './tools/concurrency.js';
 import { metaFooter } from './tools/toolTypes.js';
 import {
   type ContextGrowthStats,
@@ -329,28 +330,21 @@ export class AgentHarness {
   }
 
   /**
-   * v1.8.0: true when a tool may run concurrently with other parallel-safe
-   * tools. Write/execute tools stay serial (preserve file/order safety).
-   * `task` is parallel-safe (read-only sub-agents). Opt out: ZELARI_PARALLEL_TOOLS=0.
+   * v1.8.0 / 2.x F: true when a tool may run concurrently with other
+   * parallel-safe tools. Write/execute stay serial. `task agent=general`
+   * is exclusive (it writes); explore/verify tentacles stay parallel-safe.
+   * Opt out: ZELARI_PARALLEL_TOOLS=0.
    */
-  private isParallelSafeTool(toolName: string): boolean {
-    if (process.env.ZELARI_PARALLEL_TOOLS === '0') return false;
-    if (toolName === 'task') return true;
+  private isParallelSafeTool(toolName: string, args?: Record<string, unknown>): boolean {
     const def = this.config.toolRegistry?.get(toolName);
-    if (!def) {
-      // Unknown / MCP: allow parallel for search-like MCP tools; serial otherwise.
-      if (toolName.startsWith('mcp_')) {
-        const lower = toolName.toLowerCase();
-        if (lower.includes('write') || lower.includes('edit') || lower.includes('delete')) {
-          return false;
-        }
-        return true;
-      }
-      return false;
-    }
-    const perms = def.permissions ?? [];
-    if (perms.includes('write') || perms.includes('execute')) return false;
-    return true;
+    return (
+      classifyToolConcurrency({
+        toolName,
+        args,
+        permissions: def?.permissions,
+        registered: Boolean(def) || toolName === 'task',
+      }) === 'parallel-safe'
+    );
   }
 
   /**
@@ -501,7 +495,7 @@ export class AgentHarness {
     let i = 0;
     while (i < pending.length) {
       const p = pending[i]!;
-      if (p.skipped || p.cached !== undefined || !this.isParallelSafeTool(p.toolName)) {
+      if (p.skipped || p.cached !== undefined || !this.isParallelSafeTool(p.toolName, p.args)) {
         out[i] = toOut(p, await invokeOne(p));
         i += 1;
         continue;
@@ -513,7 +507,7 @@ export class AgentHarness {
         j < pending.length &&
         !pending[j]!.skipped &&
         pending[j]!.cached === undefined &&
-        this.isParallelSafeTool(pending[j]!.toolName)
+        this.isParallelSafeTool(pending[j]!.toolName, pending[j]!.args)
       ) {
         j += 1;
       }
@@ -903,7 +897,7 @@ export class AgentHarness {
       // tolerated the reversed order; MiniMax/GLM do not.
       const turnToolResults: { toolCallId: string; content: string }[] = [];
       // v1.8.0: queue native tool_call deltas; execute on `finish` so
-      // consecutive read-only tools (and multi-`task`) run in parallel.
+      // consecutive read-only tools (and multi-`task` explore/verify) run in parallel.
       type PendingNativeTool = {
         toolCallId: string;
         toolName: string;

@@ -12,6 +12,7 @@
 import type { SessionEventEnvelope } from './types.js';
 import { ACTOR_SYSTEM } from './types.js';
 import { buildProjection, type SessionProjection } from './replay.js';
+import { classifyInterruptedTools, interruptedEventData } from './recovery.js';
 import type { SessionStore } from './store.js';
 import type { SessionLogWriter } from './writer.js';
 
@@ -60,12 +61,22 @@ export interface ResumeResult {
 /** Resume a session: reopen the log (seq continues) and mark the resume. */
 export async function resumeSession(store: SessionStore, sessionId: string): Promise<ResumeResult> {
   const opened = await store.open(sessionId);
+  const classified: SessionEventEnvelope[] = [];
+  for (const item of classifyInterruptedTools(opened.report.events)) {
+    classified.push(
+      await opened.writer.append({
+        kind: 'tool.interrupted',
+        actor: ACTOR_SYSTEM,
+        data: interruptedEventData(item),
+      }),
+    );
+  }
   const resumed = await opened.writer.append({
     kind: 'session.resumed',
     actor: ACTOR_SYSTEM,
     data: { fromSeq: opened.projection.lastSeq },
   });
-  const projection = buildProjection([...opened.report.events, resumed]);
+  const projection = buildProjection([...opened.report.events, ...classified, resumed]);
   return { writer: opened.writer, projection };
 }
 

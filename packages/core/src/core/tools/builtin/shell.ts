@@ -67,6 +67,7 @@ export const bashTool: ToolDefinition<BashArgs, BashResult> = {
     'Run a shell command. On Windows uses Git Bash when available (POSIX semantics: ls, $VAR, && work); falls back to cmd.exe otherwise. Streams stdout/stderr. Respects timeout and cancellation. Returns exit code. ' +
     'stdin is CLOSED (non-interactive): any command that prompts for input will fail or be cancelled — always pass non-interactive flags (--yes, -y, --template), and if a scaffolder insists on prompting (e.g. create-vite in a non-empty directory), create the files manually with write_file instead.',
   permissions: ['execute'],
+  sideEffect: 'local',
   timeoutMs: 60000,
   inputSchema: BashArgsSchema,
   execute: async (args, ctx) => {

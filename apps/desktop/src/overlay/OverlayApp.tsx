@@ -20,6 +20,7 @@ import {
 } from "../overlayWindow";
 import type { DispatchMode, WorkPhase } from "../types";
 import { loadDesktopPrefs } from "../desktopPrefs";
+import { appendGauntletLoop } from "../gauntletLoop";
 
 /** Mic is manual toggle only: click on → listen, click off → stop (no auto-send). */
 type MicState = "off" | "listening" | "agent_working";
@@ -315,10 +316,13 @@ export function OverlayApp() {
           cfg.modelByProvider[provider] ||
           cfg.providers.find((p) => p.id === provider)?.defaultModel;
         const prefs = loadDesktopPrefs();
+        const promptForRun = prefs.gauntletLoop
+          ? appendGauntletLoop(prompt)
+          : prompt;
 
         writeDefaults(mode, phase);
         await runTask({
-          prompt,
+          prompt: promptForRun,
           mode,
           phase,
           provider: provider || undefined,

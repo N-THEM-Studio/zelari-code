@@ -18,6 +18,7 @@ import { createHash } from 'node:crypto';
 import type { FsProvider, ShellProvider } from '../runtime/providers.js';
 import type { SessionEventInput } from '../session/types.js';
 import type { Criterion, EvidenceRef, VerificationResult } from './types.js';
+import { analyzeScope, type ScopeAnalysisInput } from './scopeDiscipline.js';
 
 export interface VerificationServices {
   shell?: ShellProvider;
@@ -50,10 +51,13 @@ export class VerificationEngine {
   ) {}
 
   /** Evaluate criteria deterministically; optionally emit the spine event. */
-  async evaluate(criteria: readonly Criterion[], context: { packId?: string } = {}): Promise<VerificationResult[]> {
+  async evaluate(
+    criteria: readonly Criterion[],
+    context: { packId?: string; scope?: ScopeAnalysisInput } = {},
+  ): Promise<VerificationResult[]> {
     const results: VerificationResult[] = [];
     for (const criterion of criteria) {
-      results.push(await this.evaluateOne(criterion));
+      results.push(await this.evaluateOne(criterion, context.scope));
     }
     if (this.options.emit) {
       // Degrade-and-stop discipline: a failing spine must never fail
@@ -107,7 +111,10 @@ export class VerificationEngine {
     }
   }
 
-  private async evaluateOne(criterion: Criterion): Promise<VerificationResult> {
+  private async evaluateOne(
+    criterion: Criterion,
+    scope?: ScopeAnalysisInput,
+  ): Promise<VerificationResult> {
     const started = this.options.now?.() ?? Date.now();
     const base = {
       criterionId: criterion.id,
@@ -119,6 +126,17 @@ export class VerificationEngine {
       ...patch,
       durationMs: Math.max(0, (this.options.now?.() ?? Date.now()) - started),
     });
+
+    if (criterion.id === 'quality.scope-discipline' && scope) {
+      const analysis = analyzeScope(scope);
+      // Advisory: concern is not a deterministic fail (plan §8.3).
+      const status = analysis.status === 'pass' ? 'pass' : 'unknown';
+      return done({
+        status,
+        evidence: [],
+        detail: analysis.reasons.join('; ') || analysis.status,
+      });
+    }
 
     const check = criterion.check;
     if (!check || check.kind === 'none') {

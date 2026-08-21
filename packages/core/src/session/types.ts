@@ -39,6 +39,8 @@ export const SESSION_EVENT_KINDS = [
   'assistant.message',
   'tool.call',
   'tool.result',
+  // 2.x B (crash-safe recovery): dangling call classified. State-only.
+  'tool.interrupted',
   'context.injected',
   'session.compacted',
   'task.created',

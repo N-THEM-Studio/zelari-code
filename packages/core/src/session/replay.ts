@@ -12,6 +12,7 @@ import {
   type SessionEventEnvelope,
 } from './types.js';
 import { deriveMessages, type DerivedMessage } from './modelSurface.js';
+import { classifyInterruptedTools, type ToolInterrupted } from './recovery.js';
 
 export type ReplayIssueType =
   | 'corrupt-line'
@@ -115,6 +116,8 @@ export interface SessionProjection {
   missionAdvice: Array<{ seq: number; recommendation: string; rationale: string }>;
   replans: number;
   issues: ReplayIssue[];
+  /** Dangling tool.call events classified for crash recovery (2.x B). */
+  interruptedTools: ToolInterrupted[];
 }
 
 function parseVerification(e: SessionEventEnvelope): VerificationRunSummary {
@@ -150,6 +153,7 @@ export function buildProjection(events: readonly SessionEventEnvelope[], issues:
     missionAdvice: [],
     replans: 0,
     issues,
+    interruptedTools: classifyInterruptedTools(events),
   };
   for (const e of events) {
     switch (e.kind) {

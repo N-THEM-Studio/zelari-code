@@ -5,6 +5,33 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-08-21
+
+### Added
+
+- **Desktop Gauntlet Loop**: top-bar toggle (and Settings) appends the builder/critic
+  loop instructions to the next Goal. Chat shows a badge, not the full prompt;
+  overlay and resume stay in lockstep via Desktop prefs.
+- **Crash-safe tool recovery**: dangling `tool.call` events are classified
+  (`retry-safe` vs `inspect-first`). Resume writes `tool.interrupted` on the
+  session spine; mutating tools are never retried blindly.
+- **Relational session invariants**: `validateSessionTrace` checks seq, tool
+  pairing, duplicate results, evidence `seq` anchors, and completion-before-verification.
+- **Scope discipline**: event-backed `analyzeScope` on changed files. Unexpected
+  source paths are advisory (`unknown`), not a deterministic fail; lockfiles and
+  generated dirs are split out.
+- **Tool concurrency classifier**: `task agent=general` is exclusive; explore/verify
+  tentacles stay parallel-safe.
+
+### Fixed
+
+- **Orphan tentacles after `task` timeout**: the registry now aborts a child
+  AbortController on timeout and `runSubAgent` calls `harness.cancel()`, so a
+  timed-out general tentacle stops writing. Writer budget is 15 minutes
+  (`TASK_TOOL_TIMEOUT_MS`), matching the Kraken graph.
+- **`read_file` empty range**: `maxBytes` applies to the selected line range, not
+  a prefix of the file. Out-of-range starts report `LINE_RANGE_EMPTY`.
+
 ## [2.2.0] - 2026-08-20
 
 ### Added

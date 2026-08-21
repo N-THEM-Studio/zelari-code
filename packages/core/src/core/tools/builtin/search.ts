@@ -229,6 +229,7 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
     'Returns matches with line numbers and context, plus filesWalked/filesInTree counts ' +
     'and a warning when the include globs matched suspiciously few files.',
   permissions: ['read'],
+  sideEffect: 'none',
   timeoutMs: 30000,
   inputSchema: GrepContentArgsSchema,
   execute: async (args, ctx) => {

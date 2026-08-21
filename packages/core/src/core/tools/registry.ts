@@ -222,12 +222,25 @@ export class ToolRegistry {
       return typedErr(`Invalid input: ${parsed.error.message}`);
     }
 
-    // Timeout + cancellation
+    // Timeout + cancellation. Use a *child* AbortController so a tool timeout
+    // stops that tool (and nested tentacles) without aborting the parent harness.
     const timeoutMs = options.timeoutMs ?? tool.timeoutMs ?? 30000;
-    const signal = options.signal;
+    const parentSignal = options.signal;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let rejectRace: ((err: Error) => void) | undefined;
+    const onParentAbort = () => {
+      if (timer !== undefined) clearTimeout(timer);
+      if (!controller.signal.aborted) controller.abort();
+      rejectRace?.(new Error(`Tool "${name}" aborted`));
+    };
+    if (parentSignal) {
+      if (parentSignal.aborted) onParentAbort();
+      else parentSignal.addEventListener('abort', onParentAbort);
+    }
 
     const ctx: ToolContext = {
-      signal: signal ?? new AbortController().signal,
+      signal: controller.signal,
       cwd: options.cwd ?? process.cwd(),
       audit: () => { /* audit log injected externally */ },
       sessionId: options.sessionId ?? 'default',
@@ -241,6 +254,7 @@ export class ToolRegistry {
           cwd: ctx.cwd,
         });
         if (!pre.ok) {
+          parentSignal?.removeEventListener('abort', onParentAbort);
           return typedErr(`[hook:${pre.hookName ?? 'unknown'}] ${pre.reason ?? 'denied'}`);
         }
       } catch (hookErr) {
@@ -252,11 +266,15 @@ export class ToolRegistry {
       const result = await Promise.race<TypedResult<O>>([
         tool.execute(parsed.data, ctx) as Promise<TypedResult<O>>,
         new Promise<TypedResult<O>>((_, reject) => {
-          const timer = setTimeout(() => reject(new Error(`Tool "${name}" timed out after ${timeoutMs}ms`)), timeoutMs);
-          signal?.addEventListener('abort', () => {
-            clearTimeout(timer);
-            reject(new Error(`Tool "${name}" aborted`));
-          });
+          rejectRace = reject;
+          if (parentSignal?.aborted) {
+            onParentAbort();
+            return;
+          }
+          timer = setTimeout(() => {
+            if (!controller.signal.aborted) controller.abort();
+            reject(new Error(`Tool "${name}" timed out after ${timeoutMs}ms`));
+          }, timeoutMs);
         }),
       ]);
       // v1.5.3 / v1.21.0: truncate large results before they land in the LLM
@@ -296,6 +314,10 @@ export class ToolRegistry {
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err);
       return typedErr(error);
+    } finally {
+      rejectRace = undefined;
+      if (timer !== undefined) clearTimeout(timer);
+      parentSignal?.removeEventListener('abort', onParentAbort);
     }
   }
 

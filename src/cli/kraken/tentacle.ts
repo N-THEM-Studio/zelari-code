@@ -13,6 +13,7 @@
 export {
   runTentacle,
   runSubAgent,
+  TASK_TOOL_TIMEOUT_MS,
   type RunTentacleOptions,
   type TentacleResult,
   type TentacleSuccess,

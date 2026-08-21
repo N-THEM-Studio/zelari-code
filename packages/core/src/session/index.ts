@@ -13,3 +13,5 @@ export * from './replay.js';
 export * from './store.js';
 export * from './lineage.js';
 export * from './exportSession.js';
+export * from './invariants.js';
+export * from './recovery.js';

@@ -6,6 +6,8 @@ import {
   createTaskTool,
   buildTaskUserPrompt,
   maxTaskSpawnsPerTurn,
+  runSubAgent,
+  TASK_TOOL_TIMEOUT_MS,
   type SubAgentContext,
   type SubAgentHarness,
 } from '../../src/cli/tools/taskTool.js';
@@ -39,6 +41,12 @@ const dummyContext: SubAgentContext = {
 };
 
 describe('createTaskTool', () => {
+  it('gives general writers a 15-minute wrapper budget', () => {
+    const tool = createTaskTool({ createSubAgentContext: async () => null });
+    expect(tool.timeoutMs).toBe(TASK_TOOL_TIMEOUT_MS);
+    expect(TASK_TOOL_TIMEOUT_MS).toBe(900_000);
+  });
+
   it('validates that description + prompt are required', () => {
     const tool = createTaskTool({ createSubAgentContext: async () => null });
     expect(tool.name).toBe('task');
@@ -182,6 +190,30 @@ describe('createBuiltinToolRegistry — task tool + readOnly isolation', () => {
   });
 });
 
+
+describe('runSubAgent abort', () => {
+  it('calls harness.cancel when the parent signal aborts mid-run', async () => {
+    let cancelled = false;
+    const harness: SubAgentHarness = {
+      async *run() {
+        yield { type: 'message_start' } as BrainEvent;
+        await new Promise((r) => setTimeout(r, 200));
+        yield { type: 'message_delta', delta: 'late' } as unknown as BrainEvent;
+        yield { type: 'message_end' } as BrainEvent;
+      },
+      cancel() {
+        cancelled = true;
+      },
+    };
+    const ac = new AbortController();
+    const p = runSubAgent(harness, { signal: ac.signal });
+    await new Promise((r) => setTimeout(r, 20));
+    ac.abort();
+    const res = await p;
+    expect(cancelled).toBe(true);
+    expect(res.aborted).toBe(true);
+  });
+});
 
 describe('Kraken task contract helpers', () => {
   it('buildTaskUserPrompt appends scope and acceptance', () => {

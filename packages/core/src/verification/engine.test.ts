@@ -105,4 +105,21 @@ describe('VerificationEngine (deterministic, zero LLM)', () => {
     expect(data.packId).toBe('zelari-coding/v1');
     expect(data.results).toHaveLength(1);
   });
+
+  it('quality.scope-discipline is advisory: concern → unknown, not fail', async () => {
+    const engine = new VerificationEngine({});
+    const [r] = await engine.evaluate(
+      [
+        {
+          id: 'quality.scope-discipline',
+          text: 'minimal diff',
+          source: 'criteria-pack',
+          required: false,
+        },
+      ],
+      { scope: { changedFiles: ['js/a.js', 'progress.html'], expectedFiles: ['js/a.js'] } },
+    );
+    expect(r?.status).toBe('unknown');
+    expect(r?.detail).toContain('progress.html');
+  });
 });

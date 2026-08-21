@@ -25,6 +25,12 @@ import { CopyButton } from "./components/CopyButton";
 import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
 import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
+import { GauntletToggle } from "./components/GauntletToggle";
+import {
+  appendGauntletLoop,
+  hasGauntletLoop,
+  stripGauntletLoop,
+} from "./gauntletLoop";
 
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
@@ -305,7 +311,7 @@ function uid(prefix = "id"): string {
 }
 
 function titleFromPrompt(prompt: string): string {
-  const t = prompt.trim().replace(/\s+/g, " ");
+  const t = stripGauntletLoop(prompt).trim().replace(/\s+/g, " ");
   return t.length > 48 ? `${t.slice(0, 48)}…` : t || "New chat";
 }
 
@@ -474,6 +480,14 @@ export default function App() {
   const [mode, setMode] = useState<DispatchMode>(defaults.mode);
   const [phase, setPhase] = useState<WorkPhase>(defaults.phase);
   const [krakenGraph, setKrakenGraph] = useState(false);
+
+  const setGauntletLoop = useCallback((value: boolean) => {
+    setPrefs((prev) => {
+      const next = { ...prev, gauntletLoop: value };
+      saveDesktopPrefs(next);
+      return next;
+    });
+  }, []);
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
   const [cli, setCli] = useState<CliStatus | null>(null);
@@ -1893,8 +1907,11 @@ export default function App() {
       (attachments.length === 1
         ? `Please review: ${attachments[0].name}`
         : `Please review the attached files (${attachments.length})`);
+    const withLoop = prefs.gauntletLoop
+      ? appendGauntletLoop(userVisible)
+      : userVisible;
     // Full prompt (with file bodies) is stored so multi-turn history keeps context.
-    const prompt = buildPromptWithAttachments(userVisible, attachments);
+    const prompt = buildPromptWithAttachments(withLoop, attachments);
 
     const userMsg: ChatMessage = {
       id: uid("user"),
@@ -1920,7 +1937,11 @@ export default function App() {
     setDraft("");
     setAttachments([]);
     runCoordinator.request(convId, activeCwd ?? undefined);
-    setStatusLine(krakenGraph ? "kraken graph running…" : `${mode} · ${phase} running…`);
+    setStatusLine(
+      krakenGraph
+        ? "kraken graph running…"
+        : `${mode} · ${phase}${prefs.gauntletLoop ? " · gauntlet" : ""} running…`,
+    );
 
     setConversations((prev) =>
       prev.map((c) => {
@@ -2423,6 +2444,11 @@ export default function App() {
               disabled={running}
               onChange={setKrakenGraph}
             />
+            <GauntletToggle
+              value={prefs.gauntletLoop}
+              disabled={running}
+              onChange={setGauntletLoop}
+            />
 
             <button
               type="button"
@@ -2535,7 +2561,17 @@ export default function App() {
                       <div key={m.id} className={`message ${m.role}`}>
                         {m.role === "user" ? (
                           <>
-                            <div className="bubble user-bubble">{m.content}</div>
+                            <div className="bubble user-bubble">
+                              {hasGauntletLoop(m.content) ? (
+                                <>
+                                  <span className="gauntlet-badge">Gauntlet</span>
+                                  {stripGauntletLoop(m.content) ||
+                                    "Gauntlet Loop"}
+                                </>
+                              ) : (
+                                m.content
+                              )}
+                            </div>
                             <div className="bubble-actions">
                               <CopyButton
                                 getText={() => m.content}
@@ -2630,6 +2666,25 @@ export default function App() {
                 onClick={() => setTextLoopRecovery(false)}
               >
                 Dismiss
+              </button>
+            </div>
+          )}
+          {prefs.gauntletLoop && (
+            <div className="pending-skill-chip gauntlet-chip" role="status">
+              <span>
+                <strong>Gauntlet Loop</strong>
+                <span className="muted">
+                  {" "}
+                  — next send appends builder + critic rounds until the bar is met
+                </span>
+              </span>
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={running}
+                onClick={() => setGauntletLoop(false)}
+              >
+                Off
               </button>
             </div>
           )}
@@ -2834,6 +2889,7 @@ export default function App() {
           <div className="composer-hint">
             Enter to send · @tag files · Skills ★ · drop to attach · {phase}{" "}
             · {mode}
+            {prefs.gauntletLoop ? " · Gauntlet ON" : ""}
             {provider ? ` · ${provider}` : ""}
             {model ? ` / ${model}` : ""}
           </div>

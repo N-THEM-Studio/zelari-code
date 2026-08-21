@@ -30,6 +30,8 @@ export interface DesktopPrefs {
   verifierReview: VerifierReviewPreference;
   /** Experimental Best-of-N (N=3). Requires ZELARI_EXPERIMENTAL=bon on the CLI. */
   bonAlpha: boolean;
+  /** Append the Gauntlet Loop instructions to each send. */
+  gauntletLoop: boolean;
 }
 
 export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
@@ -39,6 +41,7 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   verifyPack: false,
   verifierReview: null,
   bonAlpha: false,
+  gauntletLoop: false,
 };
 
 export function isExecutionProfile(value: unknown): value is ExecutionProfile {
@@ -65,6 +68,7 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
     verifierReview:
       typeof r.verifierReview === "boolean" ? r.verifierReview : null,
     bonAlpha: r.bonAlpha === true,
+    gauntletLoop: r.gauntletLoop === true,
   };
 }
 

@@ -81,7 +81,16 @@ export interface SubAgentContext {
 /** A minimal harness surface — just the event stream. */
 export interface SubAgentHarness {
   run(): AsyncIterable<BrainEvent>;
+  /** Stop an in-flight run (provider stream + nested tools). */
+  cancel?(): void;
 }
+
+/**
+ * Wall-clock bound for the `task` tool wrapper (parent AgentHarness invoke).
+ * Must cover a `general` writer: 5 minutes is not enough on a slow reasoning
+ * model. Keep aligned with DEFAULT_WRITER_NODE_TIMEOUT_MS in kraken/executor.
+ */
+export const TASK_TOOL_TIMEOUT_MS = 900_000;
 
 export interface TaskToolDeps {
   /**
@@ -355,9 +364,16 @@ export async function runSubAgent(
   /** toolCallId → { tool, command } captured at tool_execution_start. */
   const pendingTools = new Map<string, { tool: string; command?: string }>();
   const toolTrace: TentacleToolTrace[] = [];
-  if (signal?.aborted) return { result: '', aborted: true };
+  const onAbort = () => harness.cancel?.();
+  if (signal?.aborted) {
+    onAbort();
+    return { result: '', aborted: true };
+  }
+  signal?.addEventListener('abort', onAbort, { once: true });
+  try {
   for await (const ev of harness.run()) {
     if (signal?.aborted) {
+      onAbort();
       return {
         result: (lastCompleted || current).trim(),
         ...(error ? { error } : {}),
@@ -429,7 +445,9 @@ export async function runSubAgent(
     ...(usage ? { usage } : {}),
     ...(toolTrace.length > 0 ? { toolTrace } : {}),
   };
-
+  } finally {
+    signal?.removeEventListener('abort', onAbort);
+  }
 }
 
 /** Successful tentacle run (raw conclusion + footer, no `[sub-agent:…]` prefix). */
@@ -823,7 +841,7 @@ export function createTaskTool(
         ? `\nRESTRICTED in this mode: only agent=${allowedAgents.join('|')} is allowed.`
         : ''),
     permissions: ['read', 'network', 'write', 'execute'],
-    timeoutMs: 300_000,
+    timeoutMs: TASK_TOOL_TIMEOUT_MS,
     inputSchema,
     execute: async (args, ctx): Promise<TypedResult<{ result: string; agent: string }>> => {
       const agent: TaskAgentKind = args.agent ?? 'explore';

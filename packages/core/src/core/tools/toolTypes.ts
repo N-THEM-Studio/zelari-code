@@ -14,6 +14,7 @@ import type { ZodSchema } from 'zod';
  *  - TREE_EMPTY          the target directory exists but walked 0 entries
  *  - FILE_NOT_FOUND      the target file does not exist (no silent fallback)
  *  - EMPTY_FILE          the file exists but has 0 bytes
+ *  - LINE_RANGE_EMPTY    startLine/endLine selected 0 lines of a non-empty file
  *  - MAX_BYTES_TRUNCATED payload cut by the maxBytes cap (explicit, never silent)
  */
 export interface ToolResultMeta {
@@ -54,6 +55,11 @@ export interface ToolDefinition<I = unknown, O = unknown> {
   jsonSchema?: Record<string, unknown>;
   /** Optional related tools (for discovery in UI). */
   relatedTools?: string[];
+  /**
+   * Crash-recovery class (2.x B). `none` = retry-safe if the result is
+   * missing; `local`/`external` = inspect-first, never retry blindly.
+   */
+  sideEffect?: 'none' | 'local' | 'external';
 }
 
 export interface ToolContext {

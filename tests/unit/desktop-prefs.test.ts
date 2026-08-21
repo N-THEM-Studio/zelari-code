@@ -38,6 +38,7 @@ describe("normalizeDesktopPrefs", () => {
         verifyPack: true,
         verifierReview: false,
         bonAlpha: "yes",
+        gauntletLoop: true,
         extra: 1,
       }),
     ).toEqual({
@@ -47,6 +48,7 @@ describe("normalizeDesktopPrefs", () => {
       verifyPack: true,
       verifierReview: false,
       bonAlpha: false,
+      gauntletLoop: true,
     });
   });
 
@@ -64,6 +66,7 @@ describe("normalizeDesktopPrefs", () => {
       verifyPack: false,
       verifierReview: null,
       bonAlpha: true,
+      gauntletLoop: false,
     });
   });
 });
@@ -85,6 +88,7 @@ describe("load/saveDesktopPrefs", () => {
         verifyPack: true,
         verifierReview: true,
         bonAlpha: true,
+        gauntletLoop: true,
       },
       storage,
     );
@@ -96,6 +100,7 @@ describe("load/saveDesktopPrefs", () => {
       verifyPack: true,
       verifierReview: true,
       bonAlpha: true,
+      gauntletLoop: true,
     });
   });
 

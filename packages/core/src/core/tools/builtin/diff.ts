@@ -366,6 +366,7 @@ export const showDiffTool: ToolDefinition<ShowDiffArgs, ShowDiffResult> = {
     'Read-only — does NOT modify the file. Use this to preview edits before applying ' +
     'with edit_file or apply_diff.',
   permissions: ['read'],
+  sideEffect: 'none',
   timeoutMs: 15000,
   inputSchema: ShowDiffArgsSchema,
   execute: async (args, ctx) => {
@@ -497,6 +498,7 @@ export const applyDiffTool: ToolDefinition<ApplyDiffArgs, ApplyDiffResult> = {
     'With dryRun=true, returns the final content without writing. ' +
     'Atomic: if any hunk fails, no partial write occurs.',
   permissions: ['write'],
+  sideEffect: 'local',
   timeoutMs: 15000,
   inputSchema: ApplyDiffArgsSchema,
   execute: async (args, ctx) => {

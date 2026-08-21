@@ -34,6 +34,7 @@ export const listFilesTool: ToolDefinition<ListFilesArgs, ListFilesResult> = {
     'before reading specific files. Supports a maxDepth for recursive listing and excludes ' +
     'common dependency/build directories by default.',
   permissions: ['read'],
+  sideEffect: 'none',
   timeoutMs: 15000,
   inputSchema: ListFilesArgsSchema,
   execute: async (args, ctx) => {

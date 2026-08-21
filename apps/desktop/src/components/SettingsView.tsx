@@ -214,6 +214,7 @@ export function SettingsView({
     prefs.verifierReview,
   );
   const [bonAlpha, setBonAlpha] = useState(prefs.bonAlpha);
+  const [gauntletLoop, setGauntletLoop] = useState(prefs.gauntletLoop);
   const [verifierMode, setVerifierMode] = useState<"inherit" | "custom">("inherit");
   const [verifierProvider, setVerifierProvider] = useState("");
   const [verifierModel, setVerifierModel] = useState("");
@@ -238,6 +239,7 @@ export function SettingsView({
     setVerifyPack(prefs.verifyPack);
     setVerifierReview(prefs.verifierReview);
     setBonAlpha(prefs.bonAlpha);
+    setGauntletLoop(prefs.gauntletLoop);
   }, [prefs]);
 
   useEffect(() => {
@@ -295,6 +297,7 @@ export function SettingsView({
           verifyPack,
           verifierReview,
           bonAlpha,
+          gauntletLoop,
         },
       });
       setMessage("Saved provider, model & chat defaults.");
@@ -1000,6 +1003,17 @@ export function SettingsView({
                   <span>
                     Best-of-N alpha (N=3, experimental) — never flips the
                     deterministic gate
+                  </span>
+                </label>
+                <label className="field field-check">
+                  <input
+                    type="checkbox"
+                    checked={gauntletLoop}
+                    onChange={(e) => setGauntletLoop(e.target.checked)}
+                  />
+                  <span>
+                    Gauntlet Loop — append builder/critic rounds to the next
+                    Goal (same as the top-bar toggle)
                   </span>
                 </label>
                 <p className="muted settings-tip">
