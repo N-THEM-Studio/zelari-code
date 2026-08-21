@@ -26,6 +26,10 @@ interface Props {
   toolLabel?: string | null;
   /** This-turn tool calls (newest last). */
   steps?: LiveToolStep[];
+  /** Wall-clock start of the current run (elapsed ticker). */
+  startedAt?: number;
+  /** True while the provider is emitting hidden thinking tokens. */
+  reasoning?: boolean;
 }
 
 function modeKicker(mode: DispatchMode): string {
@@ -34,20 +38,41 @@ function modeKicker(mode: DispatchMode): string {
   return "Kraken";
 }
 
+export function formatRunElapsed(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "0s";
+  const sec = Math.floor(ms / 1000);
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return s > 0 ? `${m}m ${s}s` : `${m}m`;
+}
+
 export function RunActivity({
   running,
   mode,
   memberName,
   toolLabel,
   steps = [],
+  startedAt,
+  reasoning = false,
 }: Props) {
   const phrases =
     mode === "council" ? COUNCIL_THINKING_PHRASES : THINKING_PHRASES;
   const [phraseIdx, setPhraseIdx] = useState(0);
   const [fade, setFade] = useState(true);
+  const [now, setNow] = useState(() => Date.now());
   const [line, setLine] = useState<{ title: string; sub?: string }>({
     title: phrases[0],
   });
+
+  useEffect(() => {
+    if (!running) return;
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, [running]);
+
+  const elapsed =
+    startedAt && startedAt > 0 ? formatRunElapsed(now - startedAt) : undefined;
 
   // Rotate thinking phrases when idle (no active tool label)
   useEffect(() => {
@@ -70,22 +95,27 @@ export function RunActivity({
       if (toolLabel) {
         setLine({
           title: toolLabel,
-          sub: memberName || undefined,
+          sub: [memberName, elapsed].filter(Boolean).join(" · ") || undefined,
         });
       } else if (memberName && mode === "council") {
         setLine({
           title: memberName,
-          sub: "speaking…",
+          sub: elapsed ? `speaking · ${elapsed}` : "speaking…",
+        });
+      } else if (reasoning) {
+        setLine({
+          title: elapsed ? `Reasoning · ${elapsed}` : "Reasoning",
         });
       } else {
         setLine({
           title: phrases[phraseIdx % phrases.length],
+          sub: elapsed,
         });
       }
       setFade(true);
     }, 280);
     return () => window.clearTimeout(t);
-  }, [running, toolLabel, memberName, mode, phraseIdx, phrases]);
+  }, [running, toolLabel, memberName, mode, phraseIdx, phrases, reasoning, elapsed]);
 
   if (!running) return null;
 

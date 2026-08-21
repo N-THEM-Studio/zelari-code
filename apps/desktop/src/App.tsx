@@ -26,11 +26,7 @@ import { ModeToggle } from "./components/ModeToggle";
 import { PhaseToggle } from "./components/PhaseToggle";
 import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
 import { GauntletToggle } from "./components/GauntletToggle";
-import {
-  appendGauntletLoop,
-  hasGauntletLoop,
-  stripGauntletLoop,
-} from "./gauntletLoop";
+import { hasGauntletLoop, stripGauntletLoop } from "./gauntletLoop";
 
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
@@ -47,6 +43,11 @@ import {
   readVerificationRun,
   type VerificationRunView,
 } from "./components/VerificationStatusCard";
+import {
+  GauntletProgressCard,
+  readGauntletProgress,
+  type GauntletProgressView,
+} from "./components/GauntletProgressCard";
 import {
   loadDesktopPrefs,
   saveDesktopPrefs,
@@ -473,6 +474,12 @@ export default function App() {
   const [verificationByConv, setVerificationByConv] = useState<
     Record<string, VerificationCardState>
   >({});
+  const [gauntletByConv, setGauntletByConv] = useState<
+    Record<string, GauntletProgressView | undefined>
+  >({});
+  const [reasoningByConv, setReasoningByConv] = useState<
+    Record<string, boolean>
+  >({});
   const [prefs, setPrefs] = useState<DesktopPrefs>(() => loadPrefs());
   const [liveMemberNameByConv, setLiveMemberNameByConv] = useState<
     Record<string, string | null>
@@ -487,6 +494,18 @@ export default function App() {
       saveDesktopPrefs(next);
       return next;
     });
+    if (value) setKrakenGraph(false);
+  }, []);
+  const setGraphMode = useCallback((value: boolean) => {
+    setKrakenGraph(value);
+    if (value) {
+      setPrefs((prev) => {
+        if (!prev.gauntletLoop) return prev;
+        const next = { ...prev, gauntletLoop: false };
+        saveDesktopPrefs(next);
+        return next;
+      });
+    }
   }, []);
   const [provider, setProvider] = useState("");
   const [model, setModel] = useState("");
@@ -1121,9 +1140,22 @@ export default function App() {
           return;
         }
 
-        // Proprietary CoT: never surface thinking_delta body in the product UI.
-        // Spinner uses showGlobalThinking while running with no assistant text yet.
+        // Proprietary CoT: never surface thinking_delta body. Use it only as
+        // a heartbeat so the spinner can say "Reasoning · 2m 14s".
         if (ev.type === "thinking_delta") {
+          setReasoningByConv((prev) =>
+            prev[convId] ? prev : { ...prev, [convId]: true },
+          );
+          return;
+        }
+        if (ev.type === "gauntlet_progress") {
+          const progress = readGauntletProgress(ev);
+          if (progress) {
+            setGauntletByConv((prev) => ({ ...prev, [convId]: progress }));
+            setStatusLineIfActive(
+              `gauntlet · ${progress.phase} · ${progress.pieceLabel} · r${progress.round}/${progress.maxRounds}`,
+            );
+          }
           return;
         }
 
@@ -1907,11 +1939,9 @@ export default function App() {
       (attachments.length === 1
         ? `Please review: ${attachments[0].name}`
         : `Please review the attached files (${attachments.length})`);
-    const withLoop = prefs.gauntletLoop
-      ? appendGauntletLoop(userVisible)
-      : userVisible;
     // Full prompt (with file bodies) is stored so multi-turn history keeps context.
-    const prompt = buildPromptWithAttachments(withLoop, attachments);
+    // Gauntlet is a CLI flag, not a prompt append (P2).
+    const prompt = buildPromptWithAttachments(userVisible, attachments);
 
     const userMsg: ChatMessage = {
       id: uid("user"),
@@ -1928,6 +1958,8 @@ export default function App() {
     setLiveStepsFor(convId, []);
     setKrakenCardByConv((prev) => ({ ...prev, [convId]: {} }));
     setVerificationByConv((prev) => ({ ...prev, [convId]: {} }));
+    setGauntletByConv((prev) => ({ ...prev, [convId]: undefined }));
+    setReasoningByConv((prev) => ({ ...prev, [convId]: false }));
     turn.pendingToolNames.clear();
     setLiveMemberNameFor(convId, null);
     setFollowStream(true);
@@ -2011,6 +2043,7 @@ export default function App() {
         verifyPack: prefs.verifyPack,
         verifierReview: prefs.verifierReview ?? undefined,
         bonAlpha: prefs.bonAlpha,
+        gauntletLoop: prefs.gauntletLoop,
       });
       runCoordinator.started({
         runId,
@@ -2442,7 +2475,7 @@ export default function App() {
             <KrakenGraphToggle
               value={krakenGraph}
               disabled={running}
-              onChange={setKrakenGraph}
+              onChange={setGraphMode}
             />
             <GauntletToggle
               value={prefs.gauntletLoop}
@@ -2596,8 +2629,17 @@ export default function App() {
                     }
                     toolLabel={liveToolLabel}
                     steps={liveSteps}
+                    startedAt={
+                      turnsRef.current.get(active?.id ?? "")?.startedAt
+                    }
+                    reasoning={Boolean(reasoningByConv[active?.id ?? ""])}
                   />
                 )}
+                {gauntletByConv[active?.id ?? ""] ? (
+                  <GauntletProgressCard
+                    progress={gauntletByConv[active?.id ?? ""] ?? null}
+                  />
+                ) : null}
                 {krakenCard ? (
                   <KrakenProgressCard
                     progress={krakenCard.progress ?? null}
@@ -2675,7 +2717,7 @@ export default function App() {
                 <strong>Gauntlet Loop</strong>
                 <span className="muted">
                   {" "}
-                  — next send appends builder + critic rounds until the bar is met
+                  — next send runs a capped builder/critic loop (not Graph)
                 </span>
               </span>
               <button

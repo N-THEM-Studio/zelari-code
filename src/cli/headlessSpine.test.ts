@@ -76,6 +76,14 @@ describe('parseHeadlessFlags 2.0 flags', () => {
     expect(res.options).toBeNull();
     expect(res.error).toMatch(/--resume requires/);
   });
+
+  it('accepts --gauntlet and --no-gauntlet', () => {
+    const on = parseHeadlessFlags(['--headless', '--task', 'x', '--gauntlet']);
+    expect(on.error).toBeUndefined();
+    expect(on.options?.gauntlet).toBe(true);
+    const off = parseHeadlessFlags(['--headless', '--task', 'x', '--gauntlet', '--no-gauntlet']);
+    expect(off.options?.gauntlet).toBeUndefined();
+  });
 });
 
 describe('openHeadlessSpine', () => {

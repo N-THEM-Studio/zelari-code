@@ -140,6 +140,12 @@ export interface CreateRegistryOptions {
    */
   planMode?: boolean;
   /**
+   * Gauntlet conductor parent (P2): keep `task` so the host can fan out
+   * builder/critic tentacles, but omit write/edit/bash and other mutators
+   * so the lead cannot eat the work itself.
+   */
+  gauntletParent?: boolean;
+  /**
    * Interactive ask_user tool (Grok-style). When provided, the tool blocks
    * the harness until the UI resolves. Omit for headless / readOnly subagents.
    */
@@ -267,8 +273,9 @@ export function createBuiltinToolRegistry(
     options.planMode === true ||
     profile === 'explore';
   const verifyMode = profile === 'verify';
-  const allowMutators = !readOnly && !verifyMode;
-  const allowBash = allowMutators || verifyMode;
+  const gauntletParent = options.gauntletParent === true;
+  const allowMutators = !readOnly && !verifyMode && !gauntletParent;
+  const allowBash = (allowMutators || verifyMode) && !gauntletParent;
 
   const permPolicy = options.permissionPolicy ?? defaultPermissionPolicy();
   const withPerm = <I, O>(t: ToolDefinition<I, O>) =>
@@ -324,7 +331,10 @@ export function createBuiltinToolRegistry(
 
   // Interactive clarification — available in plan + build (not pure explore RO).
   const askUserTool =
-    options.readOnly === true || profile === 'explore' || profile === 'verify'
+    options.readOnly === true ||
+    profile === 'explore' ||
+    profile === 'verify' ||
+    gauntletParent
       ? null
       : createAskUserTool(options.onAskUser);
   if (askUserTool) {
@@ -335,6 +345,7 @@ export function createBuiltinToolRegistry(
   const enableSkill =
     options.enableSkill !== false &&
     options.readOnly !== true &&
+    !gauntletParent &&
     profile !== 'explore' &&
     profile !== 'verify';
   const skillTool = enableSkill ? withPerm(createSkillTool({ cwd: root })) : null;
@@ -346,6 +357,7 @@ export function createBuiltinToolRegistry(
   const enableTodos =
     options.enableTodos !== false &&
     options.readOnly !== true &&
+    !gauntletParent &&
     profile === 'full';
   const todoWrite = enableTodos ? withPerm(createTodoWriteTool()) : null;
   const todoRead = enableTodos ? withPerm(createTodoReadTool()) : null;
@@ -357,6 +369,7 @@ export function createBuiltinToolRegistry(
   const enablePlanTasks =
     options.enablePlanTasks !== false &&
     options.readOnly !== true &&
+    !gauntletParent &&
     (profile === 'full' || options.planMode === true) &&
     profile !== 'explore' &&
     profile !== 'verify' &&
@@ -432,7 +445,7 @@ export function createBuiltinToolRegistry(
   // Browser verification (browser_check) — full registry only (it drives a
   // real browser). Gated by ZELARI_BROWSER; self-reports install steps when
   // Playwright is absent, so it's safe to register unconditionally.
-  if (!readOnly && process.env.ZELARI_BROWSER !== '0') {
+  if (!readOnly && !gauntletParent && process.env.ZELARI_BROWSER !== '0') {
     const browserTool = createBrowserTool();
     registry.register(browserTool);
     tools.push({
@@ -444,7 +457,7 @@ export function createBuiltinToolRegistry(
 
   // SSH deploy/monitor tools — full registry only. Gated by ZELARI_SSH=0.
   // Targets from ~/.zelari-code/ssh-targets.json; ssh_run is allowlist-only.
-  if (!readOnly && process.env.ZELARI_SSH !== '0') {
+  if (!readOnly && !gauntletParent && process.env.ZELARI_SSH !== '0') {
     for (const t of createSshTools()) {
       registry.register(t);
       tools.push({
@@ -457,7 +470,7 @@ export function createBuiltinToolRegistry(
 
   // Schema-inspired world model (hypothesis / checks / run_backtest / timeline).
   // Full registry only. Kill switch: ZELARI_SCHEMA_LOOP=0.
-  if (!readOnly) {
+  if (!readOnly && !gauntletParent) {
     for (const t of createWorldModelTools()) {
       const safe = wrapWithAudit(t as ToolDefinition<Record<string, unknown>, unknown>, audit, sessionId);
       registry.register(safe);

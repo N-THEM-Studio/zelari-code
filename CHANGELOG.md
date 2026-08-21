@@ -5,6 +5,29 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-08-21
+
+### Changed
+
+- **Gauntlet is a host loop, not a prompt.** The Desktop toggle forwards
+  `--gauntlet` / `ZELARI_GAUNTLET=1`. The CLI runs capped builder (`task
+  general`) + isolated critic (`task verify`) rounds. The parent cannot
+  write (`write_file` / `edit_file` / `apply_diff` / `bash` stripped). Stop
+  is `PASS` with tool evidence, `BLOCKED`, round cap (default 3), or cancel.
+  `unknown ≠ pass`. Live `gauntlet_progress` card; no `progress.html`.
+  The Goal is decomposed into scoped pieces (LLM JSON, 60s timeout, then a
+  single-piece fallback). Disjoint scopes may run in parallel. Critics
+  compare against optional on-disk quality bars (blind A/B when two bars
+  are given); `WINNER: A|B|TIE` is recorded on the piece result. Host
+  wall clock defaults to 45 minutes (`ZELARI_GAUNTLET_WALL_MS`, `0` disables)
+  and aborts in-flight tentacles. Desktop Graph and Gauntlet toggles are
+  mutually exclusive.
+
+### Fixed
+
+- **Reasoning heartbeat in Desktop.** Hidden `thinking_delta` tokens now
+  drive `Reasoning · 2m 14s` on the run spinner instead of looking stalled.
+
 ## [2.3.0] - 2026-08-21
 
 ### Added

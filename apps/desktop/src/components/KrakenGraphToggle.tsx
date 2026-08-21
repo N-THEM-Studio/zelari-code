@@ -13,7 +13,7 @@ export function KrakenGraphToggle({ value, disabled, onChange }: Props) {
         type="button"
         className={`seg-btn${value ? " active" : ""}`}
         disabled={disabled}
-        title="Plan + execute the prompt as a parallel Kraken task graph (bypasses mode)"
+        title="Plan + execute as a Kraken task graph. Mutually exclusive with Gauntlet."
         onClick={() => onChange(!value)}
       >
         Graph

@@ -207,6 +207,22 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     return runHeadlessKrakenGraph(opts, provider, model);
   }
 
+  const { shouldRunGauntletHostLoop } = await import('./gauntlet/policy.js');
+  if (shouldRunGauntletHostLoop(opts)) {
+    const { runHeadlessGauntlet } = await import('./gauntlet/run.js');
+    return runHeadlessGauntlet(opts, provider, model);
+  }
+  if (opts.gauntlet) {
+    const why = opts.krakenGraph
+      ? 'kraken-graph owns dispatch'
+      : (opts.phase ?? 'build') === 'plan'
+        ? 'PLAN is already write-stripped; host loop is BUILD-only'
+        : 'mode is not kraken-build';
+    const line = `[gauntlet] flag set but host loop skipped (${why})`;
+    if (opts.output === 'json') emitEvent({ type: 'log', message: line });
+    else process.stderr.write(`[zelari-code --headless] ${line}\n`);
+  }
+
   if (mode === 'zelari') {
     return runHeadlessZelari(opts, provider, model, providerStream);
   }
@@ -489,6 +505,7 @@ async function runHeadlessSingle(
   // ZELARI_PERMISSION_*=deny for hard lockdown.
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     planMode: planModeFromOpts(opts),
+    gauntletParent: Boolean(opts.gauntlet) && !planModeFromOpts(opts),
     // Fase 1 (ADR-0020): anchor tentacles to the provider/model THIS run
     // resolved (--provider/--model opts or Desktop's selector), mirroring
     // what the kraken-graph path already does for its executor.

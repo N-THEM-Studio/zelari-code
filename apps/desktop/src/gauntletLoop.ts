@@ -1,7 +1,7 @@
 /**
- * Gauntlet Loop — appended to the user's Goal when the Desktop toggle is on.
- * Keep this text stable: resume, history and the strip/has helpers key off
- * the first-line marker.
+ * Gauntlet Loop — display helpers for historical chats that still contain
+ * the old prompt block. The send path MUST NOT append this; the toggle
+ * forwards `--gauntlet` and the CLI runs a host loop.
  */
 export const GAUNTLET_LOOP_MARKER = "You are running a Gauntlet Loop.";
 

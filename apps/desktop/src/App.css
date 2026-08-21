@@ -5821,6 +5821,12 @@ kbd {
   border-top: 1px dashed rgba(255,255,255,0.12);
 }
 .app[data-theme="light"] .kraken-card-metrics { border-top-color: rgba(15,20,30,0.12); }
+.gauntlet-card-gap {
+  font-size: 12px;
+  line-height: 1.45;
+  opacity: 0.85;
+  padding-top: 2px;
+}
 
 /* ── Desktop 2.0 verification status + prefs ── */
 .verification-card {

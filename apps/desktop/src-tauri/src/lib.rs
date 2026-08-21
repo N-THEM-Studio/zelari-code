@@ -2337,6 +2337,9 @@ struct RunTaskArgs {
     /// Experimental Best-of-N: sets ZELARI_EXPERIMENTAL=bon on the child.
     #[serde(default)]
     bon_alpha: bool,
+    /// Host-driven Gauntlet loop (`--gauntlet` / ZELARI_GAUNTLET).
+    #[serde(default)]
+    gauntlet_loop: bool,
 }
 
 fn default_mode() -> String {
@@ -2490,6 +2493,7 @@ fn run_task(
     let verify_pack = args.verify_pack;
     let verifier_review = args.verifier_review;
     let bon_alpha = args.bon_alpha;
+    let gauntlet_loop = args.gauntlet_loop;
 
     let env_ctx = RunEnvelopeCtx {
         run_id: run_id.clone(),
@@ -2522,6 +2526,7 @@ fn run_task(
             verify_pack,
             verifier_review,
             bon_alpha,
+            gauntlet_loop,
         );
 
         let (exit_code, cancelled) = match result {
@@ -2581,6 +2586,7 @@ fn spawn_headless(
     verify_pack: bool,
     verifier_review: Option<bool>,
     bon_alpha: bool,
+    gauntlet: bool,
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
 
@@ -2663,6 +2669,10 @@ fn spawn_headless(
         bon_alpha,
     );
     cmd.env("ZELARI_EXPERIMENTAL", experimental);
+    if gauntlet {
+        cmd.arg("--gauntlet");
+    }
+    cmd.env("ZELARI_GAUNTLET", if gauntlet { "1" } else { "0" });
 
     if let Some(p) = provider {
         if !p.is_empty() {
@@ -3189,6 +3199,7 @@ node "{}" %*"#,
         assert!(!args.strict_done);
         assert!(!args.verify_pack);
         assert_eq!(args.verifier_review, None);
+        assert!(!args.gauntlet_loop);
     }
 
     #[test]

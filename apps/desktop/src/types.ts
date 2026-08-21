@@ -165,6 +165,8 @@ export interface RunTaskArgs {
   verifierReview?: boolean;
   /** Experimental Best-of-N (sets ZELARI_EXPERIMENTAL=bon on the spawned CLI). */
   bonAlpha?: boolean;
+  /** Host-driven Gauntlet loop (`--gauntlet` / ZELARI_GAUNTLET=1). */
+  gauntletLoop?: boolean;
 }
 
 /**

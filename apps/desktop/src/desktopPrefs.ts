@@ -30,7 +30,7 @@ export interface DesktopPrefs {
   verifierReview: VerifierReviewPreference;
   /** Experimental Best-of-N (N=3). Requires ZELARI_EXPERIMENTAL=bon on the CLI. */
   bonAlpha: boolean;
-  /** Append the Gauntlet Loop instructions to each send. */
+  /** Host-driven Gauntlet loop (`--gauntlet` on the CLI). */
   gauntletLoop: boolean;
 }
 

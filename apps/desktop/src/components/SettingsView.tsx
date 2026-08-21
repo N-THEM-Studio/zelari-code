@@ -1012,8 +1012,8 @@ export function SettingsView({
                     onChange={(e) => setGauntletLoop(e.target.checked)}
                   />
                   <span>
-                    Gauntlet Loop — append builder/critic rounds to the next
-                    Goal (same as the top-bar toggle)
+                    Gauntlet Loop — host-driven builder/critic rounds (capped;
+                    exclusive with Graph). Same as the top-bar toggle.
                   </span>
                 </label>
                 <p className="muted settings-tip">

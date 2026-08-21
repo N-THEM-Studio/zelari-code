@@ -8,7 +8,7 @@ import {
 } from "../../apps/desktop/src/gauntletLoop";
 
 describe("appendGauntletLoop", () => {
-  it("appends the loop block after the user Goal", () => {
+  it("still builds the legacy block for historical chats (send path no longer appends)", () => {
     const out = appendGauntletLoop("migliora l'illuminazione");
     expect(out.startsWith("migliora l'illuminazione")).toBe(true);
     expect(out).toContain(GAUNTLET_LOOP_MARKER);

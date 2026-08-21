@@ -125,6 +125,11 @@ export interface HeadlessOptions {
    * @since v1.31.x
    */
   runPlan?: string;
+  /**
+   * Host-driven Gauntlet loop (builder/critic tentacles, capped).
+   * Desktop toggle forwards `--gauntlet` / ZELARI_GAUNTLET=1. Not a prompt.
+   */
+  gauntlet?: boolean;
 }
 
 export interface HeadlessParseResult {
@@ -160,6 +165,8 @@ Options:
   --kraken-graph <goal>      Plan + execute a Kraken task graph instead of --task
                              (mutually exclusive with --task; ZELARI_KRAKEN_GRAPH=0 disables)
   --kraken-graph-file <path> Same as --kraken-graph but read from a file
+  --gauntlet                 Host-driven builder/critic loop (ZELARI_GAUNTLET=1).
+                             Parent cannot write; tentacles do the work. BUILD only.
 
 Exit codes:
   0  completed
@@ -215,6 +222,9 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
     process.env.ZELARI_KRAKEN_PLAN_ONLY === '1' ||
     process.env.ZELARI_KRAKEN_PLAN_ONLY === 'true';
   let runPlan = process.env.ZELARI_KRAKEN_RUN_PLAN;
+  let gauntlet =
+    process.env.ZELARI_GAUNTLET === '1' ||
+    process.env.ZELARI_GAUNTLET === 'true';
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -432,6 +442,10 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
     } else if (arg === '--run-plan') {
       runPlan = argv[i + 1];
       i++;
+    } else if (arg === '--gauntlet') {
+      gauntlet = true;
+    } else if (arg === '--no-gauntlet') {
+      gauntlet = false;
     }
   }
 
@@ -471,6 +485,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       ...(krakenGraph ? { krakenGraph } : {}),
       ...(planOnly ? { planOnly: true } : {}),
       ...(runPlan ? { runPlan } : {}),
+      ...(gauntlet ? { gauntlet: true } : {}),
     },
   };
 }
