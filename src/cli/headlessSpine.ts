@@ -292,17 +292,18 @@ export function derivedModelSeed(derived: readonly DerivedMessage[]): AgentMessa
   return derivedToAgentMessages(derived)
     .map((m) =>
       m.role === 'system'
-        ? { role: 'user' as const, content: m.content }
+        ? { ...m, role: 'user' as const }
         : m,
     )
     .map((m) =>
       m.role === 'assistant' && m.content
         ? {
-            role: 'assistant' as const,
+            ...m,
             content: cleanAgentContent(m.content, {
               stripQuestion: false,
               stripThink: false,
             }),
+            ...(m.seq !== undefined ? { seq: m.seq } : {}),
           }
         : m,
     )

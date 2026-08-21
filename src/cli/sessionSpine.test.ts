@@ -49,6 +49,42 @@ describe('mapBrainEventToSpine', () => {
     expect(mapped!.data).toMatchObject({ callId: 'c1', ok: false });
   });
 
+  it('maps session_compacted range + checkpoint onto session.compacted', () => {
+    const mapped = mapBrainEventToSpine(
+      ev('session_compacted', {
+        summary: 'inner',
+        messagesRemoved: 4,
+        fromSeq: 2,
+        toSeq: 8,
+        checkpoint: { role: 'user', content: 'wrapped inner' },
+        strategy: 'extractive',
+        sourceEventSeqs: [2, 3, 8],
+        inputTokens: 900,
+        outputTokens: 250,
+        savedTokens: 650,
+        recompactionRate: 1,
+        summaryStrategy: 'extractive',
+        provider: 'test-provider',
+        model: 'test-model',
+      }),
+    );
+    expect(mapped!.kind).toBe('session.compacted');
+    expect(mapped!.data).toMatchObject({
+      summary: 'inner',
+      fromSeq: 2,
+      toSeq: 8,
+      strategy: 'extractive',
+      checkpoint: { role: 'user', content: 'wrapped inner' },
+      inputTokens: 900,
+      outputTokens: 250,
+      savedTokens: 650,
+      recompactionRate: 1,
+      summaryStrategy: 'extractive',
+      provider: 'test-provider',
+      model: 'test-model',
+    });
+  });
+
   it('drops ui/progress events (queue_update, message_start, thinking_delta)', () => {
     expect(mapBrainEventToSpine(ev('queue_update', { queuedCount: 1 }))).toBeNull();
     expect(mapBrainEventToSpine(ev('message_start', { messageId: 'm', role: 'assistant' }))).toBeNull();

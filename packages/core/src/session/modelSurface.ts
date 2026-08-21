@@ -2,12 +2,14 @@
  * session/modelSurface.ts — the ONLY path from session events to model history.
  *
  * `isModelSurfaceEvent` decides what counts as model-visible; `deriveMessages`
- * projects surface events into a provider-neutral message list. The CLI maps
- * these onto its provider-specific request format — nothing else may invent
- * model-visible history (ADR-0016 invariant: model-visible ⟺ logged).
+ * projects surface events into a provider-neutral message list. Range-bearing
+ * `session.compacted` events replace `[fromSeq, toSeq]` (ledger unchanged).
+ * The CLI maps these onto its provider-specific request format — nothing else
+ * may invent model-visible history (ADR-0016 invariant: model-visible ⟺ logged).
  */
 
 import type { SessionEventEnvelope, SessionEventKind } from './types.js';
+import { coveringCompactions, isSeqShadowed } from './compaction.js';
 
 /** Event kinds that (may) feed the model input. Everything else is state. */
 export const MODEL_SURFACE_KINDS: ReadonlySet<SessionEventKind> = new Set([
@@ -32,6 +34,10 @@ export interface DerivedMessage {
   isError?: boolean;
   /** Seq of the source envelope — provenance for audit/replay. */
   seq: number;
+  /** Closed raw interval represented by a durable compact checkpoint. */
+  compactedFromSeq?: number;
+  compactedToSeq?: number;
+  sourceEventSeqs?: number[];
 }
 
 export interface DeriveMessagesOptions {
@@ -47,13 +53,42 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
-/** Project surface events into the neutral model history. Deterministic. */
+/**
+ * Project surface events into the neutral model history. Deterministic.
+ *
+ * Range-bearing `session.compacted` events replace `[fromSeq, toSeq]` with
+ * the checkpoint (durable shadowing). Compact events without a range stay
+ * additive (legacy `{summary}` append).
+ */
 export function deriveMessages(
   events: readonly SessionEventEnvelope[],
   options: DeriveMessagesOptions = {},
 ): DerivedMessage[] {
+  const coverings = coveringCompactions(events);
+  const orderedCoverings = [...coverings].sort((a, b) => a.fromSeq - b.fromSeq || a.seq - b.seq);
+  const compactBySeq = new Map(coverings.map((c) => [c.seq, c]));
   const messages: DerivedMessage[] = [];
+  let nextCheckpoint = 0;
+  const pushCheckpoint = (compact: (typeof orderedCoverings)[number]): void => {
+    messages.push({
+      role: compact.role,
+      content: compact.content,
+      seq: compact.seq,
+      compactedFromSeq: compact.fromSeq,
+      compactedToSeq: compact.toSeq,
+      ...(compact.sourceEventSeqs ? { sourceEventSeqs: compact.sourceEventSeqs } : {}),
+    });
+  };
+  const pushDueCheckpoints = (seq: number): void => {
+    while (nextCheckpoint < orderedCoverings.length && orderedCoverings[nextCheckpoint]!.fromSeq <= seq) {
+      pushCheckpoint(orderedCoverings[nextCheckpoint]!);
+      nextCheckpoint += 1;
+    }
+  };
   for (const e of events) {
+    pushDueCheckpoints(e.seq);
+    if (compactBySeq.has(e.seq)) continue;
+    if (isSeqShadowed(e.seq, coverings)) continue;
     if (!isModelSurfaceEvent(e)) continue;
     const d = e.data;
     switch (e.kind) {
@@ -97,6 +132,7 @@ export function deriveMessages(
         break;
     }
   }
+  pushDueCheckpoints(Number.POSITIVE_INFINITY);
   return messages;
 }
 

@@ -73,6 +73,56 @@ export interface CompactHistoryResult {
   cacheReuseExpected?: boolean;
   /** v1.36.0: replay diverged from the original prefix (telemetry only). */
   replayExactPrefix?: boolean;
+  /** Closed spine range replaced by the checkpoint (absent without seqs). */
+  fromSeq?: number;
+  toSeq?: number;
+  sourceEventSeqs?: number[];
+  strategy?: 'extractive' | 'llm';
+}
+
+/** Min/max spine seq of dropped messages. Undefined when any dropped msg lacks seq. */
+export function compactedRangeFromDropped(
+  dropped: readonly AgentMessage[],
+): { fromSeq: number; toSeq: number; sourceEventSeqs: number[] } | undefined {
+  if (dropped.length === 0) return undefined;
+  const seqs: number[] = [];
+  const sources: number[] = [];
+  for (const m of dropped) {
+    const hasCompactRange =
+      typeof m.compactedFromSeq === 'number' &&
+      Number.isInteger(m.compactedFromSeq) &&
+      m.compactedFromSeq > 0 &&
+      typeof m.compactedToSeq === 'number' &&
+      Number.isInteger(m.compactedToSeq) &&
+      m.compactedToSeq >= m.compactedFromSeq;
+    if (hasCompactRange) {
+      seqs.push(m.compactedFromSeq!, m.compactedToSeq!);
+      sources.push(...(m.sourceEventSeqs ?? []));
+      if (typeof m.seq === 'number' && Number.isInteger(m.seq) && m.seq > 0) {
+        seqs.push(m.seq);
+        sources.push(m.seq);
+      }
+      continue;
+    }
+    if (typeof m.seq !== 'number' || !Number.isInteger(m.seq) || m.seq < 1) return undefined;
+    seqs.push(m.seq);
+    sources.push(m.seq);
+  }
+  return {
+    fromSeq: Math.min(...seqs),
+    toSeq: Math.max(...seqs),
+    sourceEventSeqs: [...new Set(sources)],
+  };
+}
+
+function withDroppedRange(
+  result: CompactHistoryResult,
+  dropped: readonly AgentMessage[],
+  strategy: 'extractive' | 'llm',
+): CompactHistoryResult {
+  const range = compactedRangeFromDropped(dropped);
+  if (!range) return { ...result, strategy };
+  return { ...result, ...range, strategy };
 }
 
 /**
@@ -265,7 +315,10 @@ const CHECKPOINT_WRAPPER_PREFIX =
   'This is an automatically generated checkpoint of earlier conversation. ' +
   'Treat it as established context and continue directly.';
 
-export function buildCheckpointMessage(summaryText: string): AgentMessage {
+export function buildCheckpointMessage(
+  summaryText: string,
+  range?: { fromSeq: number; toSeq: number; sourceEventSeqs: number[] },
+): AgentMessage {
   return {
     role: 'user',
     content:
@@ -273,6 +326,13 @@ export function buildCheckpointMessage(summaryText: string): AgentMessage {
       '\n\n<compacted-summary>\n' +
       summaryText +
       '\n</compacted-summary>',
+    ...(range
+      ? {
+          compactedFromSeq: range.fromSeq,
+          compactedToSeq: range.toSeq,
+          sourceEventSeqs: [...range.sourceEventSeqs],
+        }
+      : {}),
   };
 }
 
@@ -285,7 +345,11 @@ export function compactHistoryDetailed(
 ): CompactHistoryResult {
   const maxMessages = resolveMaxMessages(opts);
   if (maxMessages === 0) {
-    return { messages: [], compacted: true, messagesRemoved: messages.length, summary: "" };
+    return withDroppedRange(
+      { messages: [], compacted: true, messagesRemoved: messages.length, summary: '' },
+      messages,
+      'extractive',
+    );
   }
   // Trigger at 2× cap so we don't compact on every single turn (amortize).
   // v1.36.0 (P8): occupancy-driven callers pass force=true so high TOKEN
@@ -311,19 +375,25 @@ export function compactHistoryDetailed(
   }
 
   const droppedMsgs = messages.slice(0, cut);
+  const droppedRange = compactedRangeFromDropped(droppedMsgs);
   const pruned = pruneToolResultsDetailed(messages.slice(cut));
   const kept = pruned.messages;
   const summaryText = extractiveHistorySummary(droppedMsgs);
   const summary = buildCheckpointMessage(
     summaryText || `${COMPACT_MARKER} ${cut} earlier message(s) dropped.`,
+    droppedRange,
   );
-  return {
-    messages: [summary, ...kept],
-    compacted: true,
-    messagesRemoved: cut,
-    summary: summary.content,
-    prunedToolResults: pruned.stats.pruned,
-  };
+  return withDroppedRange(
+    {
+      messages: [summary, ...kept],
+      compacted: true,
+      messagesRemoved: cut,
+      summary: summary.content,
+      prunedToolResults: pruned.stats.pruned,
+    },
+    droppedMsgs,
+    'extractive',
+  );
 }
 
 /**
@@ -390,16 +460,21 @@ export async function compactHistoryAsync(
 
   const pruned = pruneToolResultsDetailed(messages.slice(cut));
   const kept = pruned.messages;
-  const summary = buildCheckpointMessage(summaryText);
-  return {
-    messages: [summary, ...kept],
-    compacted: true,
-    messagesRemoved: cut,
-    summary: summaryText,
-    prunedToolResults: pruned.stats.pruned,
-    cacheReuseExpected,
-    replayExactPrefix,
-  };
+  const summary = buildCheckpointMessage(summaryText, compactedRangeFromDropped(droppedMsgs));
+  const usedLlm = summaryText !== extractive && summaryText.trim().length > 40;
+  return withDroppedRange(
+    {
+      messages: [summary, ...kept],
+      compacted: true,
+      messagesRemoved: cut,
+      summary: summaryText,
+      prunedToolResults: pruned.stats.pruned,
+      cacheReuseExpected,
+      replayExactPrefix,
+    },
+    droppedMsgs,
+    usedLlm ? 'llm' : 'extractive',
+  );
 }
 
 /** Rough chars/4 token estimate over content + tool args (local, no cycle). */

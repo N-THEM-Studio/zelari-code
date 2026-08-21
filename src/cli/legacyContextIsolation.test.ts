@@ -24,11 +24,16 @@ function readCli(rel: string): string {
 describe('ADR-0024 — legacy context isolation', () => {
   it('budget pipeline measures the spine-derived seed, never the raw 1.x store', () => {
     const src = readCli(path.join('hooks', 'useChatTurn.ts'));
+    const builder = readCli(path.join('budget', 'modelContextBuilder.ts'));
     expect(src).not.toContain('applyBudgetPolicyAsync(getHistory()');
-    // The declared discrete fallback (degraded/disabled spine) stays the only
-    // seed path that may read the 1.x store.
-    const fallbackUses = src.match(/spineSeed \?\? getHistory\(\)/g) ?? [];
-    expect(fallbackUses.length).toBe(1);
+    expect(src).not.toContain('applyBudgetPolicyAsync(');
+    expect(src.match(/await buildModelContext\(/g)).toHaveLength(2);
+    expect(src).toContain('fallbackHistory: historyForModel');
+    expect(src).toContain('fallbackHistory: getHistory()');
+    // The shared builder owns the declared discrete fallback and always
+    // prefers the session-derived projection when the spine is active.
+    expect(builder).toContain('const derived = await sessionHistory(input.session)');
+    expect(builder).toContain('const sourceHistory = derived ?? [...input.fallbackHistory]');
   });
 
   it('headless hot path touches opts.history only via the one-shot spine import', () => {

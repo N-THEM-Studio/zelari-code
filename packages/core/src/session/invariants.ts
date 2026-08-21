@@ -115,5 +115,104 @@ export function validateSessionTrace(
     });
   }
 
+  pushCompactionViolations(events, knownSeq, pairs, violations);
+
   return violations;
+}
+
+function pushCompactionViolations(
+  events: readonly SessionEventEnvelope[],
+  knownSeq: Set<number>,
+  pairs: ReturnType<typeof pairToolCalls>,
+  violations: SessionInvariantViolation[],
+): void {
+  for (const e of events) {
+    if (e.kind !== 'session.compacted') continue;
+    const fromSeq = asSeq(e.data.fromSeq);
+    const toSeq = asSeq(e.data.toSeq);
+    if (fromSeq === undefined && toSeq === undefined) continue;
+    if (fromSeq === undefined || toSeq === undefined || fromSeq > toSeq) {
+      violations.push({
+        code: 'COMPACTION_RANGE_INVALID',
+        seq: e.seq,
+        message: `session.compacted seq ${e.seq} has invalid fromSeq/toSeq`,
+      });
+      continue;
+    }
+    if (e.seq <= toSeq) {
+      violations.push({
+        code: 'COMPACTION_EVENT_INSIDE_RANGE',
+        seq: e.seq,
+        message: `session.compacted seq ${e.seq} must be > toSeq ${toSeq}`,
+      });
+    }
+    if (!knownSeq.has(fromSeq) || !knownSeq.has(toSeq)) {
+      violations.push({
+        code: 'COMPACTION_BOUNDARY_SEQ_MISSING',
+        seq: e.seq,
+        message: `session.compacted seq ${e.seq} range endpoints must exist in the trace`,
+      });
+    }
+    const checkpoint = e.data.checkpoint;
+    if (
+      !checkpoint ||
+      typeof checkpoint !== 'object' ||
+      !['user', 'system'].includes(String((checkpoint as Record<string, unknown>).role ?? '')) ||
+      typeof (checkpoint as Record<string, unknown>).content !== 'string'
+    ) {
+      violations.push({
+        code: 'COMPACTION_CHECKPOINT_INVALID',
+        seq: e.seq,
+        message: `session.compacted seq ${e.seq} must carry a user/system checkpoint with string content`,
+      });
+    }
+    const sourceRaw = e.data.sourceEventSeqs;
+    if (Array.isArray(sourceRaw)) {
+      for (const raw of sourceRaw) {
+        const s = asSeq(raw);
+        if (s === undefined) {
+          violations.push({
+            code: 'COMPACTION_SOURCE_SEQ_INVALID',
+            seq: e.seq,
+            message: 'sourceEventSeqs entries must be positive integers',
+          });
+        } else if (!knownSeq.has(s)) {
+          violations.push({
+            code: 'COMPACTION_SOURCE_SEQ_MISSING',
+            seq: e.seq,
+            message: `sourceEventSeqs ${s} is not an event in this trace`,
+          });
+        } else if (s < fromSeq || s > toSeq) {
+          violations.push({
+            code: 'COMPACTION_SOURCE_SEQ_OUTSIDE_RANGE',
+            seq: e.seq,
+            message: `sourceEventSeqs ${s} is outside ${fromSeq}..${toSeq}`,
+          });
+        }
+      }
+    }
+    for (const pair of pairs) {
+      const callSeq = pair.call.seq;
+      const callInside = callSeq >= fromSeq && callSeq <= toSeq;
+      if (!pair.result) {
+        if (callInside) {
+          violations.push({
+            code: 'COMPACTION_ACTIVE_TOOL_CALL',
+            seq: e.seq,
+            message: `tool.call seq ${callSeq} is compacted before a result or interruption`,
+          });
+        }
+        continue;
+      }
+      const resultSeq = pair.result.seq;
+      const resultInside = resultSeq >= fromSeq && resultSeq <= toSeq;
+      if (callInside !== resultInside) {
+        violations.push({
+          code: 'COMPACTION_TOOL_PAIR_SPLIT',
+          seq: e.seq,
+          message: `tool pair ${callSeq}/${resultSeq} is split by range ${fromSeq}..${toSeq}`,
+        });
+      }
+    }
+  }
 }

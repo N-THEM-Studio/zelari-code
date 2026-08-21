@@ -27,6 +27,24 @@ import type { StoredRequestUsage } from './requestSnapshotStore.js';
 import { applySessionSurface } from '../hooks/observationStore.js';
 import { capabilitiesFor } from '../provider/capabilities.js';
 
+function mergeCompactRange(
+  into: {
+    fromSeq?: number;
+    toSeq?: number;
+    sourceSeqs: number[];
+    strategy?: 'extractive' | 'llm';
+  },
+  r: CompactHistoryResult,
+): void {
+  if (r.fromSeq !== undefined && r.toSeq !== undefined) {
+    into.fromSeq = into.fromSeq === undefined ? r.fromSeq : Math.min(into.fromSeq, r.fromSeq);
+    into.toSeq = into.toSeq === undefined ? r.toSeq : Math.max(into.toSeq, r.toSeq);
+    if (r.sourceEventSeqs) into.sourceSeqs.push(...r.sourceEventSeqs);
+  }
+  if (r.strategy === 'llm') into.strategy = 'llm';
+  else if (r.strategy && !into.strategy) into.strategy = r.strategy;
+}
+
 export interface BudgetPolicy {
   /** Possibly compacted history. */
   history: AgentMessage[];
@@ -49,6 +67,11 @@ export interface BudgetPolicy {
   compactSummary?: string;
   /** Messages removed by compaction this policy application. */
   messagesRemoved?: number;
+  /** Closed spine range replaced this turn (durable session.compacted). */
+  compactedFromSeq?: number;
+  compactedToSeq?: number;
+  compactSourceSeqs?: number[];
+  compactStrategy?: 'extractive' | 'llm';
   /**
    * v1.36.0: full-request pressure (header + conversation + reserved
    * output). Present only when a request snapshot anchored the meter.
@@ -154,6 +177,12 @@ export function applyBudgetPolicy(
   let { estimated, occupancy } = occupancyOf(hist, sessionExtra, contextLimit);
   let compactSummary = '';
   let messagesRemoved = 0;
+  const compactRange: {
+    fromSeq?: number;
+    toSeq?: number;
+    sourceSeqs: number[];
+    strategy?: 'extractive' | 'llm';
+  } = { sourceSeqs: [] };
 
   if (occupancy >= compact.warnAt && occupancy < compact.compactAt) {
     warnings.push(
@@ -173,6 +202,7 @@ export function applyBudgetPolicy(
     if (r.compacted) {
       messagesRemoved += r.messagesRemoved;
       if (r.summary) compactSummary = r.summary;
+      mergeCompactRange(compactRange, r);
     }
     ({ estimated, occupancy } = occupancyOf(hist, sessionExtra, contextLimit));
     warnings.push(
@@ -188,6 +218,7 @@ export function applyBudgetPolicy(
     if (hard.compacted) {
       messagesRemoved += hard.messagesRemoved;
       if (hard.summary) compactSummary = hard.summary;
+      mergeCompactRange(compactRange, hard);
     }
     ({ estimated, occupancy } = occupancyOf(hist, sessionExtra, contextLimit));
     historyTurns = 2;
@@ -207,6 +238,14 @@ export function applyBudgetPolicy(
     occupancy,
     compactSummary: compactSummary || undefined,
     messagesRemoved: messagesRemoved || undefined,
+    ...(compactRange.fromSeq !== undefined && compactRange.toSeq !== undefined
+      ? {
+          compactedFromSeq: compactRange.fromSeq,
+          compactedToSeq: compactRange.toSeq,
+          compactSourceSeqs: compactRange.sourceSeqs,
+          compactStrategy: compactRange.strategy,
+        }
+      : {}),
   };
 }
 
@@ -227,6 +266,13 @@ export interface BudgetPolicyEnvelope {
   requestSnapshot?: {
     snapshot: RoutedRequestSnapshot;
     usage?: StoredRequestUsage;
+  } | null;
+  /** Current host-neutral request surface (used before a routed snapshot exists). */
+  requestSurface?: {
+    provider: string;
+    model: string;
+    systemMessages: readonly AgentMessage[];
+    tools: readonly AgentToolSpec[];
   } | null;
   /** Provider stream for cache-aware compaction replay. */
   providerStream?: ProviderStreamFn;
@@ -265,6 +311,7 @@ export async function applyBudgetPolicyAsync(
   let { historyTurns, maxToolLoopIterations } = phaseKnobs(phase);
 
   const envelope = opts?.requestSnapshot ?? null;
+  const surface = envelope?.snapshot ?? opts?.requestSurface ?? null;
   // v1.36.0 (case 12): when only the providerStream is available (no routed
   // snapshot yet — first turn, tests), synthesize a DEGRADED replay base so
   // the summarizer still runs on a cold minimal prefix: no cache reuse, but
@@ -276,27 +323,27 @@ export async function applyBudgetPolicyAsync(
     model: string;
     systemMessages: readonly AgentMessage[];
     tools: readonly AgentToolSpec[];
-  } | null = envelope
+  } | null = surface
     ? {
-        provider: envelope.snapshot.provider,
-        model: envelope.snapshot.model,
-        systemMessages: envelope.snapshot.systemMessages,
-        tools: envelope.snapshot.tools,
+        provider: surface.provider,
+        model: surface.model,
+        systemMessages: surface.systemMessages,
+        tools: surface.tools,
       }
     : opts?.providerStream
       ? { provider: 'local', model: opts?.model ?? 'unknown', systemMessages: [], tools: [] }
       : null;
 
   // Full-request meter (anchored when snapshot+usage are available).
-  const headerTokens = envelope
-    ? estimateSystemTokensLite(envelope.snapshot.systemMessages) +
-      estimateToolSchemaTokensLite(envelope.snapshot.tools)
+  const headerTokens = surface
+    ? estimateSystemTokensLite(surface.systemMessages) +
+      estimateToolSchemaTokensLite(surface.tools)
     : 0;
   const convTokensOf = (h: readonly AgentMessage[]) =>
     estimateConversationTokensLite(h);
 
   let hist = history as AgentMessage[];
-  let estimated = envelope
+  let estimated = surface
     ? headerTokens + convTokensOf(hist) + RESERVED_OUTPUT_TOKENS
     : estimateHistoryTokens(hist) + sessionExtra;
   let occupancy = Math.min(1, estimated / contextLimit);
@@ -304,6 +351,12 @@ export async function applyBudgetPolicyAsync(
   let messagesRemoved = 0;
   let cacheReuseExpected: boolean | undefined;
   let prunedTotal = 0;
+  const compactRange: {
+    fromSeq?: number;
+    toSeq?: number;
+    sourceSeqs: number[];
+    strategy?: 'extractive' | 'llm';
+  } = { sourceSeqs: [] };
 
   if (occupancy >= compact.warnAt && occupancy < compact.compactAt) {
     warnings.push(
@@ -317,7 +370,7 @@ export async function applyBudgetPolicyAsync(
     if (pruned.stats.pruned > 0) {
       hist = pruned.messages;
       prunedTotal += pruned.stats.pruned;
-      estimated = envelope
+      estimated = surface
         ? headerTokens + convTokensOf(hist) + RESERVED_OUTPUT_TOKENS
         : estimateHistoryTokens(hist) + sessionExtra;
       occupancy = Math.min(1, estimated / contextLimit);
@@ -332,11 +385,12 @@ export async function applyBudgetPolicyAsync(
     if (r.compacted) {
       messagesRemoved += r.messagesRemoved;
       if (r.summary) compactSummary = r.summary;
+      mergeCompactRange(compactRange, r);
       if (r.cacheReuseExpected !== undefined) {
         cacheReuseExpected = r.cacheReuseExpected;
       }
     }
-    estimated = envelope
+    estimated = surface
       ? headerTokens + convTokensOf(hist) + RESERVED_OUTPUT_TOKENS
       : estimateHistoryTokens(hist) + sessionExtra;
     occupancy = Math.min(1, estimated / contextLimit);
@@ -415,12 +469,20 @@ export async function applyBudgetPolicyAsync(
     warnings,
     maxToolLoopIterations,
     historyTurns,
-    estimatedHistoryTokens: envelope ? convTokensOf(hist) : estimated,
+    estimatedHistoryTokens: surface ? convTokensOf(hist) : estimated,
     contextLimit,
     occupancy,
     compactSummary: compactSummary || undefined,
     messagesRemoved: messagesRemoved || undefined,
-    ...(envelope ? { contextPressureTokens: estimated } : {}),
+    ...(compactRange.fromSeq !== undefined && compactRange.toSeq !== undefined
+      ? {
+          compactedFromSeq: compactRange.fromSeq,
+          compactedToSeq: compactRange.toSeq,
+          compactSourceSeqs: compactRange.sourceSeqs,
+          compactStrategy: compactRange.strategy,
+        }
+      : {}),
+    ...(surface ? { contextPressureTokens: estimated } : {}),
     ...(cacheReuseExpected !== undefined ? { cacheReuseExpected } : {}),
     ...(cacheMetricsLine ? { cacheMetricsLine } : {}),
   };

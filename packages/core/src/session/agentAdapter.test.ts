@@ -1,8 +1,8 @@
 /**
  * agentAdapter tests (Exit-1 E1.1) — DerivedMessage[] → AgentMessage[].
- * Guarantees: role/content/toolCallId mapping, no seq leakage, 1:1 mapping
- * even for includeToolCalls JSON payloads, empty-in/empty-out, no mutation
- * of the input.
+ * Guarantees: role/content/toolCallId mapping, seq copied as provenance, 1:1
+ * mapping even for includeToolCalls JSON payloads, empty-in/empty-out, no
+ * mutation of the input.
  */
 import { describe, expect, it } from 'vitest';
 import { derivedToAgentMessages } from './agentAdapter.js';
@@ -35,15 +35,15 @@ function envelope(
 }
 
 describe('derivedToAgentMessages (E1.1)', () => {
-  it('maps user/assistant turns 1:1 (role + content, no seq leakage)', () => {
+  it('maps user/assistant turns 1:1 (role + content + seq provenance)', () => {
     const events = [
       envelope(1, 'user.message', USER, { text: 'fix the bug' }),
       envelope(2, 'assistant.message', AGENT, { text: 'on it' }),
     ];
     const agent = derivedToAgentMessages(deriveMessages(events));
     expect(agent).toEqual([
-      { role: 'user', content: 'fix the bug' },
-      { role: 'assistant', content: 'on it' },
+      { role: 'user', content: 'fix the bug', seq: 1 },
+      { role: 'assistant', content: 'on it', seq: 2 },
     ]);
   });
 
@@ -54,7 +54,7 @@ describe('derivedToAgentMessages (E1.1)', () => {
     ];
     const agent = derivedToAgentMessages(deriveMessages(events));
     expect(agent).toEqual([
-      { role: 'tool', content: 'file-a\nfile-b', toolCallId: 'c1' },
+      { role: 'tool', content: 'file-a\nfile-b', toolCallId: 'c1', seq: 2 },
     ]);
   });
 
@@ -65,8 +65,8 @@ describe('derivedToAgentMessages (E1.1)', () => {
     ];
     const agent = derivedToAgentMessages(deriveMessages(events));
     expect(agent).toEqual([
-      { role: 'user', content: 'hello' },
-      { role: 'system', content: 'prior context summarized' },
+      { role: 'user', content: 'hello', seq: 1 },
+      { role: 'system', content: 'prior context summarized', seq: 2 },
     ]);
   });
 

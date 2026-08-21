@@ -100,6 +100,16 @@ export interface AgentMessage {
    * "The `reasoning_content` in the thinking mode must be passed back to the API."
    */
   reasoningContent?: string;
+  /**
+   * Spine seq this message was derived from. Provenance for durable
+   * compaction ranges (`session.compacted` fromSeq/toSeq). Not a wire
+   * field — providers map known keys only.
+   */
+  seq?: number;
+  /** Closed ledger interval represented by a compacted checkpoint. */
+  compactedFromSeq?: number;
+  compactedToSeq?: number;
+  sourceEventSeqs?: number[];
 }
 
 export interface AgentToolSpec {

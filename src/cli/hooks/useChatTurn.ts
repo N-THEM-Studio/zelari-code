@@ -5,7 +5,7 @@ import type { ChatMessage } from "../components/ChatStream.js";
 import { AgentHarness } from "@zelari/core/harness";
 import type { AgentMessage } from "@zelari/core/harness";
 import { ingestLiveEvent } from "./observationStore.js";
-import { MetricsLogger, getMetricsLogger } from "../metrics.js";
+import { MetricsLogger, getMetricsLogger, recordCompactionMetrics } from "../metrics.js";
 import type { BrainContextMetricsEvent } from "@zelari/core/events";
 import { calculateCost } from "../modelPricing.js";
 import {
@@ -29,7 +29,6 @@ import { buildKrakenRepairPrompt } from "../kraken/completionGate.js";
 import { evaluateStrictBuildGate, strictGateEventPayload, type StrictGateOptions } from "../kraken/verificationBridge.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
-import { derivedModelSeed } from "../headlessSpine.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
 import { armPickerTimeout, askUserTimeoutMs } from "./askUserTimeout.js";
 import { defaultPermissionPolicy } from "../safety/toolPermissions.js";
@@ -76,7 +75,7 @@ import { computeSessionStatsDelta } from "./chatStats.js";
 import { envNumber } from "../utils/envNumber.js";
 import { getPhase } from "../phaseState.js";
 import { describePhase } from "../phase.js";
-import { applyBudgetPolicyAsync } from "../budget/tokenBudget.js";
+import { buildModelContext } from "../budget/modelContextBuilder.js";
 import {
   recordRequestSnapshot,
   recordRequestUsage,
@@ -241,19 +240,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // declared fallback (degraded/disabled spine, or a spine log still
         // empty while the store carries replayed 1.x history) and keeps
         // feeding render + budget heuristics.
-        let historyForModel: readonly AgentMessage[];
-        {
-          const mirror = writerRef.current?.spine ?? null;
-          let spineSeed: readonly AgentMessage[] | null = null;
-          if (mirror && mirror.status === "active") {
-            const derived = await mirror.derivedPriorTurns();
-            if (derived && derived.length > 0) {
-              spineSeed = derivedModelSeed(derived);
-            }
-          }
-          historyForModel = spineSeed ?? getHistory();
-        }
-                writerRef.current?.spine?.userMessage(effectiveUserText);
+        let historyForModel: readonly AgentMessage[] = getHistory();
         // Local-CLI provider (Slice B): opt-in via ZELARI_LOCAL_CLI=claude|codex|...
         // No API key needed — the CLI is authenticated on its own. Permission
         // prompts flow to the zelari broker via ZELARI_PERM_SOCKET (Slice A).
@@ -425,43 +412,50 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // E1.5 (ADR-0024): the budget pipeline measures the spine-derived
         // model history, not the 1.x store — compaction decisions apply to
         // exactly what the model is about to see.
-        const budget = await applyBudgetPolicyAsync(historyForModel, getPhase(), {
+        const requestSnapshot = getRequestSnapshotWithUsage(sessionId);
+        const modelContext = await buildModelContext({
+          fallbackHistory: historyForModel,
+          session: writerRef.current?.spine ?? null,
+          phase: workPhase,
           model: getActiveModel(),
+          provider: envConfig?.providerId ?? (localCli || 'local'),
           sessionId,
-          // v1.36.0: envelope for full-request metering + cache-aware
-          // compaction replay (last warm prefix + provider usage anchor).
-          requestSnapshot: getRequestSnapshotWithUsage(sessionId),
+          requestSnapshot,
           providerStream,
+          onCompactionMetric: (metrics) => recordCompactionMetrics(
+            sessionId,
+            envConfig?.providerId ?? (localCli || 'local'),
+            getActiveModel(),
+            metrics,
+          ),
+          persistCompaction: async (payload, compactBudget) => {
+            const compactionEvent = createBrainEvent('session_compacted', sessionId, {
+              ...payload,
+              ...(requestSnapshot
+                ? {
+                    sourceRequestFingerprint: requestSnapshot.snapshot.requestFingerprint,
+                    headerFingerprint: requestSnapshot.snapshot.headerFingerprint,
+                  }
+                : {}),
+              ...(compactBudget.contextPressureTokens !== undefined
+                ? { sourceEstimatedTokens: compactBudget.contextPressureTokens }
+                : {}),
+              ...(compactBudget.cacheReuseExpected !== undefined
+                ? { cacheReuseExpected: compactBudget.cacheReuseExpected }
+                : {}),
+            });
+            await writerRef.current?.append(compactionEvent);
+          },
         });
-        setHistory(budget.history);
-        for (const w of budget.warnings) {
-          appendSystem(setMessages, w, Date.now());
+        const budget = modelContext.budget;
+        historyForModel = modelContext.history;
+        setHistory(historyForModel);
+        for (const warning of budget.warnings) {
+          appendSystem(setMessages, warning, Date.now());
         }
-        // v1.36.0 (P15): durable session_compacted event on the JSONL log —
-        // cache telemetry rides along (fingerprints, size delta, reuse flag).
-        if ((budget.messagesRemoved ?? 0) > 0) {
-          const envelope = getRequestSnapshotWithUsage(sessionId);
-          const compactionEvent = createBrainEvent('session_compacted', sessionId, {
-            summary: budget.compactSummary ?? '',
-            messagesRemoved: budget.messagesRemoved ?? 0,
-            ...(envelope
-              ? {
-                  sourceRequestFingerprint: envelope.snapshot.requestFingerprint,
-                  headerFingerprint: envelope.snapshot.headerFingerprint,
-                }
-              : {}),
-            ...(budget.contextPressureTokens !== undefined
-              ? { sourceEstimatedTokens: budget.contextPressureTokens }
-              : {}),
-            ...(budget.cacheReuseExpected !== undefined
-              ? { cacheReuseExpected: budget.cacheReuseExpected }
-              : {}),
-          });
-          void writerRef.current?.append(compactionEvent);
-        }
+        writerRef.current?.spine?.userMessage(effectiveUserText);
         // E1.5: if the pipeline compacted, the replayed history replaces
         // this turn's seed so the model sees exactly what was measured.
-        historyForModel = budget.history;
         historySeedLen = historyForModel.length;
         // v0.7.3: surface the council plan (if any) to the single agent too.
         // The plan lives in .zelari/plan.json but the agent had no idea it
@@ -1378,35 +1372,36 @@ async function dispatchCouncilPromptImpl(
   // v1.36 parity + E1.5 (ADR-0024): compactInPlace() removed from the hot
   // path — the budget pipeline owns compaction (prune → remeasure → replay)
   // and now measures the spine-derived model history, not the 1.x store.
-  let councilHistory: readonly AgentMessage[] = getHistory();
-  {
-    const mirror = writerRef.current?.spine ?? null;
-    if (mirror && mirror.status === "active") {
-      const derived = await mirror.derivedPriorTurns();
-      if (derived && derived.length > 0) {
-        councilHistory = derivedModelSeed(derived);
-      }
-    }
-  }
-  const councilBudget = await applyBudgetPolicyAsync(councilHistory, getPhase(), {
-    model: envConfig.model,
-  });
-  setHistory(councilBudget.history);
-  for (const w of councilBudget.warnings) {
-    appendSystem(setMessages, w, Date.now());
-  }
-  // E1.5: compaction must be visible on the spine too (model-visible ⟺
-  // logged) — same durable event as the single-agent path.
-  if ((councilBudget.messagesRemoved ?? 0) > 0) {
-    void writerRef.current?.append(
-      createBrainEvent("session_compacted", sessionId, {
-        summary: councilBudget.compactSummary ?? "",
-        messagesRemoved: councilBudget.messagesRemoved ?? 0,
-      }),
-    );
-  }
   const anchored = maybeAnchorShortAnswer(text);
   const effectiveText = anchored ?? text;
+  const councilContext = await buildModelContext({
+    fallbackHistory: getHistory(),
+    session: writerRef.current?.spine ?? null,
+    phase: getPhase(),
+    model: envConfig.model,
+    provider: envConfig.providerId,
+    sessionId,
+    onCompactionMetric: (metrics) => recordCompactionMetrics(
+      sessionId,
+      envConfig.providerId,
+      envConfig.model,
+      metrics,
+    ),
+    persistCompaction: async (payload) => {
+      await writerRef.current?.append(
+        createBrainEvent('session_compacted', sessionId, payload),
+      );
+    },
+  });
+  const councilBudget = councilContext.budget;
+  setHistory(councilContext.history);
+  for (const warning of councilBudget.warnings) {
+    appendSystem(setMessages, warning, Date.now());
+  }
+  writerRef.current?.spine?.userMessage(effectiveText);
+  // E1.5: compaction must be visible on the spine too (model-visible ⟺
+  // logged) — same durable event as the single-agent path.
+
   appendSystem(
     setMessages,
     `[phase] ${describePhase(getPhase())}`,

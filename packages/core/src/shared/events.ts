@@ -221,6 +221,30 @@ export interface BrainSessionCompactedEvent extends BrainEventBase {
   prunedToolResults?: number;
   /** False when the summarizer ran on a different provider/model (no KV reuse). */
   cacheReuseExpected?: boolean;
+  /** Closed interval of spine seqs this checkpoint replaces. */
+  fromSeq?: number;
+  toSeq?: number;
+  checkpoint?: { role: 'user' | 'system'; content: string };
+  strategy?: 'extractive' | 'llm';
+  sourceEventSeqs?: number[];
+  retainedCriterionIds?: string[];
+  retainedEvidenceRefs?: unknown[];
+  retainedState?: object;
+  stateSnapshot?: object;
+  /** Estimated model-history tokens before compaction. */
+  inputTokens?: number;
+  /** Estimated model-history tokens in the replacement surface. */
+  outputTokens?: number;
+  /** Non-negative estimated token reduction. */
+  savedTokens?: number;
+  /** 1 when this compaction replaces an earlier checkpoint, otherwise 0. */
+  recompactionRate?: number;
+  /** Narrative summarizer used for the checkpoint. */
+  summaryStrategy?: 'extractive' | 'llm';
+  /** Summarizer provider, present for LLM checkpoints. */
+  provider?: string;
+  /** Summarizer model, present for LLM checkpoints. */
+  model?: string;
 }
 
 // --- Errors -----------------------------------------------------------------

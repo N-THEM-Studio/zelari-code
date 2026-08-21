@@ -58,6 +58,8 @@ import { randomUUID } from 'node:crypto';
 import { evaluateStrictBuildGate, strictGateEventPayload, strictGateExitCode } from './kraken/verificationBridge.js';
 import { nativePackEnabled } from './kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from './kraken/verifierLifecycle.js';
+import { buildModelContext } from './budget/modelContextBuilder.js';
+import { recordCompactionMetrics } from './metrics.js';
 import {
   openHeadlessSpine,
   resolveHeadlessProfileId,
@@ -495,7 +497,7 @@ async function runHeadlessSingle(
   // E1.4: advertise the spine session id so hosts (Desktop) resume the
   // same event log next turn instead of replaying 1.x history JSON.
   emitEvent(sessionStartedEvent(spine));
-  if (opts.task) spine.userMessage(opts.task);
+
   // Fase 3 (ADR-0020): fresh per-run candidate registry (each headless run
   // is one process, so per-run == per-turn here).
   resetKrakenCandidates();
@@ -674,19 +676,43 @@ async function runHeadlessSingle(
   // stripThink: false) so ---QUESTION--- blocks and <think> survive for
   // multi-turn binding. The legacy --history JSON is only the one-shot
   // import source (or the declared fallback when the spine is degraded).
-  const historySeed: AgentMessage[] = seededHistory.history;
+  const modelContext = await buildModelContext({
+    fallbackHistory: seededHistory.history,
+    session: spine.spine,
+    phase: opts.phase ?? 'build',
+    model,
+    provider,
+    systemMessages,
+    tools,
+    sessionId: spine.sessionId,
+    providerStream,
+    onCompactionMetric: (metrics) => recordCompactionMetrics(spine.sessionId, provider, model, metrics),
+    persistCompaction: async (payload) => {
+      await spine.appendEvent({
+        kind: 'session.compacted',
+        actor: { type: 'system' },
+        data: { ...payload },
+      });
+    },
+  });
+  const historySeed: AgentMessage[] = modelContext.history;
+  for (const warning of modelContext.budget.warnings) {
+    if (opts.output === 'json') emitEvent({ type: 'log', message: warning });
+    else process.stderr.write('[zelari-code --headless] ' + warning + '\n');
+  }
 
   // Short continues ("procedi", "conferma", phase plan→build) re-anchor the
   // prior assistant output into the user message — module lastClarification
   // is empty in a fresh headless process.
   const effectiveTask = buildAgentUserWithHistory(opts.task, historySeed);
+  if (opts.task) spine.userMessage(effectiveTask);
 
   const maxToolLoop = (() => {
     const n = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
       default: 30,
       min: 1,
     });
-    return n;
+    return Math.min(n, modelContext.budget.maxToolLoopIterations);
   })();
 
   type SinglePassResult = {
@@ -1091,7 +1117,7 @@ async function runHeadlessCouncil(
   // E1.4: advertise the spine session id so hosts (Desktop) resume the
   // same event log next turn instead of replaying 1.x history JSON.
   emitEvent(sessionStartedEvent(spine));
-  if (opts.task) spine.userMessage(opts.task);
+
   // Experiment: free-form council+build soft-gated to design-phase unless
   // ZELARI_COUNCIL_CAN_BUILD=1. Also strip project mutators (planMode tools).
   const { shouldAllowCouncilBuild } = await import('./buildPolicy.js');
@@ -1120,8 +1146,36 @@ async function runHeadlessCouncil(
   // spine carries the transcript).
   // Exit-1/E1.2: spine-derived prior turns (legacy --history is the
   // one-shot import source, not the model-context brain).
-  const historySeed: AgentMessage[] = seededHistory.history;
+  const contextTools: AgentToolSpec[] = toolRegistry.toOpenAITools().map((tool) => ({
+    name: tool.function.name,
+    description: tool.function.description,
+    parameters: tool.function.parameters as Record<string, unknown>,
+  }));
+  const councilContext = await buildModelContext({
+    fallbackHistory: seededHistory.history,
+    session: spine.spine,
+    phase: councilRunMode === 'design-phase' ? 'plan' : 'build',
+    model,
+    provider,
+    tools: contextTools,
+    sessionId: spine.sessionId,
+    providerStream,
+    onCompactionMetric: (metrics) => recordCompactionMetrics(spine.sessionId, provider, model, metrics),
+    persistCompaction: async (payload) => {
+      await spine.appendEvent({
+        kind: 'session.compacted',
+        actor: { type: 'system' },
+        data: { ...payload },
+      });
+    },
+  });
+  const historySeed: AgentMessage[] = councilContext.history;
+  for (const warning of councilContext.budget.warnings) {
+    if (opts.output === 'json') emitEvent({ type: 'log', message: warning });
+    else process.stderr.write('[zelari-code --headless] ' + warning + '\n');
+  }
   const effectiveTask = buildCouncilTaskWithHistory(opts.task, historySeed);
+  if (opts.task) spine.userMessage(effectiveTask);
 
   let exitCode = 0;
   const scrub = createStreamScrubber();
@@ -1248,7 +1302,7 @@ async function runHeadlessZelari(
   // E1.4: advertise the spine session id so hosts (Desktop) resume the
   // same event log next turn instead of replaying 1.x history JSON.
   emitEvent(sessionStartedEvent(spine));
-  if (opts.task) spine.userMessage(opts.task);
+
   spine.missionPhase('design', 'mission-start');
   const { buildMissionBrief } = await import('@zelari/core/council');
   const { hasWorkspacePlan } = await import('./workspace/planDetect.js');
@@ -1285,8 +1339,33 @@ async function runHeadlessZelari(
 
   // Exit-1/E1.2: spine-derived prior turns (legacy --history is the
   // one-shot import source, not the model-context brain).
-  const historySeed: AgentMessage[] = seededHistory.history;
+  const contextTools: AgentToolSpec[] = toolRegistry.toOpenAITools().map((tool) => ({
+    name: tool.function.name,
+    description: tool.function.description,
+    parameters: tool.function.parameters as Record<string, unknown>,
+  }));
+  const missionContext = await buildModelContext({
+    fallbackHistory: seededHistory.history,
+    session: spine.spine,
+    phase: opts.phase ?? 'build',
+    model,
+    provider,
+    tools: contextTools,
+    sessionId: spine.sessionId,
+    providerStream,
+    onCompactionMetric: (metrics) => recordCompactionMetrics(spine.sessionId, provider, model, metrics),
+    persistCompaction: async (payload) => {
+      await spine.appendEvent({
+        kind: 'session.compacted',
+        actor: { type: 'system' },
+        data: { ...payload },
+      });
+    },
+  });
+  const historySeed: AgentMessage[] = missionContext.history;
+  for (const warning of missionContext.budget.warnings) emit(warning);
   const missionTask = buildCouncilTaskWithHistory(opts.task, historySeed);
+  if (opts.task) spine.userMessage(missionTask);
 
   // Surface the brief once so the desktop UI is not blank.
   emit(`[zelari] mission brief\n${JSON.stringify({ deliverable: brief.deliverableThisMission, mvp: brief.sliceMvp?.title }, null, 0)}`);

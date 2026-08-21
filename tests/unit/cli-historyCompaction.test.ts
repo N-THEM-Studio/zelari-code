@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   compactHistory,
+  compactHistoryDetailed,
+  compactedRangeFromDropped,
   resolveMaxMessages,
   type CompactHistoryOptions,
 } from "../../src/cli/hooks/historyCompaction.js";
@@ -72,7 +74,58 @@ describe("historyCompaction (v1.6.0)", () => {
     });
   });
 
-  describe("compactHistory", () => {
+  describe("compactedRangeFromDropped", () => {
+  it("returns min/max seq when every dropped message has seq", () => {
+    expect(
+      compactedRangeFromDropped([
+        { role: "user", content: "a", seq: 2 },
+        { role: "assistant", content: "b", seq: 5 },
+        { role: "user", content: "c", seq: 3 },
+      ]),
+    ).toEqual({ fromSeq: 2, toSeq: 5, sourceEventSeqs: [2, 5, 3] });
+  });
+
+  it("returns undefined when any dropped message lacks seq", () => {
+    expect(
+      compactedRangeFromDropped([
+        { role: "user", content: "a", seq: 1 },
+        { role: "assistant", content: "b" },
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("inherits the raw interval represented by a dropped checkpoint", () => {
+    expect(
+      compactedRangeFromDropped([
+        {
+          role: "user",
+          content: "C1",
+          seq: 101,
+          compactedFromSeq: 1,
+          compactedToSeq: 100,
+        },
+        { role: "user", content: "later", seq: 102 },
+      ]),
+    ).toEqual({ fromSeq: 1, toSeq: 102, sourceEventSeqs: [101, 102] });
+  });
+});
+
+describe("compactHistoryDetailed range", () => {
+  it("records fromSeq/toSeq when the dropped prefix is spine-derived", () => {
+    const msgs: AgentMessage[] = [];
+    for (let i = 1; i <= 12; i++) {
+      msgs.push({ role: i % 2 === 1 ? "user" : "assistant", content: `m${i}`, seq: i });
+    }
+    const r = compactHistoryDetailed(msgs, { maxMessages: 4, force: true });
+    expect(r.compacted).toBe(true);
+    expect(r.fromSeq).toBe(1);
+    expect(r.toSeq).toBeGreaterThanOrEqual(1);
+    expect(r.toSeq).toBeLessThan(12);
+    expect(r.strategy).toBe("extractive");
+  });
+});
+
+describe("compactHistory", () => {
     it("returns the same array reference when under the cap (no compaction)", () => {
       delete process.env.ZELARI_HISTORY_TURNS;
       const msgs = plainTurns(10);

@@ -40,6 +40,21 @@ describe('historySummary extractive', () => {
     expect(s).toMatch(/App\.tsx/);
   });
 
+  it('preserves constraints, unresolved failures and verification state', () => {
+    const summary = extractiveHistorySummary([
+      { role: 'user', content: 'You must not change the public API.' },
+      { role: 'assistant', content: 'Decision: keep the existing serializer.' },
+      {
+        role: 'tool',
+        toolCallId: 'c1',
+        content: 'typecheck failed: unresolved error in src/core/api.ts',
+      },
+    ]);
+    expect(summary).toContain('User constraints');
+    expect(summary).toContain('Unresolved failures');
+    expect(summary).toContain('Latest verification state');
+  });
+
   it('formatDroppedForLlm is bounded and non-empty', () => {
     const dropped = plainTurns(20);
     const t = formatDroppedForLlm(dropped);

@@ -28,6 +28,8 @@ import {
   readSessionLog,
   deriveMessages,
   isModelSurfaceEvent,
+  coveringCompactions,
+  shadowedSeqSet,
   resolveSessionsDir,
   type SessionEventEnvelope,
 } from '@zelari/core/session';
@@ -175,10 +177,12 @@ describe('Exit-1/E1.7 — invariante model-visible ⟺ logged (P1)', () => {
     const derivedSeqs = new Set(derived.map((m) => m.seq));
     const surface = events.filter(isModelSurfaceEvent);
     expect(surface.length).toBeGreaterThan(0);
+    const shadowed = shadowedSeqSet(coveringCompactions(events));
     for (const e of surface) {
-      // tool.call is the only surface kind the neutral derive drops by
-      // default (includeToolCalls=false) — everything else must map.
+      // Declared exclusions: tool.call (includeToolCalls=false) and seqs
+      // shadowed by a range-bearing session.compacted.
       if (e.kind === 'tool.call') continue;
+      if (shadowed.has(e.seq)) continue;
       expect(derivedSeqs.has(e.seq), `${e.kind}@${e.seq} must derive`).toBe(true);
     }
   });

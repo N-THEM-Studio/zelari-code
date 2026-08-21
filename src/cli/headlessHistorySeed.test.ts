@@ -52,7 +52,7 @@ describe('seedHeadlessModelHistory', () => {
     expect(seed.importedCount).toBe(2);
     // system/tool dropped; <think> + ---QUESTION--- preserved (binding policy)
     expect(seed.history).toHaveLength(2);
-    expect(seed.history[0]).toEqual({ role: 'user', content: 'build the login form' });
+    expect(seed.history[0]).toEqual({ role: 'user', content: 'build the login form', seq: 3 });
     expect(seed.history[1]?.role).toBe('assistant');
     expect(seed.history[1]?.content).toContain('<think>plan</think>');
     expect(seed.history[1]?.content).toContain('---QUESTION---');
@@ -141,7 +141,10 @@ describe('seedHeadlessModelHistory', () => {
       kinds.indexOf('assistant.message'),
     );
     // Clean text round-trips byte-identical through import → derive.
-    expect(seed.history).toEqual(plain);
+    expect(seed.history).toEqual([
+      { ...plain[0], seq: 3 },
+      { ...plain[1], seq: 4 },
+    ]);
     await handle.close('test-end');
   });
 

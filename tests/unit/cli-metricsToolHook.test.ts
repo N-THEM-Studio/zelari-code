@@ -18,6 +18,7 @@ import {
   getMetricsLogger,
   resetMetricsLogger,
   readMetrics,
+  recordCompactionMetrics,
   type MetricsRecord,
 } from '../../src/cli/metrics.js';
 
@@ -66,6 +67,49 @@ describe('MetricsKind extension to include "tool" (Task G.3.1)', () => {
     }
   });
 });
+
+describe('compaction metrics', () => {
+  it('writes token savings, recompaction rate, strategy and restore failures', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'metrics-compaction-'));
+    const file = path.join(dir, 'metrics.jsonl');
+    const saved = process.env.ANATHEMA_METRICS_FILE;
+    process.env.ANATHEMA_METRICS_FILE = file;
+    resetMetricsLogger();
+    try {
+      recordCompactionMetrics('sess-c', 'test-provider', 'test-model', {
+        count: 1,
+        inputTokens: 900,
+        outputTokens: 250,
+        savedTokens: 650,
+        recompactionRate: 1,
+        summaryStrategy: 'extractive',
+        restoreFailures: 0,
+      });
+      await getMetricsLogger().flush();
+
+      const [record] = await readMetrics(file);
+      expect(record).toMatchObject({
+        kind: 'compaction',
+        sessionId: 'sess-c',
+        provider: 'test-provider',
+        model: 'test-model',
+        compactionCount: 1,
+        compactionInputTokens: 900,
+        compactionOutputTokens: 250,
+        compactionSavedTokens: 650,
+        compactionRecompactionRate: 1,
+        compactionSummaryStrategy: 'extractive',
+        compactionRestoreFailures: 0,
+      });
+    } finally {
+      if (saved === undefined) delete process.env.ANATHEMA_METRICS_FILE;
+      else process.env.ANATHEMA_METRICS_FILE = saved;
+      resetMetricsLogger();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 
 describe('Process-wide singleton MetricsLogger (Task G.3.3)', () => {
   beforeEach(() => {

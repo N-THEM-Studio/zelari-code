@@ -5,6 +5,29 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-08-21
+
+### Added
+
+- **Durable session compaction surface.** `deriveMessages()` treats
+  `session.compacted` with `{fromSeq,toSeq,checkpoint}` as a replacement
+  of that closed interval (later coverings swallow earlier checkpoints).
+  The JSONL ledger stays append-only. Legacy `{summary}` events without a
+  range still append. Invariants flag invalid ranges and tool-pair splits
+  across the compact boundary.
+- **Shared durable ModelContextBuilder.** TUI, council and headless now use
+  one derive → measure → compact → persist → flush → re-derive pipeline.
+  Desktop and companion serve inherit it through headless. Spine-derived
+  messages carry seq/range provenance, so chained compactions do not resurrect
+  raw events; summary-only events remain the compatibility fallback when the
+  source has no seq.
+- **Structured compaction state and telemetry.** Checkpoints prepend a
+  deterministic state block retaining required criteria, unresolved failures,
+  verification/evidence refs, affected files, user constraints and mission
+  state. JSONL compaction metrics report token savings, repeated-checkpoint
+  rate, summary strategy and replay restore failures; LLM checkpoints also
+  retain provider/model provenance.
+
 ## [2.4.0] - 2026-08-21
 
 ### Changed

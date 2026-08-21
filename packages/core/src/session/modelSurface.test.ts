@@ -39,6 +39,26 @@ describe('deriveMessages', () => {
     const messages = deriveMessages(events, { includeToolCalls: true });
     expect(messages.map((m) => m.role)).toEqual(['user', 'assistant', 'assistant', 'tool', 'system']);
   });
+
+  it('range-bearing compact shadows fromSeq..toSeq (legacy summary stays additive)', () => {
+    const ranged = [
+      e(1, 'user.message', { text: 'old-1' }),
+      e(2, 'assistant.message', { text: 'old-2' }),
+      e(3, 'user.message', { text: 'keep' }),
+      e(4, 'session.compacted', {
+        fromSeq: 1,
+        toSeq: 2,
+        checkpoint: { role: 'system', content: 'C1' },
+        strategy: 'extractive',
+      }),
+    ];
+    const messages = deriveMessages(ranged);
+    expect(messages.map((m) => `${m.role}:${m.content}`)).toEqual([
+      'system:C1',
+      'user:keep',
+    ]);
+    expect(messages.map((m) => m.seq)).toEqual([4, 3]);
+  });
 });
 
 describe('pairToolCalls', () => {

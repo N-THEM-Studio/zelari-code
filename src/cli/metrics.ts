@@ -34,7 +34,7 @@ import os from 'node:os';
 
 export const METRICS_ROTATE_BYTES = 10 * 1024 * 1024; // 10 MB
 
-export type MetricsKind = 'run' | 'message' | 'error' | 'tool';
+export type MetricsKind = 'run' | 'message' | 'error' | 'tool' | 'compaction';
 
 export interface MetricsRecord {
   ts: number;
@@ -59,6 +59,20 @@ export interface MetricsRecord {
     historyBytesAtRequest?: number;
     historyBytesPeak?: number;
     cacheHitTokens?: number;
+    /** Number of compactions represented by this record. */
+    compactionCount?: number;
+    /** Estimated model-history tokens before compaction. */
+    compactionInputTokens?: number;
+    /** Estimated model-history tokens after compaction. */
+    compactionOutputTokens?: number;
+    /** Non-negative estimated token reduction. */
+    compactionSavedTokens?: number;
+    /** Fraction of this record's compactions replacing an earlier checkpoint. */
+    compactionRecompactionRate?: number;
+    /** Narrative summarizer used for the checkpoint. */
+    compactionSummaryStrategy?: 'extractive' | 'llm';
+    /** Durable compactions that could not be restored from replay. */
+    compactionRestoreFailures?: number;
 }
 
 export class MetricsLogger {
@@ -138,6 +152,38 @@ export async function readMetrics(file: string): Promise<MetricsRecord[]> {
     }
   }
   return out;
+}
+
+export interface CompactionMetricValues {
+  count: number;
+  inputTokens: number;
+  outputTokens: number;
+  savedTokens: number;
+  recompactionRate: number;
+  summaryStrategy: 'extractive' | 'llm';
+  restoreFailures: number;
+}
+
+/** Adapt host-neutral compaction metrics to the process JSONL schema. */
+export function recordCompactionMetrics(
+  sessionId: string | undefined,
+  provider: string | undefined,
+  model: string | undefined,
+  metrics: CompactionMetricValues,
+): void {
+  getMetricsLogger().record({
+    kind: 'compaction',
+    sessionId,
+    provider,
+    model,
+    compactionCount: metrics.count,
+    compactionInputTokens: metrics.inputTokens,
+    compactionOutputTokens: metrics.outputTokens,
+    compactionSavedTokens: metrics.savedTokens,
+    compactionRecompactionRate: metrics.recompactionRate,
+    compactionSummaryStrategy: metrics.summaryStrategy,
+    compactionRestoreFailures: metrics.restoreFailures,
+  });
 }
 
 /**

@@ -29,6 +29,8 @@ import {
   buildProjection,
   deriveMessages,
   type SessionEventInput,
+  buildCompactionStateSnapshot,
+  type CompactionStateSnapshot,
   type SessionProjection,
   type DerivedMessage,
 } from '@zelari/core/session';
@@ -74,12 +76,69 @@ export function mapBrainEventToSpine(ev: BrainEvent): SessionEventInput | null {
           durationMs: ev.durationMs,
         },
       };
-    case 'session_compacted':
-      return {
-        kind: 'session.compacted',
-        actor: ACTOR_SYSTEM,
-        data: { summary: (ev as { summary?: unknown }).summary ?? '' },
+    case 'session_compacted': {
+      const compact = ev as {
+        summary?: unknown;
+        messagesRemoved?: unknown;
+        fromSeq?: unknown;
+        toSeq?: unknown;
+        checkpoint?: unknown;
+        strategy?: unknown;
+        sourceEventSeqs?: unknown;
+        retainedCriterionIds?: unknown;
+        retainedEvidenceRefs?: unknown;
+        retainedState?: unknown;
+        stateSnapshot?: unknown;
+        sourceRequestFingerprint?: unknown;
+        headerFingerprint?: unknown;
+        sourceEstimatedTokens?: unknown;
+        cacheReuseExpected?: unknown;
+        inputTokens?: unknown;
+        outputTokens?: unknown;
+        savedTokens?: unknown;
+        recompactionRate?: unknown;
+        summaryStrategy?: unknown;
+        provider?: unknown;
+        model?: unknown;
       };
+      const data: Record<string, unknown> = { summary: compact.summary ?? '' };
+      if (typeof compact.messagesRemoved === 'number') data.messagesRemoved = compact.messagesRemoved;
+      if (typeof compact.fromSeq === 'number' && typeof compact.toSeq === 'number') {
+        data.fromSeq = compact.fromSeq;
+        data.toSeq = compact.toSeq;
+      }
+      if (compact.checkpoint && typeof compact.checkpoint === 'object') data.checkpoint = compact.checkpoint;
+      if (compact.strategy === 'extractive' || compact.strategy === 'llm') data.strategy = compact.strategy;
+      if (Array.isArray(compact.sourceEventSeqs)) data.sourceEventSeqs = compact.sourceEventSeqs;
+      if (Array.isArray(compact.retainedCriterionIds)) {
+        data.retainedCriterionIds = compact.retainedCriterionIds;
+      }
+      if (Array.isArray(compact.retainedEvidenceRefs)) {
+        data.retainedEvidenceRefs = compact.retainedEvidenceRefs;
+      }
+      if (compact.retainedState && typeof compact.retainedState === 'object') {
+        data.retainedState = compact.retainedState;
+      }
+      if (compact.stateSnapshot && typeof compact.stateSnapshot === 'object') data.stateSnapshot = compact.stateSnapshot;
+      if (typeof compact.sourceRequestFingerprint === 'string') {
+        data.sourceRequestFingerprint = compact.sourceRequestFingerprint;
+      }
+      if (typeof compact.headerFingerprint === 'string') data.headerFingerprint = compact.headerFingerprint;
+      if (typeof compact.sourceEstimatedTokens === 'number') {
+        data.sourceEstimatedTokens = compact.sourceEstimatedTokens;
+      }
+      if (typeof compact.cacheReuseExpected === 'boolean') data.cacheReuseExpected = compact.cacheReuseExpected;
+      if (typeof compact.inputTokens === 'number') data.inputTokens = compact.inputTokens;
+      if (typeof compact.outputTokens === 'number') data.outputTokens = compact.outputTokens;
+      if (typeof compact.savedTokens === 'number') data.savedTokens = compact.savedTokens;
+      if (typeof compact.recompactionRate === 'number') data.recompactionRate = compact.recompactionRate;
+      if (compact.summaryStrategy === 'extractive' || compact.summaryStrategy === 'llm') {
+        data.summaryStrategy = compact.summaryStrategy;
+      }
+      if (typeof compact.provider === 'string') data.provider = compact.provider;
+      if (typeof compact.model === 'string') data.model = compact.model;
+      return { kind: 'session.compacted', actor: ACTOR_SYSTEM, data };
+    }
     case 'agent_start':
       return {
         kind: 'note',
@@ -210,6 +269,17 @@ export class SessionSpineMirror {
     ).catch(() => null);
     if (!report || report.events.length === 0) return null;
     return deriveMessages(report.events);
+  }
+
+  /** Deterministic operational state retained beside a compact checkpoint. */
+  async compactionStateSnapshot(toSeq: number): Promise<CompactionStateSnapshot | null> {
+    if (this.status !== 'active' && this.status !== 'closed') return null;
+    await this.flush();
+    const report = await readSessionLog(
+      path.join(this.sessionsDir, this.sessionId, 'events.jsonl'),
+    ).catch(() => null);
+    if (!report || report.events.length === 0) return null;
+    return buildCompactionStateSnapshot(report.events, toSeq);
   }
 
   /**
@@ -385,6 +455,7 @@ export class SpineMirroringWriter implements SessionWriterLike {
 
   async flush(): Promise<void> {
     await this.inner.flush?.();
+    await this.spine?.flush();
   }
 
   async close(): Promise<void> {

@@ -29,6 +29,8 @@ export type SessionActor = z.infer<typeof SessionActorSchema>;
  * Closed event vocabulary (surface + state events).
  * Surface (model-visible): user.message, assistant.message, tool.call,
  * tool.result, session.compacted. Everything else is state/derived.
+ * `session.compacted` with `{fromSeq,toSeq,checkpoint}` shadows that range
+ * in deriveMessages(); `{summary}` without a range is legacy (append-only).
  */
 export const SESSION_EVENT_KINDS = [
   'session.started',

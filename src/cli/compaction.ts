@@ -16,6 +16,9 @@
  * The LLM-summarization path can be added later as a sibling function
  * (e.g. `compactTranscriptWithSummary(messages, providerStream)`) without
  * breaking this contract.
+ *
+ * @deprecated Compatibility-only UI transcript transform for /compact.
+ * Model context compaction is owned by budget/modelContextBuilder.ts.
  */
 
 export interface CompactionOptions {
@@ -61,6 +64,8 @@ export interface CompactMessage {
  *
  * Returns the same array reference (with no summary) when compaction
  * isn't needed, so callers can compare references cheaply.
+ *
+ * @deprecated Use only for the legacy /compact transcript display.
  */
 export function compactTranscript(
   messages: ReadonlyArray<CompactMessage>,

@@ -22,16 +22,26 @@ export function extractiveHistorySummary(
 
   const userGoals: string[] = [];
   const assistantNotes: string[] = [];
+  const userConstraints: string[] = [];
+  const unresolved: string[] = [];
+  const verification: string[] = [];
+  const decisions: string[] = [];
   const tools = new Map<string, number>();
   const files = new Set<string>();
   let toolResults = 0;
 
   for (const m of dropped) {
     if (m.role === 'user' && m.content.trim()) {
-      userGoals.push(oneLine(m.content, 220));
+      const goal = oneLine(m.content, 220);
+      userGoals.push(goal);
+      if (/\b(must|never|required|only|do not|constraint|vincolo|deve|senza)\b/i.test(goal)) userConstraints.push(goal);
     } else if (m.role === 'assistant') {
       if (m.content.trim()) {
-        assistantNotes.push(oneLine(m.content, 180));
+        const note = oneLine(m.content, 220);
+        assistantNotes.push(note);
+        if (/\b(fail|failed|error|unresolved|remaining|todo|blocked|gap|errore|fallit|irrisolt|manca)\b/i.test(note)) unresolved.push(note);
+        if (/\b(test|typecheck|build|verify|verification|passed|failed|green|red)\b/i.test(note)) verification.push(note);
+        if (/\b(decid|decision|chosen|choose|scelt|adopt|implement)\b/i.test(note)) decisions.push(note);
       }
       if (m.toolCalls) {
         for (const tc of m.toolCalls) {
@@ -42,6 +52,8 @@ export function extractiveHistorySummary(
     } else if (m.role === 'tool') {
       toolResults += 1;
       collectPathsFromText(m.content, files);
+      if (/\b(fail|failed|error|exception|blocked|errore|fallit)\b/i.test(m.content)) unresolved.push(oneLine(m.content, 220));
+      if (/\b(test|typecheck|build|verify|passed|failed|success)\b/i.test(m.content)) verification.push(oneLine(m.content, 220));
     }
   }
 
@@ -53,6 +65,22 @@ export function extractiveHistorySummary(
   if (userGoals.length) {
     parts.push('## User goals / requests');
     for (const g of userGoals.slice(-6)) parts.push(`- ${g}`);
+  }
+  if (userConstraints.length) {
+    parts.push('## User constraints (preserve exactly)');
+    for (const item of [...new Set(userConstraints)].slice(-8)) parts.push(`- ${item}`);
+  }
+  if (unresolved.length) {
+    parts.push('## Unresolved failures / pending repair');
+    for (const item of [...new Set(unresolved)].slice(-8)) parts.push(`- ${item}`);
+  }
+  if (verification.length) {
+    parts.push('## Latest verification state');
+    for (const item of [...new Set(verification)].slice(-6)) parts.push(`- ${item}`);
+  }
+  if (decisions.length) {
+    parts.push('## Recent active decisions');
+    for (const item of [...new Set(decisions)].slice(-6)) parts.push(`- ${item}`);
   }
 
   if (assistantNotes.length) {

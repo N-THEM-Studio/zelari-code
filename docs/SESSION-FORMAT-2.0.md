@@ -32,6 +32,56 @@ più scritto dalla spine.
 > **model-visible ⟺ logged**: solo i kinds di `MODEL_SURFACE_KINDS` (`user.message`,
 > `assistant.message`, `tool.call`, `tool.result`, `session.compacted`) entrano in
 > `deriveMessages` — l'unico path della history del modello.
+>
+> **Compact the projection, never the ledger.** Un `session.compacted` con
+> `{fromSeq,toSeq,checkpoint}` **shadowa** l'intervallo chiuso nella model
+> surface (i raw restano nel JSONL). Un compact successivo che copre il seq
+> di un checkpoint precedente lo sostituisce (chaining). Il payload legacy
+> `{summary}` senza range resta additivo.
+
+### Contratto `session.compacted` v2
+
+Un checkpoint durevole conserva il range sostituito, la model surface e lo
+stato deterministico necessario al proseguimento:
+
+```json
+{
+  "fromSeq": 12,
+  "toSeq": 80,
+  "checkpoint": {"role": "user", "content": "<compaction-state>…"},
+  "strategy": "extractive",
+  "sourceEventSeqs": [12, 13, 80],
+  "retainedCriterionIds": ["tests"],
+  "retainedEvidenceRefs": [{"seq": 76, "tier": "command-output"}],
+  "retainedState": {
+    "unresolvedIssueIds": ["tests"],
+    "affectedFiles": ["src/a.ts"],
+    "missionStateRef": "phase:verification"
+  },
+  "inputTokens": 18000,
+  "outputTokens": 3200,
+  "savedTokens": 14800,
+  "recompactionRate": 0,
+  "summaryStrategy": "extractive"
+}
+```
+
+Per i checkpoint LLM sono registrati anche `provider` e `model`. Le
+invarianti richiedono range valido e precedente all'evento compact, endpoint
+e source seq esistenti, checkpoint user/system valido, EvidenceRef risolvibili
+e boundary che non separi una tool call dal relativo result né includa una call
+ancora attiva.
+
+`ModelContextBuilder` è il percorso comune di TUI, council e headless
+(Desktop e companion `serve` delegano a headless): deriva dalla spine, misura,
+compatta, persiste, esegue il flush, rilegge la projection durevole e misura
+nuovamente prima di invocare `AgentHarness`. Il blocco
+`<compaction-state version="1">` conserva criteria required, failure aperte,
+latest verification, EvidenceRef, file interessati, vincoli utente e stato
+missione; la narrativa LLM/extractive viene aggiunta dopo questo blocco.
+
+La telemetria JSONL usa record `kind:"compaction"` con count, input/output e
+saved tokens, recompaction rate, summary strategy e restore failures.
 
 ### Replay tollerante
 

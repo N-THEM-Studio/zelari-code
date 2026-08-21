@@ -7,6 +7,7 @@
  */
 export * from './types.js';
 export * from './modelSurface.js';
+export * from './compaction.js';
 export * from './agentAdapter.js';
 export * from './writer.js';
 export * from './replay.js';
