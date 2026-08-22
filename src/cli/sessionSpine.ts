@@ -266,30 +266,18 @@ export class SessionSpineMirror {
   /** Log the user prompt — the P1 gap the 1.x log never closed. */
   userMessage(text: string): void {
     const seqP = this.append({ kind: 'user.message', actor: ACTOR_USER, data: { text } });
+    // NOTE (2.6 Track A): task.contract seeding happens INSIDE append() on
+    // the same write chain (user.message -> task.contract, deterministic
+    // order, flush() awaits both). A .then() here would race flush()'s
+    // chain capture - the exact bug CI caught on Linux.
+    void seqP;
     // 2.6 Track A (doc section 14): seed the first-class task contract from
     // the FIRST user message of a fresh session. Env-gated pilot
     // (ZELARI_TASK_CONTRACT=1), state-only, version-monotone - the derived
     // contract anchors constraints/criteria the compaction snapshot prefers
     // over regex extraction (F7). Later steers stay ordinary user messages
     // until task.contract_updated wiring ships; degrade-and-stop applies.
-    if (process.env.ZELARI_TASK_CONTRACT === '1' && !this.contractSeeded) {
-      this.contractSeeded = true;
-      void seqP
-        .then((seq) => {
-          const contract = deriveInitialContract(seq ?? 1, text);
-          if (contract) {
-            void this.append({
-              kind: 'task.contract',
-              actor: ACTOR_SYSTEM,
-              data: { contract, kind: 'task.contract' },
-            });
-          }
-        })
-        .catch(() => {
-          /* degrade-and-stop: seeding failure never breaks the turn */
-        });
-    }
-  }
+      }
 
   /**
    * Log an assistant message outside the streaming path — legacy
@@ -474,6 +462,15 @@ export class SessionSpineMirror {
     // snapshot is due it lands right AFTER its tool.call on this same chain
     // (local variable — no re-entrant append racing the this.chain capture).
     const dueSnapshot = input.kind === 'tool.call' ? this.onToolCallBudget() : null;
+    // 2.6 Track A: capture contract seeding synchronously for the FIRST
+    // user.message (env-gated pilot). Chained below on the same local seq
+    // promise - deterministic order, never a re-entrant append race.
+    const dueContract =
+      input.kind === 'user.message' &&
+      process.env.ZELARI_TASK_CONTRACT === '1' &&
+      !this.contractSeeded
+        ? ((this.contractSeeded = true), input.data?.text as string)
+        : null;
     let seq: Promise<number | null> = this.chain
       .then(() => this.writer!.append(input))
       .then((envelope) => envelope.seq);
@@ -483,6 +480,23 @@ export class SessionSpineMirror {
           .append({ kind: 'resource.snapshot', actor: ACTOR_SYSTEM, data: { ...dueSnapshot } })
           .then(() => s),
       );
+    }
+    if (dueContract) {
+      seq = seq.then(async (s) => {
+        try {
+          const contract = deriveInitialContract(s ?? 1, dueContract);
+          if (contract) {
+            await this.writer!.append({
+              kind: 'task.contract',
+              actor: ACTOR_SYSTEM,
+              data: { contract, kind: 'task.contract' },
+            });
+          }
+        } catch {
+          /* degrade-and-stop: seeding failure never breaks the turn */
+        }
+        return s;
+      });
     }
     this.chain = seq
       .catch((err) => {
