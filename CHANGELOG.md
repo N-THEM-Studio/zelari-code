@@ -5,6 +5,87 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.1] - 2026-08-23
+
+Hardening release: turns the 2.6 primitives into end-to-end guarantees
+(correctness fixes, single resource authority, harness manifest lifecycle,
+real candidate-vs-baseline regression gate).
+
+### Fixed
+
+- **TaskContract parser** — acceptance criteria are recognized only from
+  explicit patterns (`- [ ]` / `- [x]` / `Acceptance:` / `Criterion:` /
+  `Verify:` / `Test:` / `Success:`); narrative lines no longer become false
+  criteria (a contract without explicit patterns gets `acceptanceCriteria:
+  []`). Seeding is now default-on (`ZELARI_TASK_CONTRACT=0` opts out).
+- **Gauntlet zero-budget ordering** — `budgetGate` returns `hold` at zero
+  remaining budget before the finalize-verify reserve check (0 → hold,
+  reserve-only → finalize-verify, ample → repair).
+- **Single RESOURCE STATUS** — `ModelContextBuilder` no longer appends a
+  second resource-status tail; the latest-only `resource.snapshot`
+  projection is the single model-visible status across TUI, headless,
+  resume and post-compaction.
+- **RegressionGate missing anchors** — candidate-vs-baseline comparison
+  runs on the union of anchor IDs; a baseline-PASS anchor with no candidate
+  record is a REGRESSION (or an explicit BLOCKED), so anchors can no longer
+  disappear from the gate.
+- **Harness change classification** — `HarnessChangeSet` keeps structural /
+  behavioral / cosmetic buckets separate instead of flattening to a single
+  `overall` where behavioral hid structural; structural changes trigger the
+  full structural gate; unknown behavioral fields get Tier 0 + full
+  behavioral anchors — never zero.
+- **`runGate` candidate comparison** — baseline and candidate summaries
+  load separately and feed `evaluateRegressionGate` (baseline suite =
+  baseline, current suite = candidate); validity violations reach the gate
+  instead of a hardcoded empty array; `--baseline none` is rejected
+  (exit 2).
+- **Version manifests** — repair release: all manifests (root, core,
+  desktop, tauri, lockfiles) back in lockstep at 2.6.1.
+
+### Changed
+
+- **ResourcePolicy is the single tool-budget authority** —
+  `ZELARI_MAX_TOOL_CALLS` now aliases `ResourcePolicy.maxToolCalls` instead
+  of adding a second independent cap; per-turn sub-agent caps are derived
+  clamps that can never exceed the remaining session budget.
+- **Hard `maxToolCalls` semantics** — usage is no longer clamped at the
+  limit: denied calls keep the real count, `overrun` is reported in
+  snapshots, and `resource.limit_reached` / `resource.overrun` events are
+  emitted.
+- **Argument-aware verification reserve** — the spine gate seam is now
+  `toolCallGate(toolName, args, context)`: bare `bash` counts as
+  verification-essential only for test/typecheck/build/git-diff style
+  commands, not arbitrary exploration.
+
+### Added
+
+- **Harness manifest lifecycle** — every new session registers
+  `session.harness_manifest` (TUI, headless, desktop bridge) via a shared
+  `noteHarnessLifecycle` helper; resume compares original vs current hash
+  and records `session.harness_drift` (non-blocking).
+- **Canonical `CORE_VERSION` + deep fingerprints** — `@zelari/core`
+  exports `CORE_VERSION` (no more `require.resolve` with `0.0.0` fallback);
+  tool fingerprints hash name + description + inputSchema; skills hash a
+  content digest.
+- **TUI/headless budget parity** — shared
+  `restoreBudgetRuntimeFromSession()` rebuilds the ledger identically in
+  every host (12/40 used → remaining 28 in both TUI and headless); TUI now
+  attaches a real `BudgetRuntime` (gate + resume) instead of a pass-through.
+- **Steer versioning** — relevant user steer messages emit versioned
+  `task.contract_updated` events (append-only, user-over-derived authority).
+- **ResourceReserveGate in the completion lifecycle** — non-PASS with an
+  exhausted budget ends `BLOCKED/resource-exhausted` in headless runs
+  instead of a false done; the Gauntlet loop consults the budget gate.
+- **Eval provenance + token budgets** — anchor runs record real
+  `harnessManifestHash` / `resourcePolicyHash`, enforce `maxTokens`
+  (`budget-exceeded-tokens`), and report token-accurate `RunCost`
+  (input/output/cache-hit tokens, tool calls, wall ms, USD) with
+  `toolCostUsd` included in cost-per-verified-solve.
+- **Historical anchor set expanded 3 → 15** (5 local bugfix, 4 multi-file,
+  3 verification/evidence, 2 session resume, 1 resource budget) with
+  deterministic fixtures; **CI eval retention gate is Tier-0 blocking**
+  against the latest stable tag baseline (never `none`).
+
 ## [2.6.0] - 2026-08-22
 
 ### Added
