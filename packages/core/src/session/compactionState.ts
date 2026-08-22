@@ -233,9 +233,34 @@ export function buildCompactionStateSnapshot(
         }
       : undefined;
 
+  // 2.6 (doc section 14.5): prefer the first-class TaskContract when the
+  // session carries one; the regex extraction above stays as fallback.
+  const latestContractEvent = [...scoped]
+    .reverse()
+    .find((event) => event.kind === 'task.contract' || event.kind === 'task.contract_updated');
+  const contractRaw =
+    latestContractEvent && typeof latestContractEvent.data.contract === 'object'
+      ? (latestContractEvent.data.contract as {
+          goal?: unknown;
+          constraints?: unknown;
+          acceptanceCriteria?: unknown;
+        })
+      : undefined;
+  const contractConstraints =
+    Array.isArray(contractRaw?.constraints)
+      ? (contractRaw!.constraints as Array<{ text?: unknown; source?: unknown; required?: unknown }>)
+          .filter((c) => c.source === 'user' && c.required === true && typeof c.text === 'string')
+          .map((c) => String(c.text))
+      : undefined;
+  const contractCriteria =
+    Array.isArray(contractRaw?.acceptanceCriteria)
+      ? (contractRaw!.acceptanceCriteria as Array<{ id?: unknown; required?: unknown }>)
+          .filter((c) => typeof c.id === 'string')
+          .map((c) => ({ id: String(c.id), required: c.required === true }))
+      : undefined;
   return {
     version: 1,
-    activeCriteria,
+    activeCriteria: contractCriteria ?? activeCriteria,
     unresolvedIssues,
     ...(latestVerification
       ? {
@@ -252,7 +277,7 @@ export function buildCompactionStateSnapshot(
       : {}),
     retainedEvidenceRefs: evidenceFromResults(results),
     affectedFiles: [...affectedFiles].slice(0, 64),
-    userConstraints: [...userConstraints].slice(-12),
+    userConstraints: contractConstraints ?? [...userConstraints].slice(-12),
     ...(missionState ? { missionState } : {}),
   };
 }

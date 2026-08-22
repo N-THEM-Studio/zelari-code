@@ -22,8 +22,11 @@ import {
   type SessionEventInput,
 } from '@zelari/core/session';
 import { deriveMissionState } from '@zelari/core/mission';
+import { readSessionLog } from '@zelari/core/session';
+import path from 'node:path';
 import { resolveProfile, toolManifestHash } from '@zelari/core/runtime';
 import { SessionSpineMirror, type SpineMirrorOptions } from './sessionSpine.js';
+import { BudgetRuntime, resolveResourceEnforcement } from './budget/budgetRuntime.js';
 import type { SessionVerificationRunSnapshot } from '@zelari/core/verification';
 import { defaultProfileForMode, type HeadlessMode } from './headless.js';
 
@@ -35,6 +38,9 @@ export interface HeadlessSpineHandle {
   observe(ev: unknown): void;
   userMessage(text: string): void;
   verificationRun(payload: Record<string, unknown>): void;
+  /** 2.6 Phase 3 pre-dispatch resource gate (null = no budget runtime, allow). */
+  gateResourceToolCall(toolName: string): { allowed: boolean; reason?: string } | null;
+
   /**
    * F3 (ADR-0023 §5): append one spine event and resolve its assigned seq
    * (null when degraded/disabled) — the anchor EvidenceRef.seq points at.
@@ -116,6 +122,16 @@ export async function openHeadlessSpine(opts: {
   };
   const spine = await SessionSpineMirror.adopt(opts.sessionId, mirrorOpts);
   if (spine.status === 'active') {
+    // 2.6 Track B (Phase 2/3): count tool calls, emit resource.snapshot.
+    const budget = new BudgetRuntime(profileId, { enforcement: resolveResourceEnforcement() });
+    if (spine.resumedFromSeq !== undefined && spine.resumedFromSeq > 0) {
+      // §9.5 reconstructable state: rebuild usage from the prior log.
+      const prior = await readSessionLog(
+        path.join(spine.sessionsDir, opts.sessionId, 'events.jsonl'),
+      ).catch(() => null);
+      if (prior) budget.adoptLedgerFromEvents(prior.events);
+    }
+    spine.attachBudgetRuntime(budget);
     spine.note('headless.profile', { profile: profileId, mode: opts.mode ?? 'kraken' });
   }
 
@@ -130,6 +146,9 @@ export async function openHeadlessSpine(opts: {
     },
     userMessage(text: string): void {
       spine.userMessage(text);
+    },
+    gateResourceToolCall(toolName: string): { allowed: boolean; reason?: string } | null {
+      return spine.gateResourceToolCall(toolName);
     },
     verificationRun(payload: Record<string, unknown>): void {
       spine.verificationRun(payload);

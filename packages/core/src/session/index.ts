@@ -16,3 +16,4 @@ export * from './lineage.js';
 export * from './exportSession.js';
 export * from './invariants.js';
 export * from './recovery.js';
+export * from './taskContract.js';

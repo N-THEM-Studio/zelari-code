@@ -1,0 +1,22 @@
+{
+  "id": "ts-rename-multi-file",
+  "version": 1,
+  "tier": 1,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "Rename the function getUser in user.ts to fetchUser and update the import in api.ts so the program still works. Do not change behaviour.",
+  "fixture": {
+    "files": [
+      { "path": "src/user.ts", "content": "export function getUser(): string {\n  return 'u1';\n}\n" },
+      { "path": "src/api.ts", "content": "import { getUser } from './user.js';\nexport function call(): string {\n  return getUser();\n}\n" },
+      {
+        "path": "check.mjs",
+        "content": "import assert from 'node:assert';\nimport { readFileSync } from 'node:fs';\nconst user = readFileSync('src/user.ts', 'utf8');\nconst api = readFileSync('src/api.ts', 'utf8');\nassert.ok(user.includes('fetchUser'), 'user.ts must define fetchUser');\nassert.ok(!user.includes('getUser'), 'user.ts must not keep the old name');\nassert.ok(api.includes('fetchUser'), 'api.ts must import fetchUser');\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [{ "command": "node check.mjs", "expectExit": 0 }],
+  "budget": { "maxToolCalls": 20, "verificationReserve": 3, "maxWallMs": 240000 },
+  "tags": ["multi-file", "refactor"]
+}

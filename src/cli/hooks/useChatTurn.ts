@@ -416,6 +416,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         const modelContext = await buildModelContext({
           fallbackHistory: historyForModel,
           session: writerRef.current?.spine ?? null,
+          resourceSnapshot: writerRef.current?.spine?.latestResourceSnapshot() ?? null,
           phase: workPhase,
           model: getActiveModel(),
           provider: envConfig?.providerId ?? (localCli || 'local'),
@@ -757,6 +758,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           })),
           toolRegistry,
           providerStream,
+          // 2.6 Phase 3: host-owned pre-dispatch resource gate via the spine
+          // mirror (doc section 11.3). Degrade-and-stop (null gate = allow).
+          toolCallGate: (name: string) =>
+            writerRef.current?.spine?.gateResourceToolCall(name) ?? { allowed: true },
           cwd,
           maxToolCallsPerTurn,
           maxToolLoopIterations,

@@ -1,0 +1,23 @@
+{
+  "id": "js-fix-export-bugfix",
+  "version": 1,
+  "tier": 0,
+  "profile": "minimal/v1",
+  "phase": "build",
+  "task": "The file sum.js contains add(a,b) with a subtraction bug (a - b). Fix it so it adds, without changing the exported function names.",
+  "fixture": {
+    "files": [
+      { "path": "sum.js", "content": "export function add(a, b) {\n  return a - b;\n}\n" },
+      {
+        "path": "sum.test.mjs",
+        "content": "import { add } from './sum.js';\nimport assert from 'node:assert';\nassert.strictEqual(add(2, 3), 5);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    { "command": "node sum.test.mjs", "expectExit": 0 }
+  ],
+  "budget": { "maxToolCalls": 12, "verificationReserve": 2, "maxWallMs": 120000 },
+  "tags": ["local-bugfix", "js"]
+}

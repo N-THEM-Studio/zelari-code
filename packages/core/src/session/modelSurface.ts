@@ -6,6 +6,11 @@
  * `session.compacted` events replace `[fromSeq, toSeq]` (ledger unchanged).
  * The CLI maps these onto its provider-specific request format — nothing else
  * may invent model-visible history (ADR-0016 invariant: model-visible ⟺ logged).
+ *
+ * 2.6 (doc §10.2): LATEST-ONLY kinds. `resource.snapshot` is model-surface
+ * but only its LAST event projects — earlier snapshots stay in the ledger
+ * (state) without flooding the context. Every event kind may opt into this
+ * projection; today it is exactly {'resource.snapshot'}.
  */
 
 import type { SessionEventEnvelope, SessionEventKind } from './types.js';
@@ -18,10 +23,31 @@ export const MODEL_SURFACE_KINDS: ReadonlySet<SessionEventKind> = new Set([
   'tool.call',
   'tool.result',
   'session.compacted',
+  // 2.6: budget awareness for the model (latest-only projection below).
+  'resource.snapshot',
 ]);
+
+/**
+ * Surface kinds projected LATEST-ONLY: the highest-seq event of the kind
+ * becomes one system message; earlier ones remain in the log (state).
+ */
+export const LATEST_ONLY_SURFACE_KINDS: ReadonlySet<SessionEventKind> = new Set(['resource.snapshot']);
 
 export function isModelSurfaceEvent(event: { kind: string }): boolean {
   return MODEL_SURFACE_KINDS.has(event.kind as SessionEventKind);
+}
+
+/** Highest seq per latest-only kind — the sole event of that kind that projects. */
+export function latestSurfaceSeqByKind(
+  events: readonly SessionEventEnvelope[],
+): Map<SessionEventKind, number> {
+  const latest = new Map<SessionEventKind, number>();
+  for (const e of events) {
+    if (LATEST_ONLY_SURFACE_KINDS.has(e.kind) && !isSeqShadowed(e.seq, coveringCompactions(events))) {
+      latest.set(e.kind, e.seq);
+    }
+  }
+  return latest;
 }
 
 /** Provider-neutral derived message with provenance (source event seq). */
@@ -53,12 +79,38 @@ function asString(value: unknown): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * Human/model-readable RESOURCE STATUS block (doc §10.3) from a snapshot
+ * payload. Pure — used by deriveMessages and by the CLI emitter tests.
+ */
+export function formatResourceSnapshot(data: Record<string, unknown>): string {
+  const used = asNumber(data.toolCallsUsed) ?? 0;
+  const remaining = asNumber(data.toolCallsRemaining) ?? 0;
+  const lines = [
+    'RESOURCE STATUS',
+    `Tool calls: ${used} / ${used + remaining}`,
+    `Remaining: ${remaining}`,
+  ];
+  const wall = asNumber(data.wallMsRemaining);
+  if (wall !== undefined) lines.push(`Wall clock remaining: ${Math.max(0, Math.round(wall / 1000))}s`);
+  lines.push(`Verification reserve: ${asNumber(data.verificationReserve) ?? 0}`);
+  lines.push(`Repair reserve: ${asNumber(data.repairReserve) ?? 0}`);
+  if (typeof data.stage === 'string') lines.push(`Stage: ${data.stage}`);
+  if (typeof data.pressure === 'string') lines.push(`Pressure: ${data.pressure}`);
+  return lines.join('\n');
+}
+
 /**
  * Project surface events into the neutral model history. Deterministic.
  *
  * Range-bearing `session.compacted` events replace `[fromSeq, toSeq]` with
  * the checkpoint (durable shadowing). Compact events without a range stay
- * additive (legacy `{summary}` append).
+ * additive (legacy `{summary}` append). Latest-only kinds project exactly
+ * their last event (see LATEST_ONLY_SURFACE_KINDS).
  */
 export function deriveMessages(
   events: readonly SessionEventEnvelope[],
@@ -67,6 +119,7 @@ export function deriveMessages(
   const coverings = coveringCompactions(events);
   const orderedCoverings = [...coverings].sort((a, b) => a.fromSeq - b.fromSeq || a.seq - b.seq);
   const compactBySeq = new Map(coverings.map((c) => [c.seq, c]));
+  const latestOfKind = latestSurfaceSeqByKind(events);
   const messages: DerivedMessage[] = [];
   let nextCheckpoint = 0;
   const pushCheckpoint = (compact: (typeof orderedCoverings)[number]): void => {
@@ -90,6 +143,8 @@ export function deriveMessages(
     if (compactBySeq.has(e.seq)) continue;
     if (isSeqShadowed(e.seq, coverings)) continue;
     if (!isModelSurfaceEvent(e)) continue;
+    // Latest-only projection: skip superseded snapshots of the same kind.
+    if (LATEST_ONLY_SURFACE_KINDS.has(e.kind) && latestOfKind.get(e.kind) !== e.seq) continue;
     const d = e.data;
     switch (e.kind) {
       case 'user.message':
@@ -127,6 +182,13 @@ export function deriveMessages(
         messages.push({
           role: 'system',
           content: String(d.summary ?? '[session compacted]'),
+          seq: e.seq,
+        });
+        break;
+      case 'resource.snapshot':
+        messages.push({
+          role: 'system',
+          content: formatResourceSnapshot(d),
           seq: e.seq,
         });
         break;

@@ -679,6 +679,7 @@ async function runHeadlessSingle(
   const modelContext = await buildModelContext({
     fallbackHistory: seededHistory.history,
     session: spine.spine,
+    resourceSnapshot: spine.spine.latestResourceSnapshot(),
     phase: opts.phase ?? 'build',
     model,
     provider,
@@ -740,6 +741,10 @@ async function runHeadlessSingle(
       tools,
       toolRegistry,
       providerStream,
+      // 2.6 Phase 3: host-owned pre-dispatch resource gate (doc section 11.3).
+      // Advisory by default; ZELARI_RESOURCE_ENFORCEMENT=protected enables the
+      // protected verification reserve. Degrade-and-stop (null gate = allow).
+      toolCallGate: (name: string) => spine.gateResourceToolCall(name) ?? { allowed: true },
       maxToolLoopIterations: maxToolLoop,
     });
 

@@ -1,0 +1,36 @@
+name: eval-retention-gate
+
+# 2.6 Track A (F11): historical-anchor retention gate.
+# Tier 0 anchors are PR-blocking; the gate itself runs report-only until
+# baseline coverage exists (rollout Phase 1 → Phase 4 per doc §28).
+
+on:
+  pull_request:
+    paths:
+      - 'packages/core/src/**'
+      - 'src/cli/**'
+      - 'eval/anchors/**'
+      - 'tools/eval/**'
+      - '.github/workflows/eval-retention-gate.yml'
+  push:
+    branches: [main]
+
+jobs:
+  tier0-anchors:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build core (CLI imports resolve from dist)
+        run: npm run build --workspace=@zelari/core
+      - name: Eval harness unit tests (anchor format, runner, gate, targeting)
+        run: npx vitest run tools/eval
+      - name: Session + resource invariants (spine replay safety)
+        run: npx vitest run packages/core/src/session packages/core/src/runtime packages/core/src/verification/resourceReserveGate.test.ts
+      - name: Retention gate (report-only shadow phase — no baseline agent runs in CI yet)
+        run: node --experimental-strip-types tools/eval/runGate.ts --baseline none --report-only
+        continue-on-error: false

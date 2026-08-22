@@ -37,3 +37,6 @@ apps/companion-android/captures/
 
 # Local scratch (release notes, one-off bump scripts) — never committed
 .tmp/
+
+# Eval result store (runtime output of tools/eval regression gate)
+eval/results/

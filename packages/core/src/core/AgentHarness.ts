@@ -170,6 +170,18 @@ export interface AgentHarnessConfig {
    * the providerStream loop up to this many times before yielding
    * agent_end. Default 3. Set to 0 to disable queue draining.
    */
+  /**
+   * v2.6 resource-aware execution (Phase 3): host-owned pre-dispatch gate,
+   * consulted before EVERY toolRegistry.invoke (native tool_call deltas and
+   * text-format tools alike). Returning { allowed: false } makes the harness
+   * synthesize an error tool result (model-visible) so the model can pivot to
+   * verification/repair — the tool does NOT run. Guarded: a missing or
+   * throwing gate never blocks a call (degrade-and-stop).
+   */
+  toolCallGate?: (
+    toolName: string,
+    args: Record<string, unknown>,
+  ) => { allowed: boolean; reason?: string };
   maxQueuedIterations?: number;
   /**
    * Soft maximum of tool-loop iterations (observe → reason → act cycles)
@@ -362,6 +374,22 @@ export class AgentHarness {
    * via Promise.all (chunked by ZELARI_MAX_PARALLEL_TOOLS, default 6); write/
    * execute tools run one-at-a-time in order.
    */
+  /**
+   * v2.6 Phase 3 resource seam: consult the host-owned pre-dispatch gate.
+   * Degrade-and-stop — a throwing gate NEVER blocks a tool call.
+   */
+  private checkToolCallGate(
+    toolName: string,
+    args: Record<string, unknown>,
+  ): { allowed: boolean; reason?: string } {
+    if (!this.config.toolCallGate) return { allowed: true };
+    try {
+      return this.config.toolCallGate(toolName, args) ?? { allowed: true };
+    } catch {
+      return { allowed: true };
+    }
+  }
+
   private async executePendingTools(
     pending: ReadonlyArray<{
       toolCallId: string;
@@ -406,6 +434,20 @@ export class AgentHarness {
       if (p.skipped || !this.config.toolRegistry) {
         return {
           content: `[skipped] maxToolCallsPerTurn reached (limit=${maxToolCalls})`,
+          isError: true,
+          durationMs: 0,
+        };
+      }
+
+      // v2.6 Phase 3: host-owned resource gate (protected verification
+      // reserve). Denied calls never reach the registry nor the doom-loop
+      // counter — the model gets a visible reason to pivot.
+      const gate = this.checkToolCallGate(p.toolName, p.args);
+      if (!gate.allowed) {
+        return {
+          content:
+            `[resource-gate] ${gate.reason ?? 'denied by resource policy'} ` +
+            `Prioritize verification/repair actions (test, typecheck, build, read failures) or finalize honestly.`,
           isError: true,
           durationMs: 0,
         };
@@ -1140,6 +1182,24 @@ export class AgentHarness {
               });
               this.emit(startEv);
               yield startEv;
+              // v2.6 Phase 3: host-owned resource gate (text-format path).
+              const gate = this.checkToolCallGate(tt.name, tt.args);
+              if (!gate.allowed) {
+                const denied =
+                  `[resource-gate] ${gate.reason ?? 'denied by resource policy'} ` +
+                  `Prioritize verification/repair actions (test, typecheck, build, read failures) or finalize honestly.`;
+                const denyEv = createBrainEvent('tool_execution_end', this.sessionId, {
+                  toolCallId,
+                  result: denied,
+                  isError: true,
+                  durationMs: 0,
+                });
+                this.emit(denyEv);
+                yield denyEv;
+                turnToolResults.push({ toolCallId, content: denied });
+                executedAny = true;
+                continue;
+              }
               let resultStr = '';
               let isError = false;
               const startMs = Date.now();

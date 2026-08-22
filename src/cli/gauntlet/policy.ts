@@ -71,3 +71,23 @@ export function shouldRunGauntletHostLoop(opts: {
   const phase = opts.phase ?? 'build';
   return phase !== 'plan';
 }
+
+/**
+ * 2.6 Track B (doc section 13.5): budget-aware gauntlet gate — combines the
+ * critic verdict (PASS/GAP/BLOCKED, authority unchanged) with the resource
+ * budget to decide how the REMAINING budget is spent. The critic and the
+ * CompletionPolicy keep their authority; this only shapes next-action
+ * feasibility. Pure function (unit-tested in tools/eval).
+ */
+export type GauntletBudgetDecision = 'proceed' | 'finalize-verify' | 'hold';
+
+export function budgetAwareGauntletGate(input: {
+  verdict: 'PASS' | 'GAP' | 'BLOCKED';
+  toolCallsRemaining: number;
+  verificationReserve: number;
+}): GauntletBudgetDecision {
+  if (input.verdict === 'PASS') return 'proceed';
+  if (input.toolCallsRemaining <= input.verificationReserve) return 'finalize-verify';
+  if (input.toolCallsRemaining <= 0) return 'hold';
+  return 'proceed';
+}

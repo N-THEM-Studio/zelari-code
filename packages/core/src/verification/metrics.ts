@@ -42,3 +42,43 @@ export function verificationCostRatio(verificationMs: number, totalMs: number): 
   if (totalMs <= 0) return null;
   return verificationMs / totalMs;
 }
+
+/**
+ * 2.6 Track B (doc section 15): unified cost-per-verified-solve metrics.
+ * Core-side aggregation over cost-bearing samples — the full RunCost type
+ * lives in tools/eval/cost.ts (eval tooling boundary); here we accept the
+ * minimal cost shape so the core stays dependency-free.
+ */
+export interface CostedTaskSample extends TaskOutcomeSample {
+  modelCostUsd: number;
+  wallMs: number;
+  toolCalls: number;
+}
+
+export interface CostPerVerifiedSolveStats {
+  verifiedSolves: number;
+  totalCostUsd: number;
+  costPerVerifiedSolve: number | null;
+  wallMsPerVerifiedSolve: number | null;
+  toolCallsPerVerifiedSolve: number | null;
+}
+
+/** North-star aggregation: quality (verified) over quantity (cost). */
+export function costPerVerifiedSolve(samples: readonly CostedTaskSample[]): CostPerVerifiedSolveStats {
+  const solved = samples.filter((s) => s.verified === true);
+  const totalCostUsd = samples.reduce((sum, s) => sum + s.modelCostUsd, 0);
+  const totalWallMs = samples.reduce((sum, s) => sum + s.wallMs, 0);
+  const totalToolCalls = samples.reduce((sum, s) => sum + s.toolCalls, 0);
+  const n = solved.length;
+  return {
+    verifiedSolves: n,
+    totalCostUsd: round(totalCostUsd),
+    costPerVerifiedSolve: n > 0 ? round(totalCostUsd / n) : null,
+    wallMsPerVerifiedSolve: n > 0 ? Math.round(totalWallMs / n) : null,
+    toolCallsPerVerifiedSolve: n > 0 ? round(totalToolCalls / n) : null,
+  };
+}
+
+function round(v: number): number {
+  return Math.round(v * 1e6) / 1e6;
+}

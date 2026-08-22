@@ -26,6 +26,7 @@ import {
   type CompactionTelemetry,
 } from './persistCompact.js';
 import { derivedModelSeed } from '../headlessSpine.js';
+import { formatResourceSnapshot } from '@zelari/core/session';
 
 export interface CompactionMetrics extends CompactionTelemetry {
   count: 1;
@@ -35,6 +36,11 @@ export interface CompactionMetrics extends CompactionTelemetry {
 function messageWasRecompacted(message: AgentMessage, history: readonly AgentMessage[]): boolean {
   if (message.compactedFromSeq === undefined) return false;
   return !history.some((candidate) => candidate.seq !== undefined && candidate.seq === message.seq);
+}
+
+/** RESOURCE STATUS system tail (doc §10.3) from the latest snapshot payload. */
+function resourceStatusMessage(payload: object): AgentMessage {
+  return { role: 'system', content: formatResourceSnapshot(payload as Record<string, unknown>) };
 }
 
 export type DurableCompactionPayload = ReturnType<typeof compactEventPayload>;
@@ -59,6 +65,8 @@ export interface ModelContextBuilderInput {
   signal?: AbortSignal;
   requestSnapshot?: BudgetPolicyEnvelope['requestSnapshot'];
   providerStream?: ProviderStreamFn;
+  /** Latest resource snapshot (2.6 Track B) — rendered as RESOURCE STATUS. */
+  resourceSnapshot?: object | null;
   /** Receives one record for each compaction attempt. */
   onCompactionMetric?: (metrics: CompactionMetrics) => void;
   /**
@@ -168,6 +176,13 @@ export async function buildModelContext(
         ranged && input.persistCompaction && !reconstructedFromSession ? 1 : 0,
     };
     input.onCompactionMetric?.(compactionMetrics);
+  }
+
+  // 2.6 Track B (doc §10.3): model-visible RESOURCE STATUS — the LATEST
+  // snapshot only, appended as a system tail AFTER compaction replay so the
+  // occupancy measurement below includes it. Projection stays latest-only.
+  if (input.resourceSnapshot) {
+    history = [...history, resourceStatusMessage(input.resourceSnapshot)];
   }
 
   if (requestSurface) {

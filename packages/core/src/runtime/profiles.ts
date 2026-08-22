@@ -9,6 +9,7 @@
 
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { stableStringify } from '../core/requestSnapshot.js';
 
 export const ProfileSchema = z.object({
   /** `<name>/v<N>` — immutable once published. */
@@ -97,4 +98,14 @@ export function resolveProfile(id: string): Profile {
 export function toolManifestHash(tools: readonly string[]): string {
   const manifest = [...tools].sort().join(',');
   return createHash('sha256').update(manifest).digest('hex');
+}
+
+/**
+ * Stable hash of the FULL profile (capability set + orchestration mounts +
+ * verification flags) — the `profile.hash` field of the harness manifest
+ * (2.6 Track A). Uses the shared canonical serializer (requestSnapshot) so
+ * key order can never flip the hash.
+ */
+export function profileHash(profile: Profile): string {
+  return createHash('sha256').update(stableStringify(profile)).digest('hex');
 }

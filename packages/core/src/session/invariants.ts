@@ -216,3 +216,63 @@ function pushCompactionViolations(
     }
   }
 }
+
+/**
+ * 2.6 Track A/B relational invariants: resource events + task contract
+ * (doc section 24.1). Standalone so replay/CI can opt in per surface.
+ */
+export function validateResourceAndContractEvents(
+  events: readonly SessionEventEnvelope[],
+): SessionInvariantViolation[] {
+  const violations: SessionInvariantViolation[] = [];
+  let lastToolCallsUsed = -1;
+  for (const e of events) {
+    if (e.kind === 'resource.snapshot') {
+      const used = e.data.toolCallsUsed;
+      const remaining = e.data.toolCallsRemaining;
+      if (typeof used !== 'number' || typeof remaining !== 'number' || used < 0 || remaining < 0) {
+        violations.push({ code: 'RESOURCE_SNAPSHOT_INVALID', seq: e.seq, message: 'snapshot must carry non-negative toolCallsUsed/Remaining' });
+        continue;
+      }
+      if (used < lastToolCallsUsed) {
+        violations.push({ code: 'RESOURCE_USED_MONOTONIC', seq: e.seq, message: `toolCallsUsed went ${lastToolCallsUsed} -> ${used}` });
+      }
+      lastToolCallsUsed = used;
+      const limit = typeof e.data.toolCallsLimit === 'number' ? e.data.toolCallsLimit : used + remaining;
+      if (used + remaining !== limit) {
+        violations.push({ code: 'RESOURCE_REMAINING_COHERENT', seq: e.seq, message: `used(${used}) + remaining(${remaining}) != limit(${limit})` });
+      }
+      for (const key of ['verificationReserve', 'repairReserve'] as const) {
+        const v = e.data[key];
+        if (typeof v === 'number' && v < 0) {
+          violations.push({ code: 'RESERVE_NEGATIVE', seq: e.seq, message: `${key} is negative (${v})` });
+        }
+      }
+    }
+    if (e.kind === 'session.harness_manifest') {
+      if (typeof e.data.manifestHash !== 'string' || !e.data.manifest) {
+        violations.push({ code: 'MANIFEST_PAYLOAD_INVALID', seq: e.seq, message: 'session.harness_manifest needs {manifest, manifestHash}' });
+      }
+    }
+  }
+  let lastVersion = 0;
+  for (const e of events) {
+    if (e.kind !== 'task.contract' && e.kind !== 'task.contract_updated') continue;
+    const contract = e.data.contract;
+    const version = contract && typeof contract === 'object' ? (contract as Record<string, unknown>).version : undefined;
+    if (typeof version !== 'number' || version < 1) {
+      violations.push({ code: 'TASK_CONTRACT_VERSION_MONOTONIC', seq: e.seq, message: 'contract payload must carry a positive version' });
+      continue;
+    }
+    if (version <= lastVersion) {
+      violations.push({ code: 'TASK_CONTRACT_VERSION_MONOTONIC', seq: e.seq, message: `version ${version} did not increase past ${lastVersion}` });
+    }
+    lastVersion = version;
+    const source = contract && typeof contract === 'object' ? (contract as Record<string, unknown>).source : undefined;
+    const userSeq = source && typeof source === 'object' ? (source as Record<string, unknown>).userSeq : undefined;
+    if (typeof userSeq !== 'number' || userSeq < 1) {
+      violations.push({ code: 'TASK_CONTRACT_SOURCE_INVALID', seq: e.seq, message: 'contract.source.userSeq must be a positive event seq' });
+    }
+  }
+  return violations;
+}

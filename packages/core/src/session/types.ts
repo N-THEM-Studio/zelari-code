@@ -37,6 +37,10 @@ export const SESSION_EVENT_KINDS = [
   'session.resumed',
   'session.ended',
   'session.forked',
+  // 2.6 Track A (harness manifest): canonical harness fingerprint recorded
+  // once at session start / manifest change. State-only (never model-surface):
+  // data = {manifest, manifestHash}. Schema review per ADR-0021.
+  'session.harness_manifest',
   'user.message',
   'assistant.message',
   'tool.call',
@@ -47,6 +51,11 @@ export const SESSION_EVENT_KINDS = [
   'session.compacted',
   'task.created',
   'task.updated',
+  // 2.6 Track A (doc §14): first-class task contract. Append-only,
+  // monotone versioning (task.contract_updated supersedes, never rewrites).
+  // State-only: compaction projects it into CompactionStateSnapshot.
+  'task.contract',
+  'task.contract_updated',
   'kraken.task',
   'council.member',
   'mission.phase',
@@ -59,6 +68,12 @@ export const SESSION_EVENT_KINDS = [
   // the session-log anchor EvidenceRef.seq points at (command output, fs
   // observation, digest). Not model-surface. Schema review per ADR-0021.
   'verification.evidence',
+  // 2.6 Track B (resource-aware execution, doc §9-§12): host-owned resource
+  // state. `resource.snapshot` is model-surface with LATEST-ONLY projection
+  // (doc §10.2 — see modelSurface.ts); limit/reserve events are state-only.
+  'resource.snapshot',
+  'resource.limit_reached',
+  'resource.reserve_entered',
   'note',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];

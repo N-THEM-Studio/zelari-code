@@ -29,6 +29,20 @@ migration is required — this is purely additive. The concrete file-based
 implementation lives in the CLI, so `@zelari/core` stays dependency-free
 (only `zod`).
 
+## v2.5/2.6 — additive session vocabulary + resource seam (non-breaking)
+
+The session spine gains six **state-only / model-surface** event kinds
+(`session.harness_manifest`, `task.contract`, `task.contract_updated`,
+`resource.snapshot`, `resource.limit_reached`, `resource.reserve_entered`).
+`SESSION_SCHEMA_VERSION` stays `1`: payloads are additive and tolerant replay
+ignores unknown kinds, so older logs replay unchanged. `resource.snapshot`
+projects **latest-only** onto the model surface (older snapshots stay in the
+ledger/log). `AgentHarnessConfig` gains an optional `toolCallGate` seam
+(host-owned pre-dispatch resource gate — degrade-and-stop when absent or
+throwing). CLI flags: `ZELARI_TASK_CONTRACT=1` seeds the task contract from
+the first user message; `ZELARI_RESOURCE_ENFORCEMENT=advisory|protected`
+selects the verification-reserve mode. Library consumers: additive only.
+
 ## Why
 
 Pre-v0.5.0, `@zelari/core` lived at `src/main/core/`, `src/agents/`,
@@ -296,3 +310,24 @@ not dropped.
 
 See `docs/SESSION-FORMAT-2.0.md` for the on-disk format and verifier
 config, and `docs/GUIDA.md` §17a–17c for the user-facing story.
+
+## 2.6 — session vocabulary extension (additive, schema review ADR-0021)
+
+Six new event kinds, payload-additive only (`SESSION_SCHEMA_VERSION` stays 1 —
+tolerant replay ignores unknown kinds on older readers):
+
+- `session.harness_manifest` — state-only. `{manifest, manifestHash}` recorded
+  at session start / manifest change (2.6 Track A, doc SS6.5).
+- `task.contract` / `task.contract_updated` — state-only, append-only, monotone
+  `contract.version` (doc SS14.4). Compaction projects them into
+  `CompactionStateSnapshot` (regex extraction stays as fallback).
+- `resource.snapshot` — MODEL-SURFACE with latest-only projection in
+  `deriveMessages` (doc SS10.2): the model sees only the last snapshot; the
+  ledger keeps all of them.
+- `resource.limit_reached` / `resource.reserve_entered` — state-only markers
+  emitted by the host when the protected verification reserve activates.
+
+New relational invariants live in `validateResourceAndContractEvents()`
+(session/invariants.ts): `RESOURCE_USED_MONOTONIC`, `RESOURCE_REMAINING_COHERENT`,
+`RESERVE_NEGATIVE`, `TASK_CONTRACT_VERSION_MONOTONIC`, `TASK_CONTRACT_SOURCE_INVALID`,
+`MANIFEST_PAYLOAD_INVALID`.

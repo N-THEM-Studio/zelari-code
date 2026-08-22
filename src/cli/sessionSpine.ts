@@ -34,11 +34,13 @@ import {
   type SessionProjection,
   type DerivedMessage,
 } from '@zelari/core/session';
-import { ACTOR_AGENT, ACTOR_SYSTEM, ACTOR_USER } from '@zelari/core/session';
+import { ACTOR_AGENT, ACTOR_SYSTEM, ACTOR_USER, deriveInitialContract } from '@zelari/core/session';
 import {
   lastVerificationRun as lastVerificationRunFromLog,
   type SessionVerificationRunSnapshot,
 } from '@zelari/core/verification';
+import type { ResourceSnapshotPayload } from './budget/resourceSnapshot.js';
+import { BudgetRuntime, resolveResourceEnforcement } from './budget/budgetRuntime.js';
 import path from 'node:path';
 
 /** Kill switch — default ON in the 2.0 alpha. */
@@ -168,6 +170,13 @@ export interface SpineMirrorOptions {
    * data payload (profile id, workspace, tool-manifest hash).
    */
   extraStarted?: Record<string, unknown>;
+  /**
+   * 2.6 Track A: canonical harness manifest parts/builder output recorded as
+   * a `session.harness_manifest` state event right after session start.
+   * Opt-in — callers that pass it own the {manifest, manifestHash} payload
+   * (see src/cli/harnessManifest.ts buildHarnessManifest).
+   */
+  harnessManifest?: { manifest: unknown; manifestHash: string };
 }
 
 const MAX_STREAM_BUFFERS = 32;
@@ -182,6 +191,10 @@ export class SessionSpineMirror {
   private chain: Promise<number | null> = Promise.resolve(null);
   private readonly streamBuffers = new Map<string, string>();
   private warned = false;
+  /** Host-owned budget runtime (attached via attachBudgetRuntime). */
+  private budgetRuntime: BudgetRuntime | null = null;
+  /** 2.6 Track A: set once a task.contract has been seeded (or the log had one). */
+  private contractSeeded = false;
   status: SpineStatus = 'disabled';
   /** Seq the log continued from when adopting an existing session. */
   resumedFromSeq: number | undefined;
@@ -206,6 +219,11 @@ export class SessionSpineMirror {
       const sessionDir = path.join(mirror.sessionsDir, sessionId);
       const report = await readSessionLog(path.join(sessionDir, 'events.jsonl'));
       const existed = report.events.length > 0 || report.issues.length > 0;
+      // 2.6 Track A: a resumed session already carries its contract/user
+      // history — never re-seed from a later steer (version authority §14.3).
+      if (report.events.some((e) => e.kind === 'task.contract' || e.kind === 'user.message')) {
+        mirror.contractSeeded = true;
+      }
       const lastSeq = report.events[report.events.length - 1]?.seq ?? 0;
       mirror.writer = await SessionLogWriter.open(sessionDir, sessionId, lastSeq + 1, {
         now: options.now,
@@ -222,6 +240,16 @@ export class SessionSpineMirror {
           ...options.extraStarted,
         },
       });
+      if (options.harnessManifest) {
+        await mirror.append({
+          kind: 'session.harness_manifest',
+          actor: ACTOR_SYSTEM,
+          data: {
+            manifest: options.harnessManifest.manifest,
+            manifestHash: options.harnessManifest.manifestHash,
+          },
+        });
+      }
       mirror.status = 'active';
     } catch (err) {
       if (err instanceof SessionLogLockedError) {
@@ -237,7 +265,30 @@ export class SessionSpineMirror {
 
   /** Log the user prompt — the P1 gap the 1.x log never closed. */
   userMessage(text: string): void {
-    void this.append({ kind: 'user.message', actor: ACTOR_USER, data: { text } });
+    const seqP = this.append({ kind: 'user.message', actor: ACTOR_USER, data: { text } });
+    // 2.6 Track A (doc section 14): seed the first-class task contract from
+    // the FIRST user message of a fresh session. Env-gated pilot
+    // (ZELARI_TASK_CONTRACT=1), state-only, version-monotone - the derived
+    // contract anchors constraints/criteria the compaction snapshot prefers
+    // over regex extraction (F7). Later steers stay ordinary user messages
+    // until task.contract_updated wiring ships; degrade-and-stop applies.
+    if (process.env.ZELARI_TASK_CONTRACT === '1' && !this.contractSeeded) {
+      this.contractSeeded = true;
+      void seqP
+        .then((seq) => {
+          const contract = deriveInitialContract(seq ?? 1, text);
+          if (contract) {
+            void this.append({
+              kind: 'task.contract',
+              actor: ACTOR_SYSTEM,
+              data: { contract, kind: 'task.contract' },
+            });
+          }
+        })
+        .catch(() => {
+          /* degrade-and-stop: seeding failure never breaks the turn */
+        });
+    }
   }
 
   /**
@@ -254,6 +305,49 @@ export class SessionSpineMirror {
   }
 
   /** Await all pending appends (import → derive read-back needs this). */
+  /**
+   * Record the canonical harness manifest (2.6 Track A, doc section 6.5): one
+   * state-only event at session start / manifest change. Degrade-and-stop
+   * like every other mirror method - the spine never breaks the loop.
+   */
+  harnessManifest(manifest: unknown, manifestHash: string): void {
+    void this.append({
+      kind: 'session.harness_manifest',
+      actor: ACTOR_SYSTEM,
+      data: { manifest, manifestHash },
+    });
+  }
+  /**
+   * Attach the host-owned budget runtime (2.6 Track B, Phase 2/3). From here
+   * on every `tool.call` that lands on the spine is counted and — at §10.4
+   * frequency — a `resource.snapshot` event is appended right after it.
+   * Degrade-and-stop discipline applies: budget wiring never breaks a turn.
+   */
+  attachBudgetRuntime(runtime: BudgetRuntime): void {
+    this.budgetRuntime = runtime;
+  }
+
+  /** Latest emitted resource snapshot (the model-visible one), or null. */
+  latestResourceSnapshot(): ResourceSnapshotPayload | null {
+    return this.budgetRuntime?.latestEmitted() ?? null;
+  }
+
+  /**
+   * §11.3 pre-dispatch gate for hosts that enforce the protected zone
+   * (Phase 3): delegates to the attached runtime, never throws. Null when
+   * no runtime is attached (hosts treat as "no budget info, allow").
+   */
+  gateResourceToolCall(toolName: string): { allowed: boolean; reason?: string } | null {
+    const gate = this.budgetRuntime?.gateToolCall(toolName);
+    if (!gate) return null;
+    return { allowed: gate.allowed, ...(gate.reason ? { reason: gate.reason } : {}) };
+  }
+
+  /** Count a landed tool.call; returns the snapshot due (§10.4), if any. */
+  private onToolCallBudget(): ResourceSnapshotPayload | null {
+    return this.budgetRuntime?.noteToolCall() ?? null;
+  }
+
   async flush(): Promise<void> {
     await this.chain;
   }
@@ -376,9 +470,21 @@ export class SessionSpineMirror {
 
   private append(input: SessionEventInput): Promise<number | null> {
     if (!this.writer || this.status === 'closed') return Promise.resolve(null);
-    this.chain = this.chain
+    // 2.6 Track B: count synchronously BEFORE enqueueing; when §10.4 says a
+    // snapshot is due it lands right AFTER its tool.call on this same chain
+    // (local variable — no re-entrant append racing the this.chain capture).
+    const dueSnapshot = input.kind === 'tool.call' ? this.onToolCallBudget() : null;
+    let seq: Promise<number | null> = this.chain
       .then(() => this.writer!.append(input))
-      .then((envelope) => envelope.seq)
+      .then((envelope) => envelope.seq);
+    if (dueSnapshot) {
+      seq = seq.then((s) =>
+        this.writer!
+          .append({ kind: 'resource.snapshot', actor: ACTOR_SYSTEM, data: { ...dueSnapshot } })
+          .then(() => s),
+      );
+    }
+    this.chain = seq
       .catch((err) => {
         this.status = 'degraded';
         this.writer = null;
@@ -474,6 +580,15 @@ export async function wrapSessionWriter(
   options: SpineMirrorOptions = {},
 ): Promise<SpineMirroringWriter> {
   const spine = await SessionSpineMirror.adopt(sessionId, options);
+  if (spine.status === 'active') {
+    // 2.6 Track B (Phase 2/3): count tool calls + emit resource.snapshot.
+    const profile = options.extraStarted?.profile;
+    spine.attachBudgetRuntime(
+      new BudgetRuntime(typeof profile === 'string' ? profile : 'kraken/v1', {
+        enforcement: resolveResourceEnforcement(),
+      }),
+    );
+  }
   return new SpineMirroringWriter(inner, spine.status === 'active' ? spine : null);
 }
 

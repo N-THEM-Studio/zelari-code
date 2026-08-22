@@ -31,6 +31,7 @@ import {
   coveringCompactions,
   shadowedSeqSet,
   resolveSessionsDir,
+  formatResourceSnapshot,
   type SessionEventEnvelope,
 } from '@zelari/core/session';
 import type { AgentMessage } from '@zelari/core/harness';
@@ -107,7 +108,11 @@ describe('Exit-1/E1.6 — replay determinismo (log → deriveMessages → seed)'
     const fromFile = deriveMessages(await replay('inv-e16-a'));
     expect(derived).toEqual(fromFile);
 
-    const roleContent = derived!.map((m) => `${m.role}:${m.content}`);
+    // 2.6 Track B: resource.snapshot is model-surface LATEST-ONLY — exactly
+    // one system entry survives (the last), asserted separately below.
+    const roleContent = derived!
+      .filter((m) => !m.content.startsWith('RESOURCE STATUS'))
+      .map((m) => `${m.role}:${m.content}`);
     expect(roleContent).toEqual([
       'user:legacy-u1',
       'assistant:legacy-a1',
@@ -116,6 +121,10 @@ describe('Exit-1/E1.6 — replay determinismo (log → deriveMessages → seed)'
       'tool:file-a file-b', // derived neutral history keeps tool results…
       'system:compacted-context', // …and compaction, before the seed policy maps them
     ]);
+    const snapshots = derived!.filter((m) => m.content.startsWith('RESOURCE STATUS'));
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0].role).toBe('system');
+    expect(snapshots[0].content).toMatch(/^RESOURCE STATUS[\s\S]*Tool calls: 1 \/ 40/);
     await reopened.close('test-end');
   });
 
@@ -133,7 +142,11 @@ describe('Exit-1/E1.6 — replay determinismo (log → deriveMessages → seed)'
 
     const derived = deriveMessages(await replay('inv-e16-c'));
     const seed = derivedModelSeed(derived);
-    expect(seed.map((m) => `${m.role}:${m.content}`)).toEqual([
+    // 2.6 Track B: snapshot follows the same system→user seed policy as the
+    // compacted summary (1.x store convention), asserted separately.
+    expect(
+      seed.filter((m) => !m.content.startsWith('RESOURCE STATUS')).map((m) => `${m.role}:${m.content}`),
+    ).toEqual([
       'user:legacy-u1',
       'assistant:legacy-a1',
       'user:turn-1 task',
@@ -141,6 +154,9 @@ describe('Exit-1/E1.6 — replay determinismo (log → deriveMessages → seed)'
       'user:compacted-context', // compacted summary → user (1.x store convention)
       // tool result dropped: orphan role 'tool' without a paired tool_calls block
     ]);
+    const seedSnap = seed.filter((m) => m.content.startsWith('RESOURCE STATUS'));
+    expect(seedSnap).toHaveLength(1);
+    expect(seedSnap[0].role).toBe('user');
   });
 });
 
@@ -161,7 +177,7 @@ describe('Exit-1/E1.7 — invariante model-visible ⟺ logged (P1)', () => {
           ? 'user'
           : source!.kind === 'assistant.message'
             ? 'assistant'
-            : source!.kind === 'session.compacted'
+            : source!.kind === 'session.compacted' || source!.kind === 'resource.snapshot'
               ? 'system'
               : 'tool';
       expect(m.role).toBe(expectedRole);
@@ -179,10 +195,15 @@ describe('Exit-1/E1.7 — invariante model-visible ⟺ logged (P1)', () => {
     expect(surface.length).toBeGreaterThan(0);
     const shadowed = shadowedSeqSet(coveringCompactions(events));
     for (const e of surface) {
-      // Declared exclusions: tool.call (includeToolCalls=false) and seqs
-      // shadowed by a range-bearing session.compacted.
+      // Declared exclusions: tool.call (includeToolCalls=false), seqs
+      // shadowed by a range-bearing session.compacted, and every
+      // resource.snapshot except the LAST (latest-only projection, 2.6).
       if (e.kind === 'tool.call') continue;
       if (shadowed.has(e.seq)) continue;
+      if (e.kind === 'resource.snapshot') {
+        const lastSnap = [...surface].reverse().find((x) => x.kind === 'resource.snapshot');
+        if (lastSnap && lastSnap.seq !== e.seq) continue;
+      }
       expect(derivedSeqs.has(e.seq), `${e.kind}@${e.seq} must derive`).toBe(true);
     }
   });
@@ -204,11 +225,13 @@ describe('Exit-1/E1.7 — invariante model-visible ⟺ logged (P1)', () => {
     // model-surface event, and log order matches turn order.
     const surface = (await replay('inv-e17-c')).filter(isModelSurfaceEvent);
     const loggedTexts = surface.map((e) =>
-      String(
-        (e.data as { text?: string; summary?: string }).text ??
-          (e.data as { summary?: string }).summary ??
-          '',
-      ),
+      e.kind === 'resource.snapshot'
+        ? formatResourceSnapshot(e.data)
+        : String(
+            (e.data as { text?: string; summary?: string }).text ??
+              (e.data as { summary?: string }).summary ??
+              '',
+          ),
     );
     const texts = loggedTexts.filter((t) =>
       ['legacy-u1', 'turn-1 task', 'turn-2 task'].includes(t),
@@ -222,7 +245,9 @@ describe('Exit-1/E1.7 — invariante model-visible ⟺ logged (P1)', () => {
     await handle.close('test-end');
     const turn3 = await SessionSpineMirror.adopt('inv-e17-c', { baseDir: tmp, quiet: true });
     const seed3 = derivedModelSeed((await turn3.derivedPriorTurns()) ?? []);
-    expect(seed3.map((m) => m.content)).toEqual([
+    expect(
+      seed3.filter((m) => !m.content.startsWith('RESOURCE STATUS')).map((m) => m.content),
+    ).toEqual([
       'legacy-u1',
       'legacy-a1',
       'turn-1 task',
@@ -231,6 +256,7 @@ describe('Exit-1/E1.7 — invariante model-visible ⟺ logged (P1)', () => {
       'turn-2 task',
       'turn-2 reply',
     ]);
+    expect(seed3.filter((m) => m.content.startsWith('RESOURCE STATUS'))).toHaveLength(1);
     await turn3.close('test-end');
   });
 });

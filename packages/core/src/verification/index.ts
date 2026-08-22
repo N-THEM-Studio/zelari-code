@@ -10,3 +10,4 @@ export * from './criteriaPack.v1.js';
 export * from './metrics.js';
 export * from './verifier.js';
 export * from './scopeDiscipline.js';
+export * from './resourceReserveGate.js';
