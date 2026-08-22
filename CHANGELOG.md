@@ -5,6 +5,79 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.0] - 2026-08-22
+
+### Added
+
+- **Canonical Harness Manifest.** `HarnessManifestV1` (zod-validated) hashes
+  the effective harness: profile hash, prompt hashes (kraken/gauntlet/
+  council/mission), tool and skill manifest hashes, policy hashes (routing,
+  verification, completion, compaction, resource) and runtime versions.
+  `hashHarnessManifest()` is deterministic (stable serialization, no
+  timestamps); `diffHarnessManifest()` + `classifyHarnessChanges()` classify
+  changes as behavioral / structural / cosmetic. Every session can register
+  `session.harness_manifest` (opt-in via `ZELARI_HARNESS_MANIFEST=1`).
+- **Central ResourceBudget / ResourceLedger.** Host-owned
+  `ResourcePolicy` (per-profile defaults: kraken 40 tool calls, 6
+  verification reserve, 4 repair reserve, 15 min wall clock) drives
+  `computeBudget()` with four pressure states (ample / normal /
+  constrained / critical). The CLI `BudgetRuntime` counts tool calls
+  through the spine mirror, rebuilds the ledger from the session log on
+  resume (no double counting, monotonic usage) and emits `resource.snapshot`
+  events (first use, stage or pressure change, reserve threshold crossing,
+  usage delta).
+- **Model-visible resource status, latest-only.** `deriveMessages()`
+  projects only the latest `resource.snapshot` into the model surface as a
+  `RESOURCE STATUS` system block; older snapshots remain in the durable
+  ledger. TUI and headless both inject the projection.
+- **Verification budget reserve.** `resourceReserveGate` keeps
+  deterministic PASS authoritative and returns `BLOCKED
+  resource-exhausted` instead of a false done when the remaining budget
+  cannot fund required evidence. Enforcement modes: `advisory` (default)
+  and `protected` (`ZELARI_RESOURCE_ENFORCEMENT=protected`), wired through
+  a new `toolCallGate` seam on `AgentHarness` — denied calls surface a
+  model-visible reason without consuming the doom-loop budget.
+- **First-class TaskContract.** `task.contract` events carry a versioned
+  goal + constraints + acceptance criteria with user-over-derived
+  authority (`TaskContractConflictError` on removal of required items or
+  unauthorized goal rewrites). Seeding from the first user message is
+  opt-in via `ZELARI_TASK_CONTRACT=1`; compaction prefers the contract
+  over regex extraction (fallback preserved).
+- **Budget-aware continuation.** `budgetContinuation` decides
+  complete / repair / pivot / hold from verification state + remaining
+  budget + repair history (repeated identical gaps favor pivot; critical
+  pressure favors hold). Advisory-only; `passByBudget` is locked to false.
+- **Historical anchor set + harness regression gate.** JSON+zod anchor
+  manifests under `eval/anchors/` with deterministic fixtures, hard
+  budgets and exit-code success checks. `tools/eval` provides the anchor
+  runner, retention policy presets (stable: 0 regressions /
+  experimental: 1 / research: 2), regression gate (commit rule: validity
+  AND regressions within budget AND cost within policy), §8.6 reports,
+  targeted anchor selection from manifest diffs, a file-based eval result
+  store keyed by manifest hash, and the `npm run eval:gate` entry point.
+  Bootstrap anchors: Tier 0 local bugfix, Tier 1 multi-file rename,
+  Tier 1 resource-budget exhaustion.
+- **Unified cost metric.** `costPerVerifiedSolve()` extends the existing
+  verification metrics (verified solve rate, false-done rate) with
+  cost / wall-time / tool-calls per verified solve and a pareto report.
+- **CI.** `eval-retention-gate.yml` runs the gate in Phase 1 shadow mode
+  (report-only) on push/PR.
+
+### Changed
+
+- **Session event vocabulary (additive).** Six new state-only kinds:
+  `session.harness_manifest`, `task.contract`, `task.contract_updated`,
+  `resource.snapshot`, `resource.limit_reached`, `resource.reserve_entered`.
+  `SESSION_SCHEMA_VERSION` stays 1; replay of old logs is unaffected and
+  old readers ignore the new kinds. `validateResourceAndContractEvents()`
+  enforces monotonic usage, coherent remaining values, non-negative
+  reserves and contract version monotonicity.
+- **Gauntlet budget awareness.** The gauntlet policy derives budget
+  pressure and discourages non-essential delegation under constrained
+  budgets without changing critic or CompletionPolicy authority.
+- **MIGRATION.md** documents the new events, projections, seam and
+  environment flags.
+
 ## [2.5.0] - 2026-08-21
 
 ### Added
@@ -1220,6 +1293,16 @@ End-to-end against MiniMax-M3 (the model these failures were first reported on):
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [1.21.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [2.6.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
