@@ -38,15 +38,34 @@ export function selectTargetedAnchors(
 ): TargetedAnchorSelection {
   const diff = diffHarnessManifest(oldManifest, newManifest);
   const classification = classifyHarnessChanges(diff);
+  // 2.6.1 (plan §17): read the change SET, never `overall` — a structural
+  // change keeps the full structural gate even when behavioral fields moved
+  // in the same diff, and structural coverage can never shrink.
+  const { structural, behavioral, cosmetic } = classification.changeSet;
 
-  if (classification.overall === 'structural') {
+  if (structural.length > 0) {
     return {
       overall: 'structural',
       anchors: [...anchors],
-      rationale: `structural change (${diff.changed.join(', ')}) — full anchor set + session invariants`,
+      rationale: `structural change (${structural.join(', ')}) — full anchor set + session invariants${behavioral.length > 0 ? ` (plus behavioral: ${behavioral.join(', ')})` : ''}`,
     };
   }
-  if (classification.overall === 'cosmetic') {
+  // Unknown/unmapped field: assume behavioural — Tier 0 + every behavioral
+  // tag match. NEVER zero anchors on an unmapped change (plan §17).
+  const unknownFields = cosmetic.filter((f) => !(f in FIELD_TO_TAGS));
+  if (unknownFields.length > 0) {
+    const tier0 = anchors.filter((a) => a.tier === 0);
+    const wanted = new Set<string>();
+    for (const field of behavioral) for (const tag of FIELD_TO_TAGS[field] ?? []) wanted.add(tag);
+    const targeted = anchors.filter((a) => a.tags.some((t) => wanted.has(t)));
+    const merged = [...new Map([...tier0, ...targeted].map((a) => [a.id, a])).values()];
+    return {
+      overall: 'behavioral',
+      anchors: merged,
+      rationale: `unknown harness field (${unknownFields.join(', ')}) — Tier 0 + behavioral anchors as conservative floor (${merged.length}/${anchors.length})`,
+    };
+  }
+  if (behavioral.length === 0) {
     return {
       overall: 'cosmetic',
       anchors: [],
@@ -56,13 +75,13 @@ export function selectTargetedAnchors(
 
   // Behavioural: union of tags targeted by changed fields.
   const wantedTags = new Set<string>();
-  for (const field of diff.changed) {
+  for (const field of behavioral) {
     for (const tag of FIELD_TO_TAGS[field] ?? []) wantedTags.add(tag);
   }
   const targeted = anchors.filter((a) => a.tags.some((t) => wantedTags.has(t)));
   return {
     overall: 'behavioral',
     anchors: targeted,
-    rationale: `behavioral change (${diff.changed.join(', ')}) → tags [${[...wantedTags].sort().join(', ')}] → ${targeted.length}/${anchors.length} anchors`,
+    rationale: `behavioral change (${behavioral.join(', ')}) → tags [${[...wantedTags].sort().join(', ')}] → ${targeted.length}/${anchors.length} anchors`,
   };
 }

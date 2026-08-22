@@ -1,0 +1,36 @@
+{
+  "id": "js-off-by-one-fix",
+  "version": 1,
+  "tier": 0,
+  "profile": "minimal/v1",
+  "phase": "build",
+  "task": "range.js has an inclusive/exclusive bug: range(1,4) returns [1,2,3,4] but must return [1,2,3]. Fix the loop bound. Do not change the export.",
+  "fixture": {
+    "files": [
+      {
+        "path": "range.js",
+        "content": "export function range(a, b) {\n  const out = [];\n  for (let i = a; i <= b; i++) out.push(i);\n  return out;\n}\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { range } from './range.js';\nimport assert from 'node:assert';\nassert.deepEqual(range(1, 4), [1, 2, 3]);\nassert.deepEqual(range(0, 0), []);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 12,
+    "verificationReserve": 2,
+    "maxWallMs": 120000
+  },
+  "tags": [
+    "local-bugfix",
+    "js"
+  ]
+}

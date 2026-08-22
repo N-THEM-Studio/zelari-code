@@ -1,0 +1,44 @@
+{
+  "id": "js-rename-usage-multi-file",
+  "version": 1,
+  "tier": 1,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "Rename the exported function calc to compute in math.js and update every importer (run.mjs). No aliases or re-exports of the old name.",
+  "fixture": {
+    "files": [
+      {
+        "path": "math.js",
+        "content": "export function calc(x) {\n  return x * 2;\n}\n"
+      },
+      {
+        "path": "run.mjs",
+        "content": "import { calc } from './math.js';\nif (calc(21) !== 42) throw new Error('bad');\nconsole.log('ok');\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { compute } from './math.js';\nimport assert from 'node:assert';\nassert.strictEqual(compute(21), 42);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    },
+    {
+      "command": "node run.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 20,
+    "verificationReserve": 3,
+    "maxWallMs": 180000
+  },
+  "tags": [
+    "multi-file",
+    "rename"
+  ]
+}

@@ -1,8 +1,11 @@
 name: eval-retention-gate
 
 # 2.6 Track A (F11): historical-anchor retention gate.
-# Tier 0 anchors are PR-blocking; the gate itself runs report-only until
-# baseline coverage exists (rollout Phase 1 → Phase 4 per doc §28).
+# Tier 0 deterministic tests are PR-BLOCKING (2.6.1 plan §24 Phase 2).
+# The candidate-vs-baseline comparison runs against the LAST STABLE TAG —
+# never `none` (§24: an anchor must not disappear from the gate). While the
+# stable baseline store is being seeded, the comparison step is shadow
+# (--report-only) but FAILS LOUD when the baseline summary is missing.
 
 on:
   pull_request:
@@ -20,6 +23,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
@@ -27,10 +32,16 @@ jobs:
       - run: npm ci
       - name: Build core (CLI imports resolve from dist)
         run: npm run build --workspace=@zelari/core
-      - name: Eval harness unit tests (anchor format, runner, gate, targeting)
+      - name: Eval harness unit tests (anchor format, runner, gate, targeting) - BLOCKING Tier 0
         run: npx vitest run tools/eval
-      - name: Session + resource invariants (spine replay safety)
+      - name: Session + resource invariants (spine replay safety) - BLOCKING Tier 0
         run: npx vitest run packages/core/src/session packages/core/src/runtime packages/core/src/verification/resourceReserveGate.test.ts
-      - name: Retention gate (report-only shadow phase — no baseline agent runs in CI yet)
-        run: node --experimental-strip-types tools/eval/runGate.ts --baseline none --report-only
-        continue-on-error: false
+      - name: Retention gate vs last stable tag (shadow until baseline store seeded)
+        run: |
+          BASELINE=$(git describe --tags --abbrev=0 2>/dev/null || echo missing)
+          echo "baseline tag: $BASELINE"
+          if [ "$BASELINE" = "missing" ]; then
+            echo "::warning::no stable tag yet — retention gate cannot compare (seed the baseline store and tag)"
+            exit 0
+          fi
+          node --experimental-strip-types tools/eval/runGate.ts --baseline "$BASELINE" --report-only

@@ -17,6 +17,8 @@ export interface ResourceSnapshotPayload {
   toolCallsLimit: number;
   toolCallsUsed: number;
   toolCallsRemaining: number;
+  /** 2.6.1 (plan §9): real spend past the hard limit (0 within budget). */
+  overrun: number;
   wallMsRemaining?: number;
   verificationReserve: number;
   repairReserve: number;
@@ -31,6 +33,7 @@ export function buildResourceSnapshot(budget: ResourceBudget, policy: ResourcePo
     toolCallsLimit: budget.toolCalls.limit,
     toolCallsUsed: budget.toolCalls.used,
     toolCallsRemaining: budget.toolCalls.remaining,
+    overrun: budget.toolCalls.overrun,
     ...(budget.wallTime.remainingMs !== undefined ? { wallMsRemaining: budget.wallTime.remainingMs } : {}),
     verificationReserve: budget.reserve.verification,
     repairReserve: budget.reserve.repair,

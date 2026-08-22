@@ -28,6 +28,12 @@ function main(): number {
   const candidateHash = arg('candidate') ?? '';
   const presetName = (arg('preset') ?? 'stable') as keyof typeof RETENTION_PRESETS;
   const reportOnly = argv.includes('--report-only');
+  // 2.6.1 (plan §24): `none` is FORBIDDEN as a baseline — an anchor must
+  // never be able to 'disappear' from the comparison by pointing at nothing.
+  if (baselineHash === 'none' && !process.env.ZELARI_EVAL_ALLOW_NONE) {
+  console.error('runGate: --baseline none is not allowed (2.6.1 plan §24). Use the last stable tag or an approved manifest hash.');
+  process.exit(2);
+}
   const store = EvalResultStore.default();
 
   if (!baselineHash) {
@@ -37,24 +43,46 @@ function main(): number {
   const policy = RETENTION_PRESETS[presetName] ?? RETENTION_PRESETS.stable;
   const baseline = store.loadRuns(baselineHash);
   const candidate = candidateHash ? store.loadRuns(candidateHash) : [];
+  // 2.6.1 (plan §22): baseline and candidate summaries load SEPARATELY — the
+  // candidate suite describes the candidate, never a copy of the baseline.
   const baselineSummary = store.loadSummary(baselineHash);
+  const candidateSummary = candidateHash ? store.loadSummary(candidateHash) : null;
+
+  // 2.6.1 (plan §22): validity is FED, never hardcoded empty. Real sources:
+  // missing run records for a requested suite, and records without harness
+  // provenance hashes (plan §19 — provenance is part of validity).
+  const validityViolations: string[] = [];
+  if (baseline.length === 0) {
+    validityViolations.push(`baseline ${baselineHash} has no run records`);
+  }
+  if (candidateHash && candidate.length === 0) {
+    validityViolations.push(`candidate ${candidateHash} has no run records`);
+  }
+  for (const r of candidate) {
+    if (!r.harnessManifestHash) validityViolations.push(`candidate record ${r.anchorId}: empty harnessManifestHash`);
+    if (!r.resourcePolicyHash) validityViolations.push(`candidate record ${r.anchorId}: empty resourcePolicyHash`);
+  }
 
   const comparison = evaluateRegressionGate({
     manifestHash: candidateHash || baselineHash,
     baseline,
     candidate,
-    currentSuite: baselineSummary?.result.currentSuite ?? { passed: 0, total: 0 },
+    currentSuite:
+      candidateSummary?.result.currentSuite ?? {
+        passed: candidate.filter((r) => r.result === 'pass').length,
+        total: candidate.length,
+      },
     baselineCurrentSuite: baselineSummary?.result.currentSuite,
-    validityViolations: [],
+    validityViolations,
     policy,
   });
 
-  const baselineCost = summarizeCost(baseline).costPerVerifiedSolve;
+  const candidateCost = summarizeCost(candidate).costPerVerifiedSolve;
   console.log(
     formatGateReport(comparison, {
-      anchorsPassed: baseline.filter((r) => r.result === 'pass').length,
-      anchorsTotal: baseline.length,
-      costPerVerifiedSolve: baselineCost,
+      anchorsPassed: candidate.filter((r) => r.result === 'pass').length,
+      anchorsTotal: candidate.length,
+      costPerVerifiedSolve: candidateCost,
     }),
   );
   if (reportOnly) {

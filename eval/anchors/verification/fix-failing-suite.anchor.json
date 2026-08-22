@@ -1,0 +1,36 @@
+{
+  "id": "js-fix-failing-suite",
+  "version": 1,
+  "tier": 0,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "The suite median.test.mjs FAILS. Fix median.js (not the test) so the suite passes. median of [1,2,3] is 2, of [4,1] is 2.5.",
+  "fixture": {
+    "files": [
+      {
+        "path": "median.js",
+        "content": "export function median(xs) {\n  const s = [...xs];\n  return s[Math.floor(s.length / 2)];\n}\n"
+      },
+      {
+        "path": "median.test.mjs",
+        "content": "import { median } from './median.js';\nimport assert from 'node:assert';\nassert.strictEqual(median([1, 2, 3]), 2);\nassert.strictEqual(median([4, 1]), 2.5);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node median.test.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 18,
+    "verificationReserve": 3,
+    "maxWallMs": 180000
+  },
+  "tags": [
+    "verification",
+    "failing-suite"
+  ]
+}

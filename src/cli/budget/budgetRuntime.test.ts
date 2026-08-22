@@ -6,7 +6,7 @@
  *  - protected enforcement denies non-essential tools inside the reserve
  *    zone while advisory mode lets everything through with a notice.
  */
-import { describe, expect, it, afterEach } from 'vitest';
+import { describe, expect, it, afterEach, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -63,7 +63,7 @@ describe('BudgetRuntime (pure)', () => {
     const rt = new BudgetRuntime('kraken/v1', { enforcement: 'protected' });
     for (let i = 0; i < 35; i++) rt.noteToolCall();
     expect(rt.gateToolCall('task').allowed).toBe(false);
-    expect(rt.gateToolCall('bash').allowed).toBe(true);
+    expect(rt.gateToolCall({ toolName: 'bash', args: { command: 'npm test' } }).allowed).toBe(true);
     expect(rt.gateToolCall('read_file').allowed).toBe(true);
   });
 
@@ -123,12 +123,50 @@ describe('SessionSpineMirror × BudgetRuntime wiring', () => {
     await mirror.close('test-end');
   });
 
-  it('hard limit: usage never exceeds the policy limit in the projection', () => {
+  it('hard limit: overrun is kept real, never clamped (2.6.1 plan §9)', () => {
     const rt = new BudgetRuntime('kraken/v1');
     for (let i = 0; i < 50; i++) rt.noteToolCall();
     const snap = rt.current();
-    expect(snap.toolCallsUsed).toBe(40); // §9.5 invariant: used <= limit
+    expect(snap.toolCallsUsed).toBe(50); // real spend, NO clamp
     expect(snap.toolCallsRemaining).toBe(0);
-    expect(snap.toolCallsUsed + snap.toolCallsRemaining).toBe(snap.toolCallsLimit);
+    expect(snap.overrun).toBe(10); // 50 - 40
+    // Gate denies every new billable call at the hard limit, both modes.
+    const denied = rt.gateToolCall({ toolName: 'bash', args: { command: 'npm test' } });
+    expect(denied.allowed).toBe(false);
+    expect(denied.hardLimit).toBe(true);
+    expect(denied.reason).toMatch(/budget \(maxToolCalls\) is spent|Resource exhausted/i);
+  });
+
+  it('hard-limit events: limit_reached once, then overrun (2.6.1 plan §9)', () => {
+    const rt = new BudgetRuntime('kraken/v1'); // limit 40
+    let limitReached = 0;
+    let overrun = 0;
+    for (let i = 0; i < 43; i++) {
+      const effect = rt.consumeToolCall();
+      if (effect.hardEvent?.kind === 'resource.limit_reached') limitReached += 1;
+      if (effect.hardEvent?.kind === 'resource.overrun') overrun += 1;
+    }
+    expect(limitReached).toBe(1); // exactly at the crossing (call #40)
+    expect(overrun).toBe(3); // calls #41, #42, #43
+  });
+
+  it('2.6.1 plan §13: bash is essential only for verification commands (argument-aware)', () => {
+    const rt = new BudgetRuntime('kraken/v1', { enforcement: 'protected' });
+    for (let i = 0; i < 35; i++) rt.noteToolCall(); // enter reserve zone
+    expect(rt.gateToolCall({ toolName: 'bash', args: { command: 'npm test' } }).allowed).toBe(true);
+    expect(rt.gateToolCall({ toolName: 'bash', args: { command: 'git diff --stat' } }).allowed).toBe(true);
+    expect(rt.gateToolCall({ toolName: 'bash', args: { command: 'npm install lodash' } }).allowed).toBe(false);
+    expect(rt.gateToolCall({ toolName: 'bash', args: { command: 'rm -rf node_modules && find . -name "*.tmp"' } }).allowed).toBe(false);
+    expect(rt.gateToolCall('task').allowed).toBe(false);
+  });
+
+  it('2.6.1 plan §8: ZELARI_MAX_TOOL_CALLS is a policy alias, not a second limit', () => {
+    vi.stubEnv('ZELARI_MAX_TOOL_CALLS', '10');
+    const rt = new BudgetRuntime('kraken/v1');
+    expect(rt.policy.maxToolCalls).toBe(10); // session budget rewritten
+    expect(rt.current().toolCallsLimit).toBe(10); // one number everywhere
+    vi.unstubAllEnvs();
+    const rtDefault = new BudgetRuntime('kraken/v1');
+    expect(rtDefault.policy.maxToolCalls).toBe(40); // untouched without the env
   });
 });

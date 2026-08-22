@@ -1,0 +1,36 @@
+{
+  "id": "js-evidence-report",
+  "version": 1,
+  "tier": 1,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "stats.js exports sum/mean. Create verify.mjs that imports both, asserts mean([2,4])===3, and prints \"VERIFIED <sum([1,2,3])>\" (i.e. VERIFIED 6).",
+  "fixture": {
+    "files": [
+      {
+        "path": "stats.js",
+        "content": "export function sum(xs) {\n  return xs.reduce((a, b) => a + b, 0);\n}\nexport function mean(xs) {\n  return sum(xs) / xs.length;\n}\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { execFileSync } from 'node:child_process';\nconst out = execFileSync('node', ['verify.mjs'], { encoding: 'utf8' });\nif (!out.includes('VERIFIED 6')) throw new Error(out);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 18,
+    "verificationReserve": 3,
+    "maxWallMs": 180000
+  },
+  "tags": [
+    "verification",
+    "evidence"
+  ]
+}

@@ -4,7 +4,10 @@
  * the model or mutates state. Budget state is reconstructible from the
  * session log (ResourceLedger on the CLI side counts `tool.call` events).
  *
- * Invariants (§9.5): used <= limit, remaining = limit - used, reserves >= 0.
+ * Invariants (§9.5 / 2.6.1 plan §9): remaining = max(0, limit - used),
+ * reserves >= 0. `used` may exceed the hard limit AFTER the fact (an
+ * in-flight essential call landing over budget) — that is the overrun, kept
+ * visible, never clamped away.
  */
 
 import type { BudgetPressure, ResourcePolicy, ResourceStage } from './resourcePolicy.js';
@@ -14,6 +17,11 @@ export interface ResourceBudget {
     limit: number;
     used: number;
     remaining: number;
+    /**
+     * 2.6.1 (plan §9): real overrun past the HARD limit — `used` is never
+     * clamped. 0 while within budget; 2 when used=42, limit=40.
+     */
+    overrun: number;
   };
   wallTime: {
     limitMs?: number;
@@ -61,12 +69,17 @@ export function computeBudget(
   },
   stage: ResourceStage = 'explore',
 ): ResourceBudget {
-  const used = Math.max(0, Math.min(usage.toolCallsUsed, policy.maxToolCalls));
+  // 2.6.1 (plan §9): maxToolCalls is a HARD limit — `used` keeps the real
+  // count (no clamp), `remaining` floors at 0, and the true overrun is
+  // projected so events/denials can reference it.
+  const used = Math.max(0, usage.toolCallsUsed);
+  const overrun = Math.max(0, used - policy.maxToolCalls);
   return {
     toolCalls: {
       limit: policy.maxToolCalls,
       used,
-      remaining: policy.maxToolCalls - used,
+      remaining: Math.max(0, policy.maxToolCalls - used),
+      overrun,
     },
     wallTime: {
       limitMs: policy.wallClockMs,

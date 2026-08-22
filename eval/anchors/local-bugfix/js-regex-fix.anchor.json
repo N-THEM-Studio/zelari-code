@@ -1,0 +1,37 @@
+{
+  "id": "js-regex-anchor-fix",
+  "version": 1,
+  "tier": 0,
+  "profile": "minimal/v1",
+  "phase": "build",
+  "task": "isEmail.js regex is missing the TLD part so \"a@b\" is accepted. Fix it so a dot-TLD of 2+ letters is required.",
+  "fixture": {
+    "files": [
+      {
+        "path": "isEmail.js",
+        "content": "export function isEmail(s) {\n  return /^[^@]+@[^@]+$/.test(s);\n}\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { isEmail } from './isEmail.js';\nimport assert from 'node:assert';\nassert.strictEqual(isEmail('a@b'), false);\nassert.strictEqual(isEmail('a@b.co'), true);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 12,
+    "verificationReserve": 2,
+    "maxWallMs": 120000
+  },
+  "tags": [
+    "local-bugfix",
+    "js",
+    "regex"
+  ]
+}

@@ -27,6 +27,8 @@ import path from 'node:path';
 import { resolveProfile, toolManifestHash } from '@zelari/core/runtime';
 import { SessionSpineMirror, type SpineMirrorOptions } from './sessionSpine.js';
 import { BudgetRuntime, resolveResourceEnforcement } from './budget/budgetRuntime.js';
+import { restoreBudgetRuntimeFromSession } from './budget/restoreRuntime.js';
+import { noteHarnessLifecycle } from './sessionSpine.js';
 import type { SessionVerificationRunSnapshot } from '@zelari/core/verification';
 import { defaultProfileForMode, type HeadlessMode } from './headless.js';
 
@@ -39,7 +41,11 @@ export interface HeadlessSpineHandle {
   userMessage(text: string): void;
   verificationRun(payload: Record<string, unknown>): void;
   /** 2.6 Phase 3 pre-dispatch resource gate (null = no budget runtime, allow). */
-  gateResourceToolCall(toolName: string): { allowed: boolean; reason?: string } | null;
+  gateResourceToolCall(toolName: string, args?: unknown): { allowed: boolean; reason?: string; hardLimit?: boolean } | null;
+  /** 2.6.1: live budget probe (loop gates, per-turn clamps). */
+  resourceBudgetLimit(): { maxToolCalls: number; remaining: number; verificationReserve: number } | null;
+  /** 2.6.1: full budget shape for the completion reserve gate (plan §14). */
+  resourceBudgetSummary(): import('@zelari/core').ResourceBudget | null;
 
   /**
    * F3 (ADR-0023 §5): append one spine event and resolve its assigned seq
@@ -125,13 +131,13 @@ export async function openHeadlessSpine(opts: {
     // 2.6 Track B (Phase 2/3): count tool calls, emit resource.snapshot.
     const budget = new BudgetRuntime(profileId, { enforcement: resolveResourceEnforcement() });
     if (spine.resumedFromSeq !== undefined && spine.resumedFromSeq > 0) {
-      // §9.5 reconstructable state: rebuild usage from the prior log.
-      const prior = await readSessionLog(
-        path.join(spine.sessionsDir, opts.sessionId, 'events.jsonl'),
-      ).catch(() => null);
-      if (prior) budget.adoptLedgerFromEvents(prior.events);
+      // 2.6.1 plan §10: the SAME helper every host uses (parity invariant).
+      await restoreBudgetRuntimeFromSession(budget, opts.sessionId, opts.baseDir);
     }
     spine.attachBudgetRuntime(budget);
+    // 2.6.1 (plan §6): same lifecycle as the TUI — manifest presence 100%,
+    // drift on resume — via the ONE shared host helper.
+    await noteHarnessLifecycle(spine, opts.sessionId, profileId, budget, opts.baseDir);
     spine.note('headless.profile', { profile: profileId, mode: opts.mode ?? 'kraken' });
   }
 
@@ -147,8 +153,14 @@ export async function openHeadlessSpine(opts: {
     userMessage(text: string): void {
       spine.userMessage(text);
     },
-    gateResourceToolCall(toolName: string): { allowed: boolean; reason?: string } | null {
-      return spine.gateResourceToolCall(toolName);
+    gateResourceToolCall(toolName: string, args?: unknown): { allowed: boolean; reason?: string; hardLimit?: boolean } | null {
+      return spine.gateResourceToolCall(toolName, args);
+    },
+    resourceBudgetLimit() {
+      return spine.resourceBudgetLimit();
+    },
+    resourceBudgetSummary() {
+      return spine.resourceBudgetSummary();
     },
     verificationRun(payload: Record<string, unknown>): void {
       spine.verificationRun(payload);

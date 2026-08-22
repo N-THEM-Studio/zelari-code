@@ -6,6 +6,7 @@ import { parseBlindWinner } from './blind.js';
 import type { GauntletCaps } from './policy.js';
 import { DEFAULT_WALL_MS } from './policy.js';
 import { parseGauntletVerdict, type GauntletVerdict } from './verdict.js';
+import { budgetAwareGauntletGate } from './policy.js';
 import { builderUserPrompt, criticUserPrompt, GAUNTLET_CRITIC_SYSTEM } from './prompts.js';
 import type { GauntletPiece } from './decompose.js';
 import { scheduleWaves } from './schedule.js';
@@ -38,6 +39,8 @@ export interface GauntletLoopDeps {
   emit: (event: Record<string, unknown>) => void;
   note?: (text: string, data?: Record<string, unknown>) => void;
   signal?: AbortSignal;
+  /** 2.6.1 (plan §15/§16): live budget probe; null = no budget info. */
+  budgetGate?: () => { remaining: number; verificationReserve: number } | null;
   now?: () => number;
   sessionId: string;
   /** Optional workspace briefing injected into builder prompts. */
@@ -64,8 +67,11 @@ export async function runGauntletLoop(args: {
   pieces: GauntletPiece[];
   caps: GauntletCaps;
   deps: GauntletLoopDeps;
+  /** 2.6.1 (plan §15): host-level probe wins over deps when both exist. */
+  budgetGate?: GauntletLoopDeps['budgetGate'];
 }): Promise<GauntletLoopResult> {
-  const { caps, deps } = args;
+  const { caps } = args;
+  const deps = { ...args.deps, budgetGate: args.budgetGate ?? args.deps.budgetGate };
   const pieces = args.pieces.slice(0, caps.maxPieces);
   const started = (deps.now ?? Date.now)();
   const results: GauntletPieceResult[] = [];
@@ -138,6 +144,23 @@ export async function runGauntletLoop(args: {
         builderError: built.error,
       });
       winner = parseBlindWinner(criticized.result) ?? winner;
+      // 2.6.1 (plan §15/§16): budget-aware next-round feasibility. Zero
+      // budget holds; reserve-only finalizes; PASS keeps critic authority.
+      if (last.kind !== 'PASS') {
+        const b = deps.budgetGate?.() ?? null;
+        if (b) {
+          const decision = budgetAwareGauntletGate({
+            verdict: last.kind,
+            toolCallsRemaining: b.remaining,
+            verificationReserve: b.verificationReserve,
+          });
+          if (decision === 'hold') {
+            gap = last.gap;
+            break;
+          }
+          if (decision === 'finalize-verify') break;
+        }
+      }
       emitProgress({
         phase: last.kind === 'PASS' ? 'settled' : last.kind === 'BLOCKED' ? 'blocked' : 'repairing',
         pieceId: piece.id,

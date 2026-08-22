@@ -124,30 +124,81 @@ export function contractToCompactionFields(contract: TaskContract): {
   };
 }
 
-/** Derive an initial contract from the first user message (heuristic, CLI-side seed). */
+/**
+ * Derive an initial contract from the first user message (heuristic, CLI-side seed).
+ *
+ * 2.6.1 parser fix (closure plan §3): a line becomes an acceptance criterion
+ * ONLY when it carries an explicit marker — a checkbox (`- [ ]` / `- [x]`,
+ * with or without the list dash) or a keyword lead-in (`Acceptance:`,
+ * `Criterion:`, `Verify:`, `Test:`, `Success:` with an explicit `:`/`#`
+ * separator). Prose without markers NEVER produces criteria (no more false
+ * criteria from arbitrary lines); normative lines stay constraints.
+ */
+const CHECKBOX_CRITERION = /^\[([ xX])\]\s*(.+)$/;
+const KEYWORD_CRITERION = /^(acceptance|criterion|criteria|verify|test|success)\s*[:#]\s*(.+)$/i;
+/** Command-looking values on Verify:/Test: lines become a command hint. */
+const COMMAND_HINT = /^(npm|pnpm|yarn|bun|npx|node|vitest|jest|tsc|eslint|prettier|git)\b/;
+const CONSTRAINT_LEAD = /^(do not|don't|never|no\s|non\s|without changing|keep|must not|avoid)\b/i;
+
 export function deriveInitialContract(userSeq: number, text: string): TaskContract {
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   // Strip list markers before heuristic matching ("- do not…" → "do not…").
   const stripped = lines.map((l) => l.replace(/^[-*]\s+/, ''));
-  const constraintLines = stripped.filter((l) => /^(do not|don't|never|no |non |without changing|keep)/i.test(l));
-  const criteriaLines = stripped
-    .filter((l) => /^\[?\s*[x ]?\s*\]?\s*/.test(l) === false ? /^(acceptance|verify|test)[:\s]/i.test(l) : true)
-    .map((l) => l.replace(/^\[?\s*[x ]?\s*\]?\s*/, '').replace(/^(acceptance|verify|test)[:\s]+/i, ''));
+
+  const acceptanceCriteria: TaskCriterion[] = [];
+  const criterionLines = new Set<number>();
+  stripped.forEach((line, i) => {
+    const checkbox = CHECKBOX_CRITERION.exec(line);
+    if (checkbox) {
+      criterionLines.add(i);
+      acceptanceCriteria.push({
+        id: `ac-${acceptanceCriteria.length + 1}`,
+        text: checkbox[2]!.trim(),
+        source: 'user' as const,
+        required: true,
+      });
+      return;
+    }
+    const keyword = KEYWORD_CRITERION.exec(line);
+    if (keyword) {
+      criterionLines.add(i);
+      const value = keyword[2]!.trim();
+      const lead = keyword[1]!.toLowerCase();
+      const hint =
+        (lead === 'verify' || lead === 'test') && COMMAND_HINT.test(value)
+          ? { kind: 'command' as const, value }
+          : undefined;
+      acceptanceCriteria.push({
+        id: `ac-${acceptanceCriteria.length + 1}`,
+        text: value,
+        source: 'user' as const,
+        required: true,
+        ...(hint ? { verificationHint: hint } : {}),
+      });
+    }
+  });
+
+  const isConstraint = (i: number): boolean =>
+    !criterionLines.has(i) && CONSTRAINT_LEAD.test(stripped[i] ?? '');
+  const constraints = stripped
+    .map((text, i) => ({ text, i }))
+    .filter(({ i }) => isConstraint(i))
+    .map(({ text }, i) => ({
+      id: `uc-${i + 1}`,
+      text,
+      source: 'user' as const,
+      required: true,
+    }));
+
+  // Goal: the first line that is neither a criterion nor a constraint.
+  const goalIdx = lines.findIndex((_, i) => !criterionLines.has(i) && !isConstraint(i));
+  const goal = goalIdx >= 0 ? lines[goalIdx]! : (lines[0] ?? text.slice(0, 200));
+
   return TaskContractSchema.parse({
     version: 1,
-    goal: lines[0] ?? text.slice(0, 200),
-    constraints: constraintLines.map((t, i) => ({
-      id: `uc-${i + 1}`,
-      text: t,
-      source: 'user' as const,
-      required: true,
-    })),
-    acceptanceCriteria: criteriaLines.map((t, i) => ({
-      id: `ac-${i + 1}`,
-      text: t,
-      source: 'user' as const,
-      required: true,
-    })),
+    goal,
+    constraints,
+    acceptanceCriteria,
     source: { userSeq },
   });
 }

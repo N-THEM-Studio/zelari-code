@@ -49,6 +49,29 @@ describe('classifyHarnessChanges (§16)', () => {
   it('no diff → cosmetic (standard CI)', () => {
     expect(classifyHarnessChanges(diffHarnessManifest(manifest(), manifest())).overall).toBe('cosmetic');
   });
+
+  it('2.6.1 plan §17: mixed structural+behavioral keeps BOTH in changeSet', () => {
+    const a = manifest();
+    const b = manifest();
+    b.prompts = { kraken: harnessInputHash('k2') };
+    b.runtime = { coreVersion: '2.6.0', cliVersion: '2.5.0' };
+    const cls = classifyHarnessChanges(diffHarnessManifest(a, b));
+    expect(cls.overall).toBe('behavioral'); // back-compat severity rollup
+    expect(cls.changeSet.behavioral).toContain('prompts.kraken');
+    expect(cls.changeSet.structural).toContain('runtime.coreVersion');
+  });
+
+  it('2.6.1 plan §17: mixed diff → structural gate runs the FULL anchor set', () => {
+    const a = manifest();
+    const b = manifest();
+    b.prompts = { kraken: harnessInputHash('k2') };
+    b.runtime = { coreVersion: '2.6.0', cliVersion: '2.5.0' };
+    const anchors = loadAnchors(ANCHORS_DIR);
+    const sel = selectTargetedAnchors(a, b, anchors);
+    expect(sel.overall).toBe('structural');
+    expect(sel.anchors).toHaveLength(anchors.length);
+    expect(sel.rationale).toContain('structural change');
+  });
 });
 
 describe('selectTargetedAnchors (§16.3)', () => {

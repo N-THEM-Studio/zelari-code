@@ -137,6 +137,19 @@ export interface HarnessChangeClassification {
   /** Highest-severity class present (behavioral > structural > cosmetic). */
   overall: HarnessChangeClass;
   byField: Record<string, HarnessChangeClass>;
+  /**
+   * 2.6.1 (plan §17): the FULL change set, per class. `overall` alone let a
+   * behavioral change shadow a concurrent structural one — policy consumers
+   * must read `changeSet` (structural present ⇒ structural gate, additive).
+   */
+  changeSet: HarnessChangeSet;
+}
+
+/** Plan §17: per-class field lists, nothing collapsed away. */
+export interface HarnessChangeSet {
+  structural: string[];
+  behavioral: string[];
+  cosmetic: string[];
 }
 
 export function classifyHarnessChanges(diff: HarnessManifestDiff): HarnessChangeClassification {
@@ -145,10 +158,14 @@ export function classifyHarnessChanges(diff: HarnessManifestDiff): HarnessChange
     const hit = FIELD_CLASSES.find((m) => field === m.prefix || field.startsWith(m.prefix + '.'));
     byField[field] = hit ? hit.cls : 'cosmetic';
   }
+  const changeSet: HarnessChangeSet = { structural: [], behavioral: [], cosmetic: [] };
+  for (const field of diff.changed) {
+    changeSet[byField[field]!].push(field);
+  }
   const order: Record<HarnessChangeClass, number> = { behavioral: 3, structural: 2, cosmetic: 1 };
   const overall = (Object.values(byField) as HarnessChangeClass[]).reduce<HarnessChangeClass>(
     (acc, cls) => (order[cls] > order[acc] ? cls : acc),
     'cosmetic',
   );
-  return { overall, byField };
+  return { overall, byField, changeSet };
 }

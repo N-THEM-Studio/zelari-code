@@ -15,6 +15,12 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { addCost, zeroCost, type RunCost } from './cost.ts';
+import {
+  defaultResourcePolicy,
+  resolveProfile,
+  resourcePolicyHash,
+  toolFingerprintHash,
+} from '@zelari/core';
 import type { AnchorManifest, AnchorRunRecord } from './types.ts';
 
 export interface AgentRunOutcome {
@@ -22,16 +28,34 @@ export interface AgentRunOutcome {
   toolCalls: number;
   wallMs: number;
   costUsd?: number;
+  toolCostUsd?: number;
   inputTokens?: number;
   outputTokens?: number;
+  cacheHitTokens?: number;
   detail?: string;
 }
 
 /** Injected executor: production wraps the headless CLI; tests use stubs. */
 export type AgentRunner = (anchor: AnchorManifest, workspaceDir: string) => AgentRunOutcome | Promise<AgentRunOutcome>;
 
+/**
+ * 2.6.1 (plan §19): REAL provenance by default — computed from the anchor's
+ * own profile + the canonical policy hash. Hosts may override (e.g. the
+ * headless runner forwarding the live session hashes); records are never
+ * allowed to carry empty strings.
+ */
+function defaultProvenance(anchor: AnchorManifest): { harnessManifestHash: string; resourcePolicyHash: string } {
+  const profile = resolveProfile(anchor.profile);
+  return {
+    harnessManifestHash: toolFingerprintHash(profile.tools.map((name) => ({ name }))),
+    resourcePolicyHash: resourcePolicyHash(defaultResourcePolicy(anchor.profile)),
+  };
+}
+
 export interface AnchorRunnerOptions {
   runner: AgentRunner;
+  /** Explicit provenance override (live session hashes). */
+  provenance?: { harnessManifestHash?: string; resourcePolicyHash?: string };
   /** Parent scratch dir (created if missing). Defaults to os.tmpdir(). */
   workspaceRoot?: string;
   /** Shell used for fixture/setup/success commands (default: process shell). */
@@ -50,6 +74,7 @@ export async function runAnchor(
 ): Promise<AnchorRunRecord> {
   const runId = randomUUID();
   const recordedAt = (options.now ?? (() => new Date().toISOString()))();
+  const prov = { ...defaultProvenance(anchor), ...(options.provenance ?? {}) };
   const workspaceDir = path.join(options.workspaceRoot ?? import.meta.dirname ?? '.', `anchor-${anchor.id}-${runId}`);
   let record: AnchorRunRecord;
 
@@ -69,8 +94,8 @@ export async function runAnchor(
           runId,
           anchorId: anchor.id,
           anchorVersion: anchor.version,
-          harnessManifestHash: '',
-          resourcePolicyHash: '',
+          harnessManifestHash: prov.harnessManifestHash,
+          resourcePolicyHash: prov.resourcePolicyHash,
           result: 'blocked',
           verified: false,
           cost: zeroCost(),
@@ -90,6 +115,9 @@ export async function runAnchor(
     // 3. Budget verdict (doc §7.4: tool/token/wall limits are hard).
     const overToolCalls = outcome.toolCalls > anchor.budget.maxToolCalls;
     const overWall = anchor.budget.maxWallMs !== undefined && outcome.wallMs > anchor.budget.maxWallMs;
+    // 2.6.1 (plan §20): maxTokens is ENFORCED, not just declared.
+    const tokenSum = (outcome.inputTokens ?? 0) + (outcome.outputTokens ?? 0);
+    const overTokens = anchor.budget.maxTokens !== undefined && tokenSum >= anchor.budget.maxTokens;
 
     // 4. Deterministic success checks — the ONLY golden signal (§7.7).
     let checksOk = true;
@@ -107,22 +135,26 @@ export async function runAnchor(
 
     const cost: RunCost = addCost(zeroCost(), {
       ...zeroCost(),
+      inputTokens: outcome.inputTokens ?? 0,
+      outputTokens: outcome.outputTokens ?? 0,
+      cacheHitTokens: outcome.cacheHitTokens ?? 0,
       toolCalls: outcome.toolCalls,
       wallMs: agentWallMs,
       modelCostUsd: outcome.costUsd ?? 0,
+      toolCostUsd: outcome.toolCostUsd,
     });
 
     if (!outcome.ok) {
       record = {
         runId, anchorId: anchor.id, anchorVersion: anchor.version,
-        harnessManifestHash: '', resourcePolicyHash: '',
+        harnessManifestHash: prov.harnessManifestHash, resourcePolicyHash: prov.resourcePolicyHash,
         result: 'fail', verified: false, cost, exitCode: 1,
         reason: 'agent-error', detail: outcome.detail, recordedAt,
       };
     } else if (overToolCalls) {
       record = {
         runId, anchorId: anchor.id, anchorVersion: anchor.version,
-        harnessManifestHash: '', resourcePolicyHash: '',
+        harnessManifestHash: prov.harnessManifestHash, resourcePolicyHash: prov.resourcePolicyHash,
         result: 'blocked', verified: false, cost, exitCode: 0,
         reason: 'budget-exceeded-tool-calls',
         detail: `${outcome.toolCalls} > ${anchor.budget.maxToolCalls}`, recordedAt,
@@ -130,22 +162,30 @@ export async function runAnchor(
     } else if (overWall) {
       record = {
         runId, anchorId: anchor.id, anchorVersion: anchor.version,
-        harnessManifestHash: '', resourcePolicyHash: '',
+        harnessManifestHash: prov.harnessManifestHash, resourcePolicyHash: prov.resourcePolicyHash,
         result: 'blocked', verified: false, cost, exitCode: 0,
         reason: 'budget-exceeded-wall',
         detail: `${agentWallMs}ms > ${anchor.budget.maxWallMs}ms`, recordedAt,
       };
+    } else if (overTokens) {
+      record = {
+        runId, anchorId: anchor.id, anchorVersion: anchor.version,
+        harnessManifestHash: prov.harnessManifestHash, resourcePolicyHash: prov.resourcePolicyHash,
+        result: 'blocked', verified: false, cost, exitCode: 0,
+        reason: 'budget-exceeded-tokens',
+        detail: `${tokenSum} >= ${anchor.budget.maxTokens}`, recordedAt,
+      };
     } else if (!checksOk) {
       record = {
         runId, anchorId: anchor.id, anchorVersion: anchor.version,
-        harnessManifestHash: '', resourcePolicyHash: '',
+        harnessManifestHash: prov.harnessManifestHash, resourcePolicyHash: prov.resourcePolicyHash,
         result: 'fail', verified: false, cost, exitCode,
         reason: 'checks-failed', detail: firstFailure, recordedAt,
       };
     } else {
       record = {
         runId, anchorId: anchor.id, anchorVersion: anchor.version,
-        harnessManifestHash: '', resourcePolicyHash: '',
+        harnessManifestHash: prov.harnessManifestHash, resourcePolicyHash: prov.resourcePolicyHash,
         result: 'pass', verified: true, cost, exitCode: 0, recordedAt,
       };
     }

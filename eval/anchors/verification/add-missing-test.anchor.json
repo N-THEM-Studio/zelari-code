@@ -1,0 +1,41 @@
+{
+  "id": "js-add-missing-test",
+  "version": 1,
+  "tier": 0,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "clamp.js has no tests. Add clamp.test.mjs covering clamp(5,0,3)===3, clamp(-1,0,3)===0, clamp(2,0,3)===2. Do not modify clamp.js.",
+  "fixture": {
+    "files": [
+      {
+        "path": "clamp.js",
+        "content": "export function clamp(v, lo, hi) {\n  return Math.min(hi, Math.max(lo, v));\n}\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { clamp } from './clamp.js';\nimport assert from 'node:assert';\nassert.strictEqual(clamp(5, 0, 3), 3);\nassert.strictEqual(clamp(-1, 0, 3), 0);\nassert.strictEqual(clamp(2, 0, 3), 2);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    },
+    {
+      "command": "node clamp.test.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 18,
+    "verificationReserve": 3,
+    "maxWallMs": 180000
+  },
+  "tags": [
+    "verification",
+    "evidence",
+    "tests"
+  ]
+}

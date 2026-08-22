@@ -16,12 +16,13 @@ import { defaultResourcePolicy, resourcePolicyHash, ResourcePolicySchema } from 
 const POLICY = defaultResourcePolicy('kraken/v1'); // 40 / 6 / 4 / 900s
 
 describe('computeBudget', () => {
-  it('keeps remaining = limit - used and clamps overuse', () => {
+  it('keeps remaining = limit - used; overuse is REAL, never clamped (2.6.1 §9)', () => {
     const b = computeBudget(POLICY, { toolCallsUsed: 27 });
-    expect(b.toolCalls).toEqual({ limit: 40, used: 27, remaining: 13 });
+    expect(b.toolCalls).toEqual({ limit: 40, used: 27, remaining: 13, overrun: 0 });
     const over = computeBudget(POLICY, { toolCallsUsed: 55 });
-    expect(over.toolCalls.used).toBe(40);
+    expect(over.toolCalls.used).toBe(55); // real spend
     expect(over.toolCalls.remaining).toBe(0);
+    expect(over.toolCalls.overrun).toBe(15); // 55 - 40
   });
 
   it('keeps reserves non-negative and stages explicit', () => {

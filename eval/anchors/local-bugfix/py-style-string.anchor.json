@@ -1,0 +1,37 @@
+{
+  "id": "js-string-template-fix",
+  "version": 1,
+  "tier": 0,
+  "profile": "minimal/v1",
+  "phase": "build",
+  "task": "greet.js returns \"Hello !\" (missing the name). Fix the template so greet(\"Ada\") returns \"Hello Ada!\". Keep the signature.",
+  "fixture": {
+    "files": [
+      {
+        "path": "greet.js",
+        "content": "export function greet(name) {\n  return `Hello !`;\n}\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { greet } from './greet.js';\nimport assert from 'node:assert';\nassert.strictEqual(greet('Ada'), 'Hello Ada!');\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 10,
+    "verificationReserve": 2,
+    "maxWallMs": 120000
+  },
+  "tags": [
+    "local-bugfix",
+    "js",
+    "string"
+  ]
+}

@@ -14,7 +14,16 @@ import {
   hashHarnessManifest,
   type HarnessManifestV1,
 } from '@zelari/core';
-import { profileHash, toolManifestHash, type Profile } from '@zelari/core';
+import {
+  CORE_VERSION,
+  profileHash,
+  skillFingerprintHash,
+  toolFingerprintHash,
+  toolManifestHash,
+  type Profile,
+  type SkillFingerprint,
+  type ToolFingerprint,
+} from '@zelari/core';
 import { getCurrentVersion } from './updater.js';
 
 /** Raw behavioural inputs the CLI knows how to collect today. */
@@ -26,8 +35,12 @@ export interface HarnessManifestParts {
   prompts?: Partial<Record<'kraken' | 'gauntlet' | 'council' | 'mission', string>>;
   /** Tool names advertised to the model for this session. */
   toolNames: readonly string[];
+  /** 2.6.1 (plan §7): full specs when available — names alone miss edits. */
+  toolSpecs?: readonly ToolFingerprint[];
   /** Skill ids loaded for this session (empty = none). */
   skillIds?: readonly string[];
+  /** 2.6.1 (plan §7): id+version+contentDigest fingerprints. */
+  skillSpecs?: readonly SkillFingerprint[];
   /** Routing policy object (model selection rules) — hashed canonically. */
   routing?: unknown;
   /** Verification engine config — hashed canonically. */
@@ -45,16 +58,7 @@ export interface HarnessManifestParts {
   cliVersion?: string;
 }
 
-function resolveCoreVersion(): string {
-  try {
-    // Same bundle-safe precedent as updater.ts getCurrentVersion().
-    const pkgPath = require.resolve('@zelari/core/package.json');
-    const pkg = require(pkgPath) as { version: string };
-    return pkg.version;
-  } catch {
-    return '0.0.0';
-  }
-}
+
 
 /** Build + validate + hash the manifest. Throws on invalid assembly. */
 export function buildHarnessManifest(parts: HarnessManifestParts): {
@@ -76,8 +80,13 @@ export function buildHarnessManifest(parts: HarnessManifestParts): {
     },
     prompts,
     capabilities: {
-      toolManifestHash: toolManifestHash(parts.toolNames),
-      skillManifestHash: harnessInputHash([...(parts.skillIds ?? [])].sort()),
+      // 2.6.1 (plan §7): full fingerprints when specs are available.
+      toolManifestHash: parts.toolSpecs
+        ? toolFingerprintHash(parts.toolSpecs)
+        : toolManifestHash(parts.toolNames),
+      skillManifestHash: parts.skillSpecs
+        ? skillFingerprintHash(parts.skillSpecs)
+        : harnessInputHash([...(parts.skillIds ?? [])].sort()),
     },
     policies: {
       routingHash: harnessInputHash(parts.routing ?? { unset: true }),
@@ -87,7 +96,8 @@ export function buildHarnessManifest(parts: HarnessManifestParts): {
       resourcePolicyHash: harnessInputHash(parts.resourcePolicy ?? { unset: true }),
     },
     runtime: {
-      coreVersion: parts.coreVersion ?? resolveCoreVersion(),
+      // 2.6.1 (plan §7): canonical export — no more require.resolve.
+      coreVersion: parts.coreVersion ?? CORE_VERSION,
       cliVersion: parts.cliVersion ?? getCurrentVersion(),
     },
   });

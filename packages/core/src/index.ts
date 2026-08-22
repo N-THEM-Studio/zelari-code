@@ -44,3 +44,6 @@ export * from './mission/index.js';
 
 // Experimental flags registry (2.0 Phase 5 — all OFF by default)
 export * from './experimental.js';
+
+export { CORE_VERSION } from './version.js';
+export { toolFingerprintHash, skillFingerprintHash, type ToolFingerprint, type SkillFingerprint } from './runtime/fingerprints.js';

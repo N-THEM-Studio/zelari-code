@@ -239,8 +239,16 @@ export function validateResourceAndContractEvents(
       }
       lastToolCallsUsed = used;
       const limit = typeof e.data.toolCallsLimit === 'number' ? e.data.toolCallsLimit : used + remaining;
-      if (used + remaining !== limit) {
-        violations.push({ code: 'RESOURCE_REMAINING_COHERENT', seq: e.seq, message: `used(${used}) + remaining(${remaining}) != limit(${limit})` });
+      // 2.6.1 (plan §9): remaining = max(0, limit - used). Over budget the
+      // arithmetic sum no longer matches the limit — the OVERRUN does.
+      if (remaining !== Math.max(0, limit - used)) {
+        violations.push({ code: 'RESOURCE_REMAINING_COHERENT', seq: e.seq, message: `remaining(${remaining}) != max(0, limit(${limit}) - used(${used}))` });
+      }
+      const overrun = e.data.overrun;
+      if (overrun !== undefined) {
+        if (typeof overrun !== 'number' || overrun < 0 || overrun !== Math.max(0, used - limit)) {
+          violations.push({ code: 'RESOURCE_OVERRUN_COHERENT', seq: e.seq, message: `overrun(${String(overrun)}) != max(0, used(${used}) - limit(${limit}))` });
+        }
       }
       for (const key of ['verificationReserve', 'repairReserve'] as const) {
         const v = e.data[key];

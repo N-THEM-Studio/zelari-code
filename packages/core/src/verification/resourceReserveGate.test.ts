@@ -110,6 +110,46 @@ describe('task contract (§14)', () => {
     expect(c.version).toBe(1);
   });
 
+  it('2.6.1 parser fix: unmarked prose NEVER becomes criteria (plan §3)', () => {
+    const c = deriveInitialContract(
+      1,
+      'Fix login.\nDo not change password semantics.\nKeep Node 24 compatibility.',
+    );
+    expect(c.goal).toBe('Fix login.');
+    expect(c.constraints.map((x) => x.text)).toEqual([
+      'Do not change password semantics.',
+      'Keep Node 24 compatibility.',
+    ]);
+    expect(c.acceptanceCriteria).toEqual([]);
+  });
+
+  it('explicit markers produce criteria (checkbox + keyword lead-ins)', () => {
+    const c = deriveInitialContract(
+      1,
+      'Ship the fix\n- [ ] tests pass\n- [x] docs updated\nAcceptance: login works\nCriterion: no regression\nVerify: npm test\nTest: vitest run\nSuccess: user can log in',
+    );
+    expect(c.acceptanceCriteria.map((x) => x.text)).toEqual([
+      'tests pass',
+      'docs updated',
+      'login works',
+      'no regression',
+      'npm test',
+      'vitest run',
+      'user can log in',
+    ]);
+    const verify = c.acceptanceCriteria.find((x) => x.text === 'npm test')!;
+    expect(verify.verificationHint).toEqual({ kind: 'command', value: 'npm test' });
+    // Criteria lines are not double-counted as constraints or goal.
+    expect(c.constraints).toEqual([]);
+    expect(c.goal).toBe('Ship the fix');
+  });
+
+  it('keyword without separator stays prose (no false criteria)', () => {
+    const c = deriveInitialContract(1, 'Test the login flow manually');
+    expect(c.acceptanceCriteria).toEqual([]);
+    expect(c.goal).toBe('Test the login flow manually');
+  });
+
   it('user wins: required user items survive agent updates', () => {
     expect(() =>
       applyTaskContractUpdate(base, { removeConstraintIds: ['uc-1'] }),

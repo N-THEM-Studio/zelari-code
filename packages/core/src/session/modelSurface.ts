@@ -90,11 +90,14 @@ function asNumber(value: unknown): number | undefined {
 export function formatResourceSnapshot(data: Record<string, unknown>): string {
   const used = asNumber(data.toolCallsUsed) ?? 0;
   const remaining = asNumber(data.toolCallsRemaining) ?? 0;
+  const limit = asNumber(data.toolCallsLimit) ?? used + remaining;
   const lines = [
     'RESOURCE STATUS',
-    `Tool calls: ${used} / ${used + remaining}`,
+    `Tool calls: ${used} / ${limit}`,
     `Remaining: ${remaining}`,
   ];
+  const overrun = asNumber(data.overrun);
+  if (overrun !== undefined && overrun > 0) lines.push(`Overrun: ${overrun}`);
   const wall = asNumber(data.wallMsRemaining);
   if (wall !== undefined) lines.push(`Wall clock remaining: ${Math.max(0, Math.round(wall / 1000))}s`);
   lines.push(`Verification reserve: ${asNumber(data.verificationReserve) ?? 0}`);

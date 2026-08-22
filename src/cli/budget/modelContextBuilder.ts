@@ -178,10 +178,18 @@ export async function buildModelContext(
     input.onCompactionMetric?.(compactionMetrics);
   }
 
-  // 2.6 Track B (doc §10.3): model-visible RESOURCE STATUS — the LATEST
-  // snapshot only, appended as a system tail AFTER compaction replay so the
-  // occupancy measurement below includes it. Projection stays latest-only.
-  if (input.resourceSnapshot) {
+  // 2.6 Track B (doc §10.3) / 2.6.1 fix (closure plan §12): the durable
+  // `resource.snapshot` event is the ONLY model surface (ADR-0016 invariant:
+  // model-visible ⟺ logged) — deriveMessages projects the LATEST snapshot as
+  // one system message. Append a tail ONLY when no durable snapshot is in the
+  // history (fallback history, or a spine replay predating budget tracking).
+  // Exactly one RESOURCE STATUS may ever reach the provider.
+  if (
+    input.resourceSnapshot &&
+    !history.some(
+      (m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('RESOURCE STATUS'),
+    )
+  ) {
     history = [...history, resourceStatusMessage(input.resourceSnapshot)];
   }
 

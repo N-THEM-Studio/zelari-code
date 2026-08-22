@@ -1,0 +1,37 @@
+{
+  "id": "js-null-guard-fix",
+  "version": 1,
+  "tier": 0,
+  "profile": "minimal/v1",
+  "phase": "build",
+  "task": "first.js throws on an empty array. Add a guard so first([]) returns undefined instead of throwing. Keep first([x]) behaviour.",
+  "fixture": {
+    "files": [
+      {
+        "path": "first.js",
+        "content": "export function first(xs) {\n  return xs[0].value;\n}\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { first } from './first.js';\nimport assert from 'node:assert';\nassert.strictEqual(first([]), undefined);\nassert.strictEqual(first([{ value: 7 }]).value ?? first([{ value: 7 }]), 7);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 12,
+    "verificationReserve": 2,
+    "maxWallMs": 120000
+  },
+  "tags": [
+    "local-bugfix",
+    "js",
+    "guards"
+  ]
+}

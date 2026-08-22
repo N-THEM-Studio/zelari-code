@@ -1,0 +1,37 @@
+{
+  "id": "js-log-append-resume",
+  "version": 1,
+  "tier": 1,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "log.js appendEvent(log, ev) must never mutate the input array and must return a NEW array with ev appended. Fix the in-place push.",
+  "fixture": {
+    "files": [
+      {
+        "path": "log.js",
+        "content": "export function appendEvent(log, ev) {\n  log.push(ev);\n  return log;\n}\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { appendEvent } from './log.js';\nimport assert from 'node:assert';\nconst original = [{ seq: 1 }];\nconst next = appendEvent(original, { seq: 2 });\nassert.strictEqual(original.length, 1);\nassert.strictEqual(next.length, 2);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 16,
+    "verificationReserve": 2,
+    "maxWallMs": 150000
+  },
+  "tags": [
+    "session",
+    "resume",
+    "append-only"
+  ]
+}

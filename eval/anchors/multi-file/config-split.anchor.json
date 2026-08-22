@@ -1,0 +1,36 @@
+{
+  "id": "js-config-split-multi-file",
+  "version": 1,
+  "tier": 1,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "Split config.js into config.dev.js and config.prod.js (same keys, port 3000 dev / 8080 prod) and make config.js export a selector pick(env) returning the right one.",
+  "fixture": {
+    "files": [
+      {
+        "path": "config.js",
+        "content": "export const config = { port: 3000 };\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { pick } from './config.js';\nimport assert from 'node:assert';\nassert.strictEqual(pick('dev').port, 3000);\nassert.strictEqual(pick('prod').port, 8080);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 22,
+    "verificationReserve": 3,
+    "maxWallMs": 180000
+  },
+  "tags": [
+    "multi-file",
+    "config"
+  ]
+}

@@ -744,7 +744,10 @@ async function runHeadlessSingle(
       // 2.6 Phase 3: host-owned pre-dispatch resource gate (doc section 11.3).
       // Advisory by default; ZELARI_RESOURCE_ENFORCEMENT=protected enables the
       // protected verification reserve. Degrade-and-stop (null gate = allow).
-      toolCallGate: (name: string) => spine.gateResourceToolCall(name) ?? { allowed: true },
+      // 2.6.1 (plan §13): argument-aware — bash is essential only when the
+      // command is a test/typecheck/build/git-diff line.
+      toolCallGate: (name: string, args: Record<string, unknown>) =>
+        spine.gateResourceToolCall(name, args) ?? { allowed: true },
       maxToolLoopIterations: maxToolLoop,
     });
 
@@ -1530,6 +1533,32 @@ async function runHeadlessZelari(
             completionOk = hook.completion?.completion?.ok ?? false;
             if (completionOk) {
               emit(`[zelari] slice completion ok`);
+            }
+            // 2.6.1 (plan §14): resource reserve gate in the completion lifecycle —
+            // the budget can never create a PASS; it can only turn a non-PASS
+            // into BLOCKED/resource-exhausted. Advisory spine record either way.
+            try {
+              const budget = spine.resourceBudgetSummary();
+              if (budget && !completionOk) {
+                const { evaluateResourceReserveGate } = await import('@zelari/core/verification');
+                const gated = evaluateResourceReserveGate({
+                  evaluation: {
+                    verdict: 'REPAIR_REQUIRED',
+                    summary: 'headless slice completion',
+                    satisfied: [],
+                    unsatisfied: [],
+                    evidenceComplete: false,
+                    eventBackedEvidenceComplete: false,
+                  },
+                  budget,
+                });
+                if (gated.verdict === 'BLOCKED') {
+                  emit('[zelari] completion BLOCKED: resource budget exhausted (non-PASS + zero remaining)');
+                }
+                spine.note('completion.resource_gate', { decision: gated.verdict, remaining: budget.toolCalls.remaining });
+              }
+            } catch {
+              /* advisory record only — never breaks the turn */
             }
           } catch {
             // best-effort

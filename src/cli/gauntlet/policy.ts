@@ -87,7 +87,10 @@ export function budgetAwareGauntletGate(input: {
   verificationReserve: number;
 }): GauntletBudgetDecision {
   if (input.verdict === 'PASS') return 'proceed';
-  if (input.toolCallsRemaining <= input.verificationReserve) return 'finalize-verify';
+  // 2.6.1 fix (closure plan §16): zero budget must HOLD — checked BEFORE the
+  // reserve comparison, otherwise remaining=0 <= reserve wins and a broke
+  // gauntlet would be told to "finalize-verify" with nothing left to spend.
   if (input.toolCallsRemaining <= 0) return 'hold';
+  if (input.toolCallsRemaining <= input.verificationReserve) return 'finalize-verify';
   return 'proceed';
 }

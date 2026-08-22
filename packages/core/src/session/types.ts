@@ -41,6 +41,9 @@ export const SESSION_EVENT_KINDS = [
   // once at session start / manifest change. State-only (never model-surface):
   // data = {manifest, manifestHash}. Schema review per ADR-0021.
   'session.harness_manifest',
+  // 2.6.1 (closure plan §6): resume-time harness drift record. State-only:
+  // data = {originalManifestHash, currentManifestHash}. Non-blocking signal.
+  'session.harness_drift',
   'user.message',
   'assistant.message',
   'tool.call',
@@ -74,6 +77,8 @@ export const SESSION_EVENT_KINDS = [
   'resource.snapshot',
   'resource.limit_reached',
   'resource.reserve_entered',
+  // 2.6.1 (closure plan §9): hard-limit overrun telemetry — state-only.
+  'resource.overrun',
   'note',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];

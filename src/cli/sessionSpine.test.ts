@@ -111,12 +111,17 @@ describe('SessionSpineMirror.adopt', () => {
     await second.close('done');
     const report = await readSessionLog(path.join(tmp, 'sess-b', 'events.jsonl'));
     const kinds = report.events.map((e) => e.kind);
+    // 2.6.1 (plan §4/§25): TaskContract is default-ON — the first
+    // user.message seeds task.contract; the post-resume steer versions it
+    // via task.contract_updated (append-only, monotone).
     expect(kinds).toEqual([
       'session.started',
       'user.message',
+      'task.contract',
       'session.ended',
       'session.resumed',
       'user.message',
+      'task.contract_updated',
       'session.ended',
     ]);
     // seq must be monotonic and gap-free across the reopen

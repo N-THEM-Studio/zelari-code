@@ -64,8 +64,8 @@ describe('task.contract seeding (2.6 Track A)', () => {
     }
   });
 
-  it('does NOT seed when the flag is off (default rollout Phase 1)', async () => {
-    delete process.env[FLAG];
+  it('does NOT seed when opted out (ZELARI_TASK_CONTRACT=0, 2.6.1 §25 default-ON)', async () => {
+    process.env[FLAG] = '0';
     const mirror = await SessionSpineMirror.adopt('tc-off', { baseDir });
     mirror.userMessage('plain prompt');
     await mirror.flush();

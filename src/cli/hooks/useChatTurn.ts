@@ -722,14 +722,19 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         systemPrefixLen = systemMessages.length;
 
         // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
-        // The council sets 5; the single-prompt path previously set NONE, so a
-        // flailing model could loop for the full MAX_TOOL_LOOP_ITERATIONS (12)
-        // of junk calls (e.g. read_file same path ×3 then silence). Default 25,
-        // overridable via ZELARI_MAX_TOOL_CALLS.
-        const maxToolCallsPerTurn = envNumber(process.env.ZELARI_MAX_TOOL_CALLS, {
+        // 2.6.1 (plan §8): the per-turn cap is advisory anti-spam ONLY and is
+        // clamped by the session ResourcePolicy — ZELARI_MAX_TOOL_CALLS is a
+        // config alias for the session budget (see BudgetRuntime), so the
+        // policy stays the single authority and this can never become a
+        // second independent limit.
+        const perTurnEnv = envNumber(process.env.ZELARI_MAX_TOOL_CALLS, {
           default: 25,
           min: 1,
         });
+        const sessionCap = writerRef.current?.spine?.resourceBudgetLimit();
+        const maxToolCallsPerTurn = sessionCap
+          ? Math.max(1, Math.min(perTurnEnv, sessionCap.maxToolCalls))
+          : perTurnEnv;
         // v1.5.2 / v1.8.0 / v1.8.3: soft tool-loop + optional hard ceiling.
         // Soft can auto-extend until hard so multi-step work finishes.
         const maxToolLoopIterations = budget.maxToolLoopIterations;
@@ -760,8 +765,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           providerStream,
           // 2.6 Phase 3: host-owned pre-dispatch resource gate via the spine
           // mirror (doc section 11.3). Degrade-and-stop (null gate = allow).
-          toolCallGate: (name: string) =>
-            writerRef.current?.spine?.gateResourceToolCall(name) ?? { allowed: true },
+          // 2.6.1 (plan §13): argument-aware — bash is essential only when
+          // the command is a test/typecheck/build/git-diff line.
+          toolCallGate: (name: string, args: Record<string, unknown>) =>
+            writerRef.current?.spine?.gateResourceToolCall(name, args) ?? { allowed: true },
           cwd,
           maxToolCallsPerTurn,
           maxToolLoopIterations,
@@ -1564,10 +1571,17 @@ async function dispatchCouncilPromptImpl(
   // 5 tool calls per turn (a planner creating 8 tasks got 3 of them skipped
   // with "[skipped] maxToolCallsPerTurn reached"). Same env override as the
   // single-prompt path.
-  const councilMaxToolCalls = envNumber(process.env.ZELARI_MAX_TOOL_CALLS, {
+  // 2.6.1 (plan §8): same rule as the single-prompt path — the council
+  // per-turn cap is advisory and clamped by the session ResourcePolicy
+  // (single authority), never a second independent limit.
+  const councilPerTurnEnv = envNumber(process.env.ZELARI_MAX_TOOL_CALLS, {
     default: 15,
     min: 1,
   });
+  const councilSessionCap = writerRef.current?.spine?.resourceBudgetLimit();
+  const councilMaxToolCalls = councilSessionCap
+    ? Math.max(1, Math.min(councilPerTurnEnv, councilSessionCap.maxToolCalls))
+    : councilPerTurnEnv;
   // Wire soft/hard tool-loop budgets into every council member harness
   // (previously only the single-agent path set these — members defaulted
   // to harness soft=30 with unbounded soft×3 hard extension).

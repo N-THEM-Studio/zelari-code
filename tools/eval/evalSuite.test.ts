@@ -36,6 +36,13 @@ function rec(anchorId: string, result: AnchorRunRecord['result'], costUsd = 0.1)
 
 const okRunner: AgentRunner = () => ({ ok: true, toolCalls: 2, wallMs: 100 });
 
+/** 2.6.1 (§18): the anchor set grew — tests must pick by id, never [0]. */
+function anchorById(id: string): AnchorManifest {
+  const found = loadAnchors(ANCHORS_DIR).find((a) => a.id === id);
+  if (!found) throw new Error(`anchor ${id} missing`);
+  return AnchorManifestSchema.parse(found);
+}
+
 /** Simulates an agent that actually fixes the workspace (writes the fix). */
 const fixingRunner: AgentRunner = (anchor, workspaceDir) => {
   const target = anchor.fixture.files[0];
@@ -59,7 +66,7 @@ describe('anchor runner (§26.6)', () => {
   });
 
   it('pass: fixture + ok agent + green checks → verified record', async () => {
-    const anchor = AnchorManifestSchema.parse(loadAnchors(ANCHORS_DIR)[0]);
+    const anchor = anchorById('js-fix-export-bugfix');
     const record = await runAnchor(anchor, {
       runner: fixingRunner,
       workspaceRoot: mkdtempSync(path.join(tmpdir(), 'anchor-')),
@@ -70,7 +77,7 @@ describe('anchor runner (§26.6)', () => {
   });
 
   it('blocked: agent over tool budget → budget-exceeded, not fail', async () => {
-    const anchor = AnchorManifestSchema.parse(loadAnchors(ANCHORS_DIR)[0]);
+    const anchor = anchorById('js-fix-export-bugfix');
     const record = await runAnchor(anchor, {
       runner: () => ({ ok: true, toolCalls: 999, wallMs: 50 }),
       workspaceRoot: mkdtempSync(path.join(tmpdir(), 'anchor-')),
@@ -81,7 +88,7 @@ describe('anchor runner (§26.6)', () => {
   });
 
   it('fail: checks red → checks-failed with detail', async () => {
-    const anchor = AnchorManifestSchema.parse({ ...loadAnchors(ANCHORS_DIR)[0], success: [{ command: 'node definitely-missing.mjs' }] });
+    const anchor = AnchorManifestSchema.parse({ ...anchorById('js-fix-export-bugfix'), success: [{ command: 'node definitely-missing.mjs' }] });
     const record = await runAnchor(anchor, {
       runner: okRunner,
       workspaceRoot: mkdtempSync(path.join(tmpdir(), 'anchor-')),
@@ -116,6 +123,36 @@ describe('regression gate (§26.7)', () => {
     });
     expect(cmp.decision).toBe('REJECT');
     expect(cmp.result.anchors.regressions.map((r) => r.anchorId)).toEqual(['a1']);
+  });
+
+  it('2.6.1 plan §21: baseline PASS missing from candidate → REJECT (missing anchor)', () => {
+    const cmp = evaluateRegressionGate({
+      manifestHash: 'cand',
+      baseline: [rec('a1', 'pass'), rec('a2', 'pass')],
+      candidate: [rec('a2', 'pass')],
+      currentSuite: { passed: 10, total: 10 },
+      policy: RETENTION_PRESETS.stable,
+    });
+    expect(cmp.decision).toBe('REJECT');
+    expect(cmp.result.anchors.regressions).toEqual([
+      { anchorId: 'a1', baseline: 'pass', candidate: 'missing' },
+    ]);
+    expect(cmp.result.anchors.total).toBe(2);
+  });
+
+  it('2.6.1 plan §21: 25 PASS baseline, 24 PASS + 1 missing candidate → REJECT', () => {
+    const baseline = Array.from({ length: 25 }, (_, i) => rec(`a${i + 1}`, 'pass'));
+    const candidate = baseline.slice(1); // a1 disappeared
+    const cmp = evaluateRegressionGate({
+      manifestHash: 'cand',
+      baseline,
+      candidate,
+      currentSuite: { passed: 10, total: 10 },
+      policy: RETENTION_PRESETS.stable,
+    });
+    expect(cmp.decision).toBe('REJECT');
+    expect(cmp.result.anchors.passed).toBe(24);
+    expect(cmp.result.anchors.total).toBe(25);
   });
 
   it('experimental preset tolerates exactly one regression', () => {

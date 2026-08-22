@@ -129,7 +129,13 @@ export async function runHeadlessGauntlet(
       }`,
     });
 
-    const result = await runGauntletLoop({
+    // 2.6.1 (plan §15): live session budget probe for the loop gate.
+  const budgetGate = () => {
+    const lim = spine.resourceBudgetLimit();
+    return lim ? { remaining: lim.remaining, verificationReserve: lim.verificationReserve } : null;
+  };
+  const result = await runGauntletLoop({
+    budgetGate,
       pieces: decomposed.pieces,
       caps,
       deps: {

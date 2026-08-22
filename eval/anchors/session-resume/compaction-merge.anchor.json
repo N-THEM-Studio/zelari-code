@@ -1,0 +1,36 @@
+{
+  "id": "js-compaction-merge",
+  "version": 1,
+  "tier": 1,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "compact.js mergeLatest(oldSnap, newSnap) must keep the LATEST snapshot fields (newSnap wins) while preserving old fields newSnap omits. Fix the spread order.",
+  "fixture": {
+    "files": [
+      {
+        "path": "compact.js",
+        "content": "export function mergeLatest(oldSnap, newSnap) {\n  return { ...newSnap, ...oldSnap };\n}\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { mergeLatest } from './compact.js';\nimport assert from 'node:assert';\nconst m = mergeLatest({ version: 1, keep: true }, { version: 2 });\nassert.strictEqual(m.version, 2);\nassert.strictEqual(m.keep, true);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 16,
+    "verificationReserve": 2,
+    "maxWallMs": 150000
+  },
+  "tags": [
+    "session",
+    "compaction"
+  ]
+}

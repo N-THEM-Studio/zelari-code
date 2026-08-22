@@ -41,6 +41,10 @@ import {
 } from '@zelari/core/verification';
 import type { ResourceSnapshotPayload } from './budget/resourceSnapshot.js';
 import { BudgetRuntime, resolveResourceEnforcement } from './budget/budgetRuntime.js';
+import { lastHarnessManifestHash, restoreBudgetRuntimeFromSession } from './budget/restoreRuntime.js';
+import { resolveProfile } from '@zelari/core/runtime';
+import { buildHarnessManifest } from './harnessManifest.js';
+import { contractEventData, latestTaskContract, updateTaskContract } from './kraken/taskContract.js';
 import path from 'node:path';
 
 /** Kill switch — default ON in the 2.0 alpha. */
@@ -321,19 +325,49 @@ export class SessionSpineMirror {
   }
 
   /**
+   * 2.6.1 (plan §8): session ResourcePolicy cap for hosts that need to derive
+   * per-turn limits — the policy stays the single authority. Null when no
+   * runtime is attached (hosts keep their own default).
+   */
+  /** Full budget shape for evaluateResourceReserveGate (plan §14). */
+  resourceBudgetSummary(): import('@zelari/core').ResourceBudget | null {
+    return this.budgetRuntime?.budgetSnapshot() ?? null;
+  }
+
+  resourceBudgetLimit(): { maxToolCalls: number; remaining: number; verificationReserve: number } | null {
+    const snap = this.budgetRuntime?.current();
+    return snap
+      ? {
+          maxToolCalls: snap.toolCallsLimit,
+          remaining: snap.toolCallsRemaining,
+          verificationReserve: snap.verificationReserve,
+        }
+      : null;
+  }
+
+  /**
    * §11.3 pre-dispatch gate for hosts that enforce the protected zone
    * (Phase 3): delegates to the attached runtime, never throws. Null when
    * no runtime is attached (hosts treat as "no budget info, allow").
+   * 2.6.1 (plan §13): argument-aware — pass the tool args so `bash` is only
+   * essential when it is a test/typecheck/build/git-diff command.
    */
-  gateResourceToolCall(toolName: string): { allowed: boolean; reason?: string } | null {
-    const gate = this.budgetRuntime?.gateToolCall(toolName);
+  gateResourceToolCall(toolName: string, args?: unknown): { allowed: boolean; reason?: string; hardLimit?: boolean } | null {
+    const gate = this.budgetRuntime?.gateToolCall({ toolName, args });
     if (!gate) return null;
-    return { allowed: gate.allowed, ...(gate.reason ? { reason: gate.reason } : {}) };
+    return {
+      allowed: gate.allowed,
+      ...(gate.reason ? { reason: gate.reason } : {}),
+      ...(gate.hardLimit ? { hardLimit: gate.hardLimit } : {}),
+    };
   }
 
-  /** Count a landed tool.call; returns the snapshot due (§10.4), if any. */
-  private onToolCallBudget(): ResourceSnapshotPayload | null {
-    return this.budgetRuntime?.noteToolCall() ?? null;
+  /**
+   * Count a landed tool.call; returns the snapshot due (§10.4) plus the
+   * hard-limit event due on this call (2.6.1 plan §9), if any.
+   */
+  private onToolCallBudget(): { snapshot: ResourceSnapshotPayload | null; hardEvent: { kind: 'resource.limit_reached' | 'resource.overrun'; data: Record<string, unknown> } | null } {
+    return this.budgetRuntime?.consumeToolCall() ?? { snapshot: null, hardEvent: null };
   }
 
   async flush(): Promise<void> {
@@ -457,24 +491,41 @@ export class SessionSpineMirror {
   }
 
   private append(input: SessionEventInput): Promise<number | null> {
+    // 2.6.1 (plan §25): TaskContract is default-ON (opt-out ZELARI_TASK_CONTRACT=0).
     if (!this.writer || this.status === 'closed') return Promise.resolve(null);
     // 2.6 Track B: count synchronously BEFORE enqueueing; when §10.4 says a
     // snapshot is due it lands right AFTER its tool.call on this same chain
     // (local variable — no re-entrant append racing the this.chain capture).
-    const dueSnapshot = input.kind === 'tool.call' ? this.onToolCallBudget() : null;
+    // 2.6.1 (plan §9): hard-limit events land on the same chain too.
+    const budgetEffect = input.kind === 'tool.call' ? this.onToolCallBudget() : null;
     // 2.6 Track A: capture contract seeding synchronously for the FIRST
     // user.message (env-gated pilot). Chained below on the same local seq
     // promise - deterministic order, never a re-entrant append race.
     const dueContract =
       input.kind === 'user.message' &&
-      process.env.ZELARI_TASK_CONTRACT === '1' &&
+      taskContractsEnabled() &&
       !this.contractSeeded
         ? ((this.contractSeeded = true), input.data?.text as string)
+        : null;
+    // 2.6.1 (plan §4): later user steers version the contract (append-only,
+    // monotone version, user-sourced items never removable by agents).
+    const steerText =
+      input.kind === 'user.message' && taskContractsEnabled() && this.contractSeeded && !dueContract
+        ? ((input.data?.text as string) ?? null)
         : null;
     let seq: Promise<number | null> = this.chain
       .then(() => this.writer!.append(input))
       .then((envelope) => envelope.seq);
-    if (dueSnapshot) {
+    if (budgetEffect?.hardEvent) {
+      const hard = budgetEffect.hardEvent;
+      seq = seq.then((s) =>
+        this.writer!
+          .append({ kind: hard.kind, actor: ACTOR_SYSTEM, data: { ...hard.data } })
+          .then(() => s),
+      );
+    }
+    if (budgetEffect?.snapshot) {
+      const dueSnapshot = budgetEffect.snapshot;
       seq = seq.then((s) =>
         this.writer!
           .append({ kind: 'resource.snapshot', actor: ACTOR_SYSTEM, data: { ...dueSnapshot } })
@@ -494,6 +545,31 @@ export class SessionSpineMirror {
           }
         } catch {
           /* degrade-and-stop: seeding failure never breaks the turn */
+        }
+        return s;
+      });
+    }
+    if (steerText) {
+      seq = seq.then(async (s) => {
+        try {
+          const eventsPath = path.join(this.sessionsDir, this.sessionId, 'events.jsonl');
+          const report = await readSessionLog(eventsPath).catch(() => null);
+          if (!report || typeof s !== 'number') return s;
+          const current = latestTaskContract(report.events);
+          if (!current) return s;
+          const updated = updateTaskContract(current, {
+            addConstraints: [{ id: `steer-${s}`, text: steerText, source: 'user', required: false }],
+            nextUserSeq: s,
+          });
+          if (updated.version !== current.version) {
+            await this.writer!.append({
+              kind: 'task.contract_updated',
+              actor: ACTOR_SYSTEM,
+              data: contractEventData(updated, true),
+            });
+          }
+        } catch {
+          /* degrade-and-stop: steer versioning never breaks the turn */
         }
         return s;
       });
@@ -597,10 +673,24 @@ export async function wrapSessionWriter(
   if (spine.status === 'active') {
     // 2.6 Track B (Phase 2/3): count tool calls + emit resource.snapshot.
     const profile = options.extraStarted?.profile;
-    spine.attachBudgetRuntime(
-      new BudgetRuntime(typeof profile === 'string' ? profile : 'kraken/v1', {
-        enforcement: resolveResourceEnforcement(),
-      }),
+    const budget = new BudgetRuntime(typeof profile === 'string' ? profile : 'kraken/v1', {
+      enforcement: resolveResourceEnforcement(),
+    });
+    // 2.6.1 (plan §10): TUI/host parity — on resume, rebuild the ledger from
+    // the prior log with the SAME helper headless uses, so remaining budget
+    // is identical across hosts (12/40 → remaining 28 everywhere).
+    if (spine.resumedFromSeq !== undefined && spine.resumedFromSeq > 0) {
+      await restoreBudgetRuntimeFromSession(budget, sessionId, options.baseDir);
+    }
+    spine.attachBudgetRuntime(budget);
+    // 2.6.1 (plan §6): manifest presence = 100% + resume drift detection.
+    await noteHarnessLifecycle(
+      spine,
+      sessionId,
+      typeof profile === 'string' ? profile : 'kraken/v1',
+      budget,
+      options.baseDir,
+      (options.extraStarted as { phase?: string } | undefined)?.phase,
     );
   }
   return new SpineMirroringWriter(inner, spine.status === 'active' ? spine : null);
@@ -628,4 +718,51 @@ export async function resumeSpineContext(
     projection: buildProjection(report.events, report.issues),
     derived: deriveMessages(report.events),
   };
+}
+
+/** 2.6.1 (plan §25): TaskContract default-ON; opt out with ZELARI_TASK_CONTRACT=0. */
+function taskContractsEnabled(): boolean {
+  return process.env.ZELARI_TASK_CONTRACT !== '0';
+}
+
+/**
+ * 2.6.1 (plan §6): harness manifest lifecycle shared by EVERY host — fresh
+ * session persists session.harness_manifest; a resume compares the original
+ * hash and records session.harness_drift (non-blocking signal). Degrade-and-
+ * stop: manifest wiring never breaks a turn.
+ */
+export async function noteHarnessLifecycle(
+  spine: SessionSpineMirror,
+  sessionId: string,
+  profileId: string,
+  budget: BudgetRuntime,
+  baseDir?: string,
+  phaseHint?: unknown,
+): Promise<void> {
+  try {
+    const profile = resolveProfile(profileId);
+    const { manifest, manifestHash } = buildHarnessManifest({
+      profile,
+      phase: phaseHint === 'plan' ? 'plan' : 'build',
+      toolNames: profile.tools,
+      // plan §7/§8: the REAL session policy — never the {unset:true} marker.
+      resourcePolicy: budget.policy,
+    });
+    if (spine.resumedFromSeq !== undefined && spine.resumedFromSeq > 0) {
+      const original = await lastHarnessManifestHash(sessionId, baseDir);
+      if (original === null) {
+        spine.harnessManifest(manifest, manifestHash); // pre-2.6.1 log: backfill
+      } else if (original !== manifestHash) {
+        await spine.appendEvent({
+          kind: 'session.harness_drift',
+          actor: ACTOR_SYSTEM,
+          data: { originalManifestHash: original, currentManifestHash: manifestHash },
+        });
+      }
+    } else {
+      spine.harnessManifest(manifest, manifestHash);
+    }
+  } catch {
+    /* degrade-and-stop */
+  }
 }

@@ -1,0 +1,44 @@
+{
+  "id": "ts-move-module-multi-file",
+  "version": 1,
+  "tier": 1,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "Move the implementation of util.js into lib/util.js and re-export it from util.js so both existing imports keep working. Do not duplicate the logic.",
+  "fixture": {
+    "files": [
+      {
+        "path": "util.js",
+        "content": "export function slug(s) {\n  return s.trim().toLowerCase().replace(/\\s+/g, '-');\n}\n"
+      },
+      {
+        "path": "app.mjs",
+        "content": "import { slug } from './util.js';\nconsole.log(slug('A B'));\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { slug } from './lib/util.js';\nimport { slug as s2 } from './util.js';\nimport assert from 'node:assert';\nassert.strictEqual(slug('A B'), 'a-b');\nassert.strictEqual(s2('C  D'), 'c-d');\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0
+    },
+    {
+      "command": "node app.mjs",
+      "expectExit": 0
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 20,
+    "verificationReserve": 3,
+    "maxWallMs": 180000
+  },
+  "tags": [
+    "multi-file",
+    "refactor"
+  ]
+}

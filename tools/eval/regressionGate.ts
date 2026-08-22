@@ -14,7 +14,8 @@ import type { HarnessRetentionPolicy } from './retentionPolicy.ts';
 export interface AnchorRegression {
   anchorId: string;
   baseline: 'pass' | 'fail' | 'blocked';
-  candidate: 'pass' | 'fail' | 'blocked';
+  /** `missing` = baseline PASS with NO candidate record (2.6.1, plan §21). */
+  candidate: 'pass' | 'fail' | 'blocked' | 'missing';
 }
 
 export interface AnchorImprovement {
@@ -54,10 +55,12 @@ export interface GateComparison {
 export function summarizeCost(records: readonly AnchorRunRecord[]): RunCostSummary {
   const total = records.reduce<RunCost>((acc, r) => addCost(acc, r.cost), zeroCost());
   const solves = records.filter((r) => r.verified).length;
+  // 2.6.1 (plan §23): unified cost = model + tool spend per verified solve.
+  const unifiedUsd = total.modelCostUsd + (total.toolCostUsd ?? 0);
   return {
     total,
     verifiedSolves: solves,
-    costPerVerifiedSolve: solves > 0 ? total.modelCostUsd / solves : null,
+    costPerVerifiedSolve: solves > 0 ? unifiedUsd / solves : null,
     wallMsPerVerifiedSolve: solves > 0 ? total.wallMs / solves : null,
     toolCallsPerVerifiedSolve: solves > 0 ? total.toolCalls / solves : null,
   };
@@ -82,24 +85,36 @@ export function evaluateRegressionGate(input: {
   const reasons: string[] = [];
 
   const baselineById = new Map(baseline.map((r) => [r.anchorId, r]));
+  const candidateById = new Map(candidate.map((r) => [r.anchorId, r]));
   const regressions: AnchorRegression[] = [];
   const improvements: AnchorImprovement[] = [];
   let passed = 0;
-  for (const c of candidate) {
+  // 2.6.1 (plan §21): compare over the UNION of baseline ∪ candidate ids —
+  // an anchor may never "disappear" from the candidate to dodge the gate.
+  // Baseline PASS + no candidate record is itself a REGRESSION.
+  const unionIds = [...new Set([...baselineById.keys(), ...candidateById.keys()])].sort();
+  for (const anchorId of unionIds) {
+    const b = baselineById.get(anchorId);
+    const c = candidateById.get(anchorId);
+    if (!c) {
+      if (b && b.result === 'pass') {
+        regressions.push({ anchorId, baseline: b.result, candidate: 'missing' });
+      }
+      continue;
+    }
     if (c.result === 'pass') passed += 1;
-    const b = baselineById.get(c.anchorId);
     if (!b) continue;
     if (b.result === 'pass' && c.result !== 'pass') {
-      regressions.push({ anchorId: c.anchorId, baseline: b.result, candidate: c.result });
+      regressions.push({ anchorId, baseline: b.result, candidate: c.result });
     } else if (b.result !== 'pass' && c.result === 'pass') {
-      improvements.push({ anchorId: c.anchorId, baseline: b.result, candidate: c.result });
+      improvements.push({ anchorId, baseline: b.result, candidate: c.result });
     }
   }
 
   const result: HarnessEvalResult = {
     manifestHash,
     currentSuite,
-    anchors: { passed, total: candidate.length, regressions, improvements },
+    anchors: { passed, total: unionIds.length, regressions, improvements },
     validity: {
       passed: (input.validityViolations ?? []).length === 0,
       violations: [...(input.validityViolations ?? [])],
