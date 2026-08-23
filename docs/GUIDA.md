@@ -265,6 +265,9 @@ La terza modalità (`⚡ zelari`) trasforma **un prompt libero** in una **missio
 | `ZELARI_COUNCIL_CAN_BUILD` | off | `1` = free-form council può implementare (Lucifero); forza anche zelari su path council |
 | `ZELARI_MODE_MAX_TOOLS_AGENT` | `40` | budget tool call per slice agent in missione |
 | `ZELARI_MODE_MAX_TOOLS_LUCIFER` | `30` | budget tool call chairman (solo path legacy council impl) |
+| `ZELARI_TASK_CONTRACT` | `1` | `0` = disattiva il TaskContract della missione (goal / constraints / acceptance dal brief; default on) |
+
+**Continuation budget-aware (2.6.3):** terminata ogni slice di implementation, un gate valuta budget residuo e storia dei gap: `repair` riprova la slice, `pivot` cambia approccio dopo lo stesso GAP ripetuto (roster ridotto), `hold` ferma la missione all'esaurimento del budget **senza** dichiarare done (il PASS deterministico resta l'unica authority; niente `passByBudget`).
 
 ### Memoria di progetto
 
@@ -1042,6 +1045,8 @@ model context (AgentHarness)
 - **Invariant:** ciò che il modello vede ⟺ ciò che è loggato — prompt utente inclusi, cosa che il log 1.x non registrava mai
 - **Eventi di stato oltre al modello:** `verification.run` / `verification.evidence`, `mission.progress`, lineage (`session.forked`), `session.started` con profilo + manifest hash
 
+- **Harness manifest (deep, 2.6.3):** il manifest della sessione fingerprinta la superficie tool reale (name + description + input schema) oltre a profilo e resource policy — un cambio di tool/descrizione/schema cambia l'hash, e il resume segnala il drift (`session.harness_drift`)
+
 ### Resume
 
 ```bash
@@ -1320,6 +1325,7 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 | `ZELARI_VERIFY_PACK` | `0` | `1` = criteria pack v1 nativo (typecheck/test/build reali) — gate indipendente: non richiede strict-done né Kraken Selection |
 | `ZELARI_VERIFIER_REVIEW` | `0` | `1` = verifier LLM advisory dopo il gate (headless kraken); `0` forza off anche con modello dedicato |
 | `ZELARI_SESSIONS_DIR` | `<workspace>/.zelari/sessions` | Override della directory della session spine (test/CI) |
+| `ZELARI_EVAL_RESULTS_DIR` | `eval/results` | Override della directory del result store eval — gate di regressione (test/CI) |
 
 ### Path override (test/CI)
 

@@ -261,6 +261,9 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 🤖 **Multi-agent council** — 6 roles (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with feedback loops and member promotion
 - 🐙 **Kraken super-agent** — default mode (aliases `agent`/`single`): lead that spawns `task` tentacles (`explore` / `general` / `verify`), optional git worktrees, and **Kraken Graph** (`/kraken graph`) for a parallel DAG
 - ⚡ **Zelari-mode** — autonomous multi-run missions: a free-form prompt becomes a mission brief, then **design@council → build@kraken** until the MVP slice's `completion.ok` is green or the iteration budget runs out
+- 🧮 **Budget-aware mission continuation** — after each mission slice a continuation gate decides repair / pivot / hold from the remaining budget and gap history (repeated gap → pivot with reduced roster; exhaustion → hold, never a false done; deterministic PASS stays the only authority)
+- 🧾 **Deep harness manifest** — each session fingerprints its real tool surface (name + description + input schema per tool) alongside profile and resource policy, so tool or schema drift changes the manifest hash and is detectable on resume and in eval provenance
+- 🚦 **Eval retention gate** — tiered anchor suite (`eval/anchors/`), versioned result store per manifest hash, and a CI regression gate comparing candidate vs last stable tag (blocking once the baseline store is seeded; honest shadow + warning until then)
 - 🧠 **Project memory** — zero-dependency file-based recall (`.zelari/memory/`), fed into the council as RAG context between mission slices (opt-out with `ZELARI_MEMORY=0`)
 - ⇧⇥ **Kraken/council/zelari mode switch** — `shift+tab` cycles free-form prompts between the kraken lead, the full council pipeline, and an autonomous mission (mode shown in the status line)
 - 🎨 **Rich TUI** — Ink + React: native-scrollback chat stream, input bar with status line below it (mode · provider · model · session · cwd · execution timer)
@@ -338,6 +341,8 @@ zelari-code (CLI, Apache-2.0)
 | `ZELARI_MEMORY=0` | Disable the file-based project memory (`.zelari/memory/`) |
 | `ZELARI_MISSION_AUTO=1` | Auto-start Zelari missions (skip the brief confirmation) |
 | `ZELARI_MISSION_MAX_ITER` | Max **implementation** slices per Zelari mission (default 6; design-phase is free; impl 2+ = Minosse+Lucifero only) |
+| `ZELARI_TASK_CONTRACT=0` | Disable the mission TaskContract (goal / constraints / acceptance criteria extracted from the brief; on by default) |
+| `ZELARI_EVAL_RESULTS_DIR` | Dev: override the eval result-store dir used by `tools/eval` (test/CI) |
 | `ZELARI_MODE_MAX_TOOLS_LUCIFER` | Chairman (Lucifero) tool budget in zelari-mode (default 30) |
 | `ZELARI_DIAGNOSTICS=0` | Disable the post-edit compiler/lint diagnostics loop |
 | `ZELARI_DIAGNOSTICS_TIMEOUT_MS` | Timeout of the diagnostics loop (default 5000) |
@@ -457,6 +462,15 @@ npm test
 ```bash
 npm run typecheck
 ```
+
+### Eval retention gate
+
+```bash
+npm run test:eval    # eval engine + regression-gate unit tests
+npm run eval:gate    # regression gate vs stored baseline (CI parity)
+```
+
+Anchors: `eval/anchors/` (tiered) · result store: `eval/results/`, versioned per harness-manifest hash and seeded with `node --experimental-strip-types tools/eval/runAnchors.ts` · CI: `.github/workflows/eval-retention-gate.yml` — Tier-0 always blocking; the retention gate runs candidate anchors vs the store extracted from the last stable tag and **blocks on regression** once the baseline store is seeded (declared bootstrap + warning until then; never fake greens).
 
 ## Related
 
