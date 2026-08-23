@@ -13,6 +13,7 @@
  */
 
 import { build } from 'esbuild';
+import { copyFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -56,5 +57,13 @@ await build({
   },
   logLevel: 'info',
 });
+
+// `node:sqlite` exposes synchronous primitives. Zelari runs them in a
+// dedicated worker so the agent/event loop stays asynchronous; copy that
+// runtime asset next to both the tsc and bundled CLI layouts.
+const workerSource = path.join(pkgRoot, 'src', 'cli', 'memory', 'sqliteWorker.mjs');
+const workerTarget = path.join(pkgRoot, 'dist', 'cli', 'memory', 'sqliteWorker.mjs');
+await mkdir(path.dirname(workerTarget), { recursive: true });
+await copyFile(workerSource, workerTarget);
 
 console.log(`[bundle-cli] bundled → ${path.relative(pkgRoot, outfile)}`);

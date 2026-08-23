@@ -1038,6 +1038,32 @@ fn get_app_config() -> Result<serde_json::Value, String> {
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct MemoryQueryArgs {
+    cwd: String,
+    request: serde_json::Value,
+}
+
+/// Read-only Desktop bridge. Domain behavior remains in the Node MemoryService.
+#[tauri::command]
+fn query_memory(args: MemoryQueryArgs) -> Result<serde_json::Value, String> {
+    let cwd = args.cwd.trim();
+    if cwd.is_empty() {
+        return Err("A project folder is required for memory exploration.".into());
+    }
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let request = serde_json::to_string(&args.request)
+        .map_err(|e| format!("Failed to encode memory request: {e}"))?;
+    let raw = run_cli_capture(
+        &node,
+        &cli,
+        &["--memory-json", request.as_str(), "--cwd", cwd],
+    )?;
+    parse_cli_json_stdout(&raw).ok_or_else(|| format!("Invalid JSON from memory service.\n{raw}"))
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct SetConfigArgs {
     provider: Option<String>,
     model: Option<String>,
@@ -3065,6 +3091,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_cli_status,
             get_app_config,
+            query_memory,
             set_app_config,
             set_api_key,
             login_oauth,

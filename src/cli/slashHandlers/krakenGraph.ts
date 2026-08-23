@@ -18,6 +18,11 @@ import { planTaskGraph } from '../kraken/planner.js';
 import { loadGraphSnapshot, formatSnapshotForPlanner } from '../kraken/graphMemory.js';
 import { KrakenGraphExecutor, isKrakenGraphEnabled } from '../kraken/executor.js';
 import { formatKrakenGraphAscii, formatKrakenGraphDigest } from '../kraken/graphStatus.js';
+import {
+  getMemoryService,
+  isMemoryAutoWriteEnabled,
+  isMemoryV2Enabled,
+} from '../memory/serviceFactory.js';
 
 export interface KrakenGraphSlashContext {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
@@ -43,6 +48,12 @@ export async function handleKrakenGraph(
 
   appendSystem(ctx.setMessages, `[kraken] planning graph for: ${prompt.trim()}`);
 
+  const memory = isMemoryV2Enabled()
+    ? await getMemoryService(ctx.cwd, process.env, {
+        onWarning: (warning) => appendSystem(ctx.setMessages, warning),
+      })
+    : undefined;
+
   const audit = new AuditLogger();
   const taskToolDeps = {
     createSubAgentContext: createKrakenSubAgentContextFactory({
@@ -50,6 +61,8 @@ export async function handleKrakenGraph(
       audit,
       sessionId: ctx.sessionId,
     }),
+    ...(memory ? { memoryService: memory } : {}),
+    memoryAutoWrite: isMemoryAutoWriteEnabled(),
   };
 
   try {
@@ -92,5 +105,7 @@ export async function handleKrakenGraph(
       ctx.setMessages,
       `[kraken] graph run failed: ${err instanceof Error ? err.message : String(err)}`,
     );
+  } finally {
+    await memory?.close().catch(() => undefined);
   }
 }

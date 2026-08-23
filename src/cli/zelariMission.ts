@@ -492,6 +492,12 @@ export async function runZelariMission(
         sliceId: brief.sliceMvp.id,
         source: 'council',
         iteration: step,
+        memoryKind: result.completionOk ? 'outcome' : runMode === 'design-phase' ? 'decision' : 'episode',
+        importance: result.completionOk ? 0.9 : 0.6,
+        confidence: result.completionOk ? 0.95 : result.degraded ? 0.45 : 0.7,
+        writeClass: result.completionOk ? 'auto' : 'candidate',
+        completionOk: result.completionOk,
+        verified: result.completionOk && !result.degraded,
       },
     );
 

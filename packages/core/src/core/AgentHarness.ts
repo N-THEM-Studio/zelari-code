@@ -54,6 +54,7 @@ import {
   TEXT_LOOP_RECOVERY_SYSTEM,
   TEXT_LOOP_RECOVERY_USER_PROMPT,
 } from './textLoopDetect.js';
+import type { MemoryService } from '../memory/types.js';
 
 export {
   collapseLoopedAssistantText,
@@ -225,6 +226,16 @@ export interface AgentHarnessConfig {
   memberId?: string;
   /** Human-readable member label (e.g. "Caronte"). See `memberId`. */
   memberName?: string;
+  /**
+   * Optional native project memory. The harness performs a bounded, fail-open
+   * recall before the first provider call and injects it ephemerally after the
+   * stable system prefix (it never mutates conversation history).
+   */
+  memoryService?: MemoryService;
+  /** Explicit recall objective; defaults to the latest user message. */
+  memoryQuery?: string;
+  /** Hard character budget for the ephemeral memory block. Default 2,000. */
+  memoryContextChars?: number;
 }
 
 export type ProviderStreamFn = (params: {
@@ -293,6 +304,8 @@ export class AgentHarness {
 
   /** Fase M: per-run context-growth counters (reset on every run()). */
   private growth: ContextGrowthStats = emptyContextGrowthStats();
+  /** Ephemeral per-run context; never appended to `config.messages`. */
+  private activeMemoryContext = '';
 
   constructor(config: AgentHarnessConfig) {
     this.config = config;
@@ -648,6 +661,7 @@ export class AgentHarness {
     this.toolCallCounts = new Map();
     this.textToolReentries = 0;
     this.growth = emptyContextGrowthStats();
+    const memoryWarning = await this.prepareMemoryContext();
 
     // Emit agent_start
     const startEvent: BrainAgentStartEvent = createBrainEvent('agent_start', this.sessionId, {
@@ -657,6 +671,15 @@ export class AgentHarness {
     });
     this.emit(startEvent);
     yield startEvent;
+    if (memoryWarning) {
+      const warning = createBrainEvent('error', this.sessionId, {
+        severity: 'recoverable',
+        message: memoryWarning,
+        code: 'memory_recall_failed',
+      });
+      this.emit(warning);
+      yield warning;
+    }
 
     // === Initial turn (always runs to preserve Phase 12.x behavior) ===
     // The harness processes the messages buffer that was provided in
@@ -873,18 +896,60 @@ export class AgentHarness {
     yield agentEnd;
 
     this.activeController = null;
+    this.activeMemoryContext = '';
+  }
+
+  private async prepareMemoryContext(): Promise<string | null> {
+    this.activeMemoryContext = '';
+    const memory = this.config.memoryService;
+    if (!memory) return null;
+    const latestUser = [...this.config.messages]
+      .reverse()
+      .find((message) => message.role === 'user')?.content;
+    const query = (this.config.memoryQuery ?? latestUser ?? '').trim();
+    if (!query) return null;
+    try {
+      const context = await memory.buildContext({
+        text: query,
+        useGraph: true,
+        maxChars: this.config.memoryContextChars ?? 2_000,
+        maxMemories: 8,
+      });
+      this.activeMemoryContext = context.text;
+      return null;
+    } catch (error) {
+      return `[memory] recall failed; continuing without memory (${error instanceof Error ? error.message : String(error)}).`;
+    }
+  }
+
+  /** Build a provider-only view with memory after the stable system prefix. */
+  private messagesForProvider(): AgentMessage[] {
+    if (!this.activeMemoryContext) return this.config.messages;
+    let prefixEnd = 0;
+    while (prefixEnd < this.config.messages.length && this.config.messages[prefixEnd]?.role === 'system') {
+      prefixEnd += 1;
+    }
+    return [
+      ...this.config.messages.slice(0, prefixEnd),
+      { role: 'system', content: this.activeMemoryContext },
+      ...this.config.messages.slice(prefixEnd),
+    ];
   }
 
   /**
    * v1.36.0: capture a deterministic snapshot of the routed request just
    * before it goes out. Never throws into the request path.
    */
-  private emitSnapshot(tools: AgentToolSpec[], generation?: ProviderGenerationOptions): void {
+  private emitSnapshot(
+    tools: AgentToolSpec[],
+    generation?: ProviderGenerationOptions,
+    messages: AgentMessage[] = this.messagesForProvider(),
+  ): void {
     if (!this.config.onRequestSnapshot) return;
     try {
       this.config.onRequestSnapshot(
         createRoutedRequestSnapshot({
-          messages: this.config.messages,
+          messages,
           model: this.config.model,
           provider: this.config.provider,
           tools,
@@ -917,10 +982,11 @@ export class AgentHarness {
     usageRef: { value: UsageBreakdown | null },
   ): AsyncIterable<BrainEvent> {
     try {
-      this.emitSnapshot(this.config.tools);
-      recordRequest(this.growth, this.config.messages);
+      const requestMessages = this.messagesForProvider();
+      this.emitSnapshot(this.config.tools, undefined, requestMessages);
+      recordRequest(this.growth, requestMessages);
       const stream = this.config.providerStream({
-        messages: this.config.messages,
+        messages: requestMessages,
         model: this.config.model,
         provider: this.config.provider,
         tools: this.config.tools,
@@ -1396,11 +1462,12 @@ export class AgentHarness {
     // invocation. We re-enter runSingleTurn but with an empty tools list via
     // a throwaway config override is not possible (config is readonly), so we
     // call the providerStream directly with tools: [].
-    recordRequest(this.growth, this.config.messages);
+    const requestMessages = this.messagesForProvider();
+    recordRequest(this.growth, requestMessages);
     try {
-      this.emitSnapshot([]);
+      this.emitSnapshot([], undefined, requestMessages);
       const stream = this.config.providerStream({
-        messages: this.config.messages,
+        messages: requestMessages,
         model: this.config.model,
         provider: this.config.provider,
         tools: [],

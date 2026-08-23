@@ -21,8 +21,8 @@ export * from './council/index.js';
 // Skills (built-in)
 export * from './skills/index.js';
 
-// Memory backend contract (implementation lives in the CLI)
-export * from './memory/types.js';
+// Native cognitive memory contracts + service (persistence lives in the CLI)
+export * from './memory/index.js';
 
 // Durable state contract (file-backed store lives in the CLI)
 export * from './state/index.js';

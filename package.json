@@ -48,7 +48,8 @@
     "postinstall": "node scripts/postinstall.mjs",
     "prepublishOnly": "node scripts/prepublish.mjs",
     "eval:gate": "node --experimental-strip-types tools/eval/runGate.ts",
-    "test:eval": "vitest run tools/eval"
+    "test:eval": "vitest run tools/eval",
+    "test:memory": "vitest run packages/core/src/memory/scoring.test.ts tests/unit/core-agentHarness-memory.test.ts tests/unit/cli-sqliteMemoryV2.test.ts tests/unit/cli-memorySemantic.test.ts tests/unit/cli-memoryMigration.test.ts tests/unit/cli-memoryMcp.test.ts tests/unit/cli-memoryJsonApi.test.ts tests/unit/cli-memoryCommands.test.ts tests/unit/cli-memoryPerformance.test.ts tests/unit/cli-kraken-sharedMemory.test.ts tests/unit/cli-semantic.test.ts tools/eval/memoryMetrics.test.ts"
   },
   "dependencies": {
     "ink": "^6.8.0",

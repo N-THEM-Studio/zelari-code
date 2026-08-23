@@ -210,6 +210,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       // feedback instead of an actionable error message.
       let envConfig: Awaited<ReturnType<typeof providerFromEnv>> | undefined;
       let harness: AgentHarness;
+      let memoryService: import('@zelari/core/memory').MemoryService | undefined;
+      let memoryAutoWrite = false;
       // v1.6.0: length of the history seed actually passed to the harness.
       // Captured here (after compaction) so the finally block can slice off
       // exactly the seed and keep only this turn's newly-appended tail.
@@ -267,6 +269,17 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         }
         setBusy(true);
         const workPhase = getPhase();
+        try {
+          const memoryFactory = await import('../memory/serviceFactory.js');
+          if (memoryFactory.isMemoryV2Enabled()) {
+            memoryService = await memoryFactory.getMemoryService(process.cwd(), process.env, {
+              onWarning: (warning) => appendSystem(setMessages, warning, Date.now()),
+            });
+            memoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
+          }
+        } catch {
+          // Memory is fail-open; the model turn remains available.
+        }
         // Grok-style ask_user: block the tool-loop until picker resolves so
         // the same harness run continues with the answer as tool_result.
         const onAskUser = setPicker
@@ -353,6 +366,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           onAskUser,
           onPermissionAsk,
           permissionPolicy: defaultPermissionPolicy(),
+          ...(memoryService ? { memoryService } : {}),
+          memoryAutoWrite,
         });
         // Fase 2 (ADR-0020): per-turn progress projection (sparse phase events).
         // The dedicated UI chip ships with the selection phases; for now the
@@ -776,6 +791,13 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // the cache-aware compaction replay (last warm prefix).
           onRequestSnapshot: (snap) => recordRequestSnapshot(sessionId, snap),
           ...(maxToolLoopHardCap > 0 ? { maxToolLoopHardCap } : {}),
+          ...(memoryService
+            ? {
+                memoryService,
+                memoryQuery: effectiveUserText,
+                memoryContextChars: 2_000,
+              }
+            : {}),
         });
         harnessRef.current = harness;
         setQueueCount(harness.queueLength);
@@ -1200,6 +1222,33 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // Parsing/picker failure must never break the turn.
             }
           }
+          if (memoryService && memoryAutoWrite && turnSucceeded && assistantContent.trim()) {
+            try {
+              const cleanedOutcome = cleanAgentContent(assistantContent, {
+                stripQuestion: true,
+                stripThink: true,
+              }).trim();
+              if (cleanedOutcome) {
+                await memoryService.remember({
+                  kind: workPhase === 'build' ? 'outcome' : 'finding',
+                  content: cleanedOutcome.slice(0, 8_000),
+                  importance: workPhase === 'build' ? 0.7 : 0.55,
+                  confidence: workPhase === 'build' ? 0.72 : 0.6,
+                  source: { agent: 'zelari', sessionId },
+                  tags: ['agent-turn', `phase:${workPhase}`],
+                  metadata: {
+                    objective: userText.slice(0, 2_000),
+                    phase: workPhase,
+                    writeClass: workPhase === 'build' ? 'auto' : 'candidate',
+                  },
+                  writeClass: workPhase === 'build' ? 'auto' : 'candidate',
+                });
+              }
+            } catch {
+              // A memory write never changes the outcome of the model turn.
+            }
+          }
+          await memoryService?.close().catch(() => undefined);
           harnessRef.current = null;
           setQueueCount(0);
           setBusy(false);
@@ -1528,11 +1577,35 @@ async function dispatchCouncilPromptImpl(
           appendSystem(setMessages, msg, at ?? Date.now()),
       })
     : undefined;
+  let councilMemory: import('@zelari/core/memory').MemoryService | undefined;
+  let councilMemoryAutoWrite = false;
+  let nativeMemoryContext = '';
+  try {
+    const memoryFactory = await import('../memory/serviceFactory.js');
+    if (memoryFactory.isMemoryV2Enabled()) {
+      councilMemory = await memoryFactory.getMemoryService(process.cwd(), process.env, {
+        onWarning: (warning) => appendSystem(setMessages, warning, Date.now()),
+      });
+      councilMemoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
+      if (!overrides.ragContext) {
+        nativeMemoryContext = (await councilMemory.buildContext({
+          text: effectiveText,
+          useGraph: true,
+          maxChars: 2_000,
+          maxMemories: 8,
+        })).text;
+      }
+    }
+  } catch {
+    // Native memory is advisory and fail-open.
+  }
   const { registry: councilToolRegistry } = createBuiltinToolRegistry({
     planMode: workPhase === "plan" || softGatedToDesign,
     onAskUser: onAskUserCouncil,
     onPermissionAsk: onPermissionAskCouncil,
     permissionPolicy: defaultPermissionPolicy(),
+    ...(councilMemory ? { memoryService: councilMemory } : {}),
+    memoryAutoWrite: councilMemoryAutoWrite,
   });
   const workspaceCtx = createWorkspaceContext();
   const workspaceReg = createWorkspaceToolRegistry(workspaceCtx);
@@ -1629,7 +1702,7 @@ async function dispatchCouncilPromptImpl(
       mode: overrides.ragContext ? "zelari" : "council",
       cwd: process.cwd(),
       userMessage: effectiveText,
-      memoryHits: overrides.ragContext,
+      memoryHits: [overrides.ragContext, nativeMemoryContext].filter(Boolean).join('\n\n') || undefined,
       durableState: durableState || undefined,
       historySnippet: formatHistoryForCouncil(4) || undefined,
       includeLessons: true,
@@ -2142,6 +2215,39 @@ async function dispatchCouncilPromptImpl(
         ok: !councilAborted && !chairmanErrored,
       });
     }
+    if (
+      councilMemory &&
+      councilMemoryAutoWrite &&
+      (membersCompleted > 0 || chairmanProducedOutput) &&
+      chairmanSynthesisText.trim()
+    ) {
+      try {
+        await councilMemory.remember({
+          kind: councilRunMode === 'design-phase' ? 'decision' : 'outcome',
+          content: chairmanSynthesisText.slice(0, 12_000),
+          importance: councilRunMode === 'design-phase' ? 0.8 : 0.75,
+          confidence: sliceCompletionOk ? 0.95 : sliceDegraded ? 0.45 : 0.72,
+          source: { agent: 'council', sessionId },
+          tags: ['council', `run-mode:${councilRunMode}`],
+          metadata: {
+            objective: effectiveText.slice(0, 2_000),
+            completionOk: sliceCompletionOk,
+            degraded: sliceDegraded,
+            writeCount: luciferWriteCount,
+            verified: sliceCompletionOk && !sliceDegraded,
+            writeClass: sliceDegraded ? 'candidate' : 'auto',
+          },
+          writeClass: sliceDegraded ? 'candidate' : 'auto',
+        });
+        await councilMemory.consolidate({
+          source: { agent: 'council', sessionId },
+          minOccurrences: 2,
+        });
+      } catch {
+        // Council completion is independent from memory persistence.
+      }
+    }
+    await councilMemory?.close().catch(() => undefined);
     await (writerRef.current as { flush?: () => Promise<void> } | null)?.flush?.();
     setBusy(false);
   }

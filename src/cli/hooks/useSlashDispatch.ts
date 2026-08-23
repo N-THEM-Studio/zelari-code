@@ -22,6 +22,7 @@ import {
   handleStateRestore,
 } from '../slashHandlers/state.js';
 import { handleCacheStats } from '../slashHandlers/cache.js';
+import { handleMemoryCommand } from '../slashHandlers/memory.js';
 import {
   handleTrust,
   handleTrustStatus,
@@ -511,6 +512,17 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     }
     if (result.kind === 'state_usage') {
       appendSystem(setMessages, result.message ?? '[state] usage');
+      setInput('');
+      return;
+    }
+
+    // ── Native cognitive memory ──
+    if (result.kind === 'memory') {
+      await handleMemoryCommand(
+        { ...baseCtx, cwd: process.cwd() },
+        result.memorySubcommand,
+        result.memoryArgs,
+      );
       setInput('');
       return;
     }

@@ -20,6 +20,8 @@ import type {
   MemoryResult,
   MemorySearchOptions,
 } from '@zelari/core';
+import { LegacyMemoryBackendAdapter, NoopMemoryService } from '@zelari/core/memory';
+import { getMemoryService, isMemoryV2Enabled } from './serviceFactory.js';
 
 interface StoredFact {
   id: string;
@@ -150,6 +152,11 @@ export async function getMemoryBackend(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<MemoryBackend> {
   if (!isMemoryEnabled(env)) return new NoopMemoryBackend();
+  if (isMemoryV2Enabled(env)) {
+    const service = await getMemoryService(projectRoot, env);
+    if (service instanceof NoopMemoryService) return new NoopMemoryBackend();
+    return new LegacyMemoryBackendAdapter(service);
+  }
   const backend = new FileMemoryBackend();
   try {
     await backend.init(projectRoot);

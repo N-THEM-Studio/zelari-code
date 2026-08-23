@@ -212,6 +212,7 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 | `/zelari <input>` | Run an autonomous mission — design@council then build@kraken until the MVP slice is complete |
 | `/council-feedback <id> <1-5>` | Rate a council member |
 | `/promote-member <id>` | Promote a council member to a skill |
+| `/memory …` | Search, inspect, index, consolidate, promote, diagnose, or export project memory |
 | `/sessions`, `/resume <id>`, `/new` | Session management |
 | `/branch <name>`, `/branches`, `/checkout <name>` | Session branches |
 | `/compact`, `/clear` | Compact / clear transcript |
@@ -264,7 +265,7 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 🧮 **Budget-aware mission continuation** — after each mission slice a continuation gate decides repair / pivot / hold from the remaining budget and gap history (repeated gap → pivot with reduced roster; exhaustion → hold, never a false done; deterministic PASS stays the only authority)
 - 🧾 **Deep harness manifest** — each session fingerprints its real tool surface (name + description + input schema per tool) alongside profile and resource policy, so tool or schema drift changes the manifest hash and is detectable on resume and in eval provenance
 - 🚦 **Eval retention gate** — tiered anchor suite (`eval/anchors/`), versioned result store per manifest hash, and a CI regression gate comparing candidate vs last stable tag (blocking once the baseline store is seeded; honest shadow + warning until then)
-- 🧠 **Project memory** — zero-dependency file-based recall (`.zelari/memory/`), fed into the council as RAG context between mission slices (opt-out with `ZELARI_MEMORY=0`)
+- 🧠 **Native shared project memory** — compatible JSONL by default; opt-in SQLite V2 adds typed graph nodes, immutable history, bounded recall and shared Council/Kraken/session knowledge without MCP ([guide](./docs/MEMORY.md))
 - ⇧⇥ **Kraken/council/zelari mode switch** — `shift+tab` cycles free-form prompts between the kraken lead, the full council pipeline, and an autonomous mission (mode shown in the status line)
 - 🎨 **Rich TUI** — Ink + React: native-scrollback chat stream, input bar with status line below it (mode · provider · model · session · cwd · execution timer)
 - 🗂️ **Live git sidebar** — right-hand panel with working-tree changes (`+added`/`-removed` per file, refreshed every 4s; auto-hidden on narrow terminals)
@@ -338,7 +339,14 @@ zelari-code (CLI, Apache-2.0)
 | `ZELARI_CLI_PATH` | Desktop: path to local `bin/zelari-code.js` monorepo entry |
 | `ZELARI_NO_PATH_REPAIR=1` | Windows: skip npm-prefix PATH auto-repair |
 | `ANATHEMA_FAILOVER=0` | Disable cross-provider failover |
-| `ZELARI_MEMORY=0` | Disable the file-based project memory (`.zelari/memory/`) |
+| `ZELARI_MEMORY=0` | Disable project memory (`.zelari/memory/`) |
+| `ZELARI_MEMORY_V2=1` | Enable native SQLite shared memory (JSONL remains the compatibility default) |
+| `ZELARI_MEMORY_BACKEND=sqlite\|file` | Explicitly select SQLite V2 or legacy JSONL |
+| `ZELARI_MEMORY_AUTO_WRITE=0` | Keep V2 recall but disable automatic agent writes |
+| `ZELARI_MEMORY_SEMANTIC=1` | Enable optional hybrid semantic memory recall |
+| `ZELARI_MEMORY_MCP=1` | Enable the optional trusted external memory MCP server |
+| `ZELARI_MEMORY_MCP_CLIENT_ID=<id>` | Stable local owner id for MCP-private memories |
+| `ZELARI_MEMORY_STRICT=1` | Fail instead of degrading when SQLite V2 cannot initialize |
 | `ZELARI_MISSION_AUTO=1` | Auto-start Zelari missions (skip the brief confirmation) |
 | `ZELARI_MISSION_MAX_ITER` | Max **implementation** slices per Zelari mission (default 6; design-phase is free; impl 2+ = Minosse+Lucifero only) |
 | `ZELARI_TASK_CONTRACT=0` | Disable the mission TaskContract (goal / constraints / acceptance criteria extracted from the brief; on by default) |

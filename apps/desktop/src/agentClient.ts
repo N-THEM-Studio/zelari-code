@@ -18,6 +18,75 @@ export async function getAppConfig(): Promise<DesktopConfig> {
   return invoke<DesktopConfig>("get_app_config");
 }
 
+export interface MemoryNodeDto {
+  id: string;
+  kind: string;
+  content: string;
+  importance: number;
+  confidence: number;
+  status: string;
+  visibility: "project" | "private";
+  tags: string[];
+  source: Record<string, string | undefined>;
+  createdAt: string;
+  updatedAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface MemoryRecallDto {
+  node: MemoryNodeDto;
+  score: number;
+  signals: Record<string, number>;
+}
+
+export interface MemoryStatsDto {
+  backend: string;
+  nodes: number;
+  edges: number;
+  active: number;
+  semanticIndex: string;
+  semanticModel?: string;
+  semanticIndexed?: number;
+  semanticStale?: number;
+}
+
+export interface MemorySearchResponse {
+  ok: boolean;
+  error?: string;
+  warnings: string[];
+  projectId?: string;
+  results: MemoryRecallDto[];
+  stats?: MemoryStatsDto;
+}
+
+export interface MemoryDetailResponse {
+  ok: boolean;
+  error?: string;
+  warnings: string[];
+  node?: MemoryNodeDto;
+  related?: Array<{ edge: { id: string; from: string; to: string; relation: string }; node: MemoryNodeDto }>;
+  history?: Array<{
+    versionId: string;
+    revision: number;
+    recordedAt: string;
+    actor?: string;
+    reason?: string;
+    snapshot: MemoryNodeDto;
+  }>;
+}
+
+export type MemoryDesktopRequest =
+  | { operation: "search"; query?: string; limit?: number; kinds?: string[]; statuses?: string[]; useGraph?: boolean; includeHistorical?: boolean }
+  | { operation: "detail"; memoryId: string }
+  | { operation: "stats" };
+
+export async function queryMemory<T = MemorySearchResponse>(
+  cwd: string,
+  request: MemoryDesktopRequest,
+): Promise<T> {
+  return invoke<T>("query_memory", { args: { cwd, request } });
+}
+
 export async function setAppConfig(args: {
   provider?: string;
   model?: string;

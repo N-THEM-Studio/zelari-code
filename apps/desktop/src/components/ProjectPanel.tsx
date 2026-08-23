@@ -5,8 +5,9 @@ import { useCallback, useEffect, useState } from "react";
 import { getGitStatus, listDir } from "../agentClient";
 import type { DirEntry, GitStatusSnapshot } from "../types";
 import { fileIconColor, folderIconColor } from "../fileKind";
+import { MemoryExplorer } from "./MemoryExplorer";
 
-type ProjectTab = "files" | "git";
+type ProjectTab = "files" | "git" | "memory";
 
 interface Props {
   cwd: string | null;
@@ -28,7 +29,7 @@ const LS_TAB = "zelari-desktop-project-tab";
 function loadTab(): ProjectTab {
   try {
     const t = localStorage.getItem(LS_TAB);
-    return t === "git" ? "git" : "files";
+    return t === "git" || t === "memory" ? t : "files";
   } catch {
     return "files";
   }
@@ -68,6 +69,7 @@ export function ProjectPanel({
   const [loadingPaths, setLoadingPaths] = useState<Set<string>>(
     () => new Set(),
   );
+  const [memoryRefreshKey, setMemoryRefreshKey] = useState(0);
 
   const setActiveTab = (t: ProjectTab) => {
     setTab(t);
@@ -186,6 +188,7 @@ export function ProjectPanel({
 
   const onRefresh = () => {
     if (tab === "git") void refreshGit();
+    else if (tab === "memory") setMemoryRefreshKey((value) => value + 1);
     else {
       setChildren(new Map());
       setExpanded(new Set());
@@ -229,6 +232,15 @@ export function ProjectPanel({
             onClick={() => setActiveTab("git")}
           >
             Git
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "memory"}
+            className={`project-tab${tab === "memory" ? " active" : ""}`}
+            onClick={() => setActiveTab("memory")}
+          >
+            Memory
           </button>
         </div>
         {tab === "git" && snap?.isRepo && snap.branch ? (
@@ -280,11 +292,17 @@ export function ProjectPanel({
             onReveal={(path) => void onReveal(path)}
             onTagPath={onTagPath}
           />
-        ) : (
+        ) : tab === "git" ? (
           <GitBody
             snap={snap}
             cwd={cwd}
             onReveal={(path) => void onReveal(path)}
+          />
+        ) : (
+          <MemoryExplorer
+            cwd={cwd}
+            refreshKey={memoryRefreshKey}
+            onStatus={onStatus}
           />
         )}
       </div>

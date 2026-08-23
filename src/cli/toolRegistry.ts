@@ -72,6 +72,7 @@ import type {
 import { typedErr } from '@zelari/core/harness/tools/toolTypes';
 import { cliToolToEnhanced, registerCustomTool } from '@zelari/core/skills';
 import type { EnhancedToolDefinition } from '@zelari/core/skills';
+import type { MemoryService } from '@zelari/core/memory';
 
 export interface BuiltinToolSummary {
   /** Tool name as registered. */
@@ -192,6 +193,9 @@ export interface CreateRegistryOptions {
    * Pass a runner to override; pass null to disable.
    */
   lifecycleHooks?: LifecycleHookRunner | null;
+  /** Native project memory shared by task-tool tentacles. */
+  memoryService?: MemoryService;
+  memoryAutoWrite?: boolean;
 }
 
 /**
@@ -503,6 +507,10 @@ export function createBuiltinToolRegistry(
           ...(options.subAgentProvider ? { provider: options.subAgentProvider } : {}),
           ...(options.subAgentModel ? { model: options.subAgentModel } : {}),
         }),
+        ...(options.memoryService ? { memoryService: options.memoryService } : {}),
+        ...(options.memoryAutoWrite !== undefined
+          ? { memoryAutoWrite: options.memoryAutoWrite }
+          : {}),
       },
       options.planMode === true ? { allowedAgents: ['explore'] } : undefined,
     );

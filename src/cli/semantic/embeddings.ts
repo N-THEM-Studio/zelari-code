@@ -12,6 +12,8 @@ export interface EmbedConfig {
   baseUrl: string;
   /** Embedding model id (e.g. 'text-embedding-3-small'). */
   model: string;
+  /** Hard network bound. Default 30 seconds. */
+  timeoutMs?: number;
 }
 
 export type EmbedResult = { embeddings: number[][] } | { error: string };
@@ -46,6 +48,9 @@ export async function embedTexts(
 ): Promise<EmbedResult> {
   if (texts.length === 0) return { embeddings: [] };
   const url = `${config.baseUrl.replace(/\/$/, '')}/embeddings`;
+  const timeoutMs = Math.max(1_000, Math.min(config.timeoutMs ?? 30_000, 120_000));
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetchImpl(url, {
@@ -55,20 +60,29 @@ export async function embedTexts(
         Authorization: `Bearer ${config.apiKey}`,
       },
       body: JSON.stringify({ model: config.model, input: texts }),
+      signal: controller.signal,
     });
   } catch (err) {
-    return { error: `network error contacting ${url}: ${err instanceof Error ? err.message : String(err)}` };
+    clearTimeout(timer);
+    return {
+      error: controller.signal.aborted
+        ? `embedding request timed out after ${timeoutMs}ms`
+        : `network error contacting ${url}: ${err instanceof Error ? err.message : String(err)}`,
+    };
   }
   if (!response.ok) {
     const body = await response.text().catch(() => '');
+    clearTimeout(timer);
     return { error: `HTTP ${response.status} from ${url}: ${body.slice(0, 160)}` };
   }
   let json: unknown;
   try {
     json = await response.json();
   } catch (err) {
+    clearTimeout(timer);
     return { error: `invalid JSON from ${url}: ${err instanceof Error ? err.message : String(err)}` };
   }
+  clearTimeout(timer);
   const embeddings = parseEmbeddingsResponse(json, texts.length);
   if (!embeddings) return { error: `unexpected embeddings response shape from ${url}` };
   return { embeddings };

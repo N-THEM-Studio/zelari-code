@@ -46,6 +46,7 @@ import {
 } from './krakenWorktree.js';
 import { krakenTentacleStart, krakenTentacleEnd } from './krakenLive.js';
 import type { UsageBreakdown } from '@zelari/core/events';
+import type { MemoryService } from '@zelari/core/memory';
 import {
   candidateInstructions,
   isKrakenSelectionEnabled,
@@ -110,6 +111,10 @@ export interface TaskToolDeps {
    * ZELARI_KRAKEN_WORKTREE=1. Tests can force-disable.
    */
   allowWorktree?: boolean;
+  /** Shared native project memory used by every tentacle in this run. */
+  memoryService?: MemoryService;
+  /** Persist concise tentacle outcomes. Defaults true when memoryService exists. */
+  memoryAutoWrite?: boolean;
 }
 
 /**
@@ -481,6 +486,8 @@ export interface TentacleSuccess {
    * when `deferMerge` was requested.
    */
   worktreeHandle: WorktreeHandle | null;
+  /** Cognitive-memory node created from this concise conclusion, if enabled. */
+  memoryId?: string;
 }
 
 /** Failed tentacle run. `error` is the exact message previously given to typedErr. */
@@ -659,6 +666,13 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     cwd: runCwd,
     maxToolCallsPerTurn: maxToolCalls,
     maxToolLoopIterations: Math.max(12, maxToolCalls + 4),
+    ...(deps.memoryService
+      ? {
+          memoryService: deps.memoryService,
+          memoryQuery: `${args.description}\n${userContent}`,
+          memoryContextChars: 2_400,
+        }
+      : {}),
   };
 
   let harness: SubAgentHarness;
@@ -786,6 +800,39 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ok: true,
   });
 
+  let memoryId: string | undefined;
+  if (deps.memoryService && deps.memoryAutoWrite !== false) {
+    try {
+      const verifyPass = agent === 'verify' && /(?:VERDICT:\s*PASS|status:\s*pass)/i.test(result);
+      const memory = await deps.memoryService.remember({
+        kind: agent === 'verify' ? 'verification' : agent === 'general' ? 'outcome' : 'finding',
+        content: result.slice(0, 12_000),
+        importance: agent === 'general' ? 0.75 : 0.65,
+        confidence: verifyPass ? 0.98 : agent === 'verify' ? 0.7 : 0.72,
+        tags: ['kraken', `tentacle:${agent}`],
+        source: {
+          agent: `kraken-${agent}`,
+          sessionId,
+          tentacleId: opts.nodeId ?? liveId,
+          ...(worktree?.path ? { worktree: worktree.path } : {}),
+        },
+        metadata: {
+          writeClass: agent === 'verify' || agent === 'general' ? 'auto' : 'candidate',
+          description: args.description,
+          scope: args.scope ?? [],
+          acceptance: args.acceptance ?? [],
+          graphId: opts.graphId,
+          nodeId: opts.nodeId,
+          verified: verifyPass,
+        },
+        writeClass: agent === 'verify' || agent === 'general' ? 'auto' : 'candidate',
+      });
+      memoryId = memory.id;
+    } catch {
+      // Shared memory is fail-open: a persistence issue never fails the tentacle.
+    }
+  }
+
   return {
     ok: true,
     agent,
@@ -797,6 +844,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ...(toolTrace && toolTrace.length > 0 ? { toolTrace } : {}),
     worktreePath: worktree?.path ?? null,
     worktreeHandle: worktree,
+    ...(memoryId ? { memoryId } : {}),
   };
 }
 

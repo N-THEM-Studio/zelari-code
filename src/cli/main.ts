@@ -240,6 +240,49 @@ function pickRootComponent(): {
     void runPluginsInstall(argv).then((code) => process.exit(code));
     return { kind: "done" };
   }
+  if (argv.includes("--memory-json")) {
+    const requestIndex = argv.indexOf("--memory-json");
+    const rawRequest = requestIndex >= 0 ? argv[requestIndex + 1] : undefined;
+    const cwdIndex = argv.indexOf("--cwd");
+    const projectRoot = cwdIndex >= 0 && argv[cwdIndex + 1] ? argv[cwdIndex + 1] : process.cwd();
+    if (!rawRequest) {
+      console.error("[zelari-code --memory-json] a JSON request argument is required");
+      process.exit(1);
+    }
+    void import("./memory/jsonApi.js")
+      .then(({ runMemoryJsonApi }) => runMemoryJsonApi(projectRoot, rawRequest))
+      .then((result) => {
+        process.stdout.write(`${JSON.stringify(result)}\n`);
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error(`[zelari-code --memory-json] ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      });
+    return { kind: "done" };
+  }
+  // Optional external project-memory transport. Native Council/Kraken/mission
+  // paths call MemoryService directly and never depend on this server.
+  if (argv.includes("--memory-mcp")) {
+    const cwdIndex = argv.indexOf("--cwd");
+    const projectRoot = cwdIndex >= 0 && argv[cwdIndex + 1]
+      ? argv[cwdIndex + 1]
+      : process.cwd();
+    const clientIndex = argv.indexOf("--client-id");
+    const clientId = clientIndex >= 0 && argv[clientIndex + 1]
+      ? argv[clientIndex + 1]
+      : undefined;
+    void import("./memory/mcpCli.js")
+      .then(({ runMemoryMcpCli }) => runMemoryMcpCli(projectRoot, clientId))
+      .then(() => process.exit(0))
+      .catch((err) => {
+        console.error(
+          `[zelari-code --memory-mcp] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      });
+    return { kind: "done" };
+  }
   // External-agent permission broker (OpenMausBot pattern): spawned by
   // `claude --permission-prompt-tool "zelari-code --permission-mcp <socket>"`.
   // Pure stdio JSON-RPC loop — must NOT mount Ink or run preflight. The
@@ -430,6 +473,10 @@ function pickRootComponent(): {
         "                      at User scope (prevents the agent stopping mid-task)\n" +
         "  --permission-mcp <socket>  MCP stdio server for external agent permission prompts\n" +
         "                      (spawned by claude --permission-prompt-tool)\n" +
+        "  --memory-mcp       Optional MCP stdio server for project memory\n" +
+        "    --cwd <path>      Trusted project root (requires ZELARI_MEMORY_MCP=1)\n" +
+        "    --client-id <id>  Stable local owner identity for private memories\n" +
+        "  --memory-json <json>  Read-only project-memory bridge for Zelari Desktop\n" +
         "  --skip-checks       Skip the boot-time prerequisite check\n" +
         "                      (alias for ZELARI_SKIP_PREFLIGHT=1)\n" +
         "  --no-wizard         Skip the first-run wizard\n" +
@@ -518,6 +565,7 @@ function pickRootComponent(): {
         "  ZELARI_NO_WIZARD=1    Skip the first-run wizard\n" +
         "  ZELARI_SKIP_PREFLIGHT=1  Skip the boot prerequisite check\n" +
         "  ZELARI_NO_PLUGIN_PROMPT=1  Skip the boot plugin-install prompt\n" +
+        "  ZELARI_MEMORY_MCP=1  Enable the optional external memory MCP server\n" +
         "  ANATHEMA_DEV=1        Disable background update check + preflight\n",
     );
     process.exit(0);

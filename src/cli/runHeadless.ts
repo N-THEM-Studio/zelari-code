@@ -17,6 +17,7 @@
 import { AgentHarness, type ProviderStreamFn } from '@zelari/core/harness';
 import type { AgentMessage, AgentToolSpec } from '@zelari/core/harness';
 import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
+import type { MemoryService } from '@zelari/core/memory';
 import { cleanAgentContent } from '@zelari/core';
 import { createBrainEvent } from '@zelari/core/events';
 import {
@@ -266,6 +267,11 @@ async function runHeadlessKrakenGraph(
 
   const cwd = process.cwd();
   const sessionId = crypto.randomUUID();
+  const { getMemoryService, isMemoryAutoWriteEnabled, isMemoryV2Enabled } =
+    await import('./memory/serviceFactory.js');
+  const graphMemory = isMemoryV2Enabled()
+    ? await getMemoryService(cwd, process.env)
+    : undefined;
   const log = (message: string): void => {
     if (opts.output === 'json') {
       emitEvent({ type: 'log', message });
@@ -377,6 +383,8 @@ async function runHeadlessKrakenGraph(
           provider,
           model,
         }),
+        ...(graphMemory ? { memoryService: graphMemory } : {}),
+        memoryAutoWrite: isMemoryAutoWriteEnabled(),
       },
       parentCwd: cwd,
       sessionId,
@@ -425,6 +433,7 @@ async function runHeadlessKrakenGraph(
     return 2;
   } finally {
     process.off('SIGINT', onSigint);
+    await graphMemory?.close().catch(() => undefined);
   }
 }
 
@@ -482,6 +491,11 @@ async function runHeadlessSingle(
   providerStream: ProviderStreamFn,
 ): Promise<number> {
   const sessionId = crypto.randomUUID();
+  const memoryFactory = await import('./memory/serviceFactory.js');
+  const nativeMemory = memoryFactory.isMemoryV2Enabled()
+    ? await memoryFactory.getMemoryService(process.cwd(), process.env)
+    : undefined;
+  const memoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
 
   // Headless / Desktop: no interactive permission UI — auto-allow "ask" rules
   // unless the user set an explicit deny. Override with ZELARI_AUTO=0 and
@@ -519,6 +533,8 @@ async function runHeadlessSingle(
       ui: 'allow',
       auto: true,
     },
+    ...(nativeMemory ? { memoryService: nativeMemory } : {}),
+    memoryAutoWrite,
   });
   // Parity with TUI: project MCP tools must be available from Desktop/headless.
   await registerHeadlessMcp(toolRegistry, opts);
@@ -752,6 +768,13 @@ async function runHeadlessSingle(
       toolCallGate: (name: string, args: Record<string, unknown>) =>
         spine.gateResourceToolCall(name, args) ?? { allowed: true },
       maxToolLoopIterations: maxToolLoop,
+      ...(nativeMemory
+        ? {
+            memoryService: nativeMemory,
+            memoryQuery: opts.task,
+            memoryContextChars: 2_000,
+          }
+        : {}),
     });
 
     let finalReason: 'completed' | 'cancelled' | 'error' = 'completed';
@@ -1067,6 +1090,35 @@ async function runHeadlessSingle(
     } catch { /* export is best-effort */ }
   }
 
+  if (nativeMemory && memoryAutoWrite && pass.finalReason !== 'error') {
+    try {
+      const finalContent = [...pass.messages]
+        .reverse()
+        .find((message) => message.role === 'assistant' && message.content.trim())
+        ?.content.trim();
+      if (finalContent) {
+        await nativeMemory.remember({
+          kind: planModeFromOpts(opts) ? 'finding' : 'outcome',
+          content: finalContent.slice(0, 8_000),
+          importance: planModeFromOpts(opts) ? 0.55 : 0.7,
+          confidence: strictExit === 0 ? 0.75 : 0.45,
+          source: { agent: 'zelari-headless', sessionId: spine.sessionId },
+          tags: ['headless', `phase:${opts.phase ?? 'build'}`],
+          metadata: {
+            objective: opts.task.slice(0, 2_000),
+            successfulWrites: pass.successfulWrites,
+            strictExit,
+            writeClass: planModeFromOpts(opts) ? 'candidate' : 'auto',
+          },
+          writeClass: planModeFromOpts(opts) ? 'candidate' : 'auto',
+        });
+      }
+    } catch {
+      // Headless exit status is never governed by memory persistence.
+    }
+  }
+  await nativeMemory?.close().catch(() => undefined);
+
   if (pass.finalReason === 'error') return 3;
   // E2.2: strict done gate — a blocked verdict overrides a clean pass exit.
   if (strictExit !== 0) return strictExit;
@@ -1076,6 +1128,8 @@ async function runHeadlessSingle(
 async function buildCouncilToolRegistry(
   planMode: boolean,
   opts?: HeadlessOptions,
+  memoryService?: MemoryService,
+  memoryAutoWrite = false,
 ) {
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     planMode,
@@ -1087,6 +1141,8 @@ async function buildCouncilToolRegistry(
       ui: 'allow',
       auto: true,
     },
+    ...(memoryService ? { memoryService } : {}),
+    memoryAutoWrite,
   });
   const { createWorkspaceContext, createWorkspaceStubs } = await import('./workspace/stubs.js');
   const { createWorkspaceToolRegistry } = await import('./workspace/toolRegistry.js');
@@ -1113,6 +1169,11 @@ async function runHeadlessCouncil(
 ): Promise<number> {
   const { dispatchCouncil } = await import('./councilDispatcher.js');
   const sessionId = crypto.randomUUID();
+  const memoryFactory = await import('./memory/serviceFactory.js');
+  const nativeMemory = memoryFactory.isMemoryV2Enabled()
+    ? await memoryFactory.getMemoryService(process.cwd(), process.env)
+    : undefined;
+  const memoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
 
   const spine = await openHeadlessSpine({
     sessionId: opts.resumeSessionId ?? sessionId,
@@ -1147,6 +1208,8 @@ async function runHeadlessCouncil(
   const { toolRegistry } = await buildCouncilToolRegistry(
     planModeFromOpts(opts) || softGated,
     opts,
+    nativeMemory,
+    memoryAutoWrite,
   );
   const { FeedbackStore } = await import('./councilFeedback.js');
   const feedbackStore = new FeedbackStore();
@@ -1199,11 +1262,20 @@ async function runHeadlessCouncil(
     const { loadDurableContext } = await import('./state/loadDurableContext.js');
     const cwd = process.cwd();
     const durableState = await loadDurableContext(cwd);
+    const memoryContext = nativeMemory
+      ? (await nativeMemory.buildContext({
+          text: effectiveTask,
+          useGraph: true,
+          maxChars: 2_000,
+          maxMemories: 8,
+        })).text
+      : '';
     const composed = composeProjectContext({
       mode: 'council',
       cwd,
       userMessage: opts.task,
       includeLessons: true,
+      memoryHits: memoryContext || undefined,
       durableState: durableState || undefined,
       includeDurableState: false,
     });
@@ -1266,6 +1338,7 @@ async function runHeadlessCouncil(
     process.stderr.write(
       `[zelari-code --headless] council error: ${err instanceof Error ? err.message : String(err)}\n`,
     );
+    await nativeMemory?.close().catch(() => undefined);
     return 2;
   }
 
@@ -1285,6 +1358,31 @@ async function runHeadlessCouncil(
       }
     } catch { /* export is best-effort */ }
   }
+  if (nativeMemory && memoryAutoWrite && lastAssistantText) {
+    try {
+      await nativeMemory.remember({
+        kind: councilRunMode === 'design-phase' ? 'decision' : 'outcome',
+        content: lastAssistantText.slice(0, 12_000),
+        importance: councilRunMode === 'design-phase' ? 0.8 : 0.75,
+        confidence: exitCode === 0 ? 0.78 : 0.45,
+        source: { agent: 'council-headless', sessionId: spine.sessionId },
+        tags: ['council', 'headless', `run-mode:${councilRunMode}`],
+        metadata: {
+          objective: opts.task.slice(0, 2_000),
+          exitCode,
+          writeClass: exitCode === 0 ? 'auto' : 'candidate',
+        },
+        writeClass: exitCode === 0 ? 'auto' : 'candidate',
+      });
+      await nativeMemory.consolidate({
+        source: { agent: 'council-headless', sessionId: spine.sessionId },
+        minOccurrences: 2,
+      });
+    } catch {
+      // Memory is not part of the council completion gate.
+    }
+  }
+  await nativeMemory?.close().catch(() => undefined);
   return exitCode;
 }
 
@@ -1329,9 +1427,14 @@ async function runHeadlessZelari(
     hasPlan: hasWorkspacePlan(projectRoot),
   });
   const memory = await getMemoryBackend(projectRoot);
+  const nativeMissionMemory = (
+    memory as typeof memory & { service?: MemoryService }
+  ).service;
   const { toolRegistry, workspaceCtx } = await buildCouncilToolRegistry(
     planModeFromOpts(opts),
     opts,
+    nativeMissionMemory,
+    Boolean(nativeMissionMemory) && process.env.ZELARI_MEMORY_AUTO_WRITE !== '0',
   );
   const feedbackStore = new FeedbackStore();
   const chairmanBudget = envNumber(process.env.ZELARI_MODE_MAX_TOOLS_LUCIFER, {

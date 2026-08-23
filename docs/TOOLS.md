@@ -60,6 +60,21 @@ Usati soprattutto dal **council** (sempre registrati lì). Agente singolo: su sk
 
 Alias: `searchRAG` → `searchDocuments` (via registry “Did you mean”).
 
+## Memoria cognitiva nativa
+
+La memoria non è un tool LLM né un server MCP interno: AgentHarness, Council,
+Kraken e missioni chiamano direttamente `MemoryService`. Con
+`ZELARI_MEMORY_V2=1`, la CLI usa SQLite in un worker e condivide recall e
+scritture tra tentacoli e sessioni. `/memory` espone ricerca, provenienza,
+relazioni, storia, retraction, consolidamento, doctor ed export. Vedi
+[`MEMORY.md`](./MEMORY.md).
+
+Il recall semantico resta opzionale (`ZELARI_MEMORY_SEMANTIC=1`) e degrada a
+FTS; `/memory index` ricostruisce l'indice versionato. Il server esterno
+`--memory-mcp` richiede folder trust e `ZELARI_MEMORY_MCP=1`, mentre le
+integrazioni native e il tab Memory di Desktop continuano a usare direttamente
+`MemoryService`.
+
 
 ### Workspace plan tasks (ADR-0018, v1.43.0)
 

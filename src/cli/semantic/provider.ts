@@ -13,7 +13,12 @@ import type { EmbedFn } from './index.js';
 export const DEFAULT_EMBED_MODEL = 'text-embedding-3-small';
 
 export function embedModel(): string {
-  return process.env.ZELARI_EMBED_MODEL ?? DEFAULT_EMBED_MODEL;
+  return process.env.ZELARI_EMBED_MODEL?.trim() || DEFAULT_EMBED_MODEL;
+}
+
+function embedTimeoutMs(): number {
+  const parsed = Number(process.env.ZELARI_EMBED_TIMEOUT_MS);
+  return Number.isFinite(parsed) ? Math.max(1_000, Math.min(parsed, 120_000)) : 30_000;
 }
 
 /**
@@ -24,7 +29,12 @@ export function embedModel(): string {
 export async function buildProviderEmbedFn(): Promise<EmbedFn | null> {
   const cfg = await providerFromEnv();
   if (!cfg) return null;
-  const embedCfg = { apiKey: cfg.apiKey, baseUrl: cfg.baseUrl, model: embedModel() };
+  const embedCfg = {
+    apiKey: cfg.apiKey,
+    baseUrl: cfg.baseUrl,
+    model: embedModel(),
+    timeoutMs: embedTimeoutMs(),
+  };
   return async (texts: string[]) => {
     const res = await embedTexts(texts, embedCfg);
     return 'error' in res ? { error: res.error } : res.embeddings;

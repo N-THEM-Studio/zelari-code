@@ -61,8 +61,8 @@
       "default": "./dist/council/index.js"
     },
     "./memory": {
-      "types": "./dist/memory/types.d.ts",
-      "default": "./dist/memory/types.js"
+      "types": "./dist/memory/index.d.ts",
+      "default": "./dist/memory/index.js"
     },
     "./state": {
       "types": "./dist/state/index.d.ts",

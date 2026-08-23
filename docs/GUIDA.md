@@ -271,9 +271,18 @@ La terza modalità (`⚡ zelari`) trasforma **un prompt libero** in una **missio
 
 ### Memoria di progetto
 
-Zelari-mode persiste gli esiti di ogni slice in una **memoria file-based** per-progetto: `.zelari/memory/log.jsonl` (una riga per fatto). Alla ricerca (per keyword) i risultati rilevanti vengono passati al council come contesto RAG. Nessuna dipendenza nativa, nessun vector store — è un seam per un eventuale backend semantico futuro.
+Il backend compatibile salva gli esiti in `.zelari/memory/log.jsonl`. Con
+`ZELARI_MEMORY_V2=1` (o `ZELARI_MEMORY_BACKEND=sqlite`) entra in funzione la
+memoria cognitiva nativa in `.zelari/memory/memory.db`: nodi e relazioni
+tipizzati, provenienza, versioni immutabili, FTS, ranking e context budget.
+Council, Kraken, missioni, modalità headless e sessioni successive condividono
+lo stesso scope di progetto senza MCP. Il JSONL precedente viene importato in
+modo idempotente e rimane intatto.
 
-Disattivala con `ZELARI_MEMORY=0` (degrada a no-op, il resto continua a funzionare). La memoria è **isolata per progetto**: progetti diversi non si mischiano.
+Disattivala con `ZELARI_MEMORY=0` (degrada a no-op, il resto continua a
+funzionare). Per mantenere solo il recall V2 imposta
+`ZELARI_MEMORY_AUTO_WRITE=0`. Dettagli, sicurezza e diagnostica:
+[`docs/MEMORY.md`](./MEMORY.md).
 
 ---
 
@@ -537,6 +546,23 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | `/council-feedback <memberId> <1-5> [nota]` | Valuta un membro (es. `/council-feedback geryon 4 ottime idee`) |
 | `/promote-member <memberId>` | Promuove un membro council a skill standalone |
 
+#### Memoria
+
+| Comando | Descrizione |
+|---|---|
+| `/memory` o `/memory stats` | Backend, schema, nodi, archi e candidati |
+| `/memory search <query>` | Recall corrente con ranking e grafo |
+| `/memory show <id>` | Contenuto, lifecycle, provenienza e metadata |
+| `/memory related <id>` | Relazioni tipizzate in ingresso e uscita |
+| `/memory history <id>` | Timeline delle revisioni immutabili |
+| `/memory retract <id> [reason]` | Ritira senza perdere la storia |
+| `/memory forget <id> --yes` | Cancella fisicamente dopo conferma esplicita |
+| `/memory consolidate [query]` | Consolida candidati ripetuti con `derived_from` |
+| `/memory index [--force]` | Indicizza o ricostruisce gli embedding opzionali |
+| `/memory promote <id>` | Promuove conoscenza durevole nel blocco gestito di `AGENTS.md` |
+| `/memory doctor` | Schema, integrità, foreign key e FTS |
+| `/memory export [path]` | Esporta JSON entro il progetto |
+
 #### Sessioni e transcript
 
 | Comando | Descrizione |
@@ -609,7 +635,10 @@ Accumulo **verificato** di artefatti (Palmer *State, Not Tokens*) e ottimizzazio
 | `ZELARI_PROMPT_CACHE_TTL` | `auto` | Preferenza documentata in `/cache stats` (`1h`/`5m`/`auto`). Sul path OpenAI-compat il caching è automatico server-side: l’efficienza reale viene dal **prefix stabile** (identity+tools), non da questo flag. Marker Anthropic futuri potranno usarlo. |
 | `ZELARI_CTX_DURABLE_CHARS` | `3000` | Cap del blocco durable iniettato nel volatile prompt |
 
-**Memoria vs state:** `.zelari/memory/` è retrieval soft; `.zelari/state/` è catena di commit post-verification. Agent/council/zelari/headless caricano HEAD via `loadDurableContext()` (async) e lo mettono nel **volatile** context (non nel system prefix cachabile).
+**Memoria vs state:** `.zelari/memory/` è conoscenza richiamabile e versionata;
+`.zelari/state/` è catena di commit post-verification. Il log sessione resta la
+cronologia event-sourced e `AGENTS.MD` il livello curato. I blocchi richiamati
+sono aggiunti al contesto volatile del turno, non al system prefix cachabile.
 
 **Restore:** `/state restore [id]` ripunta HEAD e, se presente, ripristina il git checkpoint collegato. Usa `--no-tree` per solo HEAD cognitivo.
 

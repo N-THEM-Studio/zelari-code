@@ -86,6 +86,18 @@ describe('semantic embeddings', () => {
     const failRes = await embedTexts(['x'], { apiKey: 'k', baseUrl: 'https://api', model: 'm' }, fail);
     expect('error' in failRes).toBe(true);
   });
+
+  it('bounds a stalled embeddings endpoint with an abort timeout', async () => {
+    const stalled = ((_url: string, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    })) as unknown as typeof fetch;
+    const result = await embedTexts(
+      ['x'],
+      { apiKey: 'k', baseUrl: 'https://api', model: 'm', timeoutMs: 1 },
+      stalled,
+    );
+    expect(result).toEqual({ error: 'embedding request timed out after 1000ms' });
+  });
 });
 
 // ---------------------------------------------------------------------------

@@ -438,6 +438,8 @@ export class KrakenGraphExecutor {
   private wb: WorkbenchWriter | null = null;
 
   private readonly nodeRunState = new Map<string, NodeRunState>();
+  /** Graph node id → durable cognitive-memory id produced by its tentacle. */
+  private readonly memoryIds = new Map<string, string>();
   /** fix node id → id of the failed node it was spawned to repair. */
   private readonly repairs = new Map<string, string>();
   /**
@@ -700,6 +702,11 @@ export class KrakenGraphExecutor {
     );
     await this.wb?.flush();
     this.wb?.close();
+
+    // Persist graph semantics only after every tentacle has settled. This is
+    // fail-open and never changes convergence: memory records the execution,
+    // it does not govern it.
+    await this.linkMemoryGraph(graph, converged);
 
     // Cross-run memory: let the next planning pass see where this one stopped
     // instead of replanning the whole goal blind.
@@ -1063,6 +1070,7 @@ export class KrakenGraphExecutor {
   /** Apply a tentacle result to its node: success, retry, fix-spawn, or terminal failure. */
   private applyResult(graph: TaskGraph, node: TaskNode, res: TentacleResult): void {
     if (res.ok) {
+      if (res.memoryId) this.memoryIds.set(node.id, res.memoryId);
       node.status = 'done';
       node.result = res.result;
       this.radio('node_end', { description: node.label, agent: node.kind, ok: true });
@@ -1173,6 +1181,68 @@ export class KrakenGraphExecutor {
       error: res.error,
       durationMs: this.durationsMs.get(node.id),
     });
+  }
+
+  private async linkMemoryGraph(graph: TaskGraph, converged: boolean): Promise<void> {
+    const memory = this.deps.memoryService;
+    if (!memory || this.deps.memoryAutoWrite === false) return;
+    try {
+      for (const node of graph.nodes.values()) {
+        const nodeMemoryId = this.memoryIds.get(node.id);
+        if (!nodeMemoryId) continue;
+        for (const dependencyId of node.deps) {
+          const dependencyMemoryId = this.memoryIds.get(dependencyId);
+          if (!dependencyMemoryId) continue;
+          if (node.kind === 'verify') {
+            const verdict = parseVerifyVerdict(node.result).verdict;
+            await memory.connect({
+              from: dependencyMemoryId,
+              to: nodeMemoryId,
+              relation: verdict === 'pass'
+                ? 'validated_by'
+                : verdict === 'fail'
+                  ? 'invalidated_by'
+                  : 'related_to',
+              createdBy: 'kraken-orchestrator',
+            });
+          } else {
+            await memory.connect({
+              from: nodeMemoryId,
+              to: dependencyMemoryId,
+              relation: 'derived_from',
+              createdBy: 'kraken-orchestrator',
+            });
+          }
+        }
+      }
+      const counts = countByStatus(graph) as unknown as Record<string, number>;
+      const outcome = await memory.remember({
+        kind: converged ? 'outcome' : 'failure',
+        content:
+          `Kraken graph for “${this.goal ?? graph.id}” ${converged ? 'converged' : 'did not converge'}: ` +
+          `${counts.done ?? 0} done, ${counts.error ?? 0} error, ${counts.skipped ?? 0} skipped.`,
+        importance: 0.8,
+        confidence: converged ? 0.9 : 0.8,
+        tags: ['kraken', 'graph-outcome'],
+        source: { agent: 'kraken-orchestrator', sessionId: this.sessionId },
+        metadata: { graphId: graph.id, converged, counts, writeClass: 'auto' },
+        writeClass: 'auto',
+      });
+      for (const memoryId of this.memoryIds.values()) {
+        await memory.connect({
+          from: outcome.id,
+          to: memoryId,
+          relation: 'derived_from',
+          createdBy: 'kraken-orchestrator',
+        });
+      }
+      await memory.consolidate({
+        source: { agent: 'kraken-orchestrator', sessionId: this.sessionId },
+        minOccurrences: 2,
+      });
+    } catch {
+      // Memory failure never changes graph status or prevents snapshotting.
+    }
   }
 
   /**
