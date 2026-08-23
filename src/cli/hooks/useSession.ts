@@ -15,6 +15,24 @@ import { wrapSessionWriter, type SpineMirroringWriter } from '../sessionSpine.js
 import type { ChatMessage } from '../components/ChatStream.js';
 import { eventsToMessages } from './eventsToMessages.js';
 import { EMPTY_LIVE, type LiveState } from './chatState.js';
+import { createBuiltinToolRegistry } from '../toolRegistry.js';
+import { resolveProfile } from '@zelari/core/runtime';
+import type { ToolFingerprint } from '@zelari/core';
+
+/**
+ * 2.6.1 (plan §7): deep tool specs (name + description + JSON schema) for the
+ * TUI session manifest. Degrades to undefined — wrapSessionWriter falls
+ * back to shallow tool names.
+ */
+function manifestToolSpecs(): readonly ToolFingerprint[] | undefined {
+  try {
+    const { registry } = createBuiltinToolRegistry({});
+    return registry.fingerprints(resolveProfile('kraken/v1').tools);
+  } catch {
+    return undefined;
+  }
+}
+
 
 /**
  * useSession — owns session lifecycle (bootstrap, restore, /sessions, /resume, /new).
@@ -94,7 +112,11 @@ export function useSession(): UseSessionResult {
         setCurrentSessionId(id);
       }
       if (cancelled) return;
-      writerRef.current = await wrapSessionWriter(new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() }), id);
+      writerRef.current = await wrapSessionWriter(
+        new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() }),
+        id,
+        { toolSpecs: manifestToolSpecs() },
+      );
       setSessionId(id);
       // 2.0 spine: surface the dual-write state on resume (best-effort).
       const spine = writerRef.current?.spine;
@@ -162,7 +184,11 @@ export function useSession(): UseSessionResult {
         setCurrentSessionId(id);
         writerRef.current?.close();
         invalidateObservationIndex();
-        writerRef.current = await wrapSessionWriter(new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() }), id);
+        writerRef.current = await wrapSessionWriter(
+        new SessionJsonlWriter(id, { baseDir: getSessionBaseDir() }),
+        id,
+        { toolSpecs: manifestToolSpecs() },
+      );
         setSessionId(id);
         resetTranscript();
         setSessionActive(false);

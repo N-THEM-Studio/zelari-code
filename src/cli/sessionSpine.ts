@@ -40,6 +40,7 @@ import {
   type SessionVerificationRunSnapshot,
 } from '@zelari/core/verification';
 import type { ResourceSnapshotPayload } from './budget/resourceSnapshot.js';
+import type { ToolFingerprint } from '@zelari/core';
 import { BudgetRuntime, resolveResourceEnforcement } from './budget/budgetRuntime.js';
 import { lastHarnessManifestHash, restoreBudgetRuntimeFromSession } from './budget/restoreRuntime.js';
 import { resolveProfile } from '@zelari/core/runtime';
@@ -181,6 +182,12 @@ export interface SpineMirrorOptions {
    * (see src/cli/harnessManifest.ts buildHarnessManifest).
    */
   harnessManifest?: { manifest: unknown; manifestHash: string };
+  /**
+   * 2.6.1 (plan §7): deep tool specs (name + description + JSON schema) from the
+   * live registry — feeds the harness manifest fingerprint. Optional: hosts
+   * without a registry in scope degrade to shallow tool names.
+   */
+  toolSpecs?: readonly ToolFingerprint[];
 }
 
 const MAX_STREAM_BUFFERS = 32;
@@ -735,7 +742,8 @@ export async function wrapSessionWriter(
       budget,
       options.baseDir,
       (options.extraStarted as { phase?: string } | undefined)?.phase,
-    );
+      options.toolSpecs,
+      );
   }
   return new SpineMirroringWriter(inner, spine.status === 'active' ? spine : null);
 }
@@ -782,6 +790,7 @@ export async function noteHarnessLifecycle(
   budget: BudgetRuntime,
   baseDir?: string,
   phaseHint?: unknown,
+  toolSpecs?: readonly ToolFingerprint[],
 ): Promise<void> {
   try {
     const profile = resolveProfile(profileId);
@@ -789,6 +798,8 @@ export async function noteHarnessLifecycle(
       profile,
       phase: phaseHint === 'plan' ? 'plan' : 'build',
       toolNames: profile.tools,
+      // 2.6.1 (plan §7): deep specs when the host has a live registry in scope.
+      toolSpecs,
       // plan §7/§8: the REAL session policy — never the {unset:true} marker.
       resourcePolicy: budget.policy,
     });

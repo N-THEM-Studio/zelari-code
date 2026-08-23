@@ -25,6 +25,7 @@ import { deriveMissionState } from '@zelari/core/mission';
 import { readSessionLog } from '@zelari/core/session';
 import path from 'node:path';
 import { resolveProfile, toolManifestHash } from '@zelari/core/runtime';
+import type { ToolFingerprint } from '@zelari/core';
 import { SessionSpineMirror, type SpineMirrorOptions } from './sessionSpine.js';
 import { BudgetRuntime, resolveResourceEnforcement } from './budget/budgetRuntime.js';
 import { restoreBudgetRuntimeFromSession } from './budget/restoreRuntime.js';
@@ -110,6 +111,8 @@ export async function openHeadlessSpine(opts: {
   workspace?: string;
   baseDir?: string;
   quiet?: boolean;
+  /** 2.6.1 (plan §7): deep tool specs from the run registry (filtered to the profile). */
+  toolSpecs?: readonly ToolFingerprint[];
 }): Promise<HeadlessSpineHandle> {
   const profileId = resolveHeadlessProfileId(opts.mode, opts.profile);
   let profileTools: readonly string[] = [];
@@ -139,7 +142,17 @@ export async function openHeadlessSpine(opts: {
     spine.attachBudgetRuntime(budget);
     // 2.6.1 (plan §6): same lifecycle as the TUI — manifest presence 100%,
     // drift on resume — via the ONE shared host helper.
-    await noteHarnessLifecycle(spine, opts.sessionId, profileId, budget, opts.baseDir);
+    // 2.6.1 (plan §7): deep specs filtered to THIS profile’s tool list.
+    const manifestSpecs = opts.toolSpecs?.filter((spec) => profileTools.includes(spec.name));
+    await noteHarnessLifecycle(
+      spine,
+      opts.sessionId,
+      profileId,
+      budget,
+      opts.baseDir,
+      undefined,
+      manifestSpecs && manifestSpecs.length > 0 ? manifestSpecs : undefined,
+    );
     spine.note('headless.profile', { profile: profileId, mode: opts.mode ?? 'kraken' });
   }
 

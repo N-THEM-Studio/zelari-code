@@ -483,25 +483,6 @@ async function runHeadlessSingle(
 ): Promise<number> {
   const sessionId = crypto.randomUUID();
 
-  const spine = await openHeadlessSpine({
-    sessionId: opts.resumeSessionId ?? sessionId,
-    mode: opts.mode,
-    profile: opts.profile,
-    workspace: process.cwd(),
-  });
-  // Exit-1/E1.2: the session spine is the model-context source of truth.
-  // Legacy `--history` is imported one-shot into a fresh log; prior turns
-  // are then derived from events. The 1.x rolling history no longer feeds
-  // the harness messages directly (degraded spine falls back to it).
-  const seededHistory = await seedHeadlessModelHistory(spine, opts.history);
-  // E1.4: advertise the spine session id so hosts (Desktop) resume the
-  // same event log next turn instead of replaying 1.x history JSON.
-  emitEvent(sessionStartedEvent(spine));
-
-  // Fase 3 (ADR-0020): fresh per-run candidate registry (each headless run
-  // is one process, so per-run == per-turn here).
-  resetKrakenCandidates();
-  resetKrakenTurnMetrics();
   // Headless / Desktop: no interactive permission UI — auto-allow "ask" rules
   // unless the user set an explicit deny. Override with ZELARI_AUTO=0 and
   // ZELARI_PERMISSION_*=deny for hard lockdown.
@@ -541,6 +522,27 @@ async function runHeadlessSingle(
   });
   // Parity with TUI: project MCP tools must be available from Desktop/headless.
   await registerHeadlessMcp(toolRegistry, opts);
+  const spine = await openHeadlessSpine({
+    sessionId: opts.resumeSessionId ?? sessionId,
+    mode: opts.mode,
+    profile: opts.profile,
+    workspace: process.cwd(),
+    // 2.6.1 (plan §7): deep specs from THIS run’s registry.
+    toolSpecs: toolRegistry.fingerprints(),
+  });
+  // Exit-1/E1.2: the session spine is the model-context source of truth.
+  // Legacy `--history` is imported one-shot into a fresh log; prior turns
+  // are then derived from events. The 1.x rolling history no longer feeds
+  // the harness messages directly (degraded spine falls back to it).
+  const seededHistory = await seedHeadlessModelHistory(spine, opts.history);
+  // E1.4: advertise the spine session id so hosts (Desktop) resume the
+  // same event log next turn instead of replaying 1.x history JSON.
+  emitEvent(sessionStartedEvent(spine));
+
+  // Fase 3 (ADR-0020): fresh per-run candidate registry (each headless run
+  // is one process, so per-run == per-turn here).
+  resetKrakenCandidates();
+  resetKrakenTurnMetrics();
   const tools: AgentToolSpec[] = toolRegistry.toOpenAITools().map((t) => ({
     name: t.function.name,
     description: t.function.description,

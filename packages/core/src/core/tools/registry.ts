@@ -2,6 +2,7 @@ import { zodToJsonSchema } from './zodBridge.js';
 import type { LifecycleHookRunner } from '../hooks/index.js';
 import { spillToolOutput } from './toolOutputSpill.js';
 import { typedErr, type ToolDefinition, type ToolContext, type TypedResult } from './toolTypes.js';
+import type { ToolFingerprint } from '../../runtime/fingerprints.js';
 
 export { spillToolOutput, resolveToolOutputDir, isToolSpillEnabled } from './toolOutputSpill.js';
 
@@ -333,6 +334,21 @@ export class ToolRegistry {
       },
     }));
     return this.openAIToolsCache;
+  }
+
+  /** 2.6.1 (plan §7): deep tool specs (name + description + JSON schema) for the harness manifest. */
+  fingerprints(names?: readonly string[]): ToolFingerprint[] {
+    const wanted = names ? new Set(names) : null;
+    const out: ToolFingerprint[] = [];
+    for (const t of this.tools.values()) {
+      if (wanted && !wanted.has(t.name)) continue;
+      out.push({
+        name: t.name,
+        description: t.description,
+        inputSchema: t.jsonSchema ?? zodToJsonSchema(t.inputSchema),
+      });
+    }
+    return out;
   }
 }
 
