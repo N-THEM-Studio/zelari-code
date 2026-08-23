@@ -676,6 +676,7 @@ async function runHeadlessSingle(
   // stripThink: false) so ---QUESTION--- blocks and <think> survive for
   // multi-turn binding. The legacy --history JSON is only the one-shot
   // import source (or the declared fallback when the spine is degraded).
+  await spine.beginResourceTurn();
   const modelContext = await buildModelContext({
     fallbackHistory: seededHistory.history,
     session: spine.spine,
@@ -1159,6 +1160,7 @@ async function runHeadlessCouncil(
     description: tool.function.description,
     parameters: tool.function.parameters as Record<string, unknown>,
   }));
+  await spine.beginResourceTurn();
   const councilContext = await buildModelContext({
     fallbackHistory: seededHistory.history,
     session: spine.spine,
@@ -1352,6 +1354,7 @@ async function runHeadlessZelari(
     description: tool.function.description,
     parameters: tool.function.parameters as Record<string, unknown>,
   }));
+  await spine.beginResourceTurn();
   const missionContext = await buildModelContext({
     fallbackHistory: seededHistory.history,
     session: spine.spine,

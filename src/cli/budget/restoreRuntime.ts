@@ -2,9 +2,11 @@
  * src/cli/budget/restoreRuntime.ts — host-parity resume helper (2.6.1
  * closure plan §10). ONE path rebuilds the live BudgetRuntime from the
  * durable session log so TUI, headless and the Desktop bridge reconstruct
- * the SAME ResourceLedger after a resume:
+ * the SAME cumulative ResourceLedger and active execution epoch after a
+ * resume. A new user turn then advances the epoch and starts again at 0:
  *
- *   12/40 used → resume (any host) → remaining 28
+ *   interrupted 12/40 → resume same epoch → remaining 28
+ *   completed 40/40 → new user turn → 0/40 (session total stays 40)
  */
 
 import { readSessionLog, resolveSessionsDir } from '@zelari/core/session';

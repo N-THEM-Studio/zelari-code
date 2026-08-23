@@ -25,7 +25,9 @@ beforeEach(async () => {
 
 afterEach(async () => {
   delete process.env.ZELARI_SESSION_SPINE;
-  await fs.rm(tmp, { recursive: true, force: true });
+  // Windows: a recursive rmdir can race with an in-flight append chain —
+  // retry instead of failing the suite with ENOTEMPTY (Node default is 0).
+  await fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 });
 
 function eventsPath(sessionId: string): string {
@@ -44,6 +46,7 @@ describe('sessionStartedEvent (E1.4)', () => {
       sessionId: 'desk-turn-1',
       spine: 'active',
     });
+    await handle.close('turn-1-done');
   });
 
   it('round-trips: resuming the advertised id continues the same log (seq)', async () => {

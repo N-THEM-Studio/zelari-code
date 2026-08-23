@@ -12,24 +12,25 @@
  *     warning; `protected` (Phase 3, ZELARI_RESOURCE_ENFORCEMENT=protected)
  *     denies non-essential tools and tells the model to verify/finalize.
  *
- * 2.6.1 (closure plan §9/§13):
- *   - maxToolCalls is a HARD limit: once remaining hits 0 every further
- *     billable call is denied (both enforcement modes) and the overrun is
- *     projected (`used` never clamped; `resource.limit_reached` /
- *     `resource.overrun` events land on the spine);
+ * 2.6.1 hardening (§9/§13 + per-turn epoch repair):
+ *   - maxToolCalls is a HARD limit for the active execution epoch: once
+ *     remaining hits 0 every further billable call is denied (both
+ *     enforcement modes), while cumulative session telemetry remains in the
+ *     ledger (`resource.limit_reached` / `resource.overrun` land on spine);
  *   - the verification gate is ARGUMENT-AWARE: an essential `bash` is a
  *     test/typecheck/build/git-diff command, not any shell line.
  *
  * The model never mutates this state — only the host appends (§9.5).
  */
 
-import { defaultResourcePolicy, type ResourcePolicy, type ResourceStage } from '@zelari/core';
+import { computeBudget, defaultResourcePolicy, type ResourcePolicy, type ResourceStage } from '@zelari/core';
 import type { SessionEventEnvelope } from '@zelari/core';
 import { ResourceLedger, rebuildLedgerFromEvents } from './resourceLedger.js';
 import {
   buildResourceSnapshot,
   shouldEmitSnapshot,
   type ResourceSnapshotPayload,
+  withResourceSnapshotContext,
 } from './resourceSnapshot.js';
 
 export type ResourceEnforcement = 'advisory' | 'protected';
@@ -57,7 +58,7 @@ const PROTECTED_DENIAL =
   'Resource protected: remaining tool calls are reserved for verification and targeted repair. Run the required checks (test/typecheck/build), read the failure, apply a minimal fix, retest — or report BLOCKED with the evidence you have.';
 
 const HARD_LIMIT_DENIAL =
-  'Resource exhausted: the session tool budget (maxToolCalls) is spent. No further billable tool calls are allowed — summarize what was verified and report BLOCKED/resource-exhausted with the evidence already collected.';
+  'Resource exhausted: this turn\'s execution budget (maxToolCalls) is spent. No further billable tool calls are allowed in this turn — summarize what was verified and report BLOCKED/resource-exhausted with the evidence already collected. A later user turn starts a fresh execution budget.';
 
 /** bash commands that count as verification-essential (plan §13). */
 const ESSENTIAL_BASH = [
@@ -154,23 +155,46 @@ export class BudgetRuntime {
   readonly enforcement: ResourceEnforcement;
   private readonly ledger: ResourceLedger;
   private readonly essential: ReadonlySet<string>;
+  private readonly initialStage: ResourceStage;
   private stage: ResourceStage;
+  private epoch = 0;
+  private executionBaseline = { toolCallsUsed: 0, wallMs: 0, tokensUsed: 0 };
   private lastEmitted?: ResourceSnapshotPayload;
   private hardLimitAnnounced = false;
 
   constructor(profileId: string, opts: BudgetRuntimeOptions = {}) {
     const basePolicy = opts.policy ?? defaultResourcePolicy(profileId);
-    // 2.6.1 (plan §8): ZELARI_MAX_TOOL_CALLS is a CONFIG ALIAS for the session
-    // ResourcePolicy.maxToolCalls — NOT a second independent limit. Setting it
-    // rewrites the single session budget (and its manifest hash); every cap,
-    // gate and snapshot derives from that one number.
+    // ZELARI_MAX_TOOL_CALLS is a CONFIG ALIAS for ResourcePolicy.maxToolCalls,
+    // not a second cap. The policy is session-stable (and manifest-hashed),
+    // while its hard enforcement is scoped to one execution epoch/turn.
     const envCap = Number.parseInt(process.env.ZELARI_MAX_TOOL_CALLS ?? '', 10);
     this.policy =
       Number.isFinite(envCap) && envCap >= 1 ? { ...basePolicy, maxToolCalls: envCap } : basePolicy;
     this.enforcement = opts.enforcement ?? 'advisory';
     this.essential = new Set(opts.essentialTools ?? DEFAULT_ESSENTIAL_TOOLS);
-    this.stage = opts.stage ?? 'implement';
+    this.initialStage = opts.stage ?? 'implement';
+    this.stage = this.initialStage;
     this.ledger = new ResourceLedger();
+  }
+
+  /**
+   * Start a fresh user-turn execution epoch. The durable ledger remains
+   * cumulative for telemetry; only the enforcement baseline moves forward.
+   */
+  beginTurn(): ResourceSnapshotPayload {
+    this.executionBaseline = this.ledger.usage();
+    this.epoch += 1;
+    this.stage = this.initialStage;
+    this.hardLimitAnnounced = false;
+    this.lastEmitted = undefined;
+    const next = this.current();
+    this.lastEmitted = next;
+    return next;
+  }
+
+  /** Cumulative session telemetry (never reset by beginTurn). */
+  sessionUsage(): ReturnType<ResourceLedger['usage']> {
+    return this.ledger.usage();
   }
 
   /**
@@ -191,7 +215,13 @@ export class BudgetRuntime {
     this.ledger.record('tool-call');
     const next = this.current();
     let hardEvent: HardLimitEvent | null = null;
-    const data = { used: next.toolCallsUsed, limit: next.toolCallsLimit, overrun: next.overrun };
+    const data = {
+      epoch: next.epoch,
+      used: next.toolCallsUsed,
+      limit: next.toolCallsLimit,
+      overrun: next.overrun,
+      sessionToolCallsUsed: next.sessionToolCallsUsed,
+    };
     if (!this.hardLimitAnnounced && next.toolCallsRemaining <= 0) {
       this.hardLimitAnnounced = true;
       hardEvent = { kind: 'resource.limit_reached', data };
@@ -222,12 +252,25 @@ export class BudgetRuntime {
 
   /** 2.6.1 (plan §14): canonical budget for the reserve gate. */
   budgetSnapshot(): import('@zelari/core').ResourceBudget {
-    return this.ledger.budget(this.policy, this.stage);
+    const cumulative = this.ledger.usage();
+    return computeBudget(
+      this.policy,
+      {
+        toolCallsUsed: Math.max(0, cumulative.toolCallsUsed - this.executionBaseline.toolCallsUsed),
+        elapsedMs: Math.max(0, cumulative.wallMs - this.executionBaseline.wallMs),
+        tokensUsed: Math.max(0, cumulative.tokensUsed - this.executionBaseline.tokensUsed),
+      },
+      this.stage,
+    );
   }
 
   /** Current projection without emitting. */
   current(): ResourceSnapshotPayload {
-    return buildResourceSnapshot(this.ledger.budget(this.policy, this.stage), this.policy);
+    const cumulative = this.ledger.usage();
+    return withResourceSnapshotContext(buildResourceSnapshot(this.budgetSnapshot(), this.policy), {
+      epoch: this.epoch,
+      sessionToolCallsUsed: cumulative.toolCallsUsed,
+    });
   }
 
   /**
@@ -262,6 +305,26 @@ export class BudgetRuntime {
   adoptLedgerFromEvents(events: readonly SessionEventEnvelope[]): void {
     const rebuilt = rebuildLedgerFromEvents(events);
     this.ledger.resetTo(rebuilt.snapshot());
+    let epochStart = -1;
+    let fallbackUserStart = -1;
+    let restoredEpoch = 0;
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i]!;
+      if (event.kind === 'user.message') fallbackUserStart = i;
+      if (event.kind === 'resource.epoch_started') {
+        epochStart = i;
+        const value = event.data.epoch;
+        if (typeof value === 'number' && Number.isInteger(value) && value > restoredEpoch) {
+          restoredEpoch = value;
+        }
+      }
+    }
+    const activeStart = epochStart >= 0 ? epochStart : fallbackUserStart;
+    this.executionBaseline =
+      activeStart >= 0
+        ? rebuildLedgerFromEvents(events.slice(0, activeStart + 1)).usage()
+        : { toolCallsUsed: 0, wallMs: 0, tokensUsed: 0 };
+    this.epoch = restoredEpoch;
     this.lastEmitted = undefined;
     const now = this.current();
     this.hardLimitAnnounced = now.toolCallsRemaining <= 0;

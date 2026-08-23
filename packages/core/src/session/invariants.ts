@@ -226,7 +226,26 @@ export function validateResourceAndContractEvents(
 ): SessionInvariantViolation[] {
   const violations: SessionInvariantViolation[] = [];
   let lastToolCallsUsed = -1;
+  let lastEpoch = 0;
+  let activeEpoch = 0;
+  let lastSessionToolCallsUsed = -1;
   for (const e of events) {
+    if (e.kind === 'resource.epoch_started') {
+      const epoch = e.data.epoch;
+      if (typeof epoch !== 'number' || !Number.isInteger(epoch) || epoch <= lastEpoch) {
+        violations.push({
+          code: 'RESOURCE_EPOCH_MONOTONIC',
+          seq: e.seq,
+          message: `resource epoch ${String(epoch)} did not increase past ${lastEpoch}`,
+        });
+      } else {
+        lastEpoch = epoch;
+        activeEpoch = epoch;
+      }
+      // toolCallsUsed is monotone inside an execution epoch, not forever
+      // across the durable session. Session totals remain monotone below.
+      lastToolCallsUsed = -1;
+    }
     if (e.kind === 'resource.snapshot') {
       const used = e.data.toolCallsUsed;
       const remaining = e.data.toolCallsRemaining;
@@ -238,6 +257,31 @@ export function validateResourceAndContractEvents(
         violations.push({ code: 'RESOURCE_USED_MONOTONIC', seq: e.seq, message: `toolCallsUsed went ${lastToolCallsUsed} -> ${used}` });
       }
       lastToolCallsUsed = used;
+      const epoch = e.data.epoch;
+      if (epoch !== undefined && (typeof epoch !== 'number' || !Number.isInteger(epoch) || epoch !== activeEpoch)) {
+        violations.push({
+          code: 'RESOURCE_SNAPSHOT_EPOCH_MISMATCH',
+          seq: e.seq,
+          message: `snapshot epoch ${String(epoch)} does not match active epoch ${activeEpoch}`,
+        });
+      }
+      const sessionUsed = e.data.sessionToolCallsUsed;
+      if (sessionUsed !== undefined) {
+        if (typeof sessionUsed !== 'number' || !Number.isInteger(sessionUsed) || sessionUsed < used) {
+          violations.push({
+            code: 'RESOURCE_SESSION_USAGE_INVALID',
+            seq: e.seq,
+            message: `sessionToolCallsUsed(${String(sessionUsed)}) must be an integer >= epoch used(${used})`,
+          });
+        } else if (sessionUsed < lastSessionToolCallsUsed) {
+          violations.push({
+            code: 'RESOURCE_SESSION_USAGE_MONOTONIC',
+            seq: e.seq,
+            message: `sessionToolCallsUsed went ${lastSessionToolCallsUsed} -> ${sessionUsed}`,
+          });
+        }
+        if (typeof sessionUsed === 'number') lastSessionToolCallsUsed = sessionUsed;
+      }
       const limit = typeof e.data.toolCallsLimit === 'number' ? e.data.toolCallsLimit : used + remaining;
       // 2.6.1 (plan §9): remaining = max(0, limit - used). Over budget the
       // arithmetic sum no longer matches the limit — the OVERRUN does.

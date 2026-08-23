@@ -14,6 +14,10 @@ import type { ResourcePolicy } from '@zelari/core';
 
 /** Payload of the `resource.snapshot` session event (state + surface). */
 export interface ResourceSnapshotPayload {
+  /** Monotone execution epoch within the durable session (0 = legacy/unscoped). */
+  epoch?: number;
+  /** Cumulative session telemetry; enforcement uses toolCallsUsed for this epoch. */
+  sessionToolCallsUsed?: number;
   toolCallsLimit: number;
   toolCallsUsed: number;
   toolCallsRemaining: number;
@@ -40,6 +44,25 @@ export function buildResourceSnapshot(budget: ResourceBudget, policy: ResourcePo
     stage: budget.stage,
     pressure: budgetPressure(budget, policy),
     reserveProtected: isVerificationReserveProtected(budget),
+  };
+}
+
+export interface ResourceSnapshotContext {
+  epoch?: number;
+  sessionToolCallsUsed?: number;
+}
+
+/** Add execution-scope metadata without changing the pure budget projection. */
+export function withResourceSnapshotContext(
+  snapshot: ResourceSnapshotPayload,
+  context: ResourceSnapshotContext,
+): ResourceSnapshotPayload {
+  return {
+    ...snapshot,
+    ...(context.epoch !== undefined ? { epoch: context.epoch } : {}),
+    ...(context.sessionToolCallsUsed !== undefined
+      ? { sessionToolCallsUsed: context.sessionToolCallsUsed }
+      : {}),
   };
 }
 

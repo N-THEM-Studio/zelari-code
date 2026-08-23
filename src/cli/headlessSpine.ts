@@ -38,6 +38,8 @@ export interface HeadlessSpineHandle {
   spine: SessionSpineMirror;
   /** Mirror a BrainEvent onto the spine (no-op when degraded/disabled). */
   observe(ev: unknown): void;
+  /** Start the per-turn execution budget before deriving model context. */
+  beginResourceTurn(): Promise<void>;
   userMessage(text: string): void;
   verificationRun(payload: Record<string, unknown>): void;
   /** 2.6 Phase 3 pre-dispatch resource gate (null = no budget runtime, allow). */
@@ -149,6 +151,9 @@ export async function openHeadlessSpine(opts: {
       if (ev && typeof ev === 'object' && 'type' in ev) {
         spine.mirrorBrainEvent(ev as BrainEvent);
       }
+    },
+    beginResourceTurn(): Promise<void> {
+      return spine.beginResourceTurn();
     },
     userMessage(text: string): void {
       spine.userMessage(text);
@@ -276,7 +281,9 @@ export async function seedHeadlessModelHistory(
   }
   for (const m of legacySeed) {
     if (m.role === 'user') {
-      mirror.userMessage(m.content);
+      // Historical import is not a live execution turn and must not reset or
+      // emit the per-turn resource epoch before the actual current prompt.
+      mirror.userMessage(m.content, { beginResourceTurn: false, imported: 'legacy-history' });
     } else {
       mirror.assistantMessage(m.content, { imported: 'legacy-history' });
     }

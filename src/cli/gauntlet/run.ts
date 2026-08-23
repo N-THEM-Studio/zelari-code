@@ -129,7 +129,7 @@ export async function runHeadlessGauntlet(
       }`,
     });
 
-    // 2.6.1 (plan §15): live session budget probe for the loop gate.
+    // Live execution-epoch budget probe for the loop gate.
   const budgetGate = () => {
     const lim = spine.resourceBudgetLimit();
     return lim ? { remaining: lim.remaining, verificationReserve: lim.verificationReserve } : null;

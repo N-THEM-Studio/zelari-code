@@ -1,8 +1,9 @@
 /**
  * src/cli/budget/resourceLedger.ts — host-owned append-only resource ledger
- * (2.6 Track B, doc §9.4). Single counting point: tool-call usage derives
- * from `tool.call` session events (never from tool.interrupted — no double
- * count). The model can read projections; only the host appends.
+ * (2.6 Track B, doc §9.4). This ledger is cumulative session telemetry.
+ * Single counting point: tool-call usage derives from `tool.call` session
+ * events (never from tool.interrupted — no double count). BudgetRuntime
+ * subtracts an epoch baseline for per-turn enforcement; only the host appends.
  */
 
 import {

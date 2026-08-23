@@ -197,6 +197,8 @@ export class SessionSpineMirror {
   private warned = false;
   /** Host-owned budget runtime (attached via attachBudgetRuntime). */
   private budgetRuntime: BudgetRuntime | null = null;
+  /** True after the host prepared an epoch but before its user.message lands. */
+  private resourceTurnPrepared = false;
   /** 2.6 Track A: set once a task.contract has been seeded (or the log had one). */
   private contractSeeded = false;
   status: SpineStatus = 'disabled';
@@ -268,8 +270,22 @@ export class SessionSpineMirror {
   }
 
   /** Log the user prompt — the P1 gap the 1.x log never closed. */
-  userMessage(text: string): void {
-    const seqP = this.append({ kind: 'user.message', actor: ACTOR_USER, data: { text } });
+  userMessage(
+    text: string,
+    options: { beginResourceTurn?: boolean; imported?: string } = {},
+  ): void {
+    // Direct callers still get correct per-turn semantics. Hot paths prepare
+    // (and await) this epoch before model-context derivation, so this is
+    // idempotent there and only consumes the prepared marker.
+    if (options.beginResourceTurn !== false) {
+      void this.beginResourceTurn();
+      this.resourceTurnPrepared = false;
+    }
+    const seqP = this.append({
+      kind: 'user.message',
+      actor: ACTOR_USER,
+      data: { text, ...(options.imported ? { imported: options.imported } : {}) },
+    });
     // NOTE (2.6 Track A): task.contract seeding happens INSIDE append() on
     // the same write chain (user.message -> task.contract, deterministic
     // order, flush() awaits both). A .then() here would race flush()'s
@@ -279,9 +295,9 @@ export class SessionSpineMirror {
     // the FIRST user message of a fresh session. Env-gated pilot
     // (ZELARI_TASK_CONTRACT=1), state-only, version-monotone - the derived
     // contract anchors constraints/criteria the compaction snapshot prefers
-    // over regex extraction (F7). Later steers stay ordinary user messages
-    // until task.contract_updated wiring ships; degrade-and-stop applies.
-      }
+    // over regex extraction (F7). Later steers remain user messages and also
+    // emit task.contract_updated below; degrade-and-stop applies.
+  }
 
   /**
    * Log an assistant message outside the streaming path — legacy
@@ -317,6 +333,34 @@ export class SessionSpineMirror {
    */
   attachBudgetRuntime(runtime: BudgetRuntime): void {
     this.budgetRuntime = runtime;
+    this.resourceTurnPrepared = false;
+  }
+
+  /**
+   * Prepare a fresh per-user-turn execution epoch before model context is
+   * derived. The cumulative ResourceLedger is retained; enforcement and the
+   * latest RESOURCE STATUS restart at 0 / policy.maxToolCalls.
+   */
+  beginResourceTurn(): Promise<void> {
+    if (!this.budgetRuntime || this.resourceTurnPrepared) {
+      return this.chain.then(() => undefined);
+    }
+    const snapshot = this.budgetRuntime.beginTurn();
+    this.resourceTurnPrepared = true;
+    void this.append({
+      kind: 'resource.epoch_started',
+      actor: ACTOR_SYSTEM,
+      data: {
+        epoch: snapshot.epoch,
+        kind: 'turn',
+        sessionToolCallsUsed: snapshot.sessionToolCallsUsed,
+      },
+    });
+    return this.append({
+      kind: 'resource.snapshot',
+      actor: ACTOR_SYSTEM,
+      data: { ...snapshot },
+    }).then(() => undefined);
   }
 
   /** Latest emitted resource snapshot (the model-visible one), or null. */
@@ -676,9 +720,9 @@ export async function wrapSessionWriter(
     const budget = new BudgetRuntime(typeof profile === 'string' ? profile : 'kraken/v1', {
       enforcement: resolveResourceEnforcement(),
     });
-    // 2.6.1 (plan §10): TUI/host parity — on resume, rebuild the ledger from
-    // the prior log with the SAME helper headless uses, so remaining budget
-    // is identical across hosts (12/40 → remaining 28 everywhere).
+    // TUI/host parity — on resume, rebuild both cumulative telemetry and the
+    // active epoch with the SAME helper headless uses. An interrupted 12/40
+    // resumes at 28 remaining; the next user turn starts a fresh 0/40 epoch.
     if (spine.resumedFromSeq !== undefined && spine.resumedFromSeq > 0) {
       await restoreBudgetRuntimeFromSession(budget, sessionId, options.baseDir);
     }

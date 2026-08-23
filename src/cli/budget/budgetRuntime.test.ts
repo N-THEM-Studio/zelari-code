@@ -13,6 +13,7 @@ import os from 'node:os';
 import { readSessionLog, deriveMessages, resolveSessionsDir } from '@zelari/core/session';
 import { SessionSpineMirror } from '../sessionSpine.js';
 import { BudgetRuntime, resolveResourceEnforcement } from './budgetRuntime.js';
+import { restoreBudgetRuntimeFromSession } from './restoreRuntime.js';
 
 let tmp: string;
 
@@ -24,6 +25,7 @@ async function tmpDir(): Promise<string> {
 afterEach(async () => {
   if (tmp) await fs.rm(tmp, { recursive: true, force: true }).catch(() => undefined);
   tmp = undefined as unknown as string;
+  vi.unstubAllEnvs();
 });
 
 function brainToolStart(callId: string, tool = 'bash') {
@@ -74,6 +76,27 @@ describe('BudgetRuntime (pure)', () => {
     expect(rt.gateToolCall('task').advisory).toBe(false);
   });
 
+  it('starts each user turn at 0 without erasing cumulative session telemetry', () => {
+    const rt = new BudgetRuntime('kraken/v1');
+    const first = rt.beginTurn();
+    expect(first.epoch).toBe(1);
+    for (let i = 0; i < 40; i++) rt.noteToolCall();
+    expect(rt.current().toolCallsUsed).toBe(40);
+    expect(rt.gateToolCall('read_file').allowed).toBe(false);
+    expect(rt.sessionUsage().toolCallsUsed).toBe(40);
+
+    const second = rt.beginTurn();
+    expect(second).toMatchObject({
+      epoch: 2,
+      toolCallsUsed: 0,
+      toolCallsRemaining: 40,
+      sessionToolCallsUsed: 40,
+    });
+    expect(rt.gateToolCall('read_file').allowed).toBe(true);
+    rt.noteToolCall();
+    expect(rt.current()).toMatchObject({ toolCallsUsed: 1, sessionToolCallsUsed: 41 });
+  });
+
   it('resolveResourceEnforcement reads the env phase selector', () => {
     expect(resolveResourceEnforcement({} as NodeJS.ProcessEnv)).toBe('advisory');
     expect(resolveResourceEnforcement({ ZELARI_RESOURCE_ENFORCEMENT: 'protected' } as unknown as NodeJS.ProcessEnv)).toBe('protected');
@@ -81,6 +104,55 @@ describe('BudgetRuntime (pure)', () => {
 });
 
 describe('SessionSpineMirror × BudgetRuntime wiring', () => {
+  it('resume preserves an interrupted epoch, then a new turn gets a fresh budget', async () => {
+    tmp = await tmpDir();
+    const first = await SessionSpineMirror.adopt('budget-epoch-resume', { baseDir: tmp, quiet: true });
+    const firstRuntime = new BudgetRuntime('kraken/v1');
+    first.attachBudgetRuntime(firstRuntime);
+    await first.beginResourceTurn();
+    first.userMessage('turn one');
+    for (let i = 0; i < 40; i++) first.mirrorBrainEvent(brainToolStart(`c${i}`) as never);
+    await first.flush();
+    expect(first.gateResourceToolCall('read_file')?.allowed).toBe(false);
+    await first.close('turn-one-done');
+
+    const resumed = await SessionSpineMirror.adopt('budget-epoch-resume', { baseDir: tmp, quiet: true });
+    const resumedRuntime = new BudgetRuntime('kraken/v1');
+    await restoreBudgetRuntimeFromSession(resumedRuntime, 'budget-epoch-resume', tmp);
+    resumed.attachBudgetRuntime(resumedRuntime);
+    // Before a new prompt this is still the restored turn-one epoch.
+    expect(resumedRuntime.current()).toMatchObject({
+      epoch: 1,
+      toolCallsUsed: 40,
+      toolCallsRemaining: 0,
+      sessionToolCallsUsed: 40,
+    });
+
+    await resumed.beginResourceTurn();
+    expect(resumedRuntime.current()).toMatchObject({
+      epoch: 2,
+      toolCallsUsed: 0,
+      toolCallsRemaining: 40,
+      sessionToolCallsUsed: 40,
+    });
+    expect(resumed.gateResourceToolCall('read_file')?.allowed).toBe(true);
+    resumed.userMessage('turn two');
+    resumed.mirrorBrainEvent(brainToolStart('c41') as never);
+    await resumed.flush();
+    expect(resumedRuntime.current()).toMatchObject({ toolCallsUsed: 1, sessionToolCallsUsed: 41 });
+    await resumed.close('turn-two-done');
+
+    const log = path.join(resolveSessionsDir({ baseDir: tmp }), 'budget-epoch-resume', 'events.jsonl');
+    const report = await readSessionLog(log);
+    expect(report.events.filter((e) => e.kind === 'resource.epoch_started')).toHaveLength(2);
+    const snapshots = report.events.filter((e) => e.kind === 'resource.snapshot');
+    expect(snapshots.at(-1)?.data).toMatchObject({
+      epoch: 2,
+      toolCallsUsed: 1,
+      sessionToolCallsUsed: 41,
+    });
+  });
+
   it('counts tool.calls and appends resource.snapshot events; latest-only projects', async () => {
     tmp = await tmpDir();
     const mirror = await SessionSpineMirror.adopt('budget-rt-1', { baseDir: tmp, quiet: true });
@@ -163,7 +235,7 @@ describe('SessionSpineMirror × BudgetRuntime wiring', () => {
   it('2.6.1 plan §8: ZELARI_MAX_TOOL_CALLS is a policy alias, not a second limit', () => {
     vi.stubEnv('ZELARI_MAX_TOOL_CALLS', '10');
     const rt = new BudgetRuntime('kraken/v1');
-    expect(rt.policy.maxToolCalls).toBe(10); // session budget rewritten
+    expect(rt.policy.maxToolCalls).toBe(10); // one epoch policy rewritten
     expect(rt.current().toolCallsLimit).toBe(10); // one number everywhere
     vi.unstubAllEnvs();
     const rtDefault = new BudgetRuntime('kraken/v1');

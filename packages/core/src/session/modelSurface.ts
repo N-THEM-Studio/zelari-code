@@ -96,6 +96,10 @@ export function formatResourceSnapshot(data: Record<string, unknown>): string {
     `Tool calls: ${used} / ${limit}`,
     `Remaining: ${remaining}`,
   ];
+  const sessionUsed = asNumber(data.sessionToolCallsUsed);
+  if (sessionUsed !== undefined && sessionUsed !== used) {
+    lines.push(`Session total: ${sessionUsed}`);
+  }
   const overrun = asNumber(data.overrun);
   if (overrun !== undefined && overrun > 0) lines.push(`Overrun: ${overrun}`);
   const wall = asNumber(data.wallMsRemaining);

@@ -413,6 +413,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // model history, not the 1.x store — compaction decisions apply to
         // exactly what the model is about to see.
         const requestSnapshot = getRequestSnapshotWithUsage(sessionId);
+        await writerRef.current?.spine?.beginResourceTurn();
         const modelContext = await buildModelContext({
           fallbackHistory: historyForModel,
           session: writerRef.current?.spine ?? null,
@@ -722,11 +723,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         systemPrefixLen = systemMessages.length;
 
         // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
-        // 2.6.1 (plan §8): the per-turn cap is advisory anti-spam ONLY and is
-        // clamped by the session ResourcePolicy — ZELARI_MAX_TOOL_CALLS is a
-        // config alias for the session budget (see BudgetRuntime), so the
-        // policy stays the single authority and this can never become a
-        // second independent limit.
+        // The harness cap is advisory anti-spam and is clamped by the active
+        // ResourcePolicy epoch. ZELARI_MAX_TOOL_CALLS configures that one
+        // policy; BudgetRuntime resets enforcement at each user turn while
+        // keeping cumulative session telemetry separately.
         const perTurnEnv = envNumber(process.env.ZELARI_MAX_TOOL_CALLS, {
           default: 25,
           min: 1,
@@ -1386,6 +1386,7 @@ async function dispatchCouncilPromptImpl(
   // and now measures the spine-derived model history, not the 1.x store.
   const anchored = maybeAnchorShortAnswer(text);
   const effectiveText = anchored ?? text;
+  await writerRef.current?.spine?.beginResourceTurn();
   const councilContext = await buildModelContext({
     fallbackHistory: getHistory(),
     session: writerRef.current?.spine ?? null,

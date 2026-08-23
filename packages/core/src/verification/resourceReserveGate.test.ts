@@ -195,6 +195,18 @@ describe('resource.snapshot surface (§10)', () => {
     };
   }
 
+  function epochEvent(seq: number, epoch: number, sessionToolCallsUsed: number): SessionEventEnvelope {
+    return {
+      schemaVersion: 1,
+      sessionId: 's',
+      seq,
+      ts: seq,
+      kind: 'resource.epoch_started',
+      actor: { type: 'system' },
+      data: { epoch, kind: 'turn', sessionToolCallsUsed },
+    };
+  }
+
   it('is model-surface but LATEST-ONLY: only the last snapshot projects', () => {
     expect(MODEL_SURFACE_KINDS.has('resource.snapshot')).toBe(true);
     expect([...LATEST_ONLY_SURFACE_KINDS]).toEqual(['resource.snapshot']);
@@ -219,6 +231,18 @@ describe('resource.snapshot surface (§10)', () => {
     const codes = validateResourceAndContractEvents(bad).map((v) => v.code);
     expect(codes).toContain('RESOURCE_USED_MONOTONIC');
     expect(codes).toContain('RESOURCE_REMAINING_COHERENT');
+  });
+
+  it('allows usage to reset only across an explicit execution epoch', () => {
+    expect(SESSION_EVENT_KINDS).toContain('resource.epoch_started');
+    const endOfTurn = { ...snapEvent(2, 40, 0), data: { ...snapEvent(2, 40, 0).data, epoch: 1, sessionToolCallsUsed: 40 } };
+    const newTurn = { ...snapEvent(4, 0, 40), data: { ...snapEvent(4, 0, 40).data, epoch: 2, sessionToolCallsUsed: 40 } };
+    expect(validateResourceAndContractEvents([
+      epochEvent(1, 1, 0),
+      endOfTurn,
+      epochEvent(3, 2, 40),
+      newTurn,
+    ])).toEqual([]);
   });
 
   it('pressure bands derive from the same policy the budget used', () => {
