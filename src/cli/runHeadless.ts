@@ -528,7 +528,7 @@ async function runHeadlessSingle(
     profile: opts.profile,
     workspace: process.cwd(),
     // 2.6.1 (plan §7): deep specs from THIS run’s registry.
-    toolSpecs: toolRegistry.fingerprints(),
+    toolSpecs: typeof toolRegistry.fingerprints === 'function' ? toolRegistry.fingerprints() : undefined,
   });
   // Exit-1/E1.2: the session spine is the model-context source of truth.
   // Legacy `--history` is imported one-shot into a fresh log; prior turns
