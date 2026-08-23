@@ -5,6 +5,45 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-08-23
+
+Native shared cognitive memory, promoted from MVP to a stable local V1.2
+surface across Core, CLI, Council/Kraken, MCP, and Desktop.
+
+### Added
+
+- **Native memory contracts** — `@zelari/core/memory` now exposes typed nodes,
+  relations, immutable revisions, provenance, lifecycle state, scoring,
+  bounded context assembly, policies, adapters, and graceful no-op fallback.
+- **SQLite memory spine** — project-local schema v2 uses WAL, FTS, typed graph
+  edges, concurrent-writer handling, forward-only migrations with locking and
+  consistent backups, legacy JSONL import, consolidation, and health metrics.
+- **Hybrid semantic retrieval** — optional injected embeddings add persistent,
+  versioned semantic search with paged interruptible indexing, stale-vector
+  invalidation, worker-side ranking, provider timeouts, and lexical fallback.
+- **Native orchestration integration** — AgentHarness, Council, Kraken
+  tentacles, missions, interactive sessions, and headless runs can share and
+  reuse bounded project knowledge across processes and restarts.
+- **Inspection and interoperability** — `/memory` commands, safe AGENTS.md
+  promotion, a read-only Desktop explorer, a versioned Desktop JSON API, and
+  an opt-in MCP stdio server for external agents.
+- **Memory evaluation suite** — repeatable recall, precision, stale/duplicate
+  injection, token-efficiency, semantic-gain, and real SQLite latency metrics.
+
+### Security
+
+- Secret scanning and private-reasoning removal apply before persistence.
+- External access enforces project trust, canonical scope, visibility,
+  ownership, payload limits, relation validation, and bounded write rates.
+- MCP remains disabled unless explicitly enabled and is never required by the
+  native memory path.
+
+### Changed
+
+- Vitest now caps the whole repository at 50% of available workers, preventing
+  process-heavy Git and SQLite suites from starving each other in CI while
+  retaining the existing per-test timeout guarantees.
+
 ## [2.7.0] - 2026-08-23
 
 Desktop UI alignment: project-grouped chat history, colored file tree, and
