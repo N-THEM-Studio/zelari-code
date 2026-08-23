@@ -5,6 +5,32 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-08-23
+
+Desktop UI alignment: project-grouped chat history, colored file tree, and
+collapsible task panels.
+
+### Added
+
+- **Project-grouped chat history** — the desktop session sidebar groups chats
+  by project folder with collapsible headers (chevron + chat count), state
+  persisted in localStorage; every group is collapsible, including the one
+  containing the active chat.
+- **Colored file tree** — Files tab icons are tinted per folder name and file
+  extension (VS Code Material-style palette: TypeScript cyan, JS/JSON amber,
+  CSS blue, SCSS/images purple, HTML orange, configs/scripts green).
+- **Collapsible task panels** — Tasks and Project sections above the
+  conversation are collapsible with clickable headers and persisted state.
+
+### Changed
+
+- **Mock-aligned dark theme** — near-black (#050508) background, cyan/violet
+  accents (#00e5ff / #c084fc), gradient New chat button and Active/Archived
+  tabs, 2x2 suggestion chips with per-chip gradient borders, glowing circular
+  send button.
+- **Right rail sizing** — Files/Git panel honors collapsed (36px) and
+  narrow-window (160px) widths; 292px only when expanded on wide windows.
+
 ## [2.6.3] - 2026-08-23
 
 2.6 closure hardening: mission budget governance, deep harness-manifest
