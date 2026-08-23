@@ -5,6 +5,36 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.3] - 2026-08-23
+
+2.6 closure hardening: mission budget governance, deep harness-manifest
+provenance, and a real CI retention gate.
+
+### Added
+
+- **Mission budget-aware continuation** - `evaluateBudgetContinuation()` from
+  `@zelari/core` now governs the Mission driver lifecycle (not just advisory):
+  budget pressure plus repeated/identical implementation gaps produce
+  `hold`/`pivot`/`repair` decisions, pivot reduces the specialist roster, and
+  `repairHistory` persists across resume.
+- **Deep harness-manifest fingerprinting** - the session lifecycle manifest is
+  now built from real tool specs (`name` + `description` + `inputSchema`) via
+  the new `ToolRegistry.fingerprints()` accessor, threaded from the TUI and
+  headless hosts (best-effort: degrades gracefully when specs are unavailable).
+  Tool description/schema changes now change the manifest hash.
+- **Eval result store + CI retention gate** - new `tools/eval/runAnchors.ts`
+  CLI runs the anchor suite with a real headless runner and deep suite
+  provenance, seeding the versioned result store; `runGate` gains
+  `--baseline-store`, `--baseline latest` and `--candidate all` (multi-manifest
+  suites); the retention workflow compares the stable-tag baseline against the
+  candidate for real and is blocking when API credentials exist (declared
+  shadow otherwise - never fake outcomes in the store).
+
+### Fixed
+
+- **Headless deep-specs guard** - sessions no longer break when a tool
+  registry without fingerprint support is injected.
+
 ## [2.6.2] - 2026-08-23
 
 Resource-budget repair release: restores the documented per-turn hard limit
