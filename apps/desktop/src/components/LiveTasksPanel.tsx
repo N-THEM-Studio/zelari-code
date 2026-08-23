@@ -1,6 +1,9 @@
+import { useCallback, useState } from "react";
 import type { LiveTask } from "../liveTasks/types";
 import { SessionTodosPanel } from "./SessionTodosPanel";
 import { groupProjectTasks } from "../liveTasks/workspacePlan";
+
+const LS_PROJECT_COLLAPSED = "zelari-desktop-project-tasks-collapsed";
 
 interface Props {
   tasks: LiveTask[];
@@ -31,8 +34,30 @@ function projectSummary(tasks: LiveTask[]): string | null {
  * from `phases[].order`), so a normalized plan reads as a sequenced
  * roadmap instead of a flat wall of tasks. Project tasks have no
  * "Clear": they are durable workspace state, not chat scratch space.
+ * Both sections are collapsible (state persisted per section) so long
+ * task walls can be folded away while chatting.
  */
 export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
+  const [projectCollapsed, setProjectCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(LS_PROJECT_COLLAPSED) === "1";
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleProject = useCallback(() => {
+    setProjectCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem(LS_PROJECT_COLLAPSED, next ? "1" : "0");
+      } catch {
+        /* ignore */
+      }
+      return next;
+    });
+  }, []);
+
   const project = projectTasks ?? [];
   // Completed/cancelled project tasks drop out of the panel: once marked
   // done they are history, not live state, and a fully closed plan hides
@@ -49,51 +74,68 @@ export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
       <SessionTodosPanel todos={tasks} onClear={onClear} />
       {active.length > 0 ? (
         <div
-          className="session-todos-panel live-tasks-project"
+          className={`session-todos-panel live-tasks-project${
+            projectCollapsed ? " collapsed" : ""
+          }`}
           aria-label="Workspace project tasks"
         >
           <div className="session-todos-head">
-            <span className="session-todos-title">Project</span>
+            <button
+              type="button"
+              className="session-todos-toggle"
+              onClick={toggleProject}
+              aria-expanded={!projectCollapsed}
+              title={
+                projectCollapsed ? "Expand project tasks" : "Collapse project tasks"
+              }
+            >
+              <span className="session-todos-chevron" aria-hidden>
+                {projectCollapsed ? "▸" : "▾"}
+              </span>
+              <span className="session-todos-title">Project</span>
+            </button>
             {projectSummary(project) ? (
               <span className="session-todos-summary">
                 {projectSummary(project)}
               </span>
             ) : null}
           </div>
-          <div className="live-tasks-groups">
-            {groups.map((g) => (
-              <section
-                key={g.key}
-                className="live-tasks-phase-group"
-                aria-label={`Fase ${g.label}`}
-              >
-                <div className="live-tasks-phase">
-                  <span className="live-tasks-phase-name">{g.label}</span>
-                  <span className="live-tasks-phase-count">
-                    {g.tasks.length}
-                  </span>
-                </div>
-                <ul className="session-todos-list live-tasks-phase-list">
-                  {g.tasks.map((t) => (
-                    <li key={t.id} className={`session-todo status-${t.status}`}>
-                      <span className="session-todo-mark" aria-hidden>
-                        {t.status === "completed"
-                          ? "V"
-                          : t.status === "in_progress"
-                            ? "?"
-                            : t.status === "cancelled"
-                              ? "-"
-                              : t.status === "blocked"
-                                ? "!"
-                                : "•"}
-                      </span>
-                      <span className="session-todo-text">{t.content}</span>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </div>
+          {projectCollapsed ? null : (
+            <div className="live-tasks-groups">
+              {groups.map((g) => (
+                <section
+                  key={g.key}
+                  className="live-tasks-phase-group"
+                  aria-label={`Fase ${g.label}`}
+                >
+                  <div className="live-tasks-phase">
+                    <span className="live-tasks-phase-name">{g.label}</span>
+                    <span className="live-tasks-phase-count">
+                      {g.tasks.length}
+                    </span>
+                  </div>
+                  <ul className="session-todos-list live-tasks-phase-list">
+                    {g.tasks.map((t) => (
+                      <li key={t.id} className={`session-todo status-${t.status}`}>
+                        <span className="session-todo-mark" aria-hidden>
+                          {t.status === "completed"
+                            ? "V"
+                            : t.status === "in_progress"
+                              ? "?"
+                              : t.status === "cancelled"
+                                ? "-"
+                                : t.status === "blocked"
+                                  ? "!"
+                                  : "•"}
+                        </span>
+                        <span className="session-todo-text">{t.content}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
+            </div>
+          )}
         </div>
       ) : null}
     </>

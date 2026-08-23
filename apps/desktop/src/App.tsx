@@ -57,6 +57,13 @@ import {
 import { LiveTasksPanel } from "./components/LiveTasksPanel";
 import { parseTodosFromUnknown } from "./sessionTodosUi";
 import {
+  SESSION_FOLDERS_STORAGE_KEY,
+  groupSessionsByFolder,
+  loadCollapsedSet,
+  persistCollapsedSet,
+  toggleCollapsedKey,
+} from "./sessionGroups";
+import {
   applySessionTasks,
   applyWorkspaceSnapshot,
   applyWorkspaceUpdate,
@@ -121,6 +128,9 @@ const SUGGESTIONS = [
   "Add a unit test for the headless CLI path",
   "Review recent git changes for risk",
 ];
+
+/** Per-suggestion icon (reference mock): refresh · clock · chart · shield. */
+const SUGGESTION_ICONS = ["🔄", "🕒", "📊", "🛡️"];
 
 /** Max chars of file text inlined into the agent prompt per attachment. */
 const ATTACH_TEXT_MAX = 48_000;
@@ -724,11 +734,28 @@ export default function App() {
     }
   }, []);
 
+  const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(
+    () => loadCollapsedSet(SESSION_FOLDERS_STORAGE_KEY),
+  );
+
   const visibleSessions = useMemo(() => {
     return conversations.filter((c) =>
       sessionFilter === "archived" ? c.archived : !c.archived,
     );
   }, [conversations, sessionFilter]);
+
+  const sessionGroups = useMemo(
+    () => groupSessionsByFolder(visibleSessions),
+    [visibleSessions],
+  );
+
+  const toggleSessionFolder = useCallback((key: string) => {
+    setCollapsedFolders((prev) => {
+      const next = toggleCollapsedKey(prev, key);
+      persistCollapsedSet(SESSION_FOLDERS_STORAGE_KEY, next);
+      return next;
+    });
+  }, []);
 
   const unseenByConv = useMemo(
     () => unseenResultsByConversation(runCoordinator.state),
@@ -2340,7 +2367,27 @@ export default function App() {
                 : "No active chats"}
             </div>
           )}
-          {visibleSessions.map((c) => (
+          {sessionGroups.map((g) => {
+            const groupCollapsed = collapsedFolders.has(g.key);
+            return (
+              <div key={g.key} className="session-group">
+                <button
+                  type="button"
+                  className="session-group-head"
+                  title={g.path || undefined}
+                  aria-expanded={!groupCollapsed}
+                  onClick={() => toggleSessionFolder(g.key)}
+                >
+                  <span className="session-group-chevron" aria-hidden>
+                    {groupCollapsed ? "▸" : "▾"}
+                  </span>
+                  <span className="session-group-name">{g.label}</span>
+                  <span className="session-group-count">
+                    {g.sessions.length}
+                  </span>
+                </button>
+                {!groupCollapsed &&
+                  g.sessions.map((c) => (
             <div
               key={c.id}
               className={`session-item-wrap${c.id === activeId ? " active" : ""}`}
@@ -2374,7 +2421,11 @@ export default function App() {
                   >
                     ✓
                   </span>
-                ) : null}
+                ) : (
+                  <span className="session-bubble" aria-hidden>
+                    💬
+                  </span>
+                )}
                 <span className="session-meta">
                   {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
                 </span>
@@ -2407,7 +2458,10 @@ export default function App() {
                 </button>
               </div>
             </div>
-          ))}
+                  ))}
+              </div>
+            );
+          })}
         </div>
 
         <div className="sidebar-foot">
@@ -2533,7 +2587,7 @@ export default function App() {
                   tools, and light stats.
                 </p>
                 <div className="suggestions">
-                  {SUGGESTIONS.map((s) => (
+                  {SUGGESTIONS.map((s, i) => (
                     <button
                       key={s}
                       type="button"
@@ -2541,7 +2595,10 @@ export default function App() {
                       onClick={() => void send(s)}
                       disabled={running || (cli !== null && !cli.ok)}
                     >
-                      {s}
+                      <span className="suggestion-icon" aria-hidden>
+                        {SUGGESTION_ICONS[i] ?? "✦"}
+                      </span>
+                      <span className="suggestion-text">{s}</span>
                     </button>
                   ))}
                 </div>

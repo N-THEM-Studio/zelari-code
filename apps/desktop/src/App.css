@@ -5872,3 +5872,462 @@ kbd {
   gap: 8px;
 }
 .field-check input { margin-top: 3px; }
+
+/* ===== Session sidebar: collapsible project-folder groups ===== */
+.session-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.session-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px 4px;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.session-group-head:hover {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.session-group-chevron {
+  flex: none;
+  width: 10px;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.session-group-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+}
+
+.session-group-count {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* ===== Files tree: colored icons (reference-mock palette) ===== */
+.file-tree-node .file-tree-row .file-tree-icon {
+  opacity: 1;
+}
+
+.file-tree-node.is-dir > .file-tree-row .file-tree-icon {
+  opacity: 1;
+}
+
+/* ===== Tasks / Project sections: collapsible ===== */
+.session-todos-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.session-todos-chevron {
+  flex: none;
+  width: 10px;
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.session-todos-panel.collapsed .session-todos-head {
+  opacity: 0.85;
+}
+
+/* ===== Reference-mock alignment layer (dark + cyan/violet glow) =====
+   Appended last on purpose: same-specificity rules here win the cascade. */
+
+:root {
+  --bg: #050508;
+  --bg-solid: #0a0a0f;
+  --sidebar: rgba(12, 12, 18, 0.92);
+  --surface: rgba(255, 255, 255, 0.04);
+  --surface-hover: rgba(255, 255, 255, 0.08);
+  --border: rgba(255, 255, 255, 0.07);
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --text-secondary: #94a3b8;
+  --text-muted: rgba(148, 163, 184, 0.55);
+  --accent: #00e5ff;
+  --accent-2: #c084fc;
+  --accent-strong: #7dd3fc;
+  --accent-soft: rgba(0, 229, 255, 0.12);
+  --on-accent: #050508;
+  --input-bg: #101016;
+  --input-bg-hover: #16161e;
+  --success: #22c55e;
+  --aurora-base: radial-gradient(
+    120% 120% at 80% -10%,
+    #0c0c16 0%,
+    #07070c 52%,
+    #050508 100%
+  );
+  --blob-1: rgba(0, 229, 255, 0.05);
+  --blob-2: rgba(168, 85, 247, 0.05);
+  --blob-3: rgba(0, 229, 255, 0.04);
+  --blob-4: rgba(192, 132, 252, 0.04);
+  --sidebar-w: 292px;
+}
+
+/* Re-assert accents on every mode (mode blocks earlier would override :root) */
+.app[data-mode] {
+  --accent: #00e5ff;
+  --accent-2: #c084fc;
+  --accent-strong: #7dd3fc;
+  --accent-soft: rgba(0, 229, 255, 0.12);
+}
+
+/* ---------- Top bar ---------- */
+.topbar {
+  background: rgba(15, 15, 20, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 14px;
+  backdrop-filter: blur(14px);
+}
+.model-chip {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+}
+.topbar .seg-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+}
+.topbar .seg-toggle button {
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 8px;
+  padding: 4px 10px;
+  font-size: 11.5px;
+  font-weight: 500;
+  transition: background 120ms ease, color 120ms ease, box-shadow 120ms ease;
+}
+.topbar .seg-toggle button:hover {
+  color: #e2e8f0;
+}
+.topbar .seg-toggle button.active,
+.topbar .seg-toggle button[aria-pressed="true"] {
+  background: #00e5ff;
+  color: #050508;
+  font-weight: 600;
+  box-shadow: 0 0 14px rgba(0, 229, 255, 0.45);
+}
+.topbar .btn-ghost.topbar-folder {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 10px;
+  color: #cbd5e1;
+}
+
+/* ---------- Left sidebar (chat history) ---------- */
+.sidebar {
+  background: linear-gradient(180deg, #0c0c12 0%, #0a0a10 100%);
+  border-right: 1px solid rgba(255, 255, 255, 0.05);
+}
+.btn-new {
+  background: linear-gradient(90deg, #00d4ff 0%, #c084fc 100%);
+  color: #ffffff;
+  font-weight: 600;
+  border: 0;
+  border-radius: 12px;
+  box-shadow: 0 4px 18px rgba(0, 212, 255, 0.22),
+    0 4px 18px rgba(192, 132, 252, 0.16);
+}
+.btn-new:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.session-filter {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+.session-filter button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+.session-filter button.active {
+  background: linear-gradient(
+    90deg,
+    rgba(59, 130, 246, 0.55),
+    rgba(168, 85, 247, 0.55)
+  );
+  color: #ffffff;
+  font-weight: 600;
+}
+.session-label {
+  display: none; /* the project-folder group header is the section title */
+}
+.session-group-head {
+  padding: 8px 6px 6px;
+  font-size: 13.5px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+  color: #ffffff;
+}
+.session-group-head:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+}
+.session-group-chevron {
+  color: #94a3b8;
+  font-size: 10px;
+}
+.session-group-count {
+  background: rgba(0, 229, 255, 0.1);
+  color: #7dd3fc;
+}
+.session-item-wrap.active {
+  background: linear-gradient(
+    90deg,
+    rgba(0, 229, 255, 0.1),
+    rgba(192, 132, 252, 0.06)
+  );
+  border: 1px solid rgba(0, 229, 255, 0.16);
+  border-radius: 10px;
+}
+.session-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 8px;
+  row-gap: 1px;
+}
+.session-title {
+  grid-column: 1;
+  grid-row: 1;
+  color: #e8eaef;
+  font-size: 12.5px;
+}
+.session-run-badge,
+.session-bubble {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+}
+.session-bubble {
+  color: #7ab8ff;
+  font-size: 11px;
+  line-height: 1;
+  opacity: 0.85;
+}
+.session-meta {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  text-align: left;
+  color: #94a3b8;
+  font-size: 10.5px;
+}
+.sidebar-foot .status-pill {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+/* ---------- Empty state (welcome) ---------- */
+.empty-state h1 {
+  font-size: 40px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+}
+.empty-state p {
+  color: #94a3b8;
+}
+.suggestions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  max-width: 660px;
+  margin-inline: auto;
+}
+.suggestion {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-align: left;
+  padding: 12px 14px;
+  border-radius: 14px;
+  color: #e6e8ef;
+  font-size: 12.5px;
+  background: linear-gradient(rgba(13, 13, 20, 0.92), rgba(13, 13, 20, 0.92))
+      padding-box,
+    linear-gradient(135deg, rgba(0, 229, 255, 0.55), rgba(192, 132, 252, 0.55))
+      border-box;
+  border: 1px solid transparent;
+  box-shadow: 0 0 18px rgba(0, 229, 255, 0.06);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+.suggestion:nth-child(1) {
+  background: linear-gradient(rgba(13, 13, 20, 0.92), rgba(13, 13, 20, 0.92))
+      padding-box,
+    linear-gradient(135deg, #22c55e, #00e5ff) border-box;
+}
+.suggestion:nth-child(2) {
+  background: linear-gradient(rgba(13, 13, 20, 0.92), rgba(13, 13, 20, 0.92))
+      padding-box,
+    linear-gradient(135deg, #a855f7, #6366f1) border-box;
+}
+.suggestion:nth-child(3) {
+  background: linear-gradient(rgba(13, 13, 20, 0.92), rgba(13, 13, 20, 0.92))
+      padding-box,
+    linear-gradient(135deg, #f59e0b, #00e5ff) border-box;
+}
+.suggestion:nth-child(4) {
+  background: linear-gradient(rgba(13, 13, 20, 0.92), rgba(13, 13, 20, 0.92))
+      padding-box,
+    linear-gradient(135deg, #a855f7, #00e5ff) border-box;
+}
+.suggestion:hover:not(:disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 22px rgba(0, 229, 255, 0.12);
+}
+.suggestion-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 14px;
+  line-height: 1;
+}
+.suggestion-text {
+  min-width: 0;
+}
+
+/* ---------- Composer ---------- */
+.composer {
+  background: rgba(13, 13, 20, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.45);
+}
+.composer:focus-within {
+  border-color: rgba(0, 229, 255, 0.35);
+  box-shadow: 0 0 0 1px rgba(0, 229, 255, 0.22),
+    0 8px 30px rgba(0, 229, 255, 0.08);
+}
+.composer .btn-send {
+  background: linear-gradient(135deg, #00d4ff, #2563eb);
+  color: #ffffff;
+  border-radius: 999px;
+  box-shadow: 0 0 16px rgba(0, 212, 255, 0.45);
+}
+.composer .btn-send:hover:not(:disabled) {
+  filter: brightness(1.1);
+}
+.composer-hints,
+.composer-hint {
+  color: rgba(148, 163, 184, 0.75);
+  font-size: 10.5px;
+}
+.composer .btn-mic {
+  color: #94a3b8;
+}
+
+/* ---------- Optional tools banner (Install = neon green) ---------- */
+.plugin-banner {
+  background: linear-gradient(rgba(15, 15, 22, 0.94), rgba(15, 15, 22, 0.94))
+      padding-box,
+    linear-gradient(135deg, rgba(0, 229, 255, 0.4), rgba(192, 132, 252, 0.4))
+      border-box;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5), 0 0 24px rgba(0, 229, 255, 0.06);
+}
+.plugin-banner-install {
+  background: rgba(34, 197, 94, 0.12);
+  color: #22c55e;
+  border: 1px solid rgba(34, 197, 94, 0.45);
+  border-radius: 8px;
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.25);
+  font-weight: 600;
+}
+.plugin-banner-install:hover:not(:disabled) {
+  background: rgba(34, 197, 94, 0.2);
+}
+
+/* ---------- Right rail (Files / Git) ---------- */
+/* Keep the base sizing states intact:
+   - collapsed  -> 36px vertical strip (base `.git-panel.collapsed`)
+   - <=960px    -> 160px            (base media query)
+   - expanded   -> 292px, only on wide windows (mock: ~280-300px) */
+.git-panel.project-panel {
+  background: linear-gradient(180deg, #0c0c12 0%, #0a0a10 100%);
+  border-left: 1px solid rgba(255, 255, 255, 0.05);
+}
+@media (min-width: 961px) {
+  .git-panel.project-panel:not(.collapsed) {
+    width: 292px;
+    flex-shrink: 0;
+  }
+}
+.project-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 10px;
+}
+.project-tab {
+  border: 0;
+  background: transparent;
+  color: #94a3b8;
+  border-radius: 8px;
+  font-size: 11.5px;
+}
+.project-tab.active {
+  background: rgba(0, 229, 255, 0.14);
+  color: #7dd3fc;
+  font-weight: 600;
+}
+.file-tree-row {
+  color: #c7cdd8;
+}

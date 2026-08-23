@@ -4,6 +4,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getGitStatus, listDir } from "../agentClient";
 import type { DirEntry, GitStatusSnapshot } from "../types";
+import { fileIconColor, folderIconColor } from "../fileKind";
 
 type ProjectTab = "files" | "git";
 
@@ -507,7 +508,15 @@ function TreeNode({
           <span className="file-tree-chevron" aria-hidden>
             {entry.isDir ? (isOpen ? "▾" : "▸") : ""}
           </span>
-          <span className="file-tree-icon" aria-hidden>
+          <span
+            className="file-tree-icon"
+            aria-hidden
+            style={{
+              color: entry.isDir
+                ? folderIconColor(entry.name, isOpen)
+                : fileIconColor(entry.name),
+            }}
+          >
             {entry.isDir ? <IconFolder open={isOpen} /> : <IconFile />}
           </span>
           <span className="file-tree-name">{entry.name}</span>
