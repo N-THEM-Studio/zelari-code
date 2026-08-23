@@ -1,11 +1,19 @@
 name: eval-retention-gate
 
-# 2.6 Track A (F11): historical-anchor retention gate.
-# Tier 0 deterministic tests are PR-BLOCKING (2.6.1 plan §24 Phase 2).
-# The candidate-vs-baseline comparison runs against the LAST STABLE TAG —
-# never `none` (§24: an anchor must not disappear from the gate). While the
-# stable baseline store is being seeded, the comparison step is shadow
-# (--report-only) but FAILS LOUD when the baseline summary is missing.
+# 2.6 Track A (F11 → 2.6.2): historical-anchor retention gate.
+#
+# Tier 0 — deterministic unit tests, PR-BLOCKING (unchanged).
+# Tier 1 — retention gate vs the LAST STABLE TAG, blocking when a provider
+#          key exists: candidate anchors RUN for real (runAnchors --runner
+#          headless), the baseline store is extracted from the tag
+#          (git archive), and runGate exits non-zero on regression.
+#          Without credentials the comparison degrades to an EXPLICIT shadow
+#          report (--report-only + ::warning) — it never fakes a green gate.
+#          §24: a tag WITHOUT a seeded baseline store FAILS LOUD — anchors
+#          must not silently disappear from the comparison.
+#
+# seed-baseline (workflow_dispatch) — runs the anchor suite on main and
+# commits eval/results/<hash>/ so the next stable tag ships a baseline.
 
 on:
   pull_request:
@@ -17,6 +25,10 @@ on:
       - '.github/workflows/eval-retention-gate.yml'
   push:
     branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   tier0-anchors:
@@ -32,16 +44,90 @@ jobs:
       - run: npm ci
       - name: Build core (CLI imports resolve from dist)
         run: npm run build --workspace=@zelari/core
-      - name: Eval harness unit tests (anchor format, runner, gate, targeting) - BLOCKING Tier 0
+      - name: Eval harness unit tests (anchor format, runner, gate, targeting, store seeding) - BLOCKING Tier 0
         run: npx vitest run tools/eval
       - name: Session + resource invariants (spine replay safety) - BLOCKING Tier 0
         run: npx vitest run packages/core/src/session packages/core/src/runtime packages/core/src/verification/resourceReserveGate.test.ts
-      - name: Retention gate vs last stable tag (shadow until baseline store seeded)
+
+  retention-gate:
+    runs-on: ubuntu-latest
+    needs: tier0-anchors
+    env:
+      ZELARI_API_KEY: ${{ secrets.ZELARI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build CLI (headless runner target)
+        run: npm run build
+      - name: Extract baseline store from last stable tag
         run: |
-          BASELINE=$(git describe --tags --abbrev=0 2>/dev/null || echo missing)
-          echo "baseline tag: $BASELINE"
-          if [ "$BASELINE" = "missing" ]; then
-            echo "::warning::no stable tag yet — retention gate cannot compare (seed the baseline store and tag)"
+          BASELINE_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo missing)
+          echo "baseline tag: $BASELINE_TAG"
+          if [ "$BASELINE_TAG" = "missing" ]; then
+            echo "::warning::no stable tag yet — retention gate cannot compare (bootstrap; seed via seed-baseline dispatch and tag)"
+            echo "BASELINE_AVAILABLE=false" >> "$GITHUB_ENV"
             exit 0
           fi
-          node --experimental-strip-types tools/eval/runGate.ts --baseline "$BASELINE" --report-only
+          mkdir -p /tmp/baseline-store
+          if ! git archive "$BASELINE_TAG" eval/results 2>/dev/null | tar -x -C /tmp/baseline-store --strip-components=2; then
+            echo "::error::tag $BASELINE_TAG has NO seeded baseline store (eval/results). Run the seed-baseline workflow before tagging (plan §24: an anchor must not disappear from the gate)."
+            exit 1
+          fi
+          echo "BASELINE_AVAILABLE=true" >> "$GITHUB_ENV"
+      - name: Run candidate anchors + seed store (real agent runs)
+        if: ${{ env.BASELINE_AVAILABLE == 'true' && env.ZELARI_API_KEY != '' }}
+        run: node --experimental-strip-types tools/eval/runAnchors.ts --tier 0 --tier 1 --runner headless
+      - name: Retention gate vs stable tag baseline - BLOCKING
+        if: ${{ env.BASELINE_AVAILABLE == 'true' && env.ZELARI_API_KEY != '' }}
+        run: |
+          node --experimental-strip-types tools/eval/runGate.ts \
+            --baseline latest \
+            --baseline-store /tmp/baseline-store \
+            --candidate all \
+            --preset stable
+      - name: Retention gate shadow report (no provider key — never fakes green)
+        if: ${{ env.BASELINE_AVAILABLE == 'true' && env.ZELARI_API_KEY == '' }}
+        run: |
+          echo "::warning::ZELARI_API_KEY absent — candidate anchors NOT run; printing baseline-only shadow report (rollout §28 Phase 1). Add the secret to enable the blocking gate."
+          node --experimental-strip-types tools/eval/runGate.ts \
+            --baseline latest \
+            --baseline-store /tmp/baseline-store \
+            --report-only
+
+  seed-baseline:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      ZELARI_API_KEY: ${{ secrets.ZELARI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build CLI (headless runner target)
+        run: npm run build
+      - name: Run anchor suite (tier 0+1) and seed eval/results
+        run: node --experimental-strip-types tools/eval/runAnchors.ts --tier 0 --tier 1 --runner headless --strict
+      - name: Commit seeded baseline store
+        run: |
+          git config user.name "zelari-eval-bot"
+          git config user.email "eval-bot@zelari.local"
+          git add eval/results
+          if git diff --cached --quiet; then
+            echo "nothing new to seed"
+            exit 0
+          fi
+          git commit -m "eval: seed baseline store (F11 result store)"
+          git push
