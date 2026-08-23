@@ -15,11 +15,15 @@ import { randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
 import type { DurableStateStore, MemoryBackend } from '@zelari/core';
+import type { BudgetPressure, ResourceBudget } from '@zelari/core';
 import type { CouncilRunMode, MissionBrief } from '@zelari/core/council';
 import {
+  evaluateBudgetContinuation,
   evaluateMissionContinuation,
+  type BudgetContinuationAdvice,
   type MissionContinuationAdvice,
   type MissionProgress,
+  type RepairAttempt,
 } from '@zelari/core/mission';
 import { formatMemoryHits } from './memory/fileBackend.js';
 import { createCheckpoint } from './checkpoint/checkpointManager.js';
@@ -54,6 +58,13 @@ export interface MissionState {
   cumulativeTokens?: number;
   /** Per-slice execution trace (ADR-0015-A). */
   trace?: SliceTrace[];
+  /**
+   * Budget-aware continuation history (2.6 closure, plan §13): one entry per
+   * failed implementation slice, fingerprinted by gap key. Fed to
+   * evaluateBudgetContinuation so repeated IDENTICAL gaps pivot/hold instead
+   * of retrying identically until the iteration cap.
+   */
+  repairHistory?: RepairAttempt[];
 }
 
 /** What one council slice run reports back to the loop. */
@@ -151,6 +162,13 @@ export interface ZelariMissionDeps {
    */
   onMissionProgress?: (advice: MissionContinuationAdvice, iteration: number) => void;
   /**
+   * 2.6 closure (plan §13): budget-aware continuation decision after each
+   * implementation slice. Unlike onMissionProgress this one GOVERNS the loop
+   * (hold stops the mission, pivot changes the next attempt); the hook lets
+   * hosts observe/audit the decision and its rationale.
+   */
+  onBudgetDecision?: (advice: BudgetContinuationAdvice, iteration: number) => void;
+  /**
    * Optional hook after each persisted mission-state.json write. The host
    * can project deriveMissionState from the live spine here.
    */
@@ -210,6 +228,33 @@ export function resolveMaxTokens(env: NodeJS.ProcessEnv = process.env): number |
 }
 
 /** True unless auto-start is explicitly requested. */
+/**
+ * Stable fingerprint of an implementation slice's failure mode, used as
+ * `latestGapKey` for evaluateBudgetContinuation: repeated IDENTICAL gaps are
+ * the signal that the current repair strategy is not working (pivot).
+ */
+export function missionGapKey(result: SliceRunResult, completionOk: boolean): string | undefined {
+  if (completionOk) return undefined;
+  if (typeof result.writeCount === 'number' && result.writeCount === 0) return 'impl-no-write';
+  if (result.degraded) return 'impl-degraded';
+  return 'impl-completion-gap';
+}
+
+/**
+ * Mission-level BudgetPressure from iteration usage, aligned with core
+ * DEFAULT_PRESSURE_THRESHOLDS (ample >=0.5, constrained >=0.25, critical <0.1
+ * of the remaining/limit ratio; exhausted is always critical).
+ */
+export function missionPressure(usage: { used: number; limit: number }): BudgetPressure {
+  const remaining = Math.max(0, usage.limit - usage.used);
+  if (remaining <= 0) return 'critical';
+  const ratio = usage.limit > 0 ? remaining / usage.limit : 0;
+  if (ratio < 0.1) return 'critical';
+  if (ratio < 0.25) return 'constrained';
+  if (ratio < 0.5) return 'normal';
+  return 'ample';
+}
+
 export function isMissionAutoStart(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.ZELARI_MISSION_AUTO === '1';
 }
@@ -353,6 +398,12 @@ export async function runZelariMission(
   // Budget cap accumulators (ADR-0013).
   let cumulativeCostUsd = 0;
   let cumulativeTokens = 0;
+  // Budget-aware continuation state (2.6 closure, plan §13).
+  const repairHistory: RepairAttempt[] = Array.isArray(state.repairHistory)
+    ? [...state.repairHistory]
+    : [];
+  let forcePivot = false;
+  const missionStartMs = now().getTime();
 
   while (true) {
     const runMode: CouncilRunMode = pendingDesign ? 'design-phase' : 'implementation';
@@ -378,7 +429,7 @@ export async function runZelariMission(
     const promptIter = runMode === 'implementation' ? implStep : 1;
     const slicePrompt = buildSlicePrompt(brief, userMessage, runMode, promptIter);
 
-    const implementerRetry = runMode === 'implementation' && implStep > 1;
+    const implementerRetry = runMode === 'implementation' && (implStep > 1 || forcePivot);
     const sliceStartedAt = now().toISOString();
     const sliceStartMs = now().getTime();
 
@@ -561,6 +612,61 @@ export async function runZelariMission(
       );
       return state;
     }
+
+    // ── Budget-aware continuation GOVERNS the loop (2.6 closure, plan §13) ──
+    // evaluateBudgetContinuation is the resource dimension next to the
+    // advisory policy above: deterministic PASS returned earlier is untouched;
+    // here hold/pivot decide instead of blind identical retries. Mapping
+    // note: a mission slice carries its own verification, so reserve = 0 and
+    // maxIter stays the hard cap — the gate adds pivot-on-repeated-gap and an
+    // explicit hold rationale, never a false done (passByBudget is false).
+    const gapKey = missionGapKey(result, completionOk);
+    const budgetAdvice = evaluateBudgetContinuation({
+      verdict: completionOk ? 'PASS' : 'REPAIR_REQUIRED',
+      budget: {
+        toolCalls: {
+          limit: maxIter,
+          used: implStep,
+          remaining: Math.max(0, maxIter - implStep),
+          overrun: Math.max(0, implStep - maxIter),
+        },
+        wallTime: { elapsedMs: Math.max(0, now().getTime() - missionStartMs) },
+        tokens: { used: cumulativeTokens, softLimit: maxTokens },
+        reserve: { verification: 0, repair: 0 },
+        stage: completionOk ? 'verify' : 'repair',
+      } satisfies ResourceBudget,
+      pressure: missionPressure({ used: implStep, limit: maxIter }),
+      latestGapKey: gapKey,
+      repairHistory,
+    });
+    deps.onBudgetDecision?.(budgetAdvice, step);
+    const prevAttempt = repairHistory[repairHistory.length - 1];
+    if (gapKey) {
+      repairHistory.push({
+        gapKey,
+        outcome: prevAttempt && prevAttempt.gapKey === gapKey ? 'unchanged' : 'improved',
+      });
+      state.repairHistory = repairHistory.slice(-10);
+    }
+
+    if (budgetAdvice.decision === 'hold') {
+      state.status = 'stopped';
+      state.updatedAt = now().toISOString();
+      await persist();
+      deps.emit(
+        `[zelari] fermata (hold budget-aware): ${budgetAdvice.rationale}. ` +
+          `${implStep} implementazioni senza completamento verde` +
+          (designFirst ? ' (design-phase esclusa dal budget)' : '') +
+          '. Stato salvato in .zelari/mission-state.json',
+      );
+      return state;
+    }
+    if (budgetAdvice.decision === 'pivot') {
+      deps.emit(`[zelari] pivot (budget-aware): ${budgetAdvice.rationale}.`);
+      forcePivot = true;
+    }
+    // 'repair' → targeted next slice (existing loop). 'complete' is only
+    // reachable from a deterministic PASS, handled above.
 
     // Stall detection: an implementation slice that wrote 0 files made no
     // progress toward the deliverable (the documented composer-2.5 mode —

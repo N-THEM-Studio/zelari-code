@@ -3,3 +3,4 @@
  */
 export * from './missionState.js';
 export * from './continuationPolicy.js';
+export * from './budgetContinuation.js';
