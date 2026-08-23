@@ -5,6 +5,27 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.6.2] - 2026-08-23
+
+Resource-budget repair release: restores the documented per-turn hard limit
+without losing cumulative session telemetry or interrupted-turn resume safety.
+
+### Fixed
+
+- **Per-turn `maxToolCalls` enforcement** — a turn that spends its full budget
+  no longer leaves the whole session permanently exhausted. Every explicit new
+  user turn starts a fresh execution epoch at 0/N; resuming an interrupted turn
+  restores the usage of that same epoch.
+- **Headless session-event cleanup** — tests close the session handle before
+  removing its temporary directory and retry transient Windows cleanup races.
+
+### Added
+
+- **Resource execution epochs** — `resource.epoch_started` events separate the
+  active turn budget from cumulative `ResourceLedger` telemetry. Snapshots and
+  invariants now preserve and validate both views across TUI, headless, council,
+  Mission and resume flows.
+
 ## [2.6.1] - 2026-08-23
 
 Hardening release: turns the 2.6 primitives into end-to-end guarantees

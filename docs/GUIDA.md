@@ -1,6 +1,6 @@
 # Zelari Code — Guida all'uso
 
-> **Versione documento:** 2.6.1
+> **Versione documento:** 2.6.2
 > CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri 2), council a 6 ruoli, super-agent **kraken**, missioni **zelari**, slash commands, MCP, SSH e provider LLM agnostici (OAuth Grok / ChatGPT / Anthropic).  
 > Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **Apache-2.0**.
 
@@ -1292,6 +1292,8 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 | `ZELARI_MAX_PARALLEL_TOOLS` | Max tool paralleli per segmento (default 6) |
 | `ZELARI_MAX_TOOL_LOOP_ITERATIONS` | Budget soft tool-loop per run |
 | `ZELARI_MAX_TOOL_LOOP_HARD` | Ceiling hard tool-loop |
+
+`ZELARI_MAX_TOOL_CALLS` governa l’esecuzione del turno corrente: riparte da zero a ogni nuovo messaggio utente. Il ledger della sessione conserva comunque il totale cumulativo per resume, telemetria ed eval; un resume senza nuovo turno ripristina invece il consumo dell’esecuzione interrotta.
 
 ### Capability avanzate / harness
 
