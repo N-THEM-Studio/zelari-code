@@ -43,6 +43,11 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Activate pinned npm
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          npm --version
       - run: npm ci
       - name: Build core (CLI imports resolve from dist)
         run: npm run build --workspace=@zelari/core
@@ -64,6 +69,11 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Activate pinned npm
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          npm --version
       - run: npm ci
       - name: Build CLI (headless runner target)
         run: npm run build
@@ -122,6 +132,11 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      - name: Activate pinned npm
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          npm --version
       - run: npm ci
       - name: Build CLI (headless runner target)
         run: npm run build

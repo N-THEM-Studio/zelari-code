@@ -26,6 +26,12 @@ jobs:
         with:
           node-version: '24'
 
+      - name: Activate pinned npm
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          npm --version
+
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
@@ -68,6 +74,12 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
           cache: npm
+
+      - name: Activate pinned npm
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          npm --version
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund

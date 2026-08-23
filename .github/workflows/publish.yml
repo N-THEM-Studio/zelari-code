@@ -30,6 +30,12 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
+      - name: Activate pinned npm
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          npm --version
+
       - name: Install dependencies
         run: npm ci
 
@@ -99,6 +105,12 @@ jobs:
         with:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
+
+      - name: Activate pinned npm
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          npm --version
 
       - name: Install dependencies
         run: npm ci
