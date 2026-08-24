@@ -1,6 +1,6 @@
 # Zelari Code — Guida all'uso
 
-> **Versione documento:** 2.8.0
+> **Versione documento:** 2.9.0
 > CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri 2), council a 6 ruoli, super-agent **kraken**, missioni **zelari**, slash commands, MCP, SSH e provider LLM agnostici (OAuth Grok / ChatGPT / Anthropic).  
 > Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **Apache-2.0**.
 

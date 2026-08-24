@@ -5,6 +5,50 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.0] - 2026-08-24
+
+OpenAI-compatible provider reliability and prompt-cache stability release,
+covering Grok/xAI, DeepSeek, MiniMax, and Z.ai/GLM.
+
+### Added
+
+- **Provider-neutral BUILD liveness** — mutation-required runs track tool and
+  successful mutation evidence by registry permissions and argument-aware
+  effects. A bounded two-turn recovery prevents false completion without an
+  infinite loop; exhausted or provider-error runs terminate explicitly.
+- **Grok conversation affinity** — OpenAI-compatible Grok requests send a
+  stable, validated `x-grok-conv-id` derived from the harness session. The
+  first zero-mutation recovery can require a tool call; later recovery remains
+  prompt-only so normal completion is never globally forced.
+- **Provider profiles** — separate Grok, DeepSeek V4, MiniMax M2/M3, and
+  Z.ai/GLM capability profiles centralize context windows, reasoning replay,
+  prompt-cache behavior, sampling, and recovery serialization.
+
+### Changed
+
+- **Ephemeral resource tail** — `resource.snapshot` remains durable session
+  state but no longer rewrites persistent model history. The current resource
+  status is appended only to the live provider request and is still included
+  in token-budget calculations, preserving the stable cacheable prefix.
+- **Headless/TUI/Mission consistency** — all primary hosts and general task
+  agents use the shared liveness policy; headless no longer maintains a second
+  tool-name-based write retry.
+
+### Fixed
+
+- Grok can no longer finish a mutation-required BUILD run with text-only
+  success and zero writes.
+- Provider failures before a required mutation can no longer be reported as a
+  successful agent completion.
+- Dry-run write tools and read-only explore/verify task agents do not satisfy
+  mutation evidence.
+
+### Tests
+
+- Added focused coverage for zero-write Grok recovery, bounded failure,
+  stable conversation affinity, provider serialization, ephemeral cache-tail
+  invariants, legacy resource-status replay, and provider-aware token budgets.
+
 ## [2.8.0] - 2026-08-23
 
 Native shared cognitive memory, promoted from MVP to a stable local V1.2
