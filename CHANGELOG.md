@@ -5,6 +5,17 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.9.2] - 2026-08-24
+
+Restores the 2.9.0 tree as npm `latest`. 2.9.1 remains on the registry but
+is no longer the install target.
+
+### Changed
+
+- **Restore 2.9.0** — lockstep version metadata only. The 2.9.1 Grok/xAI
+  streaming patch is not included. `npm install -g zelari-code` resolves
+  here.
+
 ## [2.9.0] - 2026-08-24
 
 OpenAI-compatible provider reliability and prompt-cache stability release,
