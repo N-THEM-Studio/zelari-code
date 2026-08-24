@@ -72,8 +72,8 @@ export const SESSION_EVENT_KINDS = [
   // observation, digest). Not model-surface. Schema review per ADR-0021.
   'verification.evidence',
   // 2.6 Track B (resource-aware execution, doc §9-§12): host-owned resource
-  // state. `resource.snapshot` is model-surface with LATEST-ONLY projection
-  // (doc §10.2 — see modelSurface.ts); limit/reserve events are state-only.
+  // state. `resource.snapshot` is rendered only as a volatile request tail;
+  // it never enters the persistent model-history projection.
   'resource.epoch_started',
   'resource.snapshot',
   'resource.limit_reached',

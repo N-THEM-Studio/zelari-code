@@ -96,6 +96,8 @@ describe('buildAgentUserWithHistory (Desktop plan→build)', () => {
     expect(
       expectsDiskImplementation('implement the founder section', 'build', []),
     ).toBe(true);
+    expect(expectsDiskImplementation('refactor the provider adapter', 'build', [])).toBe(true);
+    expect(expectsDiskImplementation('correggi il bug e rinomina il file', 'build', [])).toBe(true);
   });
 
   it('re-anchors Italian confirm phrases', () => {

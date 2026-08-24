@@ -43,6 +43,21 @@ throwing). CLI flags: `ZELARI_TASK_CONTRACT=1` seeds the task contract from
 the first user message; `ZELARI_RESOURCE_ENFORCEMENT=advisory|protected`
 selects the verification-reserve mode. Library consumers: additive only.
 
+## v2.9 — provider liveness and ephemeral resource tail (non-breaking)
+
+`AgentHarnessConfig` adds optional `buildLiveness` and `requestTail` seams,
+while `ProviderStreamFn` receives an optional stable `conversationId` plus
+bounded recovery generation metadata. Existing consumers can ignore every new
+field. Mutation-required hosts may opt into the shared liveness invariant.
+
+`resource.snapshot` remains persisted as session state, but it is no longer a
+durable model-surface message. Hosts append the latest formatted status through
+`requestTail` for the current provider request only. This deliberate exception
+keeps resource accounting replayable while preventing volatile status text from
+invalidating the cacheable conversation prefix. Older session logs continue to
+replay, and legacy persisted `RESOURCE STATUS` messages are removed at the
+model-context upgrade boundary.
+
 ## Why
 
 Pre-v0.5.0, `@zelari/core` lived at `src/main/core/`, `src/agents/`,

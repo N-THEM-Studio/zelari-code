@@ -122,6 +122,33 @@ export interface AgentToolSpec {
   parameters: Record<string, unknown>;
 }
 
+/** Host-owned progress evidence for mutation-required build turns. */
+export interface BuildProgress {
+  toolCalls: number;
+  mutationsAttempted: number;
+  mutationsSucceeded: number;
+  verificationCalls: number;
+  recoveries: number;
+}
+
+/**
+ * Provider-neutral build-liveness policy. The host decides whether the task
+ * requires an on-disk mutation; the harness owns progress detection and the
+ * bounded recovery loop. Provider-specific forcing is serialized only by the
+ * provider adapter through generation.toolChoice.
+ */
+export interface BuildLivenessPolicy {
+  mutationRequired: boolean;
+  /** Zero-mutation recovery turns before the run is failed. Default 2. */
+  maxRecoveries?: number;
+}
+
+export const BUILD_LIVENESS_RECOVERY_PROMPT =
+  '[build-liveness] The requested task requires an on-disk implementation, ' +
+  'but no successful project mutation has occurred yet. Continue working. ' +
+  'Inspect only as needed, then make the required change with an available ' +
+  'mutating tool. Do not merely describe a patch or claim completion.';
+
 export interface AgentHarnessConfig {
   /** Model identifier (e.g. 'grok-4', 'MiniMax-M2.5'). */
   model: string;
@@ -145,6 +172,14 @@ export interface AgentHarnessConfig {
    * tool execution and emit a matching `tool_execution_end` event.
    */
   toolRegistry?: ToolRegistry;
+  /** Enforce successful mutation evidence before a mutate/build task completes. */
+  buildLiveness?: BuildLivenessPolicy;
+  /**
+   * Volatile messages appended only to the routed request. They never enter
+   * `config.messages` or `getMessages()` and are re-read before every call.
+   * Used for current resource status without rewriting persistent history.
+   */
+  requestTail?: () => readonly AgentMessage[];
   /** Optional cwd for tool execution. Defaults to process.cwd(). */
   cwd?: string;
   /**
@@ -244,6 +279,8 @@ export type ProviderStreamFn = (params: {
   provider: string;
   tools: AgentToolSpec[];
   signal?: AbortSignal;
+  /** Stable harness/session id for provider-side conversation affinity. */
+  conversationId?: string;
   /**
    * v1.36.0: optional generation knobs (purpose/temperature/maxTokens).
    * Providers that understand them apply them; others ignore them. Used by
@@ -306,6 +343,13 @@ export class AgentHarness {
   private growth: ContextGrowthStats = emptyContextGrowthStats();
   /** Ephemeral per-run context; never appended to `config.messages`. */
   private activeMemoryContext = '';
+  private buildProgress: BuildProgress = {
+    toolCalls: 0,
+    mutationsAttempted: 0,
+    mutationsSucceeded: 0,
+    verificationCalls: 0,
+    recoveries: 0,
+  };
 
   constructor(config: AgentHarnessConfig) {
     this.config = config;
@@ -347,6 +391,37 @@ export class AgentHarness {
    */
   getMessages(): readonly AgentMessage[] {
     return this.config.messages;
+  }
+
+  /** Immutable snapshot of host-observed build progress for this run. */
+  getBuildProgress(): Readonly<BuildProgress> {
+    return { ...this.buildProgress };
+  }
+
+  private toolPermissions(toolName: string): ReadonlyArray<string> {
+    return this.config.toolRegistry?.get(toolName)?.permissions ?? [];
+  }
+
+  private isMutationTool(toolName: string, args: Record<string, unknown>): boolean {
+    const permissions = this.toolPermissions(toolName);
+    if (!permissions.includes('write')) return false;
+    // Generic preview contract used by built-in and third-party mutators.
+    if (args.dryRun === true) return false;
+    // Reuse the registry's argument-aware effect classification. In
+    // particular, `task agent=explore|verify` is parallel-safe/read-only even
+    // though the shared task definition advertises the superset of permissions.
+    return classifyToolConcurrency({
+      toolName,
+      args,
+      permissions,
+      registered: Boolean(this.config.toolRegistry?.get(toolName)),
+    }) === 'exclusive';
+  }
+
+  private recordSuccessfulTool(toolName: string, args: Record<string, unknown>): void {
+    const permissions = this.toolPermissions(toolName);
+    if (this.isMutationTool(toolName, args)) this.buildProgress.mutationsSucceeded += 1;
+    if (permissions.includes('execute')) this.buildProgress.verificationCalls += 1;
   }
 
   /**
@@ -661,6 +736,13 @@ export class AgentHarness {
     this.toolCallCounts = new Map();
     this.textToolReentries = 0;
     this.growth = emptyContextGrowthStats();
+    this.buildProgress = {
+      toolCalls: 0,
+      mutationsAttempted: 0,
+      mutationsSucceeded: 0,
+      verificationCalls: 0,
+      recoveries: 0,
+    };
     const memoryWarning = await this.prepareMemoryContext();
 
     // Emit agent_start
@@ -698,7 +780,11 @@ export class AgentHarness {
     yield initialMsgStart;
 
     let initialTurnLength = 0;
-    const initialFinishRef = { value: 'stop' };
+    const initialFinishRef = {
+      value: 'stop',
+      clarificationRequested: false,
+      providerError: false,
+    };
     // Task G.4.3 — capture real provider usage for this turn. The ref
     // is read after runSingleTurn returns and attached to message_end.
     const initialUsageRef = { value: null as UsageBreakdown | null };
@@ -728,7 +814,7 @@ export class AgentHarness {
     this.emit(initialMsgEnd);
     yield initialMsgEnd;
 
-    // === Agentic tool-call loop ===
+    // === Agentic tool-call + bounded build-liveness recovery loop ===
     // Soft budget (maxToolLoopIterations) can auto-extend up to the hard cap
     // when the model still wants tools — multi-step work finishes instead of
     // dying mid-task with "budget exhausted". Absolute hard cap still bounds
@@ -739,13 +825,47 @@ export class AgentHarness {
     let extensions = 0;
     const maxExtensions = 8;
 
+    type TurnState = typeof initialFinishRef;
+    const maxBuildRecoveries = Math.max(
+      0,
+      Math.min(10, this.config.buildLiveness?.maxRecoveries ?? 2),
+    );
+    const planBuildRecovery = (turn: TurnState): ProviderGenerationOptions | null => {
+      if (!this.config.buildLiveness?.mutationRequired) return null;
+      if (this.buildProgress.mutationsSucceeded > 0) return null;
+      if (turn.value !== 'stop' || turn.clarificationRequested || turn.providerError) return null;
+      if (this.buildProgress.recoveries >= maxBuildRecoveries) return null;
+      this.buildProgress.recoveries += 1;
+      this.config.messages.push({ role: 'user', content: BUILD_LIVENESS_RECOVERY_PROMPT });
+      return {
+        purpose: 'build-recovery',
+        toolChoice: 'required',
+        recoveryAttempt: this.buildProgress.recoveries,
+      };
+    };
+    let lastTurnState: TurnState = initialFinishRef;
+    let recoveryGeneration = planBuildRecovery(initialFinishRef);
+
     while (
       !this.cancelled &&
       !hadError &&
-      toolLoopTurns < softCap &&
-      initialFinishRef.value === 'tool_calls'
+      toolLoopTurns < hardCap &&
+      (toolLoopTurns < softCap || recoveryGeneration !== null) &&
+      (initialFinishRef.value === 'tool_calls' || recoveryGeneration !== null)
     ) {
       toolLoopTurns++;
+
+      if (recoveryGeneration) {
+        const recoveryEvent = createBrainEvent('error', this.sessionId, {
+          severity: 'recoverable',
+          message:
+            `BUILD liveness recovery ${recoveryGeneration.recoveryAttempt}/${maxBuildRecoveries}: ` +
+            'no successful mutation observed; continuing instead of completing.',
+          code: 'build_liveness_recovery',
+        });
+        this.emit(recoveryEvent);
+        yield recoveryEvent;
+      }
 
       const turnMessageId = crypto.randomUUID();
       const msgStart: BrainMessageStartEvent = createBrainEvent(
@@ -757,9 +877,20 @@ export class AgentHarness {
       yield msgStart;
 
       let turnLength = 0;
-      const turnFinishRef = { value: 'stop' };
+      const turnFinishRef: TurnState = {
+        value: 'stop',
+        clarificationRequested: false,
+        providerError: false,
+      };
       const turnUsageRef = { value: null as UsageBreakdown | null };
-      for await (const ev of this.runSingleTurn(turnMessageId, turnFinishRef, turnUsageRef)) {
+      const generation = recoveryGeneration ?? undefined;
+      recoveryGeneration = null;
+      for await (const ev of this.runSingleTurn(
+        turnMessageId,
+        turnFinishRef,
+        turnUsageRef,
+        generation,
+      )) {
         if (ev.type === 'message_delta') {
           turnLength += (ev as BrainMessageDeltaEvent).delta.length;
         } else if (ev.type === 'error') {
@@ -782,6 +913,10 @@ export class AgentHarness {
 
       // Drive the loop: keep going only if this turn again requested tool calls.
       initialFinishRef.value = turnFinishRef.value;
+      initialFinishRef.clarificationRequested = turnFinishRef.clarificationRequested;
+      initialFinishRef.providerError = turnFinishRef.providerError;
+      lastTurnState = turnFinishRef;
+      recoveryGeneration = planBuildRecovery(turnFinishRef);
       if (hadError || this.cancelled) break;
 
       // Soft-cap hit but model still wants tools → extend until hard cap.
@@ -827,6 +962,30 @@ export class AgentHarness {
       yield* this.runFinalAnswerTurn();
     }
 
+    // A mutate/build task may never report successful completion without a
+    // successful write-permission tool result. Recovery is bounded above, so
+    // an uncooperative provider fails explicitly instead of looping forever.
+    if (
+      !this.cancelled &&
+      !hadError &&
+      this.config.buildLiveness?.mutationRequired &&
+      this.buildProgress.mutationsSucceeded === 0 &&
+      !lastTurnState.clarificationRequested
+    ) {
+      hadError = true;
+      const providerFailed = lastTurnState.providerError;
+      const stalled = createBrainEvent('error', this.sessionId, {
+        severity: 'fatal',
+        message: providerFailed
+          ? 'BUILD provider call failed before any successful on-disk mutation was observed.'
+          : `BUILD stalled after ${this.buildProgress.recoveries} recovery turn(s): ` +
+            'the task required an on-disk mutation, but no successful mutation was observed.',
+        code: providerFailed ? 'build_liveness_provider_error' : 'build_liveness_stalled',
+      });
+      this.emit(stalled);
+      yield stalled;
+    }
+
     // === Queue drain (Task 18.1) ===
     // After the initial turn, drain queued user prompts up to
     // maxQueuedIterations. Each iteration appends the next dequeued
@@ -835,6 +994,7 @@ export class AgentHarness {
     let turns = 0;
     while (turns < this.maxQueuedIterations) {
       if (this.cancelled) break;
+      if (hadError) break;
       if (this.queue.length === 0) break;
 
       const queuedPrompt = this.dequeueNext();
@@ -853,7 +1013,11 @@ export class AgentHarness {
       yield msgStart;
 
       let turnLength = 0;
-      const turnFinishRef = { value: 'stop' };
+      const turnFinishRef = {
+        value: 'stop',
+        clarificationRequested: false,
+        providerError: false,
+      };
       const turnUsageRef = { value: null as UsageBreakdown | null };
       for await (const ev of this.runSingleTurn(turnMessageId, turnFinishRef, turnUsageRef)) {
         if (ev.type === 'message_delta') {
@@ -924,16 +1088,26 @@ export class AgentHarness {
 
   /** Build a provider-only view with memory after the stable system prefix. */
   private messagesForProvider(): AgentMessage[] {
-    if (!this.activeMemoryContext) return this.config.messages;
+    let messages: AgentMessage[] = this.config.messages;
     let prefixEnd = 0;
-    while (prefixEnd < this.config.messages.length && this.config.messages[prefixEnd]?.role === 'system') {
-      prefixEnd += 1;
+    if (this.activeMemoryContext) {
+      while (prefixEnd < messages.length && messages[prefixEnd]?.role === 'system') {
+        prefixEnd += 1;
+      }
+      messages = [
+        ...messages.slice(0, prefixEnd),
+        { role: 'system', content: this.activeMemoryContext },
+        ...messages.slice(prefixEnd),
+      ];
     }
-    return [
-      ...this.config.messages.slice(0, prefixEnd),
-      { role: 'system', content: this.activeMemoryContext },
-      ...this.config.messages.slice(prefixEnd),
-    ];
+    if (!this.config.requestTail) return messages;
+    try {
+      const tail = this.config.requestTail();
+      return tail.length > 0 ? [...messages, ...tail] : messages;
+    } catch {
+      // Runtime status is advisory — never fail a provider request for it.
+      return messages;
+    }
   }
 
   /**
@@ -978,12 +1152,17 @@ export class AgentHarness {
    */
   private async *runSingleTurn(
     messageId: string,
-    finishRef: { value: string },
+    finishRef: {
+      value: string;
+      clarificationRequested: boolean;
+      providerError: boolean;
+    },
     usageRef: { value: UsageBreakdown | null },
+    generation?: ProviderGenerationOptions,
   ): AsyncIterable<BrainEvent> {
     try {
       const requestMessages = this.messagesForProvider();
-      this.emitSnapshot(this.config.tools, undefined, requestMessages);
+      this.emitSnapshot(this.config.tools, generation, requestMessages);
       recordRequest(this.growth, requestMessages);
       const stream = this.config.providerStream({
         messages: requestMessages,
@@ -991,6 +1170,8 @@ export class AgentHarness {
         provider: this.config.provider,
         tools: this.config.tools,
         signal: this.activeController?.signal,
+        conversationId: this.sessionId,
+        generation,
       });
 
       // Per-turn tool call counter (Task G.2). Reset on every turn so
@@ -1116,6 +1297,10 @@ export class AgentHarness {
           yield thinkEvent;
         } else if (delta.kind === 'tool_call') {
           toolCallsThisTurn++;
+          this.buildProgress.toolCalls += 1;
+          if (this.isMutationTool(delta.toolName, delta.args)) {
+            this.buildProgress.mutationsAttempted += 1;
+          }
           // Record this tool call so the assistant message (appended after the
           // turn) carries the full tool_calls list the model emitted.
           turnToolCalls.push({ id: delta.toolCallId, name: delta.toolName, args: delta.args });
@@ -1181,6 +1366,11 @@ export class AgentHarness {
                 this.toolCallCache.set(item.cacheKey, item.content);
               }
             }
+            for (let i = 0; i < executed.length; i++) {
+              const item = executed[i]!;
+              const pending = pendingNativeTools[i]!;
+              if (!item.isError) this.recordSuccessfulTool(pending.toolName, pending.args);
+            }
             pendingNativeTools.length = 0;
           }
           // Clarification pause: if the model posed a ---QUESTION--- with choices,
@@ -1191,6 +1381,7 @@ export class AgentHarness {
             /"choices"\s*:\s*\[/.test(turnText);
           if (clarificationPause) {
             finishRef.value = 'stop';
+            finishRef.clarificationRequested = true;
           }
 
           // Fallback text-format tools: ---TOOLS--- JSON, MiniMax invoke XML,
@@ -1239,6 +1430,10 @@ export class AgentHarness {
               const tt = toolsToRun[ti]!;
               if (typeof maxToolCalls === 'number' && toolCallsThisTurn + 1 > maxToolCalls) break;
               toolCallsThisTurn++;
+              this.buildProgress.toolCalls += 1;
+              if (this.isMutationTool(tt.name, tt.args)) {
+                this.buildProgress.mutationsAttempted += 1;
+              }
               const toolCallId = `text-${crypto.randomUUID().slice(0, 8)}`;
               turnToolCalls.push({ id: toolCallId, name: tt.name, args: tt.args });
               const startEv = createBrainEvent('tool_execution_start', this.sessionId, {
@@ -1313,6 +1508,7 @@ export class AgentHarness {
               this.emit(endEv);
               yield endEv;
               turnToolResults.push({ toolCallId, content: resultStr });
+              if (!isError) this.recordSuccessfulTool(tt.name, tt.args);
               executedAny = true;
             }
             if (executedAny) {
@@ -1387,6 +1583,7 @@ export class AgentHarness {
           }
           break;
         } else if (delta.kind === 'error') {
+          finishRef.providerError = true;
           const errEvent = createBrainEvent('error', this.sessionId, {
             severity: 'recoverable',
             message: delta.message,
@@ -1405,6 +1602,7 @@ export class AgentHarness {
         }
       }
     } catch (err) {
+      finishRef.providerError = true;
       const errorMessage = err instanceof Error ? err.message : String(err);
       const errEvent = createBrainEvent('error', this.sessionId, {
         severity: 'recoverable',
@@ -1456,7 +1654,11 @@ export class AgentHarness {
     });
 
     let totalLength = 0;
-    const finishRef = { value: 'stop' };
+    const finishRef = {
+      value: 'stop',
+      clarificationRequested: false,
+      providerError: false,
+    };
     const usageRef = { value: null as UsageBreakdown | null };
     // Temporarily drop tools for this call by building a no-tools provider
     // invocation. We re-enter runSingleTurn but with an empty tools list via
@@ -1472,6 +1674,7 @@ export class AgentHarness {
         provider: this.config.provider,
         tools: [],
         signal: this.activeController?.signal,
+        conversationId: this.sessionId,
       });
       for await (const delta of stream) {
         if (this.cancelled) break;

@@ -247,7 +247,7 @@ export function expectsDiskImplementation(
   if (!trimmed) return false;
   if (isShortContinueReply(trimmed)) return true;
   if (
-    /\b(implement|implementa|scrivi|scriviamo|applica|modifica|fix|write|edit|crea|aggiungi|aggiorna|apply|patch)\b/i.test(
+    /\b(implement(?:a|are)?|scriv(?:i|iamo|ere)|applica(?:re)?|modifica(?:re)?|fix|write|edit|crea(?:re)?|aggiung(?:i|ere)|aggiorn(?:a|are)|apply|patch|refactor|corregg(?:i|ere)|risolv(?:i|ere)|remove|rimuov(?:i|ere)|rename|rinomina(?:re)?|replace|sostituisc(?:i|e)|delete|elimina(?:re)?|build|costruisc(?:i|e)|convert(?:i|ire)?|migra(?:re)?|upgrade)\b/i.test(
       trimmed,
     )
   ) {

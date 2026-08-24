@@ -7,10 +7,10 @@
  * The CLI maps these onto its provider-specific request format — nothing else
  * may invent model-visible history (ADR-0016 invariant: model-visible ⟺ logged).
  *
- * 2.6 (doc §10.2): LATEST-ONLY kinds. `resource.snapshot` is model-surface
- * but only its LAST event projects — earlier snapshots stay in the ledger
- * (state) without flooding the context. Every event kind may opt into this
- * projection; today it is exactly {'resource.snapshot'}.
+ * Runtime-only state such as `resource.snapshot` remains in the durable
+ * ledger but is not projected into persistent conversation history. Hosts
+ * inject its latest value as a volatile request tail instead, preserving the
+ * append-only prefix cache invariant across tool iterations.
  */
 
 import type { SessionEventEnvelope, SessionEventKind } from './types.js';
@@ -23,7 +23,10 @@ export const MODEL_SURFACE_KINDS: ReadonlySet<SessionEventKind> = new Set([
   'tool.call',
   'tool.result',
   'session.compacted',
-  // 2.6: budget awareness for the model (latest-only projection below).
+]);
+
+/** Durable state kinds that hosts may render as non-persistent request tails. */
+export const EPHEMERAL_TAIL_EVENT_KINDS: ReadonlySet<SessionEventKind> = new Set([
   'resource.snapshot',
 ]);
 
@@ -31,7 +34,7 @@ export const MODEL_SURFACE_KINDS: ReadonlySet<SessionEventKind> = new Set([
  * Surface kinds projected LATEST-ONLY: the highest-seq event of the kind
  * becomes one system message; earlier ones remain in the log (state).
  */
-export const LATEST_ONLY_SURFACE_KINDS: ReadonlySet<SessionEventKind> = new Set(['resource.snapshot']);
+export const LATEST_ONLY_SURFACE_KINDS: ReadonlySet<SessionEventKind> = new Set();
 
 export function isModelSurfaceEvent(event: { kind: string }): boolean {
   return MODEL_SURFACE_KINDS.has(event.kind as SessionEventKind);
@@ -189,13 +192,6 @@ export function deriveMessages(
         messages.push({
           role: 'system',
           content: String(d.summary ?? '[session compacted]'),
-          seq: e.seq,
-        });
-        break;
-      case 'resource.snapshot':
-        messages.push({
-          role: 'system',
-          content: formatResourceSnapshot(d),
           seq: e.seq,
         });
         break;

@@ -2,7 +2,7 @@
  * budgetRuntime wiring tests (2.6 Track B, Phase 2/3 rollout):
  *  - SessionSpineMirror + BudgetRuntime count every tool.call and emit
  *    resource.snapshot at §10.4 frequency (first sight + usage delta);
- *  - deriveMessages projects the LATEST snapshot only (model surface);
+ *  - deriveMessages excludes snapshots from persistent model history;
  *  - protected enforcement denies non-essential tools inside the reserve
  *    zone while advisory mode lets everything through with a notice.
  */
@@ -153,7 +153,7 @@ describe('SessionSpineMirror × BudgetRuntime wiring', () => {
     });
   });
 
-  it('counts tool.calls and appends resource.snapshot events; latest-only projects', async () => {
+  it('counts tool.calls and keeps resource.snapshot as non-surface state', async () => {
     tmp = await tmpDir();
     const mirror = await SessionSpineMirror.adopt('budget-rt-1', { baseDir: tmp, quiet: true });
     mirror.attachBudgetRuntime(new BudgetRuntime('kraken/v1'));
@@ -173,11 +173,11 @@ describe('SessionSpineMirror × BudgetRuntime wiring', () => {
     const latest = mirror.latestResourceSnapshot();
     expect(latest?.toolCallsUsed).toBe(2);
 
-    // Model surface: deriveMessages projects ONLY the latest snapshot.
+    // Persistent model history excludes runtime state; the host injects the
+    // latest mirror value as an ephemeral request tail.
     const derived = deriveMessages(report.events);
     const surface = derived.filter((m) => m.content.includes('RESOURCE STATUS'));
-    expect(surface).toHaveLength(1);
-    expect(surface[0].content).toContain('Tool calls: 2 / 40');
+    expect(surface).toHaveLength(0);
 
     await mirror.close('test-end');
   });

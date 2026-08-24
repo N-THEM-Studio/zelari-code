@@ -252,6 +252,7 @@ export async function runAgentMissionSlice(
       tools: toolSpecs,
       toolRegistry: deps.toolRegistry,
       providerStream: deps.providerStream,
+      buildLiveness: { mutationRequired: writeRetry, maxRecoveries: 2 },
       cwd: deps.projectRoot,
       maxToolCallsPerTurn: maxToolCalls,
       maxToolLoopIterations: maxToolLoop,

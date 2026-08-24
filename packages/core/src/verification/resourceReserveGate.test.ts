@@ -10,7 +10,12 @@ import { evaluateResourceReserveGate } from './resourceReserveGate.js';
 import { evaluateCompletion, STRICT_ALL_POLICY } from './completionPolicy.js';
 import { evaluateBudgetContinuation } from '../mission/budgetContinuation.js';
 import { applyTaskContractUpdate, deriveInitialContract, TaskContractConflictError, type TaskContract } from '../session/taskContract.js';
-import { deriveMessages, LATEST_ONLY_SURFACE_KINDS, MODEL_SURFACE_KINDS } from '../session/modelSurface.js';
+import {
+  deriveMessages,
+  EPHEMERAL_TAIL_EVENT_KINDS,
+  LATEST_ONLY_SURFACE_KINDS,
+  MODEL_SURFACE_KINDS,
+} from '../session/modelSurface.js';
 import { SESSION_EVENT_KINDS, type SessionEventEnvelope } from '../session/types.js';
 import { validateResourceAndContractEvents } from '../session/invariants.js';
 
@@ -207,20 +212,17 @@ describe('resource.snapshot surface (§10)', () => {
     };
   }
 
-  it('is model-surface but LATEST-ONLY: only the last snapshot projects', () => {
-    expect(MODEL_SURFACE_KINDS.has('resource.snapshot')).toBe(true);
-    expect([...LATEST_ONLY_SURFACE_KINDS]).toEqual(['resource.snapshot']);
+  it('is durable state but never persistent model history', () => {
+    expect(MODEL_SURFACE_KINDS.has('resource.snapshot')).toBe(false);
+    expect(EPHEMERAL_TAIL_EVENT_KINDS.has('resource.snapshot')).toBe(true);
+    expect([...LATEST_ONLY_SURFACE_KINDS]).toEqual([]);
     const events = [
       { kind: 'user.message', seq: 1, ts: 1, schemaVersion: 1, sessionId: 's', actor: { type: 'user' }, data: { text: 'hi' } },
       snapEvent(2, 10),
       snapEvent(3, 27),
     ] as SessionEventEnvelope[];
     const messages = deriveMessages(events);
-    const snapshots = messages.filter((m) => m.content.startsWith('RESOURCE STATUS'));
-    expect(snapshots).toHaveLength(1);
-    expect(snapshots[0]!.seq).toBe(3);
-    expect(snapshots[0]!.content).toContain('Tool calls: 27 / 40');
-    expect(snapshots[0]!.content).toContain('Verification reserve: 6');
+    expect(messages.map((m) => m.content)).toEqual(['hi']);
   });
 
   it('invariants: monotone usage, coherent remaining, non-negative reserves', () => {

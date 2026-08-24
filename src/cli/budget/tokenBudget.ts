@@ -108,18 +108,18 @@ export function estimateHistoryTokens(messages: readonly AgentMessage[]): number
  * compaction that rewrites the history prefix and busts the server-side
  * prefix cache. ZELARI_CONTEXT_LIMIT always wins when set.
  */
-export function defaultContextLimitForModel(model?: string): number {
-  return capabilitiesFor(model).contextWindow;
+export function defaultContextLimitForModel(model?: string, provider?: string): number {
+  return capabilitiesFor(model, provider).contextWindow;
 }
 
-export function resolveContextLimit(model?: string): number {
+export function resolveContextLimit(model?: string, provider?: string): number {
   // v1.20.0: raised default from 200k → 400k so the rolling history can
   // hold a full multi-step turn (build + smoke + verify + JSON updates)
   // without triggering HARD 95% compaction mid-work. The 85%/95% clamps
   // in applyBudgetPolicy still fire when genuinely needed.
   // v1.35.x: model-aware default — DeepSeek v4 uses 1M.
   return envNumber(process.env.ZELARI_CONTEXT_LIMIT, {
-    default: defaultContextLimitForModel(model),
+    default: defaultContextLimitForModel(model, provider),
     min: 4_000,
     max: 2_000_000,
   });
@@ -164,10 +164,10 @@ function occupancyOf(
 export function applyBudgetPolicy(
   history: readonly AgentMessage[],
   phase: WorkPhase,
-  opts?: { sessionTokens?: number; model?: string },
+  opts?: { sessionTokens?: number; model?: string; provider?: string },
 ): BudgetPolicy {
-  const contextLimit = resolveContextLimit(opts?.model);
-  const compact = capabilitiesFor(opts?.model).compaction;
+  const contextLimit = resolveContextLimit(opts?.model, opts?.provider);
+  const compact = capabilitiesFor(opts?.model, opts?.provider).compaction;
 
   const sessionExtra = opts?.sessionTokens ?? 0;
   const warnings: string[] = [];
@@ -261,6 +261,7 @@ export interface BudgetPolicyEnvelope {
   sessionTokens?: number;
   signal?: AbortSignal;
   model?: string;
+  provider?: string;
   sessionId?: string;
   /** Last routed request snapshot + provider usage (requestSnapshotStore). */
   requestSnapshot?: {
@@ -303,8 +304,8 @@ export async function applyBudgetPolicyAsync(
   phase: WorkPhase,
   opts?: BudgetPolicyEnvelope,
 ): Promise<BudgetPolicy> {
-  const contextLimit = resolveContextLimit(opts?.model);
-  const compact = capabilitiesFor(opts?.model).compaction;
+  const contextLimit = resolveContextLimit(opts?.model, opts?.provider);
+  const compact = capabilitiesFor(opts?.model, opts?.provider).compaction;
 
   const sessionExtra = opts?.sessionTokens ?? 0;
   const warnings: string[] = [];

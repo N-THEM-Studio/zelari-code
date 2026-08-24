@@ -423,6 +423,7 @@ function mapAgentMessage(m: AgentMessage, vision: boolean): Record<string, unkno
 
 export function openaiCompatibleProvider(config: OpenAICompatibleConfig): ProviderStreamFn {
   return async function* (params): AsyncIterable<ProviderDelta> {
+    const capabilities = capabilitiesFor(params.model, config.providerId);
     // Map the provider-neutral AgentMessage[] into the OpenAI chat format.
     // The harness keeps tool results as { role: 'tool', toolCallId, content }
     // and assistant tool-call turns as { role: 'assistant', content,
@@ -457,7 +458,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       model: params.model,
       messages,
       stream: true,
-      temperature: generation?.temperature ?? capabilitiesFor(params.model).sampling.temperature,
+      temperature: generation?.temperature ?? capabilities.sampling.temperature,
       // Task G.4.2 — request the provider to send real token usage in
       // the final chunk (gated by `stream_options.include_usage` on the
       // OpenAI-compatible API). Providers that don't honor this (some
@@ -504,7 +505,28 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
           parameters: t.parameters,
         },
       }));
-      body.tool_choice = 'auto';
+      const recoveryAttempt = generation?.recoveryAttempt ?? 1;
+      const forceRecoveryTool =
+        generation?.toolChoice === 'required' &&
+        capabilities.buildRecovery.forceToolChoice &&
+        recoveryAttempt <= capabilities.buildRecovery.maxForcedTurns;
+      body.tool_choice = forceRecoveryTool ? 'required' : 'auto';
+    }
+
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.apiKey}`,
+      ...(config.extraHeaders ?? {}),
+    };
+    const affinityHeader = capabilities.promptCache.conversationAffinityHeader;
+    const conversationId = params.conversationId?.trim();
+    if (
+      affinityHeader &&
+      conversationId &&
+      conversationId.length <= 256 &&
+      !/[\u0000-\u001f\u007f]/.test(conversationId)
+    ) {
+      headers[affinityHeader] = conversationId;
     }
 
     // v1.5.2: retry transient failures (429/5xx + network errors) on the
@@ -541,10 +563,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
         try {
           response = await fetch(`${config.baseUrl}/chat/completions`, {
             method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${config.apiKey}`,
-            },
+            headers,
             body: JSON.stringify(body),
             // Cancel aborts the HTTP request; stream idle is enforced below
             // per-chunk so active multi-minute streams are not killed.

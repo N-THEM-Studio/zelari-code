@@ -3,9 +3,9 @@
  * the model-visible RESOURCE STATUS block (2.6 Track B, doc §10).
  *
  * Frequency rules (§10.4): after a tool batch, on stage change, when a
- * reserve threshold is crossed, and at verification/repair start. The event
- * is model-surface LATEST-ONLY (modelSurface.ts projection) — the ledger
- * keeps every snapshot, the model sees the last.
+ * reserve threshold is crossed, and at verification/repair start. The ledger
+ * keeps every snapshot; the host injects only the current value as a volatile
+ * request tail, outside persistent model history.
  */
 
 import type { ResourceBudget } from '@zelari/core';

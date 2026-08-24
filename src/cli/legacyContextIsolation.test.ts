@@ -33,7 +33,8 @@ describe('ADR-0024 — legacy context isolation', () => {
     // The shared builder owns the declared discrete fallback and always
     // prefers the session-derived projection when the spine is active.
     expect(builder).toContain('const derived = await sessionHistory(input.session)');
-    expect(builder).toContain('const sourceHistory = derived ?? [...input.fallbackHistory]');
+    expect(builder).toContain('const sourceHistory = (derived ?? [...input.fallbackHistory]).filter(');
+    expect(builder).toContain('(message) => !isLegacyResourceStatus(message)');
   });
 
   it('headless hot path touches opts.history only via the one-shot spine import', () => {

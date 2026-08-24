@@ -663,6 +663,10 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     tools: sub.tools,
     toolRegistry: sub.registry,
     providerStream: sub.providerStream,
+    buildLiveness: {
+      mutationRequired: agent === 'general',
+      maxRecoveries: 2,
+    },
     cwd: runCwd,
     maxToolCallsPerTurn: maxToolCalls,
     maxToolLoopIterations: Math.max(12, maxToolCalls + 4),

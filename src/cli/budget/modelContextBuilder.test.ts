@@ -18,17 +18,18 @@ function countStatus(history: readonly AgentMessage[]): number {
   ).length;
 }
 
-describe('modelContextBuilder single RESOURCE STATUS (2.6.1, plan §12)', () => {
-  it('fallback history with no durable snapshot → appends exactly one tail', async () => {
+describe('modelContextBuilder ephemeral RESOURCE STATUS tail', () => {
+  it('returns one request-only tail without mutating persistent history', async () => {
     const result = await buildModelContext({
       fallbackHistory: [{ role: 'user', content: 'fix the bug' }],
       phase: 'build',
       resourceSnapshot: snapshot,
     });
-    expect(countStatus(result.history)).toBe(1);
+    expect(countStatus(result.history)).toBe(0);
+    expect(countStatus(result.requestTail)).toBe(1);
   });
 
-  it('history already carries the durable latest-only projection → no second tail', async () => {
+  it('strips a legacy persisted status and replaces it with the current tail', async () => {
     const result = await buildModelContext({
       fallbackHistory: [
         { role: 'user', content: 'fix the bug' },
@@ -41,7 +42,9 @@ describe('modelContextBuilder single RESOURCE STATUS (2.6.1, plan §12)', () => 
       phase: 'build',
       resourceSnapshot: snapshot,
     });
-    expect(countStatus(result.history)).toBe(1);
+    expect(countStatus(result.history)).toBe(0);
+    expect(countStatus(result.requestTail)).toBe(1);
+    expect(result.requestTail[0]!.content).toContain('Tool calls: 3 / 40');
   });
 
   it('no snapshot input → no status block at all', async () => {
@@ -50,5 +53,6 @@ describe('modelContextBuilder single RESOURCE STATUS (2.6.1, plan §12)', () => 
       phase: 'build',
     });
     expect(countStatus(result.history)).toBe(0);
+    expect(countStatus(result.requestTail)).toBe(0);
   });
 });

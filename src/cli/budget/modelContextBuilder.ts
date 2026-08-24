@@ -38,9 +38,15 @@ function messageWasRecompacted(message: AgentMessage, history: readonly AgentMes
   return !history.some((candidate) => candidate.seq !== undefined && candidate.seq === message.seq);
 }
 
-/** RESOURCE STATUS system tail (doc §10.3) from the latest snapshot payload. */
-function resourceStatusMessage(payload: object): AgentMessage {
-  return { role: 'system', content: formatResourceSnapshot(payload as Record<string, unknown>) };
+/** RESOURCE STATUS tail from the latest snapshot payload (never persisted). */
+export function resourceStatusTail(payload: object | null | undefined): AgentMessage[] {
+  return payload
+    ? [{ role: 'system', content: formatResourceSnapshot(payload as Record<string, unknown>) }]
+    : [];
+}
+
+function isLegacyResourceStatus(message: AgentMessage): boolean {
+  return message.role === 'system' && message.content.startsWith('RESOURCE STATUS');
 }
 
 export type DurableCompactionPayload = ReturnType<typeof compactEventPayload>;
@@ -78,6 +84,8 @@ export interface ModelContextBuilderInput {
 
 export interface ModelContextBuilderResult {
   history: AgentMessage[];
+  /** Volatile request-only tail; callers must not add it to rolling history. */
+  requestTail: AgentMessage[];
   budget: BudgetPolicy;
   source: 'session' | 'fallback';
   compactionMetrics?: CompactionMetrics;
@@ -107,7 +115,12 @@ export async function buildModelContext(
 ): Promise<ModelContextBuilderResult> {
   const derived = await sessionHistory(input.session);
   const source = derived ? 'session' as const : 'fallback' as const;
-  const sourceHistory = derived ?? [...input.fallbackHistory];
+  // Strip snapshots persisted by <=2.8.0 once at the upgrade boundary. New
+  // snapshots never enter deriveMessages()/rolling history.
+  const sourceHistory = (derived ?? [...input.fallbackHistory]).filter(
+    (message) => !isLegacyResourceStatus(message),
+  );
+  const requestTail = resourceStatusTail(input.resourceSnapshot);
   const inputTokens = estimateHistoryTokens(sourceHistory);
   const requestSurface =
     input.systemMessages || input.tools
@@ -121,7 +134,8 @@ export async function buildModelContext(
 
   let budget = await applyBudgetPolicyAsync(sourceHistory, input.phase, {
     model: input.model,
-    sessionTokens: input.sessionTokens,
+    provider: input.provider,
+    sessionTokens: (input.sessionTokens ?? 0) + estimateHistoryTokens(requestTail),
     sessionId: input.sessionId,
     signal: input.signal,
     requestSnapshot: input.requestSnapshot,
@@ -178,26 +192,11 @@ export async function buildModelContext(
     input.onCompactionMetric?.(compactionMetrics);
   }
 
-  // 2.6 Track B (doc §10.3) / 2.6.1 fix (closure plan §12): the durable
-  // `resource.snapshot` event is the ONLY model surface (ADR-0016 invariant:
-  // model-visible ⟺ logged) — deriveMessages projects the LATEST snapshot as
-  // one system message. Append a tail ONLY when no durable snapshot is in the
-  // history (fallback history, or a spine replay predating budget tracking).
-  // Exactly one RESOURCE STATUS may ever reach the provider.
-  if (
-    input.resourceSnapshot &&
-    !history.some(
-      (m) => m.role === 'system' && typeof m.content === 'string' && m.content.startsWith('RESOURCE STATUS'),
-    )
-  ) {
-    history = [...history, resourceStatusMessage(input.resourceSnapshot)];
-  }
-
   if (requestSurface) {
     const measured = measureRequest({
       systemMessages: requestSurface.systemMessages,
       tools: requestSurface.tools,
-      conversation: history,
+      conversation: [...history, ...requestTail],
       anchor: input.requestSnapshot,
       contextLimit: budget.contextLimit,
       reservedOutputTokens: 8_192,
@@ -210,7 +209,7 @@ export async function buildModelContext(
       contextPressureTokens: measured.contextPressureTokens,
     };
   } else {
-    const estimated = estimateHistoryTokens(history);
+    const estimated = estimateHistoryTokens([...history, ...requestTail]);
     budget = {
       ...budget,
       history,
@@ -221,6 +220,7 @@ export async function buildModelContext(
 
   return {
     history,
+    requestTail,
     budget,
     source,
     ...(compactionPayload ? { compactionPayload } : {}),

@@ -36,16 +36,19 @@ describe('tokenBudget', () => {
     expect(resolveContextLimit()).toBe(50000);
   });
 
-  it('defaultContextLimitForModel: deepseek-v4 → 1M, others → 400k', () => {
+  it('defaultContextLimitForModel follows provider profiles', () => {
     expect(defaultContextLimitForModel('deepseek-v4-pro')).toBe(1_000_000);
     expect(defaultContextLimitForModel('deepseek-v4-flash')).toBe(1_000_000);
-    expect(defaultContextLimitForModel('grok-4')).toBe(400_000);
+    expect(defaultContextLimitForModel('grok-4.6')).toBe(500_000);
+    expect(defaultContextLimitForModel('MiniMax-M3')).toBe(1_000_000);
+    expect(defaultContextLimitForModel('glm-4.7')).toBe(200_000);
+    expect(defaultContextLimitForModel('unknown', 'grok')).toBe(500_000);
     expect(defaultContextLimitForModel(undefined)).toBe(400_000);
   });
 
   it('resolveContextLimit is model-aware when env is unset', () => {
     expect(resolveContextLimit('deepseek-v4-pro')).toBe(1_000_000);
-    expect(resolveContextLimit('grok-4')).toBe(400_000);
+    expect(resolveContextLimit('grok-4.6')).toBe(500_000);
   });
 
   it('resolveContextLimit: env override wins over model default', () => {

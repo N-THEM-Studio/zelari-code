@@ -64,9 +64,13 @@ export interface RoutedRequestSnapshot {
 /** Optional generation knobs for a provider call (P3, context upgrade). */
 export interface ProviderGenerationOptions {
   /** Who is asking: normal turns vs the compaction engine. */
-  purpose?: 'conversation' | 'compaction';
+  purpose?: 'conversation' | 'compaction' | 'build-recovery';
   temperature?: number;
   maxTokens?: number;
+  /** Provider-neutral request for a tool call on a liveness recovery turn. */
+  toolChoice?: 'auto' | 'required';
+  /** One-based recovery attempt; provider profiles may force only an initial subset. */
+  recoveryAttempt?: number;
 }
 
 /**

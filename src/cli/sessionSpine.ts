@@ -370,7 +370,7 @@ export class SessionSpineMirror {
     }).then(() => undefined);
   }
 
-  /** Latest emitted resource snapshot (the model-visible one), or null. */
+  /** Latest emitted resource snapshot (available for request-tail injection). */
   latestResourceSnapshot(): ResourceSnapshotPayload | null {
     return this.budgetRuntime?.latestEmitted() ?? null;
   }

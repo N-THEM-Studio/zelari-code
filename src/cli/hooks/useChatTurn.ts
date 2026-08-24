@@ -69,13 +69,17 @@ import {
   maybeAnchorShortAnswer,
   formatHistoryForCouncil,
   setHistory,
+  expectsDiskImplementation,
 } from "./conversationContext.js";
 import type { ProviderName } from "../keyStore.js";
 import { computeSessionStatsDelta } from "./chatStats.js";
 import { envNumber } from "../utils/envNumber.js";
 import { getPhase } from "../phaseState.js";
 import { describePhase } from "../phase.js";
-import { buildModelContext } from "../budget/modelContextBuilder.js";
+import {
+  buildModelContext,
+  resourceStatusTail,
+} from "../budget/modelContextBuilder.js";
 import {
   recordRequestSnapshot,
   recordRequestUsage,
@@ -778,6 +782,18 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           })),
           toolRegistry,
           providerStream,
+          buildLiveness: {
+            mutationRequired: expectsDiskImplementation(
+              userText,
+              workPhase,
+              historyForModel,
+            ),
+            maxRecoveries: 2,
+          },
+          requestTail: () =>
+            resourceStatusTail(
+              writerRef.current?.spine?.latestResourceSnapshot() ?? null,
+            ),
           // 2.6 Phase 3: host-owned pre-dispatch resource gate via the spine
           // mirror (doc section 11.3). Degrade-and-stop (null gate = allow).
           // 2.6.1 (plan §13): argument-aware — bash is essential only when

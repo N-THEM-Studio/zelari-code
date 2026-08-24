@@ -25,7 +25,6 @@ import {
   buildCouncilTaskWithHistory,
   expectsDiskImplementation,
 } from './hooks/conversationContext.js';
-import { buildImplementationWriteRetryPrompt } from '@zelari/core/council';
 import { createBuiltinToolRegistry } from './toolRegistry.js';
 import { KrakenTurnRuntime } from './kraken/turnRuntime.js';
 import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from './kraken/candidateRegistry.js';
@@ -59,7 +58,7 @@ import { randomUUID } from 'node:crypto';
 import { evaluateStrictBuildGate, strictGateEventPayload, strictGateExitCode } from './kraken/verificationBridge.js';
 import { nativePackEnabled } from './kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from './kraken/verifierLifecycle.js';
-import { buildModelContext } from './budget/modelContextBuilder.js';
+import { buildModelContext, resourceStatusTail } from './budget/modelContextBuilder.js';
 import { recordCompactionMetrics } from './metrics.js';
 import {
   openHeadlessSpine,
@@ -726,6 +725,11 @@ async function runHeadlessSingle(
   // is empty in a fresh headless process.
   const effectiveTask = buildAgentUserWithHistory(opts.task, historySeed);
   if (opts.task) spine.userMessage(effectiveTask);
+  const wantWrites = expectsDiskImplementation(
+    opts.task,
+    opts.phase,
+    historySeed,
+  );
 
   const maxToolLoop = (() => {
     const n = envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {
@@ -744,10 +748,7 @@ async function runHeadlessSingle(
     messages: readonly AgentMessage[];
   };
 
-  /**
-   * One AgentHarness pass. Tracks write_file/edit_file success so BUILD can
-   * force a retry when the model only reads and claims "already done".
-   */
+  /** One AgentHarness pass with provider-neutral mutation progress evidence. */
   async function runSinglePass(
     messages: AgentMessage[],
     passSessionId: string,
@@ -760,6 +761,8 @@ async function runHeadlessSingle(
       tools,
       toolRegistry,
       providerStream,
+      buildLiveness: { mutationRequired: wantWrites, maxRecoveries: 2 },
+      requestTail: () => resourceStatusTail(spine.spine.latestResourceSnapshot()),
       // 2.6 Phase 3: host-owned pre-dispatch resource gate (doc section 11.3).
       // Advisory by default; ZELARI_RESOURCE_ENFORCEMENT=protected enables the
       // protected verification reserve. Degrade-and-stop (null gate = allow).
@@ -776,14 +779,18 @@ async function runHeadlessSingle(
           }
         : {}),
     });
+    const readBuildProgress = (): { mutationsAttempted: number; mutationsSucceeded: number } => {
+      const getter = (harness as AgentHarness & {
+        getBuildProgress?: () => { mutationsAttempted: number; mutationsSucceeded: number };
+      }).getBuildProgress;
+      return typeof getter === 'function'
+        ? getter.call(harness)
+        : { mutationsAttempted: 0, mutationsSucceeded: 0 };
+    };
 
     let finalReason: 'completed' | 'cancelled' | 'error' = 'completed';
     let exitCode = 0;
     const textBuffer: string[] = [];
-    let successfulWrites = 0;
-    let emittedWrites = 0;
-    /** toolCallId → toolName (end events omit the name). */
-    const pendingToolNames = new Map<string, string>();
     const scrub = createStreamScrubber();
 
     try {
@@ -792,34 +799,6 @@ async function runHeadlessSingle(
         spine.observe(event);
         if (event.type === 'message_start') {
           scrub.reset();
-        }
-        if (event.type === 'tool_execution_start') {
-          const name = (event as { toolName?: string }).toolName ?? '';
-          const id = (event as { toolCallId?: string }).toolCallId ?? '';
-          if (id && name) pendingToolNames.set(id, name);
-          if (name === 'write_file' || name === 'edit_file' || name === 'apply_diff') {
-            emittedWrites += 1;
-          }
-        }
-        if (event.type === 'tool_execution_end') {
-          const id = (event as { toolCallId?: string }).toolCallId ?? '';
-          const name = pendingToolNames.get(id) ?? '';
-          pendingToolNames.delete(id);
-          const isError = !!(event as { isError?: boolean }).isError;
-          const result = String((event as { result?: string }).result ?? '');
-          if (
-            (name === 'write_file' || name === 'edit_file' || name === 'apply_diff') &&
-            !isError
-          ) {
-            // edit_file may return ok with 0 replacements — still count as
-            // attempted; require non-empty success signal when present.
-            const zeroEdit =
-              name === 'edit_file' &&
-              /occurrencesReplaced["']?\s*[:=]\s*0\b|0 occurrence|no changes/i.test(
-                result,
-              );
-            if (!zeroEdit) successfulWrites += 1;
-          }
         }
         if (event.type === 'message_delta' && typeof event.delta === 'string') {
           const cleanDelta = scrub.push(event.delta);
@@ -859,18 +838,19 @@ async function runHeadlessSingle(
         finalReason: 'error',
         exitCode: 2,
         textBuffer,
-        successfulWrites,
-        emittedWrites,
+        successfulWrites: readBuildProgress().mutationsSucceeded,
+        emittedWrites: readBuildProgress().mutationsAttempted,
         messages: harness.getMessages(),
       };
     }
 
+    const buildProgress = readBuildProgress();
     return {
       finalReason,
       exitCode,
       textBuffer,
-      successfulWrites,
-      emittedWrites,
+      successfulWrites: buildProgress.mutationsSucceeded,
+      emittedWrites: buildProgress.mutationsAttempted,
       messages: harness.getMessages(),
     };
   }
@@ -903,53 +883,6 @@ async function runHeadlessSingle(
   ];
 
   let pass = await runSinglePass(initialMessages, sessionId);
-
-  // BUILD delivery gate: model often reads the plan + existing files then
-  // falsely claims "already implemented". Force one write-focused retry.
-  const wantWrites = expectsDiskImplementation(
-    opts.task,
-    opts.phase,
-    historySeed,
-  );
-  if (
-    wantWrites &&
-    pass.successfulWrites === 0 &&
-    pass.finalReason === 'completed' &&
-    pass.exitCode === 0
-  ) {
-    const retryPrompt = buildImplementationWriteRetryPrompt(opts.task);
-    if (opts.output === 'json') {
-      emitEvent({
-        type: 'log',
-        message:
-          '[headless] BUILD: no successful write_file/edit_file — forcing implementation retry',
-      });
-    } else {
-      process.stderr.write(
-        `[zelari-code --headless] BUILD: no successful writes — forcing implementation retry\n`,
-      );
-    }
-    // Keep full prior pass messages so the model sees what it already read;
-    // append a hard user directive to write now.
-    const retryMessages: AgentMessage[] = [
-      ...pass.messages.filter((m) => m.role !== 'system'),
-    ];
-    // Re-prepend the same system messages (filtered out above if present).
-    const withSystem: AgentMessage[] = [
-      ...systemMessages,
-      ...retryMessages,
-      { role: 'user', content: retryPrompt },
-    ];
-    progressRuntime.beginPass();
-    const retry = await runSinglePass(withSystem, `${sessionId}-write-retry`);
-    // Prefer retry outcome; merge streamed text so the UI sees both passes.
-    pass = {
-      ...retry,
-      textBuffer: [...pass.textBuffer, ...retry.textBuffer],
-      successfulWrites: pass.successfulWrites + retry.successfulWrites,
-      emittedWrites: pass.emittedWrites + retry.emittedWrites,
-    };
-  }
 
   // E2.2: when strict mode is on and the gate stays blocked after the repair
   // pass, the run closes non-success (dedicated exit code + session status).
@@ -1070,7 +1003,7 @@ async function runHeadlessSingle(
   // spine is the canonical model context (ADR-0024); hosts resume via
   // --resume <sessionId> (E1.4). Keep only the zero-write warning signal.
   if (pass.finalReason !== 'error' && opts.output === 'json' && wantWrites && pass.successfulWrites === 0) {
-    emitEvent({ type: 'log', message: '[headless] BUILD warning: still zero successful writes after retry' });
+    emitEvent({ type: 'log', message: '[headless] BUILD failed: zero successful mutations after liveness recovery' });
   }
 
   try {
