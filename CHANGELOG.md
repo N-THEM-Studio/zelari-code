@@ -5,6 +5,15 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.10.0] - 2026-08-25
+
+### Added
+- **Desktop — Kraken Model Routing** — new Settings → Defaults card to route Explore, General and Verify tentacles plus the Graph planner to dedicated models. `Inherit` persists no model id and the Tauri bridge strips any inherited `ZELARI_KRAKEN_*_MODEL` env from the headless CLI process.
+- **Desktop — Settings tooltips** — accessible ⓘ help (hover, keyboard focus, Escape) on Kraken routing, strict gates, native criteria pack, advisory review, Best-of-N, Gauntlet Loop and execution profile.
+
+### Changed
+- **Desktop — Provider settings** — "Verification model" renamed to "Advisory verification model" to keep the LLM judge distinct from the Verify tentacle model.
+
 ## [2.9.2] - 2026-08-24
 
 Restores the 2.9.0 tree as npm `latest`. 2.9.1 remains on the registry but
@@ -1555,6 +1564,16 @@ End-to-end against MiniMax-M3 (the model these failures were first reported on):
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [2.6.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [2.10.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
