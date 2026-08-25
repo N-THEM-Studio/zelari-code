@@ -5,6 +5,27 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.0] - 2026-08-25
+
+Frontier Runtime Upgrade: one shared runtime for Kraken, Council and Zelari
+gains an observer/intervention layer, a bidirectional headless control plane,
+tentacle activity telemetry, per-role context projection, a run flight
+recorder and an A/B eval harness. No new orchestration mode.
+
+### Added
+
+- **Runtime observer bus** (`@zelari/core`, `ZELARI_RUNTIME_OBSERVERS=1`) — priority-ordered observers with per-observer failure modes (`ignore`/`warn`/`fail-closed`) and cooperative interventions (`deny_tool`/`stop`/`inject`/`retry`/`replace`) applied at safe boundaries in `AgentHarness`.
+- **Runtime guards** — `RepetitionGuard` (canonical tool-call fingerprint), `FailureSignatureGuard` (normalized command+exit+tail signature), `DuplicateSearchGuard` (near-identical search queries), `NoProgressGuard` (consecutive unproductive turns), plus `ReasoningWatchdog` provider telemetry (TTFT / stream-idle warnings, never auto-aborts).
+- **Live steering** — headless protocol v2 (`protocol_info`, `control_accepted` / `control_applied` / `control_rejected`): `steer` / `follow_up` / `cancel` events on stdin NDJSON, drained at turn boundaries by `SteeringObserver`; late steers convert to follow-ups. Desktop gains a `send_control` Tauri command with piped stdin and a capability-gated control client.
+- **Kraken Activity** — tentacles emit `agent_spawned` / `agent_status` / `agent_tool` / `agent_ended` BrainEvents (resolved model, provider, worktree, graph node) on headless stdout; new Desktop Kraken Activity panel with lead/tentacle/graph detail, warnings and pending controls.
+- **Per-role context policy** — `AgentContextPolicy` for lead/explore/general/verify plus a pure `ContextProjector` (tool-result projection, pairing-safe history windows) and `parentContextForRole`: tentacle sub-agents can be seeded with a bounded parent digest instead of full transcripts via `task` `parentTranscript` (opt-in).
+- **Run flight recorder** (`ZELARI_RUN_RECORD=1`) — `.zelari/runs/<id>/` with manifest, ordered trace, per-agent logs and metrics; centralized `redactRuntimePayload()` redaction and retention policy (`ZELARI_RUN_RETENTION_DAYS` / `_MAX_MB`, never deletes active runs).
+- **Eval arms (A/B harness)** — `tools/eval/arms/`: env-diff arms with removal semantics, NDJSON metric extraction from existing BrainEvents, aggregation/comparison tables and `guards` / `model-routing` experiment presets.
+
+### Changed
+
+- **Headless JSON** emits `protocol_info` v2 at startup when stdin is a pipe (TTY untouched); consumers should ignore unknown event types. Default behavior is unchanged when all new flags are off.
+
 ## [2.10.0] - 2026-08-25
 
 ### Added
