@@ -32,6 +32,15 @@ export interface DesktopPrefs {
   bonAlpha: boolean;
   /** Host-driven Gauntlet loop (`--gauntlet` on the CLI). */
   gauntletLoop: boolean;
+
+  /** Kraken read-oriented exploration model override. Empty = inherit. */
+  krakenExploreModel: string;
+  /** Kraken code-writing general tentacle model override. Empty = inherit. */
+  krakenGeneralModel: string;
+  /** Kraken verify tentacle model override. Empty = inherit. */
+  krakenVerifyModel: string;
+  /** Kraken Graph planner model override. Empty = inherit. */
+  krakenPlannerModel: string;
 }
 
 export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
@@ -42,6 +51,10 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   verifierReview: null,
   bonAlpha: false,
   gauntletLoop: false,
+  krakenExploreModel: "",
+  krakenGeneralModel: "",
+  krakenVerifyModel: "",
+  krakenPlannerModel: "",
 };
 
 export function isExecutionProfile(value: unknown): value is ExecutionProfile {
@@ -49,6 +62,11 @@ export function isExecutionProfile(value: unknown): value is ExecutionProfile {
     typeof value === "string" &&
     (EXECUTION_PROFILES as readonly string[]).includes(value)
   );
+}
+
+/** Empty / whitespace = no Desktop override (Inherit). */
+export function normalizeModelOverride(value: unknown): string {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 /** Normalize a stored blob; unknown / missing fields fall back to defaults. */
@@ -69,6 +87,10 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
       typeof r.verifierReview === "boolean" ? r.verifierReview : null,
     bonAlpha: r.bonAlpha === true,
     gauntletLoop: r.gauntletLoop === true,
+    krakenExploreModel: normalizeModelOverride(r.krakenExploreModel),
+    krakenGeneralModel: normalizeModelOverride(r.krakenGeneralModel),
+    krakenVerifyModel: normalizeModelOverride(r.krakenVerifyModel),
+    krakenPlannerModel: normalizeModelOverride(r.krakenPlannerModel),
   };
 }
 

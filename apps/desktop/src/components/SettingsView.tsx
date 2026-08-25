@@ -19,6 +19,8 @@ import { McpSection } from "./McpSection";
 import { SkillsSection } from "./SkillsSection";
 import { SshSection } from "./SshSection";
 import { CompanionServeSection } from "./CompanionServeSection";
+import { SettingHelp } from "./SettingHelp";
+import { KrakenModelSelect } from "./KrakenModelSelect";
 
 type SettingsTab =
   | "provider"
@@ -215,6 +217,18 @@ export function SettingsView({
   );
   const [bonAlpha, setBonAlpha] = useState(prefs.bonAlpha);
   const [gauntletLoop, setGauntletLoop] = useState(prefs.gauntletLoop);
+  const [krakenExploreModel, setKrakenExploreModel] = useState(
+    prefs.krakenExploreModel,
+  );
+  const [krakenGeneralModel, setKrakenGeneralModel] = useState(
+    prefs.krakenGeneralModel,
+  );
+  const [krakenVerifyModel, setKrakenVerifyModel] = useState(
+    prefs.krakenVerifyModel,
+  );
+  const [krakenPlannerModel, setKrakenPlannerModel] = useState(
+    prefs.krakenPlannerModel,
+  );
   const [verifierMode, setVerifierMode] = useState<"inherit" | "custom">("inherit");
   const [verifierProvider, setVerifierProvider] = useState("");
   const [verifierModel, setVerifierModel] = useState("");
@@ -240,6 +254,10 @@ export function SettingsView({
     setVerifierReview(prefs.verifierReview);
     setBonAlpha(prefs.bonAlpha);
     setGauntletLoop(prefs.gauntletLoop);
+    setKrakenExploreModel(prefs.krakenExploreModel);
+    setKrakenGeneralModel(prefs.krakenGeneralModel);
+    setKrakenVerifyModel(prefs.krakenVerifyModel);
+    setKrakenPlannerModel(prefs.krakenPlannerModel);
   }, [prefs]);
 
   useEffect(() => {
@@ -298,6 +316,10 @@ export function SettingsView({
           verifierReview,
           bonAlpha,
           gauntletLoop,
+          krakenExploreModel,
+          krakenGeneralModel,
+          krakenVerifyModel,
+          krakenPlannerModel,
         },
       });
       setMessage("Saved provider, model & chat defaults.");
@@ -604,15 +626,28 @@ export function SettingsView({
                   />
                 </label>
 
-                <h3 className="settings-subhead">Kraken — Verification model</h3>
+                <h3 className="settings-subhead">
+                  Kraken — Advisory verification model
+                </h3>
                 <p className="muted">
                   Optional LLM judge for Kraken selection (inherit or dedicated
                   provider/model). Advisory only — never a done signal and never
-                  a substitute for the deterministic gate. Persists to CLI{" "}
-                  <code>provider.json</code>.
+                  a substitute for the deterministic gate or the Verify tentacle.
+                  Persists to CLI <code>provider.json</code>.
                 </p>
                 <label className="field">
-                  <span>Verification model</span>
+                  <span className="field-label-row">
+                    <span>Advisory verification model</span>
+                    <SettingHelp
+                      id="tooltip-advisory-verifier-provider"
+                      label="Advisory verifier"
+                    >
+                      Optional LLM judge that provides an additional review of
+                      Kraken&apos;s result. It is advisory and does not replace
+                      deterministic verification gates. Its provider and model
+                      are configured separately in Provider settings.
+                    </SettingHelp>
+                  </span>
                   <select
                     value={verifierMode}
                     onChange={(e) => {
@@ -917,7 +952,14 @@ export function SettingsView({
                   the chat mode; override here for every new run.
                 </p>
                 <label className="field">
-                  <span>Profile</span>
+                  <span className="field-label-row">
+                    <span>Profile</span>
+                    <SettingHelp id="tooltip-execution-profile" label="Execution profile">
+                      Selects the capability profile used by the Desktop execution pipeline.
+                      kraken/v1 is the normal Kraken profile; other profiles change the available
+                      agent workflow and capabilities.
+                    </SettingHelp>
+                  </span>
                   <select
                     value={profile}
                     onChange={(e) =>
@@ -942,9 +984,15 @@ export function SettingsView({
                     checked={strictDone}
                     onChange={(e) => setStrictDone(e.target.checked)}
                   />
-                  <span>
-                    Kraken strict gate — unknown ≠ pass, no done without
-                    evidence
+                  <span className="field-label-row">
+                    <span>
+                      Kraken strict gate — unknown ≠ pass, no done without
+                      evidence
+                    </span>
+                    <SettingHelp id="tooltip-kraken-strict" label="Kraken strict gate">
+                      Requires sufficient verification evidence before Kraken can mark a task as
+                      complete. An unknown verification state is not treated as a pass.
+                    </SettingHelp>
                   </span>
                 </label>
                 <label className="field field-check">
@@ -953,9 +1001,15 @@ export function SettingsView({
                     checked={missionStrict}
                     onChange={(e) => setMissionStrict(e.target.checked)}
                   />
-                  <span>
-                    Mission strict gate — enabled by default for Zelari
-                    missions
+                  <span className="field-label-row">
+                    <span>
+                      Mission strict gate — enabled by default for Zelari
+                      missions
+                    </span>
+                    <SettingHelp id="tooltip-mission-strict" label="Mission strict gate">
+                      Applies strict completion evidence rules to Zelari/Mission runs before the
+                      mission can be considered complete.
+                    </SettingHelp>
                   </span>
                 </label>
                 <label className="field field-check">
@@ -964,13 +1018,25 @@ export function SettingsView({
                     checked={verifyPack}
                     onChange={(e) => setVerifyPack(e.target.checked)}
                   />
-                  <span>
-                    Native criteria pack — run project typecheck, tests and
-                    build when available
+                  <span className="field-label-row">
+                    <span>
+                      Native criteria pack — run project typecheck, tests and
+                      build when available
+                    </span>
+                    <SettingHelp id="tooltip-native-pack" label="Native criteria pack">
+                      Runs deterministic project checks such as typecheck, tests and build when
+                      the project exposes the corresponding commands.
+                    </SettingHelp>
                   </span>
                 </label>
                 <label className="field">
-                  <span>Advisory verifier review</span>
+                  <span className="field-label-row">
+                    <span>Advisory verifier review</span>
+                    <SettingHelp id="tooltip-advisory-review" label="Advisory verifier review">
+                      Controls whether Zelari asks the configured advisory verification model for
+                      an additional LLM review. This review does not replace deterministic gates.
+                    </SettingHelp>
+                  </span>
                   <select
                     value={
                       verifierReview === null
@@ -1000,9 +1066,16 @@ export function SettingsView({
                     checked={bonAlpha}
                     onChange={(e) => setBonAlpha(e.target.checked)}
                   />
-                  <span>
-                    Best-of-N alpha (N=3, experimental) — never flips the
-                    deterministic gate
+                  <span className="field-label-row">
+                    <span>
+                      Best-of-N alpha (N=3, experimental) — never flips the
+                      deterministic gate
+                    </span>
+                    <SettingHelp id="tooltip-bon-alpha" label="Best-of-N alpha">
+                      Experimental test-time compute mode that generates and evaluates multiple
+                      candidate solutions. It can increase quality on difficult tasks but also
+                      increases latency and model usage.
+                    </SettingHelp>
                   </span>
                 </label>
                 <label className="field field-check">
@@ -1011,11 +1084,106 @@ export function SettingsView({
                     checked={gauntletLoop}
                     onChange={(e) => setGauntletLoop(e.target.checked)}
                   />
-                  <span>
-                    Gauntlet Loop — host-driven builder/critic rounds (capped;
-                    exclusive with Graph). Same as the top-bar toggle.
+                  <span className="field-label-row">
+                    <span>
+                      Gauntlet Loop — host-driven builder/critic rounds (capped;
+                      exclusive with Graph). Same as the top-bar toggle.
+                    </span>
+                    <SettingHelp id="tooltip-gauntlet-loop" label="Gauntlet Loop">
+                      Runs iterative builder-versus-critic rounds so the implementation can be
+                      challenged and revised multiple times. Intended for difficult tasks and
+                      higher verification effort.
+                    </SettingHelp>
                   </span>
                 </label>
+                <h3 className="settings-subhead">Kraken — Model Routing</h3>
+                <p className="muted">
+                  Configure which model Kraken uses for each role. Empty /
+                  inherit values fall back to Kraken defaults. Inherit sends no
+                  Desktop override; Kraken uses its normal model selection and
+                  fallback rules.
+                </p>
+                <div className="field">
+                  <span className="field-label-row">
+                    <span>Lead model</span>
+                    <SettingHelp id="tooltip-kraken-lead" label="Kraken Lead">
+                      The main Kraken model. It coordinates the task, decides when to delegate
+                      work to tentacles, evaluates their results, and produces the final response.
+                      This model is selected from the main model control in the toolbar.
+                    </SettingHelp>
+                  </span>
+                  <p className="muted settings-lead-model">
+                    Current toolbar model: {customModel.trim() || model || "not set"}
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => selectTab("provider")}
+                  >
+                    Change in Provider
+                  </button>
+                </div>
+                <KrakenModelSelect
+                  label="Explore tentacles"
+                  tooltipId="tooltip-kraken-explore"
+                  tooltip="Read-oriented Kraken sub-agents used to inspect the repository, locate symbols, understand architecture and gather context. A fast, lower-cost model is usually sufficient because Explore normally does not implement the final code changes."
+                  value={krakenExploreModel}
+                  models={models}
+                  inheritLabel="Inherit / Kraken default"
+                  onChange={setKrakenExploreModel}
+                />
+                <KrakenModelSelect
+                  label="General tentacles"
+                  tooltipId="tooltip-kraken-general"
+                  tooltip="Code-writing Kraken sub-agents used for implementation tasks. They may edit files and perform delegated coding work. Prefer a strong coding model when the task is complex or the changes are high impact."
+                  value={krakenGeneralModel}
+                  models={models}
+                  inheritLabel="Inherit / Kraken lead"
+                  onChange={setKrakenGeneralModel}
+                />
+                <KrakenModelSelect
+                  label="Verify tentacles"
+                  tooltipId="tooltip-kraken-verify"
+                  tooltip="Kraken sub-agents dedicated to checking completed work. They can review changes, inspect test/build results and look for regressions before the parent agent considers the task complete. This is different from the Advisory verification model."
+                  value={krakenVerifyModel}
+                  models={models}
+                  inheritLabel="Inherit / Kraken default"
+                  onChange={setKrakenVerifyModel}
+                />
+                <KrakenModelSelect
+                  label="Graph planner"
+                  tooltipId="tooltip-kraken-planner"
+                  tooltip="Model used to plan Kraken Graph tasks as a dependency graph (DAG). It decides how a large goal can be split into nodes and which work can run in parallel. A fast non-reasoning or lower-latency model is often sufficient for this structured planning step."
+                  value={krakenPlannerModel}
+                  models={models}
+                  inheritLabel="Inherit / Kraken lead"
+                  onChange={setKrakenPlannerModel}
+                />
+                <div className="field">
+                  <span className="field-label-row">
+                    <span>Advisory verifier</span>
+                    <SettingHelp id="tooltip-kraken-advisory" label="Advisory verifier">
+                      Optional LLM judge that provides an additional review of Kraken's result.
+                      It is advisory and does not replace deterministic verification gates.
+                      Its provider and model are configured separately in Provider settings.
+                    </SettingHelp>
+                  </span>
+                  <p className="muted">
+                    Configured separately in Provider settings
+                  </p>
+                  <button
+                    type="button"
+                    className="btn-ghost"
+                    onClick={() => selectTab("provider")}
+                  >
+                    Open Provider settings
+                  </button>
+                </div>
+                <p className="muted">
+                  Typical setup: Explore → fast / low-cost · General → strongest
+                  coding model · Verify → reliable coding/review model · Planner
+                  → fast / low-latency
+                </p>
                 <p className="muted settings-tip">
                   Tip: cycle mode with{" "}
                   <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>, phase with{" "}

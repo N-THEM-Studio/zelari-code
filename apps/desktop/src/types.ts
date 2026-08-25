@@ -167,6 +167,14 @@ export interface RunTaskArgs {
   bonAlpha?: boolean;
   /** Host-driven Gauntlet loop (`--gauntlet` / ZELARI_GAUNTLET=1). */
   gauntletLoop?: boolean;
+  /** Model override for Kraken read-only / exploration tentacles. */
+  krakenExploreModel?: string;
+  /** Model override for Kraken general code-writing tentacles. */
+  krakenGeneralModel?: string;
+  /** Model override for Kraken verify tentacles. */
+  krakenVerifyModel?: string;
+  /** Model override for Kraken Graph planning. */
+  krakenPlannerModel?: string;
 }
 
 /**

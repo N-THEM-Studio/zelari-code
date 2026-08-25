@@ -2366,6 +2366,18 @@ struct RunTaskArgs {
     /// Host-driven Gauntlet loop (`--gauntlet` / ZELARI_GAUNTLET).
     #[serde(default)]
     gauntlet_loop: bool,
+    /// Kraken explore tentacle model override. Empty / None = inherit.
+    #[serde(default)]
+    kraken_explore_model: Option<String>,
+    /// Kraken general tentacle model override. Empty / None = inherit.
+    #[serde(default)]
+    kraken_general_model: Option<String>,
+    /// Kraken verify tentacle model override. Empty / None = inherit.
+    #[serde(default)]
+    kraken_verify_model: Option<String>,
+    /// Kraken Graph planner model override. Empty / None = inherit.
+    #[serde(default)]
+    kraken_planner_model: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -2520,6 +2532,10 @@ fn run_task(
     let verifier_review = args.verifier_review;
     let bon_alpha = args.bon_alpha;
     let gauntlet_loop = args.gauntlet_loop;
+    let kraken_explore_model = args.kraken_explore_model;
+    let kraken_general_model = args.kraken_general_model;
+    let kraken_verify_model = args.kraken_verify_model;
+    let kraken_planner_model = args.kraken_planner_model;
 
     let env_ctx = RunEnvelopeCtx {
         run_id: run_id.clone(),
@@ -2553,6 +2569,10 @@ fn run_task(
             verifier_review,
             bon_alpha,
             gauntlet_loop,
+            kraken_explore_model.as_deref(),
+            kraken_general_model.as_deref(),
+            kraken_verify_model.as_deref(),
+            kraken_planner_model.as_deref(),
         );
 
         let (exit_code, cancelled) = match result {
@@ -2613,6 +2633,10 @@ fn spawn_headless(
     verifier_review: Option<bool>,
     bon_alpha: bool,
     gauntlet: bool,
+    kraken_explore_model: Option<&str>,
+    kraken_general_model: Option<&str>,
+    kraken_verify_model: Option<&str>,
+    kraken_planner_model: Option<&str>,
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
 
@@ -2699,6 +2723,26 @@ fn spawn_headless(
         cmd.arg("--gauntlet");
     }
     cmd.env("ZELARI_GAUNTLET", if gauntlet { "1" } else { "0" });
+    set_optional_model_env(
+        &mut cmd,
+        "ZELARI_KRAKEN_EXPLORE_MODEL",
+        kraken_explore_model,
+    );
+    set_optional_model_env(
+        &mut cmd,
+        "ZELARI_KRAKEN_GENERAL_MODEL",
+        kraken_general_model,
+    );
+    set_optional_model_env(
+        &mut cmd,
+        "ZELARI_KRAKEN_VERIFY_MODEL",
+        kraken_verify_model,
+    );
+    set_optional_model_env(
+        &mut cmd,
+        "ZELARI_KRAKEN_PLANNER_MODEL",
+        kraken_planner_model,
+    );
 
     if let Some(p) = provider {
         if !p.is_empty() {
@@ -2909,6 +2953,19 @@ fn spawn_headless(
             Err(_) => Ok(if cancelled { 130 } else { 2 }),
         },
         Err(_) => Ok(if cancelled { 130 } else { 2 }),
+    }
+}
+
+/// Desktop is authoritative: a value sets the env, inherit removes it
+/// so a parent-shell override cannot leak into the child CLI.
+fn set_optional_model_env(cmd: &mut Command, key: &str, value: Option<&str>) {
+    match value.map(str::trim).filter(|v| !v.is_empty()) {
+        Some(v) => {
+            cmd.env(key, v);
+        }
+        None => {
+            cmd.env_remove(key);
+        }
     }
 }
 
@@ -3227,6 +3284,66 @@ node "{}" %*"#,
         assert!(!args.verify_pack);
         assert_eq!(args.verifier_review, None);
         assert!(!args.gauntlet_loop);
+        assert_eq!(args.kraken_explore_model, None);
+        assert_eq!(args.kraken_general_model, None);
+        assert_eq!(args.kraken_verify_model, None);
+        assert_eq!(args.kraken_planner_model, None);
+    }
+
+    fn env_value(cmd: &Command, key: &str) -> Option<Option<String>> {
+        cmd.get_envs().find_map(|(k, v)| {
+            if k.to_string_lossy() == key {
+                Some(v.map(|s| s.to_string_lossy().into_owned()))
+            } else {
+                None
+            }
+        })
+    }
+
+    #[test]
+    fn set_optional_model_env_sets_non_empty_and_removes_inherit() {
+        let mut cmd = Command::new("echo");
+        set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_EXPLORE_MODEL", Some("model-a"));
+        set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_GENERAL_MODEL", Some("model-b"));
+        set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_VERIFY_MODEL", Some("model-c"));
+        set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_PLANNER_MODEL", Some("model-d"));
+        assert_eq!(
+            env_value(&cmd, "ZELARI_KRAKEN_EXPLORE_MODEL").flatten().as_deref(),
+            Some("model-a")
+        );
+        assert_eq!(
+            env_value(&cmd, "ZELARI_KRAKEN_GENERAL_MODEL").flatten().as_deref(),
+            Some("model-b")
+        );
+        assert_eq!(
+            env_value(&cmd, "ZELARI_KRAKEN_VERIFY_MODEL").flatten().as_deref(),
+            Some("model-c")
+        );
+        assert_eq!(
+            env_value(&cmd, "ZELARI_KRAKEN_PLANNER_MODEL").flatten().as_deref(),
+            Some("model-d")
+        );
+
+        set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_GENERAL_MODEL", None);
+        set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_EXPLORE_MODEL", Some("  "));
+        assert_eq!(env_value(&cmd, "ZELARI_KRAKEN_GENERAL_MODEL"), Some(None));
+        assert_eq!(env_value(&cmd, "ZELARI_KRAKEN_EXPLORE_MODEL"), Some(None));
+    }
+
+    #[test]
+    fn desktop_run_deserializes_kraken_model_overrides() {
+        let args: RunTaskArgs = serde_json::from_value(serde_json::json!({
+            "prompt": "test",
+            "krakenExploreModel": "fast-model",
+            "krakenGeneralModel": "coding-model",
+            "krakenVerifyModel": "review-model",
+            "krakenPlannerModel": "planner-model"
+        }))
+        .unwrap();
+        assert_eq!(args.kraken_explore_model.as_deref(), Some("fast-model"));
+        assert_eq!(args.kraken_general_model.as_deref(), Some("coding-model"));
+        assert_eq!(args.kraken_verify_model.as_deref(), Some("review-model"));
+        assert_eq!(args.kraken_planner_model.as_deref(), Some("planner-model"));
     }
 
     #[test]

@@ -332,6 +332,10 @@ export function OverlayApp() {
           verifierReview: prefs.verifierReview ?? undefined,
           bonAlpha: prefs.bonAlpha,
           gauntletLoop: prefs.gauntletLoop,
+          krakenExploreModel: prefs.krakenExploreModel || undefined,
+          krakenGeneralModel: prefs.krakenGeneralModel || undefined,
+          krakenVerifyModel: prefs.krakenVerifyModel || undefined,
+          krakenPlannerModel: prefs.krakenPlannerModel || undefined,
         });
       } catch (e) {
         submitLock.current = false;

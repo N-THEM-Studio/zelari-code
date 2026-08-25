@@ -2071,6 +2071,10 @@ export default function App() {
         verifierReview: prefs.verifierReview ?? undefined,
         bonAlpha: prefs.bonAlpha,
         gauntletLoop: prefs.gauntletLoop,
+        krakenExploreModel: prefs.krakenExploreModel || undefined,
+        krakenGeneralModel: prefs.krakenGeneralModel || undefined,
+        krakenVerifyModel: prefs.krakenVerifyModel || undefined,
+        krakenPlannerModel: prefs.krakenPlannerModel || undefined,
       });
       runCoordinator.started({
         runId,

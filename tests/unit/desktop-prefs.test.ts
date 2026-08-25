@@ -5,6 +5,7 @@ import {
   isExecutionProfile,
   loadDesktopPrefs,
   normalizeDesktopPrefs,
+  normalizeModelOverride,
   saveDesktopPrefs,
 } from "../../apps/desktop/src/desktopPrefs";
 
@@ -23,10 +24,30 @@ describe("isExecutionProfile", () => {
   });
 });
 
+describe("normalizeModelOverride", () => {
+  it("trims strings and maps non-strings to empty inherit", () => {
+    expect(normalizeModelOverride("fast-model")).toBe("fast-model");
+    expect(normalizeModelOverride("  coding-model  ")).toBe("coding-model");
+    expect(normalizeModelOverride("   ")).toBe("");
+    expect(normalizeModelOverride("")).toBe("");
+    expect(normalizeModelOverride(null)).toBe("");
+    expect(normalizeModelOverride(false)).toBe("");
+    expect(normalizeModelOverride(123)).toBe("");
+    expect(normalizeModelOverride({})).toBe("");
+  });
+});
+
 describe("normalizeDesktopPrefs", () => {
   it("returns defaults for garbage input", () => {
     expect(normalizeDesktopPrefs(null)).toEqual(DEFAULT_DESKTOP_PREFS);
     expect(normalizeDesktopPrefs("x")).toEqual(DEFAULT_DESKTOP_PREFS);
+  });
+
+  it("defaults Kraken model overrides to inherit", () => {
+    expect(DEFAULT_DESKTOP_PREFS.krakenExploreModel).toBe("");
+    expect(DEFAULT_DESKTOP_PREFS.krakenGeneralModel).toBe("");
+    expect(DEFAULT_DESKTOP_PREFS.krakenVerifyModel).toBe("");
+    expect(DEFAULT_DESKTOP_PREFS.krakenPlannerModel).toBe("");
   });
 
   it("keeps only known fields and coerces booleans", () => {
@@ -49,6 +70,10 @@ describe("normalizeDesktopPrefs", () => {
       verifierReview: false,
       bonAlpha: false,
       gauntletLoop: true,
+      krakenExploreModel: "",
+      krakenGeneralModel: "",
+      krakenVerifyModel: "",
+      krakenPlannerModel: "",
     });
   });
 
@@ -67,6 +92,42 @@ describe("normalizeDesktopPrefs", () => {
       verifierReview: null,
       bonAlpha: true,
       gauntletLoop: false,
+      krakenExploreModel: "",
+      krakenGeneralModel: "",
+      krakenVerifyModel: "",
+      krakenPlannerModel: "",
+    });
+  });
+
+  it("persists Kraken model overrides and rejects invalid types", () => {
+    expect(
+      normalizeDesktopPrefs({
+        profile: "kraken/v1",
+        krakenExploreModel: "fast-model",
+        krakenGeneralModel: "coding-model",
+        krakenVerifyModel: "review-model",
+        krakenPlannerModel: "planner-model",
+      }),
+    ).toEqual({
+      ...DEFAULT_DESKTOP_PREFS,
+      krakenExploreModel: "fast-model",
+      krakenGeneralModel: "coding-model",
+      krakenVerifyModel: "review-model",
+      krakenPlannerModel: "planner-model",
+    });
+
+    expect(
+      normalizeDesktopPrefs({
+        krakenExploreModel: null,
+        krakenGeneralModel: false,
+        krakenVerifyModel: 123,
+        krakenPlannerModel: {},
+      }),
+    ).toMatchObject({
+      krakenExploreModel: "",
+      krakenGeneralModel: "",
+      krakenVerifyModel: "",
+      krakenPlannerModel: "",
     });
   });
 });
@@ -89,6 +150,10 @@ describe("load/saveDesktopPrefs", () => {
         verifierReview: true,
         bonAlpha: true,
         gauntletLoop: true,
+        krakenExploreModel: "fast-model",
+        krakenGeneralModel: "coding-model",
+        krakenVerifyModel: "review-model",
+        krakenPlannerModel: "planner-model",
       },
       storage,
     );
@@ -101,6 +166,10 @@ describe("load/saveDesktopPrefs", () => {
       verifierReview: true,
       bonAlpha: true,
       gauntletLoop: true,
+      krakenExploreModel: "fast-model",
+      krakenGeneralModel: "coding-model",
+      krakenVerifyModel: "review-model",
+      krakenPlannerModel: "planner-model",
     });
   });
 

@@ -5873,6 +5873,81 @@ kbd {
 }
 .field-check input { margin-top: 3px; }
 
+.field-label-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.settings-lead-model {
+  margin: 6px 0 8px !important;
+}
+
+.setting-help {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.setting-help-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  opacity: 0.75;
+  cursor: help;
+  border-radius: 999px;
+}
+
+.setting-help-trigger:hover,
+.setting-help-trigger:focus-visible {
+  opacity: 1;
+  color: var(--text);
+  outline: none;
+}
+
+.setting-help-trigger:focus-visible {
+  box-shadow: 0 0 0 2px var(--border-subtle);
+}
+
+.setting-help-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.setting-help-tooltip {
+  position: absolute;
+  z-index: 40;
+  width: min(320px, 70vw);
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-elevated);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+}
+
+.setting-help.is-open .setting-help-tooltip,
+.setting-help:hover .setting-help-tooltip,
+.setting-help:focus-within .setting-help-tooltip {
+  opacity: 1;
+  visibility: visible;
+}
+
+
 /* ===== Session sidebar: collapsible project-folder groups ===== */
 .session-group {
   display: flex;
