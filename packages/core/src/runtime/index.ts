@@ -10,3 +10,7 @@ export * from './harnessManifest.js';
 export * from './executionContext.js';
 export * from './resourcePolicy.js';
 export * from './resourceBudget.js';
+export * from './observers/index.js';
+export * from './guards/index.js';
+export * from './recorder/index.js';
+export * from './controls/index.js';

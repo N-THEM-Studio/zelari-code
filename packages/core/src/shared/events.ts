@@ -14,6 +14,10 @@
 export type BrainEventType =
   | 'agent_start'
   | 'agent_end'
+  | 'agent_spawned'
+  | 'agent_status'
+  | 'agent_tool'
+  | 'agent_ended'
   | 'message_start'
   | 'message_end'
   | 'message_delta'
@@ -75,6 +79,51 @@ export interface BrainAgentEndEvent extends BrainEventBase {
   durationMs: number;
   memberId?: string;
   memberName?: string;
+}
+
+// --- Tentacle activity (Frontier plan §37) -----------------------------------
+
+/** Role of a Kraken tentacle as spawned via the `task` tool. */
+export type TentacleAgentRole = 'explore' | 'general' | 'verify' | 'fix' | 'planner';
+
+/** A Kraken tentacle has been spawned by the lead (via the `task` tool). */
+export interface BrainAgentSpawnedEvent extends BrainEventBase {
+  type: 'agent_spawned';
+  agentId: string;
+  role: TentacleAgentRole;
+  title?: string;
+  model?: string;
+  provider?: string;
+  scope?: string[];
+  worktree?: string;
+}
+
+/** Coarse lifecycle status of a tentacle, for live activity UIs. */
+export interface BrainAgentStatusEvent extends BrainEventBase {
+  type: 'agent_status';
+  agentId: string;
+  status: 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
+  message?: string;
+}
+
+/** A tool execution inside a tentacle (start/end, with duration on end). */
+export interface BrainAgentToolEvent extends BrainEventBase {
+  type: 'agent_tool';
+  agentId: string;
+  toolCallId: string;
+  tool: string;
+  status: 'started' | 'completed' | 'failed';
+  summary?: string;
+  durationMs?: number;
+}
+
+/** A tentacle finished (ok, error, cancelled or timeout). */
+export interface BrainAgentEndedEvent extends BrainEventBase {
+  type: 'agent_ended';
+  agentId: string;
+  reason: string;
+  ok: boolean;
+  durationMs: number;
 }
 
 // --- Message streaming ------------------------------------------------------
@@ -426,6 +475,10 @@ export interface BrainKrakenMetricsEvent extends BrainEventBase {
 export type BrainEvent =
   | BrainAgentStartEvent
   | BrainAgentEndEvent
+  | BrainAgentSpawnedEvent
+  | BrainAgentStatusEvent
+  | BrainAgentToolEvent
+  | BrainAgentEndedEvent
   | BrainMessageStartEvent
   | BrainMessageDeltaEvent
   | BrainMessageEndEvent

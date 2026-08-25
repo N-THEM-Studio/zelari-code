@@ -67,6 +67,9 @@ import {
   sessionStartedEvent,
   type HeadlessSpineHandle,
 } from './headlessSpine.js';
+import { RuntimeControlQueue } from '@zelari/core/runtime';
+import { attachControlPlane, type ControlPlaneHandle } from './headless/controlBridge.js';
+import { protocolInfoEvent } from './headless/protocol.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   resetTaskSpawnCount();
@@ -496,10 +499,30 @@ async function runHeadlessSingle(
     : undefined;
   const memoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
 
+  // PHASE 2 (§22, §35): bidirectional headless control plane. Attach only
+  // when the host pipes NDJSON on stdout AND stdin is a pipe (Desktop);
+  // a TTY stdin never gets a reader attached. protocol_info is the v2
+  // handshake Desktop gates its Steer UI on.
+  const controlQueue = new RuntimeControlQueue();
+  const harnessHolder: { cancel?: () => void } = {};
+  const controlPlane: ControlPlaneHandle | undefined =
+    opts.output === 'json' && process.stdin.isTTY !== true
+      ? (() => {
+          emitEvent(protocolInfoEvent());
+          return attachControlPlane({
+            input: process.stdin,
+            queue: controlQueue,
+            emit: emitEvent,
+            onCancel: () => harnessHolder.cancel?.(),
+          });
+        })()
+      : undefined;
+
   // Headless / Desktop: no interactive permission UI — auto-allow "ask" rules
   // unless the user set an explicit deny. Override with ZELARI_AUTO=0 and
   // ZELARI_PERMISSION_*=deny for hard lockdown.
   const { registry: toolRegistry } = createBuiltinToolRegistry({
+      onTentacleEvent: (ev) => emitEvent(ev as Parameters<typeof emitEvent>[0]),
     planMode: planModeFromOpts(opts),
     gauntletParent: Boolean(opts.gauntlet) && !planModeFromOpts(opts),
     // Fase 1 (ADR-0020): anchor tentacles to the provider/model THIS run
@@ -771,6 +794,8 @@ async function runHeadlessSingle(
       toolCallGate: (name: string, args: Record<string, unknown>) =>
         spine.gateResourceToolCall(name, args) ?? { allowed: true },
       maxToolLoopIterations: maxToolLoop,
+      // PHASE 2: control queue — SteeringObserver drains it at turn ends.
+      controlQueue,
       ...(nativeMemory
         ? {
             memoryService: nativeMemory,
@@ -779,6 +804,7 @@ async function runHeadlessSingle(
           }
         : {}),
     });
+    harnessHolder.cancel = () => harness.cancel();
     const readBuildProgress = (): { mutationsAttempted: number; mutationsSucceeded: number } => {
       const getter = (harness as AgentHarness & {
         getBuildProgress?: () => { mutationsAttempted: number; mutationsSucceeded: number };
@@ -1052,6 +1078,13 @@ async function runHeadlessSingle(
   }
   await nativeMemory?.close().catch(() => undefined);
 
+  // PHASE 2 (§28): run boundary reached — convert late steers to follow-ups,
+  // ack every pending control, surface chained texts to the host, detach.
+  const pendingFollowUps = controlPlane?.finalize() ?? [];
+  for (const followUp of pendingFollowUps) {
+    emitEvent({ type: 'log', message: `follow_up_queued: ${followUp.slice(0, 500)}` });
+  }
+  controlPlane?.dispose();
   if (pass.finalReason === 'error') return 3;
   // E2.2: strict done gate — a blocked verdict overrides a clean pass exit.
   if (strictExit !== 0) return strictExit;

@@ -31,6 +31,7 @@ import { hasGauntletLoop, stripGauntletLoop } from "./gauntletLoop";
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsView } from "./components/SettingsView";
 import { RunActivity, type LiveToolStep } from "./components/RunActivity";
+import { KrakenActivity } from "./components/KrakenActivity";
 import {
   KrakenProgressCard,
   readKrakenProgress,
@@ -2707,6 +2708,7 @@ export default function App() {
                     metrics={krakenCard.metrics ?? null}
                   />
                 ) : null}
+                <KrakenActivity />
                 {verificationByConv[active?.id ?? ""]?.run ? (
                   <VerificationStatusCard
                     run={verificationByConv[active?.id ?? ""].run ?? null}

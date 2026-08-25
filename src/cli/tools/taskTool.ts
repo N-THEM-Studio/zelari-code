@@ -24,7 +24,15 @@ import type {
   ProviderStreamFn,
   AgentHarnessConfig,
 } from '@zelari/core/harness';
-import type { BrainEvent } from '@zelari/core/shared/events';
+import type { AgentMessage } from '@zelari/core/harness';
+import { parentContextForRole } from '@zelari/core/context';
+import type {
+  BrainEvent,
+  BrainAgentSpawnedEvent,
+  BrainAgentStatusEvent,
+  BrainAgentToolEvent,
+  BrainAgentEndedEvent,
+} from '@zelari/core/shared/events';
 import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import {
   typedOk,
@@ -45,6 +53,7 @@ import {
   type WorktreeMergeResult,
 } from './krakenWorktree.js';
 import { krakenTentacleStart, krakenTentacleEnd } from './krakenLive.js';
+import { randomUUID } from 'node:crypto';
 import type { UsageBreakdown } from '@zelari/core/events';
 import type { MemoryService } from '@zelari/core/memory';
 import {
@@ -94,6 +103,8 @@ export interface SubAgentHarness {
 export const TASK_TOOL_TIMEOUT_MS = 900_000;
 
 export interface TaskToolDeps {
+  /** Optional sink for tentacle activity events (Frontier plan §37). */
+  onTentacleEvent?: (ev: BrainEvent) => void;
   /**
    * Build provider + tool registry for one sub-agent run.
    * `agent` selects tool set (explore RO / general write / verify tests).
@@ -359,7 +370,7 @@ function toolCommandHint(args: Record<string, unknown> | undefined): string | un
 
 export async function runSubAgent(
   harness: SubAgentHarness,
-  opts: { signal?: AbortSignal } = {},
+  opts: { signal?: AbortSignal; onEvent?: (ev: BrainEvent) => void } = {},
 ): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[] }> {
   const { signal } = opts;
   let current = '';
@@ -385,6 +396,9 @@ export async function runSubAgent(
         aborted: true,
         ...(toolTrace.length > 0 ? { toolTrace } : {}),
       };
+    }
+    if (opts.onEvent && (ev.type === 'agent_start' || ev.type === 'agent_end' || ev.type === 'tool_execution_start' || ev.type === 'tool_execution_update' || ev.type === 'tool_execution_end')) {
+      opts.onEvent(ev);
     }
     // 2.1 T5 (original-tool-backed evidence): capture the tentacle's raw tool
     // executions mechanically, at execution time — the verify-report note is
@@ -528,6 +542,8 @@ export interface RunTentacleOptions {
    * creates a worktree of its own (writers).
    */
   cwdOverride?: string;
+  /** Lead messages for §51 parent-summary projection (optional, inert by default). */
+  parentTranscript?: AgentMessage[];
   /** Session id used for radio JSONL correlation. */
   sessionId: string;
   /**
@@ -604,6 +620,21 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ...(opts.nodeId ? { nodeId: opts.nodeId } : {}),
   });
 
+  const emitActivity = (ev: Omit<BrainEvent, 'id' | 'sessionId'> & { type: BrainEvent['type'] }) => {
+    deps.onTentacleEvent?.({ ...ev, id: randomUUID(), sessionId } as BrainEvent);
+  };
+  const endTentacle = (id: string, info: Parameters<typeof krakenTentacleEnd>[1]) => {
+    krakenTentacleEnd(id, info);
+    emitActivity({
+      type: 'agent_ended',
+      agentId: id,
+      reason: info.detail ?? (info.ok === false ? 'failed' : 'completed'),
+      ok: info.ok !== false,
+      durationMs: info.durationMs ?? 0,
+      ts: Date.now(),
+    } as BrainAgentEndedEvent);
+  };
+
   let sub: SubAgentContext | null;
   try {
     sub = await deps.createSubAgentContext({
@@ -621,7 +652,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       ok: false,
       durationMs: Date.now() - started,
     });
-    krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
+    endTentacle(liveId, { ok: false, durationMs: Date.now() - started });
     return {
       ok: false,
       agent,
@@ -638,7 +669,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       ok: false,
       durationMs: Date.now() - started,
     });
-    krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
+    endTentacle(liveId, { ok: false, durationMs: Date.now() - started });
     return {
       ok: false,
       agent,
@@ -646,11 +677,27 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     };
   }
 
-  const userContent = buildTaskUserPrompt({
+  emitActivity({
+    type: 'agent_spawned',
+    agentId: liveId,
+    role: agent,
+    title: args.description,
+    ...(sub.model ? { model: sub.model } : {}),
+    ...(sub.provider ? { provider: sub.provider } : {}),
+    ...(args.scope && args.scope.length > 0 ? { scope: args.scope } : {}),
+    ...(worktree ? { worktree: worktree.path } : {}),
+    ts: Date.now(),
+  } as BrainAgentSpawnedEvent);
+  emitActivity({ type: 'agent_status', agentId: liveId, status: 'running', ts: Date.now() } as BrainAgentStatusEvent);
+  const taskUserContent = buildTaskUserPrompt({
     prompt: args.prompt,
     scope: args.scope,
     acceptance: withKrakenRequiredChecks(agent, args.acceptance),
   });
+  // §51 — tentacles may receive a compact projected parent summary (never
+  // the full lead transcript). Inert unless parentTranscript is passed.
+  const parentBlock = parentContextForRole(agent, opts.parentTranscript ?? []);
+  const userContent = parentBlock ? `${parentBlock.block}\n\n${taskUserContent}` : taskUserContent;
   const maxToolCalls = maxToolCallsForThoroughness(thoroughness, agent);
   const runCwd = sub.cwd || effectiveCwd;
   const config: AgentHarnessConfig = {
@@ -673,7 +720,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ...(deps.memoryService
       ? {
           memoryService: deps.memoryService,
-          memoryQuery: `${args.description}\n${userContent}`,
+          memoryQuery: `${args.description}\n${taskUserContent}`,
           memoryContextChars: 2_400,
         }
       : {}),
@@ -689,7 +736,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     }
   } catch (err) {
     if (worktree) await cleanupKrakenWorktree(worktree);
-    krakenTentacleEnd(liveId, { ok: false, durationMs: Date.now() - started });
+    endTentacle(liveId, { ok: false, durationMs: Date.now() - started });
     return {
       ok: false,
       agent,
@@ -697,8 +744,17 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     };
   }
 
+  const startedTools = new Map<string, string>();
   const { result, error, aborted, usage, toolTrace } = await runSubAgent(harness, {
     ...(opts.signal ? { signal: opts.signal } : {}),
+    onEvent: (ev) => {
+      if (ev.type === 'tool_execution_start') {
+        startedTools.set(ev.toolCallId, ev.toolName);
+        emitActivity({ type: 'agent_tool', agentId: liveId, toolCallId: ev.toolCallId, tool: ev.toolName, status: 'started', ...(ev.args ? { summary: toolCommandHint(ev.args) } : {}), ts: Date.now() } as BrainAgentToolEvent);
+      } else if (ev.type === 'tool_execution_end') {
+        emitActivity({ type: 'agent_tool', agentId: liveId, toolCallId: ev.toolCallId, tool: startedTools.get(ev.toolCallId) ?? 'unknown', status: ev.isError ? 'failed' : 'completed', durationMs: ev.durationMs, ts: Date.now() } as BrainAgentToolEvent);
+      }
+    },
   });
   const durationMs = Date.now() - started;
 
@@ -718,7 +774,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       durationMs,
       ok: false,
     });
-    krakenTentacleEnd(liveId, {
+    endTentacle(liveId, {
       ok: false,
       model: sub.model,
       detail: 'cancelled',
@@ -740,7 +796,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       durationMs,
       ok: false,
     });
-    krakenTentacleEnd(liveId, { ok: false, model: sub.model, detail: error, durationMs });
+    endTentacle(liveId, { ok: false, model: sub.model, detail: error, durationMs });
     return {
       ok: false,
       agent,
@@ -785,7 +841,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     g.__zelariLastGeneralAt = Date.now();
   }
 
-  krakenTentacleEnd(liveId, {
+  endTentacle(liveId, {
     ok: true,
     model: sub.model,
     detail: result.slice(0, 160),

@@ -128,6 +128,10 @@
       "types": "./dist/runtime/index.d.ts",
       "default": "./dist/runtime/index.js"
     },
+    "./context": {
+      "types": "./dist/context/index.d.ts",
+      "default": "./dist/context/index.js"
+    },
     "./verification": {
       "types": "./dist/verification/index.d.ts",
       "default": "./dist/verification/index.js"

@@ -2472,6 +2472,47 @@ fn plugins_install(args: PluginsInstallArgs) -> Result<serde_json::Value, String
     })
 }
 
+/// Registry of live headless children's stdin handles, keyed by run id —
+/// the control plane for live steering (Frontier plan §33–34, §22).
+static CONTROL_STDIN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::process::ChildStdin>>> =
+    std::sync::OnceLock::new();
+
+fn control_stdin_registry()
+-> &'static std::sync::Mutex<std::collections::HashMap<String, std::process::ChildStdin>> {
+    CONTROL_STDIN.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Write one NDJSON ControlEvent to a running headless child's stdin.
+/// Accepts steer / follow_up / cancel (pause+resume are rejected: the CLI
+/// headless control bridge does not map them yet).
+#[tauri::command]
+fn send_control(run_id: String, event: serde_json::Value) -> Result<(), String> {
+    let obj = event.as_object().ok_or("control event must be a JSON object")?;
+    let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+    if kind.is_empty() {
+        return Err("control event requires a \"type\" field".into());
+    }
+    if !matches!(kind, "steer" | "follow_up" | "cancel") {
+        return Err(format!("unsupported control event type: {kind}"));
+    }
+    let id = obj.get("id").and_then(|v| v.as_str()).unwrap_or("");
+    if id.is_empty() {
+        return Err("control event requires an \"id\" field".into());
+    }
+    let line = serde_json::to_string(&event).map_err(|e| format!("serialize control: {e}"))?;
+    let mut map = control_stdin_registry().lock().unwrap_or_else(|e| e.into_inner());
+    let stdin = map
+        .get_mut(&run_id)
+        .ok_or_else(|| format!("no active run: {run_id}"))?;
+    use std::io::Write;
+    stdin
+        .write_all(line.as_bytes())
+        .and_then(|_| stdin.write_all(b"
+"))
+        .and_then(|_| stdin.flush())
+        .map_err(|e| format!("failed to write control: {e}"))
+}
+
 #[tauri::command]
 fn run_task(
     app: AppHandle,
@@ -2603,6 +2644,10 @@ fn run_task(
             },
         );
         registry.remove(&run_id_thread);
+        control_stdin_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&run_id_thread);
     });
 
     Ok(run_id)
@@ -2639,6 +2684,9 @@ fn spawn_headless(
     kraken_planner_model: Option<&str>,
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
+    // Control plane (§22): accept ControlEvent NDJSON on stdin. spawn_cli_base
+    // nulls stdin for one-shot captures; the streaming run overrides it here.
+    cmd.stdin(Stdio::piped());
 
     // Long prompts overflow Windows' ~32KB CreateProcess command-line
     // ceiling (os error 206), exactly like multi-turn history used to.
@@ -2803,6 +2851,12 @@ fn spawn_headless(
     cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
 
     let mut child = cmd.spawn().map_err(format_cli_spawn_err)?;
+    if let Some(h) = child.stdin.take() {
+        control_stdin_registry()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(envelope.run_id.clone(), h);
+    }
 
     let stdout = child
         .stdout
@@ -3161,6 +3215,7 @@ pub fn run() {
             plugins_install,
             run_task,
             cancel_run,
+            send_control,
             get_git_status,
             write_text_file,
             list_dir,

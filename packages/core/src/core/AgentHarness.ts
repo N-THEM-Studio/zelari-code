@@ -55,6 +55,15 @@ import {
   TEXT_LOOP_RECOVERY_USER_PROMPT,
 } from './textLoopDetect.js';
 import type { MemoryService } from '../memory/types.js';
+import type {
+  ObserverDescriptor,
+  RuntimeEventBase,
+} from '../runtime/observers/types.js';
+import {
+  ObserverBus,
+  buildRuntimeObserverBus,
+} from '../runtime/observers/ObserverBus.js';
+import type { RuntimeControlQueue } from '../runtime/controls/RuntimeControlQueue.js';
 
 export {
   collapseLoopedAssistantText,
@@ -271,6 +280,23 @@ export interface AgentHarnessConfig {
   memoryQuery?: string;
   /** Hard character budget for the ephemeral memory block. Default 2,000. */
   memoryContextChars?: number;
+
+  /**
+   * Frontier PHASE 1 (opt-in): in-process observers consulted by the loop
+   * (deny_tool / cooperative stop / inject). Explicit descriptors always
+   * run; when omitted, the default bus only builds while
+   * ZELARI_RUNTIME_OBSERVERS is enabled — otherwise zero observer overhead.
+   */
+  observers?: ObserverDescriptor[];
+  /**
+   * Frontier PHASE 2 (opt-in): live steering queue. When provided, a
+   * SteeringObserver joins the observer bus (priority 20) even with the
+   * ZELARI_RUNTIME_OBSERVERS flag off — an explicit queue is itself an
+   * opt-in. Steers drain at each safe turn boundary and are injected as a
+   * user message for the next provider call; the in-flight request is never
+   * interrupted.
+   */
+  controlQueue?: RuntimeControlQueue;
 }
 
 export type ProviderStreamFn = (params: {
@@ -332,6 +358,15 @@ export class AgentHarness {
   private toolCallCounts: Map<string, number> = new Map();
 
   /**
+   * Frontier PHASE 1: observer bus, or `null` when observers are off. Every
+   * hook site guards on `this.observerBus` so the off-path stays identical
+   * to the pre-observer loop.
+   */
+  private readonly observerBus: ObserverBus | null;
+  /** Coarse turn counter attached to observer events (per run, 0-based). */
+  private observerTurn = 0;
+
+  /**
    * How many times this run re-entered the provider because the model emitted
    * tool calls as a `---TOOLS---` text block (fallback format) instead of native
    * tool_calls. Capped so a model that keeps re-emitting the same block can't
@@ -370,6 +405,12 @@ export class AgentHarness {
       typeof hardCfg === 'number' && hardCfg > 0
         ? Math.max(soft, hardCfg)
         : Math.max(soft * 3, soft + 60);
+
+    // Frontier PHASE 1: explicit config.observers always run; otherwise the
+    // env-flagged default bus (buildRuntimeObserverBus) or none at all.
+    this.observerBus = config.observers?.length
+      ? new ObserverBus(config.observers)
+      : (buildRuntimeObserverBus({ steeringQueue: config.controlQueue }) ?? null);
   }
 
   /**
@@ -478,6 +519,64 @@ export class AgentHarness {
     }
   }
 
+  /** Base fields shared by every observer event this harness emits. */
+  private observerEventBase(turn: number): RuntimeEventBase {
+    return {
+      id: crypto.randomUUID(),
+      ts: Date.now(),
+      turn,
+      identity: {
+        runId: this.sessionId,
+        agentId: this.sessionId,
+        role: this.config.memberId ? 'council' : 'lead',
+        mode: this.config.memberId ? 'council' : 'kraken',
+        model: this.config.model,
+        provider: this.config.provider,
+      },
+    };
+  }
+
+  /**
+   * Frontier PHASE 1: observer pre-dispatch gate, consulted after the host
+   * resource gate on EVERY registry dispatch (native + text paths).
+   * `deny_tool` blocks the call with a model-visible reason; `stop` is a
+   * cooperative cancel (agent_end reason 'cancelled'); `inject` appends a
+   * user/system message at the next safe boundary (the in-flight provider
+   * request is never mutated). `retry`/`replace` are not yet honored at
+   * this hook and fall through as continue.
+   */
+  private async checkObserverToolGate(
+    toolCallId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+  ): Promise<{ allowed: boolean; reason?: string }> {
+    const bus = this.observerBus;
+    if (!bus) return { allowed: true };
+    const result = await bus.emitResolved('onToolCall', {
+      ...this.observerEventBase(this.observerTurn),
+      toolCallId,
+      toolName,
+      args,
+    });
+    if (result.action === 'deny_tool') {
+      return { allowed: false, reason: result.reason };
+    }
+    if (result.action === 'stop') {
+      this.cancel();
+      return { allowed: false, reason: result.reason };
+    }
+    if (result.action === 'inject') {
+      // Safe boundary: appended to the transcript so the NEXT provider
+      // request sees it — the in-flight request is never mutated.
+      this.config.messages.push({
+        role: result.message.role === 'system' ? 'system' : 'user',
+        content: result.message.content,
+      });
+      return { allowed: true };
+    }
+    return { allowed: true };
+  }
+
   private async executePendingTools(
     pending: ReadonlyArray<{
       toolCallId: string;
@@ -536,6 +635,20 @@ export class AgentHarness {
           content:
             `[resource-gate] ${gate.reason ?? 'denied by resource policy'} ` +
             `Prioritize verification/repair actions (test, typecheck, build, read failures) or finalize honestly.`,
+          isError: true,
+          durationMs: 0,
+        };
+      }
+
+      // Frontier PHASE 1: observer gate (deny_tool / cooperative stop).
+      const observerGate = await this.checkObserverToolGate(
+        p.toolCallId,
+        p.toolName,
+        p.args,
+      );
+      if (!observerGate.allowed) {
+        return {
+          content: `[observers] ${observerGate.reason ?? 'denied by observer policy'}`,
           isError: true,
           durationMs: 0,
         };
@@ -744,6 +857,17 @@ export class AgentHarness {
       recoveries: 0,
     };
     const memoryWarning = await this.prepareMemoryContext();
+
+    // Frontier PHASE 1: observer runtime (opt-in). A stop at run start is a
+    // cooperative cancel — the turn still drains so events pair up cleanly.
+    this.observerTurn = 0;
+    if (this.observerBus) {
+      const start = await this.observerBus.emitResolved(
+        'onRunStart',
+        this.observerEventBase(0),
+      );
+      if (start.action === 'stop') this.cancel();
+    }
 
     // Emit agent_start
     const startEvent: BrainAgentStartEvent = createBrainEvent('agent_start', this.sessionId, {
@@ -1049,6 +1173,27 @@ export class AgentHarness {
     }) as BrainContextMetricsEvent;
     this.emit(growthEvent);
     yield growthEvent;
+
+    // Frontier PHASE 1: observer run-end notifications. Interventions here
+    // are advisory only (the run is already over) and never throw.
+    if (this.observerBus) {
+      const endReason: 'completed' | 'cancelled' | 'error' =
+        hadError ? 'error' : this.cancelled ? 'cancelled' : 'completed';
+      try {
+        if (endReason === 'cancelled') {
+          await this.observerBus.emitResolved('onCancelled', {
+            ...this.observerEventBase(this.observerTurn),
+            reason: 'cancelled',
+          });
+        }
+        await this.observerBus.emitResolved('onRunEnd', {
+          ...this.observerEventBase(this.observerTurn),
+          reason: endReason,
+        });
+      } catch {
+        // Observers must never break the run-end path.
+      }
+    }
 
     // Emit agent_end
     const agentEnd: BrainAgentEndEvent = createBrainEvent('agent_end', this.sessionId, {
@@ -1461,6 +1606,26 @@ export class AgentHarness {
                 executedAny = true;
                 continue;
               }
+              // Frontier PHASE 1: observer gate (text-format path).
+              const observerGate = await this.checkObserverToolGate(
+                toolCallId,
+                tt.name,
+                tt.args,
+              );
+              if (!observerGate.allowed) {
+                const denied = `[observers] ${observerGate.reason ?? 'denied by observer policy'}`;
+                const denyEv = createBrainEvent('tool_execution_end', this.sessionId, {
+                  toolCallId,
+                  result: denied,
+                  isError: true,
+                  durationMs: 0,
+                });
+                this.emit(denyEv);
+                yield denyEv;
+                turnToolResults.push({ toolCallId, content: denied });
+                executedAny = true;
+                continue;
+              }
               let resultStr = '';
               let isError = false;
               const startMs = Date.now();
@@ -1560,6 +1725,29 @@ export class AgentHarness {
           // needs a preceding assistant message that declared the matching
           // tool_calls. reasoningContent must be kept when tool_calls are
           // present (DeepSeek thinking mode).
+          // Frontier PHASE 2: safe turn boundary (spec §21). Steering
+          // injects land at turn finish — before the turn is sealed and
+          // always before the next provider call; the in-flight request
+          // is never mutated. Also advances the observer turn counter.
+          if (this.observerBus) {
+            this.observerTurn += 1;
+            try {
+              const turnEnd = await this.observerBus.emitResolved(
+                'onTurnEnd',
+                this.observerEventBase(this.observerTurn),
+              );
+              if (turnEnd.action === 'inject') {
+                this.config.messages.push({
+                  role: turnEnd.message.role === 'system' ? 'system' : 'user',
+                  content: turnEnd.message.content,
+                });
+              } else if (turnEnd.action === 'stop') {
+                this.cancel();
+              }
+            } catch {
+              // Observers must never break the turn boundary.
+            }
+          }
           if (turnToolCalls.length > 0 || turnText.length > 0 || turnReasoning.length > 0) {
             this.config.messages.push({
               role: 'assistant',

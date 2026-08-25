@@ -35,6 +35,7 @@ export * from './session/index.js';
 
 // Runtime execution seams + versioned profiles (ADR-0022)
 export * from './runtime/index.js';
+export * from './context/index.js';
 
 // Deterministic verification + completion policy + optional verifier (ADR-0023)
 export * from './verification/index.js';

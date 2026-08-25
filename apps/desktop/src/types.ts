@@ -279,6 +279,49 @@ export type AgentEvent =
     }
   | { type: "error"; message?: string; error?: string }
   | { type: "log"; message?: string }
+  | { type: "protocol_info"; version?: number; capabilities?: string[] }
+  | { type: "control_accepted"; controlId?: string; controlType?: string }
+  | { type: "control_applied"; controlId?: string; controlType?: string; boundary?: string }
+  | { type: "control_rejected"; controlId?: string; reason?: string }
+  | {
+      type: "agent_spawned";
+      runId?: string;
+      agentId?: string;
+      parentAgentId?: string;
+      role?: string;
+      model?: string;
+      provider?: string;
+      title?: string;
+      scope?: string[];
+      graphNodeId?: string;
+      worktree?: string;
+      ts?: number;
+    }
+  | {
+      type: "agent_status";
+      agentId?: string;
+      status?: string;
+      message?: string;
+      ts?: number;
+    }
+  | {
+      type: "agent_tool";
+      agentId?: string;
+      toolCallId?: string;
+      tool?: string;
+      status?: string;
+      summary?: string;
+      durationMs?: number;
+      ts?: number;
+    }
+  | {
+      type: "agent_ended";
+      agentId?: string;
+      reason?: string;
+      durationMs?: number;
+      tokenUsage?: { input?: number; output?: number };
+      ts?: number;
+    }
   | { type: string; [key: string]: unknown };
 
 export interface GitFileChange {

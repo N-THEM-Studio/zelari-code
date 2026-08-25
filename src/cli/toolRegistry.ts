@@ -28,6 +28,7 @@ import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPat
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
 import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
+import type { BrainEvent } from '@zelari/core/shared/events';
 import { createTaskTool, type TaskAgentKind, type TaskToolDeps } from './tools/taskTool.js';
 import { createKrakenSelectTool } from './tools/krakenSelectTool.js';
 import { createAskUserTool, type AskUserHandler } from './tools/askUser.js';
@@ -120,6 +121,8 @@ export interface CreateRegistryOptions {
    * omitting `task` entirely from the plan registry.
    */
   planExploreTask?: boolean;
+  /** Sink for tentacle activity events (Frontier plan §37); forwarded to the `task` tool. */
+  onTentacleEvent?: (ev: BrainEvent) => void;
   /**
    * Fase 4 (ADR-0020): register `kraken_select` on the PARENT Kraken
    * registry. Callers set it only for kraken runs with the alpha
@@ -511,6 +514,7 @@ export function createBuiltinToolRegistry(
         ...(options.memoryAutoWrite !== undefined
           ? { memoryAutoWrite: options.memoryAutoWrite }
           : {}),
+        ...(options.onTentacleEvent ? { onTentacleEvent: options.onTentacleEvent } : {}),
       },
       options.planMode === true ? { allowedAgents: ['explore'] } : undefined,
     );
