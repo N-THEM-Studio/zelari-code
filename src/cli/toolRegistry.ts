@@ -57,11 +57,19 @@ import { getKrakenVerifierOverride } from './providerConfig.js';
 import type { ProviderName } from './keyStore.js';
 import {
   defaultPermissionPolicy,
+  intersectPermissionPolicy,
   resolveToolPermission,
   type PermissionAskHandler,
   type PermissionPolicy,
 } from './safety/toolPermissions.js';
 import { createDefaultLifecycleHooks } from './safety/lifecycleHooks.js';
+import {
+  agentRulesFor,
+  loadPolicySet,
+  matchAgentPolicyRule,
+  mergeRuleEffect,
+  type PolicyRuleSet,
+} from './safety/policyEngine.js';
 import { withResultCache } from './toolResultCache.js';
 import type { LifecycleHookRunner } from '@zelari/core/harness';
 import type {
@@ -164,6 +172,17 @@ export interface CreateRegistryOptions {
    * is ask (and not auto), the tool is denied with a clear message.
    */
   onPermissionAsk?: PermissionAskHandler;
+  /**
+   * P0.5 policy engine: the agent identity this registry runs as — 'lead'
+   * (the default when omitted) for the main registry, or the sub-agent kind
+   * ('explore' | 'general' | 'verify') for tentacle registries. Selects the
+   * per-agent rule lists from `.zelari/policy.json` (project) and
+   * `~/.zelari/policy.json` (global); a missing/broken file or
+   * ZELARI_POLICY=0 yields no rules. createKrakenSubAgentContextFactory
+   * passes the tentacle's kind here — that is how per-AGENT rules reach
+   * sub-agents without threading identity through ToolContext.
+   */
+  policyAgent?: string;
   /**
    * Sub-agent tool profile:
    * - full: default parent registry
@@ -285,8 +304,14 @@ export function createBuiltinToolRegistry(
   const allowBash = (allowMutators || verifyMode) && !gauntletParent;
 
   const permPolicy = options.permissionPolicy ?? defaultPermissionPolicy();
+// P0.5 policy engine v1: per-command/per-path rules for THIS agent identity.
+// Loaded once per registry build; empty when absent/invalid/disabled (ZELARI_POLICY=0).
+const agentPolicyRules: PolicyRuleSet = agentRulesFor(
+  loadPolicySet(root),
+  options.policyAgent ?? 'lead',
+);
   const withPerm = <I, O>(t: ToolDefinition<I, O>) =>
-    wrapWithPermissions(t, permPolicy, options.onPermissionAsk);
+    wrapWithPermissions(t, permPolicy, options.onPermissionAsk, agentPolicyRules, root);
 
   // Observe tools — always registered.
   registry.register(withPerm(safeReadFile));
@@ -507,6 +532,10 @@ export function createBuiltinToolRegistry(
           root,
           audit,
           sessionId,
+          // P0.4 capability inheritance: tentacles intersect THIS
+          // registry's own policy (permPolicy above) — they can never
+          // exceed it.
+          parentPolicy: permPolicy,
           ...(options.subAgentProvider ? { provider: options.subAgentProvider } : {}),
           ...(options.subAgentModel ? { model: options.subAgentModel } : {}),
         }),
@@ -695,8 +724,18 @@ export function createKrakenSubAgentContextFactory(opts: {
    */
   provider?: string;
   model?: string;
+  /**
+   * P0.4 capability inheritance: the PARENT agent's permission policy.
+   * The sub-agent registry is built with intersectPermissionPolicy(
+   * parentPolicy, subProfilePolicy) — deny > ask > allow per category — so
+   * a tentacle can NEVER hold more permission than its parent. Callers
+   * that have a policy in scope (the parent registry builder, headless
+   * runs) pass it here; when omitted the all-allow/auto default is used,
+   * which makes the intersection a no-op rather than an escalation.
+   */
+  parentPolicy?: PermissionPolicy;
 }): TaskToolDeps['createSubAgentContext'] {
-  const { root, audit, sessionId, provider: providerOverride, model: modelOverride } = opts;
+  const { root, audit, sessionId, provider: providerOverride, model: modelOverride, parentPolicy } = opts;
   return async ({ agent, cwd: subCwd }) => {
     const cfg = providerOverride
       ? await providerConfigFor(providerOverride as ProviderName)
@@ -724,6 +763,21 @@ export function createKrakenSubAgentContextFactory(opts: {
     const subCfg = { ...effCfg, model };
     const subProfile = taskAgentToProfile(agent);
     const subRoot = subCwd || root;
+    // P0.4 capability inheritance: a tentacle NEVER holds more permission
+    // than its parent. The sub-profile policy this factory builds is
+    // headless-style auto-allow (a tentacle has no interactive prompt to
+    // ask at); the effective policy is its intersection with the parent
+    // policy — deny > ask > allow per category, `auto` is the AND of both.
+    // If the intersection downgrades a category to `ask`, resolution must
+    // FAIL CLOSED: the sub-agent context has no interactive ask handler, and
+    // `wrapWithPermissions` already returns typedErr for `ask` without
+    // `onPermissionAsk`, so that guarantee is reused as-is here (no extra
+    // handling needed).
+    const agentPolicyForSubProfile = defaultPermissionPolicy({ auto: true });
+    const effectiveSubPolicy = intersectPermissionPolicy(
+      parentPolicy ?? agentPolicyForSubProfile,
+      agentPolicyForSubProfile,
+    );
     const { registry: subRegistry } = createBuiltinToolRegistry({
       root: subRoot,
       audit,
@@ -733,7 +787,9 @@ export function createKrakenSubAgentContextFactory(opts: {
       enableSkill: agent === 'general',
       diagnostics: false,
       lspProvider: null,
-      permissionPolicy: defaultPermissionPolicy({ auto: true }),
+      permissionPolicy: effectiveSubPolicy,
+      // P0.5: the tentacle's agent identity drives per-agent policy rules.
+      policyAgent: agent,
     });
     return {
       providerStream: buildProviderStream(subCfg),
@@ -758,6 +814,8 @@ function wrapWithPermissions<I, O>(
   original: ToolDefinition<I, O>,
   policy: PermissionPolicy,
   onAsk?: PermissionAskHandler,
+  agentRules?: PolicyRuleSet,
+  root?: string,
 ): ToolDefinition<I, O> {
   const required = (original.permissions ?? []) as ToolPermission[];
   // Pure read tools under allow policy — no wrap overhead.
@@ -770,13 +828,27 @@ function wrapWithPermissions<I, O>(
     ...original,
     execute: async (input: I, ctx: ToolContext): Promise<TypedResult<O>> => {
       const decision = resolveToolPermission(original.name, required, policy);
-      if (decision.action === 'deny') {
-        return typedErr(`[permission] ${decision.reason}`);
+      // P0.5: merge this agent's per-command/per-path rule — deny > ask > allow;
+      // a rule can only ADD restriction, never remove it (mergeRuleEffect).
+      const rule = agentRules
+        ? matchAgentPolicyRule(
+            agentRules,
+            required,
+            (input ?? {}) as Record<string, unknown>,
+            root ?? process.cwd(),
+          )
+        : null;
+      const action = mergeRuleEffect(decision.action, rule);
+      const rulePrefix = rule
+        ? `[policy] rule '${rule.match}'${rule.reason ? ` — ${rule.reason}` : ''}`
+        : '';
+      if (action === 'deny') {
+        return typedErr(`[permission] ${rulePrefix || decision.reason}`);
       }
-      if (decision.action === 'ask') {
+      if (action === 'ask') {
         if (!onAsk) {
           return typedErr(
-            `[permission] ${decision.reason} No interactive approval available ` +
+            `[permission] ${rulePrefix ? `${rulePrefix} ` : ''}${decision.reason} No interactive approval available ` +
               `(set ZELARI_AUTO=1 to auto-allow, or configure onPermissionAsk).`,
           );
         }

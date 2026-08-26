@@ -104,6 +104,50 @@ export function defaultPermissionPolicy(
 }
 
 /**
+ * Restrictiveness lattice for {@link PermissionAction}: deny > ask > allow
+ * (most restrictive wins).
+ */
+const ACTION_RANK: Record<PermissionAction, number> = { allow: 0, ask: 1, deny: 2 };
+
+function moreRestrictive(a: PermissionAction, b: PermissionAction): PermissionAction {
+  return ACTION_RANK[a] >= ACTION_RANK[b] ? a : b;
+}
+
+/**
+ * Capability inheritance (P0.4): a Kraken tentacle (sub-agent spawned via
+ * the `task` tool) must NEVER hold more permission than its parent. The
+ * sub-agent's effective policy is the intersection of the parent's policy
+ * and the sub-agent profile's own policy, merged per category with the most
+ * restrictive action winning (deny > ask > allow). A category restricted in
+ * only ONE of the two policies keeps that restriction.
+ *
+ * `auto` (ask resolves as allow without UI) intersects as the AND of both:
+ * silently auto-allowing a category the parent would have had to ask about
+ * would itself be an escalation.
+ *
+ * If the intersection downgrades a category to `ask` while the sub-agent
+ * context has no interactive ask handler, resolution must FAIL CLOSED
+ * (deny). That behavior already lives in `wrapWithPermissions`
+ * (toolRegistry.ts): `ask` without `onPermissionAsk` returns a typedErr, so
+ * the escalation path stays closed with no extra handling here.
+ *
+ * Pure function, no I/O.
+ */
+export function intersectPermissionPolicy(
+  parent: PermissionPolicy,
+  child: PermissionPolicy,
+): PermissionPolicy {
+  return {
+    read: moreRestrictive(parent.read, child.read),
+    write: moreRestrictive(parent.write, child.write),
+    execute: moreRestrictive(parent.execute, child.execute),
+    network: moreRestrictive(parent.network, child.network),
+    ui: moreRestrictive(parent.ui, child.ui),
+    auto: parent.auto && child.auto,
+  };
+}
+
+/**
  * Resolve effective action for a tool given its required permission tags.
  * Empty permissions → allow. Most restrictive action wins: deny > ask > allow.
  * Session grants promote ask → allow for the rest of the process.
