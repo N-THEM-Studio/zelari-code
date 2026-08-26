@@ -5,6 +5,14 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.1] - 2026-08-26
+
+### Fixed
+- **Kraken Graph Planner model precedence** — ZELARI_KRAKEN_PLANNER_MODEL now wins over the lead model forwarded by headless/Graph callers. New shared resolveKrakenPlannerModel() used by both planner.ts and scriptPlanner.ts; until 2.11.0 the Settings value was silently ignored because runHeadless always forwarded the lead model as opts.model.
+
+### Added
+- **Kraken Delegation Policy** — new ZELARI_KRAKEN_DELEGATION=automatic|prefer|aggressive|lead-only prompt playbook injected into Kraken/Zelari lead turns (automatic leaves the prompt unchanged). Desktop Settings → Kraken gains a Delegation policy select wired through RunTaskArgs → Tauri env ZELARI_KRAKEN_DELEGATION.
+
 ## [2.11.0] - 2026-08-25
 
 Frontier Runtime Upgrade: one shared runtime for Kraken, Council and Zelari
