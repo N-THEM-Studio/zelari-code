@@ -25,6 +25,7 @@ import { resolveApiKeyWithMeta, type ProviderName } from '../keyStore.js';
 import { resolveBaseUrl } from '../provider/openai-compatible.js';
 import { getModelForProvider, getProviderConfig } from '../providerConfig.js';
 import { PlannerTransportError, type PlannerLlmClient } from './planner.js';
+import { resolveKrakenPlannerModel } from '../tools/krakenModel.js';
 
 const MAX_PLAN_ATTEMPTS = 2;
 
@@ -277,11 +278,11 @@ async function createScriptPlannerLlmClient(opts: {
   if (!baseUrl) {
     throw new Error(`No base URL for provider '${active}'. Set a custom endpoint in Settings.`);
   }
-  const model =
+  const parent =
     opts.model?.trim() ||
-    process.env.ZELARI_KRAKEN_PLANNER_MODEL?.trim() ||
     getModelForProvider(active) ||
     'grok-4.5';
+  const model = resolveKrakenPlannerModel(parent);
   // We just need the `complete` function. The metadata is unused past this
   // point; the planner only needs to call the LLM.
   return {

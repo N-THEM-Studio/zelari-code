@@ -6,7 +6,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
-import { resolveKrakenSubModel } from '../../src/cli/tools/krakenModel.js';
+import {
+  resolveKrakenPlannerModel,
+  resolveKrakenSubModel,
+} from '../../src/cli/tools/krakenModel.js';
 import {
   appendKrakenRadio,
   readKrakenRadio,
@@ -86,6 +89,20 @@ describe('resolveKrakenSubModel (K5)', () => {
     expect(resolveKrakenSubModel('explore', 'grok-4', env)).toBe('explore-special');
     expect(resolveKrakenSubModel('verify', 'grok-4', env)).toBe('verify-special');
     expect(resolveKrakenSubModel('general', 'grok-4', env)).toBe('general-special');
+  });
+});
+
+describe('resolveKrakenPlannerModel', () => {
+  it('defaults to parent / lead model when env unset', () => {
+    expect(resolveKrakenPlannerModel('grok-4', {})).toBe('grok-4');
+  });
+
+  it('planner env wins over the forwarded lead model', () => {
+    expect(
+      resolveKrakenPlannerModel('grok-4', {
+        ZELARI_KRAKEN_PLANNER_MODEL: 'planner-lite',
+      }),
+    ).toBe('planner-lite');
   });
 });
 

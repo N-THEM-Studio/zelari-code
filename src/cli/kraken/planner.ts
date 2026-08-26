@@ -30,6 +30,7 @@ import { getModelForProvider, getProviderConfig } from '../providerConfig.js';
 import { resolveApiKeyWithMeta, type ProviderName } from '../keyStore.js';
 import { resolveBaseUrl } from '../provider/openai-compatible.js';
 import { buildWorkspaceSummary } from '../workspace/workspaceSummary.js';
+import { resolveKrakenPlannerModel } from '../tools/krakenModel.js';
 
 const MAX_PLAN_ATTEMPTS = 2;
 
@@ -595,18 +596,19 @@ async function resolveLlm(opts: {
   if (!baseUrl) {
     throw new Error(`No base URL for provider '${active}'. Set a custom endpoint in Settings.`);
   }
-  // Precedence mirrors the tentacle model routing in `tools/krakenModel.ts`:
-  // an explicit caller override first (Desktop's picker / --model, see the
-  // provider-anchoring fix in 734766f), then the planner-specific env, then
-  // the persisted default. Planning is one structured completion with no tool
-  // use, so pointing it at a cheap non-reasoning model is usually the right
-  // call even when the main model is a slow reasoner.
-  const model =
+  // Precedence matches tentacle routing (`resolveKrakenPlannerModel`):
+  // planner-specific env first (Desktop Settings → ZELARI_KRAKEN_PLANNER_MODEL),
+  // then the forwarded lead/--model, then the persisted default. Callers such
+  // as runHeadless always pass the lead model as opts.model, so env must win
+  // or the Settings picker is a no-op. Planning is one structured completion
+  // with no tool use — a cheap non-reasoning model is usually right even when
+  // the lead is a slow reasoner.
+  const parent =
     opts.model?.trim() ||
-    process.env.ZELARI_KRAKEN_PLANNER_MODEL?.trim() ||
     getModelForProvider(active) ||
     process.env.ZELARI_MODEL ||
     '';
+  const model = resolveKrakenPlannerModel(parent);
   if (!model) {
     throw new Error(`No model selected for provider '${active}'`);
   }

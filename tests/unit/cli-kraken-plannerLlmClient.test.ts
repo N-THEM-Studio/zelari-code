@@ -300,9 +300,19 @@ describe('planTaskGraph — planner model selection', () => {
     expect(body.model).toBe('deepseek-v4-lite');
   });
 
-  it("lets an explicit caller override win over the planner env", async () => {
-    process.env.ZELARI_KRAKEN_PLANNER_MODEL = 'deepseek-v4-lite';
+  it('prefers ZELARI_KRAKEN_PLANNER_MODEL over an explicit caller model',
+    async () => {
+      process.env.ZELARI_KRAKEN_PLANNER_MODEL = 'deepseek-v4-lite';
 
+      // runHeadless always forwards the lead/--model as opts.model.
+      await planTaskGraph({ prompt: 'goal', model: 'deepseek-v4-pro' });
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+      expect(body.model).toBe('deepseek-v4-lite');
+    },
+  );
+
+  it('uses an explicit caller model when the planner env is unset', async () => {
     await planTaskGraph({ prompt: 'goal', model: 'deepseek-v4-pro' });
 
     const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);

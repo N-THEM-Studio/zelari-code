@@ -7,6 +7,10 @@
  *   3. Auto-pick cheap model from discovered list (explore/verify) when enabled
  *   4. Parent model
  *
+ * Graph planner (resolveKrakenPlannerModel) is the same shape:
+ *   1. ZELARI_KRAKEN_PLANNER_MODEL
+ *   2. Parent / lead model (opts.model, --model, persisted default)
+ *
  * Auto-pick (no manual env required for cheap tentacles):
  *   - Default ON for explore/verify when no explicit model env is set
  *   - Disable with ZELARI_KRAKEN_AUTO_MODEL=0
@@ -110,6 +114,21 @@ export function resolveKrakenSubModel(
   }
 
   return parentModel;
+}
+
+/**
+ * Graph planner model. Desktop Settings maps the planner picker to
+ * `ZELARI_KRAKEN_PLANNER_MODEL`; `runHeadless` always forwards the lead
+ * `--model` as `opts.model`. The env override must therefore win — same
+ * contract as tentacle kind-specific env before parent.
+ */
+export function resolveKrakenPlannerModel(
+  parentModel: string,
+  env: NodeJS.ProcessEnv = process.env,
+): string {
+  const specific = env.ZELARI_KRAKEN_PLANNER_MODEL?.trim();
+  if (specific) return specific;
+  return parentModel.trim();
 }
 
 /**
