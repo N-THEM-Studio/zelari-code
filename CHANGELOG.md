@@ -5,6 +5,14 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.11.2] - 2026-08-26
+
+### Added
+
+- **Kraken cross-provider model routing** — qualified refs `provider/model` (e.g. `glm/glm-4.7-air`) in `ZELARI_KRAKEN_EXPLORE_MODEL` / `ZELARI_KRAKEN_GENERAL_MODEL` / `ZELARI_KRAKEN_VERIFY_MODEL` / `ZELARI_KRAKEN_PLANNER_MODEL` / `ZELARI_KRAKEN_SUB_MODEL` now route tentacles and the Graph planner to a different provider, resolved with its own credentials and base URL. Unqualified ids keep the previous behavior (lead provider); refs whose prefix matches no configured provider fall back to the raw id. New `parseQualifiedModelRef()` in `krakenModel.ts`; split applied in `toolRegistry.ts` (tentacle stream), `planner.ts` and `scriptPlanner.ts`.
+- **Desktop — cross-provider model selects** — the four Kraken model selects in Settings now render one optgroup per configured provider (active provider keeps unqualified values for backward compatibility), so Explore/General/Verify/Planner can target models of other logged-in providers without changing the lead.
+- **GUIDA** — documented `ZELARI_KRAKEN_DELEGATION`, qualified `provider/model` refs and the planner precedence (env wins over the forwarded lead model) in the Kraken env table plus a new "Routing dei modelli" section.
+
 ## [2.11.1] - 2026-08-26
 
 ### Fixed

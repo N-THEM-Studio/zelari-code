@@ -21,6 +21,16 @@ vi.mock('../../src/cli/provider/openai-compatible.js', () => ({
 
 vi.mock('../../src/cli/tools/krakenModel.js', () => ({
   resolveKrakenSubModel: vi.fn((_agent: string, parentModel: string) => parentModel),
+  // Minimal faithful re-implementation (module is mocked out wholesale).
+  parseQualifiedModelRef: (ref: string) => {
+    const s = ref?.trim() ?? '';
+    const slash = s.indexOf('/');
+    if (slash <= 0 || slash === s.length - 1) return null;
+    const provider = s.slice(0, slash).trim();
+    const model = s.slice(slash + 1).trim();
+    if (!provider || !model) return null;
+    return { provider, model };
+  },
 }));
 
 import { createKrakenSubAgentContextFactory } from '../../src/cli/toolRegistry.js';
