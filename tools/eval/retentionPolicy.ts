@@ -14,6 +14,12 @@ export const HarnessRetentionPolicySchema = z.object({
   maxCostPerSolveIncreasePct: z.number().min(0).optional(),
   /** Max allowed % increase in wall time per verified solve, if configured. */
   maxWallTimeIncreasePct: z.number().min(0).optional(),
+  /**
+   * Minimum share of candidate anchor runs that must end VERIFIED
+   * (t13, plan §P1.2). Fail-closed: an empty candidate set measures
+   * nothing and rejects. Opt-in — presets stay unset.
+   */
+  minVerificationGatePassRate: z.number().min(0).max(1).optional(),
   requireValidityPass: z.literal(true),
 });
 export type HarnessRetentionPolicy = z.infer<typeof HarnessRetentionPolicySchema>;

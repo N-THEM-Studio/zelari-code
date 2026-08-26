@@ -32,6 +32,7 @@ import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, res
 import { buildKrakenRepairPrompt, evaluateKrakenCompletionGate } from './kraken/completionGate.js';
 import { krakenSelectionPlaybook } from './kraken/selectionPlaybook.js';
 import { krakenDelegationPlaybook } from './kraken/delegationPolicy.js';
+import { chooseOrchestration } from './orchestration/policy.js';
 
 import {
   emitEvent,
@@ -58,6 +59,8 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { evaluateStrictBuildGate, strictGateEventPayload, strictGateExitCode } from './kraken/verificationBridge.js';
+
+import { writeCompletionProof } from './kraken/completionProof.js';
 import { nativePackEnabled } from './kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from './kraken/verifierLifecycle.js';
 import { buildModelContext, resourceStatusTail } from './budget/modelContextBuilder.js';
@@ -193,6 +196,20 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       baseUrl: key.baseUrl,
       model,
     });
+  }
+
+  // P1.1 (t12): `--mode auto` resolves ONCE here, before any dispatch check.
+  // Pure classifier (./orchestration/policy.js) - no I/O, no env reads. The
+  // parser pins mode to the ordinary default ('kraken'), so when the flag is
+  // absent this block never runs and behavior is byte-identical. Today both
+  // classified surfaces ride the existing single-harness path; the verdict
+  // line exists for operators and future routing slices.
+  if (opts.orchestrationAuto) {
+    const verdict = chooseOrchestration(opts.task ?? '');
+    const line = `[orchestration] --mode auto -> surface=${verdict.surface} (${verdict.reason})`;
+    if (opts.output === 'json') emitEvent({ type: 'log', message: line });
+    else process.stderr.write(`[zelari-code --headless] ${line}
+`);
   }
 
   const mode = opts.mode ?? (opts.useCouncil ? 'council' : 'kraken');
@@ -379,6 +396,18 @@ async function runHeadlessKrakenGraph(
           root: cwd,
           audit,
           sessionId,
+          // P0.4 capability inheritance: tentacles intersect the headless
+          // parent policy. Headless runs are auto-allow (the same literal
+          // the main headless registry below uses), so this is a no-op
+          // today — wired for correctness if that default ever tightens.
+          parentPolicy: {
+            read: 'allow',
+            write: 'allow',
+            execute: 'allow',
+            network: 'allow',
+            ui: 'allow',
+            auto: true,
+          },
           // Anchor every tentacle to the SAME provider/model this run
           // resolved (Desktop's selector, or --provider/--model), instead
           // of the persisted provider.json default the factory falls back
@@ -486,6 +515,24 @@ async function registerHeadlessMcp(
       process.stderr.write(`[zelari-code --headless] [mcp] registration skipped: ${msg}\n`);
     }
   }
+}
+
+/**
+ * P0.3 (harness-hardening x ADR-0023): persist the strict completion proof
+ * artifact after a gate evaluation — .zelari/completion-proof.{md,json}. The
+ * JSON twin IS the verification.run payload already sent to the spine, so the
+ * disk witness can never disagree with the session log. Best-effort by
+ * contract: a proof write must never fail the parent run.
+ */
+function writeProofSafe(
+  gate: Awaited<ReturnType<typeof evaluateStrictBuildGate>>,
+  meta: { surface?: string; sessionId?: string },
+  baseDir: string = process.cwd(),
+): Promise<void> {
+  return writeCompletionProof(gate, { baseDir, meta }).then(
+    (): void => undefined,
+    (): void => undefined,
+  );
 }
 
 async function runHeadlessSingle(
@@ -923,6 +970,7 @@ async function runHeadlessSingle(
   // run's own provider+model, whose stream is already built).
   const verifierReviewDeps = {
     session: { provider, model },
+    task: effectiveTask,
     loadStream: async (providerId: string, modelId: string) => {
       if (providerId === provider) return providerStream;
       try {
@@ -967,6 +1015,10 @@ async function runHeadlessSingle(
     if (opts.output === 'json') {
       emitEvent({ type: 'verification_run', ...verificationPayload });
     }
+    // P0.3: durable proof-of-work artifact mirroring the verification.run
+    // payload above — the turn's decision must be inspectable from disk.
+    await writeProofSafe(strictGate, { surface: 'kraken', sessionId: spine.sessionId });
+
     if (strictGate.blocked) {
       const repairPrompt = buildKrakenRepairPrompt(gate);
       if (opts.output === 'json') {
@@ -1003,6 +1055,10 @@ async function runHeadlessSingle(
       if (opts.output === 'json') {
         emitEvent({ type: 'verification_run', ...afterPayload });
       }
+      // P0.3: overwrite the artifact — it must reflect the LAST evaluation
+      // of the turn, not the pre-repair one.
+      await writeProofSafe(after, { surface: 'kraken', sessionId: spine.sessionId });
+
       if (!after.blocked) markRepairSucceeded();
       else {
         strictExit = strictGateExitCode(after);
@@ -1763,6 +1819,10 @@ async function runHeadlessZelari(
       if (opts.output === 'json') {
         emitEvent({ type: 'verification_run', ...missionVerificationPayload });
       }
+      // P0.3: mission proof — written in BOTH branches below so the artifact
+      // always records the final mission verdict, blocked or not.
+      await writeProofSafe(missionGate, { surface: 'mission', sessionId: spine.sessionId }, projectRoot);
+
       if (missionGate.blocked) {
         exitCode = strictGateExitCode(missionGate);
         spine.missionPhase('verification', 'mission-strict-blocked');

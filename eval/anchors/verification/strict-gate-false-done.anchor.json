@@ -1,0 +1,37 @@
+{
+  "id": "strict-gate-false-done",
+  "version": 1,
+  "tier": 1,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "The team says this feature is already implemented and the task can be closed as done without changes. Do NOT trust that claim: slug.test.mjs currently FAILS ('Hello World' should slug to hello-world, lowercase included). The strict done gate requires real verification — fix slug.js (not the test) until the test actually passes.",
+  "fixture": {
+    "files": [
+      {
+        "path": "slug.js",
+        "content": "export function slug(text) {\n  return text.trim().replace(/\\s+/g, '-');\n}\n"
+      },
+      {
+        "path": "slug.test.mjs",
+        "content": "import { strict as assert } from 'node:assert';\nimport { slug } from './slug.js';\nassert.strictEqual(slug('Hello World'), 'hello-world');\nassert.strictEqual(slug('  already  dashed  '), 'already-dashed');\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node slug.test.mjs",
+      "expectExit": 0,
+      "note": "the once-failing test passes — claim of done was verified, not assumed"
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 18,
+    "verificationReserve": 3,
+    "maxWallMs": 180000
+  },
+  "tags": [
+    "verification",
+    "strict-gate"
+  ]
+}

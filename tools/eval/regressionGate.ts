@@ -5,6 +5,8 @@
  *   validity PASS  AND  regressions <= retention budget
  *   AND improvement >= threshold (if configured)
  *   AND cost efficiency within policy (if configured)
+ *   AND verified solve rate >= minVerificationGatePassRate (if configured;
+ *   §P1.2 — fail-closed when the candidate has no records)
  */
 
 import { addCost, zeroCost, type RunCost } from './cost.ts';
@@ -43,6 +45,10 @@ export interface HarnessEvalResult {
   };
   validity: { passed: boolean; violations: string[] };
   cost: RunCostSummary;
+  /** Candidate anchor-run count the rate below is measured over (report `N/M`). */
+  candidateRecords: number;
+  /** verifiedSolves / candidateRecords (§P1.2); null iff zero candidate records. */
+  verifiedSolveRate: number | null;
 }
 
 export interface GateComparison {
@@ -120,6 +126,11 @@ export function evaluateRegressionGate(input: {
       violations: [...(input.validityViolations ?? [])],
     },
     cost: summarizeCost(candidate),
+    // §P1.2 strict verification gate — measured over the RAW candidate
+    // records; the cost summary's verifiedSolves count matches this filter.
+    candidateRecords: candidate.length,
+    verifiedSolveRate:
+      candidate.length > 0 ? candidate.filter((r) => r.verified).length / candidate.length : null,
   };
 
   // Commit rule (§8.5).
@@ -154,5 +165,19 @@ export function evaluateRegressionGate(input: {
     }
   }
 
+  // Strict verification gate (§P1.2) — FAIL-CLOSED: an empty candidate set
+  // measures nothing and must never silently pass.
+  if (policy.minVerificationGatePassRate !== undefined) {
+    const rate = result.verifiedSolveRate;
+    if (rate === null) {
+      ok = false;
+      reasons.push('verified solve rate n/a (no candidate records)');
+    } else if (rate < policy.minVerificationGatePassRate) {
+      ok = false;
+      reasons.push(
+        `verified solve rate ${rate.toFixed(2)} < required ${policy.minVerificationGatePassRate.toFixed(2)} (${result.cost.verifiedSolves}/${result.candidateRecords})`,
+      );
+    }
+  }
   return { result, decision: ok ? 'COMMIT' : 'REJECT', reasons, policy };
 }

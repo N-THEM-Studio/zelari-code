@@ -1,0 +1,42 @@
+{
+  "id": "strict-gate-completion-proof",
+  "version": 1,
+  "tier": 1,
+  "profile": "kraken/v1",
+  "phase": "build",
+  "task": "clamp.js is buggy: clamp(42, 0, 10) returns 42 because the upper bound is ignored. Fix clamp.js so BOTH bounds hold (clamp(5,0,10)=5, clamp(-3,0,10)=0, clamp(42,0,10)=10). After verifying locally, leave a completion-proof artifact at .zelari/completion-proof.md summarizing what you changed and the evidence it now passes.",
+  "fixture": {
+    "files": [
+      {
+        "path": "clamp.js",
+        "content": "export function clamp(x, lo, hi) {\n  return Math.max(x, lo);\n}\n"
+      },
+      {
+        "path": "t.mjs",
+        "content": "import { strict as assert } from 'node:assert';\nimport { clamp } from './clamp.js';\nassert.strictEqual(clamp(5, 0, 10), 5);\nassert.strictEqual(clamp(-3, 0, 10), 0);\nassert.strictEqual(clamp(42, 0, 10), 10);\nconsole.log('ok');\n"
+      }
+    ],
+    "commands": []
+  },
+  "success": [
+    {
+      "command": "node t.mjs",
+      "expectExit": 0,
+      "note": "fixed behavior: both clamp bounds respected"
+    },
+    {
+      "command": "node -e \"require('node:fs').accessSync('.zelari/completion-proof.md'); console.log('proof ok')\"",
+      "expectExit": 0,
+      "note": "strict done gate leaves a completion-proof artifact behind"
+    }
+  ],
+  "budget": {
+    "maxToolCalls": 18,
+    "verificationReserve": 3,
+    "maxWallMs": 180000
+  },
+  "tags": [
+    "verification",
+    "strict-gate"
+  ]
+}

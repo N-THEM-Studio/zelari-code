@@ -19,6 +19,19 @@ export function formatGateReport(
     costB !== null && costC !== null
       ? `$${costB.toFixed(2)} → $${costC.toFixed(2)} (${(((costC - costB) / Math.max(costB, 1e-9)) * 100).toFixed(0)}%)`
       : 'n/a';
+  // §P1.2 strict verification gate line — always rendered so operators see
+  // verification coverage; the required threshold is appended when the
+  // retention policy opts into minVerificationGatePassRate.
+  const gateRateLine =
+    result.verifiedSolveRate === null
+      ? 'Verified solve rate: n/a (no candidate records)'
+      : `Verified solve rate: ${result.cost.verifiedSolves}/${result.candidateRecords} (${Math.round(
+          result.verifiedSolveRate * 100,
+        )}%)${
+          comparison.policy.minVerificationGatePassRate !== undefined
+            ? ` (required ≥ ${Math.round(comparison.policy.minVerificationGatePassRate * 100)}%)`
+            : ''
+        }`;
   const lines = [
     `Harness candidate: ${result.manifestHash.slice(0, 8)}`,
     '',
@@ -29,6 +42,7 @@ export function formatGateReport(
     '',
     'Cost / verified solve',
     costLine,
+    gateRateLine,
     '',
     `Retention budget: ${comparison.policy.maxRegressedAnchors}`,
     '',
