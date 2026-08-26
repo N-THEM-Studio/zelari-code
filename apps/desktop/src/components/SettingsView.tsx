@@ -9,6 +9,7 @@ import {
 import type { CliStatus, DesktopConfig, DispatchMode, WorkPhase } from "../types";
 import {
   EXECUTION_PROFILES,
+  type DelegationPolicy,
   type DesktopPrefs,
   type ExecutionProfile,
 } from "../desktopPrefs";
@@ -229,6 +230,8 @@ export function SettingsView({
   const [krakenPlannerModel, setKrakenPlannerModel] = useState(
     prefs.krakenPlannerModel,
   );
+  const [krakenDelegation, setKrakenDelegation] =
+    useState<DelegationPolicy>(prefs.krakenDelegation);
   const [verifierMode, setVerifierMode] = useState<"inherit" | "custom">("inherit");
   const [verifierProvider, setVerifierProvider] = useState("");
   const [verifierModel, setVerifierModel] = useState("");
@@ -258,6 +261,7 @@ export function SettingsView({
     setKrakenGeneralModel(prefs.krakenGeneralModel);
     setKrakenVerifyModel(prefs.krakenVerifyModel);
     setKrakenPlannerModel(prefs.krakenPlannerModel);
+    setKrakenDelegation(prefs.krakenDelegation);
   }, [prefs]);
 
   useEffect(() => {
@@ -320,6 +324,7 @@ export function SettingsView({
           krakenGeneralModel,
           krakenVerifyModel,
           krakenPlannerModel,
+          krakenDelegation,
         },
       });
       setMessage("Saved provider, model & chat defaults.");
@@ -1159,6 +1164,29 @@ export function SettingsView({
                   inheritLabel="Inherit / Kraken lead"
                   onChange={setKrakenPlannerModel}
                 />
+                <div className="field">
+                  <span className="field-label-row">
+                    <span>Delegation policy</span>
+                    <SettingHelp id="tooltip-kraken-delegation" label="Delegation policy">
+                      Controls when the Kraken lead spawns tentacles instead of doing
+                      the work itself. Automatic keeps the CLI default behaviour.
+                      Prefer tentacles nudges the lead to delegate exploration,
+                      implementation and verification. Aggressive makes the lead an
+                      orchestrator. Lead only disables unsolicited tentacles.
+                    </SettingHelp>
+                  </span>
+                  <select
+                    value={krakenDelegation}
+                    onChange={(e) =>
+                      setKrakenDelegation(e.target.value as DelegationPolicy)
+                    }
+                  >
+                    <option value="automatic">Automatic (CLI default)</option>
+                    <option value="prefer">Prefer tentacles</option>
+                    <option value="aggressive">Aggressive</option>
+                    <option value="lead-only">Lead only</option>
+                  </select>
+                </div>
                 <div className="field">
                   <span className="field-label-row">
                     <span>Advisory verifier</span>

@@ -25,6 +25,8 @@ import { resetTaskSpawnCount } from "../tools/taskTool.js";
 import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from "../kraken/candidateRegistry.js";
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from "../kraken/metrics.js";
 import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
+import { krakenDelegationPlaybook } from "../kraken/delegationPolicy.js";
+
 import { buildKrakenRepairPrompt } from "../kraken/completionGate.js";
 import { evaluateStrictBuildGate, strictGateEventPayload, type StrictGateOptions } from "../kraken/verificationBridge.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
@@ -706,6 +708,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 KRAKEN_IDENTITY_MODULE,
                 KRAKEN_LEAD_PLAYBOOK_MODULE,
                 ...krakenSelectionPlaybook(true),
+                ...krakenDelegationPlaybook(true),
+
                 languageModule,
               ],
               agentSkillConfigs: [],

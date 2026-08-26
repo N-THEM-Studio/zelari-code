@@ -26,6 +26,7 @@ import { resolveAgentMissionToolBudget } from './buildPolicy.js';
 import { envNumber } from './utils/envNumber.js';
 import type { SliceRunResult } from './zelariMission.js';
 import { calculateCost } from './modelPricing.js';
+import { krakenDelegationPlaybook } from './kraken/delegationPolicy.js';
 
 const MUTATING = new Set(['write_file', 'edit_file', 'apply_diff']);
 
@@ -205,6 +206,8 @@ export async function runAgentMissionSlice(
           customPromptModules: [
             KRAKEN_IDENTITY_MODULE,
             KRAKEN_LEAD_PLAYBOOK_MODULE,
+            ...krakenDelegationPlaybook(true),
+
             {
               type: 'language-policy',
               title: 'Response Language',

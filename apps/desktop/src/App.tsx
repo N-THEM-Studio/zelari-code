@@ -2076,6 +2076,8 @@ export default function App() {
         krakenGeneralModel: prefs.krakenGeneralModel || undefined,
         krakenVerifyModel: prefs.krakenVerifyModel || undefined,
         krakenPlannerModel: prefs.krakenPlannerModel || undefined,
+        krakenDelegation:
+          prefs.krakenDelegation !== "automatic" ? prefs.krakenDelegation : undefined,
       });
       runCoordinator.started({
         runId,

@@ -2378,6 +2378,9 @@ struct RunTaskArgs {
     /// Kraken Graph planner model override. Empty / None = inherit.
     #[serde(default)]
     kraken_planner_model: Option<String>,
+    /// Kraken delegation policy (automatic|prefer|aggressive|lead-only). None / "automatic" = CLI default.
+    #[serde(default)]
+    kraken_delegation: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -2577,6 +2580,7 @@ fn run_task(
     let kraken_general_model = args.kraken_general_model;
     let kraken_verify_model = args.kraken_verify_model;
     let kraken_planner_model = args.kraken_planner_model;
+    let kraken_delegation = args.kraken_delegation;
 
     let env_ctx = RunEnvelopeCtx {
         run_id: run_id.clone(),
@@ -2614,6 +2618,7 @@ fn run_task(
             kraken_general_model.as_deref(),
             kraken_verify_model.as_deref(),
             kraken_planner_model.as_deref(),
+            kraken_delegation.as_deref(),
         );
 
         let (exit_code, cancelled) = match result {
@@ -2682,6 +2687,7 @@ fn spawn_headless(
     kraken_general_model: Option<&str>,
     kraken_verify_model: Option<&str>,
     kraken_planner_model: Option<&str>,
+    kraken_delegation: Option<&str>,
 ) -> Result<i32, String> {
     let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
     // Control plane (§22): accept ControlEvent NDJSON on stdin. spawn_cli_base
@@ -2790,6 +2796,11 @@ fn spawn_headless(
         &mut cmd,
         "ZELARI_KRAKEN_PLANNER_MODEL",
         kraken_planner_model,
+    );
+    set_optional_model_env(
+        &mut cmd,
+        "ZELARI_KRAKEN_DELEGATION",
+        kraken_delegation,
     );
 
     if let Some(p) = provider {
@@ -3343,6 +3354,7 @@ node "{}" %*"#,
         assert_eq!(args.kraken_general_model, None);
         assert_eq!(args.kraken_verify_model, None);
         assert_eq!(args.kraken_planner_model, None);
+        assert_eq!(args.kraken_delegation, None);
     }
 
     fn env_value(cmd: &Command, key: &str) -> Option<Option<String>> {
@@ -3362,6 +3374,7 @@ node "{}" %*"#,
         set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_GENERAL_MODEL", Some("model-b"));
         set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_VERIFY_MODEL", Some("model-c"));
         set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_PLANNER_MODEL", Some("model-d"));
+        set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_DELEGATION", Some("prefer"));
         assert_eq!(
             env_value(&cmd, "ZELARI_KRAKEN_EXPLORE_MODEL").flatten().as_deref(),
             Some("model-a")
@@ -3378,6 +3391,10 @@ node "{}" %*"#,
             env_value(&cmd, "ZELARI_KRAKEN_PLANNER_MODEL").flatten().as_deref(),
             Some("model-d")
         );
+        assert_eq!(
+            env_value(&cmd, "ZELARI_KRAKEN_DELEGATION").flatten().as_deref(),
+            Some("prefer")
+        );
 
         set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_GENERAL_MODEL", None);
         set_optional_model_env(&mut cmd, "ZELARI_KRAKEN_EXPLORE_MODEL", Some("  "));
@@ -3392,13 +3409,15 @@ node "{}" %*"#,
             "krakenExploreModel": "fast-model",
             "krakenGeneralModel": "coding-model",
             "krakenVerifyModel": "review-model",
-            "krakenPlannerModel": "planner-model"
+            "krakenPlannerModel": "planner-model",
+            "krakenDelegation": "prefer"
         }))
         .unwrap();
         assert_eq!(args.kraken_explore_model.as_deref(), Some("fast-model"));
         assert_eq!(args.kraken_general_model.as_deref(), Some("coding-model"));
         assert_eq!(args.kraken_verify_model.as_deref(), Some("review-model"));
         assert_eq!(args.kraken_planner_model.as_deref(), Some("planner-model"));
+        assert_eq!(args.kraken_delegation.as_deref(), Some("prefer"));
     }
 
     #[test]

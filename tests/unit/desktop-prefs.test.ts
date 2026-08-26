@@ -4,6 +4,7 @@ import {
   DESKTOP_PREFS_KEY,
   isExecutionProfile,
   loadDesktopPrefs,
+  normalizeDelegation,
   normalizeDesktopPrefs,
   normalizeModelOverride,
   saveDesktopPrefs,
@@ -34,6 +35,23 @@ describe("normalizeModelOverride", () => {
     expect(normalizeModelOverride(false)).toBe("");
     expect(normalizeModelOverride(123)).toBe("");
     expect(normalizeModelOverride({})).toBe("");
+  });
+});
+
+describe("normalizeDelegation", () => {
+  it("accepts the four canonical policies and trims/case-folds", () => {
+    expect(normalizeDelegation("automatic")).toBe("automatic");
+    expect(normalizeDelegation("prefer")).toBe("prefer");
+    expect(normalizeDelegation("aggressive")).toBe("aggressive");
+    expect(normalizeDelegation("lead-only")).toBe("lead-only");
+    expect(normalizeDelegation("  Lead-Only ")).toBe("lead-only");
+  });
+
+  it("falls back to automatic for unknown or missing values", () => {
+    expect(normalizeDelegation(undefined)).toBe("automatic");
+    expect(normalizeDelegation("")).toBe("automatic");
+    expect(normalizeDelegation("wat")).toBe("automatic");
+    expect(normalizeDelegation(42)).toBe("automatic");
   });
 });
 
@@ -70,6 +88,7 @@ describe("normalizeDesktopPrefs", () => {
       verifierReview: false,
       bonAlpha: false,
       gauntletLoop: true,
+      krakenDelegation: "automatic",
       krakenExploreModel: "",
       krakenGeneralModel: "",
       krakenVerifyModel: "",
@@ -92,6 +111,7 @@ describe("normalizeDesktopPrefs", () => {
       verifierReview: null,
       bonAlpha: true,
       gauntletLoop: false,
+      krakenDelegation: "automatic",
       krakenExploreModel: "",
       krakenGeneralModel: "",
       krakenVerifyModel: "",
@@ -150,6 +170,7 @@ describe("load/saveDesktopPrefs", () => {
         verifierReview: true,
         bonAlpha: true,
         gauntletLoop: true,
+        krakenDelegation: "prefer",
         krakenExploreModel: "fast-model",
         krakenGeneralModel: "coding-model",
         krakenVerifyModel: "review-model",
@@ -166,6 +187,7 @@ describe("load/saveDesktopPrefs", () => {
       verifierReview: true,
       bonAlpha: true,
       gauntletLoop: true,
+      krakenDelegation: "prefer",
       krakenExploreModel: "fast-model",
       krakenGeneralModel: "coding-model",
       krakenVerifyModel: "review-model",

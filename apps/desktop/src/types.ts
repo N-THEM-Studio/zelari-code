@@ -175,6 +175,8 @@ export interface RunTaskArgs {
   krakenVerifyModel?: string;
   /** Model override for Kraken Graph planning. */
   krakenPlannerModel?: string;
+  /** Kraken delegation policy (automatic|prefer|aggressive|lead-only). Omitted/automatic = CLI default. */
+  krakenDelegation?: string;
 }
 
 /**

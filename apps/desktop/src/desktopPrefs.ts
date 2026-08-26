@@ -41,6 +41,8 @@ export interface DesktopPrefs {
   krakenVerifyModel: string;
   /** Kraken Graph planner model override. Empty = inherit. */
   krakenPlannerModel: string;
+  /** Kraken delegation policy: when the lead spawns tentacles ("automatic" = CLI default). */
+  krakenDelegation: DelegationPolicy;
 }
 
 export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
@@ -55,6 +57,7 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   krakenGeneralModel: "",
   krakenVerifyModel: "",
   krakenPlannerModel: "",
+  krakenDelegation: "automatic",
 };
 
 export function isExecutionProfile(value: unknown): value is ExecutionProfile {
@@ -67,6 +70,23 @@ export function isExecutionProfile(value: unknown): value is ExecutionProfile {
 /** Empty / whitespace = no Desktop override (Inherit). */
 export function normalizeModelOverride(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+export const DELEGATION_POLICIES = [
+  "automatic",
+  "prefer",
+  "aggressive",
+  "lead-only",
+] as const;
+
+export type DelegationPolicy = (typeof DELEGATION_POLICIES)[number];
+
+/** Unknown / missing values fall back to "automatic" (the CLI default). */
+export function normalizeDelegation(value: unknown): DelegationPolicy {
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (DELEGATION_POLICIES as readonly string[]).includes(v)
+    ? (v as DelegationPolicy)
+    : "automatic";
 }
 
 /** Normalize a stored blob; unknown / missing fields fall back to defaults. */
@@ -91,6 +111,7 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
     krakenGeneralModel: normalizeModelOverride(r.krakenGeneralModel),
     krakenVerifyModel: normalizeModelOverride(r.krakenVerifyModel),
     krakenPlannerModel: normalizeModelOverride(r.krakenPlannerModel),
+    krakenDelegation: normalizeDelegation(r.krakenDelegation),
   };
 }
 

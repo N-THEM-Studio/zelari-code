@@ -31,6 +31,8 @@ import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, res
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from './kraken/metrics.js';
 import { buildKrakenRepairPrompt, evaluateKrakenCompletionGate } from './kraken/completionGate.js';
 import { krakenSelectionPlaybook } from './kraken/selectionPlaybook.js';
+import { krakenDelegationPlaybook } from './kraken/delegationPolicy.js';
+
 import {
   emitEvent,
   resolveHeadlessKey,
@@ -681,6 +683,8 @@ async function runHeadlessSingle(
             KRAKEN_IDENTITY_MODULE,
             KRAKEN_LEAD_PLAYBOOK_MODULE,
             ...krakenSelectionPlaybook(opts.mode === 'kraken'),
+            ...krakenDelegationPlaybook(opts.mode === 'kraken'),
+
             {
               type: 'language-policy',
               title: 'Response Language',
