@@ -1467,8 +1467,9 @@ Il mode default **kraken** (ex `agent`) è un lead che spawna sub-agent via tool
 | Env / comando | Effetto |
 |---------------|---------|
 | `ZELARI_KRAKEN_MAX_TASK_SPAWNS` | Cap spawn `task` per turno parent (default 6); reset a ogni messaggio utente |
-| `ZELARI_KRAKEN_SUB_MODEL` | Modello economico per tentacoli explore/verify |
-| `ZELARI_KRAKEN_EXPLORE_MODEL` / `ZELARI_KRAKEN_VERIFY_MODEL` / `ZELARI_KRAKEN_GENERAL_MODEL` | Override per tipo |
+| `ZELARI_KRAKEN_SUB_MODEL` | Modello economico per tentacoli explore/verify. Ammette ref **qualificati** `provider/model` (es. `glm/glm-4.7-air`) per usare un provider diverso da quello del lead |
+| `ZELARI_KRAKEN_EXPLORE_MODEL` / `ZELARI_KRAKEN_VERIFY_MODEL` / `ZELARI_KRAKEN_GENERAL_MODEL` | Override per tipo; ammettono ref **qualificati** `provider/model` per mandare quel tentacolo su un provider diverso da quello del lead |
+| `ZELARI_KRAKEN_DELEGATION` | Policy di delega del lead: `automatic` (default, comportamento invariato) · `prefer` (spinge il lead a usare i tentacoli `task`) · `aggressive` · `lead-only` (il lead lavora da solo). In Desktop: Settings → Kraken → Delegation policy |
 | `ZELARI_KRAKEN_GENERAL_USES_SUB=1` | Fa usare SUB_MODEL anche a general |
 | `ZELARI_KRAKEN_WORKTREE=1` | Isola `task` general in git worktree sotto `.zelari/worktrees/` |
 | `ZELARI_KRAKEN_WORKTREE_KEEP=1` | Non cancella worktree/branch a fine tentacolo (merge manuale) |
@@ -1476,6 +1477,8 @@ Il mode default **kraken** (ex `agent`) è un lead che spawna sub-agent via tool
 | `/kraken [sessionId]` | Mostra radio tentacoli (`.zelari/radio/<session>.jsonl`) |
 
 Dopo un `task` general il risultato include un **verify-hint**: il parent deve verificare (`bash` o `task` verify) prima di dichiarare done.
+
+**Routing dei modelli (2.11):** un tentacolo risolve il proprio modello in quest'ordine: override specifico (`EXPLORE`/`GENERAL`/`VERIFY`) → `SUB_MODEL` → auto-pick → modello del lead. Un ref qualificato `provider/model` sceglie anche il **provider** (credenziali e stream) oltre al modello; se il provider non è configurato il valore passa tale e quale al provider del lead. Il pannello **Kraken Activity** in Desktop mostra il modello effettivamente risolto per ogni tentacolo (`agent_spawned`).
 
 ### Kraken Graph — DAG di tentacoli paralleli
 
@@ -1490,7 +1493,7 @@ task e lo esegue in parallelo dove gli scope sono disgiunti.
 | `ZELARI_KRAKEN_NODE_TIMEOUT_MS` | Wall-clock per nodo, **tutti i tipi** (`0` = nessun limite). Se non impostata il budget dipende dal tipo: 300000 per `explore`/`verify`, 900000 per `general`/`fix` |
 | `ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS` | Wall-clock dei soli nodi che scrivono (`general`/`fix`), default 900000 |
 | `ZELARI_KRAKEN_CANCEL_GRACE_MS` | Attesa perché un tentacolo cancellato si smonti prima di dichiararlo inarrestabile (default 30000). Un nodo che non si ferma **non** viene ri-eseguito: due tentacoli sullo stesso scope corrompono il lavoro |
-| `ZELARI_KRAKEN_PLANNER_MODEL` | Modello usato **solo** per il planning. Il planning è una singola completion strutturata senza tool use: puntarlo a un modello veloce non-reasoning evita i timeout tipici dei reasoning model |
+| `ZELARI_KRAKEN_PLANNER_MODEL` | Modello usato **solo** per il planning; **vince sul modello del lead** e ammette ref qualificati `provider/model`. Il planning è una singola completion strutturata senza tool use: puntarlo a un modello veloce non-reasoning evita i timeout tipici dei reasoning model |
 | `ZELARI_KRAKEN_PLANNER_TIMEOUT_MS` | Wall-clock della richiesta di planning (default 300000; `0` = nessun limite) |
 | `ZELARI_KRAKEN_PLANNER_MAX_TOKENS` | Budget token della risposta del planner (default 8192) |
 
