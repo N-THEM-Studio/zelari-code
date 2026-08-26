@@ -28,7 +28,13 @@ import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
 import { krakenDelegationPlaybook } from "../kraken/delegationPolicy.js";
 
 import { buildKrakenRepairPrompt } from "../kraken/completionGate.js";
-import { evaluateStrictBuildGate, strictGateEventPayload, type StrictGateOptions } from "../kraken/verificationBridge.js";
+import {
+  evaluateStrictBuildGate,
+  strictGateEventPayload,
+  type StrictBuildGateEvaluation,
+  type StrictGateOptions,
+} from "../kraken/verificationBridge.js";
+import { writeCompletionProof } from "../kraken/completionProof.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
@@ -863,6 +869,15 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // F3: forward engine verification events (verification.evidence/run) onto the spine.
               const krakenSpineEmit: NonNullable<StrictGateOptions["emit"]> = (input) =>
                 writerRef.current?.spine?.appendEvent(input) ?? Promise.resolve(null);
+              // P0.3 (harness-hardening x ADR-0023): persist the completion-proof
+              // artifact after every strict gate evaluation — the file always
+              // reflects the LAST evaluation of the turn. Best-effort by
+              // contract: never breaks the turn.
+              const writeProofSafe = (gate: StrictBuildGateEvaluation): Promise<void> =>
+                writeCompletionProof(gate, { meta: { surface: "kraken", sessionId } }).then(
+                  (): void => undefined,
+                  (): void => undefined,
+                );
               if (
                 event.reason === "completed" &&
                 !krakenRepairEnqueued &&
@@ -872,6 +887,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 const strictGate = await evaluateStrictBuildGate("build", { emit: krakenSpineEmit });
                 const krakenGate = strictGate.gate;
                 writerRef.current?.spine?.verificationRun(strictGateEventPayload(strictGate));
+                await writeProofSafe(strictGate);
                 if (krakenGate.blocked) {
                   krakenRepairEnqueued = true; // budget = 1, structural
                   markRepairTriggered();
@@ -885,14 +901,18 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   krakenSuppressFinish = true;
                 }
               }
-              if (
-                event.reason === "completed" &&
-                krakenRepairEnqueued &&
-                !((await evaluateStrictBuildGate("build", { emit: krakenSpineEmit })).blocked)
-              ) {
+              const repairCheck =
+                event.reason === "completed" && krakenRepairEnqueued
+                  ? await evaluateStrictBuildGate("build", { emit: krakenSpineEmit })
+                  : null;
+              // P0.3: the proof artifact must reflect the LAST evaluation of
+              // the turn — refresh it after every gate evaluation here.
+              if (repairCheck) await writeProofSafe(repairCheck);
+              if (repairCheck && !repairCheck.blocked) {
                 markRepairSucceeded(); // repair pass resolved every blocking check
               } else if (event.reason === "completed" && krakenRepairEnqueued) {
                 const still = await evaluateStrictBuildGate("build", { emit: krakenSpineEmit });
+                await writeProofSafe(still);
                 if (still.blocked) {
                   appendSystem(
                     setMessages,
