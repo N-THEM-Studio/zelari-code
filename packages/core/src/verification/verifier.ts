@@ -116,7 +116,8 @@ export interface VerifierServiceDeps {
 
 const VERIFIER_SYSTEM_PROMPT = [
   'You are an independent completion verifier.',
-  'You receive a work summary and deterministic verification results.',
+  'You receive the original task, a git diff summary, a test output excerpt,',
+  'and deterministic verification results — never the builder narration.',
   'Answer with a single JSON object and nothing else:',
   '{"verdict":"confirmed|rejected|unknown","score":0..1,"rationale":"..."}',
   'Rules: never confirm when a required deterministic check failed or is unknown;',
@@ -148,6 +149,12 @@ export class VerifierService {
     summary: string;
     results: readonly VerificationResult[];
     session?: SessionModelInfo;
+    /** Original user task (blind-review context). */
+    task?: string;
+    /** Git diff summary of the work under review. */
+    diffSummary?: string;
+    /** Excerpt of deterministic test/typecheck/build/lint output. */
+    testOutputExcerpt?: string;
   }): Promise<VerifierReview> {
     const effective = this.effectiveModel(request.session);
     const base = { effectiveModel: effective, usedLogprobs: false } as const;
@@ -158,9 +165,17 @@ export class VerifierService {
     try {
       response = await this.deps.callModel({
         system: VERIFIER_SYSTEM_PROMPT,
+        // Blind review payload: evidence only (task, diff summary, test output
+        // excerpt, deterministic results). Builder narration/reasoning is
+        // structurally excluded — undefined keys are omitted.
         user: JSON.stringify(
           {
+            ...(request.task === undefined ? {} : { task: request.task }),
             summary: request.summary,
+            ...(request.diffSummary === undefined ? {} : { diffSummary: request.diffSummary }),
+            ...(request.testOutputExcerpt === undefined
+              ? {}
+              : { testOutputExcerpt: request.testOutputExcerpt }),
             deterministicResults: request.results.map((r) => ({
               criterionId: r.criterionId,
               status: r.status,

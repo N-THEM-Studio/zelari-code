@@ -34,8 +34,11 @@ import {
   type ModelSelection,
   type VerifierModelCaller,
   type VerifierReview,
+  type VerificationResult,
 } from '@zelari/core/verification';
 import { collectProviderText } from '../tools/krakenSelectTool.js';
+import { resolveCrossModelVerifier } from '../tools/krakenModel.js';
+import { getWorkingDiff } from '../gitOps.js';
 import { loadVerifierModelSelection } from './verifierResolution.js';
 import type { StrictBuildGateEvaluation } from './verificationBridge.js';
 
@@ -105,16 +108,114 @@ export interface VerifierReviewDeps {
   emit?: (input: SessionEventInput) => Promise<unknown>;
   /** Verifier call timeout. Default 120s (mirrors the 1.x selection verifier). */
   timeoutMs?: number;
+  /** Original user task text for the blind review (caller-provided). */
+  task?: string;
+  /** Working directory for the git diff; default process.cwd(). */
+  cwd?: string;
+  /**
+   * Injectable diff seam; production default = getWorkingDiff from
+   * ../gitOps.js (staged working-tree diff). Never allowed to throw into
+   * the review path.
+   */
+  getDiff?: (opts: {
+    cwd: string;
+    maxChars: number;
+    staged?: boolean;
+  }) => Promise<{ diff: string; empty: boolean; truncated: boolean }>;
+  /**
+   * P0.6 cross-model family candidates; consulted ONLY in inherit mode via
+   * resolveCrossModelVerifier. Default: unused (session identity kept).
+   */
+  familyCandidates?: { provider: string; model: string }[];
 }
 
 function resolveIdentity(
   selection: ModelSelection,
   session?: VerifierIdentity,
+  familyCandidates?: readonly { provider: string; model: string }[],
+  env: Env = process.env,
 ): VerifierIdentity | null {
   if (selection.mode === 'fixed') {
     return { provider: selection.provider, model: selection.model };
   }
-  return session && session.provider && session.model ? session : null;
+  if (!session || !session.provider || !session.model) return null;
+  // P0.6 cross-model: inherit mode may route to a different provider family
+  // when family candidates were supplied; otherwise keep session identity.
+  if (familyCandidates && familyCandidates.length > 0) {
+    const cross = resolveCrossModelVerifier(session, familyCandidates, env);
+    if (cross) return { provider: cross.provider, model: cross.model };
+  }
+  return session;
+}
+
+/** Criterion ids that look like deterministic test/typecheck/build/lint runs. */
+function isTestEvidenceCriterion(criterionId: string): boolean {
+  const id = criterionId.toLowerCase();
+  return ['test', 'typecheck', 'build', 'lint'].some((k) => id.includes(k));
+}
+
+/**
+ * Blind evidence excerpt: criterionId + status + detail for deterministic
+ * test/typecheck/build/lint criteria, capped at maxChars. Empty when none.
+ */
+export function extractTestOutputExcerpt(
+  results: readonly { criterionId: string; status: string; detail?: string }[],
+  maxChars = 4000,
+): string {
+  const lines: string[] = [];
+  for (const r of results) {
+    if (!isTestEvidenceCriterion(r.criterionId)) continue;
+    lines.push([r.criterionId, r.status, r.detail].filter(Boolean).join(' — '));
+  }
+  if (lines.length === 0) return '';
+  return lines.join('\n').slice(0, maxChars);
+}
+
+export interface BlindReviewInput {
+  task?: string;
+  summary: string;
+  diffSummary?: string;
+  testOutputExcerpt?: string;
+  results: readonly VerificationResult[];
+}
+
+/**
+ * Build the BLIND review input for VerifierService.reviewCompletion:
+ * original task, synthetic deterministic-evidence summary, staged git diff
+ * summary, and a capped test-output excerpt. Never reads session messages,
+ * builder reasoning, or assistant text — the verifier sees evidence only.
+ * Every extra input degrades independently (empty/failing diff → omitted).
+ */
+export async function buildBlindReviewInput(
+  evaluation: StrictBuildGateEvaluation,
+  deps: VerifierReviewDeps,
+): Promise<BlindReviewInput> {
+  const results = evaluation.results ?? [];
+  const passed = results.filter((r) => r.status === 'pass').length;
+  const verdict = evaluation.evaluation?.verdict ?? 'UNKNOWN';
+  const summary =
+    `Kraken BUILD turn — deterministic evidence: ${passed}/${results.length} ` +
+    `criteria pass, completion verdict ${verdict}.`;
+  const task = deps.task?.trim();
+  const testOutputExcerpt = extractTestOutputExcerpt(results);
+  let diffSummary: string | undefined;
+  try {
+    const res = await (deps.getDiff ?? getWorkingDiff)({
+      cwd: deps.cwd ?? process.cwd(),
+      maxChars: 8000,
+      staged: true,
+    });
+    if (res && !res.empty && res.diff) diffSummary = res.diff;
+  } catch {
+    // degrade-and-continue: the blind review proceeds without the diff
+  }
+  return {
+    ...(task ? { task } : {}),
+    summary,
+    ...(diffSummary !== undefined ? { diffSummary } : {}),
+    ...(testOutputExcerpt ? { testOutputExcerpt } : {}),
+    results,
+  };
 }
 
 /**
@@ -131,7 +232,7 @@ export async function runAdvisoryVerifierReview(
   const env = deps.env ?? process.env;
   const selection = deps.selection ?? loadVerifierModelSelection();
   if (!verifierReviewEnabled(selection, env)) return null;
-  const identity = resolveIdentity(selection, deps.session);
+  const identity = resolveIdentity(selection, deps.session, deps.familyCandidates, env);
   let callModel = deps.callModel;
   if (!callModel) {
     if (!identity || !deps.loadStream) return null;
@@ -148,13 +249,9 @@ export async function runAdvisoryVerifierReview(
     emit: deps.emit,
     env,
   });
-  const passed = evaluation.results.filter((r) => r.status === 'pass').length;
-  const summary =
-    `Kraken BUILD turn — deterministic evidence: ${passed}/${evaluation.results.length} ` +
-    `criteria pass, completion verdict ${evaluation.evaluation.verdict}.`;
+  const blind = await buildBlindReviewInput(evaluation, deps);
   const review = await service.reviewCompletion({
-    summary,
-    results: evaluation.results,
+    ...blind,
     session: deps.session,
   });
   evaluation.review = review;

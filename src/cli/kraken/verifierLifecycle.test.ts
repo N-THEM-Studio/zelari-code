@@ -14,8 +14,12 @@
  *    throws into the parent turn.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import type { VerifierModelCaller } from '@zelari/core/verification';
-import { runAdvisoryVerifierReview, verifierReviewEnabled } from './verifierLifecycle.js';
+import type { VerifierModelCaller, VerificationResult } from '@zelari/core/verification';
+import {
+  extractTestOutputExcerpt,
+  runAdvisoryVerifierReview,
+  verifierReviewEnabled,
+} from './verifierLifecycle.js';
 import {
   evaluateStrictBuildGate,
   strictGateEventPayload,
@@ -67,7 +71,7 @@ function selectWithChecks(checks: string[]): void {
 async function evaluatedGate(status: 'pass' | 'fail', emit?: (input: unknown) => Promise<{ seq: number }>): Promise<StrictBuildGateEvaluation> {
   selectWithChecks([CHECK]);
   setKrakenCheckResults([{ check: CHECK, status, note: 'vitest 58/58' }]);
-  return evaluateStrictBuildGate('build', { env: {}, ...(emit ? { emit: emit as never } : {}) });
+  return evaluateStrictBuildGate('build', { env: { ZELARI_VERIFY_PACK: '0' }, ...(emit ? { emit: emit as never } : {}) });
 }
 
 function stubCaller(text: string): VerifierModelCaller {
@@ -78,11 +82,13 @@ let envPrev: string | undefined;
 beforeEach(() => {
   envPrev = process.env.ZELARI_STRICT_DONE;
   process.env.ZELARI_STRICT_DONE = '1';
+  process.env.ZELARI_VERIFY_PACK = '0'; // P0.2 default ON - keep these suites hermetic
   resetKrakenCandidates();
 });
 afterEach(() => {
   if (envPrev === undefined) delete process.env.ZELARI_STRICT_DONE;
   else process.env.ZELARI_STRICT_DONE = envPrev;
+  delete process.env.ZELARI_VERIFY_PACK;
   resetKrakenCandidates();
 });
 
@@ -202,5 +208,151 @@ describe('runAdvisoryVerifierReview', () => {
       callModel: stubCaller('{"verdict":"confirmed"}'),
     });
     expect(review).toBeNull();
+  });
+});
+
+describe('blind review input (P0.6)', () => {
+  function spyCaller(text: string): {
+    caller: VerifierModelCaller;
+    calls: { system: string; user: string }[];
+  } {
+    const calls: { system: string; user: string }[] = [];
+    const caller: VerifierModelCaller = async (input) => {
+      calls.push(input);
+      return { text, provider: 'grok', model: 'verifier-x' };
+    };
+    return { caller, calls };
+  }
+
+  function typecheckResult(): VerificationResult {
+    return {
+      criterionId: 'typecheck',
+      status: 'pass',
+      source: 'deterministic-engine',
+      evidence: [{ tier: 'command-output', ref: 'tsc --noEmit', capturedAt: 0, digest: 'd'.repeat(64) }],
+      evaluatedAt: 0,
+      durationMs: 5,
+      detail: 'exit 0',
+    };
+  }
+
+  it('callModel spy: user JSON carries task + diffSummary + testOutputExcerpt, never narration', async () => {
+    const gate = await evaluatedGate('pass', emitSeq());
+    gate.results = [...(gate.results ?? []), typecheckResult()];
+    const { caller, calls } = spyCaller('{"verdict":"confirmed","score":0.9}');
+    await runAdvisoryVerifierReview(gate, {
+      env: {},
+      selection: { mode: 'fixed', provider: 'grok', model: 'verifier-x' },
+      callModel: caller,
+      task: '   make the flaky check deterministic   ',
+      getDiff: async () => ({
+        diff: 'diff --git a/x.ts b/x.ts\n+export const x = 1;',
+        empty: false,
+        truncated: false,
+      }),
+    });
+    expect(calls).toHaveLength(1);
+    const payload = JSON.parse(calls[0]?.user ?? '{}') as Record<string, unknown>;
+    expect(payload.task).toBe('make the flaky check deterministic');
+    expect(String(payload.diffSummary)).toContain('diff --git');
+    expect(String(payload.testOutputExcerpt)).toContain('typecheck');
+    expect(String(payload.testOutputExcerpt)).toContain('exit 0');
+    // Blind payload keys are exactly the allowed evidence set.
+    expect(Object.keys(payload).sort()).toEqual([
+      'deterministicResults',
+      'diffSummary',
+      'summary',
+      'task',
+      'testOutputExcerpt',
+    ]);
+    for (const banned of ['reasoning', 'narration', 'builder', 'thoughts', 'assistant']) {
+      expect(
+        Object.keys(payload).some((k) => k.toLowerCase().includes(banned)),
+      ).toBe(false);
+    }
+  });
+
+  it('getDiff failure degrades: the review still runs without diffSummary', async () => {
+    const gate = await evaluatedGate('pass', emitSeq());
+    const { caller, calls } = spyCaller('{"verdict":"confirmed"}');
+    const review = await runAdvisoryVerifierReview(gate, {
+      env: {},
+      selection: { mode: 'fixed', provider: 'grok', model: 'verifier-x' },
+      callModel: caller,
+      getDiff: async () => {
+        throw new Error('git exploded');
+      },
+    });
+    expect(review?.verdict).toBe('confirmed');
+    const payload = JSON.parse(calls[0]?.user ?? '{}') as Record<string, unknown>;
+    expect('diffSummary' in payload).toBe(false);
+  });
+
+  it('extractTestOutputExcerpt filters to test/typecheck/build/lint criteria and caps', () => {
+    const excerpt = extractTestOutputExcerpt([
+      { criterionId: 'check-1-selection-contract', status: 'pass', detail: 'ignored' },
+      { criterionId: 'Typecheck', status: 'fail', detail: 'TS2304' },
+      { criterionId: 'unit-tests', status: 'pass', detail: '58/58' },
+    ]);
+    expect(excerpt).toContain('Typecheck');
+    expect(excerpt).toContain('unit-tests');
+    expect(excerpt).not.toContain('selection-contract');
+    expect(extractTestOutputExcerpt([])).toBe('');
+    const big = extractTestOutputExcerpt(
+      [{ criterionId: 'build', status: 'pass', detail: 'x'.repeat(1000) }],
+      50,
+    );
+    expect(big.length).toBe(50);
+  });
+
+  it('inherit + familyCandidates routes the verifier identity to a different family', async () => {
+    const gate = await evaluatedGate('pass', emitSeq());
+    const loaded: string[] = [];
+    const review = await runAdvisoryVerifierReview(gate, {
+      env: { ZELARI_VERIFIER_REVIEW: 'true' },
+      selection: { mode: 'inherit' },
+      session: { provider: 'openai', model: 'gpt-5' },
+      familyCandidates: [
+        { provider: 'openai', model: 'gpt-5-mini' },
+        { provider: 'grok', model: 'grok-4' },
+      ],
+      loadStream: async (provider, model) => {
+        loaded.push(`${provider}/${model}`);
+        return null;
+      },
+    });
+    expect(loaded).toEqual(['grok/grok-4']); // first different-family candidate wins
+    expect(review?.fallback).toBe('discrete'); // null stream degrades, never throws
+  });
+
+  it('inherit without familyCandidates keeps the session identity verbatim', async () => {
+    const gate = await evaluatedGate('pass', emitSeq());
+    const loaded: string[] = [];
+    await runAdvisoryVerifierReview(gate, {
+      env: { ZELARI_VERIFIER_REVIEW: 'true' },
+      selection: { mode: 'inherit' },
+      session: { provider: 'openai', model: 'gpt-5' },
+      loadStream: async (provider, model) => {
+        loaded.push(`${provider}/${model}`);
+        return null;
+      },
+    });
+    expect(loaded).toEqual(['openai/gpt-5']);
+  });
+
+  it('ZELARI_KRAKEN_CROSS_MODEL=0 keeps the session identity even with candidates', async () => {
+    const gate = await evaluatedGate('pass', emitSeq());
+    const loaded: string[] = [];
+    await runAdvisoryVerifierReview(gate, {
+      env: { ZELARI_VERIFIER_REVIEW: 'true', ZELARI_KRAKEN_CROSS_MODEL: '0' },
+      selection: { mode: 'inherit' },
+      session: { provider: 'openai', model: 'gpt-5' },
+      familyCandidates: [{ provider: 'anthropic', model: 'claude-sonnet-4' }],
+      loadStream: async (provider, model) => {
+        loaded.push(`${provider}/${model}`);
+        return null;
+      },
+    });
+    expect(loaded).toEqual(['openai/gpt-5']);
   });
 });

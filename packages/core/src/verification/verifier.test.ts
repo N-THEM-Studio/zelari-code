@@ -175,3 +175,60 @@ describe('VerifierService ranking / BoN / progress', () => {
     expect(blended.label).not.toContain('%');
   });
 });
+
+describe('VerifierService blind review input (P0.6)', () => {
+  function capturingService(response: VerifierModelResponse): {
+    s: VerifierService;
+    calls: { system: string; user: string }[];
+  } {
+    const calls: { system: string; user: string }[] = [];
+    const s = new VerifierService({
+      callModel: async (input) => {
+        calls.push(input);
+        return response;
+      },
+      config: { ...DEFAULT_VERIFIER_CONFIG, enabled: true },
+      env: {},
+    });
+    return { s, calls };
+  }
+
+  it('includes task/diffSummary/testOutputExcerpt in the user payload when provided', async () => {
+    const { s, calls } = capturingService({ text: '{"verdict":"confirmed"}' });
+    await s.reviewCompletion({
+      summary: 'done',
+      results: [result('tests', 'pass')],
+      task: 'add dark mode',
+      diffSummary: ' M src/app.ts',
+      testOutputExcerpt: 'tests: 12/12 pass',
+    });
+    expect(calls).toHaveLength(1);
+    const payload = JSON.parse(calls[0]?.user ?? '{}') as Record<string, unknown>;
+    expect(payload.task).toBe('add dark mode');
+    expect(payload.diffSummary).toBe(' M src/app.ts');
+    expect(payload.testOutputExcerpt).toBe('tests: 12/12 pass');
+    expect(payload.summary).toBe('done');
+    expect(payload.deterministicResults).toEqual([{ criterionId: 'tests', status: 'pass' }]);
+  });
+
+  it('never leaks builder narration: user payload keys stay within the allowed set', async () => {
+    const { s, calls } = capturingService({ text: '{"verdict":"unknown"}' });
+    // Even if a caller tries to sneak builder reasoning into the request,
+    // only the allowed blind-evidence keys are ever serialized.
+    const sneaky = {
+      summary: 'done',
+      results: [],
+      reasoning: 'I thought hard about it',
+      builderExplanation: 'trust me',
+      thoughts: 'chain of thought',
+      assistantMessage: 'all done!',
+    } as unknown as Parameters<VerifierService['reviewCompletion']>[0];
+    await s.reviewCompletion(sneaky);
+    expect(calls).toHaveLength(1);
+    const keys = Object.keys(JSON.parse(calls[0]?.user ?? '{}')).sort();
+    expect(keys).toEqual(['deterministicResults', 'summary']);
+    for (const banned of ['reasoning', 'narration', 'builder', 'thoughts', 'assistant']) {
+      expect(keys.some((k) => k.toLowerCase().includes(banned))).toBe(false);
+    }
+  });
+});

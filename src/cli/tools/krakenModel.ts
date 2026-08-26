@@ -25,6 +25,13 @@ export interface ResolveKrakenModelOpts {
   provider?: string;
   /** Explicit candidate model ids (tests / async loader). */
   candidates?: string[];
+  /**
+   * P0.6: cross-provider family candidates for the verify tentacle.
+   * When supplied (and no kind-specific/shared env wins), a candidate from a
+   * different provider family than the parent is preferred and returned as a
+   * QUALIFIED ref ("provider/model").
+   */
+  familyCandidates?: { provider: string; model: string }[];
 }
 
 /** Heuristic: model ids that look cheaper / faster than flagship. */
@@ -98,6 +105,74 @@ export function parseQualifiedModelRef(ref: string): QualifiedModelRef | null {
   return { provider, model };
 }
 
+/**
+ * P0.6 cross-model verification: coarse provider-family inference so the
+ * verify tentacle can be routed to a DIFFERENT provider family than the
+ * builder (independent blind check). Unknown providers keep their normalized
+ * id as the family bucket ("other" when empty).
+ */
+export function inferModelFamily(provider: string, model?: string): string {
+  const p = (provider ?? '').trim().toLowerCase();
+  const m = (model ?? '').trim().toLowerCase();
+  const hay = `${p} ${m}`.trim();
+  if (!hay) return 'other';
+  if (/\b(zhipu|glm)\b/.test(hay)) return 'zhipu';
+  if (/\b(google|gemini)\b/.test(hay)) return 'google';
+  if (/\b(xai|grok)\b/.test(hay)) return 'xai';
+  if (/\b(anthropic|claude)\b/.test(hay)) return 'anthropic';
+  if (
+    /\b(openai|chatgpt|codex)\b/.test(hay) ||
+    /\bgpt\b/.test(hay) ||
+    /(^|\s)o[134]($|[-_.])/.test(hay)
+  ) {
+    return 'openai';
+  }
+  return p || 'other';
+}
+
+/** First candidate from a different provider family than the builder. */
+export function pickDifferentFamily(
+  builder: { provider: string; model?: string },
+  candidates: readonly { provider: string; model: string }[],
+): { provider: string; model: string } | null {
+  const builderFamily = inferModelFamily(builder.provider, builder.model);
+  for (const c of candidates) {
+    const provider = c.provider?.trim() ?? '';
+    const model = c.model?.trim() ?? '';
+    if (!provider || !model) continue;
+    if (inferModelFamily(provider, model) !== builderFamily) {
+      return { provider, model };
+    }
+  }
+  // Same-family fallback is allowed — never force a worse pick.
+  return null;
+}
+
+/**
+ * Verify-model resolution across families (P0.6):
+ *   1. ZELARI_KRAKEN_VERIFY_MODEL explicit override wins (qualified refs are
+ *      returned parsed; unqualified ids inherit the builder's provider);
+ *   2. otherwise the first candidate from a different provider family;
+ *   3. ZELARI_KRAKEN_CROSS_MODEL=0|false|off opts out entirely (null keeps
+ *      the inherit/same-family behavior).
+ */
+export function resolveCrossModelVerifier(
+  builder: { provider: string; model?: string },
+  candidates: readonly { provider: string; model: string }[],
+  env: NodeJS.ProcessEnv = process.env,
+): { provider: string; model: string } | null {
+  const cross = (env.ZELARI_KRAKEN_CROSS_MODEL ?? '').trim().toLowerCase();
+  if (cross === '0' || cross === 'false' || cross === 'off') return null;
+  const specific = env.ZELARI_KRAKEN_VERIFY_MODEL?.trim();
+  if (specific) {
+    const qualified = parseQualifiedModelRef(specific);
+    if (qualified) return qualified;
+    const provider = builder.provider?.trim();
+    return provider ? { provider, model: specific } : null;
+  }
+  return pickDifferentFamily(builder, candidates);
+}
+
 /** Resolve model id for a tentacle given the parent/active model. */
 export function resolveKrakenSubModel(
   agent: TaskAgentKind,
@@ -122,6 +197,22 @@ export function resolveKrakenSubModel(
       return parentModel;
     }
     return shared;
+  }
+
+  // P0.6 cross-model verification: with family candidates supplied, prefer a
+  // different provider family for the verify tentacle (explicit env already
+  // won above). Returns a QUALIFIED ref so toolRegistry's parseQualifiedModelRef
+  // path can split provider/model with graceful fallback.
+  if (
+    agent === 'verify' &&
+    opts.familyCandidates &&
+    opts.familyCandidates.length > 0
+  ) {
+    const picked = pickDifferentFamily(
+      { provider: opts.provider ?? '', model: parentModel },
+      opts.familyCandidates,
+    );
+    if (picked) return `${picked.provider}/${picked.model}`;
   }
 
   // Auto-pick cheap model for explore/verify (not general — keep strong writer).
