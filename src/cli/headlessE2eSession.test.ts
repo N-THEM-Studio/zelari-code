@@ -62,8 +62,8 @@ beforeEach(() => {
   process.env.ZELARI_SESSIONS_DIR = sessionsDir;
   // Never let a developer-machine environment leak into the product path.
   delete process.env.ZELARI_LOCAL_CLI;
-  delete process.env.ZELARI_STRICT_DONE;
-  delete process.env.ZELARI_VERIFY_PACK;
+  process.env.ZELARI_STRICT_DONE = '0'; // P0.1 default ON — keep e2e hermetic
+  process.env.ZELARI_VERIFY_PACK = '0'; // P0.2 default ON — keep e2e hermetic
   delete process.env.ZELARI_PERM_SOCKET;
 });
 

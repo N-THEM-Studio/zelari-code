@@ -18,9 +18,10 @@
  * permanently-unknown blocker on repos without that script). Optional
  * advisory criteria are kept — they surface as `unknown` without gating.
  *
- * Env surface (all optional, alpha flags documented in GUIDA):
- *   ZELARI_VERIFY_PACK=1|on|true     enable the native pack (alpha: opt-in,
- *                                     default off — mirrors ZELARI_STRICT_DONE)
+ * Env surface (all optional, flags documented in GUIDA):
+ *   ZELARI_VERIFY_PACK=0|off|false   disable the native pack (ON by default
+ *                                     since P0.2; repo-adaptive binding keeps
+ *                                     repos without npm scripts unaffected)
  *   ZELARI_VERIFY_TYPECHECK_CMD      override typecheck command ('' disables)
  *   ZELARI_VERIFY_TEST_CMD           override test command ('' disables)
  *   ZELARI_VERIFY_BUILD_CMD          override build command ('' disables)
@@ -46,10 +47,15 @@ export interface NativePackCommands {
   buildCommand: string | null;
 }
 
-/** Opt-in during the alpha: the native pack runs only when explicitly enabled. */
+/**
+ * ON by default since harness-hardening P0.2 — the native criteria pack joins
+ * every strict evaluation unless explicitly disabled. Explicit opt-out:
+ * `ZELARI_VERIFY_PACK=0|off|false`.
+ */
 export function nativePackEnabled(env: Env = process.env): boolean {
   const v = env.ZELARI_VERIFY_PACK?.toLowerCase();
-  return v === '1' || v === 'on' || v === 'true';
+  if (v === '0' || v === 'off' || v === 'false') return false;
+  return true;
 }
 
 /**

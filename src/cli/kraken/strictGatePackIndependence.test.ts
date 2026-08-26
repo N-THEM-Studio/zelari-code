@@ -58,7 +58,7 @@ beforeEach(() => {
   // T6 proof precondition: strict-done OFF (the 1.x/2.0 default) — the pack
   // must still drive the gate on its own.
   strictPrev = process.env.ZELARI_STRICT_DONE;
-  delete process.env.ZELARI_STRICT_DONE;
+  process.env.ZELARI_STRICT_DONE = '0'; // P0.1 default ON — this suite locks pack independence with strict off
   resetKrakenCandidates();
 });
 afterEach(() => {
@@ -110,9 +110,9 @@ describe('evaluateStrictBuildGate — pack without selection', () => {
     expect(evaluation.summary).toBe('open (native pack bound no command)');
   });
 
-  it('default (no pack, no selection) stays exactly the 2.0 early-return', async () => {
+  it('pack opt-out + no selection stays exactly the 2.0 early-return', async () => {
     const evaluation = await evaluateStrictBuildGate('build', {
-      env: {},
+      env: { ZELARI_VERIFY_PACK: '0' },
       shell: stubShell({}),
     });
     expect(evaluation.strict).toBe(false);

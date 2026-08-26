@@ -1114,7 +1114,7 @@ Tier deterministiche (event-backed): `tool-output`, `command-output`, `fs-observ
 
 ### Criteria pack v1
 
-Con `ZELARI_VERIFY_PACK=1` il criteria pack v1 esegue per davvero i check di progetto — typecheck, test, build — usando gli script npm reali del repo, e fonde i risultati nello stesso gate. Dalla 2.1 il pack è un gate **indipendente**: non richiede `--strict-done` né la Kraken Selection — basta il flag, anche su un turno kraken "semplice":
+Dalla P0.2 il criteria pack v1 è attivo **di default** ed esegue per davvero i check di progetto — typecheck, test, build — usando gli script npm reali del repo (auto-unbind quando lo script manca), e fonde i risultati nello stesso gate; `ZELARI_VERIFY_PACK=0` lo disattiva. Dalla 2.1 il pack è un gate **indipendente**: non richiede `--strict-done` né la Kraken Selection — basta il flag, anche su un turno kraken "semplice":
 
 ```bash
 zelari-code --headless --task "ship F3" --strict-done   # kraken, opt-in
@@ -1127,7 +1127,7 @@ ZELARI_VERIFY_PACK=1 zelari-code --headless --task "ship"   # pack standalone: s
 
 | Superficie | Default | Flag |
 |---|---|---|
-| Kraken (TUI + headless) | **off** (opt-in, ADR-0026) | `--strict-done` / `ZELARI_STRICT_DONE=1` |
+| Kraken (TUI + headless) | **ON** (P0.1) | opt-out: `ZELARI_STRICT_DONE=0` |
 | Mission `zelari` | **ON** (ADR-0025) | opt-out: `--no-strict-done` / `ZELARI_MISSION_STRICT=0` |
 
 Quando lo strict è attivo, un `pass` conta solo se l'evidenza è **event-backed** (`EvidenceRef.seq` ancorato a un evento `verification.evidence` sulla spine). Una nota del verify tentacle senza emitter di sessione è **BLOCKED** (ADR-0026).
@@ -1349,9 +1349,9 @@ Tutto sotto `~/.tmp/zelari-code/` (salvo override env):
 
 | Variabile | Default | Effetto |
 |---|---|---|
-| `ZELARI_STRICT_DONE` | `0` | `1` = evidence gate strict su kraken/TUI/headless (ADR-0025) |
+| `ZELARI_STRICT_DONE` | `1` | `0` = opt-out del gate strict kraken/TUI/headless (ON di default, P0.1) |
 | `ZELARI_MISSION_STRICT` | `1` | `0` = opt-out del gate strict mission (default ON) |
-| `ZELARI_VERIFY_PACK` | `0` | `1` = criteria pack v1 nativo (typecheck/test/build reali) — gate indipendente: non richiede strict-done né Kraken Selection |
+| `ZELARI_VERIFY_PACK` | `1` | `0` = opt-out del criteria pack v1 nativo (ON di default, P0.2; auto-unbind senza script npm) — gate indipendente: non richiede strict-done né Kraken Selection |
 | `ZELARI_VERIFIER_REVIEW` | `0` | `1` = verifier LLM advisory dopo il gate (headless kraken); `0` forza off anche con modello dedicato |
 | `ZELARI_SESSIONS_DIR` | `<workspace>/.zelari/sessions` | Override della directory della session spine (test/CI) |
 | `ZELARI_EVAL_RESULTS_DIR` | `eval/results` | Override della directory del result store eval — gate di regressione (test/CI) |

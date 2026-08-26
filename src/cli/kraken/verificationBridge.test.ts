@@ -45,12 +45,14 @@ let envPrev: string | undefined;
 
 beforeEach(() => {
   envPrev = process.env.ZELARI_STRICT_DONE;
+  process.env.ZELARI_VERIFY_PACK = '0'; // P0.2 default ON — keep gate tests hermetic
   resetKrakenCandidates();
 });
 
 afterEach(() => {
   if (envPrev === undefined) delete process.env.ZELARI_STRICT_DONE;
   else process.env.ZELARI_STRICT_DONE = envPrev;
+  delete process.env.ZELARI_VERIFY_PACK;
   resetKrakenCandidates();
 });
 
@@ -84,8 +86,8 @@ describe('krakenResultsToContract', () => {
 });
 
 describe('evaluateStrictBuildGate', () => {
-  it('strict off (default): mirrors the legacy gate exactly', async () => {
-    delete process.env.ZELARI_STRICT_DONE;
+  it('strict off (opt-out): mirrors the legacy gate exactly', async () => {
+    process.env.ZELARI_STRICT_DONE = '0';
     expect(strictDoneEnabled()).toBe(false);
     selectWithChecks(CHECKS);
     setKrakenCheckResults([
@@ -193,7 +195,7 @@ describe('strictGateExitCode (E2.2 — blocked strict done closes non-success)',
   });
 
   it('strict off + legacy blocked → 0 (enforcement is strict-only)', async () => {
-    delete process.env.ZELARI_STRICT_DONE;
+    process.env.ZELARI_STRICT_DONE = '0';
     selectWithChecks(CHECKS);
     setKrakenCheckResults([{ check: CHECKS[0], status: 'fail', note: 'red' }]);
     const evaluation = await evaluateStrictBuildGate('build');

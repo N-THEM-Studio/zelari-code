@@ -39,6 +39,14 @@ export interface HeadlessOptions {
    */
   mode: HeadlessMode;
   /**
+   * P1.1 (t12): set when `--mode auto` is passed. runHeadless classifies
+   * the task once at dispatch via chooseOrchestration
+   * (./orchestration/policy.js), logs the chosen surface, then proceeds on the
+   * ordinary default path. Deliberately kept OUT of the HeadlessMode union:
+   * that alias is ChatMode, shared by spine/TUI code outside this slice's scope.
+   */
+  orchestrationAuto?: boolean;
+  /**
    * Work phase (plan = no project writes; build = full tools).
    * @since desktop parity
    */
@@ -94,9 +102,9 @@ export interface HeadlessOptions {
    */
   exportSessionPath?: string;
   /**
-   * Enable the ADR-0023 strict BUILD completion gate for this process
-   * (`ZELARI_STRICT_DONE=1`). Default off for 1.x compat. Missions run
-   * the gate by default (ADR-0025); `ZELARI_MISSION_STRICT=0` opts out.
+   * Strict BUILD completion gate (ADR-0023). ON by default on every
+   * surface since P0.1; opt out with `ZELARI_STRICT_DONE=0` (kraken) or
+   * `ZELARI_MISSION_STRICT=0` (missions).
    * @since 2.0.0-alpha.0
    */
   strictDone?: boolean;
@@ -147,7 +155,7 @@ Options:
   --task <text>              Task prompt (required)
   --task-file <path>         Same as --task but read from a file (avoids Windows argv cap)
   --output json|plain        Output format (default: json)
-  --mode kraken|council|zelari  Dispatch mode (default: kraken; agent=alias)
+  --mode kraken|council|zelari|auto  Dispatch mode (default: kraken; agent=alias; auto=classify the task)
   --council                  Alias for --mode council
   --phase plan|build         Work phase (default: build)
   --provider <id>            Provider override (default: active)
@@ -159,9 +167,9 @@ Options:
                              (default by --mode; recorded in the session spine header)
   --resume <sessionId>       Continue an existing 2.0 spine session (seq continues)
   --export-session <path>    Write zelari-session-export/1 JSON after the run (- = stdout)
-  --strict-done              Enable ADR-0023 evidence gate (ZELARI_STRICT_DONE=1)
-                             Missions run the gate by default (ADR-0025);
-                             opt out with ZELARI_MISSION_STRICT=0 or --no-strict-done
+  --strict-done              Force the ADR-0023 evidence gate ON (ON by default since P0.1)
+                             Opt out with ZELARI_STRICT_DONE=0 (kraken) or
+                             ZELARI_MISSION_STRICT=0 (missions)
   --kraken-graph <goal>      Plan + execute a Kraken task graph instead of --task
                              (mutually exclusive with --task; ZELARI_KRAKEN_GRAPH=0 disables)
   --kraken-graph-file <path> Same as --kraken-graph but read from a file
@@ -206,6 +214,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
   let phase: WorkPhase = 'build';
   let modeExplicit = false;
   let councilFlag = false;
+  let sawModeAuto = false; // P1.1: `--mode auto` seen; resolved at dispatch.
   let provider: string | undefined;
   let model: string | undefined;
   let history: AgentMessage[] | undefined;
@@ -263,11 +272,20 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       councilFlag = true;
     } else if (arg === '--mode') {
       const next = argv[i + 1];
+      // t12/P1.1: `auto` is an opt-in meta-mode - recognized here, resolved
+      // at dispatch (runHeadless) once the full task prompt is known. Mode
+      // itself keeps its historical default so behavior stays identical.
+      if (next !== undefined && next.trim().toLowerCase() === 'auto') {
+        sawModeAuto = true;
+        modeExplicit = true;
+        i++;
+        continue;
+      }
       const parsed = next ? parseMode(next) : null;
       if (!parsed) {
         return {
           options: null,
-          error: `--mode requires 'kraken', 'council', or 'zelari' (agent=alias), got '${next ?? '(missing)'}'`,
+          error: `--mode requires 'kraken', 'council', 'zelari', or 'auto' (agent=alias), got '${next ?? '(missing)'}'`,
         };
       }
       mode = parsed;
@@ -473,6 +491,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       mode,
       phase,
       useCouncil: mode === 'council',
+      ...(sawModeAuto ? { orchestrationAuto: true } : {}),
       provider,
       model,
       ...(history && history.length > 0 ? { history } : {}),

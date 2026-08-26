@@ -3,7 +3,7 @@
  * runs natively in the Kraken strict-build path.
  *
  * Locks the composition contract:
- *  - pack is opt-in (ZELARI_VERIFY_PACK=1), default off during the alpha;
+ *  - pack is ON by default (P0.2); ZELARI_VERIFY_PACK=0|off|false opts out;
  *  - env overrides replace `npm run <script>` binding (hermetic tests);
  *  - required criteria without a bound command are DROPPED, not unknowned;
  *  - a failing pack command forces REPAIR_REQUIRED even when every selection
@@ -88,14 +88,15 @@ afterEach(() => {
   resetKrakenCandidates();
 });
 
-describe('nativePackEnabled (alpha opt-in)', () => {
-  it('is OFF by default and only enabled by explicit flags', () => {
-    expect(nativePackEnabled({})).toBe(false);
+describe('nativePackEnabled (ON by default, P0.2)', () => {
+  it('is ON by default; only 0|off|false opts out', () => {
+    expect(nativePackEnabled({})).toBe(true);
     expect(nativePackEnabled({ ZELARI_VERIFY_PACK: '1' })).toBe(true);
     expect(nativePackEnabled({ ZELARI_VERIFY_PACK: 'on' })).toBe(true);
     expect(nativePackEnabled({ ZELARI_VERIFY_PACK: 'true' })).toBe(true);
     expect(nativePackEnabled({ ZELARI_VERIFY_PACK: '0' })).toBe(false);
-    expect(nativePackEnabled({ ZELARI_VERIFY_PACK: 'yes' })).toBe(false);
+    expect(nativePackEnabled({ ZELARI_VERIFY_PACK: 'off' })).toBe(false);
+    expect(nativePackEnabled({ ZELARI_VERIFY_PACK: 'false' })).toBe(false);
   });
 });
 
@@ -142,7 +143,7 @@ describe('buildNativeCriteria', () => {
 
 describe('evaluateNativePack', () => {
   it('returns null when disabled or when no command is bound', async () => {
-    expect(await evaluateNativePack({ env: {}, shell: stubShell({}) })).toBeNull();
+    expect(await evaluateNativePack({ env: { ZELARI_VERIFY_PACK: '0' }, shell: stubShell({}) })).toBeNull();
     expect(
       await evaluateNativePack({
         env: { ZELARI_VERIFY_PACK: '1' },
@@ -213,10 +214,10 @@ describe('evaluateStrictBuildGate × native pack (F2 lock)', () => {
     expect(results.filter((r) => r.status === 'pass').length).toBeGreaterThanOrEqual(3);
   });
 
-  it('pack disabled (default) → native null and identical legacy-only verdict', async () => {
+  it('pack opt-out (ZELARI_VERIFY_PACK=0) → native null and identical legacy-only verdict', async () => {
     selectWithChecks(CHECKS);
     setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }]);
-    const gate = await evaluateStrictBuildGate('build', { env: {}, emit: emitSeq(), shell: stubShell({}) });
+    const gate = await evaluateStrictBuildGate('build', { env: { ZELARI_VERIFY_PACK: '0' }, emit: emitSeq(), shell: stubShell({}) });
     expect(gate.native).toBeNull();
     expect(gate.evaluation!.verdict).toBe('PASS');
     expect(strictGateEventPayload(gate).engine).toBe('kraken-legacy+completion-policy');

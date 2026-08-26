@@ -40,8 +40,9 @@ import {
 } from '@zelari/core/verification';
 
 /**
- * Strict done gate defaults (ADR-0025): per-surface.
- * - `kraken` (default): opt-in via `ZELARI_STRICT_DONE=1|true`, else off (1.x compat).
+ * Strict done gate defaults: per-surface.
+ * - `kraken` (default): ON by default (harness-hardening P0.1); explicit
+ *   opt-out via `ZELARI_STRICT_DONE=0|false`.
  * - `mission`: ON by default; explicit opt-out via `ZELARI_MISSION_STRICT=0|false`.
  */
 export type StrictDoneSurface = 'kraken' | 'mission';
@@ -52,8 +53,11 @@ export function strictDoneEnabled(surface: StrictDoneSurface = 'kraken'): boolea
     if (v === '0' || v === 'false') return false;
     return true;
   }
+  // P0.1: strict evidence gate is the default on the kraken surface too —
+  // "done means verified" no longer requires an opt-in. `0|false` opts out.
   const v = process.env.ZELARI_STRICT_DONE;
-  return v === '1' || v === 'true';
+  if (v === '0' || v === 'false') return false;
+  return true;
 }
 
 export interface KrakenEvidenceContract {

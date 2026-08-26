@@ -86,12 +86,14 @@ let envPrev: string | undefined;
 beforeEach(() => {
   envPrev = process.env.ZELARI_STRICT_DONE;
   process.env.ZELARI_STRICT_DONE = '1';
+  process.env.ZELARI_VERIFY_PACK = '0'; // P0.2 default ON - keep these suites hermetic
   resetKrakenCandidates();
 });
 
 afterEach(() => {
   if (envPrev === undefined) delete process.env.ZELARI_STRICT_DONE;
   else process.env.ZELARI_STRICT_DONE = envPrev;
+  delete process.env.ZELARI_VERIFY_PACK;
   resetKrakenCandidates();
 });
 

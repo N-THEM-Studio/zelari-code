@@ -1,7 +1,7 @@
 /**
  * ADR-0025 lock tests — strict done defaults per surface.
  *
- * Kraken (default surface): opt-in via ZELARI_STRICT_DONE, else off (1.x compat).
+ * Kraken (default surface): strict gate ON by default (P0.1); ZELARI_STRICT_DONE=0|false opts out.
  * Mission: strict evidence gate ON by default; ZELARI_MISSION_STRICT=0|false
  * is the only opt-out. These defaults are product decisions, not accidents —
  * a regression here changes what "done" means for autonomous missions.
@@ -83,14 +83,15 @@ afterEach(() => {
 });
 
 describe('strictDoneEnabled defaults (ADR-0025)', () => {
-  it('kraken: default OFF, opt-in via ZELARI_STRICT_DONE', async () => {
+  it('kraken: default ON (P0.1), opt-out via ZELARI_STRICT_DONE=0|false', async () => {
     await withEnv(undefined, undefined, () => {
-      expect(strictDoneEnabled()).toBe(false);
-      expect(strictDoneEnabled('kraken')).toBe(false);
+      expect(strictDoneEnabled()).toBe(true);
+      expect(strictDoneEnabled('kraken')).toBe(true);
     });
     await withEnv('1', undefined, () => expect(strictDoneEnabled()).toBe(true));
     await withEnv('true', undefined, () => expect(strictDoneEnabled()).toBe(true));
     await withEnv('0', undefined, () => expect(strictDoneEnabled()).toBe(false));
+    await withEnv('false', undefined, () => expect(strictDoneEnabled()).toBe(false));
   });
 
   it('mission: default ON regardless of ZELARI_STRICT_DONE', async () => {
@@ -112,7 +113,7 @@ describe('evaluateStrictBuildGate surface wiring (ADR-0025)', () => {
     await withEnv(undefined, undefined, async () => {
       selectWithChecks(CHECKS);
       // No check results reported → every required criterion is unknown.
-      const gate = await evaluateStrictBuildGate('build', { surface: 'mission' });
+      const gate = await evaluateStrictBuildGate('build', { surface: 'mission', env: { ZELARI_VERIFY_PACK: '0' } });
       expect(gate.strict).toBe(true);
       expect(gate.blocked).toBe(true);
     });
@@ -122,32 +123,34 @@ describe('evaluateStrictBuildGate surface wiring (ADR-0025)', () => {
     await withEnv(undefined, '0', async () => {
       selectWithChecks(CHECKS);
       setKrakenCheckResults(CHECKS.map((c) => ({ check: c, status: 'pass' as const, note: 'ok (stub)' })));
-      const gate = await evaluateStrictBuildGate('build', { surface: 'mission' });
+      const gate = await evaluateStrictBuildGate('build', { surface: 'mission', env: { ZELARI_VERIFY_PACK: '0' } });
       expect(gate.strict).toBe(false);
       expect(gate.blocked).toBe(false); // legacy gate green + no strict overlay
     });
   });
 
-  it('kraken surface (default) stays opt-in even with checks registered', async () => {
+  it('kraken surface (default) enforces the evidence contract even with checks registered', async () => {
     await withEnv(undefined, undefined, async () => {
       selectWithChecks(CHECKS);
       setKrakenCheckResults(CHECKS.map((c) => ({ check: c, status: 'pass' as const, note: 'ok (stub)' })));
-      const gate = await evaluateStrictBuildGate('build'); // no surface → kraken
-      expect(gate.strict).toBe(false);
-      expect(gate.blocked).toBe(false);
+      // No emit → unanchored evidence → the strict default BLOCKS (false-done guard)
+      const gate = await evaluateStrictBuildGate('build', { env: { ZELARI_VERIFY_PACK: '0' } });
+      expect(gate.strict).toBe(true);
+      expect(gate.blocked).toBe(true);
     });
   });
 
-  it('mission default does not run the native pack without ZELARI_VERIFY_PACK', async () => {
-    // The mission default gates on the selection contract only; the native
-    // criteria pack (real typecheck/test/build commands) stays opt-in so the
-    // default never adds process spawns the user did not ask for.
+  it('pack default (P0.2) runs but auto-unbinds on repos without npm scripts', async () => {
     await withEnv(undefined, undefined, async () => {
       selectWithChecks([CHECKS[0]]);
       setKrakenCheckResults([
         { check: CHECKS[0], status: 'pass', note: 'spine replay ok (stub)' },
       ]);
-      const gate = await evaluateStrictBuildGate('build', { surface: 'mission', emit: emitSeq() });
+      const gate = await evaluateStrictBuildGate('build', {
+        surface: 'mission',
+        emit: emitSeq(),
+        cwd: 'Z:/__no_such_repo__', // no package.json → pack binds nothing
+      });
       expect(gate.strict).toBe(true);
       expect(gate.native).toBeNull();
       expect(gate.blocked).toBe(false); // pass with event-backed note → PASS
