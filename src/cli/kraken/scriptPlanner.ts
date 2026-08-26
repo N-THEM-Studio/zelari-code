@@ -25,7 +25,7 @@ import { resolveApiKeyWithMeta, type ProviderName } from '../keyStore.js';
 import { resolveBaseUrl } from '../provider/openai-compatible.js';
 import { getModelForProvider, getProviderConfig } from '../providerConfig.js';
 import { PlannerTransportError, type PlannerLlmClient } from './planner.js';
-import { resolveKrakenPlannerModel } from '../tools/krakenModel.js';
+import { parseQualifiedModelRef, resolveKrakenPlannerModel } from '../tools/krakenModel.js';
 
 const MAX_PLAN_ATTEMPTS = 2;
 
@@ -269,7 +269,23 @@ async function createScriptPlannerLlmClient(opts: {
   provider?: string;
   model?: string;
 }): Promise<PlannerLlmClient> {
-  const active = (opts.provider?.trim() || getProviderConfig().activeProviderId) as ProviderName;
+  let active = (opts.provider?.trim() || getProviderConfig().activeProviderId) as ProviderName;
+  const parent =
+    opts.model?.trim() ||
+    getModelForProvider(active) ||
+    'grok-4.5';
+  let model = resolveKrakenPlannerModel(parent);
+  // Cross-provider script planner: a provider-qualified ref
+  // ("glm/glm-4.7-air") plans on that provider. Unknown provider (no key /
+  // no base URL) → keep the raw id (previous behavior).
+  const ref = parseQualifiedModelRef(model);
+  if (ref) {
+    const crossKey = await resolveApiKeyWithMeta(ref.provider as ProviderName);
+    if (crossKey?.apiKey && resolveBaseUrl(ref.provider as ProviderName)) {
+      active = ref.provider as ProviderName;
+    }
+    if (active === ref.provider) model = ref.model;
+  }
   const meta = await resolveApiKeyWithMeta(active);
   if (!meta?.apiKey) {
     throw new Error(`No API key for provider '${active}'. Save a key in Settings → Provider.`);
@@ -278,11 +294,6 @@ async function createScriptPlannerLlmClient(opts: {
   if (!baseUrl) {
     throw new Error(`No base URL for provider '${active}'. Set a custom endpoint in Settings.`);
   }
-  const parent =
-    opts.model?.trim() ||
-    getModelForProvider(active) ||
-    'grok-4.5';
-  const model = resolveKrakenPlannerModel(parent);
   // We just need the `complete` function. The metadata is unused past this
   // point; the planner only needs to call the LLM.
   return {

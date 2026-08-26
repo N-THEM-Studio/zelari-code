@@ -79,6 +79,21 @@ describe('planTaskGraph — default LLM transport', () => {
     expect(body.max_tokens).toBeGreaterThanOrEqual(8192);
   });
 
+  it('routes a provider-qualified ZELARI_KRAKEN_PLANNER_MODEL to that provider/model', async () => {
+    process.env.ZELARI_KRAKEN_PLANNER_MODEL = 'glm/glm-4.7-air';
+    fetchMock.mockResolvedValue(
+      jsonResponse({ choices: [{ message: { content: VALID_GRAPH_JSON } }] }),
+    );
+
+    await planTaskGraph({ prompt: 'plan a cross-provider slice' });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+    // Qualified ref: only the model part reaches the request body — the
+    // "glm/" prefix selects the provider and must never leak into the id.
+    expect(body.model).toBe('glm-4.7-air');
+  });
+
   it('respects ZELARI_KRAKEN_PLANNER_MAX_TOKENS when set', async () => {
     process.env.ZELARI_KRAKEN_PLANNER_MAX_TOKENS = '16000';
     fetchMock.mockResolvedValue(

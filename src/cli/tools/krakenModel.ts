@@ -76,6 +76,28 @@ export function isKrakenAutoModelEnabled(env: NodeJS.ProcessEnv = process.env): 
   return true;
 }
 
+export interface QualifiedModelRef {
+  provider: string;
+  model: string;
+}
+
+/**
+ * Parse a provider-qualified model ref ("grok/grok-4", "glm/glm-4.7-air").
+ * Returns null when the id is unqualified (no "/") or malformed (empty
+ * provider or model part). Consumers decide whether the provider actually
+ * exists (credentials/base URL) — on miss they keep the raw id, preserving
+ * the pre-qualification behavior for exotic ids that contain "/".
+ */
+export function parseQualifiedModelRef(ref: string): QualifiedModelRef | null {
+  const s = ref?.trim() ?? '';
+  const slash = s.indexOf('/');
+  if (slash <= 0 || slash === s.length - 1) return null;
+  const provider = s.slice(0, slash).trim();
+  const model = s.slice(slash + 1).trim();
+  if (!provider || !model) return null;
+  return { provider, model };
+}
+
 /** Resolve model id for a tentacle given the parent/active model. */
 export function resolveKrakenSubModel(
   agent: TaskAgentKind,

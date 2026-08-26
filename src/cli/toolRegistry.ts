@@ -702,9 +702,26 @@ export function createKrakenSubAgentContextFactory(opts: {
       ? await providerConfigFor(providerOverride as ProviderName)
       : await providerFromEnv();
     if (!cfg) return null;
-    const { resolveKrakenSubModel } = await import('./tools/krakenModel.js');
-    const model = resolveKrakenSubModel(agent, modelOverride || cfg.model);
-    const subCfg = { ...cfg, model };
+    const { resolveKrakenSubModel, parseQualifiedModelRef } = await import('./tools/krakenModel.js');
+    const resolvedModel = resolveKrakenSubModel(agent, modelOverride || cfg.model);
+    // Cross-provider tentacles (Desktop Settings → ZELARI_KRAKEN_*_MODEL): a
+    // provider-qualified ref ("grok/grok-4") selects both provider and model.
+    // Unknown provider → keep the raw id (previous behavior: sent to the lead
+    // provider unchanged).
+    let effCfg = cfg;
+    let model = resolvedModel;
+    const ref = parseQualifiedModelRef(resolvedModel);
+    if (ref) {
+      const cross =
+        ref.provider === cfg.providerId
+          ? cfg
+          : await providerConfigFor(ref.provider as ProviderName);
+      if (cross) {
+        effCfg = cross;
+        model = ref.model;
+      }
+    }
+    const subCfg = { ...effCfg, model };
     const subProfile = taskAgentToProfile(agent);
     const subRoot = subCwd || root;
     const { registry: subRegistry } = createBuiltinToolRegistry({

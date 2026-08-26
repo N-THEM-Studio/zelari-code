@@ -30,7 +30,7 @@ import { getModelForProvider, getProviderConfig } from '../providerConfig.js';
 import { resolveApiKeyWithMeta, type ProviderName } from '../keyStore.js';
 import { resolveBaseUrl } from '../provider/openai-compatible.js';
 import { buildWorkspaceSummary } from '../workspace/workspaceSummary.js';
-import { resolveKrakenPlannerModel } from '../tools/krakenModel.js';
+import { parseQualifiedModelRef, resolveKrakenPlannerModel } from '../tools/krakenModel.js';
 
 const MAX_PLAN_ATTEMPTS = 2;
 
@@ -587,15 +587,7 @@ async function resolveLlm(opts: {
   provider?: string;
   model?: string;
 }): Promise<{ provider: string; model: string; apiKey: string; baseUrl: string }> {
-  const active = (opts.provider?.trim() || getProviderConfig().activeProviderId) as ProviderName;
-  const meta = await resolveApiKeyWithMeta(active);
-  if (!meta?.apiKey) {
-    throw new Error(`No API key for provider '${active}'. Save a key in Settings → Provider.`);
-  }
-  const baseUrl = resolveBaseUrl(active);
-  if (!baseUrl) {
-    throw new Error(`No base URL for provider '${active}'. Set a custom endpoint in Settings.`);
-  }
+  let active = (opts.provider?.trim() || getProviderConfig().activeProviderId) as ProviderName;
   // Precedence matches tentacle routing (`resolveKrakenPlannerModel`):
   // planner-specific env first (Desktop Settings → ZELARI_KRAKEN_PLANNER_MODEL),
   // then the forwarded lead/--model, then the persisted default. Callers such
@@ -608,7 +600,27 @@ async function resolveLlm(opts: {
     getModelForProvider(active) ||
     process.env.ZELARI_MODEL ||
     '';
-  const model = resolveKrakenPlannerModel(parent);
+  let model = resolveKrakenPlannerModel(parent);
+  // Cross-provider planner (Desktop Settings → ZELARI_KRAKEN_PLANNER_MODEL):
+  // a provider-qualified ref ("glm/glm-4.7-air") plans on that provider.
+  // Unknown provider (no key / no base URL) → keep the raw id (previous
+  // behavior: the id goes to the lead provider unchanged).
+  const ref = parseQualifiedModelRef(model);
+  if (ref) {
+    const crossKey = await resolveApiKeyWithMeta(ref.provider as ProviderName);
+    if (crossKey?.apiKey && resolveBaseUrl(ref.provider as ProviderName)) {
+      active = ref.provider as ProviderName;
+    }
+    if (active === ref.provider) model = ref.model;
+  }
+  const meta = await resolveApiKeyWithMeta(active);
+  if (!meta?.apiKey) {
+    throw new Error(`No API key for provider '${active}'. Save a key in Settings → Provider.`);
+  }
+  const baseUrl = resolveBaseUrl(active);
+  if (!baseUrl) {
+    throw new Error(`No base URL for provider '${active}'. Set a custom endpoint in Settings.`);
+  }
   if (!model) {
     throw new Error(`No model selected for provider '${active}'`);
   }

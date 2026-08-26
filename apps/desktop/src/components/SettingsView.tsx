@@ -284,6 +284,12 @@ export function SettingsView({
   const providers = config?.providers ?? [];
   const active = providers.find((p) => p.id === provider);
   const models = active?.models ?? [];
+  // Cross-provider Kraken picks: every OTHER configured provider is selectable
+  // too; cross picks are stored provider-qualified ("grok/grok-4") and split
+  // by the CLI at tentacle/planner spawn (parseQualifiedModelRef).
+  const crossProviderGroups = providers
+    .filter((p) => p.id !== provider)
+    .map((p) => ({ id: p.id, label: p.id, models: p.models ?? [] }));
 
   useEffect(() => {
     const p = providers.find((x) => x.id === provider);
@@ -1134,6 +1140,8 @@ export function SettingsView({
                   tooltip="Read-oriented Kraken sub-agents used to inspect the repository, locate symbols, understand architecture and gather context. A fast, lower-cost model is usually sufficient because Explore normally does not implement the final code changes."
                   value={krakenExploreModel}
                   models={models}
+                  groups={crossProviderGroups}
+                  activeProviderLabel={provider}
                   inheritLabel="Inherit / Kraken default"
                   onChange={setKrakenExploreModel}
                 />
@@ -1143,6 +1151,8 @@ export function SettingsView({
                   tooltip="Code-writing Kraken sub-agents used for implementation tasks. They may edit files and perform delegated coding work. Prefer a strong coding model when the task is complex or the changes are high impact."
                   value={krakenGeneralModel}
                   models={models}
+                  groups={crossProviderGroups}
+                  activeProviderLabel={provider}
                   inheritLabel="Inherit / Kraken lead"
                   onChange={setKrakenGeneralModel}
                 />
@@ -1152,6 +1162,8 @@ export function SettingsView({
                   tooltip="Kraken sub-agents dedicated to checking completed work. They can review changes, inspect test/build results and look for regressions before the parent agent considers the task complete. This is different from the Advisory verification model."
                   value={krakenVerifyModel}
                   models={models}
+                  groups={crossProviderGroups}
+                  activeProviderLabel={provider}
                   inheritLabel="Inherit / Kraken default"
                   onChange={setKrakenVerifyModel}
                 />
@@ -1161,6 +1173,8 @@ export function SettingsView({
                   tooltip="Model used to plan Kraken Graph tasks as a dependency graph (DAG). It decides how a large goal can be split into nodes and which work can run in parallel. A fast non-reasoning or lower-latency model is often sufficient for this structured planning step."
                   value={krakenPlannerModel}
                   models={models}
+                  groups={crossProviderGroups}
+                  activeProviderLabel={provider}
                   inheritLabel="Inherit / Kraken lead"
                   onChange={setKrakenPlannerModel}
                 />
