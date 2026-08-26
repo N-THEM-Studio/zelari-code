@@ -5,6 +5,27 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.12.0] - 2026-08-26
+
+Harness Hardening: deterministic verification becomes the default.
+"Models propose, harness proves" is now the shipped behavior of every
+Kraken BUILD turn, and the harness keeps proof of it.
+
+### Added
+
+- **Completion Proof** — every turn evaluated by the strict gate writes ".zelari/completion-proof.md" (+ ".json") with gate outcome, criteria evidence, changed files and verifier verdicts; the JSON payload mirrors the session-spine "verification.run" event (no duplicated state). Renderer is deterministic and write failures never break the turn.
+- **Tentacle capability inheritance** — kraken sub-agent registries now intersect the parent permission policy (deny > ask > allow per category, "auto" as AND); a child can never exceed the lead. Fail-closed at the existing enforcement seam.
+- **Policy engine v1** — optional ".zelari/policy.json" (project) and "~/.zelari/policy.json" (global) with per-agent rules ("lead|explore|general|verify"), per-command and per-path glob patterns ("git push*", "src/**"), first-match-wins, effects allow/ask/deny. "ask" degrades to deny without an approval handler; an invalid policy file warns and is ignored, never crashes; opt out with ZELARI_POLICY=0.
+- **Blind verifier v2** — the independent completion reviewer receives the original task, a git diff summary and a test-output excerpt instead of the builder narration (no builder reasoning, no synthetic summary as the only input). Adds cross-family model selection helpers (inferModelFamily, pickDifferentFamily, resolveCrossModelVerifier); the verify tentacle resolves a qualified "provider/model" ref when candidates exist.
+- **Orchestration policy "auto"** — pure chooseOrchestration() tiers (solo -> tentacles -> graph -> council) from task shape; headless "--mode auto" parses and logs the choice, fail-closed to solo. No behavior change without the flag.
+- **Eval gate: verified solve rate** — optional minVerificationGatePassRate retention policy (0-1) rejects a candidate whose verified solve rate is below threshold (fail-closed when not measurable); reports gain a "Verified solve rate" line; two new strict-gate anchors (strict-gate-completion-proof, strict-gate-false-done). Existing presets unchanged.
+
+### Changed
+
+- **Strict done gate ON by default on the Kraken surface** — was opt-in (ZELARI_STRICT_DONE=1); opt-out with ZELARI_STRICT_DONE=0 (or "false"). Unanchored completion claims stay BLOCKED by default.
+- **Criteria pack v1 ON by default** — typecheck/test/build run as deterministic gate criteria, auto-unbinding on repos without the npm scripts (no false blockers); opt-out with ZELARI_VERIFY_PACK=0 (or "off"/"false").
+- Docs: GUIDA and "--strict-done" help text now describe the new defaults and opt-outs.
+
 ## [2.11.2] - 2026-08-26
 
 ### Added
