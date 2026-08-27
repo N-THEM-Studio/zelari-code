@@ -13,6 +13,7 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
       'bash',
       'browser_check',
       'edit_file',
+      'exec_process',
       'fetch_url',
       'find_symbol',
       'grep_content',
@@ -65,8 +66,9 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
     const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
-    // 28 HEAD tools (25 builtins + 3 plan-task) + observe_batch + retrieve_observation.
-    expect(openAITools).toHaveLength(30);
+    // 31 HEAD tools (25 builtins + 3 plan-task + exec_process) + observe_batch
+    // + retrieve_observation.
+    expect(openAITools).toHaveLength(31);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);

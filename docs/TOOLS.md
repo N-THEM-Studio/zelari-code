@@ -11,6 +11,7 @@ Prodotto: [Anathema Studio](https://anathema-studio.com/) · CLI Apache-2.0.
 |------|----------|------|
 | `read_file` / `write_file` / `edit_file` | read/write | sandbox sul project root |
 | `bash` | execute | shell blocklist; Git Bash su Windows |
+| `exec_process` | execute | P0.C2: esecuzione strutturata **senza shell** — spawn diretto di `program`+`args[]`; cwd sandboxed al workspace, timeout, stdin chiuso; ritorna `{exitCode, stdout, stderr, durationMs}` e registra `program+argv+exitCode` nell'audit |
 | `grep_content` | read | regex ricorsiva con include/exclude glob |
 | `list_files` | read | listing ricorsivo con depth |
 | `show_diff` / `apply_diff` | read/write | diff preview + patch |
@@ -24,6 +25,16 @@ Prodotto: [Anathema Studio](https://anathema-studio.com/) · CLI Apache-2.0.
 | `record_world_observation` | write | timeline append-only |
 
 World-model tools: kill switch `ZELARI_SCHEMA_LOOP=0`. Skill: `schema-loop`.
+
+**Sandbox P0.D — symlink-safe:** ogni path arg dei tool filesystem passa dal
+gate centralizzato `resolveSandboxedPath` (`src/cli/safety/sandboxPath.ts`),
+ora a due livelli: normalizzazione testuale (`..`, prefissi) **+ realpath del
+più profondo antenato esistente** rispetto al root reale. Link/junction che
+risolvono fuori dal workspace (inclusi chain `a→b→fuori` e cross-drive su
+Windows) sono rifiutati con `SandboxViolationError`; i link interni restano
+validi e il confronto ignora il case solo su win32/darwin. Risoluzione e
+scrittura sono adiacenti nel wrap del registry («garanzia una volta sola»);
+la ri-verifica anti-TOCTOU è esportata come `verifyContainment()`.
 
 ## Capability avanzate (opt-in)
 
@@ -151,6 +162,91 @@ zelari-code --set-mcp-preset cua
 
 Preferisci `browser_check` (Playwright) per **web**; Cua per **desktop nativo**.  
 Skill: `computer-use-cua` (`/skill computer-use-cua`). Doctor: `zelari-code --doctor` segnala se `cua-driver` manca dal PATH.
+
+## Policy per-comando/per-path (`.zelari/policy.json`)
+
+Il policy engine (P0.A) carica `<root>/.zelari/policy.json` (progetto) e
+`~/.zelari/policy.json` (globale = floor utente) e interseca le regole con le
+decisioni di categoria: restrict-only, `deny > ask > allow`.
+
+Modalità di caricamento dei file (**P0.B**, `ZELARI_POLICY_LOAD_MODE`):
+
+| Modalità | File esistente ma rotto (JSON/schema) |
+|----------|----------------------------------------|
+| `permissive` | warning + file ignorato, mai throw (comportamento v1; default TUI interattiva) |
+| `strict` | il run si **blocca**: exit code 2, ragione macchina `policy-load-failed` |
+
+Default: `strict` per le run **headless**, in **CI** (`CI=1`) e per le
+missioni **zelari**; `permissive` nella TUI interattiva. L'env esplicito
+vince sempre sui default.
+
+| Env | Effetto |
+|-----|---------|
+| `ZELARI_POLICY_LOAD_MODE=strict\|permissive` | Forza la modalità di caricamento (valori non validi ignorati) |
+| `ZELARI_POLICY_PRECEDENCE=legacy` | Ripristina l'override v1 project-first (default: restrict-only) |
+| `ZELARI_POLICY=0` | Disattiva il policy engine (sempre empty set) |
+
+In headless/missione un file invalido produce un evento NDJSON `error`
+(`code: "policy-load-failed"`), una nota nel session spine (evidence on-disk)
+ed exit 2 — errore runtime/harness: nessuna esecuzione senza regole valide.
+L'errore macchina è `PolicyLoadError` con `code: 'policy_invalid'`, path del
+file e, quando disponibile, la riga del parse error.
+
+**Resource claims (P0.C1, schema `version: 2`):** ogni agente può dichiarare
+una sezione opzionale `claims` con regole a risorsa — ad es.
+`{ kind: 'path', operation: 'write', pattern: 'src/auth/**', effect: 'deny',
+reason?: string }` (kinds: `path` · `process` · `network` · `mcp` · `ssh`;
+`ui`/`agent` sono parse ma non ancora emessi). Ogni risorsa che una chiamata
+tocca viene valutata INDEPENDENTEMENTE sui layer global/project e le decisioni
+si intersecano restrict-only (`deny > ask > allow`): basta UNA risorsa negata
+a bloccare la chiamata intera (es. un `apply_diff` il cui diff tocca un path
+negato fallisce anche se l'argomento primario è permesso). I claim di sola
+lettura matchano solo regole `claims`; le regole v1 `shell`/`edit` continuano
+a valere identiche per write/process. I file `version: 1` restano validi senza
+migrazioni. Dettagli tabella tool→claims: `src/cli/safety/resourceClaims.ts`.
+
+### exec_process (P0.C2, v2.1)
+
+Esecuzione di processi **strutturata**: niente stringa di shell, niente
+interpolazione (pipe, glob, `$VAR`, quoting sono semplicemente argomenti).
+
+| Arg | Tipo | Note |
+|-----|------|------|
+| `program` | string | binario sul PATH o percorso assoluto (spawn diretto, `shell:false`) |
+| `args`? | string[] | argv passato verbatim all'OS |
+| `cwd`? | string | risolto **dentro il sandbox** del workspace (`resolveSandboxedPath`) |
+| `timeoutMs`? | number | default 30s, max 600s; kill + errore esplicito |
+
+Risultato: `{ exitCode, stdout, stderr, durationMs }`; stdin chiuso
+(non-interattivo), stream cap 1 MB. Ogni invocazione passa dal permission
+wrapper (`withPerm`) ed è valutata dalla tabella resource claims come claim
+`{ kind: 'process', executable, argv }`: la regola matcha su program
+(basename, estensione Windows esclusa) + prefisso argv.
+
+Perché strutturato > shell grezza: ciò che la policy valuta (argv) È ciò che
+l'OS esegue; con `bash` invece la classificazione è best-effort — la tabella
+claims normalizza i wrapper comuni (`env FOO=x git push`, `command git push`,
+`exec git push`, `bash -lc 'git push'`, `cmd.exe /c git push`, spazi extra)
+perché un comando raw-shell punti al programma che realmente gira (non è un
+parser: ambiguità ⇒ resta l'originale).
+
+Regola policy d'esempio (`.zelari/policy.json`, `version: 2`):
+
+```json
+{
+  "version": 2,
+  "agents": {
+    "general": {
+      "claims": [
+        { "kind": "process", "pattern": "npm publish*", "effect": "ask" },
+        { "kind": "process", "pattern": "git push*", "effect": "deny", "reason": "no push diretti" }
+      ]
+    }
+  }
+}
+```
+
+La stessa regola copre anche `bash "git push"` grazie alla normalizzazione.
 
 ## Folder trust (v1.32.0)
 

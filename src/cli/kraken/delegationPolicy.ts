@@ -1,4 +1,5 @@
 import type { SystemPromptModule } from '@zelari/core/skills';
+import type { OrchestrationStrategy } from '../orchestration/signals.js';
 
 /**
  * Kraken Delegation Policy — when the lead should spawn tentacles.
@@ -6,9 +7,12 @@ import type { SystemPromptModule } from '@zelari/core/skills';
  * Routing (`ZELARI_KRAKEN_*_MODEL`) answers *which model* a tentacle uses.
  * This policy answers *whether* the lead should create the tentacle at all.
  *
- * `automatic` (default) injects nothing: the parent prompt stays
- * byte-identical to today's Lead Playbook. Other values append a short
- * override module after the lead playbook.
+ * `automatic` (default) injects nothing. Two sources can produce a REAL
+ * policy now (t23 / P1.E):
+ *   1. this env var (explicit user/host override — WINS below),
+ *   2. a strategy-derived mapping from the v2 OrchestrationDecision:
+ *      `resolveDelegationPolicyForRun(strategy)` in the `--mode auto` path
+ *      replaces the historical no-op injection with an actual module.
  *
  * Env: `ZELARI_KRAKEN_DELEGATION=automatic|prefer|aggressive|lead-only`
  */
@@ -51,6 +55,46 @@ export function resolveDelegationPolicy(
   const v = (raw ?? '').trim().toLowerCase();
   if (!v) return 'automatic';
   return ALIASES[v] ?? 'automatic';
+}
+
+/**
+ * t23 (§P1.E) — strategy → delegation mapping (replaces the `automatic`
+ * no-op when a v2 OrchestrationDecision is present). Maps onto the EXISTING
+ * three policy fragments (no new prompt prose invented):
+ *
+ *   lead-only      → 'lead-only'  (prefer-lead / no tentacles)
+ *   explore        → 'automatic'  (solo surface: delegation n/a, neutral)
+ *   lead+verify    → 'prefer'     (default WITH the verify pass)
+ *   parallel-build → 'prefer'     (tentacles preferred incl. general)
+ *   graph          → 'prefer'     (tentacles preferred incl. general)
+ *   council        → null         (n/a on the council surface)
+ */
+export const STRATEGY_DELEGATION: Readonly<
+  Record<OrchestrationStrategy, DelegationPolicy | null>
+> = {
+  'lead-only': 'lead-only',
+  explore: 'automatic',
+  'lead+verify': 'prefer',
+  'parallel-build': 'prefer',
+  graph: 'prefer',
+  council: null,
+};
+
+/**
+ * Effective delegation policy for one run. PRECEDENCE: an explicit
+ * non-automatic `ZELARI_KRAKEN_DELEGATION` wins over any strategy-derived
+ * value; otherwise the strategy map applies; no strategy ⇒ historical
+ * default ('automatic', which still injects nothing).
+ */
+export function resolveDelegationPolicyForRun(
+  strategy?: OrchestrationStrategy,
+  env: NodeJS.ProcessEnv = process.env,
+): DelegationPolicy {
+  const raw = env[KRAKEN_DELEGATION_ENV]?.trim().toLowerCase() ?? '';
+  const explicit = raw ? ALIASES[raw] : undefined;
+  if (explicit && explicit !== 'automatic') return explicit;
+  const derived = strategy ? STRATEGY_DELEGATION[strategy] : undefined;
+  return derived ?? 'automatic';
 }
 
 const PREFER_CONTENT = `# Kraken Delegation Policy

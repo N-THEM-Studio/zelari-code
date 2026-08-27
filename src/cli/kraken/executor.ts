@@ -63,6 +63,7 @@ import {
   type WorktreeMergeResult,
 } from '../tools/krakenWorktree.js';
 import { appendKrakenRadio } from '../tools/krakenRadio.js';
+import { runTransactional } from './transactional.js';
 import { runBacktest, type BacktestResult } from '../workspace/worldModel.js';
 import {
   startKrakenGraphLive,
@@ -73,6 +74,58 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { saveGraphSnapshot, toGraphSnapshot } from './graphMemory.js';
 import { WorkbenchWriter, type WorkbenchNode } from './workbench.js';
+import { arbitrateAdmission, caseInsensitiveFs, hasWriteOverlap } from './fileOwnership.js';
+import {
+  isWorktreeCapableKind,
+  resolveWorktreeMode,
+  worktreeSchedulingDecision,
+} from './worktreeScheduling.js';
+import {
+  semanticConflictDecision,
+  type SemanticConflictCtx,
+} from './semanticOwnership.js';
+import { isAstSupported, parseFileSymbolsDiag } from '../ast/engine.js';
+// t29 (§15–16): fail-open reputation recording + routing source refresh.
+import { calculateCost } from '../modelPricing.js';
+import {
+  aggregate,
+  REPUTATION_MIN_SAMPLE,
+  reputationRecordFromNodeRun,
+  type ReputationRecord,
+} from './modelReputation.js';
+// t30 (§17): spawn-ROI gate — deterministic score, threshold parsing and the
+// duplication-risk heuristic; the veto itself lives in this class (fail-open).
+import {
+  computeSpawnScore,
+  duplicationRiskFor,
+  parseRoiThreshold,
+  shouldSpawn,
+  type SpawnRoiInput,
+  type SpawnRoiTaskKind,
+  type SpawnScoreResult,
+} from './spawnRoi.js';
+import {
+  appendRecord,
+  DEFAULT_MAX_RECORDS,
+  loadRecords,
+  pruneStore,
+  resolveReputationStorePath,
+} from './reputationStore.js';
+import { setReputationSource } from './verifierRouting.js';
+
+/**
+ * P2.B default symbol extractor behind semantic ownership arbitration: the
+ * real AST outline via ast/engine. Lazy (the TS compiler API loads inside
+ * `parseFileSymbolsDiag` on first use) and fail-closed — an unsupported file
+ * or any parse failure is null, which the decision reports as a conflict so
+ * the pair defers to the sequential path instead of trusting a claim it
+ * could not verify.
+ */
+async function defaultSymbolExtractor(file: string): Promise<readonly string[] | null> {
+  if (!isAstSupported(file)) return null;
+  const r = await parseFileSymbolsDiag(file);
+  return r.status === 'ok' ? r.symbols.map((s) => s.name) : null;
+}
 
 /** Default cap on concurrently-running tentacles across the whole graph. */
 export const DEFAULT_MAX_PARALLEL = 12;
@@ -85,6 +138,19 @@ export function resolveMaxParallel(env: NodeJS.ProcessEnv = process.env): number
   if (raw === undefined || raw === '') return DEFAULT_MAX_PARALLEL;
   const n = Number.parseInt(raw, 10);
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_MAX_PARALLEL;
+}
+
+/**
+ * Transactional writer execution (P2.D), default OFF: a rollback discards
+ * partial work the existing fix/rework flow might have reused, and the
+ * whole-tree restore can revert a concurrent in-place sibling's writes.
+ * Opt in per run (`transactional: true`) or via env.
+ */
+export const DEFAULT_TRANSACTIONAL = false;
+
+/** `ZELARI_KRAKEN_TRANSACTIONAL === '1'` turns transactional writers on. */
+export function resolveTransactional(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ZELARI_KRAKEN_TRANSACTIONAL === '1';
 }
 
 /**
@@ -353,6 +419,40 @@ export interface KrakenGraphExecutorOptions {
   /** Force-enable/disable the Level-3 world-model gate (else auto-detected). */
   worldModelGate?: boolean;
   /**
+   * P2.D: run `general` (writer) tentacles transactionally — checkpoint the
+   * parent working tree before the run, roll it back if the node fails, keep
+   * the checkpoint as a recovery point on success. Explore/verify/merge and
+   * rework paths are never wrapped. Default: resolveTransactional() (env
+   * ZELARI_KRAKEN_TRANSACTIONAL === '1'; off by default).
+   */
+  transactional?: boolean;
+  /**
+   * Fold character case when comparing write scopes during ownership
+   * arbitration (P2.A). win32/darwin filesystems are case-insensitive, so
+   * `SRC/**` and `src/**` there are the same tree; default follows
+   * `process.platform` like sandboxPath.
+   */
+  ownershipCaseFolding?: boolean;
+  /**
+   * P2.B: symbol-name extractor backing semantic ownership arbitration. Only
+   * invoked when BOTH deferred/racing writers declare `ownedSymbols` and the
+   * contested file is AST-supported. Defaults to the real ast/engine outline
+   * (fail-closed: parse failure ⇒ defer); tests inject stubs. Returning null
+   * or throwing never widens parallelism — the pair stays deferred.
+   */
+  symbolExtractor?: (file: string) => Promise<readonly string[] | null>;
+  /**
+   * P2.F: reputation records backing the spawn-ROI gate. Omit to load the
+   * repo's t29 store once per run (a missing/corrupt store behaves as "no
+   * history" ⇒ default score); tests inject fixtures.
+   */
+  reputationRecords?: readonly ReputationRecord[];
+  /**
+   * P2.F: pure score seam for the ROI gate (default {@link computeSpawnScore}).
+   * Tests inject a throwing stub to prove the gate's fail-open contract.
+   */
+  roiScoreFn?: (input: SpawnRoiInput) => SpawnScoreResult;
+  /**
    * Cancels the whole graph run. Aborting stops admitting new nodes and
    * cancels every in-flight tentacle; the run then settles normally (nodes
    * still running end as errors, nodes never started end as `skipped`) so the
@@ -412,12 +512,24 @@ function agentForNode(node: TaskNode): TaskAgentKind {
   return node.kind === 'explore' || node.kind === 'verify' ? node.kind : 'general';
 }
 
+/** P2.F: fold a graph node kind onto the ROI task-kind taxonomy. */
+function roiTaskKindOf(kind: string): SpawnRoiTaskKind {
+  if (kind === 'explore') return 'explore';
+  if (kind === 'verify') return 'verify';
+  if (kind === 'spec' || kind === 'conformance') return 'review';
+  return 'implement'; // general/fix/merge and unknown kinds all mutate the tree
+}
+
 export class KrakenGraphExecutor {
   private readonly deps: TaskToolDeps;
   private readonly parentCwd: string;
   private readonly sessionId: string;
   private readonly goal: string | undefined;
   private readonly maxParallel: number;
+  /** Fold case in ownership scope comparisons (win32/darwin FSes). */
+  private readonly ownershipCaseFolding: boolean;
+  /** P2.B: symbol extractor for semantic ownership (default: ast/engine). */
+  private readonly symbolExtractor: (file: string) => Promise<readonly string[] | null>;
   /** Explicit all-kinds override; when undefined the budget is per-kind. */
   private readonly nodeTimeoutMs: number | undefined;
   private readonly cancelGraceMs: number | undefined;
@@ -427,12 +539,18 @@ export class KrakenGraphExecutor {
   private readonly maxReviewRounds: number;
   private readonly graphTimeoutMs: number;
   private readonly worldModelGateOverride: boolean | undefined;
+  /** P2.D: wrap general (writer) tentacles in checkpoint→run→rollback. */
+  private readonly transactional: boolean;
   private readonly runTentacleFn: (opts: RunTentacleOptions) => Promise<TentacleResult>;
   private readonly mergeFn: (
     handle: WorktreeHandle,
     opts?: { message?: string; cleanup?: boolean },
   ) => Promise<WorktreeMergeResult>;
   private readonly backtestFn: (cwd: string) => Promise<BacktestResult>;
+  /** P2.F: pure score seam for the ROI gate (default: computeSpawnScore). */
+  private readonly roiScoreFn: (input: SpawnRoiInput) => SpawnScoreResult;
+  /** P2.F: ROI reputation source; null until resolved once per run. */
+  private roiReputation: readonly ReputationRecord[] | null;
 
   /** Live workbench writer for this run (created once the graph starts). */
   private wb: WorkbenchWriter | null = null;
@@ -476,6 +594,9 @@ export class KrakenGraphExecutor {
     this.sessionId = opts.sessionId;
     this.goal = opts.goal;
     this.maxParallel = opts.maxParallel ?? resolveMaxParallel();
+    this.ownershipCaseFolding =
+      opts.ownershipCaseFolding ?? caseInsensitiveFs(process.platform);
+    this.symbolExtractor = opts.symbolExtractor ?? defaultSymbolExtractor;
     this.nodeTimeoutMs = opts.nodeTimeoutMs;
     this.cancelGraceMs = opts.cancelGraceMs;
     this.fixBudgetOption = opts.fixBudget;
@@ -484,10 +605,13 @@ export class KrakenGraphExecutor {
     this.maxReviewRounds = opts.maxReviewRounds ?? resolveMaxReviewRounds();
     this.graphTimeoutMs = opts.graphTimeoutMs ?? resolveGraphTimeoutMs();
     this.worldModelGateOverride = opts.worldModelGate;
+    this.transactional = opts.transactional ?? resolveTransactional();
     this.signal = opts.signal;
     this.runTentacleFn = opts.runTentacleFn ?? runTentacle;
     this.mergeFn = opts.mergeFn ?? mergeKrakenWorktree;
     this.backtestFn = opts.backtestFn ?? runBacktest;
+    this.roiScoreFn = opts.roiScoreFn ?? computeSpawnScore;
+    this.roiReputation = opts.reputationRecords ?? null;
   }
 
   /** Map a graph node onto the workbench's node shape. */
@@ -534,6 +658,9 @@ export class KrakenGraphExecutor {
 
   /** Execute the graph in place (mutates node statuses) until it settles. */
   async execute(graph: TaskGraph): Promise<KrakenExecutionSummary> {
+    // t29: refresh the reputation source (fail-open, fire-and-forget) so
+    // verifier routing consulted later in this process sees real history.
+    void this.refreshReputationSource();
     // Now that the graph is known, size the repair budget to it (unless the
     // caller pinned one). Done here rather than in the constructor because the
     // node count is the whole input to the decision.
@@ -603,7 +730,7 @@ export class KrakenGraphExecutor {
 
       // Admit everything that can start alongside what is already running,
       // up to the concurrency cap. A cancelled run admits nothing.
-      const admitted = this.aborted ? [] : this.admit(graph, inFlight);
+      const admitted = this.aborted ? [] : await this.admit(graph, inFlight);
       if (admitted.length > 0) {
         // Mark and publish the whole admission BEFORE starting any of it: an
         // async function body runs synchronously up to its first await, so
@@ -754,8 +881,22 @@ export class KrakenGraphExecutor {
    * Unlike a wave-at-a-time scheduler this is called on every completion, so a
    * node becomes eligible the moment its blocker settles instead of waiting
    * for the slowest member of some earlier batch.
+   *
+   * The surviving list then goes through file-ownership arbitration (P2.A):
+   * a writer whose scope overlaps a writer already admitted this round or
+   * already in flight is DEFERRED, never failed — it stays READY and is
+   * re-offered on the next completion, so overlapping writers serialize via
+   * the ordinary settle-one-at-a-time loop.
+   *
+   * P2.C exception: with ZELARI_KRAKEN_WORKTREE=auto a deferred writer whose
+   * overlap is merely partial (score < 0.75, `classifyOverlap`) is re-admitted
+   * immediately under git worktree isolation instead of idling behind its
+   * racing writer.
    */
-  private admit(graph: TaskGraph, inFlight: Map<string, Promise<SettledNode>>): TaskNode[] {
+  private async admit(
+    graph: TaskGraph,
+    inFlight: Map<string, Promise<SettledNode>>,
+  ): Promise<TaskNode[]> {
     const capacity = this.maxParallel - inFlight.size;
     if (capacity <= 0) return [];
 
@@ -765,15 +906,310 @@ export class KrakenGraphExecutor {
       if (n) running.push(n);
     }
 
-    const admitted: TaskNode[] = [];
+    const candidates: TaskNode[] = [];
     for (const node of getReadyNodes(graph)) {
-      if (admitted.length >= capacity) break;
+      if (candidates.length >= capacity) break;
       const safe =
         running.every((r) => canRunParallel(r, node)) &&
-        admitted.every((a) => canRunParallel(a, node));
-      if (safe) admitted.push(node);
+        candidates.every((a) => canRunParallel(a, node));
+      if (safe) candidates.push(node);
     }
-    return admitted;
+
+    // P2.A: two writers with overlapping scopes must never share the tree.
+    // Arbitration can only shrink the candidate list, so this is pure
+    // defense-in-depth on top of canRunParallel — plus case folding on
+    // win32/darwin and a workbench/radio trail for every deferral.
+    const { admitted, deferred } = arbitrateAdmission(candidates, running, {
+      caseInsensitive: this.ownershipCaseFolding,
+    });
+
+    // P2.C: with ZELARI_KRAKEN_WORKTREE=auto, a writer arbitration would defer
+    // against another writer can still start NOW when the overlap is merely
+    // partial/containment — it runs in its own git worktree and tentacle
+    // merges stay sequential (Correction 4), so the race is merge-safe by
+    // construction and a cheap merge beats idling. Identical-grain overlap
+    // (same scope, wildcard claims folded to a match) still defers: that
+    // merge would cost more than the serialization. Any other mode keeps the
+    // deferral exactly as P2.A left it.
+    const worktreeMode = resolveWorktreeMode(process.env.ZELARI_KRAKEN_WORKTREE);
+    const rescued: TaskNode[] = [];
+    const held: TaskNode[] = [];
+    if (worktreeMode === 'auto' && deferred.length > 0) {
+      // The race set to score against: everything in flight PLUS everything
+      // admitted this round — those are running the moment admit() returns,
+      // and a first-round clash would otherwise never be rescuable (running
+      // is still empty then).
+      const racing: TaskNode[] = [...running, ...admitted];
+      for (const node of deferred) {
+        const decision =
+          isWorktreeCapableKind(node.kind) &&
+          !this.reworks.has(node.id) && // a rework edits an EXISTING worktree
+          this.deps.allowWorktree !== false
+            ? worktreeSchedulingDecision(node, racing, process.env, {
+                caseInsensitive: this.ownershipCaseFolding,
+              })
+            : undefined;
+        if (decision && decision.mode === 'parallel-worktree') {
+          rescued.push(node);
+          this.radio('node_worktree_scheduled', {
+            description: node.label,
+            agent: node.kind,
+            detail: `worktree-isolated parallel admission: overlap=${decision.overlapScore.toFixed(2)} (${decision.rationaleCode})`,
+            ok: true,
+            nodeId: node.id,
+            overlapScore: decision.overlapScore,
+            rationaleCode: decision.rationaleCode,
+            ...(decision.bestMatchId !== undefined
+              ? { runningNode: decision.bestMatchId }
+              : {}),
+          });
+          this.wb?.logEvent(
+            `worktree-scheduled ${node.id} "${node.label}" — overlap ${decision.overlapScore.toFixed(2)} (${decision.rationaleCode}) vs ${decision.bestMatchId ?? 'writer'}; runs isolated, merge stays sequential`,
+          );
+        } else {
+          held.push(node);
+        }
+      }
+    } else {
+      held.push(...deferred);
+    }
+
+    // P2.B: semantic rescue — a writer the arbitration still holds whose
+    // deferral is pure same-file grain can run alongside its racer when BOTH
+    // sides declare `ownedSymbols` and every contested pair verifies as
+    // symbol-disjoint. One undecided or conflicting pair keeps the t25
+    // deferral intact (fail-closed: undeclared claims, malformed specs and
+    // AST extraction failures all defer). When worktree scheduling is `auto`
+    // and the node is isolatable it reuses the t27 worktree path (same-file
+    // different-symbol is still a git merge risk); otherwise it is admitted
+    // plainly, with telemetry saying exactly that.
+    const semAdmitted: TaskNode[] = [];
+    if (held.length > 0) {
+      // Everything the node would race: in flight, admitted this round, or
+      // already rescued above (worktree-isolated but still concurrent).
+      const racing: TaskNode[] = [...running, ...admitted, ...rescued];
+      const ctx: SemanticConflictCtx = {
+        extractSymbols: this.symbolExtractor,
+        astSupported: isAstSupported,
+      };
+      for (const node of held) {
+        const verdict = await this.semanticRescueDecision(node, racing, ctx);
+        if (!verdict) continue;
+        const isolatable =
+          worktreeMode === 'auto' &&
+          isWorktreeCapableKind(node.kind) &&
+          !this.reworks.has(node.id) && // a rework edits an EXISTING worktree
+          this.deps.allowWorktree !== false;
+        this.radio('node_semantic_admitted', {
+          description: node.label,
+          agent: node.kind,
+          detail: `semantic admission: disjoint symbol claims on ${verdict.contestedFile} vs ${verdict.racerId} (${verdict.reasonCode}) — ${isolatable ? 'worktree-isolated' : 'plain parallel; same-file merge risk'}`,
+          ok: true,
+          nodeId: node.id,
+          rationaleCode: isolatable ? 'semantic-disjoint-worktree' : 'semantic-disjoint-plain',
+          runningNode: verdict.racerId,
+          contestedFile: verdict.contestedFile,
+          symbolsA: verdict.symbolsA,
+          symbolsB: verdict.symbolsB,
+        });
+        this.wb?.logEvent(
+          `semantic-admitted ${node.id} "${node.label}" — disjoint claims on ${verdict.contestedFile} vs ${verdict.racerId} (${verdict.reasonCode}); ${isolatable ? 'runs worktree-isolated' : 'runs plainly alongside'}`,
+        );
+        if (isolatable) rescued.push(node);
+        else {
+          semAdmitted.push(node);
+          racing.push(node); // later held nodes must be arbitrated against it too
+        }
+      }
+    }
+    for (const node of held) {
+      if (rescued.includes(node) || semAdmitted.includes(node)) continue;
+      const scopes = node.scope && node.scope.length > 0 ? node.scope.join(', ') : '**';
+      this.radio('node_deferred', {
+        description: node.label,
+        agent: node.kind,
+        detail: `deferred: write scope (${scopes}) overlaps a running writer — stays READY`,
+        ok: true,
+      });
+      this.wb?.logEvent(
+        `deferred ${node.id} "${node.label}" — write scope (${scopes}) overlaps a running writer; stays ready for the next round`,
+      );
+    }
+    // P2.F: spawn-ROI gate — every tentacle spawn must have positive expected
+    // value. Runs AFTER ownership arbitration and both rescues, so it can only
+    // shrink the final spawn list; a node scoring below the threshold goes
+    // back the deferred path (stays READY, re-offered next round — never
+    // failed) with a `node_roi_vetoed` radio trail. Fail-open: any error
+    // inside the gate spawns the batch (see roiGate).
+    return (await this.roiGate([...admitted, ...rescued, ...semAdmitted], running)).spawn;
+  }
+
+  /**
+   * P2.F: resolve the ROI gate's reputation source once per run — the
+   * injected fixture when given, else the repo's t29 store. Fail-open: a
+   * missing/corrupt store already degrades to [] inside loadRecords, and an
+   * unexpected error is swallowed the same way ("no history").
+   */
+  private async roiReputationRecords(): Promise<readonly ReputationRecord[]> {
+    if (this.roiReputation !== null) return this.roiReputation;
+    try {
+      this.roiReputation = await loadRecords(resolveReputationStorePath(this.parentCwd));
+    } catch {
+      this.roiReputation = [];
+    }
+    return this.roiReputation;
+  }
+
+  /**
+   * P2.F: build the ROI input for one node. Reputation comes from the t29
+   * (repo, host-agent-role) bucket and is trusted only at/above
+   * REPUTATION_MIN_SAMPLE — below that the rate/repair/latency fields stay
+   * null so the score falls back to its sane defaults (unknown ⇒ spawn).
+   * Token and per-token price estimates do not exist pre-run in v1
+   * (documented): both stay null. `now` is taken by the gate, never inside
+   * the pure module.
+   */
+  private roiInputFor(
+    node: TaskNode,
+    racing: readonly TaskNode[],
+    records: readonly ReputationRecord[],
+    now: number,
+  ): SpawnRoiInput {
+    let verifiedRate: number | null = null;
+    let avgRepairs: number | null = null;
+    let latencyMs: number | null = null;
+    let sample = 0;
+    try {
+      const summary = aggregate(
+        records,
+        { repo: path.basename(this.parentCwd), role: agentForNode(node) },
+        now,
+      );
+      sample = summary.sample;
+      if (summary.sample >= REPUTATION_MIN_SAMPLE) {
+        verifiedRate = summary.verifiedRate;
+        avgRepairs = summary.avgRepairs;
+        latencyMs = summary.avgLatencyMs;
+      }
+    } catch {
+      /* fail-open: treat as no history */
+    }
+    return {
+      reputationSample: sample,
+      verifiedRate,
+      historicalAvgRepairs: avgRepairs,
+      estimatedTokens: null,
+      costUsdPer1k: null,
+      latencyMsEstimate: latencyMs,
+      duplicationRisk: duplicationRiskFor(node, racing),
+      taskKind: roiTaskKindOf(node.kind),
+    };
+  }
+
+  /**
+   * P2.F: the veto itself. Scores every node about to spawn against
+   * ZELARI_KRAKEN_ROI_THRESHOLD (raw env string parsed per admit — invalid ⇒
+   * default) and returns the survivors. Vetoed nodes are NOT failed: they are
+   * simply not returned, so they stay READY and are re-offered next round,
+   * each with a `node_roi_vetoed` radio trail. Fail-open twice over: an error
+   * while scoring ONE node spawns that node, and an error that escapes the
+   * loop spawns the whole batch — the gate must never break a run.
+   */
+  private async roiGate(
+    spawnList: readonly TaskNode[],
+    running: readonly TaskNode[],
+  ): Promise<{ spawn: TaskNode[]; vetoed: TaskNode[] }> {
+    const spawn: TaskNode[] = [];
+    const vetoed: TaskNode[] = [];
+    if (spawnList.length === 0) return { spawn, vetoed };
+    try {
+      const threshold = parseRoiThreshold(process.env.ZELARI_KRAKEN_ROI_THRESHOLD);
+      const records = await this.roiReputationRecords();
+      const now = Date.now();
+      const racing = [...running, ...spawnList];
+      for (const node of spawnList) {
+        try {
+          const input = this.roiInputFor(
+            node,
+            racing.filter((r) => r.id !== node.id),
+            records,
+            now,
+          );
+          const score = this.roiScoreFn(input);
+          if (shouldSpawn(score, threshold)) {
+            spawn.push(node);
+            continue;
+          }
+          vetoed.push(node);
+          const pinned = Number(score.score.toFixed(4));
+          this.radio('node_roi_vetoed', {
+            description: node.label,
+            agent: node.kind,
+            detail: `roi gate: spawnScore ${pinned} < threshold ${threshold} (${score.rationaleCode}) — stays READY`,
+            ok: true,
+            nodeId: node.id,
+            spawnScore: pinned,
+            threshold,
+            rationaleCode: score.rationaleCode,
+          });
+          this.wb?.logEvent(
+            `roi-vetoed ${node.id} "${node.label}" — spawnScore ${pinned} < ${threshold} (${score.rationaleCode}); deferred, not failed`,
+          );
+        } catch {
+          spawn.push(node); // per-node fail-open
+        }
+      }
+    } catch {
+      return { spawn: [...spawnList], vetoed: [] }; // whole-gate fail-open
+    }
+    return { spawn, vetoed };
+  }
+
+  /**
+   * P2.B: may `node` (held by P2.A/P2.C arbitration) run alongside the racing
+   * writers because BOTH sides declare disjoint symbol ownership? Only a pair
+   * that actually shares a contested file qualifies; EVERY overlapping racer
+   * must verify disjoint — one undecided or conflicting pair keeps the node
+   * held. Returns the telemetry anchor of the last verified pair, or null to
+   * defer exactly as today.
+   */
+  private async semanticRescueDecision(
+    node: TaskNode,
+    racing: readonly TaskNode[],
+    ctx: SemanticConflictCtx,
+  ): Promise<{
+    racerId: string;
+    contestedFile: string;
+    reasonCode: string;
+    symbolsA: string[];
+    symbolsB: string[];
+  } | null> {
+    if (!node.ownedSymbols || node.ownedSymbols.length === 0) return null;
+    let verified: {
+      racerId: string;
+      contestedFile: string;
+      reasonCode: string;
+      symbolsA: string[];
+      symbolsB: string[];
+    } | null = null;
+    for (const racer of racing) {
+      const overlaps = hasWriteOverlap(racer, node, {
+        caseInsensitive: this.ownershipCaseFolding,
+      });
+      if (!overlaps) continue;
+      const verdict = await semanticConflictDecision(racer, node, ctx);
+      // No shared contested file ⇒ the claims cannot anchor a same-file
+      // rescue; treat as undecided (defer) rather than widening on spec faith.
+      if (verdict.conflict || verdict.contestedFile === undefined) return null;
+      verified = {
+        racerId: racer.id,
+        contestedFile: verdict.contestedFile,
+        reasonCode: verdict.reasonCode,
+        symbolsA: [...(racer.ownedSymbols ?? [])],
+        symbolsB: [...node.ownedSymbols],
+      };
+    }
+    return verified;
   }
 
   /**
@@ -845,34 +1281,74 @@ export class KrakenGraphExecutor {
       node.kind === 'verify' || isRework
         ? this.inheritedWorktreeCwdFor(node, graph)
         : undefined;
-    const res = await this.withNodeTimeout(
-      this.runTentacleFn({
-        // `allowWorktree: false` is what actually stops a rework from opening
-        // its own worktree: creation is driven by the agent kind ('general')
-        // inside runTentacle, not by anything the executor passes per-call.
-        deps: isRework ? { ...this.deps, allowWorktree: false } : this.deps,
-        args: {
-          description: node.label,
-          prompt: upstream ? `${node.prompt}\n${upstream}` : node.prompt,
-          scope: node.scope,
-          acceptance: node.acceptance,
-        },
-        agent,
-        thoroughness: thoroughnessForKind(node.kind),
-        parentCwd: this.parentCwd,
-        ...(inheritedCwd ? { cwdOverride: inheritedCwd } : {}),
-        sessionId: this.sessionId,
-        // Defer merge for writers so the executor controls merge ordering
-        // (Correction 4); explore/verify/rework never create a worktree.
-        deferMerge: usesWorktree,
-        graphId: graph.id,
-        nodeId: node.id,
-        signal: controller.signal,
-      }),
+    const runOpts: RunTentacleOptions = {
+      // `allowWorktree: false` is what actually stops a rework from opening
+      // its own worktree: creation is driven by the agent kind ('general')
+      // inside runTentacle, not by anything the executor passes per-call.
+      deps: isRework ? { ...this.deps, allowWorktree: false } : this.deps,
+      args: {
+        description: node.label,
+        prompt: upstream ? `${node.prompt}\n${upstream}` : node.prompt,
+        scope: node.scope,
+        acceptance: node.acceptance,
+      },
       agent,
-      controller,
-    );
+      thoroughness: thoroughnessForKind(node.kind),
+      parentCwd: this.parentCwd,
+      ...(inheritedCwd ? { cwdOverride: inheritedCwd } : {}),
+      sessionId: this.sessionId,
+      // Defer merge for writers so the executor controls merge ordering
+      // (Correction 4); explore/verify/rework never create a worktree.
+      deferMerge: usesWorktree,
+      graphId: graph.id,
+      nodeId: node.id,
+      signal: controller.signal,
+    };
+    const runOnce = (): Promise<TentacleResult> =>
+      this.withNodeTimeout(this.runTentacleFn(runOpts), agent, controller);
 
+    // P2.D: transactional writers (opt-in) — checkpoint the parent tree
+    // before the run, roll it back if the node fails, keep the checkpoint as
+    // a recovery point (correlated to graph/node) on success. Explore,
+    // verify, merge and rework paths are never wrapped.
+    if (!this.transactional || node.kind !== 'general') {
+      const res = await runOnce();
+      if (res.ok && usesWorktree) {
+        this.nodeRunState.set(node.id, { worktreeHandle: res.worktreeHandle });
+      }
+      return res;
+    }
+    const tx = await runTransactional(
+      { cwd: this.parentCwd, taskId: graph.id, nodeId: node.id, label: node.label },
+      async () => {
+        const res = await runOnce();
+        // A failed tentacle RESOLVES with ok:false — map it to a throw so
+        // runTransactional sees a transaction failure and rolls back.
+        if (!res.ok) throw new Error(res.error);
+        return res;
+      },
+    );
+    if (tx.outcome === 'rolledback') {
+      this.radio('node_rolled_back', {
+        description: node.label,
+        agent: node.kind,
+        detail: tx.error ?? 'node failed; workspace rolled back',
+        ok: false,
+      });
+      this.wb?.logEvent(
+        `rolled back ${node.id} "${node.label}" — ${tx.error ?? 'node failed'}`,
+      );
+      // The ordinary failure path: retry (if budgeted) re-runs from the clean
+      // checkpoint state. No `cancelled` field — the tentacle unwound, so a
+      // re-run is safe.
+      return { ok: false, agent, error: tx.error ?? `node "${node.label}" failed` };
+    }
+    const res: TentacleResult | undefined = tx.value;
+    if (!res) {
+      // Contractually unreachable (success/passthrough carry the run's
+      // result); an honest failure beats returning undefined.
+      return { ok: false, agent, error: tx.note ?? 'transactional run produced no result' };
+    }
     if (res.ok && usesWorktree) {
       this.nodeRunState.set(node.id, { worktreeHandle: res.worktreeHandle });
     }
@@ -1069,6 +1545,11 @@ export class KrakenGraphExecutor {
 
   /** Apply a tentacle result to its node: success, retry, fix-spawn, or terminal failure. */
   private applyResult(graph: TaskGraph, node: TaskNode, res: TentacleResult): void {
+    this.applyResultInner(graph, node, res);
+    this.recordNodeReputation(node, res);
+  }
+
+  private applyResultInner(graph: TaskGraph, node: TaskNode, res: TentacleResult): void {
     if (res.ok) {
       if (res.memoryId) this.memoryIds.set(node.id, res.memoryId);
       node.status = 'done';
@@ -1181,6 +1662,75 @@ export class KrakenGraphExecutor {
       error: res.error,
       durationMs: this.durationsMs.get(node.id),
     });
+  }
+
+  /**
+   * t29 (§15): append ONE reputation record for a settled node run — the
+   * minimal recorder hook. Only terminal states are recorded (success, or a
+   * failure that consumed the retry budget / got its fix node): retries leave
+   * the node `pending` and cancelled/unconfirmed runs are skipped, because
+   * cancellation and re-entry are not model signals. Repo = basename of the
+   * parent cwd; role = host agent kind (agentForNode); model when the result
+   * carries one ('n/a' merge pseudo-model ⇒ null); provider is NOT carried by
+   * TentacleResult so it records as null (documented v1 limitation). FAILOPEN:
+   * every failure path is swallowed — reputation must never break a run.
+   */
+  private recordNodeReputation(node: TaskNode, res: TentacleResult): void {
+    try {
+      if (!res.ok) {
+        if (this.aborted || res.cancelled === true || res.cancelled === false) return;
+        // Retry re-queues the node ('pending'): its final run records the
+        // whole story via retryCount, so intermediate attempts are not rows.
+        if (node.status === 'pending') return;
+      }
+      const model = res.ok && res.model && res.model !== 'n/a' ? res.model : null;
+      const reviewerVerdict =
+        res.ok && this.isReviewerKind(node.kind) && typeof node.result === 'string' && node.result.length > 0
+          ? parseVerifyVerdict(node.result).verdict
+          : null;
+      const record = reputationRecordFromNodeRun({
+        repo: path.basename(this.parentCwd),
+        role: agentForNode(node),
+        kind: node.kind,
+        ok: res.ok,
+        reviewerVerdict,
+        repairCount: node.retryCount,
+        model,
+        provider: null, // TentacleResult carries no provider identity (t29 v1).
+        costUsd:
+          res.ok && model && res.usage
+            ? calculateCost(
+                model,
+                res.usage.promptTokens,
+                res.usage.completionTokens,
+                res.usage.cachedPromptTokens ?? 0,
+              )
+            : null,
+        latencyMs: this.durationsMs.get(node.id) ?? null,
+      });
+      const storePath = resolveReputationStorePath(this.parentCwd);
+      void appendRecord(storePath, record)
+        .then(() => pruneStore(storePath, DEFAULT_MAX_RECORDS))
+        .catch(() => {
+          /* fail-open */
+        });
+    } catch {
+      /* fail-open: reputation must never break a run */
+    }
+  }
+
+  /**
+   * t29 (§16): load the repo's reputation store once per run and publish it
+   * as the verifier-routing source, so the NEXT advisory review inside this
+   * process consults real history. Passive + fail-open: a missing/corrupt
+   * store yields an empty list, which keeps t21 heuristics verbatim.
+   */
+  private async refreshReputationSource(): Promise<void> {
+    try {
+      setReputationSource(await loadRecords(resolveReputationStorePath(this.parentCwd)));
+    } catch {
+      /* fail-open */
+    }
   }
 
   private async linkMemoryGraph(graph: TaskGraph, converged: boolean): Promise<void> {
@@ -1540,10 +2090,29 @@ export class KrakenGraphExecutor {
       | 'node_end'
       | 'node_retry'
       | 'node_fix'
+      | 'node_deferred'
+      | 'node_worktree_scheduled'
+      | 'node_semantic_admitted'
+      | 'node_roi_vetoed'
+      | 'node_rolled_back'
       | 'graph_converged'
       | 'graph_failed'
       | 'node_meter',
-    fields: { description: string; agent?: string; detail?: string; ok?: boolean },
+    fields: {
+      description: string;
+      agent?: string;
+      detail?: string;
+      ok?: boolean;
+      nodeId?: string;
+      overlapScore?: number;
+      rationaleCode?: string;
+      runningNode?: string;
+      contestedFile?: string;
+      spawnScore?: number;
+      threshold?: number;
+      symbolsA?: string[];
+      symbolsB?: string[];
+    },
   ): void {
     appendKrakenRadio(this.parentCwd, this.sessionId, {
       kind,
@@ -1551,6 +2120,15 @@ export class KrakenGraphExecutor {
       description: fields.description,
       ...(fields.detail !== undefined ? { detail: fields.detail } : {}),
       ...(fields.ok !== undefined ? { ok: fields.ok } : {}),
+      ...(fields.nodeId !== undefined ? { nodeId: fields.nodeId } : {}),
+      ...(fields.overlapScore !== undefined ? { overlapScore: fields.overlapScore } : {}),
+      ...(fields.rationaleCode !== undefined ? { rationaleCode: fields.rationaleCode } : {}),
+      ...(fields.runningNode !== undefined ? { runningNode: fields.runningNode } : {}),
+      ...(fields.contestedFile !== undefined ? { contestedFile: fields.contestedFile } : {}),
+      ...(fields.spawnScore !== undefined ? { spawnScore: fields.spawnScore } : {}),
+      ...(fields.threshold !== undefined ? { threshold: fields.threshold } : {}),
+      ...(fields.symbolsA !== undefined ? { symbolsA: fields.symbolsA } : {}),
+      ...(fields.symbolsB !== undefined ? { symbolsB: fields.symbolsB } : {}),
     });
   }
 

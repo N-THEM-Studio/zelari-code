@@ -5,7 +5,7 @@
  *   - explore / verify: READ-ONLY (or read+bash for verify)
  *   - general: full tools except nested `task` (no recursion)
  *   - Parent gets only a short conclusion, not the full sub-transcript
- *   - Optional git worktree for general when ZELARI_KRAKEN_WORKTREE=1
+ *   - Optional git worktree for general when ZELARI_KRAKEN_WORKTREE=1|true|auto
  *   - Radio JSONL under .zelari/radio/ for parent observability
  *
  * Structure (F2 — Kraken graph engine):
@@ -53,6 +53,7 @@ import {
   type WorktreeMergeResult,
 } from './krakenWorktree.js';
 import { krakenTentacleStart, krakenTentacleEnd } from './krakenLive.js';
+import { resolveWorktreeMode } from '../kraken/worktreeScheduling.js';
 import { randomUUID } from 'node:crypto';
 import type { UsageBreakdown } from '@zelari/core/events';
 import type { MemoryService } from '@zelari/core/memory';
@@ -120,7 +121,9 @@ export interface TaskToolDeps {
   harnessFactory?: (config: AgentHarnessConfig) => SubAgentHarness;
   /**
    * When true (default), general tentacles may use a git worktree if
-   * ZELARI_KRAKEN_WORKTREE=1. Tests can force-disable.
+   * ZELARI_KRAKEN_WORKTREE=1. Tests can force-disable. The env may also be
+   * `auto` (P2.C): worktrees permitted, the graph scheduler decides which
+   * nodes need isolation.
    */
   allowWorktree?: boolean;
   /** Shared native project memory used by every tentacle in this run. */
@@ -588,13 +591,17 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   const started = Date.now();
   const g = globalThis as unknown as SpawnGlobal;
 
-  // Optional worktree isolation for general writers (K7).
+  // Optional worktree isolation for general writers (K7). ZELARI_KRAKEN_WORKTREE=1
+  // (or true) always isolates; `auto` (P2.C) lets the graph scheduler decide per
+  // node — every general writer is worktree-capable so admitted parallel writers
+  // never share the parent tree, and merges stay sequential.
   let worktree: WorktreeHandle | null = null;
   let effectiveCwd = opts.cwdOverride || parentCwd;
   const wantWt =
     agent === 'general' &&
     deps.allowWorktree !== false &&
-    isKrakenWorktreeEnabled();
+    (isKrakenWorktreeEnabled() ||
+      resolveWorktreeMode(process.env.ZELARI_KRAKEN_WORKTREE) === 'auto');
   if (wantWt) {
     try {
       worktree = await createKrakenWorktree(parentCwd, args.description);

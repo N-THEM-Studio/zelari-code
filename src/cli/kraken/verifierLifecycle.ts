@@ -37,10 +37,12 @@ import {
   type VerificationResult,
 } from '@zelari/core/verification';
 import { collectProviderText } from '../tools/krakenSelectTool.js';
-import { resolveCrossModelVerifier } from '../tools/krakenModel.js';
 import { getWorkingDiff } from '../gitOps.js';
 import { loadVerifierModelSelection } from './verifierResolution.js';
+// t21 (§P1.D): risk-based reviewer routing on top of the P0.6 cross-family default.
+import { activeRisk, divergenceFromReviews, mergeVerifierVerdicts, resolveVerifierRouting } from './verifierRouting.js';
 import type { StrictBuildGateEvaluation } from './verificationBridge.js';
+import type { TaskRisk } from '@zelari/core';
 
 type Env = Record<string, string | undefined>;
 
@@ -127,25 +129,11 @@ export interface VerifierReviewDeps {
    * resolveCrossModelVerifier. Default: unused (session identity kept).
    */
   familyCandidates?: { provider: string; model: string }[];
-}
-
-function resolveIdentity(
-  selection: ModelSelection,
-  session?: VerifierIdentity,
-  familyCandidates?: readonly { provider: string; model: string }[],
-  env: Env = process.env,
-): VerifierIdentity | null {
-  if (selection.mode === 'fixed') {
-    return { provider: selection.provider, model: selection.model };
-  }
-  if (!session || !session.provider || !session.model) return null;
-  // P0.6 cross-model: inherit mode may route to a different provider family
-  // when family candidates were supplied; otherwise keep session identity.
-  if (familyCandidates && familyCandidates.length > 0) {
-    const cross = resolveCrossModelVerifier(session, familyCandidates, env);
-    if (cross) return { provider: cross.provider, model: cross.model };
-  }
-  return session;
+  /**
+   * t21: explicit verify-risk for this pass (`low|medium|high|critical`).
+   * Default: activeRisk(env) — ZELARI_VERIFY_RISK > active contract > medium.
+   */
+  risk?: TaskRisk;
 }
 
 /** Criterion ids that look like deterministic test/typecheck/build/lint runs. */
@@ -232,28 +220,64 @@ export async function runAdvisoryVerifierReview(
   const env = deps.env ?? process.env;
   const selection = deps.selection ?? loadVerifierModelSelection();
   if (!verifierReviewEnabled(selection, env)) return null;
-  const identity = resolveIdentity(selection, deps.session, deps.familyCandidates, env);
-  let callModel = deps.callModel;
-  if (!callModel) {
-    if (!identity || !deps.loadStream) return null;
-    callModel = makeVerifierCallModel(deps.loadStream, identity, deps.timeoutMs);
-  }
-  const service = new VerifierService({
-    callModel,
-    config: {
-      enabled: true,
-      model: selection,
-      progressScoring: false,
-      bon: { enabled: false, n: 3 },
+  // t21 / PW §10: LOW risk turns the LLM reviewer OFF — deterministic
+  // verification only. The reviewer is ADVISORY, so its absence cannot
+  // create an `unknown` blocker: `evaluation.review` simply stays unset and
+  // the CompletionPolicy verdict rests solely on the deterministic criteria.
+  const risk = deps.risk ?? activeRisk(env);
+  if (risk === 'low') return null;
+  // Route reviewers per risk (t21): resolves the identity family-wise exactly
+  // like the previous P0.6 path (fixed selection wins; inherit may cross to a
+  // different provider family), then refines economy/strength and, at critical
+  // risk, adds an independent second-family reviewer.
+  const route = resolveVerifierRouting(
+    selection.mode === 'fixed' ? { provider: selection.provider, model: selection.model } : null,
+    risk,
+    {
+      selectionMode: selection.mode === 'fixed' ? 'fixed' : 'inherit',
+      session: deps.session ?? null,
+      familyCandidates: deps.familyCandidates,
+      env,
     },
-    emit: deps.emit,
-    env,
-  });
+  );
+  const reviewers = route.reviewers;
+  let callModel = deps.callModel;
+  if (reviewers.length === 0 || (!callModel && !deps.loadStream)) return null;
   const blind = await buildBlindReviewInput(evaluation, deps);
-  const review = await service.reviewCompletion({
-    ...blind,
-    session: deps.session,
-  });
+  const reviews: VerifierReview[] = [];
+  for (const reviewer of reviewers) {
+    // One VerifierService per reviewer so each appends its own spine
+    // `verification.run` event. Sequential on purpose — mirrors the single
+    // advisory pass; no new spawn machinery.
+    const call =
+      callModel ??
+      makeVerifierCallModel(deps.loadStream!, reviewer.identity, deps.timeoutMs);
+    const service = new VerifierService({
+      callModel: call,
+      config: {
+        enabled: true,
+        model: selection,
+        progressScoring: false,
+        bon: { enabled: false, n: 3 },
+      },
+      emit: deps.emit,
+      env,
+    });
+    reviews.push(await service.reviewCompletion({ ...blind, session: deps.session }));
+  }
+  // Single reviewer (low churn default): behavior identical to pre-t21.
+  // Multiple reviewers (critical): merge PESSIMISTICALLY — any blocker/fail
+  // wins over unknown wins over confirmed.
+  const review = reviews.length > 1 ? mergeVerifierVerdicts(reviews) : reviews[0]!;
   evaluation.review = review;
+  // PW §10: disagreement between the two critical reviewers becomes
+  // structured EVIDENCE (`verifier-divergence`) in the verification.run
+  // payload → completion proof json; it never rewrites the merged verdict.
+  if (reviews.length > 1 && risk === 'critical') {
+    evaluation.reviewDivergence = divergenceFromReviews(
+      reviews,
+      reviewers.map((r) => ({ family: r.family, role: r.role })),
+    );
+  }
   return review;
 }

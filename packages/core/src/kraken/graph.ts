@@ -43,6 +43,13 @@ export interface TaskNode {
   scope?: string[];
   /** Optional acceptance checklist (contract). */
   acceptance?: string[];
+  /**
+   * Optional P2.B symbol-level ownership claims in the
+   * `"<file>#<Symbol>"` grammar (see cli kraken/semanticOwnership.ts).
+   * Declared by the planner; lets the executor admit two same-file writers
+   * whose claims are verified disjoint instead of serializing them.
+   */
+  ownedSymbols?: string[];
   /** Ids of predecessor nodes that must be `done` before this one may start. */
   deps: string[];
   status: TaskNodeStatus;

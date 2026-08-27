@@ -1,24 +1,38 @@
 /**
- * completionProof — harness-hardening P0.3 (× ADR-0023): the completion
- * proof-of-work artifact.
+ * completionProof — harness-hardening P0.3 (× ADR-0023), transaction-grade
+ * persistence (t20 §P1.B × PW §7): the completion proof-of-work artifact.
  *
- * Every strict build-gate evaluation (kraken BUILD turn, post-repair
- * re-evaluation, mission close, TUI agent_end) leaves a durable witness on
- * disk: `.zelari/completion-proof.md` for humans and hosts that read prose,
- * `.zelari/completion-proof.json` for machines. The JSON body IS the spine
- * `verification.run` payload (`strictGateEventPayload`) — same source of
- * truth, zero duplication — so the artifact can never disagree with the
- * session log.
+ * Every strict build-gate evaluation leaves a durable witness on disk:
+ * `.zelari/completion-proof.md` (prose) + `.zelari/completion-proof.json`
+ * (machines). v2 contract (t20): the JSON WRAPS the spine
+ * `verification.run` payload under `evaluation` verbatim and seals an
+ * `attestation` block of sha256 digests (./completionProofAttestation.js);
+ * writes are atomic (tmp→fsync→rename, ./completionProofPersist.js); under
+ * `required` persistence a failed write BLOCKS an otherwise-PASSing gate
+ * (completionGate exit-4 family).
  *
- * Discipline:
- * - rendering is deterministic (no clock access; `generatedAt` only when
- *   passed via meta);
- * - writing NEVER fails the parent flow: `writeCompletionProof` swallows
- *   every error and reports it as `null`.
+ * Discipline: rendering is deterministic given its inputs; writing NEVER throws — failures surface in the returned outcome.
  */
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { strictGateEventPayload, type StrictBuildGateEvaluation } from './verificationBridge.js';
+import {
+  PROOF_KIND,
+  PROOF_VERSION,
+  attestationSection,
+  buildAttestedWrapper,
+  type CompletionProofWrapper,
+  type ProofAttestation,
+  type ProofAttestationOptions,
+} from './completionProofAttestation.js';
+import { activeTaskContractSnapshot, defaultVerificationPlanSnapshot } from './completionProofProbe.js';
+import {
+  activeProofPersistenceMode,
+  enforceRequiredProofPersistence,
+  writeFileAtomic,
+  type ProofPersistenceMode,
+  type ProofPersistenceOutcome,
+} from './completionProofPersist.js';
 import type { Criterion, VerificationResult } from '@zelari/core/verification';
 
 /** Contextual pointers rendered into the proof header (all optional). */
@@ -45,6 +59,14 @@ export interface WriteCompletionProofOptions {
   /** Directory that owns the `.zelari/` folder; defaults to process.cwd(). */
   baseDir?: string;
   meta?: CompletionProofMeta;
+  /**
+   * Extra context hashed into the attestation (task contract of this run,
+   * pre-resolved verification plan / git inputs). Omitted pieces resolve
+   * best-effort; set `skipProbes` for hermetic artifacts.
+   */
+  attestation?: ProofAttestationOptions;
+  /** Override persistence-mode resolution (defaults to active mode). */
+  persistenceMode?: ProofPersistenceMode;
 }
 
 /** Verdict line — mirrors strictGateEventPayload's fallback rule exactly. */
@@ -58,7 +80,7 @@ function cell(text: string, max = 200): string {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
-/** One `tier · seq N · digest xxxxxxxx…` evidence descriptor per ref. */
+/** One `tier · seq N · digest xxxxxxxx…` descriptor per evidence ref. */
 function evidenceCell(result: VerificationResult | null): string {
   if (!result || result.evidence.length === 0) return '—';
   return result.evidence
@@ -70,7 +92,6 @@ function evidenceCell(result: VerificationResult | null): string {
     })
     .join('; ');
 }
-
 interface ProofRow {
   id: string;
   text: string | null;
@@ -81,9 +102,7 @@ interface ProofRow {
 
 /**
  * Deterministic criterion rows: flat results first (selection contract then
- * native pack order — the order they joined the evaluation), then unsatisfied
- * ids that produced no result at all (`missing`). Only native criteria expose
- * their text on the evaluation; selection criteria render their stable id.
+ * native pack order), then unsatisfied ids with no result at all (`missing`).
  */
 function proofRows(evaluation: StrictBuildGateEvaluation): ProofRow[] {
   const nativeById = new Map<string, Criterion>(
@@ -114,13 +133,17 @@ function proofRows(evaluation: StrictBuildGateEvaluation): ProofRow[] {
   return [...rows.values()];
 }
 
-function renderMarkdown(evaluation: StrictBuildGateEvaluation, meta: CompletionProofMeta): string {
+function renderMarkdown(
+  evaluation: StrictBuildGateEvaluation,
+  meta: CompletionProofMeta,
+  attestationLines: string[],
+): string {
   const lines: string[] = [
     '# Completion Proof',
     '',
     'Strict build-gate proof-of-work (ADR-0023). The machine-readable twin of',
-    'this document — `completion-proof.json` — is the exact `verification.run`',
-    'payload sent to the session spine.',
+    'this document — `completion-proof.json` — wraps the exact',
+    '`verification.run` payload sent to the session spine.',
     '',
     `- **Verdict**: **${verdictOf(evaluation)}**`,
     `- **Strict gate**: ${evaluation.strict ? 'on' : 'off'}`,
@@ -185,48 +208,112 @@ function renderMarkdown(evaluation: StrictBuildGateEvaluation, meta: CompletionP
     lines.push(`- **Model**: ${model}${review.usedLogprobs ? ' (logprobs)' : ''}`);
     if (review.fallback) lines.push(`- **Fallback**: ${review.fallback}`);
     if (review.rationale) lines.push(`- **Rationale**: ${cell(review.rationale, 400)}`);
+    // t21 (PW §10): dual critical-risk reviewers surface their verdicts and
+    // any disagreement right here — `verifier-divergence` is EVIDENCE in the
+    // proof, not a silent pick between conflicting reviews.
+    const divergence = evaluation.reviewDivergence;
+    if (divergence) {
+      const perReviewer = divergence.reviews
+        .map((r) => `${r.provider ?? '?'}/${r.model ?? '?'}=${r.verdict}`)
+        .join(' vs ');
+      lines.push(`- **Dual review (${divergence.risk})**: ${cell(perReviewer)}`);
+      lines.push(
+        `- **Divergence** (\`verifier-divergence\` evidence item): ${divergence.divergent ? 'yes' : 'no'} — pessimistic merge → ${divergence.mergedVerdict}`,
+      );
+    }
   }
+
+  if (attestationLines.length > 0) lines.push('', ...attestationLines);
 
   lines.push('', '---', '', 'Machine record: `completion-proof.json` (same directory).');
   return `${lines.join('\n')}\n`;
 }
 
 /**
- * Render the proof pair for a strict build-gate evaluation. `json` is the
- * spine `verification.run` payload verbatim; `markdown` is the human- and
- * host-facing view. Deterministic: no clock or randomness unless
- * `meta.generatedAt` is provided.
+ * Render the proof pair. Without a sealed attestation json stays the bare
+ * spine payload (legacy v1); with one BOTH views come from the v2 wrapper
+ * (json) and gain `## Attestation` (markdown). Deterministic.
  */
 export function renderCompletionProof(
   evaluation: StrictBuildGateEvaluation,
   meta: CompletionProofMeta = {},
+  attestation?: ProofAttestation,
 ): CompletionProofRender {
+  const payload = strictGateEventPayload(evaluation);
+  if (!attestation) {
+    return { markdown: renderMarkdown(evaluation, meta, []), json: JSON.stringify(payload, null, 2) };
+  }
+  const wrapper: CompletionProofWrapper = {
+    kind: PROOF_KIND,
+    version: PROOF_VERSION,
+    evaluation: payload,
+    attestation,
+  };
   return {
-    markdown: renderMarkdown(evaluation, meta),
-    json: JSON.stringify(strictGateEventPayload(evaluation), null, 2),
+    markdown: renderMarkdown(evaluation, meta, attestationSection(attestation)),
+    json: JSON.stringify(wrapper, null, 2),
   };
 }
 
 /**
- * Persist `.zelari/completion-proof.{md,json}` under `baseDir` (default
- * `process.cwd()`), creating the directory. NEVER throws: any failure is
- * swallowed and reported as `null` — a proof write must not break the
- * parent run (harness-hardening P0.3).
+ * Persist `.zelari/completion-proof.{md,json}` under `baseDir`. Atomic per
+ * file; NEVER throws — failures land in the outcome (`paths: null`), and
+ * under `required` persistence also as `requiredBlockReason` for hosts to
+ * flip the gate via enforceRequiredProofPersistence.
  */
+export async function writeCompletionProofDetailed(
+  evaluation: StrictBuildGateEvaluation,
+  options: WriteCompletionProofOptions = {},
+): Promise<ProofPersistenceOutcome> {
+  const mode = options.persistenceMode ?? activeProofPersistenceMode();
+  try {
+    const baseDir = options.baseDir ?? process.cwd();
+    const dir = path.join(baseDir, '.zelari');
+    await mkdir(dir, { recursive: true });
+    const requested = options.attestation ?? {};
+    const plan =
+      requested.skipProbes || requested.verificationPlan !== undefined
+        ? undefined
+        : await defaultVerificationPlanSnapshot(baseDir);
+    const wrapper = await buildAttestedWrapper(
+      strictGateEventPayload(evaluation),
+      {
+        skipProbes: requested.skipProbes,
+        // t22 (PW §8): default to the CURRENT live contract from the
+        // contract-scope seam — a steer that bumps the version changes this
+        // digest on the next proof write. Explicit host value wins;
+        // skipProbes keeps artifacts hermetic (no seam read).
+        taskContract: requested.skipProbes
+          ? requested.taskContract
+          : (requested.taskContract ?? activeTaskContractSnapshot()),
+        git: requested.git,
+        verificationPlan: requested.verificationPlan ?? plan,
+      },
+      process.env,
+      baseDir,
+    );
+    const rendered = renderCompletionProof(evaluation, options.meta ?? {}, wrapper.attestation);
+    const markdownPath = path.join(dir, 'completion-proof.md');
+    const jsonPath = path.join(dir, 'completion-proof.json');
+    await writeFileAtomic(markdownPath, rendered.markdown);
+    await writeFileAtomic(jsonPath, rendered.json);
+    return { paths: { markdownPath, jsonPath }, mode, requiredBlockReason: null };
+  } catch (err) {
+    // Failure reasons must be actionable — under `required` they close runs.
+    const reason = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
+    return {
+      paths: null,
+      mode,
+      requiredBlockReason: mode === 'required' ? reason : null,
+    };
+  }
+}
+
+/** Legacy best-effort entry point (unchanged v1 contract): paths or null. */
 export async function writeCompletionProof(
   evaluation: StrictBuildGateEvaluation,
   options: WriteCompletionProofOptions = {},
 ): Promise<CompletionProofPaths | null> {
-  try {
-    const dir = path.join(options.baseDir ?? process.cwd(), '.zelari');
-    await mkdir(dir, { recursive: true });
-    const { markdown, json } = renderCompletionProof(evaluation, options.meta);
-    const markdownPath = path.join(dir, 'completion-proof.md');
-    const jsonPath = path.join(dir, 'completion-proof.json');
-    await writeFile(markdownPath, markdown, 'utf8');
-    await writeFile(jsonPath, json, 'utf8');
-    return { markdownPath, jsonPath };
-  } catch {
-    return null; // proof writing is best-effort by contract
-  }
+  return (await writeCompletionProofDetailed(evaluation, options)).paths;
 }
+

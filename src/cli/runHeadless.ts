@@ -31,8 +31,10 @@ import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, res
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from './kraken/metrics.js';
 import { buildKrakenRepairPrompt, evaluateKrakenCompletionGate } from './kraken/completionGate.js';
 import { krakenSelectionPlaybook } from './kraken/selectionPlaybook.js';
-import { krakenDelegationPlaybook } from './kraken/delegationPolicy.js';
+import { krakenDelegationPlaybook, resolveDelegationPolicyForRun } from './kraken/delegationPolicy.js';
 import { chooseOrchestration } from './orchestration/policy.js';
+import { collectOrchestrationFacts, spineOrchestrationNote } from './orchestration/facts.js';
+import { COUNCIL_TIER_SIZES } from './councilConfig.js';
 
 import {
   emitEvent,
@@ -60,7 +62,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { evaluateStrictBuildGate, strictGateEventPayload, strictGateExitCode } from './kraken/verificationBridge.js';
 
-import { writeCompletionProof } from './kraken/completionProof.js';
+import { writeCompletionProofDetailed } from './kraken/completionProof.js';
+import {
+  enforceRequiredProofPersistence,
+  setActiveProofPersistenceSurface,
+} from './kraken/completionProofPersist.js';
 import { nativePackEnabled } from './kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from './kraken/verifierLifecycle.js';
 import { buildModelContext, resourceStatusTail } from './budget/modelContextBuilder.js';
@@ -75,6 +81,15 @@ import {
 import { RuntimeControlQueue } from '@zelari/core/runtime';
 import { attachControlPlane, type ControlPlaneHandle } from './headless/controlBridge.js';
 import { protocolInfoEvent } from './headless/protocol.js';
+import {
+  checkStrictPolicyLoad,
+  recordPolicyLoadBlockedOnSpine,
+  reportPolicyLoadBlocked,
+} from './headless/policyGate.js';
+import {
+  activePolicyLoadMode,
+  setActivePolicyLoadSurface,
+} from './safety/policyLoadMode.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   resetTaskSpawnCount();
@@ -142,6 +157,29 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   // Apply work phase before any tool registry is built.
   setPhase(opts.phase ?? 'build');
 
+  // P0.B — strict policy-load gate BEFORE anything dispatches (provider key
+  // resolution, registry build, agent turns). Headless/CI/mission default to
+  // `strict`; ZELARI_POLICY_LOAD_MODE wins. A file that exists but fails
+  // JSON/schema parsing blocks the run: exit 2 + reason `policy-load-failed`
+  // on stderr / NDJSON + a spine note as on-disk evidence.
+  setActivePolicyLoadSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
+  // t20 §P1.B: unattended surfaces demand their durable proof witness
+  // (ZELARI_PROOF_PERSISTENCE overrides; see completionProofPersist.ts).
+  setActiveProofPersistenceSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
+  const policyLoad = checkStrictPolicyLoad(process.cwd(), { mode: activePolicyLoadMode() });
+  if (policyLoad.blocked && policyLoad.block) {
+    reportPolicyLoadBlocked(policyLoad.block, opts.output);
+    await recordPolicyLoadBlockedOnSpine(policyLoad.block, {
+      mode: opts.mode,
+      ...(opts.profile ? { profile: opts.profile } : {}),
+      ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
+    });
+    return policyLoad.block.exitCode;
+  }
+  for (const w of policyLoad.warnings) {
+    process.stderr.write(`[zelari-code --headless] [policy] ${w}\n`);
+  }
+
   // v1.30.0: external-agent permission broker (ZELARI_PERM_SOCKET). Serves
   // `claude --permission-prompt-tool "zelari-code --permission-mcp <socket>"`
   // with a policy-only handler: ZELARI_AUTO=1 auto-allows, otherwise ask
@@ -198,21 +236,31 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     });
   }
 
-  // P1.1 (t12): `--mode auto` resolves ONCE here, before any dispatch check.
-  // Pure classifier (./orchestration/policy.js) - no I/O, no env reads. The
-  // parser pins mode to the ordinary default ('kraken'), so when the flag is
-  // absent this block never runs and behavior is byte-identical. Today both
-  // classified surfaces ride the existing single-harness path; the verdict
-  // line exists for operators and future routing slices.
+  // P1.1 (t12) -> t23 (P1.E): `--mode auto` resolves ONCE here, before any
+  // dispatch check. Pure classifier (./orchestration/policy.js); the only
+  // I/O is the CHEAP FACTS collection (bounded repo walk + active-contract
+  // seam read). The parser pins mode to the ordinary default ('kraken'), so
+  // when the flag is absent this block never runs and behavior stays
+  // byte-identical. V2 wiring: strategy maps onto mode (council => council
+  // pipeline), a REAL delegation policy (replacing the no-op injection),
+  // and the orchestration_decision spine telemetry note emitted by hosts.
   if (opts.orchestrationAuto) {
-    const verdict = chooseOrchestration(opts.task ?? '');
-    const line = `[orchestration] --mode auto -> surface=${verdict.surface} (${verdict.reason})`;
+    const facts = await collectOrchestrationFacts();
+    const verdict = chooseOrchestration(opts.task ?? '', facts);
+    opts.orchestrationDecision = verdict;
+    const line = `[orchestration] --mode auto -> surface=${verdict.surface} strategy=${verdict.strategy} confidence=${verdict.confidence} latency~${verdict.estimatedLatencyMs}ms (${verdict.rationaleCode})`;
     if (opts.output === 'json') emitEvent({ type: 'log', message: line });
     else process.stderr.write(`[zelari-code --headless] ${line}
 `);
   }
 
-  const mode = opts.mode ?? (opts.useCouncil ? 'council' : 'kraken');
+  let mode = opts.mode ?? (opts.useCouncil ? 'council' : 'kraken');
+  // t23 mapping v1: council is the ONLY strategy that changes dispatch mode
+  // (lead-only|explore and lead+verify|parallel-build|graph all ride the
+  // single-harness path — the delegation policy differentiates them).
+  if (opts.orchestrationDecision?.strategy === 'council') {
+    mode = 'council';
+  }
   const profileId = resolveHeadlessProfileId(mode, opts.profile);
 
   if (opts.output === 'json') {
@@ -518,23 +566,34 @@ async function registerHeadlessMcp(
 }
 
 /**
- * P0.3 (harness-hardening x ADR-0023): persist the strict completion proof
- * artifact after a gate evaluation — .zelari/completion-proof.{md,json}. The
- * JSON twin IS the verification.run payload already sent to the spine, so the
- * disk witness can never disagree with the session log. Best-effort by
- * contract: a proof write must never fail the parent run.
+ * P0.3 (harness-hardening x ADR-0023) + t20 §P1.B: persist the strict
+ * completion proof artifact after a gate evaluation —
+ * `.zelari/completion-proof.{md,json}` (atomic tmp→fsync→rename writes).
+ * The JSON twin wraps the verification.run payload already sent to the
+ * spine, so the disk witness can never disagree with the session log.
+ *
+ * Durability is demand-driven (t20): under `required` persistence mode
+ * (headless/mission defaults; ZELARI_PROOF_PERSISTENCE override) a failed
+ * write BLOCKS an otherwise-PASSing gate — strictGateExitCode then closes
+ * the run 4 even though verification itself passed. Best-effort surfaces
+ * keep the P0.3 contract: never fail the parent run.
  */
-function writeProofSafe(
+async function writeProofSafe(
   gate: Awaited<ReturnType<typeof evaluateStrictBuildGate>>,
   meta: { surface?: string; sessionId?: string },
   baseDir: string = process.cwd(),
 ): Promise<void> {
-  return writeCompletionProof(gate, { baseDir, meta }).then(
-    (): void => undefined,
-    (): void => undefined,
-  );
+  const outcome = await writeCompletionProofDetailed(gate, { baseDir, meta });
+  if (enforceRequiredProofPersistence(gate, outcome)) {
+    emitEvent({
+      type: 'log',
+      message: `[headless] completion proof REQUIRED but not persisted (${outcome.requiredBlockReason}) — gate BLOCKED`,
+    });
+    process.stderr.write(
+      `[zelari-code --headless] required completion proof not persisted: ${outcome.requiredBlockReason}\n`,
+    );
+  }
 }
-
 async function runHeadlessSingle(
   opts: HeadlessOptions,
   provider: string,
@@ -625,6 +684,12 @@ async function runHeadlessSingle(
   // E1.4: advertise the spine session id so hosts (Desktop) resume the
   // same event log next turn instead of replaying 1.x history JSON.
   emitEvent(sessionStartedEvent(spine));
+
+  // t23 telemetry: decision recorded on the spine (state-only `note`,
+  // orchestration_decision payload) BEFORE the turn's model surface begins.
+  if (opts.orchestrationDecision) {
+    spineOrchestrationNote(spine, opts.orchestrationDecision);
+  }
 
   // Fase 3 (ADR-0020): fresh per-run candidate registry (each headless run
   // is one process, so per-run == per-turn here).
@@ -730,7 +795,15 @@ async function runHeadlessSingle(
             KRAKEN_IDENTITY_MODULE,
             KRAKEN_LEAD_PLAYBOOK_MODULE,
             ...krakenSelectionPlaybook(opts.mode === 'kraken'),
-            ...krakenDelegationPlaybook(opts.mode === 'kraken'),
+            ...krakenDelegationPlaybook(
+              opts.mode === 'kraken',
+              // t23: --mode auto injects the REAL strategy-derived policy
+              // (env override already folded in); explicit modes keep the
+              // env-resolved default (undefined ⇒ resolveDelegationPolicy()).
+              opts.orchestrationDecision
+                ? resolveDelegationPolicyForRun(opts.orchestrationDecision.strategy)
+                : undefined,
+            ),
 
             {
               type: 'language-policy',
@@ -1216,6 +1289,12 @@ async function runHeadlessCouncil(
   // same event log next turn instead of replaying 1.x history JSON.
   emitEvent(sessionStartedEvent(spine));
 
+  // t23 telemetry: same spine note on the council host (--mode auto can
+  // route here when the design-conflict trigger fires).
+  if (opts.orchestrationDecision) {
+    spineOrchestrationNote(spine, opts.orchestrationDecision);
+  }
+
   // Experiment: free-form council+build soft-gated to design-phase unless
   // ZELARI_COUNCIL_CAN_BUILD=1. Also strip project mutators (planMode tools).
   const { shouldAllowCouncilBuild } = await import('./buildPolicy.js');
@@ -1314,6 +1393,13 @@ async function runHeadlessCouncil(
       tools: toolRegistry,
       feedbackStore,
       runMode: councilRunMode,
+      // t23: an auto-SELECTED council runs the LITE tier (3 members) unless
+      // ZELARI_COUNCIL_TIER / ZELARI_COUNCIL_SIZE explicitly opt into full.
+      ...(opts.orchestrationDecision?.strategy === 'council' &&
+        process.env['ZELARI_COUNCIL_TIER'] === undefined &&
+        process.env['ZELARI_COUNCIL_SIZE'] === undefined
+        ? { councilSize: COUNCIL_TIER_SIZES.lite }
+        : {}),
       workspaceContext: composed.workspaceContext,
       ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
       maxToolLoopIterations: envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, {

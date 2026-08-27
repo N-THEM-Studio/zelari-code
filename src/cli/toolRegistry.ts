@@ -39,6 +39,7 @@ import {
   type PlanTaskEventSink,
 } from './tools/planTaskTools.js';
 import { createInspectCommandTool } from './tools/inspectCommand.js';
+import { createExecProcessTool } from './tools/execProcess.js';
 import { createObserveBatchTool } from './tools/observeBatch.js';
 import { createRetrieveObservationTool } from './tools/retrieveObservation.js';
 import { createLspTools } from './lsp/tools.js';
@@ -65,12 +66,18 @@ import {
 import { createDefaultLifecycleHooks } from './safety/lifecycleHooks.js';
 import {
   agentLayersFor,
+  emptyPolicySet,
   loadPolicySet,
   mergeRuleEffect,
+  PolicyLoadError,
   type LayeredPolicyRuleSet,
   type PolicyPrecedence,
 } from './safety/policyEngine.js';
-import { matchAgentPolicyRuleLayered } from './safety/policyLayers.js';
+import { activePolicyLoadMode } from './safety/policyLoadMode.js';
+import { intersectEffects, matchAgentPolicyRuleLayered } from './safety/policyLayers.js';
+// t22: the TaskContract compiles into a NON-OVERRIDABLE restrict-only layer.
+import { matchContractCapabilityRule } from './kraken/contractCompiler.js';
+import { resolveClaimsVerdict } from './safety/resourceClaims.js';
 import { withResultCache } from './toolResultCache.js';
 import type { LifecycleHookRunner } from '@zelari/core/harness';
 import type {
@@ -279,6 +286,12 @@ export function createBuiltinToolRegistry(
   // Wrap bash: shell blocklist + audit.
   const safeBash = wrapWithShellSafety(bashTool, audit, sessionId);
 
+  // P0.C2 (t17): structured exec_process — same shell-safety discipline as
+  // bash (blocklist + audit) with an evidence-grade audit summary
+  // (`program argv -> exitCode=N`); registered THROUGH the permission
+  // wrapper below so policy claims gate every execution.
+  const safeExecProcess = wrapWithExecEvidence(createExecProcessTool(root), audit, sessionId);
+
   // v0.7.5: network tools — audit-only wrap (no filesystem paths to sandbox;
   // the tools themselves enforce http(s)-only + timeout + size caps).
   const safeFetchUrl = wrapWithAudit(fetchUrlTool, audit, sessionId);
@@ -311,7 +324,24 @@ export function createBuiltinToolRegistry(
 // project file); ZELARI_POLICY_PRECEDENCE=legacy restores the v1
 // project-first override. Loaded once per registry build; empty when
 // absent/invalid/disabled (ZELARI_POLICY=0).
-const agentPolicySet = loadPolicySet(root);
+const agentPolicySet = (() => {
+  // P0.B: load in the ACTIVE policy-load mode (resolvePolicyLoadMode:
+  // ZELARI_POLICY_LOAD_MODE > strict for headless/CI/mission > permissive
+  // TUI). Registry construction stays infallible — a strict-mode
+  // PolicyLoadError degrades to the empty set with a loud stderr line here;
+  // the HARD block happens in the runHeadless pre-flight gate
+  // (headless/policyGate.ts), which returns exit 2 / `policy-load-failed`
+  // before any registry is ever built.
+  try {
+    return loadPolicySet(root, { mode: activePolicyLoadMode() });
+  } catch (err) {
+    if (err instanceof PolicyLoadError) {
+      process.stderr.write(`[policy] ${err.message} — registry continues WITHOUT agent rules.\n`);
+      return emptyPolicySet();
+    }
+    throw err;
+  }
+})();
 const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
   agentPolicySet,
   options.policyAgent ?? 'lead',
@@ -372,6 +402,9 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
   }
   if (allowBash) {
     registry.register(withPerm(safeBash));
+    // P0.C2: unlike legacy bash, exec_process is ALWAYS behind the
+    // permission + resource-claims choke-point.
+    registry.register(withPerm(safeExecProcess));
   }
 
   // Interactive clarification — available in plan + build (not pure explore RO).
@@ -438,7 +471,7 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
     ...(observeBatchTool ? [observeBatchTool] : []),
     ...(retrieveObservationTool ? [retrieveObservationTool] : []),
     ...(allowMutators ? [safeWriteFile, safeEditFile, safeApplyDiff] : []),
-    ...(allowBash ? [safeBash] : []),
+    ...(allowBash ? [safeBash, safeExecProcess] : []),
     ...(askUserTool ? [askUserTool] : []),
     ...(skillTool ? [skillTool] : []),
     ...(todoWrite ? [todoWrite] : []),
@@ -856,10 +889,42 @@ function wrapWithPermissions<I, O>(
             root ?? process.cwd(),
           )
         : null;
-      const action = mergeRuleEffect(decision.action, rule);
-      const rulePrefix = rule
-        ? `[policy] rule '${rule.match}'${rule.reason ? ` — ${rule.reason}` : ''}`
-        : '';
+      // P0.C1 resource claims: EVERY resource this invocation can touch gets
+      // its own layered match and the per-claim effects intersect into the
+      // decision (deny > ask > allow) — a multi-path tool can no longer pass
+      // because only its first path was checked. No matched claim ⇒
+      // undefined ⇒ the category + single-rule decision is untouched.
+      const claims = agentLayers
+        ? resolveClaimsVerdict(
+            agentLayers,
+            precedence,
+            original.name,
+            (input ?? {}) as Record<string, unknown>,
+            root ?? process.cwd(),
+          )
+        : undefined;
+      // t22: the active TaskContract's compiled capability layer matches as a
+      // THIRD independent source and its effect intersects LAST — a contract
+      // deny can never be relaxed and a contract allow can never widen any
+      // other layer or the category decision (same deny>ask>allow lattice).
+      // No scoped contract ⇒ null ⇒ this slot is inert.
+      const contractRule = matchContractCapabilityRule(
+        required,
+        (input ?? {}) as Record<string, unknown>,
+        root ?? process.cwd(),
+      );
+      const action = intersectEffects(mergeRuleEffect(decision.action, rule), claims?.effect, contractRule?.effect);
+      const claimHit =
+        claims && claims.effect !== undefined
+          ? claims.matchedRules.find((x) => x.effect === claims.effect)
+          : undefined;
+      const rulePrefix = contractRule
+        ? `[contract] rule '${contractRule.match}'${contractRule.reason ? ` — ${contractRule.reason}` : ''}`
+        : rule
+          ? `[policy] rule '${rule.match}'${rule.reason ? ` — ${rule.reason}` : ''}`
+          : claimHit
+            ? `[policy] claim '${claimHit.match}'${claimHit.reason ? ` — ${claimHit.reason}` : ''}`
+            : '';
       if (action === 'deny') {
         return typedErr(`[permission] ${rulePrefix || decision.reason}`);
       }
@@ -1017,6 +1082,48 @@ function wrapWithAudit<I extends Record<string, unknown>, O>(
           tool: original.name,
           args: redactForAudit(rawArgs as Record<string, unknown>),
           sessionId,
+          fn: () => original.execute(rawArgs, ctx),
+        });
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : String(err),
+        } as TypedResult<O>;
+      }
+    },
+  };
+}
+
+/**
+ * P0.C2 (t17) evidence seam for exec_process: blocklist-style guard plus an
+ * audit entry whose summary records program + argv + exitCode so executed
+ * structured commands survive as verifiable evidence in the audit trail and
+ * the session spine (tool events feed Completion Proof evidence refs).
+ */
+function wrapWithExecEvidence<I extends Record<string, unknown>, O>(
+  original: ToolDefinition<I, O>,
+  audit: AuditLogger,
+  sessionId: string,
+): ToolDefinition<I, O> {
+  return {
+    ...original,
+    execute: async (rawArgs: I, ctx: ToolContext): Promise<TypedResult<O>> => {
+      const args = rawArgs as Record<string, unknown>;
+      const program = typeof args['program'] === 'string' ? args['program'] : '';
+      const argv = Array.isArray(args['args'])
+        ? args['args'].filter((x): x is string => typeof x === 'string')
+        : [];
+      const what = [program, ...argv].join(' ');
+      try {
+        return await audit.runTool({
+          tool: original.name,
+          args: redactForAudit(args),
+          sessionId,
+          summarize: (result) => {
+            const r = result as TypedResult<{ exitCode?: number }>;
+            const code = r.ok ? r.value.exitCode : undefined;
+            return `${what}${code !== undefined ? ` -> exitCode=${code}` : ''}`;
+          },
           fn: () => original.execute(rawArgs, ctx),
         });
       } catch (err) {

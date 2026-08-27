@@ -47,6 +47,13 @@ export interface HeadlessOptions {
    */
   orchestrationAuto?: boolean;
   /**
+   * t23/P1.E: full v2 OrchestrationDecision resolved at dispatch when
+   * `--mode auto` is passed (assigned inside runHeadless — NEVER parsed from
+   * CLI flags). Hosts read it for delegation-policy injection and the
+   * `orchestration_decision` spine telemetry note; absent on explicit modes.
+   */
+  orchestrationDecision?: import('./orchestration/policy.js').OrchestrationDecision;
+  /**
    * Work phase (plan = no project writes; build = full tools).
    * @since desktop parity
    */

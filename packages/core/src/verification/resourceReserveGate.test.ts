@@ -9,7 +9,7 @@ import { defaultResourcePolicy } from '../runtime/resourcePolicy.js';
 import { evaluateResourceReserveGate } from './resourceReserveGate.js';
 import { evaluateCompletion, STRICT_ALL_POLICY } from './completionPolicy.js';
 import { evaluateBudgetContinuation } from '../mission/budgetContinuation.js';
-import { applyTaskContractUpdate, deriveInitialContract, TaskContractConflictError, type TaskContract } from '../session/taskContract.js';
+import { applyTaskContractUpdate, deriveInitialContract, TaskContractConflictError, TaskContractSchema, type TaskContract } from '../session/taskContract.js';
 import {
   deriveMessages,
   EPHEMERAL_TAIL_EVENT_KINDS,
@@ -176,6 +176,30 @@ describe('task contract (§14)', () => {
     });
     expect(updated.acceptanceCriteria.map((c) => c.id)).toEqual(['ac-1', 'ac-2']);
     expect(updated.version).toBe(2);
+  });
+
+  // t22 (§P1.C): scope/risk are OPTIONAL schema fields — everything about a
+  // contract without them parses exactly as before (replay-safe), and a
+  // versioned steer PRESERVES them so compiled capability layers survive.
+  it('t22: scope/risk optional + preserved across steers (replay-compat)', () => {
+    // Old-spine shape parses byte-identically with NO new keys added.
+    const legacy = TaskContractSchema.parse({
+      version: 1,
+      goal: 'fix auth refresh',
+      constraints: [],
+      acceptanceCriteria: [],
+      source: { userSeq: 2 },
+    });
+    expect('scope' in legacy).toBe(false);
+    expect('risk' in legacy).toBe(false);
+
+    const scoped = applyTaskContractUpdate(
+      TaskContractSchema.parse({ ...base, scope: { allowedPaths: ['src/**'], forbiddenPaths: ['vendor/**'] }, risk: 'medium' }),
+      { goal: 'steered goal', nextUserSeq: 9 },
+    );
+    expect(scoped.version).toBe(2);
+    expect(scoped.scope).toEqual({ allowedPaths: ['src/**'], forbiddenPaths: ['vendor/**'] });
+    expect(scoped.risk).toBe('medium');
   });
 });
 

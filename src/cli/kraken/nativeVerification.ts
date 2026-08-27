@@ -18,6 +18,12 @@
  * permanently-unknown blocker on repos without that script). Optional
  * advisory criteria are kept — they surface as `unknown` without gating.
  *
+ * Multi-ecosystem (P1.A / t19): command resolution delegates to the adapter
+ * registry (./verificationAdapters) — package.json/npm is now the node
+ * adapter, and Cargo.toml / go.mod / pyproject.toml repos get native plans
+ * too (highest detect score wins; unrecognized roots contribute nothing).
+ * The same repo-adaptive honesty holds everywhere: an unbindable slot → null.
+ *
  * Env surface (all optional, flags documented in GUIDA):
  *   ZELARI_VERIFY_PACK=0|off|false   disable the native pack (ON by default
  *                                     since P0.2; repo-adaptive binding keeps
@@ -38,6 +44,7 @@ import {
   type Criterion,
   type VerificationResult,
 } from '@zelari/core/verification';
+import { resolveAdapterForRoot } from './verificationAdapters/index.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -58,28 +65,68 @@ export function nativePackEnabled(env: Env = process.env): boolean {
   return true;
 }
 
+/** Empty baseline plan: an adapter-less root still honors env overrides. */
+const EMPTY_PLAN: NativePackCommands = {
+  typecheckCommand: null,
+  testCommand: null,
+  buildCommand: null,
+};
+
 /**
- * Resolve pack commands: env override wins (empty string = explicit
- * disable), otherwise bind `npm run <script>` only when the repo declares
- * the script. Unbound → null → the criterion is dropped downstream.
+ * Env override surface, applied ON TOP of whatever an adapter produced
+ * (semantics preserved exactly from F2): an override replaces the bound
+ * command — even a null one (so pure-override setups work on any repo) —
+ * and the empty string explicitly disables that slot. Unset → keep the
+ * adapter's binding.
+ */
+export function applyEnvOverridesToPlan(env: Env, plan: NativePackCommands): NativePackCommands {
+  const pick = (override: string | undefined, bound: string | null): string | null => {
+    if (override !== undefined) {
+      const trimmed = override.trim();
+      return trimmed === '' ? null : trimmed;
+    }
+    return bound;
+  };
+  return {
+    typecheckCommand: pick(env.ZELARI_VERIFY_TYPECHECK_CMD, plan.typecheckCommand),
+    testCommand: pick(env.ZELARI_VERIFY_TEST_CMD, plan.testCommand),
+    buildCommand: pick(env.ZELARI_VERIFY_BUILD_CMD, plan.buildCommand),
+  };
+}
+
+/**
+ * Legacy F2 resolver kept for compatibility: env overrides over implicit
+ * node-script bindings (`npm run <script>` when package.json declares it).
+ * The ecosystem-aware path is resolvePackCommandsForRoot below.
  */
 export function resolvePackCommands(
   env: Env,
   scripts: Record<string, unknown>,
 ): NativePackCommands {
-  const pick = (override: string | undefined, scriptName: string): string | null => {
-    if (override !== undefined) {
-      const trimmed = override.trim();
-      return trimmed === '' ? null : trimmed;
-    }
+  const npmScript = (scriptName: string): string | null => {
     const script = scripts[scriptName];
     return typeof script === 'string' && script.length > 0 ? `npm run ${scriptName}` : null;
   };
-  return {
-    typecheckCommand: pick(env.ZELARI_VERIFY_TYPECHECK_CMD, 'typecheck'),
-    testCommand: pick(env.ZELARI_VERIFY_TEST_CMD, 'test'),
-    buildCommand: pick(env.ZELARI_VERIFY_BUILD_CMD, 'build'),
-  };
+  return applyEnvOverridesToPlan(env, {
+    typecheckCommand: npmScript('typecheck'),
+    testCommand: npmScript('test'),
+    buildCommand: npmScript('build'),
+  });
+}
+
+/**
+ * P1.A (t19): ecosystem-aware resolver — pick the highest-scoring adapter
+ * for `cwd` (resolveAdapterForRoot), take its build plan, then layer env
+ * overrides on top. An unrecognized root degrades to the empty plan, so a
+ * pure-override setup keeps working exactly as it did before adapters.
+ */
+export async function resolvePackCommandsForRoot(
+  env: Env,
+  cwd: string,
+): Promise<NativePackCommands> {
+  const adapter = await resolveAdapterForRoot(cwd);
+  const plan = adapter ? await adapter.buildPlan(cwd) : EMPTY_PLAN;
+  return applyEnvOverridesToPlan(env, plan);
 }
 
 /** Per-command timeout (default mirrors the core pack: 10 minutes). */
@@ -145,7 +192,8 @@ export async function evaluateNativePack(deps: NativePackDeps = {}): Promise<Nat
   const env = deps.env ?? process.env;
   if (!nativePackEnabled(env)) return null;
   const cwd = deps.cwd ?? process.cwd();
-  const commands = resolvePackCommands(env, await readPackageScripts(cwd));
+  // P1.A: ecosystem-aware resolution — adapter build plan + env overrides.
+  const commands = await resolvePackCommandsForRoot(env, cwd);
   // No bound command at all → nothing deterministic to add; advisories alone
   // would only pollute the contract with permanently-unknown results.
   if (!commands.typecheckCommand && !commands.testCommand && !commands.buildCommand) return null;

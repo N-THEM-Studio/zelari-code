@@ -25,6 +25,13 @@ import { getKrakenCheckResults, krakenRequiredChecks, getLastVerifyToolTrace } f
 import { evaluateKrakenCompletionGate, type KrakenCompletionGate } from './completionGate.js';
 import type { KrakenCheckResult, TentacleToolTrace } from './verifyReport.js';
 import { evaluateNativePack, nativePackEnabled, type NativePackEvaluation } from './nativeVerification.js';
+// t22: TaskContract → compiler (capability rules + verification criteria).
+import {
+  activeContractScope,
+  evaluateContractCriteria,
+  compileVerificationCriteria,
+  type ContractCriteriaEvaluation,
+} from './contractCompiler.js';
 import type { ShellProvider } from '@zelari/core/runtime';
 import type { SessionEventInput } from '@zelari/core/session';
 import {
@@ -278,6 +285,36 @@ export async function anchorSelectionEvidence(
 }
 
 /** Combined outcome: legacy gate + strict evidence evaluation (selection contract + native criteria pack). */
+/**
+ * t21 (§P1.D × PW §10): one reviewer's verdict as recorded for evidence.
+ * Advisory-only metadata; never authoritative for verdict/blocked.
+ */
+export interface ReviewerVerdictRecord {
+  provider: string | null;
+  model: string | null;
+  family: string;
+  role: string;
+  verdict: 'confirmed' | 'rejected' | 'unknown';
+  score: number | null;
+  rationale: string | null;
+  fallback: string | null;
+}
+
+/**
+ * t21 (PW §10): critical-risk dual-review disagreement becomes STRUCTURED
+ * EVIDENCE (evidence item kind `verifier-divergence`) instead of a silent
+ * pick. Serialized inside the `verification.run` payload (`verifier.divergence`)
+ * so it flows verbatim into the completion proof json wrapper.
+ */
+export interface VerifierDivergenceEvidence {
+  kind: 'verifier-divergence';
+  risk: 'critical';
+  /** True when reviewers disagreed (pessimistic merge still applies). */
+  divergent: boolean;
+  mergedVerdict: VerifierReview['verdict'];
+  reviews: ReviewerVerdictRecord[];
+}
+
 export interface StrictBuildGateEvaluation {
   gate: KrakenCompletionGate;
   strict: boolean;
@@ -290,6 +327,13 @@ export interface StrictBuildGateEvaluation {
    */
   native?: NativePackEvaluation | null;
   /**
+   * t22 (§P1.C): TaskContract-compiled criteria (verificationHint commands)
+   * evaluated by the same engine, joined into the SAME CompletionPolicy
+   * evaluation as the pack. Null when no contract/scope registered or the
+   * contract binds no deterministic command.
+   */
+  compiled?: ContractCriteriaEvaluation | null;
+  /**
    * Flat VerificationResult list backing the evaluation (selection contract
    * + native pack). Set whenever the strict path runs; consumed by the
    * advisory verifier review (verifierLifecycle.ts).
@@ -300,6 +344,11 @@ export interface StrictBuildGateEvaluation {
    * informational only, NEVER authoritative for verdict/blocked.
    */
   review?: VerifierReview | null;
+  /**
+   * t21 (§P1.D): dual critical-risk reviewer verdicts + disagreement, set
+   * only when two reviewers ran. Same advisory discipline as `review`.
+   */
+  reviewDivergence?: VerifierDivergenceEvidence | null;
   /**
    * 2.1 T5: how the selection-contract evidence was anchored — refs tied to
    * captured tool executions (pattern A) vs re-emitted notes (pattern B,
@@ -332,6 +381,12 @@ export interface StrictGateOptions {
    * opt-out via `ZELARI_MISSION_STRICT=0`.
    */
   surface?: StrictDoneSurface;
+  /**
+   * t22: live TaskContract of this turn — explicit override that wins over
+   * the active-scope seam (kraken/contractCompiler.setActiveContractScope).
+   * Neither present ⇒ no contract contribution to the gate.
+   */
+  taskContract?: import('@zelari/core').TaskContract;
 }
 
 /**
@@ -350,7 +405,12 @@ export async function evaluateStrictBuildGate(
   const strictOn = strictDoneEnabled(options.surface ?? 'kraken');
   const nativeOn = nativePackEnabled(options.env ?? process.env);
   const selectionAvailable = gate.selectionUsed && gate.total > 0;
-  if ((!selectionAvailable && !nativeOn) || (!strictOn && !nativeOn)) {
+  // t22: TaskContract-compiled criteria participate under the SAME switches
+  // as the pack. They can rescue a bare "nothing to evaluate" early-return
+  // when no selection ran and the pack binds nothing (contract-only turn).
+  const scopeContract = options.taskContract ?? activeContractScope()?.contract;
+  const contractPlan = scopeContract ? compileVerificationCriteria(scopeContract) : [];
+  if ((!selectionAvailable && !nativeOn && contractPlan.length === 0) || (!strictOn && !nativeOn)) {
     return {
       gate,
       strict: false,
@@ -379,8 +439,18 @@ export async function evaluateStrictBuildGate(
     shell: options.shell,
     emit: options.emit,
   }).catch((): null => null);
-  const allCriteria = [...contract.criteria, ...(native?.criteria ?? [])];
-  const allResults = [...contract.results, ...(native?.results ?? [])];
+  // t22: contract-compiled criteria join the pack's evaluation — blockers
+  // add up. Evaluated with the same shell/emit seams so evidence anchors to
+  // the spine exactly like the pack's. A failure degrades to no contribution.
+  const compiled = scopeContract
+    ? await evaluateContractCriteria(scopeContract, {
+        cwd: options.cwd,
+        shell: options.shell,
+        emit: options.emit,
+      }).catch((): ContractCriteriaEvaluation | null => null)
+    : null;
+  const allCriteria = [...contract.criteria, ...(native?.criteria ?? []), ...(compiled?.criteria ?? [])];
+  const allResults = [...contract.results, ...(native?.results ?? []), ...(compiled?.results ?? [])];
   // Pack enabled but nothing bound (and no selection contract) → nothing to
   // evaluate: stay non-strict rather than certify an empty PASS.
   if (allCriteria.length === 0) {
@@ -406,6 +476,7 @@ export async function evaluateStrictBuildGate(
     anchoring,
     evaluation,
     native,
+    compiled,
     blocked,
     summary: blocked
       ? `blocked (strict ${evaluation?.verdict ?? 'n/a'}): ${legacyPart}evidence ${
@@ -460,6 +531,22 @@ export function strictGateEventPayload(evaluation: StrictBuildGateEvaluation): R
           })),
         }
       : null,
+    // t22: contract-compiled deterministic checks (Verify commands) — same
+    // evidence discipline as the pack; omitted entirely when absent so old
+    // payloads stay byte-identical.
+    ...(evaluation.compiled
+      ? {
+          compiled: {
+            criteria: evaluation.compiled.criteria.map((c) => ({ id: c.id, required: c.required })),
+            results: evaluation.compiled.results.map((r) => ({
+              criterionId: r.criterionId,
+              status: r.status,
+              evidence: r.evidence.map((e) => ({ tier: e.tier, ref: e.ref, digest: e.digest, ...(e.seq !== undefined ? { seq: e.seq } : {}) })),
+              detail: r.detail,
+            })),
+          },
+        }
+      : {}),
     // 2.1 T4: advisory verifier review (opt-in) — informational, never
     // authoritative: verdict/blocked above come from the deterministic policy.
     verifier: evaluation.review
@@ -470,6 +557,9 @@ export function strictGateEventPayload(evaluation: StrictBuildGateEvaluation): R
           fallback: evaluation.review.fallback ?? null,
           effectiveModel: evaluation.review.effectiveModel,
           advisory: true,
+          // t21 (PW §10): dual critical-risk reviewer evidence item — present
+          // ONLY when two reviewers ran, so old payloads stay byte-identical.
+          ...(evaluation.reviewDivergence ? { divergence: evaluation.reviewDivergence } : {}),
         }
       : null,
     summary: evaluation.summary,

@@ -5,6 +5,43 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.14.0] - 2026-08-27
+
+Releases B, C and D of the authority &amp; verification roadmap: policy loading
+is fail-closed wherever the harness runs autonomously, every tool declares its
+resource claims, shell rules survive wrapper tricks, verification speaks six
+ecosystems, Completion Proofs are transaction-grade attestations, the
+TaskContract compiles into capability policy and verification plan, reviewers
+are picked by risk, and the scheduler arbitrates file/semantic ownership,
+worktrees, model reputation and spawn ROI.
+
+### Added
+
+- **Strict policy loading (P0.B)** — `PolicyLoadMode`: headless, mission and CI default to `strict`, where a malformed policy file blocks execution with a machine-readable `PolicyLoadError` (exit 2, `policy-load-failed` NDJSON event, BLOCKED event on the spine). Interactive TUI stays `permissive` (warning). Override with `ZELARI_POLICY_LOAD_MODE`.
+- **Resource claims policy engine (P0.C1)** — every tool declares `ResourceClaim`s (path / process / network / mcp / ssh); `policy.json` v2 adds `claims` matching (v1 rules still honored); all claims are evaluated before execution and intersected restrict-only; subagent capabilities are a subset of the parent's. `apply_diff` now checks **every** `---`/`+++` header path.
+- **Structured process tool `exec_process` (P0.C2)** — spawns without a shell; raw-shell commands are normalized best-effort (`env X=…`, `command`, `bash -lc`, `cmd /c`) so a `git push* = deny` rule can no longer be bypassed by `env FOO=x git push`. Executed commands are audit-logged for the Completion Proof.
+- **Symlink-safe sandbox (P0.D)** — `resolveSandboxedPath` resolves the nearest existing ancestor via realpath and case-folds on win32/darwin (junction cross-drive rejected); `verifyContainment()` closes the check→write swap race at the choke-point.
+- **Multi-ecosystem verification adapters (P1.A)** — deterministic plans for Node (npm/pnpm/yarn/bun detected via `packageManager` + lockfile), Python (pytest / ruff / mypy when configured), Rust (cargo check/test/clippy), Go (go test/vet), Java (Gradle wrapper-aware, Maven) and .NET (dotnet test/build). Missing checks never fabricate failures.
+- **Transaction-grade Completion Proof (P1.B)** — atomic persistence (tmp → fsync → rename); `required` mode in headless/mission (PASS without a persisted proof ⇒ BLOCKED); JSON v2 wrapper carries the spine evaluation verbatim plus sha256 attestations (commitSha, diff, contract, verification plan, harness manifest, self-sealing proof digest); `validateCompletionProof` verifies offline.
+- **TaskContract compiler (P1.C)** — contracts gain `scope` (`allowedPaths`/`forbiddenPaths`) and `risk`; allowed paths compile into capability rules intersected **last** at the tool choke-point; `verificationHint` acceptance criteria compile into deterministic verification criteria in the same CompletionPolicy (ADR-0030).
+- **Risk-based verifier routing (P1.D)** — low risk ⇒ deterministic verification only; medium ⇒ cheapest cross-family reviewer; high ⇒ strongest cross-family reviewer; critical ⇒ two independent reviewers from two families distinct from the builder, pessimistic merge, divergences recorded as evidence. Reviewer input stays blind to builder narration.
+- **Adaptive orchestration v2 (P1.E)** — `OrchestrationDecision` replaces the no-op `automatic` delegation policy: six strategies (lead-only → mission), deterministic rule table first, confidence/rationale/latency estimates, decision telemetry on the session spine.
+- **File ownership arbitration (P2.A)** — writer tentacles carry scope globs; overlapping admissions are deferred (not failed) until the owner finishes; case-fold aware on win32/darwin.
+- **Semantic ownership (P2.B)** — same-file parallel writes allowed when owned symbols are disjoint (AST-injected, fail-closed when symbols are undeclared).
+- **Worktree scheduling (P2.C)** — `ZELARI_KRAKEN_WORKTREE=auto`: low overlap ⇒ parallel worktrees, high overlap ⇒ sequential execution, estimated before spawning.
+- **Transactional tentacles (P2.D)** — opt-in `ZELARI_KRAKEN_TRANSACTIONAL=1`: checkpoint → run → PASS keeps a correlated recovery point, FAIL restores and drops it; restore failures are reported honestly.
+- **Model reputation (P2.E)** — per-model verified-solve metrics with 30-day half-life in an append-only JSONL store; verifier routing consults reputation **only inside** cross-family pools (routing rules unchanged, fallback identical).
+- **Spawn ROI controller (P2.F)** — every spawn is scored `expectedGain / (cost + latency + duplicationRisk)`; low-score spawns are deferred (not failed) with telemetry; fail-open on missing data.
+
+### Changed
+
+- `ZELARI_KRAKEN_WORKTREE` gains the `auto` value (`1` / off unchanged); strict policy loading is the new default for headless, mission and CI.
+
+### Fixed
+
+- **`applyTaskContractUpdate` dropped new fields on steer** — the update helper rebuilt the contract without spreading unknown fields, silently discarding `scope`/`risk`; now preserved.
+- **Completion proof adapter mirror** — `completionProofProbe` no longer hardcodes a stale adapter list; a tripwire test fails when the registry and the probe diverge.
+
 ## [2.13.0] - 2026-08-27
 
 Policy layers can only tighten permissions, writer tentacles get 45 minutes,

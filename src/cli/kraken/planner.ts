@@ -244,6 +244,7 @@ const PlannedNodeSchema = z.object({
   label: z.string().min(1).max(200),
   prompt: z.string().min(1),
   scope: z.array(z.string().min(1)).max(32).optional(),
+  ownedSymbols: z.array(z.string().min(1)).max(64).optional(),
   acceptance: z.array(z.string().min(1)).max(16).optional(),
   deps: z.array(z.string()).max(32).default([]),
 });
@@ -831,6 +832,7 @@ export function buildGraphFromPlan(graphId: string, planned: PlannedNode[]): Tas
     label: p.label,
     prompt: p.prompt,
     scope: p.scope,
+    ownedSymbols: p.ownedSymbols,
     acceptance: p.acceptance,
     deps: [...p.deps],
     status: 'pending',

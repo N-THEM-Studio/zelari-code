@@ -18,8 +18,10 @@ import {
   loadPolicySet,
   matchAgentPolicyRule,
   mergeRuleEffect,
+  PolicyLoadError,
   resolvePolicyRule,
   type LayeredPolicyRuleSet,
+  type PolicyLoadMode,
   type PolicyRule,
 } from './policyEngine.js';
 import { intersectEffects, matchAgentPolicyRuleLayered } from './policyLayers.js';
@@ -150,7 +152,7 @@ describe('policyEngine.loadPolicySet', () => {
   it('unsupported version -> whole file ignored with a warning', () => {
     const root = tmpRoot();
     writePolicyFile(root, {
-      version: 2,
+      version: 99, // P0.C1: 1 and 2 are both supported; anything else rejects
       agents: { general: { shell: [rule('*', 'deny')] } },
     });
     const set = loadPolicySet(root, { homeDir: tmpHome() });
@@ -437,5 +439,66 @@ describe('P0.A restrict-only layering (matchAgentPolicyRuleLayered / intersectEf
     expect(intersectEffects('ask', 'allow')).toBe('ask');
     expect(intersectEffects(undefined, undefined)).toBe('allow');
     expect(intersectEffects('allow', undefined)).toBe('allow');
+  });
+});
+
+// ── P0.B: PolicyLoadMode strict/permissive ─────────────────────────────────
+
+/** Capture (not expect-throw) so the machine-readable fields are assertable. */
+function loadStrict(root: string, home: string): unknown {
+  try {
+    return loadPolicySet(root, { homeDir: home, mode: 'strict' });
+  } catch (err) {
+    return err;
+  }
+}
+
+describe('policyEngine.loadPolicySet strict mode (P0.B)', () => {
+  it('broken JSON + strict -> throws PolicyLoadError with code policy_invalid + file', () => {
+    const root = tmpRoot();
+    writePolicyFile(root, '{ definitely not json');
+    const err = loadStrict(root, tmpHome());
+    expect(err).toBeInstanceOf(PolicyLoadError);
+    const ple = err as PolicyLoadError;
+    expect(ple.code).toBe('policy_invalid');
+    expect(path.isAbsolute(ple.file)).toBe(true);
+    expect(ple.file.split(path.sep).join('/')).toContain('.zelari/policy.json');
+    expect(ple.message).toContain('invalid JSON');
+  });
+
+  it('schema-invalid file + strict -> throws with the schema reason as detail', () => {
+    const root = tmpRoot();
+    writePolicyFile(root, { version: 99, agents: {} }); // v1|v2 valid since P0.C1
+    const err = loadStrict(root, tmpHome());
+    expect(err).toBeInstanceOf(PolicyLoadError);
+    expect((err as PolicyLoadError).code).toBe('policy_invalid');
+    expect((err as PolicyLoadError).message).toContain('version');
+  });
+
+  it('broken JSON + permissive -> warning path unchanged (no throw)', () => {
+    const root = tmpRoot();
+    writePolicyFile(root, '{ definitely not json');
+    // Type-level guard: the default IS permissive when the option is omitted.
+    const set = loadPolicySet(root, { homeDir: tmpHome(), mode: 'permissive' as PolicyLoadMode });
+    expect(set.agents.size).toBe(0);
+    expect(set.warnings.length).toBe(1);
+    expect(set.warnings[0]).toContain('invalid JSON');
+  });
+
+  it('missing files stay empty in strict mode too (absence is not invalidity)', () => {
+    const set = loadPolicySet(tmpRoot(), { homeDir: tmpHome(), mode: 'strict' });
+    expect(set.agents.size).toBe(0);
+    expect(set.warnings).toEqual([]);
+  });
+
+  it('rule-level issues stay non-fatal warnings even in strict (whole-file rejects only)', () => {
+    const root = tmpRoot();
+    writePolicyFile(root, {
+      version: 1,
+      agents: { general: { shell: [{ effect: 'deny' }, rule('rm *', 'deny')] } },
+    });
+    const set = loadPolicySet(root, { homeDir: tmpHome(), mode: 'strict' });
+    expect(agentRulesFor(set, 'general').shell).toHaveLength(1);
+    expect(set.warnings.join('\n')).toContain('match');
   });
 });

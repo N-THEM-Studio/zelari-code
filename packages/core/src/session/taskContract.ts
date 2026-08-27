@@ -33,6 +33,22 @@ export const TaskCriterionSchema = z.object({
 });
 export type TaskCriterion = z.infer<typeof TaskCriterionSchema>;
 
+/**
+ * t22 (§P1.C): optional execution scope for the contract compiler — glob
+ * patterns relative to the workspace root (`src/**`, `vendor/**`). BOTH
+ * arrays optional; an absent `scope` means "no compiled capability layer"
+ * (exactly today's behavior), so old spines replay unchanged.
+ */
+export const TaskContractScopeSchema = z.object({
+  allowedPaths: z.array(z.string().min(1)).optional(),
+  forbiddenPaths: z.array(z.string().min(1)).optional(),
+});
+export type TaskContractScope = z.infer<typeof TaskContractScopeSchema>;
+
+/** Risk taxonomy carried verbatim from user intent (descriptive metadata). */
+export const TASK_RISKS = ['low', 'medium', 'high', 'critical'] as const;
+export type TaskRisk = (typeof TASK_RISKS)[number];
+
 export const TaskContractSchema = z.object({
   version: z.number().int().positive(),
   goal: z.string().min(1),
@@ -42,6 +58,10 @@ export const TaskContractSchema = z.object({
     /** Seq of the user.message the contract was extracted from. */
     userSeq: z.number().int().positive(),
   }),
+  /** Optional compile-time scope (contractCompiler → policy layer). */
+  scope: TaskContractScopeSchema.optional(),
+  /** Optional declared task risk (metadata; digest-relevant like everything). */
+  risk: z.enum(TASK_RISKS).optional(),
 });
 export type TaskContract = z.infer<typeof TaskContractSchema>;
 
@@ -108,6 +128,11 @@ export function applyTaskContractUpdate(
     source: {
       userSeq: update.nextUserSeq ?? contract.source.userSeq,
     },
+    // t22: scope/risk have no update path yet (user-authored only) but MUST
+    // survive a steer intact — a dropped scope would silently disarm the
+    // compiled capability layer at version 2. Absent stays absent (replay-safe).
+    ...(contract.scope ? { scope: contract.scope } : {}),
+    ...(contract.risk !== undefined ? { risk: contract.risk } : {}),
   });
 }
 

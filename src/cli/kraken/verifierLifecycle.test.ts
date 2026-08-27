@@ -25,6 +25,7 @@ import {
   strictGateEventPayload,
   type StrictBuildGateEvaluation,
 } from './verificationBridge.js';
+import { renderCompletionProof } from './completionProof.js';
 import { resetKrakenCandidates, setKrakenCheckResults, setKrakenSelection } from './candidateRegistry.js';
 
 const CHECK = 'session survives concurrent refresh';
@@ -354,5 +355,98 @@ describe('blind review input (P0.6)', () => {
       },
     });
     expect(loaded).toEqual(['openai/gpt-5']);
+  });
+});
+
+describe('t21 risk-based routing (§P1.D × PW §10)', () => {
+  it('risk=low runs NO reviewer and cannot create an unknown blocker', async () => {
+    const gate = await evaluatedGate('pass', emitSeq());
+    let calls = 0;
+    const spy: VerifierModelCaller = async () => {
+      calls++;
+      return { text: '{"verdict":"confirmed"}', provider: 'grok', model: 'verifier-x' };
+    };
+    const review = await runAdvisoryVerifierReview(gate, {
+      env: { ZELARI_VERIFIER_REVIEW: 'true' },
+      risk: 'low',
+      selection: { mode: 'fixed', provider: 'grok', model: 'verifier-x' },
+      callModel: spy,
+      getDiff: async () => ({ diff: '', empty: true, truncated: false }),
+    });
+    expect(review).toBeNull();
+    expect(calls).toBe(0);
+    expect(gate.review).toBeUndefined();
+    // Advisory reviewer absent ⇒ no `unknown` blocker can appear because of
+    // it: the payload simply has no verifier section at all.
+    const payload = strictGateEventPayload(gate);
+    expect(payload.verifier).toBeNull();
+    // Deterministic-only verification remains PASS-capable on green checks.
+    expect(payload.verdict).toBe('PASS');
+    expect(gate.blocked).toBe(false);
+  });
+
+  it('risk=critical runs BOTH reviewers sequentially and records verifier-divergence evidence', async () => {
+    const gate = await evaluatedGate('pass', emitSeq());
+    const verdictsByCall = [
+      '{"verdict":"rejected","rationale":"tests lie"}',
+      '{"verdict":"confirmed","score":0.9}',
+    ];
+    let n = 0;
+    const users: string[] = [];
+    const recordingCaller: VerifierModelCaller = async (input) => {
+      users.push(input.user);
+      return { text: verdictsByCall[n++] ?? '', provider: 'stub', model: `m${n}` };
+    };
+    const review = await runAdvisoryVerifierReview(gate, {
+      env: { ZELARI_VERIFIER_REVIEW: 'true' },
+      risk: 'critical',
+      selection: { mode: 'inherit' },
+      session: { provider: 'openai', model: 'gpt-5' },
+      familyCandidates: [
+        { provider: 'anthropic', model: 'claude-opus-4' },
+        { provider: 'grok', model: 'grok-4' },
+      ],
+      callModel: recordingCaller,
+      getDiff: async () => ({ diff: 'diff --git a/x b/x\n+1', empty: false, truncated: false }),
+      task: 'ship feature X',
+    });
+    expect(n).toBe(2); // both reviewers ran (sequential)
+    expect(users[0]).toEqual(users[1]); // identical BLIND input for both
+    expect(review?.verdict).toBe('rejected'); // pessimistic merge wins
+    const div = gate.reviewDivergence;
+    expect(div?.kind).toBe('verifier-divergence');
+    expect(div?.risk).toBe('critical');
+    expect(div?.divergent).toBe(true);
+    expect(div?.mergedVerdict).toBe('rejected');
+    expect(div?.reviews.map((r) => [r.family, r.role, r.verdict])).toEqual([
+      ['anthropic', 'strongest', 'rejected'],
+      ['xai', 'second-opinion', 'confirmed'], // xai = inferModelFamily bucket for grok ids
+    ]);
+    // Divergence travels as EVIDENCE in the verification.run payload…
+    const payload = strictGateEventPayload(gate) as {
+      verifier: { divergence?: { kind?: string; divergent?: boolean } | null };
+    };
+    expect(payload.verifier?.divergence?.kind).toBe('verifier-divergence');
+    expect(payload.verifier?.divergence?.divergent).toBe(true);
+    // …and is rendered into the proof artifact itself.
+    const md = renderCompletionProof(gate, {}).markdown;
+    expect(md).toContain('verifier-divergence');
+    expect(md).toContain('pessimistic merge');
+  });
+
+  it('env override drives risk without deps.risk (contract seam consulted)', async () => {
+    const gate = await evaluatedGate('pass', emitSeq());
+    let calls = 0;
+    const review = await runAdvisoryVerifierReview(gate, {
+      env: { ZELARI_VERIFIER_REVIEW: 'true', ZELARI_VERIFY_RISK: 'low' },
+      selection: { mode: 'fixed', provider: 'grok', model: 'verifier-x' },
+      callModel: async () => {
+        calls++;
+        return { text: '{"verdict":"confirmed"}', provider: 'grok', model: 'verifier-x' };
+      },
+      getDiff: async () => ({ diff: '', empty: true, truncated: false }),
+    });
+    expect(review).toBeNull();
+    expect(calls).toBe(0); // ZELARI_VERIFY_RISK=low ⇒ deterministic only
   });
 });

@@ -111,6 +111,69 @@ describe('executor → workbench wiring', () => {
     }
   });
 
+  it('records ownership deferrals in the workbench event tail', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'kraken-wb-defer-'));
+    const prev = process.env[WORKBENCH_ENV];
+    process.env[WORKBENCH_ENV] = '1';
+    try {
+      const graph = buildGraphFromPlan('kraken-exec-defer', [
+        {
+          id: 'g1',
+          kind: 'general',
+          label: 'auth work',
+          prompt: 'fix auth',
+          scope: ['SRC/auth'],
+          deps: [],
+        },
+        {
+          id: 'g2',
+          kind: 'general',
+          label: 'more auth',
+          prompt: 'extend auth',
+          scope: ['src/auth/jwt.ts'],
+          deps: [],
+        },
+      ]);
+
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: { createSubAgentContext: async () => null },
+        parentCwd: cwd,
+        sessionId: 'sess-exec-defer',
+        goal: 'fix auth twice',
+        // Case-folding on: ownership arbitration (not canRunParallel, which is
+        // case-sensitive) is the layer that catches `SRC/auth` ≡ `src/auth`,
+        // so the deferral trail below is arbitration's own.
+        ownershipCaseFolding: true,
+        runTentacleFn: async (opts) => okResult(opts.args.description),
+        mergeFn: async () => ({
+          ok: true,
+          merged: false,
+          committed: false,
+          conflict: false,
+          message: 'no-op',
+        }),
+      });
+
+      const summary = await executor.execute(graph);
+      expect(summary.converged).toBe(true);
+
+      const files = await listRadioDir(cwd);
+      const wb = files.find((f) => f.startsWith('workbench-') && f.endsWith('.md'));
+      expect(wb, `expected a workbench-*.md file, got: ${files.join(', ')}`).toBeTruthy();
+
+      const body = await fs.readFile(path.join(cwd, '.zelari', 'radio', wb!), 'utf8');
+      // The overlapping writer was deferred with a workbench note — and the
+      // graph still converged (deferred ≠ failed).
+      expect(body).toContain('deferred g2');
+      expect(body).toContain('overlaps a running writer');
+      expect(body).toContain('graph_converged');
+    } finally {
+      if (prev === undefined) delete process.env[WORKBENCH_ENV];
+      else process.env[WORKBENCH_ENV] = prev;
+      await fs.rm(cwd, { recursive: true, force: true });
+    }
+  });
+
   it('respects ZELARI_KRAKEN_WORKBENCH=0 (no workbench file written)', async () => {
     const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'kraken-wb-off-'));
     const prev = process.env[WORKBENCH_ENV];

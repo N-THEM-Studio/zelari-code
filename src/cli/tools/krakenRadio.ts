@@ -21,6 +21,24 @@ export type KrakenRadioKind =
   | 'node_end'
   | 'node_retry'
   | 'node_fix'
+  | 'node_deferred'
+  // P2.C worktree scheduling: a writer arbitration would have deferred was
+  // admitted in parallel under git worktree isolation (low scope overlap,
+  // ZELARI_KRAKEN_WORKTREE=auto).
+  | 'node_worktree_scheduled'
+  // P2.B semantic ownership: a writer arbitration would have deferred was
+  // admitted because BOTH sides declare disjoint ownedSymbols for the
+  // contested file (admission-time symbol disjointness — see
+  // kraken/semanticOwnership.ts for the honest v1 limits).
+  | 'node_semantic_admitted'
+  // P2.D transactional writers: a writer node failed and its partial work
+  // was rolled back to the pre-run checkpoint (ZELARI_KRAKEN_TRANSACTIONAL).
+  | 'node_rolled_back'
+  // P2.F spawn-ROI gate: an admitted node scored below its expected-value
+  // threshold and was sent back the deferred path (stays READY, never
+  // failed) — deterministic score in kraken/spawnRoi.ts, vetoed at the
+  // executor's tentacle spawn site.
+  | 'node_roi_vetoed'
   | 'graph_converged'
   | 'graph_failed'
   // Bennett's Razor weakness-meter refinement (Slice L/N+3 wiring).
@@ -41,6 +59,24 @@ export interface KrakenRadioEvent {
   worktree?: string | null;
   durationMs?: number;
   ok?: boolean;
+  /** Graph node id (node_* graph-engine events). */
+  nodeId?: string;
+  /** P2.C: scope-overlap score (0..1) behind a node_worktree_scheduled event. */
+  overlapScore?: number;
+  /** P2.C: machine-readable why behind a node_worktree_scheduled event. */
+  rationaleCode?: string;
+  /** P2.C: id of the running writer the scheduled node was scored against. */
+  runningNode?: string;
+  /** P2.B: file both semantically-admitted writers declared claims on. */
+  contestedFile?: string;
+  /** P2.F: ROI spawn score behind a node_roi_vetoed event. */
+  spawnScore?: number;
+  /** P2.F: the ROI threshold the score was vetoed against. */
+  threshold?: number;
+  /** P2.B: the racing writer's declared symbol claims (verbatim specs). */
+  symbolsA?: string[];
+  /** P2.B: the admitted node's declared symbol claims (verbatim specs). */
+  symbolsB?: string[];
 }
 
 function radioDir(cwd: string): string {
@@ -72,6 +108,15 @@ export function appendKrakenRadio(
       ...(event.worktree !== undefined ? { worktree: event.worktree } : {}),
       ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
       ...(event.ok !== undefined ? { ok: event.ok } : {}),
+      ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
+      ...(event.overlapScore !== undefined ? { overlapScore: event.overlapScore } : {}),
+      ...(event.rationaleCode !== undefined ? { rationaleCode: event.rationaleCode } : {}),
+      ...(event.runningNode !== undefined ? { runningNode: event.runningNode } : {}),
+      ...(event.contestedFile !== undefined ? { contestedFile: event.contestedFile } : {}),
+      ...(event.spawnScore !== undefined ? { spawnScore: event.spawnScore } : {}),
+      ...(event.threshold !== undefined ? { threshold: event.threshold } : {}),
+      ...(event.symbolsA !== undefined ? { symbolsA: event.symbolsA } : {}),
+      ...(event.symbolsB !== undefined ? { symbolsB: event.symbolsB } : {}),
     };
     appendFileSync(radioPath(cwd, sessionId), `${JSON.stringify(row)}\n`, 'utf8');
   } catch {

@@ -293,7 +293,12 @@ describe('writeCompletionProof', () => {
       const json = await readFile(paths!.jsonPath, 'utf8');
       expect(md).toContain('**PASS**');
       expect(md).toContain('sess-proof');
-      expect(JSON.parse(json).verdict).toBe('PASS');
+      // t20: the disk artifact is the v2 wrapper — spine payload under
+      // `evaluation`, attestation block beside it.
+      const parsed = JSON.parse(json) as { kind?: string; version?: number; evaluation?: Record<string, unknown> };
+      expect(parsed.kind).toBe('completion-proof');
+      expect(parsed.version).toBe(2);
+      expect(parsed.evaluation!.verdict).toBe('PASS');
       const overwrite = await writeCompletionProof(
         { ...evaluation, blocked: true, summary: 'blocked later' },
         { baseDir: dir },

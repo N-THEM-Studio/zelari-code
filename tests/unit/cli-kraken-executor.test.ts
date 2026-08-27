@@ -1,10 +1,14 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import {
   createGraph,
   type TaskNode,
   type TaskNodeKind,
   type TaskNodeStatus,
 } from '@zelari/core';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import {
   KrakenGraphExecutor,
   resolveNodeTimeoutMs,
@@ -28,6 +32,9 @@ import {
   resetKrakenGraphLive,
   getKrakenGraphLive,
 } from '../../src/cli/kraken/graphStatus.js';
+import { listCheckpoints } from '../../src/cli/checkpoint/checkpointManager.js';
+import { readKrakenRadio } from '../../src/cli/tools/krakenRadio.js';
+import type { ReputationRecord } from '../../src/cli/kraken/modelReputation.js';
 
 /** Compact node factory (mirrors packages/core/src/kraken/graph.test.ts). */
 function node(id: string, deps: string[] = [], over: Partial<TaskNode> = {}): TaskNode {
@@ -47,6 +54,33 @@ function node(id: string, deps: string[] = [], over: Partial<TaskNode> = {}): Ta
 const fakeTaskToolDeps = {
   createSubAgentContext: async () => null,
 };
+
+/**
+ * Hermetic reputation store for EVERY TEST in this file (t30): the spawn-ROI
+ * gate and the t29 recording hook both resolve their store via
+ * ZELARI_REPUTATION_PATH. Without a per-test pin they would read/write a
+ * shared accumulating store (machine-local default for parentCwd '/tmp/repo'),
+ * making admission scores — and thus these tests — depend on records written
+ * by earlier tests. A fresh missing file per test ⇒ loadRecords [] ⇒ all-null
+ * ROI scores ⇒ spawn, i.e. exactly the pre-t30 behavior. (Within one run the
+ * gate loads the store once at first admit, so nodes settling later in the
+ * same run never re-enter the decision.) Per-test overrides (reputation
+ * recording suite) run inner-first and restore this pin afterwards.
+ */
+let hermeticReputationDir: string | undefined;
+beforeEach(() => {
+  hermeticReputationDir = mkdtempSync(path.join(tmpdir(), 'zelari-executor-rep-'));
+  process.env.ZELARI_REPUTATION_PATH = path.join(hermeticReputationDir, 'reputation.jsonl');
+});
+afterEach(() => {
+  if (hermeticReputationDir === undefined) return;
+  const pinned = path.join(hermeticReputationDir, 'reputation.jsonl');
+  if (process.env.ZELARI_REPUTATION_PATH === pinned) {
+    delete process.env.ZELARI_REPUTATION_PATH;
+  }
+  rmSync(hermeticReputationDir, { recursive: true, force: true });
+  hermeticReputationDir = undefined;
+});
 
 function fakeWorktreeHandle(id: string): WorktreeHandle {
   return { id, branch: `kraken/${id}`, path: `/tmp/${id}`, repoRoot: '/tmp/repo', baseSha: 'abc123' };
@@ -151,6 +185,309 @@ describe('KrakenGraphExecutor', () => {
       const summary = await executor.execute(graph);
       expect(summary.converged).toBe(true);
       expect(peakInFlight).toBe(1);
+    });
+
+    it('serializes overlapping-scope writers: the second starts only after the first settles', async () => {
+      const events: string[] = [];
+      let inFlight = 0;
+      let peakInFlight = 0;
+
+      const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+        const id = opts.args.description;
+        events.push(`start:${id}`);
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 10));
+        inFlight -= 1;
+        events.push(`end:${id}`);
+        return {
+          ok: true,
+          agent: opts.agent,
+          thoroughness: opts.thoroughness,
+          model: 'test-model',
+          result: `${id}: done`,
+          footer: '',
+          worktreePath: null,
+          worktreeHandle: null,
+        };
+      };
+
+      // `src/api` (a directory scope covers its subtree) contains `src/api/x.ts`
+      // → file-ownership arbitration must defer g2 until g1 has settled.
+      const graph = createGraph('overlap-scope', [
+        node('g1', [], { kind: 'general', scope: ['src/api'], maxRetries: 0 }),
+        node('g2', [], { kind: 'general', scope: ['src/api/jwt.ts'], maxRetries: 0 }),
+      ]);
+
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'test-session',
+        runTentacleFn,
+        worldModelGate: false,
+      });
+
+      const summary = await executor.execute(graph);
+      expect(summary.converged).toBe(true);
+      expect(summary.failedNodeIds).toEqual([]);
+      // Deferred, not failed: both writers ran, one after the other.
+      expect(events).toEqual([
+        'start:g1',
+        'end:g1',
+        'start:g2',
+        'end:g2',
+      ]);
+      expect(peakInFlight).toBe(1);
+    });
+
+    it('admits disjoint-scope writers in the same round', async () => {
+      let inFlight = 0;
+      let peakInFlight = 0;
+
+      const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 15));
+        inFlight -= 1;
+        return {
+          ok: true,
+          agent: opts.agent,
+          thoroughness: opts.thoroughness,
+          model: 'test-model',
+          result: 'done',
+          footer: '',
+          worktreePath: null,
+          worktreeHandle: null,
+        };
+      };
+
+      const graph = createGraph('disjoint-scope-pair', [
+        node('g1', [], { kind: 'general', scope: ['src/a/**'], maxRetries: 0 }),
+        node('g2', [], { kind: 'general', scope: ['src/b/**'], maxRetries: 0 }),
+      ]);
+
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'test-session',
+        runTentacleFn,
+        worldModelGate: false,
+      });
+
+      const summary = await executor.execute(graph);
+      expect(summary.converged).toBe(true);
+      // Disjoint scopes ⇒ ownership arbitration keeps both in the same wave.
+      expect(peakInFlight).toBe(2);
+    });
+
+    it('folds case in scope comparison only when ownershipCaseFolding is set', async () => {
+      const makePeak = async (caseFolding: boolean | undefined): Promise<number> => {
+        let inFlight = 0;
+        let peakInFlight = 0;
+        const runTentacleFn = async (): Promise<TentacleResult> => {
+          inFlight += 1;
+          peakInFlight = Math.max(peakInFlight, inFlight);
+          await new Promise((r) => setTimeout(r, 15));
+          inFlight -= 1;
+          return {
+            ok: true,
+            agent: 'general',
+            thoroughness: 'deep',
+            model: 'test-model',
+            result: 'done',
+            footer: '',
+            worktreePath: null,
+            worktreeHandle: null,
+          };
+        };
+        const graph = createGraph('case-fold', [
+          node('g1', [], { kind: 'general', scope: ['SRC/api'], maxRetries: 0 }),
+          node('g2', [], { kind: 'general', scope: ['src/api'], maxRetries: 0 }),
+        ]);
+        const executor = new KrakenGraphExecutor({
+          taskToolDeps: fakeTaskToolDeps,
+          parentCwd: '/tmp/repo',
+          sessionId: 'test-session',
+          runTentacleFn,
+          worldModelGate: false,
+          ...(caseFolding === undefined ? {} : { ownershipCaseFolding: caseFolding }),
+        });
+        await executor.execute(graph);
+        return peakInFlight;
+      };
+
+      // Case-insensitive FS semantics (win32/darwin): same tree → serialize.
+      expect(await makePeak(true)).toBe(1);
+      // Case-sensitive FS semantics (linux): distinct literals → parallel.
+      expect(await makePeak(false)).toBe(2);
+    });
+  });
+
+  describe('P2.C worktree scheduling (ZELARI_KRAKEN_WORKTREE=auto)', () => {
+    const ENV_KEY = 'ZELARI_KRAKEN_WORKTREE';
+    let savedEnv: string | undefined;
+    beforeEach(() => {
+      savedEnv = process.env[ENV_KEY];
+      delete process.env[ENV_KEY];
+    });
+    afterEach(() => {
+      if (savedEnv === undefined) delete process.env[ENV_KEY];
+      else process.env[ENV_KEY] = savedEnv;
+    });
+
+    /** Count concurrent tentacles while every run succeeds. */
+    function makeRunner() {
+      let inFlight = 0;
+      const state = { peakInFlight: 0 };
+      const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+        inFlight += 1;
+        state.peakInFlight = Math.max(state.peakInFlight, inFlight);
+        await new Promise((r) => setTimeout(r, 15));
+        inFlight -= 1;
+        return {
+          ok: true,
+          agent: opts.agent,
+          thoroughness: opts.thoroughness,
+          model: 'test-model',
+          result: 'done',
+          footer: '',
+          worktreePath: null,
+          worktreeHandle: null,
+        };
+      };
+      return { runTentacleFn, state };
+    }
+
+    /**
+     * Two writers whose scopes `canRunParallel` (case-sensitive, core) calls
+     * disjoint — so both become candidates — but folded ownership arbitration
+     * calls overlapping: `src/api` contains `src/api/jwt.ts` (score 0.5 → low).
+     */
+    function overlappingPair() {
+      return createGraph('wt-sched', [
+        node('g1', [], { kind: 'general', scope: ['SRC/api'], maxRetries: 0 }),
+        node('g2', [], { kind: 'general', scope: ['src/api/jwt.ts'], maxRetries: 0 }),
+      ]);
+    }
+
+    it('auto: a low-overlap writer is admitted alongside the racing writer, worktree-isolated', async () => {
+      process.env[ENV_KEY] = 'auto';
+      const { runTentacleFn, state } = makeRunner();
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'wt-auto-low',
+        runTentacleFn,
+        worldModelGate: false,
+        ownershipCaseFolding: true,
+      });
+
+      const summary = await executor.execute(overlappingPair());
+      expect(summary.converged).toBe(true);
+      // Rescued: both writers ran at once instead of serializing.
+      expect(state.peakInFlight).toBe(2);
+      const events = readKrakenRadio('/tmp/repo', 'wt-auto-low');
+      const evt = events.find((e) => e.kind === 'node_worktree_scheduled');
+      expect(evt).toBeDefined();
+      expect(evt?.nodeId).toBe('g2');
+      expect(evt?.overlapScore).toBe(0.5);
+      expect(evt?.rationaleCode).toBe('low-overlap-worktree');
+      expect(evt?.runningNode).toBe('g1');
+      // The rescued node never went through the plain deferral path.
+      expect(events.some((e) => e.kind === 'node_deferred' && e.description === 'g2')).toBe(
+        false,
+      );
+    });
+
+    it('auto: identical-grain (high) overlap still defers the second writer', async () => {
+      process.env[ENV_KEY] = 'auto';
+      const { runTentacleFn, state } = makeRunner();
+      const graph = createGraph('wt-auto-high', [
+        node('g1', [], { kind: 'general', scope: ['SRC/api'], maxRetries: 0 }),
+        node('g2', [], { kind: 'general', scope: ['src/api'], maxRetries: 0 }),
+      ]);
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'wt-auto-high',
+        runTentacleFn,
+        worldModelGate: false,
+        ownershipCaseFolding: true,
+      });
+
+      await executor.execute(graph);
+      // Folded scopes are the same claim (score 1 → high) → sequential as ever.
+      expect(state.peakInFlight).toBe(1);
+      const events = readKrakenRadio('/tmp/repo', 'wt-auto-high');
+      expect(events.some((e) => e.kind === 'node_deferred' && e.description === 'g2')).toBe(
+        true,
+      );
+      expect(events.some((e) => e.kind === 'node_worktree_scheduled')).toBe(false);
+    });
+
+    it('default env (unset): low-overlap pair still serializes exactly as before', async () => {
+      const { runTentacleFn, state } = makeRunner();
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'wt-default',
+        runTentacleFn,
+        worldModelGate: false,
+        ownershipCaseFolding: true,
+      });
+
+      await executor.execute(overlappingPair());
+      expect(state.peakInFlight).toBe(1);
+      const events = readKrakenRadio('/tmp/repo', 'wt-default');
+      expect(events.some((e) => e.kind === 'node_deferred' && e.description === 'g2')).toBe(
+        true,
+      );
+      expect(events.some((e) => e.kind === 'node_worktree_scheduled')).toBe(false);
+    });
+
+    it('auto: a writer whose deps disable worktrees cannot be isolated and stays deferred', async () => {
+      process.env[ENV_KEY] = 'auto';
+      const { runTentacleFn, state } = makeRunner();
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: { ...fakeTaskToolDeps, allowWorktree: false },
+        parentCwd: '/tmp/repo',
+        sessionId: 'wt-auto-nocap',
+        runTentacleFn,
+        worldModelGate: false,
+        ownershipCaseFolding: true,
+      });
+
+      await executor.execute(overlappingPair());
+      expect(state.peakInFlight).toBe(1);
+      const events = readKrakenRadio('/tmp/repo', 'wt-auto-nocap');
+      expect(events.some((e) => e.kind === 'node_deferred' && e.description === 'g2')).toBe(
+        true,
+      );
+      expect(events.some((e) => e.kind === 'node_worktree_scheduled')).toBe(false);
+    });
+
+    it('auto: read-only nodes overlap freely and are never worktree-scheduled', async () => {
+      process.env[ENV_KEY] = 'auto';
+      const { runTentacleFn, state } = makeRunner();
+      const graph = createGraph('wt-auto-readonly', [
+        node('v1', [], { kind: 'verify', scope: ['src/api'], maxRetries: 0 }),
+        node('v2', [], { kind: 'verify', scope: ['src/api'], maxRetries: 0 }),
+      ]);
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'wt-auto-readonly',
+        runTentacleFn,
+        worldModelGate: false,
+      });
+
+      await executor.execute(graph);
+      expect(state.peakInFlight).toBe(2);
+      expect(
+        readKrakenRadio('/tmp/repo', 'wt-auto-readonly').some(
+          (e) => e.kind === 'node_worktree_scheduled',
+        ),
+      ).toBe(false);
     });
   });
 
@@ -1821,5 +2158,588 @@ describe('whole-graph wall-clock budget', () => {
     expect(summary.converged).toBe(false);
     // The point of routing through the cancellation path: it still settles.
     expect(graph.nodes.get('g2')?.status).toBe('skipped');
+  });
+});
+
+describe('KrakenGraphExecutor transactional writers (P2.D)', () => {
+  let repo: string;
+
+  beforeEach(() => {
+    resetKrakenGraphLive();
+    repo = mkdtempSync(path.join(tmpdir(), 'tx-exec-'));
+    const run = (...args: string[]) =>
+      execFileSync('git', ['-C', repo, ...args], { stdio: 'ignore' });
+    run('init');
+    run('config', 'user.email', 'test@example.com');
+    run('config', 'user.name', 'Test');
+    run('config', 'commit.gpgsign', 'false');
+    // Byte-exact restores on Windows (mirrors cli-checkpoint.test.ts).
+    run('config', 'core.autocrlf', 'false');
+    // Keep tool state (.zelari/radio, workbench) out of the checkpoints, the
+    // way production repos ignore it — the transaction covers the WORK TREE.
+    writeFileSync(path.join(repo, '.gitignore'), '.zelari/\n');
+    writeFileSync(path.join(repo, 'seed.txt'), 'original\n');
+    execFileSync('git', ['-C', repo, 'add', '-A'], { stdio: 'ignore' });
+    execFileSync('git', ['-C', repo, 'commit', '-m', 'initial'], { stdio: 'ignore' });
+  });
+
+  afterEach(() => rmSync(repo, { recursive: true, force: true }));
+
+  const okResult = (opts: RunTentacleOptions): TentacleResult => ({
+    ok: true,
+    agent: opts.agent,
+    thoroughness: opts.thoroughness,
+    model: 'test-model',
+    result: 'done',
+    footer: '',
+    worktreePath: null,
+    worktreeHandle: null,
+  });
+
+  it('rolls the workspace back when a transactional writer node fails', async () => {
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      // Partial work: a new file plus a mutation of a tracked one.
+      writeFileSync(path.join(repo, 'dirty.txt'), 'partial work\n');
+      writeFileSync(path.join(repo, 'seed.txt'), 'MUTATED\n');
+      return { ok: false, agent: opts.agent, error: 'writer gave up', cancelled: true };
+    };
+
+    const graph = createGraph('tx-fail', [node('g1', [], { kind: 'general', maxRetries: 0 })]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: repo,
+      sessionId: 'tx-fail',
+      runTentacleFn,
+      worldModelGate: false,
+      fixBudget: 0,
+      transactional: true,
+    }).execute(graph);
+
+    // The node went through the ordinary failure path…
+    expect(summary.failedNodeIds).toEqual(['g1']);
+    expect(graph.nodes.get('g1')?.status).toBe('error');
+    // …and the workspace is back at the pre-run checkpoint state.
+    expect(existsSync(path.join(repo, 'dirty.txt'))).toBe(false);
+    expect(readFileSync(path.join(repo, 'seed.txt'), 'utf8')).toBe('original\n');
+    // The rollback is surfaced on the radio.
+    const events = readKrakenRadio(repo, 'tx-fail');
+    expect(events.some((e) => e.kind === 'node_rolled_back' && e.ok === false)).toBe(true);
+  });
+
+  it('keeps a node-correlated recovery-point checkpoint when the writer succeeds', async () => {
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      writeFileSync(path.join(repo, 'out.txt'), 'work\n');
+      return okResult(opts);
+    };
+
+    const graph = createGraph('tx-ok', [node('g1', [], { kind: 'general', maxRetries: 0 })]);
+
+    const summary = await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: repo,
+      sessionId: 'tx-ok',
+      runTentacleFn,
+      worldModelGate: false,
+      transactional: true,
+    }).execute(graph);
+
+    expect(summary.converged).toBe(true);
+    // Success keeps the work…
+    expect(readFileSync(path.join(repo, 'out.txt'), 'utf8')).toBe('work\n');
+    // …and the recovery point, correlated to the graph (task) and node.
+    const cps = await listCheckpoints(repo);
+    expect(cps).toHaveLength(1);
+    expect(cps[0].label).toContain('task=tx-ok');
+    expect(cps[0].label).toContain('node=g1');
+  });
+
+  it('stays inert when transactional is off (default): partial work is left in place', async () => {
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      writeFileSync(path.join(repo, 'dirty.txt'), 'partial work\n');
+      return { ok: false, agent: opts.agent, error: 'writer gave up', cancelled: true };
+    };
+
+    const graph = createGraph('tx-off', [node('g1', [], { kind: 'general', maxRetries: 0 })]);
+
+    await new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: repo,
+      sessionId: 'tx-off',
+      runTentacleFn,
+      worldModelGate: false,
+      fixBudget: 0,
+    }).execute(graph);
+
+    // No checkpoint taken, nothing rolled back — pre-P2.D behavior exactly.
+    expect(existsSync(path.join(repo, 'dirty.txt'))).toBe(true);
+    expect(await listCheckpoints(repo)).toHaveLength(0);
+  });
+});
+
+describe('P2.B semantic ownership (ownedSymbols)', () => {
+  const ENV_KEY = 'ZELARI_KRAKEN_WORKTREE';
+  let savedEnv: string | undefined;
+  beforeEach(() => {
+    savedEnv = process.env[ENV_KEY];
+    delete process.env[ENV_KEY];
+  });
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = savedEnv;
+  });
+
+  /** Runner counting concurrency; every run succeeds. */
+  function makeRunner() {
+    let inFlight = 0;
+    const state = { peakInFlight: 0 };
+    const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      inFlight += 1;
+      state.peakInFlight = Math.max(state.peakInFlight, inFlight);
+      await new Promise((r) => setTimeout(r, 15));
+      inFlight -= 1;
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: 'done',
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      };
+    };
+    return { runTentacleFn, state };
+  }
+
+  /**
+   * Two same-file writers. The scopes are case-distinct so core's
+   * case-sensitive `canRunParallel` lets both become candidates, while the
+   * executor's folded arbitration (win32 default) defers the second — the
+   * deferral the semantic rescue then re-examines.
+   */
+  function sameFilePair(symbolsG1: string[] | undefined, symbolsG2: string[] | undefined) {
+    return createGraph('sem-own', [
+      node('g1', [], {
+        kind: 'general',
+        scope: ['SRC/auth.ts'],
+        ...(symbolsG1 === undefined ? {} : { ownedSymbols: symbolsG1 }),
+        maxRetries: 0,
+      }),
+      node('g2', [], {
+        kind: 'general',
+        scope: ['src/auth.ts'],
+        ...(symbolsG2 === undefined ? {} : { ownedSymbols: symbolsG2 }),
+        maxRetries: 0,
+      }),
+    ]);
+  }
+
+  const verifyingExtractor = async (file: string): Promise<readonly string[] | null> => {
+    if (!file.endsWith('.ts')) return null;
+    return ['AuthService', 'TokenService'];
+  };
+
+  it('auto: disjoint same-file symbols are admitted in parallel (worktree-style rescue)', async () => {
+    process.env[ENV_KEY] = 'auto';
+    const { runTentacleFn, state } = makeRunner();
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'sem-auto-disjoint',
+      runTentacleFn,
+      worldModelGate: false,
+      ownershipCaseFolding: true,
+      symbolExtractor: verifyingExtractor,
+    });
+
+    const summary = await executor.execute(
+      sameFilePair(['src/auth.ts#AuthService.login'], ['src/auth.ts#TokenService.refresh']),
+    );
+    expect(summary.converged).toBe(true);
+    expect(state.peakInFlight).toBe(2);
+    const events = readKrakenRadio('/tmp/repo', 'sem-auto-disjoint');
+    const evt = events.find((e) => e.kind === 'node_semantic_admitted');
+    expect(evt).toBeDefined();
+    expect(evt?.nodeId).toBe('g2');
+    expect(evt?.runningNode).toBe('g1');
+    expect(evt?.contestedFile).toBe('src/auth.ts');
+    expect(evt?.symbolsA).toEqual(['src/auth.ts#AuthService.login']);
+    expect(evt?.symbolsB).toEqual(['src/auth.ts#TokenService.refresh']);
+    expect(evt?.rationaleCode).toBe('semantic-disjoint-worktree');
+    // g2 never went through the plain deferral path.
+    expect(events.some((e) => e.kind === 'node_deferred' && e.description === 'g2')).toBe(false);
+  });
+
+  it('auto: the same declared symbol still defers exactly as t25 left it', async () => {
+    process.env[ENV_KEY] = 'auto';
+    const { runTentacleFn, state } = makeRunner();
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'sem-auto-clash',
+      runTentacleFn,
+      worldModelGate: false,
+      ownershipCaseFolding: true,
+      symbolExtractor: verifyingExtractor,
+    });
+
+    await executor.execute(
+      sameFilePair(['src/auth.ts#AuthService.login'], ['src/auth.ts#AuthService.login']),
+    );
+    expect(state.peakInFlight).toBe(1);
+    const events = readKrakenRadio('/tmp/repo', 'sem-auto-clash');
+    expect(events.some((e) => e.kind === 'node_deferred' && e.description === 'g2')).toBe(true);
+    expect(events.some((e) => e.kind === 'node_semantic_admitted')).toBe(false);
+  });
+
+  it('without ownedSymbols nothing changes: deferral, no semantic events', async () => {
+    const { runTentacleFn, state } = makeRunner();
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'sem-undeclared',
+      runTentacleFn,
+      worldModelGate: false,
+      ownershipCaseFolding: true,
+      symbolExtractor: verifyingExtractor,
+    });
+
+    await executor.execute(sameFilePair(undefined, undefined));
+    expect(state.peakInFlight).toBe(1);
+    const events = readKrakenRadio('/tmp/repo', 'sem-undeclared');
+    expect(events.some((e) => e.kind === 'node_deferred' && e.description === 'g2')).toBe(true);
+    expect(events.some((e) => e.kind === 'node_semantic_admitted')).toBe(false);
+  });
+
+  it('a throwing extractor defers (fail-closed, never fail-open)', async () => {
+    process.env[ENV_KEY] = 'auto';
+    const { runTentacleFn, state } = makeRunner();
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'sem-extractor-throw',
+      runTentacleFn,
+      worldModelGate: false,
+      ownershipCaseFolding: true,
+      symbolExtractor: async () => {
+        throw new Error('ast engine exploded');
+      },
+    });
+
+    await executor.execute(
+      sameFilePair(['src/auth.ts#AuthService.login'], ['src/auth.ts#TokenService.refresh']),
+    );
+    expect(state.peakInFlight).toBe(1);
+    const events = readKrakenRadio('/tmp/repo', 'sem-extractor-throw');
+    expect(events.some((e) => e.kind === 'node_deferred' && e.description === 'g2')).toBe(true);
+    expect(events.some((e) => e.kind === 'node_semantic_admitted')).toBe(false);
+  });
+
+  it('worktree off: disjoint same-file symbols admit plainly with telemetry', async () => {
+    const { runTentacleFn, state } = makeRunner();
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'sem-plain',
+      runTentacleFn,
+      worldModelGate: false,
+      ownershipCaseFolding: true,
+      symbolExtractor: verifyingExtractor,
+    });
+
+    await executor.execute(
+      sameFilePair(['src/auth.ts#AuthService.login'], ['src/auth.ts#TokenService.refresh']),
+    );
+    expect(state.peakInFlight).toBe(2);
+    const events = readKrakenRadio('/tmp/repo', 'sem-plain');
+    const evt = events.find((e) => e.kind === 'node_semantic_admitted');
+    expect(evt).toBeDefined();
+    expect(evt?.rationaleCode).toBe('semantic-disjoint-plain');
+    expect(evt?.contestedFile).toBe('src/auth.ts');
+  });
+});
+
+/**
+ * t29 (§15): reputation recording — one JSONL row per settled node, keyed by
+ * (repo, role, model), written next to the run; and FAILOPEN: a store that
+ * cannot be written (unusable path) must never fail the run.
+ */
+describe('reputation recording (t29)', () => {
+  let tmp: string;
+  let prevEnv: string | undefined;
+
+  beforeEach(() => {
+    tmp = mkdtempSync(path.join(tmpdir(), 'zelari-rep-'));
+    prevEnv = process.env.ZELARI_REPUTATION_PATH;
+    resetKrakenGraphLive();
+  });
+
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.ZELARI_REPUTATION_PATH;
+    else process.env.ZELARI_REPUTATION_PATH = prevEnv;
+    rmSync(tmp, { recursive: true, force: true });
+  });
+
+  const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+    const isVerify = opts.agent === 'verify';
+    return {
+      ok: true,
+      agent: opts.agent,
+      thoroughness: opts.thoroughness,
+      model: isVerify ? 'verify-model' : 'writer-model',
+      result: isVerify ? 'checked it\n\nVERDICT: PASS' : 'done',
+      footer: '',
+      worktreePath: null,
+      worktreeHandle: null,
+      usage: { promptTokens: 1_000_000, completionTokens: 1_000_000, totalTokens: 2_000_000, cachedPromptTokens: 0 },
+    };
+  };
+
+  it('records one line per settled node with repo/role/model/outcome/cost/latency', async () => {
+    const storePath = path.join(tmp, 'reputation.jsonl');
+    process.env.ZELARI_REPUTATION_PATH = storePath;
+
+    const graph = createGraph('rep-recording', [
+      node('w', [], { kind: 'general', label: 'w' }),
+      node('v', ['w'], { kind: 'verify', label: 'v' }),
+    ]);
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: tmp,
+      sessionId: 'rep-session',
+      runTentacleFn,
+      worldModelGate: false,
+    });
+    const summary = await executor.execute(graph);
+    expect(summary.converged).toBe(true);
+
+    const lines = readFileSync(storePath, 'utf8').trim().split('\n');
+    expect(lines).toHaveLength(2);
+    const records = lines.map((l) => JSON.parse(l) as Record<string, unknown>);
+    const writer = records.find((r) => r['role'] === 'general')!;
+    const verify = records.find((r) => r['role'] === 'verify')!;
+    expect(writer['repo']).toBe(path.basename(tmp));
+    expect(writer['model']).toBe('writer-model');
+    expect(writer['provider']).toBeNull();
+    expect(writer['outcome']).toBe('verified');
+    expect(writer['firstPass']).toBe(true);
+    // 1M in + 1M out at DEFAULT_RATE (input $1/M, output $3/M) = $4.
+    expect(writer['costUsd']).toBeCloseTo(4, 5);
+    expect(typeof writer['latencyMs']).toBe('number');
+    expect(verify['model']).toBe('verify-model');
+    expect(verify['outcome']).toBe('verified'); // VERDICT: PASS trailer
+  });
+
+  it('is fail-open: an unwritable store never breaks the run', async () => {
+    // A regular FILE where mkdir would need a directory ⇒ append always fails
+    // (ENOTDIR/EEXIST), deterministically on win32 and POSIX alike.
+    const blocker = path.join(tmp, 'blocker');
+    writeFileSync(blocker, 'not a directory', 'utf8');
+    process.env.ZELARI_REPUTATION_PATH = path.join(blocker, 'reputation.jsonl');
+
+    const graph = createGraph('rep-failopen', [
+      node('w', [], { kind: 'general', label: 'w' }),
+      node('v', ['w'], { kind: 'verify', label: 'v' }),
+    ]);
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: tmp,
+      sessionId: 'rep-failopen-session',
+      runTentacleFn,
+      worldModelGate: false,
+    });
+    const summary = await executor.execute(graph);
+    expect(summary.converged).toBe(true);
+    expect(graph.nodes.get('w')?.status).toBe('done');
+    expect(graph.nodes.get('v')?.status).toBe('done');
+    expect(existsSync(process.env.ZELARI_REPUTATION_PATH!)).toBe(false);
+  });
+});
+
+describe('spawn ROI gate (P2.F)', () => {
+  const ENV_KEY = 'ZELARI_KRAKEN_ROI_THRESHOLD';
+  let savedEnv: string | undefined;
+
+  beforeEach(() => {
+    savedEnv = process.env[ENV_KEY];
+    delete process.env[ENV_KEY];
+    resetKrakenGraphLive();
+  });
+
+  afterEach(() => {
+    if (savedEnv === undefined) delete process.env[ENV_KEY];
+    else process.env[ENV_KEY] = savedEnv;
+  });
+
+  const okRunner =
+    (onRun: () => void = () => {}) =>
+    async (opts: RunTentacleOptions): Promise<TentacleResult> => {
+      onRun();
+      return {
+        ok: true,
+        agent: opts.agent,
+        thoroughness: opts.thoroughness,
+        model: 'test-model',
+        result: 'done',
+        footer: '',
+        worktreePath: null,
+        worktreeHandle: null,
+      };
+    };
+
+  function singleWriter() {
+    return createGraph('roi-one', [
+      node('w', [], { kind: 'general', label: 'w', scope: ['src/roi-a'], maxRetries: 0 }),
+    ]);
+  }
+
+  it('(a) healthy node spawns: no veto radio, node runs, run converges', async () => {
+    let ran = 0;
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'roi-healthy',
+      runTentacleFn: okRunner(() => {
+        ran += 1;
+      }),
+      worldModelGate: false,
+      reputationRecords: [], // no history ⇒ all-null score ⇒ spawn (fail-open)
+    });
+    const graph = singleWriter();
+    const summary = await executor.execute(graph);
+
+    expect(summary.converged).toBe(true);
+    expect(ran).toBe(1);
+    expect(graph.nodes.get('w')?.status).toBe('done');
+    expect(
+      readKrakenRadio('/tmp/repo', 'roi-healthy').some((e) => e.kind === 'node_roi_vetoed'),
+    ).toBe(false);
+  });
+
+  it('(b) very high threshold env: veto radio + node deferred (never failed) + run completes', async () => {
+    process.env[ENV_KEY] = '999';
+    let ran = 0;
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'roi-veto-high',
+      runTentacleFn: okRunner(() => {
+        ran += 1;
+      }),
+      worldModelGate: false,
+      reputationRecords: [],
+    });
+    const graph = singleWriter();
+    const summary = await executor.execute(graph);
+
+    expect(ran).toBe(0); // the spawn never happened
+    expect(graph.nodes.get('w')?.status).toBe('pending'); // deferred path, not failed
+    expect(summary.failedNodeIds).toEqual([]);
+    const evt = readKrakenRadio('/tmp/repo', 'roi-veto-high').find(
+      (e) => e.kind === 'node_roi_vetoed',
+    );
+    expect(evt).toBeDefined();
+    expect(evt?.nodeId).toBe('w');
+    expect(evt?.threshold).toBe(999);
+    expect(typeof evt?.spawnScore).toBe('number');
+    expect(evt?.rationaleCode).toBe('roi-defaults');
+    // A ROI veto is not an ownership deferral: no node_deferred event.
+    expect(
+      readKrakenRadio('/tmp/repo', 'roi-veto-high').some((e) => e.kind === 'node_deferred'),
+    ).toBe(false);
+  });
+
+  it('(b2) reputation-backed: a failing (repo, role) bucket vetoes with no env override', async () => {
+    const now = Date.now();
+    const records: ReputationRecord[] = Array.from({ length: 6 }, () => ({
+      ts: now - 60_000,
+      repo: 'repo', // basename of parentCwd '/tmp/repo'
+      model: 'm',
+      provider: null,
+      role: 'general', // agentForNode(general) parity
+      language: null,
+      outcome: 'failed',
+      firstPass: false,
+      repairCount: 3,
+      costUsd: null,
+      latencyMs: null,
+    }));
+    let ran = 0;
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'roi-veto-reputation',
+      runTentacleFn: okRunner(() => {
+        ran += 1;
+      }),
+      worldModelGate: false,
+      reputationRecords: records,
+    });
+    const graph = singleWriter();
+    const summary = await executor.execute(graph);
+
+    expect(ran).toBe(0);
+    expect(graph.nodes.get('w')?.status).toBe('pending');
+    expect(summary.failedNodeIds).toEqual([]);
+    const evt = readKrakenRadio('/tmp/repo', 'roi-veto-reputation').find(
+      (e) => e.kind === 'node_roi_vetoed',
+    );
+    expect(evt).toBeDefined();
+    expect(evt?.rationaleCode).toBe('roi-reputation-backed');
+    expect(evt?.spawnScore).toBe(0); // verifiedRate 0 ⇒ gain 0
+    expect(evt?.threshold).toBe(0.15); // untouched default
+  });
+
+  it('(c) fail-open: a throwing score seam never breaks the run', async () => {
+    let ran = 0;
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'roi-failopen-score',
+      runTentacleFn: okRunner(() => {
+        ran += 1;
+      }),
+      worldModelGate: false,
+      reputationRecords: [],
+      roiScoreFn: () => {
+        throw new Error('roi seam exploded');
+      },
+    });
+    const graph = singleWriter();
+    const summary = await executor.execute(graph);
+
+    expect(summary.converged).toBe(true);
+    expect(ran).toBe(1);
+    expect(graph.nodes.get('w')?.status).toBe('done');
+    expect(
+      readKrakenRadio('/tmp/repo', 'roi-failopen-score').some(
+        (e) => e.kind === 'node_roi_vetoed',
+      ),
+    ).toBe(false);
+  });
+
+  it('(c2) invalid threshold string falls back to the default (all-null ⇒ spawn)', async () => {
+    process.env[ENV_KEY] = 'not-a-number';
+    let ran = 0;
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'roi-bad-threshold',
+      runTentacleFn: okRunner(() => {
+        ran += 1;
+      }),
+      worldModelGate: false,
+      reputationRecords: [],
+    });
+    const summary = await executor.execute(singleWriter());
+
+    expect(summary.converged).toBe(true);
+    expect(ran).toBe(1);
+    expect(
+      readKrakenRadio('/tmp/repo', 'roi-bad-threshold').some(
+        (e) => e.kind === 'node_roi_vetoed',
+      ),
+    ).toBe(false);
   });
 });
