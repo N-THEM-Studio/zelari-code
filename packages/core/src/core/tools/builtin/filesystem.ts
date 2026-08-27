@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
+import { detectNewline, fromLF, toLF } from './newlines.js';
 
 const ReadFileArgsSchema = z.object({
   path: z.string().min(1),
@@ -140,9 +141,48 @@ interface EditFileResult {
   occurrencesReplaced: number;
 }
 
+/**
+ * Byte-exact replace first; if that misses (typical: model LF vs file CRLF),
+ * retry on newline-normalized text and restore the file's original terminator.
+ */
+export function replaceFileString(
+  text: string,
+  oldString: string,
+  newString: string,
+  replaceAll: boolean,
+): { occurrences: number; newContent: string } {
+  const exact = replaceOnceOrAll(text, oldString, newString, replaceAll);
+  if (exact.occurrences > 0) return exact;
+  const nl = detectNewline(text);
+  const normalized = replaceOnceOrAll(toLF(text), toLF(oldString), toLF(newString), replaceAll);
+  if (normalized.occurrences === 0) return normalized;
+  return { occurrences: normalized.occurrences, newContent: fromLF(normalized.newContent, nl) };
+}
+
+function replaceOnceOrAll(
+  text: string,
+  oldString: string,
+  newString: string,
+  replaceAll: boolean,
+): { occurrences: number; newContent: string } {
+  if (replaceAll) {
+    if (!text.includes(oldString)) return { occurrences: 0, newContent: text };
+    const parts = text.split(oldString);
+    return { occurrences: parts.length - 1, newContent: parts.join(newString) };
+  }
+  const idx = text.indexOf(oldString);
+  if (idx === -1) return { occurrences: 0, newContent: text };
+  return {
+    occurrences: 1,
+    newContent: text.slice(0, idx) + newString + text.slice(idx + oldString.length),
+  };
+}
+
 export const editFileTool: ToolDefinition<EditFileArgs, EditFileResult> = {
   name: 'edit_file',
-  description: 'Replace exact string match in a file. Idempotent: returns 0 occurrences if no match.',
+  description:
+    'Replace a string in a file. Matching ignores CRLF vs LF; the file keeps its ' +
+    'original line endings. Returns an error if oldString is not found.',
   permissions: ['write'],
   sideEffect: 'local',
   timeoutMs: 10000,
@@ -152,22 +192,12 @@ export const editFileTool: ToolDefinition<EditFileArgs, EditFileResult> = {
       const absPath = path.isAbsolute(args.path) ? args.path : path.join(ctx.cwd, args.path);
       const content = await fs.readFile(absPath, { encoding: 'utf-8', signal: ctx.signal } as never);
       const text = typeof content === 'string' ? content : content.toString('utf-8');
-      let occurrences = 0;
-      let newContent: string;
-      if (args.replaceAll) {
-        const parts = text.split(args.oldString);
-        occurrences = parts.length - 1;
-        newContent = parts.join(args.newString);
-      } else {
-        const idx = text.indexOf(args.oldString);
-        if (idx === -1) {
-          occurrences = 0;
-          newContent = text;
-        } else {
-          occurrences = 1;
-          newContent = text.slice(0, idx) + args.newString + text.slice(idx + args.oldString.length);
-        }
-      }
+      const { occurrences, newContent } = replaceFileString(
+        text,
+        args.oldString,
+        args.newString,
+        args.replaceAll,
+      );
       if (occurrences === 0) {
         return typedErr(
           `edit_file: no match for oldString in ${args.path}. ` +

@@ -97,10 +97,11 @@ export interface SubAgentHarness {
 
 /**
  * Wall-clock bound for the `task` tool wrapper (parent AgentHarness invoke).
- * Must cover a `general` writer: 5 minutes is not enough on a slow reasoning
- * model. Keep aligned with DEFAULT_WRITER_NODE_TIMEOUT_MS in kraken/executor.
+ * Must cover a `general` writer on a slow reasoning model (thinking:max,
+ * multi-file P0 slices). Keep aligned with DEFAULT_WRITER_NODE_TIMEOUT_MS
+ * in kraken/executor.
  */
-export const TASK_TOOL_TIMEOUT_MS = 900_000;
+export const TASK_TOOL_TIMEOUT_MS = 2_700_000;
 
 export interface TaskToolDeps {
   /** Optional sink for tentacle activity events (Frontier plan §37). */

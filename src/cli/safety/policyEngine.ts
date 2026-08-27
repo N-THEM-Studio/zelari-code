@@ -1,14 +1,13 @@
 /**
- * Policy engine v1 (P0.5) — per-command and per-path permission rules per
+ * Policy engine v2 (P0.A) — per-command and per-path permission rules per
  * agent, layered on top of the per-CATEGORY policy in toolPermissions.ts.
  *
  * Rules come from two USER-authored config files (same trust level as
- * AGENTS.MD — deliberately NO trust subsystem here; the project file may
- * legitimately override the global one, e.g. re-allowing `git push --force-
- * with-lease*` that the global file denies):
+ * AGENTS.MD — deliberately NO trust subsystem here; the GLOBAL file is the
+ * user's personal floor, which the project file can NO LONGER relax):
  *
- *   <root>/.zelari/policy.json   — project rules (take precedence)
- *   ~/.zelari/policy.json        — global fallback rules
+ *   <root>/.zelari/policy.json   — project rules
+ *   ~/.zelari/policy.json        — global rules
  *
  * Shape:
  *   {
@@ -24,9 +23,13 @@
  *
  * `match` is a GLOB-style prefix pattern: `git push*` matches any command
  * starting with "git push"; `src/**` matches any path under src/; `*` alone
- * matches everything. Within one agent's ordered rule list the FIRST match
- * wins (project rules are ordered before global ones, which is exactly how
- * project overrides global).
+ * matches everything. Within one LAYER's ordered rule list the FIRST match
+ * wins (P0.A): the two layers stay SEPARATE and combine RESTRICT-ONLY — every
+ * matching rule intersects with the category decision, most-restrictive-wins
+ * (deny > ask > allow), so a global deny can never be masked by the project.
+ * Escape hatch: ZELARI_POLICY_PRECEDENCE=legacy restores the v1 behavior
+ * (project rules concatenated before global ones, first-match overrides);
+ * the active mode is exposed as `PolicySet.precedence`.
  *
  * Fail-closed conventions (mirrors toolPermissions.ts): a missing file is
  * silently empty; a broken file NEVER throws — the parse error is collected
@@ -35,7 +38,7 @@
  *
  * Hand-rolled validators on purpose: no zod, no new deps.
  *
- * @since v2.12.0
+ * @since v2.12.0 · restrict-only layers v2.13.0
  */
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -54,6 +57,14 @@ export interface PolicyRule {
   reason?: string;
 }
 
+/**
+ * How the global and project LAYERS combine (P0.A): `restrict-only` (the
+ * default) matches each layer independently and keeps the MOST restrictive
+ * effect (deny > ask > allow); `legacy` restores v1 semantics — project
+ * rules before global ones in one first-match-wins list.
+ */
+export type PolicyPrecedence = 'restrict-only' | 'legacy';
+
 /** One agent's ordered rule lists. First match wins within each list. */
 export interface PolicyRuleSet {
   /** Matched against the shell command string (execute-category tools). */
@@ -62,11 +73,21 @@ export interface PolicyRuleSet {
   edit: PolicyRule[];
 }
 
+/** Per-agent rules kept as DISTINCT sources (never concatenated upstream). */
+export interface LayeredPolicyRuleSet {
+  /** `~/.zelari/policy.json` rules — the user-level floor. */
+  global: PolicyRuleSet;
+  /** `<root>/.zelari/policy.json` rules — repo-level refinement. */
+  project: PolicyRuleSet;
+}
+
 export interface PolicySet {
-  /** Agent key → merged rule set (project rules first, then global). */
-  agents: Map<string, PolicyRuleSet>;
+  /** Agent key → layered rule sets (global + project kept distinct). */
+  agents: Map<string, LayeredPolicyRuleSet>;
   /** Non-fatal problems: invalid JSON, unknown agents, skipped rules. */
   warnings: string[];
+  /** Which precedence resolved this set (read once at load time). */
+  precedence: PolicyPrecedence;
 }
 
 /** The authoritative agent keys ('lead' = the main registry; the three
@@ -75,14 +96,32 @@ export const POLICY_AGENTS: readonly string[] = ['lead', 'explore', 'general', '
 const KNOWN_AGENTS: ReadonlySet<string> = new Set(POLICY_AGENTS);
 
 export const EMPTY_POLICY_RULE_SET: PolicyRuleSet = { shell: [], edit: [] };
+export const EMPTY_POLICY_LAYERS: LayeredPolicyRuleSet = {
+  global: EMPTY_POLICY_RULE_SET,
+  project: EMPTY_POLICY_RULE_SET,
+};
 
 export function emptyPolicySet(): PolicySet {
-  return { agents: new Map(), warnings: [] };
+  return { agents: new Map(), warnings: [], precedence: policyPrecedenceFromEnv() };
 }
 
-/** Rules for one agent; unknown/unlisted agents get the empty set. */
+/** Raw layers for one agent; unknown/unlisted agents get the empty layers. */
+export function agentLayersFor(set: PolicySet, agent: string): LayeredPolicyRuleSet {
+  return set.agents.get(agent) ?? EMPTY_POLICY_LAYERS;
+}
+
+/**
+ * COMPAT view (v1 shape): project rules then global rules in ONE list —
+ * first-match over this concatenation IS legacy precedence. Restrict-only
+ * consumers must use agentLayersFor + matchAgentPolicyRuleLayered instead.
+ */
 export function agentRulesFor(set: PolicySet, agent: string): PolicyRuleSet {
-  return set.agents.get(agent) ?? EMPTY_POLICY_RULE_SET;
+  const l = set.agents.get(agent);
+  if (!l) return EMPTY_POLICY_RULE_SET;
+  return {
+    shell: [...l.project.shell, ...l.global.shell],
+    edit: [...l.project.edit, ...l.global.edit],
+  };
 }
 
 // ── Glob matching ──────────────────────────────────────────────────────────
@@ -131,7 +170,8 @@ export function resolvePolicyRule(rules: readonly PolicyRule[], value: string): 
 
 // ── Merge with the category decision ──────────────────────────────────────
 
-const EFFECT_RANK: Record<PolicyEffect, number> = { allow: 0, ask: 1, deny: 2 };
+/** Shared lattice with policyLayers.ts intersectEffects: deny > ask > allow. */
+export const EFFECT_RANK: Record<PolicyEffect, number> = { allow: 0, ask: 1, deny: 2 };
 
 /**
  * Merge a matched rule's effect into the category-level action under the
@@ -202,6 +242,18 @@ export function matchAgentPolicyRule(
 export function isPolicyEngineDisabled(): boolean {
   const v = process.env.ZELARI_POLICY?.trim().toLowerCase();
   return v === '0' || v === 'false' || v === 'no' || v === 'off';
+}
+
+/**
+ * P0.A escape hatch: ZELARI_POLICY_PRECEDENCE=legacy selects the v1
+ * project-overrides-global first-match behavior; any other value (unset
+ * included) selects the default restrict-only layering. Read at policy-load
+ * time and exposed as PolicySet.precedence so callers/tests can assert the
+ * active mode.
+ */
+export function policyPrecedenceFromEnv(): PolicyPrecedence {
+  const v = process.env.ZELARI_POLICY_PRECEDENCE?.trim().toLowerCase();
+  return v === 'legacy' ? 'legacy' : 'restrict-only';
 }
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
@@ -303,25 +355,27 @@ function readPolicyFile(file: string, warnings: string[]): Map<string, PolicyRul
 }
 
 /**
- * Load and merge the project (`<root>/.zelari/policy.json`) and global
- * (`~/.zelari/policy.json`) rule sets. Project rules are concatenated
- * BEFORE global ones so first-match-wins resolution gives the project file
- * legitimate precedence over the global one. NEVER throws: broken files
- * yield warnings + whatever parsed cleanly. Pass `homeDir` to override the
- * global-file location (tests).
+ * Load the project (`<root>/.zelari/policy.json`) and global
+ * (`~/.zelari/policy.json`) rule sets into DISTINCT layers (P0.A): the two
+ * sources are NEVER concatenated at load time — evaluation intersects them
+ * restrict-only (matchAgentPolicyRuleLayered in policyLayers.ts) unless
+ * ZELARI_POLICY_PRECEDENCE=legacy restores the v1 concat view. NEVER
+ * throws: broken files yield warnings + whatever parsed cleanly. Pass
+ * `homeDir` to override the global-file location (tests).
  */
 export function loadPolicySet(root: string, opts: { homeDir?: string } = {}): PolicySet {
   if (isPolicyEngineDisabled()) return emptyPolicySet();
   const warnings: string[] = [];
+  const precedence = policyPrecedenceFromEnv();
   const project = readPolicyFile(path.join(root, '.zelari', 'policy.json'), warnings);
   const global = readPolicyFile(path.join(opts.homeDir ?? homedir(), '.zelari', 'policy.json'), warnings);
-  const agents = new Map<string, PolicyRuleSet>();
-  for (const [agent, g] of global) {
-    agents.set(agent, { shell: [...g.shell], edit: [...g.edit] });
-  }
+  const agents = new Map<string, LayeredPolicyRuleSet>();
   for (const [agent, p] of project) {
-    const g = agents.get(agent) ?? EMPTY_POLICY_RULE_SET;
-    agents.set(agent, { shell: [...p.shell, ...g.shell], edit: [...p.edit, ...g.edit] });
+    agents.set(agent, { project: p, global: EMPTY_POLICY_RULE_SET });
   }
-  return { agents, warnings };
+  for (const [agent, g] of global) {
+    const l = agents.get(agent);
+    agents.set(agent, l ? { ...l, global: g } : { project: EMPTY_POLICY_RULE_SET, global: g });
+  }
+  return { agents, warnings, precedence };
 }

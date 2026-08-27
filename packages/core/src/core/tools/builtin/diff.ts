@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
+import { detectNewline, fromLF, splitLinesLF } from './newlines.js';
 
 /**
  * diff — show_diff + apply_diff.
@@ -195,7 +196,7 @@ interface ParsedDiff {
 }
 
 function parseUnified(raw: string): ParsedDiff {
-  const lines = raw.split('\n');
+  const lines = splitLinesLF(raw);
   if (lines.length < 2 || !lines[0].startsWith('--- ') || !lines[1].startsWith('+++ ')) {
     throw new Error('Invalid unified diff: missing --- / +++ headers');
   }
@@ -251,12 +252,94 @@ function normalizeWhitespace(s: string): string {
   return s.replace(/\s+/g, ' ').trim();
 }
 
+function linesEqual(fileLine: string, opText: string, fuzzy: boolean): boolean {
+  if (fileLine === opText) return true;
+  if (fuzzy && normalizeWhitespace(fileLine) === normalizeWhitespace(opText)) return true;
+  return false;
+}
+
+function hunkOldNeedle(hunk: Hunk): string[] {
+  return hunk.ops.filter((op) => op.kind !== '+').map((op) => op.text);
+}
+
+function matchAt(lines: string[], at: number, needle: string[], fuzzy: boolean): boolean {
+  if (needle.length === 0) return at >= 0 && at <= lines.length;
+  if (at < 0 || at + needle.length > lines.length) return false;
+  for (let i = 0; i < needle.length; i++) {
+    if (!linesEqual(lines[at + i] ?? '', needle[i]!, fuzzy)) return false;
+  }
+  return true;
+}
+
+/**
+ * Resolve where a hunk's old side sits in the original file.
+ *
+ * `oldStart` is tried first (correct unified diffs). If it misses — LLM
+ * numbered the hunk after applying earlier hunks, or off-by-N — search
+ * forward from `fileIdx` for a unique / closest match of the old lines.
+ */
+function locateHunk(
+  lines: string[],
+  hunk: Hunk,
+  fileIdx: number,
+  fuzzy: boolean,
+): { start: number } | { error: string } {
+  const needle = hunkOldNeedle(hunk);
+  const preferred = hunk.oldStart - 1;
+
+  if (needle.length === 0) {
+    const start = Math.max(fileIdx, preferred >= 0 ? preferred : fileIdx);
+    return { start };
+  }
+
+  if (preferred >= fileIdx && matchAt(lines, preferred, needle, fuzzy)) {
+    return { start: preferred };
+  }
+
+  const hits: number[] = [];
+  for (let i = fileIdx; i <= lines.length - needle.length; i++) {
+    if (matchAt(lines, i, needle, fuzzy)) hits.push(i);
+  }
+  if (hits.length === 0) {
+    if (preferred >= fileIdx) {
+      let fileAt = preferred;
+      for (const op of hunk.ops) {
+        if (op.kind === '+') continue;
+        const fileLine = lines[fileAt] ?? '';
+        if (!linesEqual(fileLine, op.text, fuzzy)) {
+          const label = op.kind === '-' ? 'Delete mismatch' : 'Context mismatch';
+          return {
+            error:
+              `${label} at line ${fileAt + 1}: expected "${op.text.slice(0, 60)}", ` +
+              `got "${fileLine.slice(0, 60)}"`,
+          };
+        }
+        fileAt++;
+      }
+    }
+    return { error: `Hunk context not found (oldStart ${hunk.oldStart})` };
+  }
+  if (hits.length === 1) return { start: hits[0]! };
+
+  hits.sort((a, b) => Math.abs(a - preferred) - Math.abs(b - preferred) || a - b);
+  const bestDist = Math.abs(hits[0]! - preferred);
+  const tied = hits.filter((h) => Math.abs(h - preferred) === bestDist);
+  if (tied.length > 1) {
+    return {
+      error:
+        `Ambiguous hunk at oldStart ${hunk.oldStart}: ${tied.length} equally close ` +
+        `matches (refusing to guess)`,
+    };
+  }
+  return { start: hits[0]! };
+}
+
 /**
  * Apply ALL hunks to the original file lines in a single pass.
  *
- * Correct algorithm: each hunk's oldStart refers to the ORIGINAL file, not the
- * post-previous-hunk state. We walk the file once, copying unmodified prefix
- * and rewriting per-hunk regions. Atomic: if ANY hunk fails, no commits happen.
+ * Each hunk's oldStart refers to the ORIGINAL file, not the post-previous-hunk
+ * state. When oldStart misses, the hunk is relocated by matching its old lines.
+ * Atomic: if ANY hunk fails, no commits happen.
  */
 function applyAllHunks(
   originalLines: string[],
@@ -264,29 +347,23 @@ function applyAllHunks(
   fuzzy: boolean,
 ): { lines: string[]; hunksApplied: number; hunksSkipped: number; lastReason?: string } {
   const out: string[] = [];
-  let fileIdx = 0; // pointer into originalLines
+  let fileIdx = 0;
   let hunksApplied = 0;
   let hunksSkipped = 0;
   let lastReason: string | undefined;
 
   for (const hunk of hunks) {
-    const startIdx = hunk.oldStart - 1; // 0-indexed
-    if (startIdx < 0) {
+    const located = locateHunk(originalLines, hunk, fileIdx, fuzzy);
+    if ('error' in located) {
       hunksSkipped++;
-      lastReason = `oldStart ${hunk.oldStart} out of range (must be >= 1)`;
-      continue;
+      lastReason = located.error;
+      break;
     }
-    if (startIdx > originalLines.length) {
-      hunksSkipped++;
-      lastReason = `oldStart ${hunk.oldStart} beyond file end (length ${originalLines.length})`;
-      continue;
-    }
-    // Copy unmodified prefix
+    const startIdx = located.start;
     while (fileIdx < startIdx) {
       out.push(originalLines[fileIdx]);
       fileIdx++;
     }
-    // Walk hunk ops against original file
     let hunkFileIdx = fileIdx;
     let hunkIdx = 0;
     const hunkOut: string[] = [];
@@ -295,7 +372,7 @@ function applyAllHunks(
       const op = hunk.ops[hunkIdx];
       if (op.kind === ' ') {
         const fileLine = originalLines[hunkFileIdx] ?? '';
-        if (fileLine === op.text || (fuzzy && normalizeWhitespace(fileLine) === normalizeWhitespace(op.text))) {
+        if (linesEqual(fileLine, op.text, fuzzy)) {
           hunkOut.push(fileLine);
           hunkFileIdx++;
           hunkIdx++;
@@ -306,7 +383,7 @@ function applyAllHunks(
         }
       } else if (op.kind === '-') {
         const fileLine = originalLines[hunkFileIdx] ?? '';
-        if (fileLine === op.text || (fuzzy && normalizeWhitespace(fileLine) === normalizeWhitespace(op.text))) {
+        if (linesEqual(fileLine, op.text, fuzzy)) {
           hunkFileIdx++;
           hunkIdx++;
         } else {
@@ -315,20 +392,18 @@ function applyAllHunks(
           break;
         }
       } else {
-        // '+'
         hunkOut.push(op.text);
         hunkIdx++;
       }
     }
     if (!hunkOk) {
       hunksSkipped++;
-      break; // atomic: stop on first failure
+      break;
     }
     out.push(...hunkOut);
     fileIdx = hunkFileIdx;
     hunksApplied++;
   }
-  // Copy remaining unmodified tail
   while (fileIdx < originalLines.length) {
     out.push(originalLines[fileIdx]);
     fileIdx++;
@@ -381,8 +456,8 @@ export const showDiffTool: ToolDefinition<ShowDiffArgs, ShowDiffResult> = {
         }
         // ENOENT → treat as empty file (creating new)
       }
-      const a = current.split('\n');
-      const b = args.proposedContent.split('\n');
+      const a = splitLinesLF(current);
+      const b = splitLinesLF(args.proposedContent);
       // Re-implement groupIntoHunks with custom CONTEXT for show_diff
       const CONTEXT = args.contextLines;
       // Guarded + prefix/suffix-trimmed LCS (see diffOps): a small edit in a
@@ -494,7 +569,9 @@ export const applyDiffTool: ToolDefinition<ApplyDiffArgs, ApplyDiffResult> = {
   name: 'apply_diff',
   description:
     'Apply a unified diff patch to a file. Parses ---/+++/@@ headers and applies each ' +
-    'hunk sequentially. With fuzzyMatch=true, tolerates whitespace differences. ' +
+    'hunk sequentially. CRLF vs LF is ignored; the file keeps its original line endings. ' +
+    'Hunks whose @@ line numbers drifted (common after an earlier insert) are relocated ' +
+    'by matching context. With fuzzyMatch=true, also tolerates whitespace differences. ' +
     'With dryRun=true, returns the final content without writing. ' +
     'Atomic: if any hunk fails, no partial write occurs.',
   permissions: ['write'],
@@ -524,9 +601,10 @@ export const applyDiffTool: ToolDefinition<ApplyDiffArgs, ApplyDiffResult> = {
       }
       // Apply ALL hunks atomically against the ORIGINAL file. Each hunk's
       // oldStart refers to the original file, not the post-previous-hunk state.
-      const originalLines = current.split('\n');
+      const nl = detectNewline(current);
+      const originalLines = splitLinesLF(current);
       const result = applyAllHunks(originalLines, parsed.hunks, args.fuzzyMatch);
-      const finalContent = result.lines.join('\n');
+      const finalContent = fromLF(result.lines.join('\n'), nl);
       const ok = result.hunksSkipped === 0;
       if (ok && !args.dryRun) {
         await fs.mkdir(path.dirname(absPath), { recursive: true });

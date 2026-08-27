@@ -1490,8 +1490,10 @@ task e lo esegue in parallelo dove gli scope sono disgiunti.
 | `ZELARI_KRAKEN_GRAPH=0` | Kill-switch: disabilita del tutto il graph engine |
 | `ZELARI_KRAKEN_MAX_PARALLEL` | Tentacoli concorrenti massimi |
 | `ZELARI_KRAKEN_FIX_BUDGET` | Numero di nodi `fix` ammessi prima del fallimento terminale |
-| `ZELARI_KRAKEN_NODE_TIMEOUT_MS` | Wall-clock per nodo, **tutti i tipi** (`0` = nessun limite). Se non impostata il budget dipende dal tipo: 300000 per `explore`/`verify`, 900000 per `general`/`fix` |
-| `ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS` | Wall-clock dei soli nodi che scrivono (`general`/`fix`), default 900000 |
+| `ZELARI_KRAKEN_NODE_TIMEOUT_MS` | Wall-clock per nodo, **tutti i tipi** (`0` = nessun limite). Se non impostata il budget dipende dal tipo: 300000 per `explore`/`verify`, 2700000 per `general`/`fix` |
+| `ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS` | Wall-clock dei soli nodi che scrivono (`general`/`fix`), default 2700000 |
+| `ZELARI_POLICY=0` | Disattiva il policy engine (`.zelari/policy.json` + `~/.zelari/policy.json`) |
+| `ZELARI_POLICY_PRECEDENCE=legacy` | Ripristina la valutazione v1 (project first-match può mascherare un deny globale). Default **restrict-only**: i layer global e project si intersecano, `deny > ask > allow` |
 | `ZELARI_KRAKEN_CANCEL_GRACE_MS` | Attesa perché un tentacolo cancellato si smonti prima di dichiararlo inarrestabile (default 30000). Un nodo che non si ferma **non** viene ri-eseguito: due tentacoli sullo stesso scope corrompono il lavoro |
 | `ZELARI_KRAKEN_PLANNER_MODEL` | Modello usato **solo** per il planning; **vince sul modello del lead** e ammette ref qualificati `provider/model`. Il planning è una singola completion strutturata senza tool use: puntarlo a un modello veloce non-reasoning evita i timeout tipici dei reasoning model |
 | `ZELARI_KRAKEN_PLANNER_TIMEOUT_MS` | Wall-clock della richiesta di planning (default 300000; `0` = nessun limite) |

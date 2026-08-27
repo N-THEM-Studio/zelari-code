@@ -41,10 +41,10 @@ const dummyContext: SubAgentContext = {
 };
 
 describe('createTaskTool', () => {
-  it('gives general writers a 15-minute wrapper budget', () => {
+  it('gives general writers a 45-minute wrapper budget', () => {
     const tool = createTaskTool({ createSubAgentContext: async () => null });
     expect(tool.timeoutMs).toBe(TASK_TOOL_TIMEOUT_MS);
-    expect(TASK_TOOL_TIMEOUT_MS).toBe(900_000);
+    expect(TASK_TOOL_TIMEOUT_MS).toBe(2_700_000);
   });
 
   it('validates that description + prompt are required', () => {

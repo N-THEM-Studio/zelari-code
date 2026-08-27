@@ -30,7 +30,13 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
-import { runTentacle, type TaskAgentKind, type TaskThoroughness, type TaskToolDeps } from './taskTool.js';
+import {
+  runTentacle,
+  TASK_TOOL_TIMEOUT_MS,
+  type TaskAgentKind,
+  type TaskThoroughness,
+  type TaskToolDeps,
+} from './taskTool.js';
 
 /** Per-call config; validated with Zod for early failure. */
 const CsvFanoutArgsSchema = z.object({
@@ -48,7 +54,7 @@ const CsvFanoutArgsSchema = z.object({
   scope_template: z.array(z.string()).optional(),
   /** Default: ZELARI_KRAKEN_MAX_PARALLEL. */
   max_concurrency: z.number().int().positive().optional(),
-  /** Per-row timeout (ms). Default: 5 min for verify, 15 min for general. */
+  /** Per-row timeout (ms). Default: 5 min for verify, 45 min for general. */
   max_runtime_seconds: z.number().int().positive().optional(),
 });
 
@@ -163,13 +169,13 @@ export async function runCsvFanout(args: CsvFanoutArgs, deps: TaskToolDeps, opts
   opts.onLog?.(`csv fanout: ${rows.length} rows × ${args.agent_kind} @ concurrency=${concurrency}`);
 
   // Per-row runtime cap. We mirror the kind-aware default from the graph
-  // executor (5 min for readers, 15 min for writers) so a slow row can't
+  // executor (5 min for readers, 45 min for writers) so a slow row can't
   // hang the whole batch.
   const perRowMs =
     args.max_runtime_seconds !== undefined
       ? args.max_runtime_seconds * 1000
       : args.agent_kind === 'general'
-        ? 900_000
+        ? TASK_TOOL_TIMEOUT_MS
         : 300_000;
 
   // Output records: copy each input row, append result columns.

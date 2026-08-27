@@ -64,12 +64,13 @@ import {
 } from './safety/toolPermissions.js';
 import { createDefaultLifecycleHooks } from './safety/lifecycleHooks.js';
 import {
-  agentRulesFor,
+  agentLayersFor,
   loadPolicySet,
-  matchAgentPolicyRule,
   mergeRuleEffect,
-  type PolicyRuleSet,
+  type LayeredPolicyRuleSet,
+  type PolicyPrecedence,
 } from './safety/policyEngine.js';
+import { matchAgentPolicyRuleLayered } from './safety/policyLayers.js';
 import { withResultCache } from './toolResultCache.js';
 import type { LifecycleHookRunner } from '@zelari/core/harness';
 import type {
@@ -304,14 +305,26 @@ export function createBuiltinToolRegistry(
   const allowBash = (allowMutators || verifyMode) && !gauntletParent;
 
   const permPolicy = options.permissionPolicy ?? defaultPermissionPolicy();
-// P0.5 policy engine v1: per-command/per-path rules for THIS agent identity.
-// Loaded once per registry build; empty when absent/invalid/disabled (ZELARI_POLICY=0).
-const agentPolicyRules: PolicyRuleSet = agentRulesFor(
-  loadPolicySet(root),
+// P0.A layered policy engine: per-command/per-path rules for THIS agent
+// identity with global and project kept as DISTINCT layers. Default
+// evaluation is restrict-only (a global deny/ask can never be relaxed by the
+// project file); ZELARI_POLICY_PRECEDENCE=legacy restores the v1
+// project-first override. Loaded once per registry build; empty when
+// absent/invalid/disabled (ZELARI_POLICY=0).
+const agentPolicySet = loadPolicySet(root);
+const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
+  agentPolicySet,
   options.policyAgent ?? 'lead',
 );
   const withPerm = <I, O>(t: ToolDefinition<I, O>) =>
-    wrapWithPermissions(t, permPolicy, options.onPermissionAsk, agentPolicyRules, root);
+    wrapWithPermissions(
+      t,
+      permPolicy,
+      options.onPermissionAsk,
+      agentPolicyLayers,
+      agentPolicySet.precedence,
+      root,
+    );
 
   // Observe tools — always registered.
   registry.register(withPerm(safeReadFile));
@@ -814,7 +827,8 @@ function wrapWithPermissions<I, O>(
   original: ToolDefinition<I, O>,
   policy: PermissionPolicy,
   onAsk?: PermissionAskHandler,
-  agentRules?: PolicyRuleSet,
+  agentLayers?: LayeredPolicyRuleSet,
+  precedence: PolicyPrecedence = 'restrict-only',
   root?: string,
 ): ToolDefinition<I, O> {
   const required = (original.permissions ?? []) as ToolPermission[];
@@ -828,11 +842,15 @@ function wrapWithPermissions<I, O>(
     ...original,
     execute: async (input: I, ctx: ToolContext): Promise<TypedResult<O>> => {
       const decision = resolveToolPermission(original.name, required, policy);
-      // P0.5: merge this agent's per-command/per-path rule — deny > ask > allow;
-      // a rule can only ADD restriction, never remove it (mergeRuleEffect).
-      const rule = agentRules
-        ? matchAgentPolicyRule(
-            agentRules,
+      // P0.A: resolve this agent's rule across the global+project layers —
+      // restrict-only by default (deny > ask > allow; a global deny/ask can
+      // never be relaxed by the project file; legacy precedence restores the
+      // v1 project-first override). The survivor only ever ADDS restriction
+      // to the category decision (mergeRuleEffect).
+      const rule = agentLayers
+        ? matchAgentPolicyRuleLayered(
+            agentLayers,
+            precedence,
             required,
             (input ?? {}) as Record<string, unknown>,
             root ?? process.cwd(),

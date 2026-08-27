@@ -1,6 +1,6 @@
 /**
  * Policy engine v1 (P0.5) — load/validate `.zelari/policy.json` +
- * `~/.zelari/policy.json`, glob matching, first-match-wins ordering,
+ * `~/.zelari/policy.json`, glob matching, restrict-only layering (P0.A;
  * per-agent isolation, and enforcement through createBuiltinToolRegistry
  * (same registry-level style as toolPermissions.intersect.test.ts).
  */
@@ -8,18 +8,21 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import type { ToolContext } from '@zelari/core/harness/tools/toolTypes';
+import type { ToolContext, ToolPermission } from '@zelari/core/harness/tools/toolTypes';
 import { AuditLogger } from './auditLogger.js';
 import { clearSessionPermissionGrants, type PermissionPolicy } from './toolPermissions.js';
 import {
+  agentLayersFor,
   agentRulesFor,
   emptyPolicySet,
   loadPolicySet,
   matchAgentPolicyRule,
   mergeRuleEffect,
   resolvePolicyRule,
+  type LayeredPolicyRuleSet,
   type PolicyRule,
 } from './policyEngine.js';
+import { intersectEffects, matchAgentPolicyRuleLayered } from './policyLayers.js';
 import { createBuiltinToolRegistry } from '../toolRegistry.js';
 
 function tmpRoot(): string {
@@ -155,7 +158,7 @@ describe('policyEngine.loadPolicySet', () => {
     expect(set.warnings.join('\n')).toContain('version');
   });
 
-  it('project rules precede global rules (project legitimately overrides global)', () => {
+  it('v1 compat view (agentRulesFor): project-first concat is the LEGACY shape', () => {
     const root = tmpRoot();
     writePolicyFile(root, { agents: { general: { shell: [rule('echo hi', 'allow')] } } });
     const home = tmpHome();
@@ -167,6 +170,16 @@ describe('policyEngine.loadPolicySet', () => {
     // its exact pattern while the global deny still catches the rest.
     expect(resolvePolicyRule(shell, 'echo hi')?.effect).toBe('allow');
     expect(resolvePolicyRule(shell, 'echo bye')?.effect).toBe('deny');
+
+    // P0.A default (restrict-only): the SAME policy set through the layered
+    // evaluator — the project allow can no longer mask the global deny.
+    const layered = matchAgentPolicyRuleLayered(
+      agentLayersFor(set, 'general'),
+      'restrict-only',
+      ['execute'] as ToolPermission[],
+      { command: 'echo hi' },
+    );
+    expect(layered?.effect).toBe('deny');
   });
 
   it('global file applies when the project file is missing', () => {
@@ -345,5 +358,84 @@ describe('policyEngine enforcement through createBuiltinToolRegistry (wiring)', 
     // fail closed (mirrors the P0.4 ask-without-handler behavior).
     expect(res.ok).toBe(false);
     expect(res.error).toContain('No interactive approval available');
+  });
+});
+
+// ── P0.A: restrict-only layering ───────────────────────────────────────────
+
+describe('P0.A restrict-only layering (matchAgentPolicyRuleLayered / intersectEffects)', () => {
+  const r = (match: string, effect: PolicyRule['effect'], reason?: string): PolicyRule => ({
+    match,
+    effect,
+    reason,
+  });
+  const layers = (project: PolicyRule[], global: PolicyRule[]): LayeredPolicyRuleSet => ({
+    project: { shell: project, edit: [] },
+    global: { shell: global, edit: [] },
+  });
+  const EXEC = ['execute'] as ToolPermission[];
+  const WRITE = ['write'] as ToolPermission[];
+
+  it('global deny is NOT overridable by a project allow (default precedence)', () => {
+    const m = matchAgentPolicyRuleLayered(
+      layers([r('git push*', 'allow')], [r('git push*', 'deny', 'global floor')]),
+      'restrict-only',
+      EXEC,
+      { command: 'git push origin main' },
+    );
+    expect(m?.effect).toBe('deny');
+    // The GLOBAL rule surfaces as the surviving restriction, not the project one.
+    expect(m?.reason).toBe('global floor');
+  });
+
+  it('global ask can never degrade to allow via a project allow', () => {
+    const m = matchAgentPolicyRuleLayered(
+      layers([r('echo *', 'allow')], [r('echo *', 'ask')]),
+      'restrict-only',
+      EXEC,
+      { command: 'echo hi' },
+    );
+    expect(m?.effect).toBe('ask');
+  });
+
+  it('project layer only ever RESTRICTS (project deny, absent global rule)', () => {
+    const m = matchAgentPolicyRuleLayered(
+      { project: { shell: [], edit: [r('secret/**', 'deny')] }, global: { shell: [], edit: [] } },
+      'restrict-only',
+      WRITE,
+      { path: 'secret/k.txt', content: 'x' },
+    );
+    if (!m) throw new Error('expected a matching rule');
+    expect(m.effect).toBe('deny');
+    // The survivor only ever ADDS restriction to the category decision.
+    expect(mergeRuleEffect('allow', m)).toBe('deny');
+    expect(mergeRuleEffect('ask', m)).toBe('deny');
+  });
+
+  it('ZELARI_POLICY_PRECEDENCE=legacy restores the v1 project-first override', () => {
+    const m = matchAgentPolicyRuleLayered(
+      layers([r('git push*', 'allow')], [r('git push*', 'deny')]),
+      'legacy',
+      EXEC,
+      { command: 'git push origin main' },
+    );
+    expect(m?.effect).toBe('allow');
+  });
+
+  it('no matching rule in any layer → null (category decision untouched)', () => {
+    const m = matchAgentPolicyRuleLayered(
+      layers([r('cargo *', 'ask')], [r('git push*', 'deny')]),
+      'restrict-only',
+      EXEC,
+      { command: 'echo hello' },
+    );
+    expect(m).toBeNull();
+  });
+
+  it('intersectEffects lattice: deny > ask > allow; undefined never constrains', () => {
+    expect(intersectEffects('allow', 'deny', 'ask')).toBe('deny');
+    expect(intersectEffects('ask', 'allow')).toBe('ask');
+    expect(intersectEffects(undefined, undefined)).toBe('allow');
+    expect(intersectEffects('allow', undefined)).toBe('allow');
   });
 });

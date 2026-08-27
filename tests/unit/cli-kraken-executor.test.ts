@@ -459,6 +459,7 @@ describe('KrakenGraphExecutor', () => {
         expect(resolveNodeTimeoutMs({}, 'explore')).toBe(DEFAULT_NODE_TIMEOUT_MS);
         expect(resolveNodeTimeoutMs({}, 'verify')).toBe(DEFAULT_NODE_TIMEOUT_MS);
         expect(DEFAULT_WRITER_NODE_TIMEOUT_MS).toBeGreaterThan(DEFAULT_NODE_TIMEOUT_MS);
+        expect(DEFAULT_WRITER_NODE_TIMEOUT_MS).toBe(2_700_000);
       });
 
       it('keeps the no-agent default unchanged for existing callers', () => {
