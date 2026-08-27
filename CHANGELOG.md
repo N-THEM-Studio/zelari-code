@@ -5,6 +5,23 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.13.0] - 2026-08-27
+
+Policy layers can only tighten permissions, writer tentacles get 45 minutes,
+and Windows CRLF files stop breaking `edit_file` / `apply_diff`.
+
+### Added
+
+- **Policy layering restrict-only (P0.A)** — global (`~/.zelari/policy.json`) and project (`.zelari/policy.json`) rules are evaluated as **separate layers**. Matched effects intersect most-restrictive-wins (`deny > ask > allow`), so a project `allow` can no longer mask a global `deny` or `ask`. Escape hatch: `ZELARI_POLICY_PRECEDENCE=legacy` restores the v1 concatenate / first-match-wins behavior.
+
+### Changed
+
+- **Kraken writer tentacle timeout 15 → 45 minutes** — `TASK_TOOL_TIMEOUT_MS` (and the aliased graph writer budget `DEFAULT_WRITER_NODE_TIMEOUT_MS`) is now 2_700_000 ms. Explore/verify stay at 5 minutes. Override with `ZELARI_KRAKEN_WRITER_NODE_TIMEOUT_MS` / `ZELARI_KRAKEN_NODE_TIMEOUT_MS`.
+
+### Fixed
+
+- **`edit_file` / `apply_diff` on Windows CRLF files** — matching is newline-agnostic (model LF vs file CRLF) and the original terminator is restored on write, so a working-tree CRLF file no longer fails with `no match for oldString`. `apply_diff` also relocates hunks whose `@@` line numbers drifted after an earlier insert; ambiguous equally-close matches still refuse to guess.
+
 ## [2.12.0] - 2026-08-26
 
 Harness Hardening: deterministic verification becomes the default.
