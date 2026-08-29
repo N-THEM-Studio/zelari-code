@@ -151,13 +151,17 @@ describe('SQLite cognitive memory', () => {
     const [a, b] = await Promise.all([service(root), service(root)]);
     await Promise.all(Array.from({ length: 30 }, (_, index) =>
       (index % 2 ? a.memory : b.memory).remember({
-        kind: 'finding', content: `Concurrent unique finding number ${index}`,
+        // padStart: memoryTokens drops length-1 tokens, so `number 0`…`9`
+        // shared one exactKey and flaked Linux CI (26/30) on 2.16.1 publish.
+        kind: 'finding', content: `Concurrent unique finding number ${String(index).padStart(2, '0')}`,
         source: { agent: index % 2 ? 'tentacle-a' : 'tentacle-b' },
         writeClass: 'candidate',
       }),
     ));
-    expect((await a.memory.stats()).nodes).toBe(30);
     await Promise.all([a.memory.close(), b.memory.close()]);
+    const check = await service(root);
+    expect((await check.memory.stats()).nodes).toBe(30);
+    await check.memory.close();
   });
 
   it('imports legacy JSONL idempotently without deleting the source', async () => {
