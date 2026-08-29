@@ -1,20 +1,22 @@
-//! Zelari Desktop — thin Tauri shell over `zelari-code --headless`.
+//! Zelari Desktop — thin Tauri shell over the `zelari-code` CLI.
 //!
 //! The coding brain stays in Node (`@zelari/core` + CLI). This host only
-//! resolves the CLI, spawns headless runs, and streams NDJSON BrainEvents
+//! resolves the CLI, drives ONE long-lived `--serve-harness` sidecar
+//! (see harness_sidecar.rs) over NDJSON stdio, and streams NDJSON BrainEvents
 //! to the web UI via Tauri events.
 
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+
+mod harness_sidecar;
+use harness_sidecar::HarnessSidecar;
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -412,11 +414,11 @@ struct RunFinished {
     cancelled: bool,
 }
 
-fn find_node() -> Option<PathBuf> {
+pub(crate) fn find_node() -> Option<PathBuf> {
     which::which("node").ok()
 }
 
-fn resolve_cli_entry() -> Result<PathBuf, String> {
+pub(crate) fn resolve_cli_entry() -> Result<PathBuf, String> {
     let resolved = resolve_cli_entry_raw()?;
     Ok(unwrap_cli_js_entry(&resolved))
 }
@@ -878,7 +880,7 @@ fn extract_js_path_from_cmd_shim(text: &str, shim_dir: Option<&Path>) -> Option<
 }
 
 /// Human-readable spawn failure (Windows batch-shim hint).
-fn format_cli_spawn_err(err: impl std::fmt::Display) -> String {
+pub(crate) fn format_cli_spawn_err(err: impl std::fmt::Display) -> String {
     let msg = err.to_string();
     if msg.contains("batch file arguments are invalid") {
         format!(
@@ -892,7 +894,7 @@ fn format_cli_spawn_err(err: impl std::fmt::Display) -> String {
     }
 }
 
-fn spawn_cli_base(node: &Path, cli: &Path, cwd: Option<&Path>) -> Command {
+pub(crate) fn spawn_cli_base(node: &Path, cli: &Path, cwd: Option<&Path>) -> Command {
     // Always prefer the unwrapped JS entry so Windows never CreateProcess'es a .cmd.
     let cli = unwrap_cli_js_entry(cli);
     let mut c = if is_js_entry(&cli) {
@@ -930,7 +932,7 @@ fn spawn_cli_base(node: &Path, cli: &Path, cwd: Option<&Path>) -> Command {
 /// grandchild node processes (and their libuv handles) half-closed, which
 /// surfaces as `UV_HANDLE_CLOSING` assertions in `async.c`.
 /// Does **not** wait — caller must `wait()` once to reap.
-fn kill_child_tree(child: &mut Child) {
+pub(crate) fn kill_child_tree(child: &mut Child) {
     let pid = child.id();
     #[cfg(windows)]
     {
@@ -2294,6 +2296,12 @@ fn list_dir(args: ListDirArgs) -> Result<ListDirDto, String> {
     })
 }
 
+// Fields never read in Rust (mission_strict, verify_pack, verifier_review,
+// bon_alpha, kraken_* overrides) stay part of the frontend command contract:
+// they are consumed by serde and referenced in tests. Since the sidecar
+// migration they are pinned at sidecar spawn (no per-run protocol field) —
+// see harness_sidecar::spawn_generation and run_sidecar_turn.
+#[allow(dead_code)]
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct RunTaskArgs {
@@ -2475,21 +2483,20 @@ fn plugins_install(args: PluginsInstallArgs) -> Result<serde_json::Value, String
     })
 }
 
-/// Registry of live headless children's stdin handles, keyed by run id —
-/// the control plane for live steering (Frontier plan §33–34, §22).
-static CONTROL_STDIN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::process::ChildStdin>>> =
-    std::sync::OnceLock::new();
-
-fn control_stdin_registry()
--> &'static std::sync::Mutex<std::collections::HashMap<String, std::process::ChildStdin>> {
-    CONTROL_STDIN.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
-}
-
-/// Write one NDJSON ControlEvent to a running headless child's stdin.
-/// Accepts steer / follow_up / cancel (pause+resume are rejected: the CLI
-/// headless control bridge does not map them yet).
+/// Registry of live runs is kept in RunRegistry; control routing lives in
+/// harness_sidecar (the sidecar transport owns the process stdin).
+/// Write one NDJSON ControlEvent to a running run's harness session.
+/// Accepts steer / follow_up / cancel — routed over the sidecar's
+/// session-scoped protocol (session.steer / session.cancel). On CLI builds
+/// without those methods the typed `unknown_method` error surfaces to the
+/// caller: visible, no crash, and NEVER a fallback to a bare --headless
+/// spawn's stdin bridge.
 #[tauri::command]
-fn send_control(run_id: String, event: serde_json::Value) -> Result<(), String> {
+fn send_control(
+    sidecar: State<'_, Arc<HarnessSidecar>>,
+    run_id: String,
+    event: serde_json::Value,
+) -> Result<(), String> {
     let obj = event.as_object().ok_or("control event must be a JSON object")?;
     let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
     if kind.is_empty() {
@@ -2502,24 +2509,14 @@ fn send_control(run_id: String, event: serde_json::Value) -> Result<(), String> 
     if id.is_empty() {
         return Err("control event requires an \"id\" field".into());
     }
-    let line = serde_json::to_string(&event).map_err(|e| format!("serialize control: {e}"))?;
-    let mut map = control_stdin_registry().lock().unwrap_or_else(|e| e.into_inner());
-    let stdin = map
-        .get_mut(&run_id)
-        .ok_or_else(|| format!("no active run: {run_id}"))?;
-    use std::io::Write;
-    stdin
-        .write_all(line.as_bytes())
-        .and_then(|_| stdin.write_all(b"
-"))
-        .and_then(|_| stdin.flush())
-        .map_err(|e| format!("failed to write control: {e}"))
+    sidecar.steer_run(&run_id, &event)
 }
 
 #[tauri::command]
 fn run_task(
     app: AppHandle,
     state: State<'_, Arc<RunRegistry>>,
+    sidecar: State<'_, Arc<HarnessSidecar>>,
     args: RunTaskArgs,
 ) -> Result<String, String> {
     let prompt = args.prompt.trim().to_string();
@@ -2530,8 +2527,10 @@ fn run_task(
     let mode = normalize_mode(&args.mode, args.council);
     let phase = normalize_phase(&args.phase);
 
-    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
-    let cli = resolve_cli_entry()?;
+    // Fail FAST with the same visible errors as before (the sidecar would
+    // surface these too, but only after run-started — keep the early Err).
+    find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    resolve_cli_entry()?;
 
     let run_id = format!(
         "run-{}",
@@ -2558,6 +2557,7 @@ fn run_task(
     );
 
     let registry = Arc::clone(&state);
+    let sidecar = Arc::clone(&sidecar);
     let app_handle = app.clone();
     let run_id_thread = run_id.clone();
     let provider = args.provider;
@@ -2571,16 +2571,11 @@ fn run_task(
     let run_plan = args.run_plan;
     let profile = args.profile;
     let strict_done = args.strict_done;
-    let mission_strict = args.mission_strict;
-    let verify_pack = args.verify_pack;
-    let verifier_review = args.verifier_review;
-    let bon_alpha = args.bon_alpha;
     let gauntlet_loop = args.gauntlet_loop;
-    let kraken_explore_model = args.kraken_explore_model;
-    let kraken_general_model = args.kraken_general_model;
-    let kraken_verify_model = args.kraken_verify_model;
-    let kraken_planner_model = args.kraken_planner_model;
-    let kraken_delegation = args.kraken_delegation;
+    // NOTE: mission_strict / verify_pack / verifier_review / bon_alpha /
+    // kraken_* model overrides are NOT forwarded per-run anymore — the
+    // harness protocol has no turn field for them; they are pinned at
+    // sidecar spawn (documented in harness_sidecar::spawn_generation).
 
     let env_ctx = RunEnvelopeCtx {
         run_id: run_id.clone(),
@@ -2589,12 +2584,11 @@ fn run_task(
     };
 
     thread::spawn(move || {
-        let result = spawn_headless(
+        let result = run_sidecar_turn(
             &app_handle,
+            &sidecar,
             &cancel_flag,
             &env_ctx,
-            &node,
-            &cli,
             &prompt,
             &mode,
             &phase,
@@ -2609,16 +2603,7 @@ fn run_task(
             run_plan.as_deref(),
             profile.as_deref(),
             strict_done,
-            mission_strict,
-            verify_pack,
-            verifier_review,
-            bon_alpha,
             gauntlet_loop,
-            kraken_explore_model.as_deref(),
-            kraken_general_model.as_deref(),
-            kraken_verify_model.as_deref(),
-            kraken_planner_model.as_deref(),
-            kraken_delegation.as_deref(),
         );
 
         let (exit_code, cancelled) = match result {
@@ -2649,21 +2634,16 @@ fn run_task(
             },
         );
         registry.remove(&run_id_thread);
-        control_stdin_registry()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&run_id_thread);
     });
 
     Ok(run_id)
 }
 
-fn spawn_headless(
+fn run_sidecar_turn(
     app: &AppHandle,
+    sidecar: &Arc<HarnessSidecar>,
     cancel: &AtomicBool,
     envelope: &RunEnvelopeCtx,
-    node: &Path,
-    cli: &Path,
     prompt: &str,
     mode: &str,
     phase: &str,
@@ -2678,360 +2658,104 @@ fn spawn_headless(
     run_plan: Option<&str>,
     profile: Option<&str>,
     strict_done: bool,
-    mission_strict: bool,
-    verify_pack: bool,
-    verifier_review: Option<bool>,
-    bon_alpha: bool,
     gauntlet: bool,
-    kraken_explore_model: Option<&str>,
-    kraken_general_model: Option<&str>,
-    kraken_verify_model: Option<&str>,
-    kraken_planner_model: Option<&str>,
-    kraken_delegation: Option<&str>,
 ) -> Result<i32, String> {
-    let mut cmd = spawn_cli_base(node, cli, cwd.map(Path::new));
-    // Control plane (§22): accept ControlEvent NDJSON on stdin. spawn_cli_base
-    // nulls stdin for one-shot captures; the streaming run overrides it here.
-    cmd.stdin(Stdio::piped());
-
-    // Long prompts overflow Windows' ~32KB CreateProcess command-line
-    // ceiling (os error 206), exactly like multi-turn history used to.
-    // Spill the prompt to a temp file and pass --task-file /
-    // --kraken-graph-file; short prompts stay inline. Best-effort: on
-    // write failure we fall back to the inline flag and let the spawn
-    // surface the error.
-    const PROMPT_FILE_THRESHOLD: usize = 8_000;
-    let task_file: Option<PathBuf> = if prompt.len() > PROMPT_FILE_THRESHOLD {
-        let file_name = format!(
-            "zelari-task-{}.txt",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        );
-        let path = std::env::temp_dir().join(file_name);
-        fs::write(&path, prompt).ok().map(|_| path)
-    } else {
-        None
+    // Sessions carry the workspace: today's spawn used current_dir(cwd); on
+    // the shared sidecar the cwd travels as session.create's workspaceRoot
+    // (the kernel keys per-workspace services — LSP, policy cache — by it).
+    let workspace_root = match cwd.map(str::trim).filter(|c| !c.is_empty()) {
+        Some(c) => c.to_string(),
+        None => std::env::current_dir()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|_| ".".into()),
     };
 
-    cmd.arg("--headless");
+    // Turn input mirrors the CLI flags the old --headless spawn built
+    // (HeadlessOptions shape — verified against src/cli/headless.ts):
+    //   --task/--task-file      → task        (NDJSON stdin has NO Windows
+    //                             ~32KB command-line ceiling, so the
+    //                             tempfile spill is no longer needed)
+    //   --mode/--phase          → mode/phase
+    //   --provider/--model      → provider/model
+    //   --profile               → profile
+    //   --strict-done           → strictDone  (env `ZELARI_STRICT_DONE` stays
+    //                             authoritative for the gate; sidecar spawn
+    //                             pins the desktop default, documented)
+    //   --gauntlet              → gauntlet
+    //   --kraken-graph          → krakenGraph (+ planOnly / runPlan)
+    //   --resume <id>           → resumeSessionId
+    //   --history-file <json>   → history     (parsed array; invalid JSON is
+    //                             ignored → stateless, same as the CLI)
+    //   --todos <json>          → todos       (parsed array, same fallback)
+    // Env-only per-run knobs (bon_alpha, kraken_* model overrides,
+    // verify_pack, verifier_review) have NO run.turn field: they are pinned
+    // at sidecar spawn (see harness_sidecar::spawn_generation). Documented
+    // limitation of the sidecar model — never silently mis-mapped.
+    let mut input = serde_json::json!({
+        "task": prompt,
+        "mode": mode,
+        "phase": phase,
+        "strictDone": strict_done,
+        "gauntlet": gauntlet,
+    });
+    if let Some(p) = provider.map(str::trim).filter(|p| !p.is_empty()) {
+        input["provider"] = serde_json::json!(p);
+    }
+    if let Some(m) = model.map(str::trim).filter(|m| !m.is_empty()) {
+        input["model"] = serde_json::json!(m);
+    }
+    if let Some(p) = profile.map(str::trim).filter(|p| !p.is_empty()) {
+        input["profile"] = serde_json::json!(p);
+    }
     if kraken_graph {
-        // Plan + execute a Kraken task graph instead of a normal dispatch —
-        // `--kraken-graph` and `--task` are mutually exclusive on the CLI
-        // side (see src/cli/headless.ts); `--mode`/`--phase` are harmless
-        // to still pass, the graph path ignores them.
-        match task_file {
-            Some(ref p) => cmd.arg("--kraken-graph-file").arg(p),
-            None => cmd.arg("--kraken-graph").arg(prompt),
-        };
-        // Desktop "plan" phase: write the plan to disk and stop (no execution).
+        // Plan + execute a Kraken task graph instead of a normal dispatch.
+        input["krakenGraph"] = serde_json::json!(prompt);
         if plan_only {
-            cmd.arg("--plan-only");
+            input["planOnly"] = serde_json::json!(true);
         }
-        // Desktop "build" phase after a plan-only run: execute the saved plan.
-        if let Some(id) = run_plan {
-            if !id.trim().is_empty() {
-                cmd.arg("--run-plan").arg(id);
+        if let Some(id) = run_plan.map(str::trim).filter(|id| !id.is_empty()) {
+            input["runPlan"] = serde_json::json!(id);
+        }
+    }
+    if let Some(sid) = session_id.map(str::trim).filter(|s| !s.is_empty()) {
+        // E1.4: resume the 2.0 spine session so model context comes from the
+        // event log; also pre-binds sidecar event routing for this run.
+        input["resumeSessionId"] = serde_json::json!(sid);
+    }
+    if let Some(h) = history.filter(|h| !h.is_empty()) {
+        match serde_json::from_str::<serde_json::Value>(h) {
+            Ok(v) if v.is_array() => {
+                input["history"] = v;
             }
-        }
-    } else {
-        match task_file {
-            Some(ref p) => cmd.arg("--task-file").arg(p),
-            None => cmd.arg("--task").arg(prompt),
-        };
-    }
-    cmd.arg("--output")
-        .arg("json")
-        .arg("--mode")
-        .arg(mode)
-        .arg("--phase")
-        .arg(phase);
-
-    if let Some(profile) = profile {
-        if !profile.trim().is_empty() {
-            cmd.arg("--profile").arg(profile);
+            _ => {} // Non-fatal: degrade to stateless (CLI parity).
         }
     }
-    if strict_done {
-        cmd.arg("--strict-done");
-    }
-    // Desktop settings are authoritative in both directions. Explicit `0`
-    // prevents an inherited shell environment from silently re-enabling a
-    // switch that the user turned off in the UI.
-    cmd.env("ZELARI_STRICT_DONE", if strict_done { "1" } else { "0" });
-    cmd.env(
-        "ZELARI_MISSION_STRICT",
-        if mission_strict { "1" } else { "0" },
-    );
-    cmd.env("ZELARI_VERIFY_PACK", if verify_pack { "1" } else { "0" });
-    if let Some(enabled) = verifier_review {
-        cmd.env("ZELARI_VERIFIER_REVIEW", if enabled { "1" } else { "0" });
-    }
-    // Desktop ships a Memory panel: enable the SQLite memory backend for
-    // spawned runs so memories are actually captured. An explicit user
-    // opt-out in the shell environment always wins.
-    if std::env::var("ZELARI_MEMORY").unwrap_or_default() != "0"
-        && std::env::var("ZELARI_MEMORY_V2").unwrap_or_default() != "0"
-    {
-        cmd.env("ZELARI_MEMORY_V2", "1");
-    }
-    let experimental = desktop_experimental_flags(
-        &std::env::var("ZELARI_EXPERIMENTAL").unwrap_or_default(),
-        bon_alpha,
-    );
-    cmd.env("ZELARI_EXPERIMENTAL", experimental);
-    if gauntlet {
-        cmd.arg("--gauntlet");
-    }
-    cmd.env("ZELARI_GAUNTLET", if gauntlet { "1" } else { "0" });
-    set_optional_model_env(
-        &mut cmd,
-        "ZELARI_KRAKEN_EXPLORE_MODEL",
-        kraken_explore_model,
-    );
-    set_optional_model_env(
-        &mut cmd,
-        "ZELARI_KRAKEN_GENERAL_MODEL",
-        kraken_general_model,
-    );
-    set_optional_model_env(
-        &mut cmd,
-        "ZELARI_KRAKEN_VERIFY_MODEL",
-        kraken_verify_model,
-    );
-    set_optional_model_env(
-        &mut cmd,
-        "ZELARI_KRAKEN_PLANNER_MODEL",
-        kraken_planner_model,
-    );
-    set_optional_model_env(
-        &mut cmd,
-        "ZELARI_KRAKEN_DELEGATION",
-        kraken_delegation,
-    );
-
-    if let Some(p) = provider {
-        if !p.is_empty() {
-            cmd.arg("--provider").arg(p);
-        }
-    }
-    if let Some(m) = model {
-        if !m.is_empty() {
-            cmd.arg("--model").arg(m);
-        }
-    }
-    // Forward conversation history so the desktop (fresh process per message)
-    // preserves multi-turn context. We write the JSON to a TEMP FILE rather
-    // than passing it as `--history <json>` because Windows' CreateProcess has
-    // a ~32KB command-line ceiling (os error 206) and a multi-turn chat's
-    // serialized history can easily exceed it. The CLI reads it via
-    // `--history-file <path>`; we clean up the file below after the run ends.
-    let history_file: Option<PathBuf> = if let Some(h) = history {
-        if !h.is_empty() {
-            let file_name = format!(
-                "zelari-history-{}.json",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .map(|d| d.as_nanos())
-                    .unwrap_or(0)
-            );
-            let path = std::env::temp_dir().join(file_name);
-            match fs::write(&path, h) {
-                Ok(()) => {
-                    cmd.arg("--history-file").arg(&path);
-                    Some(path)
-                }
-                Err(_) => None, // Non-fatal: degrade to stateless.
+    if let Some(t) = todos.filter(|t| !t.is_empty()) {
+        match serde_json::from_str::<serde_json::Value>(t) {
+            Ok(v) if v.is_array() => {
+                input["todos"] = v;
             }
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-
-    if let Some(t) = todos {
-        if !t.is_empty() {
-            cmd.arg("--todos").arg(t);
+            _ => {} // Non-fatal: todos replay degrades to empty (CLI parity).
         }
     }
 
-    // E1.4: resume the 2.0 spine session so model context comes from the
-    // event log (deriveMessages) instead of replaying 1.x --history JSON.
-    // History stays as fallback: the CLI ignores it when the log exists
-    // and falls back to it only when the spine is degraded/disabled.
-    if let Some(sid) = session_id {
-        if !sid.trim().is_empty() {
-            cmd.arg("--resume").arg(sid.trim());
-        }
-    }
-
-    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-
-    let mut child = cmd.spawn().map_err(format_cli_spawn_err)?;
-    if let Some(h) = child.stdin.take() {
-        control_stdin_registry()
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(envelope.run_id.clone(), h);
-    }
-
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| "Failed to capture CLI stdout".to_string())?;
-    let stderr = child
-        .stderr
-        .take()
-        .ok_or_else(|| "Failed to capture CLI stderr".to_string())?;
-
-    // Drain stderr on a side thread (never block the NDJSON reader).
-    let app_err = app.clone();
-    let ctx_err = envelope.clone();
-    let err_thread = thread::spawn(move || {
-        let reader = BufReader::new(stderr);
-        for line in reader.lines().flatten() {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                continue;
-            }
-            let _ = app_err.emit(
-                "agent-stderr",
-                serde_json::json!({
-                    "line": trimmed,
-                    "runId": ctx_err.run_id,
-                    "conversationId": ctx_err.conversation_id,
-                    "cwd": ctx_err.cwd,
-                }),
-            );
-        }
-    });
-
-    // Read stdout on a side thread so we can poll cancel without waiting for
-    // the next line (thinking phases can be silent for minutes).
-    let (tx, rx) = mpsc::channel::<Result<String, String>>();
-    let out_thread = thread::spawn(move || {
-        let reader = BufReader::new(stdout);
-        for line in reader.lines() {
-            match line {
-                Ok(l) => {
-                    if tx.send(Ok(l)).is_err() {
-                        break;
-                    }
-                }
-                Err(e) => {
-                    let _ = tx.send(Err(e.to_string()));
-                    break;
-                }
-            }
-        }
-    });
-
-    let mut cancelled = false;
-    loop {
-        if cancel.load(Ordering::SeqCst) {
-            cancelled = true;
-            kill_child_tree(&mut child);
-            break;
-        }
-
-        match rx.recv_timeout(Duration::from_millis(200)) {
-            Ok(Ok(line)) => {
-                let trimmed = line.trim();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                match serde_json::from_str::<serde_json::Value>(trimmed) {
-                    Ok(value) => {
-                        let _ = app.emit("agent-event", enveloped(value, envelope));
-                    }
-                    Err(_) => {
-                        let _ = app.emit(
-                            "agent-event",
-                            enveloped(
-                                serde_json::json!({
-                                    "type": "log",
-                                    "message": trimmed,
-                                }),
-                                envelope,
-                            ),
-                        );
-                    }
-                }
-            }
-            Ok(Err(e)) => {
-                let _ = app.emit(
-                    "agent-event",
-                    enveloped(
-                        serde_json::json!({
-                            "type": "error",
-                            "message": format!("stdout read error: {e}"),
-                        }),
-                        envelope,
-                    ),
-                );
-                break;
-            }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                // Still running — loop to re-check cancel.
-                if let Ok(Some(status)) = child.try_wait() {
-                    // Process exited; drain remaining lines briefly.
-                    while let Ok(msg) = rx.try_recv() {
-                        if let Ok(line) = msg {
-                            let trimmed = line.trim();
-                            if trimmed.is_empty() {
-                                continue;
-                            }
-                            if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-                                let _ = app.emit("agent-event", enveloped(value, envelope));
-                            }
-                        }
-                    }
-                    let _ = err_thread.join();
-                    let _ = out_thread.join();
-                    return Ok(status
-                        .code()
-                        .unwrap_or(if status.success() { 0 } else { 2 }));
-                }
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => break,
-        }
-    }
-
-    // Reader finished or cancel: reap exactly once.
-    if !cancelled {
-        if let Ok(None) = child.try_wait() {
-            // stdout closed but process still alive — give it a moment, then kill tree
-            thread::sleep(Duration::from_millis(150));
-            if let Ok(None) = child.try_wait() {
-                kill_child_tree(&mut child);
-            }
-        }
-    }
-
-    let _ = err_thread.join();
-    let _ = out_thread.join();
-    // Clean up the history/prompt tempfiles (best-effort; never fail the run).
-    if let Some(ref p) = history_file {
-        let _ = fs::remove_file(p);
-    }
-    if let Some(ref p) = task_file {
-        let _ = fs::remove_file(p);
-    }
-    match child.try_wait() {
-        Ok(Some(s)) => Ok(s.code().unwrap_or(if s.success() { 0 } else { 2 })),
-        Ok(None) => match child.wait() {
-            Ok(s) => Ok(s.code().unwrap_or(if s.success() { 0 } else { 2 })),
-            Err(_) => Ok(if cancelled { 130 } else { 2 }),
+    sidecar.run_turn_full(
+        app,
+        &envelope.run_id,
+        &workspace_root,
+        session_id,
+        input,
+        cancel,
+        &mut |value| {
+            let _ = app.emit("agent-event", enveloped(value, envelope));
         },
-        Err(_) => Ok(if cancelled { 130 } else { 2 }),
-    }
+    )
 }
+
 
 /// Desktop is authoritative: a value sets the env, inherit removes it
 /// so a parent-shell override cannot leak into the child CLI.
-fn set_optional_model_env(cmd: &mut Command, key: &str, value: Option<&str>) {
+pub(crate) fn set_optional_model_env(cmd: &mut Command, key: &str, value: Option<&str>) {
     match value.map(str::trim).filter(|v| !v.is_empty()) {
         Some(v) => {
             cmd.env(key, v);
@@ -3042,7 +2766,7 @@ fn set_optional_model_env(cmd: &mut Command, key: &str, value: Option<&str>) {
     }
 }
 
-fn desktop_experimental_flags(existing: &str, bon_alpha: bool) -> String {
+pub(crate) fn desktop_experimental_flags(existing: &str, bon_alpha: bool) -> String {
     let mut flags: Vec<String> = existing
         .split(',')
         .map(|s| s.trim().to_string())
@@ -3218,6 +2942,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(Arc::new(RunRegistry::default()))
         .manage(Arc::new(CompanionServeState::default()))
+        .manage(Arc::new(HarnessSidecar::new()))
         .invoke_handler(tauri::generate_handler![
             get_cli_status,
             get_app_config,
@@ -3256,8 +2981,21 @@ pub fn run() {
             test_ssh_target,
             print_ssh_pubkey
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Zelari Desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building Zelari Desktop")
+        .run(|app_handle, event| {
+            // Requirement 4 — the proof survives the UI. On app exit we do
+            // NOT hard-kill the sidecar mid-write: shutdown() closes the
+            // child's stdin, which is the protocol's graceful-shutdown
+            // trigger — the server runs close() → kernel dispose(), which
+            // awaits ALL pending completion-proof writes (never cancels
+            // them) before services die. The wait is bounded (8s drain +
+            // reap margin); only past that deadline does the supervisor
+            // force-kill the tree (taskkill /T /F on Windows).
+            if let tauri::RunEvent::Exit = event {
+                app_handle.state::<Arc<HarnessSidecar>>().shutdown();
+            }
+        });
 }
 
 #[cfg(test)]
