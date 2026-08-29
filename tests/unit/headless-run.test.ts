@@ -35,6 +35,13 @@ vi.mock('@zelari/core/harness', () => ({
       (this as { lastOpts?: unknown }).lastOpts = _opts;
     }
   },
+  // t30 extension loader (src/cli/extensions/loader.ts) instantiates the real
+  // ExtensionRegistry via runOneTurn; keep the stale harness mock exporting it.
+  ExtensionRegistry: class {
+    register = vi.fn();
+    list = () => [];
+    get = () => undefined;
+  },
 }));
 
 vi.mock('../../src/cli/provider/openai-compatible.js', () => ({
