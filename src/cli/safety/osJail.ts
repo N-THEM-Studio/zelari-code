@@ -28,7 +28,8 @@
  *   1. ZELARI_OS_JAIL=off|advisory|required (exact match, case/space
  *     -insensitive; any other value is IGNORED — a typo never weakens the jail)
  *   2. default: `required` on strict surfaces (headless/mission/CI — see
- *      policyLoadMode), `advisory` on the interactive TUI.
+ *      policyLoadMode) WHEN the platform backend probes available, otherwise
+ *      VISIBLE advisory; `advisory` on the interactive TUI.
  *
  * A stub backend may be injected via {@link setJailBackendForTests} — that
  * seam is for TESTS ONLY and is never set by production code paths.
@@ -114,7 +115,13 @@ export function resolveJailMode(
   if (v === 'off') return 'off';
   if (v === 'advisory') return 'advisory';
   if (v === 'required') return 'required';
-  return activePolicyLoadMode(env) === 'strict' ? 'required' : 'advisory';
+  if (activePolicyLoadMode(env) !== 'strict') return 'advisory';
+  // Strict surfaces want a REAL jail — but the backend must exist. Defaulting
+  // to `required` on a platform with no honest backend (win32 today, linux
+  // without bwrap) would DENY every exec tool call there. The honest default
+  // is VISIBLE advisory (triple notice); `required` stays enforceable — and
+  // DENIES on a missing backend — when set explicitly via ZELARI_OS_JAIL.
+  return probeJailBackend().available ? 'required' : 'advisory';
 }
 
 /** Resolve the ACTIVE jail mode from env (injectable so tests never mutate process.env). */

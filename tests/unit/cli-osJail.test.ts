@@ -58,6 +58,13 @@ afterEach(() => {
 });
 
 describe('resolveJailMode (ZELARI_OS_JAIL — resolveHookFailureMode pattern)', () => {
+  /** Structural JailBackend stub — flips availability without touching the platform probe. */
+  const stubBackend = (available: boolean) => ({
+    id: `stub-${available ? 'ok' : 'no'}`,
+    probe: () => ({ backend: 'stub', available, reason: available ? 'stub available' : 'stub unavailable' }),
+    wrap: (_spec: unknown, program: string, argv: readonly string[]) => ({ program, argv: [...argv] }),
+  });
+
   it('exact overrides win: off | advisory | required (case/space-insensitive)', () => {
     expect(resolveJailMode('off', {})).toBe('off');
     expect(resolveJailMode(' advisory ', {})).toBe('advisory');
@@ -67,18 +74,21 @@ describe('resolveJailMode (ZELARI_OS_JAIL — resolveHookFailureMode pattern)', 
   it('invalid values are IGNORED and fall through to the surface default', () => {
     const prev = activePolicyLoadSurface();
     try {
-      setActivePolicyLoadSurface('headless'); // strict ⇒ would be required
+      setJailBackendForTests(stubBackend(true)); // strict + available backend ⇒ required
+      setActivePolicyLoadSurface('headless');
       expect(resolveJailMode('bogus', {})).toBe('required');
-      setActivePolicyLoadSurface('tui'); // permissive ⇒ would be advisory
+      setActivePolicyLoadSurface('tui'); // permissive ⇒ advisory
       expect(resolveJailMode('  CLOSED  ', {})).toBe('advisory');
     } finally {
+      setJailBackendForTests(null);
       setActivePolicyLoadSurface(prev);
     }
   });
 
-  it('default: required on headless/mission/CI, advisory on the TUI', () => {
+  it('default: required on strict surfaces when a backend EXISTS, visible advisory when it does not', () => {
     const prev = activePolicyLoadSurface();
     try {
+      setJailBackendForTests(stubBackend(true));
       setActivePolicyLoadSurface('headless');
       expect(resolveJailMode(undefined, {})).toBe('required');
       setActivePolicyLoadSurface('mission');
@@ -87,7 +97,16 @@ describe('resolveJailMode (ZELARI_OS_JAIL — resolveHookFailureMode pattern)', 
       expect(resolveJailMode(undefined, {})).toBe('advisory');
       // ambient CI tightens the TUI to the strict surface
       expect(resolveJailMode(undefined, { CI: '1' })).toBe('required');
+      // Honest platform without a backend (win32 today): the DEFAULT never
+      // makes exec unusable there — visible advisory. The golden rule stays:
+      // an EXPLICIT required still resolves to required (and the spawn path
+      // DENIES on the missing backend — covered by the spawn tests below).
+      setJailBackendForTests(stubBackend(false));
+      setActivePolicyLoadSurface('headless');
+      expect(resolveJailMode(undefined, {})).toBe('advisory');
+      expect(resolveJailMode('required', {})).toBe('required');
     } finally {
+      setJailBackendForTests(null);
       setActivePolicyLoadSurface(prev);
     }
   });

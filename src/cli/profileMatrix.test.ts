@@ -131,7 +131,7 @@ describe('F7 profile × phase smoke matrix (Exit-3.2)', () => {
 
 describe('F7 wiring invariants (source-level, legacyContextIsolation pattern)', () => {
   it('kraken and council registries derive planMode from the resolved phase', () => {
-    const src = readCli('runHeadless.ts');
+    const src = readCli('runHeadless.ts') + '\n' + readCli('headless/runOneTurn.ts');
     // Kraken parent registry (headless hot path).
     expect(src).toContain('planMode: planModeFromOpts(opts),');
     // Council pipelines: explicit phase (design leg) and soft-gated variant.

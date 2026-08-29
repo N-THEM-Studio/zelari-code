@@ -59,7 +59,7 @@ describe('ADR-0024 — legacy context isolation', () => {
 
 describe('strict done gate enforcement (E2.2)', () => {
   it('headless kraken BUILD enforces the strict verdict on the run outcome', () => {
-    const src = readCli('runHeadless.ts');
+    const src = readCli('runHeadless.ts') + '\n' + readCli('headless/runOneTurn.ts');
     expect(src).toContain('strictGateExitCode(after)');
     expect(src).toMatch(/strictExit !== 0 \? 'stopped' : 'completed'/);
     expect(src).toMatch(/if \(strictExit !== 0\) return strictExit;/);
