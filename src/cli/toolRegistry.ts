@@ -19,15 +19,23 @@ import {
   writeFileTool,
   editFileTool,
 } from '@zelari/core/harness/tools/builtin/filesystem';
-import { bashTool } from '@zelari/core/harness/tools/builtin/shell';
+import { createBashTool, type BashSpawnSeam } from '@zelari/core/harness/tools/builtin/shell';
 import { grepContentTool } from '@zelari/core/harness/tools/builtin/search';
 import { listFilesTool } from '@zelari/core/harness/tools/builtin/listFiles';
 import { showDiffTool, applyDiffTool } from '@zelari/core/harness/tools/builtin/diff';
 import { fetchUrlTool, webSearchTool } from '@zelari/core/harness/tools/builtin/web';
-import { resolveSandboxedPath, SandboxViolationError } from './safety/sandboxPath.js';
+import { resolveSandboxedPath, SandboxViolationError, verifyContainment } from './safety/sandboxPath.js';
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
-import { runDiagnosticsForFile, formatDiagnostics, type Runner } from './diagnostics/engine.js';
+import {
+  DEFAULT_PROVIDERS,
+  formatDiagnostics,
+  runDiagnosticsForFile,
+  type Diagnostic,
+  type Runner,
+} from './diagnostics/engine.js';
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import type { BrainEvent } from '@zelari/core/shared/events';
 import { createTaskTool, type TaskAgentKind, type TaskToolDeps } from './tools/taskTool.js';
 import { createKrakenSelectTool } from './tools/krakenSelectTool.js';
@@ -63,7 +71,11 @@ import {
   type PermissionAskHandler,
   type PermissionPolicy,
 } from './safety/toolPermissions.js';
-import { createDefaultLifecycleHooks } from './safety/lifecycleHooks.js';
+import { createDefaultLifecycleHooks, HOOKS_FAILURE_ENV, resolveHookFailureMode } from './safety/lifecycleHooks.js';
+// t30 (Pilastro C): ExtensionAPI seam — extension tools ride the SAME
+// wrapWithPermissions path as builtins; onPreToolUse handlers ride the t22
+// failure semantics (resolveHookFailureMode, same env override as hooks).
+import { extensionToolToDefinition, withExtensionPreToolUse } from './extensions/extensionToolWiring.js';
 import {
   agentLayersFor,
   emptyPolicySet,
@@ -77,9 +89,20 @@ import { activePolicyLoadMode } from './safety/policyLoadMode.js';
 import { intersectEffects, matchAgentPolicyRuleLayered } from './safety/policyLayers.js';
 // t22: the TaskContract compiles into a NON-OVERRIDABLE restrict-only layer.
 import { matchContractCapabilityRule } from './kraken/contractCompiler.js';
-import { resolveClaimsVerdict } from './safety/resourceClaims.js';
+import { matchResourceClaimLayered, resourceClaimsFor, resolveClaimsVerdict } from './safety/resourceClaims.js';
+// v2.17 (t28): OS jail (Pilastro A) — the ONLY spawn choke-point for exec/bash.
+import {
+  buildJailSpec,
+  jailAdvisoryNotice,
+  jailAvailability,
+  jailDenyReason,
+  networkSpecFromClaimHosts,
+  spawnJailed,
+  type JailNetwork,
+  type JailSpec,
+} from './safety/osJail.js';
 import { withResultCache } from './toolResultCache.js';
-import type { LifecycleHookRunner } from '@zelari/core/harness';
+import type { ExtensionRegistry, LifecycleHookRunner } from '@zelari/core/harness';
 import type {
   ToolDefinition,
   TypedResult,
@@ -108,9 +131,11 @@ export interface CreateRegistryOptions {
   /** Session id used in audit entries. */
   sessionId?: string;
   /**
-   * Enable the post-edit diagnostics loop (fast file-scoped checker runs
-   * after write_file/edit_file/apply_diff, appending errors to the result).
-   * Defaults to true unless `ZELARI_DIAGNOSTICS=0` is set.
+   * Enable the diagnostics loop (fast file-scoped checker appending
+   * errors to the result): post-edit on write_file/edit_file/apply_diff,
+   * and — since 2.21 (t31) — post-execute on bash/exec_process over the
+   * source paths the invocation claims. Defaults to true unless
+   * `ZELARI_DIAGNOSTICS=0` is set.
    */
   diagnostics?: boolean;
   /** Inject the diagnostics process runner (tests). Defaults to real spawn. */
@@ -223,6 +248,17 @@ export interface CreateRegistryOptions {
    * Pass a runner to override; pass null to disable.
    */
   lifecycleHooks?: LifecycleHookRunner | null;
+  /**
+   * t30 (Pilastro C): pre-loaded extension runtime (src/cli/extensions/loader.ts
+   * loads it ASYNC from disk — global dir always, project dir only when the
+   * folder is trusted). Extension tools are registered through the SAME
+   * wrapWithPermissions path as builtin tools (they can never widen the
+   * parent policy; ContractCompiler still intersects LAST) and the collected
+   * onPreToolUse handlers ride the t22 failure semantics. Null/undefined ⇒
+   * no extensions: the disk load happens in the host, never in this sync
+   * registry builder.
+   */
+  extensions?: ExtensionRegistry | null;
   /** Native project memory shared by task-tool tentacles. */
   memoryService?: MemoryService;
   memoryAutoWrite?: boolean;
@@ -236,7 +272,9 @@ export interface CreateRegistryOptions {
  *  - filesystem tools: resolveSandboxedPath() on every path arg; throws
  *    SandboxViolationError if the path escapes the root.
  *  - bash: assertShellAllowed() on the command; throws ShellBlockedError
- *    on any blocklist match.
+ *    on any blocklist match. Since v2.17 (t27) the cwd arg is ALSO jailed:
+ *    resolveSandboxedPath() resolves it against the root before the spawn
+ *    and a cwd outside the root is a typed `[sandbox]` deny.
  *  - every tool: AuditLogger.runTool() wraps the call to record ts,
  *    args (redacted), ok, duration, summary.
  */
@@ -252,9 +290,16 @@ export function createBuiltinToolRegistry(
   // loop: after a successful edit, a fast file-scoped checker runs on the
   // touched file and its errors/warnings are appended to the tool result so
   // the model sees compiler feedback in the same turn (opt out: ZELARI_DIAGNOSTICS=0).
+  // t31 (2.21 §6.6): the execute tools (bash/exec_process) share the same
+  // loop post-execute, on the source paths the invocation claims.
   const diagnosticsOn = options.diagnostics ?? process.env.ZELARI_DIAGNOSTICS !== '0';
   const withDiag = <I extends Record<string, unknown>, O>(t: ToolDefinition<I, O>) =>
     diagnosticsOn ? wrapWithDiagnostics(t, root, options.diagnosticsRunner) : t;
+  // t31 (2.21 §6.6): the EXECUTE tools (bash/exec_process) get the same
+  // diagnostics loop, post-execute, on the source paths the invocation
+  // claims — same engine, same result channel, same opt-out as withDiag.
+  const withExecDiag = <I extends Record<string, unknown>, O>(t: ToolDefinition<I, O>) =>
+    diagnosticsOn ? wrapWithExecuteDiagnostics(t, root, options.diagnosticsRunner) : t;
   // Cache sits inside the sandbox wrap so permission + path checks still
   // run on every call; only the disk/search work is skipped on a hit.
   const safeReadFile = wrapWithSandbox(
@@ -264,8 +309,14 @@ export function createBuiltinToolRegistry(
     audit,
     sessionId,
   );
-  const safeWriteFile = withDiag(wrapWithSandbox(writeFileTool, ['path'], root, audit, sessionId));
-  const safeEditFile = withDiag(wrapWithSandbox(editFileTool, ['path'], root, audit, sessionId));
+  // v2.16 (t26): write tools additionally re-verify containment (fresh
+  // syscalls) immediately before execute — see wrapWithSandbox opts.verifyWrite.
+  const safeWriteFile = withDiag(
+    wrapWithSandbox(writeFileTool, ['path'], root, audit, sessionId, { verifyWrite: true }),
+  );
+  const safeEditFile = withDiag(
+    wrapWithSandbox(editFileTool, ['path'], root, audit, sessionId, { verifyWrite: true }),
+  );
   const safeGrepContent = wrapWithSandbox(
     withResultCache(grepContentTool, { kind: 'ttl' }),
     ['path'],
@@ -281,16 +332,65 @@ export function createBuiltinToolRegistry(
     sessionId,
   );
   const safeShowDiff = wrapWithSandbox(showDiffTool, ['path'], root, audit, sessionId);
-  const safeApplyDiff = withDiag(wrapWithSandbox(applyDiffTool, ['path'], root, audit, sessionId));
+  const safeApplyDiff = withDiag(
+    wrapWithSandbox(applyDiffTool, ['path'], root, audit, sessionId, { verifyWrite: true }),
+  );
 
-  // Wrap bash: shell blocklist + audit.
-  const safeBash = wrapWithShellSafety(bashTool, audit, sessionId);
+  // v2.17 (t28, Pilastro A): ONE JailSpec per registry, from the SAME root
+  // decision the sandbox wrappers use (no second policy engine). The bash
+  // tool is rebuilt with the osJail spawn seam so its ONLY spawn route is
+  // safety/osJail.spawnJailed; the network posture is narrowed per
+  // invocation from the SAME layered claims engine the permission wrapper
+  // uses (agentPolicyLayers below — the resolver only runs inside
+  // execute(), never at construction, so the declaration order is safe).
+  const jailSpec = buildJailSpec({ root });
+  const resolveJailNetwork = (toolName: string, args: Record<string, unknown>): JailNetwork => {
+    const allowedHosts: string[] = [];
+    for (const claim of resourceClaimsFor(toolName, args)) {
+      if (claim.kind !== 'network') continue;
+      const hit = matchResourceClaimLayered(
+        agentPolicyLayers,
+        agentPolicySet.precedence,
+        claim,
+        root,
+      );
+      if (hit?.effect === 'allow') allowedHosts.push(claim.host);
+    }
+    return networkSpecFromClaimHosts(allowedHosts);
+  };
+  const jailedBashSeam: BashSpawnSeam = (req) => {
+    const res = spawnJailed(jailSpec, req);
+    if (res.outcome === 'spawned') {
+      return { outcome: 'spawned', child: res.child, ...(res.notice ? { notice: res.notice } : {}) };
+    }
+    return res.outcome === 'denied'
+      ? { outcome: 'denied', reason: res.reason }
+      : { outcome: 'failed', reason: res.reason };
+  };
+
+  // Wrap bash: shell blocklist + sandboxed cwd (v2.17 t27) + OS-jail
+  // preflight (v2.17 t28) + audit — spawned ONLY through the seam above.
+  // t31 (2.21 §6.6): after a successful run, diagnostics run on the source
+  // paths the command claims (post-execute, same loop as the edit tools).
+  const safeBash = withExecDiag(
+    wrapWithShellSafety(createBashTool(jailedBashSeam), audit, sessionId, root, jailSpec),
+  );
 
   // P0.C2 (t17): structured exec_process — same shell-safety discipline as
   // bash (blocklist + audit) with an evidence-grade audit summary
   // (`program argv -> exitCode=N`); registered THROUGH the permission
-  // wrapper below so policy claims gate every execution.
-  const safeExecProcess = wrapWithExecEvidence(createExecProcessTool(root), audit, sessionId);
+  // wrapper below so policy claims gate every execution. v2.17 (t28): the
+  // tool spawns via spawnJailed internally (network = claims verdict).
+  // t31 (2.21 §6.6): post-execute diagnostics on claimed source paths.
+  const safeExecProcess = withExecDiag(
+    wrapWithExecEvidence(
+      createExecProcessTool(root, {
+        resolveNetwork: (input) => resolveJailNetwork('exec_process', input as unknown as Record<string, unknown>),
+      }),
+      audit,
+      sessionId,
+    ),
+  );
 
   // v0.7.5: network tools — audit-only wrap (no filesystem paths to sandbox;
   // the tools themselves enforce http(s)-only + timeout + size caps).
@@ -651,6 +751,39 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
     }
   }
 
+  // t30 (Pilastro C): ExtensionAPI seam. Extension tools enter through the
+  // SAME `withPerm` wrapper as every builtin above — category policy, agent
+  // rules, resource claims and the TaskContract capability layer all still
+  // intersect (contract LAST), so a declared permission can never widen the
+  // parent policy. Tool names never collide: an already-registered tool
+  // wins and the extension tool is skipped LOUDLY (no shadowing builtins).
+  const extRegistry = options.extensions;
+  if (extRegistry) {
+    for (const entry of extRegistry.listExtensionTools()) {
+      if (registry.get(entry.spec.name)) {
+        process.stderr.write(
+          `[extensions] tool "${entry.spec.name}" from extension "${entry.extensionId}" collides with an existing tool — skipped\n`,
+        );
+        continue;
+      }
+      registry.register(withPerm(extensionToolToDefinition(entry)));
+    }
+    // Extension onPreToolUse handlers: additive post-pass over EVERY tool
+    // (builtins included), mirroring the PreToolUse phase ordering (hooks
+    // run before the tool body). t22 failure semantics via the SAME
+    // resolver that drives the JSON lifecycle hooks. No handlers ⇒ no wrap,
+    // zero overhead on registries without extensions.
+    const preHandlers = extRegistry.preToolUseHandlers;
+    if (preHandlers.length > 0) {
+      const failureMode = resolveHookFailureMode(process.env[HOOKS_FAILURE_ENV]);
+      const wrapExtPre = withExtensionPreToolUse(preHandlers, { failureMode });
+      for (const name of registry.list()) {
+        const def = registry.get(name);
+        if (def) registry.register(wrapExtPre(def));
+      }
+    }
+  }
+
   return { registry, tools };
 }
 
@@ -958,18 +1091,50 @@ function wrapWithPermissions<I, O>(
   };
 }
 
-function wrapWithSandbox<I extends Record<string, unknown>, O>(
+/**
+ * Wrap a filesystem tool so every path argument is sandboxed to `root` before
+ * the tool runs: lexical + symlink-safe resolution (resolveSandboxedPath), a
+ * typed SandboxViolationError → `{ ok: false, error: '[sandbox] …' }` deny,
+ * and an audit record for every violation.
+ *
+ * v2.16 (t26): write tools (write_file / edit_file / apply_diff) pass
+ * `{ verifyWrite: true }` — the resolved destination is re-checked with
+ * verifyContainment (BOTH layers, fresh syscalls) as the LAST step before
+ * execute, closing the TOCTOU window between the resolve above and the
+ * actual disk mutation (links swapped during an approval UI / hook await).
+ * Read-side tools stay resolve-only.
+ */
+export function wrapWithSandbox<I extends Record<string, unknown>, O>(
   original: ToolDefinition<I, O>,
   pathArgs: readonly string[],
   root: string,
   audit: AuditLogger,
   sessionId: string,
+  opts: { verifyWrite?: boolean } = {},
 ): ToolDefinition<I, O> {
   return {
     ...original,
     execute: async (rawArgs: I, ctx: ToolContext): Promise<TypedResult<O>> => {
       // Pre-flight: sandbox all path args; rewrite them in-place.
       const args = rawArgs as Record<string, unknown>;
+      // Audit + typedErr so the caller gets a friendly error (the resolver
+      // below and the t26 re-check share the same deny shape).
+      const denySandbox = async (err: SandboxViolationError): Promise<TypedResult<O>> => {
+        await audit.append({
+          ts: new Date().toISOString(),
+          sessionId,
+          tool: original.name,
+          args: redactForAudit(args),
+          ok: false,
+          resultSummary: err.message,
+          durationMs: 0,
+          error: 'sandbox_violation',
+        });
+        return {
+          ok: false,
+          error: `[sandbox] ${err.message}`,
+        } as TypedResult<O>;
+      };
       for (const key of pathArgs) {
         const v = args[key];
         if (typeof v === 'string' && v.length > 0) {
@@ -977,21 +1142,25 @@ function wrapWithSandbox<I extends Record<string, unknown>, O>(
             args[key] = resolveSandboxedPath(v, { root });
           } catch (err) {
             if (err instanceof SandboxViolationError) {
-              // Audit + return typedErr so the caller gets a friendly error.
-              await audit.append({
-                ts: new Date().toISOString(),
-                sessionId,
-                tool: original.name,
-                args: redactForAudit(args),
-                ok: false,
-                resultSummary: err.message,
-                durationMs: 0,
-                error: 'sandbox_violation',
-              });
-              return {
-                ok: false,
-                error: `[sandbox] ${err.message}`,
-              } as TypedResult<O>;
+              return denySandbox(err);
+            }
+            throw err;
+          }
+        }
+      }
+      // v2.16 (t26): TOCTOU re-check on the write path — verifyContainment
+      // re-runs BOTH layers on fresh syscalls as the last step before the
+      // tool mutates disk. Same EPERM → lexical-layer degradation semantics
+      // as sandboxPath itself (reused as-is, not reimplemented).
+      if (opts.verifyWrite) {
+        for (const key of pathArgs) {
+          const v = args[key];
+          if (typeof v !== 'string' || v.length === 0) continue;
+          try {
+            verifyContainment(v, { root });
+          } catch (err) {
+            if (err instanceof SandboxViolationError) {
+              return await denySandbox(err);
             }
             throw err;
           }
@@ -1068,6 +1237,129 @@ function wrapWithDiagnostics<I extends Record<string, unknown>, O>(
   };
 }
 
+// ---------------------------------------------------------------------------
+// t31 (2.21 §6.6): post-execute diagnostics on CLAIMED source paths for the
+// execute tools (bash / exec_process). The edit tools run the loop through
+// wrapWithDiagnostics; an execute touches source files too (`node gen.ts`,
+// `eslint src/a.ts`) — after a successful run, the SAME fast file-scoped
+// checker runs on the source paths the invocation claims (the process
+// claims of resourceClaimsFor — the SAME claims table the permission and
+// jail-network layers read) and the formatted block lands under
+// `diagnostics` in the result value — the SAME channel, no second mechanism.
+// Conservative by construction: a token counts only when it (a) has an
+// extension the diagnostics engine can check (DEFAULT_PROVIDERS surface),
+// (b) resolves INSIDE the workspace root (same sandbox policy as path args),
+// and (c) exists on disk after the run. Missing/outside paths are skipped.
+// Best-effort like the edit loop: never blocks, never fails the tool.
+// ---------------------------------------------------------------------------
+const DIAG_SOURCE_EXTENSIONS: ReadonlySet<string> = new Set(
+  DEFAULT_PROVIDERS.flatMap((p) => p.extensions),
+);
+/** Cap the post-execute fan-out (an execute can mention many paths). */
+const EXEC_DIAGNOSTICS_MAX_FILES = 4;
+
+/** One claimed token → existing in-root source path, or null. */
+function claimedSourcePath(
+  token: string,
+  args: Record<string, unknown>,
+  root: string,
+): string | null {
+  const cleaned = token.replace(/^["']|["']$/g, '');
+  if (!cleaned || cleaned.startsWith('-')) return null; // flags are not paths
+  if (!DIAG_SOURCE_EXTENSIONS.has(path.extname(cleaned).toLowerCase())) return null;
+  // Bases: the (jailed, absolute) cwd the child ran in, then the root — a
+  // relative cwd value still resolves against the root, never process.cwd().
+  const bases = [root];
+  const cwd = args['cwd'];
+  if (typeof cwd === 'string' && cwd.length > 0) {
+    bases.unshift(path.isAbsolute(cwd) ? cwd : path.resolve(root, cwd));
+  }
+  for (const base of bases) {
+    const candidate = path.isAbsolute(cleaned) ? path.normalize(cleaned) : path.resolve(base, cleaned);
+    try {
+      // Same containment policy as every path arg (symlink-safe resolve).
+      const contained = resolveSandboxedPath(candidate, { root });
+      if (existsSync(contained)) return contained;
+    } catch {
+      // Resolves outside the root → not a workspace source path; skip.
+    }
+  }
+  return null;
+}
+
+/** Source paths claimed by an execute invocation (process claims → tokens). */
+function claimedSourcePaths(
+  toolName: string,
+  args: Record<string, unknown>,
+  root: string,
+): string[] {
+  const out: string[] = [];
+  for (const claim of resourceClaimsFor(toolName, args)) {
+    if (claim.kind !== 'process') continue;
+    const tokens = [
+      claim.executable,
+      ...(claim.argv ?? []),
+      ...(claim.raw ? claim.raw.split(/\s+/) : []),
+    ];
+    for (const token of tokens) {
+      const p = claimedSourcePath(token, args, root);
+      if (p && !out.includes(p)) out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * Wrap an execute tool (bash / exec_process) with the post-execute
+ * diagnostics loop over its claimed source paths. After a successful run,
+ * each claimed in-root source file (capped) goes through the SAME
+ * runDiagnosticsForFile + formatDiagnostics pipeline the edit loop uses;
+ * a non-empty formatted block is appended to the result value under
+ * `diagnostics` so the model sees compiler feedback in the same turn.
+ * Never changes a failed result; diagnostics failures are swallowed.
+ */
+function wrapWithExecuteDiagnostics<I extends Record<string, unknown>, O>(
+  original: ToolDefinition<I, O>,
+  root: string,
+  runner?: Runner,
+): ToolDefinition<I, O> {
+  return {
+    ...original,
+    execute: async (rawArgs: I, ctx: ToolContext): Promise<TypedResult<O>> => {
+      const result = await original.execute(rawArgs, ctx);
+      if (!result.ok) return result;
+      const value = result.value as Record<string, unknown> | null;
+      if (!value || typeof value !== 'object') return result;
+      try {
+        const paths = claimedSourcePaths(
+          original.name,
+          rawArgs as Record<string, unknown>,
+          root,
+        ).slice(0, EXEC_DIAGNOSTICS_MAX_FILES);
+        if (paths.length === 0) return result;
+        const timeoutMs = Number(process.env.ZELARI_DIAGNOSTICS_TIMEOUT_MS) || 5000;
+        const diags: Diagnostic[] = [];
+        for (const p of paths) {
+          diags.push(
+            ...(await runDiagnosticsForFile(p, {
+              cwd: root,
+              timeoutMs,
+              ...(runner ? { runner } : {}),
+            })),
+          );
+        }
+        const formatted = formatDiagnostics(diags, { relativeTo: root });
+        if (formatted) {
+          return { ok: true, value: { ...value, diagnostics: formatted } } as TypedResult<O>;
+        }
+      } catch {
+        // Diagnostics must never break an execution — swallow and return as-is.
+      }
+      return result;
+    },
+  };
+}
+
 /** Audit-only wrap for tools with no path/shell args (network tools). */
 function wrapWithAudit<I extends Record<string, unknown>, O>(
   original: ToolDefinition<I, O>,
@@ -1122,7 +1414,12 @@ function wrapWithExecEvidence<I extends Record<string, unknown>, O>(
           summarize: (result) => {
             const r = result as TypedResult<{ exitCode?: number }>;
             const code = r.ok ? r.value.exitCode : undefined;
-            return `${what}${code !== undefined ? ` -> exitCode=${code}` : ''}`;
+            // v2.17 (t28): carry the advisory os-jail signal into the audit
+            // trail (visible fail-open must be auditable, not only on console).
+            const jail = r.meta?.warnings
+              ?.filter((w) => w.startsWith('os-jail:'))
+              .join('; ');
+            return `${what}${code !== undefined ? ` -> exitCode=${code}` : ''}${jail ? ` [${jail}]` : ''}`;
           },
           fn: () => original.execute(rawArgs, ctx),
         });
@@ -1137,13 +1434,26 @@ function wrapWithExecEvidence<I extends Record<string, unknown>, O>(
 }
 
 /**
- * Wrap the bash tool: assertShellAllowed() runs before execute(), and
- * every invocation is audited.
+ * Wrap the bash tool: assertShellAllowed() runs before execute(), the cwd
+ * argument is jailed to the workspace root with resolveSandboxedPath()
+ * (v2.17 t27 — the resolved ABSOLUTE cwd is injected so the child process
+ * starts inside the sandbox; a cwd outside the root is a typed deny before
+ * any process is created), and every invocation is audited.
+ *
+ * v2.17 (t28): OS-jail preflight when a JailSpec is provided —
+ *  - ZELARI_OS_JAIL=required + backend missing ⇒ audited typed `[jail]`
+ *    DENY before any spawn (golden rule: never warn/skip/upgrade);
+ *  - ZELARI_OS_JAIL=advisory + backend missing ⇒ the command still runs
+ *    (visible fail-open: the console signal is emitted by spawnJailed, the
+ *    audit entry is appended here);
+ *  - off / backend available ⇒ spawn proceeds through the osJail seam.
  */
 function wrapWithShellSafety<I extends Record<string, unknown>, O>(
   original: ToolDefinition<I, O>,
   audit: AuditLogger,
   sessionId: string,
+  root: string,
+  jail?: JailSpec,
 ): ToolDefinition<I, O> {
   return {
     ...original,
@@ -1171,6 +1481,66 @@ function wrapWithShellSafety<I extends Record<string, unknown>, O>(
             } as TypedResult<O>;
           }
           throw err;
+        }
+      }
+      // v2.17 (t27): jail the bash cwd to the workspace root BEFORE the
+      // builtin spawns — the same discipline wrapWithSandbox applies to
+      // filesystem path args (symlink-safe resolve). Absent cwd resolves to
+      // the root itself, so the child never inherits an unjailed ctx.cwd.
+      // Rejection happens BEFORE any spawn: the command does not run.
+      const rawCwd = args['cwd'];
+      try {
+        args['cwd'] = resolveSandboxedPath(
+          typeof rawCwd === 'string' && rawCwd.length > 0 ? rawCwd : '.',
+          { root },
+        );
+      } catch (err) {
+        if (!(err instanceof SandboxViolationError)) throw err;
+        await audit.append({
+          ts: new Date().toISOString(),
+          sessionId,
+          tool: original.name,
+          args: redactForAudit(args),
+          ok: false,
+          resultSummary: err.message,
+          durationMs: 0,
+          error: 'sandbox_violation',
+        });
+        return {
+          ok: false,
+          error: `[sandbox] ${err.message}`,
+        } as TypedResult<O>;
+      }
+      // v2.17 (t28): OS-jail preflight — BEFORE any spawn the mode and the
+      // honest backend probe decide. required + missing ⇒ typed `[jail]`
+      // deny (the builtin below never runs); advisory + missing ⇒ audited
+      // visible fail-open and the spawn (unjailed) proceeds.
+      if (jail) {
+        const { mode, probe } = jailAvailability();
+        if (mode !== 'off' && !probe.available) {
+          if (mode === 'required') {
+            const reason = jailDenyReason(probe, mode);
+            await audit.append({
+              ts: new Date().toISOString(),
+              sessionId,
+              tool: original.name,
+              args: redactForAudit(args),
+              ok: false,
+              resultSummary: reason,
+              durationMs: 0,
+              error: 'jail_denied',
+            });
+            return { ok: false, error: `[jail] ${reason}` } as TypedResult<O>;
+          }
+          await audit.append({
+            ts: new Date().toISOString(),
+            sessionId,
+            tool: original.name,
+            args: redactForAudit(args),
+            ok: true,
+            resultSummary: `[os-jail] ${jailAdvisoryNotice(probe)}`,
+            durationMs: 0,
+          });
         }
       }
       try {

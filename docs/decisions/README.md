@@ -28,6 +28,7 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 | 0027 | Strict Kraken default 2.1: resta opt-in CLI, host decide via pack | ✅ Accettato | 2026-08-20 | 2026-08-20 |
 | 0028 | Native criteria pack adattivo: CLI esplicito, default a carico dell'host | ✅ Accettato | 2026-08-20 | 2026-08-20 |
 | 0029 | Memoria cognitiva condivisa native-first, SQLite locale e MCP esterno | ✅ Accettato | 2026-08-23 | 2026-08-23 |
+| 0030 | Razionalizzazione default HARNESS-10: strict-done e verify-pack ON, trust headless UNTRUSTED | ✅ Accettato | 2026-08-23 | 2026-08-23 |
 
 ## Formato
 
