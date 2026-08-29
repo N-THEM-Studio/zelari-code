@@ -198,7 +198,9 @@ describe('sandboxedFs binding (e)', () => {
     expect(inside.ok).toBe(true);
     expect(fs.readFileSync(path.join(tmp, 'sub', 'file.txt'), 'utf8')).toBe('hello');
 
-    const escape = await fsx.writeFile('..\\outside.txt', 'nope');
+    // Portable parent-escape: forward slash is a separator on win32 AND posix
+    // (a backslash literal is NOT a separator on posix, so it would stay inside).
+    const escape = await fsx.writeFile('../outside.txt', 'nope');
     expect(escape.ok).toBe(false);
     if (!escape.ok) expect(escape.error).toContain('[extension-fs]');
 

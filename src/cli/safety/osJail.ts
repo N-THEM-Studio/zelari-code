@@ -203,7 +203,10 @@ export function defaultWritable(
   tmp: string = tmpdir(),
   platform: string = process.platform,
 ): string[] {
-  const raw = [path.resolve(root), tmp, path.join(home, '.zelari-code')];
+  // All three entries go through the same resolution so that dedup is
+  // host-independent: a win32 case-folded collapse must hold on any host
+  // (path.resolve is identity for already-absolute native paths).
+  const raw = [path.resolve(root), path.resolve(tmp), path.join(home, '.zelari-code')];
   const out: string[] = [];
   for (const p of raw) {
     const key = platform === 'win32' ? p.toLowerCase() : p;
