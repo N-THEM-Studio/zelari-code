@@ -5,6 +5,31 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.0] - 2026-08-29
+
+Kernel hardening release (HARNESS-10): fail-closed autonomous runs, an OS-level jail choke-point around process tools, and a single long-lived Harness App Server.
+
+### Added
+
+- **OS jail choke-point (`spawnJailed`)** - `src/cli/safety/osJail.ts` + `jails/{darwin,linux,win32}.ts`. `JailSpec` derives from the already-intersected claims/contract/layers (root = sandboxed workspace, network deny/allow from host claims, env allowlist, writable = root + tmpdir + `~/.zelari-code`) — no second policy engine. `ZELARI_OS_JAIL=off|advisory|required`; when `required` and the OS backend is unavailable the tool is **DENIED**, never silently downgraded (win32 is honestly unavailable today). `exec_process` no longer calls raw `child_process`; blocklist stays as defense-in-depth. CI grep-gate `scripts/verify-os-jail.mjs` fails if a raw spawn reappears on the jailed paths.
+- **Harness App Server (`--serve-harness`)** - `packages/core/src/harness/appServer.ts` (kernel, no React): long-lived server, N sessions, per-workspace refcounted services (one `LspManager`/policy cache/proof writer per root, reused across sessions); proof writes are never cancelled by a client disconnect. `src/cli/serve/harnessServer.ts` speaks NDJSON over stdio on the unchanged headless protocol v2; `session.steer`/`session.cancel` are session-scoped. `runOneTurn.ts` extracted from `runHeadless.ts` as a reusable library (zero behavior change).
+- **ExtensionAPI seam (not a plugin framework)** - `packages/core/src/harness/extensionApi.ts`: `registerTool` (same Zod + permissions path as builtins — ContractCompiler remains the last intersect), `onPreToolUse`, sandboxed-FS only (no process/net). Loads from `~/.zelari-code/extensions` and from trusted-project `.zelari/extensions`; `extensions.lock` sha256 verified before import (batch-reject in strict mode, warn+skip in TUI); kill switch `ZELARI_EXTENSIONS=0`. Extension hook crashes deny with `extension-hook-failed` in fail-closed surfaces.
+- **Post-execute source diagnostics** - tools with write/execute permissions trigger LSP diagnostics on claimed source paths after `execute` (same channel/timeout/opt-out as the edit loop), so edits made via an interpreter no longer stay blind.
+- **Desktop harness sidecar** - `apps/desktop/src-tauri` talks to one long-lived `--serve-harness` sidecar (supervisor, restart backoff); the 4 parallel runs become 4 sessions on the same server; typed errors and `harness-sidecar-status` events instead of silent `--headless` fallback; shutdown drains pending completion proofs before killing the process tree. Companion `runManager` gains client mode behind `ZELARI_HARNESS_SERVER=1` (default spawn behavior byte-identical).
+
+### Changed
+
+- **Hooks fail-closed in autonomous runs** - `HookFailureMode` (`fail-open|fail-closed`): in strict policy-load surfaces (headless/mission/CI) a PreToolUse crash, timeout, invalid JSON, or deny without reason now **DENIES** the call (`hook-failed`) instead of allowing it; the empty catch around `runPreToolUse` in `ToolRegistry.invoke` is gone. `ZELARI_HOOKS_FAILURE` overrides; TUI stays allow+log.
+- **completionGate catch no longer opens the gate** - a thrown gate evaluation returns `BLOCKED` with `unknownChecks` (strict-done exit 4), not `OPEN_GATE`. Budget exhaustion stays `BLOCKED` as before; the two paths are no longer conflated.
+- **toolCallGate throw no longer fail-opens** - same `HookFailureMode` wiring: gate throw ⇒ DENY (`gate-failed`) in fail-closed runs, allow+log in TUI.
+- **bash joins the contained-spawn paths** - CLI `bash` resolves its cwd through `resolveSandboxedPath` (missing cwd ⇒ workspace root, never the raw process cwd) and the builtin spawns `/bin/sh -c` / `cmd.exe /d /s /c` with `shell:false` via an injected `spawnSeam`. `LifecycleHookRunner.execCommand` drops `shell:true` for explicit argv (`splitHookCommandLine`).
+- **Companion CORS allowlist** - `access-control-allow-origin: *` removed; origins must be allowlisted (`ZELARI_COMPANION_ALLOWED_ORIGINS`, loopback-only default); non-browser clients unaffected.
+
+### Fixed
+
+- Stale `@zelari/core/harness` mock in headless tests missing `ExtensionRegistry` (4 broken tests after the extension loader wiring).
+- `wrapWithSandbox` now calls the existing `verifyContainment` before write/edit/apply_diff execute (junction/symlink escapes deny with a typed error and are audited).
+
 ## [2.15.0] - 2026-08-29
 
 Desktop experience release: the headless control plane reaches the chat UI.
