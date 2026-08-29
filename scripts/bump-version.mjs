@@ -1,6 +1,33 @@
 import fs from 'node:fs';
 
-const V = process.argv[2] || '1.9.4';
+// Accepts either an explicit semver version (e.g. `2.15.0`) or a bump
+// keyword (`major` | `minor` | `patch`) that increments the CURRENT root
+// version. Anything else is rejected — the old code wrote whatever string
+// it received (e.g. the literal "minor") into every version field.
+const arg = process.argv[2];
+if (!arg) {
+  console.error('usage: node scripts/bump-version.mjs <version|major|minor|patch>');
+  process.exit(1);
+}
+const KEYWORDS = ['major', 'minor', 'patch'];
+const SEMVER = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
+const current = JSON.parse(fs.readFileSync('package.json', 'utf8')).version;
+let V = arg;
+if (KEYWORDS.includes(arg)) {
+  const parts = current.split('.').map((n) => parseInt(n, 10));
+  if (parts.length !== 3 || parts.some(Number.isNaN)) {
+    console.error(`bump-version: cannot bump "${arg}" — current version "${current}" is not plain semver`);
+    process.exit(1);
+  }
+  const idx = KEYWORDS.indexOf(arg);
+  parts[idx] += 1;
+  for (let i = idx + 1; i < 3; i += 1) parts[i] = 0;
+  V = parts.join('.');
+}
+if (!SEMVER.test(V)) {
+  console.error(`bump-version: "${arg}" is neither a bump keyword (${KEYWORDS.join('|')}) nor a valid semver version`);
+  process.exit(1);
+}
 
 for (const f of ['package.json', 'packages/core/package.json', 'apps/desktop/package.json']) {
   const j = JSON.parse(fs.readFileSync(f, 'utf8'));

@@ -26,7 +26,7 @@ describe('parseSetConfigFlags', () => {
   it('errors when --set-config without args', () => {
     const r = parseSetConfigFlags(['--set-config']);
     expect(r.request).toBeNull();
-    expect(r.error).toMatch(/requires/);
+    expect(r.error).toMatch(/at least one of/);
   });
 
   it('parses provider only', () => {

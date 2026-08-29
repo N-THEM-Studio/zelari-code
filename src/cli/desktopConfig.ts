@@ -233,7 +233,7 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
     return {
       request: null,
       error:
-        '--set-config requires --provider, --model, --endpoint, --thinking, --verifier-provider + --verifier-model, --verifier-clear, and/or --endpoint-clear',
+        '--set-config: nothing to update — provide at least one of --provider, --model, --endpoint, --thinking, --verifier-provider + --verifier-model, --verifier-clear, or --endpoint-clear',
     };
   }
 

@@ -233,7 +233,7 @@ describe('parseSetConfigFlags — verifier flags', () => {
   it('no flags at all → still an error (same as before)', () => {
     const res = parseSetConfigFlags(['--set-config']);
     expect(res.request).toBeNull();
-    expect(res.error).toMatch(/--set-config requires/);
+    expect(res.error).toMatch(/at least one of/);
   });
 });
 
