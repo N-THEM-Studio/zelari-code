@@ -24,6 +24,12 @@ import {
   type CompanionProject,
 } from './config.js';
 import { RunManager } from './runManager.js';
+import {
+  COMPANION_ALLOWED_ORIGINS_ENV,
+  allowedOriginFor,
+  loopbackOrigins,
+  parseAllowedOrigins,
+} from './cors.js';
 
 export interface ServeOptions {
   bind?: string;
@@ -63,7 +69,8 @@ function sendJson(
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(data),
-    'access-control-allow-origin': '*',
+    // t25: the allow-origin header is set per-request from the allowlist
+    // (see the createServer handler) — never a wildcard.
     'access-control-allow-headers': 'authorization, content-type',
     'access-control-allow-methods': 'GET, POST, OPTIONS',
     ...extraHeaders,
@@ -130,11 +137,27 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
 
   const runs = new RunManager();
 
+  // v2.16 (t25): CORS allowlist — this server's own loopback origins plus any
+  // extra browser origins configured via ZELARI_COMPANION_ALLOWED_ORIGINS
+  // (comma-separated). Requests WITHOUT an Origin header (curl / native
+  // loopback tooling) are unaffected; foreign browser origins get no
+  // access-control-allow-origin header, so the browser blocks the response.
+  const allowedOrigins = [
+    ...loopbackOrigins(port),
+    ...parseAllowedOrigins(process.env[COMPANION_ALLOWED_ORIGINS_ENV]),
+  ];
+
   const server = createServer(async (req, res) => {
-    // CORS preflight (browser companion / PWA)
+    // v2.16 (t25): allowlist-driven CORS — emit the header ONLY for
+    // allowlisted browser origins (loopback + env). writeHead below never
+    // overrides it, so this covers sendJson, preflight and SSE alike.
+    const corsOrigin = allowedOriginFor(req.headers.origin, allowedOrigins);
+    if (corsOrigin) res.setHeader('access-control-allow-origin', corsOrigin);
+
+    // CORS preflight (browser companion / PWA) — no wildcard: an origin not
+    // on the allowlist gets a headerless 204 and the browser blocks it.
     if (req.method === 'OPTIONS') {
       res.writeHead(204, {
-        'access-control-allow-origin': '*',
         'access-control-allow-headers': 'authorization, content-type',
         'access-control-allow-methods': 'GET, POST, OPTIONS',
       });
@@ -265,7 +288,7 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
           'content-type': 'text/event-stream; charset=utf-8',
           'cache-control': 'no-cache, no-transform',
           connection: 'keep-alive',
-          'access-control-allow-origin': '*',
+          // t25: allow-origin comes from the per-request allowlist set above.
           'access-control-allow-headers': 'authorization, content-type',
         });
         res.write(`: connected run=${runId}\n\n`);
