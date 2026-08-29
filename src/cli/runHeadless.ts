@@ -163,6 +163,12 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     void permBrokerStop?.();
   });
 
+  // P0.B — strict policy-load BEFORE key resolution. A broken policy file
+  // must exit 2 (policy-load-failed), never fall through to "no API key"
+  // (exit 1). Sidecar turns hit the same gate inside dispatchHeadlessTurn.
+  const policyBlock = await applyHeadlessPolicyGate(opts);
+  if (policyBlock !== undefined) return policyBlock;
+
   const { provider: resolvedProvider, model } = resolveHeadlessProvider(opts);
   let provider = resolvedProvider;
 
@@ -190,6 +196,28 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   }
 
   return dispatchHeadlessTurn(opts, provider, model, providerStream);
+}
+
+/** Strict policy-load + phase/proof surfaces. Returns the block exit code, or undefined. */
+async function applyHeadlessPolicyGate(opts: HeadlessOptions): Promise<number | undefined> {
+  const cwd = resolveHeadlessCwd(opts);
+  setPhase(opts.phase ?? 'build');
+  setActivePolicyLoadSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
+  setActiveProofPersistenceSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
+  const policyLoad = checkStrictPolicyLoad(cwd, { mode: activePolicyLoadMode() });
+  if (policyLoad.blocked && policyLoad.block) {
+    reportPolicyLoadBlocked(policyLoad.block, opts.output);
+    await recordPolicyLoadBlockedOnSpine(policyLoad.block, {
+      mode: opts.mode,
+      ...(opts.profile ? { profile: opts.profile } : {}),
+      ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
+    });
+    return policyLoad.block.exitCode;
+  }
+  for (const w of policyLoad.warnings) {
+    process.stderr.write(`[zelari-code --headless] [policy] ${w}\n`);
+  }
+  return undefined;
 }
 
 /**
@@ -229,22 +257,8 @@ export async function dispatchHeadlessTurn(
     /* non-fatal */
   }
 
-  setPhase(opts.phase ?? 'build');
-  setActivePolicyLoadSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
-  setActiveProofPersistenceSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
-  const policyLoad = checkStrictPolicyLoad(cwd, { mode: activePolicyLoadMode() });
-  if (policyLoad.blocked && policyLoad.block) {
-    reportPolicyLoadBlocked(policyLoad.block, opts.output);
-    await recordPolicyLoadBlockedOnSpine(policyLoad.block, {
-      mode: opts.mode,
-      ...(opts.profile ? { profile: opts.profile } : {}),
-      ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
-    });
-    return policyLoad.block.exitCode;
-  }
-  for (const w of policyLoad.warnings) {
-    process.stderr.write(`[zelari-code --headless] [policy] ${w}\n`);
-  }
+  const policyBlock = await applyHeadlessPolicyGate(opts);
+  if (policyBlock !== undefined) return policyBlock;
 
   // P1.1 (t12) -> t23 (P1.E): `--mode auto` resolves ONCE here, before any
   // dispatch check. Pure classifier (./orchestration/policy.js); the only

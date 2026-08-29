@@ -13,6 +13,7 @@ Patch: Desktop sidecar honors the Open Folder workspace.
 
 - **Desktop sidecar workspace** — 2.16.0's long-lived `--serve-harness` child is spawned without `current_dir`, and `createCliRunTurn` ignored `session.create`'s `workspaceRoot`. Tool search, memory, session spine and the "You are running in" prompt all used the Tauri exe directory (`Z:\Zelari Desktop` on Windows) instead of the Open Folder project. `opts.cwd` now threads that root through every dispatch path (kraken / council / zelari / graph / gauntlet) without `chdir`, so parallel sessions on different folders stay isolated. Desktop UI surfaces (file tree, Memory panel) were already using the conversation cwd — the split-brain was agent-only.
 - **Desktop sidecar dispatch** — `createCliRunTurn` always called `runOneTurn` (kraken single-agent), so council / zelari / graph / gauntlet never hit their `runHeadless` loops. They now go through `dispatchHeadlessTurn` (no process-fatal handlers).
+- **Headless policy gate** — strict `policy.json` load runs before API-key resolution again. The 2.16.3 dispatch extraction returned exit 1 (`no API key`) instead of 2 (`policy-load-failed`) when a broken policy file was present.
 
 ## [2.16.2] - 2026-08-29
 
