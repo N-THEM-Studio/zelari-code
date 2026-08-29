@@ -154,6 +154,16 @@ export interface HeadlessOptions {
    * Omitted → `process.cwd()` (CLI `--headless` one-shot / TUI).
    */
   cwd?: string;
+  /** Kraken explore tentacle model (`ZELARI_KRAKEN_EXPLORE_MODEL`). */
+  krakenExploreModel?: string;
+  /** Kraken general tentacle model (`ZELARI_KRAKEN_GENERAL_MODEL`). */
+  krakenGeneralModel?: string;
+  /** Kraken verify tentacle model (`ZELARI_KRAKEN_VERIFY_MODEL`). */
+  krakenVerifyModel?: string;
+  /** Kraken graph planner model (`ZELARI_KRAKEN_PLANNER_MODEL`). */
+  krakenPlannerModel?: string;
+  /** Kraken delegation policy (`ZELARI_KRAKEN_DELEGATION`). */
+  krakenDelegation?: string;
 }
 
 /**

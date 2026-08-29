@@ -62,6 +62,7 @@ import {
 } from './sessionControl.js';
 import { resolveHeadlessKey, resolveHeadlessProvider, type HeadlessOptions } from '../headless.js';
 import { dispatchHeadlessTurn } from '../runHeadless.js';
+import { parseMode } from '../mode.js';
 import { LspManager } from '../lsp/manager.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { setActiveProofPersistenceSurface } from '../kraken/completionProofPersist.js';
@@ -139,9 +140,11 @@ export function bindHarnessTurnOptions(
   if (typeof turnInput.task !== 'string' || turnInput.task.length === 0) {
     throw new Error('run.turn requires a non-empty string `task`');
   }
-  const mode = (
-    typeof turnInput.mode === 'string' ? turnInput.mode : 'kraken'
-  ) as NonNullable<HeadlessOptions['mode']>;
+  // Desktop Rust historically mapped "kraken" → "agent"; the CLI parser
+  // aliases agent→kraken. Sidecar JSON skipped that alias, so playbooks
+  // gated on mode==='kraken' never loaded (lead-only tentacles).
+  const rawMode = typeof turnInput.mode === 'string' ? turnInput.mode : 'kraken';
+  const mode = (parseMode(rawMode) ?? 'kraken') as NonNullable<HeadlessOptions['mode']>;
   return {
     ...(input as unknown as Omit<HeadlessOptions, 'task' | 'mode' | 'output' | 'cwd'>),
     task: turnInput.task,

@@ -55,6 +55,7 @@ import {
 import { envNumber } from './utils/envNumber.js';
 import { setPhase } from './phaseState.js';
 import { describePhase } from './phase.js';
+import { parseMode } from './mode.js';
 import { createStreamScrubber } from './utils/streamScrub.js';
 import { resetTaskSpawnCount } from './tools/taskTool.js';
 import { writeSessionTodos } from './sessionTodos.js';
@@ -227,6 +228,23 @@ async function applyHeadlessPolicyGate(opts: HeadlessOptions): Promise<number | 
  * CLI wrapper. Honors `opts.cwd` so N sidecar sessions can sit on
  * different folders without `chdir`.
  */
+const KRAKEN_TURN_ENV: Array<[keyof HeadlessOptions, string]> = [
+  ['krakenExploreModel', 'ZELARI_KRAKEN_EXPLORE_MODEL'],
+  ['krakenGeneralModel', 'ZELARI_KRAKEN_GENERAL_MODEL'],
+  ['krakenVerifyModel', 'ZELARI_KRAKEN_VERIFY_MODEL'],
+  ['krakenPlannerModel', 'ZELARI_KRAKEN_PLANNER_MODEL'],
+  ['krakenDelegation', 'ZELARI_KRAKEN_DELEGATION'],
+];
+
+function applyKrakenTurnEnv(opts: HeadlessOptions): void {
+  for (const [field, envKey] of KRAKEN_TURN_ENV) {
+    const raw = opts[field];
+    if (typeof raw === 'string' && raw.trim()) {
+      process.env[envKey] = raw.trim();
+    }
+  }
+}
+
 export async function dispatchHeadlessTurn(
   opts: HeadlessOptions,
   provider: string,
@@ -234,7 +252,13 @@ export async function dispatchHeadlessTurn(
   providerStream: ProviderStreamFn,
 ): Promise<number> {
   const cwd = resolveHeadlessCwd(opts);
-  opts = { ...opts, cwd };
+  if (typeof opts.mode === 'string') {
+    const parsed = parseMode(opts.mode);
+    opts = { ...opts, cwd, ...(parsed ? { mode: parsed } : {}) };
+  } else {
+    opts = { ...opts, cwd };
+  }
+  applyKrakenTurnEnv(opts);
 
   if (opts.todos && opts.todos.length > 0) {
     writeSessionTodos(opts.todos, { merge: false });

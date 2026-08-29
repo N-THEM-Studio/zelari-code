@@ -53,6 +53,12 @@ describe('bindHarnessTurnOptions', () => {
       /task/,
     );
   });
+
+  it('aliases Desktop mode "agent" to kraken so tentacle playbooks load', () => {
+    const root = path.join(os.tmpdir(), 'zelari-agent-mode');
+    const opts = bindHarnessTurnOptions({ task: 'explore the repo', mode: 'agent' }, root);
+    expect(opts.mode).toBe('kraken');
+  });
 });
 
 describe('session dir follows workspaceRoot (not process.cwd())', () => {

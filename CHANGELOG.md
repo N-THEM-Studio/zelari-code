@@ -5,6 +5,12 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- **Desktop Kraken tentacles** — sidecar `run.turn` kept `mode: "agent"` (Rust mapped `kraken`→`agent`) so selection/delegation playbooks gated on `mode === "kraken"` never loaded; the lead ran alone. Canonicalize `agent`→`kraken` and forward Kraken model + delegation fields per turn.
+
 ## [2.16.3] - 2026-08-30
 
 Patch: Desktop sidecar honors the Open Folder workspace.

@@ -2405,12 +2405,16 @@ fn default_true() -> bool {
 
 fn normalize_mode(mode: &str, council: bool) -> String {
     let m = mode.trim().to_lowercase();
-    if council && (m.is_empty() || m == "agent") {
+    if council && (m.is_empty() || m == "agent" || m == "kraken") {
         return "council".into();
     }
     match m.as_str() {
-        "agent" | "council" | "zelari" => m,
-        _ => "agent".into(),
+        // Canonical single-agent surface is kraken; `agent` is a legacy alias.
+        // Mapping kraken→agent made sidecar JSON skip Kraken playbooks
+        // (gated on mode==="kraken") so Desktop ran lead-only.
+        "kraken" | "agent" => "kraken".into(),
+        "council" | "zelari" => m,
+        _ => "kraken".into(),
     }
 }
 
@@ -2574,10 +2578,14 @@ fn run_task(
     let profile = args.profile;
     let strict_done = args.strict_done;
     let gauntlet_loop = args.gauntlet_loop;
-    // NOTE: mission_strict / verify_pack / verifier_review / bon_alpha /
-    // kraken_* model overrides are NOT forwarded per-run anymore — the
-    // harness protocol has no turn field for them; they are pinned at
-    // sidecar spawn (documented in harness_sidecar::spawn_generation).
+    let kraken_explore_model = args.kraken_explore_model;
+    let kraken_general_model = args.kraken_general_model;
+    let kraken_verify_model = args.kraken_verify_model;
+    let kraken_planner_model = args.kraken_planner_model;
+    let kraken_delegation = args.kraken_delegation;
+    // mission_strict / verify_pack / verifier_review / bon_alpha remain
+    // sidecar-spawn knobs (no run.turn field yet). Kraken tentacle routing
+    // and delegation ARE per-turn — otherwise Desktop Settings are ignored.
 
     let env_ctx = RunEnvelopeCtx {
         run_id: run_id.clone(),
@@ -2606,6 +2614,11 @@ fn run_task(
             profile.as_deref(),
             strict_done,
             gauntlet_loop,
+            kraken_explore_model.as_deref(),
+            kraken_general_model.as_deref(),
+            kraken_verify_model.as_deref(),
+            kraken_planner_model.as_deref(),
+            kraken_delegation.as_deref(),
         );
 
         let (exit_code, cancelled) = match result {
@@ -2661,6 +2674,11 @@ fn run_sidecar_turn(
     profile: Option<&str>,
     strict_done: bool,
     gauntlet: bool,
+    kraken_explore_model: Option<&str>,
+    kraken_general_model: Option<&str>,
+    kraken_verify_model: Option<&str>,
+    kraken_planner_model: Option<&str>,
+    kraken_delegation: Option<&str>,
 ) -> Result<i32, String> {
     // Sessions carry the workspace: today's spawn used current_dir(cwd); on
     // the shared sidecar the cwd travels as session.create's workspaceRoot
@@ -2689,10 +2707,8 @@ fn run_sidecar_turn(
     //   --history-file <json>   → history     (parsed array; invalid JSON is
     //                             ignored → stateless, same as the CLI)
     //   --todos <json>          → todos       (parsed array, same fallback)
-    // Env-only per-run knobs (bon_alpha, kraken_* model overrides,
-    // verify_pack, verifier_review) have NO run.turn field: they are pinned
-    // at sidecar spawn (see harness_sidecar::spawn_generation). Documented
-    // limitation of the sidecar model — never silently mis-mapped.
+    // Env-only knobs still pinned at sidecar spawn: bon_alpha, verify_pack,
+    // verifier_review. Kraken tentacle models + delegation ARE per-turn.
     let mut input = serde_json::json!({
         "task": prompt,
         "mode": mode,
@@ -2708,6 +2724,21 @@ fn run_sidecar_turn(
     }
     if let Some(p) = profile.map(str::trim).filter(|p| !p.is_empty()) {
         input["profile"] = serde_json::json!(p);
+    }
+    if let Some(m) = kraken_explore_model.map(str::trim).filter(|m| !m.is_empty()) {
+        input["krakenExploreModel"] = serde_json::json!(m);
+    }
+    if let Some(m) = kraken_general_model.map(str::trim).filter(|m| !m.is_empty()) {
+        input["krakenGeneralModel"] = serde_json::json!(m);
+    }
+    if let Some(m) = kraken_verify_model.map(str::trim).filter(|m| !m.is_empty()) {
+        input["krakenVerifyModel"] = serde_json::json!(m);
+    }
+    if let Some(m) = kraken_planner_model.map(str::trim).filter(|m| !m.is_empty()) {
+        input["krakenPlannerModel"] = serde_json::json!(m);
+    }
+    if let Some(d) = kraken_delegation.map(str::trim).filter(|d| !d.is_empty()) {
+        input["krakenDelegation"] = serde_json::json!(d);
     }
     if kraken_graph {
         // Plan + execute a Kraken task graph instead of a normal dispatch.

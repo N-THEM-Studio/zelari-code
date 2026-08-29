@@ -29,6 +29,7 @@ import { krakenSelectionPlaybook } from '../kraken/selectionPlaybook.js';
 import { krakenDelegationPlaybook, resolveDelegationPolicyForRun } from '../kraken/delegationPolicy.js';
 import { spineOrchestrationNote } from '../orchestration/facts.js';
 import { emitEvent, resolveHeadlessCwd, resolveHeadlessKey, type HeadlessOptions } from '../headless.js';
+import { isKrakenMode } from '../mode.js';
 import { buildSystemPromptSplit, systemMessagesFromSplit, getAllTools, KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE, buildLanguagePolicyModuleFor } from '@zelari/core/skills';
 import { envNumber } from '../utils/envNumber.js';
 import { createStreamScrubber } from '../utils/streamScrub.js';
@@ -243,7 +244,7 @@ export async function runOneTurn(
     subAgentModel: model,
     // Fase 4 (ADR-0020): kraken_select on the parent registry for kraken
     // runs with the alpha selection flag on (default off = unchanged).
-    krakenSelect: opts.mode === 'kraken' && isKrakenSelectionEnabled(),
+    krakenSelect: isKrakenMode(opts.mode) && isKrakenSelectionEnabled(),
     // ADR-0018 3b: upgrade plan-task domain events to first-class NDJSON
     // BrainEvents. Rust envelopes every stdout line with runId/conversationId,
     // so task events ride the same multiplexed channel as the rest.
@@ -397,9 +398,9 @@ export async function runOneTurn(
           customPromptModules: [
             KRAKEN_IDENTITY_MODULE,
             KRAKEN_LEAD_PLAYBOOK_MODULE,
-            ...krakenSelectionPlaybook(opts.mode === 'kraken'),
+            ...krakenSelectionPlaybook(isKrakenMode(opts.mode)),
             ...krakenDelegationPlaybook(
-              opts.mode === 'kraken',
+              isKrakenMode(opts.mode),
               // t23: --mode auto injects the REAL strategy-derived policy
               // (env override already folded in); explicit modes keep the
               // env-resolved default (undefined ⇒ resolveDelegationPolicy()).
@@ -680,7 +681,7 @@ export async function runOneTurn(
   if (
     pass.finalReason === 'completed' &&
     pass.exitCode === 0 &&
-    opts.mode === 'kraken' &&
+    isKrakenMode(opts.mode) &&
     (isKrakenSelectionEnabled() || nativePackEnabled()) &&
     !planModeFromOpts(opts)
   ) {
