@@ -128,6 +128,7 @@ export async function openHeadlessSpine(opts: {
   };
   const mirrorOpts: SpineMirrorOptions = {
     baseDir: opts.baseDir,
+    workspaceRoot: opts.workspace,
     quiet: opts.quiet,
     extraStarted: extra,
   };

@@ -28,7 +28,7 @@ import { buildKrakenRepairPrompt } from '../kraken/completionGate.js';
 import { krakenSelectionPlaybook } from '../kraken/selectionPlaybook.js';
 import { krakenDelegationPlaybook, resolveDelegationPolicyForRun } from '../kraken/delegationPolicy.js';
 import { spineOrchestrationNote } from '../orchestration/facts.js';
-import { emitEvent, resolveHeadlessKey, type HeadlessOptions } from '../headless.js';
+import { emitEvent, resolveHeadlessCwd, resolveHeadlessKey, type HeadlessOptions } from '../headless.js';
 import { buildSystemPromptSplit, systemMessagesFromSplit, getAllTools, KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE, buildLanguagePolicyModuleFor } from '@zelari/core/skills';
 import { envNumber } from '../utils/envNumber.js';
 import { createStreamScrubber } from '../utils/streamScrub.js';
@@ -67,7 +67,7 @@ export async function registerHeadlessMcp(
 ): Promise<void> {
   try {
     const { registerMcpTools, closeMcpClients } = await import('../mcp/mcpManager.js');
-    const mcp = await registerMcpTools(toolRegistry, process.cwd());
+    const mcp = await registerMcpTools(toolRegistry, resolveHeadlessCwd(opts));
     // Ensure MCP child processes are torn down when the headless process exits.
     if (!mcpExitHookInstalled) {
       mcpExitHookInstalled = true;
@@ -138,9 +138,10 @@ export async function runOneTurn(
   providerStream: ProviderStreamFn,
 ): Promise<number> {
   const sessionId = crypto.randomUUID();
+  const cwd = resolveHeadlessCwd(opts);
   const memoryFactory = await import('../memory/serviceFactory.js');
   const nativeMemory = memoryFactory.isMemoryV2Enabled()
-    ? await memoryFactory.getMemoryService(process.cwd(), process.env)
+    ? await memoryFactory.getMemoryService(cwd, process.env)
     : undefined;
   const memoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
 
@@ -216,7 +217,7 @@ export async function runOneTurn(
       if (opts.output === 'json') emitEvent({ type: 'log', message: msg });
       else process.stderr.write(`[zelari-code --headless] ${msg}\n`);
     };
-    const extLoad = await loadDefaultExtensionRuntime(process.cwd(), { logger: emitExtLog });
+    const extLoad = await loadDefaultExtensionRuntime(cwd, { logger: emitExtLog });
     if (extLoad.ok) {
       extensionRuntime = extLoad.runtime.registry;
       if (extLoad.runtime.loaded.length > 0) {
@@ -231,7 +232,8 @@ export async function runOneTurn(
   // unless the user set an explicit deny. Override with ZELARI_AUTO=0 and
   // ZELARI_PERMISSION_*=deny for hard lockdown.
   const { registry: toolRegistry } = createBuiltinToolRegistry({
-      onTentacleEvent: (ev) => emitEvent(ev as Parameters<typeof emitEvent>[0]),
+    root: cwd,
+    onTentacleEvent: (ev) => emitEvent(ev as Parameters<typeof emitEvent>[0]),
     planMode: planModeFromOpts(opts),
     gauntletParent: Boolean(opts.gauntlet) && !planModeFromOpts(opts),
     // Fase 1 (ADR-0020): anchor tentacles to the provider/model THIS run
@@ -274,7 +276,7 @@ export async function runOneTurn(
     sessionId: opts.resumeSessionId ?? sessionId,
     mode: opts.mode,
     profile: opts.profile,
-    workspace: process.cwd(),
+    workspace: cwd,
     // 2.6.1 (plan §7): deep specs from THIS run’s registry.
     toolSpecs: typeof toolRegistry.fingerprints === 'function' ? toolRegistry.fingerprints() : undefined,
   });
@@ -326,7 +328,7 @@ export async function runOneTurn(
         `shell: ${process.platform === 'win32' ? 'cmd.exe / Git Bash (auto-detected)' : '/bin/sh'}`,
         '',
         '# Working Directory',
-        `You are running in: ${process.cwd()}`,
+        `You are running in: ${cwd}`,
         'All relative file paths are resolved against this directory.',
         'The shell is NON-INTERACTIVE (stdin closed): pass non-interactive flags (--yes, --force, --template).',
         '',
@@ -352,7 +354,6 @@ export async function runOneTurn(
       '../workspace/composeContext.js'
     );
     const { loadDurableContext } = await import('../state/loadDurableContext.js');
-    const cwd = process.cwd();
     const durableState = await loadDurableContext(cwd);
     const composed = composeProjectContext({
       mode: 'kraken',
@@ -509,6 +510,7 @@ export async function runOneTurn(
       messages,
       tools,
       toolRegistry,
+      cwd,
       providerStream,
       buildLiveness: { mutationRequired: wantWrites, maxRecoveries: 2 },
       requestTail: () => resourceStatusTail(spine.spine.latestResourceSnapshot()),
@@ -682,7 +684,7 @@ export async function runOneTurn(
     (isKrakenSelectionEnabled() || nativePackEnabled()) &&
     !planModeFromOpts(opts)
   ) {
-    const strictGate = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input) });
+    const strictGate = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input), cwd });
     // 2.1 T4: opt-in advisory verifier review (dedicated model configured in
     // provider.json, or ZELARI_VERIFIER_REVIEW=1). Advisory only — it can
     // neither un-block nor block the turn; it lands in the verification.run
@@ -696,7 +698,7 @@ export async function runOneTurn(
     }
     // P0.3: durable proof-of-work artifact mirroring the verification.run
     // payload above — the turn's decision must be inspectable from disk.
-    await writeProofSafe(strictGate, { surface: 'kraken', sessionId: spine.sessionId });
+    await writeProofSafe(strictGate, { surface: 'kraken', sessionId: spine.sessionId }, cwd);
 
     if (strictGate.blocked) {
       const repairPrompt = buildKrakenRepairPrompt(gate);
@@ -727,7 +729,7 @@ export async function runOneTurn(
         successfulWrites: pass.successfulWrites + repair.successfulWrites,
         emittedWrites: pass.emittedWrites + repair.emittedWrites,
       };
-      const after = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input) });
+      const after = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input), cwd });
       await runAdvisoryVerifierReview(after, verifierReviewDeps).catch((): void => undefined);
       const afterPayload = strictGateEventPayload(after);
       spine.verificationRun(afterPayload);
@@ -736,7 +738,7 @@ export async function runOneTurn(
       }
       // P0.3: overwrite the artifact — it must reflect the LAST evaluation
       // of the turn, not the pre-repair one.
-      await writeProofSafe(after, { surface: 'kraken', sessionId: spine.sessionId });
+      await writeProofSafe(after, { surface: 'kraken', sessionId: spine.sessionId }, cwd);
 
       if (!after.blocked) markRepairSucceeded();
       else {

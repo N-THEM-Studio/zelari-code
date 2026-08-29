@@ -2320,9 +2320,11 @@ struct RunTaskArgs {
     /// every emitted event so the frontend can route without guessing.
     #[serde(default)]
     conversation_id: Option<String>,
-    /// Optional working directory chosen via "Open Folder". When set, the
-    /// headless CLI is spawned inside it (current_dir) so the agent operates
-    /// on the user-selected project. None = inherit the Tauri process cwd.
+    /// Optional working directory chosen via "Open Folder". Travels as
+    /// `session.create { workspaceRoot }` on the shared `--serve-harness`
+    /// sidecar (the child is spawned once without current_dir; the turn
+    /// honors this via HeadlessOptions.cwd). None = inherit the Tauri
+    /// process cwd.
     #[serde(default)]
     cwd: Option<String>,
     /// JSON-encoded AgentMessage[] of prior conversation turns, forwarded to

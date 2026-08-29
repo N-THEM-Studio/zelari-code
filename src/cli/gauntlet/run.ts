@@ -3,7 +3,7 @@
  */
 import { AgentHarness } from '@zelari/core/harness';
 import type { HeadlessOptions } from '../headless.js';
-import { emitEvent } from '../headless.js';
+import { emitEvent, resolveHeadlessCwd } from '../headless.js';
 import { openHeadlessSpine, seedHeadlessModelHistory, sessionStartedEvent } from '../headlessSpine.js';
 import { AuditLogger } from '../safety/auditLogger.js';
 import { createKrakenSubAgentContextFactory } from '../toolRegistry.js';
@@ -28,7 +28,7 @@ export async function runHeadlessGauntlet(
     sessionId,
     mode: opts.mode,
     profile: opts.profile,
-    workspace: process.cwd(),
+    workspace: resolveHeadlessCwd(opts),
   });
   emitEvent(sessionStartedEvent(spine));
   const seeded = await seedHeadlessModelHistory(spine, opts.history);
@@ -50,7 +50,7 @@ export async function runHeadlessGauntlet(
         }, wallMs)
       : undefined;
 
-  const cwd = process.cwd();
+  const cwd = resolveHeadlessCwd(opts);
   const audit = new AuditLogger();
   const createSubAgentContext = createKrakenSubAgentContextFactory({
     root: cwd,

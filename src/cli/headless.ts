@@ -23,6 +23,7 @@ import { parseMode } from './mode.js';
 import type { ChatMode } from './components/StatusBar.js';
 import type { AgentMessage, AgentImage } from '@zelari/core/harness';import { resolveProfile } from '@zelari/core/runtime';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import type { SessionTodoStatus } from './sessionTodos.js';
 
 /** Dispatch mode for headless (mirrors TUI shift+tab modes). */
@@ -145,6 +146,24 @@ export interface HeadlessOptions {
    * Desktop toggle forwards `--gauntlet` / ZELARI_GAUNTLET=1. Not a prompt.
    */
   gauntlet?: boolean;
+  /**
+   * Workspace root for this turn. The long-lived `--serve-harness` sidecar
+   * cannot `chdir` (N parallel sessions on different folders share one
+   * process), so tools, memory, spine, sandbox and the "You are running in"
+   * prompt must honor this instead of `process.cwd()`.
+   * Omitted → `process.cwd()` (CLI `--headless` one-shot / TUI).
+   */
+  cwd?: string;
+}
+
+/**
+ * Resolve the workspace root a headless turn must operate in.
+ * Never use `process.chdir` for this — a shared sidecar may host several
+ * sessions on different folders at once.
+ */
+export function resolveHeadlessCwd(opts: { cwd?: string | undefined }): string {
+  const raw = typeof opts.cwd === 'string' ? opts.cwd.trim() : '';
+  return path.resolve(raw.length > 0 ? raw : process.cwd());
 }
 
 export interface HeadlessParseResult {

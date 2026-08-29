@@ -108,6 +108,8 @@ vi.mock('../../src/cli/safety/auditLogger.js', () => ({
 
 import { runHeadless } from '../../src/cli/runHeadless.js';
 import * as keyStore from '../../src/cli/keyStore.js';
+import os from 'node:os';
+import path from 'node:path';
 
 // ─── Helpers ─────────────────────────────────────────────────────────────
 
@@ -365,5 +367,35 @@ describe('runHeadless — kraken graph', () => {
       .map((l) => JSON.parse(l) as { type: string; message?: string });
     const errorEvent = lines.find((l) => l.type === 'error');
     expect(errorEvent?.message).toContain('LLM HTTP 500');
+  });
+
+  it('plans the graph inside opts.cwd, not process.cwd()', async () => {
+    const fakeGraph = { id: 'g1', nodes: new Map() };
+    plannerMock.mockResolvedValue(fakeGraph);
+    executeMock.mockResolvedValue({
+      graph: fakeGraph,
+      converged: true,
+      failedNodeIds: [],
+      counts: {},
+    });
+    const workspace = path.join(os.tmpdir(), `zelari-graph-cwd-${Date.now()}`);
+    const cwdBefore = process.cwd();
+    const out = captureStdout();
+    try {
+      const code = await runHeadless({
+        task: '',
+        krakenGraph: 'fix the auth bug',
+        output: 'json',
+        useCouncil: false,
+        cwd: workspace,
+      });
+      expect(code).toBe(0);
+    } finally {
+      out.restore();
+    }
+    expect(process.cwd()).toBe(cwdBefore);
+    expect(plannerMock).toHaveBeenCalledWith(
+      expect.objectContaining({ cwd: path.resolve(workspace) }),
+    );
   });
 });

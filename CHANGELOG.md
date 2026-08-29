@@ -5,6 +5,15 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.3] - 2026-08-30
+
+Patch: Desktop sidecar honors the Open Folder workspace.
+
+### Fixed
+
+- **Desktop sidecar workspace** — 2.16.0's long-lived `--serve-harness` child is spawned without `current_dir`, and `createCliRunTurn` ignored `session.create`'s `workspaceRoot`. Tool search, memory, session spine and the "You are running in" prompt all used the Tauri exe directory (`Z:\Zelari Desktop` on Windows) instead of the Open Folder project. `opts.cwd` now threads that root through every dispatch path (kraken / council / zelari / graph / gauntlet) without `chdir`, so parallel sessions on different folders stay isolated. Desktop UI surfaces (file tree, Memory panel) were already using the conversation cwd — the split-brain was agent-only.
+- **Desktop sidecar dispatch** — `createCliRunTurn` always called `runOneTurn` (kraken single-agent), so council / zelari / graph / gauntlet never hit their `runHeadless` loops. They now go through `dispatchHeadlessTurn` (no process-fatal handlers).
+
 ## [2.16.2] - 2026-08-29
 
 Unblocks npm publish after 2.16.1 CI failed on a flaky memory test (2.16.1 was never published).

@@ -167,6 +167,8 @@ export function mapBrainEventToSpine(ev: BrainEvent): SessionEventInput | null {
 export interface SpineMirrorOptions {
   /** Explicit sessions base dir (tests). */
   baseDir?: string;
+  /** Workspace root — sessions live at `<workspaceRoot>/.zelari/sessions`. */
+  workspaceRoot?: string;
   now?: () => number;
   /** Suppress the one-time degraded warning (tests). */
   quiet?: boolean;
@@ -217,7 +219,10 @@ export class SessionSpineMirror {
     readonly sessionId: string,
     private readonly options: SpineMirrorOptions,
   ) {
-    this.sessionsDir = resolveSessionsDir({ baseDir: options.baseDir });
+    this.sessionsDir = resolveSessionsDir({
+      baseDir: options.baseDir,
+      workspaceRoot: options.workspaceRoot,
+    });
   }
 
   /**

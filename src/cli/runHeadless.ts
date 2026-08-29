@@ -38,6 +38,7 @@ import { COUNCIL_TIER_SIZES } from './councilConfig.js';
 
 import {
   emitEvent,
+  resolveHeadlessCwd,
   resolveHeadlessKey,
   resolveHeadlessProvider,
   type HeadlessOptions,
@@ -95,32 +96,8 @@ import { planModeFromOpts, registerHeadlessMcp, runOneTurn, writeProofSafe } fro
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   resetTaskSpawnCount();
-  // Desktop multi-turn todo persistence: each message spawns a fresh process,
-  // so seed the in-process todo store from the replayed list before dispatch
-  // (todo_read then returns the prior state instead of empty).
-  if (opts.todos && opts.todos.length > 0) {
-    writeSessionTodos(opts.todos, { merge: false });
-  }
   if (opts.strictDone) {
     process.env.ZELARI_STRICT_DONE = '1';
-  }
-  // Expand @path tags in the task prompt (Desktop/CLI parity). Best-effort —
-  // already-inlined Desktop attachments are left alone if no @tokens remain.
-  try {
-    const { expandAtMentions } = await import('./atMentions.js');
-    const task = typeof opts.task === 'string' ? opts.task : '';
-    if (task.includes('@')) {
-      const { text, hits } = expandAtMentions(task, process.cwd());
-      if (text !== task) {
-        opts = { ...opts, task: text };
-      }
-      const images = hits.filter((h) => h.image).map((h) => h.image!);
-      if (images.length > 0) {
-        opts = { ...opts, images };
-      }
-    }
-  } catch {
-    /* non-fatal */
   }
 
   // === Global crash handlers (headless-only) ===
@@ -155,32 +132,6 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   };
   process.on('uncaughtException', (err) => handleFatal('uncaughtException', err));
   process.on('unhandledRejection', (err) => handleFatal('unhandledRejection', err));
-
-  // Apply work phase before any tool registry is built.
-  setPhase(opts.phase ?? 'build');
-
-  // P0.B — strict policy-load gate BEFORE anything dispatches (provider key
-  // resolution, registry build, agent turns). Headless/CI/mission default to
-  // `strict`; ZELARI_POLICY_LOAD_MODE wins. A file that exists but fails
-  // JSON/schema parsing blocks the run: exit 2 + reason `policy-load-failed`
-  // on stderr / NDJSON + a spine note as on-disk evidence.
-  setActivePolicyLoadSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
-  // t20 §P1.B: unattended surfaces demand their durable proof witness
-  // (ZELARI_PROOF_PERSISTENCE overrides; see completionProofPersist.ts).
-  setActiveProofPersistenceSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
-  const policyLoad = checkStrictPolicyLoad(process.cwd(), { mode: activePolicyLoadMode() });
-  if (policyLoad.blocked && policyLoad.block) {
-    reportPolicyLoadBlocked(policyLoad.block, opts.output);
-    await recordPolicyLoadBlockedOnSpine(policyLoad.block, {
-      mode: opts.mode,
-      ...(opts.profile ? { profile: opts.profile } : {}),
-      ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
-    });
-    return policyLoad.block.exitCode;
-  }
-  for (const w of policyLoad.warnings) {
-    process.stderr.write(`[zelari-code --headless] [policy] ${w}\n`);
-  }
 
   // v1.30.0: external-agent permission broker (ZELARI_PERM_SOCKET). Serves
   // `claude --permission-prompt-tool "zelari-code --permission-mcp <socket>"`
@@ -238,6 +189,63 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     });
   }
 
+  return dispatchHeadlessTurn(opts, provider, model, providerStream);
+}
+
+/**
+ * Per-turn dispatch shared by `--headless` (one-shot process) and
+ * `--serve-harness` (long-lived sidecar). Does NOT install process-fatal
+ * handlers or mutate `ZELARI_STRICT_DONE` — those belong to the one-shot
+ * CLI wrapper. Honors `opts.cwd` so N sidecar sessions can sit on
+ * different folders without `chdir`.
+ */
+export async function dispatchHeadlessTurn(
+  opts: HeadlessOptions,
+  provider: string,
+  model: string,
+  providerStream: ProviderStreamFn,
+): Promise<number> {
+  const cwd = resolveHeadlessCwd(opts);
+  opts = { ...opts, cwd };
+
+  if (opts.todos && opts.todos.length > 0) {
+    writeSessionTodos(opts.todos, { merge: false });
+  }
+
+  try {
+    const { expandAtMentions } = await import('./atMentions.js');
+    const task = typeof opts.task === 'string' ? opts.task : '';
+    if (task.includes('@')) {
+      const { text, hits } = expandAtMentions(task, cwd);
+      if (text !== task) {
+        opts = { ...opts, task: text };
+      }
+      const images = hits.filter((h) => h.image).map((h) => h.image!);
+      if (images.length > 0) {
+        opts = { ...opts, images };
+      }
+    }
+  } catch {
+    /* non-fatal */
+  }
+
+  setPhase(opts.phase ?? 'build');
+  setActivePolicyLoadSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
+  setActiveProofPersistenceSurface(opts.mode === 'zelari' ? 'mission' : 'headless');
+  const policyLoad = checkStrictPolicyLoad(cwd, { mode: activePolicyLoadMode() });
+  if (policyLoad.blocked && policyLoad.block) {
+    reportPolicyLoadBlocked(policyLoad.block, opts.output);
+    await recordPolicyLoadBlockedOnSpine(policyLoad.block, {
+      mode: opts.mode,
+      ...(opts.profile ? { profile: opts.profile } : {}),
+      ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
+    });
+    return policyLoad.block.exitCode;
+  }
+  for (const w of policyLoad.warnings) {
+    process.stderr.write(`[zelari-code --headless] [policy] ${w}\n`);
+  }
+
   // P1.1 (t12) -> t23 (P1.E): `--mode auto` resolves ONCE here, before any
   // dispatch check. Pure classifier (./orchestration/policy.js); the only
   // I/O is the CHEAP FACTS collection (bounded repo walk + active-contract
@@ -247,9 +255,9 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   // pipeline), a REAL delegation policy (replacing the no-op injection),
   // and the orchestration_decision spine telemetry note emitted by hosts.
   if (opts.orchestrationAuto) {
-    const facts = await collectOrchestrationFacts();
+    const facts = await collectOrchestrationFacts(cwd);
     const verdict = chooseOrchestration(opts.task ?? '', facts);
-    opts.orchestrationDecision = verdict;
+    opts = { ...opts, orchestrationDecision: verdict };
     const line = `[orchestration] --mode auto -> surface=${verdict.surface} strategy=${verdict.strategy} confidence=${verdict.confidence} latency~${verdict.estimatedLatencyMs}ms (${verdict.rationaleCode})`;
     if (opts.output === 'json') emitEvent({ type: 'log', message: line });
     else process.stderr.write(`[zelari-code --headless] ${line}
@@ -336,7 +344,7 @@ async function runHeadlessKrakenGraph(
   const { AuditLogger } = await import('./safety/auditLogger.js');
   const { createKrakenSubAgentContextFactory } = await import('./toolRegistry.js');
 
-  const cwd = process.cwd();
+  const cwd = resolveHeadlessCwd(opts);
   const sessionId = crypto.randomUUID();
   const { getMemoryService, isMemoryAutoWriteEnabled, isMemoryV2Enabled } =
     await import('./memory/serviceFactory.js');
@@ -525,7 +533,9 @@ async function buildCouncilToolRegistry(
   memoryService?: MemoryService,
   memoryAutoWrite = false,
 ) {
+  const cwd = opts ? resolveHeadlessCwd(opts) : process.cwd();
   const { registry: toolRegistry } = createBuiltinToolRegistry({
+    root: cwd,
     planMode,
     permissionPolicy: {
       read: 'allow',
@@ -542,7 +552,7 @@ async function buildCouncilToolRegistry(
   const { createWorkspaceToolRegistry } = await import('./workspace/toolRegistry.js');
   const { setWorkspaceStubs } = await import('@zelari/core/skills');
 
-  const realCtx = createWorkspaceContext();
+  const realCtx = createWorkspaceContext(cwd);
   const realReg = createWorkspaceToolRegistry(realCtx);
   for (const name of realReg.list()) {
     const td = realReg.get(name);
@@ -563,9 +573,10 @@ async function runHeadlessCouncil(
 ): Promise<number> {
   const { dispatchCouncil } = await import('./councilDispatcher.js');
   const sessionId = crypto.randomUUID();
+  const cwd = resolveHeadlessCwd(opts);
   const memoryFactory = await import('./memory/serviceFactory.js');
   const nativeMemory = memoryFactory.isMemoryV2Enabled()
-    ? await memoryFactory.getMemoryService(process.cwd(), process.env)
+    ? await memoryFactory.getMemoryService(cwd, process.env)
     : undefined;
   const memoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
 
@@ -573,7 +584,7 @@ async function runHeadlessCouncil(
     sessionId: opts.resumeSessionId ?? sessionId,
     mode: opts.mode,
     profile: opts.profile,
-    workspace: process.cwd(),
+    workspace: cwd,
   });
   // Exit-1/E1.2: the session spine is the model-context source of truth.
   // Legacy `--history` is imported one-shot into a fresh log; prior turns
@@ -660,7 +671,6 @@ async function runHeadlessCouncil(
   try {
     const { composeProjectContext } = await import('./workspace/composeContext.js');
     const { loadDurableContext } = await import('./state/loadDurableContext.js');
-    const cwd = process.cwd();
     const durableState = await loadDurableContext(cwd);
     const memoryContext = nativeMemory
       ? (await nativeMemory.buildContext({
@@ -685,6 +695,7 @@ async function runHeadlessCouncil(
       provider: 'openai-compatible',
       providerStream,
       sessionId,
+      workspaceRoot: cwd,
       tools: toolRegistry,
       feedbackStore,
       runMode: councilRunMode,
@@ -802,7 +813,7 @@ async function runHeadlessZelari(
   model: string,
   providerStream: ProviderStreamFn,
 ): Promise<number> {
-  const projectRoot = process.cwd();
+  const projectRoot = resolveHeadlessCwd(opts);
 
   const sessionId = opts.resumeSessionId ?? crypto.randomUUID();
   const spine = await openHeadlessSpine({
@@ -1105,6 +1116,7 @@ async function runHeadlessZelari(
         const { detectDegradedRun } = await import('@zelari/core/council');
 
         const { registry: agentRegistry } = createBuiltinToolRegistry({
+          root: projectRoot,
           planMode: false,
           permissionPolicy: {
             read: 'allow',
@@ -1194,6 +1206,7 @@ async function runHeadlessZelari(
       const missionGate = await evaluateStrictBuildGate('build', {
         emit: (input) => spine.appendEvent(input),
         surface: 'mission',
+        cwd: projectRoot,
       });
       const missionVerificationPayload = strictGateEventPayload(missionGate);
       spine.verificationRun(missionVerificationPayload);

@@ -55,13 +55,13 @@ import type {
   WorkspaceServicesFactory,
 } from '@zelari/core/harness';
 import { controlAcceptedEvent, controlAppliedEvent, protocolInfoEvent } from '../headless/protocol.js';
-import { runOneTurn } from '../headless/runOneTurn.js';
 import {
   clearSessionTurnControl,
   getLiveTurnControl,
   runWithSession,
 } from './sessionControl.js';
 import { resolveHeadlessKey, resolveHeadlessProvider, type HeadlessOptions } from '../headless.js';
+import { dispatchHeadlessTurn } from '../runHeadless.js';
 import { LspManager } from '../lsp/manager.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { setActiveProofPersistenceSurface } from '../kraken/completionProofPersist.js';
@@ -127,9 +127,37 @@ export function createCliWorkspaceServices(workspaceRoot: string): WorkspaceServ
 }
 
 /**
+ * Bind a `run.turn` payload to HeadlessOptions, pinning the session's
+ * workspaceRoot as `cwd`. Extracted so tests can prove the sidecar does
+ * not silently fall back to `process.cwd()` (the 2.16.0 leak).
+ */
+export function bindHarnessTurnOptions(
+  input: Record<string, unknown>,
+  workspaceRoot: string,
+): HeadlessOptions {
+  const turnInput = input as Partial<HeadlessOptions>;
+  if (typeof turnInput.task !== 'string' || turnInput.task.length === 0) {
+    throw new Error('run.turn requires a non-empty string `task`');
+  }
+  const mode = (
+    typeof turnInput.mode === 'string' ? turnInput.mode : 'kraken'
+  ) as NonNullable<HeadlessOptions['mode']>;
+  return {
+    ...(input as unknown as Omit<HeadlessOptions, 'task' | 'mode' | 'output' | 'cwd'>),
+    task: turnInput.task,
+    mode,
+    output: 'json',
+    cwd: workspaceRoot,
+    useCouncil: turnInput.useCouncil === true || mode === 'council',
+  };
+}
+
+/**
  * Real turn implementation: provider/key/stream resolution happens ONCE
  * per server (mirroring runHeadless: one process, one key), then each
- * run.turn is a runOneTurn call — the exact `--headless` code path.
+ * run.turn is `dispatchHeadlessTurn` — same switch as `--headless`
+ * (kraken / council / zelari / graph / gauntlet), with the session
+ * workspaceRoot threaded as `opts.cwd`.
  */
 export function createCliRunTurn(): RunTurnFn {
   let streamPromise: Promise<{ provider: string; model: string; stream: unknown }> | null = null;
@@ -156,28 +184,13 @@ export function createCliRunTurn(): RunTurnFn {
   };
   return async (input, deps) => {
     const { provider, model, stream } = await ensureStream();
-    // Transport-boundary validation: a headless single turn needs a task.
-    // Everything else arrives as untrusted JSON, so the payload is cast
-    // once (unknown → Omit) and the required/forced fields are set here.
-    const turnInput = input as Partial<HeadlessOptions>;
-    if (typeof turnInput.task !== 'string' || turnInput.task.length === 0) {
-      throw new Error('run.turn requires a non-empty string `task`');
-    }
-    const opts: HeadlessOptions = {
-      ...(input as unknown as Omit<HeadlessOptions, 'task' | 'mode' | 'output'>),
-      task: turnInput.task,
-      mode: (typeof turnInput.mode === 'string'
-        ? turnInput.mode
-        : 'kraken') as NonNullable<HeadlessOptions['mode']>,
-      output: 'json', // NDJSON transport: BrainEvents ride the same stdout
-    };
-    const exitCode = await runOneTurn(
+    const opts = bindHarnessTurnOptions(input, deps.session.workspaceRoot);
+    const exitCode = await dispatchHeadlessTurn(
       opts,
       provider,
       model,
-      stream as Parameters<typeof runOneTurn>[3],
+      stream as Parameters<typeof dispatchHeadlessTurn>[3],
     );
-    void deps.services.policyCache.workspaceRoot;
     return { exitCode };
   };
 }
