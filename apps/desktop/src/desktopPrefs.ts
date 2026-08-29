@@ -143,3 +143,18 @@ export function saveDesktopPrefs(
     /* quota / private mode */
   }
 }
+
+/**
+ * Merge a partial into prefs, persist immediately and return the new object.
+ * Granular replacement for the old monolithic SettingsView onSave flow:
+ * every autosaving control in the redesigned Settings goes through here,
+ * keeping the prefs → localStorage → run_task pipeline intact.
+ */
+export function patchDesktopPrefs(
+  prev: DesktopPrefs,
+  partial: Partial<DesktopPrefs>,
+): DesktopPrefs {
+  const next = normalizeDesktopPrefs({ ...prev, ...partial });
+  saveDesktopPrefs(next);
+  return next;
+}

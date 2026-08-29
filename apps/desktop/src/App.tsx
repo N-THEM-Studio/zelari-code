@@ -27,9 +27,16 @@ import { PhaseToggle } from "./components/PhaseToggle";
 import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
 import { GauntletToggle } from "./components/GauntletToggle";
 import { hasGauntletLoop, stripGauntletLoop } from "./gauntletLoop";
+import {
+  controlEvent,
+  sendControl,
+  supportsControl,
+  type ProtocolInfoEvent,
+} from "./controlClient";
+import "./steer.css";
 
 import { ProviderModelBar } from "./components/ProviderModelBar";
-import { SettingsView } from "./components/SettingsView";
+import { SettingsShell } from "./components/settings/SettingsShell";
 import { RunActivity, type LiveToolStep } from "./components/RunActivity";
 import { KrakenActivity } from "./components/KrakenActivity";
 import {
@@ -51,6 +58,7 @@ import {
 } from "./components/GauntletProgressCard";
 import {
   loadDesktopPrefs,
+  patchDesktopPrefs,
   saveDesktopPrefs,
   type DesktopPrefs,
 } from "./desktopPrefs";
@@ -628,6 +636,18 @@ export default function App() {
     setTheme(next);
   }, []);
 
+  // Ctrl/Cmd+, opens Settings from anywhere in the app.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === ",") {
+        e.preventDefault();
+        setView((v) => (v === "chat" ? "settings" : v));
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   // Persist the chosen working folder
   useEffect(() => {
     if (workdir) localStorage.setItem("zelari-desktop-workdir", workdir);
@@ -935,6 +955,16 @@ export default function App() {
     followStreamRef.current = true;
   }, [activeId]);
 
+  // Control plane (§35): per-conversation capability handshake emitted by
+  // the CLI at run start. The composer's steer mode is gated on it so an
+  // old CLI keeps the previous behaviour (disabled while running).
+  const [controlInfoByConv, setControlInfoByConv] = useState<
+    Record<string, ProtocolInfoEvent>
+  >({});
+  const controlInfoRef = useRef<Record<string, ProtocolInfoEvent>>({});
+  const steerSupported =
+    running && supportsControl(controlInfoByConv[active?.id ?? ""], "steer");
+
   const speech = useSpeechToText({
     disabled: running,
     onFinal: (piece) => {
@@ -990,6 +1020,59 @@ export default function App() {
           }
           return;
         }
+        // Control plane (§35): handshake + steering acks. protocol_info
+        // gates the composer's steer mode; acks advance the bubble state
+        // (sent → accepted → applied — never assume stdin writes, §24).
+        if (ev.type === "protocol_info") {
+          const info = ev as { version?: unknown; capabilities?: unknown };
+          const next: ProtocolInfoEvent = {
+            type: "protocol_info",
+            version: typeof info.version === "number" ? info.version : 0,
+            capabilities: Array.isArray(info.capabilities)
+              ? (info.capabilities as string[])
+              : [],
+          };
+          controlInfoRef.current = {
+            ...controlInfoRef.current,
+            [convId]: next,
+          };
+          setControlInfoByConv((prev) => ({ ...prev, [convId]: next }));
+          return;
+        }
+        if (
+          ev.type === "control_accepted" ||
+          ev.type === "control_applied" ||
+          ev.type === "control_rejected"
+        ) {
+          const controlId =
+            typeof (ev as { controlId?: unknown }).controlId === "string"
+              ? (ev as { controlId: string }).controlId
+              : "";
+          if (controlId) {
+            const state: "accepted" | "applied" | "rejected" =
+              ev.type === "control_accepted"
+                ? "accepted"
+                : ev.type === "control_applied"
+                  ? "applied"
+                  : "rejected";
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === convId
+                  ? {
+                      ...c,
+                      messages: c.messages.map((m) =>
+                        m.steer?.id === controlId
+                          ? { ...m, steer: { id: controlId, state } }
+                          : m,
+                      ),
+                    }
+                  : c,
+              ),
+            );
+          }
+          return;
+        }
+
         const turn = turnFor(convId);
         const setStatusLineIfActive = (s: string) => {
           if (convId === activeIdRef.current) setStatusLine(s);
@@ -1005,6 +1088,36 @@ export default function App() {
           // phase can re-run it via `--run-plan`.
           const planIdMatch = /plan_only_id=([0-9a-f-]+)/i.exec(msg);
           if (planIdMatch) setKrakenPlanId(planIdMatch[1]);
+          // Late steers become follow-ups at run end (§24): surface the
+          // queued text in chat and prefill the composer — only when the
+          // user hasn't typed something else meanwhile.
+          const followUpMatch = /^follow_up_queued:\s*([\s\S]+)$/.exec(msg);
+          if (followUpMatch && followUpMatch[1].trim()) {
+            const followUpText = followUpMatch[1].trim();
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === convId
+                  ? {
+                      ...c,
+                      messages: [
+                        ...c.messages,
+                        {
+                          id: uid("sys"),
+                          role: "system",
+                          content: `Follow-up ready: ${followUpText}`,
+                          createdAt: Date.now(),
+                        },
+                      ],
+                    }
+                  : c,
+              ),
+            );
+            if (convId === activeIdRef.current) {
+              setDraft((prev) => (prev.trim() ? prev : followUpText));
+            }
+            setStatusLineIfActive("Follow-up ready — review and send");
+            return;
+          }
           // Do not surface routine headless bootstrap lines in the chat UI
           // (mode/phase/provider line, MCP registration count, etc.).
           const hideFromChat =
@@ -1941,12 +2054,86 @@ export default function App() {
     [addFiles, running],
   );
 
+  /**
+   * Steering (control plane §30–§35): while a run is live on a v2 CLI, the
+   * composer sends steer events instead of queuing a new task. The bubble
+   * tracks the ack cycle; "sent" is NOT "steered" until applied (§24).
+   */
+  const steerActiveRun = async (text: string) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    const convId = activeIdRef.current;
+    const run = runCoordinator.getRun(convId);
+    if (!run || (run.status !== "running" && run.status !== "starting")) {
+      setStatusLine("No active run to steer.");
+      return;
+    }
+    if (!supportsControl(controlInfoRef.current[convId], "steer")) {
+      setStatusLine("Steering needs a newer CLI — update zelari-code.");
+      return;
+    }
+    const ev = controlEvent("steer", { text: trimmed });
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              updatedAt: Date.now(),
+              messages: [
+                ...c.messages,
+                {
+                  id: uid("steer"),
+                  role: "user" as const,
+                  content: trimmed,
+                  createdAt: Date.now(),
+                  steer: { id: ev.id, state: "sent" as const },
+                },
+              ],
+            }
+          : c,
+      ),
+    );
+    setDraft("");
+    setAttachments([]);
+    setFollowStream(true);
+    followStreamRef.current = true;
+    setStatusLine("Steer queued — applies at the next turn boundary…");
+    try {
+      await sendControl(run.runId, ev);
+    } catch (e) {
+      const failMsg = e instanceof Error ? e.message : String(e);
+      setStatusLine(`Steer failed: ${failMsg}`);
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === convId
+            ? {
+                ...c,
+                messages: c.messages.map((m) =>
+                  m.steer?.id === ev.id
+                    ? {
+                        ...m,
+                        steer: { id: ev.id, state: "rejected" as const },
+                      }
+                    : m,
+                ),
+              }
+            : c,
+        ),
+      );
+    }
+  };
+
   const send = async (text?: string) => {
     const convId = active.id;
     const turn = turnFor(convId);
     const fromSpeech = [draft, speech.interim].filter(Boolean).join(" ").trim();
     let base = (text ?? fromSpeech).trim();
-    if ((!base && attachments.length === 0 && !pendingSkill) || running) return;
+    if (!base && attachments.length === 0 && !pendingSkill) return;
+    // Running + v2 CLI → steer the live run instead of dispatching a task.
+    if (running) {
+      void steerActiveRun(base);
+      return;
+    }
     speech.stop();
     setTextLoopRecovery(false);
     setMention(null);
@@ -2265,7 +2452,7 @@ export default function App() {
         {aurora}
         <TitleBar />
         <div className="app-settings-body">
-          <SettingsView
+          <SettingsShell
             config={config}
             cli={cli}
             defaultMode={defaultMode}
@@ -2279,21 +2466,20 @@ export default function App() {
               await refreshConfig();
               await refreshCli();
             }}
-            onSave={async (args) => {
-              await setAppConfig({
-                provider: args.provider,
-                model: args.model,
-              });
-              setDefaultMode(args.defaultMode);
-              setDefaultPhase(args.defaultPhase);
-              saveDefaults(args.defaultMode, args.defaultPhase);
-              saveDesktopPrefs(args.prefs);
-              setPrefs(args.prefs);
-              setProvider(args.provider);
-              setModel(args.model);
-              setMode(args.defaultMode);
-              setPhase(args.defaultPhase);
-              await refreshConfig();
+            onDefaultsChange={(nextMode, nextPhase) => {
+              setDefaultMode(nextMode);
+              setDefaultPhase(nextPhase);
+              saveDefaults(nextMode, nextPhase);
+              setMode(nextMode);
+              setPhase(nextPhase);
+            }}
+            onProviderModelChange={(nextProvider, nextModel) => {
+              setProvider(nextProvider);
+              setModel(nextModel);
+            }}
+            onPrefsChange={(partial) => {
+              setPrefs((prev) => patchDesktopPrefs(prev, partial));
+              if (partial.gauntletLoop === true) setKrakenGraph(false);
             }}
           />
         </div>
@@ -2655,10 +2841,24 @@ export default function App() {
                         </ReplyAccordion>
                       </div>
                     ) : (
-                      <div key={m.id} className={`message ${m.role}`}>
+                      <div
+                        key={m.id}
+                        className={`message ${m.role}${m.steer ? " is-steer" : ""}`}
+                      >
                         {m.role === "user" ? (
                           <>
                             <div className="bubble user-bubble">
+                              {m.steer ? (
+                                <span className={`steer-state ${m.steer.state}`}>
+                                  {m.steer.state === "sent"
+                                    ? "steering…"
+                                    : m.steer.state === "accepted"
+                                      ? "queued · applies at turn end"
+                                      : m.steer.state === "applied"
+                                        ? "applied ✓"
+                                        : "rejected ✗"}
+                                </span>
+                              ) : null}
                               {hasGauntletLoop(m.content) ? (
                                 <>
                                   <span className="gauntlet-badge">Gauntlet</span>
@@ -2931,14 +3131,16 @@ export default function App() {
                 placeholder={
                   speech.listening
                     ? "Listening… speak now"
-                    : mode === "zelari"
+                    : steerSupported
+                      ? "Steer the running agent… (applied at turn end)"
+                      : mode === "zelari"
                       ? "Describe the mission… (@file to tag)"
                       : mode === "council"
                         ? "Ask the council… (@file · Skills ★)"
                         : "Message the agent… (@file to tag paths)"
                 }
                 rows={1}
-                disabled={running}
+                disabled={running && !steerSupported}
               />
               {speech.interim ? (
                 <div className="speech-interim" aria-live="polite">
@@ -2953,14 +3155,40 @@ export default function App() {
             </div>
             <div className="composer-actions">
               {running ? (
-                <button
-                  type="button"
-                  className="btn-stop"
-                  onClick={() => void onStop()}
-                  title="Stop"
-                >
-                  Stop
-                </button>
+                <>
+                  {steerSupported ? (
+                    <button
+                      type="button"
+                      className="btn-send"
+                      disabled={!(draft.trim() || speech.interim.trim())}
+                      onClick={() => void send()}
+                      title="Steer — queued, applied at the next turn boundary"
+                      aria-label="Steer running agent"
+                    >
+                      <svg
+                        viewBox="0 0 24 24"
+                        width="17"
+                        height="17"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden
+                      >
+                        <path d="M3 12h16M13 6l6 6-6 6" />
+                      </svg>
+                    </button>
+                  ) : null}
+                  <button
+                    type="button"
+                    className="btn-stop"
+                    onClick={() => void onStop()}
+                    title="Stop"
+                  >
+                    Stop
+                  </button>
+                </>
               ) : (
                 <button
                   type="button"

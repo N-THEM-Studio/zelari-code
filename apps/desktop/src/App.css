@@ -1,24 +1,24 @@
-/* Zelari Desktop — Liquid Glass (grey / white glass scale) */
+                                                              
 
 :root {
   color-scheme: dark;
-  /* Dark: charcoal glass + soft white glass highlights */
+                                                          
   --bg: #0a0a0b;
   --bg-solid: #121214;
-  /* Height of the frameless titlebar (mirrors `.titlebar { height: 36px }`).
-     Any `position: fixed` panel that lives in the right rail — workbench
-     panel — must start *below* this offset
-     so its own close (×) button doesn't overlap the OS window's
-     minimize/maximize/close controls. A click that lands on the OS close
-     button instead of the panel's × closes the whole app, which is the
-     worst possible UX. */
+                                                                              
+                                                                          
+                                            
+                                                                 
+                                                                          
+                                                                        
+                          
   --titlebar-h: 36px;
   --bg-elevated: rgba(28, 28, 32, 0.72);
-  /* Backwards-compatible alias — many existing rules (workbench-panel,
-     weak-tip, etc.) reference --bg-elev, which used to be
-     the canonical name. Without this alias every one of them resolves
-     to `unset`, leaving the background fully transparent. Keep this
-     line; remove the call sites instead. */
+                                                                        
+                                                           
+                                                                       
+                                                                     
+                                            
   --bg-elev: var(--bg-elevated);
   --sidebar: rgba(14, 14, 16, 0.78);
   --surface: rgba(255, 255, 255, 0.055);
@@ -28,7 +28,7 @@
   --text: rgba(255, 255, 255, 0.94);
   --text-secondary: rgba(255, 255, 255, 0.58);
   --text-muted: rgba(255, 255, 255, 0.38);
-  /* Neutral glass accent (bright white → soft grey) */
+                                                       
   --accent: #d8d8dc;
   --accent-2: #f4f4f5;
   --accent-soft: rgba(255, 255, 255, 0.1);
@@ -76,7 +76,7 @@
   --chrome-gap: 12px;
 }
 
-/* Mode accents — grey glass steps (subtle identity, still monochrome) */
+                                                                         
 .app[data-mode="agent"] {
   --accent: #d4d4d8;
   --accent-2: #fafafa;
@@ -93,7 +93,7 @@
   --accent-strong: #a8a8ac;
 }
 
-/* ── Light theme: frosted white glass ── */
+                                            
 .app[data-theme="light"],
 :root:has(.app[data-theme="light"]) {
   color-scheme: light;
@@ -183,7 +183,7 @@ body,
   overflow: hidden;
 }
 
-/* Keep page chrome in sync when theme is set on .app */
+                                                        
 html[data-theme="light"],
 html[data-theme="light"] body,
 html[data-theme="light"] #root {
@@ -220,7 +220,7 @@ button {
   background: none;
 }
 
-/* ── Aurora background ── */
+                             
 .aurora {
   position: fixed;
   inset: 0;
@@ -303,7 +303,7 @@ button {
   }
 }
 
-/* ── Liquid glass ── */
+                        
 .glass-panel {
   position: relative;
   background: linear-gradient(
@@ -375,7 +375,7 @@ button {
   gap: 10px;
 }
 
-/* Custom frameless titlebar */
+                               
 .titlebar {
   display: flex;
   align-items: center;
@@ -448,7 +448,7 @@ button {
   color: #fff;
 }
 
-/* Main area floats over aurora (mockup: open glass, not a solid box) */
+                                                                        
 .workspace {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -462,7 +462,7 @@ button {
   overflow: hidden;
 }
 
-/* ── Sidebar (structure unchanged; glass shell) ── */
+                                                      
 .sidebar {
   display: flex;
   flex-direction: column;
@@ -768,7 +768,7 @@ button {
   word-break: break-all;
 }
 
-/* ── Main ── */
+                
 .main {
   display: flex;
   flex-direction: column;
@@ -779,7 +779,7 @@ button {
   padding: 6px 8px 0;
 }
 
-/* Floating glass capsule (topbar + composer) like mockup */
+                                                            
 .glass-capsule {
   position: relative;
   background: linear-gradient(
@@ -935,7 +935,7 @@ button {
   cursor: not-allowed;
 }
 
-/* ── Chat stream ── */
+                       
 .chat-scroll-shell {
   position: relative;
   flex: 1;
@@ -951,7 +951,7 @@ button {
   scroll-behavior: smooth;
 }
 
-/* Re-attach to live stream — frosted glass chip */
+                                                   
 .btn-follow-stream {
   position: absolute;
   left: 50%;
@@ -1164,7 +1164,7 @@ button {
   font-size: 15px;
 }
 
-/* --- Clarification (---QUESTION---) --------------------------------------- */
+                                                                                
 .clarification-card {
   margin-top: 14px;
   padding: 14px 16px;
@@ -1243,7 +1243,7 @@ button {
   line-height: 1.4;
 }
 
-/* --- Plugin install banner ----------------------------------------------- */
+                                                                               
 .plugin-banner {
   display: flex;
   gap: 12px;
@@ -1334,7 +1334,7 @@ button {
   background: rgba(255, 255, 255, 0.08);
 }
 
-/* Install failure — surface the real npm error + scrollable output. */
+                                                                       
 .plugin-banner-error {
   margin-top: 8px;
   padding: 10px 12px;
@@ -1454,7 +1454,7 @@ button {
   animation: fadeIn 0.18s ease;
 }
 
-/* Clear separation between turns */
+                                    
 .message.user + .message.assistant,
 .message.assistant + .message.user,
 .message.assistant + .message.assistant {
@@ -1555,7 +1555,7 @@ button {
   word-break: break-word;
 }
 
-/* ── Tool call cards ── */
+                           
 .message.tool {
   gap: 0;
 }
@@ -1683,7 +1683,7 @@ button {
   border-color: rgba(248, 113, 113, 0.25);
 }
 
-/* ── Light structured content (no raw # ** artifacts) ── */
+                                                            
 .md-content {
   color: var(--text);
   line-height: 1.65;
@@ -1815,7 +1815,7 @@ button {
   color: var(--text-muted);
 }
 
-/* ── Live run activity (thinking / tools / members, fade) ── */
+                                                                
 .run-activity {
   display: flex;
   align-items: flex-start;
@@ -1874,7 +1874,7 @@ button {
   gap: 2px;
 }
 
-/* Fixed mini-title (Council / Agent / Mission) — never fades */
+                                                                
 .run-activity-kicker {
   font-size: 11px;
   font-weight: 600;
@@ -1884,7 +1884,7 @@ button {
   flex-shrink: 0;
 }
 
-/* Only this block fades / rotates */
+                                     
 .run-activity-stage {
   min-height: 1.4em;
   transition: opacity 0.32s ease, transform 0.32s ease;
@@ -1966,11 +1966,11 @@ button {
   white-space: nowrap;
 }
 
-/* ── Reply accordion ── */
+                           
 .reply-accordion {
   display: flex;
   flex-direction: column;
-  /* No hard clip on the whole card — body scrolls only if very long */
+                                                                       
   max-height: none;
   border-radius: 16px;
   background: linear-gradient(
@@ -2001,7 +2001,7 @@ button {
     0 0 0 1px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
-/* Fixed header — stays put while body scrolls */
+                                                 
 .reply-accordion-head {
   width: 100%;
   display: flex;
@@ -2045,7 +2045,7 @@ button {
   white-space: nowrap;
 }
 
-/* Scroll only the answer body when content is very long */
+                                                           
 .reply-accordion-scroll {
   flex: 1 1 auto;
   min-height: 0;
@@ -2125,7 +2125,7 @@ button {
   }
 }
 
-/* Thinking animation */
+                        
 .thinking-block {
   display: flex;
   align-items: center;
@@ -2241,14 +2241,14 @@ button {
   white-space: pre-wrap;
 }
 
-/* ── Composer (mockup pill) ── */
+                                  
 .composer-wrap {
   padding: 0 24px 18px;
   background: transparent;
   flex-shrink: 0;
 }
 
-/* Drag & drop attach */
+                        
 .app.is-drag-over {
   outline: none;
 }
@@ -2517,7 +2517,7 @@ button {
   color: var(--text-muted);
 }
 
-/* Text buttons (settings, MCP, updates) — pill that fits the label */
+                                                                      
 .btn-send,
 .btn-stop {
   display: inline-flex;
@@ -2574,7 +2574,7 @@ button {
   background: rgba(248, 113, 113, 0.25);
 }
 
-/* Composer-only: circular icon send + pill stop */
+                                                   
 .composer .btn-send {
   width: 40px;
   height: 40px;
@@ -2607,7 +2607,7 @@ button {
   color: var(--text-muted);
 }
 
-/* Shared thin scrollbar (chat, sessions, git/files, settings) */
+                                                                 
 .scroll-thin,
 .chat-scroll,
 .session-list,
@@ -2670,7 +2670,7 @@ button {
   background: transparent;
 }
 
-/* ── Control bar (legacy / unused in main chat) ── */
+                                                      
 .control-bar {
   display: none;
 }
@@ -2861,21 +2861,7 @@ button {
   color: var(--text);
 }
 
-/* Settings forms still use .field / .field-inline */
-.field-inline {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: var(--text-secondary);
-}
-
-.field-inline span {
-  font-weight: 500;
-  color: var(--text-muted);
-}
-
-/* Solid control chrome — avoid native white select + white text */
+                                                                   
 .field-inline select,
 .field select,
 .field input,
@@ -3067,7 +3053,7 @@ button {
   color: #ecfdf5;
 }
 
-/* ── CLI setup overlay (first-run / missing engine) ── */
+                                                          
 .setup-overlay {
   position: fixed;
   inset: 0;
@@ -3190,7 +3176,7 @@ button {
   color: var(--accent);
 }
 
-/* ── Settings (aligned with workspace chrome) ── */
+                                                    
 .app-settings {
   display: flex;
   flex-direction: column;
@@ -3199,147 +3185,19 @@ button {
   background: transparent;
 }
 
+/* Pass-through flex link: TitleBar → body → SettingsShell. Without this the
+   shell's `flex: 1` is inert, the frame grows to content size and
+   `.app-settings { overflow: hidden }` clips everything below the fold. */
 .app-settings-body {
   position: relative;
   z-index: 1;
   flex: 1;
   min-height: 0;
-  overflow: auto;
-  background: transparent;
-  padding: 0 var(--chrome-gap) var(--chrome-gap);
-  box-sizing: border-box;
-}
-
-.settings-view {
-  max-width: none;
-  margin: 0;
-  padding: 0;
-  height: 100%;
   display: flex;
   flex-direction: column;
-  min-height: 0;
-  box-sizing: border-box;
-  background: linear-gradient(
-    160deg,
-    var(--glass-fill-a),
-    var(--glass-fill-b) 45%,
-    var(--glass-fill-c)
-  );
-  -webkit-backdrop-filter: blur(28px) saturate(170%);
-  backdrop-filter: blur(28px) saturate(170%);
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-deep), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  overflow: hidden;
-  color: var(--text);
 }
 
-.settings-header {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  margin-bottom: 0;
-  flex-shrink: 0;
-  padding: 14px 20px;
-  border-bottom: 1px solid var(--border-subtle);
-  background: transparent;
-}
-
-.settings-header h1 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 650;
-  letter-spacing: -0.02em;
-  flex: 1;
-  color: var(--text);
-}
-
-.settings-header-refresh {
-  margin-left: auto;
-}
-
-.settings-shell {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
-  gap: 0;
-  flex: 1;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.settings-nav {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  overflow-y: auto;
-  padding: 16px 12px;
-  border-right: 1px solid rgba(0, 0, 0, 0.06);
-  background: #ffffff;
-}
-
-.app[data-theme="dark"] .settings-nav {
-  background: rgba(255, 255, 255, 0.96);
-  border-right-color: rgba(0, 0, 0, 0.08);
-  color: rgba(12, 12, 14, 0.92);
-}
-
-.settings-nav-item {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 3px;
-  text-align: left;
-  padding: 12px 14px;
-  border-radius: 12px;
-  color: rgba(40, 40, 46, 0.72);
-  border: 1px solid transparent;
-  transition: background 0.12s, color 0.12s, border-color 0.12s, box-shadow 0.12s;
-}
-
-.settings-nav-item:hover {
-  background: rgba(0, 0, 0, 0.04);
-  color: rgba(12, 12, 14, 0.92);
-}
-
-.settings-nav-item.active {
-  background: #f4f4f5;
-  border-color: rgba(0, 0, 0, 0.08);
-  color: rgba(12, 12, 14, 0.94);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
-}
-
-.settings-nav-item .settings-tab-icon {
-  color: rgba(60, 60, 68, 0.55);
-}
-
-.settings-nav-item.active .settings-tab-icon {
-  color: rgba(30, 30, 36, 0.85);
-}
-
-.settings-nav-item .settings-nav-hint {
-  color: rgba(60, 60, 68, 0.48);
-}
-
-.settings-nav-item.active .settings-nav-hint {
-  color: rgba(40, 40, 46, 0.62);
-}
-
-.settings-nav-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  width: 100%;
-}
-
-.settings-tab-icon {
-  width: 15px;
-  height: 15px;
-  flex-shrink: 0;
-  color: var(--text-muted);
-  opacity: 0.9;
-}
-
-/* MCP extensions */
+                    
 .mcp-scope-row {
   display: flex;
   flex-wrap: wrap;
@@ -3456,36 +3314,6 @@ button {
   color: var(--input-text) !important;
 }
 
-.settings-nav-item.active .settings-tab-icon {
-  color: var(--text-secondary);
-}
-
-.settings-nav-label {
-  font-size: 13.5px;
-  font-weight: 600;
-  color: inherit;
-}
-
-.settings-nav-hint {
-  font-size: 11.5px;
-  line-height: 1.35;
-  padding-left: 23px;
-}
-
-.settings-main {
-  min-height: 0;
-  overflow-y: auto;
-  padding: 22px 28px 20px;
-  color: var(--text);
-  flex: 1;
-}
-
-.settings-panel {
-  min-height: 0;
-  color: var(--text);
-  max-width: 720px;
-}
-
 .settings-stack {
   display: flex;
   flex-direction: column;
@@ -3535,22 +3363,9 @@ button {
   color: var(--text-muted);
 }
 
-.settings-tip {
-  margin-top: 8px !important;
-  margin-bottom: 0 !important;
-}
-
 .settings-card code {
   font-family: var(--mono);
   font-size: 11.5px;
-}
-
-.oauth-url {
-  word-break: break-all;
-}
-
-.oauth-url a {
-  color: var(--accent, #7aa2ff);
 }
 
 
@@ -3585,7 +3400,7 @@ button {
   background: var(--bg-elevated);
 }
 
-/* ── @-mention popup + skill picker (composer) ───────────────────────── */
+                                                                            
 
 .composer-stack {
   position: relative;
@@ -3843,36 +3658,9 @@ button {
   opacity: 0.75;
 }
 
-.settings-footer {
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 16px 12px;
-  border-top: 1px solid var(--border-subtle);
-  background: transparent;
-  margin-top: auto;
-}
-
-.settings-footer-msg {
-  flex: 1;
-  min-width: 0;
-}
-
-.settings-footer-hint {
-  font-size: 12px;
-  color: var(--text-muted);
-}
-
 .footer-banner {
   margin: 0;
   padding: 8px 10px;
-}
-
-.settings-footer-actions {
-  padding-top: 0;
-  flex-shrink: 0;
 }
 
 .shortcuts-kv {
@@ -3901,37 +3689,6 @@ kbd {
 }
 
 @media (max-width: 720px) {
-  .settings-shell {
-    grid-template-columns: 1fr;
-    overflow: auto;
-  }
-
-  .settings-nav {
-    flex-direction: row;
-    flex-wrap: wrap;
-    gap: 6px;
-    overflow: visible;
-  }
-
-  .settings-nav-item {
-    flex: 1 1 auto;
-    min-width: 0;
-    padding: 8px 10px;
-  }
-
-  .settings-nav-hint {
-    display: none;
-  }
-
-  .settings-main {
-    overflow: visible;
-  }
-
-  .settings-view {
-    overflow: auto;
-    height: auto;
-    min-height: 100%;
-  }
 
   .app-settings {
     overflow: auto;
@@ -4085,7 +3842,7 @@ kbd {
   background: var(--hover-tint);
 }
 
-/* ── Text-loop recovery banner ── */
+                                     
 .text-loop-recovery {
   display: flex;
   flex-wrap: wrap;
@@ -4116,7 +3873,7 @@ kbd {
   white-space: nowrap;
 }
 
-/* ── Session todos (agent todo_write) ── */
+                                            
 .session-todos-panel {
   flex-shrink: 0;
   margin: 8px 12px 0;
@@ -4193,7 +3950,7 @@ kbd {
   color: #e2a58f;
 }
 
-/* Workspace project tasks section (ADR-0018) sits under session tasks. */
+                                                                          
 .live-tasks-project {
   margin-top: -4px;
 }
@@ -4219,14 +3976,14 @@ kbd {
   white-space: nowrap;
 }
 
-/* ── Composer shortcuts ── */
+                              
 .composer-shortcuts {
   color: var(--text-muted);
   font-size: 11px;
   opacity: 0.85;
 }
 
-/* ── Project right rail (Files | Git) ── */
+                                            
 .git-panel,
 .project-panel {
   width: 268px;
@@ -4663,9 +4420,9 @@ kbd {
   }
 }
 
-/* ── Copy / export controls ── */
+                                  
 
-/* Shared ghost icon button (message copy, code copy, reply copy). */
+                                                                     
 .copy-btn {
   display: inline-flex;
   align-items: center;
@@ -4694,7 +4451,7 @@ kbd {
   color: var(--success);
 }
 
-/* User bubble: reveal the copy action on hover, aligned to the right. */
+                                                                         
 .bubble-actions {
   display: flex;
   justify-content: flex-end;
@@ -4706,9 +4463,9 @@ kbd {
   opacity: 1;
 }
 
-/* Reply accordion: pin the copy button over the (sticky) header, top-right.
-   The card never scrolls itself, so this stays visible while the body
-   scrolls. */
+                                                                             
+                                                                       
+              
 .reply-accordion.has-copy {
   position: relative;
 }
@@ -4720,7 +4477,7 @@ kbd {
   z-index: 3;
 }
 
-/* Code block: relative wrapper so the copy button can sit top-right. */
+                                                                        
 .md-code-wrap {
   position: relative;
 }
@@ -4737,7 +4494,7 @@ kbd {
   background: rgba(3, 6, 16, 0.8);
 }
 
-/* Session export button disabled state (empty conversation). */
+                                                                
 .session-actions button:disabled {
   opacity: 0.3;
   cursor: default;
@@ -4748,25 +4505,25 @@ kbd {
   color: var(--text-muted);
 }
 
-/* ------------------------------------------------------------------ */
-/* ------------------------------------------------------------------ */
-/* Weakness badge (desktop v1.31.x)                                  */
-/*                                                                    */
-/* Inline pill rendered by <WeaknessBadge> when a message contains a  */
-/* VERDICT: PASS|FAIL trailer. The pill shows the verdict + score,    */
-/* with a hover/focus tooltip explaining tight / medium / loose.      */
-/* Three color buckets keyed off the weakness score in [0, 1]:        */
-/*   tight   (w < 0.4) — green-tinted, the reviewer was specific     */
-/*   medium  (0.4-0.7) — amber, mixed                                  */
-/*   loose   (w >= 0.7) — red, the reviewer asserted very little      */
-/* ------------------------------------------------------------------ */
+                                                                        
+                                                                        
+                                                                       
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                       
+                                                                         
+                                                                        
+                                                                        
 
 .weakness-badge-row {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 0 0 10px;
-  /* Sit above the markdown body so the eye lands on it first. */
+                                                                 
   font-size: 12.5px;
   color: var(--text-muted);
 }
@@ -4808,11 +4565,11 @@ kbd {
 }
 
 .weakness-verdict[data-verdict="pass"] {
-  /* inherits from .weakness-badge currentColor */
+                                                  
 }
 
 .weakness-verdict[data-verdict="fail"] {
-  /* same treatment; the bucket color carries the meaning */
+                                                            
 }
 
 .weakness-verdict[data-verdict="unknown"] {
@@ -4881,17 +4638,17 @@ kbd {
   border-bottom-style: solid;
 }
 
-/* Bucket colors. The .weakness-badge element's `color` carries the hue,
-   so the verdict chip, border, and tooltip border all stay in sync. */
+                                                                         
+                                                                       
 
 .weakness-badge.weakness-tight {
-  color: #2da567; /* green — specific, high-confidence */
+  color: #2da567;                                        
 }
 .weakness-badge.weakness-medium {
-  color: #d99a2b; /* amber — mixed */
+  color: #d99a2b;                    
 }
 .weakness-badge.weakness-loose {
-  color: #c34a4a; /* red — vague, treat with care */
+  color: #c34a4a;                                   
 }
 
 .app[data-theme="light"] .weakness-badge.weakness-tight {
@@ -4904,14 +4661,14 @@ kbd {
   color: #a83a3a;
 }
 
-/* ------------------------------------------------------------------ */
-/* Workbench live tail (desktop v1.31.x)                             */
-/*                                                                    */
-/* Side panel that opens from the topbar "Workbench" toggle and tails  */
-/* <cwd>/.zelari/radio/workbench-<id>.md on a 1.5s polling loop.      */
-/* Renders a tiny Markdown subset (H1-H3, paragraphs, lists, tables,  */
-/* fenced code) — no react-markdown dep.                              */
-/* ------------------------------------------------------------------ */
+                                                                        
+                                                                       
+                                                                        
+                                                                         
+                                                                        
+                                                                        
+                                                                        
+                                                                        
 
 .workbench-toggle {
   display: inline-flex;
@@ -4939,31 +4696,31 @@ kbd {
 
 .workbench-panel {
   position: fixed;
-  /* Start below the frameless titlebar so the panel's own × doesn't
-     overlap the OS window's minimize/maximize/close controls. Without
-     this offset a click that lands a few pixels high on the panel's
-     close button instead closes the whole app. */
+                                                                     
+                                                                       
+                                                                     
+                                                  
   top: var(--titlebar-h);
   right: 0;
   bottom: 0;
   width: 480px;
   max-width: 100vw;
-  /* `isolation: isolate` opens a
-     fresh stacking context so the fixed positioning is anchored to the
-     viewport even if an ancestor ever gains a transform / filter /
-     backdrop-filter (which would otherwise re-anchor `position: fixed`
-     to that ancestor and could let sibling content visually "leak"
-     over the panel). */
+                                  
+                                                                        
+                                                                    
+                                                                        
+                                                                    
+                        
   z-index: 1100;
   isolation: isolate;
   display: flex;
   flex-direction: column;
-  /* Near-opaque frost: the :root --bg-elev (0.72 alpha, no blur) shows
-     the chat stream right through the panel — the user reads it as
-     "the panel isn't really there". Same recipe as .sidebar (blur 28px)
-     so the panel reads as solid while staying on-theme. All child
-     blocks (head / meta / body / tabs) reference var(--bg-elev) and
-     inherit this local value. */
+                                                                        
+                                                                    
+                                                                         
+                                                                   
+                                                                     
+                                 
   --bg-elev: rgba(18, 18, 22, 0.95);
   background: var(--bg-elev);
   -webkit-backdrop-filter: blur(28px) saturate(160%);
@@ -4979,8 +4736,8 @@ kbd {
   to   { transform: translateX(0);    opacity: 1; }
 }
 
-/* Light theme: same frost recipe, near-white fill (mirrors the light
-   --bg-elevated, bumped to ~opaque so the chat never shows through). */
+                                                                      
+                                                                        
 .app[data-theme="light"] .workbench-panel {
   --bg-elev: rgba(250, 250, 252, 0.96);
 }
@@ -4991,10 +4748,10 @@ kbd {
   justify-content: space-between;
   padding: 14px 18px 10px;
   border-bottom: 1px solid var(--border);
-  /* Opaque fill — the parent panel is opaque, but the head used to inherit
-     the same `var(--bg-elev)` token with no own rule, so any future
-     change to the panel's background would silently leak into the head.
-     Pin it here so the panel reads as one solid block top-to-bottom. */
+                                                                            
+                                                                     
+                                                                         
+                                                                        
   background: var(--bg-elev);
 }
 
@@ -5051,10 +4808,10 @@ kbd {
   padding: 14px 18px 18px;
   font-size: 13px;
   line-height: 1.55;
-  /* Opaque fill — see note on .workbench-panel-head. The body is the
-     longest section of the panel; an accidental transparent body would
-     make the user see the chat stream underneath and feel like the
-     panel isn't really there. */
+                                                                      
+                                                                        
+                                                                    
+                                 
   background: var(--bg-elev);
 }
 
@@ -5148,14 +4905,14 @@ kbd {
   border-bottom: none;
 }
 
-/* ------------------------------------------------------------------ */
-/* Workbench panel: tabs + Graph view (Slice N #1)                    */
-/*                                                                    */
-/* Two tabs in the side panel — "Graph" (default, node cards in a     */
-/* grid) and "Tail" (the original markdown rendering). The panel       */
-/* header + tabs are owned by WorkbenchPanel; the inner views are     */
-/* plain block children.                                              */
-/* ------------------------------------------------------------------ */
+                                                                        
+                                                                        
+                                                                        
+                                                                        
+                                                                         
+                                                                        
+                                                                        
+                                                                        
 
 .workbench-tail {
   display: flex;
@@ -5201,7 +4958,7 @@ kbd {
   outline-offset: -2px;
 }
 
-/* Workbench panel: Plan + Tasks tabs (plan→build wiring) */
+                                                            
 
 .workbench-phase-badge {
   margin-left: 8px;
@@ -5348,7 +5105,7 @@ kbd {
   color: var(--text-muted);
 }
 
-/* KrakenGraphVisualizer — body, node grid, side detail card */
+                                                               
 
 .kraken-graph-panel {
   display: flex;
@@ -5492,7 +5249,7 @@ kbd {
   font-size: 12.5px;
   font-weight: 600;
   line-height: 1.3;
-  /* Truncate gracefully on small widths */
+                                           
   overflow: hidden;
   text-overflow: ellipsis;
   display: -webkit-box;
@@ -5509,9 +5266,9 @@ kbd {
   white-space: nowrap;
 }
 
-/* Edge overlay: SVG sitting on top of the node grid, behind the cards.
-   Cards are z-index: 1 above the SVG so the lines never cover a node
-   body; the SVG only shows in the gaps between cards. */
+                                                                        
+                                                                      
+                                                         
 .kraken-graph-edges {
   position: absolute;
   inset: 0;
@@ -5703,7 +5460,7 @@ kbd {
 
 
 
-/* --- M2 run badges (sidebar) --- */
+                                     
 .session-run-badge {
   display: inline-flex;
   align-items: center;
@@ -5723,7 +5480,7 @@ kbd {
   50% { opacity: 0.45; }
 }
 
-/* Phase groups inside workspace project tasks (plan.json phases[]). */
+                                                                       
 .live-tasks-groups {
   display: flex;
   flex-direction: column;
@@ -5754,7 +5511,7 @@ kbd {
   gap: 2px;
 }
 
-/* ── Kraken selection card (kraken_progress / kraken_metrics) ── */
+                                                                    
 .kraken-card {
   display: flex;
   flex-direction: column;
@@ -5828,7 +5585,7 @@ kbd {
   padding-top: 2px;
 }
 
-/* ── Desktop 2.0 verification status + prefs ── */
+                                                   
 .verification-card {
   display: flex;
   flex-direction: column;
@@ -5923,7 +5680,7 @@ kbd {
 .setting-help-tooltip {
   position: absolute;
   z-index: 40;
-  width: min(320px, 70vw);
+  width: min(300px, 72vw);
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border-subtle);
@@ -5935,9 +5692,9 @@ kbd {
   opacity: 0;
   visibility: hidden;
   pointer-events: none;
-  left: 50%;
+  left: -6px;
   bottom: calc(100% + 8px);
-  transform: translateX(-50%);
+  text-align: left;
 }
 
 .setting-help.is-open .setting-help-tooltip,
@@ -5947,8 +5704,34 @@ kbd {
   visibility: visible;
 }
 
+/* Measured placement (see SettingHelp.tsx): flip/drop so the tooltip is
+   never clipped by the settings scroll container. */
+.setting-help.flip-left .setting-help-tooltip {
+  left: auto;
+  right: -6px;
+}
 
-/* ===== Session sidebar: collapsible project-folder groups ===== */
+.setting-help.drop-below .setting-help-tooltip {
+  bottom: auto;
+  top: calc(100% + 8px);
+}
+
+/* ---------- Chat: scroll & long-history rendering ---------- */
+
+/* Keep wheel/scroll chaining inside the chat column. */
+.chat-scroll {
+  overscroll-behavior: contain;
+}
+
+/* Skip layout/paint of finished assistant messages far outside the viewport.
+   The streaming message is excluded so stick-to-bottom stays exact. */
+.message.assistant:not(.is-streaming) {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 180px;
+}
+
+
+                                                                    
 .session-group {
   display: flex;
   flex-direction: column;
@@ -5956,7 +5739,7 @@ kbd {
   margin-bottom: 4px;
 }
 
-/* Project memory explorer ------------------------------------------------ */
+                                                                              
 .memory-explorer {
   display: flex;
   min-height: 100%;
@@ -5978,9 +5761,25 @@ kbd {
   min-width: 0;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
-  color: var(--text);
+  /* themed input vars (never a ghost var): dark #1a1a1e / light #ffffff */
+  background: var(--input-bg);
+  color: var(--input-text);
   padding: 7px 8px;
+}
+
+.memory-search input::placeholder { color: var(--input-placeholder); }
+
+.memory-search input:focus,
+.memory-search select:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* Native option popup must follow the active theme, not the OS color-scheme */
+.memory-search select option {
+  background: var(--option-bg);
+  color: var(--option-text);
 }
 
 .memory-search input { grid-column: 1 / -1; }
@@ -5994,6 +5793,13 @@ kbd {
   cursor: pointer;
   padding: 6px 9px;
 }
+
+.memory-search button:hover:not(:disabled),
+.memory-back:hover {
+  background: var(--surface-hover);
+}
+
+.memory-search button:disabled { opacity: 0.55; cursor: default; }
 
 .memory-summary,
 .memory-empty {
@@ -6020,7 +5826,7 @@ kbd {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: color-mix(in srgb, var(--panel) 78%, transparent);
+  background: color-mix(in srgb, var(--bg-elevated) 78%, transparent);
   color: var(--text);
   cursor: pointer;
   padding: 8px;
@@ -6030,7 +5836,7 @@ kbd {
 .memory-result:hover,
 .memory-related:hover {
   border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg-elevated));
 }
 
 .memory-result-head,
@@ -6061,6 +5867,17 @@ kbd {
 .memory-state.state-superseded,
 .memory-state.state-archived { color: #d8ae68; }
 .memory-visibility { color: #8fa8ff; }
+
+/* Light theme: pale pastels tuned for white cards (contrast) */
+.app[data-theme="light"] .memory-state.state-retracted { color: #b3243c; }
+.app[data-theme="light"] .memory-state.state-superseded,
+.app[data-theme="light"] .memory-state.state-archived { color: #8a6420; }
+.app[data-theme="light"] .memory-visibility { color: #3d5acc; }
+.app[data-theme="light"] .memory-error {
+  color: #a32638;
+  border-color: rgba(196, 60, 60, 0.4);
+  background: rgba(196, 60, 60, 0.08);
+}
 
 .memory-score {
   margin-left: auto;
@@ -6182,7 +5999,7 @@ kbd {
   text-align: center;
 }
 
-/* ===== Files tree: colored icons (reference-mock palette) ===== */
+                                                                    
 .file-tree-node .file-tree-row .file-tree-icon {
   opacity: 1;
 }
@@ -6191,7 +6008,7 @@ kbd {
   opacity: 1;
 }
 
-/* ===== Tasks / Project sections: collapsible ===== */
+                                                       
 .session-todos-toggle {
   display: inline-flex;
   align-items: center;
@@ -6216,8 +6033,8 @@ kbd {
   opacity: 0.85;
 }
 
-/* ===== Reference-mock alignment layer (dark + cyan/violet glow) =====
-   Appended last on purpose: same-specificity rules here win the cascade. */
+                                                                        
+                                                                            
 
 :root {
   --bg: #050508;
@@ -6250,7 +6067,7 @@ kbd {
   --sidebar-w: 292px;
 }
 
-/* Re-assert accents on every mode (mode blocks earlier would override :root) */
+                                                                                
 .app[data-mode] {
   --accent: #00e5ff;
   --accent-2: #c084fc;
@@ -6258,7 +6075,7 @@ kbd {
   --accent-soft: rgba(0, 229, 255, 0.12);
 }
 
-/* ---------- Top bar ---------- */
+                                   
 .topbar {
   background: rgba(15, 15, 20, 0.82);
   border: 1px solid rgba(255, 255, 255, 0.06);
@@ -6305,7 +6122,7 @@ kbd {
   color: #cbd5e1;
 }
 
-/* ---------- Left sidebar (chat history) ---------- */
+                                                       
 .sidebar {
   background: linear-gradient(180deg, #0c0c12 0%, #0a0a10 100%);
   border-right: 1px solid rgba(255, 255, 255, 0.05);
@@ -6348,7 +6165,7 @@ kbd {
   font-weight: 600;
 }
 .session-label {
-  display: none; /* the project-folder group header is the section title */
+  display: none;                                                           
 }
 .session-group-head {
   padding: 8px 6px 6px;
@@ -6416,7 +6233,7 @@ kbd {
   background: rgba(255, 255, 255, 0.03);
 }
 
-/* ---------- Empty state (welcome) ---------- */
+                                                 
 .empty-state h1 {
   font-size: 40px;
   font-weight: 700;
@@ -6489,7 +6306,7 @@ kbd {
   min-width: 0;
 }
 
-/* ---------- Composer ---------- */
+                                    
 .composer {
   background: rgba(13, 13, 20, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.08);
@@ -6519,7 +6336,7 @@ kbd {
   color: #94a3b8;
 }
 
-/* ---------- Optional tools banner (Install = neon green) ---------- */
+                                                                        
 .plugin-banner {
   background: linear-gradient(rgba(15, 15, 22, 0.94), rgba(15, 15, 22, 0.94))
       padding-box,
@@ -6541,11 +6358,11 @@ kbd {
   background: rgba(34, 197, 94, 0.2);
 }
 
-/* ---------- Right rail (Files / Git) ---------- */
-/* Keep the base sizing states intact:
-   - collapsed  -> 36px vertical strip (base `.git-panel.collapsed`)
-   - <=960px    -> 160px            (base media query)
-   - expanded   -> 292px, only on wide windows (mock: ~280-300px) */
+                                                    
+                                       
+                                                                     
+                                                       
+                                                                    
 .git-panel.project-panel {
   background: linear-gradient(180deg, #0c0c12 0%, #0a0a10 100%);
   border-left: 1px solid rgba(255, 255, 255, 0.05);

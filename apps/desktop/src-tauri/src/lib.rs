@@ -1144,7 +1144,7 @@ fn set_app_config(args: SetConfigArgs) -> Result<serde_json::Value, String> {
     }
     if argv.len() == 1 {
         return Err(
-            "set_app_config requires provider, model, endpoint, thinking, verifier provider+model, verifierClear, and/or endpointClear".into(),
+            "set_app_config: nothing to update — provide at least one of provider, model, endpoint, thinking, verifier provider+model, verifierClear, or endpointClear".into(),
         );
     }
     let refs: Vec<&str> = argv.iter().map(|s| s.as_str()).collect();
@@ -2767,6 +2767,14 @@ fn spawn_headless(
     cmd.env("ZELARI_VERIFY_PACK", if verify_pack { "1" } else { "0" });
     if let Some(enabled) = verifier_review {
         cmd.env("ZELARI_VERIFIER_REVIEW", if enabled { "1" } else { "0" });
+    }
+    // Desktop ships a Memory panel: enable the SQLite memory backend for
+    // spawned runs so memories are actually captured. An explicit user
+    // opt-out in the shell environment always wins.
+    if std::env::var("ZELARI_MEMORY").unwrap_or_default() != "0"
+        && std::env::var("ZELARI_MEMORY_V2").unwrap_or_default() != "0"
+    {
+        cmd.env("ZELARI_MEMORY_V2", "1");
     }
     let experimental = desktop_experimental_flags(
         &std::env::var("ZELARI_EXPERIMENTAL").unwrap_or_default(),

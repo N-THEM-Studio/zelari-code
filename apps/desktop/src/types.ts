@@ -33,6 +33,12 @@ export interface ChatMessage {
   meta?: string;
   /** Light run stats attached when a turn finishes. */
   stats?: MessageStats;
+  /** Steering metadata (control plane §30–§35): tracks the outbound steer
+   * event ack cycle sent → accepted → applied / rejected. */
+  steer?: {
+    id: string;
+    state: "sent" | "accepted" | "applied" | "rejected";
+  };
 }
 
 export interface MessageStats {

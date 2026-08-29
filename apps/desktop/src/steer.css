@@ -1,0 +1,32 @@
+/*
+ * Steering bubbles (headless control plane §30–§35).
+ * A steer message is a user bubble with an ack lifecycle:
+ * sent → accepted → applied (or rejected). "Sent" is NOT "steered" (§24).
+ */
+
+.message.user.is-steer .user-bubble {
+  border-left: 2px solid var(--accent, #8b7cf6);
+  background: var(--accent-soft, rgba(139, 124, 246, 0.1));
+}
+
+.message.user.is-steer .user-bubble .steer-state {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted, #9a9aa5);
+}
+
+.message.user.is-steer .user-bubble .steer-state.accepted {
+  color: var(--accent, #8b7cf6);
+}
+
+.message.user.is-steer .user-bubble .steer-state.applied {
+  color: #3ecf8e;
+}
+
+.message.user.is-steer .user-bubble .steer-state.rejected {
+  color: #ff7f90;
+}

@@ -1,0 +1,720 @@
+/*
+ * Settings UI — token-based skin for the redesigned SettingsShell.
+ *
+ * Everything is scoped under `.settings-shell` so the reused child sections
+ * (MCP, Skills, SSH, Companion, Updates) get the new skin automatically.
+ * Zero hardcoded colors: local tokens reference the app tokens with safe
+ * fallbacks, and the light theme only overrides tokens.
+ */
+
+.settings-shell {
+  /* Local tokens (dark defaults — the app default look). */
+  --s-surface: rgba(24, 24, 30, 0.55);
+  --s-surface-raised: rgba(32, 32, 40, 0.65);
+  --s-surface-inset: rgba(12, 12, 16, 0.45);
+  --s-border: rgba(255, 255, 255, 0.09);
+  --s-border-strong: rgba(255, 255, 255, 0.16);
+  --s-text: rgba(238, 240, 246, 0.94);
+  --s-text-dim: rgba(190, 194, 208, 0.72);
+  --s-text-faint: rgba(150, 154, 170, 0.55);
+  --s-hover: rgba(255, 255, 255, 0.06);
+  --s-active: rgba(255, 255, 255, 0.1);
+  --s-accent: var(--accent, #8ea6ff);
+  --s-accent-soft: rgba(142, 166, 255, 0.16);
+  --s-accent-text: #c9d6ff;
+  --s-ok: #57c99b;
+  --s-ok-soft: rgba(87, 201, 155, 0.14);
+  --s-warn: #e0b34d;
+  --s-warn-soft: rgba(224, 179, 77, 0.14);
+  --s-error: #e2657a;
+  --s-error-soft: rgba(226, 101, 122, 0.14);
+  --s-spring: var(--spring, cubic-bezier(0.5, 1.6, 0.4, 1));
+  --s-radius-lg: 22px;
+  --s-radius: 16px;
+  --s-radius-sm: 12px;
+  --s-pad: 20px;
+  --s-gap: 12px;
+
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  color: var(--s-text);
+}
+
+[data-theme="light"] .settings-shell {
+  --s-surface: rgba(255, 255, 255, 0.72);
+  --s-surface-raised: rgba(255, 255, 255, 0.9);
+  --s-surface-inset: rgba(235, 240, 252, 0.7);
+  --s-border: rgba(20, 34, 72, 0.12);
+  --s-border-strong: rgba(20, 34, 72, 0.22);
+  --s-text: #1d2540;
+  --s-text-dim: rgba(35, 45, 75, 0.78);
+  --s-text-faint: rgba(35, 45, 75, 0.55);
+  --s-hover: rgba(20, 34, 72, 0.06);
+  --s-active: rgba(20, 34, 72, 0.1);
+  --s-accent-soft: rgba(64, 96, 220, 0.14);
+  --s-accent-text: #2d4bb4;
+  --s-ok-soft: rgba(24, 138, 100, 0.14);
+  --s-warn-soft: rgba(178, 130, 20, 0.16);
+  --s-error-soft: rgba(198, 50, 76, 0.13);
+}
+
+/* ---------- Layout ---------- */
+
+.settings-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 24px 0;
+}
+
+.settings-header h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  color: var(--s-text);
+}
+
+.settings-header-refresh {
+  margin-left: auto;
+}
+
+.settings-frame {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  gap: var(--s-gap);
+  padding: 12px 24px 24px;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px;
+  border-radius: var(--s-radius-lg);
+  border: 1px solid var(--s-border);
+  background: var(--s-surface);
+  backdrop-filter: blur(22px);
+  overflow-y: auto;
+}
+
+.settings-nav-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--s-radius-sm);
+  background: transparent;
+  color: var(--s-text-dim);
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.22s var(--s-spring), color 0.22s var(--s-spring),
+    border-color 0.22s var(--s-spring), transform 0.22s var(--s-spring);
+}
+
+.settings-nav-item:hover {
+  background: var(--s-hover);
+  color: var(--s-text);
+}
+
+.settings-nav-item:active {
+  transform: scale(0.98);
+}
+
+.settings-nav-item.active {
+  background: var(--s-accent-soft);
+  border-color: var(--s-border-strong);
+  color: var(--s-accent-text);
+}
+
+.settings-nav-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.settings-nav-hint {
+  padding-left: 25px;
+  font-size: 10.5px;
+  color: var(--s-text-faint);
+}
+
+.settings-tab-icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.settings-content {
+  min-height: 0;
+  overflow-y: auto;
+  /* Absolutely-positioned tooltips must not create a horizontal scrollbar. */
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-gap);
+  padding-right: 4px;
+}
+
+.settings-section-head {
+  padding: 4px 4px 8px;
+}
+
+.settings-section-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  color: var(--s-text);
+}
+
+.settings-section-head p {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--s-text-dim);
+}
+
+/* ---------- Cards ---------- */
+
+.settings-shell .settings-card,
+.s-card {
+  padding: var(--s-pad);
+  border-radius: var(--s-radius);
+  border: 1px solid var(--s-border);
+  background: var(--s-surface);
+  backdrop-filter: blur(22px);
+}
+
+.s-card-title {
+  margin: 0 0 2px;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--s-text);
+}
+
+.s-card-desc {
+  margin: 0 0 14px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--s-text-dim);
+}
+
+.s-card > .settings-subhead {
+  margin: 18px 0 8px;
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--s-text-faint);
+}
+
+.s-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ---------- Rows & fields ---------- */
+
+.s-row {
+  display: grid;
+  grid-template-columns: minmax(140px, 200px) minmax(0, 1fr) 28px;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 12px;
+  border-radius: var(--s-radius-sm);
+  transition: background 0.2s ease;
+}
+
+.s-row:hover {
+  background: var(--s-hover);
+}
+
+.s-row.stack {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.s-row-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--s-text);
+}
+
+.s-row-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--s-text-faint);
+}
+
+.s-row-control {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* Inputs (shared skin for native + custom) */
+.settings-shell select,
+.settings-shell input:not([type="checkbox"]):not([type="radio"]),
+.settings-shell textarea,
+.s-input,
+.s-select {
+  padding: 8px 11px;
+  border-radius: var(--s-radius-sm);
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-inset);
+  color: var(--s-text);
+  font-size: 12.5px;
+  font-family: inherit;
+  min-width: 0;
+  transition: border-color 0.22s var(--s-spring), box-shadow 0.22s var(--s-spring),
+    background 0.22s ease;
+}
+
+.settings-shell select,
+.s-select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%239aa2b8' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  padding-right: 30px;
+  cursor: pointer;
+}
+
+.settings-shell select:hover,
+.settings-shell input:not([type="checkbox"]):not([type="radio"]):hover,
+.settings-shell textarea:hover {
+  border-color: var(--s-border-strong);
+}
+
+.settings-shell select:focus,
+.settings-shell input:not([type="checkbox"]):not([type="radio"]):focus,
+.settings-shell textarea:focus,
+.s-input:focus,
+.s-select:focus {
+  outline: none;
+  border-color: var(--s-accent);
+  box-shadow: 0 0 0 3px var(--s-accent-soft);
+}
+
+.settings-shell select option {
+  /* follow active theme instead of hardcoded dark */
+  background: var(--option-bg);
+  color: var(--option-text);
+}
+
+.settings-shell .field,
+.settings-shell .kv,
+.settings-shell .muted {
+  color: var(--s-text-dim);
+}
+
+.settings-shell .field span,
+.settings-shell .field label {
+  color: var(--s-text);
+}
+
+.settings-shell .ok-inline {
+  color: var(--s-ok);
+}
+
+.settings-shell .warn {
+  color: var(--s-warn);
+}
+
+.settings-shell code {
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: var(--s-surface-inset);
+  border: 1px solid var(--s-border);
+  font-size: 11px;
+}
+
+.settings-shell kbd {
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--s-border-strong);
+  background: var(--s-surface-inset);
+  font-size: 10.5px;
+  font-family: ui-monospace, monospace;
+}
+
+.settings-shell .kv {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr);
+  gap: 8px 16px;
+  margin: 0;
+  font-size: 12px;
+}
+
+.settings-shell .kv dt {
+  color: var(--s-text-faint);
+}
+
+.settings-shell .kv dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--s-text);
+}
+
+/* ---------- Toggle ---------- */
+
+.s-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  width: 38px;
+  height: 22px;
+  flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--s-border-strong);
+  background: var(--s-surface-inset);
+  cursor: pointer;
+  transition: background 0.25s var(--s-spring), border-color 0.25s ease;
+}
+
+.s-toggle::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--s-text-dim);
+  transition: transform 0.25s var(--s-spring), background 0.25s ease;
+}
+
+.s-toggle.on {
+  background: var(--s-accent-soft);
+  border-color: var(--s-accent);
+}
+
+.s-toggle.on::after {
+  transform: translateX(16px);
+  background: var(--s-accent);
+}
+
+.s-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ---------- Status pill ---------- */
+
+.s-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.s-pill::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.s-pill.ok {
+  color: var(--s-ok);
+  background: var(--s-ok-soft);
+  border-color: rgba(87, 201, 155, 0.35);
+}
+
+.s-pill.warn {
+  color: var(--s-warn);
+  background: var(--s-warn-soft);
+  border-color: rgba(224, 179, 77, 0.35);
+}
+
+.s-pill.neutral {
+  color: var(--s-text-faint);
+  background: var(--s-hover);
+  border-color: var(--s-border);
+}
+
+/* ---------- Provider grid ---------- */
+
+.s-provider-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.s-provider-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  border-radius: var(--s-radius-sm);
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-inset);
+  text-align: left;
+  cursor: pointer;
+  color: var(--s-text);
+  transition: border-color 0.22s var(--s-spring), background 0.22s ease,
+    transform 0.22s var(--s-spring), box-shadow 0.22s ease;
+}
+
+.s-provider-card:hover {
+  border-color: var(--s-border-strong);
+  background: var(--s-hover);
+}
+
+.s-provider-card:active {
+  transform: scale(0.985);
+}
+
+.s-provider-card.active {
+  border-color: var(--s-accent);
+  background: var(--s-accent-soft);
+  box-shadow: 0 0 0 3px var(--s-accent-soft);
+}
+
+.s-provider-name {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.s-provider-model {
+  font-size: 10.5px;
+  color: var(--s-text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.s-busy-dot {
+  width: 12px;
+  height: 12px;
+  flex: none;
+  border-radius: 50%;
+  border: 2px solid var(--s-border-strong);
+  border-top-color: var(--s-accent);
+  animation: s-spin 0.7s linear infinite;
+}
+
+@keyframes s-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* ---------- OAuth stepper ---------- */
+
+.s-steps {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.s-step {
+  flex: 1;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-inset);
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--s-text-faint);
+  text-align: center;
+  transition: color 0.25s ease, border-color 0.25s ease, background 0.25s ease;
+}
+
+.s-step.current {
+  color: var(--s-accent-text);
+  border-color: var(--s-accent);
+  background: var(--s-accent-soft);
+}
+
+.s-step.done {
+  color: var(--s-ok);
+  border-color: rgba(87, 201, 155, 0.4);
+  background: var(--s-ok-soft);
+}
+
+.s-oauth-link {
+  margin: 8px 0;
+  font-size: 11.5px;
+  color: var(--s-text-dim);
+  overflow-wrap: anywhere;
+}
+
+.s-oauth-link a {
+  color: var(--s-accent-text);
+}
+
+/* ---------- Toasts ---------- */
+
+.s-toast-host {
+  position: absolute;
+  right: 28px;
+  bottom: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.s-toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 240px;
+  max-width: 380px;
+  padding: 11px 13px;
+  border-radius: var(--s-radius-sm);
+  border: 1px solid var(--s-border-strong);
+  background: var(--s-surface-raised);
+  backdrop-filter: blur(24px);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.35);
+  pointer-events: auto;
+  animation: s-toast-in 0.32s var(--s-spring);
+}
+
+@keyframes s-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.s-toast-msg {
+  flex: 1;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--s-text);
+}
+
+.s-toast.ok .s-toast-msg {
+  color: var(--s-ok);
+}
+
+.s-toast.error .s-toast-msg {
+  color: var(--s-error);
+}
+
+.s-toast-detail {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--s-surface-inset);
+  font-size: 10.5px;
+  font-family: ui-monospace, monospace;
+  color: var(--s-text-dim);
+  max-height: 88px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+
+.s-toast-close {
+  flex: none;
+  padding: 2px 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--s-text-faint);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.s-toast-close:hover {
+  background: var(--s-hover);
+  color: var(--s-text);
+}
+
+/* ---------- Stack (child sections) ---------- */
+
+.settings-shell .settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-gap);
+}
+
+.settings-shell .settings-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.settings-shell .settings-actions.inline {
+  margin-top: 8px;
+}
+
+.settings-shell .settings-row .field,
+.settings-shell .settings-card-inner {
+  min-width: 0;
+}
+
+.settings-shell .theme-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border-radius: 999px;
+  border: 1px solid var(--s-border);
+  background: var(--s-surface-inset);
+}
+
+.settings-shell .theme-toggle button {
+  padding: 6px 16px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--s-text-dim);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.25s var(--s-spring), color 0.25s ease;
+}
+
+.settings-shell .theme-toggle button.active {
+  background: var(--s-accent-soft);
+  color: var(--s-accent-text);
+}
+
+.settings-shell .theme-toggle button:hover:not(.active) {
+  background: var(--s-hover);
+  color: var(--s-text);
+}
+
+@media (max-width: 860px) {
+  .settings-frame {
+    grid-template-columns: 1fr;
+  }
+  .settings-nav {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+  .settings-nav-hint {
+    display: none;
+  }
+}

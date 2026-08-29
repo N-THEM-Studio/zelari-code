@@ -161,7 +161,15 @@ export function MemoryExplorer({ cwd, refreshKey = 0, onStatus }: Props) {
         </div>
       ) : null}
       {error ? <div className="memory-error">{error}</div> : null}
-      {!loading && !error && results.length === 0 ? <div className="memory-empty">No matching memories.</div> : null}
+      {!loading && !error && results.length === 0 ? (
+        <div className="memory-empty">
+          {stats && stats.nodes > 0
+            ? query.trim() || kind !== "all"
+              ? "No matching memories — try a different query or kind."
+              : `${stats.nodes} memories stored — type a query to search them.`
+            : "Memory is empty for this project. Memories (decisions, findings, failures) are captured automatically while the agent works — run a task and check back."}
+        </div>
+      ) : null}
       <div className="memory-results">
         {results.map(({ node, score }) => (
           <button key={node.id} type="button" className="memory-result" onClick={() => void openDetail(node.id)}>
