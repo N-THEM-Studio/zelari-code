@@ -5,6 +5,14 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.2] - 2026-08-29
+
+Unblocks npm publish after 2.16.1 CI failed on a flaky memory test (2.16.1 was never published).
+
+### Fixed
+
+- Concurrent SQLite memory WAL test: single-digit ids (`0`–`9`) were dropped by `memoryTokens` (min length 2), so exact-content dedupe collapsed writers and Linux CI saw 26/30 nodes.
+
 ## [2.16.1] - 2026-08-29
 
 Patch for the Desktop 2.16.0 harness sidecar handshake.
