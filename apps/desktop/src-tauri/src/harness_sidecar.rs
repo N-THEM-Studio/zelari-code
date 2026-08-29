@@ -57,6 +57,35 @@ use tauri::{AppHandle, Emitter};
 /// src/cli/headless/protocol.ts). Verified on the boot line.
 pub(crate) const HEADLESS_PROTOCOL_VERSION: u32 = 2;
 
+/// Args after the JS entry. Without `--serve-harness` the child boots the
+/// Ink TUI and stdout starts with PluginGate ("Checking for optional tool
+/// plugins…") instead of `protocol_info` — the 2.16.0 Desktop regression.
+pub(crate) const SIDECAR_CLI_ARGS: &[&str] = &["--serve-harness"];
+
+/// One stdout line during the boot handshake.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BootLine {
+    ProtocolInfo(u32),
+    /// Blank / whitespace-only — keep reading.
+    Skip,
+    /// Non-empty line that is not a `protocol_info` JSON object.
+    Wrong(String),
+}
+
+/// Classify one stdout line as the harness boot handshake.
+pub(crate) fn interpret_boot_line(raw: &str) -> BootLine {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return BootLine::Skip;
+    }
+    match serde_json::from_str::<Value>(trimmed) {
+        Ok(v) if v.get("type").and_then(|t| t.as_str()) == Some("protocol_info") => {
+            BootLine::ProtocolInfo(v.get("version").and_then(|x| x.as_u64()).unwrap_or(2) as u32)
+        }
+        _ => BootLine::Wrong(trimmed.chars().take(200).collect()),
+    }
+}
+
 /// Bounded wait for the `protocol_info` boot line after spawn.
 const BOOT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Bounded graceful-drain wait at app close (proof writes flush server-side)
@@ -146,9 +175,10 @@ impl InFlight {
                 self.detach();
                 Err(err)
             }
-            Err(RecvTimeoutError::Disconnected) => {
-                Err(HarnessError::new("sidecar_died", "harness sidecar exited while the request was in flight"))
-            }
+            Err(RecvTimeoutError::Disconnected) => Err(HarnessError::new(
+                "sidecar_died",
+                "harness sidecar exited while the request was in flight",
+            )),
         }
     }
 
@@ -258,6 +288,7 @@ impl HarnessSidecar {
         let node = crate::find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
         let cli = crate::resolve_cli_entry()?;
         let mut cmd = crate::spawn_cli_base(&node, &cli, None);
+        cmd.args(SIDECAR_CLI_ARGS);
         // The transport owns stdin: NDJSON requests flow in here (the base
         // helper nulls stdin for one-shot captures — override for streaming).
         cmd.stdin(Stdio::piped());
@@ -273,6 +304,10 @@ impl HarnessSidecar {
         //   still forwarded as the `strictDone` turn field (best effort —
         //   the gates read env, so this is sidecar-granular; documented).
         cmd.env("ZELARI_MEMORY_V2", "1");
+        // Belt-and-suspenders with `--serve-harness`: the CLI also keys off
+        // this env so a stale Desktop binary that omits the flag still
+        // starts the NDJSON server instead of the TUI.
+        cmd.env("ZELARI_SERVE_HARNESS", "1");
         cmd.env("ZELARI_STRICT_DONE", "0");
         cmd.env("ZELARI_MISSION_STRICT", "1");
         cmd.env("ZELARI_VERIFY_PACK", "0");
@@ -648,7 +683,10 @@ impl HarnessSidecar {
         .ok_or_else(|| format!("no active run: {run_id}"))?;
         let kind = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
         let res = if kind == "cancel" {
-            let reason = event.get("reason").and_then(|r| r.as_str()).unwrap_or("user");
+            let reason = event
+                .get("reason")
+                .and_then(|r| r.as_str())
+                .unwrap_or("user");
             self.roundtrip(
                 "session.cancel",
                 json!({ "sessionId": session, "reason": reason }),
@@ -759,8 +797,10 @@ impl HarnessSidecar {
                 return;
             }
             let sole_awaiting = {
-                let mut awaiting =
-                    self.awaiting_spine.lock().unwrap_or_else(|e| e.into_inner());
+                let mut awaiting = self
+                    .awaiting_spine
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 if awaiting.len() == 1 {
                     Some(awaiting.remove(0))
                 } else {
@@ -850,23 +890,29 @@ fn supervise_child(
 ) {
     let mut reader = BufReader::new(stdout);
 
-    // Phase 1 — boot handshake: the FIRST stdout line must be protocol_info.
-    let mut first = String::new();
-    let boot = match reader.read_line(&mut first) {
-        Ok(0) => Err("harness sidecar exited before handshake".to_string()),
-        Ok(_) => match serde_json::from_str::<Value>(first.trim()) {
-            Ok(v) if v.get("type").and_then(|t| t.as_str()) == Some("protocol_info") => Ok(
-                v.get("version").and_then(|x| x.as_u64()).unwrap_or(2) as u32,
-            ),
-            _ => Err(format!(
-                "harness sidecar boot line is not protocol_info: {}",
-                first.trim().chars().take(200).collect::<String>()
-            )),
-        },
-        Err(e) => Err(format!("harness sidecar stdout read error: {e}")),
+    // Phase 1 — boot handshake: skip blank lines, then require protocol_info.
+    let mut boot_line = String::new();
+    let boot = loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break Err("harness sidecar exited before handshake".to_string()),
+            Ok(_) => match interpret_boot_line(&line) {
+                BootLine::Skip => continue,
+                BootLine::ProtocolInfo(version) => {
+                    boot_line = line;
+                    break Ok(version);
+                }
+                BootLine::Wrong(preview) => {
+                    break Err(format!(
+                        "harness sidecar boot line is not protocol_info: {preview}"
+                    ));
+                }
+            },
+            Err(e) => break Err(format!("harness sidecar stdout read error: {e}")),
+        }
     };
     if boot.is_ok() {
-        me.dispatch_line(&proc, &first);
+        me.dispatch_line(&proc, &boot_line);
     }
     let _ = boot_tx.send(boot);
 
@@ -983,5 +1029,55 @@ fn fail_pending(
     let mut guard = pending.lock().unwrap_or_else(|e| e.into_inner());
     for (_, tx) in guard.drain() {
         let _ = tx.send(Err(HarnessError::new(code, message)));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sidecar_argv_is_serve_harness() {
+        assert_eq!(SIDECAR_CLI_ARGS, &["--serve-harness"]);
+    }
+
+    #[test]
+    fn boot_line_accepts_protocol_info() {
+        assert_eq!(
+            interpret_boot_line(r#"{"type":"protocol_info","version":2}"#),
+            BootLine::ProtocolInfo(2)
+        );
+    }
+
+    #[test]
+    fn boot_line_defaults_missing_version_to_2() {
+        assert_eq!(
+            interpret_boot_line(r#"{"type":"protocol_info"}"#),
+            BootLine::ProtocolInfo(2)
+        );
+    }
+
+    #[test]
+    fn boot_line_skips_blank() {
+        assert_eq!(interpret_boot_line("  \n"), BootLine::Skip);
+        assert_eq!(interpret_boot_line(""), BootLine::Skip);
+    }
+
+    #[test]
+    fn boot_line_rejects_plugin_gate_tui_frame() {
+        match interpret_boot_line("Checking for optional tool plugins…") {
+            BootLine::Wrong(preview) => {
+                assert!(preview.contains("Checking for optional tool plugins"));
+            }
+            other => panic!("expected Wrong, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn boot_line_rejects_other_json() {
+        match interpret_boot_line(r#"{"type":"log","message":"hi"}"#) {
+            BootLine::Wrong(preview) => assert!(preview.contains("log")),
+            other => panic!("expected Wrong, got {other:?}"),
+        }
     }
 }

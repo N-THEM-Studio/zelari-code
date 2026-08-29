@@ -159,8 +159,11 @@ export function PluginGate({ cwd, children }: PluginGateProps): React.ReactEleme
     [current, cwd, advance],
   );
 
-  // Done (or skipped) → render the app.
-  if (phase === 'done') {
+  // Done (or skipped) → render the app. skipGate must win on the FIRST
+  // paint: initial phase is 'detecting', and a piped Desktop sidecar
+  // would otherwise emit "Checking for optional tool plugins…" as stdout
+  // line 1 (breaking the protocol_info handshake).
+  if (skipGate || phase === 'done') {
     return <>{children}</>;
   }
 

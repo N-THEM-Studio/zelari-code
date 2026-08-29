@@ -68,6 +68,7 @@ import {
   upsertSshTarget,
   type SshTargetInput,
 } from "./ssh/targets.js";
+import { shouldStartHarnessServer } from "./serve/detectHarnessMode.js";
 
 /**
  * Bundled CLI version. Derived from <pkg>/package.json at runtime so it
@@ -320,7 +321,16 @@ function pickRootComponent(): {
   // host discipline as --serve: no TUI, no preflight, transport owns
   // stdin/stdout; the dynamic import happens in main() so the serve
   // promise is the last thing keeping the process alive.
-  if (argv.includes("--serve-harness")) {
+  // Also recovers Desktop 2.16.0, which spawned the sidecar with piped
+  // stdio and no `--serve-harness` (PluginGate then polluted the boot line).
+  if (
+    shouldStartHarnessServer({
+      argv,
+      env: process.env,
+      stdinIsTTY: process.stdin.isTTY,
+      stdoutIsTTY: process.stdout.isTTY,
+    })
+  ) {
     return { kind: "harness-server" };
   }
   // URL → skill draft (Desktop skill form). MUST run before any Ink path —
