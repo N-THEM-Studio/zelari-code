@@ -5,6 +5,28 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.15.0] - 2026-08-29
+
+Desktop experience release: the headless control plane reaches the chat UI.
+
+### Added
+
+- **In-run steering (Desktop)** - the composer stays live while an agent/council run is in flight on a protocol-v2 CLI: submitting sends a `steer` control event instead of queuing a new task. Steer bubbles track the ack cycle (`sent → accepted → applied`, or `rejected`) and never claim success before `control_applied` (§24). Capability-gated on `protocol_info`: old CLIs keep the previous disabled-composer behaviour.
+- **Follow-up handoff (Desktop)** - steers that arrive after the run ends are surfaced by the CLI as `follow_up_queued`; the UI shows the queued text in chat and prefills the composer (never overwriting what the user is typing).
+- **Memory on by default in Desktop runs** - `run_task` now sets `ZELARI_MEMORY_V2=1` for spawned CLI children (explicit user opt-out `ZELARI_MEMORY=0`/`ZELARI_MEMORY_V2=0` still wins), so the Memory panel finally reads a live archive instead of a permanently empty store. Empty-states differentiate "store empty" vs "type a query" vs "no matches".
+
+### Changed
+
+- **Settings redesign (Desktop)** - 48 → 12 files: six focused sections (General, Models & Providers, Agents, Extensions, Connections, System), autosave with per-control busy/toast feedback, shared primitives (`SettingsCard`, `SettingsRow`, `Toggle`, `SelectInput`, `StatusPill`), token-based `settings.css` with complete light theme, `Esc` closes and `Ctrl/Cmd+,` opens settings. Provider/agent prefs now save through granular callbacks instead of a global Save button.
+- **Chat performance (Desktop)** - `content-visibility: auto` on concluded assistant messages and `overscroll-behavior: contain` on the chat column.
+
+### Fixed
+
+- Settings layout: broken flex chain (`app-settings-body`) left sections unscrollable and clipped; header spacing; stale dark-nav override beating the new skin.
+- Settings tooltips near viewport edges were clipped; placement is now measured (`flip-left` / `drop-below`).
+- Light theme: memory panel selects rendered white-on-white (missing `--panel` token, unwired `--option-*` vars); option popups now follow the active theme everywhere.
+- `--set-config` / `set_app_config` error message now says "provide at least one of …" instead of implying all flags are required.
+
 ## [2.14.0] - 2026-08-27
 
 Releases B, C and D of the authority &amp; verification roadmap: policy loading
@@ -1686,6 +1708,16 @@ End-to-end against MiniMax-M3 (the model these failures were first reported on):
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [2.10.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [minor] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
