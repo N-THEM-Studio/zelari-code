@@ -219,7 +219,7 @@ async function shutdown(): Promise<void> {
  * these print to stdout and exit, leaving the TTY untouched.
  */
 function pickRootComponent(): {
-  kind: "wizard" | "app" | "headless" | "done" | "serve";
+  kind: "wizard" | "app" | "headless" | "done" | "serve" | "harness-server";
   element?: React.ReactElement;
   headlessOpts?: Parameters<typeof runHeadless>[0];
   serveOpts?: import("./companion/serve.js").ServeOptions;
@@ -315,6 +315,13 @@ function pickRootComponent(): {
     // promise is the last thing keeping the process alive.
     const { parseServeFlags } = require("./companion/serve.js") as typeof import("./companion/serve.js");
     return { kind: "serve", serveOpts: parseServeFlags(argv) ?? {} };
+  }
+  // t29 (Pilastro B): long-lived harness kernel over stdio NDJSON. Same
+  // host discipline as --serve: no TUI, no preflight, transport owns
+  // stdin/stdout; the dynamic import happens in main() so the serve
+  // promise is the last thing keeping the process alive.
+  if (argv.includes("--serve-harness")) {
+    return { kind: "harness-server" };
   }
   // URL → skill draft (Desktop skill form). MUST run before any Ink path —
   // Desktop pipes stdin (no TTY); mounting the TUI throws "Raw mode is not supported".
@@ -1160,6 +1167,22 @@ function main() {
         // eslint-disable-next-line no-console
         console.error(
           `[zelari-code serve] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      });
+    return;
+  }
+
+  // t29: long-lived harness kernel (--serve-harness). Host pre-flight is
+  // skipped like --serve — a missing git/bash must not kill the server.
+  if (picked.kind === "harness-server") {
+    void import("./serve/harnessServer.js")
+      .then(({ runHarnessServer }) => runHarnessServer())
+      .then(() => process.exit(0))
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[zelari-code --serve-harness] ${err instanceof Error ? err.message : String(err)}`,
         );
         process.exit(1);
       });
