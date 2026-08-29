@@ -5,6 +5,16 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.16.1] - 2026-08-29
+
+Patch for the Desktop 2.16.0 harness sidecar handshake.
+
+### Fixed
+
+- **Desktop harness sidecar** — spawn now passes `--serve-harness` (and `ZELARI_SERVE_HARNESS=1`). 2.16.0 launched the interactive TUI instead, so the first stdout line was PluginGate's "Checking for optional tool plugins…" and the handshake failed with `harness sidecar unavailable`.
+- **CLI sidecar recovery** — empty-argv + Desktop sidecar env fingerprint (piped stdio, `ANATHEMA_DEV` + `ZELARI_SKIP_PREFLIGHT` + `ZELARI_MEMORY_V2`) starts the NDJSON server even without the flag, so an already-installed 2.16.0 Desktop works after updating the CLI.
+- **PluginGate first paint** — `skipGate` no longer emits the detecting spinner on the first Ink frame (piped / non-TTY).
+
 ## [2.16.0] - 2026-08-29
 
 Kernel hardening release (HARNESS-10): fail-closed autonomous runs, an OS-level jail choke-point around process tools, and a single long-lived Harness App Server.
