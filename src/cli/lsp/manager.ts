@@ -6,6 +6,20 @@
  * session. Documents are opened/synced on demand. All operations are
  * best-effort: a missing server binary, a spawn failure, or a request
  * timeout resolves to an empty/neutral result so the tools degrade cleanly.
+ *
+ * v2.17 (t28, Pilastro A) — IN/OUT-OF-JAIL DECLARATION: language servers
+ * here are deliberately OUT of the osJail surface. They are persistent,
+ * session-lifetime processes spawned via `child_process.spawn` directly
+ * (this file) — they do NOT pass through safety/osJail.spawnJailed, they
+ * run with the inherited environment, and they are not covered by the
+ * scripts/verify-os-jail.mjs grep gate. Rationale: an OS jail (bwrap/
+ * seatbelt wrappers) is designed for short-lived, per-invocation children;
+ * a long-lived LSP server needs IPC stability, workspace-wide watchers and
+ * node_modules across the tree, and a jailed spawn would break navigation
+ * without adding real containment for a process that only READS the
+ * workspace. This is a documented residual risk of t28, not an oversight —
+ * revisiting it (e.g. landlock-style filesystem-only restrictions for LSP
+ * servers) is future work.
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -130,6 +144,8 @@ export class LspManager implements LspProvider {
 
     let entry: ServerEntry | null = null;
     try {
+      // OUT-OF-JAIL (t28): this direct spawn is documented above — LSP
+      // servers never pass through safety/osJail.spawnJailed.
       const child = this.spawnImpl(cmd.command, cmd.args, {
         cwd: this.cwd,
       }) as ChildProcessWithoutNullStreams;

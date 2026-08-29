@@ -17,16 +17,25 @@
  *  - the shell blocklist still runs on the joined program+argv as
  *    defense-in-depth against destructive payloads.
  *
+ * v2.17 (t28, Pilastro A): the spawn goes through the osJail choke-point
+ * {@link spawnJailed} — NO direct child_process spawn remains on this path
+ * (grep-gated by scripts/verify-os-jail.mjs). Under the active jail the
+ * child gets an allowlisted env only; a missing backend with
+ * ZELARI_OS_JAIL=required DENIES the tool (typed `[jail]` error) and with
+ * `advisory` runs unjailed with a visible warning on the result. The
+ * network posture comes from the SAME resourceClaims decision as the
+ * permission layer (hosts whose claim resolved to `allow`).
+ *
  * Windows note: direct spawn like the bash tool's win32 branch — plain .exe
  * binaries on PATH work; `.cmd`/`.bat` shims may need the full path (no
  * shell indirection exists here to resolve them).
  */
 
-import { spawn } from 'node:child_process';
 import { z } from 'zod';
-import { typedErr, typedOk, type ToolDefinition } from '@zelari/core/harness/tools/toolTypes';
+import { typedErr, typedOk, type ToolDefinition, type ToolResultMeta } from '@zelari/core/harness/tools/toolTypes';
 import { findBlockedReason } from '../safety/shellBlocklist.js';
 import { resolveSandboxedPath, SandboxViolationError } from '../safety/sandboxPath.js';
+import { buildJailSpec, networkSpecFromClaimHosts, spawnJailed, type JailNetwork } from '../safety/osJail.js';
 
 export const execProcessInputSchema = z.object({
   /** Program to execute: bare name resolved via PATH, or an absolute path. */
@@ -52,7 +61,22 @@ export interface ExecProcessResult {
 /** Per-stream output cap — same budget as the bash tool. */
 const MAX_STREAM_CHARS = 1024 * 1024;
 
-export function createExecProcessTool(root: string): ToolDefinition<ExecProcessInput, ExecProcessResult> {
+export interface ExecProcessToolOptions {
+  /**
+   * t28: resolve the JailSpec network posture for THIS invocation from the
+   * SAME layered claims engine the permission wrapper uses (no second
+   * policy engine). Omitted ⇒ conservative deny.
+   */
+  resolveNetwork?: (args: ExecProcessInput) => JailNetwork;
+}
+
+export function createExecProcessTool(
+  root: string,
+  opts: ExecProcessToolOptions = {},
+): ToolDefinition<ExecProcessInput, ExecProcessResult> {
+  // The spec is per-registry (root is constant); only the network posture
+  // is narrowed per invocation from the claims verdict.
+  const baseSpec = buildJailSpec({ root });
   return {
     name: 'exec_process',
     description:
@@ -82,20 +106,30 @@ export function createExecProcessTool(root: string): ToolDefinition<ExecProcessI
       }
       return new Promise((resolve) => {
         const start = Date.now();
-        let child: ReturnType<typeof spawn>;
-        try {
-          // Direct spawn, shell:false — argv array reaches the OS untouched.
-          child = spawn(input.program, argv, {
-            cwd,
-            signal: ctx?.signal,
-            shell: false,
-            env: { ...process.env, CI: process.env.CI ?? '1' },
-            stdio: ['ignore', 'pipe', 'pipe'], // non-interactive by construction
-          });
-        } catch (err) {
-          resolve(typedErr(`exec_process could not launch ${input.program}: ${err instanceof Error ? err.message : String(err)}`));
+        // v2.17 (t28): THE choke-point. Deny/notice/fail are handled below;
+        // this path never touches child_process directly.
+        const spec = { ...baseSpec, network: opts.resolveNetwork?.(input) ?? baseSpec.network };
+        const res = spawnJailed(spec, {
+          program: input.program,
+          argv,
+          cwd,
+          signal: ctx?.signal,
+          env: process.env,
+          envExtras: { CI: process.env.CI ?? '1' },
+        });
+        if (res.outcome === 'denied') {
+          resolve(typedErr(res.reason));
           return;
         }
+        if (res.outcome === 'failed') {
+          resolve(typedErr(`exec_process could not launch ${input.program}: ${res.reason}`));
+          return;
+        }
+        // Visible fail-open (advisory): the notice rides on the result meta.
+        const meta: ToolResultMeta | undefined = res.notice
+          ? { status: 'complete', warnings: [`os-jail: ${res.notice}`] }
+          : undefined;
+        const child = res.child;
         let stdout = '';
         let stderr = '';
         child.stdout?.on('data', (d: Buffer) => {
@@ -123,12 +157,15 @@ export function createExecProcessTool(root: string): ToolDefinition<ExecProcessI
         child.on('close', (code) => {
           clearTimeout(timer);
           resolve(
-            typedOk({
-              exitCode: code ?? -1,
-              stdout: stdout.slice(0, MAX_STREAM_CHARS),
-              stderr: stderr.slice(0, MAX_STREAM_CHARS),
-              durationMs: Date.now() - start,
-            }),
+            typedOk(
+              {
+                exitCode: code ?? -1,
+                stdout: stdout.slice(0, MAX_STREAM_CHARS),
+                stderr: stderr.slice(0, MAX_STREAM_CHARS),
+                durationMs: Date.now() - start,
+              },
+              meta,
+            ),
           );
         });
       });
