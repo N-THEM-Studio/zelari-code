@@ -13,6 +13,13 @@
  * reads env + the active surface registered by the host (runHeadless calls
  * setActivePolicyLoadSurface before any registry exists; TUI never does and
  * keeps the 'tui' default).
+ *
+ * v2.16 (HARNESS-10 t22): strict ALSO implies lifecycle-hook FAIL-CLOSED —
+ * in headless/mission/CI runs a hook that crashes, times out or returns
+ * garbage DENIES the tool call (reason 'hook-failed') instead of allowing
+ * it; the permissive TUI keeps fail-open allow+log.
+ * `ZELARI_HOOKS_FAILURE=fail-open|fail-closed` can override (see
+ * safety/lifecycleHooks.resolveHookFailureMode).
  */
 import type { PolicyLoadMode } from './policyEngine.js';
 

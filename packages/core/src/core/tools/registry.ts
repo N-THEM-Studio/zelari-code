@@ -178,7 +178,11 @@ export class ToolRegistry {
     return this.tools.get(name);
   }
 
-  /** v0.10.0: attach the fail-open lifecycle hook runner (null to disable). */
+  /**
+   * v0.10.0: attach the lifecycle hook runner (null to disable).
+   * v2.16 (t22): the runner's failureMode decides what a THROWING runner
+   * means — fail-closed denies the call, fail-open (default) allows it.
+   */
   setLifecycleHooks(runner: LifecycleHookRunner | null): void {
     this.lifecycleHooks = runner;
   }
@@ -247,7 +251,10 @@ export class ToolRegistry {
       sessionId: options.sessionId ?? 'default',
     };
 
-    // v0.10.0: PreToolUse lifecycle hooks — fail-open; deny blocks the tool.
+    // v0.10.0: PreToolUse lifecycle hooks — deny blocks the tool.
+    // v2.16 (t22): a THROWING runner follows the runner's failureMode:
+    // fail-closed ⇒ typedErr deny before execute; fail-open (default) ⇒ log
+    // + allow, exactly as before.
     if (this.lifecycleHooks) {
       try {
         const pre = await this.lifecycleHooks.runPreToolUse(name, parsed.data, {
@@ -259,7 +266,14 @@ export class ToolRegistry {
           return typedErr(`[hook:${pre.hookName ?? 'unknown'}] ${pre.reason ?? 'denied'}`);
         }
       } catch (hookErr) {
-        // Belt-and-suspenders: a throwing runner must never block the tool.
+        if (this.lifecycleHooks.failureMode === 'fail-closed') {
+          parentSignal?.removeEventListener('abort', onParentAbort);
+          return typedErr('[hook:unknown] hook-failed');
+        }
+        // Belt-and-suspenders (fail-open): a throwing runner never blocks the tool.
+        console.error(
+          `[hooks] PreToolUse runner threw (fail-open): ${hookErr instanceof Error ? hookErr.message : String(hookErr)}`,
+        );
       }
     }
 

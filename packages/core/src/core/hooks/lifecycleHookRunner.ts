@@ -1,10 +1,19 @@
 /**
  * LifecycleHookRunner — executes PreToolUse / PostToolUse / SessionStart /
- * SessionEnd hooks as external commands (or HTTP POSTs), FAIL-OPEN.
+ * SessionEnd hooks as external commands (or HTTP POSTs).
  *
  * Safety model (v1.32.0):
  * - A hook that crashes, times out, exits non-zero, or returns invalid JSON
- *   is logged and treated as ALLOW. Hooks must never brick the agent.
+ *   is logged and treated as ALLOW (default `failureMode: 'fail-open'`).
+ *   v2.16 (HARNESS-10 t22): `failureMode: 'fail-closed'` — used by the CLI
+ *   for strict headless/mission/CI surfaces — treats every such unreliable
+ *   outcome as an explicit DENY with reason `hook-failed` instead (same
+ *   deny shape as a hook's own decision). The mode applies to PreToolUse
+ *   AND Session hooks; the CLI layer decides it (see
+ *   src/cli/safety/lifecycleHooks.ts `resolveHookFailureMode`).
+ * - v2.17 (t27): hook commands spawn as an EXPLICIT argv with `shell: false`
+ *   on every OS (see splitHookCommandLine) — shell metacharacters in a hook
+ *   `command` are literal arguments, never re-interpreted by a shell.
  * - The ONLY way to block a tool is an explicit JSON decision
  *   `{ "decision": "deny", "reason": "..." }` on stdout / response body.
  * - Tool matching is Claude-code style: `Bash` and `bash` both match the
@@ -39,7 +48,16 @@ export interface LifecycleHookRunnerOptions {
   logger?: (msg: string) => void;
   /** Default per-hook timeout in ms (default 5000). */
   defaultTimeoutMs?: number;
+  /**
+   * v2.16 (t22): what an unreliable hook (crash/timeout/invalid JSON/deny
+   * without reason) means. 'fail-open' (default) logs and allows;
+   * 'fail-closed' denies with reason 'hook-failed'.
+   */
+  failureMode?: HookFailureMode;
 }
+
+/** How an unreliable hook outcome resolves (v2.16 t22). */
+export type HookFailureMode = 'fail-open' | 'fail-closed';
 
 const DEFAULT_TIMEOUT_MS = 5000;
 
@@ -52,17 +70,77 @@ function parseJson<T>(text: string): T | null {
 }
 
 /**
- * Execute one hook for an event. NEVER throws: any failure becomes an
- * explicit allow (fail-open) with a logged warning.
+ * v2.17 (t27): conservative command line → argv split for hook commands.
+ *
+ * Splits on whitespace; honors single/double quotes and `\"` `\'` `\\`
+ * escapes. A backslash escapes ONLY quote/backslash characters (never an
+ * arbitrary next char) so Windows paths like `C:\tools\hook.mjs` survive
+ * unquoted. There are NO shell semantics: metacharacters (`;`, `&&`, `|`,
+ * `$VAR`, `>`) are never special — they become literal argv tokens. Paired
+ * with `shell: false` in {@link LifecycleHookRunner.execCommand} the OS
+ * executes exactly `[program, ...args]`: `echo a; rm -rf /` is the program
+ * `echo` with the literal argument `a;` — the `rm` NEVER runs. Unclosed
+ * quotes are tolerated (the partial token is kept, the hook then fails and
+ * the failure mode decides the outcome). Env-prefix syntax (`FOO=1 node x`)
+ * is NOT shell-magic here: `FOO=1` would be the program name and fail —
+ * move environment into the hook script. Windows `.cmd`/`.bat` shims
+ * (`npm`, `npx`) need the full path, same limitation as exec_process.
+ */
+export function splitHookCommandLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let hasToken = false;
+  let quote: '"' | "'" | null = null;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (quote) {
+      if (ch === quote) {
+        quote = null;
+      } else if (quote === '"' && ch === '\\' && (line[i + 1] === '"' || line[i + 1] === '\\')) {
+        cur += line[i + 1];
+        i += 1;
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"' || ch === "'") {
+      quote = ch;
+      hasToken = true;
+    } else if (ch === '\\' && (line[i + 1] === '"' || line[i + 1] === "'" || line[i + 1] === '\\')) {
+      cur += line[i + 1];
+      hasToken = true;
+      i += 1;
+    } else if (/\s/.test(ch)) {
+      if (hasToken) {
+        out.push(cur);
+        cur = '';
+        hasToken = false;
+      }
+    } else {
+      cur += ch;
+      hasToken = true;
+    }
+  }
+  if (hasToken || cur.length > 0) out.push(cur);
+  return out;
+}
+
+/**
+ * Execute hooks for lifecycle events. NEVER throws: an unreliable hook
+ * (crash / timeout / invalid JSON / deny without reason) becomes an explicit
+ * allow (fail-open, default) or an explicit deny 'hook-failed' (fail-closed,
+ * t22), with a logged warning either way.
  */
 export class LifecycleHookRunner {
   private hooks: HookDefinition[] = [];
   private readonly logger: (msg: string) => void;
   private readonly defaultTimeoutMs: number;
+  /** v2.16 (t22): resolved failure mode. Default 'fail-open'. */
+  readonly failureMode: HookFailureMode;
 
   constructor(options: LifecycleHookRunnerOptions = {}) {
     this.logger = options.logger ?? ((msg) => console.error(`[hooks] ${msg}`));
     this.defaultTimeoutMs = options.defaultTimeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.failureMode = options.failureMode ?? 'fail-open';
     for (const dir of options.dirs ?? []) {
       this.loadDir(dir);
     }
@@ -107,8 +185,9 @@ export class LifecycleHookRunner {
 
   /**
    * Run matching PreToolUse hooks. Returns `{ ok: false }` ONLY when a hook
-   * explicitly denies. All other outcomes (no match, crash, timeout, invalid
-   * JSON, allow decision) return `{ ok: true }`.
+   * explicitly denies — or, in fail-closed mode (t22), when the hook runner
+   * could not produce a verdict at all. Fail-open: no match, crash, timeout,
+   * invalid JSON and allow decisions all return `{ ok: true }`.
    */
   async runPreToolUse(
     toolName: string,
@@ -159,12 +238,12 @@ export class LifecycleHookRunner {
     }
   }
 
-  /** Run matching SessionStart hooks. Fail-open; deny never throws. */
+  /** Run matching SessionStart hooks. Failure semantics per failureMode (t22). */
   async runSessionStart(ctx: { sessionId?: string; cwd?: string }): Promise<SessionHookResult> {
     return this.runSessionHooks('SessionStart', ctx);
   }
 
-  /** Run matching SessionEnd hooks. Fail-open. */
+  /** Run matching SessionEnd hooks. Failure semantics per failureMode (t22). */
   async runSessionEnd(ctx: { sessionId?: string; cwd?: string }): Promise<SessionHookResult> {
     return this.runSessionHooks('SessionEnd', ctx);
   }
@@ -192,7 +271,7 @@ export class LifecycleHookRunner {
     return { ok: true };
   }
 
-  /** Execute a single hook, swallowing every failure into an allow. */
+  /** Execute a single hook; the failure mode decides allow vs deny 'hook-failed'. */
   private async runHookSafely(
     hook: HookDefinition,
     payload: HookPayload,
@@ -204,20 +283,31 @@ export class LifecycleHookRunner {
         : await this.execCommand(hook.command ?? '', payload, timeoutMs, hook.cwd);
       const decision = parseJson<HookDecision>(raw);
       if (!decision) {
-        this.logger(`hook "${hook.name}" returned invalid JSON (fail-open): ${raw.slice(0, 200)}`);
-        return { decision: 'allow' };
+        this.logger(`hook "${hook.name}" returned invalid JSON (${this.failureMode}): ${raw.slice(0, 200)}`);
+        return this.failureDecision();
       }
       if (decision.decision === 'deny' && typeof decision.reason !== 'string') {
-        this.logger(`hook "${hook.name}" denied without reason (fail-open)`);
-        return { decision: 'allow' };
+        this.logger(`hook "${hook.name}" denied without reason (${this.failureMode})`);
+        return this.failureDecision();
       }
       return decision;
     } catch (err) {
       this.logger(
-        `hook "${hook.name}" failed (fail-open): ${err instanceof Error ? err.message : String(err)}`,
+        `hook "${hook.name}" failed (${this.failureMode}): ${err instanceof Error ? err.message : String(err)}`,
       );
-      return { decision: 'allow' };
+      return this.failureDecision();
     }
+  }
+
+  /**
+   * v2.16 (t22): resolve a hook that produced no usable verdict. Fail-open
+   * (default) allows; fail-closed maps the failure to the same shape as an
+   * explicit deny so PreToolUse/Session hook consumers block the call.
+   */
+  private failureDecision(): HookDecision {
+    return this.failureMode === 'fail-closed'
+      ? { decision: 'deny', reason: 'hook-failed' }
+      : { decision: 'allow' };
   }
 
   /** Spawn `command`, write JSON payload to stdin, read stdout until close. */
@@ -228,9 +318,19 @@ export class LifecycleHookRunner {
     cwd?: string,
   ): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      // Shell-spawn so `node script.mjs` / `deno run` both work cross-platform.
-      const child = spawn(command, {
-        shell: true,
+      // v2.17 (t27): explicit argv + `shell: false` on EVERY OS (previously
+      // `spawn(command, { shell: true })`). The command line is parsed by
+      // splitHookCommandLine (quotes yes, shell metacharacters no) so a hook
+      // command can never be re-interpreted / chained by a shell: the OS
+      // runs exactly [program, ...args]. Plain .exe binaries resolve on PATH
+      // (`node script.mjs` / `deno run` keep working cross-platform).
+      const argv = splitHookCommandLine(command);
+      if (argv.length === 0) {
+        reject(new Error('empty hook command'));
+        return;
+      }
+      const child = spawn(argv[0], argv.slice(1), {
+        shell: false,
         cwd,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true,

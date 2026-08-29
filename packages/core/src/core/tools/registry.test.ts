@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
 import { ToolRegistry } from './registry.js';
+import type { LifecycleHookRunner } from '../hooks/index.js';
 import { typedOk, type ToolDefinition } from './toolTypes.js';
 
 function def<I, O>(partial: ToolDefinition<I, O>): ToolDefinition<I, O> {
@@ -92,5 +93,57 @@ describe('ToolRegistry.invoke timeout + abort', () => {
     expect(res.ok).toBe(false);
     if (!res.ok) expect(res.error).toMatch(/aborted/);
     expect(toolSignal?.aborted).toBe(true);
+  });
+});
+
+describe('ToolRegistry.invoke × hook runner failureMode (t22)', () => {
+  function throwingHooks(failureMode: 'fail-open' | 'fail-closed'): LifecycleHookRunner {
+    return {
+      failureMode,
+      runPreToolUse: async () => {
+        throw new Error('hook runner exploded');
+      },
+    } as unknown as LifecycleHookRunner;
+  }
+
+  function countingRegistry(): { reg: ToolRegistry; executions: () => number } {
+    const reg = new ToolRegistry();
+    let executions = 0;
+    reg.register(
+      def({
+        name: 'counted',
+        description: 'counted',
+        permissions: [],
+        inputSchema: z.object({}),
+        execute: async () => {
+          executions += 1;
+          return typedOk('ran');
+        },
+      }),
+    );
+    return { reg, executions: () => executions };
+  }
+
+  it('fail-closed: throwing hook runner ⇒ typedErr deny, execute never runs', async () => {
+    const { reg, executions } = countingRegistry();
+    reg.setLifecycleHooks(throwingHooks('fail-closed'));
+    const res = await reg.invoke('counted', {});
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain('hook-failed');
+    expect(executions()).toBe(0);
+  });
+
+  it('fail-open (default): throwing hook runner ⇒ log + allow, execute runs', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { reg, executions } = countingRegistry();
+      reg.setLifecycleHooks(throwingHooks('fail-open'));
+      const res = await reg.invoke('counted', {});
+      expect(res.ok).toBe(true);
+      expect(executions()).toBe(1);
+      expect(errSpy.mock.calls.some((c) => String(c[0]).includes('fail-open'))).toBe(true);
+    } finally {
+      errSpy.mockRestore();
+    }
   });
 });

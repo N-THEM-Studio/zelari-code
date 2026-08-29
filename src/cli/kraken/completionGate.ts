@@ -89,11 +89,18 @@ const OPEN_GATE: KrakenCompletionGate = {
  * (selection verdict + last verify report); returns an open gate for PLAN
  * turns, turns without selection, and selections that produced no checks.
  * Never throws.
+ *
+ * v2.16 (t23): a BUILD turn whose registry evaluation THROWS is fail-closed:
+ * the gate returns BLOCKED (checks already read count as unknown, and
+ * unknown ≠ pass) so a broken registry can never mint a green finish.
  */
 export function evaluateKrakenCompletionGate(mode: 'plan' | 'build'): KrakenCompletionGate {
+  // PLAN turns are never gated (Fase 6 routing) — outside the try so even a
+  // broken registry cannot block a plan.
+  if (mode !== 'build') return OPEN_GATE;
+  let checks: readonly string[] = [];
   try {
-    if (mode !== 'build') return OPEN_GATE;
-    const checks = krakenRequiredChecks();
+    checks = krakenRequiredChecks();
     if (checks.length === 0) return OPEN_GATE;
     const classification = classifyKrakenChecks(checks, getKrakenCheckResults());
     return {
@@ -105,8 +112,18 @@ export function evaluateKrakenCompletionGate(mode: 'plan' | 'build'): KrakenComp
       unknownChecks: classification.unknown,
     };
   } catch {
-    // The gate must never break the turn — treat errors as open.
-    return OPEN_GATE;
+    // v2.16 (t23): fail-closed — an unevaluatable gate is never a pass
+    // (unknown ≠ pass, §23 observation integrity). Checks read so far count
+    // as unknown (the repair prompt lists them); a registry broken before
+    // any check was read still blocks with nothing passed.
+    return {
+      blocked: true,
+      selectionUsed: false,
+      total: checks.length,
+      passed: 0,
+      failedChecks: [],
+      unknownChecks: [...checks],
+    };
   }
 }
 

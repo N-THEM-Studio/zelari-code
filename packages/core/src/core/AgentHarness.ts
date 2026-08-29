@@ -35,6 +35,8 @@ import {
 import { ToolRegistry } from './tools/registry.js';
 import { classifyToolConcurrency } from './tools/concurrency.js';
 import { metaFooter } from './tools/toolTypes.js';
+// v2.16 (t24): same failure-mode vocabulary as the lifecycle hooks (t22).
+import type { HookFailureMode } from './hooks/lifecycleHookRunner.js';
 import {
   type ContextGrowthStats,
   emptyContextGrowthStats,
@@ -220,13 +222,24 @@ export interface AgentHarnessConfig {
    * consulted before EVERY toolRegistry.invoke (native tool_call deltas and
    * text-format tools alike). Returning { allowed: false } makes the harness
    * synthesize an error tool result (model-visible) so the model can pivot to
-   * verification/repair — the tool does NOT run. Guarded: a missing or
-   * throwing gate never blocks a call (degrade-and-stop).
+   * verification/repair — the tool does NOT run. Guarded: a missing gate
+   * always allows; a THROWING gate is surface-aware (see
+   * {@link AgentHarnessConfig.toolCallGateFailureMode}).
    */
   toolCallGate?: (
     toolName: string,
     args: Record<string, unknown>,
   ) => { allowed: boolean; reason?: string };
+  /**
+   * v2.16 (HARNESS-10 t24): what an unreliable gate (a throw) means.
+   * 'fail-open' (default) keeps v2.6 degrade-and-stop: the crash is logged
+   * and the call proceeds — the interactive TUI. 'fail-closed' — set by the
+   * CLI for autonomous surfaces (headless/mission; same resolver as the
+   * lifecycle hooks, src/cli/safety/lifecycleHooks.ts) — treats the crash as
+   * an explicit DENY with reason 'gate-failed' (same deny shape as a gate's
+   * own decision) so a crashing gate can never be failed open.
+   */
+  toolCallGateFailureMode?: HookFailureMode;
   maxQueuedIterations?: number;
   /**
    * Soft maximum of tool-loop iterations (observe → reason → act cycles)
@@ -505,7 +518,9 @@ export class AgentHarness {
    */
   /**
    * v2.6 Phase 3 resource seam: consult the host-owned pre-dispatch gate.
-   * Degrade-and-stop — a throwing gate NEVER blocks a tool call.
+   * v2.16 (t24): an unreliable gate is surface-aware — 'fail-open' (TUI
+   * default) logs and allows (degrade-and-stop); 'fail-closed' (autonomous
+   * runs) denies with reason 'gate-failed'.
    */
   private checkToolCallGate(
     toolName: string,
@@ -514,7 +529,14 @@ export class AgentHarness {
     if (!this.config.toolCallGate) return { allowed: true };
     try {
       return this.config.toolCallGate(toolName, args) ?? { allowed: true };
-    } catch {
+    } catch (err) {
+      if (this.config.toolCallGateFailureMode === 'fail-closed') {
+        return { allowed: false, reason: 'gate-failed' };
+      }
+      console.error(
+        `[tool-gate] gate crashed for "${toolName}" — allowing (fail-open): ` +
+          `${err instanceof Error ? err.message : String(err)}`,
+      );
       return { allowed: true };
     }
   }
