@@ -62,7 +62,7 @@ import { writeSessionTodos } from './sessionTodos.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { evaluateStrictBuildGate, strictGateEventPayload, strictGateExitCode } from './kraken/verificationBridge.js';
+import { evaluateStrictBuildGate, strictEnvOverlay, strictGateEventPayload, strictGateExitCode } from './kraken/verificationBridge.js';
 
 import { writeCompletionProofDetailed } from './kraken/completionProof.js';
 import {
@@ -97,9 +97,10 @@ import { planModeFromOpts, registerHeadlessMcp, runOneTurn, writeProofSafe } fro
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   resetTaskSpawnCount();
-  if (opts.strictDone) {
-    process.env.ZELARI_STRICT_DONE = '1';
-  }
+  // H10-fix1: strictDone/missionStrict NEVER touch process.env (not even
+  // once-per-process) — each gate site builds a per-invocation overlay via
+  // strictEnvOverlay(opts), so `--no-strict-done` (false→'0') is honored
+  // and a concurrent sidecar can never race on the real env.
 
   // === Global crash handlers (headless-only) ===
   // Without these, an uncaught exception during a tool call (e.g. write_file
@@ -233,8 +234,10 @@ async function applyHeadlessPolicyGate(opts: HeadlessOptions): Promise<number | 
 /**
  * Per-turn dispatch shared by `--headless` (one-shot process) and
  * `--serve-harness` (long-lived sidecar). Does NOT install process-fatal
- * handlers or mutate `ZELARI_STRICT_DONE` — those belong to the one-shot
- * CLI wrapper. Honors `opts.cwd` so N sidecar sessions can sit on
+ * handlers or touch `ZELARI_STRICT_DONE` — the strict knobs ride
+ * HeadlessOptions into a per-invocation env overlay (strictEnvOverlay)
+ * consumed at each gate site (runOneTurn / runHeadlessZelari). Honors
+ * `opts.cwd` so N sidecar sessions can sit on
  * different folders without `chdir`. `oneShot.policyGateDone` is set by
  * the one-shot wrapper ONLY (its gate already ran); the sidecar never
  * passes it, so the gate keeps running every turn here.
@@ -1262,12 +1265,15 @@ async function runHeadlessZelari(
     if (state.status === 'error') exitCode = exitCode || 3;
     else if (state.status === 'success') {
       // ADR-0025: missions close under the strict evidence gate by default
-      // (opt-out: ZELARI_MISSION_STRICT=0). A blocked gate never exits 0 —
+      // (opt-out: ZELARI_MISSION_STRICT=0, or the per-run --no-mission-strict /
+      // --no-strict-done overlay). A blocked gate never exits 0 —
       // the mission "success" becomes the strict exit code and the spine
       // records mission-strict-blocked instead of mission-success.
       const missionGate = await evaluateStrictBuildGate('build', {
         emit: (input) => spine.appendEvent(input),
         surface: 'mission',
+        // H10-fix1: per-invocation env overlay — never process.env.
+        env: strictEnvOverlay(opts),
         cwd: projectRoot,
       });
       const missionVerificationPayload = strictGateEventPayload(missionGate);

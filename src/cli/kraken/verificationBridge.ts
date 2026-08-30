@@ -51,20 +51,64 @@ import {
  * - `kraken` (default): ON by default (harness-hardening P0.1); explicit
  *   opt-out via `ZELARI_STRICT_DONE=0|false`.
  * - `mission`: ON by default; explicit opt-out via `ZELARI_MISSION_STRICT=0|false`.
+ *
+ * H10-fix1: `env` accepts a per-invocation snapshot (see strictEnvOverlay)
+ * so concurrent sidecar turns NEVER race on process.env — the same seam as
+ * `nativePackEnabled(env ?? process.env)` in nativeVerification.ts.
  */
 export type StrictDoneSurface = 'kraken' | 'mission';
 
-export function strictDoneEnabled(surface: StrictDoneSurface = 'kraken'): boolean {
+export function strictDoneEnabled(
+  surface: StrictDoneSurface = 'kraken',
+  env: Record<string, string | undefined> = process.env,
+): boolean {
   if (surface === 'mission') {
-    const v = process.env.ZELARI_MISSION_STRICT;
+    const v = env.ZELARI_MISSION_STRICT;
     if (v === '0' || v === 'false') return false;
     return true;
   }
   // P0.1: strict evidence gate is the default on the kraken surface too —
   // "done means verified" no longer requires an opt-in. `0|false` opts out.
-  const v = process.env.ZELARI_STRICT_DONE;
+  const v = env.ZELARI_STRICT_DONE;
   if (v === '0' || v === 'false') return false;
   return true;
+}
+
+/**
+ * H10-fix1: the per-run strict knobs carried on HeadlessOptions. Tri-state
+ * per knob — true ⇒ force on, false ⇒ force off, undefined ⇒ inherit
+ * process.env. NEVER write them into process.env per turn: the sidecar
+ * dispatches turns concurrently (serve/harnessServer), so a global write is
+ * a race (see applyKrakenTurnEnv in runHeadless.ts for the anti-pattern).
+ */
+export interface StrictDoneKnobs {
+  strictDone?: boolean;
+  missionStrict?: boolean;
+}
+
+/**
+ * Build the per-invocation env OVERLAY the strict gate evaluates against: a
+ * FRESH object layered over `base` (default process.env). `strictDone` maps
+ * true→'1' / false→'0' on BOTH keys — `false` mirrors onto
+ * ZELARI_MISSION_STRICT too, preserving the semantic the old parse-time
+ * `process.env.ZELARI_MISSION_STRICT='0'` write had, without the
+ * process-global mutation. `missionStrict` drives only the mission key
+ * (it wins over the strictDone mirror when both are set).
+ */
+export function strictEnvOverlay(
+  knobs: StrictDoneKnobs,
+  base: Record<string, string | undefined> = process.env,
+): Record<string, string | undefined> {
+  const overlay: Record<string, string | undefined> = { ...base };
+  if (knobs.strictDone !== undefined) {
+    const v = knobs.strictDone ? '1' : '0';
+    overlay.ZELARI_STRICT_DONE = v;
+    overlay.ZELARI_MISSION_STRICT = v;
+  }
+  if (knobs.missionStrict !== undefined) {
+    overlay.ZELARI_MISSION_STRICT = knobs.missionStrict ? '1' : '0';
+  }
+  return overlay;
 }
 
 export interface KrakenEvidenceContract {
@@ -402,7 +446,9 @@ export async function evaluateStrictBuildGate(
   // 2.1 T6: the native criteria pack is INDEPENDENT of Kraken selection —
   // ZELARI_VERIFY_PACK=1 evaluates the pack even on turns that never ran
   // kraken_select. Selection criteria join the same evaluation when present.
-  const strictOn = strictDoneEnabled(options.surface ?? 'kraken');
+  // H10-fix1: consult the per-invocation env overlay first (undefined ⇒
+  // process.env via the default param) — never the bare ambient env.
+  const strictOn = strictDoneEnabled(options.surface ?? 'kraken', options.env);
   const nativeOn = nativePackEnabled(options.env ?? process.env);
   const selectionAvailable = gate.selectionUsed && gate.total > 0;
   // t22: TaskContract-compiled criteria participate under the SAME switches

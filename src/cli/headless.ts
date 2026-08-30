@@ -117,6 +117,14 @@ export interface HeadlessOptions {
    */
   strictDone?: boolean;
   /**
+   * Mission-strict evidence gate (ADR-0025, `ZELARI_MISSION_STRICT`). ON by
+   * default on the mission surface; `false` opts THIS run out. Per-run
+   * overlay via strictEnvOverlay — NEVER process.env, which the concurrent
+   * sidecar cannot mutate per turn (H10-fix1).
+   * @since 2.0.0-alpha.0
+   */
+  missionStrict?: boolean;
+  /**
    * Plan + execute a Kraken task graph (F4 planner + F3 executor) instead
    * of a normal single-agent/council/zelari dispatch. Mutually exclusive
    * with `--task`. Gated by the ZELARI_KRAKEN_GRAPH kill-switch.
@@ -203,9 +211,12 @@ Options:
                              (default by --mode; recorded in the session spine header)
   --resume <sessionId>       Continue an existing 2.0 spine session (seq continues)
   --export-session <path>    Write zelari-session-export/1 JSON after the run (- = stdout)
-  --strict-done              Force the ADR-0023 evidence gate ON (ON by default since P0.1)
-                             Opt out with ZELARI_STRICT_DONE=0 (kraken) or
-                             ZELARI_MISSION_STRICT=0 (missions)
+  --strict-done              Force the ADR-0023 evidence gate ON (ON by default since P0.1);
+                             --no-strict-done opts THIS run out (per-run overlay, no process
+                             env change): ZELARI_STRICT_DONE=0 (kraken) or
+                             ZELARI_MISSION_STRICT=0 (missions) semantics
+  --mission-strict           Force the mission strict evidence gate ON for this run;
+                             --no-mission-strict opts THIS run out (ZELARI_MISSION_STRICT=0)
   --kraken-graph <goal>      Plan + execute a Kraken task graph instead of --task
                              (mutually exclusive with --task; ZELARI_KRAKEN_GRAPH=0 disables)
   --kraken-graph-file <path> Same as --kraken-graph but read from a file
@@ -259,7 +270,8 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
   let profile: string | undefined;
   let resumeSessionId: string | undefined;
   let exportSessionPath: string | undefined;
-  let strictDone = false;
+  let strictDone: boolean | undefined;
+  let missionStrict: boolean | undefined;
   let krakenGraph: string | undefined;
   // Pre-flight plan review (Slice N+3): opt-in via env, with a CLI
   // flag for symmetry. Both default to off.
@@ -470,11 +482,15 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
     } else if (arg === '--strict-done') {
       strictDone = true;
     } else if (arg === '--no-strict-done') {
-      // ADR-0025: explicit opt-out for surfaces where strict is the default
-      // (mission). Sets the same env the runtime reads, so parse and run
-      // stay in sync without a second flag plumbing path.
+      // ADR-0025 / H10-fix1: explicit per-run opt-out. Rides HeadlessOptions
+      // into the strictEnvOverlay (false→'0' on both strict keys) — the old
+      // parse-time ZELARI_MISSION_STRICT write was a process-global
+      // mutation the concurrent sidecar cannot afford.
       strictDone = false;
-      process.env.ZELARI_MISSION_STRICT = '0';
+    } else if (arg === '--mission-strict') {
+      missionStrict = true;
+    } else if (arg === '--no-mission-strict') {
+      missionStrict = false;
     } else if (arg === '--kraken-graph') {
       krakenGraph = argv[i + 1];
       i++;
@@ -536,7 +552,8 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       ...(profile ? { profile } : {}),
       ...(resumeSessionId ? { resumeSessionId } : {}),
       ...(exportSessionPath ? { exportSessionPath } : {}),
-      ...(strictDone ? { strictDone: true } : {}),
+      ...(strictDone !== undefined ? { strictDone } : {}),
+      ...(missionStrict !== undefined ? { missionStrict } : {}),
       ...(krakenGraph ? { krakenGraph } : {}),
       ...(planOnly ? { planOnly: true } : {}),
       ...(runPlan ? { runPlan } : {}),

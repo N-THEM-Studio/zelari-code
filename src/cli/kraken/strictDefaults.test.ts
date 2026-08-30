@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   evaluateStrictBuildGate,
   strictDoneEnabled,
+  strictEnvOverlay,
   type StrictDoneSurface,
 } from './verificationBridge.js';
 import {
@@ -123,7 +124,10 @@ describe('evaluateStrictBuildGate surface wiring (ADR-0025)', () => {
     await withEnv(undefined, '0', async () => {
       selectWithChecks(CHECKS);
       setKrakenCheckResults(CHECKS.map((c) => ({ check: c, status: 'pass' as const, note: 'ok (stub)' })));
-      const gate = await evaluateStrictBuildGate('build', { surface: 'mission', env: { ZELARI_VERIFY_PACK: '0' } });
+      // H10-fix1: the gate's env snapshot is authoritative (nativePackEnabled
+      // semantics) — an explicit opt-out overlay must CARRY the mission key
+      // (exactly what strictEnvOverlay({ strictDone: false }) mirrors).
+      const gate = await evaluateStrictBuildGate('build', { surface: 'mission', env: { ZELARI_VERIFY_PACK: '0', ZELARI_MISSION_STRICT: '0' } });
       expect(gate.strict).toBe(false);
       expect(gate.blocked).toBe(false); // legacy gate green + no strict overlay
     });
@@ -155,6 +159,94 @@ describe('evaluateStrictBuildGate surface wiring (ADR-0025)', () => {
       expect(gate.native).toBeNull();
       expect(gate.blocked).toBe(false); // pass with event-backed note → PASS
     });
+  });
+});
+
+describe('H10-fix1: strict knobs as a per-invocation env OVERLAY', () => {
+  it('strictDoneEnabled consults an explicit env snapshot before process.env (nativePackEnabled pattern)', async () => {
+    await withEnv(undefined, undefined, () => {
+      // Overlay wins over the ambient process env.
+      expect(strictDoneEnabled('kraken', { ZELARI_STRICT_DONE: '0' })).toBe(false);
+      expect(strictDoneEnabled('mission', { ZELARI_MISSION_STRICT: '0' })).toBe(false);
+      // Snapshot without the key falls through to the default-ON surface.
+      expect(strictDoneEnabled('kraken', {})).toBe(true);
+      expect(strictDoneEnabled('mission', {})).toBe(true);
+      // Mission never reads the kraken key and vice versa.
+      expect(strictDoneEnabled('mission', { ZELARI_STRICT_DONE: '0' })).toBe(true);
+      expect(strictDoneEnabled('kraken', { ZELARI_MISSION_STRICT: '0' })).toBe(true);
+    });
+    await withEnv('0', undefined, () => {
+      // Explicit '1' in the snapshot re-enables even when process.env says off…
+      expect(strictDoneEnabled('kraken', { ZELARI_STRICT_DONE: '1' })).toBe(true);
+      // …and an explicit snapshot is AUTHORITATIVE (nativePackEnabled(env)
+      // semantics): an omitted key means the surface default (ON), not a
+      // per-key fallback to the ambient '0'. Callers inherit process.env by
+      // SPREADING it into the snapshot — that is exactly what
+      // strictEnvOverlay(knobs) produces.
+      expect(strictDoneEnabled('kraken', {})).toBe(true);
+    });
+  });
+
+  it('kraken surface: ZELARI_STRICT_DONE=0 in the gate env opts THIS turn out (no process.env write)', async () => {
+    await withEnv(undefined, undefined, async () => {
+      selectWithChecks(CHECKS);
+      setKrakenCheckResults(CHECKS.map((c) => ({ check: c, status: 'pass' as const, note: 'ok (stub)' })));
+      const gate = await evaluateStrictBuildGate('build', {
+        env: { ZELARI_VERIFY_PACK: '0', ZELARI_STRICT_DONE: '0' },
+      });
+      expect(gate.strict).toBe(false);
+      expect(gate.evaluation).toBeNull();
+      expect(gate.blocked).toBe(false);
+    });
+  });
+
+  it('mission surface: ZELARI_MISSION_STRICT=0 in the gate env opts THIS turn out', async () => {
+    await withEnv(undefined, undefined, async () => {
+      selectWithChecks(CHECKS);
+      setKrakenCheckResults(CHECKS.map((c) => ({ check: c, status: 'pass' as const, note: 'ok (stub)' })));
+      const gate = await evaluateStrictBuildGate('build', {
+        surface: 'mission',
+        env: { ZELARI_VERIFY_PACK: '0', ZELARI_MISSION_STRICT: '0' },
+      });
+      expect(gate.strict).toBe(false);
+      expect(gate.evaluation).toBeNull();
+      expect(gate.blocked).toBe(false);
+    });
+  });
+
+  it('strictEnvOverlay maps the tri-state knobs and NEVER mutates process.env', () => {
+    const krakenBefore = process.env.ZELARI_STRICT_DONE;
+    const missionBefore = process.env.ZELARI_MISSION_STRICT;
+
+    // Omit ⇒ inherit (fresh copy of the ambient env).
+    const inherit = strictEnvOverlay({});
+    expect(inherit.ZELARI_STRICT_DONE).toBe(krakenBefore);
+    expect(inherit.ZELARI_MISSION_STRICT).toBe(missionBefore);
+
+    // false ⇒ '0' on BOTH keys — the repaired --no-strict-done semantic (it
+    // used to write ZELARI_MISSION_STRICT=0 into process.env at parse time).
+    const off = strictEnvOverlay({ strictDone: false });
+    expect(off.ZELARI_STRICT_DONE).toBe('0');
+    expect(off.ZELARI_MISSION_STRICT).toBe('0');
+
+    // true ⇒ '1' on both keys.
+    const on = strictEnvOverlay({ strictDone: true });
+    expect(on.ZELARI_STRICT_DONE).toBe('1');
+    expect(on.ZELARI_MISSION_STRICT).toBe('1');
+
+    // missionStrict drives only the mission key.
+    const missionOff = strictEnvOverlay({ missionStrict: false });
+    expect(missionOff.ZELARI_MISSION_STRICT).toBe('0');
+    expect(missionOff.ZELARI_STRICT_DONE).toBe(krakenBefore);
+
+    // Explicit missionStrict wins over the strictDone mirror on the mission key.
+    const both = strictEnvOverlay({ strictDone: true, missionStrict: false });
+    expect(both.ZELARI_STRICT_DONE).toBe('1');
+    expect(both.ZELARI_MISSION_STRICT).toBe('0');
+
+    // The ambient env is untouched by every mapping above.
+    expect(process.env.ZELARI_STRICT_DONE).toBe(krakenBefore);
+    expect(process.env.ZELARI_MISSION_STRICT).toBe(missionBefore);
   });
 });
 

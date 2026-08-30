@@ -36,7 +36,7 @@ import { createStreamScrubber } from '../utils/streamScrub.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { evaluateStrictBuildGate, strictGateEventPayload, strictGateExitCode } from '../kraken/verificationBridge.js';
+import { evaluateStrictBuildGate, strictEnvOverlay, strictGateEventPayload, strictGateExitCode } from '../kraken/verificationBridge.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { enforceRequiredProofPersistence } from '../kraken/completionProofPersist.js';
 import { nativePackEnabled } from '../kraken/nativeVerification.js';
@@ -672,6 +672,11 @@ export async function runOneTurn(
     emit: (input: import('@zelari/core/session').SessionEventInput) => spine.appendEvent(input),
   };
 
+  // H10-fix1: per-invocation env overlay for the strict knobs (strictDone /
+  // missionStrict). NEVER a process.env write — the sidecar dispatches turns
+  // concurrently (serve/harnessServer) and a global write would be a race.
+  const strictEnv = strictEnvOverlay(opts);
+
   // Fase 8 (ADR-0020 × 2.1 T6): completion gate — a BUILD turn that used
   // selection OR enabled the native criteria pack (ZELARI_VERIFY_PACK)
   // cannot cleanly finish while required checks are unresolved (fail OR
@@ -685,7 +690,7 @@ export async function runOneTurn(
     (isKrakenSelectionEnabled() || nativePackEnabled()) &&
     !planModeFromOpts(opts)
   ) {
-    const strictGate = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input), cwd });
+    const strictGate = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input), cwd, env: strictEnv });
     // 2.1 T4: opt-in advisory verifier review (dedicated model configured in
     // provider.json, or ZELARI_VERIFIER_REVIEW=1). Advisory only — it can
     // neither un-block nor block the turn; it lands in the verification.run
@@ -730,7 +735,7 @@ export async function runOneTurn(
         successfulWrites: pass.successfulWrites + repair.successfulWrites,
         emittedWrites: pass.emittedWrites + repair.emittedWrites,
       };
-      const after = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input), cwd });
+      const after = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input), cwd, env: strictEnv });
       await runAdvisoryVerifierReview(after, verifierReviewDeps).catch((): void => undefined);
       const afterPayload = strictGateEventPayload(after);
       spine.verificationRun(afterPayload);
