@@ -5,6 +5,24 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.19.0] - 2026-08-30
+
+Minor: closes the T4 thread (ADR-0032) — the budget pipeline's occupancy lands on the session spine as additive `context.projection` fields, with the first consumers (`zelari inspect` + Desktop panel) and late-binding spine holders on the headless hosts.
+
+### Added
+
+- **Budget occupancy on the spine (t51/t52)** — single `budgetNoteHandle` seam in `modelContextBuilder` (1 definition, 4 wire-ups: one-turn, council, mission, kraken-graph): every projection emits a `context.projection` note carrying the budget-side fields (`occupancy` fraction, `policy`, `limit` in chars) alongside the existing memory-side fields (`contextChars` / `returnedCount`, disjoint writers on the same subject). `SCHEMA_VERSION` stays 1.
+- **Late-binding spine holders** — headless hosts type the memory sink holder as `LateBindingSpineHolder` and, after the spine binds, flush the buffered telemetry notes (cap 32, `droppedEvents` counter) instead of silently dropping them when memory is created before the spine exists. Never auto-flushes on the TUI path.
+- **Occupancy in the consumers (t54)** — `zelari inspect` Support lens renders the last budget tail (`(last: 62% warn (limit 200k))`); Desktop `HarnessStatePanel` extracts and displays `lastOccupancy` / `lastPolicy` / `contextLimit` from the last budget record.
+
+### Fixed
+
+- **`deriveHarnessState` parses projection notes (t50)** — new never-throw `parseProjection` in the spine read-model; closes the TS2304 compile break left by the resource-gated turn and aligns the `durationMs` assert.
+
+### Tests
+
+- T4 suites: 10 files / 99 tests; `test:session` 15 files / 101. Full suite green at release: 418 files / 4105 tests passed, 1 skipped; `tsc --noEmit` clean (root + desktop).
+
 ## [2.18.1] - 2026-08-31
 
 Patch: three harness feedback fixes from the 2.18 incident postmortem (resource-gate exhaustion on a BUILD turn + provider-truncated `---TOOLS---` block). The recurring class: the harness instructing the model to do what another harness layer denies, or failing silently where the model believes it acted.
@@ -1860,6 +1878,16 @@ End-to-end against MiniMax-M3 (the model these failures were first reported on):
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [2.17.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [2.19.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
