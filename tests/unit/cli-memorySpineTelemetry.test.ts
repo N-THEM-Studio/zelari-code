@@ -5,8 +5,9 @@
  *   (a) UNIT: `spineMemoryEventNote` maps MemoryEvents to spine `note`s —
  *       `context.projection` for per-turn context projection, `memory_*`
  *       otherwise — and never throws on a degraded spine;
- *   (b) UNIT: `memorySinkFor` is the late-binding seam (events dropped until
- *       the spine handle is assigned; getter-backed holders work);
+ *   (b) UNIT: `memorySinkFor` is the late-binding seam (pre-bind events are
+ *       BUFFERED up to PRE_BIND_BUFFER_CAP and drained by
+ *       flushMemorySpineNotes; overflow counts in droppedEvents);
  *   (c) INTEGRATION: the headless --kraken-graph path (memory wired directly
  *       to the open spine) records remember+recall as spine notes with
  *       `data.subject === 'context.projection'`, and the spine log NEVER
@@ -22,7 +23,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { LegacyMemoryBackendAdapter, type MemoryEvent, type MemoryService } from '@zelari/core/memory';
 import { readSessionLog } from '@zelari/core/session';
-import { memorySinkFor, spineMemoryEventNote, type SpineNoteHandle } from '../../src/cli/memory/spineTelemetry.js';
+import {
+  flushMemorySpineNotes,
+  memorySinkFor,
+  PRE_BIND_BUFFER_CAP,
+  spineMemoryEventNote,
+  type LateBindingSpineHolder,
+  type SpineNoteHandle,
+} from '../../src/cli/memory/spineTelemetry.js';
 import { getMemoryBackend } from '../../src/cli/memory/fileBackend.js';
 import { dispatchHeadlessTurn } from '../../src/cli/runHeadless.js';
 import { handleKrakenGraph } from '../../src/cli/slashHandlers/krakenGraph.js';
@@ -98,20 +106,24 @@ describe('memorySinkFor (unit)', () => {
     returnedCount: 2,
   };
 
-  it('drops events while the holder is empty and flows them once assigned (late binding)', () => {
+  it('buffers events while the holder is empty and drains them on flush (late binding)', () => {
     const notes: Array<{ text: string; data?: Record<string, unknown> }> = [];
     const handle: SpineNoteHandle = { note: (text, data) => void notes.push({ text, data }) };
-    const holder: { current?: SpineNoteHandle } = {};
+    const holder: LateBindingSpineHolder = {};
     const sink = memorySinkFor(holder);
-    sink(recallEnd);
+    sink(recallEnd); // pre-bind → buffered, not noted
     expect(notes).toHaveLength(0);
     holder.current = handle;
-    sink(recallEnd);
+    sink(recallEnd); // post-bind → direct note
     expect(notes).toHaveLength(1);
     expect(notes[0]!.text).toBe('context.projection');
+    flushMemorySpineNotes(holder); // T4-S3 drain → the buffered event lands
+    expect(notes).toHaveLength(2);
+    expect(notes[1]!.text).toBe('context.projection');
+    expect(holder.droppedEvents).toBeUndefined();
   });
 
-  it('accepts a getter-backed holder (the TUI writerRef seam shape)', () => {
+  it('accepts a getter-backed holder (the TUI writerRef seam shape) and drains it on flush', () => {
     const notes: Array<{ text: string; data?: Record<string, unknown> }> = [];
     let attached = false; // mirrors writerRef.current?.spine attaching mid-session
     const holder = {
@@ -120,11 +132,40 @@ describe('memorySinkFor (unit)', () => {
       },
     };
     const sink = memorySinkFor(holder);
-    sink(recallEnd); // getter resolves undefined → dropped
+    sink(recallEnd); // getter resolves undefined → buffered
     attached = true;
     sink(recallEnd); // getter now resolves a handle → note flows
     expect(notes).toHaveLength(1);
     expect(notes[0]!.text).toBe('context.projection');
+    flushMemorySpineNotes(holder); // drain the buffered pre-attach event
+    expect(notes).toHaveLength(2);
+    expect(notes.map((n) => n.text)).toEqual(['context.projection', 'context.projection']);
+  });
+
+  it(`caps the pre-bind buffer at PRE_BIND_BUFFER_CAP and counts overflow in droppedEvents`, () => {
+    const notes: Array<{ text: string; data?: Record<string, unknown> }> = [];
+    const holder: LateBindingSpineHolder = {};
+    const sink = memorySinkFor(holder);
+    for (let i = 0; i < PRE_BIND_BUFFER_CAP + 3; i += 1) sink(recallEnd);
+    expect(notes).toHaveLength(0);
+    expect(holder.droppedEvents).toBe(3);
+    holder.current = { note: (text, data) => void notes.push({ text, data }) };
+    flushMemorySpineNotes(holder);
+    expect(notes).toHaveLength(PRE_BIND_BUFFER_CAP); // capped survivors only
+    flushMemorySpineNotes(holder); // second drain is a no-op (buffer empty)
+    expect(notes).toHaveLength(PRE_BIND_BUFFER_CAP);
+  });
+
+  it('flush is a no-op when the handle is unset; later it drains the kept buffer', () => {
+    const notes: Array<{ text: string; data?: Record<string, unknown> }> = [];
+    const holder: LateBindingSpineHolder = {};
+    const sink = memorySinkFor(holder);
+    sink(recallEnd);
+    flushMemorySpineNotes(holder); // handle unset → no-op, buffer kept
+    expect(notes).toHaveLength(0);
+    holder.current = { note: (text, data) => void notes.push({ text, data }) };
+    flushMemorySpineNotes(holder); // now drains
+    expect(notes).toHaveLength(1);
   });
 });
 
@@ -285,7 +326,7 @@ describe('W2 — headless kraken-graph projects memory telemetry onto the spine'
 // (d) W2 follow-up: the two remaining unwired memory call sites.
 //     - getMemoryBackend (mission adapter) threads onEvent to the V2 service;
 //     - the TUI /kraken graph handler projects events through the writerRef
-//       holder (late binding; missing ref → events dropped, never a crash).
+//       holder (late binding; missing ref → buffered/no-op, never a crash).
 // ---------------------------------------------------------------------------
 
 /** setMessages fake with the same updater idiom as cli-kraken-graphSlash.test.ts. */
@@ -359,7 +400,7 @@ describe('W2 follow-up — TUI /kraken graph projects memory telemetry onto the 
     expect(JSON.stringify(notes)).not.toContain(SECRET_CONTENT);
   });
 
-  it('drops memory events without crashing when the context has no writerRef', async () => {
+  it('buffers memory events (no-op) without crashing when the context has no writerRef', async () => {
     driveMemory = rememberProbe;
     const { setMessages, messages } = fakeSetMessages();
     await expect(
