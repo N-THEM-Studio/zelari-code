@@ -63,7 +63,7 @@ import {
 import { resolveHeadlessKey, resolveHeadlessProvider, type HeadlessOptions } from '../headless.js';
 import { dispatchHeadlessTurn } from '../runHeadless.js';
 import { parseMode } from '../mode.js';
-import { LspManager } from '../lsp/manager.js';
+import { LspManager, type LspProvider } from '../lsp/manager.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { setActiveProofPersistenceSurface } from '../kraken/completionProofPersist.js';
 import { checkStrictPolicyLoad } from '../headless/policyGate.js';
@@ -156,6 +156,23 @@ export function bindHarnessTurnOptions(
 }
 
 /**
+ * t37 (anti-thrash): resolve the workspace-scoped LSP provider for a
+ * served turn. The kernel types `WorkspaceServices.lspManager` as the
+ * minimal `LspManagerLike` (`{dispose()}`) so hosts can inject fakes;
+ * only a REAL LspManager carries the `LspProvider` surface the tool
+ * registry needs. Anything else — including a bare `{dispose}` fake —
+ * resolves to `undefined` and the turn falls back to the shared
+ * per-root manager (one manager per workspace root since t37, so the
+ * fallback is anti-thrash too, never a crash).
+ */
+export function resolveTurnLspProvider(
+  services: WorkspaceServices | undefined,
+): LspProvider | undefined {
+  const candidate: unknown = services?.lspManager;
+  return candidate instanceof LspManager ? candidate : undefined;
+}
+
+/**
  * Real turn implementation: provider/key/stream resolution happens ONCE
  * per server (mirroring runHeadless: one process, one key), then each
  * run.turn is `dispatchHeadlessTurn` — same switch as `--headless`
@@ -188,11 +205,18 @@ export function createCliRunTurn(): RunTurnFn {
   return async (input, deps) => {
     const { provider, model, stream } = await ensureStream();
     const opts = bindHarnessTurnOptions(input, deps.session.workspaceRoot);
+    // t37: thread the kernel-owned workspace LspManager into the turn so
+    // the tool registry registers the LSP tools against THAT server (its
+    // lifecycle is refcounted by the kernel per root) instead of deriving
+    // one from the shared per-root map on every dispatch.
+    const lspProvider = resolveTurnLspProvider(deps.services);
     const exitCode = await dispatchHeadlessTurn(
       opts,
       provider,
       model,
       stream as Parameters<typeof dispatchHeadlessTurn>[3],
+      undefined,
+      lspProvider ? { lspProvider } : undefined,
     );
     return { exitCode };
   };

@@ -24,6 +24,7 @@
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { LspClient, type LspTransport } from './client.js';
 import { pathToUri, uriToPath, type Location } from './protocol.js';
 import { resolveServerCommand, languageIdForFile } from './servers.js';
@@ -343,31 +344,49 @@ export class LspManager implements LspProvider {
 }
 
 // ---------------------------------------------------------------------------
-// Shared singleton — LSP servers are heavy, so one manager is reused across
-// turns and disposed on process exit (rather than one per tool registry).
+// Shared managers — LSP servers are heavy, so managers are reused across
+// turns (rather than one per tool registry) and disposed on process exit.
+// t37 (anti-thrash): ONE MANAGER PER WORKSPACE ROOT instead of the old
+// single-slot global — switching root A → B → A must NOT dispose A's
+// servers (the previous singleton killed and respawned them on every
+// root change).
+// Honest trade-off: the map grows with the number of distinct roots seen
+// in the process lifetime. That is acceptable — CLI runs are short-lived,
+// and the serve-harness sidecar keeps per-workspace services behind the
+// kernel's refcounted session cache (packages/core harness/appServer), so
+// the root count stays bounded in practice.
 // ---------------------------------------------------------------------------
 
-let shared: { cwd: string; manager: LspManager } | null = null;
+const sharedByRoot = new Map<string, LspManager>();
 
 export function getSharedLspManager(cwd: string = process.cwd()): LspManager {
-  if (shared && shared.cwd === cwd) return shared.manager;
-  // cwd changed (rare) — dispose the old one and start fresh.
-  shared?.manager.dispose();
+  // Key on the resolved path so differently-spelled equivalents of the same
+  // root (trailing separator, `./ws`, drive-casing on Windows) share ONE
+  // manager instead of doubling language servers per workspace.
+  const key = path.resolve(cwd);
+  const existing = sharedByRoot.get(key);
+  if (existing) return existing;
   const manager = new LspManager({ cwd });
-  shared = { cwd, manager };
+  sharedByRoot.set(key, manager);
   return manager;
 }
 
 export function disposeSharedLspManager(): void {
-  shared?.manager.dispose();
-  shared = null;
+  for (const manager of sharedByRoot.values()) {
+    try {
+      manager.dispose();
+    } catch {
+      /* each manager is torn down independently */
+    }
+  }
+  sharedByRoot.clear();
 }
 
 // Best-effort cleanup so language servers don't outlive the CLI.
 if (typeof process !== 'undefined' && typeof process.once === 'function') {
   process.once('exit', () => {
     try {
-      shared?.manager.dispose();
+      disposeSharedLspManager();
     } catch {
       /* ignore */
     }

@@ -96,7 +96,7 @@ import {
   setActivePolicyLoadSurface,
 } from './safety/policyLoadMode.js';
 import { HOOKS_FAILURE_ENV, resolveHookFailureMode } from './safety/lifecycleHooks.js';
-import { planModeFromOpts, registerHeadlessMcp, runOneTurn, writeProofSafe } from './headless/runOneTurn.js';
+import { planModeFromOpts, registerHeadlessMcp, runOneTurn, writeProofSafe, type TurnExtras } from './headless/runOneTurn.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   resetTaskSpawnCount();
@@ -268,6 +268,10 @@ export async function dispatchHeadlessTurn(
   model: string,
   providerStream: ProviderStreamFn,
   oneShot?: { policyGateDone?: boolean },
+  // t37: serve hosts pass the kernel-owned workspace LspManager here so
+  // every dispatch path (kraken single / council / zelari) registers the
+  // LSP tools against THAT server instead of the shared per-root manager.
+  extras?: TurnExtras,
 ): Promise<number> {
   const cwd = resolveHeadlessCwd(opts);
   if (typeof opts.mode === 'string') {
@@ -374,12 +378,12 @@ export async function dispatchHeadlessTurn(
   }
 
   if (mode === 'zelari') {
-    return runHeadlessZelari(opts, provider, model, providerStream);
+    return runHeadlessZelari(opts, provider, model, providerStream, extras);
   }
   if (mode === 'council' || opts.useCouncil) {
-    return runHeadlessCouncil(opts, provider, model, providerStream);
+    return runHeadlessCouncil(opts, provider, model, providerStream, extras);
   }
-  return runOneTurn(opts, provider, model, providerStream);
+  return runOneTurn(opts, provider, model, providerStream, extras);
 }
 
 /**
@@ -635,11 +639,18 @@ async function buildCouncilToolRegistry(
   opts?: HeadlessOptions,
   memoryService?: MemoryService,
   memoryAutoWrite = false,
+  // t37: the council/zelari parent registry honors the same TurnExtras as
+  // the single-agent path. TODO(t37): the deeper council mission-slice
+  // per-agent registries (~runAgentMissionSlice below) still resolve via
+  // the shared per-root map — same anti-thrash behavior (one manager per
+  // root, no cross-workspace kills), just not the kernel-owned instance.
+  extras?: TurnExtras,
 ) {
   const cwd = opts ? resolveHeadlessCwd(opts) : process.cwd();
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     root: cwd,
     planMode,
+    ...(extras?.lspProvider ? { lspProvider: extras.lspProvider } : {}),
     permissionPolicy: {
       read: 'allow',
       write: 'allow',
@@ -673,6 +684,7 @@ async function runHeadlessCouncil(
   provider: string,
   model: string,
   providerStream: ProviderStreamFn,
+  extras?: TurnExtras,
 ): Promise<number> {
   const { dispatchCouncil } = await import('./councilDispatcher.js');
   const sessionId = crypto.randomUUID();
@@ -731,6 +743,7 @@ async function runHeadlessCouncil(
     opts,
     nativeMemory,
     memoryAutoWrite,
+    extras,
   );
   const { FeedbackStore } = await import('./councilFeedback.js');
   const feedbackStore = new FeedbackStore();
@@ -924,6 +937,7 @@ async function runHeadlessZelari(
   provider: string,
   model: string,
   providerStream: ProviderStreamFn,
+  extras?: TurnExtras,
 ): Promise<number> {
   const projectRoot = resolveHeadlessCwd(opts);
 
@@ -969,6 +983,7 @@ async function runHeadlessZelari(
     opts,
     nativeMissionMemory,
     Boolean(nativeMissionMemory) && process.env.ZELARI_MEMORY_AUTO_WRITE !== '0',
+    extras,
   );
   const feedbackStore = new FeedbackStore();
   const chairmanBudget = envNumber(process.env.ZELARI_MODE_MAX_TOOLS_LUCIFER, {

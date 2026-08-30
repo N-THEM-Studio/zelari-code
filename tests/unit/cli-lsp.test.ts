@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { EventEmitter } from 'node:events';
 import path from 'node:path';
+import { vi, beforeEach, afterEach } from 'vitest';
 import {
   encodeMessage,
   createMessageParser,
@@ -12,6 +13,8 @@ import {
 import { LspClient, type LspTransport } from '../../src/cli/lsp/client.js';
 import {
   LspManager,
+  getSharedLspManager,
+  disposeSharedLspManager,
   normalizeLocations,
   extractHoverText,
   normalizeSymbols,
@@ -20,6 +23,7 @@ import {
 } from '../../src/cli/lsp/manager.js';
 import { createLspTools } from '../../src/cli/lsp/tools.js';
 import { createBuiltinToolRegistry } from '../../src/cli/toolRegistry.js';
+import { resolveTurnLspProvider } from '../../src/cli/serve/harnessServer.js';
 
 // ---------------------------------------------------------------------------
 // protocol
@@ -341,5 +345,101 @@ describe('LspManager spawn-failure handling', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shared manager map (t37: anti-thrash multi-workspace)
+// ---------------------------------------------------------------------------
+
+describe('shared LspManager per workspace root (t37)', () => {
+  let rootA: string;
+  let rootB: string;
+
+  beforeEach(() => {
+    rootA = mkdtempSync(path.join(tmpdir(), 'lsp-map-a-'));
+    rootB = mkdtempSync(path.join(tmpdir(), 'lsp-map-b-'));
+  });
+
+  afterEach(() => {
+    disposeSharedLspManager();
+    rmSync(rootA, { recursive: true, force: true });
+    rmSync(rootB, { recursive: true, force: true });
+  });
+
+  it('keeps one manager per root — A → B → A returns the SAME instance (no kill/respawn)', () => {
+    const m1 = getSharedLspManager(rootA);
+    const m2 = getSharedLspManager(rootB);
+    expect(m2).not.toBe(m1);
+    // Regression for the old single-slot singleton: switching back to A used
+    // to dispose A's manager and hand back a brand-new one (server thrash).
+    expect(getSharedLspManager(rootA)).toBe(m1);
+    expect(getSharedLspManager(rootB)).toBe(m2);
+  });
+
+  it('resolves path spellings of the same root to ONE manager (resolve-normalized key)', () => {
+    const a = getSharedLspManager(rootA);
+    expect(getSharedLspManager(path.join(rootA, '.'))).toBe(a);
+    expect(getSharedLspManager(rootA + path.sep)).toBe(a);
+  });
+
+  it('disposeSharedLspManager() disposes EVERY root manager and resets the map', () => {
+    const m1 = getSharedLspManager(rootA);
+    const m2 = getSharedLspManager(rootB);
+    const disposeA = vi.spyOn(m1, 'dispose');
+    const disposeB = vi.spyOn(m2, 'dispose');
+
+    disposeSharedLspManager();
+
+    expect(disposeA).toHaveBeenCalledTimes(1);
+    expect(disposeB).toHaveBeenCalledTimes(1);
+    // Map reset: the next call per root creates a FRESH manager instance.
+    expect(getSharedLspManager(rootA)).not.toBe(m1);
+    expect(getSharedLspManager(rootB)).not.toBe(m2);
+  });
+
+  it('one manager failing to dispose does not prevent the others from being disposed', () => {
+    const m1 = getSharedLspManager(rootA);
+    const m2 = getSharedLspManager(rootB);
+    vi.spyOn(m1, 'dispose').mockImplementation(() => {
+      throw new Error('boom');
+    });
+    const disposeB = vi.spyOn(m2, 'dispose');
+
+    expect(() => disposeSharedLspManager()).not.toThrow();
+    expect(disposeB).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// resolveTurnLspProvider (t37: kernel → turn wiring)
+// ---------------------------------------------------------------------------
+
+describe('resolveTurnLspProvider (t37 kernel→turn wiring)', () => {
+  function fakeServices(lspManager?: { dispose(): void }): Parameters<typeof resolveTurnLspProvider>[0] {
+    return {
+      ...(lspManager ? { lspManager } : {}),
+      policyCache: { workspaceRoot: '/ws', loadedAt: 1 },
+      completionProofWriter: async () => {},
+    };
+  }
+
+  it('returns the real LspManager so the turn uses the kernel-owned workspace server', () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'lsp-resolve-'));
+    const manager = new LspManager({ cwd: root });
+    try {
+      const provider = resolveTurnLspProvider(fakeServices(manager));
+      expect(provider).toBe(manager);
+    } finally {
+      manager.dispose();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('returns undefined for a bare {dispose} LspManagerLike fake (per-root fallback, no crash)', () => {
+    const fake = { dispose: () => {} };
+    expect(resolveTurnLspProvider(fakeServices(fake))).toBeUndefined();
+    expect(resolveTurnLspProvider(fakeServices(undefined))).toBeUndefined();
+    expect(resolveTurnLspProvider(undefined)).toBeUndefined();
   });
 });

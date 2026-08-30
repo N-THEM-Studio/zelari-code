@@ -32,6 +32,10 @@ import { spineOrchestrationNote } from '../orchestration/facts.js';
 import { memorySinkFor, type SpineNoteHandle } from '../memory/spineTelemetry.js';
 import { emitEvent, resolveHeadlessCwd, resolveHeadlessKey, type HeadlessOptions } from '../headless.js';
 import { isKrakenMode } from '../mode.js';
+// t37 (Pilastro A residuo): serve hosts thread the kernel-owned workspace
+// LspManager into the turn so the tool registry stops re-deriving one from
+// the shared per-root map on every dispatch.
+import type { LspProvider } from '../lsp/manager.js';
 import { buildSystemPromptSplit, systemMessagesFromSplit, getAllTools, KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE, buildLanguagePolicyModuleFor } from '@zelari/core/skills';
 import { envNumber } from '../utils/envNumber.js';
 import { createStreamScrubber } from '../utils/streamScrub.js';
@@ -63,6 +67,19 @@ import { loadDefaultExtensionRuntime } from '../extensions/loader.js';
 
 export function planModeFromOpts(opts: HeadlessOptions): boolean {
   return (opts.phase ?? 'build') === 'plan';
+}
+
+/**
+ * t37 (anti-thrash multi-workspace): per-turn host-injected extras, kept
+ * OUT of HeadlessOptions on purpose (host-only concept, never CLI flags).
+ * Served turns receive the kernel-owned workspace LspManager so the tool
+ * registry uses that server instead of the shared per-root manager.
+ * Omitted fields keep the previous behavior; `ZELARI_LSP=0` and the
+ * registry's `lspProvider: null` opt-out still win inside the registry.
+ */
+export interface TurnExtras {
+  /** Workspace-scoped LSP provider (the kernel's per-workspace LspManager). */
+  lspProvider?: LspProvider;
 }
 
 let mcpExitHookInstalled = false;
@@ -142,6 +159,7 @@ export async function runOneTurn(
   provider: string,
   model: string,
   providerStream: ProviderStreamFn,
+  extras?: TurnExtras,
 ): Promise<number> {
   const sessionId = crypto.randomUUID();
   const cwd = resolveHeadlessCwd(opts);
@@ -281,6 +299,10 @@ export async function runOneTurn(
     ...(nativeMemory ? { memoryService: nativeMemory } : {}),
     memoryAutoWrite,
     ...(extensionRuntime ? { extensions: extensionRuntime } : {}),
+    // t37: serve-harness threads the kernel-owned workspace LspManager here
+    // (TurnExtras). undefined keeps the shared per-root fallback — which is
+    // itself one-manager-per-root since t37, so no cross-workspace thrash.
+    ...(extras?.lspProvider ? { lspProvider: extras.lspProvider } : {}),
   });
   // Parity with TUI: project MCP tools must be available from Desktop/headless.
   await registerHeadlessMcp(toolRegistry, opts);
