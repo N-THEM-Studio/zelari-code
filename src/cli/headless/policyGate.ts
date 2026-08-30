@@ -100,12 +100,21 @@ export function reportPolicyLoadBlocked(block: PolicyLoadBlock, output: 'json' |
  * On-disk evidence: open (or resume) the session spine and record the BLOCK
  * outcome in the same log other blocked outcomes use, then close it as an
  * errored session. Missions additionally get their `mission.phase` marker,
- * mirroring mission-strict-blocked. Best-effort by contract — a spine
- * failure NEVER changes the exit path (degrade-and-stop like every host).
+ * mirroring mission-strict-blocked. The spine opens under `opts.workspace`
+ * (fall back to `process.cwd()` only when the caller has none — headless
+ * callers resolve `opts.cwd` instead, never `chdir`). Best-effort by
+ * contract — a spine failure NEVER changes the exit path (degrade-and-stop
+ * like every host).
  */
 export async function recordPolicyLoadBlockedOnSpine(
   block: PolicyLoadBlock,
-  opts: { mode?: string; profile?: string; resumeSessionId?: string } = {},
+  opts: {
+    mode?: string;
+    profile?: string;
+    resumeSessionId?: string;
+    /** Workspace root for the spine (sessions live under `<workspace>/.zelari/sessions`). */
+    workspace?: string;
+  } = {},
 ): Promise<void> {
   try {
     const { openHeadlessSpine } = await import('../headlessSpine.js');
@@ -114,7 +123,7 @@ export async function recordPolicyLoadBlockedOnSpine(
       sessionId,
       ...(opts.mode ? { mode: opts.mode as 'kraken' | 'council' | 'zelari' } : {}),
       ...(opts.profile ? { profile: opts.profile } : {}),
-      workspace: process.cwd(),
+      workspace: opts.workspace ?? process.cwd(),
     });
     if (opts.mode === 'zelari') {
       spine.missionPhase('dispatch', block.reason);

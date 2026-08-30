@@ -196,7 +196,13 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
     });
   }
 
-  return dispatchHeadlessTurn(opts, provider, model, providerStream);
+  return dispatchHeadlessTurn(opts, provider, model, providerStream, {
+    // H10-fix3: the gate already ran above on the SAME input (no chdir in
+    // between) — the one-shot marker keeps dispatchHeadlessTurn from
+    // re-running it (duplicate `[policy]` stderr warning + double policy
+    // load). Per-invocation flag only; never process-global.
+    policyGateDone: true,
+  });
 }
 
 /** Strict policy-load + phase/proof surfaces. Returns the block exit code, or undefined. */
@@ -210,6 +216,9 @@ async function applyHeadlessPolicyGate(opts: HeadlessOptions): Promise<number | 
     reportPolicyLoadBlocked(policyLoad.block, opts.output);
     await recordPolicyLoadBlockedOnSpine(policyLoad.block, {
       mode: opts.mode,
+      // H10-fix2: the spine must land in the RESOLVED workspace, not the
+      // process cwd — a sidecar hosts N workspaces without `chdir`.
+      workspace: cwd,
       ...(opts.profile ? { profile: opts.profile } : {}),
       ...(opts.resumeSessionId ? { resumeSessionId: opts.resumeSessionId } : {}),
     });
@@ -226,7 +235,9 @@ async function applyHeadlessPolicyGate(opts: HeadlessOptions): Promise<number | 
  * `--serve-harness` (long-lived sidecar). Does NOT install process-fatal
  * handlers or mutate `ZELARI_STRICT_DONE` — those belong to the one-shot
  * CLI wrapper. Honors `opts.cwd` so N sidecar sessions can sit on
- * different folders without `chdir`.
+ * different folders without `chdir`. `oneShot.policyGateDone` is set by
+ * the one-shot wrapper ONLY (its gate already ran); the sidecar never
+ * passes it, so the gate keeps running every turn here.
  */
 const KRAKEN_TURN_ENV: Array<[keyof HeadlessOptions, string]> = [
   ['krakenExploreModel', 'ZELARI_KRAKEN_EXPLORE_MODEL'],
@@ -250,6 +261,7 @@ export async function dispatchHeadlessTurn(
   provider: string,
   model: string,
   providerStream: ProviderStreamFn,
+  oneShot?: { policyGateDone?: boolean },
 ): Promise<number> {
   const cwd = resolveHeadlessCwd(opts);
   if (typeof opts.mode === 'string') {
@@ -285,8 +297,16 @@ export async function dispatchHeadlessTurn(
     /* non-fatal */
   }
 
-  const policyBlock = await applyHeadlessPolicyGate(opts);
-  if (policyBlock !== undefined) return policyBlock;
+  // H10-fix3: the sidecar (serve/harnessServer) needs this gate EVERY turn —
+  // it also re-pins setPhase/setActivePolicyLoadSurface/setActiveProof-
+  // PersistenceSurface per turn. The one-shot wrapper passes
+  // `policyGateDone` because runHeadless() already ran the identical gate
+  // moments ago; re-running it would emit the same `[policy]` warning twice
+  // and reload the policy set for nothing.
+  if (!oneShot?.policyGateDone) {
+    const policyBlock = await applyHeadlessPolicyGate(opts);
+    if (policyBlock !== undefined) return policyBlock;
+  }
 
   // P1.1 (t12) -> t23 (P1.E): `--mode auto` resolves ONCE here, before any
   // dispatch check. Pure classifier (./orchestration/policy.js); the only

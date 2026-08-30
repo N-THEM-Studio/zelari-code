@@ -12,7 +12,8 @@ import { describe, expect, it, vi, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
-import { runHeadless } from '../runHeadless.js';
+import { runHeadless, dispatchHeadlessTurn } from '../runHeadless.js';
+import type { ProviderStreamFn } from '@zelari/core/harness';
 import {
   checkStrictPolicyLoad,
   type PolicyLoadBlock,
@@ -71,7 +72,9 @@ describe('checkStrictPolicyLoad (P0.B unit)', () => {
 
 describe('runHeadless × strict policy load (P0.B integration)', () => {
   it('broken policy blocks the run: exit 2 + NDJSON reason + spine note on disk', async () => {
-    const prevCwd = process.cwd();
+    // H10-fix2 regression: NO process.chdir — the run must be steered to
+    // `root` via `cwd:` alone, and the spine teardown must land under
+    // root/.zelari/sessions (NOT under the process cwd).
     const prevOverride = process.env.ZELARI_POLICY_LOAD_MODE;
     process.env.ZELARI_POLICY_LOAD_MODE = 'strict';
     let outLines = '';
@@ -84,13 +87,14 @@ describe('runHeadless × strict policy load (P0.B integration)', () => {
     try {
       const root = tmpRoot();
       breakProjectPolicy(root);
-      process.chdir(root);
+      const procSpineBefore = new Set(spineLogs(process.cwd()));
       const code = await runHeadless({
         task: 'probe',
         output: 'json',
         mode: 'kraken',
         phase: 'build',
         useCouncil: false,
+        cwd: root,
       });
       expect(code).toBe(2);
 
@@ -120,22 +124,27 @@ describe('runHeadless × strict policy load (P0.B integration)', () => {
       expect(logs.some((p) => fs.readFileSync(p, 'utf8').includes(POLICY_LOAD_BLOCK_REASON))).toBe(
         true,
       );
+
+      // H10-fix2: the blocked-session spine must NOT leak under the process
+      // cwd — before the fix, recordPolicyLoadBlockedOnSpine hardcoded
+      // `workspace: process.cwd()` and wrote there without any chdir.
+      const leaked = spineLogs(process.cwd())
+        .filter((p) => !procSpineBefore.has(p))
+        .filter((p) => fs.readFileSync(p, 'utf8').includes(POLICY_LOAD_BLOCK_REASON));
+      expect(leaked).toEqual([]);
     } finally {
       outSpy.mockRestore();
-      process.chdir(prevCwd);
       if (prevOverride === undefined) delete process.env.ZELARI_POLICY_LOAD_MODE;
       else process.env.ZELARI_POLICY_LOAD_MODE = prevOverride;
     }
   }, 30000);
 
   it('override=permissive lets the same broken file pass the gate (falls through to later startup)', async () => {
-    const prevCwd = process.cwd();
     const prevOverride = process.env.ZELARI_POLICY_LOAD_MODE;
     process.env.ZELARI_POLICY_LOAD_MODE = 'permissive';
     try {
       const root = tmpRoot();
       breakProjectPolicy(root);
-      process.chdir(root);
       // Unknown provider => deterministic exit 1 AFTER the policy gate
       // (never reaches a registry or network); the point is: not blocked
       // by the policy layer anymore.
@@ -146,10 +155,107 @@ describe('runHeadless × strict policy load (P0.B integration)', () => {
         phase: 'build',
         useCouncil: false,
         provider: 'no-such-provider',
+        cwd: root,
       });
       expect(code).toBe(1);
     } finally {
-      process.chdir(prevCwd);
+      if (prevOverride === undefined) delete process.env.ZELARI_POLICY_LOAD_MODE;
+      else process.env.ZELARI_POLICY_LOAD_MODE = prevOverride;
+    }
+  }, 30000);
+});
+
+describe('headless one-shot × policy warning dedupe (H10-fix3)', () => {
+  it('one-shot emits the [policy] warning EXACTLY once (no dispatch re-run)', async () => {
+    // runHeadless() gates BEFORE key resolution AND dispatchHeadlessTurn
+    // gates again per turn for the sidecar. On the one-shot path the second
+    // gate saw the identical input — before the fix the same warning hit
+    // stderr twice. No process-global memoization allowed: the skip must be
+    // scoped to this single invocation (`policyGateDone` marker).
+    const prevOverride = process.env.ZELARI_POLICY_LOAD_MODE;
+    process.env.ZELARI_POLICY_LOAD_MODE = 'permissive';
+    let errLines = '';
+    const errSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(((chunk: string | Uint8Array) => {
+        errLines += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+        return true;
+      }) as typeof process.stderr.write);
+    try {
+      const root = tmpRoot();
+      breakProjectPolicy(root);
+      const code = await runHeadless({
+        task: 'probe',
+        output: 'json',
+        mode: 'kraken',
+        phase: 'build',
+        useCouncil: false,
+        provider: 'no-such-provider', // deterministic exit 1 after the gate
+        cwd: root,
+      });
+      expect(code).toBe(1);
+      const policyLines = errLines.split('\n').filter((l) => l.includes('[policy]'));
+      expect(policyLines).toHaveLength(1);
+      expect(policyLines[0]).toContain('invalid JSON');
+    } finally {
+      errSpy.mockRestore();
+      if (prevOverride === undefined) delete process.env.ZELARI_POLICY_LOAD_MODE;
+      else process.env.ZELARI_POLICY_LOAD_MODE = prevOverride;
+    }
+  }, 30000);
+
+  it('sidecar turns still gate inside dispatchHeadlessTurn (no one-shot marker)', async () => {
+    // The ~line-284 gate call must stay intact: serve/harnessServer never
+    // passes `policyGateDone`, so a strict-blocked policy still stops the
+    // turn (exit 2) — and the spine evidence lands under opts.cwd.
+    const prevOverride = process.env.ZELARI_POLICY_LOAD_MODE;
+    process.env.ZELARI_POLICY_LOAD_MODE = 'strict';
+    let outLines = '';
+    const outSpy = vi
+      .spyOn(process.stdout, 'write')
+      .mockImplementation(((chunk: string | Uint8Array) => {
+        outLines += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+        return true;
+      }) as typeof process.stdout.write);
+    let errLines = '';
+    const errSpy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(((chunk: string | Uint8Array) => {
+        errLines += typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
+        return true;
+      }) as typeof process.stderr.write);
+    try {
+      const root = tmpRoot();
+      breakProjectPolicy(root);
+      const unreachableStream = (() => {
+        throw new Error('provider stream must not be reached before the policy gate');
+      }) as unknown as ProviderStreamFn;
+      const code = await dispatchHeadlessTurn(
+        {
+          task: 'probe',
+          output: 'json',
+          mode: 'kraken',
+          phase: 'build',
+          useCouncil: false,
+          provider: 'no-such-provider',
+          cwd: root,
+        },
+        'no-such-provider',
+        'test-model',
+        unreachableStream,
+        // NO one-shot marker — this is exactly what the sidecar passes.
+      );
+      expect(code).toBe(2);
+      expect(errLines).toContain(POLICY_LOAD_BLOCK_REASON);
+      const logs = spineLogs(root);
+      expect(logs.length).toBeGreaterThan(0);
+      expect(logs.some((p) => fs.readFileSync(p, 'utf8').includes(POLICY_LOAD_BLOCK_REASON))).toBe(
+        true,
+      );
+      expect(outLines).toContain(POLICY_LOAD_BLOCK_REASON);
+    } finally {
+      outSpy.mockRestore();
+      errSpy.mockRestore();
       if (prevOverride === undefined) delete process.env.ZELARI_POLICY_LOAD_MODE;
       else process.env.ZELARI_POLICY_LOAD_MODE = prevOverride;
     }
