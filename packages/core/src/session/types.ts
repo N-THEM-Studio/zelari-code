@@ -31,6 +31,9 @@ export type SessionActor = z.infer<typeof SessionActorSchema>;
  * tool.result, session.compacted. Everything else is state/derived.
  * `session.compacted` with `{fromSeq,toSeq,checkpoint}` shadows that range
  * in deriveMessages(); `{summary}` without a range is legacy (append-only).
+ * Retired kinds never re-enter this union. Old logs that contain them still
+ * replay: the tolerant reader (replay.ts) reports unknown kinds as
+ * `schema-mismatch` issues and skips those lines.
  */
 export const SESSION_EVENT_KINDS = [
   'session.started',
@@ -41,16 +44,12 @@ export const SESSION_EVENT_KINDS = [
   // once at session start / manifest change. State-only (never model-surface):
   // data = {manifest, manifestHash}. Schema review per ADR-0021.
   'session.harness_manifest',
-  // 2.6.1 (closure plan §6): resume-time harness drift record. State-only:
-  // data = {originalManifestHash, currentManifestHash}. Non-blocking signal.
-  'session.harness_drift',
   'user.message',
   'assistant.message',
   'tool.call',
   'tool.result',
   // 2.x B (crash-safe recovery): dangling call classified. State-only.
   'tool.interrupted',
-  'context.injected',
   'session.compacted',
   'task.created',
   'task.updated',
@@ -59,7 +58,6 @@ export const SESSION_EVENT_KINDS = [
   // State-only: compaction projects it into CompactionStateSnapshot.
   'task.contract',
   'task.contract_updated',
-  'kraken.task',
   'council.member',
   'mission.phase',
   'mission.replan',

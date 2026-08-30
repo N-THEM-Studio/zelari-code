@@ -48,6 +48,9 @@ export async function handleKrakenGraph(
 
   appendSystem(ctx.setMessages, `[kraken] planning graph for: ${prompt.trim()}`);
 
+  // W2 follow-up: this TUI path has no cheap spine handle
+  // (KrakenGraphSlashContext carries no mirror), so memory telemetry stays
+  // unwired here. The headless --kraken-graph path IS wired (runHeadless.ts).
   const memory = isMemoryV2Enabled()
     ? await getMemoryService(ctx.cwd, process.env, {
         onWarning: (warning) => appendSystem(ctx.setMessages, warning),

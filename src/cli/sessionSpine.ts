@@ -10,9 +10,11 @@
  * the same log.
  *
  * The 1.x JSONL sidecar (BrainEvent log) and the in-process rolling store
- * remain as a mirrored export/UI surface during the alpha (ADR-0024): they
- * feed render plus the declared discrete fallback, and are scheduled for
- * removal at 2.0.0-rc.
+ * remain as a mirrored export/UI surface (ADR-0024): they feed render plus
+ * the declared discrete fallback. Mirror removal is explicitly re-planned
+ * (deferred decision — plan task W5 in .zelari/plan.json); preconditions:
+ * strict gate green on desktop QA t21 and no mirror reads in telemetry for
+ * one minor. The old "remove at 2.0.0-rc" deadline is retired.
  *
  * Failure discipline (the "declared discrete fallback"): a spine error NEVER
  * breaks the turn — the mirror marks itself degraded, warns once on stderr
@@ -784,9 +786,8 @@ function taskContractsEnabled(): boolean {
 
 /**
  * 2.6.1 (plan §6): harness manifest lifecycle shared by EVERY host — fresh
- * session persists session.harness_manifest; a resume compares the original
- * hash and records session.harness_drift (non-blocking signal). Degrade-and-
- * stop: manifest wiring never breaks a turn.
+ * session persists session.harness_manifest; a resume only backfills it on
+ * pre-2.6.1 logs. Degrade-and-stop: manifest wiring never breaks a turn.
  */
 export async function noteHarnessLifecycle(
   spine: SessionSpineMirror,
@@ -809,15 +810,11 @@ export async function noteHarnessLifecycle(
       resourcePolicy: budget.policy,
     });
     if (spine.resumedFromSeq !== undefined && spine.resumedFromSeq > 0) {
-      const original = await lastHarnessManifestHash(sessionId, baseDir);
-      if (original === null) {
-        spine.harnessManifest(manifest, manifestHash); // pre-2.6.1 log: backfill
-      } else if (original !== manifestHash) {
-        await spine.appendEvent({
-          kind: 'session.harness_drift',
-          actor: ACTOR_SYSTEM,
-          data: { originalManifestHash: original, currentManifestHash: manifestHash },
-        });
+      // Resume: backfill only when the log predates harness manifests.
+      // (Drift detection on manifest change was retired with W5 — the event
+      // kind no longer exists; old logs replay it as a schema-mismatch note.)
+      if ((await lastHarnessManifestHash(sessionId, baseDir)) === null) {
+        spine.harnessManifest(manifest, manifestHash);
       }
     } else {
       spine.harnessManifest(manifest, manifestHash);

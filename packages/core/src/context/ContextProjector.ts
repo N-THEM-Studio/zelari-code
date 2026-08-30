@@ -1,6 +1,12 @@
 /**
  * Context Engine v2 — pure projection (Frontier Runtime Upgrade §52–53).
  *
+ * SCOPE (ADR 015): tentacle parent-context ONLY — the sole production
+ * consumer is taskTool.ts. The canonical turn-context compiler is the CLI
+ * budget pipeline (src/cli/budget/, buildModelContext); this projector must
+ * NOT be extended to the main loop (ADR 015: absorb it into the budget
+ * pipeline as a strategy if it is ever needed there — never the reverse).
+ *
  * projectContext() derives the message list an agent sends to its provider
  * from the full transcript, according to an AgentContextPolicy. It NEVER
  * mutates the input and performs no IO — enforcement budgets live in the CLI
