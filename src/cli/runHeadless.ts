@@ -259,6 +259,10 @@ export async function dispatchHeadlessTurn(
     opts = { ...opts, cwd };
   }
   applyKrakenTurnEnv(opts);
+  // Each parent user turn gets a fresh tentacle budget (GUIDA: default 6).
+  // Desktop sidecar never enters runHeadless(), so without this the counter
+  // lives for the whole Node process — 6 tentacles total, then spawn cap.
+  resetTaskSpawnCount();
 
   if (opts.todos && opts.todos.length > 0) {
     writeSessionTodos(opts.todos, { merge: false });

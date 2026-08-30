@@ -6,6 +6,7 @@
  * installer directory instead of the Open Folder project.
  */
 import { describe, it, expect } from 'vitest';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { resolveHeadlessCwd } from '../../src/cli/headless.js';
@@ -69,3 +70,18 @@ describe('session dir follows workspaceRoot (not process.cwd())', () => {
     expect(dir).not.toContain(path.join(process.cwd(), '.zelari', 'sessions'));
   });
 });
+
+describe('sidecar tentacle budget resets per turn', () => {
+  it('dispatchHeadlessTurn calls resetTaskSpawnCount (Desktop never enters runHeadless)', () => {
+    const src = fs.readFileSync(
+      path.resolve(__dirname, '../../src/cli/runHeadless.ts'),
+      'utf8',
+    );
+    const dispatch = src.split('export async function dispatchHeadlessTurn')[1]?.split(
+      'export async function',
+    )[0];
+    expect(dispatch, 'dispatchHeadlessTurn body not found').toBeTruthy();
+    expect(dispatch).toContain('resetTaskSpawnCount()');
+  });
+});
+
