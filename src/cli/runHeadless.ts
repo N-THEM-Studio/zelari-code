@@ -85,6 +85,7 @@ import {
 import { RuntimeControlQueue } from '@zelari/core/runtime';
 import { attachControlPlane, type ControlPlaneHandle } from './headless/controlBridge.js';
 import { protocolInfoEvent } from './headless/protocol.js';
+import { emitHarnessStateEvent } from './headless/harnessStateEmit.js';
 import {
   checkStrictPolicyLoad,
   recordPolicyLoadBlockedOnSpine,
@@ -625,6 +626,8 @@ async function runHeadlessKrakenGraph(
           : 'error';
       await spine.close(closeReason);
     } catch { /* spine never fails the run */ }
+    // HarnessState inc.3: final read-model event for JSON hosts (best-effort).
+    await emitHarnessStateEvent({ spine, workspaceRoot: cwd, output: opts.output, emitEvent });
   }
 }
 async function buildCouncilToolRegistry(
@@ -871,6 +874,8 @@ async function runHeadlessCouncil(
   try {
     await spine.close(exitCode === 0 ? 'completed' : 'error');
   } catch { /* spine never fails the run */ }
+  // HarnessState inc.3: final read-model event for JSON hosts (best-effort).
+  await emitHarnessStateEvent({ spine, workspaceRoot: cwd, output: opts.output, emitEvent });
   if (opts.exportSessionPath) {
     try {
       const json = await spine.exportJson();
@@ -1357,6 +1362,8 @@ async function runHeadlessZelari(
       if (exitCode === 0) await spine.close('completed');
       else await spine.close(exitCode === 2 ? 'error' : 'stopped');
     } catch { /* spine never fails the run */ }
+    // HarnessState inc.3: final read-model event for JSON hosts (best-effort).
+    await emitHarnessStateEvent({ spine, workspaceRoot: projectRoot, output: opts.output, emitEvent });
     if (opts.exportSessionPath) {
       try {
         const json = await spine.exportJson();

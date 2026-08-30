@@ -46,10 +46,9 @@ import { runAdvisoryVerifierReview } from '../kraken/verifierLifecycle.js';
 import { buildModelContext, resourceStatusTail } from '../budget/modelContextBuilder.js';
 import { recordCompactionMetrics } from '../metrics.js';
 import { openHeadlessSpine, seedHeadlessModelHistory, sessionStartedEvent } from '../headlessSpine.js';
-import { resolveSessionsDir } from '@zelari/core/session';
-// HarnessState read-model (ADR-0023 lens): derived from the closed spine and
-// emitted as the FINAL NDJSON line of a JSON turn.
-import { readHarnessState } from '../harnessState.js';
+// HarnessState inc.3: shared final-NDJSON read-model emitter (ADR-0023 lens)
+// for this host + council/mission/kraken-graph (H1 inc.2 → inc.3).
+import { emitHarnessStateEvent } from './harnessStateEmit.js';
 import { RuntimeControlQueue } from '@zelari/core/runtime';
 import { attachControlPlane, type ControlPlaneHandle } from './controlBridge.js';
 import { controlAppliedEvent, protocolInfoEvent } from './protocol.js';
@@ -798,22 +797,9 @@ export async function runOneTurn(
     await spine.close(closeStatus);
   } catch { /* spine never fails the run */ }
 
-  // HarnessState on the wire: with the spine closed, JSON hosts get the
-  // derived read-model (session lens + per-turn Turn Completion Contract)
-  // as the FINAL NDJSON line. Same dir resolution as the spine mirror
-  // (workspaceRoot + ZELARI_SESSIONS_DIR) so the read matches what was
-  // written; best-effort — a read/derivation failure logs to stderr and
-  // never changes the exit code.
-  if (opts.output === 'json') {
-    try {
-      const sessionsDir = resolveSessionsDir({ workspaceRoot: cwd });
-      const state = await readHarnessState(path.join(sessionsDir, spine.sessionId));
-      emitEvent({ type: 'harness_state', ...state });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      process.stderr.write(`[zelari-code --headless] harness_state unavailable: ${msg}\n`);
-    }
-  }
+  // HarnessState inc.3: final read-model event for JSON hosts (best-effort),
+  // via the ONE shared helper also used by council/mission/kraken-graph.
+  await emitHarnessStateEvent({ spine, workspaceRoot: cwd, output: opts.output, emitEvent });
 
   if (opts.exportSessionPath) {
     try {
