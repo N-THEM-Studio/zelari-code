@@ -439,6 +439,23 @@ function pickRootComponent(): {
     process.exit(1);
   }
   if (argv.includes("--inspect") || argv.includes("inspect")) {
+    // v0.10: `inspect <session-id> [--json]` — advisory read-only report of
+    // one session's harness_state read-model (ADR-0023). A positional
+    // argument after the command selects the session; bare `inspect` keeps
+    // the v1.32.0 environment inspection below.
+    const inspectAt = argv.findIndex((a) => a === "inspect" || a === "--inspect");
+    const sessionId =
+      inspectAt >= 0
+        ? argv.slice(inspectAt + 1).find((a) => !a.startsWith("-"))
+        : undefined;
+    if (sessionId) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { runInspectSession } =
+        require("./commands/inspectSession.js") as typeof import("./commands/inspectSession.js");
+      const json = argv.includes("--json");
+      void runInspectSession({ sessionId, json }).then((code) => process.exit(code));
+      return { kind: "done" };
+    }
     // v1.32.0: unified environment inspection (config sources, skills,
     // MCP, hooks, plugins, AGENTS.md, phase/mode, trust status).
     // Runs BEFORE the TUI so it works on a broken/mixed project.
