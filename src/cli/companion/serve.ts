@@ -271,6 +271,7 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
           },
           eventsUrl: `/v1/runs/${result.run.id}/events`,
           cancelUrl: `/v1/runs/${result.run.id}/cancel`,
+          steerUrl: `/v1/runs/${result.run.id}/steer`,
         });
         return;
       }
@@ -356,6 +357,34 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
           return;
         }
         sendJson(res, 200, { ok: true, cancelled: runId });
+        return;
+      }
+
+      // t40: live-turn steering over HTTP — same control plane as the NDJSON
+      // session.steer command (RunManager.steer → HarnessClient.steer →
+      // RuntimeControlQueue). Error mapping mirrors the cancel handler above.
+      const steerMatch = /^\/v1\/runs\/([^/]+)\/steer$/.exec(path);
+      if (req.method === 'POST' && steerMatch) {
+        const runId = steerMatch[1]!;
+        const raw = await readBody(req);
+        let body: Record<string, unknown> = {};
+        try {
+          body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' });
+          return;
+        }
+        const text = typeof body.text === 'string' ? body.text.trim() : '';
+        if (!text) {
+          sendJson(res, 400, { ok: false, error: 'text is required' });
+          return;
+        }
+        const result = await runs.steer(runId, text);
+        if (!result.ok) {
+          sendJson(res, 404, { ok: false, error: result.error });
+          return;
+        }
+        sendJson(res, 200, { ok: true, steered: runId, result: result.result });
         return;
       }
 
