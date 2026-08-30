@@ -34,6 +34,8 @@ import { krakenSelectionPlaybook } from './kraken/selectionPlaybook.js';
 import { krakenDelegationPlaybook, resolveDelegationPolicyForRun } from './kraken/delegationPolicy.js';
 import { chooseOrchestration } from './orchestration/policy.js';
 import { collectOrchestrationFacts, spineOrchestrationNote } from './orchestration/facts.js';
+// W2: memory telemetry projected onto the session spine as state-only notes.
+import { memorySinkFor, spineMemoryEventNote, type SpineNoteHandle } from './memory/spineTelemetry.js';
 import { COUNCIL_TIER_SIZES } from './councilConfig.js';
 
 import {
@@ -423,7 +425,11 @@ async function runHeadlessKrakenGraph(
   const { getMemoryService, isMemoryAutoWriteEnabled, isMemoryV2Enabled } =
     await import('./memory/serviceFactory.js');
   const graphMemory = isMemoryV2Enabled()
-    ? await getMemoryService(cwd, process.env)
+    ? await getMemoryService(cwd, process.env, {
+        // W2: the spine is already open here — memory events are noted
+        // directly (context.projection / memory_event state-only payloads).
+        onEvent: (event) => spineMemoryEventNote(spine, event),
+      })
     : undefined;
   const log = (message: string): void => {
     if (opts.output === 'json') {
@@ -669,8 +675,13 @@ async function runHeadlessCouncil(
   const sessionId = crypto.randomUUID();
   const cwd = resolveHeadlessCwd(opts);
   const memoryFactory = await import('./memory/serviceFactory.js');
+  // W2: memory events project onto the session spine (late-binding holder —
+  // the spine opens below; events before assignment are dropped, advisory).
+  const spineHolder: { current?: SpineNoteHandle } = {};
   const nativeMemory = memoryFactory.isMemoryV2Enabled()
-    ? await memoryFactory.getMemoryService(cwd, process.env)
+    ? await memoryFactory.getMemoryService(cwd, process.env, {
+        onEvent: memorySinkFor(spineHolder),
+      })
     : undefined;
   const memoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
 
@@ -680,6 +691,8 @@ async function runHeadlessCouncil(
     profile: opts.profile,
     workspace: cwd,
   });
+  // W2: bind the memory telemetry sink to the now-open spine.
+  spineHolder.current = spine;
   // Exit-1/E1.2: the session spine is the model-context source of truth.
   // Legacy `--history` is imported one-shot into a fresh log; prior turns
   // are then derived from events. The 1.x rolling history no longer feeds

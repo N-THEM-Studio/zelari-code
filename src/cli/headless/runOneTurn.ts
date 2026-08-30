@@ -28,6 +28,8 @@ import { buildKrakenRepairPrompt } from '../kraken/completionGate.js';
 import { krakenSelectionPlaybook } from '../kraken/selectionPlaybook.js';
 import { krakenDelegationPlaybook, resolveDelegationPolicyForRun } from '../kraken/delegationPolicy.js';
 import { spineOrchestrationNote } from '../orchestration/facts.js';
+// W2: memory telemetry onto the session spine (late-binding holder seam).
+import { memorySinkFor, type SpineNoteHandle } from '../memory/spineTelemetry.js';
 import { emitEvent, resolveHeadlessCwd, resolveHeadlessKey, type HeadlessOptions } from '../headless.js';
 import { isKrakenMode } from '../mode.js';
 import { buildSystemPromptSplit, systemMessagesFromSplit, getAllTools, KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE, buildLanguagePolicyModuleFor } from '@zelari/core/skills';
@@ -141,8 +143,14 @@ export async function runOneTurn(
   const sessionId = crypto.randomUUID();
   const cwd = resolveHeadlessCwd(opts);
   const memoryFactory = await import('../memory/serviceFactory.js');
+  // W2: memory events are projected onto the session spine as state-only
+  // `note`s. The spine opens below, so telemetry flows through a late-binding
+  // holder — events before assignment are dropped (advisory, never blocking).
+  const spineHolder: { current?: SpineNoteHandle } = {};
   const nativeMemory = memoryFactory.isMemoryV2Enabled()
-    ? await memoryFactory.getMemoryService(cwd, process.env)
+    ? await memoryFactory.getMemoryService(cwd, process.env, {
+        onEvent: memorySinkFor(spineHolder),
+      })
     : undefined;
   const memoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
 
@@ -281,6 +289,8 @@ export async function runOneTurn(
     // 2.6.1 (plan §7): deep specs from THIS run’s registry.
     toolSpecs: typeof toolRegistry.fingerprints === 'function' ? toolRegistry.fingerprints() : undefined,
   });
+  // W2: bind the memory telemetry sink to the now-open spine.
+  spineHolder.current = spine;
   // Exit-1/E1.2: the session spine is the model-context source of truth.
   // Legacy `--history` is imported one-shot into a fresh log; prior turns
   // are then derived from events. The 1.x rolling history no longer feeds

@@ -37,6 +37,8 @@ import {
 import { writeCompletionProof } from "../kraken/completionProof.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
+// W2: memory telemetry projected onto the session spine as state-only notes.
+import { memorySinkFor } from "../memory/spineTelemetry.js";
 import { createPermissionAskHandler } from "./permissionPicker.js";
 import { armPickerTimeout, askUserTimeoutMs } from "./askUserTimeout.js";
 import { defaultPermissionPolicy } from "../safety/toolPermissions.js";
@@ -284,8 +286,16 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         try {
           const memoryFactory = await import('../memory/serviceFactory.js');
           if (memoryFactory.isMemoryV2Enabled()) {
+            // W2: getter-backed holder — the spine mirror attaches per turn,
+            // so events resolve `writerRef.current?.spine` at emit time.
+            const tuiSpineHolder = {
+              get current() {
+                return writerRef.current?.spine;
+              },
+            };
             memoryService = await memoryFactory.getMemoryService(process.cwd(), process.env, {
               onWarning: (warning) => appendSystem(setMessages, warning, Date.now()),
+              onEvent: memorySinkFor(tuiSpineHolder),
             });
             memoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
           }
@@ -1623,8 +1633,15 @@ async function dispatchCouncilPromptImpl(
   try {
     const memoryFactory = await import('../memory/serviceFactory.js');
     if (memoryFactory.isMemoryV2Enabled()) {
+      // W2: getter-backed holder — spine mirror resolves at emit time.
+      const councilSpineHolder = {
+        get current() {
+          return writerRef.current?.spine;
+        },
+      };
       councilMemory = await memoryFactory.getMemoryService(process.cwd(), process.env, {
         onWarning: (warning) => appendSystem(setMessages, warning, Date.now()),
+        onEvent: memorySinkFor(councilSpineHolder),
       });
       councilMemoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
       if (!overrides.ragContext) {
