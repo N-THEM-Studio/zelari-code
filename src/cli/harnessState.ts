@@ -61,6 +61,14 @@ export interface ExecutionLens {
 export interface ContextProjectionRecord {
   contextChars: number;
   returnedCount: number;
+  /** 0–1 occupancy from the budget pipeline. Absent on memory-path notes. */
+  occupancy?: number;
+  estimatedHistoryTokens?: number;
+  contextLimit?: number;
+  contextPressureTokens?: number;
+  durationMs?: number;
+  backend?: string;
+  policy?: 'ok' | 'warn' | 'compact' | 'hard';
 }
 
 /** Support-lens: what the harness fed the model around the turn loop. */
@@ -71,7 +79,7 @@ export interface SupportLens {
   memoryEvents: number;
   /** Count of session.compacted events. */
   compactions: number;
-  /** Sum of session.compacted data.tokensSaved when a writer provides it (none today). */
+  /** Sum of session.compacted `savedTokens` (production) or legacy `tokensSaved`. */
   tokensSavedByCompaction?: number;
 }
 
@@ -113,6 +121,23 @@ function asNumber(v: unknown): number | undefined {
 /** A result without a usable callId cannot settle a call (`seq:` keys never collide). */
 function asCallId(v: unknown, seq: number): string {
   return typeof v === 'string' && v.length > 0 ? v : `seq:${seq}`;
+}
+
+/** A `context.projection` note parsed into the lens record; absent/malformed fields fall back to defaults (never throws). */
+function parseProjection(data: Record<string, unknown>): ContextProjectionRecord {
+  const policy = asString(data.policy);
+  return {
+    contextChars: asNumber(data.contextChars) ?? 0,
+    returnedCount: asNumber(data.returnedCount) ?? 0,
+    occupancy: asNumber(data.occupancy),
+    estimatedHistoryTokens: asNumber(data.estimatedHistoryTokens),
+    contextLimit: asNumber(data.contextLimit),
+    contextPressureTokens: asNumber(data.contextPressureTokens),
+    durationMs: asNumber(data.durationMs),
+    backend: asString(data.backend) || undefined,
+    policy:
+      policy === 'ok' || policy === 'warn' || policy === 'compact' || policy === 'hard' ? policy : undefined,
+  };
 }
 
 function newTurn(index: number, userText: string): TurnAcc {
@@ -207,17 +232,14 @@ export function deriveHarnessState(events: readonly SessionEventEnvelope[]): Har
       }
       case 'session.compacted': {
         support.compactions += 1;
-        const saved = asNumber(e.data.tokensSaved);
+        const saved = asNumber(e.data.savedTokens) ?? asNumber(e.data.tokensSaved);
         if (saved !== undefined) tokensSaved = (tokensSaved ?? 0) + saved;
         break;
       }
       case 'note': {
         const subject = asString(e.data.subject);
         if (subject === 'context.projection') {
-          support.contextProjections.push({
-            contextChars: asNumber(e.data.contextChars) ?? 0,
-            returnedCount: asNumber(e.data.returnedCount) ?? 0,
-          });
+          support.contextProjections.push(parseProjection(e.data));
         } else if (subject === 'memory_event') {
           support.memoryEvents += 1;
         }

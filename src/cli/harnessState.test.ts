@@ -239,10 +239,44 @@ describe('deriveHarnessState — SupportLens + tolerance', () => {
       ev('session.compacted', { tokensSaved: 40 }),
       ev('user.message', { text: 'go' }, { type: 'user' }),
     ]);
-    expect(state.support.contextProjections).toEqual([{ contextChars: 1234, returnedCount: 3 }]);
+    expect(state.support.contextProjections).toEqual([{ contextChars: 1234, returnedCount: 3, durationMs: 12 }]);
     expect(state.support.memoryEvents).toBe(2);
     expect(state.support.compactions).toBe(2);
     expect(state.support.tokensSavedByCompaction).toBe(40);
+  });
+
+  it('context.projection budget-side fields are preserved; malformed notes fall back to defaults', () => {
+    const state = deriveHarnessState([
+      ev('note', {
+        subject: 'context.projection',
+        contextChars: 4096,
+        returnedCount: 7,
+        occupancy: 0.42,
+        estimatedHistoryTokens: 900,
+        contextLimit: 200000,
+        contextPressureTokens: 1234,
+        durationMs: 5,
+        backend: 'miroir',
+        policy: 'warn',
+      }),
+      ev('note', { subject: 'context.projection' }),
+      ev('note', { subject: 'context.projection', contextChars: 'junk', policy: 'bogus' }),
+    ]);
+    expect(state.support.contextProjections).toEqual([
+      {
+        contextChars: 4096,
+        returnedCount: 7,
+        occupancy: 0.42,
+        estimatedHistoryTokens: 900,
+        contextLimit: 200000,
+        contextPressureTokens: 1234,
+        durationMs: 5,
+        backend: 'miroir',
+        policy: 'warn',
+      },
+      { contextChars: 0, returnedCount: 0 },
+      { contextChars: 0, returnedCount: 0 },
+    ]);
   });
 
   it('unknown/retired kinds are ignored (post-W5 vocabulary tolerance)', () => {
