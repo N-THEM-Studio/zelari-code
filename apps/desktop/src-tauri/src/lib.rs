@@ -2698,9 +2698,9 @@ fn run_sidecar_turn(
     //   --mode/--phase          → mode/phase
     //   --provider/--model      → provider/model
     //   --profile               → profile
-    //   --strict-done           → strictDone  (env `ZELARI_STRICT_DONE` stays
-    //                             authoritative for the gate; sidecar spawn
-    //                             pins the desktop default, documented)
+    //   --strict-done           → strictDone  (per-invocation env overlay,
+    //                             H10: the sidecar inherits the CLI default
+    //                             ON and the turn field wins when set)
     //   --gauntlet              → gauntlet
     //   --kraken-graph          → krakenGraph (+ planOnly / runPlan)
     //   --resume <id>           → resumeSessionId

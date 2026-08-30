@@ -1,4 +1,7 @@
 import { describe, expect, it } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   DEFAULT_DESKTOP_PREFS,
   DESKTOP_PREFS_KEY,
@@ -201,5 +204,24 @@ describe("load/saveDesktopPrefs", () => {
       getItem: () => "{not-json",
     };
     expect(loadDesktopPrefs(storage)).toEqual(DEFAULT_DESKTOP_PREFS);
+  });
+});
+
+describe("strict-done default (W6/t46 flip, post QA t21)", () => {
+  it("desktop default aligns with the CLI (strictDone ON, ADR-0025)", () => {
+    expect(DEFAULT_DESKTOP_PREFS.strictDone).toBe(true);
+    expect(normalizeDesktopPrefs({}).strictDone).toBe(true);
+    expect(normalizeDesktopPrefs({ strictDone: false }).strictDone).toBe(false);
+  });
+
+  it("sidecar no longer pins ZELARI_STRICT_DONE=0 (inherits the CLI default)", () => {
+    const rs = fs.readFileSync(
+      path.resolve(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "../../apps/desktop/src-tauri/src/harness_sidecar.rs",
+      ),
+      "utf8",
+    );
+    expect(rs).not.toContain('cmd.env("ZELARI_STRICT_DONE"');
   });
 });

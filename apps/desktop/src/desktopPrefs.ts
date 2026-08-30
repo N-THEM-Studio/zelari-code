@@ -20,7 +20,7 @@ export type VerifierReviewPreference = boolean | null;
 
 export interface DesktopPrefs {
   profile: ExecutionProfile;
-  /** Strict evidence gate for Kraken runs (off by default). */
+  /** Strict evidence gate for Kraken runs (on by default — aligned with the CLI, W6/t46 flip after QA t21). */
   strictDone: boolean;
   /** Strict evidence gate for Mission/Zelari runs (on by default). */
   missionStrict: boolean;
@@ -47,7 +47,7 @@ export interface DesktopPrefs {
 
 export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   profile: "kraken/v1",
-  strictDone: false,
+  strictDone: true,
   missionStrict: true,
   verifyPack: false,
   verifierReview: null,
@@ -97,7 +97,9 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
     profile: isExecutionProfile(r.profile)
       ? r.profile
       : DEFAULT_DESKTOP_PREFS.profile,
-    strictDone: r.strictDone === true,
+    // W6/t46: missing → new default (true, CLI-aligned); only an explicit
+    // persisted `false` opts out.
+    strictDone: r.strictDone !== false,
     missionStrict:
       typeof r.missionStrict === "boolean"
         ? r.missionStrict

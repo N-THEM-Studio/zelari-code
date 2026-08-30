@@ -299,16 +299,16 @@ impl HarnessSidecar {
         // expressed through run.turn input fields wherever the protocol
         // exposes one: provider, model, profile, gauntlet, graph, resume…):
         // - memory panel on (same as the old per-run default);
-        // - strict gates mirror the DESKTOP DEFAULTS (strict_done=false,
-        //   missions strict, verify pack off). A per-run strict_done=true is
-        //   still forwarded as the `strictDone` turn field (best effort —
-        //   the gates read env, so this is sidecar-granular; documented).
+        // - strict_done is NO LONGER pinned: the sidecar inherits the CLI
+        //   default (ON, ADR-0025 — W6/t46 flip after QA t21) and the
+        //   per-turn `strictDone` field wins via the per-invocation env
+        //   overlay (H10). Missions strict / verify pack off still mirror
+        //   the CLI defaults (belt-and-suspenders; no protocol field).
         cmd.env("ZELARI_MEMORY_V2", "1");
         // Belt-and-suspenders with `--serve-harness`: the CLI also keys off
         // this env so a stale Desktop binary that omits the flag still
         // starts the NDJSON server instead of the TUI.
         cmd.env("ZELARI_SERVE_HARNESS", "1");
-        cmd.env("ZELARI_STRICT_DONE", "0");
         cmd.env("ZELARI_MISSION_STRICT", "1");
         cmd.env("ZELARI_VERIFY_PACK", "0");
         cmd.env("ZELARI_GAUNTLET", "0");
