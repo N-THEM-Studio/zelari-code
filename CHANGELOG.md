@@ -5,6 +5,20 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.1] - 2026-08-31
+
+Patch: three harness feedback fixes from the 2.18 incident postmortem (resource-gate exhaustion on a BUILD turn + provider-truncated `---TOOLS---` block). The recurring class: the harness instructing the model to do what another harness layer denies, or failing silently where the model believes it acted.
+
+### Fixed
+
+- **Hard-limit denials no longer advise gated verification actions (t47)** — the two gate denial sites appended "Prioritize verification/repair actions" unconditionally, but at the `maxToolCalls` hard limit every call is denied, verification included; the model obeyed the advice and burned the turn retrying guaranteed denials (incident spine: tsc denied immediately after a hard-limit denial). Protected-zone denials keep the advice (essential tools are still allowed there); hard-limit denials order finalization. `toolCallGate` return type widened with `hardLimit?: boolean` (already produced by BudgetRuntime and propagated by `sessionSpine.gateResourceToolCall`).
+- **Build-liveness recovery skipped when the gate is exhausted (t48)** — `planBuildRecovery` re-entered with `toolChoice: 'required'` after a zero-mutation stop, forcing tool calls the gate guaranteed to deny (incident: two recovery turns, 6m16s of reasoning). Recovery now probes the gate with `edit_file` (essential-set: denied only at the hard limit or on a fail-closed gate crash) and skips, letting the zero-mutation stop surface honestly via `build_liveness_stalled`. Inert when no gate is configured.
+- **Truncated `---TOOLS---` blocks salvaged and reported (t49)** — a block cut before `---END---` (provider truncation) matched no parse branch: every salvage strategy sat behind the closing marker, so complete prefix calls were lost with the tail. `parseTextToolCallsDetailed` runs the same strategies on the partial body: complete prefix calls execute, the truncated tail is dropped (auto-closing a cut string argument would write garbage). `extractToolObjects` scans args brace-balanced/string-aware — the old non-greedy regex silently pushed calls with EMPTY args on nested objects; unparseable args now skip the call. The model is no longer blind: `text_tools_parse_failed` / `text_tools_truncated` advisory events carry a distinct truncated-vs-malformed message, and the feedback note reaches the model context on both paths (rolling-history push + `sessionSpine` `user.message` mirror, same contract as the `tool_call_truncated` guidance).
+
+### Tests
+
+- New suites — `agentHarnessToolGate` hard-limit section (3), `agentHarnessBuildLiveness` gate-exhausted skip (1), `agentHarnessTextToolsFeedback` (3), `core-parseTextToolCalls` truncated-block section (5), `sessionSpine` text-tools mirroring (2). Full suite green at release: 417 files / 4094 tests passed, 1 skipped; `tsc --noEmit` clean.
+
 ## [2.18.0] - 2026-08-31
 
 Minor: closes the declared 2.17 debts — ADR reconciliation, an honest spine contract on graph runs, the first `harness_state` consumers (CLI + Desktop), and two harness fixes (grep `include` semantics, truncated tool-call recovery).
