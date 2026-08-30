@@ -20,10 +20,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { MemoryEvent, MemoryService } from '@zelari/core/memory';
+import { LegacyMemoryBackendAdapter, type MemoryEvent, type MemoryService } from '@zelari/core/memory';
 import { readSessionLog } from '@zelari/core/session';
 import { memorySinkFor, spineMemoryEventNote, type SpineNoteHandle } from '../../src/cli/memory/spineTelemetry.js';
+import { getMemoryBackend } from '../../src/cli/memory/fileBackend.js';
 import { dispatchHeadlessTurn } from '../../src/cli/runHeadless.js';
+import { handleKrakenGraph } from '../../src/cli/slashHandlers/krakenGraph.js';
+import type { SpineMirroringWriter } from '../../src/cli/sessionSpine.js';
 import type { ProviderStreamFn } from '@zelari/core/harness';
 
 const AT = '2026-01-01T00:00:00.000Z';
@@ -276,4 +279,92 @@ describe('W2 — headless kraken-graph projects memory telemetry onto the spine'
     const raw = fs.readFileSync(logs[0]!, 'utf8');
     expect(raw).not.toContain(SECRET_CONTENT);
   }, 30_000);
+});
+
+// ---------------------------------------------------------------------------
+// (d) W2 follow-up: the two remaining unwired memory call sites.
+//     - getMemoryBackend (mission adapter) threads onEvent to the V2 service;
+//     - the TUI /kraken graph handler projects events through the writerRef
+//       holder (late binding; missing ref → events dropped, never a crash).
+// ---------------------------------------------------------------------------
+
+/** setMessages fake with the same updater idiom as cli-kraken-graphSlash.test.ts. */
+function fakeSetMessages() {
+  const messages: string[] = [];
+  const setMessages = (updater: unknown) => {
+    if (typeof updater === 'function') {
+      const next = (updater as (prev: unknown[]) => Array<{ content: string }>)([]);
+      messages.push(...next.map((m) => m.content));
+    }
+  };
+  return { setMessages, messages };
+}
+
+describe('W2 follow-up — getMemoryBackend threads onEvent (mission adapter)', () => {
+  it('propagates V2 service events to the caller-provided sink', async () => {
+    const events: MemoryEvent[] = [];
+    const backend = await getMemoryBackend(tmp, process.env, (event) => void events.push(event));
+    expect(backend).toBeInstanceOf(LegacyMemoryBackendAdapter);
+    await backend.add('w2 backend telemetry probe content', { source: 'w2-followup' });
+    await vi.waitFor(() => {
+      expect(events.some((e) => e.type === 'memory_write')).toBe(true);
+    });
+    await backend.close();
+  });
+
+  it('stays silent on the sink when memory is disabled', async () => {
+    process.env.ZELARI_MEMORY = '0';
+    const events: MemoryEvent[] = [];
+    const backend = await getMemoryBackend(tmp, process.env, (event) => void events.push(event));
+    await backend.add('disabled sink probe', {});
+    expect(events).toEqual([]);
+    await backend.close();
+  });
+});
+
+describe('W2 follow-up — TUI /kraken graph projects memory telemetry onto the spine', () => {
+  const rememberProbe = async (memory: MemoryService): Promise<void> => {
+    await memory.remember({
+      content: SECRET_CONTENT,
+      kind: 'fact',
+      importance: 0.9,
+      confidence: 0.9,
+      source: { agent: 'w2-followup' },
+    });
+  };
+
+  it('notes memory events via the writerRef-backed holder (late binding)', async () => {
+    const notes: Array<{ text: string; data?: Record<string, unknown> }> = [];
+    const spine: SpineNoteHandle = { note: (text, data) => void notes.push({ text, data }) };
+    const writerRef = { current: null as unknown as SpineMirroringWriter | null };
+    driveMemory = async (memory) => {
+      // Mirror attaches MID-RUN, after the handler already built the memory
+      // service — the holder getter must resolve it at emit time.
+      writerRef.current = { spine } as unknown as SpineMirroringWriter;
+      await rememberProbe(memory);
+    };
+    const { setMessages } = fakeSetMessages();
+    await handleKrakenGraph({ setMessages, cwd: tmp, sessionId: 'w2-followup', writerRef }, GOAL);
+
+    await vi.waitFor(() => {
+      expect(
+        notes.some(
+          (n) =>
+            (n.data as { subject?: string; type?: string } | undefined)?.subject === 'memory_event' &&
+            (n.data as { type?: string } | undefined)?.type === 'memory_write',
+        ),
+      ).toBe(true);
+    });
+    // Identifier-only invariant: the remembered content never reaches the spine.
+    expect(JSON.stringify(notes)).not.toContain(SECRET_CONTENT);
+  });
+
+  it('drops memory events without crashing when the context has no writerRef', async () => {
+    driveMemory = rememberProbe;
+    const { setMessages, messages } = fakeSetMessages();
+    await expect(
+      handleKrakenGraph({ setMessages, cwd: tmp, sessionId: 'w2-noref' }, GOAL),
+    ).resolves.toBeUndefined();
+    expect(messages.some((m) => m.includes('graph run failed'))).toBe(false);
+  });
 });

@@ -20,7 +20,7 @@ import type {
   MemoryResult,
   MemorySearchOptions,
 } from '@zelari/core';
-import { LegacyMemoryBackendAdapter, NoopMemoryService } from '@zelari/core/memory';
+import { LegacyMemoryBackendAdapter, NoopMemoryService, type MemoryEventSink } from '@zelari/core/memory';
 import { getMemoryService, isMemoryV2Enabled } from './serviceFactory.js';
 
 interface StoredFact {
@@ -145,15 +145,20 @@ export function isMemoryEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
 /**
  * Resolve and initialise the memory backend for a project. Returns a no-op
  * backend (never throws) when disabled or when initialisation fails, so callers
- * can always `await memory.search(...)` without guarding.
+ * can always `await memory.search(...)` without guarding. `onEvent` (optional)
+ * receives V2 memory telemetry — hosts pass a spine sink (`memorySinkFor`) or
+ * `spineMemoryEventNote` to project it onto the session spine (W2).
  */
 export async function getMemoryBackend(
   projectRoot: string,
   env: NodeJS.ProcessEnv = process.env,
+  onEvent?: MemoryEventSink,
 ): Promise<MemoryBackend> {
   if (!isMemoryEnabled(env)) return new NoopMemoryBackend();
   if (isMemoryV2Enabled(env)) {
-    const service = await getMemoryService(projectRoot, env);
+    const service = await getMemoryService(projectRoot, env, {
+      ...(onEvent ? { onEvent } : {}),
+    });
     if (service instanceof NoopMemoryService) return new NoopMemoryBackend();
     return new LegacyMemoryBackendAdapter(service);
   }

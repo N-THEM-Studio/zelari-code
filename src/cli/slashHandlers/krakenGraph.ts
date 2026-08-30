@@ -23,11 +23,19 @@ import {
   isMemoryAutoWriteEnabled,
   isMemoryV2Enabled,
 } from '../memory/serviceFactory.js';
+// W2: memory telemetry projected onto the session spine as state-only notes.
+import { memorySinkFor, type SpineNoteHandle } from '../memory/spineTelemetry.js';
+import type { SpineMirroringWriter } from '../sessionSpine.js';
 
 export interface KrakenGraphSlashContext {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
   cwd: string;
   sessionId: string;
+  /**
+   * W2: TUI session writer ref (optional — headless/test callers omit it).
+   * When present, memory telemetry projects onto the session spine mirror.
+   */
+  writerRef?: React.MutableRefObject<SpineMirroringWriter | null>;
 }
 
 export async function handleKrakenGraph(
@@ -48,12 +56,18 @@ export async function handleKrakenGraph(
 
   appendSystem(ctx.setMessages, `[kraken] planning graph for: ${prompt.trim()}`);
 
-  // W2 follow-up: this TUI path has no cheap spine handle
-  // (KrakenGraphSlashContext carries no mirror), so memory telemetry stays
-  // unwired here. The headless --kraken-graph path IS wired (runHeadless.ts).
+  // W2: late-binding sink — the TUI spine mirror attaches per turn on the
+  // session writer, so events resolve `ctx.writerRef?.current?.spine` at emit
+  // time (same idiom as useChatTurn.ts). Missing ref → events are dropped.
+  const tuiSpineHolder: { current?: SpineNoteHandle } = {
+    get current(): SpineNoteHandle | undefined {
+      return ctx.writerRef?.current?.spine ?? undefined;
+    },
+  };
   const memory = isMemoryV2Enabled()
     ? await getMemoryService(ctx.cwd, process.env, {
         onWarning: (warning) => appendSystem(ctx.setMessages, warning),
+        onEvent: memorySinkFor(tuiSpineHolder),
       })
     : undefined;
 

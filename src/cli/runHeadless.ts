@@ -951,7 +951,11 @@ async function runHeadlessZelari(
     userMessage: opts.task,
     hasPlan: hasWorkspacePlan(projectRoot),
   });
-  const memory = await getMemoryBackend(projectRoot);
+  // W2: the mission spine is already open here — mission memory events are
+  // noted directly (context.projection / memory_event state-only payloads).
+  const memory = await getMemoryBackend(projectRoot, process.env, (event) =>
+    spineMemoryEventNote(spine, event),
+  );
   const nativeMissionMemory = (
     memory as typeof memory & { service?: MemoryService }
   ).service;

@@ -2400,7 +2400,14 @@ async function runZelariMissionInTui(
     userMessage,
     hasPlan: hasWorkspacePlan(projectRoot),
   });
-  const memory = await getMemoryBackend(projectRoot);
+  // W2: getter-backed holder — the spine mirror attaches per turn, so mission
+  // memory events resolve `deps.writerRef.current?.spine` at emit time.
+  const missionSpineHolder = {
+    get current() {
+      return deps.writerRef.current?.spine;
+    },
+  };
+  const memory = await getMemoryBackend(projectRoot, process.env, memorySinkFor(missionSpineHolder));
   const chairmanBudget = envNumber(process.env.ZELARI_MODE_MAX_TOOLS_LUCIFER, {
     default: 30,
     min: 1,

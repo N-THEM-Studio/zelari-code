@@ -210,6 +210,9 @@ export function App(): React.ReactElement {
     sessionId: session.sessionId,
     messages: session.messages,
     setMessages: session.setMessages,
+    // W2: same writer ref passed to useChatTurn — lets /kraken graph project
+    // memory events onto the session spine mirror.
+    writerRef: session.writerRef,
     setInput,
     setBusy,
     setSessionId: session.setSessionId,

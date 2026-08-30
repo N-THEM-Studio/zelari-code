@@ -6,6 +6,7 @@ import type { CodingSkillDefinition } from '@zelari/core/skills';
 import type { ChatMessage } from '../components/ChatStream.js';
 import type { AgentHarness } from '@zelari/core/harness';
 import type { ProviderSpec } from '../keyStore.js';
+import type { SpineMirroringWriter } from '../sessionSpine.js';
 import { appendSystem, appendUser } from './messageHelpers.js';
 import { sessionKindRouter } from '../sessionManager.js';
 import { newSessionId } from '../sessionManager.js';
@@ -92,6 +93,12 @@ export interface SlashDispatchParams {
   sessionId: string;
   messages: ChatMessage[];
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
+  /**
+   * W2: TUI session writer ref (same ref passed to useChatTurn). Lets the
+   * /kraken graph handler project memory events onto the session spine.
+   * Optional so headless/test callers that build params by hand stay valid.
+   */
+  writerRef?: React.MutableRefObject<SpineMirroringWriter | null>;
   setInput: (v: string) => void;
   setBusy: (v: boolean) => void;
   setSessionId: (v: string) => void;
@@ -597,7 +604,10 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
 
     if (result.kind === 'kraken_graph') {
       const sid = (sessionId || 'default').trim();
-      await handleKrakenGraph({ setMessages, cwd: process.cwd(), sessionId: sid }, result.graphPrompt ?? '');
+      await handleKrakenGraph(
+        { setMessages, cwd: process.cwd(), sessionId: sid, writerRef: params.writerRef },
+        result.graphPrompt ?? '',
+      );
       return;
     }
 
