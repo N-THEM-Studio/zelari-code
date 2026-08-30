@@ -5,6 +5,30 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.18.0] - 2026-08-31
+
+Minor: closes the declared 2.17 debts — ADR reconciliation, an honest spine contract on graph runs, the first `harness_state` consumers (CLI + Desktop), and two harness fixes (grep `include` semantics, truncated tool-call recovery).
+
+### Added
+
+- **`zelari inspect <session-id>`** — first CLI consumer of `harness_state`: per-turn verdict with `unknown ≠ pass` blockers, Support lens (context projections / memory events / compactions), `--json` output, not-found exits 1 without a stack trace. Bare `zelari inspect` keeps the existing env-inspect behavior.
+- **Desktop `HarnessStatePanel`** — first GUI consumer of `harness_state`: the sidecar recognizes the final NDJSON event per session and emits a Tauri `harness-state` event; defensive `normalize.ts` (unknown ≠ pass), `useHarnessState` subscription, panel mounted after `VerificationStatusCard`; absent state renders nothing.
+- **Spine v1.1 graph node envelope** — `graph.node_started` / `graph.node_ended` state-only event pair per node attempt (`nodeId`, `agent`, `ok`, `durationMs`); zero model content on the spine; tolerant replay keeps `SCHEMA_VERSION` at 1; `merge` nodes stay radio-only. Replaces the envelope-only special case in ADR-0024.
+
+### Changed
+
+- **ADR-0024 amended (v1.1)** — the graph host is now a spine hot path with a measurable per-node envelope contract (closes the H1 self-contradiction on graph runs).
+- **ADR-0031 / ADR-0032 promoted** from the council vault to `docs/decisions/` (recall asymmetry is deliberate; budget pipeline is the canonical projection compiler); AGENTS.MD decision index refreshed to real accepted state.
+
+### Fixed
+
+- **grep_content `include` semantics** — include globs without `/` or `**` now also match the file basename at any depth (parity with `grep -r --include`); path-anchored globs unchanged; `scopeWarnings` and the tool description realigned. Previously `*.md` matched only root-level files while omitting the parameter matched everything — a silent trap for every agent.
+- **Truncated tool-call recovery** — a `tool_calls` finish reason with zero complete calls no longer leaves the model blind: after the forced stop the harness injects the recovery guidance into the model context (fallback history) and a `user.message` spine note, XOR-guarded against duplication. First-ever test coverage of this path (4 tests).
+
+### Tests
+
+- Full suite green at release: 416 files / 4080 tests; new/updated suites — `v4-walk`, `search`, `core-agentHarness-toolCallTruncated`, `sessionSpine`, `krakenGraphSpine` (differential honest pin), `inspectSession` (7), `harnessState/normalize` (5), Rust sidecar classifier (4, `cargo check` clean).
+
 ## [2.17.0] - 2026-08-30
 
 Minor: wiring-first release - the session spine now sees every headless host, projection decisions are measurable, and HarnessState v1 (read-model + Turn Completion Contract) ships on all four hosts. Closes the W1-W6 wiring gaps and t37 (LSP anti-thrash).
