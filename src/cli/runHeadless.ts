@@ -411,6 +411,15 @@ async function runHeadlessKrakenGraph(
 
   const cwd = resolveHeadlessCwd(opts);
   const sessionId = crypto.randomUUID();
+  // W1: kraken-graph was the only headless dispatch path with no ADR-0016
+  // session spine — hosts had no event log to resume or replay. Mirror the
+  // council/zelari hosts: same open shape, same degrade-and-stop discipline.
+  const spine = await openHeadlessSpine({ sessionId, mode: 'kraken', workspace: cwd });
+  // E1.4: advertise the spine session id so hosts (Desktop) resume the same
+  // event log next turn. Gated to json output — plain stdout must stay
+  // byte-for-byte identical to the pre-spine behavior.
+  if (opts.output === 'json') emitEvent(sessionStartedEvent(spine));
+  spine.userMessage(prompt);
   const { getMemoryService, isMemoryAutoWriteEnabled, isMemoryV2Enabled } =
     await import('./memory/serviceFactory.js');
   const graphMemory = isMemoryV2Enabled()
@@ -436,6 +445,10 @@ async function runHeadlessKrakenGraph(
   };
   process.once('SIGINT', onSigint);
 
+  // W1: every return below records its code first so the finally can close
+  // the spine with the matching status (completed / error / cancelled).
+  let exitCode = 0;
+
   try {
     // ---- Pre-flight: run a pre-built plan from disk, skipping the planner.
     let preflightGraph: import('@zelari/core').TaskGraph | undefined;
@@ -447,18 +460,21 @@ async function runHeadlessKrakenGraph(
         raw = await fs.readFile(planPath, 'utf8');
       } catch (e) {
         log(`plan file not found: ${planPath} (${(e as Error).message})`);
-        return 1;
+        exitCode = 1;
+        return exitCode;
       }
       let planJson: { graphId?: string; nodes?: unknown[] };
       try {
         planJson = JSON.parse(raw);
       } catch (e) {
         log(`plan file is malformed JSON: ${(e as Error).message}`);
-        return 1;
+        exitCode = 1;
+        return exitCode;
       }
       if (!planJson || !Array.isArray(planJson.nodes)) {
         log(`plan file is malformed: missing "nodes" array`);
-        return 1;
+        exitCode = 1;
+        return exitCode;
       }
       const { createGraph, validateGraph } = await import('@zelari/core');
       const validated = createGraph(planJson.graphId ?? opts.runPlan, planJson.nodes as never);
@@ -509,7 +525,8 @@ async function runHeadlessKrakenGraph(
         emitEvent({ type: 'log', message: `plan_only_id=${planId}` });
         emitEvent({ type: 'log', message: `plan_only_path=${planPath}` });
       }
-      return 0;
+      exitCode = 0;
+      return exitCode;
     }
 
     const audit = new AuditLogger();
@@ -578,7 +595,8 @@ async function runHeadlessKrakenGraph(
       process.stdout.write(`${finalAscii}\n`);
     }
 
-    return summary.converged ? 0 : 3;
+    exitCode = summary.converged ? 0 : 3;
+    return exitCode;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (opts.output === 'json') {
@@ -586,10 +604,21 @@ async function runHeadlessKrakenGraph(
     } else {
       process.stderr.write(`[zelari-code --headless] kraken graph failed: ${message}\n`);
     }
-    return 2;
+    exitCode = 2;
+    return exitCode;
   } finally {
     process.off('SIGINT', onSigint);
     await graphMemory?.close().catch(() => undefined);
+    // W1: the spine closes on EVERY exit (completed / error / cancelled) and
+    // must never change the exit code.
+    try {
+      const closeReason = abort.signal.aborted
+        ? 'cancelled'
+        : exitCode === 0
+          ? 'completed'
+          : 'error';
+      await spine.close(closeReason);
+    } catch { /* spine never fails the run */ }
   }
 }
 async function buildCouncilToolRegistry(
