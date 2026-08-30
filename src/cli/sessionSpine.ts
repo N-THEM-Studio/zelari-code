@@ -23,6 +23,7 @@
  */
 import type { BrainEvent } from '@zelari/core/events';
 import type { SessionJsonlWriter } from '@zelari/core/harness';
+import { TOOL_CALL_TRUNCATED_RECOVERY_USER } from '@zelari/core/harness';
 import {
   SessionLogWriter,
   SessionLogLockedError,
@@ -159,6 +160,20 @@ export function mapBrainEventToSpine(ev: BrainEvent): SessionEventInput | null {
           ...(ev.memberName ? { member: ev.memberName } : {}),
         },
       };
+    case 'error':
+      // A provider-truncated tool call must reach the model context on the
+      // spine path too: the harness pushes the same guidance into its rolling
+      // history (fallback path), but buildModelContext prefers the
+      // spine-derived surface, so mirror the note as a model-visible
+      // user.message. Any other error code stays out of the spine vocabulary.
+      if (ev.code === 'tool_call_truncated') {
+        return {
+          kind: 'user.message',
+          actor: ACTOR_USER,
+          data: { text: TOOL_CALL_TRUNCATED_RECOVERY_USER },
+        };
+      }
+      return null;
     default:
       // message deltas are coalesced at message_end by the mirror;
       // ui/progress/metrics events are not part of the spine vocabulary.

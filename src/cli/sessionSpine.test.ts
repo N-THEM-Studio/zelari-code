@@ -15,7 +15,8 @@ import {
   resumeSpineContext,
   spineEnabled,
 } from './sessionSpine.js';
-import { readSessionLog } from '@zelari/core/session';
+import { readSessionLog, ACTOR_USER } from '@zelari/core/session';
+import { TOOL_CALL_TRUNCATED_RECOVERY_USER } from '@zelari/core/harness';
 
 let tmp: string;
 
@@ -83,6 +84,35 @@ describe('mapBrainEventToSpine', () => {
       provider: 'test-provider',
       model: 'test-model',
     });
+  });
+
+  it('maps tool_call_truncated errors to a model-visible user.message note', () => {
+    const mapped = mapBrainEventToSpine(
+      ev('error', {
+        severity: 'recoverable',
+        code: 'tool_call_truncated',
+        message: 'Tool call was truncated',
+      }),
+    );
+    expect(mapped).not.toBeNull();
+    expect(mapped!.kind).toBe('user.message');
+    expect(mapped!.actor).toEqual(ACTOR_USER);
+    expect((mapped!.data as { text: string }).text).toBe(TOOL_CALL_TRUNCATED_RECOVERY_USER);
+  });
+
+  it('keeps other error codes out of the spine vocabulary', () => {
+    expect(
+      mapBrainEventToSpine(ev('error', { severity: 'recoverable', message: 'provider hiccup' })),
+    ).toBeNull();
+    expect(
+      mapBrainEventToSpine(
+        ev('error', {
+          severity: 'recoverable',
+          code: 'tool_budget_extended',
+          message: 'extended',
+        }),
+      ),
+    ).toBeNull();
   });
 
   it('drops ui/progress events (queue_update, message_start, thinking_delta)', () => {

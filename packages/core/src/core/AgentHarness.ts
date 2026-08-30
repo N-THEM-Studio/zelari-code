@@ -78,6 +78,20 @@ export {
   type TextLoopHit,
 } from './textLoopDetect.js';
 
+// --- Truncated tool-call recovery -------------------------------------------
+// Stable marker + guidance pushed after a `tool_call_truncated` error. The
+// error event alone is UI-only; this user message is what the NEXT provider
+// turn actually reads. sessionSpine.ts mirrors the exact same text as a
+// `user.message` spine note for the spine-derived context path —
+// buildModelContext reads either the spine surface or the rolling fallback
+// history (strict `derived ?? fallback`, never both), so the guidance shows
+// up exactly once per path; the marker doubles as the anti-dup key.
+export const TOOL_CALL_TRUNCATED_RECOVERY_MARKER = '[harness] Previous tool call was truncated';
+export const TOOL_CALL_TRUNCATED_RECOVERY_USER =
+  `${TOOL_CALL_TRUNCATED_RECOVERY_MARKER} by the provider before completion ` +
+  `(finish_reason=tool_calls but no complete tool_call arrived). ` +
+  `Retry with a shorter payload or split the work into smaller tool calls.`;
+
 // --- Public types -----------------------------------------------------------
 
 /** Inline image sent to vision-capable providers (raw base64, no data: prefix). */
@@ -1721,11 +1735,11 @@ export class AgentHarness {
           // write_file…" with no error, no completion ("muore e basta").
           // Treat it as a recoverable error and force finish='stop' so the
           // turn ends and the model gets a chance to recover on the next turn.
-          if (
+          const truncatedToolCall =
             finishRef.value === 'tool_calls' &&
             turnToolCalls.length === 0 &&
-            turnToolResults.length === 0
-          ) {
+            turnToolResults.length === 0;
+          if (truncatedToolCall) {
             const truncErr = createBrainEvent('error', this.sessionId, {
               severity: 'recoverable',
               message:
@@ -1790,6 +1804,27 @@ export class AgentHarness {
               toolCallId: tr.toolCallId,
               content: tr.content,
             });
+          }
+          // Inject the recovery guidance into the model context: the
+          // tool_call_truncated error event is advisory/UI-only, so without
+          // this push the next provider turn restarts blind and tends to
+          // re-emit the same oversized call. Placed after the assistant seal
+          // so the transcript order stays assistant(turn) → user(guidance).
+          // Idempotent: never stack two identical guidance notes back-to-back.
+          if (truncatedToolCall) {
+            const last = this.config.messages[this.config.messages.length - 1];
+            if (
+              !(
+                last?.role === 'user' &&
+                typeof last.content === 'string' &&
+                last.content.includes(TOOL_CALL_TRUNCATED_RECOVERY_MARKER)
+              )
+            ) {
+              this.config.messages.push({
+                role: 'user',
+                content: TOOL_CALL_TRUNCATED_RECOVERY_USER,
+              });
+            }
           }
           break;
         } else if (delta.kind === 'error') {
