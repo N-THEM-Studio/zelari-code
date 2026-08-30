@@ -167,16 +167,29 @@ async function walkInner(
 }
 
 /**
- * Filter a flat list of FileEntry to those whose relative path matches at
- * least one of {@link include} globs (matched against forward-slash paths).
+ * Filter a flat list of FileEntry to those matching at least one of
+ * {@link include} globs (matched against forward-slash relative paths).
+ *
+ * Glob anchoring (grep --include style):
+ *   - a glob WITHOUT '/' and WITHOUT '**' (e.g. '*.ts') is matchBase: it also
+ *     tests the entry basename, so it matches at ANY depth ('src/a.ts');
+ *   - a glob WITH '/' or '**' (e.g. 'src/*.ts') is path-anchored: it tests the
+ *     full relative path only, at exactly that level.
  */
 export function filterByInclude(entries: FileEntry[], include: string[]): FileEntry[] {
   if (include.length === 0 || (include.length === 1 && include[0] === '*')) {
     return entries.filter(e => e.type === 'file');
   }
-  const regexes = include.map(globToRegex);
+  const pathRegexes: RegExp[] = []; // anchored: relpath only
+  const baseRegexes: RegExp[] = []; // matchBase: basename too
+  for (const g of include) {
+    (g.includes('/') || g.includes('**') ? pathRegexes : baseRegexes).push(globToRegex(g));
+  }
   return entries.filter(e => {
     if (e.type !== 'file') return false;
-    return regexes.some(re => re.test(e.name));
+    if (pathRegexes.some(re => re.test(e.name))) return true;
+    // FileEntry.name is a '/'-joined relative path (built in walkInner).
+    const base = e.name.slice(e.name.lastIndexOf('/') + 1);
+    return baseRegexes.some(re => re.test(base));
   });
 }

@@ -9,8 +9,9 @@ import type { ToolContext } from '../toolTypes.js';
  * WS1 — grep_content auto-diagnostico (piano §1 + delta §7/§8).
  *
  * Fixture: root/{a.ts, sub/b.ts, sub/deep/c.ts} — every file contains "alpha".
- * The one-segment glob "*.ts" matches only a.ts; the recursive double-star
- * form matches all three (see _walk.ts globToRegex).
+ * A flat glob like "*.ts" is matchBase (grep --include style): it matches the
+ * basename at any depth, so it selects all three files. The recursive
+ * double-star form is equivalent here (see _walk.ts filterByInclude).
  */
 
 let root: string;
@@ -47,13 +48,12 @@ async function run(args: Record<string, unknown>): Promise<Extract<Exec, { ok: t
 }
 
 describe('grep_content — WS1 filesWalked + warnings', () => {
-  it('non-recursive glob: warns and reports filesWalked vs filesInTree', async () => {
+  it('flat glob: matches basename at any depth (grep --include), no hint', async () => {
     const r = await run({ path: root, pattern: 'alpha', contextLines: 0, maxMatches: 50, include: ['*.ts'] });
     expect(r.filesWalked).toBe(3);
-    expect(r.filesInTree).toBe(1);
-    expect(r.totalMatches).toBe(1);
-    expect(r.warning).toBeDefined();
-    expect(r.warning).toContain('**/*.ts');
+    expect(r.filesInTree).toBe(3);
+    expect(r.totalMatches).toBe(3);
+    expect(r.warning).toBeUndefined();
     expect(r.effectiveInclude).toEqual(['*.ts']);
   });
 
@@ -85,7 +85,8 @@ describe('grep_content — WS1 filesWalked + warnings', () => {
     const r = await run({ path: root, pattern: 'alpha', contextLines: 0, maxMatches: 50, include: '*.ts' });
     expect(r.warning).toContain('coerced');
     expect(r.effectiveInclude).toEqual(['*.ts']);
-    expect(r.filesInTree).toBe(1);
+    expect(r.filesInTree).toBe(3);
+    expect(r.warning).not.toContain('**/*.ts'); // no recursive hint for flat globs
   });
 
   it('include matching 0 of N walked files: SEARCH_EMPTY_SCOPE sentinel, model-facing', async () => {
@@ -95,6 +96,7 @@ describe('grep_content — WS1 filesWalked + warnings', () => {
     expect(r.totalMatches).toBe(0);
     expect(r.warning).toContain('SEARCH_EMPTY_SCOPE');
     expect(r.warning).toContain('Do not interpret this result as "pattern not found"');
+    expect(r.warning).not.toContain("'*' matches only one path segment"); // stale advice
   });
 
   it('intentional narrow filter with no recursive gain: stays silent (no false-positive noise)', async () => {
@@ -113,6 +115,44 @@ describe('grep_content — WS1 filesWalked + warnings', () => {
     expect(r.filesSearched).toBe(1);
     expect(r.filesInTree).toBe(1);
     expect(r.totalMatches).toBe(1);
+    expect(r.warning).toBeUndefined();
+  });
+});
+
+describe('grep_content — path-anchored globs keep the recursive hint', () => {
+  let root2: string;
+
+  beforeAll(async () => {
+    root2 = await fs.mkdtemp(path.join(os.tmpdir(), 'zelari-grep-anchored-'));
+    await fs.mkdir(path.join(root2, 'src'), { recursive: true });
+    await fs.mkdir(path.join(root2, 'lib', 'src'), { recursive: true });
+    await fs.writeFile(path.join(root2, 'src', 'x.ts'), 'alpha\n');
+    await fs.writeFile(path.join(root2, 'lib', 'src', 'y.ts'), 'alpha\n');
+  });
+
+  afterAll(async () => {
+    await fs.rm(root2, { recursive: true, force: true });
+  });
+
+  async function runIn(cwd: string, args: Record<string, unknown>) {
+    const parsed = GrepContentArgsSchema.parse(args);
+    const res = await grepContentTool.execute(parsed, makeCtx(cwd));
+    if (!res.ok) throw new Error(`tool failed: ${res.error}`);
+    return res.value;
+  }
+
+  it('anchored glob the ** form would widen: hint fires with the glob echoed', async () => {
+    // 'src/*.ts' matches src/x.ts only; '**/src/*.ts' would also match lib/src/y.ts
+    const r = await runIn(root2, { path: root2, pattern: 'alpha', contextLines: 0, maxMatches: 50, include: ['src/*.ts'] });
+    expect(r.filesWalked).toBe(2);
+    expect(r.filesInTree).toBe(1);
+    expect(r.warning).toContain("a '**/src/*.ts'");
+    expect(r.warning).toContain('would have matched 1 more');
+  });
+
+  it('flat glob over the same tree: reaches lib/src/y.ts via basename, silent', async () => {
+    const r = await runIn(root2, { path: root2, pattern: 'alpha', contextLines: 0, maxMatches: 50, include: ['*.ts'] });
+    expect(r.filesInTree).toBe(2);
     expect(r.warning).toBeUndefined();
   });
 });

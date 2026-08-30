@@ -68,7 +68,10 @@ const GrepContentArgsSchema = z.object({
   /**
    * Glob pattern(s) to INCLUDE when path is a directory.
    * Accepts a string OR string[] (models often emit a bare string).
-   * Default ['*'] = all files. Ignored when path is a file.
+   * A glob without '/' (e.g. '*.ts') matches the file basename at any depth
+   * (grep --include style); a glob with '/' (e.g. 'src/*.ts') matches the
+   * relative path at exactly that level. Default ['*'] = all files.
+   * Ignored when path is a file.
    */
   include: stringOrStringArray.optional().default(['*']),
   /**
@@ -110,16 +113,20 @@ interface GrepResult {
   effectiveExclude: string[];
   /**
    * Non-fatal diagnostics for the caller: empty include scope
-   * (SEARCH_EMPTY_SCOPE sentinel), suspicious non-recursive glob,
+   * (SEARCH_EMPTY_SCOPE sentinel), suspicious path-anchored glob,
    * coerced or deprecated input (DEPRECATED_INPUT sentinel).
    * Multiple diagnostics are joined with '; '.
    */
   warning?: string;
 }
 
-/** True when at least one include glob uses the recursive `**` form. */
-function hasRecursiveGlob(include: string[]): boolean {
-  return include.some((g) => g.includes('**'));
+/**
+ * True when at least one include glob is path-anchored (contains '/' or '**').
+ * Flat globs are matchBase (see filterByInclude) so they already reach any
+ * depth — only anchored globs can gain from the '**' recursive form.
+ */
+function hasPathAnchoredGlob(include: string[]): boolean {
+  return include.some((g) => g.includes('/') || g.includes('**'));
 }
 
 /**
@@ -130,8 +137,9 @@ function hasRecursiveGlob(include: string[]): boolean {
  *      matched none (the classic one-segment-vs-double-star glob trap).
  *      Model-facing sentinel: the caller must not read "empty scope" as
  *      "pattern not found".
- *   2. Non-recursive glob dropped files that the double-star variant of the
- *      same glob would have matched → milder hint with a recursive-glob example.
+ *   2. Path-anchored glob (with '/') dropped files that the double-star variant
+ *      of the same glob would have matched → milder hint with a recursive-glob
+ *      example. Flat globs are matchBase, so they never trigger this hint.
  */
 function scopeWarnings(allEntries: FileEntry[], include: string[], matched: number): string[] {
   const warnings: string[] = [];
@@ -139,27 +147,31 @@ function scopeWarnings(allEntries: FileEntry[], include: string[], matched: numb
   if (filesWalked === 0) return warnings;
 
   if (matched === 0) {
+    const cause = hasPathAnchoredGlob(include)
+      ? `path-anchored globs (with '/') match the relative path at exactly that level; use '**/<glob>' for recursive matching`
+      : `flat globs ('*.ts') match the basename at any depth, so no file with these names/extensions exists in the walked tree`;
     warnings.push(
       `SEARCH_EMPTY_SCOPE: include globs matched 0 of ${filesWalked} files walked — ` +
-        `'*' matches only one path segment; use '**/<glob>' for recursive matching. ` +
-        `Do not interpret this result as "pattern not found".`,
+        `${cause}. Do not interpret this result as "pattern not found".`,
     );
     return warnings;
   }
 
-  if (hasRecursiveGlob(include) || matched >= filesWalked) return warnings;
+  if (!hasPathAnchoredGlob(include) || matched >= filesWalked) return warnings;
 
-  // Would the recursive variant of the SAME globs have matched more files?
-  // ('**/' + g matches everything g matches, so wouldMatch >= matched holds
-  //  by construction — the check below only fires on real evidence.)
-  const recursiveRegexes = compileGlobs(include.map((g) => `**/${g}`));
+  // Would the recursive variant of the SAME anchored globs have matched more
+  // files? ('**/' + g matches everything g matches, so wouldMatch >= matched
+  // holds by construction — the check below only fires on real evidence.)
+  const anchored = include.filter((g) => g.includes('/') || g.includes('**'));
+  const recursiveRegexes = compileGlobs(anchored.map((g) => `**/${g}`));
   const wouldMatch = allEntries.filter(
     (e) => e.type === 'file' && matchesAnyCompiled(e.name, recursiveRegexes),
   ).length;
   if (wouldMatch > matched) {
     warnings.push(
       `include globs matched ${matched} of ${filesWalked} files walked — ` +
-        `'*' matches only one path segment; a '**/*.ts'-style recursive glob ` +
+        `a path-anchored glob ('${anchored[0]}') matches only that exact level; ` +
+        `a '**/${anchored[0]}'-style recursive glob ` +
         `would have matched ${wouldMatch - matched} more file(s) in subdirectories`,
     );
   }
@@ -223,8 +235,9 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
     'Regex search for content in a file OR recursively in a directory. ' +
     'When path is a directory, include/exclude globs filter which files are searched ' +
     '(default: all files, excluding node_modules/dist/.git/etc.). ' +
-    'Glob semantics: "*" matches ONE path segment only ("*.ts" does NOT match "sub/file.ts"); ' +
-    'use "**" for recursive matching ("**/*.ts" matches at any depth). ' +
+    'Glob semantics (grep --include style): a glob without \'/\' (e.g. "*.md") matches the file basename at ANY depth; ' +
+    'a glob with \'/\' (e.g. "src/*.ts") matches the relative path at exactly that level; ' +
+    '"**" is explicit recursion ("**/*.ts" matches at any depth, same as the bare form). ' +
     'include/exclude accept a single glob string (e.g. "*.ts") OR an array of globs. ' +
     'Returns matches with line numbers and context, plus filesWalked/filesInTree counts ' +
     'and a warning when the include globs matched suspiciously few files.',

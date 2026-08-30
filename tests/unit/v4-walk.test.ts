@@ -138,11 +138,11 @@ describe('_walk', () => {
       expect(filtered.length).toBe(4); // excludes the directory
     });
 
-    it('filters by extension glob (single segment only)', () => {
-      // *.ts → only matches files in root segment (no slashes)
+    it('filters by extension glob (matchBase: basename at any depth)', () => {
+      // '*.ts' has no '/' → matches the basename at any depth (grep --include)
       const filtered = filterByInclude(entries, ['*.ts']);
       const names = filtered.map(e => e.name).sort();
-      expect(names).toEqual(['foo.ts']);
+      expect(names).toEqual(['foo.ts', 'src/app.ts']);
     });
 
     it('supports ** recursive include (matches nested too)', () => {
@@ -154,6 +154,48 @@ describe('_walk', () => {
     it('drops directories even if glob matches', () => {
       const filtered = filterByInclude(entries, ['**']);
       expect(filtered.every(e => e.type === 'file')).toBe(true);
+    });
+
+    // Deeper tree: exercises basename fallback vs path anchoring.
+    const deepEntries: FileEntry[] = [
+      { name: 'root.ts', type: 'file' },
+      { name: 'src/one.ts', type: 'file' },
+      { name: 'src/deep/a.ts', type: 'file' },
+      { name: 'src/deep/b.ts', type: 'file' },
+      { name: 'other/a.ts', type: 'file' },
+      { name: 'src', type: 'directory' },
+    ];
+
+    it('flat glob matches nested basenames and root files alike', () => {
+      const filtered = filterByInclude(deepEntries, ['*.ts']);
+      const names = filtered.map(e => e.name).sort();
+      expect(names).toEqual([
+        'other/a.ts',
+        'root.ts',
+        'src/deep/a.ts',
+        'src/deep/b.ts',
+        'src/one.ts',
+      ]);
+    });
+
+    it('path-anchored glob stays anchored: exactly one level, no basename fallback', () => {
+      const filtered = filterByInclude(deepEntries, ['src/*.ts']);
+      const names = filtered.map(e => e.name).sort();
+      // NOT other/a.ts, NOT src/deep/b.ts (only one segment after 'src/')
+      expect(names).toEqual(['src/one.ts']);
+    });
+
+    it('overlapping globs: a file matching several globs is returned once', () => {
+      const filtered = filterByInclude(deepEntries, ['**/*.ts', '*.ts']);
+      const names = filtered.map(e => e.name).sort();
+      expect(names).toEqual([
+        'other/a.ts',
+        'root.ts',
+        'src/deep/a.ts',
+        'src/deep/b.ts',
+        'src/one.ts',
+      ]);
+      expect(new Set(names).size).toBe(names.length);
     });
   });
 });
