@@ -1008,6 +1008,14 @@ export class AgentHarness {
       if (this.buildProgress.mutationsSucceeded > 0) return null;
       if (turn.value !== 'stop' || turn.clarificationRequested || turn.providerError) return null;
       if (this.buildProgress.recoveries >= maxBuildRecoveries) return null;
+      // 2.18.1 (t48): recovery re-enters with toolChoice:'required' — if the
+      // gate denies even an essential mutation, a recovery turn can only
+      // burn provider calls on guaranteed-denied tools (hard limit or a
+      // fail-closed gate crash). Skip and let the zero-mutation stop
+      // surface honestly; the spine already carries
+      // resource.limit_reached/overrun next to it. 'edit_file' is in the
+      // essential set, so protected-zone advisories still allow it.
+      if (!this.checkToolCallGate('edit_file', {}).allowed) return null;
       this.buildProgress.recoveries += 1;
       this.config.messages.push({ role: 'user', content: BUILD_LIVENESS_RECOVERY_PROMPT });
       return {

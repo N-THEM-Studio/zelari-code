@@ -114,6 +114,48 @@ describe('AgentHarness build liveness', () => {
     expect(events.find((event) => event.type === 'agent_end')).toMatchObject({ reason: 'error' });
   });
 
+  it('skips liveness recovery when the tool gate denies mutations (hard limit)', async () => {
+    const { registry } = mutationRegistry();
+    const messages: Array<{ role: 'user'; content: string }> = [
+      { role: 'user', content: 'fix it' },
+    ];
+    let calls = 0;
+    const provider: ProviderStreamFn = async function* () {
+      calls += 1;
+      yield { kind: 'text', delta: 'No tool call.' };
+      yield { kind: 'finish', reason: 'stop' };
+    };
+    const harness = new AgentHarness({
+      model: 'grok-4.6',
+      provider: 'grok',
+      messages,
+      tools: [{ name: 'commit_change', description: 'mutate', parameters: {} }],
+      toolRegistry: registry,
+      providerStream: provider,
+      buildLiveness: { mutationRequired: true, maxRecoveries: 2 },
+      toolCallGate: () => ({
+        allowed: false,
+        reason:
+          "Resource exhausted: this turn's execution budget (maxToolCalls) is spent. " +
+          'No further billable tool calls are allowed in this turn.',
+        hardLimit: true,
+      }),
+    });
+
+    const events = await collect(harness);
+    // No recovery re-entry: forcing toolChoice:'required' when the gate
+    // denies every call only burns provider turns on guaranteed denials.
+    expect(calls).toBe(1);
+    expect(messages.filter((m) => m.content.includes('[build-liveness]'))).toHaveLength(0);
+    // The zero-mutation stop still surfaces honestly instead of looping.
+    expect(events).toContainEqual(expect.objectContaining({
+      type: 'error',
+      severity: 'fatal',
+      code: 'build_liveness_stalled',
+    }));
+    expect(events.find((event) => event.type === 'agent_end')).toMatchObject({ reason: 'error' });
+  });
+
   it('allows a structured clarification pause without forcing a mutation', async () => {
     let calls = 0;
     const provider: ProviderStreamFn = async function* () {
