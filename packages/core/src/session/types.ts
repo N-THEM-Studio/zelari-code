@@ -78,6 +78,15 @@ export const SESSION_EVENT_KINDS = [
   'resource.reserve_entered',
   // 2.6.1 (closure plan §9): hard-limit overrun telemetry — state-only.
   'resource.overrun',
+  // ADR-0024 v1.1 (amended 2026-08-30): per-node ENVELOPE for kraken-graph
+  // runs — written by the HOST (the sole spine writer) around the executor's
+  // tentacle-run seam. State-only (never model-surface): data = {nodeId,
+  // agent, graphId?, ok?, cancelled?, durationMs?}; node labels, prompts and
+  // turn output stay on the kraken radio JSONL. One pair per attempt.
+  // ADR-0021 schema review: additive state kinds need no SCHEMA_VERSION bump —
+  // older readers skip them via the tolerant replay (schema-mismatch issues).
+  'graph.node_started',
+  'graph.node_ended',
   'note',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];

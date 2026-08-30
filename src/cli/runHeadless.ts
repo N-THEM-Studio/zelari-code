@@ -31,6 +31,8 @@ import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, res
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from './kraken/metrics.js';
 import { buildKrakenRepairPrompt, evaluateKrakenCompletionGate } from './kraken/completionGate.js';
 import { krakenSelectionPlaybook } from './kraken/selectionPlaybook.js';
+// ADR-0024 v1.1: types for the host-owned per-node spine envelope wrapper.
+import type { RunTentacleOptions, TentacleResult } from './kraken/tentacle.js';
 import { krakenDelegationPlaybook, resolveDelegationPolicyForRun } from './kraken/delegationPolicy.js';
 import { chooseOrchestration } from './orchestration/policy.js';
 import { collectOrchestrationFacts, spineOrchestrationNote } from './orchestration/facts.js';
@@ -541,6 +543,17 @@ async function runHeadlessKrakenGraph(
     }
 
     const audit = new AuditLogger();
+    // ADR-0024 v1.1: per-node ENVELOPE events on the spine — written HERE, by
+    // the host (the sole spine writer), around the executor's tentacle-run
+    // seam. Tentacles/subagents never touch the spine: their turn internals
+    // (assistant text, tool calls/results) stay on the kraken radio JSONL.
+    // Envelope/metadata only — nodeId, agent, graphId, ok/cancelled and
+    // host-measured durationMs; never label/prompt/result (model content).
+    // One pair per ATTEMPT (a retry/rework produces a fresh pair); merge
+    // nodes drive no tentacle, so they stay radio-only. Additive state kinds
+    // need no SCHEMA_VERSION bump: older readers skip them via the tolerant
+    // replay (ADR-0021 schema review recorded in the ADR amendment).
+    const { runTentacle } = await import('./kraken/tentacle.js');
     const executor = new KrakenGraphExecutor({
       taskToolDeps: {
         createSubAgentContext: createKrakenSubAgentContextFactory({
@@ -574,6 +587,10 @@ async function runHeadlessKrakenGraph(
       sessionId,
       goal: prompt,
       signal: abort.signal,
+      // ADR-0024 v1.1: same delegate (`runTentacle`), wrapped so each node
+      // turn leaves a graph.node_started / graph.node_ended envelope pair on
+      // the spine. The executor owns scheduling; the HOST owns the spine.
+      runTentacleFn: (runOpts) => nodeSpineEnvelopeRun(spine, runOpts, () => runTentacle(runOpts)),
     });
     const summary = await executor.execute(graph);
     if (summary.cancelled) log('graph cancelled — partial results below');
@@ -633,6 +650,54 @@ async function runHeadlessKrakenGraph(
     // HarnessState inc.3: final read-model event for JSON hosts (best-effort).
     await emitHarnessStateEvent({ spine, workspaceRoot: cwd, output: opts.output, emitEvent });
   }
+}
+
+/**
+ * ADR-0024 v1.1: wrap one tentacle run with a host-written spine ENVELOPE
+ * pair — `graph.node_started` before, `graph.node_ended` after (ok/cancelled
+ * + host-measured durationMs; a thrown run ends `ok:false`). Metadata only:
+ * no node label, no prompt, no assistant/tool output ever reaches the spine.
+ * Runs without a nodeId (none today) are passed through un-noted. Failures
+ * of the note path never affect the run — `appendEvent` is degrade-and-stop
+ * on the mirror side; the rethrow below preserves the executor's contract.
+ */
+function nodeSpineEnvelopeRun(
+  spine: HeadlessSpineHandle,
+  runOpts: RunTentacleOptions,
+  run: () => Promise<TentacleResult>,
+): Promise<TentacleResult> {
+  const startedAt = Date.now();
+  const noteNode = (
+    kind: 'graph.node_started' | 'graph.node_ended',
+    extra?: Record<string, unknown>,
+  ): void => {
+    if (!runOpts.nodeId) return;
+    void spine.appendEvent({
+      kind,
+      actor: { type: 'system' },
+      data: {
+        nodeId: runOpts.nodeId,
+        agent: runOpts.agent,
+        ...(runOpts.graphId ? { graphId: runOpts.graphId } : {}),
+        ...extra,
+      },
+    });
+  };
+  noteNode('graph.node_started');
+  return run().then(
+    (res) => {
+      noteNode('graph.node_ended', {
+        ok: res.ok,
+        ...(!res.ok && res.cancelled ? { cancelled: true } : {}),
+        durationMs: Date.now() - startedAt,
+      });
+      return res;
+    },
+    (err) => {
+      noteNode('graph.node_ended', { ok: false, durationMs: Date.now() - startedAt });
+      throw err;
+    },
+  );
 }
 async function buildCouncilToolRegistry(
   planMode: boolean,
