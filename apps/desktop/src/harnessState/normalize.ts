@@ -29,6 +29,10 @@ export interface HarnessSupportView {
   contextChars: number;
   memoryEvents: number;
   compactions: number;
+  /** T4 (ADR-0032) budget-path fields from the LAST projection carrying them. */
+  lastOccupancy?: number;
+  lastPolicy?: string;
+  contextLimit?: number;
 }
 
 export interface HarnessStateView {
@@ -115,6 +119,11 @@ export function readHarnessStateEvent(ev: unknown): HarnessStateView | null {
     };
   });
   const projections = recordList(support?.contextProjections);
+  // T4: the LAST budget-side projection (memory-side records carry no
+  // occupancy) — optional fields, absent when no budget note exists.
+  const budgetRecord = projections
+    .filter((p) => typeof p.occupancy === "number" && Number.isFinite(p.occupancy))
+    .pop();
   return {
     sessionId: str(session?.sessionId) ?? "",
     status: str(session?.status) ?? "pending",
@@ -125,6 +134,15 @@ export function readHarnessStateEvent(ev: unknown): HarnessStateView | null {
       contextChars: projections.reduce((sum, p) => sum + num(p.contextChars), 0),
       memoryEvents: num(support?.memoryEvents),
       compactions: num(support?.compactions),
+      ...(budgetRecord
+        ? {
+            lastOccupancy: num(budgetRecord.occupancy),
+            ...(str(budgetRecord.policy) ? { lastPolicy: str(budgetRecord.policy) } : {}),
+            ...(typeof budgetRecord.contextLimit === "number"
+              ? { contextLimit: num(budgetRecord.contextLimit) }
+              : {}),
+          }
+        : {}),
     },
   };
 }

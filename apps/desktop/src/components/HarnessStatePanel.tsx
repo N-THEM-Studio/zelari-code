@@ -77,6 +77,11 @@ export function HarnessStatePanel() {
           : ""}
         {" · "}memory events {state.support.memoryEvents}
         {" · "}compactions {state.support.compactions}
+        {state.support.lastOccupancy !== undefined
+          ? ` · budget ${Math.round(state.support.lastOccupancy * 100)}%${
+              state.support.lastPolicy ? ` ${state.support.lastPolicy}` : ""
+            }`
+          : ""}
       </div>
     </section>
   );

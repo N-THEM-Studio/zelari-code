@@ -17,7 +17,12 @@
 import path from 'node:path';
 import { existsSync } from 'node:fs';
 import { resolveSessionsDir } from '@zelari/core/session';
-import { readHarnessState, type HarnessState } from '../harnessState.js';
+import { readHarnessState, type ContextProjectionRecord, type HarnessState } from '../harnessState.js';
+
+/** Token-budget limit → human size: 200000 → `200k`. */
+function formatLimit(limit: number): string {
+  return `${Math.round(limit / 1000)}k`;
+}
 
 /**
  * Pure renderer — HarnessState → report text. No I/O, no clock, no color,
@@ -48,10 +53,14 @@ export function renderInspectReport(state: HarnessState): string {
   lines.push('support lens:');
   const projections = state.support.contextProjections;
   const last = projections[projections.length - 1];
-  lines.push(
-    `  context projections: ${projections.length}` +
-      (last ? `  (last: ${last.contextChars} chars → ${last.returnedCount} items)` : ''),
-  );
+  // T4 (ADR-0032): a budget-side last record (occupancy + limit) replaces the
+  // memory-side chars→items descriptor with the human budget occupancy.
+  const tail = !last
+    ? ''
+    : last.occupancy !== undefined && last.contextLimit !== undefined
+      ? `  (last: ${Math.round(last.occupancy * 100)}% ${last.policy ?? '?'} (limit ${formatLimit(last.contextLimit)}))`
+      : `  (last: ${last.contextChars} chars → ${last.returnedCount} items)`;
+  lines.push(`  context projections: ${projections.length}${tail}`);
   lines.push(`  memory events: ${state.support.memoryEvents}`);
   const saved = state.support.tokensSavedByCompaction;
   lines.push(

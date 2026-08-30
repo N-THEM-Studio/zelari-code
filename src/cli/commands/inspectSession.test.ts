@@ -73,6 +73,8 @@ const FIXTURE: HarnessState = {
     contextProjections: [
       { contextChars: 1024, returnedCount: 3 },
       { contextChars: 4096, returnedCount: 7 },
+      // T4 (ADR-0032): budget-side record — occupancy/policy/limit only.
+      { occupancy: 0.62, estimatedHistoryTokens: 124000, contextLimit: 200000, policy: 'warn' },
     ],
     memoryEvents: 5,
     compactions: 1,
@@ -101,9 +103,25 @@ describe('renderInspectReport — pure renderer', () => {
   it('support lens: contextProjections (last chars/items), memoryEvents, compactions', () => {
     const out = renderInspectReport(FIXTURE);
     expect(out).toContain('support lens:');
-    expect(out).toContain('context projections: 2  (last: 4096 chars → 7 items)');
+    expect(out).toContain('context projections: 3  (last: 62% warn (limit 200k))');
     expect(out).toContain('memory events: 5');
     expect(out).toContain('compactions: 1 (4200 tokens saved)');
+  });
+
+  it('memory-side last projection keeps the chars→items descriptor (T4 back-compat)', () => {
+    const out = renderInspectReport({
+      ...FIXTURE,
+      support: {
+        ...FIXTURE.support,
+        contextProjections: [
+          { contextChars: 1024, returnedCount: 3 },
+          { contextChars: 4096, returnedCount: 7 },
+        ],
+      },
+    });
+    expect(out).toContain('context projections: 2  (last: 4096 chars → 7 items)');
+    // No budget fields on the last record ⇒ no occupancy tail.
+    expect(out).not.toContain('(limit ');
   });
 
   it('empty support lens degrades to zero counts, no "(last: …)" tail', () => {
@@ -150,6 +168,8 @@ function liveEvents(): SessionEventEnvelope[] {
     ev('verification.run', { strict: true, verdict: 'BLOCKED' }),
     ev('session.compacted', { tokensSaved: 4200 }),
     ev('note', { subject: 'context.projection', contextChars: 4096, returnedCount: 7 }),
+    // T4 (ADR-0032): budget-side note from the budget pipeline seam.
+    ev('note', { subject: 'context.projection', occupancy: 0.62, estimatedHistoryTokens: 124000, contextLimit: 200000, policy: 'warn' }),
     ev('session.ended', { reason: 'completed' }),
   ];
 }
@@ -191,7 +211,7 @@ describe('runInspectSession — sessions dir resolution (ADR-0016)', () => {
     expect(out).toContain('session sess-live  status=completed  turns=2');
     expect(out).toContain('turn 1  [completed]  verification: PASS  contract: complete');
     expect(out).toContain('2 blockers: tools-unsettled, verification-verdict-BLOCKED');
-    expect(out).toContain('context projections: 2  (last: 4096 chars → 7 items)');
+    expect(out).toContain('context projections: 3  (last: 62% warn (limit 200k))');
     expect(out).toContain('memory events: 1');
     expect(out).toContain('compactions: 1 (4200 tokens saved)');
     expect(errSpy).not.toHaveBeenCalled();
@@ -207,6 +227,14 @@ describe('runInspectSession — sessions dir resolution (ADR-0016)', () => {
     expect(state.support.contextProjections).toEqual([
       { contextChars: 1024, returnedCount: 3 },
       { contextChars: 4096, returnedCount: 7 },
+      {
+        contextChars: 0,
+        returnedCount: 0,
+        occupancy: 0.62,
+        estimatedHistoryTokens: 124000,
+        contextLimit: 200000,
+        policy: 'warn',
+      },
     ]);
     expect(state.support.compactions).toBe(1);
   });

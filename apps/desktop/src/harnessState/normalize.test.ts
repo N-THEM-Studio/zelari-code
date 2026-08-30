@@ -43,6 +43,7 @@ const REAL_PAYLOAD = {
     contextProjections: [
       { contextChars: 1200, returnedCount: 4 },
       { contextChars: 800, returnedCount: 2 },
+      { occupancy: 0.62, estimatedHistoryTokens: 124000, contextLimit: 200000, policy: "warn" },
     ],
     memoryEvents: 3,
     compactions: 1,
@@ -74,10 +75,13 @@ describe("readHarnessStateEvent", () => {
     });
 
     expect(v!.support).toEqual({
-      contextProjections: 2,
+      contextProjections: 3,
       contextChars: 2000,
       memoryEvents: 3,
       compactions: 1,
+      lastOccupancy: 0.62,
+      lastPolicy: "warn",
+      contextLimit: 200000,
     });
   });
 
