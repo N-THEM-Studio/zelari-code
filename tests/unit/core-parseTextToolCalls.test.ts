@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import {
   normalizeTextToolArgs,
   parseTextToolCalls,
+  parseTextToolCallsDetailed,
   parseMinimaxStyleToolCalls,
 } from "@zelari/core/harness";
 
@@ -113,6 +114,55 @@ describe("parseTextToolCalls", () => {
       ']<]minimax[>[<invoke name="updateTask">]<]minimax[>[<taskId>foo-bar]<]minimax[>[</taskId>]<]minimax[>[<status>done';
     const out = parseTextToolCalls(text);
     expect(out.some((t) => t.name === "updateTask")).toBe(true);
+  });
+});
+
+describe("parseTextToolCallsDetailed — truncated blocks (2.18.1 t49)", () => {
+  it("recovers the complete prefix of a block cut before ---END---", () => {
+    // Provider truncation: first call complete, second cut mid-args.
+    const text = `---TOOLS---
+[{"name":"read_file","args":{"path":"a.ts"}},{"name":"edit_file","args":{"path":"b.ts","newString":"partial cont`;
+    const out = parseTextToolCallsDetailed(text);
+    expect(out.truncatedBlock).toBe(true);
+    expect(out.calls).toEqual([{ name: "read_file", args: { path: "a.ts" } }]);
+  });
+
+  it("flags truncation even when nothing is recoverable", () => {
+    const text = '---TOOLS---\n[{"name":"edit_file","args":{"newString":"cut mid cont';
+    const out = parseTextToolCallsDetailed(text);
+    expect(out.truncatedBlock).toBe(true);
+    expect(out.calls).toEqual([]);
+  });
+
+  it("keeps a cut string argument out of the recovered calls (never auto-close)", () => {
+    const text =
+      '---TOOLS---[{"name":"edit_file","args":{"oldString":"a","newString":"hal';
+    const out = parseTextToolCallsDetailed(text);
+    expect(out.calls).toEqual([]);
+    expect(out.truncatedBlock).toBe(true);
+  });
+
+  it("reports truncatedBlock: false for a canonical block", () => {
+    const text =
+      '---TOOLS---\n[{"name":"read_file","args":{"path":"x"}}]\n---END---';
+    const out = parseTextToolCallsDetailed(text);
+    expect(out.truncatedBlock).toBe(false);
+    expect(out.calls).toHaveLength(1);
+  });
+
+  it("extracts nested args objects correctly (brace-balanced scan)", () => {
+    // Full-array parse fails (trailing junk), extractToolObjects runs:
+    // nested args must survive — the old non-greedy regex truncated them
+    // at the first `}` and silently pushed empty args.
+    const text =
+      '---TOOLS---\n[{"name":"edit_file","args":{"path":"i.ts","opts":{"mode":"safe","depth":2}}} junk';
+    const out = parseTextToolCalls(text);
+    expect(out).toEqual([
+      {
+        name: "edit_file",
+        args: { path: "i.ts", opts: { mode: "safe", depth: 2 } },
+      },
+    ]);
   });
 });
 

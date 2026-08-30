@@ -93,6 +93,25 @@ export const TOOL_CALL_TRUNCATED_RECOVERY_USER =
   `Retry with a shorter payload or split the work into smaller tool calls.`;
 
 /**
+ * 2.18.1 (t49): model-context feedback for text-format tool blocks that
+ * did not fully run. Same contract as TOOL_CALL_TRUNCATED_RECOVERY_USER:
+ * the harness pushes these into its rolling history (fallback path) and
+ * sessionSpine.ts mirrors the same constants as model-visible
+ * user.message notes on the spine-derived path; the markers double as
+ * anti-dup keys.
+ */
+export const TEXT_TOOLS_FAILED_MARKER = '[harness] Your ---TOOLS--- block did not run';
+export const TEXT_TOOLS_FAILED_USER =
+  `${TEXT_TOOLS_FAILED_MARKER}: no call parsed (malformed, or truncated by the provider ` +
+  `before ---END---). Re-emit the calls with native tool_call, or ONE valid ` +
+  `---TOOLS--- JSON array — smaller payloads if the block was cut off.`;
+export const TEXT_TOOLS_PARTIAL_MARKER = '[harness] Your ---TOOLS--- block was cut off';
+export const TEXT_TOOLS_PARTIAL_USER =
+  `${TEXT_TOOLS_PARTIAL_MARKER} by the provider before ---END---: only the complete ` +
+  `leading call(s) ran — the incomplete tail was dropped. Re-emit the remaining work ` +
+  `with native tool_call or smaller payloads.`;
+
+/**
  * 2.18.1 (t47): the verification advice appended to a gate denial is only
  * true inside the protected zone (essential tools still allowed). At the
  * hard limit EVERY call is denied — advising verification sends the model
@@ -1589,9 +1608,10 @@ export class AgentHarness {
           // Fallback text-format tools: ---TOOLS--- JSON, MiniMax invoke XML,
           // and garbled invoke dumps. Run any text tools not already executed
           // natively this turn (so updateTask still runs after a native read).
-          const textTools = clarificationPause
-            ? []
-            : parseTextToolCalls(turnText);
+          const textParse: TextToolParseResult = clarificationPause
+            ? { calls: [], truncatedBlock: false }
+            : parseTextToolCallsDetailed(turnText);
+          const textTools = textParse.calls;
           const toolsToRun = textTools.filter((tt) => {
             const key = hashToolCall(tt.name, tt.args);
             return !turnToolCalls.some(
@@ -1612,13 +1632,31 @@ export class AgentHarness {
           ) {
             const parseErr = createBrainEvent('error', this.sessionId, {
               severity: 'recoverable',
-              message:
-                'Found text-format tool block but parse failed; tool calls were not executed. ' +
-                'Prefer native tool_call, or ---TOOLS--- with ONE valid JSON array.',
+              message: textParse.truncatedBlock
+                ? 'Found text-format tool block but parse failed; the block is TRUNCATED ' +
+                  '(no ---END--- marker — the provider cut the response mid-block). ' +
+                  'Tool calls were not executed. Re-emit with native tool_call or smaller payloads.'
+                : 'Found text-format tool block but parse failed; tool calls were not executed. ' +
+                  'Prefer native tool_call, or ---TOOLS--- with ONE valid JSON array.',
               code: 'text_tools_parse_failed',
             });
             this.emit(parseErr);
             yield parseErr;
+          }
+          // 2.18.1 (t49): a truncated block whose complete prefix WAS
+          // recovered must still be reported — the model believes every
+          // call it emitted ran, and the dropped tail may contain a
+          // mutation ("describes edits it never made").
+          if (!clarificationPause && textParse.truncatedBlock && textTools.length > 0) {
+            const partial = createBrainEvent('error', this.sessionId, {
+              severity: 'recoverable',
+              message:
+                `Text-format tool block was truncated (missing ---END---): recovered ${textTools.length} ` +
+                'complete call(s); the incomplete tail was dropped.',
+              code: 'text_tools_truncated',
+            });
+            this.emit(partial);
+            yield partial;
           }
           if (
             !clarificationPause &&
@@ -1847,6 +1885,36 @@ export class AgentHarness {
               });
             }
           }
+          // Inject text-format tool feedback into the model context
+          // (2.18.1 t49): the text_tools_parse_failed / text_tools_truncated
+          // events above are advisory/UI-only — without this push the next
+          // turn sees its own ---TOOLS--- block in history with no tool
+          // results and believes the calls ran. sessionSpine.ts mirrors the
+          // same constants as user.message notes for the spine-derived
+          // context path. Scope: ---TOOLS--- blocks only (the minimax-style
+          // dumps have their own lenient parser). Anti-dup: never stack the
+          // two feedback notes back-to-back.
+          if (!clarificationPause) {
+            const feedbackText =
+              textParse.truncatedBlock && textTools.length > 0
+                ? TEXT_TOOLS_PARTIAL_USER
+                : /---TOOLS---/.test(turnText) && textTools.length === 0
+                  ? TEXT_TOOLS_FAILED_USER
+                  : null;
+            if (feedbackText) {
+              const last = this.config.messages[this.config.messages.length - 1];
+              if (
+                !(
+                  last?.role === 'user' &&
+                  typeof last.content === 'string' &&
+                  (last.content.includes(TEXT_TOOLS_PARTIAL_MARKER) ||
+                    last.content.includes(TEXT_TOOLS_FAILED_MARKER))
+                )
+              ) {
+                this.config.messages.push({ role: 'user', content: feedbackText });
+              }
+            }
+          }
           break;
         } else if (delta.kind === 'error') {
           finishRef.providerError = true;
@@ -2043,13 +2111,39 @@ export function normalizeTextToolArgs(
  *   - lightly over-escaped quotes (`\"` inside an already-JSON string)
  * This parser tries several recovery strategies before giving up.
  */
-export function parseTextToolCalls(
-  text: string,
-): { name: string; args: Record<string, unknown> }[] {
+export interface TextToolParseResult {
+  calls: { name: string; args: Record<string, unknown> }[];
+  /**
+   * 2.18.1 (t49): true when a ---TOOLS--- block was found WITHOUT its
+   * ---END--- marker — the provider cut the response mid-block. Complete
+   * prefix calls may still have been recovered into `calls`.
+   */
+  truncatedBlock: boolean;
+}
+
+/**
+ * Parse text-format tool calls with truncation metadata (2.18.1 t49).
+ *
+ * A block cut before ---END--- (provider truncation) previously matched
+ * NO branch — the canonical regex requires the closing marker, so every
+ * salvage strategy was skipped and complete prefix calls were lost with
+ * the incomplete tail. The partial body now runs the same strategies:
+ * complete prefix calls are recovered, the truncated tail is dropped
+ * (auto-closing a cut string argument would execute garbage).
+ */
+export function parseTextToolCallsDetailed(text: string): TextToolParseResult {
+  let truncatedBlock = false;
+  let rawBody: string | null = null;
   // 1) Canonical ---TOOLS--- … ---END--- block
   const m = /---TOOLS---\s*([\s\S]*?)---END---/.exec(text);
   if (m?.[1]) {
-    let body = m[1].trim();
+    rawBody = m[1];
+  } else if (text.includes('---TOOLS---')) {
+    rawBody = text.slice(text.indexOf('---TOOLS---') + '---TOOLS---'.length);
+    truncatedBlock = true;
+  }
+  if (rawBody !== null) {
+    let body = rawBody.trim();
     body = body
       .replace(/^```(?:json)?\s*/i, '')
       .replace(/\s*```$/i, '')
@@ -2068,7 +2162,7 @@ export function parseTextToolCalls(
 
     for (const cand of candidates) {
       const items = tryParseToolArray(cand);
-      if (items.length > 0) return items;
+      if (items.length > 0) return { calls: items, truncatedBlock };
     }
 
     const arrays = extractJsonArrays(body);
@@ -2077,18 +2171,24 @@ export function parseTextToolCalls(
       for (const a of arrays) {
         merged.push(...tryParseToolArray(a));
       }
-      if (merged.length > 0) return merged;
+      if (merged.length > 0) return { calls: merged, truncatedBlock };
     }
 
     const objs = extractToolObjects(body);
-    if (objs.length > 0) return objs;
+    if (objs.length > 0) return { calls: objs, truncatedBlock };
   }
 
   // 2) MiniMax / XML-style invoke dumps (and garbled variants from some UIs)
   const mini = parseMinimaxStyleToolCalls(text);
-  if (mini.length > 0) return mini;
+  if (mini.length > 0) return { calls: mini, truncatedBlock };
 
-  return [];
+  return { calls: [], truncatedBlock };
+}
+
+export function parseTextToolCalls(
+  text: string,
+): { name: string; args: Record<string, unknown> }[] {
+  return parseTextToolCallsDetailed(text).calls;
 }
 
 /**
@@ -2272,26 +2372,61 @@ function extractJsonArrays(text: string): string[] {
   return out;
 }
 
+/** Index of the `}` matching the `{` at openIdx, or -1 (string-aware). */
+function findBalancedBrace(text: string, openIdx: number): number {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let j = openIdx; j < text.length; j++) {
+    const c = text[j]!;
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') {
+      inStr = true;
+      continue;
+    }
+    if (c === '{') depth++;
+    else if (c === '}') {
+      depth--;
+      if (depth === 0) return j;
+    }
+  }
+  return -1;
+}
+
 /** Regex-scan for individual tool call objects when full JSON parse fails. */
 function extractToolObjects(
   text: string,
 ): { name: string; args: Record<string, unknown> }[] {
   const out: { name: string; args: Record<string, unknown> }[] = [];
-  // Match {"name":"tool", ... } with nested braces best-effort via extractJsonArrays
-  // on each {...} region is hard; use a simpler name+args capture.
-  const re =
-    /\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*(\{[\s\S]*?\})\s*\}/g;
+  // 2.18.1 (t49): brace-balanced, string-aware args scan. The old
+  // non-greedy regex stopped at the FIRST `}` — nested args failed
+  // JSON.parse and the call was silently pushed with EMPTY args (a
+  // mutating tool with missing args is worse than a skipped call).
+  // Unparseable or truncated args objects now skip the call entirely.
+  const headRe = /\{\s*"name"\s*:\s*"([^"]+)"\s*,\s*"args"\s*:\s*/g;
   let match: RegExpExecArray | null;
-  while ((match = re.exec(text)) !== null) {
+  while ((match = headRe.exec(text)) !== null) {
     const name = match[1]!;
+    const argsStart = match.index + match[0].length;
     let args: Record<string, unknown> = {};
-    try {
-      const parsed = JSON.parse(match[2]!);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-        args = parsed as Record<string, unknown>;
+    if (text[argsStart] === '{') {
+      const end = findBalancedBrace(text, argsStart);
+      if (end === -1) continue; // truncated args object — drop the call
+      try {
+        const parsed: unknown = JSON.parse(text.slice(argsStart, end + 1));
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          args = parsed as Record<string, unknown>;
+        } else {
+          continue; // non-object args — drop the call
+        }
+      } catch {
+        continue; // unparseable args — drop the call
       }
-    } catch {
-      // leave empty args
     }
     out.push({ name, args });
   }

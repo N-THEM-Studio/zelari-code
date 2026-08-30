@@ -23,7 +23,7 @@
  */
 import type { BrainEvent } from '@zelari/core/events';
 import type { SessionJsonlWriter } from '@zelari/core/harness';
-import { TOOL_CALL_TRUNCATED_RECOVERY_USER } from '@zelari/core/harness';
+import { TOOL_CALL_TRUNCATED_RECOVERY_USER, TEXT_TOOLS_FAILED_USER, TEXT_TOOLS_PARTIAL_USER } from '@zelari/core/harness';
 import {
   SessionLogWriter,
   SessionLogLockedError,
@@ -171,6 +171,23 @@ export function mapBrainEventToSpine(ev: BrainEvent): SessionEventInput | null {
           kind: 'user.message',
           actor: ACTOR_USER,
           data: { text: TOOL_CALL_TRUNCATED_RECOVERY_USER },
+        };
+      }
+      // 2.18.1 (t49): same contract for text-format tool feedback — a
+      // ---TOOLS--- block that parsed partially or not at all. Mirrors the
+      // exact constants the harness pushes on the fallback-history path.
+      if (ev.code === 'text_tools_parse_failed') {
+        return {
+          kind: 'user.message',
+          actor: ACTOR_USER,
+          data: { text: TEXT_TOOLS_FAILED_USER },
+        };
+      }
+      if (ev.code === 'text_tools_truncated') {
+        return {
+          kind: 'user.message',
+          actor: ACTOR_USER,
+          data: { text: TEXT_TOOLS_PARTIAL_USER },
         };
       }
       return null;

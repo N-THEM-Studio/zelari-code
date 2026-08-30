@@ -16,7 +16,11 @@ import {
   spineEnabled,
 } from './sessionSpine.js';
 import { readSessionLog, ACTOR_USER } from '@zelari/core/session';
-import { TOOL_CALL_TRUNCATED_RECOVERY_USER } from '@zelari/core/harness';
+import {
+  TOOL_CALL_TRUNCATED_RECOVERY_USER,
+  TEXT_TOOLS_FAILED_USER,
+  TEXT_TOOLS_PARTIAL_USER,
+} from '@zelari/core/harness';
 
 let tmp: string;
 
@@ -98,6 +102,32 @@ describe('mapBrainEventToSpine', () => {
     expect(mapped!.kind).toBe('user.message');
     expect(mapped!.actor).toEqual(ACTOR_USER);
     expect((mapped!.data as { text: string }).text).toBe(TOOL_CALL_TRUNCATED_RECOVERY_USER);
+  });
+
+  it('maps text_tools_parse_failed to the model-visible failure note (2.18.1 t49)', () => {
+    const mapped = mapBrainEventToSpine(
+      ev('error', {
+        severity: 'recoverable',
+        code: 'text_tools_parse_failed',
+        message: 'Found text-format tool block but parse failed',
+      }),
+    );
+    expect(mapped).not.toBeNull();
+    expect(mapped!.kind).toBe('user.message');
+    expect((mapped!.data as { text: string }).text).toBe(TEXT_TOOLS_FAILED_USER);
+  });
+
+  it('maps text_tools_truncated to the partial-salvage note (2.18.1 t49)', () => {
+    const mapped = mapBrainEventToSpine(
+      ev('error', {
+        severity: 'recoverable',
+        code: 'text_tools_truncated',
+        message: 'Text-format tool block was truncated (missing ---END---)',
+      }),
+    );
+    expect(mapped).not.toBeNull();
+    expect(mapped!.kind).toBe('user.message');
+    expect((mapped!.data as { text: string }).text).toBe(TEXT_TOOLS_PARTIAL_USER);
   });
 
   it('keeps other error codes out of the spine vocabulary', () => {
