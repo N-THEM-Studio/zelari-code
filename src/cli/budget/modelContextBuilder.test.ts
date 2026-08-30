@@ -56,3 +56,33 @@ describe('modelContextBuilder ephemeral RESOURCE STATUS tail', () => {
     expect(countStatus(result.requestTail)).toBe(0);
   });
 });
+
+describe('modelContextBuilder budget projection seam (T4, ADR-0032)', () => {
+  it('projects the final budget onto the optional note handle — occupancy+policy, no memory-side fields', async () => {
+    const notes: Array<{ text: string; data?: Record<string, unknown> }> = [];
+    const result = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'fix the bug' }],
+      phase: 'build',
+      budgetNoteHandle: { note: (text, data) => void notes.push({ text, data }) },
+    });
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!.text).toBe('context.projection');
+    expect(notes[0]!.data).toMatchObject({ subject: 'context.projection' });
+    const data = notes[0]!.data as { occupancy?: number; policy?: string };
+    expect(typeof data.occupancy).toBe('number');
+    expect(['ok', 'warn', 'compact', 'hard']).toContain(data.policy);
+    // Budget-side payload must NOT carry the memory-path counters.
+    expect(notes[0]!.data).not.toHaveProperty('contextChars');
+    expect(notes[0]!.data).not.toHaveProperty('returnedCount');
+    // The projection reflects the FINAL budget the caller received.
+    expect(data.occupancy).toBe(result.budget.occupancy);
+  });
+
+  it('no handle → no note, no crash (backward compatible)', async () => {
+    const result = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'hello' }],
+      phase: 'build',
+    });
+    expect(result.budget.contextLimit).toBeGreaterThan(0);
+  });
+});

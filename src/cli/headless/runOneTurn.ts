@@ -29,7 +29,7 @@ import { krakenSelectionPlaybook } from '../kraken/selectionPlaybook.js';
 import { krakenDelegationPlaybook, resolveDelegationPolicyForRun } from '../kraken/delegationPolicy.js';
 import { spineOrchestrationNote } from '../orchestration/facts.js';
 // W2: memory telemetry onto the session spine (late-binding holder seam).
-import { memorySinkFor, type SpineNoteHandle } from '../memory/spineTelemetry.js';
+import { flushMemorySpineNotes, memorySinkFor, type LateBindingSpineHolder, type SpineNoteHandle } from '../memory/spineTelemetry.js';
 import { emitEvent, resolveHeadlessCwd, resolveHeadlessKey, type HeadlessOptions } from '../headless.js';
 import { isKrakenMode } from '../mode.js';
 // t37 (Pilastro A residuo): serve hosts thread the kernel-owned workspace
@@ -166,8 +166,9 @@ export async function runOneTurn(
   const memoryFactory = await import('../memory/serviceFactory.js');
   // W2: memory events are projected onto the session spine as state-only
   // `note`s. The spine opens below, so telemetry flows through a late-binding
-  // holder — events before assignment are dropped (advisory, never blocking).
-  const spineHolder: { current?: SpineNoteHandle } = {};
+  // holder — pre-bind events are BUFFERED (cap 32) and drained on bind via
+  // flushMemorySpineNotes; overflow counts in droppedEvents (advisory only).
+  const spineHolder: LateBindingSpineHolder = {};
   const nativeMemory = memoryFactory.isMemoryV2Enabled()
     ? await memoryFactory.getMemoryService(cwd, process.env, {
         onEvent: memorySinkFor(spineHolder),
@@ -316,6 +317,8 @@ export async function runOneTurn(
   });
   // W2: bind the memory telemetry sink to the now-open spine.
   spineHolder.current = spine;
+  // T4-S3: drain pre-bind buffered memory events (cap 32) onto the spine.
+  flushMemorySpineNotes(spineHolder);
   // Exit-1/E1.2: the session spine is the model-context source of truth.
   // Legacy `--history` is imported one-shot into a fresh log; prior turns
   // are then derived from events. The 1.x rolling history no longer feeds
@@ -491,6 +494,8 @@ export async function runOneTurn(
     tools,
     sessionId: spine.sessionId,
     providerStream,
+    // T4-S2: budget occupancy/policy onto the spine (context.projection note).
+    budgetNoteHandle: spine,
     onCompactionMetric: (metrics) => recordCompactionMetrics(spine.sessionId, provider, model, metrics),
     persistCompaction: async (payload) => {
       await spine.appendEvent({

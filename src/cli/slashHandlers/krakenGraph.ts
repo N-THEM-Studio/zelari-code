@@ -24,7 +24,7 @@ import {
   isMemoryV2Enabled,
 } from '../memory/serviceFactory.js';
 // W2: memory telemetry projected onto the session spine as state-only notes.
-import { memorySinkFor, type SpineNoteHandle } from '../memory/spineTelemetry.js';
+import { flushMemorySpineNotes, memorySinkFor, type LateBindingSpineHolder, type SpineNoteHandle } from '../memory/spineTelemetry.js';
 import type { SpineMirroringWriter } from '../sessionSpine.js';
 
 export interface KrakenGraphSlashContext {
@@ -59,7 +59,7 @@ export async function handleKrakenGraph(
   // W2: late-binding sink — the TUI spine mirror attaches per turn on the
   // session writer, so events resolve `ctx.writerRef?.current?.spine` at emit
   // time (same idiom as useChatTurn.ts). Missing ref → events are dropped.
-  const tuiSpineHolder: { current?: SpineNoteHandle } = {
+  const tuiSpineHolder: LateBindingSpineHolder = {
     get current(): SpineNoteHandle | undefined {
       return ctx.writerRef?.current?.spine ?? undefined;
     },
@@ -70,6 +70,9 @@ export async function handleKrakenGraph(
         onEvent: memorySinkFor(tuiSpineHolder),
       })
     : undefined;
+  // T4-S3: drain pre-attach buffered events if the session writer already
+  // carries the spine mirror (explicit flush; no auto-flush later).
+  flushMemorySpineNotes(tuiSpineHolder);
 
   const audit = new AuditLogger();
   const taskToolDeps = {

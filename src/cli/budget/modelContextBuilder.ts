@@ -25,6 +25,11 @@ import {
   compactEventPayload,
   type CompactionTelemetry,
 } from './persistCompact.js';
+import {
+  noteBudgetProjection,
+  recordFromBudget,
+  thresholdsFor,
+} from './contextProjection.js';
 import { derivedModelSeed } from '../headlessSpine.js';
 import { formatResourceSnapshot } from '@zelari/core/session';
 
@@ -80,6 +85,12 @@ export interface ModelContextBuilderInput {
    * appends directly to the Session spine.
    */
   persistCompaction?: (payload: DurableCompactionPayload, budget: BudgetPolicy) => Promise<void>;
+  /**
+   * Optional spine handle — receives exactly one `context.projection` note
+   * per build, carrying the FINAL budget projection (occupancy / tokens /
+   * policy). Never required; writing it never throws.
+   */
+  budgetNoteHandle?: { note(text: string, data?: Record<string, unknown>): void };
 }
 
 export interface ModelContextBuilderResult {
@@ -216,6 +227,17 @@ export async function buildModelContext(
       estimatedHistoryTokens: estimated,
       occupancy: Math.min(1, estimated / budget.contextLimit),
     };
+  }
+
+  if (input.budgetNoteHandle) {
+    try {
+      noteBudgetProjection(
+        input.budgetNoteHandle,
+        recordFromBudget(budget, thresholdsFor(input.model, input.provider)),
+      );
+    } catch {
+      // Never-throw seam: telemetry must not break the context build.
+    }
   }
 
   return {

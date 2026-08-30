@@ -13,6 +13,18 @@ import type { MemoryEvent, MemoryEventSink } from '@zelari/core/memory';
 /** Minimal structural handle — satisfied by SessionSpineMirror (TUI) and HeadlessSpineHandle (headless). */
 export type SpineNoteHandle = { note(text: string, data?: Record<string, unknown>): void };
 
+/** Late-binding holder: `current` is assigned after the spine opens. */
+export type LateBindingSpineHolder = {
+  current?: SpineNoteHandle;
+  /** Overflow past {@link PRE_BIND_BUFFER_CAP} while `current` was unset. */
+  droppedEvents?: number;
+};
+
+/** Pre-bind MemoryEvents kept until {@link flushMemorySpineNotes}. */
+export const PRE_BIND_BUFFER_CAP = 32;
+
+const buffers = new WeakMap<object, MemoryEvent[]>();
+
 /**
  * Write one memory telemetry event as a spine `note`. Per-turn context
  * projection (`memory_recall_end` with reason `context-built`) gets the
@@ -47,16 +59,45 @@ export function spineMemoryEventNote(handle: SpineNoteHandle, event: MemoryEvent
   }
 }
 
+function bufferOf(holder: object): MemoryEvent[] {
+  let buf = buffers.get(holder);
+  if (!buf) {
+    buf = [];
+    buffers.set(holder, buf);
+  }
+  return buf;
+}
+
 /**
  * Late-binding seam for hosts where the memory service is constructed BEFORE
- * the spine opens (headless single-turn / council): events are dropped while
- * `holder.current` is unset and flow once the spine handle is assigned.
- * TUI hosts pass a getter-backed holder (`{ get current() { return … } }`) —
- * a getter on `current` satisfies this shape.
+ * the spine opens (headless single-turn / council). Events while
+ * `holder.current` is unset are buffered (cap {@link PRE_BIND_BUFFER_CAP});
+ * call {@link flushMemorySpineNotes} after assigning the handle.
+ * Overflow increments `holder.droppedEvents`. TUI getter-backed holders
+ * still look like a drop unless the host calls flush (no auto-flush on
+ * later events — that would change TUI attach semantics).
  */
-export function memorySinkFor(holder: { current?: SpineNoteHandle }): MemoryEventSink {
+export function memorySinkFor(holder: LateBindingSpineHolder): MemoryEventSink {
   return (event) => {
     const handle = holder.current;
-    if (handle) spineMemoryEventNote(handle, event);
+    if (handle) {
+      spineMemoryEventNote(handle, event);
+      return;
+    }
+    const buf = bufferOf(holder);
+    if (buf.length < PRE_BIND_BUFFER_CAP) buf.push(event);
+    else holder.droppedEvents = (holder.droppedEvents ?? 0) + 1;
   };
+}
+
+/**
+ * Drain the per-holder pre-bind buffer onto `holder.current`. No-op when
+ * the handle is unset or the buffer is empty. Does not throw.
+ */
+export function flushMemorySpineNotes(holder: LateBindingSpineHolder): void {
+  const handle = holder.current;
+  const buf = buffers.get(holder);
+  if (!handle || !buf?.length) return;
+  const pending = buf.splice(0, buf.length);
+  for (const event of pending) spineMemoryEventNote(handle, event);
 }

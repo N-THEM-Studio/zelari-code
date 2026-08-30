@@ -37,7 +37,7 @@ import { krakenDelegationPlaybook, resolveDelegationPolicyForRun } from './krake
 import { chooseOrchestration } from './orchestration/policy.js';
 import { collectOrchestrationFacts, spineOrchestrationNote } from './orchestration/facts.js';
 // W2: memory telemetry projected onto the session spine as state-only notes.
-import { memorySinkFor, spineMemoryEventNote, type SpineNoteHandle } from './memory/spineTelemetry.js';
+import { flushMemorySpineNotes, memorySinkFor, spineMemoryEventNote, type LateBindingSpineHolder, type SpineNoteHandle } from './memory/spineTelemetry.js';
 import { COUNCIL_TIER_SIZES } from './councilConfig.js';
 
 import {
@@ -756,8 +756,9 @@ async function runHeadlessCouncil(
   const cwd = resolveHeadlessCwd(opts);
   const memoryFactory = await import('./memory/serviceFactory.js');
   // W2: memory events project onto the session spine (late-binding holder —
-  // the spine opens below; events before assignment are dropped, advisory).
-  const spineHolder: { current?: SpineNoteHandle } = {};
+  // the spine opens below; pre-bind events are buffered (cap 32) and
+  // drained on bind — overflow counts in droppedEvents, advisory only).
+  const spineHolder: LateBindingSpineHolder = {};
   const nativeMemory = memoryFactory.isMemoryV2Enabled()
     ? await memoryFactory.getMemoryService(cwd, process.env, {
         onEvent: memorySinkFor(spineHolder),
@@ -773,6 +774,8 @@ async function runHeadlessCouncil(
   });
   // W2: bind the memory telemetry sink to the now-open spine.
   spineHolder.current = spine;
+  // T4-S3: drain pre-bind buffered memory events (cap 32) onto the spine.
+  flushMemorySpineNotes(spineHolder);
   // Exit-1/E1.2: the session spine is the model-context source of truth.
   // Legacy `--history` is imported one-shot into a fresh log; prior turns
   // are then derived from events. The 1.x rolling history no longer feeds
@@ -834,6 +837,8 @@ async function runHeadlessCouncil(
     tools: contextTools,
     sessionId: spine.sessionId,
     providerStream,
+    // T4-S2: budget occupancy/policy onto the spine (context.projection note).
+    budgetNoteHandle: spine,
     onCompactionMetric: (metrics) => recordCompactionMetrics(spine.sessionId, provider, model, metrics),
     persistCompaction: async (payload) => {
       await spine.appendEvent({
@@ -1083,6 +1088,8 @@ async function runHeadlessZelari(
     tools: contextTools,
     sessionId: spine.sessionId,
     providerStream,
+    // T4-S2: budget occupancy/policy onto the spine (context.projection note).
+    budgetNoteHandle: spine,
     onCompactionMetric: (metrics) => recordCompactionMetrics(spine.sessionId, provider, model, metrics),
     persistCompaction: async (payload) => {
       await spine.appendEvent({
