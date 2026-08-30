@@ -5,7 +5,32 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.16.5] - 2026-08-30
+## [2.17.0] - 2026-08-30
+
+Minor: wiring-first release - the session spine now sees every headless host, projection decisions are measurable, and HarnessState v1 (read-model + Turn Completion Contract) ships on all four hosts. Closes the W1-W6 wiring gaps and t37 (LSP anti-thrash).
+
+### Added
+
+- **HarnessState increment 1-3** - typed read-model over the session spine (`deriveHarnessState`/`readHarnessState`, pure O(n)) with a Turn Completion Contract enforcing ADR-0023 (`unknown ≠ pass`, `verification-verdict-BLOCKED` blocker) and a Support lens fed by the new telemetry. Consumed as the final `harness_state` NDJSON event on all four headless hosts (one-shot, council, mission, graph); read failures degrade to a stderr warning and never touch the exit code.
+- **Projection telemetry (W2)** - per-turn `context.projection` note (contextChars, returnedCount) and `memory.recall_end`/`memory.consolidate_end` wired on every call site (TUI chat/council, runOneTurn, headless council/mission, kraken graph TUI, `/kraken graph` slash, mission fileBackend). Invariant, test-asserted: memory contents never land on the spine.
+- **Steer over HTTP** - companion server exposes `POST /v1/runs/:id/steer` (400 on missing/malformed text, 404 mirroring cancel) routed to the live turn's control queue via NDJSON `session.steer`.
+- **Headless `--mission-strict` / `--no-mission-strict`** knobs.
+
+### Changed
+
+- **Kraken-graph on the spine (W1)** - `runHeadlessKrakenGraph` opens the session log (mode kraken, resolved workspace), gates `session.started` on `--output json`, and closes it on every exit (completed/error/cancelled on SIGINT); spine failures never change the exit code. ADR-0024 is no longer bypassed by default-on graph runs.
+- **Strict knobs via per-invocation env overlay** - `ZELARI_STRICT_DONE`/`ZELARI_MISSION_STRICT` are threaded through `options.env` into the strict build gate instead of mutating `process.env` (race-prone on the concurrent sidecar).
+- **Desktop strict-done default aligned with the CLI (W6, post QA t21)** - `DEFAULT_DESKTOP_PREFS.strictDone = true` (ADR-0025); the sidecar no longer pins `ZELARI_STRICT_DONE=0`. Persisted explicit `false` stays opt-out.
+- **Session spine vocabulary cleanup (W5)** - removed dead event kinds `kraken.task`, `context.injected` (zero writers) and `session.harness_drift` (zero readers); tolerant replay preserved; the 1.x mirror removal TODO is re-planned with explicit preconditions. ADRs 014 (recall asymmetry is deliberate, opt-in measurable) and 015 (budget pipeline is the canonical projection compiler) recorded.
+
+### Fixed
+
+- **Policy gate spine location + one-shot warning** - `recordPolicyLoadBlockedOnSpine` receives the resolved workspace so the spine lands under `<workspace>/.zelari/sessions` (was: the CLI cwd); the one-shot emits a single `[policy]` stderr line while the sidecar keeps gating every turn.
+- **LSP multi-workspace thrash (t37)** - `getSharedLspManager` kept one `{cwd, manager}` slot, so switching roots disposed the previous manager and respawned every language server. Now a `Map<resolvedRoot, LspManager>` reuses stable instances per root, and the kernel sidecar threads its per-workspace `lspManager` into serve turns (`instanceof`-guarded; fake `{dispose}` falls back to the per-root map). `ZELARI_LSP=0` and `lspProvider: null` opt-outs unchanged.
+
+### Tests
+
+- Sidecar lifecycle contract (spawn/reap/backoff constants, `sidecar_died` sites, no `--headless` fallback), strict exit-4 e2e via runOneTurn (BLOCKED provenance through NDJSON), harness_state emission, LSP per-root reuse + dispose-all, desktop prefs flip with a grep-gate against re-pinning the env var.
 
 Patch: tentacle budget resets every Desktop message.
 
@@ -1787,6 +1812,16 @@ End-to-end against MiniMax-M3 (the model these failures were first reported on):
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [minor] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [2.17.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
