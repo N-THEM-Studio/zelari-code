@@ -262,3 +262,106 @@ describe('AgentHarness toolCallGate failure mode (v2.16 t24)', () => {
     }
   });
 });
+
+describe('AgentHarness toolCallGate hard-limit denial (2.18.1 t47)', () => {
+  const HARD_LIMIT_REASON =
+    "Resource exhausted: this turn's execution budget (maxToolCalls) is spent. " +
+    'No further billable tool calls are allowed in this turn — summarize what was verified ' +
+    'and report BLOCKED/resource-exhausted with the evidence already collected.';
+
+  it('hard-limit denial (native path) orders finalization, NOT gated verification', async () => {
+    const log: string[] = [];
+    const harness = new AgentHarness({
+      model: 'test-model',
+      provider: 'test',
+      sessionId: 'gate-hardlimit-native',
+      messages: [{ role: 'user', content: 'go' }],
+      tools: [],
+      toolRegistry: makeRegistry(log),
+      providerStream: fakeStream([
+        [
+          { kind: 'tool_call', toolCallId: 't1', toolName: 'bash', args: { command: 'ls' } },
+          { kind: 'finish', reason: 'tool_calls' },
+        ],
+        [{ kind: 'finish', reason: 'stop' }],
+      ]),
+      toolCallGate: () => ({ allowed: false, reason: HARD_LIMIT_REASON, hardLimit: true }),
+    });
+    const events = await collect(harness);
+    const denied = toolEnds(events).find(
+      (e) => typeof e.result === 'string' && (e.result as string).includes('[resource-gate]'),
+    );
+    expect(denied).toBeDefined();
+    expect(denied!.isError).toBe(true);
+    expect(denied!.result as string).toContain('Resource exhausted');
+    // The contradiction that caused the incident: advising verification at
+    // the hard limit sends the model into guaranteed-denied retries.
+    expect(denied!.result as string).not.toContain('Prioritize verification');
+    expect(denied!.result as string).toContain('Finalize now');
+    expect(log).toEqual([]);
+  });
+
+  it('hard-limit denial (text-format path) orders finalization, NOT gated verification', async () => {
+    const log: string[] = [];
+    const harness = new AgentHarness({
+      model: 'test-model',
+      provider: 'test',
+      sessionId: 'gate-hardlimit-text',
+      messages: [{ role: 'user', content: 'go' }],
+      tools: [],
+      toolRegistry: makeRegistry(log),
+      providerStream: fakeStream([
+        [
+          {
+            kind: 'text',
+            delta: '---TOOLS---[{"name":"bash","args":{"command":"ls -la"}}]---END---',
+          },
+          { kind: 'finish', reason: 'stop' },
+        ],
+        [{ kind: 'finish', reason: 'stop' }],
+      ]),
+      toolCallGate: () => ({ allowed: false, reason: HARD_LIMIT_REASON, hardLimit: true }),
+    });
+    const events = await collect(harness);
+    const denied = toolEnds(events).find(
+      (e) => typeof e.result === 'string' && (e.result as string).includes('[resource-gate]'),
+    );
+    expect(denied).toBeDefined();
+    expect(denied!.isError).toBe(true);
+    expect(denied!.result as string).not.toContain('Prioritize verification');
+    expect(denied!.result as string).toContain('Finalize now');
+    expect(log).toEqual([]);
+  });
+
+  it('protected-zone denial (no hardLimit) keeps the verification advice', async () => {
+    const log: string[] = [];
+    const harness = new AgentHarness({
+      model: 'test-model',
+      provider: 'test',
+      sessionId: 'gate-protected-advice',
+      messages: [{ role: 'user', content: 'go' }],
+      tools: [],
+      toolRegistry: makeRegistry(log),
+      providerStream: fakeStream([
+        [
+          { kind: 'tool_call', toolCallId: 't2', toolName: 'bash', args: { command: 'ls' } },
+          { kind: 'finish', reason: 'tool_calls' },
+        ],
+        [{ kind: 'finish', reason: 'stop' }],
+      ]),
+      toolCallGate: () => ({
+        allowed: false,
+        reason: 'Resource protected: remaining tool calls are reserved for verification and targeted repair.',
+      }),
+    });
+    const events = await collect(harness);
+    const denied = toolEnds(events).find(
+      (e) => typeof e.result === 'string' && (e.result as string).includes('[resource-gate]'),
+    );
+    expect(denied).toBeDefined();
+    // Inside the protected zone essential tools ARE still allowed, so the
+    // verification advice is true and must stay.
+    expect(denied!.result as string).toContain('Prioritize verification/repair actions');
+    expect(log).toEqual([]);
+  });
+});

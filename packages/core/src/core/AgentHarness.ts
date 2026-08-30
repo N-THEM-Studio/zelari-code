@@ -92,6 +92,19 @@ export const TOOL_CALL_TRUNCATED_RECOVERY_USER =
   `(finish_reason=tool_calls but no complete tool_call arrived). ` +
   `Retry with a shorter payload or split the work into smaller tool calls.`;
 
+/**
+ * 2.18.1 (t47): the verification advice appended to a gate denial is only
+ * true inside the protected zone (essential tools still allowed). At the
+ * hard limit EVERY call is denied — advising verification sends the model
+ * into guaranteed-denied retries (observed: tsc called immediately after
+ * a hard-limit denial, then denied again).
+ */
+function gateAdvice(hardLimit: boolean | undefined): string {
+  return hardLimit
+    ? 'Finalize now with the evidence already collected; no further tool calls will run this turn.'
+    : 'Prioritize verification/repair actions (test, typecheck, build, read failures) or finalize honestly.';
+}
+
 // --- Public types -----------------------------------------------------------
 
 /** Inline image sent to vision-capable providers (raw base64, no data: prefix). */
@@ -243,7 +256,7 @@ export interface AgentHarnessConfig {
   toolCallGate?: (
     toolName: string,
     args: Record<string, unknown>,
-  ) => { allowed: boolean; reason?: string };
+  ) => { allowed: boolean; reason?: string; hardLimit?: boolean };
   /**
    * v2.16 (HARNESS-10 t24): what an unreliable gate (a throw) means.
    * 'fail-open' (default) keeps v2.6 degrade-and-stop: the crash is logged
@@ -539,7 +552,7 @@ export class AgentHarness {
   private checkToolCallGate(
     toolName: string,
     args: Record<string, unknown>,
-  ): { allowed: boolean; reason?: string } {
+  ): { allowed: boolean; reason?: string; hardLimit?: boolean } {
     if (!this.config.toolCallGate) return { allowed: true };
     try {
       return this.config.toolCallGate(toolName, args) ?? { allowed: true };
@@ -670,7 +683,7 @@ export class AgentHarness {
         return {
           content:
             `[resource-gate] ${gate.reason ?? 'denied by resource policy'} ` +
-            `Prioritize verification/repair actions (test, typecheck, build, read failures) or finalize honestly.`,
+            gateAdvice(gate.hardLimit),
           isError: true,
           durationMs: 0,
         };
@@ -1629,7 +1642,7 @@ export class AgentHarness {
               if (!gate.allowed) {
                 const denied =
                   `[resource-gate] ${gate.reason ?? 'denied by resource policy'} ` +
-                  `Prioritize verification/repair actions (test, typecheck, build, read failures) or finalize honestly.`;
+                  gateAdvice(gate.hardLimit);
                 const denyEv = createBrainEvent('tool_execution_end', this.sessionId, {
                   toolCallId,
                   result: denied,
