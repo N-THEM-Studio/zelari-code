@@ -21,7 +21,7 @@ Minor: wiring-first release - the session spine now sees every headless host, pr
 - **Kraken-graph on the spine (W1)** - `runHeadlessKrakenGraph` opens the session log (mode kraken, resolved workspace), gates `session.started` on `--output json`, and closes it on every exit (completed/error/cancelled on SIGINT); spine failures never change the exit code. ADR-0024 is no longer bypassed by default-on graph runs.
 - **Strict knobs via per-invocation env overlay** - `ZELARI_STRICT_DONE`/`ZELARI_MISSION_STRICT` are threaded through `options.env` into the strict build gate instead of mutating `process.env` (race-prone on the concurrent sidecar).
 - **Desktop strict-done default aligned with the CLI (W6, post QA t21)** - `DEFAULT_DESKTOP_PREFS.strictDone = true` (ADR-0025); the sidecar no longer pins `ZELARI_STRICT_DONE=0`. Persisted explicit `false` stays opt-out.
-- **Session spine vocabulary cleanup (W5)** - removed dead event kinds `kraken.task`, `context.injected` (zero writers) and `session.harness_drift` (zero readers); tolerant replay preserved; the 1.x mirror removal TODO is re-planned with explicit preconditions. ADRs 014 (recall asymmetry is deliberate, opt-in measurable) and 015 (budget pipeline is the canonical projection compiler) recorded.
+- **Session spine vocabulary cleanup (W5)** - removed dead event kinds `kraken.task`, `context.injected` (zero writers) and `session.harness_drift` (zero readers); tolerant replay preserved; the 1.x mirror removal TODO is re-planned with explicit preconditions. ADR-0031 (recall asymmetry is deliberate, opt-in measurable) and ADR-0032 (budget pipeline is the canonical projection compiler) recorded, promoted from the council vault to `docs/decisions/`.
 
 ### Fixed
 

@@ -32,26 +32,18 @@ User docs: `README.md`, `docs/GUIDA.md`, `docs/TOOLS.md`. Contribute: `CONTRIBUT
 ## Decisions
 
 <!-- zelari:auto:start section="decisions" -->
-See `.zelari/decisions/` for full ADRs (context/decision/consequences).
+See `docs/decisions/` for full ADRs (context/decision/consequences).
 
 **Accepted:**
 - **0016-event-sourced-session-log** _(accepted 2026-08-19)_ — session spine: append-only JSONL, single writer + ownership lock, monotonic `seq`, `SCHEMA_VERSION`, tolerant replay, `deriveMessages` as the only model-history path. Location: `.zelari/sessions/` (env `ZELARI_SESSIONS_DIR`).
 - **0021-session-spine-contract** _(accepted)_ — public contract of the spine v1 (envelope, writer, replay, projection, lineage, export).
 - **0022-execution-seams-profiles** _(accepted)_ — WorkspaceProvider/FsProvider/ShellProvider/SubagentProvider seams + versioned profiles (`minimal/v1`, `kraken/v1`, `council/v1`, `mission/v1`).
 - **0023-deterministic-verification-completion** _(accepted)_ — Criterion/EvidenceRef/VerificationResult evidence contract, `unknown ≠ pass`, CompletionPolicy `PASS|REPAIR_REQUIRED|BLOCKED`, criteria pack v1, VerifierService advisory-only.
-- **011-windows-path-auto-fix**- **011-windows-path-auto-fix** _(accepted)_ — Auto-fix the npm global prefix missing from the user PATH on Windows, both at install time (`scripts/postinstall.mjs` → `scripts/repair-path.mjs`) and at runtime (`zelari-code --fix-path` → `src/cli/utils/fixPath.ts`). Scope is HKCU ("User"), never HKLM; idempotent exact-entry match; opt-out via `ZELARI_NO_PATH_REPAIR=1`. `zelari-code --doctor` now points users at `--fix-path`. Residual limits: GPO PATH resets, SYSTEM-scope installs, and non-standard node managers (nvm-windows/scoop/volta) remain out of reach.
-
-**Proposed:**
-- **001-new-decision** _(proposed)_
-- **002-new-decision** _(proposed)_
-- **003-new-decision** _(proposed)_
-- **004-new-decision** _(proposed)_
-- **005-new-decision** _(proposed)_
-- **006-new-decision** _(proposed)_
-- **007-new-decision** _(proposed)_
-- **008-new-decision** _(proposed)_
-- **009-new-decision** _(proposed)_
-- **010-new-decision** _(proposed)_
+- **0024-single-write-model-context** _(accepted 2026-08-19, amended 2026-08-30)_ — the spine is the only model-context source on every headless host + TUI; the amendment adds the graph host (`runHeadlessKrakenGraph`, `src/cli/runHeadless.ts`) to the spine hot paths with envelope-only coverage in v1 (`started` / `user.message` / `ended`; per-node events and inner turns stay off the spine).
+- **0025-strict-done-defaults** _(accepted 2026-08-20)_ — strict done defaults per surface: Kraken opt-in, mission ON, Desktop aligned with the CLI (`DEFAULT_DESKTOP_PREFS.strictDone = true`).
+- **0031-recall-asymmetry-single-agent** _(accepted 2026-08-30)_ — recall asymmetry on single-agent paths is deliberate: default-off, opt-in only through the measurable `context.projection` gate (promoted from `.zelari/decisions/014`).
+- **0032-budget-pipeline-canonical-projection** _(accepted 2026-08-30)_ — the CLI budget pipeline is the canonical projection compiler; `ContextProjector` stays tentacle parent-context only and HarnessState is a read-model (promoted from `.zelari/decisions/015`).
+- **011-windows-path-auto-fix** _(accepted)_ — Auto-fix the npm global prefix missing from the user PATH on Windows, both at install time (`scripts/postinstall.mjs` → `scripts/repair-path.mjs`) and at runtime (`zelari-code --fix-path` → `src/cli/utils/fixPath.ts`). Scope is HKCU ("User"), never HKLM; idempotent exact-entry match; opt-out via `ZELARI_NO_PATH_REPAIR=1`. `zelari-code --doctor` now points users at `--fix-path`. Residual limits: GPO PATH resets, SYSTEM-scope installs, and non-standard node managers (nvm-windows/scoop/volta) remain out of reach.
 
 <!-- zelari:auto:end section="decisions" -->
 

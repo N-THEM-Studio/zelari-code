@@ -22,13 +22,15 @@ scrivendo un **nuovo** ADR che segnala il precedente come
 | 0016 | Log di sessione event-sourced come unica fonte di verità | 📝 Proposto | da confermare | — |
 | 0017 | Selezione unificata del "thinking effort" per tutti i provider | 📝 Proposto | da confermare | — |
 | 0018 | Contratto workspace task store su `.zelari/plan.json` (tool `task_*`) | ✅ Accettato | slice 3a implementata (v1.43.0) | — |
-| 0024 | Chiusura del dual-write: spine come unica sorgente del contesto modello | ✅ Accettato | 2026-08-19 | 2026-08-19 |
+| 0024 | Chiusura del dual-write: spine come unica sorgente del contesto modello | ✅ Accettato (emendato 2026-08-30) | 2026-08-19 | 2026-08-19 |
 | 0025 | Default strict done divisi per superficie (Kraken opt-in, mission ON) | ✅ Accettato | 2026-08-20 | 2026-08-20 |
 | 0026 | Default RC: evidence event-backed ON, Kraken strict resta opt-in | ✅ Accettato | 2026-08-20 | 2026-08-20 |
 | 0027 | Strict Kraken default 2.1: resta opt-in CLI, host decide via pack | ✅ Accettato | 2026-08-20 | 2026-08-20 |
 | 0028 | Native criteria pack adattivo: CLI esplicito, default a carico dell'host | ✅ Accettato | 2026-08-20 | 2026-08-20 |
 | 0029 | Memoria cognitiva condivisa native-first, SQLite locale e MCP esterno | ✅ Accettato | 2026-08-23 | 2026-08-23 |
 | 0030 | Razionalizzazione default HARNESS-10: strict-done e verify-pack ON, trust headless UNTRUSTED | ✅ Accettato | 2026-08-23 | 2026-08-23 |
+| 0031 | Asimmetria recall su path single-agent (W3): deliberata, opt-in misurabile | ✅ Accettato | 2026-08-30 | 2026-08-30 (promossa da `.zelari/decisions/014`) |
+| 0032 | Unificazione proiezione: la budget pipeline CLI è il compilatore canonico (W4) | ✅ Accettato | 2026-08-30 | 2026-08-30 (promossa da `.zelari/decisions/015`) |
 
 ## Formato
 

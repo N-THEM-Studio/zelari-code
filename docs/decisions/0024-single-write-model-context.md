@@ -1,6 +1,6 @@
 # ADR-0024 — Chiusura del dual-write: la spine come unica sorgente del contesto modello
 
-**Status:** Accettato
+**Status:** Accettato (emendato 2026-08-30; v1.1 2026-08-30)
 **Date:** 2026-08-19
 
 ## Contesto
@@ -86,3 +86,65 @@ spine (drift del confine di compaction).
 - [x] E1.5 — budget pipeline su seed spine-derived + `session_compacted` su path council
 - [x] Test architetturale `legacyContextIsolation.test.ts` (nessuna ricaduta nello store per il model context)
 - [ ] A 2.0.0-rc: valutare rimozione fallback store → ADR successiva
+
+## Amendment (2026-08-30) — host graph sulla spine (W1, release 2.17)
+
+Con la 2.17 l'elenco dei **path caldi** del punto 1 della Decisione si estende
+all'**host graph**: `runHeadlessKrakenGraph` (`src/cli/runHeadless.ts`) apre il
+log di sessione (`openHeadlessSpine`, mode `kraken`, workspace risolto), gated
+`session.started` su `--output json`, e lo chiude su ogni uscita
+(completed/error/cancelled, incluso il SIGINT gestito); un fallimento della
+spine non cambia mai l'exit code. Il graph host non bypassa più questa ADR sui
+run default-on.
+
+**Special-case dichiarato — copertura spine v1 sui run graph: ENVELOPE-ONLY.**
+Sui run graph il log spine contiene gli eventi di envelope del run
+(`started` / `user.message` / `ended`) più lo scaffolding host session-level
+node-independent (`session.harness_manifest`, `note`, `resource.*`,
+`task.contract`, scritti dal mirror a ogni apertura/turn-prep, identici con
+grafo vuoto o popolato); gli eventi **per-nodo** e i **turn interni** dei
+tentacoli NON finiscono sul log spine in v1 (i tentacoli scrivono sul canale
+kraken radio JSONL, non sulla spine). Il contratto è pinnato da un test
+differenziale in `src/cli/krakenGraphSpine.test.ts` (run con grafo vuoto vs
+grafo 1-nodo: sequenza spine identica). È un contratto special-case dichiarato
+qui, non una copertura completa: l'approfondimento (per-node events sulla
+spine) è rinviato.
+
+- [ ] Approfondire la copertura per-node dei run graph sulla spine (post-v1)
+
+## Amendment v1.1 (2026-08-30) — envelope per-nodo sui run graph
+
+**Sostituisce lo special-case envelope-only** dell'emendamento del 2026-08-30
+(la voce TODO "Approfondire la copertura per-node" qui sopra è chiusa da
+questo emendamento). Sui run graph la spine ora porta anche l'**envelope
+per-nodo**: eventi di stato `graph.node_started` / `graph.node_ended`
+(aggiunti al vocabolario chiuso di `packages/core/src/session/types.ts` con
+schema review per ADR-0021 — tipi additivi state-only, **senza bump di
+SCHEMA_VERSION**, che resta 1: il replay tollerante dei lettori più vecchi li
+segnala come `schema-mismatch` e li salta, e `deriveMessages()` non cambia —
+non sono model-surface).
+
+**Chi scrive — solo l'HOST.** L'emissione vive in `runHeadlessKrakenGraph`
+(`src/cli/runHeadless.ts`): l'host avvolge il seam di run del tentacolo
+(`runTentacleFn`, helper `nodeSpineEnvelopeRun`) — lo stesso invocato
+dall'executor per ogni turno di nodo — e appende la coppia started/ended via
+`spine.appendEvent` con `actor: system`. I tentacoli/subagent NON scrivono mai
+sulla spine (né lo stub di test, né il codice reale): il single-writer
+dell'ADR-0024 non cambia.
+
+**Cosa va sulla spine — solo envelope/metadata.** Payload dichiarato:
+`nodeId`, `agent`, `graphId?` su started; `nodeId`, `agent`, `graphId?`,
+`ok`, `cancelled?` (solo su run cancellato) e `durationMs` misurato
+dall'host su ended. Una coppia per **tentativo** (retry/rework = nuova
+coppia); i nodi `merge` non guidano tentacle e restano radio-only.
+Nessun contenuto modello: label del nodo, prompt, testo assistant, output di
+tool NON finiscono sulla spine — restano sul canale kraken radio JSONL
+(`node_start`/`node_end` con `detail`), correlate dallo stesso `sessionId`.
+
+**Contratto pinnato** dal test differenziale aggiornato in
+`src/cli/krakenGraphSpine.test.ts` (run grafo vuoto vs grafo 1-nodo con turno
+reale: il run 1-nodo aggiunge ESATTAMENTE la coppia `graph.node_started`/
+`graph.node_ended` alla sequenza del grafo vuoto — rimossa la coppia, le
+sequenze coincidono kind-per-kind; assenti `tool.call`/`tool.result`/
+`assistant.message`/`verification.*`; nessun payload della spine contiene
+contenuto del turno).
