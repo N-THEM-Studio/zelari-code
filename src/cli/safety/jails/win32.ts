@@ -12,13 +12,18 @@
  * and this repo bans native npm modules (P5). Faking it (e.g. env tricks or
  * "we asked nicely") would be jail-by-prompt — the exact thing t28 forbids.
  *
- * Therefore this backend ALWAYS probes `available:false`. Consequences, by
- * design and accepted by the HARNESS-10 plan (closure criterion 1):
- *   - ZELARI_OS_JAIL=required (headless/mission/CI default) ⇒ exec tools
- *     are DENIED on Windows with a typed `[jail]` error — "Se il backend OS
- *     manca, il tool è DENIED, non warned".
- *   - ZELARI_OS_JAIL=advisory (TUI default) ⇒ tools run unjailed with a
- *     VISIBLE signal (console + audit + result warning).
+ * Therefore this backend ALWAYS probes `available:false`. Consequences after
+ * the honest jail default (commit 7d70bf5 — resolveJailMode): `required` is
+ * resolved on strict surfaces ONLY WHEN the platform backend actually probes
+ * available. On Windows it never does, so the effective default here is a
+ * VISIBLE ADVISORY — tools run unjailed with a loud signal (console + audit
+ * + result warning), never a silent skip and never a fake deny:
+ *   - ZELARI_OS_JAIL=required (EXPLICIT only) ⇒ exec tools are DENIED with
+ *     a typed `[jail]` error — enforcement presupposes a backend that
+ *     exists; the explicit operator opt-in still fails closed here.
+ *   - ZELARI_OS_JAIL unset/strict (default resolution) on Windows ⇒ the
+ *     visible advisory above, NOT a deny (the old "required ⇒ DENIED
+ *     default" claim was pre-7d70bf5).
  * The typedErr surface lives in safety/osJail.decideJailSpawn — this module
  * only owns the honest probe. When a native path lands, probe() flips to a
  * real capability check and wrap() assembles [CreateProcess w/ token] — the
