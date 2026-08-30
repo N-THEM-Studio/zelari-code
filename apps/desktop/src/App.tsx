@@ -51,6 +51,7 @@ import {
   readVerificationRun,
   type VerificationRunView,
 } from "./components/VerificationStatusCard";
+import { HarnessStatePanel } from "./components/HarnessStatePanel";
 import {
   GauntletProgressCard,
   readGauntletProgress,
@@ -2916,6 +2917,7 @@ export default function App() {
                     run={verificationByConv[active?.id ?? ""].run ?? null}
                   />
                 ) : null}
+                <HarnessStatePanel />
               </div>
             )}
           </div>

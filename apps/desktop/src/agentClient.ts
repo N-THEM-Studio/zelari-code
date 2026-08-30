@@ -581,6 +581,24 @@ export async function onAgentEvent(
   return listen<AgentEvent>("agent-event", (e) => handler(e.payload));
 }
 
+export interface HarnessStatePayload {
+  sessionId: string | null;
+  state: unknown;
+}
+
+/**
+ * Advisory `harness-state` event from the harness sidecar: the relayed
+ * final NDJSON `harness_state` read-model (ADR-0023) of the last turn.
+ * Missing/malformed payloads normalize to an empty view — never an error.
+ */
+export async function onHarnessState(
+  handler: (payload: HarnessStatePayload) => void,
+): Promise<UnlistenFn> {
+  return listen<HarnessStatePayload>("harness-state", (e) =>
+    handler(e.payload),
+  );
+}
+
 export interface AgentStderrPayload {
   line: string;
   runId?: string;

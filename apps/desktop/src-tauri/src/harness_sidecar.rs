@@ -86,6 +86,38 @@ pub(crate) fn interpret_boot_line(raw: &str) -> BootLine {
     }
 }
 
+/// The final `harness_state` NDJSON event (ADR-0023 / H1 inc.3): the typed
+/// read-model the CLI emits as the LAST stdout line of a turn when
+/// output=json (runOneTurn / council / mission / kraken-graph hosts — see
+/// src/cli/headless/harnessStateEmit.ts). On the sidecar wire it rides the
+/// same stdout as every BrainEvent; it carries NO top-level sessionId (the
+/// spine id lives at `session.sessionId`), so routing hoists it (dispatch_line).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct HarnessStateEvent {
+    /// `session.sessionId` when the payload carries it (routing key).
+    pub session_id: Option<String>,
+    /// The raw read-model (type + session + turns + execution + support).
+    pub state: Value,
+}
+
+/// Pure classifier — `Some` for every `type:"harness_state"` JSON object,
+/// `None` for everything else. Advisory by contract: a MALFORMED payload
+/// still classifies (a missing session id only degrades routing to the
+/// broadcast path and leaves the UI panel empty) — never a parse error,
+/// never a crash.
+pub(crate) fn interpret_harness_state(event: &Value) -> Option<HarnessStateEvent> {
+    if event.get("type").and_then(|t| t.as_str()) != Some("harness_state") {
+        return None;
+    }
+    Some(HarnessStateEvent {
+        session_id: event
+            .pointer("/session/sessionId")
+            .and_then(|s| s.as_str())
+            .map(str::to_string),
+        state: event.clone(),
+    })
+}
+
 /// Bounded wait for the `protocol_info` boot line after spawn.
 const BOOT_TIMEOUT: Duration = Duration::from_secs(20);
 /// Bounded graceful-drain wait at app close (proof writes flush server-side)
@@ -216,6 +248,11 @@ pub(crate) struct HarnessSidecar {
     awaiting_spine: Mutex<Vec<String>>,
     /// One-shot bind notification per awaiting fresh run.
     bind_notify: Mutex<HashMap<String, Sender<()>>>,
+    /// Last `harness_state` read-model per spine sessionId (advisory UI
+    /// state; replaced wholesale on every event, never diffed or re-parsed).
+    harness_states: Mutex<HashMap<String, Value>>,
+    /// Global last harness_state regardless of session (single-run UX).
+    last_harness_state: Mutex<Option<Value>>,
     /// Startup slot: at most one fresh run between "run.turn sent" and
     /// "spine bound", so session_started binding stays deterministic.
     fresh_slot: Mutex<()>,
@@ -234,6 +271,8 @@ impl HarnessSidecar {
             sinks: Mutex::new(HashMap::new()),
             awaiting_spine: Mutex::new(Vec::new()),
             bind_notify: Mutex::new(HashMap::new()),
+            harness_states: Mutex::new(HashMap::new()),
+            last_harness_state: Mutex::new(None),
             fresh_slot: Mutex::new(()),
         }
     }
@@ -256,6 +295,52 @@ impl HarnessSidecar {
                 "harness-sidecar-status",
                 json!({ "status": status, "message": message }),
             );
+        }
+    }
+
+    /// Store the latest harness_state (per spine session + global last) and
+    /// surface it to the UI the same way emit_status does — a global Tauri
+    /// event the frontend may or may not listen to (advisory, non-breaking).
+    /// Without an AppHandle (no run started yet) it only stores, never emits.
+    fn store_and_emit_harness_state(&self, hs: &HarnessStateEvent) {
+        {
+            let mut last = self
+                .last_harness_state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            *last = Some(hs.state.clone());
+        }
+        if let Some(sid) = &hs.session_id {
+            let mut map = self.harness_states.lock().unwrap_or_else(|e| e.into_inner());
+            map.insert(sid.clone(), hs.state.clone());
+        }
+        let guard = self.app.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(app) = guard.as_ref() {
+            let _ = app.emit(
+                "harness-state",
+                json!({ "sessionId": hs.session_id, "state": hs.state }),
+            );
+        }
+    }
+
+    /// Read-model seam for future consumers (a Tauri command would call
+    /// this): the last harness_state, optionally scoped to a spine session.
+    /// lib.rs is not extended in this slice, so outside tests nothing calls
+    /// it yet — the unit test below pins the store/getter roundtrip.
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn last_harness_state(&self, session_id: Option<&str>) -> Option<Value> {
+        match session_id {
+            Some(sid) => self
+                .harness_states
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .get(sid)
+                .cloned(),
+            None => self
+                .last_harness_state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
         }
     }
 
@@ -778,6 +863,21 @@ impl HarnessSidecar {
         }
         // Unsolicited event (type field): route to run sinks.
         if value.get("type").and_then(|t| t.as_str()).is_some() {
+            // harness_state (ADR-0023 final read-model): store + surface via
+            // the advisory `harness-state` event, then route like any other
+            // BrainEvent — with the spine id HOISTED to the top level so the
+            // sink bind stays deterministic (the payload nests it at
+            // session.sessionId; without the hoist a harness_state landing
+            // in a multi-run window would broadcast instead of binding 1:1).
+            if let Some(hs) = interpret_harness_state(&value) {
+                self.store_and_emit_harness_state(&hs);
+                let mut routed = value;
+                if let Some(sid) = &hs.session_id {
+                    routed["sessionId"] = json!(sid);
+                }
+                self.route_event(routed);
+                return;
+            }
             self.route_event(value);
         }
     }
@@ -1079,5 +1179,51 @@ mod tests {
             BootLine::Wrong(preview) => assert!(preview.contains("log")),
             other => panic!("expected Wrong, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn harness_state_classifies_real_payload() {
+        let line = r#"{"type":"harness_state","session":{"sessionId":"sess-1","status":"completed","lastSeq":7},"turns":[{"index":1,"toolCalls":0,"outcome":"completed","verification":{"strict":true,"verdict":"PASS"}}],"execution":{"turnsTotal":1,"contracts":[{"turn":1,"complete":true,"signals":{},"blockers":[]}]},"support":{"contextProjections":[],"memoryEvents":0,"compactions":0}}"#;
+        let event = serde_json::from_str::<Value>(line).unwrap();
+        let hs = interpret_harness_state(&event).expect("harness_state classifies");
+        assert_eq!(hs.session_id.as_deref(), Some("sess-1"));
+        assert_eq!(
+            hs.state.get("type").and_then(|t| t.as_str()),
+            Some("harness_state")
+        );
+    }
+
+    #[test]
+    fn harness_state_rejects_other_events() {
+        let boot = serde_json::json!({ "type": "protocol_info", "version": 2 });
+        assert_eq!(interpret_harness_state(&boot), None);
+        let response = serde_json::json!({ "id": 1, "ok": true, "result": {} });
+        assert_eq!(interpret_harness_state(&response), None);
+        assert_eq!(interpret_harness_state(&serde_json::json!("nonsense")), None);
+    }
+
+    #[test]
+    fn harness_state_survives_malformed_payload() {
+        // Advisory contract: a missing session id still classifies (routing
+        // degrades to broadcast; the UI panel stays empty) — never a crash.
+        let bare = serde_json::json!({ "type": "harness_state" });
+        let hs = interpret_harness_state(&bare).expect("still classifies");
+        assert_eq!(hs.session_id, None);
+    }
+
+    #[test]
+    fn harness_state_store_roundtrip() {
+        let sidecar = HarnessSidecar::new();
+        assert_eq!(sidecar.last_harness_state(None), None);
+        let event = serde_json::json!({
+            "type": "harness_state",
+            "session": { "sessionId": "sess-2", "status": "completed" }
+        });
+        let hs = interpret_harness_state(&event).unwrap();
+        // No AppHandle in tests → the emit is skipped, the store is not.
+        sidecar.store_and_emit_harness_state(&hs);
+        assert_eq!(sidecar.last_harness_state(None), Some(event.clone()));
+        assert_eq!(sidecar.last_harness_state(Some("sess-2")), Some(event));
+        assert_eq!(sidecar.last_harness_state(Some("other")), None);
     }
 }
