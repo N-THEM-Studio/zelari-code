@@ -278,6 +278,23 @@ export interface RecallResult {
 export interface RecallQuery extends MemoryQuery {
   /** Alias retained for callers that naturally pass `{ query: ... }`. */
   query?: string;
+  /**
+   * Caller-resolved scoring overrides, structurally
+   * `Partial<MemoryScoringWeights>` (kept inline to avoid a types↔scoring
+   * type-import cycle). The core stays pressure-blind per ADR-0031/0032:
+   * hosts (the CLI budget pipeline) translate measured occupancy into weight
+   * shifts and pass them here; `rankMemoryCandidates` merges them over the
+   * defaults.
+   */
+  weights?: Partial<{
+    semanticRelevance: number;
+    lexicalRelevance: number;
+    importance: number;
+    confidence: number;
+    recency: number;
+    graphProximity: number;
+    verificationBonus: number;
+  }>;
 }
 
 export interface LinkMemoryInput extends MemoryEdgeInput {}

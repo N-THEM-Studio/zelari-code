@@ -1630,6 +1630,8 @@ async function dispatchCouncilPromptImpl(
   let councilMemory: import('@zelari/core/memory').MemoryService | undefined;
   let councilMemoryAutoWrite = false;
   let nativeMemoryContext = '';
+  /** Pressure band from the retrieval wire — reused for the skill-catalog gate. */
+  let councilRetrievalBand: 'low' | 'medium' | 'high' = 'low';
   try {
     const memoryFactory = await import('../memory/serviceFactory.js');
     if (memoryFactory.isMemoryV2Enabled()) {
@@ -1645,11 +1647,21 @@ async function dispatchCouncilPromptImpl(
       });
       councilMemoryAutoWrite = memoryFactory.isMemoryAutoWriteEnabled();
       if (!overrides.ragContext) {
+        // Budget-aware retrieval (T4 follow-up): scale recall packing and
+        // weights with measured occupancy instead of a flat 2_000/8 budget.
+        const { resolveRetrievalPolicy } = await import(
+          '../budget/retrievalPolicy.js'
+        );
+        const retrieval = resolveRetrievalPolicy(
+          councilContext.budget.occupancy,
+        );
+        councilRetrievalBand = retrieval.band;
         nativeMemoryContext = (await councilMemory.buildContext({
           text: effectiveText,
           useGraph: true,
-          maxChars: 2_000,
-          maxMemories: 8,
+          maxChars: retrieval.maxChars,
+          maxMemories: retrieval.maxMemories,
+          ...(retrieval.weights ? { weights: retrieval.weights } : {}),
         })).text;
       }
     }

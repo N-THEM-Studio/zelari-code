@@ -223,8 +223,9 @@ export class DefaultMemoryService implements MemoryService {
     const text = (raw.query ?? raw.text ?? '').slice(0, 64_000);
     const limit = Math.max(1, Math.min(raw.limit ?? 8, 100));
     this.emit({ type: 'memory_recall_start' });
+    const { weights, ...recallQuery } = raw;
     const candidates = await this.backend.search({
-      ...raw,
+      ...recallQuery,
       text,
       projectId: this.projectId,
       statuses:
@@ -281,7 +282,10 @@ export class DefaultMemoryService implements MemoryService {
         }
       }
     }
-    const ranked = diverse(rankMemoryCandidates([...byId.values()], text), limit);
+    const ranked = diverse(
+      rankMemoryCandidates([...byId.values()], text, weights ? { weights } : {}),
+      limit,
+    );
     this.emit({
       type: 'memory_recall_end',
       durationMs: Date.now() - started,

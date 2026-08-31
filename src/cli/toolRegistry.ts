@@ -149,6 +149,12 @@ export interface CreateRegistryOptions {
   /** Register the `task` sub-agent tool (default true unless readOnly). */
   enableTask?: boolean;
   /**
+   * Context-pressure band for the skill-catalog gate: under `high` pressure,
+   * high-cost skills stay loadable by name but are hidden from the advertised
+   * catalog (budget-aware retrieval, T4 follow-up). Default: no gating.
+   */
+  pressureBand?: 'low' | 'medium' | 'high';
+  /**
    * Fase 1 (ADR-0020): anchor the sub-agents spawned by `task` to this
    * provider/model (the resolved provider/model of the CURRENT turn).
    * Without this, tentacles silently fall back to the persisted
@@ -527,7 +533,7 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
     profile !== 'explore' &&
     profile !== 'verify';
   const skillTool = enableSkill
-    ? withPerm(createSkillTool({ cwd: root }))
+    ? withPerm(createSkillTool({ cwd: root, pressureBand: options.pressureBand }))
     : null;
   if (skillTool) {
     registry.register(skillTool);

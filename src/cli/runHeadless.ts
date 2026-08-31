@@ -865,12 +865,17 @@ async function runHeadlessCouncil(
     const { composeProjectContext } = await import('./workspace/composeContext.js');
     const { loadDurableContext } = await import('./state/loadDurableContext.js');
     const durableState = await loadDurableContext(cwd);
+    // Budget-aware retrieval (T4 follow-up): occupancy comes from the
+    // canonical budget pipeline (councilContext) built right above.
+    const { resolveRetrievalPolicy } = await import('./budget/retrievalPolicy.js');
+    const retrieval = resolveRetrievalPolicy(councilContext.budget.occupancy);
     const memoryContext = nativeMemory
       ? (await nativeMemory.buildContext({
           text: effectiveTask,
           useGraph: true,
-          maxChars: 2_000,
-          maxMemories: 8,
+          maxChars: retrieval.maxChars,
+          maxMemories: retrieval.maxMemories,
+          ...(retrieval.weights ? { weights: retrieval.weights } : {}),
         })).text
       : '';
     const composed = composeProjectContext({

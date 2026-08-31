@@ -18,6 +18,10 @@ import {
   type ToolDefinition,
 } from '@zelari/core/harness/tools/toolTypes';
 import { loadSkillMdSkills } from '../skillsMd.js';
+import {
+  filterSkillCatalogByBand,
+  type RetrievalPressureBand,
+} from '../budget/retrievalPolicy.js';
 
 const SkillArgsSchema = z.object({
   name: z
@@ -28,30 +32,49 @@ const SkillArgsSchema = z.object({
 
 type SkillArgs = z.infer<typeof SkillArgsSchema>;
 
-/** Build the catalog text for system prompts / tool description. */
-export function formatAvailableSkillsCatalog(cwd: string = process.cwd()): string {
+/**
+ * Build the catalog text for system prompts / tool description.
+ * With `pressureBand: 'high'`, high-cost skills are hidden from the advertised
+ * catalog (budget-aware retrieval, T4 follow-up) but stay loadable by name
+ * via the tool's execute path.
+ */
+export function formatAvailableSkillsCatalog(
+  cwd: string = process.cwd(),
+  opts?: { pressureBand?: RetrievalPressureBand },
+): string {
   // Ensure project SKILL.md skills are registered once per process path.
   try {
     loadSkillMdSkills(cwd);
   } catch {
     /* ignore load failures — catalog still has builtins */
   }
-  const skills = listCodingSkills();
-  if (skills.length === 0) {
+  const band = opts?.pressureBand;
+  const all = listCodingSkills();
+  if (all.length === 0) {
     return 'No skills registered.';
   }
-  const lines = skills.slice(0, 80).map((s) => {
+  const gated = band ? filterSkillCatalogByBand(all, band) : all;
+  const hidden = all.length - gated.length;
+  const lines = gated.slice(0, 80).map((s) => {
     const desc = (s.description || s.id).replace(/\s+/g, ' ').trim().slice(0, 160);
     return `- ${s.id}: ${desc}`;
   });
+  if (hidden > 0) {
+    lines.push(
+      `(plus ${hidden} high-cost skill(s) hidden under context pressure — still loadable by name if truly needed)`,
+    );
+  }
   return lines.join('\n');
 }
 
 export function createSkillTool(opts?: {
   cwd?: string;
+  pressureBand?: RetrievalPressureBand;
 }): ToolDefinition<SkillArgs, { name: string; content: string }> {
   const cwd = opts?.cwd ?? process.cwd();
-  const catalog = formatAvailableSkillsCatalog(cwd);
+  const catalog = formatAvailableSkillsCatalog(cwd, {
+    pressureBand: opts?.pressureBand,
+  });
 
   return {
     name: 'skill',
