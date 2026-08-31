@@ -40,14 +40,30 @@ function readFile(path: string): Record<string, McpServerConfig> {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as McpConfigFile;
     const out: Record<string, McpServerConfig> = {};
     for (const [name, cfg] of Object.entries(parsed.mcpServers ?? {})) {
-      if (!cfg || typeof cfg.command !== 'string' || !cfg.command.trim()) continue;
+      const hasCommand =
+        !!cfg && typeof cfg.command === 'string' && !!cfg.command.trim();
+      const hasUrl =
+        !!cfg && typeof cfg.url === 'string' && /^https?:\/\//i.test(cfg.url);
+      if (!cfg || (!hasCommand && !hasUrl)) continue;
       out[name] = {
-        command: cfg.command.trim(),
+        command: hasCommand ? cfg.command!.trim() : undefined,
         args: Array.isArray(cfg.args) ? cfg.args.map(String) : undefined,
         env:
           cfg.env && typeof cfg.env === 'object'
             ? (cfg.env as Record<string, string>)
             : undefined,
+        type:
+          hasUrl && !hasCommand
+            ? 'http'
+            : cfg.type === 'http'
+              ? 'http'
+              : 'stdio',
+        url: hasUrl ? cfg.url!.trim() : undefined,
+        timeoutMs:
+          typeof cfg.timeoutMs === 'number' && cfg.timeoutMs > 0
+            ? cfg.timeoutMs
+            : undefined,
+        serial: typeof cfg.serial === 'boolean' ? cfg.serial : undefined,
         enabled: cfg.enabled !== false,
       };
     }
@@ -108,8 +124,14 @@ export function upsertMcpServer(opts: {
       error: 'Invalid server name (use letters, digits, _ -)',
     };
   }
-  if (!opts.config.command?.trim()) {
-    return { ok: false, error: 'command is required' };
+  const hasCommand = !!opts.config.command?.trim();
+  const hasUrl =
+    typeof opts.config.url === 'string' && /^https?:\/\//i.test(opts.config.url);
+  if (!hasCommand && !hasUrl) {
+    return {
+      ok: false,
+      error: 'either command (stdio) or url (http) is required',
+    };
   }
   let path: string;
   if (opts.scope === 'user') {
@@ -126,9 +148,13 @@ export function upsertMcpServer(opts: {
   }
   const current = readFile(path);
   current[name] = {
-    command: opts.config.command.trim(),
+    command: hasCommand ? opts.config.command!.trim() : undefined,
     args: opts.config.args,
     env: opts.config.env,
+    type: hasUrl ? 'http' : opts.config.type === 'http' ? 'http' : 'stdio',
+    url: hasUrl ? opts.config.url!.trim() : undefined,
+    timeoutMs: opts.config.timeoutMs,
+    serial: opts.config.serial,
     enabled: opts.config.enabled !== false,
   };
   writeFile(path, current);

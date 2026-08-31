@@ -561,13 +561,16 @@ function pickRootComponent(): {
         "    --cwd <path>      Project root for .zelari/mcp.json\n" +
         "  --set-mcp           Add/update an MCP server entry\n" +
         "    --name <id>       Server name (required)\n" +
-        "    --command <bin>   Executable (required)\n" +
-        "    --args <json>     JSON array of args (optional)\n" +
+        "    --command <bin>   Executable for stdio servers\n" +
+        "    --url <endpoint>  Streamable HTTP endpoint (e.g. UE 5.8 editor)\n" +
+        "    --args <json>     JSON array of args (stdio, optional)\n" +
+        "    --timeout <ms>    Per-server request timeout (http, optional)\n" +
         "    --scope user|project  Default: user\n" +
         "    --enabled true|false  Default: true\n" +
         "    --cwd <path>      Required when scope=project\n" +
         "  --set-mcp-preset    Install a named MCP preset (e.g. cua)\n" +
         "    --preset cua      Cua Driver desktop computer-use (MCP)\n" +
+        "    --preset unreal-mcp  Unreal Engine 5.8+ editor (MCP over HTTP)\n" +
         "    --scope user|project  Default: user\n" +
         "    --cwd <path>      Required when scope=project\n" +
         "  --remove-mcp        Remove an MCP server entry\n" +
@@ -629,6 +632,8 @@ function pickRootComponent(): {
       };
       const name = get("--name");
       const command = get("--command");
+      const url = get("--url");
+      const timeoutRaw = get("--timeout");
       const scopeRaw = get("--scope") ?? "user";
       const scope = scopeRaw === "project" ? "project" : "user";
       const cwd = get("--cwd") ?? process.cwd();
@@ -641,14 +646,28 @@ function pickRootComponent(): {
         if (!Array.isArray(parsed)) throw new Error("--args must be a JSON array");
         args = parsed.map(String);
       }
-      if (!name || !command) {
-        throw new Error("--name and --command are required");
+      const timeoutMs =
+        timeoutRaw !== undefined ? Number(timeoutRaw) : undefined;
+      if (
+        timeoutMs !== undefined &&
+        (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
+      ) {
+        throw new Error("--timeout must be a positive number of milliseconds");
+      }
+      if (!name) throw new Error("--name is required");
+      if (!command && !url) {
+        throw new Error("either --command (stdio) or --url (http) is required");
+      }
+      if (url && !/^https?:\/\//i.test(url)) {
+        throw new Error("--url must be an http(s) endpoint");
       }
       const result = upsertMcpServer({
         scope,
         name,
         projectRoot: cwd,
-        config: { command, args, enabled },
+        config: url
+          ? { type: "http", url, timeoutMs, serial: true, enabled }
+          : { command, args, enabled },
       });
       if (!result.ok) throw new Error(result.error);
       console.log(JSON.stringify({ ok: true, path: result.path, name, scope }));

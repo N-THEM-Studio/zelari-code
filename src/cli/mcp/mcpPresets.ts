@@ -115,17 +115,60 @@ export function buildQwenMmPreset(): McpPreset {
   };
 }
 
+/**
+ * Unreal Engine 5.8+ editor MCP preset. The editor embeds an MCP server
+ * (Streamable HTTP on loopback, Experimental in 5.8) exposing Tool Search
+ * meta-tools: list_toolsets / describe_toolset / call_tool.
+ *
+ * Editor setup: enable the "Model Context Protocol" plugin, then turn on
+ * the MCP server under Edit → Project Settings → Plugins (default
+ * http://127.0.0.1:8000/mcp — port and path are configurable there).
+ */
+export function buildUnrealPreset(): McpPreset {
+  const url = process.env.UNREAL_MCP_URL?.trim() || "http://127.0.0.1:8000/mcp";
+  return {
+    id: "unreal-mcp",
+    servers: {
+      "unreal-mcp": {
+        type: "http",
+        url,
+        // Editor tool calls (asset scans, builds, PIE) can be slow.
+        timeoutMs: 120_000,
+        // Epic guidance: never overlap calls on the editor's game thread.
+        serial: true,
+        enabled: true,
+      },
+    },
+    notes: [
+      "Unreal Engine 5.8+ — MCP server embedded in the editor (Experimental feature).",
+      "Editor: enable the 'Model Context Protocol' plugin, then Edit → Project Settings → Plugins → MCP Server.",
+      `Endpoint: ${url} (override with UNREAL_MCP_URL; port/path configurable in the editor).`,
+      "Tool Search ON by default: tools surface as list_toolsets / describe_toolset / call_tool.",
+      "Requests are serialized and time out after 120s (editor tools can be slow).",
+      "Start the editor before OR after zelari — unreachable servers are retried on each turn.",
+      "Kill switch: disable the unreal-mcp server in mcp.json or ZELARI_MCP=0",
+    ],
+  };
+}
+
 const PRESETS: Record<string, () => McpPreset> = {
   cua: () => CUA_DRIVER_PRESET,
   "cua-driver": () => CUA_DRIVER_PRESET,
   composio: buildComposioPreset,
   "qwen-mm-plugins": buildQwenMmPreset,
   "qwen-mm": buildQwenMmPreset,
+  unreal: buildUnrealPreset,
+  "unreal-mcp": buildUnrealPreset,
+  unrealEditor: buildUnrealPreset,
 };
 
 export function listMcpPresetIds(): string[] {
   return Object.keys(PRESETS).filter(
-    (k) => k === "cua" || k === "composio" || k === "qwen-mm-plugins",
+    (k) =>
+      k === "cua" ||
+      k === "composio" ||
+      k === "qwen-mm-plugins" ||
+      k === "unreal-mcp",
   ); // canonical ids only
 }
 

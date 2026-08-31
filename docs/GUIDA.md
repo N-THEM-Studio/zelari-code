@@ -507,7 +507,7 @@ Tutti i comandi iniziano con `/` e si digitano nella barra di input della TUI.
 | `/build [goal]` | Entra in phase **build** (tool completi). Opzionale: invia subito `goal`. |
 | `/trust [path]` | Mostra o fida una cartella (MCP + hook di progetto). |
 | `/trust remove [path]` | Revoca il trust. |
-| `/integrations` | Elenca preset MCP (`composio`, `qwen-mm-plugins`, `cua`). |
+| `/integrations` | Elenca preset MCP (`composio`, `qwen-mm-plugins`, `cua`, `unreal-mcp`). |
 
 #### Provider e modello
 

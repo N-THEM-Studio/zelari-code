@@ -1,20 +1,26 @@
 /**
- * mcpClient — minimal Model Context Protocol client over stdio (v0.7.5).
+ * mcpClient — minimal Model Context Protocol client (stdio + Streamable HTTP).
  *
  * Implements exactly the slice of MCP the CLI needs to consume external
- * tool servers: `initialize` handshake, `tools/list` discovery, and
- * `tools/call` execution, speaking newline-delimited JSON-RPC 2.0 over a
- * child process's stdin/stdout (the MCP stdio transport).
+ * tool servers: `initialize` handshake, `tools/list` discovery (with
+ * cursor pagination), and `tools/call` execution.
  *
- * No SDK dependency on purpose: the protocol slice is ~150 lines and the
+ * Two transports behind one JSON-RPC pump:
+ *  - stdio  (default): newline-delimited JSON-RPC 2.0 over a child process
+ *  - http   (config `type: "http"` / `url`): Streamable HTTP — used by
+ *    editor-embedded servers such as the Unreal Engine 5.8+ editor server
+ *    (loopback, `Mcp-Session-Id`, JSON or SSE responses, 404 → re-handshake)
+ *
+ * No SDK dependency on purpose: the protocol slice stays ~250 lines and the
  * official SDK would be the CLI's heaviest dependency by far.
  *
- * @see https://modelcontextprotocol.io/specification (stdio transport)
+ * @see https://modelcontextprotocol.io/specification
  */
 
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { buildCmdLine } from "../utils/cmdline.js";
 import { getCurrentVersion } from "../updater.js";
+import { McpHttpTransport } from "./httpTransport.js";
 
 /** JSON-RPC id → pending resolver. */
 interface Pending {
@@ -23,13 +29,28 @@ interface Pending {
   timer: NodeJS.Timeout;
 }
 
+export type McpTransportType = "stdio" | "http";
+
 export interface McpServerConfig {
-  /** Executable (e.g. 'npx', 'node', 'uvx', an absolute path). */
-  command: string;
+  /** Executable for stdio servers (e.g. 'npx', 'node', 'uvx'). Optional
+   *  when `url` is set (http servers run inside another process, e.g. the
+   *  UE 5.8+ editor). */
+  command?: string;
   args?: string[];
   env?: Record<string, string>;
   /** Set false to keep the entry in config but skip it. */
   enabled?: boolean;
+  /** Transport selection. Defaults: 'http' when only `url` is set, else 'stdio'. */
+  type?: McpTransportType;
+  /** Streamable HTTP endpoint (e.g. http://127.0.0.1:8000/mcp). */
+  url?: string;
+  /** Per-server request timeout in ms (default 30000). Editor servers with
+   *  slow tools (asset scans, builds) should raise this. */
+  timeoutMs?: number;
+  /** Serialize requests to this server. Default: true for http (editor
+   *  servers must not receive overlapping calls on the game thread),
+   *  false for stdio. */
+  serial?: boolean;
 }
 
 export interface McpToolInfo {
@@ -41,23 +62,63 @@ export interface McpToolInfo {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000;
 const INIT_TIMEOUT_MS = 15_000;
+/** Guard against a broken server paginating forever. */
+const MAX_LIST_PAGES = 50;
 export const MCP_PROTOCOL_VERSION = "2025-03-26";
 
 export class McpClient {
   private child: ChildProcessWithoutNullStreams | null = null;
+  private transport: McpHttpTransport | null = null;
   private nextId = 1;
   private readonly pending = new Map<number, Pending>();
   private stdoutBuffer = "";
   private closed = false;
+  /** Tail of the serial queue (config.serial); requests run one at a time. */
+  private queueTail: Promise<unknown> = Promise.resolve();
+  /** True while the 404-recovery handshake runs: bypasses the serial queue
+   *  (the queued request that triggered the 404 is waiting on this handshake). */
+  private recovering = false;
+  private readonly serial: boolean;
+  private readonly defaultTimeoutMs: number;
 
   constructor(
     public readonly serverName: string,
     private readonly config: McpServerConfig,
-  ) {}
+  ) {
+    this.defaultTimeoutMs = config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+    this.serial = config.serial ?? this.transportKind() === "http";
+  }
 
-  /** Spawn the server process and run the MCP initialize handshake. */
+  private transportKind(): McpTransportType {
+    if (this.config.type) return this.config.type;
+    return this.config.url && !this.config.command ? "http" : "stdio";
+  }
+
+  /** Connect (spawn / HTTP session) and run the MCP initialize handshake. */
   async start(): Promise<void> {
-    if (this.child) return;
+    if (this.child || this.transport) return;
+    if (this.transportKind() === "http") {
+      const url = this.config.url;
+      if (!url) {
+        throw new Error(`[mcp:${this.serverName}] http server requires a url`);
+      }
+      this.transport = new McpHttpTransport({
+        serverName: this.serverName,
+        url,
+        // env may carry an explicit Authorization header for remote servers.
+        headers: this.config.env?.AUTHORIZATION
+          ? { Authorization: this.config.env.AUTHORIZATION }
+          : undefined,
+        onMessage: (msg) => this.handleMessage(msg),
+        onSessionLost: () => this.handshake(),
+      });
+      await this.handshake();
+      return;
+    }
+    const command = this.config.command;
+    if (!command) {
+      throw new Error(`[mcp:${this.serverName}] stdio server requires a command`);
+    }
     const spawnOpts = {
       stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...(this.config.env ?? {}) },
@@ -69,11 +130,11 @@ export class McpClient {
     // Build the command line ourselves with explicit quoting instead.
     const child = (
       process.platform === "win32"
-        ? spawn(buildCmdLine(this.config.command, this.config.args ?? []), {
+        ? spawn(buildCmdLine(command, this.config.args ?? []), {
             ...spawnOpts,
             shell: true,
           })
-        : spawn(this.config.command, this.config.args ?? [], spawnOpts)
+        : spawn(command, this.config.args ?? [], spawnOpts)
     ) as ChildProcessWithoutNullStreams;
     this.child = child;
 
@@ -94,42 +155,59 @@ export class McpClient {
       }
     });
 
-    await this.request(
-      "initialize",
-      {
-        protocolVersion: MCP_PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: "zelari-code", version: getCurrentVersion() },
-      },
-      INIT_TIMEOUT_MS,
-    );
-    this.notify("notifications/initialized", {});
+    await this.handshake();
   }
 
-  /** Discover the server's tools. */
+  private async handshake(): Promise<void> {
+    const prev = this.recovering;
+    this.recovering = true;
+    try {
+      await this.request(
+        "initialize",
+        {
+          protocolVersion: MCP_PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: { name: "zelari-code", version: getCurrentVersion() },
+        },
+        INIT_TIMEOUT_MS,
+      );
+      this.notify("notifications/initialized", {});
+    } finally {
+      this.recovering = prev;
+    }
+  }
+
+  /**
+   * Discover the server's tools. Follows `nextCursor` pagination so
+   * large servers (hundreds of tools) are listed completely.
+   */
   async listTools(): Promise<McpToolInfo[]> {
-    const res = (await this.request("tools/list", {})) as {
-      tools?: Array<{
-        name?: string;
-        description?: string;
-        inputSchema?: Record<string, unknown>;
-      }>;
-    };
-    return (res.tools ?? [])
-      .filter(
-        (
-          t,
-        ): t is {
-          name: string;
+    const tools: McpToolInfo[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < MAX_LIST_PAGES; page++) {
+      const res = (await this.request(
+        "tools/list",
+        cursor ? { cursor } : {},
+      )) as {
+        tools?: Array<{
+          name?: string;
           description?: string;
           inputSchema?: Record<string, unknown>;
-        } => !!t.name,
-      )
-      .map((t) => ({
-        name: t.name,
-        description: t.description ?? "",
-        inputSchema: t.inputSchema ?? { type: "object", properties: {} },
-      }));
+        }>;
+        nextCursor?: string;
+      };
+      for (const t of res.tools ?? []) {
+        if (!t.name) continue;
+        tools.push({
+          name: t.name,
+          description: t.description ?? "",
+          inputSchema: t.inputSchema ?? { type: "object", properties: {} },
+        });
+      }
+      cursor = typeof res.nextCursor === "string" ? res.nextCursor : undefined;
+      if (!cursor) break;
+    }
+    return tools;
   }
 
   /**
@@ -139,12 +217,12 @@ export class McpClient {
   async callTool(
     name: string,
     args: Record<string, unknown>,
-    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    timeoutMs?: number,
   ): Promise<string> {
     const res = (await this.request(
       "tools/call",
       { name, arguments: args },
-      timeoutMs,
+      timeoutMs ?? this.defaultTimeoutMs,
     )) as {
       content?: Array<{ type?: string; text?: string }>;
       isError?: boolean;
@@ -161,26 +239,54 @@ export class McpClient {
     return text;
   }
 
-  /** Terminate the server process and reject all in-flight requests. */
+  /** Terminate the server / session and reject all in-flight requests. */
   close(): void {
     this.closed = true;
     this.failAll(new Error(`[mcp:${this.serverName}] client closed`));
+    if (this.transport) {
+      this.transport.close();
+      this.transport = null;
+      return;
+    }
     this.child?.kill();
     this.child = null;
   }
 
-  // ── JSON-RPC plumbing ────────────────────────────────────────────────
+  // ── JSON-RPC plumbing (shared by both transports) ────────────────────
 
   private request(
     method: string,
     params: unknown,
-    timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS,
+    timeoutMs?: number,
   ): Promise<unknown> {
+    const effective = timeoutMs ?? this.defaultTimeoutMs;
+    // Recovery handshakes bypass the queue: the queued request that hit the
+    // 404 is parked waiting for this handshake to finish.
+    if (!this.serial || this.recovering)
+      return this.dispatch(method, params, effective);
+    // Serial mode (http default): one request in flight per server. The
+    // tail swallows rejections so a failure never blocks the queue.
+    const run = this.queueTail.then(
+      () => this.dispatch(method, params, effective),
+      () => this.dispatch(method, params, effective),
+    );
+    this.queueTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private dispatch(
+    method: string,
+    params: unknown,
+    timeoutMs: number,
+  ): Promise<unknown> {
+    const transport = this.transport;
     const child = this.child;
-    if (!child)
+    if (!transport && !child)
       return Promise.reject(new Error(`[mcp:${this.serverName}] not started`));
     const id = this.nextId++;
-    const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params });
     return new Promise<unknown>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
@@ -191,17 +297,27 @@ export class McpClient {
         );
       }, timeoutMs);
       this.pending.set(id, { resolve, reject, timer });
-      child.stdin.write(payload + "\n", (err) => {
-        if (err) {
-          clearTimeout(timer);
-          this.pending.delete(id);
-          reject(err);
-        }
-      });
+      if (transport) {
+        // Transport-level failures come back as JSON-RPC error messages.
+        void transport.send({ id, method, params }, timeoutMs);
+      } else {
+        const payload = JSON.stringify({ jsonrpc: "2.0", id, method, params });
+        child!.stdin.write(payload + "\n", (err) => {
+          if (err) {
+            clearTimeout(timer);
+            this.pending.delete(id);
+            reject(err);
+          }
+        });
+      }
     });
   }
 
   private notify(method: string, params: unknown): void {
+    if (this.transport) {
+      void this.transport.send({ method, params }, this.defaultTimeoutMs);
+      return;
+    }
     this.child?.stdin.write(
       JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n",
     );
@@ -214,30 +330,34 @@ export class McpClient {
       const line = this.stdoutBuffer.slice(0, nl).trim();
       this.stdoutBuffer = this.stdoutBuffer.slice(nl + 1);
       if (!line) continue;
-      let msg: {
-        id?: number;
-        result?: unknown;
-        error?: { message?: string; code?: number };
-      };
       try {
-        msg = JSON.parse(line);
+        this.handleMessage(JSON.parse(line));
       } catch {
         continue; // servers sometimes log garbage to stdout — ignore non-JSON
       }
-      if (typeof msg.id !== "number") continue; // notification from server — none handled yet
-      const pending = this.pending.get(msg.id);
-      if (!pending) continue;
-      this.pending.delete(msg.id);
-      clearTimeout(pending.timer);
-      if (msg.error) {
-        pending.reject(
-          new Error(
-            `[mcp:${this.serverName}] ${msg.error.message ?? "JSON-RPC error"} (code ${msg.error.code ?? "?"})`,
-          ),
-        );
-      } else {
-        pending.resolve(msg.result);
-      }
+    }
+  }
+
+  /** Route one parsed JSON-RPC message to its pending request (both transports). */
+  private handleMessage(msg: unknown): void {
+    const m = msg as {
+      id?: number;
+      result?: unknown;
+      error?: { message?: string; code?: number };
+    };
+    if (typeof m.id !== "number") return; // server notification — none handled
+    const pending = this.pending.get(m.id);
+    if (!pending) return; // already timed out / closed — ignore
+    this.pending.delete(m.id);
+    clearTimeout(pending.timer);
+    if (m.error) {
+      pending.reject(
+        new Error(
+          `[mcp:${this.serverName}] ${m.error.message ?? "JSON-RPC error"} (code ${m.error.code ?? "?"})`,
+        ),
+      );
+    } else {
+      pending.resolve(m.result);
     }
   }
 

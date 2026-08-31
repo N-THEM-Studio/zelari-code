@@ -50,7 +50,9 @@ const state: {
   tools: DiscoveredTool[];
   warnings: string[];
   clients: McpClient[];
-} = { loaded: false, tools: [], warnings: [], clients: [] };
+  /** HTTP servers unreachable at first discovery (editor may start later). */
+  pendingHttp: Array<{ name: string; cfg: McpServerConfig }>;
+} = { loaded: false, tools: [], warnings: [], clients: [], pendingHttp: [] };
 
 /**
  * Read + merge MCP config files (project entries win on name conflict).
@@ -81,7 +83,11 @@ export function readMcpConfig(
     try {
       const parsed = JSON.parse(readFileSync(p, 'utf8')) as McpConfigFile;
       for (const [name, cfg] of Object.entries(parsed.mcpServers ?? {})) {
-        if (!cfg || typeof cfg.command !== 'string' || cfg.command.length === 0) continue;
+        const hasCommand =
+          !!cfg && typeof cfg.command === 'string' && cfg.command.length > 0;
+        const hasUrl =
+          !!cfg && typeof cfg.url === 'string' && /^https?:\/\//i.test(cfg.url);
+        if (!cfg || (!hasCommand && !hasUrl)) continue;
         merged[name] = cfg;
       }
     } catch {
@@ -130,9 +136,54 @@ async function ensureLoaded(projectRoot: string): Promise<void> {
       }
     } catch (err) {
       client.close();
-      state.warnings.push(`[mcp:${name}] disabled: ${err instanceof Error ? err.message : String(err)}`);
+      const msg = err instanceof Error ? err.message : String(err);
+      if (isHttpConfig(cfg)) {
+        // HTTP servers (e.g. the UE 5.8+ editor) often start AFTER the CLI:
+        // keep them pending instead of disabling — discovery is retried on
+        // every subsequent turn until the editor answers.
+        state.pendingHttp.push({ name, cfg });
+        state.warnings.push(
+          `[mcp:${name}] not reachable yet (${msg}) — will retry each turn`,
+        );
+      } else {
+        state.warnings.push(`[mcp:${name}] disabled: ${msg}`);
+      }
     }
   }
+}
+
+function isHttpConfig(cfg: McpServerConfig): boolean {
+  return cfg.type === 'http' || (!!cfg.url && !cfg.command);
+}
+
+/**
+ * Retry HTTP servers that were unreachable at first discovery — the editor
+ * (UE 5.8+) may have started since. Silent on failure: the warning was
+ * already surfaced once at initial discovery.
+ */
+async function retryPendingHttp(): Promise<void> {
+  if (state.pendingHttp.length === 0) return;
+  const remaining: Array<{ name: string; cfg: McpServerConfig }> = [];
+  for (const p of state.pendingHttp) {
+    const client = new McpClient(p.name, p.cfg);
+    try {
+      await client.start();
+      const tools = await client.listTools();
+      state.clients.push(client);
+      for (const info of tools) {
+        state.tools.push({
+          registryName: sanitizeToolName(`mcp_${p.name}_${info.name}`),
+          serverName: p.name,
+          info,
+          client,
+        });
+      }
+    } catch {
+      client.close();
+      remaining.push(p);
+    }
+  }
+  state.pendingHttp = remaining;
 }
 
 /** OpenAI tool names must match ^[a-zA-Z0-9_-]{1,64}$. */
@@ -160,6 +211,7 @@ export async function registerMcpTools(
 ): Promise<{ registered: string[]; warnings: string[] }> {
   if (process.env['ZELARI_MCP'] === '0') return { registered: [], warnings: [] };
   await ensureLoaded(projectRoot);
+  await retryPendingHttp();
 
   const skipCuaForCouncil =
     opts?.councilMode === true && !isCuaAllowedForCouncil();
@@ -204,6 +256,7 @@ export function closeMcpClients(): void {
   state.tools = [];
   state.loaded = false;
   state.warnings = [];
+  state.pendingHttp = [];
 }
 
 /** Test hook: reset the module cache. */

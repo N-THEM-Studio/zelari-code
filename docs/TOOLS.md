@@ -150,6 +150,12 @@ Hermetic / CI: `ZELARI_MCP_USER=0` ignora `~/.zelari-code/mcp.json` (solo projec
 # 2) Register MCP preset (user scope):
 zelari-code --set-mcp-preset cua
 
+# Unreal Engine 5.8+ editor (MCP Streamable HTTP su loopback):
+#   1) Editor: abilita il plugin "Model Context Protocol" (Experimental)
+#   2) Edit → Project Settings → Plugins → MCP Server (default 127.0.0.1:8000/mcp)
+#   3) Registra il preset (endpoint overridabile con UNREAL_MCP_URL):
+zelari-code --set-mcp-preset unreal-mcp
+
 # Equivalente manuale:
 # zelari-code --set-mcp --name cua-driver --command cua-driver --args '["mcp"]'
 ```
