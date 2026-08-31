@@ -421,6 +421,18 @@ function mapAgentMessage(m: AgentMessage, vision: boolean): Record<string, unkno
   return { role: m.role, content: m.content };
 }
 
+/**
+ * Positive integer from an env var, read at call time (not module load) so
+ * runtime updates and per-test mutations are honored. Returns undefined when
+ * unset or invalid — callers keep their defaults.
+ */
+function positiveEnvInt(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
 export function openaiCompatibleProvider(config: OpenAICompatibleConfig): ProviderStreamFn {
   return async function* (params): AsyncIterable<ProviderDelta> {
     const capabilities = capabilitiesFor(params.model, config.providerId);
@@ -449,7 +461,8 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     // summarizer request differs from a conversation request ONLY in
     // sampling params — the cached prefix (system+tools+conversation) stays
     // byte-identical. Conversation calls leave `generation` undefined and
-    // keep the historical defaults below.
+    // keep the historical defaults below, plus the profile-level
+    // `maxOutputTokens` ceiling when the provider profile defines one.
     const generation = params.generation;
     const body: Record<string, unknown> = {
       // Use `params.model` (per-call override from AgentHarness, e.g. for
@@ -468,6 +481,20 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     };
     if (typeof generation?.maxTokens === 'number' && generation.maxTokens > 0) {
       body.max_tokens = generation.maxTokens;
+    } else if (
+      typeof capabilities.maxOutputTokens === 'number' &&
+      capabilities.maxOutputTokens > 0
+    ) {
+      // Grok-4.x truncation fix: conversation calls on reasoning models must
+      // carry an explicit ceiling. The provider-side default can be low enough
+      // that hidden reasoning consumes it before any visible output
+      // (finish_reason=length → recovery turn → recurring token tax). The cap
+      // is a ceiling, not a target: billing stays per actual tokens. Profiles
+      // opt in via `maxOutputTokens` (only GROK_CAPS today); the value can be
+      // overridden per-run via ZELARI_MAX_OUTPUT_TOKENS (read at call time so
+      // tests and long-lived processes honor updates without a restart).
+      body.max_tokens =
+        positiveEnvInt('ZELARI_MAX_OUTPUT_TOKENS') ?? capabilities.maxOutputTokens;
     }
 
     // Unified thinking-effort selection (ADR-0017). `config.thinking` carries

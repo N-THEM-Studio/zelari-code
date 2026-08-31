@@ -12,6 +12,16 @@ export type HarnessProfileId =
 
 export interface ProviderCapabilities {
   contextWindow: number;
+  /**
+   * Explicit `max_tokens` ceiling for CONVERSATION calls (when the per-request
+   * `generation.maxTokens` is absent). Reasoning models like grok-4.x spend
+   * completion tokens on hidden reasoning: with a low provider-side default the
+   * reasoning consumes the budget and the visible answer arrives truncated
+   * (finish_reason=length) → recovery turn → wasted tokens every time. A high
+   * ceiling is free — billing is per actual tokens, not per the cap.
+   * `undefined` = leave the provider default (profile opted out).
+   */
+  maxOutputTokens?: number;
   reasoning: {
     supported: boolean;
     levels?: readonly string[];
@@ -73,6 +83,9 @@ const DEEPSEEK_V4_CAPS = frozenProfile({
 
 const GROK_CAPS = frozenProfile({
   contextWindow: 500_000,
+  // grok-4.x truncation fix: explicit conversation ceiling (see interface
+  // doc). Override at runtime via ZELARI_MAX_OUTPUT_TOKENS.
+  maxOutputTokens: 32_768,
   reasoning: {
     supported: true,
     levels: ['low', 'medium', 'high', 'xhigh'],

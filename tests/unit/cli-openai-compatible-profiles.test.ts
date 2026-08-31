@@ -138,4 +138,65 @@ describe('OpenAI-compatible provider profile serialization', () => {
     expect(body.messages[2]).toMatchObject({ reasoning_content: 'reason' });
     expect(body.tools.map((tool) => tool.function.name)).toEqual(['a_tool', 'z_tool']);
   });
+
+  it('sends an explicit max_tokens ceiling on grok conversation calls (truncation fix)', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return doneResponse();
+    }) as typeof fetch;
+    const provider = openaiCompatibleProvider({
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.x.ai/v1',
+      model: 'grok-4.6',
+      providerId: 'openai-compatible',
+    });
+    const base = {
+      messages: [{ role: 'user' as const, content: 'implement' }],
+      model: 'grok-4.6',
+      provider: 'openai-compatible',
+    };
+
+    // Conversation call (no generation): the profile ceiling must be sent so
+    // hidden reasoning cannot exhaust a low provider-side default.
+    await drain(provider, base);
+    expect(bodies[0]).toMatchObject({ max_tokens: 32_768 });
+
+    // Per-request generation.maxTokens always wins over the profile ceiling.
+    await drain(provider, {
+      ...base,
+      generation: { purpose: 'compaction', maxTokens: 900 },
+    });
+    expect(bodies[1]).toMatchObject({ max_tokens: 900 });
+
+    // ZELARI_MAX_OUTPUT_TOKENS overrides the profile ceiling at call time.
+    process.env.ZELARI_MAX_OUTPUT_TOKENS = '12000';
+    try {
+      await drain(provider, base);
+    } finally {
+      delete process.env.ZELARI_MAX_OUTPUT_TOKENS;
+    }
+    expect(bodies[2]).toMatchObject({ max_tokens: 12_000 });
+  });
+
+  it('leaves max_tokens unset for profiles without an explicit ceiling', async () => {
+    let captured: RequestInit | undefined;
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      captured = init;
+      return doneResponse();
+    }) as typeof fetch;
+    const provider = openaiCompatibleProvider({
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.deepseek.com',
+      model: 'deepseek-v4-pro',
+      providerId: 'deepseek',
+    });
+    await drain(provider, {
+      messages: [{ role: 'user', content: 'implement' }],
+      model: 'deepseek-v4-pro',
+      provider: 'deepseek',
+    });
+
+    expect(JSON.parse(String(captured!.body))).not.toHaveProperty('max_tokens');
+  });
 });
