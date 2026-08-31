@@ -5,6 +5,20 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.21.0] - 2026-09-01
+
+Minor: native Unreal Engine 5.8+ MCP support — the first non-stdio MCP transport (Streamable HTTP), the `unreal-mcp` preset and the `unreal-editor` builtin skill. Zero new dependencies (P5: `fetch` + minimal SSE parser).
+
+### Added
+
+- **MCP Streamable HTTP transport (`src/cli/mcp/httpTransport.ts`)** — the MCP client speaks HTTP alongside stdio: POST JSON-or-SSE responses, `Mcp-Session-Id` header, automatic re-handshake + call replay on session loss (404), `nextCursor` pagination on `tools/list`, per-request abort, DELETE on close. Config v2 per server: `type` (`stdio`|`http`), `url`, `timeoutMs`, `serial` — wired into `--set-mcp` (`--url`, `--timeout`).
+- **`unreal-mcp` preset** — `zelari-code --set-mcp-preset unreal-mcp` (endpoint override `UNREAL_MCP_URL`) connects to UE 5.8+'s in-editor MCP server (loopback Streamable HTTP, protocol `2025-03-26`): 120 s timeout, serial call queue (no overlapping calls on the game thread). HTTP servers unreachable at discovery stay pending and are retried every turn — the editor may start after zelari.
+- **`unreal-editor` builtin skill** — teaches the UE Tool Search discovery path (`list_toolsets` → `describe_toolset` → `call_tool`), the serial-call rule and the not-yet-running-editor failure model.
+
+### Tests
+
+- New `cli-mcpHttp.test.ts` (7) against a real `node:http` fake server: handshake + session header, cursor pagination, SSE responses, 404 re-init + replay, serial queue (max 1 in-flight call), per-server timeout, pending-HTTP retry. Existing stdio suite (7) green; `tsc --noEmit` clean.
+
 ## [2.20.0] - 2026-08-31
 
 Minor: closes the post-2.19 residuals — provider-side output ceiling for grok conversation calls, ask-by-default EXECUTE/NETWORK permissions with resource claims in the picker, and pressure-aware memory retrieval with skill catalog gating.
