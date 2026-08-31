@@ -61,6 +61,7 @@ const BUILTIN_SKILL_MODULES = [
   '@zelari/core/skills/builtin/planning',
   '@zelari/core/skills/builtin/refactoring',
   '@zelari/core/skills/builtin/review',
+  '@zelari/core/skills/builtin/unrealEditor',
   '@zelari/core/skills/builtin/testing',
   '@zelari/core/skills/builtin/schema-loop',
   '@zelari/core/skills/builtin/computer-use-cua',
