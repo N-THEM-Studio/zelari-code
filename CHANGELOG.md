@@ -5,6 +5,24 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.20.0] - 2026-08-31
+
+Minor: closes the post-2.19 residuals — provider-side output ceiling for grok conversation calls, ask-by-default EXECUTE/NETWORK permissions with resource claims in the picker, and pressure-aware memory retrieval with skill catalog gating.
+
+### Fixed
+
+- **Grok conversation truncation — root cause (`18d9c9a`)** — `openai-compatible` conversation calls sent no `max_tokens` (only callers passing `generation.maxTokens`, e.g. compaction, set one), so grok-4.x hidden reasoning ate the provider-default completion budget and visible output arrived truncated — every affected session paid a recovery turn. New opt-in `maxOutputTokens` provider capability (`GROK_CAPS`: 32 768) now caps conversation calls; `ZELARI_MAX_OUTPUT_TOKENS` overrides at runtime; explicit `generation.maxTokens` always wins. Billing stays per actual tokens — the cap removes the recovery-turn tax, not token cost.
+- **Ask flow no longer shows bare categories** — the permission ask handler now always receives the expanded resource claims (even with no policy layers — never categories alone) and the matched rule as `policyNote`; the picker renders `Claims: · process: git push origin main` plus the `[policy]` rule note above the prompt.
+
+### Changed
+
+- **EXECUTE/NETWORK default to `ask` (`480cdb4`)** — `ZELARI_PERMISSION_EXECUTE` / `ZELARI_PERMISSION_NETWORK` flip `allow` → `ask`; read/write stay `allow` (covered by folder trust + sandbox). Escape hatches unchanged: env allow, `ZELARI_AUTO=1`. Headless and sub-agents are unaffected (explicit policy or `auto: true`).
+- **Pressure-aware retrieval (`4c4fbf8`)** — the CLI budget pipeline (ADR-0032 canonical compiler) resolves a retrieval policy per turn from measured occupancy: bands at 0.5/0.8 tighten memory packing (2000/1200/600 chars, 8/6/4 items) and bias scoring toward precision via the new optional `RecallQuery.weights` (the core stays pressure-blind by design — it only receives resolved weights). Under high pressure, high-cost skills (`estimatedCost: 'high'`) are hidden from the tool catalog but remain loadable by name — capability preserved, spend gated.
+
+### Tests
+
+- New/extended: `cli-openai-compatible-profiles` max_tokens regression (2), `budget/retrievalPolicy` (6), `cli-skillTool` catalog gating (1), `cli-toolPermissions` default-ask anti-regression + escape hatches, new `cli-permissionPickerClaims` (3), permission-policy injections across the jail/exec suites. Full suite green at release: 420 files / 4119 tests passed, 1 skipped; `tsc --noEmit` clean.
+
 ## [2.19.0] - 2026-08-30
 
 Minor: closes the T4 thread (ADR-0032) — the budget pipeline's occupancy lands on the session spine as additive `context.projection` fields, with the first consumers (`zelari inspect` + Desktop panel) and late-binding spine holders on the headless hosts.
