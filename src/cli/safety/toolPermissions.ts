@@ -8,9 +8,16 @@
  * Env (optional):
  *   ZELARI_AUTO=1              — treat "ask" as "allow" (headless / --auto)
  *   ZELARI_PERMISSION_WRITE    — allow|ask|deny (default allow)
- *   ZELARI_PERMISSION_EXECUTE  — allow|ask|deny (default allow)
- *   ZELARI_PERMISSION_NETWORK  — allow|ask|deny (default allow)
+ *   ZELARI_PERMISSION_EXECUTE  — allow|ask|deny (default ask since v2.20)
+ *   ZELARI_PERMISSION_NETWORK  — allow|ask|deny (default ask since v2.20)
  *   ZELARI_PERMISSION_READ     — allow|ask|deny (default allow)
+ *
+ * v2.20: EXECUTE and NETWORK default to "ask" — a fresh interactive session
+ * no longer runs commands or touches the network without one explicit
+ * approval. READ/WRITE keep the historical "allow" (folder trust + sandbox
+ * already gate writes). Opt back out per category with
+ * ZELARI_PERMISSION_EXECUTE=allow / ZELARI_PERMISSION_NETWORK=allow, or
+ * auto-promote every ask with ZELARI_AUTO=1 (the headless/Desktop default).
  *
  * @since v1.21.0
  */
@@ -95,8 +102,8 @@ export function defaultPermissionPolicy(
   return {
     read: parseAction(process.env.ZELARI_PERMISSION_READ, 'allow'),
     write: parseAction(process.env.ZELARI_PERMISSION_WRITE, 'allow'),
-    execute: parseAction(process.env.ZELARI_PERMISSION_EXECUTE, 'allow'),
-    network: parseAction(process.env.ZELARI_PERMISSION_NETWORK, 'allow'),
+    execute: parseAction(process.env.ZELARI_PERMISSION_EXECUTE, 'ask'),
+    network: parseAction(process.env.ZELARI_PERMISSION_NETWORK, 'ask'),
     ui: 'allow',
     auto: isAutoPermissions(),
     ...overrides,
@@ -213,9 +220,24 @@ export function resolveToolPermission(
   };
 }
 
+/** One policy-engine resource claim surfaced in the ask UI (v2.20). */
+export interface PermissionAskClaim {
+  kind: 'path' | 'process' | 'network' | 'mcp' | 'ssh' | 'ui' | 'agent';
+  /** Pre-formatted human summary, e.g. `process: git push origin main`. */
+  summary: string;
+}
+
 export type PermissionAskHandler = (req: {
   toolName: string;
   reason: string;
   categories: ToolPermission[];
   args: unknown;
+  /**
+   * v2.20: the policy engine's expansion of THIS invocation into concrete
+   * resources (resourceClaims.ts) — what the approval actually unlocks.
+   * Optional: custom handlers written before v2.20 keep working.
+   */
+  claims?: readonly PermissionAskClaim[];
+  /** Matched layered rule that forced the ask (e.g. `[policy] rule 'git push*' — …`). */
+  policyNote?: string;
 }) => Promise<boolean>;

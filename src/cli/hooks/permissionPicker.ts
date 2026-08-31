@@ -36,8 +36,16 @@ export function createPermissionAskHandler(opts: {
       const detail =
         req.reason +
         (cats.length ? ` [${cats.join(', ')}]` : '');
+      // v2.20: policy-engine context — the matched rule (why we ask) and the
+      // claim expansion (what an approval actually unlocks) render in the
+      // transcript line above the picker.
+      const claimLines = (req.claims ?? []).map((c) => `· ${c.summary}`);
+      const note = req.policyNote ? `\n${req.policyNote}` : '';
+      const claimsBlock = claimLines.length
+        ? `\nClaims:\n${claimLines.join('\n')}`
+        : '';
       appendSystem?.(
-        `[permission] ${title}\n${detail}\n→ Allow once · Always (tool) · Always (${catLabel}) · Deny`,
+        `[permission] ${title}\n${detail}${note}${claimsBlock}\n→ Allow once · Always (tool) · Always (${catLabel}) · Deny`,
         Date.now(),
       );
       let settled = false;

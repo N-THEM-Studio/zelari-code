@@ -410,6 +410,8 @@ export function matchResourceClaimLayered(
 export interface ClaimsVerdict {
   /** Intersected deny>ask>allow across ALL claims/layers; undefined = no claim matched (never `allow`). */
   effect?: PermissionAction;
+  /** The full claim expansion of this invocation ([] when none) — v2.20 ask UI. */
+  claims: ResourceClaim[];
   /** One surfaced rule per matched claim (messages/diagnostics). */
   matchedRules: PolicyRule[];
 }
@@ -424,7 +426,7 @@ export function resolveClaimsVerdict(
 ): ClaimsVerdict {
   const claims = resourceClaimsFor(toolName, args);
   const matchedRules: PolicyRule[] = [];
-  if (!layers || claims.length === 0) return { matchedRules };
+  if (!layers || claims.length === 0) return { claims, matchedRules };
   const effects: PermissionAction[] = [];
   for (const claim of claims) {
     const hit = matchResourceClaimLayered(layers, precedence, claim, root);
@@ -433,5 +435,38 @@ export function resolveClaimsVerdict(
       matchedRules.push(hit);
     }
   }
-  return effects.length > 0 ? { effect: intersectEffects(...effects), matchedRules } : { matchedRules };
+  return effects.length > 0
+    ? { effect: intersectEffects(...effects), claims, matchedRules }
+    : { claims, matchedRules };
+}
+
+/**
+ * One human line per claim for the permission-ask UI (v2.20): what THIS
+ * approval actually unlocks, from the policy engine's own expansion. Pure;
+ * each line capped at 160 chars.
+ */
+export function describeResourceClaim(claim: ResourceClaim): string {
+  const cap = (s: string): string => (s.length > 160 ? `${s.slice(0, 157)}…` : s);
+  switch (claim.kind) {
+    case 'path':
+      return cap(`path ${claim.operation}: ${claim.path}`);
+    case 'process':
+      return cap(`process: ${[claim.executable, ...(claim.argv ?? [])].join(' ')}`);
+    case 'network':
+      return cap(`network: ${claim.host}${claim.port !== undefined ? `:${claim.port}` : ''}`);
+    case 'mcp':
+      return cap(`mcp: ${claim.server}/${claim.tool}`);
+    case 'ssh':
+      return cap(`ssh: ${claim.target}${claim.command ? ` (${claim.command})` : ''}`);
+    case 'ui':
+      return cap(`ui: ${claim.action}`);
+    case 'agent':
+      return cap(`agent: ${claim.role}`);
+  }
+}
+
+/** Picker lines: at most `max` claim summaries, then a `+N more` tail. */
+export function formatClaimsForPicker(claims: readonly ResourceClaim[], max = 6): string[] {
+  const head = claims.slice(0, max).map(describeResourceClaim);
+  return claims.length > max ? [...head, `+${claims.length - max} more`] : head;
 }

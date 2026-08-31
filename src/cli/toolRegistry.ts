@@ -89,7 +89,7 @@ import { activePolicyLoadMode } from './safety/policyLoadMode.js';
 import { intersectEffects, matchAgentPolicyRuleLayered } from './safety/policyLayers.js';
 // t22: the TaskContract compiles into a NON-OVERRIDABLE restrict-only layer.
 import { matchContractCapabilityRule } from './kraken/contractCompiler.js';
-import { matchResourceClaimLayered, resourceClaimsFor, resolveClaimsVerdict } from './safety/resourceClaims.js';
+import { describeResourceClaim, matchResourceClaimLayered, resourceClaimsFor, resolveClaimsVerdict } from './safety/resourceClaims.js';
 // v2.17 (t28): OS jail (Pilastro A) — the ONLY spawn choke-point for exec/bash.
 import {
   buildJailSpec,
@@ -526,7 +526,9 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
     !gauntletParent &&
     profile !== 'explore' &&
     profile !== 'verify';
-  const skillTool = enableSkill ? withPerm(createSkillTool({ cwd: root })) : null;
+  const skillTool = enableSkill
+    ? withPerm(createSkillTool({ cwd: root }))
+    : null;
   if (skillTool) {
     registry.register(skillTool);
   }
@@ -1069,11 +1071,24 @@ function wrapWithPermissions<I, O>(
           );
         }
         try {
+          // v2.20: attach the policy engine's claim expansion (what this
+          // approval unlocks) + the matched rule that forced the ask. With
+          // no policy layers the expansion still comes from resourceClaimsFor
+          // so the picker always shows concrete resources, never bare
+          // category names.
+          const expanded =
+            claims?.claims ??
+            resourceClaimsFor(original.name, (input ?? {}) as Record<string, unknown>);
           const ok = await onAsk({
             toolName: original.name,
             reason: decision.reason,
             categories: decision.categories,
             args: input,
+            policyNote: rulePrefix || undefined,
+            claims: expanded.slice(0, 6).map((c) => ({
+              kind: c.kind,
+              summary: describeResourceClaim(c),
+            })),
           });
           if (!ok) {
             return typedErr(

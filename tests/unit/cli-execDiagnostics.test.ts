@@ -86,6 +86,7 @@ function spyRunner(calls: string[][]): Runner {
 function makeRegistry(runner: Runner) {
   return createBuiltinToolRegistry({
     root,
+    permissionPolicy: { read: 'allow', write: 'allow', execute: 'allow', network: 'allow', ui: 'allow', auto: true },
     diagnostics: true,
     diagnosticsRunner: runner,
   }).registry;
@@ -169,6 +170,7 @@ describe('post-execute diagnostics on claimed source paths (t31 §6.6)', () => {
     const calls: string[][] = [];
     const { registry } = createBuiltinToolRegistry({
       root,
+      permissionPolicy: { read: 'allow', write: 'allow', execute: 'allow', network: 'allow', ui: 'allow', auto: true },
       diagnostics: false,
       diagnosticsRunner: spyRunner(calls),
     });

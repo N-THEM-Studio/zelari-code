@@ -51,7 +51,11 @@ describe('bash cwd jail (v2.17 t27)', () => {
     const root = mkdtempSync(join(tmpdir(), 'zelari-jail-root-'));
     const outside = mkdtempSync(join(tmpdir(), 'zelari-jail-out-'));
     try {
-      const { registry } = createBuiltinToolRegistry({ root, diagnostics: false });
+      const { registry } = createBuiltinToolRegistry({
+        root,
+        permissionPolicy: { read: 'allow', write: 'allow', execute: 'allow', network: 'allow', ui: 'allow', auto: true },
+        diagnostics: false,
+      });
       // Absolute escape…
       const abs = await registry.invoke<BashValue>('bash', {
         command: 'echo escape-marker',
@@ -78,7 +82,11 @@ describe('bash cwd jail (v2.17 t27)', () => {
     const root = mkdtempSync(join(tmpdir(), 'zelari-jail-sub-'));
     try {
       mkdirSync(join(root, 'sub'), { recursive: true });
-      const { registry } = createBuiltinToolRegistry({ root, diagnostics: false });
+      const { registry } = createBuiltinToolRegistry({
+        root,
+        permissionPolicy: { read: 'allow', write: 'allow', execute: 'allow', network: 'allow', ui: 'allow', auto: true },
+        diagnostics: false,
+      });
       // `>` redirect works in POSIX sh, Git Bash AND cmd.exe — the marker
       // lands in the process cwd, proving WHERE the child actually ran.
       const res = await registry.invoke<BashValue>('bash', {
@@ -97,7 +105,11 @@ describe('bash cwd jail (v2.17 t27)', () => {
   it('defaults an absent cwd to the sandbox root, not to ctx.cwd', { timeout: REAL_SHELL_TEST_TIMEOUT }, async () => {
     const root = mkdtempSync(join(tmpdir(), 'zelari-jail-def-'));
     try {
-      const { registry } = createBuiltinToolRegistry({ root, diagnostics: false });
+      const { registry } = createBuiltinToolRegistry({
+        root,
+        permissionPolicy: { read: 'allow', write: 'allow', execute: 'allow', network: 'allow', ui: 'allow', auto: true },
+        diagnostics: false,
+      });
       // registry.invoke passes ctx.cwd = process.cwd() (the repo checkout,
       // OUTSIDE the tmpdir sandbox). Before t27 the builtin ran there; now
       // the wrapper injects the resolved root.

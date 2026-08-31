@@ -86,6 +86,7 @@ afterEach(() => {
 function makeRegistry() {
   return createBuiltinToolRegistry({
     root,
+    permissionPolicy: { read: 'allow', write: 'allow', execute: 'allow', network: 'allow', ui: 'allow', auto: true },
     diagnostics: false,
     audit: new AuditLogger(auditPath),
   }).registry;

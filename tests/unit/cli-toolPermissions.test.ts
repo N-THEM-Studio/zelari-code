@@ -21,6 +21,7 @@ beforeEach(() => {
   delete process.env.ZELARI_AUTO;
   delete process.env.ZELARI_PERMISSION_WRITE;
   delete process.env.ZELARI_PERMISSION_EXECUTE;
+  delete process.env.ZELARI_PERMISSION_NETWORK;
   clearSessionPermissionGrants();
 });
 
@@ -30,11 +31,33 @@ afterEach(() => {
 });
 
 describe('toolPermissions', () => {
-  it('defaults to allow for all categories', () => {
+  it('v2.20 defaults: execute/network ASK, read/write allow (anti-regression)', () => {
     const p = defaultPermissionPolicy();
+    // Anti-regression: if execute/network regress to 'allow', a fresh session
+    // runs commands / touches the network with NO approval — exactly what
+    // v2.20 forbids. This test MUST keep failing on such a regression.
+    expect(p.execute).toBe('ask');
+    expect(p.network).toBe('ask');
+    expect(p.read).toBe('allow');
     expect(p.write).toBe('allow');
-    expect(p.execute).toBe('allow');
     expect(p.auto).toBe(false);
+  });
+
+  it('default policy resolves execute/network tools to ASK, never allow', () => {
+    const p = defaultPermissionPolicy();
+    expect(resolveToolPermission('bash', ['execute'], p).action).toBe('ask');
+    expect(resolveToolPermission('web_search', ['network'], p).action).toBe('ask');
+  });
+
+  it('escape hatches restore the old behavior: env allow / ZELARI_AUTO', () => {
+    process.env.ZELARI_PERMISSION_EXECUTE = 'allow';
+    process.env.ZELARI_PERMISSION_NETWORK = 'allow';
+    const explicit = defaultPermissionPolicy();
+    expect(resolveToolPermission('bash', ['execute'], explicit).action).toBe('allow');
+    process.env.ZELARI_AUTO = '1';
+    expect(
+      resolveToolPermission('web_search', ['network'], defaultPermissionPolicy()).action,
+    ).toBe('allow');
   });
 
   it('honors env overrides and ZELARI_AUTO', () => {
