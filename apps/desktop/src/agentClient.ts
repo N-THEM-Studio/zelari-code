@@ -581,6 +581,24 @@ export async function onAgentEvent(
   return listen<AgentEvent>("agent-event", (e) => handler(e.payload));
 }
 
+export interface SidecarStatusPayload {
+  status: string;
+  message: string;
+}
+
+/**
+ * Harness sidecar lifecycle (`harness-sidecar-status`): spawn/boot failures,
+ * restart backoff, "down" after exhaustion. Until now these events had no
+ * listener, so a failed backend spawn looked like "the model never answers".
+ */
+export async function onSidecarStatus(
+  handler: (payload: SidecarStatusPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<SidecarStatusPayload>("harness-sidecar-status", (e) =>
+    handler(e.payload),
+  );
+}
+
 export interface HarnessStatePayload {
   sessionId: string | null;
   state: unknown;

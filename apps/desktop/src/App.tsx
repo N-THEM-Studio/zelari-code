@@ -14,6 +14,8 @@ import {
   onAgentEvent,
   onAgentStderr,
   onRunFinished,
+  onSidecarStatus,
+  type SidecarStatusPayload,
   runTask,
   setAppConfig,
   summarizeToolArgs,
@@ -548,6 +550,38 @@ export default function App() {
   /** Optional plugins (Playwright, etc.) missing in the current workdir. */
   const [pluginRows, setPluginRows] = useState<PluginStatusRow[]>([]);
   const [pluginBannerDismissed, setPluginBannerDismissed] = useState(false);
+  /**
+   * Harness sidecar health notice ("Backend CLI: …"). Until now the backend
+   * emitted harness-sidecar-status with no frontend listener, so a failed
+   * node/CLI spawn or restart exhaustion looked like "the model never
+   * answers". Non-ready statuses surface here as a banner; "ready" clears.
+   */
+  const [sidecarNotice, setSidecarNotice] = useState<string | null>(null);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    onSidecarStatus((payload: SidecarStatusPayload) => {
+      if (disposed) return;
+      if (payload.status === "ready") {
+        setSidecarNotice(null);
+      } else {
+        setSidecarNotice(
+          `${payload.message} (status: ${payload.status}) — details in logs/zelari-sidecar.log`,
+        );
+      }
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        // No Tauri backend reachable (e.g. dev browser) — nothing to surface.
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(
     null,
   );
@@ -2757,6 +2791,25 @@ export default function App() {
             />
           ) : null}
           <div className="chat-scroll" ref={scrollRef}>
+            {sidecarNotice ? (
+              <div className="chat-inner" style={{ paddingBottom: 0 }}>
+                <div
+                  role="alert"
+                  style={{
+                    border: "1px solid #b00020",
+                    background: "#2a1114",
+                    color: "#ffb4b4",
+                    borderRadius: 8,
+                    padding: "10px 14px",
+                    margin: "12px 16px 0",
+                    fontSize: 13,
+                    lineHeight: 1.45,
+                  }}
+                >
+                  <strong>Backend CLI:</strong> {sidecarNotice}
+                </div>
+              </div>
+            ) : null}
             {!pluginBannerDismissed &&
               (pluginRows.some((p) => !p.present) || pluginError) && (
                 <div className="chat-inner" style={{ paddingBottom: 0 }}>
