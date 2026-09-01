@@ -1012,7 +1012,7 @@ fn get_cli_status() -> CliStatus {
             cli_path: cli.ok().map(|p| p.display().to_string()),
             cli_version: None,
             cwd,
-            message: "Node.js not found on PATH (need Node ≥ 20).".into(),
+            message: "Node.js not found on PATH (need Node ≥ 24, see engines.node).".into(),
         },
         (Some(node_path), Err(e)) => CliStatus {
             ok: false,
