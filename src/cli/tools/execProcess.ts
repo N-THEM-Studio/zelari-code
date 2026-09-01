@@ -34,6 +34,7 @@
 import { z } from 'zod';
 import { typedErr, typedOk, type ToolDefinition, type ToolResultMeta } from '@zelari/core/harness/tools/toolTypes';
 import { findBlockedReason } from '../safety/shellBlocklist.js';
+import { inspectCommand } from '../safety/selfKillGuard.js';
 import { resolveSandboxedPath, SandboxViolationError } from '../safety/sandboxPath.js';
 import { buildJailSpec, networkSpecFromClaimHosts, spawnJailed, type JailNetwork } from '../safety/osJail.js';
 
@@ -94,6 +95,16 @@ export function createExecProcessTool(
       const blocked = findBlockedReason([input.program, ...argv].join(' '));
       if (blocked) {
         return typedErr(`[shell-blocked] exec_process refused (${blocked.reason}): ${blocked.pattern}`);
+      }
+      // Anti-self-kill: refuse argv that would terminate the agent host
+      // itself (node image kills / own process tree) — same rejection
+      // discipline as the blocklist above, BEFORE any spawn.
+      const selfKill = inspectCommand([input.program, ...argv].join(' '), {
+        selfPid: process.pid,
+        parentPid: process.ppid,
+      });
+      if (selfKill.blocked && selfKill.message) {
+        return typedErr(`[self-kill] exec_process refused: ${selfKill.message}`);
       }
       let cwd: string;
       try {

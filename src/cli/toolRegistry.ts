@@ -102,6 +102,7 @@ import {
   type JailSpec,
 } from './safety/osJail.js';
 import { withResultCache } from './toolResultCache.js';
+import { inspectCommand } from './safety/selfKillGuard.js';
 import type { ExtensionRegistry, LifecycleHookRunner } from '@zelari/core/harness';
 import type {
   ToolDefinition,
@@ -1502,6 +1503,26 @@ function wrapWithShellSafety<I extends Record<string, unknown>, O>(
             } as TypedResult<O>;
           }
           throw err;
+        }
+        // Anti-self-kill (P0): refuse commands that would terminate the agent
+        // host itself (node image kills / own process tree). Same audited
+        // typed-error discipline as the blocklist — BEFORE any spawn.
+        const selfKill = inspectCommand(cmd, { selfPid: process.pid, parentPid: process.ppid });
+        if (selfKill.blocked && selfKill.message) {
+          await audit.append({
+            ts: new Date().toISOString(),
+            sessionId,
+            tool: original.name,
+            args: redactForAudit(args),
+            ok: false,
+            resultSummary: selfKill.match ?? 'self_kill',
+            durationMs: 0,
+            error: 'self_kill_blocked',
+          });
+          return {
+            ok: false,
+            error: `[self-kill] ${selfKill.message}`,
+          } as TypedResult<O>;
         }
       }
       // v2.17 (t27): jail the bash cwd to the workspace root BEFORE the

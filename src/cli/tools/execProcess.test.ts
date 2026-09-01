@@ -99,6 +99,31 @@ describe('exec_process execution', () => {
     expect(res.error).toContain('timed out after 250ms');
   }, 15_000);
 
+  it('anti-self-kill: refuses a node-image kill BEFORE spawn, teaching the per-port alternative', async () => {
+    const tool = createExecProcessTool(root);
+    const res = await tool.execute(
+      { program: 'taskkill', args: ['//IM', 'node.exe', '//F'] },
+      makeCtx(root),
+    );
+    expect(res.ok).toBe(false);
+    if (res.ok) return; // typed tool error — never an uncaught throw
+    expect(res.error).toContain('[self-kill]');
+    // The denial must teach the safe alternative: kill by PORT, never by image.
+    expect(res.error).toContain('netstat');
+    expect(res.error).toContain('taskkill //PID');
+  });
+
+  it('anti-self-kill: allows ordinary programs through untouched', async () => {
+    const tool = createExecProcessTool(root);
+    const res = await tool.execute(
+      { program: 'taskkill', args: ['/?'] },
+      makeCtx(root),
+    );
+    // Not blocked as self-kill (help text) — it fails to launch or exits,
+    // but the error must NOT be a self-kill denial.
+    if (!res.ok) expect(res.error).not.toContain('[self-kill]');
+  });
+
   it('reports launch failures (missing binary) as errors, not hangs', async () => {
     const tool = createExecProcessTool(root);
     const res = await tool.execute(
