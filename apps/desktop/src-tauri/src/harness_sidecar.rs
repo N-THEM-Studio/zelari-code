@@ -658,13 +658,29 @@ impl HarnessSidecar {
                 in_flight.detach();
                 // Best-effort cleanup: the request is abandoned but the CLI
                 // may still be running it (holding the session's spine
-                // lock). Fire session.cancel and ignore the outcome — the
-                // typed timeout error is the user-facing result either way.
-                // Bounded by ROUNDTRIP_TIMEOUT, so no new hang path.
-                let _ = self.roundtrip(
+                // lock). If session.cancel at least answers, the session
+                // unwinds cooperatively and the child stays alive.
+                let cancel_outcome = self.roundtrip(
                     "session.cancel",
                     json!({ "sessionId": session_id, "reason": "turn_timeout" }),
                 );
+                if cancel_outcome.is_err() {
+                    // No answer within ROUNDTRIP_TIMEOUT: the CLI event loop
+                    // is hung, not merely slow — every later roundtrip would
+                    // cascade into a 30s timeout. Kill the tree; the
+                    // supervisor reaps, fails in-flight requests with
+                    // `sidecar_died` and restarts with backoff, restoring
+                    // service without user intervention.
+                    let pid = self
+                        .proc
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .as_ref()
+                        .map(|p| p.pid);
+                    if let Some(pid) = pid {
+                        kill_pid_tree(pid);
+                    }
+                }
                 return Err(HarnessError::new(
                     "turn_timeout",
                     format!(
