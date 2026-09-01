@@ -554,7 +554,8 @@ export default function App() {
    * Harness sidecar health notice ("Backend CLI: …"). Until now the backend
    * emitted harness-sidecar-status with no frontend listener, so a failed
    * node/CLI spawn or restart exhaustion looked like "the model never
-   * answers". Non-ready statuses surface here as a banner; "ready" clears.
+   * answers". Non-ready statuses surface here as a banner; "ready" clears;
+   * "log" lines are informational child stdout and ignored.
    */
   const [sidecarNotice, setSidecarNotice] = useState<string | null>(null);
   useEffect(() => {
@@ -564,6 +565,10 @@ export default function App() {
       if (disposed) return;
       if (payload.status === "ready") {
         setSidecarNotice(null);
+      } else if (payload.status === "log") {
+        // Informational child-stdout line (non-JSON): the sidecar process is
+        // alive — not a health signal, keep the current notice as is.
+        return;
       } else {
         setSidecarNotice(
           `${payload.message} (status: ${payload.status}) — details in logs/zelari-sidecar.log`,
