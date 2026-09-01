@@ -30,3 +30,9 @@
 .message.user.is-steer .user-bubble .steer-state.rejected {
   color: #ff7f90;
 }
+
+/* Local-only outcome: send_control reported the run had already finished;
+ * the steered text was handed back to the composer (see steerRecovery). */
+.message.user.is-steer .user-bubble .steer-state.not_applied {
+  color: #f5b453;
+}

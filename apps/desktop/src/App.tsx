@@ -14,6 +14,7 @@ import {
   onAgentEvent,
   onAgentStderr,
   onRunFinished,
+  onSidecarLog,
   onSidecarStatus,
   type SidecarStatusPayload,
   runTask,
@@ -36,6 +37,14 @@ import {
   type ProtocolInfoEvent,
 } from "./controlClient";
 import "./steer.css";
+
+import { planFolderSwitch } from "./folderSwitch";
+import { parseSteerSendResult } from "./steerRecovery";
+import {
+  isSidecarErrorLine,
+  pushSidecarLogLine,
+  sidecarLogLineFromPayload,
+} from "./sidecarLog";
 
 import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsShell } from "./components/settings/SettingsShell";
@@ -70,6 +79,7 @@ import { LiveTasksPanel } from "./components/LiveTasksPanel";
 import { parseTodosFromUnknown } from "./sessionTodosUi";
 import {
   SESSION_FOLDERS_STORAGE_KEY,
+  folderLabelFromCwd,
   groupSessionsByFolder,
   loadCollapsedSet,
   persistCollapsedSet,
@@ -587,6 +597,43 @@ export default function App() {
       unlisten?.();
     };
   }, []);
+
+  /**
+   * Sidecar stderr ring buffer (diagnostics panel): the child's stderr lines
+   * arrive on harness-sidecar-log; keep the newest 200 for the collapsible
+   * panel rendered at the top of the chat view.
+   */
+  const [sidecarLogLines, setSidecarLogLines] = useState<string[]>([]);
+  const [sidecarLogOpen, setSidecarLogOpen] = useState(false);
+  const sidecarLogPanelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+    onSidecarLog((payload) => {
+      if (disposed) return;
+      const line = sidecarLogLineFromPayload(payload);
+      if (!line) return;
+      setSidecarLogLines((prev) => pushSidecarLogLine(prev, line));
+    })
+      .then((fn) => {
+        if (disposed) fn();
+        else unlisten = fn;
+      })
+      .catch(() => {
+        // No Tauri backend reachable (e.g. dev browser) — nothing to surface.
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
+  // Auto-scroll to the newest line while the panel is open.
+  useEffect(() => {
+    if (!sidecarLogOpen) return;
+    const el = sidecarLogPanelRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [sidecarLogLines, sidecarLogOpen]);
+
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(
     null,
   );
@@ -710,6 +757,16 @@ export default function App() {
   const activeCwd = active?.cwd ?? null;
   /** Session tasks of the active conversation (todo_write mirror). */
   const sessionTasks = active?.sessionTasks ?? [];
+  /** Queued follow-ups of the active conversation (§24, persisted — D). */
+  const pendingFollowUps = active?.pendingFollowUps ?? [];
+  const oldestPendingFollowUp = pendingFollowUps[0];
+  // Restore persisted follow-ups as composer prefill: oldest first, one at
+  // a time, never clobbering text the user already typed. Runs on app
+  // start, on conversation switch, and after one is dispatched.
+  useEffect(() => {
+    if (!oldestPendingFollowUp) return;
+    setDraft((prev) => (prev.trim() ? prev : oldestPendingFollowUp));
+  }, [activeId, oldestPendingFollowUp]);
   /**
    * Workspace project tasks per cwd (`.zelari/plan.json`, ADR-0018).
    * Keyed by normalized cwd so every conversation on the same workspace
@@ -1139,6 +1196,12 @@ export default function App() {
                 c.id === convId
                   ? {
                       ...c,
+                      // Persist the queued follow-up (§24/D): restored as
+                      // composer prefill on reload/switch until dispatched.
+                      pendingFollowUps: [
+                        ...(c.pendingFollowUps ?? []),
+                        followUpText,
+                      ],
                       messages: [
                         ...c.messages,
                         {
@@ -2139,7 +2202,40 @@ export default function App() {
     followStreamRef.current = true;
     setStatusLine("Steer queued — applies at the next turn boundary…");
     try {
-      await sendControl(run.runId, ev);
+      const raw = await sendControl(run.runId, ev);
+      const result = parseSteerSendResult(raw);
+      if (result?.status === "already_finished") {
+        // The run ended before the steer could be queued: never leave the
+        // bubble stuck on "sent" — mark it and hand the text back to the
+        // composer (noop-recovery).
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === convId
+              ? {
+                  ...c,
+                  messages: c.messages.map((m) =>
+                    m.steer?.id === ev.id
+                      ? {
+                          ...m,
+                          steer: { id: ev.id, state: "not_applied" as const },
+                        }
+                      : m,
+                  ),
+                }
+              : c,
+          ),
+        );
+        setDraft((prev) => (prev.trim() ? prev : trimmed));
+        setStatusLine(
+          "Steer not applied — run already finished; text restored to composer",
+        );
+        return;
+      }
+      if (result?.status === "follow_up_queued") {
+        setStatusLine(
+          "Steer converted to follow-up — queued for the next run",
+        );
+      }
     } catch (e) {
       const failMsg = e instanceof Error ? e.message : String(e);
       setStatusLine(`Steer failed: ${failMsg}`);
@@ -2169,6 +2265,21 @@ export default function App() {
     const fromSpeech = [draft, speech.interim].filter(Boolean).join(" ").trim();
     let base = (text ?? fromSpeech).trim();
     if (!base && attachments.length === 0 && !pendingSkill) return;
+    // A dispatched prefilled follow-up (§24/D) leaves the queue: the exact
+    // match against the oldest entry guards against dropping a queued
+    // follow-up the user never sent.
+    if (
+      oldestPendingFollowUp &&
+      oldestPendingFollowUp.trim() === base.trim()
+    ) {
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === active.id
+            ? { ...c, pendingFollowUps: c.pendingFollowUps?.slice(1) }
+            : c,
+        ),
+      );
+    }
     // Running + v2 CLI → steer the live run instead of dispatching a task.
     if (running) {
       void steerActiveRun(base);
@@ -2452,21 +2563,45 @@ export default function App() {
     try {
       const selected = await open({ directory: true, multiple: false });
       if (typeof selected === "string") {
-        // Persist as "last opened workspace" AND bind it to the active
-        // conversation, so each chat keeps its own folder (M1).
+        // Persist as "last opened workspace" (unchanged) AND switch chats by
+        // folder-switch semantics (P0): a virgin chat is rebound in place; a
+        // chat with context KEEPS its cwd and a NEW chat is opened on the
+        // folder, so a project's spine/history is never contaminated.
         setWorkdir(selected);
-        setConversations((prev) =>
-          prev.map((c) =>
-            c.id === activeId
-              ? { ...c, cwd: selected, updatedAt: Date.now() }
-              : c,
-          ),
+        const plan = planFolderSwitch(
+          conversationsRef.current,
+          activeIdRef.current,
+          selected,
         );
-        setStatusLine(`Cartella: ${selected}`);
+        setConversations(plan.conversations);
+        if (plan.nextActiveId !== activeIdRef.current) {
+          setActiveId(plan.nextActiveId);
+          setDraft("");
+        }
+        setStatusLine(
+          plan.reboundInPlace
+            ? `Cartella: ${selected}`
+            : `Cartella: ${selected} — nuova chat su questa cartella`,
+        );
       }
     } catch (e) {
       setStatusLine(e instanceof Error ? e.message : String(e));
     }
+  };
+
+  /** Discard the oldest queued follow-up (§24/D) and clear it from the draft. */
+  const discardOldestPendingFollowUp = () => {
+    const convId = active?.id;
+    if (!convId) return;
+    const first = active?.pendingFollowUps?.[0];
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? { ...c, pendingFollowUps: c.pendingFollowUps?.slice(1) }
+          : c,
+      ),
+    );
+    if (first) setDraft((prev) => (prev.trim() === first.trim() ? "" : prev));
   };
 
   const messages = active?.messages ?? [];
@@ -2659,6 +2794,12 @@ export default function App() {
                     💬
                   </span>
                 )}
+                <span
+                  className="session-folder"
+                  title={c.cwd ? c.cwd : undefined}
+                >
+                  📁 {c.cwd ? folderLabelFromCwd(c.cwd) : "No folder"}
+                </span>
                 <span className="session-meta">
                   {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
                 </span>
@@ -2795,6 +2936,48 @@ export default function App() {
               }
             />
           ) : null}
+          <div className="sidecar-diagnostics">
+            <button
+              type="button"
+              className="sidecar-log-toggle"
+              aria-expanded={sidecarLogOpen}
+              title="Backend CLI stderr (harness sidecar)"
+              onClick={() => setSidecarLogOpen((v) => !v)}
+            >
+              <span aria-hidden>▣</span> Sidecar log
+              {sidecarLogLines.length > 0 ? (
+                <span className="sidecar-log-count">
+                  {sidecarLogLines.length}
+                </span>
+              ) : null}
+            </button>
+            {sidecarLogOpen ? (
+              <div
+                className="sidecar-log-panel"
+                ref={sidecarLogPanelRef}
+                role="log"
+              >
+                {sidecarLogLines.length === 0 ? (
+                  <div className="sidecar-log-empty">
+                    No sidecar stderr captured yet.
+                  </div>
+                ) : (
+                  sidecarLogLines.map((line, i) => (
+                    <div
+                      key={i}
+                      className={
+                        isSidecarErrorLine(line)
+                          ? "sidecar-log-line is-error"
+                          : "sidecar-log-line"
+                      }
+                    >
+                      {line}
+                    </div>
+                  ))
+                )}
+              </div>
+            ) : null}
+          </div>
           <div className="chat-scroll" ref={scrollRef}>
             {sidecarNotice ? (
               <div className="chat-inner" style={{ paddingBottom: 0 }}>
@@ -2915,7 +3098,9 @@ export default function App() {
                                       ? "queued · applies at turn end"
                                       : m.steer.state === "applied"
                                         ? "applied ✓"
-                                        : "rejected ✗"}
+                                        : m.steer.state === "not_applied"
+                                          ? "not applied — run finished"
+                                          : "rejected ✗"}
                                 </span>
                               ) : null}
                               {hasGauntletLoop(m.content) ? (
@@ -3052,6 +3237,24 @@ export default function App() {
                 onClick={() => setGauntletLoop(false)}
               >
                 Off
+              </button>
+            </div>
+          )}
+          {oldestPendingFollowUp && (
+            <div className="pending-skill-chip" role="status">
+              <span>
+                Queued follow-up
+                {pendingFollowUps.length > 1
+                  ? ` (1 of ${pendingFollowUps.length})`
+                  : ""}
+                <span className="muted"> — restored in the composer</span>
+              </span>
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={discardOldestPendingFollowUp}
+              >
+                Dismiss
               </button>
             </div>
           )}

@@ -34,10 +34,12 @@ export interface ChatMessage {
   /** Light run stats attached when a turn finishes. */
   stats?: MessageStats;
   /** Steering metadata (control plane §30–§35): tracks the outbound steer
-   * event ack cycle sent → accepted → applied / rejected. */
+   * event ack cycle sent → accepted → applied / rejected. `not_applied` is
+   * set locally when the send_control result reports the run had already
+   * finished (the text is handed back to the composer instead). */
   steer?: {
     id: string;
-    state: "sent" | "accepted" | "applied" | "rejected";
+    state: "sent" | "accepted" | "applied" | "rejected" | "not_applied";
   };
 }
 
@@ -77,6 +79,11 @@ export interface Conversation {
   /** Rolling provider-side history snapshot emitted by the CLI. Replayed on
    * the next runTask so the headless agent keeps multi-turn context. */
   history?: AgentMessageLite[];
+
+  /** Follow-ups queued by the CLI at run end (late steers, §24), oldest
+   * first. Persisted so they survive reloads; restored as composer prefill
+   * one at a time until dispatched (sent or discarded). */
+  pendingFollowUps?: string[];
 }
 
 export interface CliStatus {

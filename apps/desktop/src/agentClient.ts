@@ -599,6 +599,26 @@ export async function onSidecarStatus(
   );
 }
 
+/**
+ * One stderr line of the harness sidecar child (lossily decoded). The Rust
+ * emit is `{ line }` (harness_sidecar.rs stderr drain); a bare string is
+ * tolerated so backend shape drift never empties the panel.
+ */
+export type SidecarLogPayload = { line: string } | string;
+
+/**
+ * Sidecar stderr drain (`harness-sidecar-log`): the Rust side reads the
+ * child's stderr line-by-line and emits `{ line }` per non-empty line
+ * (mirrored to logs/zelari-sidecar.log). Feeds the diagnostics panel.
+ */
+export async function onSidecarLog(
+  handler: (payload: SidecarLogPayload) => void,
+): Promise<UnlistenFn> {
+  return listen<SidecarLogPayload>("harness-sidecar-log", (e) =>
+    handler(e.payload),
+  );
+}
+
 export interface HarnessStatePayload {
   sessionId: string | null;
   state: unknown;

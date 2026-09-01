@@ -59,8 +59,18 @@ export function supportsControl(info: ProtocolInfoEvent | null | undefined, kind
   return false;
 }
 
-/** Send one control event to a running headless child (Tauri invoke). */
-export async function sendControl(runId: string, event: OutboundControlEvent): Promise<void> {
+/**
+ * Send one control event to a running headless child (Tauri invoke).
+ * Resolves to the CLI's session result — a JSON STRING of the session.steer
+ * result object (e.g. `{"status":"already_finished"}`) on current builds;
+ * older builds resolve falsy/empty and transport/rpc errors reject.
+ * Callers classify via steerRecovery.parseSteerSendResult and must tolerate
+ * both shapes.
+ */
+export async function sendControl(
+  runId: string,
+  event: OutboundControlEvent,
+): Promise<unknown> {
   const { invoke } = await import('@tauri-apps/api/core');
-  await invoke('send_control', { runId, event });
+  return invoke('send_control', { runId, event });
 }

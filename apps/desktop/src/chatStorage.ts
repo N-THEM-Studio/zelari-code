@@ -53,5 +53,9 @@ function normalizeConv(
         ? c.cwd
         : legacyCwd ?? undefined,
     sessionTasks: sanitizeTasks(c.sessionTasks),
+    // Backward-compatible: legacy chats without the field normalize to [].
+    pendingFollowUps: Array.isArray(c.pendingFollowUps)
+      ? c.pendingFollowUps.filter((s): s is string => typeof s === "string")
+      : [],
   };
 }
