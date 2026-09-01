@@ -51,7 +51,8 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::thread;
 use std::time::{Duration, Instant};
-use tauri::{AppHandle, Emitter};
+use std::fs::OpenOptions;
+use tauri::{AppHandle, Emitter, Manager};
 
 /// The CLI harness speaks headless protocol v2 (HEADLESS_PROTOCOL_VERSION in
 /// src/cli/headless/protocol.ts). Verified on the boot line.
@@ -137,6 +138,26 @@ const SPINE_BIND_WAIT: Duration = Duration::from_secs(30);
 /// After a cooperative cancel is delivered, how long we keep waiting for the
 /// run.turn settlement before giving up on it (visible typed error).
 const CANCEL_GRACE: Duration = Duration::from_secs(30);
+
+/// Per-turn watchdog (field report: "the model never answers on clean PCs").
+/// A run.turn that never settles — provider fetch hanging on blocked network
+/// egress, CLI stuck mid-turn — used to poll FOREVER with no error and no
+/// event: an infinite silent spinner. Every turn now gets a deadline; past
+/// it the run fails with the typed error `turn_timeout`, which surfaces in
+/// chat like every other run_task Err. Default 30 min (mission/council turns
+/// are legitimately long); override with ZELARI_SIDECAR_TURN_TIMEOUT_SECS,
+/// clamped to >= 60s so a typo cannot insta-kill legitimate turns.
+const TURN_TIMEOUT_DEFAULT_SECS: u64 = 1800;
+const TURN_TIMEOUT_MIN_SECS: u64 = 60;
+
+fn turn_timeout() -> Duration {
+    let secs = std::env::var("ZELARI_SIDECAR_TURN_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(TURN_TIMEOUT_DEFAULT_SECS)
+        .max(TURN_TIMEOUT_MIN_SECS);
+    Duration::from_secs(secs)
+}
 
 /// Typed protocol/transport error. `code` mirrors the server error codes
 /// (bad_json · bad_request · unknown_method · unknown_session ·
@@ -445,10 +466,22 @@ impl HarnessSidecar {
         }
 
         // stderr drain: a full pipe would deadlock the child; lines surface
-        // as harness-sidecar-log events (visible, not attached to any run).
+        // as harness-sidecar-log events AND append to <app_data_dir>/logs/
+        // zelari-sidecar.log. The durable file matters: events are lossy
+        // across restarts and nothing else keeps the child's stderr, so this
+        // log is the field-debugging record for "the model never answers".
         {
             let app = self.app.lock().unwrap_or_else(|e| e.into_inner()).clone();
             thread::spawn(move || {
+                let mut log_file = app.as_ref().and_then(|app| {
+                    let dir = app.path().app_data_dir().ok()?.join("logs");
+                    std::fs::create_dir_all(&dir).ok()?;
+                    OpenOptions::new()
+                        .create(true)
+                        .append(true)
+                        .open(dir.join("zelari-sidecar.log"))
+                        .ok()
+                });
                 let reader = BufReader::new(stderr);
                 for line in reader.lines().map_while(Result::ok) {
                     let trimmed = line.trim();
@@ -457,6 +490,13 @@ impl HarnessSidecar {
                     }
                     if let Some(app) = app.as_ref() {
                         let _ = app.emit("harness-sidecar-log", json!({ "line": trimmed }));
+                    }
+                    if let Some(file) = log_file.as_mut() {
+                        let ts = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        let _ = writeln!(file, "[{ts}] {trimmed}");
                     }
                 }
             });
@@ -580,11 +620,25 @@ impl HarnessSidecar {
         let in_flight = self.write_request("run.turn", turn_input)?;
         let mut cancel_delivered = false;
         let mut cancel_deadline: Option<Instant> = None;
+        let timeout = turn_timeout();
+        let turn_deadline = Instant::now() + timeout;
         loop {
             if let Some(result) = in_flight.poll() {
                 return result;
             }
             on_tick();
+            // Per-turn watchdog: no settlement past the deadline = typed
+            // error, never an infinite silent spinner.
+            if Instant::now() >= turn_deadline {
+                in_flight.detach();
+                return Err(HarnessError::new(
+                    "turn_timeout",
+                    format!(
+                        "run.turn did not settle within {}s — the model call may be hanging (network egress?); details in logs/zelari-sidecar.log",
+                        timeout.as_secs()
+                    ),
+                ));
+            }
             if cancel.load(Ordering::SeqCst) {
                 if !cancel_delivered {
                     cancel_delivered = true;
