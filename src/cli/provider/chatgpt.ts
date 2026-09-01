@@ -2,7 +2,13 @@
  * ChatGPT Codex Responses API stream (subscription OAuth).
  */
 import type { ProviderDelta, ProviderStreamFn, AgentMessage } from '@zelari/core/harness';
-import type { OpenAICompatibleConfig } from './openai-compatible.js';
+import {
+  type OpenAICompatibleConfig,
+  PROVIDER_CONNECT_TIMEOUT_MS,
+  PROVIDER_STREAM_IDLE_MS,
+  PROVIDER_STREAM_MAX_MS,
+  readChunkWithTimeout,
+} from './openai-compatible.js';
 import { translateResponsesThinking } from '../thinking.js';
 
 function headers(config: OpenAICompatibleConfig): Record<string, string> {
@@ -82,14 +88,34 @@ export function chatgptResponsesProvider(config: OpenAICompatibleConfig): Provid
     const base = config.baseUrl.replace(/\/$/, '');
     const url = `${base}/responses`;
     let response: Response;
+    // CONNECT-only timeout (policy identical to openai-compatible.ts): if
+    // response headers never arrive, fail visibly — never the infinite hang
+    // of the field report "the model never answers". The stream itself is
+    // governed by the idle/max timers below, not by a wall-clock on the
+    // whole fetch.
+    const connectController = new AbortController();
+    const connectTimer = setTimeout(
+      () =>
+        connectController.abort(
+          new Error(
+            `Provider connect timeout after ${Math.round(PROVIDER_CONNECT_TIMEOUT_MS / 1000)}s ` +
+              `(no response headers). Override ZELARI_PROVIDER_CONNECT_TIMEOUT_MS.`,
+          ),
+        ),
+      PROVIDER_CONNECT_TIMEOUT_MS,
+    );
+    const signals: AbortSignal[] = [connectController.signal];
+    if (params.signal) signals.push(params.signal);
     try {
       response = await fetch(url, {
         method: 'POST',
         headers: headers(config),
         body: JSON.stringify(body),
-        signal: params.signal,
+        signal: signals.length === 1 ? signals[0]! : AbortSignal.any(signals),
       });
+      clearTimeout(connectTimer);
     } catch (err) {
+      clearTimeout(connectTimer);
       yield {
         kind: 'error',
         message: `Network error: ${err instanceof Error ? err.message : String(err)}`,
@@ -122,9 +148,21 @@ export function chatgptResponsesProvider(config: OpenAICompatibleConfig): Provid
       yield { kind: 'tool_call', toolCallId: t.id, toolName: t.name, args };
     };
 
+    // Stream watchdog (same policy as openai-compatible.ts): idle measures
+    // silence since the last USEFUL event (SSE pings don't count), max is
+    // the absolute cap on the stream.
+    const streamStartedAt = Date.now();
+    let lastUsefulAt = streamStartedAt;
+    const streamDeadline = streamStartedAt + PROVIDER_STREAM_MAX_MS;
+
     try {
       while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await readChunkWithTimeout(reader, {
+          idleMs: PROVIDER_STREAM_IDLE_MS,
+          deadlineMs: streamDeadline,
+          signal: params.signal,
+          lastUsefulAt: () => lastUsefulAt,
+        });
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -141,6 +179,7 @@ export function chatgptResponsesProvider(config: OpenAICompatibleConfig): Provid
             continue;
           }
           const type = typeof ev.type === 'string' ? ev.type : '';
+          if (type) lastUsefulAt = Date.now();
           if (type === 'response.output_text.delta' && typeof ev.delta === 'string') {
             yield { kind: 'text', delta: ev.delta };
           } else if (type === 'response.reasoning_text.delta' && typeof ev.delta === 'string') {

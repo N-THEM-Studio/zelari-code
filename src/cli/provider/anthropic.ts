@@ -2,7 +2,13 @@
  * Anthropic Messages API stream (subscription OAuth or API key).
  */
 import type { ProviderDelta, ProviderStreamFn, AgentMessage } from '@zelari/core/harness';
-import type { OpenAICompatibleConfig } from './openai-compatible.js';
+import {
+  type OpenAICompatibleConfig,
+  PROVIDER_CONNECT_TIMEOUT_MS,
+  PROVIDER_STREAM_IDLE_MS,
+  PROVIDER_STREAM_MAX_MS,
+  readChunkWithTimeout,
+} from './openai-compatible.js';
 import { resolvePromptCacheTtl } from '../hooks/chatStats.js';
 import { translateAnthropicThinking } from '../thinking.js';
 
@@ -142,14 +148,34 @@ export function anthropicMessagesProvider(config: OpenAICompatibleConfig): Provi
     const base = config.baseUrl.replace(/\/$/, '').replace(/\/v1$/, '');
     const url = `${base}/v1/messages`;
     let response: Response;
+    // CONNECT-only timeout (policy identical to openai-compatible.ts): if
+    // response headers never arrive, fail visibly — never the infinite hang
+    // of the field report "the model never answers". The stream itself is
+    // governed by the idle/max timers below, not by a wall-clock on the
+    // whole fetch.
+    const connectController = new AbortController();
+    const connectTimer = setTimeout(
+      () =>
+        connectController.abort(
+          new Error(
+            `Provider connect timeout after ${Math.round(PROVIDER_CONNECT_TIMEOUT_MS / 1000)}s ` +
+              `(no response headers). Override ZELARI_PROVIDER_CONNECT_TIMEOUT_MS.`,
+          ),
+        ),
+      PROVIDER_CONNECT_TIMEOUT_MS,
+    );
+    const signals: AbortSignal[] = [connectController.signal];
+    if (params.signal) signals.push(params.signal);
     try {
       response = await fetch(url, {
         method: 'POST',
         headers: authHeaders(config.apiKey, ttlPref === '1h'),
         body: JSON.stringify(body),
-        signal: params.signal,
+        signal: signals.length === 1 ? signals[0]! : AbortSignal.any(signals),
       });
+      clearTimeout(connectTimer);
     } catch (err) {
+      clearTimeout(connectTimer);
       yield {
         kind: 'error',
         message: `Network error: ${err instanceof Error ? err.message : String(err)}`,
@@ -194,9 +220,21 @@ export function anthropicMessagesProvider(config: OpenAICompatibleConfig): Provi
       currentTool = null;
     };
 
+    // Stream watchdog (same policy as openai-compatible.ts): idle measures
+    // silence since the last USEFUL event (SSE pings don't count), max is
+    // the absolute cap on the stream.
+    const streamStartedAt = Date.now();
+    let lastUsefulAt = streamStartedAt;
+    const streamDeadline = streamStartedAt + PROVIDER_STREAM_MAX_MS;
+
     try {
       while (true) {
-        const { value, done } = await reader.read();
+        const { value, done } = await readChunkWithTimeout(reader, {
+          idleMs: PROVIDER_STREAM_IDLE_MS,
+          deadlineMs: streamDeadline,
+          signal: params.signal,
+          lastUsefulAt: () => lastUsefulAt,
+        });
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
@@ -213,6 +251,8 @@ export function anthropicMessagesProvider(config: OpenAICompatibleConfig): Provi
             continue;
           }
           const type = ev.type;
+          // SSE `ping` keep-alives do NOT reset the idle timer.
+          if (type !== 'ping') lastUsefulAt = Date.now();
           if (type === 'content_block_delta') {
             const delta = ev.delta as Record<string, unknown> | undefined;
             if (delta?.type === 'text_delta' && typeof delta.text === 'string') {

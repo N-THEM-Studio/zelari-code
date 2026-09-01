@@ -63,14 +63,14 @@ const BACKOFF_CAP_MS = 8000;
  *   ZELARI_PROVIDER_STREAM_MAX_MS
  *   ZELARI_PROVIDER_TIMEOUT_MS — legacy alias for STREAM_IDLE
  */
-const PROVIDER_CONNECT_TIMEOUT_MS: number = (() => {
+export const PROVIDER_CONNECT_TIMEOUT_MS: number = (() => {
   const raw = process.env.ZELARI_PROVIDER_CONNECT_TIMEOUT_MS;
   // Short connect default — stream idle is separate (see below).
   const n = raw ? Number.parseInt(raw, 10) : 90_000;
   return Number.isFinite(n) && n >= 5_000 ? n : 90_000;
 })();
 
-const PROVIDER_STREAM_IDLE_MS: number = (() => {
+export const PROVIDER_STREAM_IDLE_MS: number = (() => {
   const raw =
     process.env.ZELARI_PROVIDER_STREAM_IDLE_MS ??
     process.env.ZELARI_PROVIDER_TIMEOUT_MS;
@@ -78,7 +78,7 @@ const PROVIDER_STREAM_IDLE_MS: number = (() => {
   return Number.isFinite(n) && n >= 15_000 ? n : 300_000;
 })();
 
-const PROVIDER_STREAM_MAX_MS: number = (() => {
+export const PROVIDER_STREAM_MAX_MS: number = (() => {
   const raw = process.env.ZELARI_PROVIDER_STREAM_MAX_MS;
   const n = raw ? Number.parseInt(raw, 10) : 1_800_000; // 30 min
   return Number.isFinite(n) && n >= 60_000 ? n : 1_800_000;
