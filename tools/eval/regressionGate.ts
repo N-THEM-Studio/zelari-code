@@ -7,6 +7,8 @@
  *   AND cost efficiency within policy (if configured)
  *   AND verified solve rate >= minVerificationGatePassRate (if configured;
  *   §P1.2 — fail-closed when the candidate has no records)
+ *   AND candidate runs per anchor >= minMeasuredRuns (if configured; Fase
+ *   0.1 — fail-closed multi-run floor, enforced via validity, §21/ADR-0023)
  */
 
 import { addCost, zeroCost, type RunCost } from './cost.ts';
@@ -99,6 +101,22 @@ export function evaluateRegressionGate(input: {
   // an anchor may never "disappear" from the candidate to dodge the gate.
   // Baseline PASS + no candidate record is itself a REGRESSION.
   const unionIds = [...new Set([...baselineById.keys(), ...candidateById.keys()])].sort();
+  // Fase 0.1: opt-in multi-run measurement floor. Counts come from the RAW
+  // candidate array (the id Maps dedupe, last-wins) and EVERY union anchor
+  // must clear the bar — zero-run ones included (§21: nothing dodges
+  // measurement; ADR-0023 unknown ≠ pass). Violations merge into the
+  // caller's validity path, so the existing validity logic rejects unchanged.
+  const validityViolations = [...(input.validityViolations ?? [])];
+  if (policy.minMeasuredRuns !== undefined) {
+    const candidateRunsById = new Map<string, number>();
+    for (const r of candidate) candidateRunsById.set(r.anchorId, (candidateRunsById.get(r.anchorId) ?? 0) + 1);
+    for (const anchorId of unionIds) {
+      const runs = candidateRunsById.get(anchorId) ?? 0;
+      if (runs < policy.minMeasuredRuns) {
+        validityViolations.push(`insufficient-measured-runs:${anchorId}:${runs}/${policy.minMeasuredRuns}`);
+      }
+    }
+  }
   for (const anchorId of unionIds) {
     const b = baselineById.get(anchorId);
     const c = candidateById.get(anchorId);
@@ -122,8 +140,8 @@ export function evaluateRegressionGate(input: {
     currentSuite,
     anchors: { passed, total: unionIds.length, regressions, improvements },
     validity: {
-      passed: (input.validityViolations ?? []).length === 0,
-      violations: [...(input.validityViolations ?? [])],
+      passed: validityViolations.length === 0,
+      violations: validityViolations,
     },
     cost: summarizeCost(candidate),
     // §P1.2 strict verification gate — measured over the RAW candidate

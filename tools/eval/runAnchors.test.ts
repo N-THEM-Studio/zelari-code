@@ -101,3 +101,69 @@ describe('runAnchorSuite → result store seeding (F11)', () => {
     expect(store.latestManifestHash()).toBe(result.manifestHash);
   });
 });
+
+/** Echo-style stub (as the CLI `--runner echo`): the agent "runs" and changes nothing. */
+const echoRunner: AgentRunner = () => ({ ok: true, toolCalls: 1, wallMs: 1 });
+
+/** Two already-green copies of the bootstrap anchor — the fixture is pre-solved,
+ * so the echo runner's no-op still passes the deterministic checks. */
+function repeatAnchorDir(): string {
+  const dir = mkdtempSync(path.join(tmpdir(), 'runAnchors-repeat-'));
+  const anchor = loadAnchorFile(FIX_EXPORT_ANCHOR);
+  for (const id of ['repeat-anchor-a', 'repeat-anchor-b']) {
+    writeFileSync(
+      path.join(dir, `${id}.anchor.json`),
+      JSON.stringify({
+        ...anchor,
+        id,
+        fixture: {
+          ...anchor.fixture,
+          files: anchor.fixture.files.map((f) =>
+            f.path === 'sum.js' ? { ...f, content: f.content.replace('a - b', 'a + b') } : f,
+          ),
+        },
+      }),
+      'utf8',
+    );
+  }
+  return dir;
+}
+
+describe('runAnchorSuite --repeat (t65, Fase 0.1)', () => {
+  it('repeat: 3 → 6 records, each anchorId exactly 3 times, store keeps all N', async () => {
+    const store = new EvalResultStore(mkdtempSync(path.join(tmpdir(), 'runAnchors-store-')));
+    const result = await runAnchorSuite({
+      store,
+      runner: echoRunner,
+      anchorsDir: repeatAnchorDir(),
+      tiers: [0],
+      repeat: 3,
+    });
+    expect(result.records).toHaveLength(6);
+    expect(new Set(result.records.map((r) => r.runId)).size).toBe(6);
+    for (const anchorId of ['repeat-anchor-a', 'repeat-anchor-b']) {
+      expect(result.records.filter((r) => r.anchorId === anchorId)).toHaveLength(3);
+    }
+    expect(result.passed).toBe(6);
+    // Append-only store: every repeated run is persisted.
+    expect(store.loadRuns(result.manifestHash)).toHaveLength(6);
+    // Self-comparison is unchanged by repeats — the gate's id Map dedupes.
+    expect(result.summary.result.anchors.total).toBe(2);
+  });
+
+  it('repeat: 0 throws BEFORE any run (fail-closed)', async () => {
+    const store = new EvalResultStore(mkdtempSync(path.join(tmpdir(), 'runAnchors-store-')));
+    await expect(
+      runAnchorSuite({ store, runner: echoRunner, anchorsDir: repeatAnchorDir(), tiers: [0], repeat: 0 }),
+    ).rejects.toThrow('repeat must be an integer >= 1');
+  });
+
+  it('default (no repeat) → 1 record per anchor', async () => {
+    const store = new EvalResultStore(mkdtempSync(path.join(tmpdir(), 'runAnchors-store-')));
+    const result = await runAnchorSuite({ store, runner: echoRunner, anchorsDir: repeatAnchorDir(), tiers: [0] });
+    expect(result.records).toHaveLength(2);
+    for (const anchorId of ['repeat-anchor-a', 'repeat-anchor-b']) {
+      expect(result.records.filter((r) => r.anchorId === anchorId)).toHaveLength(1);
+    }
+  });
+});

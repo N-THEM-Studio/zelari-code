@@ -20,6 +20,13 @@ export const HarnessRetentionPolicySchema = z.object({
    * nothing and rejects. Opt-in — presets stay unset.
    */
   minVerificationGatePassRate: z.number().min(0).max(1).optional(),
+  /**
+   * Minimum candidate runs per anchorId required for a MEASURED
+   * (variance-aware) comparison (Fase 0.1, ADR-0023). Fail-closed: every
+   * union anchor below the bar — zero-run ones included (§21) — rejects
+   * through the validity path. Opt-in — presets stay unset.
+   */
+  minMeasuredRuns: z.number().int().min(1).optional(),
   requireValidityPass: z.literal(true),
 });
 export type HarnessRetentionPolicy = z.infer<typeof HarnessRetentionPolicySchema>;

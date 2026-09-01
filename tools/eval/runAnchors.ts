@@ -4,6 +4,7 @@
  *
  *   node --experimental-strip-types tools/eval/runAnchors.ts \
  *     --tier 0 --tier 1 --runner headless [--store <dir>] [--limit N]
+ *       [--repeat N]
  *
  * Store layout (file-based, no database until volumes demand one):
  *   eval/results/<manifestHash>/anchors.jsonl   — one record per anchor run
@@ -102,6 +103,9 @@ export interface RunSuiteOptions {
   /** Skip provenance computation and pin the hash (tests / re-seeding). */
   provenance?: { harnessManifestHash?: string; resourcePolicyHash?: string };
   limit?: number;
+  /** Run each anchor N times (multi-run data for the variance-aware
+   * comparator, Fase 0.1); default 1. */
+  repeat?: number;
   now?: () => string;
 }
 
@@ -116,6 +120,8 @@ export interface SuiteRunResult {
 
 /** Run every anchor of the requested tiers and seed the result store. */
 export async function runAnchorSuite(options: RunSuiteOptions): Promise<SuiteRunResult> {
+  const repeat = options.repeat ?? 1;
+  if (!Number.isInteger(repeat) || repeat < 1) throw new Error('repeat must be an integer >= 1');
   const tiers = options.tiers ?? [0];
   const anchors = loadAnchors(options.anchorsDir ?? DEFAULT_ANCHORS_DIR).filter((a) =>
     tiers.includes(a.tier as 0 | 1 | 2),
@@ -131,17 +137,22 @@ export async function runAnchorSuite(options: RunSuiteOptions): Promise<SuiteRun
   const records: AnchorRunRecord[] = [];
   for (const anchor of selected) {
     const provenance = provenanceByProfile.get(anchor.profile)!;
-    const record = await runAnchor(anchor, {
-      runner: options.runner,
-      provenance,
-      workspaceRoot: options.store.rootDir,
-      now: options.now,
-    });
-    records.push(record);
-    console.log(
-      `[runAnchors] ${record.result.padEnd(7)} ${record.anchorId} (${record.reason ?? 'ok'})` +
-        ` manifest=${record.harnessManifestHash.slice(0, 12)}`,
-    );
+    for (let run = 1; run <= repeat; run += 1) {
+      const record = await runAnchor(anchor, {
+        runner: options.runner,
+        provenance,
+        workspaceRoot: options.store.rootDir,
+        now: options.now,
+      });
+      records.push(record);
+      // `#n/N` suffix only when repeating — single-run log stays identical.
+      console.log(
+        `[runAnchors] ${record.result.padEnd(7)} ${record.anchorId}` +
+          (repeat > 1 ? ` #${run}/${repeat}` : '') +
+          ` (${record.reason ?? 'ok'})` +
+          ` manifest=${record.harnessManifestHash.slice(0, 12)}`,
+      );
+    }
   }
 
   // The store keys runs by harness manifest hash. Mixed-profile suites are
@@ -203,12 +214,23 @@ async function main(): Promise<number> {
   const storeArg = argv[argv.indexOf('--store') + 1];
   const store = storeArg ? new EvalResultStore(path.resolve(storeArg)) : EvalResultStore.default();
   const limitArg = Number(argv[argv.indexOf('--limit') + 1]);
+  const repeatArg = argv.includes('--repeat') ? Number(argv[argv.indexOf('--repeat') + 1]) : undefined;
+  if (repeatArg !== undefined && (!Number.isInteger(repeatArg) || repeatArg < 1)) {
+    console.error('runAnchors: --repeat must be an integer >= 1');
+    return 2;
+  }
   const runner: AgentRunner =
     runnerName === 'echo'
       ? () => ({ ok: true, toolCalls: 1, wallMs: 1 })
       : headlessAgentRunner();
 
-  const result = await runAnchorSuite({ tiers: tiersFromArgv(), store, runner, limit: limitArg || undefined });
+  const result = await runAnchorSuite({
+    tiers: tiersFromArgv(),
+    store,
+    runner,
+    limit: limitArg || undefined,
+    repeat: repeatArg,
+  });
   console.log(
     `\n[runAnchors] suite done: ${result.passed} pass / ${result.failed} fail / ${result.blocked} blocked`,
   );

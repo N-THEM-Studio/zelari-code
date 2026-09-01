@@ -6,6 +6,8 @@
  *    records, null iff zero candidate records
  *  - policy.minVerificationGatePassRate rejects below-threshold candidates
  *    with a human-readable reason and FAILS CLOSED on an empty set
+ *  - policy.minMeasuredRuns (t65, Fase 0.1): multi-run measurement floor —
+ *    under-measured union anchors (zero-run included, §21) reject via validity
  *  - formatGateReport renders the rate (+ required threshold when opted in)
  *  - the two new strict-gate anchors parse against AnchorManifestSchema
  */
@@ -158,4 +160,72 @@ describe('strict-gate anchors (t13) schema-validity', () => {
       expect(anchor.success.length).toBeGreaterThanOrEqual(1);
     });
   }
+});
+
+describe('minMeasuredRuns multi-run floor (t65, Fase 0.1)', () => {
+  const runsPolicy = { maxRegressedAnchors: 0, requireValidityPass: true, minMeasuredRuns: 3 } as const;
+
+  it('REJECTs when a union anchor has fewer candidate runs than required', () => {
+    const cmp = evaluateRegressionGate({
+      manifestHash: 'cand',
+      baseline: [rec('anchor-a', 'pass')],
+      candidate: [rec('anchor-a', 'pass'), rec('anchor-a', 'pass')],
+      currentSuite: { passed: 2, total: 2 },
+      policy: runsPolicy,
+    });
+    expect(cmp.decision).toBe('REJECT');
+    expect(cmp.result.validity.violations).toContain('insufficient-measured-runs:anchor-a:2/3');
+    expect(cmp.reasons.join('\n')).toContain('insufficient-measured-runs:anchor-a:2/3');
+  });
+
+  it('COMMITs when every union anchor reaches the floor (3/3, no other regressions)', () => {
+    const cmp = evaluateRegressionGate({
+      manifestHash: 'cand',
+      baseline: [rec('anchor-a', 'pass')],
+      candidate: [rec('anchor-a', 'pass'), rec('anchor-a', 'pass'), rec('anchor-a', 'pass')],
+      currentSuite: { passed: 3, total: 3 },
+      policy: runsPolicy,
+    });
+    expect(cmp.decision).toBe('COMMIT');
+    expect(cmp.result.validity.violations).toEqual([]);
+  });
+
+  it('back-compat: without minMeasuredRuns a single run still COMMITs', () => {
+    const cmp = evaluateRegressionGate({
+      manifestHash: 'cand',
+      baseline: [rec('anchor-a', 'pass')],
+      candidate: [rec('anchor-a', 'pass')],
+      currentSuite: { passed: 1, total: 1 },
+      policy: { maxRegressedAnchors: 0, requireValidityPass: true },
+    });
+    expect(cmp.decision).toBe('COMMIT');
+  });
+
+  it('plan §21: a zero-run anchor in the baseline union cannot dodge measurement', () => {
+    const cmp = evaluateRegressionGate({
+      manifestHash: 'cand',
+      baseline: [rec('anchor-a', 'pass'), rec('anchor-b', 'pass')],
+      candidate: [rec('anchor-a', 'pass'), rec('anchor-a', 'pass'), rec('anchor-a', 'pass')],
+      currentSuite: { passed: 3, total: 3 },
+      policy: runsPolicy,
+    });
+    expect(cmp.decision).toBe('REJECT');
+    expect(cmp.result.validity.violations).toContain('insufficient-measured-runs:anchor-b:0/3');
+  });
+
+  it('merges with caller validityViolations into ONE reject path', () => {
+    const cmp = evaluateRegressionGate({
+      manifestHash: 'cand',
+      baseline: [rec('anchor-a', 'pass')],
+      candidate: [rec('anchor-a', 'pass'), rec('anchor-a', 'pass')],
+      currentSuite: { passed: 2, total: 2 },
+      validityViolations: ['EVIDENCE_MISSING'],
+      policy: runsPolicy,
+    });
+    expect(cmp.result.validity.violations).toEqual([
+      'EVIDENCE_MISSING',
+      'insufficient-measured-runs:anchor-a:2/3',
+    ]);
+    expect(cmp.decision).toBe('REJECT');
+  });
 });
