@@ -476,14 +476,39 @@ impl HarnessSidecar {
                 let mut log_file = app.as_ref().and_then(|app| {
                     let dir = app.path().app_data_dir().ok()?.join("logs");
                     std::fs::create_dir_all(&dir).ok()?;
+                    let path = dir.join("zelari-sidecar.log");
+                    // One-generation rotation: a hung CLI can emit stderr
+                    // for the whole boot-timeout window on every restart;
+                    // without a cap the log grows forever. 5 MiB is days of
+                    // healthy stderr. Windows rename fails on an existing
+                    // target, so drop the previous .old first.
+                    const MAX_LOG_BYTES: u64 = 5 * 1024 * 1024;
+                    if std::fs::metadata(&path)
+                        .map(|m| m.len() > MAX_LOG_BYTES)
+                        .unwrap_or(false)
+                    {
+                        let _ = std::fs::remove_file(dir.join("zelari-sidecar.log.old"));
+                        let _ = std::fs::rename(&path, dir.join("zelari-sidecar.log.old"));
+                    }
                     OpenOptions::new()
                         .create(true)
                         .append(true)
-                        .open(dir.join("zelari-sidecar.log"))
+                        .open(path)
                         .ok()
                 });
-                let reader = BufReader::new(stderr);
-                for line in reader.lines().map_while(Result::ok) {
+                // NOT reader.lines().map_while(Result::ok): one non-UTF8
+                // byte would end the iteration, kill the drain thread, fill
+                // the pipe and deadlock the child. Decode raw bytes lossily;
+                // stop only on IO error or EOF.
+                let mut reader = BufReader::new(stderr);
+                let mut buf: Vec<u8> = Vec::with_capacity(512);
+                loop {
+                    buf.clear();
+                    match reader.read_until(b'\n', &mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {}
+                    }
+                    let line = String::from_utf8_lossy(&buf);
                     let trimmed = line.trim();
                     if trimmed.is_empty() {
                         continue;
@@ -631,6 +656,15 @@ impl HarnessSidecar {
             // error, never an infinite silent spinner.
             if Instant::now() >= turn_deadline {
                 in_flight.detach();
+                // Best-effort cleanup: the request is abandoned but the CLI
+                // may still be running it (holding the session's spine
+                // lock). Fire session.cancel and ignore the outcome — the
+                // typed timeout error is the user-facing result either way.
+                // Bounded by ROUNDTRIP_TIMEOUT, so no new hang path.
+                let _ = self.roundtrip(
+                    "session.cancel",
+                    json!({ "sessionId": session_id, "reason": "turn_timeout" }),
+                );
                 return Err(HarnessError::new(
                     "turn_timeout",
                     format!(
