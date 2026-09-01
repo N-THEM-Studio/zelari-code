@@ -5,6 +5,31 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.22.0] - 2026-09-01
+
+Minor: Desktop reliability hardening — the end-to-end answer to "the model never answers" on clean machines. Per-turn watchdog + child recycling on the Tauri sidecar, sidecar status surfaced in the chat UI, persistent sidecar logs, connect/idle stream timeouts for the last two bare-fetch providers, and the Node ≥ 24 requirement made consistent across doctor, preflight and Desktop spawn errors.
+
+### Added
+
+- **Per-turn watchdog + persistent sidecar log (`c90425a`, `32b64d4`)** — a `run.turn` that never settles now fails with the typed `turn_timeout` error (default 30 min, `ZELARI_SIDECAR_TURN_TIMEOUT_SECS`, min 60 s) instead of an infinite silent spinner; every sidecar stderr line is appended to `<app_data_dir>/logs/zelari-sidecar.log` with 5 MiB one-generation rotation.
+- **Sidecar status in the chat UI (`b3e02d1`, `8c4683e`)** — `harness-sidecar-status` finally has a frontend listener: a "Backend CLI" banner with the failure reason and log path when the sidecar is not ready; informational `log` statuses (non-JSON stdout lines) don't trip it.
+- **Connect + idle stream timeouts for anthropic and chatgpt (`0c1034c`)** — the last two adapters that fetched with only the caller's abort signal now share the `openai-compatible` policy (connect 90 s / idle 5 min / max 30 min, SSE pings don't reset idle). Kills the infinite-hang class in the TUI, where no watchdog exists.
+
+### Fixed
+
+- **Sidecar stderr drain deadlock (`32b64d4`)** — a single non-UTF-8 stderr line killed the drain thread, filled the pipe and deadlocked the child; the drain now reads bytes + lossy UTF-8 and only stops on EOF/IO error.
+- **Hung-child recycling (`ef468ac`)** — on `turn_timeout`, if best-effort `session.cancel` gets no answer within the roundtrip window the child is killed (tree) and the existing supervisor restarts it with backoff — a synchronous event-loop hang no longer poisons every later roundtrip.
+- **Harness session leak (`66ec1c9`)** — the Desktop created a kernel session per run and never disposed it; `session.dispose` is now sent best-effort in the run cleanup (parity with the Android companion).
+- **Doctor reads the real `engines.node` (`9e180ef`)** — the hardcoded `< 20` check is replaced by the actual `package.json` requirement (≥ 24; graceful fallback to 20 when unreadable).
+
+### Changed
+
+- **Node minimum aligned to engines ≥ 24 (`be59c3d`, `413c6f9`)** — TUI preflight (`MIN_NODE_MAJOR`) and the Desktop "node not found" message now match `engines.node`: Node 20/22 fail explicitly at boot instead of passing the preflight and failing the doctor.
+
+### Tests
+
+- New `adapters-timeout.test.ts` (4: connect abort ×2, idle watchdog, SSE pings don't reset idle); prereq suite updated for the 24 floor (15 passing); doctor suite green (3). `cargo check`, root and desktop `tsc --noEmit` clean.
+
 ## [2.21.0] - 2026-09-01
 
 Minor: native Unreal Engine 5.8+ MCP support — the first non-stdio MCP transport (Streamable HTTP), the `unreal-mcp` preset and the `unreal-editor` builtin skill. Zero new dependencies (P5: `fetch` + minimal SSE parser).
