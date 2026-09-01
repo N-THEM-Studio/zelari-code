@@ -114,15 +114,15 @@ describe('buildRuntimeObserverBus + recorder', () => {
     await withRecorder?.emit('onRunStart', { ...eventBase() });
     await withRecorder?.emit('onRunEnd', { ...eventBase(), reason: 'completed' });
 
-    const runDirs = await readdir(root);
-    expect(runDirs).toEqual(['run_bus']); // plain bus has no recorder at all
-
-    // The recorder writes are fire-and-forget on a serial chain; poll until
-    // the manifest lands before asserting on it.
+    // The recorder writes are fire-and-forget on a serial chain (§102): poll
+    // until the manifest lands BEFORE asserting on the directory listing —
+    // on slow CI runners the mkdir may not have settled at emit-return time.
     const manifestPath = join(root, 'run_bus', 'manifest.json');
-    for (let i = 0; i < 40 && !existsSync(manifestPath); i += 1) {
+    for (let i = 0; i < 80 && !existsSync(manifestPath); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
+    const runDirs = await readdir(root);
+    expect(runDirs).toEqual(['run_bus']); // plain bus has no recorder at all
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     expect(manifest.status).toBe('completed');
   });
