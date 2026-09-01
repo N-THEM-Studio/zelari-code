@@ -68,6 +68,7 @@ import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { setActiveProofPersistenceSurface } from '../kraken/completionProofPersist.js';
 import { checkStrictPolicyLoad } from '../headless/policyGate.js';
 import { activePolicyLoadMode, setActivePolicyLoadSurface } from '../safety/policyLoadMode.js';
+import { sweepOrphanSpineLocks } from './spineLockSweep.js';
 
 export interface HarnessServerIo {
   input: Readable;
@@ -418,6 +419,15 @@ export async function runHarnessServer(): Promise<void> {
   // Same host registration runHeadless performs before any registry exists.
   setActivePolicyLoadSurface('headless');
   setActiveProofPersistenceSurface('headless');
+  // Boot sweep: a crashed host leaves writer.lock orphans behind; delete the
+  // provably-orphaned ones (dead pid / heartbeat-stale / >10 min stale) so
+  // the next resume acquires cleanly instead of silently degrading.
+  // Best-effort — a sweep failure NEVER blocks the sidecar boot.
+  try {
+    await sweepOrphanSpineLocks();
+  } catch {
+    /* boot must not depend on the sweep */
+  }
   // runOneTurn checks this to keep its paws off stdin (transport-owned).
   process.env.ZELARI_SERVE_HARNESS = '1';
   const started = startHarnessServer();
