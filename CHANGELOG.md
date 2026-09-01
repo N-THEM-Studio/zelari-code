@@ -5,6 +5,29 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.23.0] - 2026-09-01
+
+Minor: session-steer fix wave — closes the "model never answers / agent starts but stalls" family at its roots: the agent can no longer kill its own host process, orphaned session-spine locks no longer block resume, switching folder no longer drags the old project's session along, the turn watchdog is idle-based instead of wall-based, a late steer is never silently dropped, and the sidecar stderr is finally visible in the UI.
+
+### Added
+
+- **Anti-self-kill guard for bash/exec (`c50d594`)** — commands targeting the agent host process tree by image name (`taskkill /IM node.exe`, `Stop-Process -Name node`, `pkill -f node`, `wmic process … delete`) or by own-tree PID are denied with a tool error that teaches the safe alternative (kill by listening port); wired into both the bash and exec spawn paths.
+- **Spine lock liveness takeover + append heartbeat (`df6cf63`)** — `SessionLogWriter.acquireLock` now probes the lock owner PID (`kill(pid, 0)`): a dead owner is taken over immediately instead of blocking resume for 10 minutes, and every `append()` refreshes the lock timestamp (1 s throttle) so a reused PID with a frozen heartbeat still falls back to the staleness rule.
+- **Orphan lock sweep at harness server boot (`c2b91f9`)** — `runHarnessServer()` scans `.zelari/sessions/*/writer.lock` on startup and takes over locks whose owner is gone (best-effort), healing crash→restart before the user resumes.
+- **Sidecar stderr diagnostics panel (`c01bb0a`)** — `harness-sidecar-log` now has a frontend listener: a collapsible diagnostics panel with a 200-line ring buffer, reachable from the chat, error lines highlighted.
+- **Persisted queued follow-ups (`c01bb0a`)** — follow-ups queued at run end survive app restarts in `chatStorage` (`pendingFollowUps`) and come back as composer prefill until sent or dismissed.
+
+### Fixed
+
+- **Folder switch no longer rebinds the session spine (`c01bb0a`)** — picking a new folder on a used conversation now starts a new conversation bound to that folder (the old one stays in the list, folder shown as sidebar sub-heading); a virgin conversation is rebound in place as before. Kills the cross-project contamination where project A's spine and legacy context leaked into project B.
+- **`already_finished` steer noop no longer drops the text (`06d2580`, `c01bb0a`)** — `send_control` now returns the steer roundtrip payload; on `already_finished` the bubble flips to a visible `not_applied` state and the composer is prefilled (no-clobber), instead of hanging on "sent" forever with the text gone.
+- **Idle-based turn watchdog (`06d2580`)** — the sidecar watchdog resets on every NDJSON event for the run (default idle 600 s via `ZELARI_SIDECAR_TURN_IDLE_TIMEOUT_SECS`, min 60 s; wall cap raised to 3000 s, above the 45 min tentacle ceiling), a cooperative cancel now waits a 60 s grace window for a late `run.turn` settlement instead of discarding it, and the error message no longer speculates about network egress.
+- **Locked-spine degradation is no longer silent (`11be3a9`)** — resuming a session whose spine lock cannot be taken now emits the same explicit warning as the degraded case, instead of silently running without derived context.
+
+### Tests
+
+- New suites: `selfKillGuard` (lethal patterns win/posix + negatives), writer takeover (dead PID / live PID fresh heartbeat / frozen heartbeat / >10 min staleness), spine lock sweep, locked-branch warning, folder-switch planner, steer noop recovery, sidecar log ring buffer, persisted follow-ups.
+
 ## [2.22.0] - 2026-09-01
 
 Minor: Desktop reliability hardening — the end-to-end answer to "the model never answers" on clean machines. Per-turn watchdog + child recycling on the Tauri sidecar, sidecar status surfaced in the chat UI, persistent sidecar logs, connect/idle stream timeouts for the last two bare-fetch providers, and the Node ≥ 24 requirement made consistent across doctor, preflight and Desktop spawn errors.
