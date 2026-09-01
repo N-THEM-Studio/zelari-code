@@ -138,17 +138,40 @@ const SPINE_BIND_WAIT: Duration = Duration::from_secs(30);
 /// After a cooperative cancel is delivered, how long we keep waiting for the
 /// run.turn settlement before giving up on it (visible typed error).
 const CANCEL_GRACE: Duration = Duration::from_secs(30);
+/// After the watchdog (idle/wall) fires and the cooperative cancel is sent,
+/// how long the run.turn channel stays open for a late settlement: a run
+/// that actually finishes inside the window returns its REAL result — the
+/// work is not discarded. Only a silent expiry surfaces the typed timeout.
+const TURN_TIMEOUT_GRACE: Duration = Duration::from_secs(60);
 
 /// Per-turn watchdog (field report: "the model never answers on clean PCs").
-/// A run.turn that never settles — provider fetch hanging on blocked network
-/// egress, CLI stuck mid-turn — used to poll FOREVER with no error and no
-/// event: an infinite silent spinner. Every turn now gets a deadline; past
-/// it the run fails with the typed error `turn_timeout`, which surfaces in
-/// chat like every other run_task Err. Default 30 min (mission/council turns
-/// are legitimately long); override with ZELARI_SIDECAR_TURN_TIMEOUT_SECS,
-/// clamped to >= 60s so a typo cannot insta-kill legitimate turns.
-const TURN_TIMEOUT_DEFAULT_SECS: u64 = 1800;
+/// A run.turn that never settles — provider fetch hanging, CLI stuck
+/// mid-turn — used to poll FOREVER with no error and no event: an infinite
+/// silent spinner. The watchdog is IDLE-based: a turn only fails when NO
+/// NDJSON event has been received for it for TURN_IDLE_TIMEOUT — a
+/// legitimately working turn (silent model thinking, a 45-min tentacle)
+/// keeps refreshing the idle clock with every event and is never killed
+/// mid-flight. The wall cap is the structural backstop: TURN_TIMEOUT bounds
+/// even a chatty turn (default 3000s = max tentacle 45' via
+/// TASK_TOOL_TIMEOUT_MS + 5' buffer; mission/council turns are legitimately
+/// long). Past either limit the run fails with the typed error
+/// `turn_timeout`, which surfaces in chat like every other run_task Err.
+/// Env overrides: ZELARI_SIDECAR_TURN_IDLE_TIMEOUT_SECS (clamped >= 30s)
+/// and ZELARI_SIDECAR_TURN_TIMEOUT_SECS (clamped >= 60s) — a typo cannot
+/// insta-kill legitimate turns.
+const TURN_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 600;
+const TURN_IDLE_TIMEOUT_MIN_SECS: u64 = 30;
+const TURN_TIMEOUT_DEFAULT_SECS: u64 = 3000;
 const TURN_TIMEOUT_MIN_SECS: u64 = 60;
+
+fn turn_idle_timeout() -> Duration {
+    let secs = std::env::var("ZELARI_SIDECAR_TURN_IDLE_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(TURN_IDLE_TIMEOUT_DEFAULT_SECS)
+        .max(TURN_IDLE_TIMEOUT_MIN_SECS);
+    Duration::from_secs(secs)
+}
 
 fn turn_timeout() -> Duration {
     let secs = std::env::var("ZELARI_SIDECAR_TURN_TIMEOUT_SECS")
@@ -157,6 +180,16 @@ fn turn_timeout() -> Duration {
         .unwrap_or(TURN_TIMEOUT_DEFAULT_SECS)
         .max(TURN_TIMEOUT_MIN_SECS);
     Duration::from_secs(secs)
+}
+
+/// Wall-clock milliseconds since UNIX_EPOCH — the idle-watchdog time base
+/// (the reader thread stamps it; the run thread reads it; an Instant cannot
+/// be shared across that boundary).
+fn unix_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Typed protocol/transport error. `code` mirrors the server error codes
@@ -265,6 +298,10 @@ pub(crate) struct HarnessSidecar {
     run_sessions: Mutex<HashMap<String, String>>,
     /// run_id → live BrainEvent sink (the run thread forwards to the UI).
     sinks: Mutex<HashMap<String, Sender<Value>>>,
+    /// run_id → last NDJSON event received for that run (ms since
+    /// UNIX_EPOCH). The reader stamps it on every routed/broadcast event
+    /// line (any type); long_turn's idle watchdog reads it.
+    run_activity: Mutex<HashMap<String, Arc<AtomicU64>>>,
     /// Fresh (non-resumed) runs awaiting their spine binding, FIFO.
     awaiting_spine: Mutex<Vec<String>>,
     /// One-shot bind notification per awaiting fresh run.
@@ -290,6 +327,7 @@ impl HarnessSidecar {
             spine_routes: Mutex::new(HashMap::new()),
             run_sessions: Mutex::new(HashMap::new()),
             sinks: Mutex::new(HashMap::new()),
+            run_activity: Mutex::new(HashMap::new()),
             awaiting_spine: Mutex::new(Vec::new()),
             bind_notify: Mutex::new(HashMap::new()),
             harness_states: Mutex::new(HashMap::new()),
@@ -634,32 +672,49 @@ impl HarnessSidecar {
 
     /// Long-running turn request: polls the response so the cancel flag and
     /// the event pump stay live (thinking phases can be silent for minutes —
-    /// same reason the old spawn_headless polled with recv_timeout).
+    /// same reason the old spawn_headless polled with recv_timeout). The
+    /// watchdog is IDLE-based (`last_event_ms` is stamped by the reader on
+    /// every NDJSON event for this run) with the wall cap as backstop, plus
+    /// a grace window that returns a late post-cancel settlement.
     fn long_turn(
         &self,
         session_id: &str,
         turn_input: Value,
         cancel: &AtomicBool,
+        last_event_ms: &AtomicU64,
         on_tick: &mut dyn FnMut(),
     ) -> Result<Value, HarnessError> {
+        let started = Instant::now();
         let in_flight = self.write_request("run.turn", turn_input)?;
         let mut cancel_delivered = false;
         let mut cancel_deadline: Option<Instant> = None;
-        let timeout = turn_timeout();
-        let turn_deadline = Instant::now() + timeout;
+        let idle_timeout = turn_idle_timeout();
+        let wall_timeout = turn_timeout();
+        let wall_deadline = started + wall_timeout;
         loop {
             if let Some(result) = in_flight.poll() {
                 return result;
             }
             on_tick();
-            // Per-turn watchdog: no settlement past the deadline = typed
+            // Per-turn watchdog: IDLE first (no event for this run within
+            // idle_timeout = the agent stopped producing output) or the
+            // wall cap (absolute ceiling even for a chatty turn) = typed
             // error, never an infinite silent spinner.
-            if Instant::now() >= turn_deadline {
-                in_flight.detach();
+            let idle_secs = unix_millis()
+                .saturating_sub(last_event_ms.load(Ordering::SeqCst))
+                / 1000;
+            let idle_fired = idle_secs >= idle_timeout.as_secs();
+            let wall_fired = Instant::now() >= wall_deadline;
+            if idle_fired || wall_fired {
+                // Both limits crossed inside one poll quantum: report the
+                // structural backstop.
+                let kind = if wall_fired { "wall" } else { "idle" };
                 // Best-effort cleanup: the request is abandoned but the CLI
                 // may still be running it (holding the session's spine
                 // lock). If session.cancel at least answers, the session
-                // unwinds cooperatively and the child stays alive.
+                // unwinds cooperatively and the child stays alive. The
+                // run.turn pending channel stays OPEN through the grace
+                // window below (detaching here would DROP the settlement).
                 let cancel_outcome = self.roundtrip(
                     "session.cancel",
                     json!({ "sessionId": session_id, "reason": "turn_timeout" }),
@@ -681,11 +736,24 @@ impl HarnessSidecar {
                         kill_pid_tree(pid);
                     }
                 }
+                // Grace window: if the run actually settles after the
+                // cooperative cancel, return its REAL result — the work is
+                // not discarded. A hung CLI (tree killed above) answers via
+                // the supervisor's `sidecar_died` failure of this channel.
+                let grace_deadline = Instant::now() + TURN_TIMEOUT_GRACE;
+                while Instant::now() < grace_deadline {
+                    if let Some(result) = in_flight.poll() {
+                        return result;
+                    }
+                    on_tick();
+                    thread::sleep(POLL);
+                }
+                in_flight.detach();
                 return Err(HarnessError::new(
                     "turn_timeout",
                     format!(
-                        "run.turn did not settle within {}s — the model call may be hanging (network egress?); details in logs/zelari-sidecar.log",
-                        timeout.as_secs()
+                        "run.turn idle for {idle_secs}s (wall {}s, limit {kind}) — no events from the agent; see sidecar diagnostics",
+                        started.elapsed().as_secs()
                     ),
                 ));
             }
@@ -809,11 +877,18 @@ impl HarnessSidecar {
 
         // Per-run event sink: the reader thread routes routed/broadcast
         // events here; the tick closure below forwards them to the UI.
+        // The companion activity clock starts now: with no event at all the
+        // idle watchdog counts silence from turn start.
         let (evt_tx, evt_rx) = mpsc::channel::<Value>();
         self.sinks
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(run_id.to_string(), evt_tx);
+        let activity = Arc::new(AtomicU64::new(unix_millis()));
+        self.run_activity
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(run_id.to_string(), Arc::clone(&activity));
         let mut pump = || {
             while let Ok(event) = evt_rx.try_recv() {
                 on_event(event);
@@ -824,7 +899,7 @@ impl HarnessSidecar {
             turn_input = json!({});
         }
         turn_input["sessionId"] = json!(session_id);
-        let result = self.long_turn(&session_id, turn_input, cancel, &mut pump);
+        let result = self.long_turn(&session_id, turn_input, cancel, &activity, &mut pump);
 
         // Wait (bounded) for the spine binding so the slot is released as
         // soon as routing is deterministic — fresh runs only.
@@ -835,6 +910,10 @@ impl HarnessSidecar {
         // Cleanup routing state (spine_routes is kept: late events still
         // route to the finished run's dropped sink and clean up lazily).
         self.sinks
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(run_id);
+        self.run_activity
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(run_id);
@@ -871,9 +950,13 @@ impl HarnessSidecar {
     }
 
     /// send_control target: route a desktop ControlEvent to the run's
-    /// harness session. Unknown method (t32-less CLI) = typed visible error,
-    /// never a crash and never a silent fallback.
-    pub(crate) fn steer_run(&self, run_id: &str, event: &Value) -> Result<(), String> {
+    /// harness session. Returns the harness result payload (the value under
+    /// "result" in the response envelope — the CLI answers a steer with
+    /// {accepted, outcome, controlId, controlType}; outcome
+    /// "already_finished" when no live turn exists). Unknown method
+    /// (t32-less CLI) = typed visible error, never a crash and never a
+    /// silent fallback.
+    pub(crate) fn steer_run(&self, run_id: &str, event: &Value) -> Result<Value, String> {
         let session = {
             let guard = self.run_sessions.lock().unwrap_or_else(|e| e.into_inner());
             guard.get(run_id).cloned()
@@ -902,7 +985,7 @@ impl HarnessSidecar {
             self.roundtrip("session.steer", params)
         };
         match res {
-            Ok(_) => Ok(()),
+            Ok(result) => Ok(result),
             Err(err) if err.is_unknown_method() => Err(format!(
                 "this CLI build has no session-scoped controls (no {kind} support): {err}"
             )),
@@ -1062,7 +1145,24 @@ impl HarnessSidecar {
         }
     }
 
+    /// Reader-side activity stamp: EVERY NDJSON event line routed to a run
+    /// (any type) refreshes its idle-watchdog clock. Broadcast lines count
+    /// for every live run — duplicated setup logs are cosmetic, a false
+    /// idle kill would not be.
+    fn touch_run_activity(&self, run_id: &str) {
+        let clock = self
+            .run_activity
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(run_id)
+            .cloned();
+        if let Some(clock) = clock {
+            clock.store(unix_millis(), Ordering::SeqCst);
+        }
+    }
+
     fn send_to_run(&self, run_id: &str, event: Value) {
+        self.touch_run_activity(run_id);
         let tx = {
             let sinks = self.sinks.lock().unwrap_or_else(|e| e.into_inner());
             sinks.get(run_id).cloned()
@@ -1083,7 +1183,8 @@ impl HarnessSidecar {
             let sinks = self.sinks.lock().unwrap_or_else(|e| e.into_inner());
             sinks.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
         };
-        for (_, tx) in targets {
+        for (run_id, tx) in targets {
+            self.touch_run_activity(&run_id);
             let _ = tx.send(event.clone());
         }
     }

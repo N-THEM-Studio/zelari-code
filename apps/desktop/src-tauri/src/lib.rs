@@ -2493,16 +2493,18 @@ fn plugins_install(args: PluginsInstallArgs) -> Result<serde_json::Value, String
 /// harness_sidecar (the sidecar transport owns the process stdin).
 /// Write one NDJSON ControlEvent to a running run's harness session.
 /// Accepts steer / follow_up / cancel — routed over the sidecar's
-/// session-scoped protocol (session.steer / session.cancel). On CLI builds
-/// without those methods the typed `unknown_method` error surfaces to the
-/// caller: visible, no crash, and NEVER a fallback to a bare --headless
-/// spawn's stdin bridge.
+/// session-scoped protocol (session.steer / session.cancel). Resolves with
+/// the harness result payload on success (the CLI answers a steer with
+/// {accepted, outcome, controlId, controlType}; outcome "already_finished"
+/// when no live turn exists). On CLI builds without those methods the typed
+/// `unknown_method` error surfaces to the caller: visible, no crash, and
+/// NEVER a fallback to a bare --headless spawn's stdin bridge.
 #[tauri::command]
 fn send_control(
     sidecar: State<'_, Arc<HarnessSidecar>>,
     run_id: String,
     event: serde_json::Value,
-) -> Result<(), String> {
+) -> Result<serde_json::Value, String> {
     let obj = event.as_object().ok_or("control event must be a JSON object")?;
     let kind = obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
     if kind.is_empty() {
