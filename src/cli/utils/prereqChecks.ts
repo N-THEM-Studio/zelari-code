@@ -38,8 +38,8 @@ import { execSync, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { dirname } from "node:path";
 
-/** Minimum Node major version (mirrors `engines.node` ">=20.0.0" in package.json). */
-const MIN_NODE_MAJOR = 20;
+/** Minimum Node major version (mirrors `engines.node` ">=24.0.0" in package.json). */
+const MIN_NODE_MAJOR = 24;
 
 export interface PrereqResult {
   ok: boolean;

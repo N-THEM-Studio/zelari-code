@@ -168,19 +168,19 @@ afterEach(() => {
 });
 
 describe("prereqChecks — agent-shell-aware probes", () => {
-  it("checkAgentNode OKs when bash sees node >= 20", async () => {
+  it("checkAgentNode OKs when bash sees node >= 24", async () => {
     applyScenario({
       platform: "win32",
       env: { ZELARI_SHELL: "C:\\fake\\bash.exe" },
       bashPathExists: true,
-      bashProbe: { stdout: "v20.11.1\n", status: 0 },
+      bashProbe: { stdout: "v24.11.1\n", status: 0 },
     });
     const { checkAgentNode } = await importFresh();
     const r = checkAgentNode();
     expect(r.ok).toBe(true);
     expect(r.tool).toBe("node");
     expect(r.severity).toBe("critical");
-    expect(r.message).toContain("20.11.1");
+    expect(r.message).toContain("24.11.1");
   });
 
   it("checkAgentNode FAILs (critical) when bash does NOT see node — the bug we fix", async () => {
@@ -191,7 +191,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
       env: { ZELARI_SHELL: "C:\\fake\\bash.exe" },
       bashPathExists: true,
       bashProbe: { stdout: "", status: 127 }, // bash can't find node
-      mainProbe: { stdout: "v20.11.1\n" }, // main process finds node fine
+      mainProbe: { stdout: "v24.11.1\n" }, // main process finds node fine
     });
     const { checkAgentNode, checkMainNode } = await importFresh();
     const agent = checkAgentNode();
@@ -204,7 +204,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
     expect(main.ok).toBe(true);
   });
 
-  it("checkAgentNode FAILs when node is too old (< 20)", async () => {
+  it("checkAgentNode FAILs when node is too old (< 24)", async () => {
     // On POSIX the agent shell is /bin/sh, so probeTool uses execSync (not
     // spawnSync). We drive it via mainProbe.stdout.
     applyScenario({
@@ -216,7 +216,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
     expect(r.ok).toBe(false);
     expect(r.severity).toBe("critical");
     expect(r.message).toContain("18.19.0");
-    expect(r.message).toContain("20");
+    expect(r.message).toContain("24");
   });
 
   it("checkAgentNode WARNs (not fails) when version string is unparseable", async () => {
@@ -281,7 +281,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
       platform: "win32",
       whereBash: { stdout: "", status: 1 },
       powershellExists: true,
-      bashProbe: { stdout: "v20.11.1\n", status: 0 },
+      bashProbe: { stdout: "v24.11.1\n", status: 0 },
     });
     const { checkAgentBash } = await importFresh();
     const r = checkAgentBash();
@@ -321,7 +321,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
       // to assert the WSL rejection contract. PowerShell tests are separate.
       powershellExists: false,
       // cmd.exe probe (execSync) finds node:
-      mainProbe: { stdout: "v20.11.1\n" },
+      mainProbe: { stdout: "v24.11.1\n" },
     });
     const { checkAgentBash, checkAgentNode, runPrereqChecks, isWslBashPath } =
       await importFresh();
@@ -341,7 +341,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
 
     const node = checkAgentNode();
     expect(node.ok).toBe(true);
-    expect(node.message).toContain("20.11.1");
+    expect(node.message).toContain("24.11.1");
 
     const run = runPrereqChecks({ mode: "preflight" });
     expect(run.hasCriticalFail).toBe(false);
@@ -354,7 +354,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
       bashPathExists: true,
       whereBash: { stdout: "", status: 1 },
       powershellExists: false,
-      mainProbe: { stdout: "v22.0.0\n" },
+      mainProbe: { stdout: "v24.0.0\n" },
     });
     const { checkAgentBash, checkAgentNode } = await importFresh();
     expect(checkAgentBash().ok).toBe(false);
@@ -383,7 +383,7 @@ describe("runPrereqChecks — aggregation", () => {
       platform: "win32",
       env: { ZELARI_SHELL: "C:\\fake\\bash.exe" },
       bashPathExists: true,
-      bashProbe: { stdout: "v20.11.1\n", status: 0 },
+      bashProbe: { stdout: "v24.11.1\n", status: 0 },
     });
     const { runPrereqChecks } = await importFresh();
     const r = runPrereqChecks({ mode: "preflight" });
