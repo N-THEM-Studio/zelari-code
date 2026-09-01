@@ -224,12 +224,19 @@ function checkNode(
     return WARN(`could not parse node version: ${raw}`);
   }
   const major = Number(m[1]);
-  if (major < 20) {
+  // Read the REAL engines requirement instead of a hardcoded "< 20":
+  // engines.node is ">= 24.0.0" today and the old check kept green-lighting
+  // Node 20/22 installs (missing node:sqlite, degraded memory). Fallback 20
+  // preserves the old behavior for packages without an engines field.
+  const enginesNode = pkg?.engines?.node;
+  const requiredMajor = Number(enginesNode?.match(/\d+/)?.[0] ?? 20);
+  if (major < requiredMajor) {
     return FAIL(
-      `node ${raw} is older than the required engines.node (>= 20.0.0)`,
+      `node ${raw} is older than the required engines.node (${enginesNode ?? ">= 20.0.0"})\n` +
+        `         fix:  install Node.js ${requiredMajor}+ (LTS) and reopen the terminal`,
     );
   }
-  return OK(`node ${raw}`);
+  return OK(`node ${raw} (engines.node ${enginesNode ?? ">= 20.0.0"})`);
 }
 
 /** Check the CLI bundle exists. */
