@@ -50,6 +50,7 @@
     "eval:gate": "node --experimental-strip-types tools/eval/runGate.ts",
 "eval:measured": "node --experimental-strip-types tools/eval/runMeasured.ts",
 "evidence:report": "node --experimental-strip-types tools/eval/runEvidenceReport.ts",
+"evolve:propose": "node --experimental-strip-types tools/eval/runEvolvePropose.ts",
     "test:eval": "vitest run tools/eval",
     "test:memory": "vitest run packages/core/src/memory/scoring.test.ts tests/unit/core-agentHarness-memory.test.ts tests/unit/cli-sqliteMemoryV2.test.ts tests/unit/cli-memorySemantic.test.ts tests/unit/cli-memoryMigration.test.ts tests/unit/cli-memoryMcp.test.ts tests/unit/cli-memoryJsonApi.test.ts tests/unit/cli-memoryCommands.test.ts tests/unit/cli-memoryPerformance.test.ts tests/unit/cli-kraken-sharedMemory.test.ts tests/unit/cli-semantic.test.ts tools/eval/memoryMetrics.test.ts"
   },
