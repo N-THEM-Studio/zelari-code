@@ -836,6 +836,15 @@ impl HarnessSidecar {
             .remove(run_id);
         drop(slot);
 
+        // Release the kernel session (the desktop creates one per run; without
+        // this they accumulate in the server until process death — the
+        // companion runManager disposes after every settled run, the desktop
+        // must too). Best-effort: a dead sidecar or an already-unknown session
+        // must not fail the settled turn; bounded by ROUNDTRIP_TIMEOUT.
+        if let Err(err) = self.roundtrip("session.dispose", json!({ "sessionId": session_id.as_str() })) {
+            eprintln!("[harness-sidecar] session.dispose({session_id}) after run failed: {err}");
+        }
+
         // Flush whatever the reader routed while the turn was settling.
         pump();
 
