@@ -306,6 +306,18 @@ export class SessionSpineMirror {
     } catch (err) {
       if (err instanceof SessionLogLockedError) {
         mirror.status = 'locked';
+        // Same visibility as the degraded branch: a locked resume IS a
+        // degraded resume. Same warnOnce helper + same stderr channel — the
+        // spine writer is null here, so no spine `note` event can land
+        // (sessionSpine owns no NDJSON emitter; the boot sweep in
+        // harnessServer.ts reclaims the provably-dead-owner locks, so a
+        // `locked` status here means a live-looking lock). Name the failure
+        // mode precisely so hosts/Desktop can surface it verbatim.
+        mirror.warnOnce(
+          err,
+          `session lock held by another (possibly dead) owner: ${err.message} — the turn resumed WITHOUT derived spine context`,
+          'locked',
+        );
       } else {
         mirror.status = 'degraded';
         mirror.warnOnce(err);
@@ -683,13 +695,13 @@ export class SessionSpineMirror {
     return this.append(input);
   }
 
-  private warnOnce(err: unknown): void {
+  private warnOnce(err: unknown, message?: string, label = 'degraded'): void {
     if (this.warned || this.options.quiet) return;
     this.warned = true;
-    const msg = err instanceof Error ? err.message : String(err);
+    const msg = message ?? (err instanceof Error ? err.message : String(err));
     try {
       process.stderr.write(
-        `[zelari] session spine degraded for ${this.sessionId.slice(0, 8)}…: ${msg} (transcript continues on the 1.x log)\n`,
+        `[zelari] session spine ${label} for ${this.sessionId.slice(0, 8)}…: ${msg} (transcript continues on the 1.x log)\n`,
       );
     } catch {
       /* stderr gone — nothing more to do */

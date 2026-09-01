@@ -5,7 +5,7 @@
  * lock, message-delta coalescing, user.message logging (the P1 gap), the
  * declared-discrete-fallback degradation, and the kill switch.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -197,6 +197,30 @@ describe('SessionSpineMirror.adopt', () => {
     await first.close();
     const report = await readSessionLog(path.join(tmp, 'sess-c', 'events.jsonl'));
     expect(report.events.some((e) => e.kind === 'user.message')).toBe(true);
+  });
+
+  it('a locked resume is LOUD: warns once on stderr like the degraded branch', async () => {
+    const first = await SessionSpineMirror.adopt('sess-lock', { baseDir: tmp, quiet: true });
+    const stderr: string[] = [];
+    const spy = vi
+      .spyOn(process.stderr, 'write')
+      .mockImplementation(((chunk: unknown) => {
+        stderr.push(String(chunk));
+        return true;
+      }) as typeof process.stderr.write);
+    try {
+      // NOT quiet — the locked branch must emit the warnOnce note itself.
+      const second = await SessionSpineMirror.adopt('sess-lock', { baseDir: tmp });
+      expect(second.status).toBe('locked');
+      const out = stderr.join('');
+      expect(out).toContain('session spine locked for sess-lo');
+      expect(out).toContain('possibly dead');
+      expect(out).toContain('WITHOUT derived spine context');
+      expect(out).toContain('Session log is locked by another writer');
+    } finally {
+      spy.mockRestore();
+      await first.close();
+    }
   });
 
   it('degrades silently when the sessions dir cannot be created', async () => {
