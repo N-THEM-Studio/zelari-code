@@ -5,6 +5,24 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.26.0] - 2026-09-02
+
+Minor: plan-task hygiene wave — declared-vs-observed enforcement for `.zelari/plan.json` tasks (`files`, `reopened`/`stale`/`overlap` signals on the Kraken radio), the evolve pipeline Fase 3.0, and the ADR-0033 edit bench harness.
+
+### Added
+
+- **Plan task model: `files` / `completedAt` / `flags` (t56, `e78b9f1`)** — `PlanTask` gains root-relative declared globs (`files`, shared normalizer, cap 32 entries × 260 chars), set-once `completedAt` (first completion, reopen-safe) and advisory `flags` (`reopened` | `stale` | `overlap`); `task_create`/`task_update` Zod accept `files` (plus council `fileRefs` alias) and council `createTask` stubs copy them into the plan record.
+- **`ToolRegistry.setToolResultListener` (t57, `b364d2d`)** — in-process post-result seam in `@zelari/core`: a sync, fail-open listener observes every executed tool result (`{toolName, toolInput, ok}`) at the same point as the Post hook. No new deps, no JSON hook protocol.
+- **TaskTouchGuard — reopened guard (t58, `e2fad16`)** — cross-session declared-vs-observed guard wired once in `createBuiltinToolRegistry` (covers TUI and headless): a mutating write landing on a completed task's `files` after `completedAt` flags the task `reopened`, appends an evidence note and emits a `task_reopened` Kraken radio event (throttled one signal per task per session, fail-open).
+- **Session-start staleness sweep (t59, `c2acf7d`)** — `runTaskStalenessCheck` advisory sweep: completed tasks whose declared `files` have git commits newer than `completedAt` (threshold 24h, env `ZELARI_TASK_STALE_HOURS`) get flagged `stale` plus a `task_stale` radio event; new never-throw `gitLogSince` wrapper in `gitOps`.
+- **Overlap guard (t60, `8748b9b`)** — `task_create` and `task_update`→`in_progress` with globs intersecting another `in_progress` task (pure `taskOverlap` module reusing the touch-guard vocabulary) flags `overlap` with an advisory note and a `task_overlap` radio event; never blocks the call.
+- **Evolve pipeline Fase 3.0 (t70, `f1999ff`)** — `evolve:validate --with-eval` measures an eval run as a first-class `requiredValidation` row (honest ✓/✗, evidence, suggested decide command; `--eval-baseline` defaults to `latest`, `--eval-command` override used verbatim); `runMeasured --fail-insufficient` turns `insufficient-n` verdicts into exit 1 for CI-style evidence rows; the default template pins `--strict --fail-insufficient --min-runs 3` (anti-fabricated-green).
+- **Edit bench harness (t79, `daa8758`)** — `npm run edit:bench`: deterministic 200-patch bench (100 TS + 100 Python across 10 families, mulberry32 fixed seed) comparing the anchored `edit` arm against a legacy-relocating baseline arm built in a git worktree at `v2.23.0`; 3 reps with first-shot fixtures, post-run residual parse-check with calibration probes, raw JSON manifest plus `report.md` delta.
+
+### Fixed
+
+- **Registry early-return skipped the Post hook (t57, `b364d2d`)** — successful string results going through the truncate path returned early, so Post hooks (and the new listener) never saw them; the result now mutates in place and falls through, letting every executed result reach the Post hook.
+
 ## [2.25.0] - 2026-09-02
 
 Minor: ADR-0033 hardening wave — the anchored edit protocol gains its observability and enforcement teeth: file touch events on the spine, an AST gate that auto-reverts syntax-breaking writes, and the CLI catalog finally speaks only the anchored `edit`.
