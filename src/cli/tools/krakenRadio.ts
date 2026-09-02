@@ -45,7 +45,12 @@ export type KrakenRadioKind =
   // Emitted after a verify / spec / conformance verdict lands; the
   // detail carries the LLM meter payload so the desktop can surface a
   // "tightly asserted" vs "loosely claimed" distinction.
-  | 'node_meter';
+  | 'node_meter'
+  // t58 declared-vs-observed guard: a completed task's declared file was
+  // written by a LATER session (sessionStartedAt > completedAt) — the task
+  // got effectively reopened without task_update. contestedFile carries the
+  // touched path; agent is 'task-guard' (taskTouchGuard.ts).
+  | 'task_reopened';
 
 export interface KrakenRadioEvent {
   ts: string;

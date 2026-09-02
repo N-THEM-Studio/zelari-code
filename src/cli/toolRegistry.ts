@@ -25,6 +25,7 @@ import { listFilesTool } from '@zelari/core/harness/tools/builtin/listFiles';
 import { showDiffTool } from '@zelari/core/harness/tools/builtin/diff';
 import { fetchUrlTool, webSearchTool } from '@zelari/core/harness/tools/builtin/web';
 import { resolveSandboxedPath, SandboxViolationError, verifyContainment } from './safety/sandboxPath.js';
+import { createTaskTouchGuard } from './workspace/taskTouchGuard.js';
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
 import {
@@ -433,6 +434,13 @@ export function createBuiltinToolRegistry(
   const gauntletParent = options.gauntletParent === true;
   const allowMutators = !readOnly && !verifyMode && !gauntletParent;
   const allowBash = (allowMutators || verifyMode) && !gauntletParent;
+
+  // t58 declared-vs-observed guard: on parent registries with mutators, flag
+  // completed tasks whose declared files are written by a LATER session
+  // (radio 'task_reopened' + plan.json flag, total fail-open — taskTouchGuard).
+  if (isParent && allowMutators && sessionId) {
+    registry.setToolResultListener(createTaskTouchGuard({ projectRoot: root, sessionId }));
+  }
 
   const permPolicy = options.permissionPolicy ?? defaultPermissionPolicy();
 // P0.A layered policy engine: per-command/per-path rules for THIS agent
