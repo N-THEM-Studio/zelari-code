@@ -5,6 +5,19 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.24.0] - 2026-09-02
+
+Minor: the eval layer (measured, evidence-gated model comparison over the spine) and the anchored edit protocol (ADR-0033) — the two threads that turn "it works" into "we can prove which model/harness variant works better" and make every edit provably anchored to a read.
+
+### Added
+
+- **Eval layer** (6 commits) — variance-aware measured comparison layer (stats, `measuredGate`, `eval:measured`), `--repeat N` anchor runs with an opt-in `minMeasuredRuns` retention floor, spine+skill evidence aggregator (report-only), proposal engine driven by evidence findings, decision loop with a fail-closed evidence gate, and a validation runner that executes `requiredValidation` commands. The fail-closed rule is uniform: no pass without measured evidence.
+- **Anchored edit protocol (ADR-0033, t72–t78)** — every read anchors a `snapshotId` (sha256[:16] of the full pre-truncation content); `apply_diff`/`edit` reject stale snapshots WITHOUT applying and report mismatches with line number + expected/got. The task tool opens a **general⇒verify obligation** per user turn that only a parseable verify PASS extinguishes — open debt at turn end blocks strict done (exit 4) across runOneTurn/TUI/runHeadless (the compiled-done gap previously only a hint in taskTool).
+
+### Fixed
+
+- **Shell-backed command spawns close stdin** — `NodeShellProvider.exec` spawned `cmd.exe`/`/bin/sh` without explicit stdio, so an inherited stdin pipe could leave an accidentally-REPL'd process waiting forever (the intermittent >30s t39 native-pack timeouts on win32, where `cmd.exe /s` quoting can mangle quoted `node -e` arguments). `stdio: ['ignore','pipe','pipe']` now guarantees EOF on stdin; the t39 override command is the quoting-proof builtin `exit 1`.
+
 ## [2.23.0] - 2026-09-01
 
 Minor: session-steer fix wave — closes the "model never answers / agent starts but stalls" family at its roots: the agent can no longer kill its own host process, orphaned session-spine locks no longer block resume, switching folder no longer drags the old project's session along, the turn watchdog is idle-based instead of wall-based, a late steer is never silently dropped, and the sidecar stderr is finally visible in the UI.
