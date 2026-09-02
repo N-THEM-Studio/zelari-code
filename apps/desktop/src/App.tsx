@@ -803,6 +803,35 @@ export default function App() {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [activeCwd, reloadWorkspaceTasks]);
+  // t63: the backend watches `.zelari/plan.json` per workspace and
+  // emits `plan-changed` on out-of-band writes (CLI/council running
+  // while this window is unfocused — the focus guard above only fires
+  // when the user returns). Fail-open: outside the Tauri shell, or with
+  // a bundle that lacks the command, the invoke rejects and the
+  // switch+focus refresh paths keep working unchanged.
+  useEffect(() => {
+    if (!activeCwd) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("watch_plan_changes", { cwd: activeCwd });
+        const { listen } = await import("@tauri-apps/api/event");
+        const off = await listen<{ cwd: string }>("plan-changed", (e) => {
+          void reloadWorkspaceTasks(e.payload.cwd);
+        });
+        if (cancelled) off();
+        else unlisten = off;
+      } catch {
+        /* not in Tauri shell: focus/switch reload still applies */
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [activeCwd, reloadWorkspaceTasks]);
 
   /** Run registry: multiplexed runs across conversations (M2). */
   const runCoordinator = useRunCoordinator();

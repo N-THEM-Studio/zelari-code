@@ -1736,6 +1736,78 @@ struct ReadProjectTextDto {
     mtime_ms: u64,
 }
 
+/// t63: dedup registry for plan.json watchers (one thread per workspace).
+struct PlanWatchRegistry {
+    watched: std::sync::Mutex<std::collections::HashSet<String>>,
+}
+
+impl PlanWatchRegistry {
+    fn new() -> Self {
+        PlanWatchRegistry {
+            watched: std::sync::Mutex::new(std::collections::HashSet::new()),
+        }
+    }
+}
+
+/// t63: arm a backend watcher over `<cwd>/.zelari/plan.json`.
+///
+/// Emits `plan-changed` `{cwd}` when the file signature (mtime+size)
+/// changes, so the Project panel refreshes even while the window is
+/// unfocused (out-of-band CLI/council writes — the focus reload cannot
+/// see those until the user returns). Std-only poller (no new crates,
+/// per repo conventions): one detached thread per distinct workspace,
+/// deduped by canonical path via PlanWatchRegistry. The first read is a
+/// baseline (no emit); deletions never emit (nothing to reload). The
+/// payload carries the ORIGINAL cwd string so the frontend reloads the
+/// exact key it knows (fs::canonicalize would return a \\?\ verbatim
+/// prefix on Windows).
+#[tauri::command]
+fn watch_plan_changes(
+    cwd: String,
+    app: tauri::AppHandle,
+    state: tauri::State<'_, std::sync::Arc<PlanWatchRegistry>>,
+) -> Result<(), String> {
+    use tauri::Emitter;
+    let root = fs::canonicalize(&cwd).map_err(|e| format!("Cannot resolve cwd: {e}"))?;
+    let key = root.display().to_string();
+    {
+        let mut guard = state.watched.lock().unwrap_or_else(|e| e.into_inner());
+        if !guard.insert(key.clone()) {
+            return Ok(()); // already watching this workspace
+        }
+    }
+    let plan_path = root.join(".zelari").join("plan.json");
+    std::thread::spawn(move || {
+        let mut last: Option<(u64, u64)> = None;
+        let mut primed = false;
+        loop {
+            let sig = fs::metadata(&plan_path).ok().and_then(|m| {
+                let mt = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                Some((mt, m.len()))
+            });
+            if !primed {
+                last = sig;
+                primed = true;
+            } else if sig != last {
+                if sig.is_some() {
+                    let _ = app.emit(
+                        "plan-changed",
+                        serde_json::json!({ "cwd": cwd }),
+                    );
+                }
+                last = sig;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1200));
+        }
+    });
+    Ok(())
+}
+
 #[tauri::command]
 fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, String> {
     let root = args
@@ -2992,6 +3064,7 @@ pub fn run() {
         .manage(Arc::new(RunRegistry::default()))
         .manage(Arc::new(CompanionServeState::default()))
         .manage(Arc::new(HarnessSidecar::new()))
+        .manage(Arc::new(PlanWatchRegistry::new()))
         .invoke_handler(tauri::generate_handler![
             get_cli_status,
             get_app_config,
@@ -3028,7 +3101,8 @@ pub fn run() {
             set_ssh_target,
             remove_ssh_target,
             test_ssh_target,
-            print_ssh_pubkey
+            print_ssh_pubkey,
+            watch_plan_changes
         ])
         .build(tauri::generate_context!())
         .expect("error while building Zelari Desktop")
