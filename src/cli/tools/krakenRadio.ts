@@ -50,7 +50,13 @@ export type KrakenRadioKind =
   // written by a LATER session (sessionStartedAt > completedAt) — the task
   // got effectively reopened without task_update. contestedFile carries the
   // touched path; agent is 'task-guard' (taskTouchGuard.ts).
-  | 'task_reopened';
+  | 'task_reopened'
+  // t59 session-start staleness sweep: a completed task's declared files
+  // were changed by commits landed AFTER its completedAt (and the task is
+  // older than the stale threshold, default 24h) — advisory-only per
+  // ADR 0023. contestedFile carries the first declared glob; agent is
+  // 'task-guard' (taskStaleness.ts).
+  | 'task_stale';
 
 export interface KrakenRadioEvent {
   ts: string;

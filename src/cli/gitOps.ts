@@ -72,6 +72,37 @@ export async function isGitRepo(cwd: string = process.cwd()): Promise<boolean> {
   return out?.trim() === 'true';
 }
 
+export interface LogSinceOptions {
+  /** Cap on returned lines. Default 50. */
+  maxLines?: number;
+}
+
+/**
+ * Best-effort `git log --oneline --since=<sinceIso> -- <paths>` wrapper.
+ *
+ * Advisory-only staleness input (t59, plan P1.5): returns commit subject
+ * lines (newest first); empty array on error, non-repo, empty pathspec or
+ * no matches. Never throws. Task `files` globs are root-relative POSIX
+ * pathspecs — git's default fnmatch makes `star` span directories, so
+ * suffix globs and subtree patterns behave as declared.
+ */
+export async function gitLogSince(
+  cwd: string,
+  sinceIso: string,
+  paths: readonly string[],
+  opts: LogSinceOptions = {},
+): Promise<string[]> {
+  const safe = paths.filter((p): p is string => typeof p === 'string' && p.trim().length > 0);
+  if (safe.length === 0) return [];
+  const out = await git(cwd, ['log', '--oneline', `--since=${sinceIso}`, '--', ...safe]);
+  if (out === null) return [];
+  const lines = out
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
+  return lines.slice(0, opts.maxLines ?? 50);
+}
+
 /**
  * Read the working-tree diff. Combines `git diff` (unstaged) and, when
  * `staged: true`, `git diff --cached` (staged).

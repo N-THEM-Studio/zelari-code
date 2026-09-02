@@ -26,6 +26,7 @@ import { showDiffTool } from '@zelari/core/harness/tools/builtin/diff';
 import { fetchUrlTool, webSearchTool } from '@zelari/core/harness/tools/builtin/web';
 import { resolveSandboxedPath, SandboxViolationError, verifyContainment } from './safety/sandboxPath.js';
 import { createTaskTouchGuard } from './workspace/taskTouchGuard.js';
+import { runTaskStalenessCheck } from './workspace/taskStaleness.js';
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
 import { AuditLogger } from './safety/auditLogger.js';
 import {
@@ -440,6 +441,10 @@ export function createBuiltinToolRegistry(
   // (radio 'task_reopened' + plan.json flag, total fail-open — taskTouchGuard).
   if (isParent && allowMutators && sessionId) {
     registry.setToolResultListener(createTaskTouchGuard({ projectRoot: root, sessionId }));
+    // t59 session-start staleness sweep: commits landed after completedAt on
+    // declared files of old-enough completed tasks → flag 'stale' + radio
+    // 'task_stale'. Fire-and-forget, advisory-only (ADR 0023).
+    void runTaskStalenessCheck({ projectRoot: root, sessionId });
   }
 
   const permPolicy = options.permissionPolicy ?? defaultPermissionPolicy();
