@@ -342,6 +342,12 @@ export function summarizeArm(armId: string, runs: ArmRunRecord[], parseErrorFile
   };
 }
 
+// Linear ETA (minutes) from done/total and elapsed ms; null when not estimable.
+export function etaMinutesFrom(done: number, total: number, elapsedMs: number): number | null {
+  if (done <= 0 || elapsedMs <= 0 || total <= 0 || done >= total) return null;
+  return ((elapsedMs / done) * (total - done)) / 60000;
+}
+
 /** Publishable delta report (markdown). Descriptive, never a fabricated verdict. */
 export function renderDeltaReport(meta: {
   seed: number;

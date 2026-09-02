@@ -16,8 +16,8 @@
  */
 
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { basename, join, resolve } from 'node:path';
 import { argv, exit } from 'node:process';
 import type { ArmRunRecord, EvalCase } from './arms/types.ts';
 import { runExperiment } from './arms/runner.ts';
@@ -28,6 +28,7 @@ import {
   type ArmSummary,
   type EditBenchPatch,
   editBenchArms,
+  etaMinutesFrom,
   generateEditBenchSet,
   modelPinEnv,
   renderDeltaReport,
@@ -113,6 +114,79 @@ function setupBaselineWorktree(outDir: string, ref: string): string | null {
   return join(wt, 'bin', 'zelari-code.js');
 }
 
+// --status helper: parse the dashed run-dir timestamp back to a start time.
+function parseRunStartedAt(runDir: string): number | null {
+  const m = /^run-(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-(\d{2})-(\d{3})Z$/.exec(basename(runDir));
+  if (!m) return null;
+  const t = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}.${m[5]}Z`);
+  return Number.isFinite(t) ? t : null;
+}
+
+// --status: read-only progress and liveness probe for a live or finished run.
+// A case counts as done when its spine dir exists (fixtures/<arm>/rep-N/<case>/.zelari/sessions);
+// the spine dir mtime is the activity signal. etaMin assumes --reps/--count match the launched run.
+function statusMain(runDir: string, reps: number, casesPerRep: number): number {
+  if (!existsSync(runDir)) {
+    console.error('edit:bench --status: runDir not found: ' + runDir);
+    return 1;
+  }
+  const arms: Record<string, Record<string, { sessions: number; lastActivity: string | null }>> = {};
+  let done = 0;
+  let armCount = 0;
+  let lastMs = 0;
+  const fixtures = join(runDir, 'fixtures');
+  if (existsSync(fixtures)) {
+    for (const arm of readdirSync(fixtures, { withFileTypes: true })) {
+      if (!arm.isDirectory()) continue;
+      armCount++;
+      const armDir = join(fixtures, arm.name);
+      arms[arm.name] = {};
+      for (const rep of readdirSync(armDir, { withFileTypes: true })) {
+        if (!rep.isDirectory() || !rep.name.startsWith('rep-')) continue;
+        const repDir = join(armDir, rep.name);
+        let sessions = 0;
+        let repLast = 0;
+        for (const c of readdirSync(repDir, { withFileTypes: true })) {
+          if (!c.isDirectory()) continue;
+          const spine = join(repDir, c.name, '.zelari', 'sessions');
+          if (!existsSync(spine)) continue;
+          sessions++;
+          const mt = statSync(spine).mtimeMs;
+          if (mt > repLast) repLast = mt;
+        }
+        arms[arm.name][rep.name] = { sessions, lastActivity: repLast > 0 ? new Date(repLast).toISOString() : null };
+        done += sessions;
+        if (repLast > lastMs) lastMs = repLast;
+      }
+    }
+  }
+  const startedAt = parseRunStartedAt(runDir);
+  const total = armCount * reps * casesPerRep;
+  const manifestPath = join(runDir, 'manifest.json');
+  const finished = existsSync(manifestPath);
+  let manifestSummaries: unknown = null;
+  if (finished) {
+    const m = JSON.parse(readFileSync(manifestPath, 'utf8')) as { summaries?: unknown };
+    manifestSummaries = m.summaries ?? null;
+  }
+  console.log(
+    JSON.stringify(
+      {
+        runDir,
+        startedAt: startedAt === null ? null : new Date(startedAt).toISOString(),
+        finished,
+        progress: { done, total, etaMin: startedAt === null ? null : etaMinutesFrom(done, total, Date.now() - startedAt) },
+        lastActivity: lastMs > 0 ? new Date(lastMs).toISOString() : null,
+        arms,
+        manifestSummaries,
+      },
+      null,
+      2,
+    ),
+  );
+  return 0;
+}
+
 function main(): number {
   const model = arg('model');
   const provider = arg('provider') ?? undefined;
@@ -123,8 +197,12 @@ function main(): number {
   const baselineRef = arg('baseline-ref') ?? 'v2.23.0';
   const skipBaseline = argv.includes('--skip-baseline');
 
+  const statusDir = arg('status');
+  if (statusDir !== undefined) return statusMain(resolve(statusDir), reps, count);
+
   if (!model) {
     console.error('usage: runEditBench.ts --model cheap-model-id [--reps N] [--count N] [--baseline-ref git-ref | --baseline-entry path | --skip-baseline] [--out dir]');
+    console.error('       runEditBench.ts --status <runDir> [--reps N] [--count N]  (read-only progress/liveness probe)');
     return 2;
   }
   if (!Number.isFinite(reps) || reps < 1) {

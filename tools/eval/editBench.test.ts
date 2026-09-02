@@ -10,6 +10,7 @@ import {
   EDIT_BENCH_CASES,
   type ArmSummary,
   editBenchArms,
+  etaMinutesFrom,
   generateEditBenchSet,
   modelPinEnv,
   renderDeltaReport,
@@ -156,5 +157,19 @@ describe('summarizeArm + renderDeltaReport', () => {
     expect(md).toContain('residual parse-error files | 5 | 0');
     expect(md).toContain('v2.23.0');
     expect(md).toContain('l\'ADR si riapre');
+  });
+});
+
+describe('etaMinutesFrom', () => {
+  it('estimates linear remaining time', () => {
+    // 50 done in 10 min → 0.2 min per case × 50 remaining = 10 min
+    expect(etaMinutesFrom(50, 100, 10 * 60_000)).toBeCloseTo(10);
+  });
+
+  it('returns null when not estimable (no progress, complete, no elapsed, bad total)', () => {
+    expect(etaMinutesFrom(0, 100, 60_000)).toBeNull();
+    expect(etaMinutesFrom(100, 100, 60_000)).toBeNull();
+    expect(etaMinutesFrom(50, 100, 0)).toBeNull();
+    expect(etaMinutesFrom(50, 0, 60_000)).toBeNull();
   });
 });
