@@ -5,6 +5,20 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.25.0] - 2026-09-02
+
+Minor: ADR-0033 hardening wave — the anchored edit protocol gains its observability and enforcement teeth: file touch events on the spine, an AST gate that auto-reverts syntax-breaking writes, and the CLI catalog finally speaks only the anchored `edit`.
+
+### Added
+
+- **Spine file events (ADR-0033 t75, `c7be1e0`)** — the anchored edit and `write_file` paths now emit `file.read` / `file.applied` / `file.rejected` events on the session spine (core `fileEvents` + CLI `spineFileEvents` wiring, typed in the envelope kinds): every write decision is replayable evidence.
+- **AST post-apply gate (ADR-0033 t76, `c7be1e0`)** — after `edit` / `write_file` land a change, `parseFileSymbolsDiag` re-parses the file: a parse-error auto-reverts the write (the breakage never reaches disk), unsupported extensions loud-skip with a visible reason instead of silently passing.
+- **Anchored-edit catalog switch (ADR-0033 t77, `c7be1e0`)** — the CLI registers the core `edit` tool (sandbox-wrapped, `verifyWrite`); `edit_file` and `apply_diff` leave the default catalog (staying blocked in plan phase for old-session replay classification); `write_file` gains the `file_exists` WriteReject guard with opt-in `overwrite`; resource claims, budget, plan gates and tool heuristics updated for the rename.
+
+### Fixed
+
+- **Legacy registry test updated for the t77 catalog** — `tests/unit/cli-toolRegistry.test.ts` expected the pre-ADR-0033 31-tool list (`apply_diff` + `edit_file`); now asserts the 30-tool anchored catalog.
+
 ## [2.24.0] - 2026-09-02
 
 Minor: the eval layer (measured, evidence-gated model comparison over the spine) and the anchored edit protocol (ADR-0033) — the two threads that turn "it works" into "we can prove which model/harness variant works better" and make every edit provably anchored to a read.
@@ -1981,6 +1995,16 @@ End-to-end against MiniMax-M3 (the model these failures were first reported on):
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [2.19.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [2.25.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
