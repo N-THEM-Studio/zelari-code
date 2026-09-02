@@ -100,6 +100,12 @@ export class NodeShellProvider implements ShellProvider {
         windowsHide: true,
         // POSIX: own process group so the timeout can kill grandchildren too.
         detached: !isWindows,
+        // stdin CLOSED by construction: verification commands (typecheck/
+        // test/build) must never read stdin. On win32, cmd.exe quoting can
+        // mangle a quoted -e argument and drop node into its REPL, which
+        // then waits forever on an inherited pipe nobody closes — the t39
+        // pack hang. EOF on stdin makes any accidental REPL exit instead.
+        stdio: ['ignore', 'pipe', 'pipe'],
       });
       let stdout = '';
       let stderr = '';

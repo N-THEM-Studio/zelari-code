@@ -16,9 +16,12 @@
  * Hermetic by construction:
  * - `cwd` is a fresh mkdtemp WITHOUT package.json, so the repo-adaptive pack
  *   adapter binds nothing and the ONLY command comes from the env override
- *   ZELARI_VERIFY_TYPECHECK_CMD=`node -e "process.exit(1)"` — instant and
- *   deterministic on every machine. The directory MUST exist: an absent cwd
- *   hangs the shell-backed command execution (observed on win32).
+ *   ZELARI_VERIFY_TYPECHECK_CMD=`exit 1` — instant, deterministic on every
+ *   machine and QUOTING-PROOF on win32 (a quoted `node -e "…"` argument can
+ *   be mangled by cmd.exe /s semantics and drop node into its REPL; the
+ *   shell provider now closes stdin, but the command stays builtin-simple).
+ *   The directory MUST exist: an absent cwd hangs the shell-backed command
+ *   execution (observed on win32).
  * - The strict knobs ride opts (strictEnvOverlay), never process.env:
  *   ZELARI_STRICT_DONE / ZELARI_MISSION_STRICT are deleted (defaults ON).
  * - ZELARI_SESSIONS_DIR isolates the session spine; ZELARI_EXTENSIONS=0
@@ -81,8 +84,9 @@ beforeEach(async () => {
   for (const k of ENV_KEYS) savedEnv[k] = process.env[k];
   // Native pack ON with a deterministic-failing typecheck; test/build slots
   // disabled ('' = explicitly off); tiny timeout (default is 10 minutes).
+  // `exit 1` is a shell builtin: no quoting, no node, no REPL — win32-proof.
   process.env.ZELARI_VERIFY_PACK = '1';
-  process.env.ZELARI_VERIFY_TYPECHECK_CMD = 'node -e "process.exit(1)"';
+  process.env.ZELARI_VERIFY_TYPECHECK_CMD = 'exit 1';
   process.env.ZELARI_VERIFY_TEST_CMD = '';
   process.env.ZELARI_VERIFY_BUILD_CMD = '';
   process.env.ZELARI_VERIFY_TIMEOUT_MS = '5000';
