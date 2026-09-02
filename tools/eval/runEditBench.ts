@@ -31,6 +31,7 @@ import {
   etaMinutesFrom,
   generateEditBenchSet,
   modelPinEnv,
+  passRateDeltaPp,
   renderDeltaReport,
   summarizeArm,
 } from './editBench.ts';
@@ -165,9 +166,13 @@ function statusMain(runDir: string, reps: number, casesPerRep: number): number {
   const manifestPath = join(runDir, 'manifest.json');
   const finished = existsSync(manifestPath);
   let manifestSummaries: unknown = null;
+  let delta: ReturnType<typeof passRateDeltaPp> = null;
   if (finished) {
-    const m = JSON.parse(readFileSync(manifestPath, 'utf8')) as { summaries?: unknown };
+    const m = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      summaries?: Array<{ armId: string; passRate: number }>;
+    };
     manifestSummaries = m.summaries ?? null;
+    if (Array.isArray(m.summaries)) delta = passRateDeltaPp(m.summaries);
   }
   console.log(
     JSON.stringify(
@@ -179,6 +184,7 @@ function statusMain(runDir: string, reps: number, casesPerRep: number): number {
         lastActivity: lastMs > 0 ? new Date(lastMs).toISOString() : null,
         arms,
         manifestSummaries,
+        delta,
       },
       null,
       2,

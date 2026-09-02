@@ -348,6 +348,23 @@ export function etaMinutesFrom(done: number, total: number, elapsedMs: number): 
   return ((elapsedMs / done) * (total - done)) / 60000;
 }
 
+/**
+ * Pass-rate delta (percentage points) between candidate and baseline arms.
+ * Descriptive only: the ADR verdict stays a human/pipeline decision.
+ * Returns null when either arm summary is missing.
+ */
+export function passRateDeltaPp(
+  summaries: readonly { armId: string; passRate: number }[],
+  candidateArmId = 'anchored-edit',
+  baselineArmId = 'legacy-relocating',
+): { candidate: number; baseline: number; deltaPp: number } | null {
+  const candidate = summaries.find((s) => s.armId === candidateArmId);
+  const baseline = summaries.find((s) => s.armId === baselineArmId);
+  if (!candidate || !baseline) return null;
+  const deltaPp = Math.round((candidate.passRate - baseline.passRate) * 10000) / 100;
+  return { candidate: candidate.passRate, baseline: baseline.passRate, deltaPp };
+}
+
 /** Publishable delta report (markdown). Descriptive, never a fabricated verdict. */
 export function renderDeltaReport(meta: {
   seed: number;

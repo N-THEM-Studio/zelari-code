@@ -13,6 +13,7 @@ import {
   etaMinutesFrom,
   generateEditBenchSet,
   modelPinEnv,
+  passRateDeltaPp,
   renderDeltaReport,
   summarizeArm,
 } from './editBench.ts';
@@ -171,5 +172,36 @@ describe('etaMinutesFrom', () => {
     expect(etaMinutesFrom(100, 100, 60_000)).toBeNull();
     expect(etaMinutesFrom(50, 100, 0)).toBeNull();
     expect(etaMinutesFrom(50, 0, 60_000)).toBeNull();
+  });
+});
+
+describe('passRateDeltaPp', () => {
+  it('computes percentage-point delta candidate vs baseline', () => {
+    const out = passRateDeltaPp([
+      { armId: 'legacy-relocating', passRate: 0.62 },
+      { armId: 'anchored-edit', passRate: 0.71 },
+    ]);
+    expect(out).not.toBeNull();
+    expect(out?.baseline).toBe(0.62);
+    expect(out?.candidate).toBe(0.71);
+    expect(out?.deltaPp).toBeCloseTo(9);
+  });
+
+  it('returns null when either arm is missing', () => {
+    expect(passRateDeltaPp([{ armId: 'anchored-edit', passRate: 1 }])).toBeNull();
+    expect(passRateDeltaPp([{ armId: 'legacy-relocating', passRate: 1 }])).toBeNull();
+    expect(passRateDeltaPp([])).toBeNull();
+  });
+
+  it('honors custom arm ids', () => {
+    const out = passRateDeltaPp(
+      [
+        { armId: 'base', passRate: 0.5 },
+        { armId: 'cand', passRate: 0.25 },
+      ],
+      'cand',
+      'base',
+    );
+    expect(out?.deltaPp).toBeCloseTo(-25);
   });
 });
