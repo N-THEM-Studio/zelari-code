@@ -25,6 +25,21 @@ export interface TruncateToolResultOptions {
 }
 
 /**
+ * t57 (ADR 0022 seams): payload handed to the in-process post-result
+ * listener. Deliberately minimal — the CLI host (e.g. TaskTouchGuard) only
+ * needs to know which tool ran, with which validated input, and whether it
+ * produced a result (ok:true) or an error (ok:false).
+ */
+export interface ToolResultEvent {
+  toolName: string;
+  toolInput: unknown;
+  ok: boolean;
+}
+
+/** Same-process observer notified after every tool result. Null unsubscribes. */
+export type ToolResultListener = (event: ToolResultEvent) => void;
+
+/**
  * Common hallucinated tool names → canonical registry names. Models trained
  * on other agent stacks routinely call `Read`/`Glob` (Claude Code), `list_dir`
  * (Cursor), or legacy Electron-era names (`searchRAG`) — each such call burns
@@ -161,6 +176,8 @@ export class ToolRegistry {
   private tools = new Map<string, ToolDefinition>();
   /** v0.10.0: lifecycle hooks (PreToolUse/PostToolUse). Null = no hooks. */
   private lifecycleHooks: LifecycleHookRunner | null = null;
+  /** t57: in-process post-result listener (null = none). */
+  private toolResultListener: ToolResultListener | null = null;
   /**
    * Memoized toOpenAITools() result, invalidated on register(). The zod →
    * JSON-schema conversion is recursive and runs for ~20 tools twice per
@@ -189,6 +206,17 @@ export class ToolRegistry {
 
   getLifecycleHooks(): LifecycleHookRunner | null {
     return this.lifecycleHooks;
+  }
+
+  /**
+   * t57 (ADR 0022 seams): in-process, zero-config post-result observer.
+   * Unlike PostToolUse hooks this runs in the same process with no JSON
+   * protocol — meant for CLI hosts (e.g. TaskTouchGuard matching writes
+   * against plan.json globs). Fail-open: a throwing listener never breaks
+   * the tool result. Pass null to unsubscribe.
+   */
+  setToolResultListener(listener: ToolResultListener | null): void {
+    this.toolResultListener = listener;
   }
 
   list(): string[] {
@@ -295,17 +323,16 @@ export class ToolRegistry {
       // v1.5.3 / v1.21.0: truncate large results before they land in the LLM
       // transcript; spill full text to managed dir when truncated so the
       // model can re-open via path. Errors pass through untouched.
+      // t57: mutate in place instead of early-returning — the Post hook and
+      // the post-result listener below must observe EVERY executed result,
+      // including truncated string successes.
       if (result.ok) {
         const tName = options.toolName ?? name;
         if (typeof result.value === 'string') {
-          return {
-            ok: true,
-            value: truncateToolResult(result.value, {
-              toolName: tName,
-            }) as unknown as O,
-          };
-        }
-        if (result.value && typeof result.value === 'object') {
+          result.value = truncateToolResult(result.value, {
+            toolName: tName,
+          }) as unknown as O;
+        } else if (result.value && typeof result.value === 'object') {
           const v = result.value as Record<string, unknown>;
           if (typeof v.content === 'string') {
             v.content = truncateToolResult(v.content, { toolName: tName });
@@ -321,6 +348,16 @@ export class ToolRegistry {
             ok: result.ok,
             error: result.ok ? undefined : ('error' in result ? result.error : undefined),
           });
+        } catch {
+          /* fail-open */
+        }
+      }
+      // t57 (ADR 0022 seams): in-process post-result seam — same point as
+      // the Post hook. Synchronous, fail-open: a throwing listener never
+      // breaks the tool result.
+      if (this.toolResultListener) {
+        try {
+          this.toolResultListener({ toolName: name, toolInput: parsed.data, ok: result.ok });
         } catch {
           /* fail-open */
         }

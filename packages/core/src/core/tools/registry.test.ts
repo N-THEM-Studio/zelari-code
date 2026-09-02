@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { z } from 'zod';
-import { ToolRegistry } from './registry.js';
+import { ToolRegistry, type ToolResultEvent } from './registry.js';
 import type { LifecycleHookRunner } from '../hooks/index.js';
-import { typedOk, type ToolDefinition } from './toolTypes.js';
+import { typedOk, typedErr, type ToolDefinition } from './toolTypes.js';
 
 function def<I, O>(partial: ToolDefinition<I, O>): ToolDefinition<I, O> {
   return partial;
@@ -145,5 +145,74 @@ describe('ToolRegistry.invoke × hook runner failureMode (t22)', () => {
     } finally {
       errSpy.mockRestore();
     }
+  });
+});
+
+describe('ToolRegistry.setToolResultListener (t57)', () => {
+  function listenerRegistry(): { reg: ToolRegistry; seen: ToolResultEvent[] } {
+    const reg = new ToolRegistry();
+    reg.register(
+      def({
+        name: 'echo',
+        description: 'echo',
+        permissions: [],
+        inputSchema: z.object({ value: z.string() }),
+        execute: async (args: { value: string }) => typedOk(args.value),
+      }),
+    );
+    reg.register(
+      def({
+        name: 'boom',
+        description: 'boom',
+        permissions: [],
+        inputSchema: z.object({ value: z.string() }),
+        execute: async () => typedErr('kaboom'),
+      }),
+    );
+    const seen: ToolResultEvent[] = [];
+    return { reg, seen };
+  }
+
+  it('fires with {toolName, toolInput, ok:true} after a successful result', async () => {
+    const { reg, seen } = listenerRegistry();
+    reg.setToolResultListener((e) => seen.push(e));
+    const res = await reg.invoke('echo', { value: 'x' });
+    expect(res.ok).toBe(true);
+    expect(seen).toEqual([{ toolName: 'echo', toolInput: { value: 'x' }, ok: true }]);
+  });
+
+  it('fires with ok:false when the tool returns an error result', async () => {
+    const { reg, seen } = listenerRegistry();
+    reg.setToolResultListener((e) => seen.push(e));
+    const res = await reg.invoke('boom', { value: 'x' });
+    expect(res.ok).toBe(false);
+    expect(seen).toEqual([{ toolName: 'boom', toolInput: { value: 'x' }, ok: false }]);
+  });
+
+  it('a throwing listener never breaks the tool result (fail-open)', async () => {
+    const { reg } = listenerRegistry();
+    reg.setToolResultListener(() => {
+      throw new Error('listener exploded');
+    });
+    const res = await reg.invoke('echo', { value: 'survives' });
+    expect(res).toEqual({ ok: true, value: 'survives' });
+  });
+
+  it('setToolResultListener(null) unsubscribes', async () => {
+    const { reg } = listenerRegistry();
+    const spy = vi.fn();
+    reg.setToolResultListener(spy);
+    reg.setToolResultListener(null);
+    await reg.invoke('echo', { value: 'x' });
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('does not fire on early returns (not-found / invalid input) — same seam point as the Post hook', async () => {
+    const { reg } = listenerRegistry();
+    const spy = vi.fn();
+    reg.setToolResultListener(spy);
+    await reg.invoke('missing_tool', {});
+    await reg.invoke('echo', { wrong: 'shape' });
+    expect(spy).not.toHaveBeenCalled();
   });
 });
