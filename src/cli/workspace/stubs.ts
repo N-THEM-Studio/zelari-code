@@ -313,6 +313,9 @@ function addTaskRecord(
     phaseId,
     status: "pending",
     priority: t.priority,
+    // t56 declared-vs-observed: surface council fileRefs as `files` on the
+    // plan.json record (they already live in tags + the artifact body md).
+    files: t.fileRefs,
   });
   const taskPath = join(ctx.rootDir, "plan-tasks", `${id}.md`);
   const meta: PlanFrontmatter = {

@@ -60,6 +60,30 @@ export const PLAN_TASK_STATUSES: readonly PlanTaskStatus[] = [
 
 export type PlanTaskPriority = 'low' | 'medium' | 'high' | 'critical';
 
+/** Machine flags set by workspace governance (t58–t60); human text in notes. */
+export type PlanTaskFlag = 'reopened' | 'stale' | 'overlap';
+
+export const PLAN_FILES_MAX = 32;
+export const PLAN_FILE_GLOB_MAX = 260;
+
+/**
+ * Trim, drop empties, dedupe (first wins) and cap a declared file-glob list.
+ * Shared normalizer for `task_*` input and council `fileRefs` copies so both
+ * vocabularies land on the same `files` shape (t56 declared-vs-observed).
+ */
+export function normalizePlanTaskFiles(
+  values: readonly (string | undefined)[] | undefined,
+): string[] | undefined {
+  if (values === undefined) return undefined;
+  const out: string[] = [];
+  for (const raw of values) {
+    const v = typeof raw === 'string' ? raw.trim().slice(0, PLAN_FILE_GLOB_MAX) : '';
+    if (!v || out.includes(v) || out.length >= PLAN_FILES_MAX) continue;
+    out.push(v);
+  }
+  return out;
+}
+
 export interface PlanTask {
   id: string;
   /** Human-readable title. Council tasks store the same value in `name`. */
@@ -72,6 +96,12 @@ export interface PlanTask {
   agent?: string;
   createdAt?: string;
   updatedAt?: string;
+  /** Declared file globs (project-root relative) touched by this task. */
+  files?: string[];
+  /** ISO timestamp of the FIRST transition to completed; set once, never rewritten. */
+  completedAt?: string;
+  /** Machine flags ('reopened' | 'stale' | 'overlap'); human detail stays in notes. */
+  flags?: PlanTaskFlag[];
   /** Unknown fields (council `description`, `kind`, `tags`, …) pass through. */
   [key: string]: unknown;
 }

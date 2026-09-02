@@ -24,6 +24,7 @@ import {
   PLAN_MAX_TASKS,
   PLAN_NOTES_MAX,
   PLAN_TITLE_MAX,
+  normalizePlanTaskFiles,
   type PlanTask,
   type PlanTaskPriority,
   type PlanTaskStatus,
@@ -36,6 +37,11 @@ const StatusSchema = z
   );
 
 const PrioritySchema = z.enum(['low', 'medium', 'high', 'critical']);
+
+const FilesSchema = z
+  .array(z.string().min(1).max(260))
+  .max(32)
+  .describe('File globs relative to the project root touched by this task');
 
 const CreateSchema = z.object({
   title: z
@@ -55,6 +61,8 @@ const CreateSchema = z.object({
     .max(PLAN_NOTES_MAX)
     .optional()
     .describe('Optional context/acceptance notes'),
+  files: FilesSchema.optional(),
+  fileRefs: FilesSchema.optional().describe('Alias of files (council vocabulary)'),
 });
 
 const UpdateSchema = z
@@ -65,6 +73,8 @@ const UpdateSchema = z
     priority: PrioritySchema.optional(),
     phaseId: z.string().min(1).max(64).optional(),
     notes: z.string().max(PLAN_NOTES_MAX).optional(),
+    files: FilesSchema.optional().describe('Replace the declared file globs'),
+    fileRefs: FilesSchema.optional().describe('Alias of files (council vocabulary)'),
     appendNote: z
       .string()
       .max(PLAN_NOTES_MAX)
@@ -162,6 +172,9 @@ export function createPlanTaskTools(opts: {
             createdAt: now,
             updatedAt: now,
           };
+          // t56: declared file globs (council `fileRefs` vocabulary accepted).
+          const files = normalizePlanTaskFiles(input.files ?? input.fileRefs);
+          if (files) task.files = files;
           store.tasks.push(task);
           writePlanTaskArtifact(store.rootDir, task);
           return typedOk({ id, task });
@@ -207,9 +220,18 @@ export function createPlanTaskTools(opts: {
             // keep the council `name` alias in sync
             task.name = task.title;
           }
-          if (input.status !== undefined) task.status = input.status as PlanTaskStatus;
+          if (input.status !== undefined) {
+            task.status = input.status as PlanTaskStatus;
+            // First completion wins: completedAt is append-only metadata and
+            // survives reopens (t56) — staleness checks read the original date.
+            if (input.status === 'completed' && task.completedAt === undefined) {
+              task.completedAt = new Date().toISOString();
+            }
+          }
           if (input.priority !== undefined) task.priority = input.priority as PlanTaskPriority;
           if (input.phaseId !== undefined) task.phaseId = input.phaseId.slice(0, 64);
+          const nextFiles = normalizePlanTaskFiles(input.files ?? input.fileRefs);
+          if (nextFiles) task.files = nextFiles;
           if (input.notes !== undefined) {
             task.notes = input.notes.slice(0, PLAN_NOTES_MAX);
           }

@@ -8,7 +8,7 @@
  *
  * @since v1.43.0
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   existsSync,
   mkdirSync,
@@ -21,7 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createPlanTaskTools, type PlanTaskEvent } from '../tools/planTaskTools.js';
 import { createWorkspaceContext, createWorkspaceStubs } from './stubs.js';
-import type { PlanTask } from './planStore.js';
+import { normalizePlanTaskFiles, type PlanTask } from './planStore.js';
 
 let dir: string;
 
@@ -361,5 +361,118 @@ describe('task_* first-class events (ADR-0018 3b)', () => {
     expect(res.ok).toBe(true);
     if (!res.ok) return;
     expect(res.value.id).toBe('t1');
+  });
+});
+
+describe('t56 declared-vs-observed: files / completedAt / flags', () => {
+  it('normalizePlanTaskFiles trims, drops empties, dedupes and caps', () => {
+    expect(normalizePlanTaskFiles(undefined)).toBeUndefined();
+    expect(normalizePlanTaskFiles([' src/a.ts ', '', 'src/a.ts'])).toEqual(['src/a.ts']);
+    const many = Array.from({ length: 40 }, (_, i) => `f${i}.ts`);
+    expect(normalizePlanTaskFiles(many)).toHaveLength(32);
+  });
+
+  it('task_create persists files (and the fileRefs alias) through the store round-trip', async () => {
+    const { create } = makeTools(() => {});
+    const a = await create.execute(
+      { title: 'With files', files: ['src/a.ts', ' src/a.ts ', ''] },
+      toolCtx(),
+    );
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    expect(a.value.task.files).toEqual(['src/a.ts']);
+
+    const b = await create.execute(
+      { title: 'With fileRefs', fileRefs: ['docs/x.md'] },
+      toolCtx(),
+    );
+    expect(b.ok).toBe(true);
+
+    const raw = readPlanJson();
+    expect(raw.tasks[0].files).toEqual(['src/a.ts']);
+    expect(raw.tasks[1].files).toEqual(['docs/x.md']);
+  });
+
+  it('completedAt is set on first completion and never rewritten (reopen-safe)', async () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date('2026-01-01T00:00:00.000Z'));
+      const { create, update } = makeTools(() => {});
+      await create.execute({ title: 'T', files: ['src/t.ts'] }, toolCtx());
+
+      const first = await update.execute({ id: 't1', status: 'completed' }, toolCtx());
+      expect(first.ok).toBe(true);
+      if (!first.ok) return;
+      const stamp = first.value.task.completedAt;
+      expect(stamp).toBe('2026-01-01T00:00:00.000Z');
+
+      vi.setSystemTime(new Date('2026-03-03T00:00:00.000Z'));
+      const reopened = await update.execute(
+        { id: 't1', status: 'in_progress' },
+        toolCtx(),
+      );
+      expect(reopened.ok).toBe(true);
+      if (!reopened.ok) return;
+      expect(reopened.value.task.completedAt).toBe(stamp); // survives the reopen
+
+      const again = await update.execute({ id: 't1', status: 'completed' }, toolCtx());
+      expect(again.ok).toBe(true);
+      if (!again.ok) return;
+      expect(again.value.task.completedAt).toBe(stamp); // first completion wins
+      expect(readPlanJson().tasks[0].completedAt).toBe(stamp);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('task_update replaces files when provided and leaves them untouched otherwise', async () => {
+    const { create, update } = makeTools(() => {});
+    await create.execute({ title: 'T', files: ['src/old.ts'] }, toolCtx());
+
+    const res = await update.execute({ id: 't1', fileRefs: ['src/new.ts'] }, toolCtx());
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.value.task.files).toEqual(['src/new.ts']);
+
+    const untouched = await update.execute({ id: 't1', notes: 'x' }, toolCtx());
+    expect(untouched.ok).toBe(true);
+    if (!untouched.ok) return;
+    expect(untouched.value.task.files).toEqual(['src/new.ts']);
+  });
+
+  it('council createTask fileRefs land on the plan.json record as files', async () => {
+    seedPlanJson({
+      schemaVersion: 1,
+      counter: 0,
+      phases: [{ id: 'p1', name: 'P1', description: '', order: 0, color: '#000' }],
+      milestones: [],
+      tasks: [],
+    });
+    const wsCtx = createWorkspaceContext(dir);
+    const createTask = createWorkspaceStubs(wsCtx).find(
+      (s) => s.name === 'createTask',
+    )!;
+    expect(createTask).toBeTruthy();
+    await createTask.execute(
+      { phaseId: 'p1', title: 'Council task', fileRefs: ['src/cli/x.ts', 'docs/y.md'] },
+      wsCtx as never,
+    );
+    const raw = readPlanJson();
+    const council = raw.tasks.find((t: { name?: string }) => t.name === 'Council task');
+    expect(council?.files).toEqual(['src/cli/x.ts', 'docs/y.md']);
+  });
+
+  it('flags pass through the store round-trip untouched', async () => {
+    const { create, list } = makeTools(() => {});
+    await create.execute({ title: 'Flagged' }, toolCtx());
+    // flags are machine-set (t58–t60), not model input — simulate via the file
+    const raw = readPlanJson();
+    raw.tasks[0].flags = ['reopened'];
+    seedPlanJson(raw);
+
+    const out = await list.execute({}, toolCtx());
+    expect(out.ok).toBe(true);
+    if (!out.ok) return;
+    expect(out.value.tasks[0].flags).toEqual(['reopened']);
   });
 });

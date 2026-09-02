@@ -33,6 +33,8 @@ export interface PlanFrontmatter {
   dueDate?: string;
   /** Tags for filtering. */
   tags?: string[];
+  /** Declared file globs (project-root relative) touched by this task (t56). */
+  files?: string[];
 }
 
 /** Body of a phase artifact. */
