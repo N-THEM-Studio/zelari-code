@@ -56,7 +56,13 @@ export type KrakenRadioKind =
   // older than the stale threshold, default 24h) — advisory-only per
   // ADR 0023. contestedFile carries the first declared glob; agent is
   // 'task-guard' (taskStaleness.ts).
-  | 'task_stale';
+  | 'task_stale'
+  // t60 overlap guard: a task created (or moved to in_progress) declares
+  // files intersecting ANOTHER in_progress task's globs — advisory-only,
+  // never blocks (writer serialization stays the lead policy).
+  // contestedFile carries the shared glob/path; agent is 'task-guard'
+  // (taskOverlap.ts, wired from planTaskTools.ts).
+  | 'task_overlap';
 
 export interface KrakenRadioEvent {
   ts: string;

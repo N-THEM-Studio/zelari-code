@@ -585,7 +585,11 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
     profile !== 'general';
   const planTaskToolsWrapped = (
     enablePlanTasks
-      ? createPlanTaskTools({ projectRoot: root, onTaskEvent: options.onTaskEvent })
+      ? createPlanTaskTools({
+          projectRoot: root,
+          onTaskEvent: options.onTaskEvent,
+          sessionId,
+        })
       : []
   ).map((t) => withPerm(t));
   for (const t of planTaskToolsWrapped) {

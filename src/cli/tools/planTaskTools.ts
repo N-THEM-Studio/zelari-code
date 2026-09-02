@@ -29,6 +29,12 @@ import {
   type PlanTaskPriority,
   type PlanTaskStatus,
 } from '../workspace/planStore.js';
+import { appendKrakenRadio } from './krakenRadio.js';
+import {
+  findOverlappingTasks,
+  overlapNoteLine,
+  type OverlapHit,
+} from '../workspace/taskOverlap.js';
 
 const StatusSchema = z
   .enum(['pending', 'in_progress', 'completed', 'cancelled', 'blocked'])
@@ -132,9 +138,12 @@ export function createPlanTaskTools(opts: {
   projectRoot: string;
   /** Optional first-class task event sink (ADR-0018 3b). */
   onTaskEvent?: PlanTaskEventSink;
+  /** Radio session id for overlap advisories (t60); sanitized by krakenRadio. */
+  sessionId?: string;
 }): ToolDefinition<any, any>[] {
   const projectRoot = opts.projectRoot;
   const onTaskEvent = opts.onTaskEvent;
+  const radioSession = opts.sessionId ?? 'plan-tasks';
 
   const taskCreate: ToolDefinition<
     z.infer<typeof CreateSchema>,
@@ -176,8 +185,14 @@ export function createPlanTaskTools(opts: {
           const files = normalizePlanTaskFiles(input.files ?? input.fileRefs);
           if (files) task.files = files;
           store.tasks.push(task);
+          // t60: advisory overlap with OTHER in_progress tasks (never blocks).
+          const overlaps = findOverlappingTasks(task.files, store.tasks, task.id);
+          if (overlaps.length > 0) {
+            applyOverlapAdvisory(task, overlaps);
+            emitOverlapRadio(projectRoot, radioSession, task, overlaps);
+          }
           writePlanTaskArtifact(store.rootDir, task);
-          return typedOk({ id, task });
+          return typedOk(overlapResultValue({ id, task }, overlaps));
         });
         if (res.ok) {
           safeEmit(onTaskEvent, {
@@ -240,9 +255,18 @@ export function createPlanTaskTools(opts: {
             const merged = prev ? `${prev}\n${input.appendNote}` : input.appendNote;
             task.notes = merged.slice(-PLAN_NOTES_MAX);
           }
+          // t60: advisory overlap when the task moves to in_progress.
+          let overlaps: OverlapHit[] = [];
+          if (input.status === 'in_progress' && task.files) {
+            overlaps = findOverlappingTasks(task.files, store.tasks, task.id);
+            if (overlaps.length > 0) {
+              applyOverlapAdvisory(task, overlaps);
+              emitOverlapRadio(projectRoot, radioSession, task, overlaps);
+            }
+          }
           task.updatedAt = new Date().toISOString();
           writePlanTaskArtifact(store.rootDir, task);
-          return typedOk({ task });
+          return typedOk(overlapResultValue({ task }, overlaps));
         });
         if (res.ok) {
           safeEmit(onTaskEvent, {
@@ -311,6 +335,42 @@ export function createPlanTaskTools(opts: {
   };
 
   return [taskCreate, taskUpdate, taskList];
+}
+
+/**
+ * t60: flag + advisory note on the task itself (advisory-only — the call
+ * result is unaffected, writer serialization stays the lead policy).
+ */
+function applyOverlapAdvisory(task: PlanTask, overlaps: readonly OverlapHit[]): void {
+  const flags = task.flags ? [...task.flags] : [];
+  if (!flags.includes('overlap')) flags.push('overlap');
+  task.flags = flags;
+  const line = overlapNoteLine(overlaps);
+  const prev = typeof task.notes === 'string' ? task.notes : '';
+  task.notes = (prev ? `${prev}\n${line}` : line).slice(-PLAN_NOTES_MAX);
+}
+
+/** One best-effort radio event per overlapping pair (agent 'task-guard'). */
+function emitOverlapRadio(
+  projectRoot: string,
+  sessionId: string,
+  task: PlanTask,
+  overlaps: readonly OverlapHit[],
+): void {
+  for (const hit of overlaps) {
+    appendKrakenRadio(projectRoot, sessionId, {
+      kind: 'task_overlap',
+      agent: 'task-guard',
+      description: `Task ${task.id} declares files overlapping in_progress ${hit.task.id}`,
+      contestedFile: hit.contested,
+    });
+  }
+}
+
+/** Attach `overlapWarning` to the tool result only when hits exist (t60). */
+function overlapResultValue<T extends object>(value: T, overlaps: readonly OverlapHit[]): T {
+  if (overlaps.length === 0) return value;
+  return { ...value, overlapWarning: overlaps.map((h) => `${h.task.id}: ${h.contested}`) };
 }
 
 function planStoreErrorMessage(err: unknown, tool: string): string {
