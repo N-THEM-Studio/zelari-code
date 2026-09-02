@@ -32,7 +32,7 @@
  */
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { listDir, readProjectText } from "../agentClient";
+import { listDir, readProjectTextIfChanged } from "../agentClient";
 import { WeaknessBadge } from "./WeaknessBadge";
 
 interface Props {
@@ -294,6 +294,9 @@ export function KrakenGraphVisualizer({ cwd, open, onClose }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Node | null>(null);
   const resolvedCwdRef = useRef<string | null>(null);
+  // Last-read file signature (mtimeMs+size): skip parse+setBody when
+  // the workbench file did not change since the previous tick.
+  const sigRef = useRef<string | null>(null);
   // Map of node id -> bounding rect of the rendered card. Refreshed
   // by useLayoutEffect after every render + when the panel resizes.
   // Used to draw SVG edges (deps) between the card centers.
@@ -320,12 +323,18 @@ export function KrakenGraphVisualizer({ cwd, open, onClose }: Props) {
           return;
         }
         setPath(p);
+        sigRef.current = null; // new file discovered: force a full fetch
         setError(null);
       }
       try {
-        const res = await readProjectText({ path: p, cwd: currentCwd, maxBytes: 1_000_000 });
+        const fresh = await readProjectTextIfChanged(
+          { path: p, cwd: currentCwd, maxBytes: 1_000_000 },
+          sigRef.current,
+        );
         if (!alive || resolvedCwdRef.current !== currentCwd) return;
-        if (res.text) setBody(res.text);
+        if (!fresh) return; // signature unchanged: skip parse + setState
+        sigRef.current = fresh.sig;
+        if (fresh.res.text) setBody(fresh.res.text);
         setError(null);
       } catch (e) {
         if (!alive || resolvedCwdRef.current !== currentCwd) return;

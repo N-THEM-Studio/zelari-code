@@ -18,7 +18,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { listDir, readProjectText } from "../agentClient";
+import { listDir, readProjectTextIfChanged, type FileSignature } from "../agentClient";
 
 interface Props {
   /** Project root. */
@@ -57,6 +57,9 @@ const PLAN_PREFIX = "plan-";
 const PLAN_SUFFIX = ".json";
 const POLL_INTERVAL_MS = 2000;
 
+/** Per-path cache: last file signature + parsed summary (poll-skip). */
+const planFileCache = new Map<string, { sig: FileSignature; entry: PlanSummary }>();
+
 async function listPlans(cwd: string): Promise<PlanSummary[]> {
   try {
     const res = await listDir({ path: PLAN_DIR, cwd });
@@ -75,14 +78,20 @@ async function listPlans(cwd: string): Promise<PlanSummary[]> {
       }));
     // Read each file to populate the summary. We do this in parallel;
     // a malformed entry is still listed (with the malformed flag).
+    // Poll-skip: when a file's signature (mtimeMs+size) is unchanged we
+    // reuse the cached summary and skip JSON.parse + entry rebuild.
     const out: PlanSummary[] = [];
     await Promise.all(
       candidates.map(async (c) => {
-        let mtimeMs = 0;
-        let graph: PlanSummary["graph"] = null;
-        let malformed = false;
-        try {
-          const r = await readProjectText({ path: c.path, cwd, maxBytes: 4_000_000 });
+        const cached = planFileCache.get(c.path);
+        const fresh = await readProjectTextIfChanged(
+          { path: c.path, cwd, maxBytes: 4_000_000 },
+          cached ? cached.sig : null,
+        ).catch(() => null);
+        if (fresh) {
+          const r = fresh.res;
+          let graph: PlanSummary["graph"] = null;
+          let malformed = false;
           if (r.text) {
             try {
               const parsed = JSON.parse(r.text) as { id?: string; nodes?: PlanNode[] };
@@ -94,12 +103,24 @@ async function listPlans(cwd: string): Promise<PlanSummary[]> {
             } catch {
               malformed = true;
             }
-            mtimeMs = Date.now(); // best-effort; the Tauri DTO doesn't expose mtime
+          } else {
+            malformed = true;
           }
-        } catch {
-          malformed = true;
+          const entry: PlanSummary = {
+            id: c.id,
+            path: c.path,
+            graph,
+            mtimeMs: r.mtimeMs || Date.now(),
+            malformed,
+          };
+          planFileCache.set(c.path, { sig: fresh.sig, entry });
+          out.push(entry);
+        } else if (cached) {
+          // Unchanged signature (or read error): reuse the last summary.
+          out.push(cached.entry);
+        } else {
+          out.push({ id: c.id, path: c.path, graph: null, mtimeMs: 0, malformed: true });
         }
-        out.push({ id: c.id, path: c.path, graph, mtimeMs, malformed });
       }),
     );
     // Sort by file name (UUIDs are time-ordered in practice) so the

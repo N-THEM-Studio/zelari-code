@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { listDir, readProjectText } from "../agentClient";
+import { listDir, readProjectTextIfChanged } from "../agentClient";
 
 interface Props {
   /** Project root (must match the run's cwd). When null, the panel is inert. */
@@ -212,6 +212,10 @@ export function WorkbenchLiveTail({ cwd, open }: Props) {
   // Track the currently-resolved path across async ticks so a stale
   // resolve doesn't stomp a newer one.
   const resolvedCwdRef = useRef<string | null>(null);
+  // Last-read file signature (mtimeMs+size). The tail polls every
+  // ~1500ms; when the signature is unchanged we skip setState entirely
+  // instead of re-rendering identical content.
+  const sigRef = useRef<string | null>(null);
 
   const tick = useCallback(async () => {
     if (!cwd) {
@@ -235,11 +239,18 @@ export function WorkbenchLiveTail({ cwd, open }: Props) {
         }));
         return;
       }
+      sigRef.current = null; // new file discovered: force a full fetch
     }
 
     try {
-      const res = await readProjectText({ path, cwd: currentCwd, maxBytes: 1_000_000 });
+      const fresh = await readProjectTextIfChanged(
+        { path, cwd: currentCwd, maxBytes: 1_000_000 },
+        sigRef.current,
+      );
       if (resolvedCwdRef.current !== currentCwd) return;
+      if (!fresh) return; // signature unchanged: skip parse + setState
+      sigRef.current = fresh.sig;
+      const res = fresh.res;
       if (res.isDir || res.text == null) {
         setState((s) => ({
           ...s,

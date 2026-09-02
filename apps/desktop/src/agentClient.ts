@@ -283,6 +283,8 @@ export interface ReadProjectTextResult {
   text?: string | null;
   note?: string | null;
   size: number;
+  /** Milliseconds since Unix epoch of the last modification (0 if unknown). */
+  mtimeMs: number;
 }
 
 /** Read a sandboxed project file for @-mention attach. */
@@ -298,6 +300,29 @@ export async function readProjectText(args: {
       maxBytes: args.maxBytes ?? null,
     },
   });
+}
+
+/**
+ * File signature used to detect "nothing changed" cheaply:
+ * `${mtimeMs}:${size}`. Two reads with the same signature are, for
+ * polling purposes, the same content.
+ */
+export type FileSignature = string;
+
+/**
+ * Poll-skip variant of {@link readProjectText}: returns null when the
+ * file signature (mtimeMs+size) matches `lastSig`, so pollers can skip
+ * parse+setState on unchanged files. Returns the fresh result and its
+ * new signature otherwise. `lastSig === null` always fetches.
+ */
+export async function readProjectTextIfChanged(
+  args: { path: string; cwd?: string | null; maxBytes?: number },
+  lastSig: FileSignature | null,
+): Promise<{ res: ReadProjectTextResult; sig: FileSignature } | null> {
+  const res = await readProjectText(args);
+  const sig: FileSignature = `${res.mtimeMs}:${res.size}`;
+  if (lastSig !== null && sig === lastSig) return null;
+  return { res, sig };
 }
 
 export interface McpServerEntryDto {

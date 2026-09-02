@@ -1730,6 +1730,10 @@ struct ReadProjectTextDto {
     text: Option<String>,
     note: Option<String>,
     size: u64,
+    /// Milliseconds since Unix epoch of the last modification (0 if unknown).
+    /// Paired with `size` it lets TS pollers skip parse+setState when the
+    /// file signature is unchanged.
+    mtime_ms: u64,
 }
 
 #[tauri::command]
@@ -1760,6 +1764,12 @@ fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, St
     }
     let rel = rel_display(&abs, &root_canon);
     let meta = fs::metadata(&abs).map_err(|e| format!("stat failed: {e}"))?;
+    let mtime_ms = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
     if meta.is_dir() {
         return Ok(ReadProjectTextDto {
             path: rel,
@@ -1768,6 +1778,7 @@ fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, St
             text: None,
             note: Some("directory — list/read with tools as needed".into()),
             size: 0,
+            mtime_ms,
         });
     }
     let max_b = args.max_bytes.unwrap_or(512_000).min(1_000_000);
@@ -1783,6 +1794,7 @@ fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, St
                 (size / 1024).max(1)
             )),
             size,
+            mtime_ms,
         });
     }
     let bytes = fs::read(&abs).map_err(|e| format!("read failed: {e}"))?;
@@ -1796,6 +1808,7 @@ fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, St
             text: None,
             note: Some("binary — path only".into()),
             size,
+            mtime_ms,
         });
     }
     let mut text = String::from_utf8_lossy(&bytes).into_owned();
@@ -1815,6 +1828,7 @@ fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, St
         text: Some(text),
         note: None,
         size,
+        mtime_ms,
     })
 }
 

@@ -217,6 +217,14 @@ export function applyWorkspaceUpdate(
  * reader. Returns [] on missing/corrupt files - a missing plan is a
  * normal state, never an error surface.
  */
+/**
+ * Per-cwd cache of the last plan read: signature + parsed tasks.
+ * When the signature (mtimeMs+size) is unchanged we return the SAME
+ * array reference, so React state setters bail out on Object.is and
+ * the Live Tasks panel skips a pointless re-render.
+ */
+const planSigCache = new Map<string, { sig: string; tasks: LiveTask[] }>();
+
 export async function loadWorkspaceTasks(cwd: string): Promise<LiveTask[]> {
   try {
     const res = await readProjectText({
@@ -224,8 +232,16 @@ export async function loadWorkspaceTasks(cwd: string): Promise<LiveTask[]> {
       cwd,
       maxBytes: 512 * 1024,
     });
-    if (!res?.text) return [];
-    return parseWorkspacePlan(JSON.parse(res.text));
+    if (!res?.text) {
+      planSigCache.delete(cwd);
+      return [];
+    }
+    const sig = `${res.mtimeMs}:${res.size}`;
+    const hit = planSigCache.get(cwd);
+    if (hit && hit.sig === sig) return hit.tasks;
+    const tasks = parseWorkspacePlan(JSON.parse(res.text));
+    planSigCache.set(cwd, { sig, tasks });
+    return tasks;
   } catch {
     return [];
   }
