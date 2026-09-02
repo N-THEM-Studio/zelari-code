@@ -12,6 +12,10 @@
  *  - `--strict` exits 1 only on a MEASURED regression (suite-level). It
  *    never exits 1 on `insufficient-n` — missing data is a call for more
  *    runs, not a failure signal (unknown ≠ pass, but unknown ≠ fail too).
+ *  - `--fail-insufficient` (Fase 3.0, opt-in) makes `insufficient-n` exit 1
+ *    TOO — for CI-style evidence rows (evolve:validate --with-eval) where
+ *    "we could not measure this" must not read as green. Default stays
+ *    advisory; runGate.ts is untouched by this flag.
  */
 
 import { argv, exit } from 'node:process';
@@ -29,10 +33,11 @@ function main(): number {
   const candidateHash = arg('candidate');
   const minRunsRaw = Number.parseInt(arg('min-runs') ?? '3', 10);
   const strict = argv.includes('--strict');
+  const failInsufficient = argv.includes('--fail-insufficient');
 
   if (!baselineHash || !candidateHash) {
     console.error(
-      'usage: runMeasured.ts --baseline <manifestHash|latest> --candidate <manifestHash> [--baseline-store <dir>] [--min-runs N] [--strict]',
+      'usage: runMeasured.ts --baseline <manifestHash|latest> --candidate <manifestHash> [--baseline-store <dir>] [--min-runs N] [--strict] [--fail-insufficient]',
     );
     return 2;
   }
@@ -75,6 +80,10 @@ function main(): number {
 
   if (strict && comparison.suite.verdict === 'measured-worse') {
     console.log('\n(--strict: MEASURED regression → exit 1)');
+    return 1;
+  }
+  if (failInsufficient && comparison.suite.verdict === 'insufficient-n') {
+    console.log('\n(--fail-insufficient: insufficient-n → exit 1 — more runs needed; this is NOT a measured regression)');
     return 1;
   }
   console.log('\n(advisory Fase 0: promotion stays with runGate.ts — run this before trusting any candidate delta)');

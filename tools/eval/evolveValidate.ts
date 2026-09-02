@@ -157,3 +157,57 @@ export function suggestedDecideCommand(id: string, evidenceStrings: string[]): s
   for (const e of evidenceStrings) lines.push(`  --evidence "${e}"`);
   return lines.join(' \\\n');
 }
+
+/**
+ * Fase 3.0 — minimum runs demanded by the default eval row. Kept as a
+ * named constant so tests can pin the anti-fabricated-green shape.
+ */
+export const EVAL_VALIDATION_MIN_RUNS = 3;
+
+/** Input for the Fase 3.0 measured-eval validation row (all optional; see semantics below). */
+export interface EvalValidationInput {
+  /** Baseline manifest hash or 'latest' — defaults to 'latest' when empty/absent. */
+  baseline?: string;
+  /** Candidate manifest hash — REQUIRED unless `command` overrides everything. */
+  candidate?: string;
+  /** Full command override — used VERBATIM (the anti-fabricated-green escape hatch for custom pipelines). */
+  command?: string;
+}
+
+/** The measured-eval row `--with-eval` appends to the validation sequence. */
+export interface EvalValidationRow {
+  /** The exact command to measure (run like any other requiredValidation entry). */
+  command: string;
+  /** Baseline as resolved here ('latest' or the explicit hash) — context for the report. */
+  baseline: string;
+  /** Candidate hash; '' when a `command` override replaced the templated invocation. */
+  candidate: string;
+  /** 'default' = templated (safe) invocation; 'override' = operator-supplied command. */
+  source: 'default' | 'override';
+}
+
+/**
+ * Build the Fase 3.0 measured-eval validation row. Returns undefined when
+ * there is nothing honest to run (no candidate AND no command override) —
+ * the CLI turns that into a usage error rather than fabricating a row.
+ *
+ * Anti-fabricated-green: the DEFAULT command is templated with
+ * `--strict --fail-insufficient --min-runs 3` so an unmeasurable delta
+ * (insufficient-n) exits 1 instead of reading as green; only an explicit
+ * `--eval-command` can bypass that, and the row then records
+ * source:'override' so the report says so.
+ */
+export function buildEvalValidationRow(input: EvalValidationInput): EvalValidationRow | undefined {
+  const baseline =
+    input.baseline === undefined || input.baseline === '' ? 'latest' : input.baseline;
+  if (input.command !== undefined && input.command !== '') {
+    return { command: input.command, baseline, candidate: input.candidate ?? '', source: 'override' };
+  }
+  if (input.candidate === undefined || input.candidate === '') return undefined;
+  return {
+    command: `npm run eval:measured -- --baseline ${baseline} --candidate ${input.candidate} --strict --fail-insufficient --min-runs ${EVAL_VALIDATION_MIN_RUNS}`,
+    baseline,
+    candidate: input.candidate,
+    source: 'default',
+  };
+}

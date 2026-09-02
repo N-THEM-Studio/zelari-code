@@ -27,7 +27,9 @@ import path from 'node:path';
 import { argv, cwd, exit } from 'node:process';
 import { parseProposalStore, type StoredProposal } from './evolvePropose.ts';
 import {
+  buildEvalValidationRow,
   type CommandRunner,
+  type EvalValidationRow,
   evidenceString,
   resolveProposalForValidation,
   runValidations,
@@ -47,7 +49,7 @@ function flagWithoutValue(name: string): boolean {
 }
 
 function usage(): string {
-  return 'usage: runEvolveValidate.ts --id <p-NNNN> [--cwd <dir>] [--store <file>] [--timeout-ms <n>] [--json]';
+  return 'usage: runEvolveValidate.ts --id <p-NNNN> [--cwd <dir>] [--store <file>] [--timeout-ms <n>] [--json] [--with-eval [--eval-baseline <hash|latest>] [--eval-candidate <hash>] [--eval-command <cmd>]]';
 }
 
 // Local store reader (same tolerant behavior as runEvolveDecide.ts — CLI
@@ -125,7 +127,24 @@ async function validateMode(storePath: string, json: boolean): Promise<number> {
   }
   const warning = statusWarning(id, resolved.effectiveStatus);
 
-  if (resolved.requiredValidation.length === 0) {
+  // Fase 3.0 — the measured anchor gate as one more honestly-measured row.
+  const withEval = argv.includes('--with-eval');
+  const evalRow: EvalValidationRow | undefined = withEval
+    ? buildEvalValidationRow({
+        baseline: arg('eval-baseline'),
+        candidate: arg('eval-candidate'),
+        command: arg('eval-command'),
+      })
+    : undefined;
+  if (withEval && evalRow === undefined) {
+    console.error(
+      'runEvolveValidate: --with-eval requires --eval-candidate <manifestHash> (or an explicit --eval-command override)',
+    );
+    console.error(usage());
+    return 2;
+  }
+
+  if (resolved.requiredValidation.length === 0 && evalRow === undefined) {
     const note = 'no automated validation for this surface — human review IS the operator';
     if (json) {
       console.log(
@@ -155,7 +174,9 @@ async function validateMode(storePath: string, json: boolean): Promise<number> {
     return 0;
   }
 
-  const outcomes = await runValidations(resolved.requiredValidation, {
+  const commands =
+    evalRow === undefined ? resolved.requiredValidation : [...resolved.requiredValidation, evalRow.command];
+  const outcomes = await runValidations(commands, {
     cwd: dir,
     timeoutMs,
     run: execRunner(timeoutMs),
@@ -181,6 +202,7 @@ async function validateMode(storePath: string, json: boolean): Promise<number> {
           outcomes,
           evidence,
           suggestedCommand: suggested,
+          evalRow,
           warnings: warning === undefined ? [] : [warning],
         },
         null,
@@ -196,6 +218,13 @@ async function validateMode(storePath: string, json: boolean): Promise<number> {
   for (const o of outcomes as ValidationOutcome[]) {
     const suffix = o.spawnError !== undefined ? ` — ${o.spawnError}` : '';
     lines.push(`${o.ok ? '✓' : '✗'} ${evidenceString(o.command, o)}${suffix}`);
+  }
+  if (evalRow !== undefined) {
+    const target =
+      evalRow.source === 'override'
+        ? evalRow.command
+        : `baseline ${evalRow.baseline} → candidate ${evalRow.candidate}`;
+    lines.push(`eval row (Fase 3.0, measured like any other command): ${target}`);
   }
   lines.push(`=== ${outcomes.length} command(s): ${passed} passed, ${outcomes.length - passed} failed (${withoutExit} without exit code) ===`);
   if (warning !== undefined) lines.push(warning);
@@ -215,7 +244,7 @@ async function validateMode(storePath: string, json: boolean): Promise<number> {
 }
 
 async function main(): Promise<number> {
-  for (const valueFlag of ['id', 'cwd', 'store', 'timeout-ms']) {
+  for (const valueFlag of ['id', 'cwd', 'store', 'timeout-ms', 'eval-baseline', 'eval-candidate', 'eval-command']) {
     if (flagWithoutValue(valueFlag)) {
       console.error(`runEvolveValidate: --${valueFlag} requires a value`);
       console.error(usage());

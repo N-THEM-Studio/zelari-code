@@ -13,6 +13,8 @@
 import { describe, expect, it } from 'vitest';
 import { type StoredProposal } from './evolvePropose.ts';
 import {
+  buildEvalValidationRow,
+  EVAL_VALIDATION_MIN_RUNS,
   type CommandRunner,
   evidenceString,
   resolveProposalForValidation,
@@ -226,5 +228,50 @@ describe('suggestedDecideCommand — deterministic and copy-pasteable', () => {
     expect(lines[0]).toBe('npm run evolve:decide -- --id p-0001 --decision applied --ref <ref> \\');
     expect(lines[1]).toBe('  --evidence "npm run typecheck → exit 0 (12ms)" \\');
     expect(lines[2]).toBe('  --evidence "npm run test:eval → exit 0 (34ms)"');
+  });
+});
+
+describe('buildEvalValidationRow — Fase 3.0 measured-eval row', () => {
+  it('anti-fabricated-green: default command carries --strict --fail-insufficient --min-runs 3', () => {
+    const row = buildEvalValidationRow({ candidate: 'abc123' });
+    expect(row).toBeDefined();
+    expect(row?.command).toContain('npm run eval:measured --');
+    expect(row?.command).toContain('--baseline latest');
+    expect(row?.command).toContain('--candidate abc123');
+    expect(row?.command).toContain('--strict');
+    expect(row?.command).toContain('--fail-insufficient');
+    expect(row?.command).toContain(`--min-runs ${EVAL_VALIDATION_MIN_RUNS}`);
+    expect(EVAL_VALIDATION_MIN_RUNS).toBe(3);
+    expect(row?.source).toBe('default');
+  });
+
+  it('baseline defaults to latest; explicit baseline is honored verbatim', () => {
+    expect(buildEvalValidationRow({ candidate: 'c1' })?.baseline).toBe('latest');
+    expect(buildEvalValidationRow({ baseline: 'deadbeef', candidate: 'c1' })?.command).toContain('--baseline deadbeef');
+  });
+
+  it('no candidate AND no command → undefined (nothing honest to run; CLI turns it into usage exit 2)', () => {
+    expect(buildEvalValidationRow({})).toBeUndefined();
+    expect(buildEvalValidationRow({ baseline: 'deadbeef' })).toBeUndefined();
+    expect(buildEvalValidationRow({ candidate: '' })).toBeUndefined();
+  });
+
+  it('command override wins: used verbatim, never templated, source recorded as override', () => {
+    const row = buildEvalValidationRow({ command: 'npm run eval:measured -- --baseline b1 --candidate c1', candidate: 'ignored' });
+    expect(row?.command).toBe('npm run eval:measured -- --baseline b1 --candidate c1');
+    expect(row?.source).toBe('override');
+    expect(row?.candidate).toBe('ignored');
+    expect(row?.baseline).toBe('latest');
+  });
+
+  it('e2e (pure): the row measured through runValidations is honest on pass AND fail', async () => {
+    const row = buildEvalValidationRow({ candidate: 'c1' });
+    expect(row).toBeDefined();
+    const pass = await runValidations([row!.command], { cwd: '.', timeoutMs: 1000, run: scriptedRunner([{ exitCode: 0, durationMs: 5 }]) });
+    expect(pass[0]?.ok).toBe(true);
+    expect(evidenceString(row!.command, pass[0])).toContain('exit 0');
+    const fail = await runValidations([row!.command], { cwd: '.', timeoutMs: 1000, run: scriptedRunner([{ exitCode: 1, durationMs: 5 }]) });
+    expect(fail[0]?.ok).toBe(false);
+    expect(evidenceString(row!.command, fail[0]).includes('exit 0')).toBe(false);
   });
 });
