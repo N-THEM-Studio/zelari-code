@@ -87,6 +87,13 @@ export const SESSION_EVENT_KINDS = [
   // older readers skip them via the tolerant replay (schema-mismatch issues).
   'graph.node_started',
   'graph.node_ended',
+  // ADR-0033 (t75): file write-path lifecycle telemetry. State-only (never
+  // model-surface): data = {path, snapshotId?, status?}. Additive kinds —
+  // no SCHEMA_VERSION bump (ADR-0021): older readers report schema-mismatch
+  // and skip them via the tolerant replay; deriveMessages ignores them.
+  'file.read',
+  'file.applied',
+  'file.rejected',
   'note',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];

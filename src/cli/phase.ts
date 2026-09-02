@@ -47,12 +47,15 @@ export const PLAN_ALLOWED_WRITE_TOOLS = new Set([
   'createDecision',
   'linkDocuments',
   // Soft writes that only touch .zelari / plan paths are still gated in
-  // toolRegistry by path when needed; write_file/edit_file stay DENIED.
+  // toolRegistry by path when needed; write_file/edit stay DENIED.
 ]);
 
 /** Builtin tools that must never run in plan phase. */
 export const PLAN_BLOCKED_TOOLS = new Set([
   'write_file',
+  'edit',
+  // ADR-0033 t77: edit_file/apply_diff left the default catalog but past
+  // sessions' replays still classify by name — keep them blocked.
   'edit_file',
   'apply_diff',
   'bash',

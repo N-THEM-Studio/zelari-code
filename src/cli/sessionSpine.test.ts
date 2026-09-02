@@ -319,3 +319,113 @@ describe('SessionSpineMirror.release', () => {
     await again.close('done');
   });
 });
+
+describe('ADR-0033 (t75): derived file events on the spine', () => {
+  async function readKinds(sessionId: string) {
+    const { readSessionLog } = await import('@zelari/core/session');
+    const report = await readSessionLog(path.join(tmp, sessionId, 'events.jsonl'));
+    return report;
+  }
+
+  it('read_file tool.result → file.read right after it, with path + snapshotId', async () => {
+    const mirror = await SessionSpineMirror.adopt('sess-fileread', { baseDir: tmp, quiet: true });
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_start', { toolName: 'read_file', args: { path: 'a.ts' }, toolCallId: 'c1' }),
+    );
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_end', {
+        toolCallId: 'c1',
+        result: JSON.stringify({ path: '/r/a.ts', snapshotId: 'abcd1234abcd1234' }),
+        isError: false,
+        durationMs: 1,
+      }),
+    );
+    await mirror.close('test');
+
+    const report = await readKinds('sess-fileread');
+    const kinds = report.events.map((e) => e.kind);
+    const i = kinds.indexOf('tool.result');
+    expect(i).toBeGreaterThan(-1);
+    expect(kinds[i + 1]).toBe('file.read');
+    expect(report.events[i + 1].data).toMatchObject({
+      path: '/r/a.ts',
+      snapshotId: 'abcd1234abcd1234',
+    });
+  });
+
+  it('edit ok → file.applied; edit reject → file.rejected (compact: no minimalDiff)', async () => {
+    const mirror = await SessionSpineMirror.adopt('sess-fileedit', { baseDir: tmp, quiet: true });
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_start', { toolName: 'edit', args: { path: 'a.ts' }, toolCallId: 'e1' }),
+    );
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_end', {
+        toolCallId: 'e1',
+        result: JSON.stringify({
+          path: '/r/a.ts',
+          applied: true,
+          occurrencesReplaced: 1,
+          snapshotId: 'eeee5678eeee5678',
+          bytesWritten: 9,
+        }),
+        isError: false,
+        durationMs: 1,
+      }),
+    );
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_start', { toolName: 'edit', args: { path: 'b.ts' }, toolCallId: 'e2' }),
+    );
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_end', {
+        toolCallId: 'e2',
+        result:
+          'edit: stale_snapshot: /r/b.ts (expected aaaa1111, actual bbbb2222)\nstatus=failed warnings=STALE_SNAPSHOT',
+        isError: true,
+        durationMs: 1,
+      }),
+    );
+    await mirror.close('test');
+
+    const report = await readKinds('sess-fileedit');
+    const kinds = report.events.map((e) => e.kind);
+    const appliedAt = kinds.indexOf('file.applied');
+    const rejectedAt = kinds.indexOf('file.rejected');
+    expect(appliedAt).toBeGreaterThan(kinds.indexOf('tool.result'));
+    expect(rejectedAt).toBeGreaterThan(appliedAt);
+    expect(report.events[appliedAt].data).toMatchObject({
+      path: '/r/a.ts',
+      occurrencesReplaced: 1,
+      snapshotId: 'eeee5678eeee5678',
+    });
+    expect(report.events[rejectedAt].data).toMatchObject({
+      path: '/r/b.ts',
+      status: 'stale_snapshot',
+    });
+    expect(JSON.stringify(report.events[rejectedAt].data)).not.toContain('minimalDiff');
+  });
+
+  it('non-file tools and unparsable payloads derive nothing (no crash, no events)', async () => {
+    const mirror = await SessionSpineMirror.adopt('sess-filenoise', { baseDir: tmp, quiet: true });
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_start', { toolName: 'bash', args: {}, toolCallId: 'b1' }),
+    );
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_end', { toolCallId: 'b1', result: 'ok', isError: false, durationMs: 1 }),
+    );
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_start', { toolName: 'read_file', args: {}, toolCallId: 'r1' }),
+    );
+    mirror.mirrorBrainEvent(
+      ev('tool_execution_end', {
+        toolCallId: 'r1',
+        result: 'not json {{{',
+        isError: false,
+        durationMs: 1,
+      }),
+    );
+    await mirror.close('test');
+
+    const report = await readKinds('sess-filenoise');
+    expect(report.events.some((e) => e.kind.startsWith('file.'))).toBe(false);
+  });
+});

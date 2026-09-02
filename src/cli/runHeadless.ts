@@ -1235,7 +1235,7 @@ async function runHeadlessZelari(
               const name = (event as { toolName?: string; name?: string }).toolName
                 ?? (event as { name?: string }).name
                 ?? '';
-              if (name === 'write_file' || name === 'edit_file' || name === 'apply_diff') {
+              if (name === 'write_file' || name === 'edit' || name === 'edit_file' || name === 'apply_diff') {
                 writeCount += 1;
               }
             }

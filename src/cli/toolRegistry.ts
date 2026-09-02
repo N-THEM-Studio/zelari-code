@@ -1,8 +1,8 @@
 /**
  * toolRegistry — default ToolRegistry for the zelari-code CLI.
  *
- * Wires the 8 built-in tools (filesystem read/write/edit + bash + grep/list +
- * show_diff/apply_diff) into a ToolRegistry instance that the AgentHarness can
+ * Wires the built-in tools (filesystem read/write/edit + bash + grep/list +
+ * show_diff) into a ToolRegistry instance that the AgentHarness can
  * hand to the provider via `tools: registry.toOpenAITools()` + `toolRegistry: registry`.
  *
  * Task A1 of AnathemaCoder v3-A: enable the existing tool pipeline.
@@ -17,12 +17,12 @@ import { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import {
   readFileTool,
   writeFileTool,
-  editFileTool,
 } from '@zelari/core/harness/tools/builtin/filesystem';
+import { editTool } from '@zelari/core/harness/tools/builtin/edit';
 import { createBashTool, type BashSpawnSeam } from '@zelari/core/harness/tools/builtin/shell';
 import { grepContentTool } from '@zelari/core/harness/tools/builtin/search';
 import { listFilesTool } from '@zelari/core/harness/tools/builtin/listFiles';
-import { showDiffTool, applyDiffTool } from '@zelari/core/harness/tools/builtin/diff';
+import { showDiffTool } from '@zelari/core/harness/tools/builtin/diff';
 import { fetchUrlTool, webSearchTool } from '@zelari/core/harness/tools/builtin/web';
 import { resolveSandboxedPath, SandboxViolationError, verifyContainment } from './safety/sandboxPath.js';
 import { assertShellAllowed, ShellBlockedError } from './safety/shellBlocklist.js';
@@ -72,6 +72,8 @@ import {
   type PermissionPolicy,
 } from './safety/toolPermissions.js';
 import { createDefaultLifecycleHooks, HOOKS_FAILURE_ENV, resolveHookFailureMode } from './safety/lifecycleHooks.js';
+// ADR-0033 (t76): post-write AST gate with auto-revert on the write path.
+import { wrapWithAstGate } from './safety/astGate.js';
 // t30 (Pilastro C): ExtensionAPI seam — extension tools ride the SAME
 // wrapWithPermissions path as builtins; onPreToolUse handlers ride the t22
 // failure semantics (resolveHookFailureMode, same env override as hooks).
@@ -293,12 +295,15 @@ export function createBuiltinToolRegistry(
   const sessionId = options.sessionId ?? 'cli';
 
   // Wrap filesystem tools: sandbox the path argument before delegating.
-  // Edit tools (write/edit/apply_diff) are ALSO wrapped with the diagnostics
-  // loop: after a successful edit, a fast file-scoped checker runs on the
-  // touched file and its errors/warnings are appended to the tool result so
-  // the model sees compiler feedback in the same turn (opt out: ZELARI_DIAGNOSTICS=0).
+  // Write tools (write_file/edit) are ALSO wrapped with the AST gate
+  // (auto-revert on syntax-broken writes) and the diagnostics loop: after a
+  // successful edit, a fast file-scoped checker runs on the touched file and
+  // its errors/warnings are appended to the tool result so the model sees
+  // compiler feedback in the same turn (opt out: ZELARI_DIAGNOSTICS=0).
   // t31 (2.21 §6.6): the execute tools (bash/exec_process) share the same
   // loop post-execute, on the source paths the invocation claims.
+  // ADR-0033 (t77): edit_file/apply_diff left the default catalog — the
+  // anchored `edit` tool is the single write surface besides write_file.
   const diagnosticsOn = options.diagnostics ?? process.env.ZELARI_DIAGNOSTICS !== '0';
   const withDiag = <I extends Record<string, unknown>, O>(t: ToolDefinition<I, O>) =>
     diagnosticsOn ? wrapWithDiagnostics(t, root, options.diagnosticsRunner) : t;
@@ -318,11 +323,19 @@ export function createBuiltinToolRegistry(
   );
   // v2.16 (t26): write tools additionally re-verify containment (fresh
   // syscalls) immediately before execute — see wrapWithSandbox opts.verifyWrite.
+  // t76: the AST gate sits between sandbox (abs-path rewrite) and diagnostics
+  // (a reverted write surfaces as an error result, so withDiag skips it).
   const safeWriteFile = withDiag(
-    wrapWithSandbox(writeFileTool, ['path'], root, audit, sessionId, { verifyWrite: true }),
+    wrapWithAstGate(
+      wrapWithSandbox(writeFileTool, ['path'], root, audit, sessionId, { verifyWrite: true }),
+      { root },
+    ),
   );
-  const safeEditFile = withDiag(
-    wrapWithSandbox(editFileTool, ['path'], root, audit, sessionId, { verifyWrite: true }),
+  const safeEdit = withDiag(
+    wrapWithAstGate(
+      wrapWithSandbox(editTool, ['path'], root, audit, sessionId, { verifyWrite: true }),
+      { root },
+    ),
   );
   const safeGrepContent = wrapWithSandbox(
     withResultCache(grepContentTool, { kind: 'ttl' }),
@@ -339,9 +352,6 @@ export function createBuiltinToolRegistry(
     sessionId,
   );
   const safeShowDiff = wrapWithSandbox(showDiffTool, ['path'], root, audit, sessionId);
-  const safeApplyDiff = withDiag(
-    wrapWithSandbox(applyDiffTool, ['path'], root, audit, sessionId, { verifyWrite: true }),
-  );
 
   // v2.17 (t28, Pilastro A): ONE JailSpec per registry, from the SAME root
   // decision the sandbox wrappers use (no second policy engine). The bash
@@ -504,8 +514,7 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
   // Mutating tools — full/general only.
   if (allowMutators) {
     registry.register(withPerm(safeWriteFile));
-    registry.register(withPerm(safeEditFile));
-    registry.register(withPerm(safeApplyDiff));
+    registry.register(withPerm(safeEdit));
   }
   if (allowBash) {
     registry.register(withPerm(safeBash));
@@ -579,7 +588,7 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
     safeWebSearch,
     ...(observeBatchTool ? [observeBatchTool] : []),
     ...(retrieveObservationTool ? [retrieveObservationTool] : []),
-    ...(allowMutators ? [safeWriteFile, safeEditFile, safeApplyDiff] : []),
+    ...(allowMutators ? [safeWriteFile, safeEdit] : []),
     ...(allowBash ? [safeBash, safeExecProcess] : []),
     ...(askUserTool ? [askUserTool] : []),
     ...(skillTool ? [skillTool] : []),
@@ -806,6 +815,10 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
 const HARNESS_BUILTIN_NAMES: ReadonlySet<string> = new Set([
   'read_file',
   'write_file',
+  'edit',
+  // ADR-0033 t77: edit_file/apply_diff left the default catalog, but the
+  // harness bridge still exposes them for the deprecation cycle — keep
+  // skipping them here so catalog re-bridging never duplicates.
   'edit_file',
   'bash',
   'grep_content',

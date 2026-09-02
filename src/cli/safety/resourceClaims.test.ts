@@ -358,17 +358,22 @@ describe('claims enforcement through createBuiltinToolRegistry', () => {
     fs.writeFileSync(path.join(dir, rel), content);
   }
 
-  it('multi-path hole closed with PLAIN v1 rules: hidden diff path triggers its deny rule', async () => {
+  it('deny rule fires through the registry: edit on a denied path is blocked before write', async () => {
+    // Ported from the apply_diff multi-path hole test (ADR-0033 t77 removed
+    // apply_diff from the catalog): the deny rule on the hidden path must
+    // still trip through the REAL registry wiring, before any write happens.
     const dir = tmpRoot();
     writePolicyFile(dir, { agents: { general: { edit: [{ match: 'secret/**', effect: 'deny', reason: 'no secrets' }] } } });
-    makeEditableFile(dir, 'docs/open.md');
     const { registry } = makeRegistry(dir, 'general');
-    const applyDiff = registry.get('apply_diff');
-    if (!applyDiff) throw new Error('apply_diff not registered');
-    const res = (await applyDiff.execute(
+    const editTool = registry.get('edit');
+    if (!editTool) throw new Error('edit not registered');
+    const res = (await editTool.execute(
       {
-        path: 'docs/open.md',
-        diff: '--- /dev/null\n+++ b/secret/leak.txt\n@@ -0,0 +1 @@\n+sneaky\n',
+        path: 'secret/leak.txt',
+        oldString: 'placeholder',
+        newString: 'sneaky',
+        snapshotId: '0'.repeat(16),
+        replaceAll: false,
       } as never,
       makeCtx(dir),
     )) as { ok: boolean; error?: string };
@@ -378,16 +383,20 @@ describe('claims enforcement through createBuiltinToolRegistry', () => {
     expect(fs.existsSync(path.join(dir, 'secret', 'leak.txt'))).toBe(false);
   });
 
-  it('positive control: the same single-path call with an allowed patch still executes', async () => {
+  it('positive control: the same single-path call with an allowed edit still executes', async () => {
     const dir = tmpRoot();
     makeEditableFile(dir, 'docs/open.md');
     const { registry } = makeRegistry(dir, 'general');
-    const applyDiff = registry.get('apply_diff');
-    if (!applyDiff) throw new Error('apply_diff not registered');
-    const res = (await applyDiff.execute(
+    const editTool = registry.get('edit');
+    if (!editTool) throw new Error('edit not registered');
+    const { snapshotIdOf } = await import('@zelari/core/harness/tools/builtin/filesystem');
+    const res = (await editTool.execute(
       {
         path: 'docs/open.md',
-        diff: '--- a/docs/open.md\n+++ b/docs/open.md\n@@ -1 +1 @@\n-hello\n+world\n',
+        oldString: 'hello',
+        newString: 'world',
+        snapshotId: snapshotIdOf('hello\n'),
+        replaceAll: false,
       } as never,
       makeCtx(dir),
     )) as { ok: boolean };

@@ -140,7 +140,7 @@ export function createLspTools(provider: LspProvider, root: string = process.cwd
       'PREVIEW a safe, workspace-wide rename of the symbol at a position (via the ' +
       'language server): returns which files change and how many edits each gets, ' +
       'so you know the blast radius before touching anything. It does NOT write ' +
-      'files — apply the change yourself with edit_file once the scope looks right.',
+      'files — apply the change yourself with edit once the scope looks right.',
     permissions: ['read'],
     inputSchema: PosArgs.extend({
       newName: z.string().min(1).describe('The new symbol name.'),

@@ -52,6 +52,10 @@
       "types": "./dist/core/tools/builtin/diff.d.ts",
       "default": "./dist/core/tools/builtin/diff.js"
     },
+    "./harness/tools/builtin/edit": {
+      "types": "./dist/core/tools/builtin/edit.d.ts",
+      "default": "./dist/core/tools/builtin/edit.js"
+    },
     "./harness/tools/builtin/_walk": {
       "types": "./dist/core/tools/builtin/_walk.d.ts",
       "default": "./dist/core/tools/builtin/_walk.js"

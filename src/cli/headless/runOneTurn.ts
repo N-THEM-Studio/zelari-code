@@ -377,14 +377,14 @@ export async function runOneTurn(
         (opts.phase ?? 'build') === 'plan'
           ? [
               'PLAN phase: explore and design only.',
-              'Do not write project source files (write_file/edit_file/bash blocked).',
+              'Do not write project source files (write_file/edit/bash blocked).',
               'Plan artifacts under .zelari are allowed.',
               'When the plan is ready, tell the user to switch to BUILD to implement on disk.',
             ].join(' ')
           : [
               'BUILD phase — IMPLEMENT ON DISK (mandatory when the user wants code/file changes).',
               'Prior chat may contain a plan or synthesis: that text is a SPEC to apply, NOT proof that files already changed.',
-              'You MUST call write_file and/or edit_file for every file you change before saying you are done.',
+              'You MUST call write_file and/or edit for every file you change before saying you are done.',
               'After read_file: if the planned change is missing, WRITE it — do not stop at analysis.',
               'Never claim "already implemented" / "tutto fatto" based only on reading a plan or skimming code.',
               'Only claim done after successful mutating tool calls in THIS turn (or after proving the exact planned diff already exists on disk via read_file of the real files).',

@@ -225,7 +225,9 @@ export function resourceClaimsFor(toolName: string, args: unknown): ResourceClai
   const a = asArgs(args);
   switch (toolName) {
     case 'write_file':
-    case 'edit_file': {
+    case 'edit_file':
+    // ADR-0033 t77: the anchored `edit` carries the same single-path args.
+    case 'edit': {
       const p = primaryPath(a);
       return p ? [{ kind: 'path', operation: 'write', path: p }] : [];
     }

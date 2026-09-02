@@ -11,6 +11,8 @@ export const DEFAULT_WALL_MS = 45 * 60 * 1000;
 /** Mutators the gauntlet parent (conductor) must not expose. */
 export const GAUNTLET_PARENT_BLOCKED_TOOLS = [
   'write_file',
+  'edit',
+  // ADR-0033 t77: legacy names stay blocked (past sessions may replay them).
   'edit_file',
   'apply_diff',
   'bash',

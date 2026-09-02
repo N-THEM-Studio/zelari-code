@@ -1,4 +1,5 @@
 import type { ZodSchema } from 'zod';
+import type { SessionEventInput } from '../../session/types.js';
 import type { WriteReject } from './builtin/edit.js';
 
 
@@ -76,6 +77,14 @@ export interface ToolContext {
   audit: (entry: AuditEntry) => void;
   /** Session id (for audit grouping). */
   sessionId: string;
+  /**
+   * ADR-0033 (t75): optional spine emitter for file.* lifecycle telemetry
+   * (file.read / file.applied / file.rejected). Same signature as
+   * ExecutionContext.appendSessionEvent — hosts wire it where tool results
+   * already pass; hosts without a spine writer omit it and tools skip
+   * emission. Best-effort: emission failures never fail the tool result.
+   */
+  emitSessionEvent?: (input: SessionEventInput) => Promise<unknown>;
 }
 
 export interface AuditEntry {

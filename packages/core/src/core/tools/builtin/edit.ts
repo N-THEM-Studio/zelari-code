@@ -4,6 +4,7 @@ import path from 'node:path';
 import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
 import { replaceFileString, snapshotIdOf } from './filesystem.js';
 import { splitLinesLF } from './newlines.js';
+import { emitFileEvent, fileAppliedEvent, fileRejectedEvent, reReadHint } from './fileEvents.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // WriteReject — ADR-0033 day-1 structured reject (never prose)
@@ -275,6 +276,11 @@ export const editTool: ToolDefinition<EditArgs, EditResult> = {
           result.reject.status === 'stale_snapshot'
             ? `(expected ${result.reject.expectedHash}, actual ${result.reject.actualHash})`
             : '(oldString not found — no relocation attempted)';
+        // ADR-0033 (t75): file.rejected telemetry — reason = WriteReject.status.
+        await emitFileEvent(
+          ctx.emitSessionEvent,
+          fileRejectedEvent(absPath, result.reject.status, reReadHint(result.reject)),
+        );
         return typedErr(`edit: ${result.reject.status}: ${args.path} ${detail}`, {
           status: 'failed',
           warnings: [result.reject.status === 'stale_snapshot' ? 'STALE_SNAPSHOT' : 'HUNK_MISMATCH'],
@@ -285,6 +291,11 @@ export const editTool: ToolDefinition<EditArgs, EditResult> = {
         encoding: 'utf-8',
         signal: ctx.signal,
       } as never);
+      // ADR-0033 (t75): file.applied telemetry, after the durable write succeeded.
+      await emitFileEvent(
+        ctx.emitSessionEvent,
+        fileAppliedEvent(absPath, result.snapshotId, result.newContent.length),
+      );
       return typedOk({
         path: absPath,
         applied: true,

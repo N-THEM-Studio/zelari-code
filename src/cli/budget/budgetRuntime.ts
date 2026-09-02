@@ -43,8 +43,11 @@ export type ResourceEnforcement = 'advisory' | 'protected';
  */
 const DEFAULT_ESSENTIAL_TOOLS: readonly string[] = [
   'read_file',
-  'edit_file',
+  'edit',
   'write_file',
+  // ADR-0033 t77: legacy names kept for verification-essential classification
+  // of past-session replays (edit_file/apply_diff left the default catalog).
+  'edit_file',
   'apply_diff',
   'grep_content',
   'list_files',

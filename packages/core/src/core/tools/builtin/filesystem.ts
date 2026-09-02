@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
-import { detectNewline, fromLF, toLF } from './newlines.js';
+import { detectNewline, fromLF, splitLinesLF, toLF } from './newlines.js';
+import { emitFileEvent, fileReadEvent } from './fileEvents.js';
 
 /**
  * ADR-0033 snapshot anchor: sha256 of the FULL (pre-truncation) content,
@@ -62,6 +63,8 @@ export const readFileTool: ToolDefinition<ReadFileArgs, ReadFileResult> = {
       const content = typeof buf === 'string' ? buf : buf.toString('utf-8');
       // Anchor is computed on the INTEGR file, before any line-range/maxBytes cut.
       const snapshotId = snapshotIdOf(content);
+      // ADR-0033 (t75): file.read telemetry — the read that produced this anchor.
+      await emitFileEvent(ctx.emitSessionEvent, fileReadEvent(absPath, snapshotId));
       const allLines = content.split('\n');
       const totalLines = allLines.length;
       const start = args.startLine ?? 0;
@@ -115,6 +118,13 @@ const WriteFileArgsSchema = z.object({
   path: z.string().min(1),
   content: z.string(),
   createDirs: z.boolean().default(false),
+  /**
+   * ADR-0033 file_exists guard. Absent/false: an existing target is NEVER
+   * clobbered — the tool rejects with a structured `file_exists` WriteReject
+   * and writes nothing. Explicit `true` restores the legacy overwrite,
+   * on purpose and on record.
+   */
+  overwrite: z.boolean().optional(),
 });
 
 type WriteFileArgs = z.infer<typeof WriteFileArgsSchema>;
@@ -124,9 +134,32 @@ interface WriteFileResult {
   bytesWritten: number;
 }
 
+/**
+ * ADR-0033 `file_exists` diagnostic: head of the on-disk content (`-`) vs
+ * head of the incoming content (`+`), unified-like, bounded (~10 existing
+ * lines, body capped at ~40). Diagnostic only — no write happened.
+ */
+function fileExistsMinimalDiff(existing: string, incoming: string, pathLabel: string): string {
+  const EXISTING_HEAD_LINES = 10;
+  const MAX_BODY_LINES = 40;
+  const oldHead = splitLinesLF(existing).slice(0, EXISTING_HEAD_LINES);
+  const newHead = splitLinesLF(incoming).slice(0, MAX_BODY_LINES - oldHead.length);
+  return [
+    `--- ${pathLabel}`,
+    `+++ ${pathLabel}`,
+    `@@ -1,${oldHead.length} +1,${newHead.length} @@`,
+    ...oldHead.map((l) => `-${l}`),
+    ...newHead.map((l) => `+${l}`),
+  ].join('\n');
+}
+
 export const writeFileTool: ToolDefinition<WriteFileArgs, WriteFileResult> = {
   name: 'write_file',
-  description: 'Write or create a file. Use createDirs=true to auto-create parent directories.',
+  description:
+    'Write or create a file. Use createDirs=true to auto-create parent directories. ' +
+    'If the target already exists and overwrite is not true, rejects with a structured ' +
+    'file_exists WriteReject (meta.reject) and writes nothing — read it first with read_file, ' +
+    'then use edit with its snapshotId, or pass overwrite: true to replace it.',
   permissions: ['write'],
   sideEffect: 'local',
   timeoutMs: 10000,
@@ -134,6 +167,33 @@ export const writeFileTool: ToolDefinition<WriteFileArgs, WriteFileResult> = {
   execute: async (args, ctx) => {
     try {
       const absPath = path.isAbsolute(args.path) ? args.path : path.join(ctx.cwd, args.path);
+      if (!args.overwrite) {
+        // ADR-0033: write_file creates, it never silently clobbers.
+        let existing: string | null = null;
+        try {
+          const buf = await fs.readFile(absPath, { encoding: 'utf-8', signal: ctx.signal } as never);
+          existing = typeof buf === 'string' ? buf : buf.toString('utf-8');
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
+        }
+        if (existing !== null) {
+          return typedErr(
+            `write_file: ${args.path} already exists (FILE_EXISTS). ` +
+              'Read it with read_file and use edit with its snapshotId, or pass overwrite: true.',
+            {
+              status: 'failed',
+              warnings: ['FILE_EXISTS'],
+              reject: {
+                ok: false,
+                status: 'file_exists',
+                path: absPath,
+                minimalDiff: fileExistsMinimalDiff(existing, args.content, absPath),
+                next: { action: 're-read', path: absPath },
+              },
+            },
+          );
+        }
+      }
       if (args.createDirs) {
         await fs.mkdir(path.dirname(absPath), { recursive: true });
       }

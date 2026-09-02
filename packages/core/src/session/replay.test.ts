@@ -54,6 +54,26 @@ describe('readSessionLog', () => {
     expect(report.events).toHaveLength(0);
     expect(report.issues[0]?.type).toBe('schema-mismatch');
   });
+
+  it('ADR-0033: file.* state kinds validate and stay off the model surface', async () => {
+    const file = await tmpFile(
+      [env(1, 'session.started'), env(2, 'file.read'), env(3, 'file.applied'), env(4, 'file.rejected')].join(
+        '\n',
+      ) + '\n',
+    );
+    const report = await readSessionLog(file);
+    expect(report.issues).toEqual([]);
+    expect(report.events.map((e) => e.kind)).toEqual([
+      'session.started',
+      'file.read',
+      'file.applied',
+      'file.rejected',
+    ]);
+    // State-only: deriveMessages (via buildProjection) never surfaces them.
+    const projection = buildProjection(report.events);
+    expect(projection.eventCount).toBe(4);
+    expect(projection.messages).toEqual([]);
+  });
 });
 
 describe('buildProjection', () => {

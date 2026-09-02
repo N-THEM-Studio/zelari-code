@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { editFileTool, replaceFileString } from './filesystem.js';
+import { editFileTool, replaceFileString, writeFileTool } from './filesystem.js';
+import { WriteRejectSchema } from './edit.js';
 import type { ToolContext } from '../toolTypes.js';
 
 let tmpRoot: string;
@@ -74,5 +75,54 @@ describe('edit_file CRLF', () => {
     );
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error).toContain('no match for oldString');
+  });
+});
+
+describe('write_file file_exists guard (t77)', () => {
+  it('creates a new file', async () => {
+    const r = await writeFileTool.execute({ path: 'fresh.ts', content: 'hello\n' }, ctx);
+    expect(r.ok).toBe(true);
+    if (r.ok) expect(r.value.bytesWritten).toBe('hello\n'.length);
+    await expect(fs.readFile(path.join(tmpRoot, 'fresh.ts'), 'utf-8')).resolves.toBe('hello\n');
+  });
+
+  it('rejects an existing target with file_exists and leaves the disk untouched', async () => {
+    const file = path.join(tmpRoot, 'keep.ts');
+    await fs.writeFile(file, 'original\n', 'utf-8');
+    const r = await writeFileTool.execute({ path: 'keep.ts', content: 'clobber\n' }, ctx);
+    expect(r.ok).toBe(false);
+    expect(await fs.readFile(file, 'utf-8')).toBe('original\n');
+    if (!r.ok) {
+      expect(r.error).toContain('FILE_EXISTS');
+      const reject = WriteRejectSchema.parse(r.meta?.reject);
+      expect(reject.status).toBe('file_exists');
+      expect(reject.path).toBe(file);
+      expect(reject.next).toEqual({ action: 're-read', path: file });
+    }
+  });
+
+  it('overwrite: true replaces an existing file', async () => {
+    const file = path.join(tmpRoot, 'swap.ts');
+    await fs.writeFile(file, 'old\n', 'utf-8');
+    const r = await writeFileTool.execute(
+      { path: 'swap.ts', content: 'new\n', overwrite: true },
+      ctx,
+    );
+    expect(r.ok).toBe(true);
+    await expect(fs.readFile(file, 'utf-8')).resolves.toBe('new\n');
+  });
+
+  it('the file_exists minimalDiff contrasts existing (-) vs incoming (+), bounded', async () => {
+    await fs.writeFile(path.join(tmpRoot, 'd.ts'), 'line1\nline2\n', 'utf-8');
+    const r = await writeFileTool.execute({ path: 'd.ts', content: 'gone1\ngone2\n' }, ctx);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      const reject = WriteRejectSchema.parse(r.meta?.reject);
+      const lines = reject.minimalDiff.split('\n');
+      expect(lines.some((l) => l.startsWith('-'))).toBe(true);
+      expect(lines.some((l) => l.startsWith('+'))).toBe(true);
+      // Header (3) + bounded body: ~10 existing head lines, ~40 body lines cap.
+      expect(lines.length).toBeLessThanOrEqual(43);
+    }
   });
 });

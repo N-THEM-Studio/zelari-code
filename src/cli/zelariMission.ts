@@ -73,7 +73,7 @@ export interface SliceRunResult {
   ran: boolean;
   synthesisText?: string;
   /**
-   * Project-file writes (write_file/edit_file) this slice performed. When the
+   * Project-file writes (write_file/edit) this slice performed. When the
    * driver reports this, the loop uses it to detect the documented
    * composer-2.5 failure mode (implementation slice that claims done but
    * writes 0 files → degraded → never green). `undefined` means the driver
@@ -297,7 +297,7 @@ function buildSlicePrompt(
   return (
     `${userMessage}\n\n[Zelari mission] Implement the MVP slice: ` +
     `${brief.deliverableThisMission}.${fix} ` +
-    'You MUST create or modify the real project files with write_file / edit_file — ' +
+    'You MUST create or modify the real project files with write_file / edit — ' +
     'not just describe them in prose. A run that claims completion without writing ' +
     'any file is a failed run and will not be accepted.'
   );

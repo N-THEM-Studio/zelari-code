@@ -35,6 +35,9 @@ import {
 
 const WRITE_TOOLS: ReadonlySet<string> = new Set([
   'write_file',
+  'edit',
+  // ADR-0033 t77: legacy names kept so replays of past sessions still
+  // classify as writes (edit_file/apply_diff left the default catalog).
   'edit_file',
   'apply_diff',
 ]);

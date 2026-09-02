@@ -115,7 +115,7 @@ export function createAstTools(root: string): ToolDefinition[] {
     description:
       "Locate a named declaration in a TS/JS file and return its EXACT source " +
       'text and line range. Use this to grab a function/class/method verbatim so ' +
-      'you can edit_file it reliably (node-accurate) instead of guessing the ' +
+      'you can edit it reliably (node-accurate) instead of guessing the ' +
       'surrounding text. Relative paths resolve against the working directory. ' +
       'TS/JS only.',
     permissions: ['read'],

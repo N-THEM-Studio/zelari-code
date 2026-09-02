@@ -7,12 +7,11 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('registers all builtin tools (filesystem + bash + search + diff + web + task + ast + ssh + world)', () => {
     const { registry, tools } = createBuiltinToolRegistry({ lspProvider: null });
     const expected = [
-      'apply_diff',
       'ask_user',
       'ast_outline',
       'bash',
       'browser_check',
-      'edit_file',
+      'edit', // ADR-0033 t77: anchored edit replaces edit_file (apply_diff left the default catalog)
       'exec_process',
       'fetch_url',
       'find_symbol',
@@ -66,9 +65,10 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
     const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
-    // 31 HEAD tools (25 builtins + 3 plan-task + exec_process) + observe_batch
-    // + retrieve_observation.
-    expect(openAITools).toHaveLength(31);
+    // 30 HEAD tools (25 builtins + 3 plan-task + exec_process) + observe_batch
+    // + retrieve_observation, with anchored `edit` replacing edit_file and
+    // apply_diff leaving the default catalog (ADR-0033 t77).
+    expect(openAITools).toHaveLength(30);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);

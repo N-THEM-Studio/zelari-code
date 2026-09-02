@@ -49,7 +49,11 @@ import { lastHarnessManifestHash, restoreBudgetRuntimeFromSession } from './budg
 import { resolveProfile } from '@zelari/core/runtime';
 import { buildHarnessManifest } from './harnessManifest.js';
 import { contractEventData, latestTaskContract, updateTaskContract } from './kraken/taskContract.js';
+import { deriveFileEvents, type DerivedFileEvent } from './spineFileEvents.js';
 import path from 'node:path';
+
+/** ADR-0033 (t75): bounded callId→tool-name memory for result derivation. */
+const MAX_PENDING_TOOL_NAMES = 256;
 
 /** Kill switch — default ON in the 2.0 alpha. */
 export function spineEnabled(): boolean {
@@ -244,6 +248,9 @@ export class SessionSpineMirror {
   private resourceTurnPrepared = false;
   /** 2.6 Track A: set once a task.contract has been seeded (or the log had one). */
   private contractSeeded = false;
+
+  /** ADR-0033 (t75): bounded callId→tool-name map for result derivation. */
+  private pendingToolNames = new Map<string, string>();
   status: SpineStatus = 'disabled';
   /** Seq the log continued from when adopting an existing session. */
   resumedFromSeq: number | undefined;
@@ -595,6 +602,37 @@ export class SessionSpineMirror {
   private append(input: SessionEventInput): Promise<number | null> {
     // 2.6.1 (plan §25): TaskContract is default-ON (opt-out ZELARI_TASK_CONTRACT=0).
     if (!this.writer || this.status === 'closed') return Promise.resolve(null);
+    // ADR-0033 (t75): tool.call → remember its tool name (bounded) so the
+    // paired tool.result can derive file.read/file.applied/file.rejected.
+    if (input.kind === 'tool.call') {
+      const callId = input.data?.callId;
+      const tool = input.data?.tool;
+      if (typeof callId === 'string' && typeof tool === 'string') {
+        if (this.pendingToolNames.size >= MAX_PENDING_TOOL_NAMES) {
+          const oldest = this.pendingToolNames.keys().next().value;
+          if (oldest !== undefined) this.pendingToolNames.delete(oldest);
+        }
+        this.pendingToolNames.set(callId, tool);
+      }
+    }
+    // ADR-0033 (t75): derive compact file-lifecycle events from the tool
+    // result payload. They land on the SAME chain right after the
+    // tool.result (ordering guarantee). Undecodable payloads derive nothing
+    // and never break the turn (same degrade-and-stop discipline).
+    let derivedFileEvents: DerivedFileEvent[] = [];
+    if (input.kind === 'tool.result') {
+      const callId = input.data?.callId;
+      const toolName =
+        typeof callId === 'string' ? this.pendingToolNames.get(callId) : undefined;
+      if (typeof callId === 'string') this.pendingToolNames.delete(callId);
+      if (toolName !== undefined) {
+        try {
+          derivedFileEvents = deriveFileEvents(toolName, input.data?.output);
+        } catch {
+          derivedFileEvents = [];
+        }
+      }
+    }
     // 2.6 Track B: count synchronously BEFORE enqueueing; when §10.4 says a
     // snapshot is due it lands right AFTER its tool.call on this same chain
     // (local variable — no re-entrant append racing the this.chain capture).
@@ -631,6 +669,15 @@ export class SessionSpineMirror {
       seq = seq.then((s) =>
         this.writer!
           .append({ kind: 'resource.snapshot', actor: ACTOR_SYSTEM, data: { ...dueSnapshot } })
+          .then(() => s),
+      );
+    }
+    // ADR-0033 (t75): derived file events land right AFTER their tool.result
+    // on this same chain — envelope order is the audit order.
+    for (const fileEvent of derivedFileEvents) {
+      seq = seq.then((s) =>
+        this.writer!
+          .append({ kind: fileEvent.kind, actor: ACTOR_AGENT, data: { ...fileEvent.data } })
           .then(() => s),
       );
     }

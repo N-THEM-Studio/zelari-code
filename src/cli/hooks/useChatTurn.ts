@@ -637,7 +637,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 "# Work Phase: PLAN",
                 "You are in PLAN mode. Explore and design only.",
                 "- Do NOT implement production code or run destructive shell commands.",
-                "- write_file / edit_file / bash / apply_diff are unavailable.",
+                "- write_file / edit / bash are unavailable.",
                 "- inspect_command IS available: allowlisted read-only inspector (no shell). Use it for git_status/git_log/git_diff/git_show/git_branch_current/git_ls_files/typecheck/node_version/npm_ls/npm_outdated/npm_view - it turns claims into execution-verified observations.",
                 "- OBSERVATION INTEGRITY: negative evidence is valid only from a completed observation. Never conclude that code/symbols/files do not exist from degraded results, zero files examined, or unavailable backends (grep_content SEARCH_EMPTY_SCOPE, ast/LSP degraded status, inspect_command unsupported shapes).",
                 "- Produce a clear plan, ask clarifying questions (---QUESTION---), use workspace plan tools when relevant.",
@@ -648,7 +648,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   "# Work Phase: BUILD",
                   "Implement on disk. Prefer acting over describing.",
                   "- Prior plan/synthesis text is a SPEC to apply — not proof files already changed.",
-                  "- You MUST use write_file/edit_file for every file you change before claiming done.",
+                  "- You MUST use write_file/edit for every file you change before claiming done.",
                   "- After read_file: if the planned change is missing, WRITE it — do not stop at analysis.",
                   "- Never claim already-implemented based only on reading a plan or skimming code.",
                   hasPlan
@@ -1453,7 +1453,7 @@ export interface CouncilSliceResult {
   completionOk: boolean;
   ran: boolean;
   synthesisText?: string;
-  /** Project-file writes (write_file/edit_file) counted this slice. */
+  /** Project-file writes (write_file/edit) counted this slice. */
   writeCount?: number;
   /** The council flagged this slice as a degraded (non-hand-off) run. */
   degraded?: boolean;
@@ -1619,7 +1619,7 @@ async function dispatchCouncilPromptImpl(
   // Force council design-phase when UI phase is plan (and vice-versa for build).
   // Experiment: free-form council+build is soft-gated to design-phase unless
   // ZELARI_COUNCIL_CAN_BUILD=1 or the caller (zelari legacy path) opts in.
-  // Soft-gate also enables planMode tool registry so write_file/edit_file/bash
+  // Soft-gate also enables planMode tool registry so write_file/edit/bash
   // cannot create product files while "planning".
   let phaseRunMode =
     overrides.runMode ??
@@ -1975,7 +1975,7 @@ async function dispatchCouncilPromptImpl(
         // forever and made DEGRADED_RUN ("wrote no files") a permanent false
         // positive. Since implementation runs now have a single implementer
         // (specialists are read-only), "no writes at all" is the right signal.
-        if (event.toolName === "write_file" || event.toolName === "edit_file") {
+        if (event.toolName === "write_file" || event.toolName === "edit_file" || event.toolName === "edit") {
           luciferWriteCount++;
         }
         // Drain buffered deltas first so ordering matches reality, and seal

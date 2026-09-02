@@ -115,12 +115,17 @@ describe('F7 profile × phase smoke matrix (Exit-3.2)', () => {
         }
       } else {
         // Build: the full mutator set is available.
-        for (const mutator of ['write_file', 'edit_file', 'apply_diff', 'bash', 'task']) {
+        for (const mutator of ['write_file', 'edit', 'bash', 'task']) {
           expect(names.has(mutator), `${mutator} must exist in build`).toBe(true);
         }
         // Declared 2.0 profile tools are a subset of the real build registry.
+        // ADR-0033 t77: profiles (core-owned) still declare edit_file/
+        // apply_diff — the CLI catalog serves both through the anchored
+        // `edit`, so the subset check follows the catalog alias.
+        const catalogAlias: Record<string, string> = { edit_file: 'edit', apply_diff: 'edit' };
         for (const declared of cell.declaredTools) {
-          expect(names.has(declared), `declared tool ${declared} missing from build registry`).toBe(true);
+          const expected = catalogAlias[declared] ?? declared;
+          expect(names.has(expected), `declared tool ${declared} (catalog: ${expected}) missing from build registry`).toBe(true);
         }
       }
     },
@@ -153,6 +158,14 @@ describe('F7 wiring invariants (source-level, legacyContextIsolation pattern)', 
 
   it('PLAN_BLOCKED_TOOLS stays exactly the mutating builtins', () => {
     // If a new mutator lands without a plan gate, this reminds the author.
-    expect([...PLAN_BLOCKED_TOOLS].sort()).toEqual(['apply_diff', 'bash', 'edit_file', 'write_file']);
+    // ADR-0033 t77: edit_file/apply_diff left the catalog but stay blocked
+    // (past sessions' replays classify by name).
+    expect([...PLAN_BLOCKED_TOOLS].sort()).toEqual([
+      'apply_diff',
+      'bash',
+      'edit',
+      'edit_file',
+      'write_file',
+    ]);
   });
 });

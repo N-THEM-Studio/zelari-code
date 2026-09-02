@@ -129,7 +129,7 @@ const LEAD_ONLY_CONTENT = `# Kraken Delegation Policy
 Current policy: **lead only**.
 
 - Do **not** spawn \`task\` tentacles (explore / general / verify) unless the user explicitly asks.
-- Do the work yourself with \`read_file\` / \`grep_content\` / \`bash\` / \`edit_file\`.
+- Do the work yourself with \`read_file\` / \`grep_content\` / \`bash\` / \`edit\`.
 - The \`task\` tool remains available for an explicit user request only.
 `;
 

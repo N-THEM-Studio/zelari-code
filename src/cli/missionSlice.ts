@@ -28,13 +28,13 @@ import type { SliceRunResult } from './zelariMission.js';
 import { calculateCost } from './modelPricing.js';
 import { krakenDelegationPlaybook } from './kraken/delegationPolicy.js';
 
-const MUTATING = new Set(['write_file', 'edit_file', 'apply_diff']);
+const MUTATING = new Set(['write_file', 'edit', 'edit_file', 'apply_diff']);
 
 /** Prefix for agent implementation slices (mission context). */
 export const AGENT_MISSION_IMPLEMENTER_PREAMBLE =
   'You are the sole implementer for this Zelari mission slice. ' +
   'A multi-agent council may already have produced a plan under `.zelari/` — treat it as a SPEC to apply on disk. ' +
-  'You MUST create or modify real project files with write_file / edit_file. ' +
+  'You MUST create or modify real project files with write_file / edit. ' +
   'Prose without successful writes is a failed slice.';
 
 export interface WriteCountState {
@@ -77,7 +77,7 @@ export function createWriteCounter(): {
         if (!MUTATING.has(name) || event.isError) return;
         const result = String(event.result ?? '');
         const zeroEdit =
-          name === 'edit_file' &&
+          (name === 'edit_file' || name === 'edit') &&
           /occurrencesReplaced["']?\s*[:=]\s*0\b|0 occurrence|no changes/i.test(
             result,
           );
@@ -175,7 +175,7 @@ export async function runAgentMissionSlice(
     '',
     '# Work phase: BUILD (Zelari mission implementation slice)',
     'IMPLEMENT ON DISK. Prior design under .zelari/ is a SPEC, not proof of delivery.',
-    'You MUST call write_file and/or edit_file before claiming done.',
+    'You MUST call write_file and/or edit before claiming done.',
   ].join('\n');
 
   const headlessRole = {

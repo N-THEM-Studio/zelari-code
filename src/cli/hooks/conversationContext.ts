@@ -221,7 +221,7 @@ export function buildContinueUserMessage(
     `The prior assistant output is a PLAN / SPEC / PROPOSAL (or analysis). ` +
     `It is NOT proof that project files already contain those changes.\n` +
     `The user CONFIRMED the plan and wants you to IMPLEMENT it ON DISK NOW.\n` +
-    `- You MUST use write_file and/or edit_file (and bash when needed) to apply every planned change.\n` +
+    `- You MUST use write_file and/or edit (and bash when needed) to apply every planned change.\n` +
     `- Reading files alone is incomplete. Do not stop after read_file/list_files/grep.\n` +
     `- Do NOT claim "already implemented" / "tutto fatto" unless you verified the changes ` +
     `exist on disk in THIS turn (read after your own successful writes).\n` +
