@@ -38,6 +38,7 @@ import path from 'node:path';
 import type { ProviderStreamFn } from '@zelari/core/harness';
 import { runOneTurn } from './runOneTurn.js';
 import { resetKrakenCandidates } from '../kraken/candidateRegistry.js';
+import { resetTaskVerifyObligation, seedTaskVerifyObligation } from '../tools/taskTool.js';
 
 /**
  * Stream FACTORY reference, not a consumed generator: runOneTurn invokes it
@@ -206,6 +207,65 @@ describe('t39 — one-shot strict gate closes runOneTurn with exit 4 (e2e, in-pr
     expect(code).not.toBe(4);
     // Sharper than the contract above: with both switches off this is a
     // clean success, so the positive test's 4 cannot be a boot artifact.
+    expect(code).toBe(0);
+  }, 30_000);
+});
+
+describe('t78 — open general⇒verify obligation closes runOneTurn with exit 4', () => {
+  afterEach(() => {
+    resetTaskVerifyObligation();
+  });
+
+  it('kraken BUILD + seeded unverified general (no extra flag) → 4', async () => {
+    // Isolate the t78 debt gate from the t39 native-pack path.
+    process.env.ZELARI_VERIFY_PACK = '0';
+    seedTaskVerifyObligation({
+      description: 'fix foo',
+      detail: 'VERDICT: FAIL after rework',
+    });
+    const { result: code, lines } = await captureOutput(() =>
+      runOneTurn(
+        {
+          task: TASK,
+          mode: 'kraken',
+          phase: 'build',
+          output: 'json',
+          useCouncil: false,
+          cwd: tmp,
+          // no extra flag — strict done is the default
+        },
+        'openai-compatible',
+        't78-fake',
+        stubStream,
+      ),
+    );
+    expect(code).toBe(4);
+    const joined = lines.join('');
+    expect(joined).toContain('fix foo');
+    expect(joined).toMatch(/without a passing verify/);
+  }, 30_000);
+
+  it('opt-out ZELARI_STRICT_DONE=0 does not close 4 on the same debt', async () => {
+    process.env.ZELARI_VERIFY_PACK = '0';
+    process.env.ZELARI_STRICT_DONE = '0';
+    seedTaskVerifyObligation({ description: 'fix foo', detail: 'VERDICT: FAIL' });
+    const { result: code } = await captureOutput(() =>
+      runOneTurn(
+        {
+          task: TASK,
+          mode: 'kraken',
+          phase: 'build',
+          output: 'json',
+          useCouncil: false,
+          cwd: tmp,
+          strictDone: false,
+        },
+        'openai-compatible',
+        't78-fake',
+        stubStream,
+      ),
+    );
+    expect(code).not.toBe(4);
     expect(code).toBe(0);
   }, 30_000);
 });

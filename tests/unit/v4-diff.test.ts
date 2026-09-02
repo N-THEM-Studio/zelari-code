@@ -157,7 +157,10 @@ describe('apply_diff (v0.4.0)', () => {
     const r = unwrap(await runApply({ path: 'f.txt', diff }));
     expect(r.applied).toBe(false);
     expect(r.hunksSkipped).toBe(1);
-    expect(r.reason).toContain('Delete mismatch');
+    // t73 (ADR-0033): anchored mismatch message — line number + expected/got
+    // replaced the old generic "Delete mismatch" wording.
+    expect(r.reason).toContain('Mismatch at line 2');
+    expect(r.reason).toContain('expected "WRONG"');
     // File unchanged
     const written = await fs.readFile(path.join(tmpRoot, 'f.txt'), 'utf-8');
     expect(written).toBe('a\nb\nc\n');

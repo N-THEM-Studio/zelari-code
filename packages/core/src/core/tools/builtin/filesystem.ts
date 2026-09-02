@@ -1,8 +1,18 @@
 import { z } from 'zod';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
 import { detectNewline, fromLF, toLF } from './newlines.js';
+
+/**
+ * ADR-0033 snapshot anchor: sha256 of the FULL (pre-truncation) content,
+ * hex, first 16 chars. Deterministic: same content → same id. `read_file`
+ * returns it; `edit` requires it back (optimistic lock between tentacles).
+ */
+export function snapshotIdOf(content: string): string {
+  return createHash('sha256').update(content, 'utf8').digest('hex').slice(0, 16);
+}
 
 const ReadFileArgsSchema = z.object({
   path: z.string().min(1),
@@ -29,6 +39,8 @@ interface ReadFileResult {
   totalLines: number;
   readLines: { start: number; end: number };
   sizeBytes: number;
+  /** ADR-0033 anchor: sha256 of the full (pre-truncation) content, 16 hex chars. */
+  snapshotId: string;
 }
 
 export const readFileTool: ToolDefinition<ReadFileArgs, ReadFileResult> = {
@@ -36,7 +48,9 @@ export const readFileTool: ToolDefinition<ReadFileArgs, ReadFileResult> = {
   description:
     'Read a file with optional 0-based line range (endLine exclusive). ' +
     'maxBytes caps the selected range, not a prefix of the file. ' +
-    'Returns content + metadata. Use before edit_file.',
+    'Returns content + snapshotId (sha256 of the FULL content, first 16 hex chars): ' +
+    'pass this anchor to the `edit` tool — it rejects with stale_snapshot if the file ' +
+    'changed since this read. Use before edit.',
   permissions: ['read'],
   sideEffect: 'none',
   timeoutMs: 5000,
@@ -46,6 +60,8 @@ export const readFileTool: ToolDefinition<ReadFileArgs, ReadFileResult> = {
       const absPath = path.isAbsolute(args.path) ? args.path : path.join(ctx.cwd, args.path);
       const buf = await fs.readFile(absPath, { encoding: 'utf-8', signal: ctx.signal } as never);
       const content = typeof buf === 'string' ? buf : buf.toString('utf-8');
+      // Anchor is computed on the INTEGR file, before any line-range/maxBytes cut.
+      const snapshotId = snapshotIdOf(content);
       const allLines = content.split('\n');
       const totalLines = allLines.length;
       const start = args.startLine ?? 0;
@@ -71,10 +87,12 @@ export const readFileTool: ToolDefinition<ReadFileArgs, ReadFileResult> = {
           totalLines,
           readLines: { start, end: readEnd },
           sizeBytes: content.length,
+          snapshotId,
         },
         {
           status,
           counts: { bytes: content.length, lines: totalLines },
+          snapshotId,
           ...(warnings.length > 0 ? { warnings } : {}),
           ...(wasTruncated ? { truncated: true } : {}),
         },

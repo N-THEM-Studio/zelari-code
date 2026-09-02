@@ -61,7 +61,7 @@ import { setPhase } from './phaseState.js';
 import { describePhase } from './phase.js';
 import { parseMode } from './mode.js';
 import { createStreamScrubber } from './utils/streamScrub.js';
-import { resetTaskSpawnCount } from './tools/taskTool.js';
+import { resetTaskSpawnCount, resetTaskVerifyObligation } from './tools/taskTool.js';
 import { writeSessionTodos } from './sessionTodos.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
@@ -102,6 +102,7 @@ import { planModeFromOpts, registerHeadlessMcp, runOneTurn, writeProofSafe, type
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   resetTaskSpawnCount();
+  resetTaskVerifyObligation();
   // H10-fix1: strictDone/missionStrict NEVER touch process.env (not even
   // once-per-process) — each gate site builds a per-invocation overlay via
   // strictEnvOverlay(opts), so `--no-strict-done` (false→'0') is honored
@@ -287,6 +288,9 @@ export async function dispatchHeadlessTurn(
   // Desktop sidecar never enters runHeadless(), so without this the counter
   // lives for the whole Node process — 6 tentacles total, then spawn cap.
   resetTaskSpawnCount();
+  // t78: the general⇒verify obligation is per-turn too — a turn that ends
+  // with open debt is closed blocked by the strict-done gate in runOneTurn.
+  resetTaskVerifyObligation();
 
   if (opts.todos && opts.todos.length > 0) {
     writeSessionTodos(opts.todos, { merge: false });

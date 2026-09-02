@@ -24,6 +24,7 @@
 import { zodToJsonSchema } from '../core/tools/zodBridge.js';
 import type { ToolDefinition as HarnessToolDefinition } from '../core/tools/toolTypes.js';
 import { readFileTool, writeFileTool, editFileTool } from '../core/tools/builtin/filesystem.js';
+import { editTool } from '../core/tools/builtin/edit.js';
 import { bashTool } from '../core/tools/builtin/shell.js';
 import { grepContentTool } from '../core/tools/builtin/search.js';
 import { listFilesTool } from '../core/tools/builtin/listFiles.js';
@@ -35,6 +36,7 @@ const HARNESS_TOOLS: HarnessToolDefinition<never, unknown>[] = [
   readFileTool,
   writeFileTool,
   editFileTool,
+  editTool, // ADR-0033 anchored edit (snapshot-gated); edit_file stays for its deprecation cycle
   bashTool,
   grepContentTool,
   listFilesTool,
@@ -71,7 +73,7 @@ function toEnhanced(tool: HarnessToolDefinition<never, unknown>): EnhancedToolDe
 /**
  * Derive a catalog `EnhancedToolDefinition` from any harness `ToolDefinition`.
  *
- * This is the same transformation `toEnhanced` applies to the 10 HARNESS_TOOLS
+ * This is the same transformation `toEnhanced` applies to the 11 HARNESS_TOOLS
  * builtins, exposed so the CLI can bridge its OWN tool definitions (browser_check,
  * the LSP navigation tools, AST outline) into the agents catalog with identical
  * schema generation — so prompt text, provider schemas, and executor behaviour

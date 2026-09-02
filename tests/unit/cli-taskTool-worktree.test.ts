@@ -80,9 +80,10 @@ describe('createTaskTool — G2 worktree auto-merge (K7)', () => {
     };
 
     const tool = createTaskTool({
-      createSubAgentContext: async ({ cwd }) => {
+      createSubAgentContext: async ({ agent, cwd }) => {
         // Simulate the general tentacle editing a file inside the worktree.
-        writeFileSync(path.join(cwd, 'merged.txt'), 'from tentacle\n');
+        // Only the WRITER edits: the t78 auto-spawned verify is read-only.
+        if (agent === 'general') writeFileSync(path.join(cwd, 'merged.txt'), 'from tentacle\n');
         return { ...dummyContext, cwd };
       },
       harnessFactory: () =>
@@ -123,8 +124,10 @@ describe('createTaskTool — G2 worktree auto-merge (K7)', () => {
     };
 
     const tool = createTaskTool({
-      createSubAgentContext: async ({ cwd }) => {
-        writeFileSync(path.join(cwd, 'skipped.txt'), 'tentacle\n');
+      createSubAgentContext: async ({ agent, cwd }) => {
+        // Only the WRITER edits — the auto-spawned verify must not (and in
+        // production cannot) write; it runs read+bash only.
+        if (agent === 'general') writeFileSync(path.join(cwd, 'skipped.txt'), 'tentacle\n');
         return { ...dummyContext, cwd };
       },
       harnessFactory: () =>
@@ -161,8 +164,8 @@ describe('createTaskTool — G2 worktree auto-merge (K7)', () => {
     };
 
     const tool = createTaskTool({
-      createSubAgentContext: async ({ cwd }) => {
-        writeFileSync(path.join(cwd, 'kept.txt'), 'tentacle\n');
+      createSubAgentContext: async ({ agent, cwd }) => {
+        if (agent === 'general') writeFileSync(path.join(cwd, 'kept.txt'), 'tentacle\n');
         return { ...dummyContext, cwd };
       },
       harnessFactory: () =>

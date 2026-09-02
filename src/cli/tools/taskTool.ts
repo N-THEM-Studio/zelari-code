@@ -41,6 +41,7 @@ import {
   type TypedResult,
 } from '@zelari/core/harness/tools/toolTypes';
 import { appendKrakenRadio } from './krakenRadio.js';
+import { existsSync } from 'node:fs';
 import {
   createKrakenWorktree,
   cleanupKrakenWorktree,
@@ -68,6 +69,7 @@ import {
 } from '../kraken/candidateRegistry.js';
 import { allUnknownCheckResults, parseVerifyReport, type TentacleToolTrace } from '../kraken/verifyReport.js';
 import { recordCandidateTokens } from '../kraken/metrics.js';
+import { parseVerifyVerdict } from '@zelari/core';
 
 /** Sub-agent kinds (OpenCode-inspired). */
 export type TaskAgentKind = 'explore' | 'general' | 'verify';
@@ -185,12 +187,47 @@ const VERIFY_PROMPT = [
 type SpawnGlobal = {
   __zelariTaskSpawnCount?: number;
   __zelariLastGeneralAt?: number;
+  /**
+   * t78 (ADR-0033 slice): runtime `general ⇒ verify` obligation. Set when a
+   * `task agent=general` finishes and cleared only by the runtime-spawned
+   * verify reporting a parseable PASS. Open debt at end of turn ⇒ strict done
+   * is blocked (exit 4) — see runOneTurn.ts. Single slot: the newest
+   * unresolved general wins, mirroring `__zelariLastGeneralAt`.
+   */
+  __zelariGeneralVerifyDebt?: { description: string; detail?: string } | null;
 };
 
 /** Reset spawn counter (call at start of each parent user turn). */
 export function resetTaskSpawnCount(): void {
   const g = globalThis as unknown as SpawnGlobal;
   g.__zelariTaskSpawnCount = 0;
+}
+
+/** Reset the general⇒verify obligation (call at start of each parent user turn). */
+export function resetTaskVerifyObligation(): void {
+  const g = globalThis as unknown as SpawnGlobal;
+  g.__zelariGeneralVerifyDebt = null;
+}
+
+/**
+ * Open verify obligation, or null when every general this turn has been
+ * verified PASS by the runtime auto-spawn (t78). Consulted by the headless
+ * strict-done gate — an open obligation closes the turn blocked (exit 4).
+ */
+export function taskVerifyObligation(): { description: string; detail?: string } | null {
+  const g = globalThis as unknown as SpawnGlobal;
+  return g.__zelariGeneralVerifyDebt ?? null;
+}
+
+/**
+ * Test seam: seed an open general⇒verify obligation without running a tentacle.
+ * Production code must never call this — the auto-verify chain owns the slot.
+ */
+export function seedTaskVerifyObligation(
+  debt: { description: string; detail?: string } | null,
+): void {
+  const g = globalThis as unknown as SpawnGlobal;
+  g.__zelariGeneralVerifyDebt = debt;
 }
 
 /** Max concurrent/serial task spawns per parent turn (env override). */
@@ -213,6 +250,213 @@ export function verifyHintForGeneral(acceptance?: string[]): string {
   return (
     `[kraken:verify-hint] General tentacle finished. Before claiming done, ` +
     `run checks or spawn task agent=verify.${acc}`
+  );
+}
+
+/** Cap on how much of the original task prompt is quoted into an auto-verify prompt (planner parity). */
+const MAX_AUTO_VERIFY_TASK_PROMPT_CHARS = 1200;
+
+/**
+ * t78 (ADR-0033 slice): prompt for the verify tentacle the `task` tool
+ * AUTO-spawns after a successful general. Mirrors the graph planner's
+ * `buildAutoVerifyPrompt` (planner.ts): restate the task, its scope and its
+ * acceptance criteria — a fresh sub-agent sees only this text — and require
+ * the parseable `VERDICT:` trailer the executor's rework loop relies on.
+ */
+export function buildTaskAutoVerifyPrompt(args: {
+  description: string;
+  prompt: string;
+  scope?: string[];
+  acceptance?: string[];
+}): string {
+  const taskPrompt =
+    args.prompt.length > MAX_AUTO_VERIFY_TASK_PROMPT_CHARS
+      ? `${args.prompt.slice(0, MAX_AUTO_VERIFY_TASK_PROMPT_CHARS)}\n… [truncated]`
+      : args.prompt;
+  const parts: string[] = [
+    `Verify on disk that this work was actually completed correctly: ${args.description}.`,
+    '',
+    '## The task that was carried out',
+    taskPrompt,
+  ];
+  if (args.scope && args.scope.length > 0) {
+    parts.push('', '## Paths the work was scoped to', ...args.scope.map((s) => `- ${s}`));
+  }
+  if (args.acceptance && args.acceptance.length > 0) {
+    parts.push('', '## Acceptance criteria to check explicitly', ...args.acceptance.map((a) => `- ${a}`));
+  }
+  parts.push(
+    '',
+    'Read the files involved rather than trusting any summary. Report the commands you ran ' +
+      'and every gap you found.',
+    '',
+    '## How to report your verdict',
+    'End your final message with a line of exactly this form, as the LAST line:',
+    '',
+    'VERDICT: PASS',
+    '',
+    'or',
+    '',
+    'VERDICT: FAIL',
+    '',
+    'This line is parsed. Only report FAIL for a real defect against the task or its ' +
+      'acceptance criteria: a rework round is expensive and there is only a small number of them.',
+  );
+  return parts.join('\n');
+}
+
+/**
+ * Prompt for the single rework round the `task` tool may spend when its
+ * auto-spawned verify reports FAIL — same shape as the graph executor's
+ * `spawnReworkPair` rework node (original task + reviewer findings).
+ */
+export function buildTaskReworkPrompt(
+  original: { prompt: string },
+  findings: string,
+): string {
+  return (
+    `A reviewer inspected this work on disk and REJECTED it. Address every finding below, ` +
+    `then leave the work in a state that satisfies the original task.\n\n` +
+    `## Original task\n${original.prompt}\n\n` +
+    `## Reviewer findings (these are what must change)\n` +
+    `${findings || '(the reviewer reported FAIL without detail)'}`
+  );
+}
+
+/**
+ * t78 (ADR-0033 slice): runtime `general ⇒ verify` obligation on the `task`
+ * tool path — the graph engine already auto-injects a verify node after every
+ * general (planner) and reworks once on FAIL (executor, DEFAULT_MAX_REVIEW_ROUNDS);
+ * the `task` tool used to append a soft hint footer and stop.
+ *
+ * Behavior (parent-side sequential spawn — sub-agents still cannot nest `task`):
+ *   1. auto-spawn one verify with the SAME acceptance[] (and the general's
+ *      worktree when it is still present — kept worktrees; merged-and-cleaned
+ *      ones left the work in the parent tree, which is what must be checked);
+ *   2. on parseable `VERDICT: FAIL`: at most `resolveMaxReviewRounds()` rework
+ *      round(s) in that same tree (executor pattern: `allowWorktree: false` so
+ *      no second worktree opens on the same scope), then verify again;
+ *   3. PASS clears the obligation; FAIL after the budget, an unknown verdict
+ *      (no parseable trailer — non-blocking here, exactly like the executor)
+ *      or a failed spawn leaves it open, and the headless strict-done gate
+ *      then closes the turn blocked (exit 4). `ZELARI_STRICT_DONE=0` remains
+ *      the only opt-out.
+ *
+ * Returns the honest parent-facing `[kraken:auto-verify]` block appended to
+ * the task result (or null when nothing ran — e.g. explore/verify agents).
+ */
+export async function runAutoVerifyAfterGeneral(opts: {
+  deps: TaskToolDeps;
+  original: { description: string; prompt: string; scope?: string[]; acceptance?: string[] };
+  /** The successful general result (for its worktree path, when kept). */
+  general: TentacleSuccess;
+  parentCwd: string;
+  sessionId: string;
+  signal?: AbortSignal;
+}): Promise<string> {
+  const g = globalThis as unknown as SpawnGlobal;
+  // Debt exists from the moment the general finished — even a mid-chain
+  // failure must not leave the work silently "verified".
+  g.__zelariGeneralVerifyDebt = { description: opts.original.description };
+
+  // Same worktree when one was used AND still exists (kept); after an
+  // auto-merge the worktree is gone and the work lives in the parent tree.
+  const inheritedCwd =
+    opts.general.worktreePath && existsSync(opts.general.worktreePath)
+      ? opts.general.worktreePath
+      : undefined;
+
+  const runVerify = (label: string): Promise<TentacleResult> =>
+    runTentacle({
+      deps: opts.deps,
+      args: {
+        description: label,
+        prompt: buildTaskAutoVerifyPrompt(opts.original),
+        scope: opts.original.scope,
+        acceptance: opts.original.acceptance,
+      },
+      agent: 'verify',
+      thoroughness: 'medium',
+      parentCwd: opts.parentCwd,
+      ...(inheritedCwd ? { cwdOverride: inheritedCwd } : {}),
+      sessionId: opts.sessionId,
+      ...(opts.signal ? { signal: opts.signal } : {}),
+    });
+
+  let verify = await runVerify(`verify: ${opts.original.description}`);
+  // Parsed like the graph executor: last VERDICT trailer wins; a failed run is
+  // an unknown (degraded observation is never proof).
+  let verdict = verify.ok ? parseVerifyVerdict(verify.result).verdict : 'unknown';
+  let findings = verify.ok ? parseVerifyVerdict(verify.result).findings : '';
+
+  if (verdict === 'fail') {
+    // Same rework budget as the graph executor (default 1), resolved lazily to
+    // avoid a module-load cycle tools → kraken/executor → tentacle → tools.
+    const { resolveMaxReviewRounds } = await import('../kraken/executor.js');
+    const maxRounds = resolveMaxReviewRounds();
+    let round = 0;
+    while (verdict === 'fail' && round < maxRounds) {
+      round += 1;
+      const rework = await runTentacle({
+        // A rework edits the EXISTING tree — it must not open a second
+        // worktree on the same scope (executor spawnReworkPair contract).
+        deps: { ...opts.deps, allowWorktree: false },
+        args: {
+          description: `rework: ${opts.original.description}`,
+          prompt: buildTaskReworkPrompt(opts.original, findings),
+          scope: opts.original.scope,
+          acceptance: opts.original.acceptance,
+        },
+        agent: 'general',
+        thoroughness: 'medium',
+        parentCwd: opts.parentCwd,
+        ...(inheritedCwd ? { cwdOverride: inheritedCwd } : {}),
+        sessionId: opts.sessionId,
+        ...(opts.signal ? { signal: opts.signal } : {}),
+      });
+      if (!rework.ok) {
+        const detail = `rework round ${round} failed: ${rework.error}`;
+        g.__zelariGeneralVerifyDebt = { description: opts.original.description, detail };
+        appendKrakenRadio(opts.parentCwd, opts.sessionId, {
+          kind: 'error',
+          agent: 'general',
+          description: `rework: ${opts.original.description}`,
+          detail,
+          ok: false,
+        });
+        return (
+          `\n\n[kraken:auto-verify] verify FAIL — rework round ${round} failed to run ` +
+          `(${rework.error}). Work stays UNVERIFIED; strict done will close this turn blocked.`
+        );
+      }
+      verify = await runVerify(`verify: ${opts.original.description} (rework ${round})`);
+      verdict = verify.ok ? parseVerifyVerdict(verify.result).verdict : 'unknown';
+      findings = verify.ok ? parseVerifyVerdict(verify.result).findings : '';
+    }
+  }
+
+  if (verdict === 'pass') {
+    g.__zelariGeneralVerifyDebt = null;
+    return `\n\n[kraken:auto-verify] verify PASS — general⇒verify obligation satisfied.`;
+  }
+
+  const detail =
+    verdict === 'fail'
+      ? `verify FAIL unresolved (rework budget spent): ${findings || 'no findings reported'}`
+      : verify.ok
+        ? 'verify produced no parseable VERDICT — unverified'
+        : `verify tentacle failed: ${verify.error}`;
+  g.__zelariGeneralVerifyDebt = { description: opts.original.description, detail };
+  appendKrakenRadio(opts.parentCwd, opts.sessionId, {
+    kind: 'error',
+    agent: 'verify',
+    description: `verify: ${opts.original.description}`,
+    detail,
+    ok: false,
+  });
+  return (
+    `\n\n[kraken:auto-verify] ${detail}. Work stays UNVERIFIED; ` +
+    `strict done will close this turn blocked.`
   );
 }
 
@@ -1084,8 +1328,38 @@ export function createTaskTool(
         }
       }
       if (!res.ok) return typedErr(res.error);
+      let result = `[sub-agent:${res.agent}/${res.thoroughness} model=${res.model}]\n${res.result}${res.footer}`;
+      // t78 (ADR-0033 slice): runtime general⇒verify obligation — after a
+      // successful general, the tool itself spawns the verify (same
+      // acceptance[], same tree) instead of only appending a hint footer.
+      // FAIL gets at most one rework round, mirroring the graph executor.
+      if (res.agent === 'general') {
+        try {
+          result += await runAutoVerifyAfterGeneral({
+            deps,
+            original: {
+              description: args.description,
+              prompt: args.prompt,
+              scope: args.scope,
+              acceptance: args.acceptance,
+            },
+            general: res,
+            parentCwd,
+            sessionId,
+            ...(ctx.signal ? { signal: ctx.signal } : {}),
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          const gv = globalThis as unknown as SpawnGlobal;
+          gv.__zelariGeneralVerifyDebt = {
+            description: args.description,
+            detail: `auto-verify chain failed: ${msg}`,
+          };
+          result += `\n\n[kraken:auto-verify] auto-verify chain failed (${msg}) — work stays UNVERIFIED.`;
+        }
+      }
       return typedOk({
-        result: `[sub-agent:${res.agent}/${res.thoroughness} model=${res.model}]\n${res.result}${res.footer}`,
+        result,
         agent: res.agent,
       });
     },

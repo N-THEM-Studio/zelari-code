@@ -25,11 +25,14 @@ import {
 import {
   createTaskTool,
   resetTaskSpawnCount,
+  resetTaskVerifyObligation,
   maxTaskSpawnsPerTurn,
+  taskVerifyObligation,
   verifyHintForGeneral,
   type SubAgentContext,
   type SubAgentHarness,
 } from '../../src/cli/tools/taskTool.js';
+import type { AgentHarnessConfig } from '@zelari/core/harness';
 import { handleSlashCommand } from '../../src/cli/slashCommands.js';
 import type { BrainEvent } from '@zelari/core/shared/events';
 import type { ToolContext } from '@zelari/core/harness/tools/toolTypes';
@@ -266,6 +269,190 @@ describe('taskTool K3/K4 integration', () => {
     });
     await tool.execute({ description: 'c', prompt: 'p' }, { ...ctx, cwd: root });
     expect(seenCwd).toBe(root);
+  });
+});
+
+/**
+ * t78 (ADR-0033 slice): runtime `general ⇒ verify` obligation on the `task`
+ * tool path. After a successful general, the tool itself spawns a verify with
+ * the SAME acceptance[]; a parseable FAIL gets at most one rework round
+ * (DEFAULT_MAX_REVIEW_ROUNDS parity); no passing verify by end of budget
+ * leaves the obligation open for the strict-done gate (exit 4).
+ */
+describe('runtime general⇒verify obligation (t78)', () => {
+  /** Deps that replay a queued conclusion per spawn and record what ran. */
+  function scriptedDeps() {
+    const seenAgents: string[] = [];
+    const seenUserPrompts: string[] = [];
+    const queue: string[] = [];
+    const deps = {
+      allowWorktree: false as const,
+      createSubAgentContext: async ({ agent, cwd }: { agent: string; cwd: string }) => {
+        seenAgents.push(agent);
+        return { ...dummyContext, cwd, model: 'm1' };
+      },
+      harnessFactory: (config: AgentHarnessConfig) => {
+        const delta = queue.shift() ?? '';
+        const user = config.messages.find((m) => m.role === 'user');
+        seenUserPrompts.push(user?.content ?? '');
+        return fakeHarness([
+          { type: 'message_start' },
+          { type: 'message_delta', delta } as Partial<BrainEvent>,
+          { type: 'message_end' },
+        ]);
+      },
+    };
+    return { deps, seenAgents, seenUserPrompts, queue };
+  }
+
+  let prevRounds: string | undefined;
+
+  beforeEach(() => {
+    resetTaskSpawnCount();
+    resetTaskVerifyObligation();
+    prevRounds = process.env.ZELARI_KRAKEN_MAX_REVIEW_ROUNDS;
+    delete process.env.ZELARI_KRAKEN_MAX_REVIEW_ROUNDS;
+  });
+
+  afterEach(() => {
+    if (prevRounds === undefined) delete process.env.ZELARI_KRAKEN_MAX_REVIEW_ROUNDS;
+    else process.env.ZELARI_KRAKEN_MAX_REVIEW_ROUNDS = prevRounds;
+    resetTaskVerifyObligation();
+  });
+
+  it('auto-spawns a verify with the same acceptance and clears the obligation on PASS', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-pass-'));
+    try {
+      const { deps, seenAgents, seenUserPrompts, queue } = scriptedDeps();
+      queue.push('edited foo', 'checks ran\nVERDICT: PASS');
+      const tool = createTaskTool(deps);
+      const res = await tool.execute(
+        { description: 'fix foo', prompt: 'edit foo', agent: 'general', acceptance: ['tests pass'] },
+        { ...ctx, cwd: root, sessionId: 't78-pass' },
+      );
+      expect(res.ok).toBe(true);
+      // Runtime obligation: a second spawn (verify) happened WITHOUT the
+      // parent asking for it — the hint footer alone is no longer the gate.
+      expect(seenAgents).toEqual(['general', 'verify']);
+      // Same acceptance[] reaches the auto-spawned verify, with the trailer
+      // instruction the rework loop parses.
+      expect(seenUserPrompts[1]).toContain('tests pass');
+      expect(seenUserPrompts[1]).toContain('edit foo');
+      expect(seenUserPrompts[1]).toContain('VERDICT: PASS');
+      if (res.ok) {
+        expect(res.value.result).toMatch(/\[kraken:auto-verify\] verify PASS/);
+      }
+      expect(taskVerifyObligation()).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('on FAIL spends ONE rework round in the same tree, then verifies again', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-rework-'));
+    try {
+      const { deps, seenAgents, seenUserPrompts, queue } = scriptedDeps();
+      queue.push(
+        'edited foo',
+        'the error path is not handled\nVERDICT: FAIL',
+        'handled the error path',
+        'fixed now\nVERDICT: PASS',
+      );
+      const tool = createTaskTool(deps);
+      const res = await tool.execute(
+        { description: 'fix foo', prompt: 'edit foo', agent: 'general', acceptance: ['tests pass'] },
+        { ...ctx, cwd: root, sessionId: 't78-rework' },
+      );
+      expect(res.ok).toBe(true);
+      // writer → verify FAIL → rework (writer again) → fresh verify PASS.
+      expect(seenAgents).toEqual(['general', 'verify', 'general', 'verify']);
+      // The rework carries the reviewer findings — it must not redo work blind.
+      expect(seenUserPrompts[2]).toContain('REJECTED');
+      expect(seenUserPrompts[2]).toContain('the error path is not handled');
+      if (res.ok) {
+        expect(res.value.result).toMatch(/verify PASS/);
+      }
+      expect(taskVerifyObligation()).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('FAIL after the rework budget leaves the obligation open (strict done blocks)', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-unresolved-'));
+    try {
+      const { deps, seenAgents, queue } = scriptedDeps();
+      queue.push('edited foo', 'still broken\nVERDICT: FAIL', 'tried again', 'still broken\nVERDICT: FAIL');
+      const tool = createTaskTool(deps);
+      const res = await tool.execute(
+        { description: 'fix foo', prompt: 'edit foo', agent: 'general' },
+        { ...ctx, cwd: root, sessionId: 't78-open' },
+      );
+      // The general itself succeeded — the tool result stays ok, but the
+      // unresolved verify debt must be visible for the strict-done gate.
+      expect(res.ok).toBe(true);
+      // Exactly one rework: no second round after the budget is spent.
+      expect(seenAgents).toEqual(['general', 'verify', 'general', 'verify']);
+      if (res.ok) {
+        expect(res.value.result).toMatch(/UNVERIFIED/);
+      }
+      const debt = taskVerifyObligation();
+      expect(debt?.description).toBe('fix foo');
+      expect(debt?.detail).toMatch(/FAIL/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('an unknown verdict (no parseable trailer) spawns no rework but stays unverified', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-unknown-'));
+    try {
+      const { deps, seenAgents, queue } = scriptedDeps();
+      queue.push('edited foo', 'cannot tell, tooling was degraded');
+      const tool = createTaskTool(deps);
+      const res = await tool.execute(
+        { description: 'fix foo', prompt: 'edit foo', agent: 'general' },
+        { ...ctx, cwd: root, sessionId: 't78-unknown' },
+      );
+      expect(res.ok).toBe(true);
+      expect(seenAgents).toEqual(['general', 'verify']);
+      if (res.ok) {
+        expect(res.value.result).toMatch(/no parseable VERDICT/);
+        expect(res.value.result).toMatch(/UNVERIFIED/);
+      }
+      expect(taskVerifyObligation()?.description).toBe('fix foo');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('explore never creates an obligation', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-explore-'));
+    try {
+      const { deps, seenAgents, queue } = scriptedDeps();
+      queue.push('found it');
+      const tool = createTaskTool(deps);
+      const res = await tool.execute(
+        { description: 'look', prompt: 'find X', agent: 'explore' },
+        { ...ctx, cwd: root, sessionId: 't78-explore' },
+      );
+      expect(res.ok).toBe(true);
+      expect(seenAgents).toEqual(['explore']);
+      expect(taskVerifyObligation()).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('TUI consumes the obligation (useChatTurn wiring)', () => {
+    const src = readFileSync(
+      path.resolve(__dirname, '..', '..', 'src', 'cli', 'hooks', 'useChatTurn.ts'),
+      'utf-8',
+    );
+    expect(src).toMatch(/\btaskVerifyObligation\b/);
+    expect(src).toMatch(/\bstrictDoneEnabled\b/);
+    expect(src).toMatch(/turn is NOT verified-complete/);
+    expect(src).toMatch(/finished without a passing verify/);
   });
 });
 

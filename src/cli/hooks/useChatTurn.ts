@@ -21,7 +21,7 @@ import { PROVIDERS } from "../keyStore.js";
 import { getActiveModel } from "../providerConfig.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
 import { KrakenTurnRuntime } from "../kraken/turnRuntime.js";
-import { resetTaskSpawnCount } from "../tools/taskTool.js";
+import { resetTaskSpawnCount, resetTaskVerifyObligation, taskVerifyObligation } from "../tools/taskTool.js";
 import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from "../kraken/candidateRegistry.js";
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from "../kraken/metrics.js";
 import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
@@ -31,6 +31,7 @@ import { buildKrakenRepairPrompt } from "../kraken/completionGate.js";
 import {
   evaluateStrictBuildGate,
   strictGateEventPayload,
+  strictDoneEnabled,
   type StrictBuildGateEvaluation,
   type StrictGateOptions,
 } from "../kraken/verificationBridge.js";
@@ -212,6 +213,9 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
     ) => {
       // Kraken: fresh tentacle spawn budget each parent user turn.
       resetTaskSpawnCount();
+      // t78: same for the runtime general⇒verify obligation — debt never
+      // leaks across parent turns.
+      resetTaskVerifyObligation();
       // Fase 3 (ADR-0020): fresh per-turn candidate registry.
       resetKrakenCandidates();
       resetKrakenTurnMetrics();
@@ -929,6 +933,24 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                     `[kraken] strict done: evidence still incomplete after repair (${
                       still.evaluation?.unsatisfied.length ?? "?"
                     } unresolved) — turn is NOT verified-complete`,
+                    Date.now(),
+                  );
+                }
+              }
+              // t78: runtime general⇒verify obligation — TUI must not silently
+              // complete a turn whose writer work is unverified. Rework already
+              // ran inside the task tool (budget ≤ 1); here we only shout.
+              if (
+                !krakenSuppressFinish &&
+                event.reason === "completed" &&
+                workPhase === "build" &&
+                strictDoneEnabled("kraken")
+              ) {
+                const verifyDebt = taskVerifyObligation();
+                if (verifyDebt) {
+                  appendSystem(
+                    setMessages,
+                    `[kraken] strict done: task general "${verifyDebt.description}" finished without a passing verify (${verifyDebt.detail ?? "unverified work"}) — turn is NOT verified-complete`,
                     Date.now(),
                   );
                 }

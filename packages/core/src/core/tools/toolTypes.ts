@@ -1,4 +1,5 @@
 import type { ZodSchema } from 'zod';
+import type { WriteReject } from './builtin/edit.js';
 
 
 /**
@@ -22,6 +23,10 @@ export interface ToolResultMeta {
   counts?: { filesWalked?: number; matches?: number; bytes?: number; lines?: number };
   warnings?: string[];
   truncated?: boolean;
+  /** ADR-0033: sha256[:16] anchor of the full (pre-truncation) content (read tools). */
+  snapshotId?: string;
+  /** ADR-0033: structured WriteReject payload for write-path failures (edit, apply_diff). */
+  reject?: WriteReject;
 }
 
 /** Discriminated union for tool execution results. */

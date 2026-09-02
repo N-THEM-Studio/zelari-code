@@ -5,11 +5,16 @@ import path from 'node:path';
 import {
   createTaskTool,
   buildTaskUserPrompt,
+  buildTaskAutoVerifyPrompt,
   maxTaskSpawnsPerTurn,
+  runAutoVerifyAfterGeneral,
   runSubAgent,
+  resetTaskVerifyObligation,
+  taskVerifyObligation,
   TASK_TOOL_TIMEOUT_MS,
   type SubAgentContext,
   type SubAgentHarness,
+  type TentacleSuccess,
 } from '../../src/cli/tools/taskTool.js';
 import { createBuiltinToolRegistry } from '../../src/cli/toolRegistry.js';
 import type { BrainEvent } from '@zelari/core/shared/events';
@@ -88,11 +93,11 @@ describe('createTaskTool', () => {
     }
   });
 
-  it('passes agent kind to createSubAgentContext', async () => {
-    let seen: string | undefined;
+  it('passes agent kind to createSubAgentContext (t78: writer is followed by the auto-verify)', async () => {
+    const seen: string[] = [];
     const tool = createTaskTool({
       createSubAgentContext: async ({ agent }) => {
-        seen = agent;
+        seen.push(agent);
         return dummyContext;
       },
       harnessFactory: () =>
@@ -106,7 +111,10 @@ describe('createTaskTool', () => {
       { description: 'edit', prompt: 'fix x', agent: 'general', thoroughness: 'deep' },
       ctx,
     );
-    expect(seen).toBe('general');
+    expect(seen[0]).toBe('general');
+    // t78: the runtime general⇒verify obligation spawns a verify after the
+    // writer — the last sub-agent context built for a general task is verify.
+    expect(seen[seen.length - 1]).toBe('verify');
   });
 
   it('returns the LAST completed message (tool-call turns discarded)', async () => {
@@ -249,5 +257,140 @@ describe('Kraken task contract helpers', () => {
         acceptance: ['tests green'],
       }).success,
     ).toBe(true);
+  });
+});
+
+/**
+ * t78 (ADR-0033 slice): the runtime general⇒verify chain the `task` tool
+ * runs after a successful general. These unit tests call the exported chain
+ * directly so the cwd-inheritance contract (same worktree while it exists,
+ * parent tree once it is gone) is pinned without needing a real git repo.
+ */
+describe('runAutoVerifyAfterGeneral (t78)', () => {
+  let prevRounds: string | undefined;
+
+  beforeEach(() => {
+    resetTaskVerifyObligation();
+    prevRounds = process.env.ZELARI_KRAKEN_MAX_REVIEW_ROUNDS;
+    delete process.env.ZELARI_KRAKEN_MAX_REVIEW_ROUNDS;
+  });
+
+  afterEach(() => {
+    if (prevRounds === undefined) delete process.env.ZELARI_KRAKEN_MAX_REVIEW_ROUNDS;
+    else process.env.ZELARI_KRAKEN_MAX_REVIEW_ROUNDS = prevRounds;
+    resetTaskVerifyObligation();
+  });
+
+  function fakeGeneral(worktreePath: string | null): TentacleSuccess {
+    return {
+      ok: true,
+      agent: 'general',
+      thoroughness: 'medium',
+      model: 'm',
+      result: 'did the work',
+      footer: '',
+      worktreePath,
+      worktreeHandle: null,
+    };
+  }
+
+  function chainDeps(conclusions: string[], seenCwds: string[]) {
+    return {
+      createSubAgentContext: async ({ cwd }: { cwd: string }) => {
+        seenCwds.push(cwd);
+        return { ...dummyContext, cwd };
+      },
+      harnessFactory: () =>
+        fakeHarness([
+          { type: 'message_start' },
+          { type: 'message_delta', delta: conclusions.shift() ?? '' } as Partial<BrainEvent>,
+          { type: 'message_end' },
+        ]),
+    };
+  }
+
+  it('verifies inside an EXISTING worktree path (same tree the writer used)', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-wt-'));
+    try {
+      const seenCwds: string[] = [];
+      const deps = chainDeps(['clean\nVERDICT: PASS'], seenCwds);
+      const summary = await runAutoVerifyAfterGeneral({
+        deps,
+        original: { description: 'fix foo', prompt: 'edit foo', acceptance: ['tests pass'] },
+        general: fakeGeneral(root),
+        parentCwd: path.join(root, 'parent'),
+        sessionId: 't78-wt',
+      });
+      // The verify ran in the still-existing worktree, not the parent tree.
+      expect(seenCwds[0]).toBe(root);
+      expect(summary).toContain('verify PASS');
+      expect(taskVerifyObligation()).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to the parent tree when the worktree was merged and cleaned up', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-merged-'));
+    try {
+      const seenCwds: string[] = [];
+      const deps = chainDeps(['clean\nVERDICT: PASS'], seenCwds);
+      const summary = await runAutoVerifyAfterGeneral({
+        deps,
+        original: { description: 'fix foo', prompt: 'edit foo' },
+        general: fakeGeneral(path.join(root, 'vanished-worktree')),
+        parentCwd: root,
+        sessionId: 't78-merged',
+      });
+      // The worktree path no longer exists — the work was auto-merged into
+      // the parent tree, which is what must be verified.
+      expect(seenCwds[0]).toBe(root);
+      expect(summary).toContain('verify PASS');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('reworks on FAIL in the SAME tree, then verifies again', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-chain-'));
+    try {
+      const seenCwds: string[] = [];
+      const deps = chainDeps(
+        // verify FAIL → rework conclusion → fresh verify PASS.
+        ['wrong\nVERDICT: FAIL', 'redid the work', 'clean now\nVERDICT: PASS'],
+        seenCwds,
+      );
+      const summary = await runAutoVerifyAfterGeneral({
+        deps,
+        original: { description: 'fix foo', prompt: 'edit foo' },
+        general: fakeGeneral(root),
+        parentCwd: root,
+        sessionId: 't78-chain',
+      });
+      // verify → rework → fresh verify, all inside the same tree.
+      expect(seenCwds).toEqual([root, root, root]);
+      expect(summary).toContain('verify PASS');
+      expect(taskVerifyObligation()).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('buildTaskAutoVerifyPrompt (t78)', () => {
+  it('restates the task, scope and acceptance and requires the parseable trailer', () => {
+    const prompt = buildTaskAutoVerifyPrompt({
+      description: 'fix foo',
+      prompt: 'edit foo',
+      scope: ['src/foo.ts'],
+      acceptance: ['tests pass', 'typecheck clean'],
+    });
+    expect(prompt).toContain('fix foo');
+    expect(prompt).toContain('edit foo');
+    expect(prompt).toContain('src/foo.ts');
+    expect(prompt).toContain('tests pass');
+    expect(prompt).toContain('typecheck clean');
+    expect(prompt).toContain('VERDICT: PASS');
+    expect(prompt).toContain('VERDICT: FAIL');
   });
 });

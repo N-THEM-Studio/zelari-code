@@ -42,7 +42,9 @@ import { createStreamScrubber } from '../utils/streamScrub.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { evaluateStrictBuildGate, strictEnvOverlay, strictGateEventPayload, strictGateExitCode } from '../kraken/verificationBridge.js';
+import { evaluateStrictBuildGate, strictEnvOverlay, strictGateEventPayload, strictGateExitCode, STRICT_DONE_EXIT_CODE, strictDoneEnabled } from '../kraken/verificationBridge.js';
+// t78 (ADR-0033 slice): runtime general⇒verify obligation on the task tool path.
+import { taskVerifyObligation } from '../tools/taskTool.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { enforceRequiredProofPersistence } from '../kraken/completionProofPersist.js';
 import { nativePackEnabled } from '../kraken/nativeVerification.js';
@@ -796,6 +798,30 @@ export async function runOneTurn(
         else process.stderr.write(`[zelari-code --headless] ${gateMsg}\n`);
       }
     }
+  }
+
+  // t78 (ADR-0033 slice): a `task agent=general` that finished this turn
+  // without a passing verify — the tool's auto-spawned verify reported FAIL
+  // after the rework budget, produced no parseable verdict, or could not run —
+  // must NOT close as success. Strict done is blocked ⇒ dedicated exit code.
+  // `ZELARI_STRICT_DONE=0` remains the only opt-out (no new env flag).
+  const verifyDebt = taskVerifyObligation();
+  if (
+    strictExit === 0 &&
+    pass.finalReason === 'completed' &&
+    pass.exitCode === 0 &&
+    isKrakenMode(opts.mode) &&
+    !planModeFromOpts(opts) &&
+    verifyDebt !== null &&
+    strictDoneEnabled('kraken', strictEnv)
+  ) {
+    strictExit = STRICT_DONE_EXIT_CODE;
+    const debtMsg =
+      `[headless] Kraken BUILD: task general "${verifyDebt.description}" finished without a ` +
+      `passing verify — strict done blocked (exit ${STRICT_DONE_EXIT_CODE}): ` +
+      `${verifyDebt.detail ?? 'unverified work'}`;
+    if (opts.output === 'json') emitEvent({ type: 'log', message: debtMsg });
+    else process.stderr.write(`[zelari-code --headless] ${debtMsg}\n`);
   }
 
   progressRuntime.finish(pass.finalReason);
