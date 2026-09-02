@@ -13,7 +13,7 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative, sep } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 import type {
   ArmRunRecord,
   EvalArm,
@@ -154,11 +154,23 @@ export function runExperiment(input: {
   } = input;
 
   const runs: ArmRunRecord[] = [];
+  // cliEntry may be repo-relative; the child cwd is the FIXTURE, so the entry
+  // MUST be resolved against THIS process's cwd before spawning (relative
+  // entry + fixture cwd = instant MODULE_NOT_FOUND, exit 1, empty stdout).
+  const entryAbs = resolve(cliEntry);
   for (const caseDef of cases) {
     for (const arm of arms) {
-      const res = spawnSync(process.execPath, [cliEntry, '--headless', '--task', caseDef.prompt, '--output', 'json'], {
+      // The child MUST inherit the parent env (PATH, SystemRoot on Windows,
+      // provider API keys); baseEnv/arm.env only OVERRIDE on top. A fully
+      // replaced env kills the CLI instantly (exit 1, no stdout) — the exact
+      // failure mode of the first t79 live run (all-zero manifest).
+      const modelArgs = [
+        ...(input.model ? ['--model', input.model] : []),
+        ...(input.provider ? ['--provider', input.provider] : []),
+      ];
+      const res = spawnSync(process.execPath, [entryAbs, '--headless', '--task', caseDef.prompt, '--output', 'json', ...modelArgs], {
         cwd: caseDef.cwdFixture,
-        env: composeArmEnv(baseEnv, arm),
+        env: { ...process.env, ...composeArmEnv(baseEnv, arm) },
         encoding: 'utf8',
         timeout: caseDef.timeoutMs,
         maxBuffer: 64 * 1024 * 1024,

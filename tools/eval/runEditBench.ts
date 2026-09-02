@@ -115,6 +115,7 @@ function setupBaselineWorktree(outDir: string, ref: string): string | null {
 
 function main(): number {
   const model = arg('model');
+  const provider = arg('provider') ?? undefined;
   const reps = Number.parseInt(arg('reps') ?? String(EDIT_BENCH_REPS), 10);
   const count = Number.parseInt(arg('count') ?? String(EDIT_BENCH_CASES), 10);
   const seed = Number.parseInt(arg('seed') ?? String(EDIT_BENCH_SEED), 10);
@@ -163,6 +164,7 @@ function main(): number {
         baseEnv,
         cliEntry,
         model,
+        provider,
       });
       manifests.push(manifest);
       collected.push(...manifest.runs);
