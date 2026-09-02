@@ -112,12 +112,15 @@ export type PlanTaskEvent =
 export type PlanTaskEventSink = (event: PlanTaskEvent) => void;
 
 function toTaskPayload(t: PlanTask): BrainTaskPayload {
+  const notes = t.notes?.trim();
   return {
     id: t.id,
     title: t.title,
     status: t.status,
     phaseId: t.phaseId,
     priority: t.priority,
+    ...(t.flags?.length ? { flags: t.flags } : {}),
+    ...(notes ? { notes: notes.slice(0, 500) } : {}),
   };
 }
 

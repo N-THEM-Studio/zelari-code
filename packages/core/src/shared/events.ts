@@ -364,6 +364,15 @@ export interface BrainTaskPayload {
   status: BrainTaskStatus;
   phaseId?: string;
   priority?: string;
+  /**
+   * Hygiene flags of the durable plan store (t56+): 'reopened' (a later
+   * session wrote to files declared by an already-completed task),
+   * 'stale' (commits landed on those files after completion), 'overlap'
+   * (declared files intersect another in-progress task). Advisory only.
+   */
+  flags?: string[];
+  /** Last note line, truncated (display hint, not a data channel). */
+  notes?: string;
 }
 
 /**

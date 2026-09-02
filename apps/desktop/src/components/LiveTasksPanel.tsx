@@ -64,8 +64,15 @@ export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
   // the Project section entirely instead of leaving a giant wall of
   // checked items. The summary keeps counting them so "plan 18/18" still
   // reads correctly while active work remains.
+  // EXCEPTION (t62): a completed task carrying the 'reopened' or 'stale'
+  // hygiene flag re-appears with a badge — drift after completion is
+  // exactly what the panel exists to surface. Other flags (e.g.
+  // 'overlap') stay advisory-only and do not resurrect history.
   const active = project.filter(
-    (t) => t.status !== "completed" && t.status !== "cancelled",
+    (t) =>
+      (t.status !== "completed" && t.status !== "cancelled") ||
+      t.flags?.includes("reopened") ||
+      t.flags?.includes("stale"),
   );
   const groups = groupProjectTasks(active);
   if (!tasks.length && !active.length) return null;
@@ -129,6 +136,22 @@ export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
                                   : "•"}
                         </span>
                         <span className="session-todo-text">{t.content}</span>
+                        {t.flags?.includes("reopened") ? (
+                          <span
+                            className="live-task-badge live-task-badge-reopened"
+                            title="File dichiarati toccati da una sessione successiva al completamento"
+                          >
+                            ⚠︎ riaperto
+                          </span>
+                        ) : null}
+                        {t.flags?.includes("stale") ? (
+                          <span
+                            className="live-task-badge live-task-badge-stale"
+                            title="Commit successivi sui file dichiarati dal task"
+                          >
+                            ⧗ stale
+                          </span>
+                        ) : null}
                       </li>
                     ))}
                   </ul>

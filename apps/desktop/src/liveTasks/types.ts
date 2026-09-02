@@ -34,6 +34,13 @@ export interface LiveTask {
   phaseId?: string;
   phaseLabel?: string;
   phaseOrder?: number;
+  /**
+   * Hygiene flags of the workspace plan store ('reopened' | 'stale' |
+   * 'overlap', t56+). Carried into the UI so a completed task that got
+   * dirty again can re-appear with a badge instead of staying hidden
+   * history (ADR-0018 + agenttrail "completed task that re-lights").
+   */
+  flags?: string[];
 }
 
 /**

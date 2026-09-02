@@ -25,6 +25,7 @@ export interface WorkspaceBrainTask {
   status?: unknown;
   phaseId?: unknown;
   priority?: unknown;
+  flags?: unknown;
 }
 
 /** Phase metadata of a `.zelari/plan.json` `phases[]` entry. */
@@ -85,6 +86,12 @@ export function brainTaskToLive(t: unknown): LiveTask | null {
   };
   if (typeof raw.phaseId === "string" && raw.phaseId) {
     live.phaseId = raw.phaseId;
+  }
+  if (Array.isArray(raw.flags)) {
+    const flags = raw.flags.filter(
+      (f): f is string => typeof f === "string" && !!f,
+    );
+    if (flags.length) live.flags = flags;
   }
   return live;
 }
