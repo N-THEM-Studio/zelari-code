@@ -398,3 +398,22 @@ export function renderDeltaReport(meta: {
     '',
   ].join('\n');
 }
+
+/**
+ * Normalizza le `summaries` del manifest per il calcolo del delta.
+ * Shape reale scritta dal runner: oggetto `{ baseline, candidate }`;
+ * per difensiva accetta anche array (righe malformate scartate).
+ */
+export function summariesToArmList(s: unknown): Array<{ armId: string; passRate: number }> {
+  const ok = (x: unknown): x is { armId: string; passRate: number } =>
+    typeof x === 'object' &&
+    x !== null &&
+    typeof (x as { armId?: unknown }).armId === 'string' &&
+    typeof (x as { passRate?: unknown }).passRate === 'number';
+  if (Array.isArray(s)) return s.filter(ok);
+  if (typeof s === 'object' && s !== null) {
+    const o = s as { baseline?: unknown; candidate?: unknown };
+    return [o.baseline, o.candidate].filter(ok);
+  }
+  return [];
+}

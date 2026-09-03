@@ -15,6 +15,7 @@ import {
   modelPinEnv,
   passRateDeltaPp,
   renderDeltaReport,
+  summariesToArmList,
   summarizeArm,
 } from './editBench.ts';
 
@@ -203,5 +204,28 @@ describe('passRateDeltaPp', () => {
       'base',
     );
     expect(out?.deltaPp).toBeCloseTo(-25);
+  });
+});
+
+describe('summariesToArmList', () => {
+  it('accetta la shape reale del manifest ({ baseline, candidate })', () => {
+    const out = summariesToArmList({
+      baseline: { armId: 'legacy-relocating', passRate: 0.5 },
+      candidate: { armId: 'anchored-edit', passRate: 0.59 },
+    });
+    expect(out).toHaveLength(2);
+    expect(passRateDeltaPp(out)?.deltaPp).toBeCloseTo(9);
+  });
+
+  it('passa attraverso gli array validi e scarta le righe malformate', () => {
+    const out = summariesToArmList([{ armId: 'a', passRate: 1 }, { armId: 'b' }, 'nope']);
+    expect(out).toHaveLength(1);
+    expect(out[0]?.armId).toBe('a');
+  });
+
+  it('restituisce lista vuota su input inutilizzabile', () => {
+    expect(summariesToArmList(null)).toHaveLength(0);
+    expect(summariesToArmList('nope')).toHaveLength(0);
+    expect(summariesToArmList({})).toHaveLength(0);
   });
 });

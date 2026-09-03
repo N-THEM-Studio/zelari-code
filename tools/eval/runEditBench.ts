@@ -33,6 +33,7 @@ import {
   modelPinEnv,
   passRateDeltaPp,
   renderDeltaReport,
+  summariesToArmList,
   summarizeArm,
 } from './editBench.ts';
 
@@ -126,7 +127,7 @@ function parseRunStartedAt(runDir: string): number | null {
 // --status: read-only progress and liveness probe for a live or finished run.
 // A case counts as done when its spine dir exists (fixtures/<arm>/rep-N/<case>/.zelari/sessions);
 // the spine dir mtime is the activity signal. etaMin assumes --reps/--count match the launched run.
-function statusMain(runDir: string, reps: number, casesPerRep: number): number {
+function statusMain(runDir: string, reps: number, casesPerRep: number, expectedArms: number): number {
   if (!existsSync(runDir)) {
     console.error('edit:bench --status: runDir not found: ' + runDir);
     return 1;
@@ -162,17 +163,15 @@ function statusMain(runDir: string, reps: number, casesPerRep: number): number {
     }
   }
   const startedAt = parseRunStartedAt(runDir);
-  const total = armCount * reps * casesPerRep;
+  const total = Math.max(armCount, expectedArms) * reps * casesPerRep;
   const manifestPath = join(runDir, 'manifest.json');
   const finished = existsSync(manifestPath);
   let manifestSummaries: unknown = null;
   let delta: ReturnType<typeof passRateDeltaPp> = null;
   if (finished) {
-    const m = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
-      summaries?: Array<{ armId: string; passRate: number }>;
-    };
+    const m = JSON.parse(readFileSync(manifestPath, 'utf8')) as { summaries?: unknown };
     manifestSummaries = m.summaries ?? null;
-    if (Array.isArray(m.summaries)) delta = passRateDeltaPp(m.summaries);
+    delta = passRateDeltaPp(summariesToArmList(m.summaries));
   }
   console.log(
     JSON.stringify(
@@ -204,11 +203,14 @@ function main(): number {
   const skipBaseline = argv.includes('--skip-baseline');
 
   const statusDir = arg('status');
-  if (statusDir !== undefined) return statusMain(resolve(statusDir), reps, count);
+  if (statusDir !== undefined) {
+    const expectedArms = Math.max(1, Number.parseInt(arg('arms') ?? String(editBenchArms().length), 10));
+    return statusMain(resolve(statusDir), reps, count, expectedArms);
+  }
 
   if (!model) {
     console.error('usage: runEditBench.ts --model cheap-model-id [--reps N] [--count N] [--baseline-ref git-ref | --baseline-entry path | --skip-baseline] [--out dir]');
-    console.error('       runEditBench.ts --status <runDir> [--reps N] [--count N]  (read-only progress/liveness probe)');
+    console.error('       runEditBench.ts --status <runDir> [--reps N] [--count N] [--arms N]  (read-only progress/liveness probe)');
     return 2;
   }
   if (!Number.isFinite(reps) || reps < 1) {
