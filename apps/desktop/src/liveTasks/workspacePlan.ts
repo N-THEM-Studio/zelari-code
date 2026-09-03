@@ -7,8 +7,11 @@
  * emitted by those tools after each durable write. Both carry the M2 run
  * envelope (runId / conversationId / cwd), so updates are routed by cwd
  * and never by the currently open chat.
+ *
+ * This module is Tauri-free on purpose: LiveTasksPanel render tests
+ * import `groupProjectTasks` and CI `npm test` never installs
+ * `@tauri-apps/api`. I/O lives in `workspacePlanIo.ts`.
  */
-import { readProjectText } from "../agentClient";
 import type { LiveTask, LiveTaskStatus } from "./types";
 
 /** Defensive cap mirroring the CLI plan store (ADR-0018). */
@@ -217,39 +220,4 @@ export function applyWorkspaceUpdate(
   if (i >= 0) next[i] = task;
   else next.push(task);
   return { ...map, [cwdKey]: next };
-}
-
-/**
- * Read `.zelari/plan.json` under `cwd` through the sandboxed Tauri
- * reader. Returns [] on missing/corrupt files - a missing plan is a
- * normal state, never an error surface.
- */
-/**
- * Per-cwd cache of the last plan read: signature + parsed tasks.
- * When the signature (mtimeMs+size) is unchanged we return the SAME
- * array reference, so React state setters bail out on Object.is and
- * the Live Tasks panel skips a pointless re-render.
- */
-const planSigCache = new Map<string, { sig: string; tasks: LiveTask[] }>();
-
-export async function loadWorkspaceTasks(cwd: string): Promise<LiveTask[]> {
-  try {
-    const res = await readProjectText({
-      path: ".zelari/plan.json",
-      cwd,
-      maxBytes: 512 * 1024,
-    });
-    if (!res?.text) {
-      planSigCache.delete(cwd);
-      return [];
-    }
-    const sig = `${res.mtimeMs}:${res.size}`;
-    const hit = planSigCache.get(cwd);
-    if (hit && hit.sig === sig) return hit.tasks;
-    const tasks = parseWorkspacePlan(JSON.parse(res.text));
-    planSigCache.set(cwd, { sig, tasks });
-    return tasks;
-  } catch {
-    return [];
-  }
 }
