@@ -26,6 +26,7 @@ import {
   EDIT_BENCH_REPS,
   EDIT_BENCH_SEED,
   type ArmSummary,
+  combineBenchAggregates,
   type EditBenchPatch,
   editBenchArms,
   etaMinutesFrom,
@@ -211,10 +212,11 @@ function main(): number {
 
   const mergeIdx = argv.indexOf('--merge');
   if (mergeIdx >= 0) {
-    const bDir = argv[mergeIdx + 1];
-    const cDir = argv[mergeIdx + 2];
-    if (!bDir || !cDir) {
-      console.error('usage: runEditBench.ts --merge <baselineRunDir> <candidateRunDir>  (cross-run verdict, quota victims excluded)');
+    const dirs = argv.slice(mergeIdx + 1).filter((x) => x !== undefined && !x.startsWith('--'));
+    const bDir = dirs[0];
+    const cDirs = dirs.slice(1);
+    if (!bDir || cDirs.length === 0) {
+      console.error('usage: runEditBench.ts --merge <baselineRunDir> <candidateRunDir...>  (cross-run verdict, quota victims excluded; candidates are combined)');
       return 2;
     }
     const readBench = (d: string): unknown => {
@@ -225,7 +227,13 @@ function main(): number {
       }
       return JSON.parse(readFileSync(p, 'utf8'));
     };
-    const verdict = mergeBenchVerdict(readBench(bDir), readBench(cDir));
+    // Candidate variadica: N run da 1 rep (finestre quota separate) fuse in un
+    // solo aggregato — i run record sono misure concatenate, mai medie.
+    let candidate = readBench(cDirs[0]);
+    for (const d of cDirs.slice(1)) {
+      candidate = combineBenchAggregates(candidate, readBench(d));
+    }
+    const verdict = mergeBenchVerdict(readBench(bDir), candidate);
     console.log(JSON.stringify(verdict, null, 2));
     return 0;
   }
@@ -233,7 +241,7 @@ function main(): number {
   if (!model) {
     console.error('usage: runEditBench.ts --model cheap-model-id [--reps N] [--count N] [--baseline-ref git-ref | --baseline-entry path | --skip-baseline] [--out dir]');
     console.error('       runEditBench.ts --status <runDir> [--reps N] [--count N] [--arms N]  (read-only progress/liveness probe)');
-    console.error('       runEditBench.ts --merge <baselineRunDir> <candidateRunDir>  (cross-run verdict: quota victims excluded)');
+    console.error('       runEditBench.ts --merge <baselineRunDir> <candidateRunDir...>  (cross-run verdict: quota victims excluded, candidates combined)');
     return 2;
   }
   if (!Number.isFinite(reps) || reps < 1) {

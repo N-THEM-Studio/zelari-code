@@ -515,3 +515,23 @@ export function mergeBenchVerdict(
     deltaPp: delta ? delta.deltaPp : null,
   };
 }
+
+/**
+ * combineBenchAggregates — fondere due aggregati bench dello stesso protocollo
+ * (es. N candidate run da 1 rep eseguite in finestre quota separate) in un solo
+ * aggregato: i run record per armId vengono concatenati così come sono (sono
+ * misure, mai medie). Le summaries diventano stale di proposito: il consumatore
+ * canonico (mergeBenchVerdict) legge solo manifests[].runs, mai summaries.
+ */
+export function combineBenchAggregates(a: unknown, b: unknown): unknown {
+  // Normalizza entrambi i lati con flattenBenchRuns e ri-emette la UNICA shape
+  // che flatten stesso accetta ({manifests:[{runs}]}): l'armId vive nei record,
+  // non a livello di manifest (run-4 evidence: by-armId contato dai record).
+  // La fusione è una concatenazione di misure già taggate, mai di medie.
+  const aRuns = flattenBenchRuns(a);
+  const bRuns = flattenBenchRuns(b);
+  if (aRuns.length === 0 && bRuns.length === 0) return a ?? b ?? { manifests: [] };
+  if (aRuns.length === 0) return b;
+  if (bRuns.length === 0) return a;
+  return { manifests: [{ runs: [...aRuns, ...bRuns] }] };
+}

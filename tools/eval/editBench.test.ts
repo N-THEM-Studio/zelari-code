@@ -12,6 +12,7 @@ import {
   editBenchArms,
   etaMinutesFrom,
   flattenBenchRuns,
+  combineBenchAggregates,
   generateEditBenchSet,
   mergeBenchVerdict,
   modelPinEnv,
@@ -280,5 +281,34 @@ describe('t79 merge cross-run (run-4 baseline valida × run-5 anchored)', () => 
     expect(v.candidate.runs).toBe(0);
     expect(v.candidateDropped).toBe(1);
     expect(v.deltaPp).toBeNull();
+  });
+});
+
+describe('combineBenchAggregates (candidate variadica run-6..N)', () => {
+  // bench è scoped al describe precedente: qui serve una copia locale (lesson:
+  // ReferenceError silenzioso mascherato da assertion failure).
+  const bench = (runs: ArmRunRecord[]): unknown => ({ summaries: {}, manifests: [{ runs }] });
+  it('fonde i run record dello stesso armId e mergeBenchVerdict li usa tutti', () => {
+    const r1 = bench([
+      rec('anchored-edit', { toolCalls: 2, passed: true }),
+      rec('anchored-edit', { toolCalls: 2, passed: false }),
+    ]);
+    const r2 = bench([
+      rec('anchored-edit', { toolCalls: 3, passed: true }),
+      rec('anchored-edit', { toolCalls: 3, passed: true }),
+      rec('anchored-edit', { toolCalls: 3, passed: true }),
+    ]);
+    const combined = combineBenchAggregates(r1, r2);
+    const anchored = flattenBenchRuns(combined).filter((r) => r.armId === 'anchored-edit');
+    expect(anchored.length).toBe(5);
+    const base = bench([rec('legacy-relocating', { toolCalls: 1, passed: true })]);
+    const v = mergeBenchVerdict(base, combined);
+    expect(v.candidate.runs).toBe(5);
+    expect(v.candidate.firstShotPassRate).toBeCloseTo(0.8, 5);
+  });
+  it("aggregato malformato → passthrough dell'altro lato, mai crash", () => {
+    const good = bench([rec('anchored-edit', { toolCalls: 1, passed: true })]);
+    expect(combineBenchAggregates(null, good)).toBe(good);
+    expect(combineBenchAggregates(good, { manifests: 'nope' })).toBe(good);
   });
 });
