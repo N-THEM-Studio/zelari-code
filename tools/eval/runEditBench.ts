@@ -30,6 +30,7 @@ import {
   editBenchArms,
   etaMinutesFrom,
   generateEditBenchSet,
+  mergeBenchVerdict,
   modelPinEnv,
   passRateDeltaPp,
   renderDeltaReport,
@@ -208,9 +209,31 @@ function main(): number {
     return statusMain(resolve(statusDir), reps, count, expectedArms);
   }
 
+  const mergeIdx = argv.indexOf('--merge');
+  if (mergeIdx >= 0) {
+    const bDir = argv[mergeIdx + 1];
+    const cDir = argv[mergeIdx + 2];
+    if (!bDir || !cDir) {
+      console.error('usage: runEditBench.ts --merge <baselineRunDir> <candidateRunDir>  (cross-run verdict, quota victims excluded)');
+      return 2;
+    }
+    const readBench = (d: string): unknown => {
+      const p = resolve(d, 'manifest.json');
+      if (!existsSync(p)) {
+        console.error(`edit:bench merge: manifest mancante in ${p} (run incompleta?)`);
+        exit(1);
+      }
+      return JSON.parse(readFileSync(p, 'utf8'));
+    };
+    const verdict = mergeBenchVerdict(readBench(bDir), readBench(cDir));
+    console.log(JSON.stringify(verdict, null, 2));
+    return 0;
+  }
+
   if (!model) {
     console.error('usage: runEditBench.ts --model cheap-model-id [--reps N] [--count N] [--baseline-ref git-ref | --baseline-entry path | --skip-baseline] [--out dir]');
     console.error('       runEditBench.ts --status <runDir> [--reps N] [--count N] [--arms N]  (read-only progress/liveness probe)');
+    console.error('       runEditBench.ts --merge <baselineRunDir> <candidateRunDir>  (cross-run verdict: quota victims excluded)');
     return 2;
   }
   if (!Number.isFinite(reps) || reps < 1) {

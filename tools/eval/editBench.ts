@@ -417,3 +417,101 @@ export function summariesToArmList(s: unknown): Array<{ armId: string; passRate:
   }
   return [];
 }
+
+/**
+ * Flatten a bench-level manifest: the runner writes an aggregate with the
+ * per-arm-rep experiment manifests under `manifests[]`, each holding its own
+ * `runs[]`. Returns every run record, any nesting shape tolerated.
+ */
+export function flattenBenchRuns(bench: unknown): ArmRunRecord[] {
+  if (typeof bench !== 'object' || bench === null) return [];
+  const manifests = (bench as { manifests?: unknown }).manifests;
+  if (!Array.isArray(manifests)) return [];
+  const out: ArmRunRecord[] = [];
+  for (const m of manifests) {
+    if (typeof m !== 'object' || m === null) continue;
+    const runs = (m as { runs?: unknown }).runs;
+    if (!Array.isArray(runs)) continue;
+    for (const r of runs) {
+      if (typeof r === 'object' && r !== null && 'armId' in r && 'metrics' in r) {
+        out.push(r as ArmRunRecord);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Quota-victim split (run-4 lesson): a run with ZERO tool calls never invoked
+ * the model — it measured nothing (agent_start -> vacuous verification -> end).
+ * Run-4 evidence: perfect bimodal separation, zero false positives
+ * (every toolCalls>=1 run had durationMs>=16s; every toolCalls===0 run failed).
+ */
+export function splitQuotaVictims(runs: readonly ArmRunRecord[]): {
+  kept: ArmRunRecord[];
+  dropped: ArmRunRecord[];
+} {
+  const kept: ArmRunRecord[] = [];
+  const dropped: ArmRunRecord[] = [];
+  for (const r of runs) {
+    if ((r.metrics?.toolCalls ?? 0) >= 1) kept.push(r);
+    else dropped.push(r);
+  }
+  return { kept, dropped };
+}
+
+/** Parse-error count carried from the source bench summary when present. */
+function parseErrorsFrom(bench: unknown, key: 'baseline' | 'candidate'): number {
+  if (typeof bench !== 'object' || bench === null) return 0;
+  const s = (bench as { summaries?: unknown }).summaries;
+  if (typeof s !== 'object' || s === null) return 0;
+  const arm = (s as Record<string, unknown>)[key];
+  if (typeof arm !== 'object' || arm === null) return 0;
+  const n = (arm as { parseErrorFiles?: unknown }).parseErrorFiles;
+  return typeof n === 'number' ? n : 0;
+}
+
+/**
+ * Merge verdict across two bench runs: baseline arm from one runDir (quota
+ * victims excluded, documented) vs candidate arm from another (rerun after a
+ * quota window killed its first attempt). Descriptive only — never a verdict.
+ */
+export function mergeBenchVerdict(
+  baselineBench: unknown,
+  candidateBench: unknown,
+  baselineArmId = 'legacy-relocating',
+  candidateArmId = 'anchored-edit',
+): {
+  baseline: ArmSummary;
+  candidate: ArmSummary;
+  baselineDropped: number;
+  candidateDropped: number;
+  deltaPp: number | null;
+} {
+  const baseRuns = flattenBenchRuns(baselineBench).filter((r) => r.armId === baselineArmId);
+  const candRuns = flattenBenchRuns(candidateBench).filter((r) => r.armId === candidateArmId);
+  const baseSplit = splitQuotaVictims(baseRuns);
+  const candSplit = splitQuotaVictims(candRuns);
+  const baseline = summarizeArm(baselineArmId, baseSplit.kept, parseErrorsFrom(baselineBench, 'baseline'));
+  const candidate = summarizeArm(candidateArmId, candSplit.kept, parseErrorsFrom(candidateBench, 'candidate'));
+  // Delta solo quando ENTRAMBI gli arm hanno run misurate: un delta su zero
+  // run candidate sarebbe un numero fabbricato, non una misura (run-4 lesson).
+  const delta =
+    baseline.runs > 0 && candidate.runs > 0
+      ? passRateDeltaPp(
+          [
+            { armId: baselineArmId, passRate: baseline.firstShotPassRate },
+            { armId: candidateArmId, passRate: candidate.firstShotPassRate },
+          ],
+          candidateArmId,
+          baselineArmId,
+        )
+      : null;
+  return {
+    baseline,
+    candidate,
+    baselineDropped: baseSplit.dropped.length,
+    candidateDropped: candSplit.dropped.length,
+    deltaPp: delta ? delta.deltaPp : null,
+  };
+}

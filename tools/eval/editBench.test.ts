@@ -11,10 +11,13 @@ import {
   type ArmSummary,
   editBenchArms,
   etaMinutesFrom,
+  flattenBenchRuns,
   generateEditBenchSet,
+  mergeBenchVerdict,
   modelPinEnv,
   passRateDeltaPp,
   renderDeltaReport,
+  splitQuotaVictims,
   summariesToArmList,
   summarizeArm,
 } from './editBench.ts';
@@ -227,5 +230,55 @@ describe('summariesToArmList', () => {
     expect(summariesToArmList(null)).toHaveLength(0);
     expect(summariesToArmList('nope')).toHaveLength(0);
     expect(summariesToArmList({})).toHaveLength(0);
+  });
+});
+
+describe('t79 merge cross-run (run-4 baseline valida × run-5 anchored)', () => {
+  const bench = (runs: ArmRunRecord[]): unknown => ({ summaries: {}, manifests: [{ runs }] });
+
+  it('splitQuotaVictims separa le run senza tool call (firma run-4, zero falsi positivi)', () => {
+    const real = rec('legacy-relocating', { toolCalls: 5, passed: true });
+    const victim = rec('legacy-relocating', { toolCalls: 0, passed: false });
+    const { kept, dropped } = splitQuotaVictims([real, victim]);
+    expect(kept).toHaveLength(1);
+    expect(dropped).toHaveLength(1);
+    expect(kept[0]?.metrics.toolCalls).toBe(5);
+  });
+
+  it('flattenBenchRuns attraversa manifests[].runs[] e scarta il malformato', () => {
+    expect(flattenBenchRuns(bench([rec('a', {}), rec('a', {})]))).toHaveLength(2);
+    expect(flattenBenchRuns({ manifests: [null, { runs: 'nope' }, {}] })).toHaveLength(0);
+    expect(flattenBenchRuns(null)).toHaveLength(0);
+    expect(flattenBenchRuns({})).toHaveLength(0);
+  });
+
+  it('mergeBenchVerdict: baseline filtrata dalle vittime + delta pp onesto', () => {
+    // run-4 legacy in miniatura: 2 run reali passate + 1 vittima quota (rep-3)
+    const base = bench([
+      rec('legacy-relocating', { toolCalls: 4, passed: true }),
+      rec('legacy-relocating', { toolCalls: 5, passed: true }),
+      rec('legacy-relocating', { toolCalls: 0, passed: false }),
+    ]);
+    // run-5 anchored in miniatura: 2 run reali, 1 passata
+    const cand = bench([
+      rec('anchored-edit', { toolCalls: 3, passed: true }),
+      rec('anchored-edit', { toolCalls: 2, passed: false }),
+    ]);
+    const v = mergeBenchVerdict(base, cand);
+    expect(v.baseline.runs).toBe(2);
+    expect(v.baseline.passed).toBe(2);
+    expect(v.baselineDropped).toBe(1);
+    expect(v.candidate.runs).toBe(2);
+    expect(v.candidate.passed).toBe(1);
+    expect(v.deltaPp).toBe(-50);
+  });
+
+  it('mergeBenchVerdict: candidate tutta vittime → runs 0 e delta null (mai verdetto fabbricato)', () => {
+    const base = bench([rec('legacy-relocating', { toolCalls: 1, passed: true })]);
+    const cand = bench([rec('anchored-edit', { toolCalls: 0, passed: false })]);
+    const v = mergeBenchVerdict(base, cand);
+    expect(v.candidate.runs).toBe(0);
+    expect(v.candidateDropped).toBe(1);
+    expect(v.deltaPp).toBeNull();
   });
 });
