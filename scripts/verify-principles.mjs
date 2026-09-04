@@ -191,6 +191,58 @@ function checkHooksChokePoint(root, report) {
   }
 }
 
+/**
+ * ADR-0036 — the "judge": everything that decides safety (P2) or measures
+ * fitness (P1). Evolution artifacts may never live in, or be imported by,
+ * these paths. Exported for scripts/touches-judge.mjs (CI PR labeling).
+ * Keep this list honest: the check below fails if a path goes missing.
+ */
+export const JUDGE_PATHS = [
+  'packages/core/src/core/tools/registry.ts',   // P2 choke-point (ToolRegistry.invoke)
+  'packages/core/src/council/verification',     // honesty lint + tier ranking
+  'src/cli/safety',                             // permissions policy, lifecycle hooks policy
+  'eval/anchors',                               // Tier-0 eval anchors (sealed, ADR-0036)
+  'tools/eval/runGate.ts',                      // deterministic eval gate runner
+  '.github/workflows/eval-retention-gate.yml',  // retention gate
+  'scripts/verify-principles.mjs',              // this gate
+];
+
+/** Evolution-genome locations (ADR-0036): proposer side, never judge. */
+const EVOLUTION_PATHS = ['.zelari/evolution', 'src/cli/evolution'];
+
+/** ADR-0036 — proposer/judge separation, enforced mechanically. */
+function checkJudgePaths(root, report) {
+  let ok = true;
+  for (const rel of JUDGE_PATHS) {
+    if (!fs.existsSync(path.join(root, rel))) {
+      ok = false;
+      report.error('judge', rel + ' is listed in JUDGE_PATHS but missing — keep the list honest (ADR-0036)');
+    }
+    if (EVOLUTION_PATHS.some((e) => rel === e || rel.startsWith(e + '/'))) {
+      ok = false;
+      report.error('judge', rel + ' is an evolution path listed in JUDGE_PATHS (ADR-0036)');
+    }
+  }
+  const judgeFiles = [];
+  for (const rel of JUDGE_PATHS) {
+    const abs = path.join(root, rel);
+    if (!fs.existsSync(abs)) continue;
+    if (fs.statSync(abs).isDirectory()) {
+      for (const f of listTsFiles(root, rel)) judgeFiles.push(f);
+    } else if (rel.endsWith('.ts')) {
+      judgeFiles.push(abs);
+    }
+  }
+  for (const abs of judgeFiles) {
+    const text = fs.readFileSync(abs, 'utf8');
+    if (/from\s+['"][^'"]*evolution/.test(text) || /import\(['"][^'"]*evolution/.test(text)) {
+      ok = false;
+      report.error('judge', path.relative(root, abs) + " imports evolution code — the judge must not depend on the proposer (ADR-0036)");
+    }
+  }
+  if (ok) report.ok('judge', 'JUDGE_PATHS intact; no evolution imports inside the judge (ADR-0036)');
+}
+
 /** Manifesto linkage — PRINCIPLES.md is complete and referenced. */
 function checkManifestoLinkage(root, report) {
   const text = readText(root, 'PRINCIPLES.md');
@@ -272,6 +324,7 @@ export function runVerifyPrinciples(root = REPO_ROOT, report = { ok() {}, error(
   checkDependencyPolicy(root, sink);
   checkZodToolSchemas(root, sink);
   checkHooksChokePoint(root, sink);
+  checkJudgePaths(root, sink);
   checkManifestoLinkage(root, sink);
   checkOneToolPerFile(root, sink);
   checkLocPreferences(root, sink);

@@ -47,6 +47,34 @@ jobs:
       - name: Version coherence (root vs @zelari/core vs devDep)
         run: npm run verify:versions
 
+  # ADR-0036: flag PRs that touch the judge (the paths that decide safety
+  # and measure fitness). Informational label only — never blocks the PR;
+  # the hard guarantee stays in verify-principles.mjs ([judge] check).
+  touches-judge:
+    name: Judge-paths label (ADR-0036)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Label judge-path touches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          node scripts/touches-judge.mjs "$BASE_SHA" | tee touches-judge.txt
+          if grep -q 'touches-judge: yes' touches-judge.txt; then
+            gh label create touches-judge --color B60205 \
+              --description 'Touches judge paths (ADR-0036) — heightened scrutiny' || true
+            gh pr edit "$PR_NUMBER" --add-label touches-judge
+          fi
+
   # Exit-3.5 multi-OS smoke: Zelari touches platform-sensitive surfaces
   # (shell, paths, process groups, signals, worktrees, session locks), so
   # core/session/runtime/verification/mission + CLI spine tests and the
