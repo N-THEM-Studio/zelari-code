@@ -55,7 +55,13 @@ never hand-edit numbers:
 |---|---|---|---|---|---|
 | _run `npm run eval:gate` and paste here_ | | | | | |
 
-> **No snapshot is published yet.** The harness exists and runs in CI
+> **No snapshot is published yet (checked 2026-09-05, post v2.30.0) — BLOCKED, not green.**
+> The seeding runner (`tools/eval/runAnchors.ts`, headless) requires provider
+> credentials (`ZELARI_API_KEY` / `ZELARI_LOCAL_CLI`) and refuses to fake
+> outcomes; the publishing machine had none, so t51 stays **blocked**
+> (unknown ≠ pass). To publish: run `runAnchors.ts --tier 0 --repeat 3` with
+> credentials, then `npm run eval:gate`, and paste the summary verbatim above.
+> The harness exists and runs in CI
 > (retention gate); publishing the table per release is the follow-up tracked
 > with the evolution engine rollout (ADR-0036): the same ledger that feeds
 > the engine produces this table — the measurer stays outside the proposer.
