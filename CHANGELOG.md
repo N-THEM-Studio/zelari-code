@@ -5,6 +5,26 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.28.0] - 2026-09-04
+
+Coherence wave: version drift closed and gate-enforced, `--help` tells the whole truth, the competitive bench harness lands, and the Desktop chat gets one session stats strip.
+
+### Added
+
+- **Competitive bench harness — `npm run bench:competitive` (t35/t36)** — reproducible zelari-vs-competitor runs over pinned eval anchors: agent adapters (zelari headless, `codex`, `claude`, `opencode` — soft-skip with a warning when a CLI is absent), deterministic per-agent scratch workspaces, N-run median aggregation, fully offline `--dry-run`, and a markdown report pinning versions and models. Advisory-only by design: it never gates CI. Scratch cleanup is Windows-resilient (EPERM retry, never fatal to the run).
+- **`--help` completeness (t33)** — the headless execution flags (`--task-file`, `--kraken-graph` + `--kraken-graph-file`, `--plan-only`, `--run-plan`, `--gauntlet`, `--once`, `--serve-harness`) are now documented in `--help`; the parser and the help text can no longer disagree.
+- **Desktop: one session stats strip (t38)** — the `KrakenProgressCard` container is gone; phase, mode and live counters live in the single session strip under the chat. One context meter (the per-message footer meter is removed — it was a second, diverging proxy for the same signal). Token trio (▲▼Σ · 🛠 · ⏱) shows in the strip only while streaming; counters only when > 0 (no more `explore 0 · verify 0`).
+
+### Changed
+
+- **Version drift closed and enforced (t32)** — `CORE_VERSION` (`packages/core/src/version.ts`) and the core README badge are synced to the release version, and `verify-versions` now checks both (the gate was blind to them while they drifted).
+- **Desktop scroll stays where you put it (t38)** — scrolling up during generation detaches follow-on-scroll on cumulative upward intent (not just a single 32px threshold); re-attach only at the true bottom.
+
+### Docs
+
+- **Decisions triage (t37)** — 0015 collision resolved (council-fanout trace view → ADR-0035), draft-vault `0030` renumbered to vault `016`, ADR-0017 (unified thinking effort) parked with explicit reopening conditions, and the decisions index regenerated from the real tree.
+- **Hygiene (t34)** — stray planning docs archived under `docs/plans/`, `HANDOFF*.md` files marked superseded.
+
 ## [2.27.0] - 2026-09-04
 
 Identity wave: the product now shows the contract instead of describing it.
