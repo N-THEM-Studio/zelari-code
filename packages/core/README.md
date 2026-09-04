@@ -2,7 +2,7 @@
 
 Reusable runtime for [Zelari Code](https://github.com/N-THEM-Studio/zelari-code) — **Apache-2.0**.
 
-Current version: **2.30.0** (kept in lockstep with the `zelari-code` CLI).
+Current version: **2.31.0** (kept in lockstep with the `zelari-code` CLI).
 
 ## What it is
 

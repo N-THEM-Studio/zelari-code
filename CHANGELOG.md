@@ -5,6 +5,24 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.31.0] - 2026-09-06
+
+The "front door" release: 2.30 stops lying about the paths it already ships, and a fresh clone gets an honest path to its first verified PASS. HANDOFF Wave 5 stays frozen: no new runtime surface, no new public API, the judge untouched (ADR-0036).
+
+### Added
+
+- **A1 - headless honesty** - `--once` and the graph host now pass `sessionId` to the post-council hook, so the evidence lint reads the session spine on headless exactly like the TUI (the bench and headless Kraken no longer see a blinder judge).
+- **A2 - budget HOLD on the Kraken path** - the session cost-budget HOLD guard runs before the provider call on the default single-agent dispatch (shared with the council path); a budget that only stopped council turns was a lying preset.
+- **B1 - first-run doctor gate** - on first run the CLI executes the doctor checks before mounting the TUI, stops on the first red with the exact fix command (`/login`, `--trust`, `--fix-path`) and requires an explicitly typed continue to proceed; `collectDoctorReport()` becomes a structured print-free API.
+- **B2 - plan-first** - in a workspace without a plan the first turn forces PLAN phase (no surprise writes); `/build` is the explicit override.
+- **B4 - the gate teaches** - strict BLOCKED / REPAIR_REQUIRED messages always end with the next command (`/verify`, or repair the named criterion).
+- **B3 - first-15-minutes walkthrough** in `docs/GUIDA.md` - one task, Plan -> Build -> Verify chip -> PASS; evolution/fitness/provenance content moves after "your first PASS".
+- **C - measurement discipline** - competitive bench `--runs` defaults to 3 (free override), the record `model` is valued or `undeclared` (never a silent null), and `docs/EVALS.md` gains the half-page measurement protocol (same custom model on both sides, declared skips, no numbers outside `report.md`).
+
+### Docs
+
+- W5 docs ride the release line: `docs/GUIDA.md`, `docs/MEMORY.md` and `docs/decisions/README.md` are now English; README documents `ZELARI_PERMISSION_PRESET` and `ZELARI_PROVENANCE`; the EVALS per-release snapshot stays honestly BLOCKED until a real provider run exists.
+
 ## [2.30.0] - 2026-09-05
 
 Hardening waves W0–W4 on top of the 2.29.0 constitution: the evolution loop becomes measurable, eval anchors become tamper-evident, security gains provenance escalation at the choke-point, and governance gains cost budgets with HOLD and memory decay.
