@@ -29,6 +29,27 @@ Only the `exports` map in `package.json` is public. Prefer curated subpaths over
 | `@zelari/core/skills` | Skill definitions |
 | `@zelari/core/memory` | `MemoryBackend` interface (file backend lives in the CLI) |
 
+### API stability tiers (2.30, t53)
+
+| Subpath | Tier | Semver effect |
+|---|---|---|
+| `@zelari/core/harness` (`AgentHarness`) | **Stable** | breaking only on major |
+| `@zelari/core/harness/tools` (`ToolRegistry` + default tools) | **Stable** | breaking only on major (incl. the `…/registry` deep subpath) |
+| `@zelari/core/runtime` — seams, profiles, `resourcePolicy`/budget ledger types | **Stable** | breaking only on major |
+| `@zelari/core/runtime` — `observers`, `guards`, `recorder`, `controls` | **Experimental** | may change on minor |
+| `@zelari/core/session`, `/context`, `/verification` | **Stable** | spine contract (ADR-0021/0024) |
+| `@zelari/core/mission`, `/events`, `/state` | **Experimental** | may change on minor |
+
+**Semver policy for exports:**
+
+- The `exports` map in `package.json` IS the contract: removing a subpath, or
+  removing a type from a **Stable** barrel, is a breaking change → major bump.
+- New subpaths and additive exports are minor releases.
+- **Experimental** surfaces may change within a minor; pin the exact version if
+  you depend on them.
+- Core versions are lockstep with the CLI (`verify-versions` gate); `CORE_VERSION`
+  never moves independently of a CLI release.
+
 Stability policy: [docs/decisions/0004-public-api-stability-policy.md](../../docs/decisions/0004-public-api-stability-policy.md).
 
 If you still import pre-0.5.0 `src/main/core/…` paths, see [MIGRATION.md](../../MIGRATION.md).
