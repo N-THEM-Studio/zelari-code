@@ -45,6 +45,24 @@ npm run eval:gate          # from a clean checkout, same Node major as CI (24.x)
 The retention gate (CI) fails a release when the current run regresses
 against the recorded stable-tag baseline for the same manifest hash.
 
+## Measurement protocol (2.31+)
+
+One discipline, half a page:
+
+- **Default `--runs 3`** on the competitive bench (override: `--runs N`).
+  A single run is an anecdote; three make a median and a spread.
+- **`model` in every record is valued or `'undeclared'`** — never a silent
+  `null`. A number without a declared model is marketing, not measurement.
+- **Same custom model on both sides** when comparing the harness itself:
+  zelari and the competitor run the same pinned provider/model, or the row
+  is labeled incomparable and excluded from the summary.
+- **Declared skips**: every skipped anchor/run carries a one-line reason
+  (CLI absent / model undeclared / fixture failed). The skip rate is
+  explained, never hidden — and the pass rate is not quoted outside
+  `report.md`.
+- **No numbers outside `report.md`**: published prose quotes the report
+  verbatim or not at all. No partial numbers in README or release notes.
+
 ## Published snapshot convention
 
 Each release appends one row per provider/model to the table below, produced
