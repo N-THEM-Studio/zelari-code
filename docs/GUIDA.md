@@ -30,7 +30,7 @@
 17c. [Deterministic verification, Strict Done and Verifier LLM (2.0)](#deterministic-verification-strict-done-and-verifier-llm-20)
 18. [Available tools](#available-tools)
 19. [Advanced capabilities and 1.26–1.34 news](#advanced-capabilities-and-126134-news)
-19a. [What's new in 2.29–2.30 (hardening)](#whats-new-in-229230-hardening)
+19a. [What's new in 2.29–2.30 (after your first PASS)](#whats-new-in-229230-after-your-first-pass)
 20. [Configuration files](#configuration-files)
 21. [Environment variables](#environment-variables)
 22. [Self-update](#self-update)
@@ -124,6 +124,30 @@ zelari-code
 ---
 
 ## First run and wizard
+
+### Your first 15 minutes (walkthrough)
+
+One tiny task, start to proof. No ADRs, no `/evolve`, no config files —
+this page is the only map you need.
+
+1. **Install & enter** — `npm i -g zelari-code`, then create a toy folder
+   and start the TUI: `mkdir hello-zelari && cd hello-zelari && zelari-code`.
+   Pick a provider with `/login` (grok / chatgpt / anthropic or an API key).
+2. **Ask for one small thing** — type:
+   `create hello.js that prints "hello" and hello.test.js, then make the test pass`.
+   With no workspace plan yet, the first turn runs in **PLAN**: Zelari
+   proposes, writes nothing. Read what it intends to do.
+3. **Switch to build** — type `/build`, then `go`. The agent writes the two
+   files and runs the test.
+4. **Watch the Verifica chip** — the status bar shows the verify state:
+   `RIPARA` (work present, proof missing) or `PASS` (every required
+   criterion has evidence). If the gate stops the turn, its message ends
+   with the **next command** (`/verify`, or fix the criterion it names).
+5. **Done** — the chip flips to `PASS`. That is the whole contract.
+
+Everything else in this guide — providers, MCP, SSH, missions, evolution —
+is optional depth you can open **after your first PASS**.
+
 
 On first launch (or when `provider.json` is missing), a 5-step **wizard** starts:
 
