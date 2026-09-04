@@ -13,7 +13,12 @@
  *      is the live source — hardcoded lines drift, e.g. "Current line:
  *      1.35.1" while the package was on 2.0.0-alpha.x);
  *   5. docs/GUIDA.md "Versione documento" (when present) tracks the package
- *      version.
+ *      version;
+ *   6. packages/core/src/version.ts CORE_VERSION === root version (t32: the
+ *      const drifted to 2.6.2 while the monorepo shipped the 2.2x line —
+ *      hosts importing it reported stale versions);
+ *   7. packages/core/README.md "Current version" === core version (t32: it
+ *      still advertised 1.34.0 at 2.27.0).
  *
  * Exit 0 = coherent; exit 1 = drift (printed to stderr).
  */
@@ -96,10 +101,38 @@ if (guidaVersion && guidaVersion[1] !== rootVersion) {
   );
 }
 
+// 6. packages/core/src/version.ts CORE_VERSION === root version (t32).
+const versionTs = readFileSync(
+  path.join(root, 'packages', 'core', 'src', 'version.ts'),
+  'utf-8',
+);
+const coreVersionConst = versionTs.match(/CORE_VERSION\s*=\s*['"]([^'"]+)['"]/);
+if (!coreVersionConst) {
+  failures.push(
+    'packages/core/src/version.ts has no CORE_VERSION export — it is the canonical importable version.',
+  );
+} else if (coreVersionConst[1] !== rootVersion) {
+  failures.push(
+    `packages/core/src/version.ts CORE_VERSION is "${coreVersionConst[1]}" but package.json says "${rootVersion}" — ` +
+      `keep the const in lockstep (it drifted silently through the 2.x line).`,
+  );
+}
+
+// 7. packages/core/README.md "Current version" === core version (t32).
+const coreReadme = readFileSync(path.join(root, 'packages', 'core', 'README.md'), 'utf-8');
+const coreReadmeVersion = coreReadme.match(/Current version:\s*\*\*([^*]+)\*\*/);
+if (coreReadmeVersion && coreReadmeVersion[1].trim() !== coreVersion) {
+  failures.push(
+    `packages/core/README.md "Current version" is "${coreReadmeVersion[1].trim()}" but @zelari/core is "${coreVersion}" — keep the README in lockstep.`,
+  );
+}
+
 if (failures.length > 0) {
   console.error('[verify-versions] VERSION DRIFT DETECTED:');
   for (const f of failures) console.error(`  - ${f}`);
   process.exit(1);
 }
 
-console.log(`[verify-versions] coherent: zelari-code@${rootVersion} == @zelari/core@${coreVersion}, devDep exact, CHANGELOG entry present, README/GUIDA version-clean.`);
+console.log(
+  `[verify-versions] coherent: zelari-code@${rootVersion} == @zelari/core@${coreVersion}, devDep exact, CHANGELOG entry present, README/GUIDA version-clean, CORE_VERSION + core README in lockstep.`,
+);
