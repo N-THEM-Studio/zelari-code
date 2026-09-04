@@ -35,6 +35,13 @@ jobs:
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
+      # t39: dependency-audit policy — block only on high+ in the root
+      # lockfile. Dependabot #6 (moderate) triaged 2026-09-04 as not
+      # reproducible: `npm audit` reports 0 vulnerabilities on both the
+      # root and apps/desktop lockfiles.
+      - name: Audit dependencies (high+ blocking)
+        run: npm audit --audit-level=high
+
       - name: Typecheck
         run: npm run typecheck
 
