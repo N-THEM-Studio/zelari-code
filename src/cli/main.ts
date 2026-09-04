@@ -527,6 +527,14 @@ function pickRootComponent(): {
         "    --resume <id>      Continue a 2.0 spine session\n" +
         "    --export-session <path>  Write zelari-session-export/1 after the run\n" +
         "    --strict-done      Evidence-based BUILD completion gate\n" +
+        "    --task-file <path>  Read the task prompt from a file (Windows argv cap)\n" +
+        "    --once             Single-cycle run (cron/git-hook triggers, ADR-0014)\n" +
+        "    --kraken-graph <goal>  Plan + execute a Kraken task graph\n" +
+        "                      (variant: --kraken-graph-file <path>; kill-switch\n" +
+        "                      ZELARI_KRAKEN_GRAPH=0)\n" +
+        "    --plan-only        Serialize the graph plan to .zelari/radio/ and exit 0\n" +
+        "    --run-plan <id>    Execute a pre-built .zelari/radio/plan-<id>.json\n" +
+        "    --gauntlet         Host-driven gauntlet loop (builder/critic tentacles)\n" +
         "  --session-export <id>  Print a portable 2.0 session export (no LLM)\n" +
         "  serve               Companion host for Android/remote clients (Tailscale)\n" +
         "    --bind <ip>       Listen address (default: 127.0.0.1; use Tailscale IP)\n" +
@@ -534,6 +542,8 @@ function pickRootComponent(): {
         "    --token <secret>  Bearer token (default: ~/.zelari-code/companion.token)\n" +
         "    --project <path>  Allowlisted project root (repeatable)\n" +
         "    --save-projects   Persist --project list to companion.json\n" +
+        "  --serve-harness     Long-lived harness kernel for hosts (NDJSON JSON-RPC\n" +
+        "                      on stdin/stdout; Desktop/companion transport)\n" +
         "  --print-config      Print provider/model config as JSON (no secrets)\n" +
         "  --plugins-status    JSON status of optional plugins (Playwright, eslint, …)\n" +
         "  --plugins-install <id>  Install plugin (playwright also fetches Chromium)\n" +
