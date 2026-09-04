@@ -35,6 +35,13 @@ export interface SshTarget {
   tags?: string[];
   /** Literals or prefix* globs allowed for ssh_run. Empty = status only. */
   allowedCommands?: string[];
+  /**
+   * W3.2 (t47): when false/undefined (default), ssh_run DENIES allowlisted
+   * commands that match an exfiltration pattern (curl/wget, netcat/socat,
+   * /dev/tcp, scp/rsync/ssh hops, large base64 blobs). Explicit per-target
+   * opt-in — the allowlist bounds what RUNS, this bounds what LEAVES.
+   */
+  allowExfil?: boolean;
   enabled?: boolean;
   notes?: string;
   /** UI only — set when listing; never stored. */
@@ -471,6 +478,17 @@ export function isSshCommandAllowed(
     };
   }
   const dangerous = /[;&|`$(){}<>]|\brm\s+-rf\b|\bmkfs\b|\bdd\s+if=/i;
+  // W3.2 (t47): deterministic exfiltration guard. The allowlist bounds WHAT
+  // RUNS; this bounds WHAT LEAVES the machine — even an allowlisted command
+  // is denied when it matches an egress pattern, unless the target opted in
+  // with allowExfil (P3: deliberate user act).
+  const exfil =
+    /\b(curl|wget)\b|\/dev\/(tcp|udp)\/|\b(nc|netcat|socat)\b|\b(scp|rsync|ssh)\b|base64\s+(-w\s*0|--wrap[=?]0?\s*)?[A-Za-z0-9+/=]{120,}/i;
+  const exfilDenied = () => ({
+    ok: false as const,
+    error:
+      'Command matches an exfiltration pattern (curl/wget, netcat/socat, /dev/tcp, scp/rsync/ssh hop, base64 blob). Set allowExfil on this target to override.',
+  });
   for (const pattern of list) {
     const p = pattern.trim();
     if (!p) continue;
@@ -483,6 +501,7 @@ export function isSshCommandAllowed(
             error: 'Command contains blocked shell metacharacters',
           };
         }
+        if (!target.allowExfil && exfil.test(cmd)) return exfilDenied();
         return { ok: true };
       }
     } else if (cmd === p) {
@@ -490,6 +509,7 @@ export function isSshCommandAllowed(
       if (/\brm\s+-rf\b|\bmkfs\b|\bdd\s+if=/i.test(cmd)) {
         return { ok: false, error: 'Command blocked for safety' };
       }
+      if (!target.allowExfil && exfil.test(cmd)) return exfilDenied();
       return { ok: true };
     }
   }

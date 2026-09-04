@@ -73,6 +73,11 @@ import {
   type PermissionAskHandler,
   type PermissionPolicy,
 } from './safety/toolPermissions.js';
+import {
+  provenanceAppliesTo,
+  provenanceMatchIn,
+  recordResultForProvenance,
+} from './safety/provenance.js';
 import { createDefaultLifecycleHooks, HOOKS_FAILURE_ENV, resolveHookFailureMode } from './safety/lifecycleHooks.js';
 // ADR-0033 (t76): post-write AST gate with auto-revert on the write path.
 import { wrapWithAstGate } from './safety/astGate.js';
@@ -1085,7 +1090,26 @@ function wrapWithPermissions<I, O>(
         (input ?? {}) as Record<string, unknown>,
         root ?? process.cwd(),
       );
-      const action = intersectEffects(mergeRuleEffect(decision.action, rule), claims?.effect, contractRule?.effect);
+      let action = intersectEffects(mergeRuleEffect(decision.action, rule), claims?.effect, contractRule?.effect);
+      // W3.1 (t46): provenance escalation at the choke-point. Write/execute
+      // args that EMBED fingerprinted non-user content (web fetch, MCP output,
+      // file reads — safety/provenance.ts) escalate an "allow" to "ask":
+      // injected instructions can no longer sail through on category
+      // defaults. Deterministic substring match, zero LLM (P2); ask/deny
+      // already gated pass through; ZELARI_PROVENANCE=0 opts out entirely.
+      let actionReason = decision.reason;
+      if (action !== 'deny' && (required.includes('write') || required.includes('execute'))) {
+        const provHit = provenanceMatchIn(JSON.stringify(input ?? {}));
+        if (provHit && provenanceAppliesTo(provHit.source, required)) {
+          const provNote = `[provenance] args embed non-user ${provHit.source} content (via ${provHit.tool})`;
+          if (action === 'allow') {
+            action = 'ask';
+            actionReason = `${provNote} — confirm before ${required.join('+')}`;
+          } else {
+            actionReason = `${decision.reason} · ${provNote}`;
+          }
+        }
+      }
       const claimHit =
         claims && claims.effect !== undefined
           ? claims.matchedRules.find((x) => x.effect === claims.effect)
@@ -1118,7 +1142,7 @@ function wrapWithPermissions<I, O>(
             resourceClaimsFor(original.name, (input ?? {}) as Record<string, unknown>);
           const ok = await onAsk({
             toolName: original.name,
-            reason: decision.reason,
+            reason: actionReason || decision.reason,
             categories: decision.categories,
             args: input,
             policyNote: rulePrefix || undefined,
@@ -1138,7 +1162,11 @@ function wrapWithPermissions<I, O>(
           );
         }
       }
-      return original.execute(input, ctx);
+      const outcome = await original.execute(input, ctx);
+      // W3.1 (t46): fingerprint non-mutating tool results (web/mcp/file) so a
+      // LATER write/execute embedding this content escalates to ask.
+      recordResultForProvenance(original.name, required, outcome);
+      return outcome;
     },
   };
 }

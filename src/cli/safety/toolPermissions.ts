@@ -95,15 +95,48 @@ export function isAutoPermissions(): boolean {
   return v === '1' || v === 'true' || v === 'yes' || v === 'on';
 }
 
-/** Default policy from env (build phase). */
+/**
+ * Permission presets (W3.3 / t48) — UX sugar over the SAME category policy.
+ * `standard` is byte-identical to the historical defaults (acceptance: a
+ * preset-free session and `--permissions standard` produce the same policy);
+ * `strict`/`yolo` only change the DEFAULT of a category. Per-category env
+ * (ZELARI_PERMISSION_READ/WRITE/EXECUTE/NETWORK), policy files and session
+ * grants still win exactly as before — a preset never touches the lattice.
+ */
+export type PermissionPreset = 'strict' | 'standard' | 'yolo';
+
+export const PERMISSION_PRESETS: Record<
+  PermissionPreset,
+  Pick<PermissionPolicy, 'read' | 'write' | 'execute' | 'network'>
+> = {
+  standard: { read: 'allow', write: 'allow', execute: 'ask', network: 'ask' },
+  strict: { read: 'allow', write: 'ask', execute: 'ask', network: 'deny' },
+  yolo: { read: 'allow', write: 'allow', execute: 'allow', network: 'allow' },
+};
+
+export function parsePermissionPreset(raw: string | undefined): PermissionPreset | null {
+  const v = raw?.trim().toLowerCase();
+  return v === 'strict' || v === 'standard' || v === 'yolo' ? v : null;
+}
+
+/**
+ * Active preset: `ZELARI_PERMISSION_PRESET` (set by `--permissions` at boot,
+ * before any registry is built), default `standard`.
+ */
+export function activePermissionPreset(): PermissionPreset {
+  return parsePermissionPreset(process.env.ZELARI_PERMISSION_PRESET) ?? 'standard';
+}
+
+/** Default policy from env + active preset (build phase). */
 export function defaultPermissionPolicy(
   overrides?: Partial<PermissionPolicy>,
 ): PermissionPolicy {
+  const preset = PERMISSION_PRESETS[activePermissionPreset()];
   return {
-    read: parseAction(process.env.ZELARI_PERMISSION_READ, 'allow'),
-    write: parseAction(process.env.ZELARI_PERMISSION_WRITE, 'allow'),
-    execute: parseAction(process.env.ZELARI_PERMISSION_EXECUTE, 'ask'),
-    network: parseAction(process.env.ZELARI_PERMISSION_NETWORK, 'ask'),
+    read: parseAction(process.env.ZELARI_PERMISSION_READ, preset.read),
+    write: parseAction(process.env.ZELARI_PERMISSION_WRITE, preset.write),
+    execute: parseAction(process.env.ZELARI_PERMISSION_EXECUTE, preset.execute),
+    network: parseAction(process.env.ZELARI_PERMISSION_NETWORK, preset.network),
     ui: 'allow',
     auto: isAutoPermissions(),
     ...overrides,

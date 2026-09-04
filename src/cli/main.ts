@@ -415,6 +415,26 @@ function pickRootComponent(): {
     console.log(printSettingsReport({ cwd: process.cwd() }));
     process.exit(0);
   }
+  if (argv.includes("--permissions")) {
+    // W3.3 (t48): permission preset — UX sugar over the category policy.
+    // Promoted to env BEFORE any registry is built; it only changes the
+    // per-category DEFAULTS (standard == the pre-preset policy). Env vars,
+    // policy files and session grants still win in both directions.
+    const pIdx = argv.indexOf("--permissions");
+    const raw = String(argv[pIdx + 1] ?? "")
+      .trim()
+      .toLowerCase();
+    if (raw !== "strict" && raw !== "standard" && raw !== "yolo") {
+      console.error(
+        `[permissions] unknown preset '${raw || ""}' — use strict | standard | yolo`,
+      );
+      process.exit(1);
+    }
+    process.env.ZELARI_PERMISSION_PRESET = raw;
+    console.log(
+      `[permissions] preset=${raw} (defaults only — ZELARI_PERMISSION_* env and policy files still win)`,
+    );
+  }
   if (argv.includes("--evolve-status")) {
     // Evolution Engine v0 (ADR-0036): read-only ledger stats. The ledger is
     // append-only under .zelari/evolution/ and written ONLY when
@@ -591,6 +611,8 @@ function pickRootComponent(): {
         "  --print-config      Print provider/model config as JSON (no secrets)\n" +
         "  --print-settings    Print zelari.config.json values + the origin of\n" +
         "                      each (default < user < project < env)\n" +
+        "  --permissions <p>   Permission preset: strict | standard | yolo — changes\n" +
+        "                      category DEFAULTS only (env vars and policy files win)\n" +
         "  --evolve-status     Evolution ledger stats (read-only; ADR-0036; the\n" +
         "                      ledger is written only when ZELARI_EVOLUTION=shadow)\n" +
         "  --plugins-status    JSON status of optional plugins (Playwright, eslint, …)\n" +
