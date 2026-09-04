@@ -1,7 +1,7 @@
 # ADR-0017 — Selezione unificata del "thinking effort" per tutti i provider
 
-**Status:** Proposto
-**Date:** da confermare
+**Status:** Proposto — **parcheggiato** (triage 2026-09-04, vedi "Esito triage" in fondo)
+**Date:** proposta 2026-08-14 (git)
 
 ## Contesto
 
@@ -84,3 +84,18 @@ Regole operative:
 - [ ] Aggiungere campo config in `provider.json`, comando `/effort`, flag `--effort`.
 - [ ] Verificare i nomi parametro live (`reasoning_effort`, `reasoning`, `thinking.budget_tokens`) per provider
       prima di finalizzare la mappatura.
+
+## Esito triage (2026-09-04, task t37/S6)
+
+**Verdetto: parcheggiato** — né accettato né ritirato. Evidenza su disco:
+
+- `ThinkingSpec`, `reasoningEffort`, `reasoning_effort`: **zero occorrenze** in `src/` e
+  `packages/core/src/` (grep 2026-09-04); nessun flag `--effort`, nessun comando `/effort`.
+- La superficie descritta (tabella capability, adattatori per provider, persistenza in
+  `provider.json`) non è mai stata implementata dalla proposta (2026-08-14).
+
+**Condizioni di riapertura:** il benchmark competitivo (t31, `bench:competitive` in
+`tools/eval/`) ora misura token/costo per run. Se i dati mostrano che l'effort di
+reasoning è una leva di costo/latenza significativa cross-provider, riprendere questo
+ADR aggiornando la mappatura provider. Fino ad allora restano validi i default per
+provider già documentati in `providerConfig.ts`.

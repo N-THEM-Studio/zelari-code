@@ -1,4 +1,10 @@
 
+# ADR-0035 — Council fan-out parallelo + trace view
+
+> **Nota di rinumerazione (2026-09-04):** questo ADR era storicamente il secondo
+> file numerato `0015` (collisione con `0015-companion-host-serve.md`). La triage
+> S6 (t37) lo ha rinumerato **0035** per eliminare l'ambiguità; contenuto invariato.
+
 - **Stato:** ✅ Accettato (Fase A implementata; Fase B deferita)
 - **Data proposta:** 2026-07-20
 - **Autore:** Zelari Code (fase PLAN)
