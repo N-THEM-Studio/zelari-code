@@ -223,6 +223,33 @@ export async function handleMemoryCommand(
         emit(`[memory] export written to ${target}`);
         return;
       }
+      case 'audit': {
+        // W4.2: read-only decay + contradiction report. Contradictions are
+        // flagged for council review (Minosse) — this NEVER mutates nodes.
+        const { decayReport, detectContradictions } = await import('../memory/audit.js');
+        type AuditNode = import('../memory/audit.js').AuditNode;
+        const dump = (await memory.export()) as unknown;
+        const nodes = (Array.isArray(dump) ? dump : ((dump as { nodes?: unknown[] }).nodes ?? [])) as AuditNode[];
+        const contradictions = detectContradictions(nodes);
+        const decayed = decayReport(nodes).slice(0, 10);
+        emit(
+          `[memory audit] ${nodes.length} node(s) · ${contradictions.length} contradiction(s) · ${decayed.length} decayed (top 10)` +
+            (contradictions.length
+              ? '\n  contradictions (flag for review):\n' +
+                contradictions
+                  .slice(0, 10)
+                  .map((p) => `    ✗ ${p.a} ↔ ${p.b} · "${p.subject}" (${p.reason})`)
+                  .join('\n')
+              : '') +
+            (decayed.length
+              ? '\n  decay (30d half-life):\n' +
+                decayed
+                  .map((d) => `    ↓ ${d.id} · ${d.declared.toFixed(2)} → ${d.effective.toFixed(2)} (${Math.round(d.ageDays)}d)`)
+                  .join('\n')
+              : ''),
+        );
+        return;
+      }
       default:
         emit(`[memory] unknown subcommand “${subcommand}”.\n  ${USAGE}`);
     }
