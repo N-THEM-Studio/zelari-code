@@ -161,7 +161,7 @@ function runOne(input: {
     const setup = materializeFixture(anchor, workspaceDir);
     if (!setup.ok) {
       return CompetitiveRunRecordSchema.parse({
-        agent: adapter.id, agentLabel: adapter.label, agentVersion: input.resolution.version, model: null,
+        agent: adapter.id, agentLabel: adapter.label, agentVersion: input.resolution.version, model: 'undeclared',
         anchorId: anchor.id, anchorVersion: anchor.version, runIndex, status: 'error', exitCode: setup.code ?? -1,
         wallMs: 0, checksFailed: null, tokens: null, costUsd: null,
         detail: `fixture setup failed: ${setup.failed}`, recordedAt,
@@ -186,7 +186,7 @@ function runOne(input: {
       agent: adapter.id,
       agentLabel: adapter.label,
       agentVersion: input.resolution.version,
-      model: null,
+      model: 'undeclared',
       anchorId: anchor.id,
       anchorVersion: anchor.version,
       runIndex,
@@ -263,7 +263,9 @@ function runBench(input: { adapters: AgentAdapter[]; resolutions: AgentResolutio
 
 function main(): number {
   const dryRun = argv.includes('--dry-run');
-  const runsRaw = Number.parseInt(arg('runs') ?? '1', 10);
+  // 2.31 C1: default 3 runs — a single run is an anecdote; three make a
+  // median and a spread. Free override with --runs N.
+  const runsRaw = Number.parseInt(arg('runs') ?? '3', 10);
   if (!Number.isInteger(runsRaw) || runsRaw < 1) {
     console.error('runCompetitiveBench: --runs must be an integer >= 1');
     return 2;
