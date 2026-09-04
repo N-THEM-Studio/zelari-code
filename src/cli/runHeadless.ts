@@ -1296,6 +1296,9 @@ async function runHeadlessZelari(
               synthesisText: synthesisText || undefined,
               degradedRun: d.degraded,
               degradedReasons: d.reasons,
+              // 2.31 A1: without sessionId the spine-evidence gate in the hook
+              // never fires, leaving headless with the legacy lint heuristic.
+              sessionId: spine.sessionId,
             });
             completionOk = hook.completion?.completion?.ok ?? false;
             if (completionOk) {
@@ -1420,6 +1423,8 @@ async function runHeadlessZelari(
               synthesisText: synthesisText || undefined,
               degradedRun: d.degraded,
               degradedReasons: d.reasons,
+              // 2.31 A1: same fix as the council path — evidence gate needs it.
+              sessionId: spine.sessionId,
             });
             if (hook.completion?.completion?.ok) {
               emit(`[zelari] slice completion ok`);

@@ -101,6 +101,24 @@ export function resetProcessSessionBudget(): void {
   processTracker = undefined;
 }
 
+/**
+ * 2.31 A2: shared HOLD guard for every provider-spend dispatch (council,
+ * Kraken default turn, build@kraken, missions). Returns the user-facing
+ * notice when the session budget is exhausted, or null when the turn may
+ * proceed. One policy, every path — a budget that stops only some paths
+ * is a lying preset.
+ */
+export function sessionBudgetHoldNotice(env: NodeJS.ProcessEnv = process.env): string | null {
+  const budget = processSessionBudget(env);
+  if (!budget.isHold()) return null;
+  const s = budget.status();
+  return (
+    `[budget] HOLD — session budget exhausted (${s.usedUsd.toFixed(2)} USD · ${s.usedTokens} tokens). ` +
+    `Raise ZELARI_SESSION_BUDGET_USD / ZELARI_SESSION_BUDGET_TOKENS or start /new. ` +
+    `State preserved; no provider call was made.`
+  );
+}
+
 /** Human-facing chip for the status bar; null when the budget is off. */
 export function budgetChip(status: BudgetStatus): { label: string; tone: 'green' | 'yellow' | 'red' } | null {
   if (status.state === 'off') return null;

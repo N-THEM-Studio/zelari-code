@@ -286,6 +286,36 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             return;
           }
         }
+        // 2.31 A2: session budget HOLD applies to the Kraken default path too —
+        // same guard as the council dispatch, before any provider spend.
+        {
+          const { sessionBudgetHoldNotice } = await import("../costBudget.js");
+          const hold = sessionBudgetHoldNotice();
+          if (hold) {
+            appendSystem(setMessages, hold, Date.now());
+            return;
+          }
+        }
+        // 2.31 B2: with no workspace plan the first turn runs in PLAN — no
+        // surprise writes on a first message. Explicit override: /build.
+        {
+          const { hasWorkspacePlan } = await import("../workspace/planDetect.js");
+          const phaseMod = await import("../phaseState.js");
+          const g = globalThis as { __zelariPlanFirstNotice?: boolean };
+          if (
+            phaseMod.getPhase() === "build" &&
+            !hasWorkspacePlan(process.cwd()) &&
+            !g.__zelariPlanFirstNotice
+          ) {
+            g.__zelariPlanFirstNotice = true;
+            phaseMod.setPhase("plan");
+            appendSystem(
+              setMessages,
+              `[permessi] No workspace plan found — first turn forced to PLAN (no surprise writes). Type /build to switch to BUILD explicitly.`,
+              Date.now(),
+            );
+          }
+        }
         setBusy(true);
         const workPhase = getPhase();
         try {
