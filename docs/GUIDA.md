@@ -1,6 +1,6 @@
 # Zelari Code — Guida all'uso
 
-> **.11.2
+> **2.30.0**
 > CLI multi-agente per coding con TUI (Ink + React), **Zelari Desktop** (Tauri 2), council a 6 ruoli, super-agent **kraken**, missioni **zelari**, slash commands, MCP, SSH e provider LLM agnostici (OAuth Grok / ChatGPT / Anthropic).  
 > Prodotto: **[Anathema Studio](https://anathema-studio.com/)** · licenza **Apache-2.0**.
 
@@ -1247,6 +1247,32 @@ ZELARI_DIAGNOSTICS=0 ZELARI_SSH=0 ZELARI_PARALLEL_TOOLS=0
 ```
 
 ---
+
+## Novità 2.29–2.30 (hardening)
+
+Feature entrate tra la 2.29 e la 2.30 (riferimenti: `HANDOFF-v2.30.md`, ADR-0036).
+
+### `zelari.config.json` e `--print-settings`
+
+- Config a livelli: default builtin → `~/.zelari-code/zelari.config.json` (utente) → `<progetto>/.zelari/zelari.config.json`; l'ultimo vince.
+- `zelari-code --print-settings` stampa ogni valore con la propria origine (default / user / project).
+- Root unica `~/.zelari-code/` con migrazione automatica al primo avvio.
+
+### Safety: permessi, provenance, exfil
+
+- `--permissions <strict|standard|yolo>` (o `ZELARI_PERMISSION_PRESET`) sceglie il preset di permessi dei tool.
+- Provenance rafforzata: gli excerpt citati dal modello vengono registrati (ring bounded) e verificati; `ZELARI_PROVENANCE=0` disattiva registrazione e matching.
+- Guard exfil SSH: i comandi remoti sono controllati contro pattern di esfiltrazione.
+
+### Budget di sessione con HOLD
+
+- Sul turn council il costo cumulativo è confrontato con il budget (`src/cli/costBudget.ts`); al superamento la sessione va in **HOLD** invece di fallire in silenzio.
+
+### Evolution engine (ADR-0036, default OFF)
+
+- Pipeline `npm run evolve:propose|validate|decide|seal`; chi propone non misura e non promuove se stesso (proposer ≠ judge, `JUDGE_PATHS` intoccabile).
+- Anchor sealed con hash normalizzato LF/BOM: drift = gate rosso.
+- Status da CLI: `zelari-code --evolve-status`; in TUI: `/evolve status|fitness|proposals`; `/memory audit` ispeziona memoria e costi (W4).
 
 ## File di configurazione
 
