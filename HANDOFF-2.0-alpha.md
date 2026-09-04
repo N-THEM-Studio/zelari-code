@@ -1,3 +1,5 @@
+> **SUPERSEDED** - historical snapshot; current state lives in README.md, CHANGELOG.md and docs/decisions/. Not onboarding docs.
+
 # HANDOFF — Zelari 2.0 Alpha (stato al 2026-08-19)
 
 > Documento di continuità per riprendere il lavoro da un'altra macchina.

@@ -1,3 +1,5 @@
+> **SUPERSEDED** - historical snapshot; current state lives in README.md, CHANGELOG.md and docs/decisions/. Not onboarding docs.
+
 # HANDOFF — Kraken super-agent
 
 > **📚 Historical / superseded (2026-08).** Snapshot taken while the tree was still **1.25.0**.  

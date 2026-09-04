@@ -1,3 +1,5 @@
+> **SUPERSEDED** - historical snapshot; current state lives in README.md, CHANGELOG.md and docs/decisions/. Not onboarding docs.
+
 > **📚 Historical / superseded.** The v0.10.0 “Steal Grok Build” P0 (lifecycle hooks, folder trust `/trust`, unified `--inspect`) shipped in **1.32.0**. Current line is **1.34.0**. See [CHANGELOG.md](./CHANGELOG.md).
 
 ---

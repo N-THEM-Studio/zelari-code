@@ -1,3 +1,5 @@
+> **SUPERSEDED** - historical snapshot; current state lives in README.md, CHANGELOG.md and docs/decisions/. Not onboarding docs.
+
 # Zelari Code — Handoff Opzione B (2026-07-03)
 
 > **📚 Historical / superseded (v0.7.8 Opzione B) — not required for contributors.**  

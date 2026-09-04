@@ -1,0 +1,820 @@
+# Zelari Code — Piano di lavoro per diventare il miglior coding harness
+
+## Obiettivo
+
+Portare Zelari Code da orchestratore multi-agent avanzato a **coding harness autonomo, verificabile, sicuro e adattivo**, con un vantaggio concreto rispetto a Codex, Claude Code e OpenCode.
+
+Principio guida:
+
+> **Models propose. Harness proves.**
+
+Il lavoro deve concentrarsi sull'affidabilità del runtime, non sull'aggiunta di ulteriori agenti o provider.
+
+---
+
+# Priorità
+
+## P0 — Safety e authority
+
+### 1. Rendere le policy `restrict-only`
+
+**File principale**
+- `src/cli/safety/policyEngine.ts`
+
+**Problema**
+La project policy può attualmente precedere la global policy. Una regola locale può quindi mascherare una restrizione globale.
+
+**Target**
+La policy effettiva deve essere l'intersezione delle restrizioni:
+
+```text
+effectivePolicy =
+  globalPolicy
+  ∩ projectPolicy
+  ∩ agentPolicy
+  ∩ parentPolicy
+```
+
+Con precedenza:
+
+```text
+deny > ask > allow
+```
+
+**Implementazione**
+- Separare global e project policy invece di concatenarle.
+- Introdurre una funzione unica di merge delle decisioni.
+- Impedire a una policy figlia di aumentare i privilegi.
+- Mantenere opzionalmente una modalità legacy per compatibilità.
+
+**Criteri di accettazione**
+- Una `deny` globale non può essere trasformata in `allow` dal progetto.
+- Una `ask` globale non può diventare `allow`.
+- Una policy di agente può solo restringere quella ereditata.
+- Tutti i casi devono avere test dedicati.
+
+---
+
+### 2. Parsing policy realmente fail-closed
+
+**File**
+- `src/cli/safety/policyEngine.ts`
+
+**Problema**
+Una policy JSON malformata può essere ignorata con warning.
+
+**Target**
+
+```text
+TUI interattiva
+→ warning configurabile
+
+Headless / CI / mission autonoma
+→ policy parse error = BLOCKED
+```
+
+**Implementazione suggerita**
+
+```ts
+type PolicyLoadMode =
+  | 'permissive'
+  | 'strict';
+```
+
+**Criteri di accettazione**
+- In modalità strict nessuna execution parte con policy invalida.
+- L'errore deve essere machine-readable.
+- Completion Proof deve registrare il blocco.
+
+---
+
+### 3. Resource Policy Engine
+
+**File**
+- `src/cli/safety/policyEngine.ts`
+- `src/cli/safety/toolPermissions.ts`
+- tool execution layer
+
+**Problema**
+Il permission matching è ancora troppo legato a stringhe shell e singoli path.
+
+**Target**
+Ogni tool dichiara esplicitamente quali risorse vuole utilizzare.
+
+```ts
+type ResourceClaim =
+  | { kind: 'path'; operation: 'read' | 'write'; path: string }
+  | { kind: 'process'; executable: string; argv: string[] }
+  | { kind: 'network'; host: string; port?: number }
+  | { kind: 'mcp'; server: string; tool: string }
+  | { kind: 'ssh'; target: string; command?: string }
+  | { kind: 'ui'; action: string }
+  | { kind: 'agent'; role: string };
+```
+
+Ogni tool:
+
+```ts
+interface ToolDefinition {
+  resources(args: unknown): ResourceClaim[];
+  execute(args: unknown): Promise<unknown>;
+}
+```
+
+Flusso:
+
+```text
+tool request
+    ↓
+resource claims
+    ↓
+policy evaluation
+    ↓
+allow / ask / deny
+    ↓
+execution
+```
+
+**Criteri di accettazione**
+- Tutte le risorse vengono valutate prima dell'esecuzione.
+- Un tool con più path controlla tutti i path.
+- MCP, network e SSH entrano nello stesso permission engine.
+- I subagent non possono ottenere capability non possedute dal parent.
+
+---
+
+### 4. Structured process execution
+
+**Problema**
+Regole come:
+
+```text
+git push* = deny
+```
+
+sono fragili se applicate a una stringa Bash arbitraria.
+
+**Target**
+Favorire un tool strutturato:
+
+```ts
+exec_process({
+  program: "git",
+  args: ["push", "origin", "main"]
+})
+```
+
+Policy applicata a:
+
+```ts
+{
+  kind: 'process',
+  executable: 'git',
+  argv: ['push', 'origin', 'main']
+}
+```
+
+**Regola consigliata**
+
+```text
+structured process execution → allow secondo policy
+raw shell                    → ask / restricted
+```
+
+**Criteri di accettazione**
+- `env FOO=x git push`, `command git push`, spacing anomalo e wrapper non devono aggirare le policy.
+- Raw shell deve essere trattata come capability ad alto rischio.
+- I comandi strutturati devono essere loggati nel Completion Proof.
+
+---
+
+### 5. Symlink-safe workspace confinement
+
+**File**
+- `src/cli/safety/sandboxPath.ts`
+
+**Target**
+
+```text
+input path
+   ↓
+normalize
+   ↓
+resolve
+   ↓
+realpath parent
+   ↓
+workspace containment check
+   ↓
+no-follow write/open
+```
+
+**Test obbligatori**
+- `../../etc/passwd`
+- symlink interno che punta fuori workspace
+- symlink chain
+- symlink creato tra check e write, dove tecnicamente testabile
+- Windows path normalization
+- case sensitivity / case folding dove applicabile
+
+**Criterio di accettazione**
+Nessuna write può uscire dal workspace senza una capability esplicita.
+
+---
+
+# P1 — Verification e Completion
+
+## 6. Verification adapters multi-ecosistema
+
+**File principale**
+- `src/cli/kraken/nativeVerification.ts`
+
+**Problema**
+La verification automatica è ancora troppo centrata sul mondo Node/npm.
+
+**Target**
+
+```ts
+interface VerificationAdapter {
+  detect(root: string): Promise<number>;
+  buildPlan(root: string): Promise<VerificationCheck[]>;
+}
+```
+
+**Adapter iniziali**
+- Node.js
+- Python
+- Rust
+- Go
+- Java / Gradle / Maven
+- .NET
+
+**Esempi**
+
+```text
+package.json + pnpm-lock.yaml
+→ pnpm typecheck
+→ pnpm test
+→ pnpm build
+
+pyproject.toml
+→ pytest
+→ ruff
+→ mypy / pyright se configurati
+
+Cargo.toml
+→ cargo check
+→ cargo test
+→ cargo clippy
+
+go.mod
+→ go test ./...
+→ go vet ./...
+
+gradlew
+→ ./gradlew test
+→ ./gradlew build
+```
+
+**Criteri di accettazione**
+- Il package manager viene rilevato automaticamente.
+- Un check non presente non genera falso fallimento.
+- Un check presente ma fallito blocca completion.
+- Ogni verifica emette evidence strutturata.
+
+---
+
+## 7. Completion Proof transaction-grade
+
+**File**
+- `src/cli/kraken/completionProof.ts`
+
+**Target**
+Due modalità:
+
+```text
+best-effort
+required
+```
+
+In `required`:
+
+```text
+verification PASS
++
+proof non persistibile
+=
+BLOCKED
+```
+
+**Persistenza**
+Scrittura atomica:
+
+```text
+temporary file
+↓
+flush / fsync
+↓
+rename
+```
+
+**Campi da aggiungere**
+
+```json
+{
+  "commitSha": "...",
+  "diffDigest": "...",
+  "taskContractDigest": "...",
+  "verificationPlanDigest": "...",
+  "harnessManifestDigest": "...",
+  "proofDigest": "..."
+}
+```
+
+**Criteri di accettazione**
+- Markdown e JSON derivano dalla stessa sorgente.
+- Il JSON è deterministicamente serializzabile.
+- Il proof può essere validato offline.
+- Il CI può richiedere il proof come condizione di successo.
+
+---
+
+## 8. TaskContract come compilatore dell'harness
+
+**File**
+- `src/cli/kraken/taskContract.ts`
+
+**Target**
+
+```text
+TaskContract
+    │
+    ├── OrchestrationPlan
+    ├── CapabilityPolicy
+    ├── VerificationPlan
+    └── CompletionPolicy
+```
+
+**Schema suggerito**
+
+```ts
+interface TaskContract {
+  goal: string;
+
+  scope: {
+    allowedPaths?: string[];
+    forbiddenPaths?: string[];
+  };
+
+  acceptance: AcceptanceCriterion[];
+  constraints: string[];
+
+  risk:
+    | 'low'
+    | 'medium'
+    | 'high'
+    | 'critical';
+}
+```
+
+**Esempio**
+
+```text
+allowedPaths = ["src/auth/**"]
+```
+
+genera:
+
+```text
+write src/auth/** → allow
+write **          → deny
+```
+
+Acceptance criteria generano automaticamente i check di verification.
+
+**Criteri di accettazione**
+- Il contract controlla scope, policy e completion.
+- Ogni modifica del contract produce una nuova versione.
+- Gli steer dell'utente sono tracciati.
+- Il Completion Proof contiene il contract digest.
+
+---
+
+# P1 — Orchestration adattiva
+
+## 9. Auto Orchestrator reale
+
+**File**
+- `src/cli/mode.ts`
+- `src/cli/kraken/delegationPolicy.ts`
+- nuovo modulo consigliato: `src/cli/kraken/orchestrator.ts`
+
+**Problema**
+L'attuale modalità automatica decide principalmente tra solo e Kraken.
+
+**Target**
+
+```ts
+interface OrchestrationDecision {
+  strategy:
+    | 'lead-only'
+    | 'explore'
+    | 'lead+verify'
+    | 'parallel-build'
+    | 'graph'
+    | 'council'
+    | 'mission';
+
+  confidence: number;
+  estimatedCost: number;
+  estimatedLatency: number;
+  rationaleCode: string;
+}
+```
+
+**Input**
+
+```ts
+{
+  contract,
+  repoSize,
+  expectedChangedFiles,
+  crossCuttingRisk,
+  ambiguity,
+  parallelismPotential,
+  budget,
+  previousFailures
+}
+```
+
+**Principio**
+Prima decisione deterministica, LLM solo come supporto opzionale.
+
+**Criteri di accettazione**
+- Task piccolo → niente over-orchestration.
+- Task complesso → DAG/parallelism quando utile.
+- Council e Mission vengono scelti solo quando giustificati.
+- La scelta viene registrata nella telemetria.
+
+---
+
+## 10. Risk-based cross-family verification
+
+**Target**
+
+```text
+LOW
+→ deterministic verification
+
+MEDIUM
+→ deterministic + reviewer
+
+HIGH
+→ deterministic + different-family reviewer
+
+CRITICAL
+→ deterministic + 2 independent reviewers
+```
+
+**Regola**
+Il reviewer non riceve il reasoning del builder.
+
+Riceve soltanto:
+- task originale
+- TaskContract
+- git diff
+- test output
+- diagnostics
+- repository state necessario
+
+**Criteri di accettazione**
+- Il verifier è blind rispetto alla narrativa del builder.
+- Per rischio high/critical si preferisce una famiglia modello diversa.
+- Reviewer failure non viene ignorato.
+- Divergenze fra reviewer diventano evidence.
+
+---
+
+# P2 — Scheduler e parallelismo
+
+## 11. File ownership
+
+Ogni subagent riceve un write scope.
+
+```text
+Agent A
+→ src/frontend/**
+
+Agent B
+→ src/backend/**
+
+Agent C
+→ tests/**
+```
+
+**Criterio**
+Due agenti non possono scrivere contemporaneamente sullo stesso scope senza arbitration.
+
+---
+
+## 12. Semantic ownership
+
+Evoluzione del file ownership.
+
+Con AST/LSP:
+
+```text
+Agent A owns AuthService.login()
+Agent B owns TokenService.refresh()
+```
+
+anche nello stesso file.
+
+**Target**
+Rilevare i conflitti prima del merge.
+
+---
+
+## 13. Worktree scheduling automatico
+
+**Regola**
+
+```text
+low overlap
+→ parallel worktrees
+
+high overlap
+→ sequential execution
+```
+
+Il planner deve stimare l'overlap prima di spawnare gli agenti.
+
+---
+
+## 14. Transactional agent execution
+
+Per ogni unità di lavoro:
+
+```text
+checkpoint
+↓
+agent edit
+↓
+diagnostics
+↓
+verification
+↓
+PASS → commit transaction
+FAIL → rollback
+```
+
+**Criteri di accettazione**
+- Un subagent fallito non sporca il workspace.
+- Il rollback è automatico.
+- I commit intermedi sono correlati al task/subtask.
+
+---
+
+# P2 — Routing intelligente
+
+## 15. Model reputation
+
+Registrare per:
+
+```text
+model
+provider
+repo
+language
+task class
+agent role
+```
+
+metriche:
+
+```text
+verified solve rate
+first-pass success
+repair count
+cost
+latency
+regression rate
+review rejection rate
+```
+
+---
+
+## 16. Repository-specific routing
+
+Il router deve imparare quale modello rende meglio su ogni repository.
+
+```text
+repo A
+→ model X strongest
+
+repo B
+→ model Y strongest
+```
+
+Non usare solo ranking globali.
+
+---
+
+## 17. Orchestration ROI controller
+
+Ogni spawn deve avere un valore atteso.
+
+```text
+spawnScore =
+  expectedSuccessGain
+  /
+  (cost + latency + duplicationRisk)
+```
+
+Se lo score è troppo basso:
+
+```text
+do not spawn
+```
+
+**Obiettivo**
+Ridurre token e latenza senza ridurre il verified solve rate.
+
+---
+
+# P3 — Benchmark e validazione competitiva
+
+## 18. Harness benchmark pubblico
+
+Confrontare:
+
+- Zelari
+- Codex
+- Claude Code
+- OpenCode
+
+Su almeno **50–100 task reali**.
+
+**Metriche**
+
+```text
+Verified Solve Rate
+First-Pass Verified Solve Rate
+Regression Rate
+Human Interventions
+Repair Iterations
+Wall Time
+Token Usage
+Dollar Cost
+Files Changed
+Rollback Rate
+False-Done Rate
+```
+
+**Regole**
+- Modelli/versioni pinned.
+- Repository/commit pinned.
+- Stesso task.
+- Stesse acceptance criteria.
+- Stesso timeout/budget.
+- Risultati riproducibili.
+
+---
+
+# Roadmap consigliata
+
+## Release A — Safety Hardening
+
+Implementare:
+
+1. Restrict-only policy layering
+2. Strict policy parsing
+3. ResourceClaim engine
+4. Structured process execution
+5. Symlink-safe sandbox
+
+**Exit criteria**
+- Nessun privilege escalation fra global/project/agent/parent.
+- Tutte le write passano da resource policy.
+- Security regression suite verde.
+
+---
+
+## Release B — Universal Verification
+
+Implementare:
+
+1. Verification adapters multi-language
+2. Atomic Completion Proof
+3. Required proof mode
+4. TaskContract → VerificationPlan
+5. TaskContract → CapabilityPolicy
+
+**Exit criteria**
+- Node, Python, Rust, Go, Java e .NET supportati.
+- Completion Proof verificabile offline.
+- Nessun BUILD può dichiararsi completo senza evidence.
+
+---
+
+## Release C — Adaptive Harness
+
+Implementare:
+
+1. Auto Orchestrator
+2. Risk scoring
+3. Cross-family verifier automatico
+4. File ownership
+5. Transactional execution
+
+**Exit criteria**
+- Task semplici non vengono sovra-orchestrati.
+- Task complessi sfruttano parallelism quando utile.
+- Failure di un agent non contamina gli altri.
+
+---
+
+## Release D — Self-Optimizing Harness
+
+Implementare:
+
+1. Model reputation
+2. Repository-specific routing
+3. Cost/latency optimizer
+4. Orchestration ROI controller
+5. Benchmark dashboard
+
+**Exit criteria**
+- Zelari può giustificare automaticamente perché ha scelto un modello/orchestrazione.
+- Verified Solve Rate non peggiora riducendo costo/latency.
+- Benchmark competitivi riproducibili.
+
+---
+
+# Ordine di implementazione raccomandato
+
+```text
+1. policyEngine.ts — restrict-only layering
+2. policyEngine.ts — strict parsing
+3. ResourceClaim API
+4. structured exec
+5. sandboxPath.ts — symlink confinement
+6. nativeVerification.ts — adapters
+7. completionProof.ts — atomic/required proof
+8. taskContract.ts — contract compiler
+9. orchestrator.ts — adaptive routing
+10. risk-based verifier
+11. transactional execution
+12. semantic ownership
+13. model reputation
+14. ROI routing
+15. competitive benchmark suite
+```
+
+---
+
+# KPI target
+
+| KPI | Target |
+|---|---:|
+| Verified Solve Rate | > 95% sui task supportati |
+| False-Done Rate | < 0.5% |
+| Security policy bypass | 0 nei regression test |
+| First-pass solve rate | crescente release su release |
+| Human interventions | -30% rispetto alla baseline |
+| Token cost per verified solve | -20% rispetto alla baseline |
+| Repair iterations | < 1.5 medie |
+| Proof persistence success | 100% in required mode |
+| Regression detection | > 99% sui benchmark interni |
+
+---
+
+# Principio architetturale finale
+
+Zelari non deve vincere perché ha più agenti.
+
+Deve vincere perché:
+
+```text
+utente
+  ↓
+TaskContract
+  ↓
+adaptive orchestration
+  ↓
+least-privilege execution
+  ↓
+heterogeneous models
+  ↓
+deterministic verification
+  ↓
+blind independent review
+  ↓
+Completion Proof
+  ↓
+measured verified solve rate
+```
+
+Il vantaggio competitivo deve essere:
+
+> **un sistema che può usare qualunque modello, ma non si fida di nessuno di essi senza prove.**
