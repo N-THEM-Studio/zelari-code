@@ -40,7 +40,7 @@ By **[Anathema Studio](https://anathema-studio.com/)** ·
 
 **Trailer (EN, ~30s):** [docs/media/trailer/zelari-code-trailer.mp4](./docs/media/trailer/zelari-code-trailer.mp4) · [media kit](./docs/media/README.md)
 
-📖 **[Full user guide (IT)](./docs/GUIDA.md)** · **[Guide (EN)](./docs/GUIDE.md)** — install, TUI, slash commands, council, skills, workspace, headless, MCP, Desktop.
+📖 **[Full user guide](./docs/GUIDA.md)** · **[Reference guide](./docs/GUIDE.md)** — install, TUI, slash commands, council, skills, workspace, headless, MCP, Desktop.
 
 **Zelari Code** is an open-source **coding orchestrator** for the terminal — the agent that doesn't trust itself. The default dispatch is the **kraken** super-agent (aliases `agent`/`single`) spawning explore/general/verify tentacles; a six-role **council** pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) is there when the work earns a second opinion; optional **zelari** missions loop until a deliverable is *proven* done — done means verified, not claimed. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (Apache-2.0).
 
@@ -349,6 +349,8 @@ zelari-code (CLI, Apache-2.0)
 | `ZELARI_MEMORY_MCP_CLIENT_ID=<id>` | Stable local owner id for MCP-private memories |
 | `ZELARI_MEMORY_STRICT=1` | Fail instead of degrading when SQLite V2 cannot initialize |
 | `ZELARI_HOOKS_FAILURE` | Lifecycle-hook failure mode: `fail-open` (TUI default: only an explicit JSON `deny` blocks) or `fail-closed` (autonomous-run default: any hook crash/timeout denies) |
+| `ZELARI_PERMISSION_PRESET` | Tool permission preset: `strict` \| `standard` (default) \| `yolo` — also settable via `--permissions` |
+| `ZELARI_PROVENANCE=0` | Disable recording and matching of model-cited excerpts (provenance ring) |
 | `ZELARI_EVOLUTION` | Evolution Engine v0: `0` (default, off) or `shadow` — append-only outcome ledger at `.zelari/evolution/ledger.jsonl`; telemetry only, never promotes anything (ADR-0036); see `/evolve` and `--evolve-status` |
 | `zelari.config.json` | Optional settings file (user `~/.zelari-code/` or project `.zelari/`) covering the knobs in this table — precedence: defaults < user < project < env; inspect the origin of every value with `zelari-code --print-settings` |
 | `ZELARI_MISSION_AUTO=1` | Auto-start Zelari missions (skip the brief confirmation) |
