@@ -4,6 +4,8 @@
 
 ## Stato al tag v2.30.0
 
+> **Update 2026-09-05 (post-release)**: il tag `v2.30.0` è stato **spostato** da `8506640` (release commit) al commit del fix anti-drift, per far ripartire il publish npm — la run #188 era fallita su "Run tests" per il seal-drift CRLF→LF (vedi "Post-tag fix" in fondo). Contenuto di release identico: stesso `2.30.0`, solo gli hash seal normalizzati in più.
+
 Wave **W0–W4** del piano hardening completate, verificate e committate. Gate verdi al rilascio: `verify-versions` coherent, `verify-principles` PASS 0 errori, suite test delle aree toccate tutta verde (evolution 14, antiGoodhart 14, provenance/presets/exfil 19, costBudget+memory-audit 19, paths 5, honesty.claims 10).
 
 Commit nel rilascio (da `ec7330f` a `39c201b` = W0–W4, poi release):
