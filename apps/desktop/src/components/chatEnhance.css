@@ -1,0 +1,160 @@
+/*
+ * Chat enhancements: end-of-turn stats card, follow-stream "new" pill,
+ * RunActivity step-feed toggle. Imported by TurnStatsCard.tsx (always
+ * loaded via ReplyAccordion), styles are plain global CSS.
+ */
+
+/* ---- TurnStatsCard (end-of-turn "white prints") ---- */
+
+.turn-stats {
+  display: block;
+  margin-top: 6px;
+}
+
+.turn-stats-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: baseline;
+  font-size: 0.82em;
+  opacity: 0.85;
+}
+
+.turn-stats-ctx {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 0.78em;
+}
+
+.turn-stats-ctx-bar {
+  position: relative;
+  display: inline-block;
+  width: 120px;
+  height: 4px;
+  border-radius: 2px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  overflow: hidden;
+  flex: none;
+}
+
+.turn-stats-ctx-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 2px;
+  background: currentColor;
+  transition: width 0.3s ease;
+}
+
+.turn-stats-ctx.is-ok {
+  color: var(--ok, #9ece6a);
+}
+.turn-stats-ctx.is-growing {
+  color: var(--warn, #e0af68);
+}
+.turn-stats-ctx.is-compact {
+  color: var(--warn-strong, #d08770);
+}
+.turn-stats-ctx.is-hard {
+  color: var(--err, #f7768e);
+}
+
+.turn-stats-ctx-label {
+  opacity: 0.9;
+}
+
+/* ---- Follow-stream button: "N new" pill ---- */
+
+.btn-follow-stream-pill {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 0.72em;
+  font-weight: 600;
+  background: var(--accent, #4b9cd3);
+  color: #fff;
+}
+
+/* ---- RunActivity: "+N more tool calls" toggle ---- */
+
+.run-activity-steps-toggle {
+  margin-top: 2px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  font-size: 0.82em;
+  opacity: 0.7;
+  cursor: pointer;
+  text-align: left;
+}
+
+.run-activity-steps-toggle:hover {
+  opacity: 1;
+}
+
+/* ---- KrakenContextPanel (realtime context strip in the chat stack) ---- */
+
+.kraken-ctx-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 10px;
+  font-size: 0.8em;
+  opacity: 0.92;
+}
+
+.kraken-ctx-head {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.kraken-ctx-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.88em;
+  opacity: 0.85;
+}
+
+.kraken-ctx-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent, #4b9cd3);
+  box-shadow: 0 0 6px var(--accent, #4b9cd3);
+  animation: kraken-ctx-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes kraken-ctx-pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.kraken-ctx-nums {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  opacity: 0.85;
+}
+
+.kraken-ctx-session {
+  opacity: 0.7;
+  font-size: 0.92em;
+}

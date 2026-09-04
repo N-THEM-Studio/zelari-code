@@ -948,7 +948,15 @@ button {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
-  scroll-behavior: smooth;
+  /* Stick-to-bottom assigns scrollTop directly and must be INSTANT. CSS
+   * smooth made every assignment animated, so in-flight animations kept
+   * dragging the user back down after they detached ("can't scroll while
+   * it generates"). Smooth is now opt-in per call (reattachStream uses
+   * scrollTo({ behavior: "smooth" })). */
+  scroll-behavior: auto;
+  /* We own the scroll position (stick-to-bottom vs user detach): disable
+   * browser scroll anchoring so it never fights our scrollTop writes. */
+  overflow-anchor: none;
 }
 
                                                    

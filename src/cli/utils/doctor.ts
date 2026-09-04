@@ -458,6 +458,53 @@ export async function runDoctor(): Promise<boolean> {
     { name: "cli bundle", run: () => checkBundle() },
     { name: "runtime deps", run: () => checkRuntimeDeps() },
     { name: "PATH", run: () => checkPath() },
+    // --- identity wave: can you actually build here? (key + trust) ---
+    // Lazy dynamic import: doctor must stay import-light and never let a
+    // config read failure crash the whole diagnostic (fail-open per check).
+    // NOTE: `require()` does NOT work here — the esbuild bundle flattens the
+    // module tree, so a runtime-relative require resolves against dist/ and
+    // misses ("Cannot find module '../providerConfig.js'"). A literal
+    // `await import()` is resolved at BUNDLE time and stays lazy at runtime.
+    {
+      name: "provider key",
+      run: async () => {
+        try {
+          const { getActiveProvider } = await import("../providerConfig.js");
+          const { resolveApiKey, getOAuthToken } = await import("../keyStore.js");
+          const active = getActiveProvider();
+          if (resolveApiKey(active.id)) {
+            return OK(`provider ${active.id} — key resolved`);
+          }
+          if (getOAuthToken(active.id)) {
+            return OK(`provider ${active.id} — OAuth token stored`);
+          }
+          return FAIL(
+            `provider ${active.id} — no key or OAuth token. In the app: /login ${active.id}, or set ${active.envVar}`,
+            "warn",
+          );
+        } catch (err) {
+          return WARN(`provider config unreadable: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
+    {
+      name: "folder trust",
+      run: async () => {
+        try {
+          const { isFolderTrusted, listTrustedFolders } = await import("../safety/folderTrust.js");
+          const cwd = process.cwd();
+          if (isFolderTrusted(cwd)) {
+            return OK(`${cwd} trusted (project MCP/hooks/extensions active)`);
+          }
+          const n = listTrustedFolders().length;
+          return WARN(
+            `${cwd} NOT trusted (${n} folder(s) trusted) — project MCP/hooks/extensions stay off. Fix: zelari-code --trust "${cwd}"`,
+          );
+        } catch (err) {
+          return WARN(`trust store unreadable: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
     // --- agent-shell checks (v1.4.0) ---
     // These probe node/git/bash THROUGH the resolved shell the agent uses.
     // A pass on "node" + a FAIL on "node (agent shell)" is the tell-tale
@@ -534,10 +581,12 @@ export async function runDoctor(): Promise<boolean> {
   console.log("");
   if (criticalFails === 0 && warns === 0) {
     // eslint-disable-next-line no-console
-    console.log("\x1b[32m✔ all checks passed\x1b[0m");
+    console.log("\x1b[32m✔ all checks passed — ready to build (sei pronto a costruire)\x1b[0m");
     return true;
   }
   // eslint-disable-next-line no-console
   console.log(`✗ ${criticalFails} critical failure(s), ${warns} warning(s)`);
+  // eslint-disable-next-line no-console
+  console.log("  fix the FAIL/WARN rows above, then re-run: zelari-code --doctor");
   return criticalFails === 0;
 }

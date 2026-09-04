@@ -127,11 +127,19 @@ export function formatKrakenLiveStatus(
     return 'Kraken live: no tentacles in this process yet.';
   }
   const slice = list.slice(-limit);
+  // Identity wave: il mestiere prima del nome — explore/general/verify are
+  // the delegation API; the user sees Ricognizione/Scrittura/Verifica.
+  const roleLabel: Record<string, string> = {
+    explore: 'Ricognizione',
+    general: 'Scrittura',
+    verify: 'Verifica',
+  };
   const lines = slice.map((t) => {
     const flag = t.status === 'running' ? '…' : t.status === 'done' ? '✓' : '✗';
     const ms = t.durationMs != null ? ` ${t.durationMs}ms` : '';
     const model = t.model ? ` [${t.model}]` : '';
-    return `${flag} ${t.agent} "${t.description}"${model}${ms}`;
+    const role = roleLabel[t.agent] ?? t.agent;
+    return `${flag} ${role} "${t.description}"${model}${ms}`;
   });
   const summary = formatKrakenLiveSummary(list);
   return [`Kraken live (${summary ?? list.length}):`, ...lines].join('\n');

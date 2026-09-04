@@ -4,15 +4,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import type { MessageStats } from "../types";
 import { CopyButton } from "./CopyButton";
-
-function formatDuration(ms: number): string {
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const s = ms / 1000;
-  if (s < 60) return `${s.toFixed(1)}s`;
-  const m = Math.floor(s / 60);
-  const rem = Math.round(s % 60);
-  return `${m}m ${rem}s`;
-}
+import { TurnStatsCard } from "./TurnStatsCard";
 
 interface Props {
   title: string;
@@ -71,31 +63,7 @@ export function ReplyAccordion({
           <div className="reply-accordion-body">{children}</div>
         </div>
       ) : null}
-      {stats && !streaming ? (
-        <div className="msg-stats reply-stats">
-          {stats.durationMs != null && (
-            <span title="Response time">{formatDuration(stats.durationMs)}</span>
-          )}
-          {stats.toolCount != null && stats.toolCount > 0 && (
-            <span title="Tools used">
-              {stats.toolCount} tool{stats.toolCount === 1 ? "" : "s"}
-            </span>
-          )}
-          {stats.totalTokens != null && stats.totalTokens > 0 && (
-            <span title="Tokens">
-              {stats.totalTokens.toLocaleString()} tokens
-              {stats.promptTokens != null && stats.completionTokens != null
-                ? ` (↑${stats.promptTokens.toLocaleString()} ↓${stats.completionTokens.toLocaleString()})`
-                : ""}
-            </span>
-          )}
-          {stats.charCount != null && stats.charCount > 0 && (
-            <span title="Characters">
-              {stats.charCount.toLocaleString()} chars
-            </span>
-          )}
-        </div>
-      ) : null}
+      {stats && !streaming ? <TurnStatsCard stats={stats} /> : null}
     </div>
   );
 }

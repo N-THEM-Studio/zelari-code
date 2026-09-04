@@ -64,6 +64,8 @@ export function RunActivity({
   const [line, setLine] = useState<{ title: string; sub?: string }>({
     title: phrases[0],
   });
+  /** Feed starts collapsed to the last few steps; tap to expand. */
+  const [stepsOpen, setStepsOpen] = useState(false);
 
   useEffect(() => {
     if (!running) return;
@@ -138,7 +140,7 @@ export function RunActivity({
         </div>
         {steps.length > 0 ? (
           <ol className="run-activity-steps" aria-label="Live tool activity">
-            {steps.slice(-8).map((s) => (
+            {(stepsOpen ? steps.slice(-8) : steps.slice(-3)).map((s) => (
               <li
                 key={s.id}
                 className={`run-activity-step is-${s.status}`}
@@ -157,6 +159,16 @@ export function RunActivity({
               </li>
             ))}
           </ol>
+        ) : null}
+        {!stepsOpen && steps.length > 3 ? (
+          <button
+            type="button"
+            className="run-activity-steps-toggle"
+            onClick={() => setStepsOpen(true)}
+          >
+            +{steps.length - 3} more tool call
+            {steps.length - 3 === 1 ? "" : "s"} this turn
+          </button>
         ) : null}
       </div>
     </div>

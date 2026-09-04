@@ -198,6 +198,9 @@ export function Wizard({ state, providers }: WizardProps): React.ReactElement {
               API key:  <Text color="cyan">{s.apiKeyChoice ?? '(unset)'}</Text>
             </Text>
           </Box>
+          <Text color="gray">
+            Next inside the app: <Text color="cyan">/login {s.providerId}</Text> for OAuth (grok · chatgpt · anthropic) · <Text color="cyan">/model</Text> to switch model · <Text color="cyan">zelari-code --doctor</Text> to confirm you are ready to build.
+          </Text>
           <Box marginTop={1}>
             <Text>
               Press <Text color="green" inverse> Enter </Text>

@@ -36,6 +36,7 @@ import {
   type StrictGateOptions,
 } from "../kraken/verificationBridge.js";
 import { writeCompletionProof } from "../kraken/completionProof.js";
+import { formatStrictBlockExplanation, recordStrictGateEvaluation } from "../kraken/verifyStatus.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
 // W2: memory telemetry projected onto the session spine as state-only notes.
@@ -899,6 +900,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 workPhase === "build"
               ) {
                 const strictGate = await evaluateStrictBuildGate("build", { emit: krakenSpineEmit });
+                recordStrictGateEvaluation(strictGate);
                 const krakenGate = strictGate.gate;
                 writerRef.current?.spine?.verificationRun(strictGateEventPayload(strictGate));
                 await writeProofSafe(strictGate);
@@ -908,7 +910,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   harness.enqueue(buildKrakenRepairPrompt(krakenGate));
                   appendSystem(
                     setMessages,
-                    `[kraken] required checks unresolved (${krakenGate.passed}/${krakenGate.total} passed) — automatic repair pass`,
+                    formatStrictBlockExplanation(strictGate),
                     Date.now(),
                   );
                   progressRuntime.beginPass(true);
@@ -919,6 +921,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 event.reason === "completed" && krakenRepairEnqueued
                   ? await evaluateStrictBuildGate("build", { emit: krakenSpineEmit })
                   : null;
+              if (repairCheck) recordStrictGateEvaluation(repairCheck);
               // P0.3: the proof artifact must reflect the LAST evaluation of
               // the turn — refresh it after every gate evaluation here.
               if (repairCheck) await writeProofSafe(repairCheck);

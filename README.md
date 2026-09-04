@@ -23,7 +23,7 @@
         Anathema Studio
 ```
 
-> AI Council coding agent CLI — multi-agent orchestration with slash commands, provider-agnostic LLM streaming, and self-update.
+> Open-source coding orchestrator — you choose the model, the proof is mandatory. Kraken by default, council when the work earns it.
 
 ![Version](https://img.shields.io/npm/v/zelari-code)
 ![License](https://img.shields.io/badge/license-Apache--2.0-blue)
@@ -36,13 +36,13 @@ By **[Anathema Studio](https://anathema-studio.com/)** ·
 [Contributing](./CONTRIBUTING.md) ·
 [Security](./SECURITY.md)
 
-![Zelari Code — AI Council for your terminal](./docs/media/hero-16x9.png)
+![Zelari Code — the agent that doesn't trust itself](./docs/media/hero-16x9.png)
 
 **Trailer (EN, ~30s):** [docs/media/trailer/zelari-code-trailer.mp4](./docs/media/trailer/zelari-code-trailer.mp4) · [media kit](./docs/media/README.md)
 
-📖 **[Full user guide (IT)](./docs/GUIDA.md)** — install, TUI, slash commands, council, skills, workspace, headless, MCP, Desktop.
+📖 **[Full user guide (IT)](./docs/GUIDA.md)** · **[Guide (EN)](./docs/GUIDE.md)** — install, TUI, slash commands, council, skills, workspace, headless, MCP, Desktop.
 
-**Zelari Code** is an open-source **AI council coding agent** for the terminal: a multi-agent pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero), a **kraken** super-agent (default; aliases `agent`/`single`) that can spawn explore/general/verify tentacles, and optional **zelari** missions that loop until a deliverable is done. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (Apache-2.0).
+**Zelari Code** is an open-source **coding orchestrator** for the terminal — the agent that doesn't trust itself. The default dispatch is the **kraken** super-agent (aliases `agent`/`single`) spawning explore/general/verify tentacles; a six-role **council** pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) is there when the work earns a second opinion; optional **zelari** missions loop until a deliverable is *proven* done — done means verified, not claimed. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (Apache-2.0).
 
 ```bash
 npm install -g zelari-code

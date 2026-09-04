@@ -83,6 +83,9 @@ function AgentRow({
 export function KrakenActivity() {
   const state = useRunActivity();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  /** Panel starts collapsed (one summary line) to keep the chat quiet;
+   *  click the header to open the full lead/tentacle breakdown. */
+  const [collapsed, setCollapsed] = useState(true);
   const [, forceTick] = useState(0);
   const lead = selectLead(state);
   const tentacles = selectTentacles(state);
@@ -111,15 +114,36 @@ export function KrakenActivity() {
         fontSize: "0.9em",
       }}
     >
-      <div style={{ display: "flex", gap: 10, alignItems: "baseline" }}>
+      <button
+        type="button"
+        aria-expanded={!collapsed}
+        onClick={() => setCollapsed((c) => !c)}
+        style={{
+          display: "flex",
+          gap: 10,
+          alignItems: "baseline",
+          background: "none",
+          border: "none",
+          color: "inherit",
+          font: "inherit",
+          padding: 0,
+          cursor: "pointer",
+          textAlign: "left",
+          width: "100%",
+        }}
+      >
+        <span aria-hidden>{collapsed ? "▸" : "▾"}</span>
         <strong>KRAKEN ACTIVITY</strong>
         <span style={{ opacity: 0.7 }}>
           {counts.completed + counts.failed + counts.cancelled}/{state.agentOrder.length} done
           {counts.running ? ` · ${counts.running} running` : ""}
           {counts.failed ? ` · ${counts.failed} failed` : ""}
+          {collapsed && warnings.length ? ` · ⚠ ${warnings.length}` : ""}
         </span>
-      </div>
+      </button>
 
+      {collapsed ? null : (
+      <div>
       {lead ? (
         <div style={{ margin: "6px 0" }}>
           <span aria-hidden>{roleGlyph(lead.role)}</span> <strong>{lead.title || "Lead"}</strong>{" "}
@@ -172,6 +196,8 @@ export function KrakenActivity() {
           Pending controls: {pending.length} ({pending.map((c) => `${c.type}:${c.state}`).join(", ")})
         </div>
       ) : null}
+      </div>
+      )}
     </section>
   );
 }

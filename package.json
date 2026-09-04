@@ -1,7 +1,7 @@
 {
   "name": "zelari-code",
   "version": "2.26.0",
-  "description": "Zelari Code — AI Council coding agent CLI. Multi-agent orchestration (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with slash commands, provider-agnostic LLM streaming, and self-update.",
+  "description": "Zelari Code — open-source coding orchestrator CLI. You choose the model; the proof is mandatory. Kraken by default, council when the work earns it: plan/build phases, provider-agnostic LLM streaming, self-update.",
   "author": "Anathema Studio <https://anathema-studio.com/>",
   "license": "Apache-2.0",
   "type": "module",

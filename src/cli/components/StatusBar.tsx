@@ -47,6 +47,16 @@ interface StatusBarProps {
   krakenLive?: string | null;
   /** Kraken graph-run summary chip (e.g. "graph 3/8 · 2↑"). @since graph engine F5 */
   krakenGraph?: string | null;
+  /**
+   * Verifica chip — the session proof contract (prova: PASS | RIPARA |
+   * BLOCCATO), visible at all times. Identity wave: P1 as product.
+   */
+  verify?: { label: string; tone: 'green' | 'yellow' | 'red' } | null;
+  /**
+   * Permessi chip — what the agent may write right now: the phase gate
+   * (plan never writes) plus the strict-done declaration (P2+P3 honesty).
+   */
+  permissions?: { label: string; tone: 'green' | 'yellow' } | null;
 }
 
 /**
@@ -82,6 +92,8 @@ export function StatusBar({
   todoSummary = null,
   krakenLive = null,
   krakenGraph = null,
+  verify = null,
+  permissions = null,
 }: StatusBarProps): React.ReactElement {
   const ctxLabel =
     contextLimit > 0
@@ -111,6 +123,22 @@ export function StatusBar({
         <Text bold color={modeColor}>
           {modeLabel}
         </Text>
+        {verify ? (
+          <>
+            <Text dimColor> · </Text>
+            <Text bold color={verify.tone}>
+              {verify.label}
+            </Text>
+          </>
+        ) : null}
+        {permissions ? (
+          <>
+            <Text dimColor> · </Text>
+            <Text bold color={permissions.tone}>
+              {permissions.label}
+            </Text>
+          </>
+        ) : null}
         <Text dimColor> · </Text>
         <Text bold color="cyan">{provider}</Text>
         <Text dimColor> · </Text>

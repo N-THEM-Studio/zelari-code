@@ -19,6 +19,7 @@ import { useExecutionTimer } from './hooks/useExecutionTimer.js';
 import { shortenCwd } from './utils/paths.js';
 import { formatTodoStatusSummary } from './sessionTodos.js';
 import { formatKrakenLiveSummary } from './tools/krakenLive.js';
+import { getVerifyChip, permissionsChip } from './kraken/verifyStatus.js';
 import { formatKrakenGraphSummary } from './kraken/graphStatus.js';
 import '@zelari/core/skills/builtin/debugging';
 import '@zelari/core/skills/builtin/docs';
@@ -356,6 +357,8 @@ export function App(): React.ReactElement {
             todoSummary={formatTodoStatusSummary()}
             krakenLive={formatKrakenLiveSummary() ?? undefined}
             krakenGraph={formatKrakenGraphSummary() ?? undefined}
+            verify={getVerifyChip() ?? undefined}
+            permissions={permissionsChip(phase)}
           />
         </Box>
         {sidebarOpen && (

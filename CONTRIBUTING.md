@@ -80,6 +80,7 @@ docs/plans/                # Historical design notes (may be outdated)
 4. Run `npm test` and `npm run typecheck` before opening a PR.
 5. Update docs when you change user-facing behavior (`README.md`, `docs/GUIDA.md`, `docs/TOOLS.md`, `CHANGELOG.md`).
 6. Do not commit secrets, API keys, `apps/desktop/keys/`, local `mcps/`, or `.zelari/` workspaces.
+7. **Identity check** — in the PR description, answer in one line: *which principle (P1–P6, see [`PRINCIPLES.md`](./PRINCIPLES.md)) makes this change more Zelari, and what did you reject because it was only "more like Claude Code"?* If the answer is "smoother UX" with no principle behind it, it is cosmetics — say so and keep it out.
 
 ## Documentation
 

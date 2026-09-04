@@ -50,6 +50,17 @@ export interface MessageStats {
   promptTokens?: number;
   completionTokens?: number;
   totalTokens?: number;
+  /**
+   * Context signal for the end-of-turn compaction meter (TurnStatsCard).
+   * Proxy: the prompt size of the last model call — the Desktop event
+   * stream does not carry usage events yet.
+   */
+  contextTokens?: number;
+  /** Context window used by the meter; defaults to 200k in the card. */
+  contextLimit?: number;
+  /** Cache metrics — rendered only when the CLI reports them (future). */
+  cachedTokens?: number;
+  cacheHitRate?: number;
 }
 
 export interface Conversation {

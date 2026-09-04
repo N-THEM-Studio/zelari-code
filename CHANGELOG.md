@@ -5,6 +5,22 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+Identity wave: the product now shows the contract instead of describing it.
+
+### Added
+
+- **The proof is now visible in the TUI** — the StatusBar gains two permanent chips: **Verifica** (`prova: PASS | RIPARA | BLOCCATO`, projected straight from the strict-gate evaluation, updated after every gate run including the post-repair re-check) and **Permessi** (what the agent may write right now: plan never writes; build declares whether proof is mandatory or explicitly opted out — declared, never hidden). When the strict gate stops a turn, the message now explains the verdict, which criteria are still unsatisfied and why the turn cannot claim done — instead of a bare passed/total line.
+- **`--doctor` is now the front door** — two new checks: `provider key` (key or OAuth token resolved for the active provider, with the exact `/login` command to fix it) and `folder trust` (is the working folder trusted, with the exact `--trust` command). An all-green doctor now ends with "ready to build (sei pronto a costruire)".
+- **Tentacle radio speaks the trade** — live tentacle lines show Ricognizione / Scrittura / Verifica instead of the API names explore/general/verify (the delegation API names are unchanged).
+- **`docs/GUIDE.md`** — English guide covering install, first run, the plan/build/proof gesture, the status chips, permissions and folder trust.
+
+### Changed
+
+- **One pitch, everywhere** — README and the npm description now lead with "open-source coding orchestrator — you choose the model, the proof is mandatory"; the council is presented as a mode (a size, per P6), not the thesis. CONTRIBUTING now asks every PR to state which principle (P1–P6) it serves and what was rejected as mere Claude-Code-mimicry.
+- **Wizard as a contract** — the confirm screen points at the real doors (`/login`, `/model`, `--doctor`) instead of pretending setup ends with an API key.
+
 ## [2.26.0] - 2026-09-02
 
 Minor: plan-task hygiene wave — declared-vs-observed enforcement for `.zelari/plan.json` tasks (`files`, `reopened`/`stale`/`overlap` signals on the Kraken radio), the evolve pipeline Fase 3.0, and the ADR-0033 edit bench harness.

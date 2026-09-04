@@ -62,7 +62,10 @@ import {
   readVerificationRun,
   type VerificationRunView,
 } from "./components/VerificationStatusCard";
-import { HarnessStatePanel } from "./components/HarnessStatePanel";
+import {
+  KrakenContextPanel,
+  type LiveCtxStats,
+} from "./components/KrakenContextPanel";
 import {
   GauntletProgressCard,
   readGauntletProgress,
@@ -658,6 +661,9 @@ export default function App() {
   followStreamRef.current = followStream;
   /** Ignore scroll events caused by programmatic stick-to-bottom. */
   const programmaticScrollRef = useRef(false);
+  /** Stream ticks that landed below the viewport while detached; shown as
+   *  a pill on the follow button so the user knows what they jumped back to. */
+  const [missedBelow, setMissedBelow] = useState(0);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const dragDepthRef = useRef(0);
@@ -842,6 +848,33 @@ export default function App() {
   const krakenCard = krakenCardByConv[active?.id ?? ""];
   const liveMemberName = liveMemberNameByConv[active?.id ?? ""] ?? null;
   const runningRef = useRef(running);
+
+  /**
+   * Realtime context stats for the Kraken panel (KrakenContextPanel):
+   * recomputed on every message delta, so the compaction meter breathes
+   * with the stream. Context proxy = chars/4 crossed with the turn's
+   * measured tokens (best signal until the CLI emits usage events).
+   */
+  const liveCtx = useMemo((): LiveCtxStats => {
+    const msgs = active?.messages ?? [];
+    let chars = 0;
+    for (const m of msgs) {
+      if (m.role === "tool") continue;
+      chars += m.content?.length ?? 0;
+    }
+    const t = turnsRef.current.get(active?.id ?? "");
+    const tok = t?.tokens;
+    const measured = tok ? tok.prompt + tok.completion : 0;
+    return {
+      ctxTokens: Math.max(Math.round(chars / 4), measured),
+      turnTokens: tok?.total ?? 0,
+      promptTokens: tok?.prompt ?? 0,
+      completionTokens: tok?.completion ?? 0,
+      toolCount: t?.toolCount ?? 0,
+      elapsedMs: t?.startedAt ? Date.now() - t.startedAt : null,
+      streaming: running,
+    };
+  }, [active?.messages, active?.id, running]);
   runningRef.current = running;
 
   const setLiveToolLabelFor = useCallback(
@@ -981,11 +1014,19 @@ export default function App() {
     return () => window.clearTimeout(t);
   }, []);
 
-  const NEAR_BOTTOM_PX = 96;
+  // Directional scroll model (fix for "can't scroll up while it
+  // generates"): detach when the user moves up beyond a small dead-zone…
+  const NEAR_BOTTOM_PX = 32;
+  // …and re-attach only when they are truly back at the very bottom.
+  const REATTACH_PX = 8;
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "auto") => {
     const el = scrollRef.current;
     if (!el) return;
+    // Hard gate: once the user detached, NO code path may pull the view
+    // down (defence in depth — effects already check followStreamRef).
+    // reattachStream flips the ref back to true before calling this.
+    if (!followStreamRef.current) return;
     programmaticScrollRef.current = true;
     if (behavior === "smooth") {
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
@@ -1004,6 +1045,7 @@ export default function App() {
   const reattachStream = useCallback(() => {
     setFollowStream(true);
     followStreamRef.current = true;
+    setMissedBelow(0);
     // Double rAF so DOM (new deltas / accordions) is painted first
     requestAnimationFrame(() => {
       requestAnimationFrame(() => scrollToBottom("smooth"));
@@ -1044,41 +1086,66 @@ export default function App() {
     return () => ro.disconnect();
   }, [followStream, scrollToBottom, activeId]);
 
-  // User scroll / wheel: detach when leaving bottom
+  // While detached during a live run, count stream ticks so the follow
+  // button can badge how much new content landed below the fold.
+  useEffect(() => {
+    if (followStream || !running) return;
+    setMissedBelow((n) => n + 1);
+  }, [streamTick, followStream, running]);
+
+  // User scroll: directional detach + bottom re-attach.
+  //
+  // Fix for "I can't scroll up while it generates, it keeps pulling me
+  // down": the old guard (`programmaticScrollRef`, 50ms grace) stayed
+  // true while deltas arrived faster than the grace period, so user
+  // scrolls via scrollbar drag, trackpad natural scrolling or keyboard
+  // were swallowed and stick-to-bottom kept winning. Direction beats
+  // timing: programmatic stick-to-bottom only ever INCREASES scrollTop,
+  // so any real decrease is the user. No wheel handler needed.
   useEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
+    let lastScrollTop = el.scrollTop;
+    let lastHeight = el.scrollHeight;
     const onScroll = () => {
-      if (programmaticScrollRef.current) return;
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (distance > NEAR_BOTTOM_PX) {
-        if (followStreamRef.current) {
-          setFollowStream(false);
-          followStreamRef.current = false;
-        }
-      }
-      // Do not auto re-attach on scroll-to-bottom: only the button does.
-      // (avoids fighting the user while they skim near the end)
-    };
-    const onWheel = (e: WheelEvent) => {
-      if (e.deltaY < 0 && followStreamRef.current) {
-        // Explicit scroll up → detach immediately
-        setFollowStream(false);
+      const goingUp = el.scrollTop < lastScrollTop - 2;
+      const goingDown = el.scrollTop > lastScrollTop + 2;
+      // A shrunken scrollHeight means React re-laid-out the list (refresh),
+      // not that the user moved — a collapsed viewport briefly reads
+      // "distance ≤ 8" and must NEVER auto-reattach.
+      const collapsed = el.scrollHeight < lastHeight - 8;
+      lastScrollTop = el.scrollTop;
+      lastHeight = el.scrollHeight;
+      if (goingUp && distance > NEAR_BOTTOM_PX && followStreamRef.current) {
         followStreamRef.current = false;
+        setFollowStream(false);
+      } else if (
+        goingDown &&
+        !collapsed &&
+        distance <= REATTACH_PX &&
+        !followStreamRef.current
+      ) {
+        // Explicit "back to live": a USER-driven downward scroll that
+        // lands on the true bottom (≤8px). While skimming above the end
+        // this can't fire, and layout collapses are excluded above.
+        followStreamRef.current = true;
+        setFollowStream(true);
+        setMissedBelow(0);
       }
     };
     el.addEventListener("scroll", onScroll, { passive: true });
-    el.addEventListener("wheel", onWheel, { passive: true });
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      el.removeEventListener("wheel", onWheel);
-    };
-  }, []);
+    return () => el.removeEventListener("scroll", onScroll);
+    // Rebind per conversation: the scroller node can be swapped when the
+    // active chat changes, and a stale (detached) listener would die
+    // silently with the old node.
+  }, [activeId]);
 
   // New chat: always re-follow
   useEffect(() => {
     setFollowStream(true);
     followStreamRef.current = true;
+    setMissedBelow(0);
   }, [activeId]);
 
   // Control plane (§35): per-conversation capability handshake emitted by
@@ -1806,6 +1873,12 @@ export default function App() {
                         totalTokens:
                           m.stats?.totalTokens ??
                           (tokens.total > 0 ? tokens.total : undefined),
+                        // Context proxy for the compaction meter: the last
+                        // prompt size is the best context signal the Desktop
+                        // receives today (no usage events yet).
+                        contextTokens:
+                          m.stats?.contextTokens ??
+                          (tokens.prompt > 0 ? tokens.prompt : undefined),
                       },
                     }
                   : m,
@@ -3189,7 +3262,7 @@ export default function App() {
                     run={verificationByConv[active?.id ?? ""].run ?? null}
                   />
                 ) : null}
-                <HarnessStatePanel />
+                <KrakenContextPanel live={liveCtx} />
               </div>
             )}
           </div>
@@ -3222,6 +3295,11 @@ export default function App() {
                 <span className="btn-follow-stream-text">
                   {running ? "Follow stream" : "Jump to latest"}
                 </span>
+                {missedBelow > 0 ? (
+                  <span className="btn-follow-stream-pill">
+                    {missedBelow} new
+                  </span>
+                ) : null}
               </span>
             </button>
           )}
