@@ -19,9 +19,9 @@
  * @since v1.32.0
  */
 
-import { homedir } from 'node:os';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { trustConfigPath } from '../paths.js';
 
 export interface TrustedFolder {
   path: string;
@@ -37,7 +37,7 @@ const DEFAULT_STORE: TrustStoreFile = { folders: [] };
 let _overrideStorePath: string | null = null;
 
 function trustStorePath(): string {
-  return _overrideStorePath ?? path.join(homedir(), '.zelari-code', 'trust.json');
+  return _overrideStorePath ?? trustConfigPath();
 }
 
 function normalize(p: string): string {

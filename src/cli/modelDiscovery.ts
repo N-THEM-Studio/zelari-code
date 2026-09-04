@@ -10,17 +10,17 @@
  * Why dynamic discovery? Providers (xAI, Z.AI, MiniMax, OpenAI) add/remove
  * models frequently — hardcoding a list in `providerDefaults` makes the user
  * see stale choices. After auth we hit the provider's `/v1/models` endpoint
- * and cache the IDs in `~/.tmp/anathema-coder/models.json`.
+ * and cache the IDs in `~/.zelari-code/models.json`.
  *
  * Pure node:fs + fetch — no Electron deps, browser-importable for jsdom tests.
  * Env override: `ANATHEMA_MODELS_FILE` (useful for tests + CI).
  *
- * @see docs/plans/2026-06-30-anathema-coder-v3-U.md
+ * @see docs/plans/ (v3-U plan, 2026-06-30)
  */
 
 import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { homedir } from 'node:os';
 import path from 'node:path';
+import { modelsCachePath } from './paths.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -175,8 +175,7 @@ async function resolveDiscoveryBaseUrl(
 // ---------------------------------------------------------------------------
 
 function defaultModelsFilePath(): string {
-  return process.env.ANATHEMA_MODELS_FILE
-    ?? path.join(homedir(), '.tmp', 'zelari-code', 'models.json');
+  return modelsCachePath();
 }
 
 export function getModelsFilePath(): string {

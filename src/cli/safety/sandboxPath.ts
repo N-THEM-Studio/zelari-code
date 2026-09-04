@@ -29,7 +29,7 @@
  * execute are adjacent, so for write_file/edit_file/apply_diff/read_file the
  * verified resolution IS the last step before the factory touches disk.
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3.md (Task A2)
+ * @see docs/plans/ (v3 plan, 2026-06-29) (Task A2)
  */
 import path from 'node:path';
 import fs from 'node:fs';

@@ -12,7 +12,7 @@
  * reveals user prompts. This matches v3-C's privacy stance for the
  * history log.
  *
- * Storage: `~/.tmp/zelari-code/skill-cache.json` (override via
+ * Storage: `~/.zelari-code/skill-cache.json` (override via
  * `ANATHEMA_SKILL_CACHE_FILE` env var). Bounded size: callers should
  * purge periodically; the file grows by entry size, no rotation.
  *
@@ -22,13 +22,13 @@
  * way). For multi-process safety, callers should wrap with flock(2)
  * — out of scope for now.
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3-H.md (Task H.1)
+ * @see docs/plans/ (v3-H plan, 2026-06-29) (Task H.1)
  */
 
 import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { createHash } from 'node:crypto';
+import { skillCachePath } from './paths.js';
 
 export const SKILL_CACHE_DEFAULT_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
@@ -59,7 +59,7 @@ export function computeInputHash(skillId: string, input: string): string {
 }
 
 export interface SkillCacheOptions {
-  /** File path. Defaults to env `ANATHEMA_SKILL_CACHE_FILE` then `~/.tmp/zelari-code/skill-cache.json`. */
+  /** File path. Defaults to env `ANATHEMA_SKILL_CACHE_FILE` then `~/.zelari-code/skill-cache.json`. */
   file?: string;
   /** Default TTL in ms for entries without an explicit expiresAt. Default 24h. */
   defaultTtlMs?: number;
@@ -78,8 +78,7 @@ export class SkillCache {
   private state: SkillCacheFile | null = null;
 
   constructor(options: SkillCacheOptions = {}) {
-    this.file = options.file ?? process.env.ANATHEMA_SKILL_CACHE_FILE
-      ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skill-cache.json');
+    this.file = options.file ?? skillCachePath();
     this.defaultTtlMs = options.defaultTtlMs ?? SKILL_CACHE_DEFAULT_TTL_MS;
     this.now = options.now ?? (() => Date.now());
     mkdirSync(path.dirname(this.file), { recursive: true });

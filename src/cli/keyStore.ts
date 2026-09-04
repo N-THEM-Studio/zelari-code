@@ -16,7 +16,7 @@
 
 import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { keyStorePath } from './paths.js';
 import {
   getRefreshImpl,
   registerDefaultRefreshImpls,
@@ -79,8 +79,7 @@ export function formatProviderIds(): string {
 }
 
 export function getKeyStorePath(): string {
-  return process.env.ANATHEMA_KEYSTORE_FILE
-    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'keys.json');
+  return keyStorePath();
 }
 
 export function getProviderSpec(id: string): ProviderSpec | undefined {

@@ -8,7 +8,7 @@
  */
 
 import { promises as fs, existsSync, readFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { semanticStateDir } from '../paths.js';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import {
@@ -37,7 +37,7 @@ export function getIndexPath(root: string): string {
   const hash = createHash('sha1').update(path.resolve(root)).digest('hex').slice(0, 16);
   return (
     process.env.ZELARI_SEMANTIC_FILE ??
-    path.join(homedir(), '.tmp', 'zelari-code', 'semantic', `${hash}.json`)
+    path.join(semanticStateDir(), `${hash}.json`)
   );
 }
 

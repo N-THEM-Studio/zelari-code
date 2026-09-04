@@ -4,7 +4,7 @@
  *
  * Task A2 of AnathemaCoder v3-A.
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3.md (Task A2)
+ * @see docs/plans/ (v3 plan, 2026-06-29) (Task A2)
  */
 
 export class ShellBlockedError extends Error {

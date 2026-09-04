@@ -25,7 +25,7 @@
  *   - Scope: openid profile email offline_access grok-cli:access api:access
  *
  * @see https://datatracker.ietf.org/doc/html/rfc8628
- * @see docs/plans/2026-06-29-anathema-coder-v2.md (Task 16.2)
+ * @see docs/plans/ (v2 plan, 2026-06-29) (Task 16.2)
  */
 
 export interface GrokOAuthOptions {

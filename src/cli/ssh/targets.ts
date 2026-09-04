@@ -12,8 +12,8 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
+import { zelariHome } from '../paths.js';
 
 export type SshAuthMode = 'agent' | 'keyPath' | 'password';
 
@@ -53,11 +53,11 @@ interface SecretsFile {
 }
 
 export function getSshTargetsPath(): string {
-  return join(homedir(), '.zelari-code', 'ssh-targets.json');
+  return join(zelariHome(), 'ssh-targets.json');
 }
 
 export function getSshSecretsPath(): string {
-  return join(homedir(), '.zelari-code', 'ssh-secrets.json');
+  return join(zelariHome(), 'ssh-secrets.json');
 }
 
 function normalizeAuth(auth: unknown): SshAuthMode {
@@ -266,7 +266,7 @@ export function buildSshBaseArgs(target: SshTarget): string[] {
  * Password is passed only in the child env (ZELARI_SSH_ASKPASS_PASS).
  */
 function ensureAskpassHelper(): string {
-  const dir = join(homedir(), '.zelari-code', 'ssh-helpers');
+  const dir = join(zelariHome(), 'ssh-helpers');
   mkdirSync(dir, { recursive: true });
   const cjs = join(dir, 'askpass.cjs');
   writeFileSync(

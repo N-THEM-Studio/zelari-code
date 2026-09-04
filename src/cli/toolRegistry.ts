@@ -10,7 +10,7 @@
  * shell blocklist, audit log).
  * v0.4.0: added show_diff + apply_diff + recursive grep_content.
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3.md (Tasks A1 + A2)
+ * @see docs/plans/ (v3 plan, 2026-06-29) (Tasks A1 + A2)
  * @see docs/plans/2026-07-01-v0-4-0-fix-audit.md (v0.4.0 scope)
  */
 import { ToolRegistry } from '@zelari/core/harness/tools/registry';

@@ -13,7 +13,7 @@
  *   - toolCalls (count of tool_execution_start events)
  *   - errored (boolean)
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3-I.md (I.1)
+ * @see docs/plans/ (v3-I plan, 2026-06-29) (I.1)
  */
 
 import type { UsageBreakdown } from '@zelari/core/events';

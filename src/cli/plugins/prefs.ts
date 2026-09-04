@@ -3,7 +3,7 @@
  *
  * Stores the "don't ask me again about plugin X" dismissal so the boot gate
  * doesn't nag users who've already decided. Modeled on providerConfig.ts:
- *   - JSON file in ~/.tmp/zelari-code/ alongside provider.json / keys.json
+ *   - JSON file in ~/.zelari-code/ alongside provider.json / keys.json
  *   - existsSync + JSON.parse + validate, graceful fallback to defaults on
  *     corrupt/missing file (a broken prefs file must never block boot)
  *   - read-modify-write mutators, mode 0o600 (owner-only) on write
@@ -21,7 +21,7 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { pluginsPrefsPath } from '../paths.js';
 
 /** Persisted plugin preferences (the on-disk shape). */
 export interface PluginPrefs {
@@ -39,8 +39,7 @@ const DEFAULTS: PluginPrefs = {
 
 /** Path to the prefs file. Env-overridable for tests. */
 export function getPluginPrefsPath(): string {
-  return process.env.ZELARI_PLUGINS_PREFS_FILE
-    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'plugins.json');
+  return pluginsPrefsPath();
 }
 
 /** Read prefs, falling back to defaults on missing/corrupt file. Never throws. */

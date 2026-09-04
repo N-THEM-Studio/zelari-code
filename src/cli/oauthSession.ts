@@ -2,8 +2,8 @@
  * oauthSession — persist PKCE verifier between Anthropic magic-link start/complete.
  */
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { oauthPendingPath } from './paths.js';
 
 export interface PendingOAuth {
   provider: string;
@@ -15,10 +15,7 @@ export interface PendingOAuth {
 const MAX_AGE_MS = 15 * 60_000;
 
 export function getPendingOAuthPath(): string {
-  return (
-    process.env.ANATHEMA_OAUTH_PENDING_FILE ??
-    path.join(os.homedir(), '.tmp', 'zelari-code', 'oauth-pending.json')
-  );
+  return oauthPendingPath();
 }
 
 export function savePendingOAuth(pending: PendingOAuth): void {

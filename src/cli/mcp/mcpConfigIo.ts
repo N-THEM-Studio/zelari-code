@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
+import { zelariHome } from '../paths.js';
 import type { McpServerConfig } from './mcpClient.js';
 
 export type McpConfigScope = 'user' | 'project';
@@ -27,7 +27,7 @@ interface McpConfigFile {
 }
 
 export function getUserMcpPath(): string {
-  return join(homedir(), '.zelari-code', 'mcp.json');
+  return join(zelariHome(), 'mcp.json');
 }
 
 export function getProjectMcpPath(projectRoot: string): string {

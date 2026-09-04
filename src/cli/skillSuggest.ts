@@ -16,11 +16,12 @@
  * (e.g. `/skill-suggest <query>` — see Task H.3.1 if added, or use
  * directly from `app.tsx` dispatch).
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3-H.md (Task H.2)
+ * @see docs/plans/ (v3-H plan, 2026-06-29) (Task H.2)
  */
 
 import { listSkills, type SkillMetadata } from '@zelari/core/skills';
 import { readSkillHistory, getSkillStats, type SkillStats } from './skillHistory.js';
+import { skillHistoryPath } from './paths.js';
 
 export interface SuggestionEntry {
   skill: SkillMetadata;
@@ -103,10 +104,7 @@ export async function suggestSkills(
 ): Promise<SuggestionEntry[]> {
   const limit = options.limit ?? 5;
   const catalog = options.catalog ?? listSkills();
-  const records = options.records ?? await readSkillHistory(
-    process.env.ANATHEMA_SKILL_HISTORY_FILE
-      ?? `${process.env.HOME ?? '/tmp'}/.tmp/anathema-coder/skill-history.jsonl`,
-  );
+  const records = options.records ?? await readSkillHistory(skillHistoryPath());
 
   const queryNorm = norm(query);
 

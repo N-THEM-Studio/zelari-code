@@ -19,7 +19,7 @@
  *   - When the env var resolves to a usable second provider, the helper
  *     returns the second stream with a label.
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3-J.md
+ * @see docs/plans/ (v3-J plan, 2026-06-29)
  */
 
 import type { ProviderStreamFn } from '@zelari/core/harness';

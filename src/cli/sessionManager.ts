@@ -4,7 +4,7 @@
  * Wraps the JSONL sidecar writer (`electron/main/core/sessionJsonl.ts`) with
  * filesystem helpers for the CLI:
  *
- *   - resolve base directory (`~/.tmp/anathema-coder/sessions/`, overridable
+ *   - resolve base directory (`~/.zelari-code/sessions/`, overridable
  *     via `ANATHEMA_SESSIONS_DIR`)
  *   - track the "current" session via a small text file (`current.txt`,
  *     overridable via `ANATHEMA_CURRENT_SESSION_FILE`)
@@ -25,8 +25,8 @@
 
 import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync, statSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { sessionsDir, currentSessionPath } from './paths.js';
 import type { BrainEvent } from '@zelari/core/events';
 import { readSession } from '@zelari/core/harness';
 
@@ -47,14 +47,12 @@ export interface SessionInfo {
 
 /** Resolve the base directory where session JSONL files live. */
 export function getSessionBaseDir(): string {
-  return process.env.ANATHEMA_SESSIONS_DIR
-    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'sessions');
+  return sessionsDir();
 }
 
 /** Resolve the file used to track the current session id. */
 export function getCurrentSessionFile(): string {
-  return process.env.ANATHEMA_CURRENT_SESSION_FILE
-    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'current.txt');
+  return currentSessionPath();
 }
 
 /** Ensure the base directory exists. Creates parent dirs as needed. */

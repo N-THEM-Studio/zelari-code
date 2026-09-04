@@ -1,6 +1,6 @@
 import path from 'node:path';
-import os from 'node:os';
 import { SkillHistoryLogger, readSkillHistory, getSkillStats } from '../skillHistory.js';
+import { skillHistoryPath } from '../paths.js';
 import { FeedbackStore } from '../councilFeedback.js';
 import { compareSkillsFromFile } from '../hooks/skillCompare.js';
 import { appendSystem } from '../hooks/messageHelpers.js';
@@ -66,8 +66,7 @@ export async function handleSkillStats(
   ctx: SkillSlashContext,
   skillId: string | undefined,
 ): Promise<void> {
-  const historyFile = process.env.ANATHEMA_SKILL_HISTORY_FILE
-    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skill-history.jsonl');
+  const historyFile = skillHistoryPath();
   try {
     const records = await readSkillHistory(historyFile);
     const stats = getSkillStats(records, skillId);
@@ -90,8 +89,7 @@ export async function handleSkillCompare(
     appendSystem(ctx.setMessages, fallbackMessage ?? '[skill-compare] missing args');
     return;
   }
-  const historyFile = process.env.ANATHEMA_SKILL_HISTORY_FILE
-    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skill-history.jsonl');
+  const historyFile = skillHistoryPath();
   try {
     const formatted = await compareSkillsFromFile(ids[0], ids[1], historyFile);
     appendSystem(ctx.setMessages, formatted);

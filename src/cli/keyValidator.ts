@@ -17,7 +17,7 @@
  *   - resolveApiKeyWithMeta (background check after a 401 — future, deferred)
  *   - tests (mock fetch)
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3-F.md (F.2)
+ * @see docs/plans/ (v3-F plan, 2026-06-29) (F.2)
  * @see electron/cli/keyStore.ts (ProviderSpec.baseUrl)
  */
 

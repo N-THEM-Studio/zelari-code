@@ -17,13 +17,13 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { homedir } from 'node:os';
 import {
   listCodingSkills,
   type CodingSkillDefinition,
 } from '@zelari/core/skills';
 import { parseSkillMd, type ParsedSkillMd } from './skillsMd.js';
 import { CODING_CATEGORIES } from './skillCategories.js';
+import { zelariHome } from './paths.js';
 
 export type SkillConfigScope = 'user' | 'project' | 'compat' | 'builtin';
 
@@ -101,7 +101,7 @@ export function ensureBuiltinSkillsLoadedSync(): void {
 }
 
 export function getUserSkillsDir(): string {
-  return join(homedir(), '.zelari-code', 'skills');
+  return join(zelariHome(), 'skills');
 }
 
 export function getProjectSkillsDir(projectRoot: string): string {

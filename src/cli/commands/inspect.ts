@@ -19,7 +19,7 @@
 
 import path from 'node:path';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { zelariHome } from '../paths.js';
 import {
   isFolderTrusted,
   listTrustedFolders,
@@ -80,7 +80,7 @@ export async function collectInspectReport(
   const snap = listSkillsSnapshot(cwd);
 
   const mcp = listMcpServers(cwd);
-  const userMcpPath = path.join(homedir(), '.zelari-code', 'mcp.json');
+  const userMcpPath = path.join(zelariHome(), 'mcp.json');
   const projectMcpPath = path.join(cwd, '.zelari', 'mcp.json');
 
   const globalHooks = globalHooksDir();
@@ -114,7 +114,7 @@ export async function collectInspectReport(
     configSources: [
       { path: userMcpPath, exists: existsSync(userMcpPath) },
       { path: projectMcpPath, exists: existsSync(projectMcpPath) },
-      { path: path.join(homedir(), '.zelari-code', 'provider.json'), exists: existsSync(path.join(homedir(), '.zelari-code', 'provider.json')) },
+      { path: path.join(zelariHome(), 'provider.json'), exists: existsSync(path.join(zelariHome(), 'provider.json')) },
       { path: path.join(cwd, '.zelari', 'AGENTS.md'), exists: existsSync(path.join(cwd, '.zelari', 'AGENTS.md')) },
       { path: path.join(cwd, 'AGENTS.md'), exists: existsSync(path.join(cwd, 'AGENTS.md')) },
     ],

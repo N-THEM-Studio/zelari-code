@@ -22,8 +22,8 @@
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
 import { registerCodingSkill, type CodingSkillDefinition, type SkillCost } from '@zelari/core/skills';
+import { zelariHome } from './paths.js';
 
 /** Valid coding categories (mirror of CODING_CATEGORY values in core). */
 const CODING_CATEGORIES = new Set([
@@ -51,7 +51,7 @@ export function skillMdSearchDirs(projectRoot: string = process.cwd()): string[]
     join(projectRoot, '.zelari', 'skills'),
     join(projectRoot, '.claude', 'skills'),
     join(projectRoot, '.opencode', 'skills'),
-    join(homedir(), '.zelari-code', 'skills'),
+    join(zelariHome(), 'skills'),
   ];
 }
 

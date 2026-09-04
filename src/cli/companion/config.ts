@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { zelariHome } from '../paths.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
 export const DEFAULT_COMPANION_PORT = 7421;
@@ -31,7 +31,7 @@ export interface CompanionConfigFile {
 }
 
 export function getZelariHome(): string {
-  return join(homedir(), '.zelari-code');
+  return zelariHome();
 }
 
 export function getCompanionConfigPath(): string {

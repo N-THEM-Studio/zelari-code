@@ -14,7 +14,7 @@
  * "First failure" means we DON'T keep retrying the primary. If you want
  * N retries, write your own retry loop outside.
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3-B.md
+ * @see docs/plans/ (v3-B plan, 2026-06-29)
  */
 
 import type { ProviderDelta, ProviderStreamFn } from '@zelari/core/harness';

@@ -24,6 +24,7 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { zelariHome } from '../paths.js';
 import { readdirSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
@@ -39,7 +40,7 @@ import { bindSandboxedFs } from './sandboxedFs.js';
 
 /** `~/.zelari-code/extensions` — user-global extensions (always active). */
 export function globalExtensionsDir(): string {
-  return join(homedir(), '.zelari-code', 'extensions');
+  return join(zelariHome(), 'extensions');
 }
 
 /** `<project>/.zelari/extensions` — project extensions (trusted only). */

@@ -2,15 +2,15 @@
  * auditLogger — append-only JSONL log of every tool invocation.
  *
  * Task A2 of AnathemaCoder v3-A. Persists to
- * `~/.tmp/anathema-coder/audit.jsonl` by default (override via
+ * `~/.zelari-code/audit.jsonl` by default (override via
  * ANATHEMA_AUDIT_LOG env). Each entry is one line of JSON with:
  *   ts, sessionId, tool, args (summary), ok, resultSummary, durationMs, error?
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3.md (Task A2)
+ * @see docs/plans/ (v3 plan, 2026-06-29) (Task A2)
  */
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { auditLogPath } from '../paths.js';
 
 export interface AuditEntry {
   /** ISO timestamp. */
@@ -107,9 +107,7 @@ export class AuditLogger {
 }
 
 function defaultAuditPath(): string {
-  const override = process.env.ANATHEMA_AUDIT_LOG;
-  if (override && override.trim().length > 0) return override;
-  return path.join(os.tmpdir(), 'zelari-code', 'audit.jsonl');
+  return auditLogPath();
 }
 
 /**

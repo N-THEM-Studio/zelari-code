@@ -19,7 +19,7 @@
  *     error?: string,
  *   }
  *
- * Storage: `~/.tmp/anathema-coder/metrics.jsonl` (override via
+ * Storage: `~/.zelari-code/metrics.jsonl` (override via
  * `ANATHEMA_METRICS_FILE` env var, useful for tests).
  *
  * Rotation: when the file exceeds 10MB, it's renamed to
@@ -30,7 +30,7 @@
 
 import { promises as fs, existsSync, statSync, renameSync, appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { metricsPath } from './paths.js';
 
 export const METRICS_ROTATE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -80,8 +80,7 @@ export class MetricsLogger {
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(file?: string) {
-    this.file = file ?? process.env.ANATHEMA_METRICS_FILE
-      ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'metrics.jsonl');
+    this.file = file ?? metricsPath();
     mkdirSync(path.dirname(this.file), { recursive: true });
   }
 
@@ -197,7 +196,7 @@ export function recordCompactionMetrics(
  * the constructor (`ANATHEMA_METRICS_FILE`), so tests can point it at
  * a temp file before any consumer imports it.
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3-G.md (Task G.3.3)
+ * @see docs/plans/ (v3-G plan, 2026-06-29) (Task G.3.3)
  */
 let _singleton: MetricsLogger | null = null;
 export function getMetricsLogger(): MetricsLogger {

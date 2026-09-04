@@ -20,7 +20,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { homedir } from 'node:os';
+import { zelariHome } from '../paths.js';
 import { z } from 'zod';
 import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import { typedOk, typedErr, type TypedResult } from '@zelari/core/harness/tools/toolTypes';
@@ -73,7 +73,7 @@ export function readMcpConfig(
   // servers installed on the developer machine (merge would otherwise leak
   // github/memory/filesystem/… into hermetic fixtures).
   if (process.env['ZELARI_MCP_USER'] !== '0') {
-    paths.push(join(homedir(), '.zelari-code', 'mcp.json'));
+    paths.push(join(zelariHome(), 'mcp.json'));
   }
   if (!opts?.skipProjectMcp) {
     paths.push(join(projectRoot, '.zelari', 'mcp.json')); // later = higher precedence

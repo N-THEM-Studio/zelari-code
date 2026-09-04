@@ -17,8 +17,8 @@ import {
   realpathSync,
 } from "node:fs";
 import { join, basename } from "node:path";
-import { homedir } from "node:os";
 import { createHash } from "node:crypto";
+import { zelariHome } from "../paths.js";
 
 /**
  * Resolve the workspace root. Returns the first writable option:
@@ -32,7 +32,7 @@ export function resolveWorkspaceRoot(
 ): string {
   const candidates = [
     join(projectRoot, ".zelari"),
-    join(homedir(), ".zelari-code", "workspace", hashProject(projectRoot)),
+    join(zelariHome(), "workspace", hashProject(projectRoot)),
   ];
 
   for (const candidate of candidates) {

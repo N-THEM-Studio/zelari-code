@@ -16,7 +16,7 @@
  *     error?: string,       // error message when ok=false
  *   }
  *
- * Storage: `~/.tmp/anathema-coder/skill-history.jsonl` (override via
+ * Storage: `~/.zelari-code/skill-history.jsonl` (override via
  * `ANATHEMA_SKILL_HISTORY_FILE` env var, useful for tests).
  *
  * Rotation: when the file exceeds 10MB, it's renamed to
@@ -29,8 +29,8 @@
 
 import { promises as fs, existsSync, statSync, renameSync, appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { skillHistoryPath } from './paths.js';
 
 export const SKILL_HISTORY_ROTATE_BYTES = 10 * 1024 * 1024; // 10 MB
 
@@ -72,8 +72,7 @@ export class SkillHistoryLogger {
   private readonly inflight = new Map<string, InflightInvocation>();
 
   constructor(file?: string) {
-    this.file = file ?? process.env.ANATHEMA_SKILL_HISTORY_FILE
-      ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skill-history.jsonl');
+    this.file = file ?? skillHistoryPath();
     mkdirSync(path.dirname(this.file), { recursive: true });
   }
 

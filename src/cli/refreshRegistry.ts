@@ -21,7 +21,7 @@
  * `GROK_OAUTH_CLIENT_ID` from env at call time (so tests can mutate it).
  *
  * @see electron/cli/keyStore.ts (RefreshImpl type, resolveApiKeyWithMeta)
- * @see docs/plans/2026-06-29-anathema-coder-v3-F.md
+ * @see docs/plans/ (v3-F plan, 2026-06-29)
  */
 
 import { refreshGrokToken, DEFAULT_GROK_OAUTH_CLIENT_ID } from './grokOAuth.js';

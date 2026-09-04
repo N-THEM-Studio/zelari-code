@@ -2,12 +2,12 @@
  * branchManager — snapshot-based session branching (Tau pattern).
  *
  * Branches are independent snapshots of a session stored under
- * `~/.tmp/anathema-coder/branches/<name>/`. No Git-style merging, no
+ * `~/.zelari-code/branches/<name>/`. No Git-style merging, no
  * conflict resolution — just file copies. Each branch has its own JSONL
  * session files and a meta.json describing when it was branched.
  *
  * Storage layout:
- *   ~/.tmp/anathema-coder/
+ *   ~/.zelari-code/
  *     sessions/<id>.jsonl         ← main sessions (managed by sessionManager)
  *     branches/
  *       <name>/
@@ -17,12 +17,12 @@
  * Pure node:fs — no Electron deps, browser-importable for jsdom tests.
  * Env override: ANATHEMA_BRANCHES_DIR.
  *
- * @see docs/plans/2026-06-29-anathema-coder-v2.md (Task 17.1)
+ * @see docs/plans/ (v2 plan, 2026-06-29) (Task 17.1)
  */
 
 import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync, statSync, rmSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { branchesDir, sessionsDir } from './paths.js';
 
 export interface BranchInfo {
   /** Branch name (filesystem-safe identifier). */
@@ -47,13 +47,11 @@ const META_FILENAME = 'meta.json';
 const SESSIONS_SUBDIR = 'sessions';
 
 export function getBranchesBaseDir(): string {
-  return process.env.ANATHEMA_BRANCHES_DIR
-    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'branches');
+  return branchesDir();
 }
 
 export function getSessionsBaseDir(): string {
-  return process.env.ANATHEMA_SESSIONS_DIR
-    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'sessions');
+  return sessionsDir();
 }
 
 function branchPathFor(name: string, baseDir: string): string {

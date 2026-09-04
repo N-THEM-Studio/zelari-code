@@ -9,7 +9,7 @@
  * Pure node:fs — no Electron deps, browser-importable for jsdom tests.
  * Env override: `ANATHEMA_COUNCIL_FEEDBACK_FILE` (useful for tests + CI).
  *
- * @see docs/plans/2026-06-29-anathema-coder-v3-I.md (I.2)
+ * @see docs/plans/ (v3-I plan, 2026-06-29) (I.2)
  */
 
 import {
@@ -20,7 +20,7 @@ import {
   mkdirSync,
 } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { councilFeedbackPath } from './paths.js';
 
 export interface FeedbackEntry {
   /** When the feedback was recorded (epoch ms). */
@@ -58,9 +58,7 @@ export class FeedbackStore {
   private entries: FeedbackEntry[] = [];
 
   constructor(options: FeedbackStoreOptions = {}) {
-    this.file = options.file
-      ?? (process.env.ANATHEMA_COUNCIL_FEEDBACK_FILE
-        ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'council-feedback.json'));
+    this.file = options.file ?? councilFeedbackPath();
     this.now = options.now ?? Date.now;
     this.load();
   }

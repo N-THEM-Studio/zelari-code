@@ -17,7 +17,7 @@
  * npm dist-tag instead of pinning them to the older stable `latest`.
  * No self-restart: caller is expected to display "please restart manually".
  *
- * @see docs/plans/2026-06-30-anathema-coder-v3-N.md
+ * @see docs/plans/ (v3-N plan, 2026-06-30)
  */
 
 import { createRequire } from 'node:module';

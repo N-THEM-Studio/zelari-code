@@ -18,8 +18,8 @@
  * @since v1.32.0
  */
 
-import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { zelariHome } from '../paths.js';
 import { readdirSync, statSync } from 'node:fs';
 import { LifecycleHookRunner, type HookFailureMode } from '@zelari/core/harness';
 import { isFolderTrusted } from './folderTrust.js';
@@ -27,7 +27,7 @@ import { activePolicyLoadMode } from './policyLoadMode.js';
 
 /** ~/.zelari-code/hooks — user-global hooks (always active). */
 export function globalHooksDir(): string {
-  return join(homedir(), '.zelari-code', 'hooks');
+  return join(zelariHome(), 'hooks');
 }
 
 /** <project>/.zelari/hooks — project hooks (trusted folders only). */

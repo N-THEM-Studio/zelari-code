@@ -7,7 +7,7 @@
  * next, and which model to use for each one.
  *
  * Storage layout (alongside keyStore):
- *   ~/.tmp/anathema-coder/
+ *   ~/.zelari-code/
  *     keys.json              ← keyStore (Task 14.9)
  *     provider.json          ← this file (Task 15.1)
  *     sessions/<id>.jsonl
@@ -16,12 +16,12 @@
  * Pure node:fs — no Electron deps, browser-importable for jsdom tests.
  * Env override: `ANATHEMA_PROVIDER_CONFIG_FILE` (useful for tests + CI).
  *
- * @see docs/plans/2026-06-29-anathema-coder-v2.md (Task 15.1)
+ * @see docs/plans/ (v2 plan, 2026-06-29) (Task 15.1)
  */
 
 import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
+import { providerConfigPath } from './paths.js';
 import { PROVIDERS, type ProviderName, type ProviderSpec } from './keyStore.js';
 import { parseThinkingSpec, stringifyThinkingSpec, type ThinkingSpec } from './thinking.js';
 
@@ -81,8 +81,7 @@ const DEFAULTS: ProviderConfig = {
 };
 
 export function getProviderConfigPath(): string {
-  return process.env.ANATHEMA_PROVIDER_CONFIG_FILE
-    ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'provider.json');
+  return providerConfigPath();
 }
 
 /**
