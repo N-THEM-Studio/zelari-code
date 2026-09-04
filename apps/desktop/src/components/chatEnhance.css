@@ -158,3 +158,46 @@
   opacity: 0.7;
   font-size: 0.92em;
 }
+
+/* Phase / mode / counters row — folded in from the old KrakenProgressCard */
+.kraken-ctx-phase {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-size: 0.95em;
+}
+
+.kraken-ctx-phase-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+}
+
+.kraken-ctx-phase-label.is-done {
+  color: var(--ok, #9ece6a);
+}
+
+.kraken-ctx-mode {
+  font-size: 0.85em;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(160, 180, 200, 0.35);
+  opacity: 0.85;
+}
+
+.kraken-ctx-counts {
+  display: inline-flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  opacity: 0.75;
+}
+
+.kraken-ctx-counts .is-ok {
+  color: var(--ok, #9ece6a);
+}
+
+.kraken-ctx-counts .is-warn {
+  color: var(--warn-strong, #d08770);
+}

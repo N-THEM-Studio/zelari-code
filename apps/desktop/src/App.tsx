@@ -51,7 +51,6 @@ import { SettingsShell } from "./components/settings/SettingsShell";
 import { RunActivity, type LiveToolStep } from "./components/RunActivity";
 import { KrakenActivity } from "./components/KrakenActivity";
 import {
-  KrakenProgressCard,
   readKrakenProgress,
   readKrakenMetrics,
   type KrakenProgressView,
@@ -853,7 +852,8 @@ export default function App() {
    * Realtime context stats for the Kraken panel (KrakenContextPanel):
    * recomputed on every message delta, so the compaction meter breathes
    * with the stream. Context proxy = chars/4 crossed with the turn's
-   * measured tokens (best signal until the CLI emits usage events).
+   * measured tokens and the last context size reported by the CLI
+   * (best signals until the CLI emits usage events).
    */
   const liveCtx = useMemo((): LiveCtxStats => {
     const msgs = active?.messages ?? [];
@@ -865,8 +865,18 @@ export default function App() {
     const t = turnsRef.current.get(active?.id ?? "");
     const tok = t?.tokens;
     const measured = tok ? tok.prompt + tok.completion : 0;
+    // Best available signal wins: chars/4 proxy < measured turn tokens <
+    // the context size the CLI last reported for a completed model call.
+    let reported = 0;
+    for (let i = msgs.length - 1; i >= 0; i--) {
+      const m = msgs[i];
+      if (m.role === "assistant" && (m.stats?.contextTokens ?? 0) > 0) {
+        reported = m.stats?.contextTokens ?? 0;
+        break;
+      }
+    }
     return {
-      ctxTokens: Math.max(Math.round(chars / 4), measured),
+      ctxTokens: Math.max(Math.round(chars / 4), measured, reported),
       turnTokens: tok?.total ?? 0,
       promptTokens: tok?.prompt ?? 0,
       completionTokens: tok?.completion ?? 0,
@@ -1107,6 +1117,17 @@ export default function App() {
     if (!el) return;
     let lastScrollTop = el.scrollTop;
     let lastHeight = el.scrollHeight;
+    // Cumulative upward intent: trackpad/smooth-wheel scrolling emits a
+    // burst of tiny upward deltas; each one alone stays under the 32px
+    // dead-zone while stick-to-bottom keeps re-pinning to the bottom, so
+    // the user can never detach. Programmatic scrolls only ever move
+    // DOWN, so every upward delta is the user — sum them inside a short
+    // window and detach on sustained intent (≥24px in ≤500ms), on top of
+    // the instant rule for full notch scrolls (distance > 32px).
+    let upAccum = 0;
+    let upWindowStart = 0;
+    const UP_INTENT_PX = 24;
+    const UP_INTENT_MS = 500;
     const onScroll = () => {
       const distance = el.scrollHeight - el.scrollTop - el.clientHeight;
       const goingUp = el.scrollTop < lastScrollTop - 2;
@@ -1115,9 +1136,22 @@ export default function App() {
       // not that the user moved — a collapsed viewport briefly reads
       // "distance ≤ 8" and must NEVER auto-reattach.
       const collapsed = el.scrollHeight < lastHeight - 8;
+      if (goingUp) {
+        const now = performance.now();
+        if (now - upWindowStart > UP_INTENT_MS) {
+          upWindowStart = now;
+          upAccum = 0;
+        }
+        upAccum += lastScrollTop - el.scrollTop;
+      }
       lastScrollTop = el.scrollTop;
       lastHeight = el.scrollHeight;
-      if (goingUp && distance > NEAR_BOTTOM_PX && followStreamRef.current) {
+      if (
+        followStreamRef.current &&
+        goingUp &&
+        (distance > NEAR_BOTTOM_PX || upAccum >= UP_INTENT_PX)
+      ) {
+        upAccum = 0;
         followStreamRef.current = false;
         setFollowStream(false);
       } else if (
@@ -1129,6 +1163,7 @@ export default function App() {
         // Explicit "back to live": a USER-driven downward scroll that
         // lands on the true bottom (≤8px). While skimming above the end
         // this can't fire, and layout collapses are excluded above.
+        upAccum = 0;
         followStreamRef.current = true;
         setFollowStream(true);
         setMissedBelow(0);
@@ -3250,19 +3285,16 @@ export default function App() {
                     progress={gauntletByConv[active?.id ?? ""] ?? null}
                   />
                 ) : null}
-                {krakenCard ? (
-                  <KrakenProgressCard
-                    progress={krakenCard.progress ?? null}
-                    metrics={krakenCard.metrics ?? null}
-                  />
-                ) : null}
                 <KrakenActivity />
                 {verificationByConv[active?.id ?? ""]?.run ? (
                   <VerificationStatusCard
                     run={verificationByConv[active?.id ?? ""].run ?? null}
                   />
                 ) : null}
-                <KrakenContextPanel live={liveCtx} />
+                <KrakenContextPanel
+                  live={liveCtx}
+                  progress={krakenCard?.progress ?? null}
+                />
               </div>
             )}
           </div>

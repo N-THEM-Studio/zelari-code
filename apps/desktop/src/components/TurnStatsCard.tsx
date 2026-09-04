@@ -4,14 +4,11 @@
  * compaction, cache).
  *
  * Shows: response time, tool calls, token split (▲ prompt · ▼ completion ·
- * Σ total), char count, and a context/compaction meter using the same
- * thresholds as the CLI budget pipeline (ok < 0.70 ≤ growing < 0.85 ≤
- * compaction soon < 0.95 ≤ compaction imminent). Cache metrics (⚡ hit
- * rate / cached tokens) render only when the CLI reports them — the
- * Desktop event stream does not carry usage events yet.
- *
- * Context size is a proxy (prompt tokens of the last model call), the
- * best signal available without CLI changes; the `~` marks it as such.
+ * Σ total) and char count — the per-turn RECORD only. The context/
+ * compaction meter lives solely in the session strip (KrakenContextPanel):
+ * one signal, one home. Cache metrics (⚡ hit rate / cached tokens) render
+ * only when the CLI reports them — the Desktop event stream does not
+ * carry usage events yet.
  */
 import type { MessageStats } from "../types";
 import "./chatEnhance.css";
@@ -58,12 +55,6 @@ export function TurnStatsCard({ stats }: { stats: MessageStats }) {
     (stats.toolCount ?? 0) > 0;
   if (!hasData) return null;
 
-  const limit = stats.contextLimit ?? DEFAULT_CONTEXT_LIMIT;
-  const ctx = stats.contextTokens ?? stats.promptTokens ?? 0;
-  const ratio = limit > 0 ? ctx / limit : 0;
-  const level = contextLevel(ratio);
-  const pct = Math.min(100, ratio * 100);
-
   return (
     <div className="msg-stats reply-stats turn-stats">
       <div className="turn-stats-row">
@@ -100,22 +91,6 @@ export function TurnStatsCard({ stats }: { stats: MessageStats }) {
           </span>
         ) : null}
       </div>
-      {ctx > 0 && limit > 0 ? (
-        <div
-          className={`turn-stats-ctx is-${level}`}
-          title={`Context proxy (~prompt tokens): ${ctx.toLocaleString()} / ${limit.toLocaleString()}`}
-        >
-          <span className="turn-stats-ctx-bar" aria-hidden>
-            <span
-              className="turn-stats-ctx-fill"
-              style={{ width: `${pct.toFixed(1)}%` }}
-            />
-          </span>
-          <span className="turn-stats-ctx-label">
-            ctx ~{pct.toFixed(pct < 10 ? 1 : 0)}% · {CONTEXT_LABEL[level]}
-          </span>
-        </div>
-      ) : null}
     </div>
   );
 }

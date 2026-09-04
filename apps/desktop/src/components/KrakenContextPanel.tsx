@@ -1,24 +1,30 @@
 /**
- * Kraken context panel — realtime, permanent context/compaction strip that
- * lives in the chat activity stack (right where HarnessStatePanel used to
- * be, which this component replaces).
+ * Kraken context panel — the ONE session strip in the chat activity stack.
  *
- * Two sources, one strip:
- *  - `live` (App-derived): recomputed on every message delta, so the
- *    context meter, token split, tool count and elapsed time update in
- *    REAL TIME while the model streams. Context size is a chars/4 proxy
- *    (marked `~`) crossed with the turn's measured tokens — the Desktop
- *    event stream does not carry usage events yet.
- *  - `useHarnessState()` (CLI final `harness_state` event): session turns,
- *    last verdict (unknown ≠ pass), compactions, memory events, context
- *    projections, and the real budget occupancy/policy when the CLI
- *    reports it.
+ * Everything live/session-scoped lives here and nowhere else:
+ *  - phase / mode / tentacle counters (CLI `kraken_progress` events,
+ *    parsed by the KrakenProgressCard readers)
+ *  - the context/compaction meter — the only one in the chat; the
+ *    end-of-turn footer (TurnStatsCard) owns the per-turn record instead
+ *  - budget occupancy + policy, session turns, last verdict, compactions,
+ *    memory events, context projections (final `harness_state` event)
+ *
+ * De-noising rules (one signal, one home): the token/tool/elapsed trio
+ * renders only while streaming — at rest the per-message footer owns it;
+ * phase counters render only when > 0; the mode chip only for `plan`
+ * (build is the default, not information).
  *
  * Advisory by contract: renders NOTHING until there is at least one live
- * signal; a missing/malformed harness event never surfaces as an error.
+ * signal or a kraken phase; a missing/malformed harness event never
+ * surfaces as an error.
  */
 import { useHarnessState } from "../harnessState";
 import type { HarnessVerdict } from "../harnessState";
+import {
+  KRAKEN_TERMINAL_PHASE,
+  krakenPhaseLabel,
+  type KrakenProgressView,
+} from "./KrakenProgressCard";
 import {
   CONTEXT_LABEL,
   DEFAULT_CONTEXT_LIMIT,
@@ -49,16 +55,45 @@ function verdictColor(v: HarnessVerdict): string | undefined {
   return undefined;
 }
 
-export function KrakenContextPanel({ live }: { live: LiveCtxStats }) {
+export function KrakenContextPanel({
+  live,
+  progress,
+}: {
+  live: LiveCtxStats;
+  progress: KrakenProgressView | null;
+}) {
   const state = useHarnessState();
   const hasLive =
     live.ctxTokens > 0 || live.turnTokens > 0 || live.toolCount > 0;
-  if (!hasLive) return null;
+  if (!hasLive && !progress) return null;
 
   const limit = DEFAULT_CONTEXT_LIMIT;
   const ratio = limit > 0 ? live.ctxTokens / limit : 0;
   const level = contextLevel(ratio);
   const pct = Math.min(100, ratio * 100);
+
+  const phaseLabel = progress ? krakenPhaseLabel(progress.phase) : null;
+  const phaseLive = !!progress && progress.phase !== KRAKEN_TERMINAL_PHASE;
+  const counts: { label: string; value: string; tone?: "ok" | "warn" }[] = [];
+  if (progress) {
+    if (progress.exploreTentacles > 0)
+      counts.push({
+        label: "explore",
+        value: String(progress.exploreTentacles),
+      });
+    if (progress.verifyTentacles > 0)
+      counts.push({ label: "verify", value: String(progress.verifyTentacles) });
+    if (progress.writes > 0)
+      counts.push({ label: "writes", value: String(progress.writes) });
+    if (typeof progress.checkTotal === "number" && progress.checkTotal > 0) {
+      const passed = progress.checksPassed ?? 0;
+      counts.push({
+        label: "checks",
+        value: `${passed}/${progress.checkTotal}`,
+        tone: passed >= progress.checkTotal ? "ok" : "warn",
+      });
+    }
+  }
 
   const lastTurn =
     state && state.turns.length > 0
@@ -81,28 +116,53 @@ export function KrakenContextPanel({ live }: { live: LiveCtxStats }) {
           ) : null}
           Kraken · context
         </span>
-        <span className="kraken-ctx-nums">
-          {live.turnTokens > 0 ? (
-            <span
-              title={`Turn tokens — prompt ▲ ${live.promptTokens.toLocaleString()} · completion ▼ ${live.completionTokens.toLocaleString()}`}
-            >
-              ▲ {formatTokens(live.promptTokens)} · ▼{" "}
-              {formatTokens(live.completionTokens)} · Σ{" "}
-              {live.turnTokens.toLocaleString()}
+        {live.streaming ? (
+          <span className="kraken-ctx-nums">
+            {live.turnTokens > 0 ? (
+              <span
+                title={`Turn tokens — prompt ▲ ${live.promptTokens.toLocaleString()} · completion ▼ ${live.completionTokens.toLocaleString()}`}
+              >
+                ▲ {formatTokens(live.promptTokens)} · ▼{" "}
+                {formatTokens(live.completionTokens)} · Σ{" "}
+                {live.turnTokens.toLocaleString()}
+              </span>
+            ) : null}
+            {live.toolCount > 0 ? (
+              <span title="Tool calls this turn">🛠 {live.toolCount}</span>
+            ) : null}
+            {live.elapsedMs != null ? (
+              <span title="Turn elapsed">⏱ {formatDuration(live.elapsedMs)}</span>
+            ) : null}
+          </span>
+        ) : null}
+      </div>
+
+      {phaseLabel ? (
+        <div className="kraken-ctx-phase">
+          <span
+            className={`kraken-ctx-phase-label${phaseLive ? " is-live" : " is-done"}`}
+          >
+            {phaseLive ? <span className="kraken-ctx-dot" aria-hidden /> : null}
+            {phaseLabel}
+          </span>
+          {progress?.mode === "plan" ? (
+            <span className="kraken-ctx-mode">plan</span>
+          ) : null}
+          {counts.length > 0 ? (
+            <span className="kraken-ctx-counts">
+              {counts.map((c) => (
+                <span key={c.label} className={c.tone ? `is-${c.tone}` : undefined}>
+                  {c.label} {c.value}
+                </span>
+              ))}
             </span>
           ) : null}
-          {live.toolCount > 0 ? (
-            <span title="Tool calls this turn">🛠 {live.toolCount}</span>
-          ) : null}
-          {live.elapsedMs != null ? (
-            <span title="Turn elapsed">⏱ {formatDuration(live.elapsedMs)}</span>
-          ) : null}
-        </span>
-      </div>
+        </div>
+      ) : null}
 
       <div
         className={`turn-stats-ctx is-${level}`}
-        title={`Context proxy: ${live.ctxTokens.toLocaleString()} / ${limit.toLocaleString()} tokens (~chars/4 crossed with measured turn tokens)`}
+        title={`Context proxy: ${live.ctxTokens.toLocaleString()} / ${limit.toLocaleString()} tokens (best of chars/4, measured turn tokens, last reported context)`}
       >
         <span className="turn-stats-ctx-bar" aria-hidden>
           <span
