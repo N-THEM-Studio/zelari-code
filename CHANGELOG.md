@@ -5,6 +5,31 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.29.0] - 2026-09-04
+
+Evolution wave: the proposer/judge constitution (ADR-0036) lands with a mechanical gate, all runtime state moves under one root, settings become a file, the honesty lint learns to read evidence, and the Evolution Engine ships as an opt-in shadow ledger that observes but never promotes.
+
+### Added
+
+- **ADR-0036 — Evolution Engine: proposer/judge separation** — the governable genome (skills, role prompts, tool budgets, routing, tentacle templates, memory heuristics) is constitutionally separated from the judge (`ToolRegistry.invoke`, sandbox/jail, blocklist, folder trust, `honesty.ts`, tier ranking, Tier-0 anchors). Nothing in the loop may self-promote; `evolvePropose`/`evolveDecide` stay human-decided.
+- **`JUDGE_PATHS` + `[judge]` gate check** — `verify-principles.mjs` owns an explicit judge-path list and fails CI if evolution code imports into the judge; `scripts/touches-judge.mjs` + a new PR job label `touches-judge` on any diff touching judge paths (the label is advisory — the hard guarantee is the gate).
+- **P1 invariant: proposer ≠ measurer** — "the engine that proposes is not the engine that measures; no artifact can promote itself" is now in PRINCIPLES.md, which becomes English-canonical; `docs/PRINCIPI.md` keeps the Italian translation (non-normative).
+- **`docs/THREAT_MODEL.md`** — 12 vectors (prompt injection via file/web/MCP, exfiltration via `ssh_run`, malicious hooks in untrusted repos, extensions, companion tokens) × the gate covering each × status guaranteed/mitigated/open, plus the "fresh clone: what loads" table.
+- **`docs/EVALS.md`** — the eval method as a public contract: evidence tiers, manifest hash as validity boundary, retention gate vs stable tag, per-release snapshot convention, anti-Goodhart rules.
+- **`zelari.config.json` + `--print-settings`** — schema-Zod file settings (9 knobs, all pre-existing env), precedence `default < user (~/.zelari-code) < project (.zelari/) < env`; invalid layers warn and are ignored (fail-open); `--print-settings` reports every value with its origin.
+- **Evolution Engine v0 (shadow, opt-in)** — `ZELARI_EVOLUTION=shadow` appends an outcome ledger (`.zelari/evolution/ledger.jsonl`: taskClass, verdict, evidence tier, cost/latency/toolCalls, steer/rollback) at the end of headless runs — fail-open, never alters a run's outcome, default off. Deterministic bilingual task classifier (no LLM). `/evolve status` (TUI) and `--evolve-status` (headless), both read-only.
+- **Evidence-backed honesty lint** — `lintSynthesisHonesty(text, evidence?)` extracts verification claims from the synthesis and clears them only against traceable `EvidenceRef`s (tool/command/fs tiers; `verifier-llm`/`human` never clear a claim — ADR-0023/0036). `RunVerificationInput.evidence` wired from the real caller; without evidence the legacy heuristic behaves byte-identically.
+- **Skill lineage** — `/promote-member` stamps promoted `SKILL.md` files with `genome`/`parent` sha256 lineage (chain-extending) plus `promotedBy`/`promotedAt`.
+
+### Changed
+
+- **One runtime root: `~/.zelari-code/`** — the three coexisting roots (`~/.tmp/zelari-code/`, legacy `~/.tmp/anathema-coder/`, `~/.zelari-code/`) collapse into one via a one-shot, non-destructive boot migration (backup + marker, new-wins; `ZELARI_HOME` override; pre-existing env overrides still win). 38 call sites moved to shared getters; fixes the hand-built path bug in `skillSuggest`.
+- **README** — council roles legend (Caronte…Lucifero, sourced from `roles.ts`), fresh-clone trust/load table, `ZELARI_HOOKS_FAILURE` documented (fail-open in TUI, fail-closed in autonomous runs).
+
+### Docs
+
+- SECURITY.md links the threat model and documents hook failure modes; AGENTS.MD decisions index pending `/council` refresh for ADR-0036.
+
 ## [2.28.0] - 2026-09-04
 
 Coherence wave: version drift closed and gate-enforced, `--help` tells the whole truth, the competitive bench harness lands, and the Desktop chat gets one session stats strip.
