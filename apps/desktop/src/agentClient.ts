@@ -14,6 +14,16 @@ export async function getCliStatus(): Promise<CliStatus> {
   return invoke<CliStatus>("get_cli_status");
 }
 
+/** 2.32 B5 — structured doctor report for the Desktop first-run gate (lib.rs cli_doctor_check → `zelari-code --doctor --json`). */
+export interface CliDoctorReport {
+  healthy: boolean;
+  firstRed: { name: string; message: string } | null;
+}
+
+export async function getCliDoctorCheck(): Promise<CliDoctorReport> {
+  return invoke<CliDoctorReport>("cli_doctor_check");
+}
+
 export async function getAppConfig(): Promise<DesktopConfig> {
   return invoke<DesktopConfig>("get_app_config");
 }

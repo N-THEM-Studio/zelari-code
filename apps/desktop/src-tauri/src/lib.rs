@@ -1025,6 +1025,28 @@ fn get_cli_status() -> CliStatus {
     }
 }
 
+/// 2.32 B5 — Desktop doctor gate. Runs `zelari-code --doctor --json` and
+/// returns the structured DoctorReport (`healthy`, `firstRed`). The CLI
+/// exits 1 when the doctor is red; the JSON on stdout is still the contract
+/// (same precedent as test_ssh_target), so stdout is parsed before any
+/// error path. Mirrors the TUI first-run gate (main.ts runFirstRunDoctorGate).
+#[tauri::command]
+fn cli_doctor_check() -> Result<serde_json::Value, String> {
+    let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
+    let cli = resolve_cli_entry()?;
+    let mut cmd = spawn_cli_base(&node, &cli, None);
+    cmd.args(["--doctor", "--json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    let output = cmd.output().map_err(format_cli_spawn_err)?;
+    let out = String::from_utf8_lossy(&output.stdout).to_string();
+    if let Some(v) = parse_cli_json_stdout(&out) {
+        return Ok(v);
+    }
+    let err = String::from_utf8_lossy(&output.stderr).to_string();
+    Err(if !err.trim().is_empty() { err } else { out })
+}
+
 /// Returns the JSON string from `zelari-code --print-config`.
 #[tauri::command]
 fn get_app_config() -> Result<serde_json::Value, String> {
@@ -3067,6 +3089,7 @@ pub fn run() {
         .manage(Arc::new(PlanWatchRegistry::new()))
         .invoke_handler(tauri::generate_handler![
             get_cli_status,
+            cli_doctor_check,
             get_app_config,
             query_memory,
             set_app_config,

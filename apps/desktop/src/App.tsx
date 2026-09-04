@@ -9,6 +9,7 @@ import {
   extractToolResult,
   getAppConfig,
   getCliStatus,
+  getCliDoctorCheck,
   getPluginsStatus,
   installPlugin,
   onAgentEvent,
@@ -110,6 +111,7 @@ import { friendlyToolLabel } from "./components/toolLabels";
 import { scrubDisplayText } from "./components/scrubDisplayText";
 import { ProjectPanel } from "./components/ProjectPanel";
 import { CliSetupGuide } from "./components/CliSetupGuide";
+import { DoctorGate } from "./components/DoctorGate";
 import { TitleBar } from "./components/TitleBar";
 import {
   MentionPopup,
@@ -558,6 +560,10 @@ export default function App() {
   const [gitRefreshKey, setGitRefreshKey] = useState(0);
   /** User dismissed the missing-CLI setup overlay for this session. */
   const [setupDismissed, setSetupDismissed] = useState(false);
+  /** 2.32 B5 — doctor gate: first red from `--doctor --json` (null = green). */
+  const [doctorRed, setDoctorRed] = useState<{ name: string; message: string } | null>(null);
+  /** User clicked "Continue anyway" on the doctor gate (session-scoped). */
+  const [doctorDismissed, setDoctorDismissed] = useState(false);
   const [cliStatusLoading, setCliStatusLoading] = useState(true);
   /** Optional plugins (Playwright, etc.) missing in the current workdir. */
   const [pluginRows, setPluginRows] = useState<PluginStatusRow[]>([]);
@@ -956,6 +962,21 @@ export default function App() {
     try {
       const s = await getCliStatus();
       setCli(s);
+      // 2.32 B5: CLI resolves → run the doctor too; the first red gates chat.
+      if (s.ok) {
+        try {
+          const d = await getCliDoctorCheck();
+          setDoctorRed(
+            d.healthy
+              ? null
+              : (d.firstRed ?? { name: "doctor", message: "unknown red check" }),
+          );
+        } catch {
+          setDoctorRed(null); // doctor unavailable → never block the front door
+        }
+      } else {
+        setDoctorRed(null);
+      }
       setStatusLine(
         s.ok ? `CLI ${s.cliVersion ?? "ready"} · ${s.message}` : s.message,
       );
@@ -2801,6 +2822,10 @@ export default function App() {
 
   const showCliSetup =
     !setupDismissed && !cliStatusLoading && cli !== null && !cli.ok;
+  // 2.32 B5 — same contract as the TUI first-run gate: CLI ok but doctor
+  // red stops the chat until fixed, or until an explicit "Continue anyway".
+  const showDoctorGate =
+    !showCliSetup && !doctorDismissed && cli?.ok === true && doctorRed !== null;
 
   return (
     <div
@@ -2832,6 +2857,13 @@ export default function App() {
           onRefresh={refreshCli}
           onOpenSettings={() => setView("settings")}
           onDismiss={() => setSetupDismissed(true)}
+        />
+      )}
+      {showDoctorGate && doctorRed && (
+        <DoctorGate
+          red={doctorRed}
+          onRecheck={refreshCli}
+          onContinueAnyway={() => setDoctorDismissed(true)}
         />
       )}
       <div className="app-body">

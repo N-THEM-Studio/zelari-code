@@ -77,6 +77,46 @@ if (!changelog.includes(`## [${rootVersion}]`)) {
   failures.push(`CHANGELOG.md has no "## [${rootVersion}]" entry for the current version.`);
 }
 
+// 8. Cargo.lock structural gate (2.31.0 lesson): a textual bump regex ate the
+//    `name = "zelari-desktop"` stanza and the TOML died at parse time on all
+//    3 CI platforms AFTER the tag (see the v2.31.0 tag move). Every
+//    [[package]] stanza must carry BOTH `name = "…"` and `version = "…"` in
+//    its header scope, and the workspace crate must appear exactly once.
+//    Bump policy: `cargo update --workspace`, or line-edit + `cargo
+//    verify-project` BEFORE tagging — never a regex over the whole file.
+{
+  const lines = readFileSync(
+    path.join(root, 'apps/desktop/src-tauri/Cargo.lock'),
+    'utf-8',
+  ).split(/\r?\n/);
+  const starts = lines.reduce(
+    (a, l, i) => (l.trim() === '[[package]]' ? (a.push(i), a) : a),
+    [],
+  );
+  starts.push(lines.length);
+  for (let s = 0; s + 1 < starts.length; s++) {
+    const from = starts[s] + 1;
+    const to = starts[s + 1];
+    const rel = lines.slice(from, to).findIndex((l) => l.startsWith('['));
+    const scope = lines.slice(from, rel === -1 ? to : from + rel);
+    for (const key of ['name', 'version']) {
+      if (!scope.some((l) => l.startsWith(`${key} = "`))) {
+        failures.push(
+          `Cargo.lock [[package]] (line ${from}): missing \`${key} = "…"\` — ` +
+            `2.31.0 lesson: bump with \`cargo update --workspace\` or line-edit + ` +
+            `\`cargo verify-project\` BEFORE tagging.`,
+        );
+      }
+    }
+  }
+  const z = lines.filter((l) => l.trim() === 'name = "zelari-desktop"').length;
+  if (z !== 1) {
+    failures.push(
+      `Cargo.lock: expected exactly one \`name = "zelari-desktop"\` stanza, found ${z}.`,
+    );
+  }
+}
+
 // 4. README must not hardcode a CLI line version (Exit-0 E0.4): the npm
 //    version badge at the top is the single live source of the version.
 const readme = readFileSync(path.join(root, 'README.md'), 'utf-8');

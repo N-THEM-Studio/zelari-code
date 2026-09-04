@@ -361,6 +361,21 @@ function pickRootComponent(): {
     return { kind: "done" };
   }
   if (argv.includes("--doctor") || argv.includes("doctor")) {
+    // 2.32 B5: `--doctor --json` prints the structured DoctorReport for the
+    // Desktop first-run gate (agentClient.getCliDoctorCheck). The exit code
+    // still reflects health so CI can gate on it; the Desktop side parses
+    // stdout regardless (same precedent as --test-ssh-target).
+    if (argv.includes("--json")) {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { collectDoctorReport } =
+        require("./utils/doctor.js") as typeof import("./utils/doctor.js");
+      void collectDoctorReport().then((report) => {
+        // eslint-disable-next-line no-console
+        console.log(JSON.stringify(report));
+        process.exit(report.healthy ? 0 : 1);
+      });
+      return { kind: "done" };
+    }
     // v1.0.3: install-health diagnostic. Runs BEFORE the bundle is loaded
     // and before any provider / config work, so it works on a broken
     // install (missing bundle, missing shim, wrong PATH, etc.).
@@ -559,7 +574,7 @@ function pickRootComponent(): {
         "Options:\n" +
         "  --version, -v       Print version and exit\n" +
         "  --help, -h          Print this help and exit\n" +
-        "  --doctor            Diagnose install health (shim, bundle, PATH, deps,\n" +
+        "  --doctor [--json]   Diagnose install health (shim, bundle, PATH, deps,\n" +
         "                      node/git/bash in the agent shell)\n" +
         "  --inspect [--json]  Unified project inspection (config, skills, MCP,\n" +
         "                      hooks, plugins, AGENTS.md, trust status)\n" +
