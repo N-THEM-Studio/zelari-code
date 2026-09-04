@@ -1,102 +1,100 @@
 # Architecture Decision Records (ADRs)
 
-Questa directory contiene le decisioni architetturali di Zelari Code.
-Ogni decisione è immutabile una volta accettata; i cambiamenti avvengono
-scrivendo un **nuovo** ADR che segnala il precedente come
-"Sostituito da".
+This directory holds the architectural decisions of Zelari Code.
+Every decision is immutable once accepted; changes happen by writing a **new**
+ADR that marks the previous one as "Superseded by".
 
-**Regole di numerazione** (applicate dalla triage 2026-09-04):
+**Numbering rules** (applied by the 2026-09-04 triage):
 
-- Un numero a 4 cifre, una volta assegnato, **non si riutilizza mai**.
-- I numeri mancanti nella sequenza (0011, 0012) **non sono mai stati
-  assegnati**: non vanno riempiti retroattivamente.
-- Il vault draft `.zelari/decisions/` usa una **serie separata** (id a 3
-  cifre); la promozione in `docs/decisions/` prende il prossimo numero
-  canonico libero.
+- A 4-digit number, once assigned, is **never reused**.
+- Missing numbers in the sequence (0011, 0012) were **never assigned**: they
+  must not be filled in retroactively.
+- The draft vault `.zelari/decisions/` uses a **separate series** (3-digit
+  ids); promotion into `docs/decisions/` takes the next free canonical
+  number.
 
-## Indice
+## Index
 
-Generato dall'albero reale dei file (triage t37/S6, 2026-09-04).
+Generated from the real file tree (triage t37/S6, 2026-09-04).
 
-| # | Titolo | Stato | Data proposta | Note |
+| # | Title | Status | Proposed | Notes |
 |------|-----------------------------------------------------|--------------|---------------|-------------------|
-| 0001 | Monorepo con npm workspaces per `@zelari/core` | ✅ Accettato | 2026-07-01 | retro su commit `6ec90be` |
-| 0002 | Pubblicazione di `@zelari/core` su npm | ✅ Accettato | 2026-07-02 | auto, MiniMax-M3 |
-| 0003 | Schema di versionamento per monorepo zelari-code | ✅ Accettato | 2026-07-02 | auto, MiniMax-M3 |
-| 0004 | Policy di stabilità API pubblica di `@zelari/core` | ✅ Accettato | 2026-07-02 | auto, MiniMax-M3 |
-| 0005 | Deprecation dei path sorgente legacy | ✅ Accettato | 2026-07-02 | auto, MiniMax-M3 |
-| 0006 | Lucifero chairman synthesis reale | ✅ Accettato | 2026-07-02 | auto, MiniMax-M3 |
-| 0007 | Independent pre-release audit (agy) come workflow gate | ✅ Accettato | 2026-07-02 | auto, MiniMax-M3 |
-| 0008 | Monorepo MIT per rilascio open source | ⚠️ Sostituito | 2026-07-15 | → ADR-0009 |
-| 0009 | Licenza Apache-2.0 per l'intero monorepo | ✅ Accettato | 2026-08-13 | |
-| 0010 | Manifesto dei principi primi (PRINCIPLES.md, P1–P6) | ✅ Accettato | 2026-08-13 | |
-| 0013 | Budget cap (token/USD) come terza stop-rule della missione Zelari | ✅ Accettato | 2026-07-20 | implementato |
-| 0014 | Mission triggers event-driven | ✅ Accettato | 2026-07-20 | implementato |
-| 0015 | Opt-in companion host (`zelari-code serve`) | ✅ Accettato | 2026-07-23 | |
-| 0016 | Log di sessione event-sourced come unica fonte di verità | ✅ Accettato | 2026-08-14 | accettazione 2026-08-19 |
-| 0017 | Selezione unificata del "thinking effort" per tutti i provider | 📝 Proposto — parcheggiato | 2026-08-14 | triage 2026-09-04: mai implementato; riaprire su evidenza costo (t31) |
-| 0018 | Contratto workspace task store su `.zelari/plan.json` (tool `task_*`) | ✅ Accettato | 2026-08-16 | slice 3a implementata (v1.43.0) |
-| 0019 | Observation Integrity come clausola esplicita di P1 | ✅ Accettato | 2026-08-17 | |
-| 0020 | Kraken: plan-safe explore task | ✅ Accettato | 2026-08-18 | |
-| 0021 | Contratto Session spine v1 | ✅ Accettato | 2026-08-19 | |
-| 0022 | Execution seams (WorkspaceProvider & friends) e profili versionati | ✅ Accettato | 2026-08-19 | |
-| 0023 | Verifica deterministica e CompletionPolicy (evidence contract) | ✅ Accettato | 2026-08-19 | |
-| 0024 | Chiusura del dual-write: spine come unica sorgente del contesto modello | ✅ Accettato | 2026-08-19 | emendato 2026-08-30 |
-| 0025 | Default strict done divisi per superficie (Kraken opt-in, mission ON) | ✅ Accettato | 2026-08-20 | |
-| 0026 | Default RC: evidence event-backed ON, Kraken strict resta opt-in | ✅ Accettato | 2026-08-20 | |
-| 0027 | Strict Kraken default 2.1: resta opt-in CLI, host decide via pack | ✅ Accettato | 2026-08-20 | |
-| 0028 | Native criteria pack adattivo: CLI esplicito, default a carico dell'host | ✅ Accettato | 2026-08-20 | |
-| 0029 | Memoria cognitiva condivisa native-first, SQLite locale e MCP esterno | ✅ Accettato | 2026-08-23 | |
-| 0030 | Razionalizzazione default HARNESS-10: strict-done e verify-pack ON, trust headless UNTRUSTED | ✅ Accettato | 2026-08-23 | |
-| 0031 | Asimmetria recall su path single-agent (W3): deliberata, opt-in misurabile | ✅ Accettato | 2026-08-30 | promossa da `.zelari/decisions/014` |
-| 0032 | Unificazione proiezione: la budget pipeline CLI è il compilatore canonico (W4) | ✅ Accettato | 2026-08-30 | promossa da `.zelari/decisions/015` |
-| 0033 | Edit ancorato: snapshot file-level, apply esatto, errore strutturato | ✅ Accettato | 2026-09-02 | implementato (slice t72–t79, release 2.24–2.26) |
-| 0034 | Desktop ships the same contract (guided CLI install first, bundling deferred) | ✅ Accettato | 2026-09-02 | identity wave |
-| 0035 | Council fan-out parallelo + trace view | ✅ Accettato | 2026-07-20 | Fase B deferita; **rinumerato da "0015" duplicato** (triage 2026-09-04) |
+| 0001 | Monorepo with npm workspaces for `@zelari/core` | ✅ Accepted | 2026-07-01 | retro on commit `6ec90be` |
+| 0002 | Publishing `@zelari/core` to npm | ✅ Accepted | 2026-07-02 | auto, MiniMax-M3 |
+| 0003 | Versioning scheme for the zelari-code monorepo | ✅ Accepted | 2026-07-02 | auto, MiniMax-M3 |
+| 0004 | Public API stability policy for `@zelari/core` | ✅ Accepted | 2026-07-02 | auto, MiniMax-M3 |
+| 0005 | Deprecation of legacy source paths | ✅ Accepted | 2026-07-02 | auto, MiniMax-M3 |
+| 0006 | Real Lucifero chairman synthesis | ✅ Accepted | 2026-07-02 | auto, MiniMax-M3 |
+| 0007 | Independent pre-release audit (agy) as a workflow gate | ✅ Accepted | 2026-07-02 | auto, MiniMax-M3 |
+| 0008 | MIT monorepo for the open-source release | ⚠️ Superseded | 2026-07-15 | → ADR-0009 |
+| 0009 | Apache-2.0 license for the whole monorepo | ✅ Accepted | 2026-08-13 | |
+| 0010 | First-principles manifesto (PRINCIPLES.md, P1–P6) | ✅ Accepted | 2026-08-13 | |
+| 0013 | Budget cap (token/USD) as the mission's third stop-rule | ✅ Accepted | 2026-07-20 | implemented |
+| 0014 | Event-driven mission triggers | ✅ Accepted | 2026-07-20 | implemented |
+| 0015 | Opt-in companion host (`zelari-code serve`) | ✅ Accepted | 2026-07-23 | |
+| 0016 | Event-sourced session log as the single source of truth | ✅ Accepted | 2026-08-14 | accepted 2026-08-19 |
+| 0017 | Unified "thinking effort" selection across providers | 📝 Proposed — parked | 2026-08-14 | triage 2026-09-04: never implemented; reopen on cost evidence (t31) |
+| 0018 | Workspace task store contract on `.zelari/plan.json` (`task_*` tools) | ✅ Accepted | 2026-08-16 | slice 3a implemented (v1.43.0) |
+| 0019 | Observation Integrity as an explicit P1 clause | ✅ Accepted | 2026-08-17 | |
+| 0020 | Kraken: plan-safe explore task | ✅ Accepted | 2026-08-18 | |
+| 0021 | Session spine v1 contract | ✅ Accepted | 2026-08-19 | |
+| 0022 | Execution seams (WorkspaceProvider & friends) and versioned profiles | ✅ Accepted | 2026-08-19 | |
+| 0023 | Deterministic verification and CompletionPolicy (evidence contract) | ✅ Accepted | 2026-08-19 | |
+| 0024 | Closing the dual-write: spine as the only model-context source | ✅ Accepted | 2026-08-19 | amended 2026-08-30 |
+| 0025 | Strict-done defaults split by surface (Kraken opt-in, mission ON) | ✅ Accepted | 2026-08-20 | |
+| 0026 | RC defaults: event-backed evidence ON, Kraken strict stays opt-in | ✅ Accepted | 2026-08-20 | |
+| 0027 | Strict Kraken default 2.1: stays CLI opt-in, host decides via pack | ✅ Accepted | 2026-08-20 | |
+| 0028 | Adaptive native criteria pack: CLI explicit, default owned by the host | ✅ Accepted | 2026-08-20 | |
+| 0029 | Native-first shared cognitive memory, local SQLite and external MCP | ✅ Accepted | 2026-08-23 | |
+| 0030 | HARNESS-10 defaults rationalization: strict-done and verify-pack ON, headless trust UNTRUSTED | ✅ Accepted | 2026-08-23 | |
+| 0031 | Recall asymmetry on single-agent paths (W3): deliberate, measurable opt-in | ✅ Accepted | 2026-08-30 | promoted from `.zelari/decisions/014` |
+| 0032 | Projection unification: the CLI budget pipeline is the canonical compiler (W4) | ✅ Accepted | 2026-08-30 | promoted from `.zelari/decisions/015` |
+| 0033 | Anchored edit: file-level snapshot, exact apply, structured error | ✅ Accepted | 2026-09-02 | implemented (slices t72–t79, releases 2.24–2.26) |
+| 0034 | Desktop ships the same contract (guided CLI install first, bundling deferred) | ✅ Accepted | 2026-09-02 | identity wave |
+| 0035 | Parallel council fan-out + trace view | ✅ Accepted | 2026-07-20 | Phase B deferred; **renumbered from duplicate "0015"** (triage 2026-09-04) |
 
-Numeri mai assegnati: **0011, 0012** (slot liberi, non riempire).
+Numbers never assigned: **0011, 0012** (free slots, do not fill).
 
-### Legacy (numerazione pre-schema, 3 cifre)
+### Legacy (pre-schema numbering, 3 digits)
 
-File storici anteriori allo schema a 4 cifre. **Non** fanno parte della
-serie canonica: `013` legacy ≠ `ADR-0013` (mission budget cap).
+Historical files predating the 4-digit schema. They are **not** part of the
+canonical series: legacy `013` ≠ `ADR-0013` (mission budget cap).
 
-| # | Titolo | Stato | Data |
+| # | Title | Status | Date |
 |------|-----------------------------------------------------|--------------|---------------|
 | 012 | Durable State Layer + Prompt Cache Efficiency | accepted | 2026-07-18 |
 | 013 | Weakness-based hypothesis selection (Bennett's Razor for Kraken) | accepted | 2026-08-08 |
 
-### Vault draft (`.zelari/decisions/`, serie separata)
+### Draft vault (`.zelari/decisions/`, separate series)
 
-ADR del vault di design, non canonici. La numerazione vault (3 cifre) è
-indipendente da quella di questa directory.
+Design-vault ADRs, not canonical. Vault numbering (3 digits) is independent
+from this directory's.
 
-| # | Titolo | Stato | Note |
+| # | Title | Status | Notes |
 |------|-----------------------------------------------------|--------------|-------------------|
-| 016 | Il TaskContract compila nel harness (capability layer + criteri) | accepted | amenda ad ADR-0023; rinumerato da "0030" vault per la collisione con l'ADR canonico 0030 (triage 2026-09-04) |
+| 016 | The TaskContract compiles in the harness (capability layer + criteria) | accepted | amendment to ADR-0023; renumbered from vault "0030" due to the collision with canonical ADR-0030 (triage 2026-09-04) |
 
-## Formato
+## Format
 
-- **Filename:** `NNNN-titolo-kebab-case.md` (4 cifre, zero-padded).
+- **Filename:** `NNNN-title-kebab-case.md` (4 digits, zero-padded).
 - **Status values:**
-  - `Proposto` — scritto, in attesa di OK Andrea.
-  - `Accettato` — implementato o in implementazione.
-  - `Sostituito` — superseded da un ADR successivo (link lì).
-  - `Ritirato` — accettato poi revocato (raro).
-- **Struttura:** Contesto → Decisione → Alternative →
-  Conseguenze → TODO.
-- **Lingua:** italiano (coerente con il resto di zelari-code).
+  - `Proposed` — written, waiting for Andrea's OK.
+  - `Accepted` — implemented or being implemented.
+  - `Superseded` — superseded by a later ADR (link there).
+  - `Retracted` — accepted then revoked (rare).
+- **Structure:** Context → Decision → Alternatives →
+  Consequences → TODO.
+- **Language:** English (consistent with the rest of zelari-code; ADRs
+  written before the i18n sweep remain in Italian).
 
-## Processo
+## Process
 
-1. MiniMax (o contributor) propone un'ADR quando vede una decisione
-   non ovvia che vincola il codice futuro.
-2. **Default:** ADR scritti da MiniMax sono **auto-accettati alla
-   creazione**, salvo obiezione esplicita di Andrea. Questo perché
-   le proposte partono già da un'analisi di coerenza col codice
-   esistente. Se Andrea dissente, l'ADR viene:
-   - Rivisto (cambio di decisione, append "Rescindito").
-   - Sostituito da un nuovo ADR che marca il vecchio come
-     `Sostituito`.
-3. ADR accettati hanno tutti i TODO spuntati o spostati in issue
-   tracker.
+1. MiniMax (or a contributor) proposes an ADR when they see a non-obvious
+   decision that constrains future code.
+2. **Default:** ADRs written by MiniMax are **auto-accepted on creation**,
+   unless Andrea explicitly objects. This is because proposals already start
+   from an analysis of coherence with the existing code. If Andrea disagrees,
+   the ADR is:
+   - Revised (decision change, append "Rescinded").
+   - Superseded by a new ADR that marks the old one as `Superseded`.
+3. Accepted ADRs have all TODOs checked off or moved to the issue tracker.

@@ -1,107 +1,106 @@
-# Memoria cognitiva nativa
+# Native cognitive memory
 
-Zelari Code può condividere conoscenza di progetto tra AgentHarness, Council,
-tentacoli Kraken, missioni e sessioni successive. La V2 è locale, non richiede
-MCP né un servizio esterno e conserva la provenienza di ogni informazione.
+Zelari Code can share project knowledge across AgentHarness, Council, Kraken
+tentacles, missions and subsequent sessions. V2 is local, requires no MCP and
+no external service, and preserves the provenance of every piece of
+information.
 
-## Attivazione
+## Activation
 
-Il comportamento storico JSONL resta il default. Per attivare SQLite V2:
+The historical JSONL behavior remains the default. To activate SQLite V2:
 
 ```powershell
 $env:ZELARI_MEMORY_V2 = '1'
 zelari-code
 ```
 
-È equivalente impostare `ZELARI_MEMORY_BACKEND=sqlite`. Quando V2 è attiva,
-le scritture automatiche sono abilitate; `ZELARI_MEMORY_AUTO_WRITE=0` mantiene
-il recall ma disabilita le nuove memorie prodotte dagli agenti.
+Setting `ZELARI_MEMORY_BACKEND=sqlite` is equivalent. When V2 is active,
+automatic writes are enabled; `ZELARI_MEMORY_AUTO_WRITE=0` keeps recall but
+disables new memories produced by agents.
 
-| Variabile | Effetto |
+| Variable | Effect |
 |---|---|
-| `ZELARI_MEMORY=0` | Disabilita ogni backend di memoria |
-| `ZELARI_MEMORY_V2=1` | Attiva il servizio nativo SQLite |
-| `ZELARI_MEMORY_BACKEND=sqlite` | Seleziona esplicitamente SQLite V2 |
-| `ZELARI_MEMORY_BACKEND=file` | Forza il backend JSONL compatibile |
-| `ZELARI_MEMORY_AUTO_WRITE=0` | Recall attivo, auto-write disattivato |
-| `ZELARI_MEMORY_SEMANTIC=1` | Abilita indice e recall semantico ibrido |
-| `ZELARI_EMBED_MODEL=<id>` | Modello embedding (default `text-embedding-3-small`) |
-| `ZELARI_EMBED_TIMEOUT_MS=<ms>` | Timeout embedding, limitato a 1–120 secondi |
-| `ZELARI_MEMORY_SEMANTIC_MIN_SCORE=<0..1>` | Soglia semantica (default `0.15`) |
-| `ZELARI_MEMORY_MCP=1` | Abilita il server MCP esterno opzionale |
-| `ZELARI_MEMORY_MCP_ADMIN=1` | Consente mutazioni MCP non owner (sconsigliato) |
-| `ZELARI_MEMORY_STRICT=1` | Rende fatale l'errore di inizializzazione V2 |
+| `ZELARI_MEMORY=0` | Disables every memory backend |
+| `ZELARI_MEMORY_V2=1` | Activates the native SQLite service |
+| `ZELARI_MEMORY_BACKEND=sqlite` | Explicitly selects SQLite V2 |
+| `ZELARI_MEMORY_BACKEND=file` | Forces the compatible JSONL backend |
+| `ZELARI_MEMORY_AUTO_WRITE=0` | Recall active, auto-write disabled |
+| `ZELARI_MEMORY_SEMANTIC=1` | Enables the hybrid semantic index and recall |
+| `ZELARI_EMBED_MODEL=<id>` | Embedding model (default `text-embedding-3-small`) |
+| `ZELARI_EMBED_TIMEOUT_MS=<ms>` | Embedding timeout, clamped to 1–120 seconds |
+| `ZELARI_MEMORY_SEMANTIC_MIN_SCORE=<0..1>` | Semantic threshold (default `0.15`) |
+| `ZELARI_MEMORY_MCP=1` | Enables the optional external MCP server |
+| `ZELARI_MEMORY_MCP_ADMIN=1` | Allows non-owner MCP mutations (not recommended) |
+| `ZELARI_MEMORY_STRICT=1` | Makes a V2 initialization error fatal |
 
-Un uso esplicito di `/memory` inizializza il backend SQLite per ispezionarlo,
-anche senza flag, a meno che `ZELARI_MEMORY=0` sia impostata.
+An explicit use of `/memory` initializes the SQLite backend for inspection
+even without flags, unless `ZELARI_MEMORY=0` is set.
 
-## Persistenza e modello
+## Persistence and model
 
-Il database si trova in `.zelari/memory/memory.db`. SQLite usa WAL e un worker
-dedicato, quindi query e scritture non bloccano l'event loop dell'agente. Ogni
-progetto riceve uno scope derivato dal path reale canonico: il recall non
-attraversa automaticamente i confini tra repository.
+The database lives in `.zelari/memory/memory.db`. SQLite uses WAL and a
+dedicated worker, so queries and writes never block the agent's event loop.
+Every project gets a scope derived from the real canonical path: recall does
+not automatically cross repository boundaries.
 
-Il database usa migrazioni forward-only con `PRAGMA user_version`. Una
-migrazione da un database esistente acquisisce un lock, esegue un checkpoint
-WAL e crea prima un backup `memory.db.v<origine>.bak`. Un runtime meno recente
-rifiuta uno schema futuro; una migrazione fallita viene rollbackata.
+The database uses forward-only migrations with `PRAGMA user_version`. A
+migration from an existing database acquires a lock, runs a WAL checkpoint and
+first creates a `memory.db.v<origin>.bak` backup. An older runtime refuses a
+future schema; a failed migration is rolled back.
 
-Una memoria contiene:
+A memory contains:
 
-- kind controllato (`fact`, `decision`, `finding`, `failure`, `verification`,
-  `outcome`, ecc.);
-- importance, confidence e stato del ciclo di vita;
-- visibilità `project` oppure `private` (owner esterno);
-- provenienza strutturata (agente, sessione, missione, slice, tentacolo, file,
-  simbolo, commit e verifica);
-- tag e metadata limitati;
-- revisioni immutabili per update, retraction e supersession;
-- archi tipizzati come `supports`, `derived_from`, `validated_by`,
-  `invalidated_by` e `supersedes`.
+- a controlled kind (`fact`, `decision`, `finding`, `failure`, `verification`,
+  `outcome`, etc.);
+- importance, confidence and lifecycle state;
+- `project` or `private` visibility (external owner);
+- structured provenance (agent, session, mission, slice, tentacle, file,
+  symbol, commit and verification);
+- bounded tags and metadata;
+- immutable revisions for update, retraction and supersession;
+- typed edges such as `supports`, `derived_from`, `validated_by`,
+  `invalidated_by` and `supersedes`.
 
-Il vecchio `.zelari/memory/log.jsonl` viene importato una volta in modo
-idempotente, mantenendo timestamp e riferimenti legacy. Il file sorgente non
-viene cancellato.
+The old `.zelari/memory/log.jsonl` is imported once idempotently, keeping
+timestamps and legacy references. The source file is not deleted.
 
-## Recall e sicurezza
+## Recall and security
 
-Il recall combina FTS lessicale, filtri, importance, confidence, recency e
-prossimità nel grafo. Se non esiste un indice semantico, il suo peso viene
-redistribuito: gli embedding non sono necessari. `buildContext()` produce un
-blocco `[ZELARI MEMORY]` con budget caratteri rigido e provenienza visibile;
-nodi retratti, archiviati o superseduti non vengono iniettati come conoscenza
-corrente.
+Recall combines lexical FTS, filters, importance, confidence, recency and
+graph proximity. If no semantic index exists, its weight is redistributed:
+embeddings are not required. `buildContext()` produces a `[ZELARI MEMORY]`
+block with a strict character budget and visible provenance; retracted,
+archived or superseded nodes are never injected as current knowledge.
 
-Contenuto, source e metadata attraversano un secret scanner. Chiavi private
-sono rifiutate; token noti, assegnazioni di credenziali e stringhe ad alta
-entropia vengono redatti. La telemetria contiene solo identificatori e misure,
-mai il testo delle memorie.
+Content, source and metadata pass through a secret scanner. Private keys are
+rejected; known tokens, credential assignments and high-entropy strings are
+redacted. Telemetry contains only identifiers and measures, never the text of
+memories.
 
-### Indice semantico opzionale
+### Optional semantic index
 
-Con `ZELARI_MEMORY_SEMANTIC=1`, Zelari riusa il provider embedding configurato
-ma mantiene un indice memoria indipendente. Ogni vettore conserva model ID,
-dimensioni e SHA-256 del contenuto: un update invalida il vettore precedente e
-impedisce l'uso di dati stale. Il recall indicizza pigramente un piccolo lotto;
-una ricostruzione esplicita e interrompibile è disponibile con:
+With `ZELARI_MEMORY_SEMANTIC=1`, Zelari reuses the configured embedding
+provider but keeps an independent memory index. Every vector stores the model
+ID, dimensions and SHA-256 of the content: an update invalidates the previous
+vector and prevents the use of stale data. Recall lazily indexes a small
+batch; an explicit, interruptible rebuild is available with:
 
 ```text
 /memory index
 /memory index --force
 ```
 
-Errori di provider, vettori corrotti o modello assente degradano sempre al
-recall FTS/lessicale deterministico.
-Scansione vettoriale, validazione dell'indice e hashing avvengono nel worker
-SQLite; al processo agente tornano soltanto i migliori candidati, evitando di
-bloccare l'event loop o trasferire l'intero indice.
-L'attivazione è esplicita anche perché il provider configurato può essere
-remoto: il contenuto già sanitizzato delle memorie viene inviato al suo endpoint
-embedding. Per dati che non devono uscire dalla macchina usare un provider
-locale oppure lasciare il semantic recall disabilitato.
+Provider errors, corrupted vectors or a missing model always degrade to the
+deterministic FTS/lexical recall.
+Vector scanning, index validation and hashing happen in the SQLite worker;
+only the best candidates return to the agent process, avoiding blocking the
+event loop or transferring the whole index.
+Activation is explicit also because the configured provider may be remote: the
+already-sanitized content of memories is sent to its embedding endpoint. For
+data that must not leave the machine, use a local provider or keep semantic
+recall disabled.
 
-## Comandi
+## Commands
 
 ```text
 /memory
@@ -116,21 +115,21 @@ locale oppure lasciare il semantic recall disabilitato.
 /memory index [--force]
 /memory promote <id>
 /memory doctor
-/memory export [path-relativo-al-progetto]
+/memory export [path-relative-to-project]
 ```
 
-`retract` mantiene revisioni e provenienza ed è la scelta normale. `forget`
-esegue una cancellazione fisica (nodo, archi e storia) e richiede `--yes`.
-L'export non può scrivere fuori dal progetto.
-`promote` accetta soltanto conoscenza durevole e attiva (`fact`, `decision`,
-`constraint`, `preference`, `procedure`) e la inserisce in un blocco gestito e
-idempotente di `AGENTS.md`; la consolidazione non modifica mai quel file da
-sola.
+`retract` keeps revisions and provenance and is the normal choice. `forget`
+performs a physical deletion (node, edges and history) and requires `--yes`.
+Export cannot write outside the project.
+`promote` accepts only durable, active knowledge (`fact`, `decision`,
+`constraint`, `preference`, `procedure`) and inserts it into a managed,
+idempotent block of `AGENTS.md`; consolidation never modifies that file on its
+own.
 
-## MCP esterno (opzionale)
+## External MCP (optional)
 
-MCP non è usato da AgentHarness, Council, Kraken, missioni, headless o Desktop.
-Per esporre lo stesso servizio a un client esterno:
+MCP is not used by AgentHarness, Council, Kraken, missions, headless or
+Desktop. To expose the same service to an external client:
 
 ```powershell
 $env:ZELARI_MEMORY_V2 = '1'
@@ -139,38 +138,38 @@ zelari-code --trust .
 zelari-code --memory-mcp --cwd . --client-id cursor-local
 ```
 
-Il server stdio espone `zelari_memory_search`, `get`, `add`, `link`, `history`
-e `retract`, oltre alle risorse `zelari://memory/...`. Le scritture richiedono
-il `project_id` esatto, ricevono sempre `source.client`, attraversano lo stesso
-secret scanner e sono limitate per minuto. Le memorie MCP sono `private` per
-default; un altro client vede soltanto memorie `project` e le proprie private.
-Retraction e relazioni con effetti di lifecycle sono owner-only, salvo opt-in
-amministrativo esplicito.
-`--client-id` (o `ZELARI_MEMORY_MCP_CLIENT_ID`) rende stabile l'ownership tra
-riavvii. È un confine locale fra client dello stesso utente, non un sistema di
-autenticazione remoto; il folder trust e i permessi del filesystem restano il
-confine di sicurezza principale.
+The stdio server exposes `zelari_memory_search`, `get`, `add`, `link`,
+`history` and `retract`, plus the `zelari://memory/...` resources. Writes
+require the exact `project_id`, always receive `source.client`, pass through
+the same secret scanner and are rate-limited per minute. MCP memories are
+`private` by default; another client sees only `project` memories and its own
+private ones. Retraction and relations with lifecycle effects are owner-only,
+unless an explicit administrative opt-in is given.
+`--client-id` (or `ZELARI_MEMORY_MCP_CLIENT_ID`) makes ownership stable across
+restarts. It is a local boundary between clients of the same user, not a
+remote authentication system; folder trust and filesystem permissions remain
+the primary security boundary.
 
 ## Desktop
 
-Il pannello progetto di Zelari Desktop include il tab **Memory**: ricerca e
-filtri per tipo, indicatori importance/confidence, stato corrente, visibilità,
-provenienza, relazioni e timeline delle revisioni. Desktop usa il bridge JSON
-di sola lettura della CLI e non accede mai direttamente al database.
+The Desktop project panel includes the **Memory** tab: search and filters by
+type, importance/confidence indicators, current state, visibility, provenance,
+relations and revision timeline. Desktop uses the CLI's read-only JSON bridge
+and never accesses the database directly.
 
-## Separazione dagli altri livelli
+## Separation from the other layers
 
-- `.zelari/state/` resta lo stato verificato e ripristinabile.
-- `.zelari/sessions/` resta la cronologia event-sourced.
-- `AGENTS.MD` resta il livello curato e stabile per umani e agenti.
-- MCP è opzionale e, quando disponibile, deve adattare `MemoryService`; non è
-  il trasporto usato internamente da Zelari.
+- `.zelari/state/` remains the verified, restorable state.
+- `.zelari/sessions/` remains the event-sourced history.
+- `AGENTS.MD` remains the curated, stable layer for humans and agents.
+- MCP is optional and, when available, must adapt to `MemoryService`; it is
+  not the transport used internally by Zelari.
 
-In caso di errore, il default è warning e continuazione senza memoria. Esegui
-`/memory doctor` per integrità, foreign key, versione schema e disponibilità
-FTS; usa `ZELARI_MEMORY_STRICT=1` soltanto negli ambienti che richiedono la
-memoria come precondizione.
+On error, the default is a warning and continuing without memory. Run
+`/memory doctor` for integrity, foreign keys, schema version and FTS
+availability; use `ZELARI_MEMORY_STRICT=1` only in environments that require
+memory as a precondition.
 
-Per il gate mirato: `npm run test:memory`. La suite include restart,
-supersession, migrazione/rollback, indice semantico corrotto, privacy MCP,
-round-trip MCP↔nativo e metriche Recall@K/precision/stale/duplicate/p95.
+For the targeted gate: `npm run test:memory`. The suite covers restart,
+supersession, migration/rollback, corrupted semantic index, MCP privacy,
+MCP↔native round-trip and Recall@K/precision/stale/duplicate/p95 metrics.
