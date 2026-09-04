@@ -1360,23 +1360,77 @@ function main() {
     return;
   }
 
-  const { waitUntilExit, unmount } = render(picked.element!);
+  // 2.31 B1: the first-run doctor gate runs BEFORE the TUI mounts — you
+  // only reach chat with a green doctor, or with an explicit "continue
+  // anyway" (dichiarato). No-op (and near-zero cost) on every later run.
+  void (async () => {
+    await runFirstRunDoctorGate();
+    const { waitUntilExit, unmount } = render(picked.element!);
 
-  process.on("SIGINT", () => {
-    unmount();
-    void shutdown();
-  });
-  process.on("SIGTERM", () => {
-    unmount();
-    void shutdown();
-  });
+    process.on("SIGINT", () => {
+      unmount();
+      void shutdown();
+    });
+    process.on("SIGTERM", () => {
+      unmount();
+      void shutdown();
+    });
 
-  // Fire-and-forget — the CLI works regardless of the update check result.
-  void backgroundUpdateCheck();
+    // Fire-and-forget — the CLI works regardless of the update check result.
+    void backgroundUpdateCheck();
 
-  waitUntilExit().then(() => {
-    void shutdown();
+    waitUntilExit().then(() => {
+      void shutdown();
+    });
+  })();
+}
+
+/**
+ * 2.31 B1 — first-run wizard gate. On the very first run (no provider
+ * credential stored) it RUNS the doctor checks and stops on the FIRST red
+ * with the exact fix command (the check message already names it: `/login`,
+ * `--trust`, `--fix-path`). Reaching the TUI with a red doctor requires an
+ * explicit typed confirmation; non-interactive sessions continue with a
+ * declared warning instead of hanging on a prompt they cannot answer.
+ */
+async function runFirstRunDoctorGate(): Promise<void> {
+  try {
+    const { getActiveProvider } = await import("./providerConfig.js");
+    const { resolveApiKey, getOAuthToken } = await import("./keyStore.js");
+    const active = getActiveProvider();
+    if (resolveApiKey(active.id) || getOAuthToken(active.id)) return; // not first run
+  } catch {
+    return; // unreadable config — never block the front door on this
+  }
+  const { collectDoctorReport } = await import("./utils/doctor.js");
+  const report = await collectDoctorReport();
+  if (report.healthy) return;
+  const red = report.firstRed!;
+  const line = (s: string) => process.stderr.write(s + "\n");
+  line("");
+  line("┌─ first run: doctor");
+  line(`│ ✗ ${red.name} — ${red.message.replace(/\n/g, "\n│   ")}`);
+  line("│ Fix the red above (its message names the exact command), then re-run:");
+  line("│   zelari-code --doctor");
+  line("└──────────────");
+  if (!process.stdin.isTTY) {
+    line("[wizard] non-interactive session: continuing with a RED doctor (dichiarato).");
+    return;
+  }
+  const rl = (await import("node:readline/promises")).createInterface({
+    input: process.stdin,
+    output: process.stdout,
   });
+  const answer = (
+    await rl.question('Continue anyway with a RED doctor? Type "si" to continue: ')
+  )
+    .trim()
+    .toLowerCase();
+  rl.close();
+  if (answer !== "si" && answer !== "sì" && answer !== "yes" && answer !== "y") {
+    process.exit(1);
+  }
+  line("[wizard] continue-anyway dichiarato — doctor is still red.");
 }
 
 main();

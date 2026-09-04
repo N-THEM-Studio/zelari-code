@@ -447,11 +447,31 @@ async function checkContextGrowth(): Promise<CheckResult> {
   }
 }
 
-export async function runDoctor(): Promise<boolean> {
-  const pkg = readPackageJson();
-  const pkgName = pkg?.name ?? "zelari-code";
+/**
+ * 2.31 B1: structured doctor report for the first-run gate — the SAME
+ * checks as `runDoctor`, collected without printing. The wizard stops on
+ * the first red with the exact fix command (the message already carries
+ * it: `/login …`, `--trust …`, `--fix-path`); the CLI flag keeps the full
+ * human report.
+ */
+export interface DoctorEntry {
+  name: string;
+  ok: boolean;
+  severity: "critical" | "warn" | "none";
+  message: string;
+}
 
-  const checks: Array<{ name: string; run: () => CheckResult | Promise<CheckResult> }> = [
+export interface DoctorReport {
+  entries: DoctorEntry[];
+  firstRed: DoctorEntry | null;
+  healthy: boolean;
+}
+
+function buildDoctorChecks(
+  pkg: ReturnType<typeof readPackageJson>,
+  pkgName: string,
+): Array<{ name: string; run: () => CheckResult | Promise<CheckResult> }> {
+  return [
     // --- install-health checks (main-process probes) ---
     { name: "node", run: () => checkNode(pkg) },
     { name: "bin shim", run: () => checkShim(pkgName) },
@@ -530,6 +550,36 @@ export async function runDoctor(): Promise<boolean> {
     // --- optional desktop computer-use (Cua Driver, trycua) ---
     { name: "cua-driver", run: () => checkCuaDriver() },
   ];
+}
+
+export async function collectDoctorReport(): Promise<DoctorReport> {
+  const pkg = readPackageJson();
+  const checks = buildDoctorChecks(pkg, pkg?.name ?? "zelari-code");
+  const entries: DoctorEntry[] = [];
+  for (const c of checks) {
+    let result: CheckResult;
+    try {
+      result = await c.run();
+    } catch (err) {
+      result = FAIL(
+        `unexpected error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    entries.push({
+      name: c.name,
+      ok: result.ok,
+      severity: result.ok ? "none" : (result.severity ?? "warn"),
+      message: result.message,
+    });
+  }
+  const firstRed = entries.find((e) => !e.ok) ?? null;
+  return { entries, firstRed, healthy: entries.every((e) => e.ok) };
+}
+
+export async function runDoctor(): Promise<boolean> {
+  const pkg = readPackageJson();
+  const pkgName = pkg?.name ?? "zelari-code";
+  const checks = buildDoctorChecks(pkg, pkgName);
 
   // eslint-disable-next-line no-console
   console.log(`zelari-code doctor (v${pkg?.version ?? "unknown"})`);
