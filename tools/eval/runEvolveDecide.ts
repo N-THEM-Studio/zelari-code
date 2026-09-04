@@ -37,6 +37,7 @@ import {
   type DecisionRecord,
   type DecisionStatus,
 } from './evolveDecide.ts';
+import { behavioralMetrics, readLedgerFile, splitByTime } from './behavioral.ts';
 
 function arg(name: string): string | undefined {
   const i = argv.indexOf(`--${name}`);
@@ -67,7 +68,7 @@ function anyOccurrenceWithoutValue(name: string): boolean {
 }
 
 function usage(): string {
-  return 'usage: runEvolveDecide.ts --list [--store <file>] [--json] | --id <p-NNNN> --decision <applied|rejected|withdrawn> [--ref <git-ref-or-worktree-path>] [--evidence <str>]... [--note <str>] [--store <file>] [--json] [--dry-run]';
+  return 'usage: runEvolveDecide.ts --list [--store <file>] [--json] | --id <p-NNNN> --decision <applied|rejected|withdrawn> [--ref <git-ref-or-worktree-path>] [--evidence <str>]... [--note <str>] [--ledger <file>] [--no-behavior] [--store <file>] [--json] [--dry-run]';
 }
 
 // Local store reader (same tolerant behavior as runEvolvePropose.ts — CLI
@@ -134,6 +135,15 @@ function listMode(storePath: string, json: boolean): number {
   return 0;
 }
 
+/** Latest record's createdAt for an id (the baseline/variant ledger boundary). */
+function latestCreatedAt(records: StoredProposal[], id: string): string | undefined {
+  let at: string | undefined;
+  for (const r of records) {
+    if (r.id === id && typeof r.createdAt === 'string') at = r.createdAt;
+  }
+  return at;
+}
+
 function decisionMode(storePath: string, json: boolean, dryRun: boolean): number {
   const id = arg('id') ?? '';
   const status = arg('decision') ?? '';
@@ -142,6 +152,7 @@ function decisionMode(storePath: string, json: boolean, dryRun: boolean): number
     console.error(usage());
     return 2;
   }
+  const { records } = readStore(storePath);
   const input: DecisionInput = {
     id,
     status: status as DecisionStatus,
@@ -152,7 +163,30 @@ function decisionMode(storePath: string, json: boolean, dryRun: boolean): number
   const note = arg('note');
   if (note !== undefined) input.note = note;
 
-  const { records } = readStore(storePath);
+  // W2/t45 — behavioural anti-Goodhart rule, computed from the outcome
+  // ledger when deciding 'applied': baseline = runs BEFORE the proposal was
+  // created, variant = runs at/after. Judge-side and self-contained
+  // (behavioral.ts imports no product CLI code). --no-behavior records the
+  // conscious opt-out; a missing ledger is stated, never faked.
+  if (status === 'applied' && !argv.includes('--no-behavior')) {
+    const rawLedger = arg('ledger');
+    const ledgerFile = path.resolve(
+      rawLedger !== undefined && !rawLedger.startsWith('--')
+        ? rawLedger
+        : path.join(cwd(), '.zelari', 'evolution', 'ledger.jsonl'),
+    );
+    if (existsSync(ledgerFile)) {
+      const createdAt = latestCreatedAt(records, id) ?? new Date(0).toISOString();
+      const split = splitByTime(readLedgerFile(ledgerFile), createdAt);
+      input.behavior = {
+        baseline: behavioralMetrics(split.before),
+        variant: behavioralMetrics(split.after),
+      };
+      console.error(`behaviour: baseline ${split.before.length} run(s) vs variant ${split.after.length} run(s) — ledger ${ledgerFile}`);
+    } else {
+      console.error(`warning: outcome ledger not found (${ledgerFile}) — behavioural rule NOT evaluated; pass --ledger <file>, or --no-behavior to record this consciously`);
+    }
+  }
   let result: ReturnType<typeof decide>;
   try {
     // The CLI owns the clock — the decision core stays pure.

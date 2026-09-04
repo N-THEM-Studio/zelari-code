@@ -70,3 +70,9 @@ never hand-edit numbers:
    rejected.
 3. A hold-out anchor quota rotates from anonymized real ledger tasks each
    release (planned; see ADR-0036 backlog).
+
+## Sealed anchors (W2/t45, enforced)
+
+Tier-0 anchors are content-frozen in eval/anchors/sealed.json; verify-principles recomputes every hash and fails the gate on drift. Manifest hash: 
+
+Hold-out rotation quota: derive new-anchor candidates from anonymized ledger outcomes each release (npm run evolve:seal -- --rotation-candidates). Behavioural promote rule: npm run evolve:decide blocks applied on steer/tier regression by code.

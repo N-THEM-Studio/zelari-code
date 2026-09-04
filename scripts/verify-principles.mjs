@@ -16,6 +16,7 @@
  * Used locally via `npm run verify:principles` and as a merge gate in
  * .github/workflows/ci.yml.
  */
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -243,6 +244,46 @@ function checkJudgePaths(root, report) {
   if (ok) report.ok('judge', 'JUDGE_PATHS intact; no evolution imports inside the judge (ADR-0036)');
 }
 
+/**
+ * W2/t45 — sealed anchors (anti-Goodhart, docs/EVALS.md #1): the seal
+ * manifest freezes the sha256 of sealed anchors; any byte drift fails this
+ * gate. The evolution loop may propose NEW anchors, never edit sealed ones.
+ */
+function checkSealedAnchors(root, report) {
+  const anchorDir = path.join(root, 'eval', 'anchors');
+  const sealFile = path.join(anchorDir, 'sealed.json');
+  if (!fs.existsSync(sealFile)) {
+    report.ok('seal', 'no sealed.json yet — anchor sealing available via npm run evolve:seal');
+    return;
+  }
+  let seal;
+  try {
+    seal = JSON.parse(fs.readFileSync(sealFile, 'utf8'));
+  } catch {
+    report.error('seal', 'eval/anchors/sealed.json is not valid JSON');
+    return;
+  }
+  if (!Array.isArray(seal.anchors) || seal.anchors.length === 0) {
+    report.ok('seal', 'seal manifest present — no sealed anchors recorded');
+    return;
+  }
+  let ok = true;
+  for (const a of seal.anchors) {
+    const abs = path.join(anchorDir, a.file);
+    if (typeof a.file !== 'string' || typeof a.sha256 !== 'string' || typeof a.id !== 'string' || !fs.existsSync(abs)) {
+      ok = false;
+      report.error('seal', `sealed anchor ${a?.id}: file missing or malformed entry (${a?.file})`);
+      continue;
+    }
+    const sha = createHash('sha256').update(fs.readFileSync(abs, 'utf8'), 'utf8').digest('hex');
+    if (sha !== a.sha256) {
+      ok = false;
+      report.error('seal', `sealed anchor ${a.id} DRIFTED — content changed after sealing (${a.file}); revert, or unseal+reseal deliberately and republish the hash (docs/EVALS.md #1)`);
+    }
+  }
+  if (ok) report.ok('seal', `${seal.anchors.length} sealed anchor(s) intact (sha256 verified)`);
+}
+
 /** Manifesto linkage — PRINCIPLES.md is complete and referenced. */
 function checkManifestoLinkage(root, report) {
   const text = readText(root, 'PRINCIPLES.md');
@@ -325,6 +366,7 @@ export function runVerifyPrinciples(root = REPO_ROOT, report = { ok() {}, error(
   checkZodToolSchemas(root, sink);
   checkHooksChokePoint(root, sink);
   checkJudgePaths(root, sink);
+  checkSealedAnchors(root, sink);
   checkManifestoLinkage(root, sink);
   checkOneToolPerFile(root, sink);
   checkLocPreferences(root, sink);

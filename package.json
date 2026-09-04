@@ -53,6 +53,7 @@
     "evolve:propose": "node --experimental-strip-types tools/eval/runEvolvePropose.ts",
     "evolve:decide": "node --experimental-strip-types tools/eval/runEvolveDecide.ts",
     "evolve:validate": "node --experimental-strip-types tools/eval/runEvolveValidate.ts",
+    "evolve:seal": "node --experimental-strip-types tools/eval/runEvolveSeal.ts",
     "edit:bench": "node --experimental-strip-types tools/eval/runEditBench.ts",
     "bench:competitive": "node --experimental-strip-types tools/eval/runCompetitiveBench.ts",
     "test:eval": "vitest run tools/eval",

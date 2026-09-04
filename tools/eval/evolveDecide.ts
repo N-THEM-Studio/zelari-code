@@ -30,6 +30,7 @@
 import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { effectiveStatusById, type StoredProposal } from './evolvePropose.ts';
+import { behavioralVerdict, type BehavioralMetrics } from './behavioral.ts';
 
 export type DecisionStatus = 'applied' | 'rejected' | 'withdrawn';
 
@@ -43,6 +44,12 @@ export interface DecisionInput {
   evidence: string[];
   /** Optional free-form operator note (copied verbatim, never generated). */
   note?: string;
+  /**
+   * W2/t45 anti-Goodhart gate: ledger-derived behavioural metrics
+   * (baseline vs variant). When present and REGRESSING, 'applied' is
+   * rejected by code (docs/EVALS.md #2) — see behavioral.ts.
+   */
+  behavior?: { baseline: BehavioralMetrics; variant: BehavioralMetrics; minRuns?: number };
 }
 
 /** A decision record repeats the decided proposal's fields + the decision fields. */
@@ -131,6 +138,23 @@ export function decide(
     if (evidence.length < required.length) {
       throw new Error(
         `applied requires evidence for every validation ask: ${required.length} required (${required.join('; ')}), got ${evidence.length} — fail-closed; pass --evidence once per ask`,
+      );
+    }
+  }
+
+  // W2/t45 — anti-Goodhart behavioural gate (docs/EVALS.md #2): a variant
+  // that raises steer/interrupt rate or lowers the average evidence tier is
+  // rejected BY CODE even when the pass rate improves. Evaluated only when
+  // the caller supplies ledger-derived metrics (runEvolveDecide computes
+  // them by default); without data the decision proceeds (absent telemetry
+  // never fabricates a verdict — the runner states it on stderr).
+  if (input.status === 'applied' && input.behavior !== undefined) {
+    const behavior = behavioralVerdict(input.behavior.baseline, input.behavior.variant, {
+      minRuns: input.behavior.minRuns,
+    });
+    if (!behavior.ok) {
+      throw new Error(
+        `applied blocked by the behavioural rule (anti-Goodhart, docs/EVALS.md #2): ${behavior.reasons.join('; ')} — a variant that degrades behaviour is rejected by construction`,
       );
     }
   }

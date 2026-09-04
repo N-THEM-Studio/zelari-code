@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "sealedAt": "2026-09-04T17:43:38.885Z",
+  "anchors": [
+    {
+      "id": "js-add-missing-test",
+      "file": "verification/add-missing-test.anchor.json",
+      "sha256": "44ede3ce168edcbc04e49d1a790a81da824ac627dc8e9a8cb3b0598d17dc2355",
+      "tier": 0,
+      "sealedAt": "2026-09-04T17:43:38.885Z"
+    },
+    {
+      "id": "js-fix-export-bugfix",
+      "file": "local-bugfix/js-fix-export.anchor.json",
+      "sha256": "1f8972c92896ee1ce8e669e3fd234d088666e893c43158fa4a62994716492bfe",
+      "tier": 0,
+      "sealedAt": "2026-09-04T17:43:38.885Z"
+    },
+    {
+      "id": "js-fix-failing-suite",
+      "file": "verification/fix-failing-suite.anchor.json",
+      "sha256": "07bdcb95b50b57b5cdc0281f16fe260729634d50e38710423235876965a02f83",
+      "tier": 0,
+      "sealedAt": "2026-09-04T17:43:38.885Z"
+    },
+    {
+      "id": "js-null-guard-fix",
+      "file": "local-bugfix/js-null-guard.anchor.json",
+      "sha256": "1207251fc7301a9e8dd42aa93ccd46ea72af30841c89b6141dee485394074f76",
+      "tier": 0,
+      "sealedAt": "2026-09-04T17:43:38.885Z"
+    },
+    {
+      "id": "js-off-by-one-fix",
+      "file": "local-bugfix/js-off-by-one.anchor.json",
+      "sha256": "7f793a9b264131ee5714c4a221a5d3092f2b0739b9270d58b893f55b1fa1054d",
+      "tier": 0,
+      "sealedAt": "2026-09-04T17:43:38.885Z"
+    },
+    {
+      "id": "js-regex-anchor-fix",
+      "file": "local-bugfix/js-regex-fix.anchor.json",
+      "sha256": "6da449d65f7b744e51db2b54bb06cff3bc8f679a9059efd94ba4078410755786",
+      "tier": 0,
+      "sealedAt": "2026-09-04T17:43:38.885Z"
+    },
+    {
+      "id": "js-string-template-fix",
+      "file": "local-bugfix/py-style-string.anchor.json",
+      "sha256": "933665c3fda972e7f8f85179631da1a88b5f8005b52a9b06ef7dd1f05a7be56d",
+      "tier": 0,
+      "sealedAt": "2026-09-04T17:43:38.885Z"
+    }
+  ]
+}
