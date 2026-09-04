@@ -430,8 +430,22 @@ function pickRootComponent(): {
         `ledger: ${LEDGER_REL} (project-local, append-only)\n` +
         `runs: ${stats.runs}` +
         (stats.runs > 0
-          ? `\nbyVerdict: ${JSON.stringify(stats.byVerdict)}\nbyClass: ${JSON.stringify(stats.byClass)}\nwindow: ${stats.firstAt} → ${stats.lastAt}`
-          : ""),
+          ? `\nbyVerdict: ${JSON.stringify(stats.byVerdict)}\nbyClass: ${JSON.stringify(stats.byClass)}\nwindow: ${stats.firstAt} → ${stats.lastAt}` +
+            (stats.weightedPassRate !== undefined
+              ? `\ntier-weighted pass rate: ${stats.weightedPassRate.toFixed(2)} (ADR-0023 ladder)`
+              : "") +
+            (stats.rollbackRate !== undefined
+              ? `\nrollback rate: ${stats.rollbackRate.toFixed(2)}`
+              : "") +
+            (stats.avgCostUsd !== undefined ? `\navg cost: $${stats.avgCostUsd.toFixed(4)}` : "") +
+            Object.entries(stats.byClassFitness)
+              .map(
+                ([cls, f]) =>
+                  `\nfitness ${cls}: pass ${f.passRate.toFixed(2)} · weighted ${f.weightedPassRate.toFixed(2)} · rollback ${f.rollbackRate.toFixed(2)}`,
+              )
+              .join("")
+          : "") +
+        `\nproposals: npm run evolve:propose — decisions in npm run evolve:decide (P1: nothing self-promotes)`,
     );
     process.exit(0);
   }

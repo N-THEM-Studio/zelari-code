@@ -42,6 +42,8 @@ export interface LedgerEntry {
   steerCount?: number;
   rollbackUsed?: boolean;
   costUsd?: number;
+  /** Wall-clock duration of the run in ms, when the caller knows it. */
+  latencyMs?: number;
   /** Harness manifest hash when known — fitness validity boundary. */
   manifestHash?: string;
 }
@@ -111,25 +113,134 @@ export function readLedger(cwd: string): LedgerEntry[] {
   return out;
 }
 
+// ─── Deterministic fitness v1 (t42, ADR-0036) ─────────────────────────────
+//
+// Pure arithmetic over ledger entries. NO LLM anywhere: the module that
+// proposes (tools/eval evolvePropose) never computes this — whoever reads
+// fitness only reads, never proposes (P1: proposer ≠ measurer).
+//
+// Tier weights — how much a verdict counts, based on the evidence backing it
+// (the evidence ladder applied to the engine itself):
+//   1.0  build / tool-output / command-output   — event-backed, traceable
+//   0.9  fs-observation                          — deterministic read, no exec
+//   0.25 anything else or missing                — claimed-ish, near-zero trust
+// Verdict handling: PASS=1, FAIL=0; HOLD and UNKNOWN are EXCLUDED from both
+// numerator and denominator (unknown ≠ pass AND unknown ≠ fail — ADR-0023).
+
+const TIER_WEIGHTS: Record<string, number> = {
+  build: 1,
+  'tool-output': 1,
+  'command-output': 1,
+  tool: 1,
+  command: 1,
+  'fs-observation': 0.9,
+  fs: 0.9,
+};
+const UNTIERED_WEIGHT = 0.25;
+
+function tierWeight(tier: string | undefined): number {
+  if (!tier) return UNTIERED_WEIGHT;
+  return TIER_WEIGHTS[tier] ?? UNTIERED_WEIGHT;
+}
+
+/** True for verdicts that count towards pass-rate (PASS or FAIL only). */
+function isRated(verdict: string): boolean {
+  return verdict === 'PASS' || verdict === 'FAIL';
+}
+
+export interface ClassFitness {
+  runs: number;
+  /** Simple PASS / (PASS+FAIL) — no tier weighting. */
+  passRate: number;
+  /** Tier-weighted pass rate in [0,1] (see weights above). */
+  weightedPassRate: number;
+  /** Mean costUsd over entries that carry it. */
+  avgCostUsd?: number;
+  /** Mean latencyMs over entries that carry it. */
+  avgLatencyMs?: number;
+  /** Mean steerCount over entries that carry it (behavioural signal). */
+  avgSteerCount?: number;
+  /** Share of entries with rollbackUsed=true. */
+  rollbackRate: number;
+}
+
 export interface LedgerStats {
   runs: number;
   byVerdict: Record<string, number>;
   byClass: Record<string, number>;
   firstAt?: string;
   lastAt?: string;
+  /** Tier-weighted global pass rate over rated (PASS|FAIL) runs. */
+  weightedPassRate?: number;
+  avgSteerCount?: number;
+  rollbackRate?: number;
+  avgCostUsd?: number;
+  avgLatencyMs?: number;
+  /** Per-taskClass deterministic fitness (the routing/fitness key). */
+  byClassFitness: Record<string, ClassFitness>;
 }
 
-/** Aggregate stats for `--evolve-status` (read-only). */
+function mean(nums: readonly number[]): number | undefined {
+  if (nums.length === 0) return undefined;
+  return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
+function classFitness(entries: readonly LedgerEntry[]): ClassFitness {
+  const rated = entries.filter((e) => isRated(e.verdict));
+  const passRate =
+    rated.length === 0 ? 0 : rated.filter((e) => e.verdict === 'PASS').length / rated.length;
+  const wSum = rated.reduce((acc, e) => acc + tierWeight(e.evidenceTier), 0);
+  const wPass = rated
+    .filter((e) => e.verdict === 'PASS')
+    .reduce((acc, e) => acc + tierWeight(e.evidenceTier), 0);
+  return {
+    runs: entries.length,
+    passRate,
+    weightedPassRate: wSum === 0 ? 0 : wPass / wSum,
+    avgCostUsd: mean(entries.map((e) => e.costUsd).filter((c): c is number => typeof c === 'number')),
+    avgLatencyMs: mean(
+      entries.map((e) => e.latencyMs).filter((c): c is number => typeof c === 'number'),
+    ),
+    avgSteerCount: mean(
+      entries.map((e) => e.steerCount).filter((c): c is number => typeof c === 'number'),
+    ),
+    rollbackRate:
+      entries.length === 0 ? 0 : entries.filter((e) => e.rollbackUsed === true).length / entries.length,
+  };
+}
+
+/** Aggregate stats + deterministic fitness for `--evolve-status` / `/evolve`. */
 export function ledgerStats(entries: readonly LedgerEntry[]): LedgerStats {
   const byVerdict: Record<string, number> = {};
   const byClass: Record<string, number> = {};
+  const byClassEntries: Record<string, LedgerEntry[]> = {};
   let firstAt: string | undefined;
   let lastAt: string | undefined;
   for (const e of entries) {
     byVerdict[e.verdict] = (byVerdict[e.verdict] ?? 0) + 1;
     byClass[e.taskClass] = (byClass[e.taskClass] ?? 0) + 1;
+    (byClassEntries[e.taskClass] ??= []).push(e);
     if (!firstAt || e.at < firstAt) firstAt = e.at;
     if (!lastAt || e.at > lastAt) lastAt = e.at;
   }
-  return { runs: entries.length, byVerdict, byClass, firstAt, lastAt };
+  const byClassFitness: Record<string, ClassFitness> = {};
+  for (const [cls, list] of Object.entries(byClassEntries)) {
+    byClassFitness[cls] = classFitness(list);
+  }
+  const global = classFitness(entries);
+  return {
+    runs: entries.length,
+    byVerdict,
+    byClass,
+    ...(firstAt ? { firstAt } : {}),
+    ...(lastAt ? { lastAt } : {}),
+    ...(global.weightedPassRate !== undefined && entries.some((e) => isRated(e.verdict))
+      ? { weightedPassRate: global.weightedPassRate }
+      : {}),
+    ...(global.avgSteerCount !== undefined ? { avgSteerCount: global.avgSteerCount } : {}),
+    ...(entries.length > 0 ? { rollbackRate: global.rollbackRate } : {}),
+    ...(global.avgCostUsd !== undefined ? { avgCostUsd: global.avgCostUsd } : {}),
+    ...(global.avgLatencyMs !== undefined ? { avgLatencyMs: global.avgLatencyMs } : {}),
+    byClassFitness,
+  };
 }

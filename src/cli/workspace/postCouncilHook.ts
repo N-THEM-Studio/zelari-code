@@ -28,6 +28,7 @@ import type {
   VerificationReport,
 } from "@zelari/core/council";
 import { updateAgentsMd } from "./agentsMd.js";
+import type { SpineEvidenceRef } from "../evolution/evidenceFromSpine.js";
 import { runBuiltinCompleteDesign } from "./completeDesign.js";
 import { runPlanDriftCheck, type PlanDriftResult } from "./planDriftCheck.js";
 import { runProjectSmoke, type ProjectSmokeResult } from "./projectSmoke.js";
@@ -102,6 +103,12 @@ export interface PostCouncilHookOptions {
   userMessage?: string;
   /** Chairman synthesis text for honesty lint. */
   synthesisText?: string;
+  /**
+   * Session id (t44, ADR-0023): when present with synthesisText, the hook
+   * collects traceable EvidenceRefs from the session spine and feeds them to
+   * the honesty lint — claims without event-backed evidence get flagged.
+   */
+  sessionId?: string;
   /** Council run was degraded — gates PASS messaging and synthesis lint. */
   degradedRun?: boolean;
   degradedReasons?: string[];
@@ -237,7 +244,7 @@ export async function runImplementationVerificationHook(
   ctx: WorkspaceContext,
   options?: Pick<
     PostCouncilHookOptions,
-    "runMode" | "synthesisText" | "degradedRun"
+    "runMode" | "synthesisText" | "degradedRun" | "sessionId"
   >,
 ): Promise<VerificationHookResult> {
   if (options?.runMode === "design-phase") {
@@ -247,11 +254,25 @@ export async function runImplementationVerificationHook(
     return { ran: false, reason: "ZELARI_VERIFY=0 (disabled)" };
   }
   try {
+    // t44 (ADR-0023): collect traceable EvidenceRefs from the session spine
+    // so the honesty lint can grade synthesis claims against real tool
+    // output. Fail-open — on any error the lint keeps its legacy heuristic.
+    let evidence: readonly SpineEvidenceRef[] | undefined;
+    if (options?.synthesisText && options?.sessionId) {
+      try {
+        const { collectSessionEvidenceRefs } = await import("../evolution/evidenceFromSpine.js");
+        const refs = collectSessionEvidenceRefs(options.sessionId);
+        if (refs.length > 0) evidence = refs;
+      } catch {
+        // fail-open: no spine evidence → legacy lint heuristic
+      }
+    }
     const report = runImplementationVerification({
       projectRoot: ctx.projectRoot,
       zelariRoot: ctx.rootDir,
       synthesisText: options?.synthesisText,
       degradedRun: options?.degradedRun,
+      ...(evidence ? { evidence } : {}),
     });
     const reportPath = writeVerificationReport(ctx.rootDir, report);
     return { ran: true, ok: report.ok, reportPath, report };

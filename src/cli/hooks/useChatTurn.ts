@@ -2129,6 +2129,7 @@ async function dispatchCouncilPromptImpl(
         const hook = await runPostCouncilHook(workspaceCtx, {
           runMode: councilRunMode,
           userMessage: effectiveText,
+          sessionId,
           synthesisText: chairmanSynthesisText || undefined,
           degradedRun: degraded.degraded,
           degradedReasons: degraded.reasons,
@@ -2220,6 +2221,26 @@ async function dispatchCouncilPromptImpl(
               Date.now(),
             );
           }
+        }
+        // t41 (ADR-0036): shadow ledger append at end of council turn.
+        // Fail-open telemetry only — must never influence the turn outcome.
+        try {
+          const { appendLedgerEntry } = await import("../evolution/ledger.js");
+          const { classifyTask } = await import("../evolution/classifyTask.js");
+          appendLedgerEntry(process.cwd(), {
+            runId: `${sessionId}-turn-${Date.now()}`,
+            at: new Date().toISOString(),
+            mode: "shadow",
+            taskClass: classifyTask({ prompt: effectiveText }).taskClass,
+            verdict: hook.verification?.ran
+              ? hook.verification.ok === true
+                ? "PASS"
+                : "FAIL"
+              : "UNKNOWN",
+            ...(hook.smoke?.ran ? { evidenceTier: "command-output" } : {}),
+          });
+        } catch {
+          // fail-open — the ledger is telemetry, never a gate
         }
         // Durable State Commit after verified council completion (Palmer).
         // Skip degraded / failed verification — those must not become HEAD.
