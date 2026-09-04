@@ -5,6 +5,26 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.30.0] - 2026-09-05
+
+Hardening waves W0–W4 on top of the 2.29.0 constitution: the evolution loop becomes measurable, eval anchors become tamper-evident, security gains provenance escalation at the choke-point, and governance gains cost budgets with HOLD and memory decay.
+
+### Added
+
+- **Evolution v0.1 — the measurable loop (W1)** — the shadow ledger now appends at the end of TUI council turns as well (verdict from the verification hook, task class from the deterministic classifier, evidence tier only when smoke actually ran); `ledgerStats` gains deterministic fitness v1 — tier-weighted pass rate (`build`/`tool-output`/`command-output` = 1, `fs-observation` = 0.9, other/missing = 0.25; HOLD/UNKNOWN excluded from the denominator), steer/rollback/cost/latency aggregates and per-class fitness; `/evolve proposals` surfaces the existing proposal store read-only (event-sourced last-record fold, corrupted lines tolerated); the honesty lint finally receives real `EvidenceRef`s derived from the session spine (`tool.call`/`tool.result` → tier `tool-output`, capped at 400, fail-open).
+- **Anti-Goodhart (W2)** — 7 Tier-0 anchors sealed with sha256 (`eval/anchors/sealed.json`, `npm run evolve:seal`): drift on a sealed anchor turns the principles gate red; behavioural promote rule in `evolveDecide` — `applied` with rising `avgSteerCount` or falling tier weight throws (a rule in code, not a judgment; no ledger data ⇒ explicit skip, never invented); `--rotation-candidates` lists anonymised task classes for future hold-out anchors (human authoring only, zero auto-generation).
+- **Security (W3)** — provenance ring at the tool choke-point: results from web/MCP/file reads are fingerprinted and any write/execute embedding them escalates allow→ask with an explicit reason (file→execute only; file→write stays free for legitimate refactors; `ZELARI_PROVENANCE=0` disables, fail-open throughout); SSH exfil guard — allowlisted commands matching egress patterns (curl/wget, nc/socat, `/dev/tcp`, scp/rsync hops, large base64 blobs) are denied unless the target opts in with `allowExfil`; permission presets `--permissions strict|standard|yolo` (+ `ZELARI_PERMISSION_PRESET`; `standard` is byte-identical to the historical defaults; per-category env still wins in both directions).
+- **Governance (W4)** — session cost budget with HOLD: `ZELARI_SESSION_BUDGET_USD`/`ZELARI_SESSION_BUDGET_TOKENS`, warn ≥80%, HOLD ≥100% blocks the provider call before the turn (history/spine intact, fail-open on invalid values), cumulative usage recorded at `agent_end`; memory audit — deterministic confidence decay (30-day half-life, floor 0.05, computed on read — history stays immutable) and mirror-negation contradiction detection, surfaced read-only via `/memory audit` (flags for review, never auto-mutates).
+- **CI** — `npm audit --audit-level=high` now blocks the verify job (moderate/low stay advisory); AGENTS.MD decisions refreshed through ADR-0036.
+
+### Changed
+
+- **`docs/THREAT_MODEL.md` rewritten** — MCP/file/web injection and ssh exfil now mitigated-to-guaranteed with the provenance ring and the exfil guard; new open residual declared (paraphrase evasion).
+
+### Docs
+
+- **`HANDOFF-v2.30.md`** — cross-machine development handoff: what shipped in W0–W4, what remains (Wave 5 + declared leftovers), and how to resume.
+
 ## [2.29.0] - 2026-09-04
 
 Evolution wave: the proposer/judge constitution (ADR-0036) lands with a mechanical gate, all runtime state moves under one root, settings become a file, the honesty lint learns to read evidence, and the Evolution Engine ships as an opt-in shadow ledger that observes but never promotes.
@@ -2084,6 +2104,16 @@ End-to-end against MiniMax-M3 (the model these failures were first reported on):
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
 ## [2.25.0] - 2026-07-10
+
+### Fixed
+- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
+- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
+- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
+
+### Added
+- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
+
+## [2.30.0] - 2026-07-10
 
 ### Fixed
 - **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
