@@ -2,6 +2,8 @@
  * Types for deterministic post-council implementation verification.
  */
 
+import type { EvidenceRef } from '../../verification/types.js';
+
 export type VerificationSeverity = 'error' | 'warn';
 
 /** Evidence ladder: claimed < grep < tool < build. */
@@ -66,4 +68,10 @@ export interface RunVerificationInput {
   synthesisText?: string;
   /** Council run was degraded (abort/error/no writes). */
   degradedRun?: boolean;
+  /**
+   * Evidence refs collected during the run (ADR-0023). When present,
+   * lintSynthesisHonesty cross-checks synthesis claims against them
+   * (P1/ADR-0036: advisory tiers never clear a claim).
+   */
+  evidence?: readonly EvidenceRef[];
 }

@@ -1,7 +1,7 @@
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import os from 'node:os';
 import { appendSystem } from '../hooks/messageHelpers.js';
+import { skillsDir } from '../paths.js';
 import type { ChatMessage } from '../components/ChatStream.js';
 
 /**
@@ -20,11 +20,20 @@ export async function handlePromoteMember(ctx: PromoteMemberSlashContext, member
   try {
     const { promoteMember } = await import('@zelari/core/council');
     const { skill, markdown } = promoteMember(memberId);
-    const skillDir = process.env.ANATHEMA_SKILL_DIR
-      ?? path.join(os.homedir(), '.tmp', 'zelari-code', 'skills');
+    const skillDir = skillsDir();
     await fs.mkdir(skillDir, { recursive: true });
     const filePath = path.join(skillDir, `${skill.id}.md`);
-    await fs.writeFile(filePath, markdown, 'utf8');
+    // ADR-0036 lineage: every promoted skill records its content hash chain.
+    // Rendered as a trailing HTML comment (NOT frontmatter) so the tolerant
+    // skill parser never has to understand lineage keys (P5: stable format).
+    const previous = await fs.readFile(filePath, 'utf8').catch(() => null);
+    const { createHash } = await import('node:crypto');
+    const sha = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
+    const lineage =
+      `<!-- lineage: genome=sha256:${sha(markdown)}` +
+      ` parent=${previous ? `sha256:${sha(previous)}` : 'none'}` +
+      ` promotedBy=user promotedAt=${new Date().toISOString()} -->`;
+    await fs.writeFile(filePath, `${markdown}\n${lineage}\n`, 'utf8');
     appendSystem(
       ctx.setMessages,
       `[promote-member] ${skill.name} (${memberId}) → ${filePath}\n` +
@@ -32,7 +41,8 @@ export async function handlePromoteMember(ctx: PromoteMemberSlashContext, member
         `  cost:        ${skill.estimatedCost}\n` +
         `  required:    ${skill.requiredRoles.join(', ') || '—'}\n` +
         `  tools:       ${skill.requiredTools.join(', ') || '—'}\n` +
-        `  tags:        ${skill.tags.join(', ')}`,
+        `  tags:        ${skill.tags.join(', ') || '—'}\n` +
+        `  lineage:     ${previous ? 'genome+parent (sha256)' : 'genome (sha256, first promote)'}`,
     );
   } catch (err) {
     appendSystem(ctx.setMessages, `[promote-member error] ${err instanceof Error ? err.message : String(err)}`);

@@ -255,7 +255,7 @@ export function runImplementationVerification(input: RunVerificationInput): Veri
     results: fileResults,
   };
 
-  results.push(...lintSynthesisHonesty(input.synthesisText));
+  results.push(...lintSynthesisHonesty(input.synthesisText, input.evidence));
   results.push(...verifyCitations(input.projectRoot, input.synthesisText));
   results.push(...auditSynthesisTiers(input.synthesisText, preliminaryReport));
   if (input.degradedRun) {
