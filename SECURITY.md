@@ -50,15 +50,22 @@ fix release when appropriate.
 - Denial of service via intentional huge model contexts or unbounded user tasks
   without a clear bug in resource limits
 
+## Threat model
+
+See [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md) — the full
+vector × gate × status matrix (guaranteed / mitigated / open) covering prompt
+injection (file/web/MCP output), exfiltration via `ssh_run`, untrusted-repo
+hooks, plugins, and what a fresh clone loads by default.
+
 ## Safe configuration notes
 
-- API keys live under `~/.tmp/zelari-code/` (and related env overrides) — never
+- API keys live under `~/.zelari-code/` (and related env overrides) — never
   commit them
 - SSH secrets: `~/.zelari-code/ssh-secrets.json` (never paste into chat)
 - Kill switches: `ZELARI_SSH=0`, `ZELARI_MCP=0`, `ZELARI_BROWSER=0`, `ZELARI_FOLDER_TRUST=0`, etc.
 - Plan phase (`/plan` or `--phase plan`) blocks project-mutating tools
 - **Folder trust** (`/trust`, `~/.zelari-code/trust.json`): project-scoped MCP and lifecycle hooks load only for trusted folders. User-global MCP/hooks stay active. Untrusted `.zelari/mcp.json` is ignored.
-- Lifecycle hooks are **fail-open**: only an explicit JSON `deny` blocks a tool.
+- Lifecycle hooks: **fail-open in the TUI** (only an explicit JSON `deny` blocks a tool), **fail-closed in autonomous runs** (headless/mission/CI: a hook crash/timeout denies). `ZELARI_HOOKS_FAILURE=fail-open|fail-closed` overrides.
 - Companion `zelari-code serve` binds a LAN/Tailscale token (`~/.zelari-code/companion.token`) — do not expose `0.0.0.0` on the public internet.
 
 ## Disclosure preference

@@ -260,6 +260,7 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 ## Features
 
 - 🤖 **Multi-agent council** — 6 roles (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with feedback loops and member promotion
+  - **Role legend:** **Caronte** — Council Director (orchestrator, opens the run) · **Nettuno** — Project Planner · **Gerione** — Creative Ideator (diverge→converge) · **Plutone** — Knowledge Architect · **Minosse** — Quality Critic (oracle: literal verification, per-run verdict) · **Lucifero** — Chairman (synthesis + dispatch) — definitions in `packages/core/src/agents/roles.ts`
 - 🐙 **Kraken super-agent** — default mode (aliases `agent`/`single`): lead that spawns `task` tentacles (`explore` / `general` / `verify`), optional git worktrees, and **Kraken Graph** (`/kraken graph`) for a parallel DAG
 - ⚡ **Zelari-mode** — autonomous multi-run missions: a free-form prompt becomes a mission brief, then **design@council → build@kraken** until the MVP slice's `completion.ok` is green or the iteration budget runs out
 - 🧮 **Budget-aware mission continuation** — after each mission slice a continuation gate decides repair / pivot / hold from the remaining budget and gap history (repeated gap → pivot with reduced roster; exhaustion → hold, never a false done; deterministic PASS stays the only authority)
@@ -282,7 +283,7 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 🤝 **Sub-agent delegation** (`task` tool) — isolated tentacles: `explore` (read-only), `general` (bounded writes), `verify` (tests/checks); optional `scope[]` + `acceptance[]`; no nested `task`
 - 📚 **26 coding skills** (+ user `SKILL.md` from `.zelari/skills/`, `.claude/skills/`, …) including `schema-loop`, `computer-use-cua`, `qwen-mm-plugins-install-setup`
 - 🔄 **Cross-provider failover** — automatic retry with provider swap on transient errors
-- 📊 **Metrics + skill history** — fire-and-forget logging to `~/.tmp/zelari-code/`
+- 📊 **Metrics + skill history** — fire-and-forget logging to `~/.zelari-code/` (unified home; auto-migrated from the legacy `~/.tmp` roots — see `src/cli/paths.ts`)
 - 🗜️ **Session management** — JSONL transcripts, resume across restarts, compaction
 - 🌿 **Branch isolation** — session snapshots per branch
 - 🔌 **MCP** — external MCP servers via `.zelari/mcp.json` or `~/.zelari-code/mcp.json`; Desktop **Extensions** store for one-click install
@@ -292,7 +293,7 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 - 🧩 **Skills store (Desktop)** — create/remove user & project `SKILL.md`; import skill from URL with the selected model; `/skills` picker in TUI
 - 📎 **@-tag paths** — tag workspace files/folders in Desktop composer and CLI prompts
 - ◇◆ **Plan / build phase** — `/plan` explores without project writes; `/build` implements with full tools (independent of kraken/council/zelari mode)
-- 🛡️ **Folder trust + lifecycle hooks** — project MCP/hooks load only for trusted folders (`/trust`, `zelari-code --inspect`); hooks are fail-open
+- 🛡️ **Folder trust + lifecycle hooks** — project MCP/hooks load only for trusted folders (`/trust`, `zelari-code --inspect`); hooks are fail-open in the TUI and **fail-closed in autonomous runs** (headless/mission/CI); override with `ZELARI_HOOKS_FAILURE=fail-open|fail-closed`. Full vector × gate matrix and fresh-clone defaults: [docs/THREAT_MODEL.md](./docs/THREAT_MODEL.md)
 - 👁️ **Native vision** — `@image.jpg` (and Desktop drop-to-attach) inlines pixels to vision-capable models; no third-party vision API
 - 🆕 **Self-update** — `/update` slash command + silent registry check on startup
 
@@ -347,6 +348,9 @@ zelari-code (CLI, Apache-2.0)
 | `ZELARI_MEMORY_MCP=1` | Enable the optional trusted external memory MCP server |
 | `ZELARI_MEMORY_MCP_CLIENT_ID=<id>` | Stable local owner id for MCP-private memories |
 | `ZELARI_MEMORY_STRICT=1` | Fail instead of degrading when SQLite V2 cannot initialize |
+| `ZELARI_HOOKS_FAILURE` | Lifecycle-hook failure mode: `fail-open` (TUI default: only an explicit JSON `deny` blocks) or `fail-closed` (autonomous-run default: any hook crash/timeout denies) |
+| `ZELARI_EVOLUTION` | Evolution Engine v0: `0` (default, off) or `shadow` — append-only outcome ledger at `.zelari/evolution/ledger.jsonl`; telemetry only, never promotes anything (ADR-0036); see `/evolve` and `--evolve-status` |
+| `zelari.config.json` | Optional settings file (user `~/.zelari-code/` or project `.zelari/`) covering the knobs in this table — precedence: defaults < user < project < env; inspect the origin of every value with `zelari-code --print-settings` |
 | `ZELARI_MISSION_AUTO=1` | Auto-start Zelari missions (skip the brief confirmation) |
 | `ZELARI_MISSION_MAX_ITER` | Max **implementation** slices per Zelari mission (default 6; design-phase is free; impl 2+ = Minosse+Lucifero only) |
 | `ZELARI_TASK_CONTRACT=0` | Disable the mission TaskContract (goal / constraints / acceptance criteria extracted from the brief; on by default) |
