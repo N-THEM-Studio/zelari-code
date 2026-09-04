@@ -189,7 +189,7 @@ async function shutdown(): Promise<void> {
   // B.5.2). The chat session in `app.tsx` writes via fire-and-forget
   // queue — if we just `process.exit(0)` on SIGINT, the last few records
   // (often the most interesting: agent_end + tool_execution_end) never
-  // land in `~/.tmp/anathema-coder/metrics.jsonl`. Awaiting `flush()`
+  // land in `~/.zelari-code/metrics.jsonl`. Awaiting `flush()`
   // before exit guarantees the file is fully written.
   try {
     await getMetricsLogger().flush();
@@ -405,6 +405,36 @@ function pickRootComponent(): {
     }
     process.exit(1);
   }
+  if (argv.includes("--print-settings")) {
+    // Fase 3 (B12): layered zelari.config.json report — every knob with the
+    // origin of its value (default < user < project < env). Read-only.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { printSettingsReport } =
+      require("./userSettings.js") as typeof import("./userSettings.js");
+    // eslint-disable-next-line no-console
+    console.log(printSettingsReport({ cwd: process.cwd() }));
+    process.exit(0);
+  }
+  if (argv.includes("--evolve-status")) {
+    // Evolution Engine v0 (ADR-0036): read-only ledger stats. The ledger is
+    // append-only under .zelari/evolution/ and written ONLY when
+    // ZELARI_EVOLUTION=shadow; this flag never mutates anything.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { evolutionMode, ledgerStats, readLedger, LEDGER_REL } =
+      require("./evolution/ledger.js") as typeof import("./evolution/ledger.js");
+    const entries = readLedger(process.cwd());
+    const stats = ledgerStats(entries);
+    // eslint-disable-next-line no-console
+    console.log(
+      `evolution mode: ${evolutionMode()} (ZELARI_EVOLUTION)\n` +
+        `ledger: ${LEDGER_REL} (project-local, append-only)\n` +
+        `runs: ${stats.runs}` +
+        (stats.runs > 0
+          ? `\nbyVerdict: ${JSON.stringify(stats.byVerdict)}\nbyClass: ${JSON.stringify(stats.byClass)}\nwindow: ${stats.firstAt} → ${stats.lastAt}`
+          : ""),
+    );
+    process.exit(0);
+  }
   if (argv.includes("--fix-budget") || argv.includes("fix-budget")) {
     // v1.20.0: runtime tool-budget repair. Sets the recommended ZELARI_*
     // env vars (hard cap, soft cap, context limit) at User scope so multi-step
@@ -545,6 +575,10 @@ function pickRootComponent(): {
         "  --serve-harness     Long-lived harness kernel for hosts (NDJSON JSON-RPC\n" +
         "                      on stdin/stdout; Desktop/companion transport)\n" +
         "  --print-config      Print provider/model config as JSON (no secrets)\n" +
+        "  --print-settings    Print zelari.config.json values + the origin of\n" +
+        "                      each (default < user < project < env)\n" +
+        "  --evolve-status     Evolution ledger stats (read-only; ADR-0036; the\n" +
+        "                      ledger is written only when ZELARI_EVOLUTION=shadow)\n" +
         "  --plugins-status    JSON status of optional plugins (Playwright, eslint, …)\n" +
         "  --plugins-install <id>  Install plugin (playwright also fetches Chromium)\n" +
         "    --cwd <path>       Workspace for -D installs (default: process.cwd())\n" +

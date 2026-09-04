@@ -651,6 +651,20 @@ async function runHeadlessKrakenGraph(
           : 'error';
       await spine.close(closeReason);
     } catch { /* spine never fails the run */ }
+    // Evolution ledger v0 (ADR-0036): shadow-mode outcome telemetry only.
+    try {
+      const { appendLedgerEntry, evolutionMode } = await import('./evolution/ledger.js');
+      const { classifyTask } = await import('./evolution/classifyTask.js');
+      if (evolutionMode() === 'shadow') {
+        appendLedgerEntry(cwd, {
+          runId: spine.sessionId,
+          at: new Date().toISOString(),
+          mode: 'shadow',
+          taskClass: classifyTask({ prompt: opts.task ?? '' }).taskClass,
+          verdict: exitCode === 0 ? 'PASS' : exitCode === 3 ? 'FAIL' : 'UNKNOWN',
+        });
+      }
+    } catch { /* ledger never fails the run (ADR-0036) */ }
     // HarnessState inc.3: final read-model event for JSON hosts (best-effort).
     await emitHarnessStateEvent({ spine, workspaceRoot: cwd, output: opts.output, emitEvent });
   }
@@ -966,6 +980,21 @@ async function runHeadlessCouncil(
   try {
     await spine.close(exitCode === 0 ? 'completed' : 'error');
   } catch { /* spine never fails the run */ }
+  // Evolution ledger v0 (ADR-0036): shadow-mode outcome telemetry only.
+  // Best-effort and fail-open — the ledger must never change the outcome.
+  try {
+    const { appendLedgerEntry, evolutionMode } = await import('./evolution/ledger.js');
+    const { classifyTask } = await import('./evolution/classifyTask.js');
+    if (evolutionMode() === 'shadow') {
+      appendLedgerEntry(cwd, {
+        runId: spine.sessionId,
+        at: new Date().toISOString(),
+        mode: 'shadow',
+        taskClass: classifyTask({ prompt: effectiveTask }).taskClass,
+        verdict: exitCode === 0 ? 'PASS' : exitCode === 3 ? 'FAIL' : 'UNKNOWN',
+      });
+    }
+  } catch { /* ledger never fails the run (ADR-0036) */ }
   // HarnessState inc.3: final read-model event for JSON hosts (best-effort).
   await emitHarnessStateEvent({ spine, workspaceRoot: cwd, output: opts.output, emitEvent });
   if (opts.exportSessionPath) {
