@@ -35,3 +35,7 @@ Commit nel rilascio (da `ec7330f` a `39c201b` = W0–W4, poi release):
 - Convenzioni: commit atomici single-task (`feat(scope): … (Wx/ty)`), tag **lightweight** `vX.Y.Z` dal commit di release, `scripts/bump-version.mjs <semver>` + lockstep **manuale** di `packages/core/src/version.ts` (`CORE_VERSION`) e `packages/core/README.md` (badge) — il gate `verify-versions` li controlla.
 - CHANGELOG: voce scritta a mano **prima** del bump (l'insert automatico dello script è stantio e si aggancia a un'ancora 1.9.3 inesistente → non parte).
 - Sicurezza invariants da non rompere: ADR-0036 (proposer ≠ measurer, `JUDGE_PATHS`), anchor sealed (drift = gate rosso), regola comportamentale in `evolveDecide`, provenance/kill-switch `ZELARI_PROVENANCE`.
+
+## Post-tag fix (2026-09-05, after v2.30.0)
+
+- Sealed-anchor hashes are now computed over **LF-normalized, BOM-stripped** content in all three hashing sites (`tools/eval/sealedAnchors.ts` seal+verify, `scripts/verify-principles.mjs` gate). v2.30.0 had sealed on a Windows CRLF checkout -> CI (LF) flagged all 7 anchors as DRIFTED. All 7 re-sealed with normalized hashes; new manifest hash published in `docs/EVALS.md`. No anchor content changed. Regression test: `tools/eval/sealNormalization.test.ts`.

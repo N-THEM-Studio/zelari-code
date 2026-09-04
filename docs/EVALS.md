@@ -73,6 +73,6 @@ never hand-edit numbers:
 
 ## Sealed anchors (W2/t45, enforced)
 
-Tier-0 anchors are content-frozen in eval/anchors/sealed.json; verify-principles recomputes every hash and fails the gate on drift. Manifest hash: 
+Tier-0 anchors are content-frozen in eval/anchors/sealed.json; verify-principles recomputes every hash and fails the gate on drift. Hashes are computed over LF-normalized, BOM-stripped content (checkout-independent: sealing on Windows `core.autocrlf` and verifying on Linux CI yield the same digest — post-v2.30.0 fix). Manifest hash: `b16ca90360f9f634fcce07b4934b353b2d3a2ea7a471d56ca299585bd1adff1c`
 
 Hold-out rotation quota: derive new-anchor candidates from anonymized ledger outcomes each release (npm run evolve:seal -- --rotation-candidates). Behavioural promote rule: npm run evolve:decide blocks applied on steer/tier regression by code.

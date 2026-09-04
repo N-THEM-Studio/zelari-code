@@ -44,6 +44,23 @@ export function sha256Text(text: string): string {
   return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
+/**
+ * Platform-independent anchor text: strip a UTF-8 BOM and normalize CRLF/CR
+ * to LF BEFORE hashing. Sealed hashes must survive checkouts with different
+ * `core.autocrlf` settings (sealed on Windows CRLF, verified on CI LF broke
+ * every seal at once — post-v2.30.0 CI fix). Byte drift that matters (real
+ * content edits) is untouched by this normalization.
+ */
+export function normalizeAnchorText(text: string): string {
+  const noBom = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  return noBom.replace(/\r\n?/g, '\n');
+}
+
+/** sha256 of an anchor file's NORMALIZED content (the only hashing path). */
+export function sha256AnchorFile(file: string): string {
+  return sha256Text(normalizeAnchorText(readFileSync(file, 'utf8')));
+}
+
 export interface AnchorFileRef {
   id: string;
   tier: number;
@@ -101,7 +118,7 @@ export function computeSealManifest(
         `unknown anchor id '${id}' — run --list to see every anchor id under ${anchorDir}`,
       );
     }
-    const sha = sha256Text(readFileSync(path.join(anchorDir, ref.relPath), 'utf8'));
+    const sha = sha256AnchorFile(path.join(anchorDir, ref.relPath));
     const at = indexOf(id);
     if (at >= 0) {
       if (anchors[at].sha256 !== sha) {
@@ -174,7 +191,7 @@ export function verifySeal(anchorDir: string, manifest: SealManifest | null): Se
       continue;
     }
     try {
-      const sha = sha256Text(readFileSync(abs, 'utf8'));
+      const sha = sha256AnchorFile(abs);
       if (sha !== a.sha256) {
         problems.push(
           `sealed anchor '${a.id}' DRIFTED — content changed after sealing (${a.file}); unseal+reseal deliberately or revert (docs/EVALS.md #1)`,

@@ -275,7 +275,11 @@ function checkSealedAnchors(root, report) {
       report.error('seal', `sealed anchor ${a?.id}: file missing or malformed entry (${a?.file})`);
       continue;
     }
-    const sha = createHash('sha256').update(fs.readFileSync(abs, 'utf8'), 'utf8').digest('hex');
+    // Mirror of normalizeAnchorText (tools/eval/sealedAnchors.ts): BOM strip +
+    // CRLF->LF so sealed hashes are checkout-independent (post-v2.30.0 CI fix).
+    const raw = fs.readFileSync(abs, 'utf8');
+    const norm = (raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw).replace(/\r\n?/g, '\n');
+    const sha = createHash('sha256').update(norm, 'utf8').digest('hex');
     if (sha !== a.sha256) {
       ok = false;
       report.error('seal', `sealed anchor ${a.id} DRIFTED — content changed after sealing (${a.file}); revert, or unseal+reseal deliberately and republish the hash (docs/EVALS.md #1)`);
