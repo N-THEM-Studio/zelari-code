@@ -1033,6 +1033,21 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                     }
                   : {}),
               });
+              // W4.1: feed the cumulative session budget with the same
+              // numbers the metrics log just recorded. HOLD is enforced
+              // pre-turn, this only accumulates (fail-open by design).
+              if (realUsage) {
+                const { processSessionBudget } = await import("../costBudget.js");
+                processSessionBudget().record({
+                  costUsd: calculateCost(
+                    envConfig.model,
+                    realUsage.promptTokens,
+                    realUsage.completionTokens,
+                    realUsage.cachedPromptTokens ?? 0,
+                  ),
+                  tokens: realUsage.totalTokens,
+                });
+              }
             } else if (event.type === "error") {
               metrics.record({
                 kind: "error",
@@ -1503,6 +1518,24 @@ async function dispatchCouncilPromptImpl(
       `No API key for the active provider "${active}". Set ${spec?.envVar ?? "the provider API key env var"} or run /login ${active} before invoking /council.`,
     );
     return { completionOk: false, ran: false };
+  }
+  // W4.1: session budget HOLD (ADR-0013 pattern extended to TUI sessions) —
+  // block the turn BEFORE any provider spend; history/spine state stays
+  // intact, so raising the cap or /new resumes without loss (P3).
+  {
+    const { processSessionBudget } = await import("../costBudget.js");
+    const budget = processSessionBudget();
+    if (budget.isHold()) {
+      const s = budget.status();
+      appendSystem(
+        setMessages,
+        `[budget] HOLD — session budget exhausted (${s.usedUsd.toFixed(2)} USD · ${s.usedTokens} tokens). ` +
+          `Raise ZELARI_SESSION_BUDGET_USD / ZELARI_SESSION_BUDGET_TOKENS or start /new. ` +
+          `State preserved; no provider call was made.`,
+        Date.now(),
+      );
+      return { completionOk: false, ran: false };
+    }
   }
   setBusy(true);
   // v1.36 parity + E1.5 (ADR-0024): compactInPlace() removed from the hot
