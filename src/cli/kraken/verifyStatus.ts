@@ -101,6 +101,14 @@ export function formatStrictBlockExplanation(
       if (unsatisfied.length > 8) {
         lines.push(`  • … e altri ${unsatisfied.length - 8}`);
       }
+      // 2.31 B4: the gate teaches, doesn't humiliate — always end with the
+      // next command, never a bare verdict.
+      const first = byId.get(unsatisfied[0].criterionId) ?? unsatisfied[0].criterionId;
+      lines.push(
+        state === 'blocked'
+          ? `Prossimo comando: /verify — poi porta evidenza per «${first}» e riprova.`
+          : `Prossimo comando: ripara «${first}», poi /verify per ricontrollare.`,
+      );
     }
   }
   lines.push(
