@@ -132,10 +132,14 @@ interface PhaseKnobs {
 
 function phaseKnobs(phase: WorkPhase): PhaseKnobs {
   return {
+    // v2.32.0 (S3): count defaults raised to a runaway safety net — the
+    // primary history gate is the adaptive char budget (see
+    // historyCompaction.resolveHistoryCharBudget). An explicit
+    // ZELARI_HISTORY_TURNS stays a user contract and is honored as before.
     historyTurns:
       phase === 'plan'
-        ? envNumber(process.env.ZELARI_HISTORY_TURNS, { default: 8, min: 0 })
-        : envNumber(process.env.ZELARI_HISTORY_TURNS, { default: 6, min: 0 }),
+        ? envNumber(process.env.ZELARI_HISTORY_TURNS, { default: 40, min: 0 })
+        : envNumber(process.env.ZELARI_HISTORY_TURNS, { default: 40, min: 0 }),
     maxToolLoopIterations:
       phase === 'plan'
         ? envNumber(process.env.ZELARI_MAX_TOOL_LOOP_ITERATIONS, { default: 60, min: 1 })

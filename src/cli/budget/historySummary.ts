@@ -9,6 +9,35 @@ import type { AgentMessage } from '@zelari/core/harness';
 const MAX_SUMMARY_CHARS = 3_500;
 const MAX_LLM_INPUT_CHARS = 24_000;
 
+/** Open-obligation line patterns (S3 projection: what is still owed). */
+const OPEN_OBLIGATION_LINE = /^\s*[-*]\s+\[\s\]/;
+const OPEN_OBLIGATION_KEYWORD = /\b(TODO|PENDING|FIX ME|STILL OWED|DA FARE)\b\s*[:.]/;
+
+function collectOpenObligations(text: string, out: string[]): void {
+  for (const rawLine of text.split('\n')) {
+    const line = rawLine.trim();
+    if (!line || line.length > 240) continue;
+    if (OPEN_OBLIGATION_LINE.test(line) || OPEN_OBLIGATION_KEYWORD.test(line)) {
+      out.push(oneLine(line, 200));
+    }
+  }
+}
+
+/** Verbatim evidence anchors (S3 projection: provenance survives compaction). */
+const EVIDENCE_PATTERNS: RegExp[] = [
+  /OBSERVATION\s+ref=#\d+(?:[^,\n]{0,40})?/g,
+  /\bcommit\s+[0-9a-f]{7,40}\b/gi,
+  /\bpushed\s+[0-9a-f]{7,40}\b/gi,
+  /\bexit code\s+\d+\b/gi,
+];
+
+function collectEvidenceRefs(text: string, out: string[]): void {
+  for (const re of EVIDENCE_PATTERNS) {
+    const matches = text.match(re);
+    if (matches) out.push(...matches);
+  }
+}
+
 /**
  * Build a structured extractive summary of messages that will be dropped from
  * the rolling history. No network — pure heuristics.
@@ -28,9 +57,13 @@ export function extractiveHistorySummary(
   const decisions: string[] = [];
   const tools = new Map<string, number>();
   const files = new Set<string>();
+  const openObligations: string[] = [];
+  const evidenceRefs: string[] = [];
   let toolResults = 0;
 
   for (const m of dropped) {
+    collectOpenObligations(m.content ?? '', openObligations);
+    collectEvidenceRefs(m.content ?? '', evidenceRefs);
     if (m.role === 'user' && m.content.trim()) {
       const goal = oneLine(m.content, 220);
       userGoals.push(goal);
@@ -69,6 +102,14 @@ export function extractiveHistorySummary(
   if (userConstraints.length) {
     parts.push('## User constraints (preserve exactly)');
     for (const item of [...new Set(userConstraints)].slice(-8)) parts.push(`- ${item}`);
+  }
+  if (openObligations.length) {
+    parts.push('## Open obligations (still owed — do not silently drop)');
+    for (const item of [...new Set(openObligations)].slice(-10)) parts.push(`- ${item}`);
+  }
+  if (evidenceRefs.length) {
+    parts.push('## Evidence anchors (verbatim refs, keep provenance)');
+    for (const item of [...new Set(evidenceRefs)].slice(-12)) parts.push(`- ${oneLine(item, 160)}`);
   }
   if (unresolved.length) {
     parts.push('## Unresolved failures / pending repair');

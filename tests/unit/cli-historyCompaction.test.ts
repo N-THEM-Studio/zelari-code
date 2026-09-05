@@ -4,6 +4,7 @@ import {
   compactHistoryDetailed,
   compactedRangeFromDropped,
   resolveMaxMessages,
+  resolveHistoryCharBudget,
   type CompactHistoryOptions,
 } from "../../src/cli/hooks/historyCompaction.js";
 import type { AgentMessage } from "@zelari/core/harness";
@@ -47,15 +48,16 @@ describe("historyCompaction (v1.6.0)", () => {
   });
 
   describe("resolveMaxMessages", () => {
-    it("defaults to 6 turns × 4 = 24 messages when env unset", () => {
+    it("defaults to a 40-turn safety net (160 messages) when env unset", () => {
       delete process.env.ZELARI_HISTORY_TURNS;
-      expect(resolveMaxMessages()).toBe(24);
+      // v2.32.0 (S3): the count is no longer the primary gate — the char
+      // budget is. The count default is only a runaway safety net.
+      expect(resolveMaxMessages()).toBe(160);
     });
 
-    it("tightens window when durableStatePresent and env unset", () => {
+    it("count no longer tightens with durableStatePresent (moved to the char budget)", () => {
       delete process.env.ZELARI_HISTORY_TURNS;
-      // default 6 → min(6,3)=3 turns × 4 = 12
-      expect(resolveMaxMessages({ durableStatePresent: true })).toBe(12);
+      expect(resolveMaxMessages({ durableStatePresent: true })).toBe(160);
     });
 
     it("returns 0 (history disabled) when ZELARI_HISTORY_TURNS=0", () => {
@@ -70,7 +72,95 @@ describe("historyCompaction (v1.6.0)", () => {
 
     it("treats garbage env as the default", () => {
       process.env.ZELARI_HISTORY_TURNS = "garbage";
-      expect(resolveMaxMessages()).toBe(24);
+      expect(resolveMaxMessages()).toBe(160);
+    });
+  });
+
+  describe("resolveHistoryCharBudget (v2.32.0 S3)", () => {
+    const origBudget = process.env.ZELARI_HISTORY_BUDGET_CHARS;
+
+    afterEach(() => {
+      if (origBudget === undefined) delete process.env.ZELARI_HISTORY_BUDGET_CHARS;
+      else process.env.ZELARI_HISTORY_BUDGET_CHARS = origBudget;
+    });
+
+    it("defaults to ~20k chars and halves with durableStatePresent (env unset)", () => {
+      delete process.env.ZELARI_HISTORY_BUDGET_CHARS;
+      expect(resolveHistoryCharBudget()).toBe(20_000);
+      expect(resolveHistoryCharBudget({ durableStatePresent: true })).toBe(10_000);
+    });
+
+    it("honors an explicit ZELARI_HISTORY_BUDGET_CHARS (durable no longer halves)", () => {
+      process.env.ZELARI_HISTORY_BUDGET_CHARS = "5000";
+      expect(resolveHistoryCharBudget()).toBe(5_000);
+      expect(resolveHistoryCharBudget({ durableStatePresent: true })).toBe(5_000);
+    });
+
+    it("clamps a too-small budget to the 2k floor", () => {
+      process.env.ZELARI_HISTORY_BUDGET_CHARS = "10";
+      expect(resolveHistoryCharBudget()).toBe(2_000);
+    });
+  });
+
+  describe("v2.32.0 S3 — char-budget gate + obligations/evidence projection", () => {
+    const origBudget = process.env.ZELARI_HISTORY_BUDGET_CHARS;
+    const origTurns = process.env.ZELARI_HISTORY_TURNS;
+
+    afterEach(() => {
+      if (origBudget === undefined) delete process.env.ZELARI_HISTORY_BUDGET_CHARS;
+      else process.env.ZELARI_HISTORY_BUDGET_CHARS = origBudget;
+      if (origTurns === undefined) delete process.env.ZELARI_HISTORY_TURNS;
+      else process.env.ZELARI_HISTORY_TURNS = origTurns;
+    });
+
+    it("compacts by CONTENT WEIGHT even with few messages (char gate)", () => {
+      delete process.env.ZELARI_HISTORY_TURNS;
+      process.env.ZELARI_HISTORY_BUDGET_CHARS = "2000";
+      const heavy: AgentMessage[] = [];
+      for (let i = 0; i < 6; i++) heavy.push({ role: "user", content: "x".repeat(600) });
+      // 6 × 600 = 3600 chars > 2000 budget, but 6 messages is FAR under any
+      // count trigger — only the char gate can fire here.
+      const result = compactHistory(heavy);
+      expect(result.length).toBeLessThan(heavy.length);
+      expect(result[0].role).toBe("user");
+      expect(result[0].content).toContain("<compacted-summary>");
+    });
+
+    it("count trigger does NOT fire by default anymore (48 light messages survive)", () => {
+      delete process.env.ZELARI_HISTORY_TURNS;
+      delete process.env.ZELARI_HISTORY_BUDGET_CHARS;
+      // 48 short messages ≈ 240 chars — far under the 20k budget. The legacy
+      // default (6 turns → trigger at 48) would have compacted; S3 must not.
+      const msgs = plainTurns(48);
+      const result = compactHistory(msgs);
+      expect(result).toBe(msgs); // same reference — untouched
+    });
+
+    it("an explicit ZELARI_HISTORY_TURNS keeps the count contract", () => {
+      process.env.ZELARI_HISTORY_TURNS = "2"; // count trigger at 16
+      delete process.env.ZELARI_HISTORY_BUDGET_CHARS;
+      const msgs = plainTurns(20);
+      const result = compactHistory(msgs);
+      expect(result.length).toBeLessThan(msgs.length);
+    });
+
+    it("projection: open obligations and evidence refs survive compaction", () => {
+      delete process.env.ZELARI_HISTORY_TURNS;
+      process.env.ZELARI_HISTORY_BUDGET_CHARS = "2000";
+      const msgs: AgentMessage[] = [
+        { role: "user", content: "- [ ] t99: ship the release (still owed)\nTODO: update the guide" },
+        { role: "assistant", content: "OBSERVATION ref=#12 [edit] applied. commit a1b2c3d pushed." },
+        ...Array.from({ length: 6 }, (_, i) => ({
+          role: "user" as const,
+          content: "y".repeat(500) + i,
+        })),
+      ];
+      const result = compactHistoryDetailed(msgs);
+      expect(result.compacted).toBe(true);
+      expect(result.summary).toContain("Open obligations");
+      expect(result.summary).toContain("t99: ship the release");
+      expect(result.summary).toContain("Evidence anchors");
+      expect(result.summary).toContain("OBSERVATION ref=#12");
     });
   });
 
@@ -129,7 +219,8 @@ describe("compactHistory", () => {
     it("returns the same array reference when under the cap (no compaction)", () => {
       delete process.env.ZELARI_HISTORY_TURNS;
       const msgs = plainTurns(10);
-      // default cap 24 → 2×48 trigger. 10 < 48 → no compaction.
+      // v2.32.0 (S3): 10 short messages ≈ 30 chars — far under the 20k char
+      // budget and under the 160-message safety net → no compaction.
       const result = compactHistory(msgs);
       expect(result).toBe(msgs);
     });

@@ -130,22 +130,16 @@ function withDroppedRange(
  * Returns 0 to signal "history disabled" (caller should short-circuit).
  */
 export function resolveMaxMessages(opts?: CompactHistoryOptions): number {
-  // v1.7.0: routed through envNumber. Behavior preserved (default 6, min 0
-  // because ZELARI_HISTORY_TURNS=0 legitimately means "disable history" —
-  // the pre-1.6 stateless fallback — and must NOT be coerced to a non-zero
-  // default on a typo).
-  const envTurns = envNumber(process.env.ZELARI_HISTORY_TURNS, { default: 6, min: 0 });
-  // opts override env; env default is 6 turns × ~4 messages/turn.
+  // v2.32.0 (S3 "adult history"): the DEFAULT count cap is a high safety
+  // net (40 turns ≈ 160 messages) — the primary gate is now the adaptive
+  // character budget (resolveHistoryCharBudget). min 0 stays because
+  // ZELARI_HISTORY_TURNS=0 legitimately means "disable history" — the
+  // pre-1.6 stateless fallback — and must NOT be coerced to a non-zero
+  // default on a typo.
+  const envTurns = envNumber(process.env.ZELARI_HISTORY_TURNS, { default: 40, min: 0 });
+  // opts override env; an EXPLICIT env is a user contract, the default is
+  // only a runaway safety net on top of the char gate.
   let turns = opts?.maxMessages ? Math.ceil(opts.maxMessages / 4) : envTurns;
-  // With durable state, default to a tighter window (min 2 turns) unless the
-  // user explicitly set maxMessages or a non-default HISTORY_TURNS.
-  if (
-    opts?.durableStatePresent &&
-    !opts?.maxMessages &&
-    process.env.ZELARI_HISTORY_TURNS === undefined
-  ) {
-    turns = Math.min(turns, 3);
-  }
   if (turns <= 0) return 0;
   // v1.36.0 (P8/case 20): occupancy-driven callers (force=true) pass a
   // PRECISE message window — honor it literally instead of rounding through
@@ -154,6 +148,32 @@ export function resolveMaxMessages(opts?: CompactHistoryOptions): number {
   // legacy path where it amortizes compaction across turns.
   if (opts?.force && opts?.maxMessages) return Math.max(1, opts.maxMessages);
   return turns * 4;
+}
+
+/**
+ * v2.32.0 (S3): the PRIMARY history gate — an adaptive character budget
+ * (~20k chars ≈ 5k tokens) instead of the legacy count-based default.
+ * Tunable via `ZELARI_HISTORY_BUDGET_CHARS` (min 2k, max 200k). With
+ * durable state present and no explicit env, the budget halves: verified
+ * discoveries live on disk (Palmer), so the transcript can stay lean.
+ */
+export function resolveHistoryCharBudget(
+  opts?: Pick<CompactHistoryOptions, 'durableStatePresent'>,
+): number {
+  const halveForDurable =
+    !!opts?.durableStatePresent && process.env.ZELARI_HISTORY_BUDGET_CHARS === undefined;
+  return envNumber(process.env.ZELARI_HISTORY_BUDGET_CHARS, {
+    default: halveForDurable ? 10_000 : 20_000,
+    min: 2_000,
+    max: 200_000,
+  });
+}
+
+/** Total content chars of a message list — the S3 gate metric. */
+export function historyChars(messages: readonly AgentMessage[]): number {
+  let n = 0;
+  for (const m of messages) n += (m.content ?? '').length;
+  return n;
 }
 
 /**
@@ -351,10 +371,19 @@ export function compactHistoryDetailed(
       'extractive',
     );
   }
-  // Trigger at 2× cap so we don't compact on every single turn (amortize).
-  // v1.36.0 (P8): occupancy-driven callers pass force=true so high TOKEN
-  // pressure compacts even when the message COUNT is low.
-  if (messages.length <= maxMessages * 2 && !opts?.force) {
+  // v2.32.0 (S3): the PRIMARY trigger is the adaptive character budget —
+  // history compacts when its CONTENT weight exceeds the budget, not when a
+  // turn count says so. The legacy count trigger (2 × cap) only applies when
+  // the user made the count an explicit contract (ZELARI_HISTORY_TURNS set,
+  // or maxMessages passed). v1.36.0 (P8): occupancy-driven callers pass
+  // force=true so high TOKEN pressure compacts regardless.
+  const charBudget = resolveHistoryCharBudget(opts);
+  const explicitCount =
+    opts?.maxMessages !== undefined || process.env.ZELARI_HISTORY_TURNS !== undefined;
+  const overChars = historyChars(messages) > charBudget;
+  const overCount = messages.length > maxMessages * 2;
+  const shouldCompact = overChars || (explicitCount && overCount) || !!opts?.force;
+  if (!shouldCompact) {
     return {
       messages: messages as AgentMessage[],
       compacted: false,
@@ -363,7 +392,21 @@ export function compactHistoryDetailed(
     };
   }
 
-  const naiveCut = Math.max(0, messages.length - maxMessages);
+  // Cut target: keep the newest tail that fits the char budget AND the
+  // count cap (whichever binds). Oldest-first, then tool-chain atomicity.
+  let naiveCut: number;
+  if (overChars) {
+    let cut = 0;
+    let keptChars = historyChars(messages);
+    while (cut < messages.length && keptChars > charBudget) {
+      keptChars -= (messages[cut].content ?? '').length;
+      cut += 1;
+    }
+    // Never keep MORE than the count cap allows (runaway net).
+    naiveCut = Math.max(cut, messages.length - maxMessages);
+  } else {
+    naiveCut = Math.max(0, messages.length - maxMessages);
+  }
   const cut = findValidCutIndex(messages, naiveCut);
   if (cut === 0) {
     return {

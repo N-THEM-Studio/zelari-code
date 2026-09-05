@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Headless/Desktop fail-closed** — the four headless policy call-sites (`runOneTurn`, graph host, main registry, mission-slice registry) now build their permission policy via `defaultPermissionPolicy()` instead of a hardcoded allow-all. Standard headless = read/write allow, execute/network fail closed (ask without a UI handler is a typed error). Honest escapes: `--permissions yolo`, `ZELARI_AUTO=1`, `ZELARI_PERMISSION_EXECUTE=allow`. The lying "auto-allow" comment is rewritten; a wiring contract test pins that the allow-all literal cannot come back.
+- **`/verify` is a real command** — the strict build gate it recommended since 2.31 now exists: deterministic (zero LLM calls), reuses `evaluateStrictBuildGate` + `formatStrictBlockExplanation`, listed in `/help`.
+- **Adult history (S3)** — the rolling-history gate is now an adaptive character budget (`ZELARI_HISTORY_BUDGET_CHARS`, default ~20k chars, 2k floor, halved when durable state is present) instead of the legacy `ZELARI_HISTORY_TURNS=6` count default. The count default is a 40-turn runaway safety net; an explicit `ZELARI_HISTORY_TURNS` stays a honored contract (`0` still disables). Compacted checkpoints now project open obligations (`- [ ]`, `TODO:`) and verbatim evidence anchors (`OBSERVATION ref=#N`, commit shas, exit codes) so provenance survives compaction.
+- **Council de-marketed** — README feature list leads with Kraken (the default); council is second, described as the opt-in second opinion it actually is.
+
+### Fixed
+
+- **CHANGELOG integrity** — removed 14 duplicated placeholder release entries (the whole 1.12.1→2.30.0 block dated 2026-07-10 with copied bodies), repaired the corrupted 1.9.2 line (literal PowerShell `` `n `` escapes expanded to real newlines), and moved the empty `[Unreleased]` block to the top per Keep-a-Changelog.
+- **CONTRIBUTING** no longer pins a hardcoded product version (the changelog is the single source of truth) and documents the release cadence rule: max one minor per 48h, fixes batched as patches.
+
 ## [2.31.0] - 2026-09-06
 
 The "front door" release: 2.30 stops lying about the paths it already ships, and a fresh clone gets an honest path to its first verified PASS. HANDOFF Wave 5 stays frozen: no new runtime surface, no new public API, the judge untouched (ADR-0036).
