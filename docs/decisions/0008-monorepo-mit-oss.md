@@ -1,49 +1,49 @@
 # ADR-0008: Monorepo MIT license for open-source release
 
-- **Status:** ⚠️ Sostituito da [ADR-0009](./0009-apache-2-0-license.md) (2026-08-13)
+- **Status:** Superseded by [ADR-0009](./0009-apache-2-0-license.md) (2026-08-13)
 - **Date:** 2026-07-15
 - **Deciders:** Anathema Studio
-- **Related:** ADR-0002 (publish `@zelari/core` MIT), dual-license era
+- **Related:** ADR-0002 (publish `@zelari/core` MIT), former dual-license
 
-## Contesto
+## Context
 
-Fino a v1.14.x il monorepo era **dual-license** di fatto:
+Until v1.14.x the monorepo was a de facto **dual license**:
 
-- CLI `zelari-code` e landing: **proprietario** (`SEE LICENSE IN LICENSE`)
-- Libreria `@zelari/core`: **MIT**
+- CLI `zelari-code` and landing page: **proprietary** (`SEE LICENSE IN LICENSE`)
+- Library `@zelari/core`: **MIT**
 
-Per un rilascio open source pubblico serve un’unica licenza comprensibile a
-contributor e redistributor, allineata al core già MIT.
+A public open-source release needs a single license understandable to
+contributors and redistributors, aligned with the already-MIT core.
 
-## Decisione
+## Decision
 
-1. **Tutto il monorepo** (CLI, `@zelari/core`, Desktop `apps/desktop`) è
-   rilasciato sotto **MIT License**.
-2. **Copyright holder** pubblico: **Anathema Studio**  
-   `https://anathema-studio.com/`  
-   (GitHub org `N-THEM-Studio` resta host del repository; non è il copyright
-   string primario nei file LICENSE.)
-3. Scaffolding community obbligatorio: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
+1. **The whole monorepo** (CLI, `@zelari/core`, Desktop `apps/desktop`) is
+   released under the **MIT License**.
+2. Public **copyright holder**: **Anathema Studio**
+   `https://anathema-studio.com/`
+   (GitHub org `N-THEM-Studio` remains the repository host; it is not the
+   primary copyright string in the LICENSE files.)
+3. Mandatory community scaffolding: `CONTRIBUTING.md`, `CODE_OF_CONDUCT.md`,
    `SECURITY.md`.
-4. ADR-0002 resta **storico** per la decisione di pubblicare il core MIT; la
-   restrizione “repo CLI proprietario” è **superseded** da questo ADR.
+4. ADR-0002 remains **historical** for the decision to publish the core MIT;
+   the "proprietary CLI repo" restriction is **superseded** by this ADR.
 
-## Conseguenze
+## Consequences
 
 ### Positive
 
-- Un solo modello legale per fork, contribuzioni e redistribuzione npm
-- Badge e README coerenti con package.json
-- `@zelari/core` e CLI non divergono più per license field
+- A single legal model for forks, contributions and npm redistribution
+- Badges and README consistent with package.json
+- `@zelari/core` and CLI no longer diverge on the license field
 
-### Negative / trade-off
+### Negative / trade-offs
 
-- Si rinuncia alle restrizioni commerciali/modifica del vecchio LICENSE
-  proprietario
-- Downstream che dipendevano dal dual-license non devono più trattare la CLI
-  come closed source
+- Gives up the commercial/modification restrictions of the old proprietary
+  LICENSE
+- Downstream depending on the dual license no longer has to treat the CLI
+  as closed source
 
-## Note
+## Notes
 
-La policy di runtime “non rivelare system/role prompt e pipeline interna”
-(v1.13+) è una **feature di prodotto**, non una clausola di licenza.
+The "do not reveal system/role prompts and internal pipeline" runtime
+policy (v1.13+) is a **product feature**, not a license clause.

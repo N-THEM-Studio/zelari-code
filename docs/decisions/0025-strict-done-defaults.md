@@ -1,81 +1,52 @@
+# ADR-0025 - Strict done defaults per surface
 
-**Status:** Accettato
+**Status:** Accepted
 **Date:** 2026-08-20
 
-## Contesto
+## Context
 
-ADR-0023 ha introdotto il gate strict BUILD (`PASS | REPAIR_REQUIRED | BLOCKED`,
-`unknown ≠ pass`, exit 4 dedicato) con attivazione `ZELARI_STRICT_DONE=1` —
-default **off** "inizialmente, default in beta". La domanda lasciata aperta era
-quale default congelandare per le due superfici che chiudono lavoro:
+ADR-0023 introduced the strict BUILD gate (`PASS | REPAIR_REQUIRED | BLOCKED`, `unknown != pass`, dedicated exit 4) activated by `ZELARI_STRICT_DONE=1` - default **off** "initially, default in beta". The open question was which default to freeze for the two surfaces that close work:
 
-- **Kraken** (headless `--task` / TUI / Desktop): turni interattivi o
-  single-task, l'utente è presente e può reagire al verdetto.
-- **Mission** (`--mode zelari`, profilo `mission/v1`): loop autonomo
-  multi-iterazione senza utente al volante; un "success" non verificato viene
-  consumato da host/automation senza supervisione.
+- **Kraken** (headless `--task` / TUI / Desktop): interactive or single-task turns, the user is present and can react to the verdict.
+- **Mission** (`--mode zelari`, profile `mission/v1`): a multi-iteration autonomous loop with no user at the wheel; an unverified "success" is consumed by host/automation without supervision.
 
-Un solo default per entrambe le superfici è sbagliato in entrambe le direzioni:
-strict-ON di default in Kraken rompe la compatibilità 1.x dei task semplici
-violando il principio del costo baseline; strict-OFF di default nelle mission
-permette il false-done esattamente dove nessuno può intercettarlo.
+A single default for both surfaces is wrong in both directions: strict-ON by default in Kraken breaks 1.x compatibility of simple tasks, violating the baseline-cost principle; strict-OFF by default in missions allows false-done exactly where nobody can intercept it.
 
-## Decisione
+## Decision
 
-Default **divisi per superficie** (Opzione A del documento di stato alpha.6 §7):
+**Defaults split per surface** (Option A of the alpha.6 status document, section 7):
 
-1. **Kraken interactive/headless: strict = opt-in.** `ZELARI_STRICT_DONE=1|true`
-   oppure `--strict-done` attivano il gate; default resta **off** fino alla RC
-   (poi si rivaluta con la matrice di profile smoke, ADR-0023 "default in beta").
-2. **Mission: strict evidence gate = default ON.** La missione chiude sotto il
-   gate senza richiedere flag; disattivazione esplicita con
-   `ZELARI_MISSION_STRICT=0|false` (escape hatch documentato, non incoraggiato).
+1. **Kraken interactive/headless: strict = opt-in.** `ZELARI_STRICT_DONE=1|true` or `--strict-done` activate the gate; default stays **off** until RC (then re-evaluated with the profile smoke matrix, ADR-0023 "default in beta").
+2. **Mission: strict evidence gate = default ON.** The mission closes under the gate without requiring a flag; explicit deactivation with `ZELARI_MISSION_STRICT=0|false` (documented escape hatch, not encouraged).
 
-Regole di composizione (già implementate da ADR-0023 e lock test F1):
+Composition rules (already implemented by ADR-0023 and lock test F1):
 
-- il gate mission **somma** blocker (legacy + evidence contract + pack nativo);
-- il verdict deterministico non viene mai riscritto dal verifier LLM (advisory);
-- gate blocked su missione "success" → exit code 4 e
-  `missionPhase('verification', 'mission-strict-blocked')` nella spine, non 0.
+- the mission gate **sums** blockers (legacy + evidence contract + native pack);
+- the deterministic verdict is never rewritten by the LLM verifier (advisory);
+- gate blocked on a mission "success" -> exit code 4 and `missionPhase('verification', 'mission-strict-blocked')` on the spine, not 0.
 
-Guardie di sicurezza:
+Safety guards:
 
-- il pack nativo (`ZELARI_VERIFY_PACK`) resta **opt-in separato** su entrambe le
-  superfici: il default mission-ON attiva il gate del contratto di selezione,
-  **non** l'esecuzione automatica di typecheck/test/build;
-- missione senza required check registrati → gate vacuo, comportamento invariato
-  (nessun nuovo fallimento su missioni senza selezione).
+- the native pack (`ZELARI_VERIFY_PACK`) stays a **separate opt-in** on both surfaces: the mission-ON default activates the selection-contract gate, **not** the automatic execution of typecheck/test/build;
+- a mission without registered required checks -> vacuous gate, unchanged behavior (no new failures on missions without selection).
 
-## Alternative considerate
+## Alternatives considered
 
-1. **Strict-ON ovunque (Opzione B "deterministic verification default")** —
-   rifiutato per ora: rompe la compatibilità 1.x di Kraken prima che la matrice
-   di profile smoke (Exit-3.2) dimostri che il costo baseline dei task semplici
-   non regredisce. Da rivalutare alla RC.
-2. **Strict-OFF ovunque fino alla beta** — rifiutato: le missioni sono il posto
-   con il rischio false-done più alto e il minor presidio umano.
-3. **Un solo knob globale** (`ZELARI_STRICT_DONE` per tutto) — rifiutato: la
-   semantica del default è la decisione stessa; un knob unico non può esprimere
-   "opt-in qui, opt-out là" e renderebbe impossibile verificare il comportamento
-   mission in CI senza inquinare Kraken.
+1. **Strict-ON everywhere (Option B "deterministic verification default")** - rejected for now: it breaks Kraken's 1.x compatibility before the profile smoke matrix (Exit-3.2) proves the baseline cost of simple tasks does not regress. To be re-evaluated at RC.
+2. **Strict-OFF everywhere until beta** - rejected: missions are the place with the highest false-done risk and the least human oversight.
+3. **A single global knob** (`ZELARI_STRICT_DONE` for everything) - rejected: the default semantics IS the decision; a single knob cannot express "opt-in here, opt-out there" and would make verifying mission behavior in CI impossible without polluting Kraken.
 
-## Conseguenze
+## Consequences
 
-**Positive** — il false-done è bloccato per costruzione esattamente dove non
-c'è supervisione; Kraken mantiene il costo baseline 1.x; i default sono
-testabili come contratto (`strictDefaults.test.ts`) e reversibili
-singolarmente alla RC.
+**Positive** - false-done is blocked by construction exactly where there is no supervision; Kraken keeps the 1.x baseline cost; the defaults are testable as a contract (`strictDefaults.test.ts`) and individually reversible at RC.
 
-**Negative** — due env var da documentare (`ZELARI_STRICT_DONE`,
-`ZELARI_MISSION_STRICT`); una missione con verifica rossa ora esce con 4 dove
-prima usciva 0 (breaking per automation che parsavano l'exit code — mitigato
-dall'escape hatch e dal messaggio spine `mission-strict-blocked`).
+**Negative** - two env vars to document (`ZELARI_STRICT_DONE`, `ZELARI_MISSION_STRICT`); a mission with a red verification now exits 4 where it used to exit 0 (breaking for automation parsing the exit code - mitigated by the escape hatch and the `mission-strict-blocked` spine message).
 
 ## TODO
 
 - [x] `strictDoneEnabled(surface)` mode-aware in `verificationBridge.ts`
-- [x] Gate mission al wind-down in `runHeadless.ts` (exit 4 + evento spine)
-- [x] Help `--strict-done` aggiornato con il default mission
-- [x] Lock test dei default (`strictDefaults.test.ts`)
-- [x] RC: rivalutare il default Kraken — **resta opt-in** (ADR-0026)
-- [x] RC: `requireEventBackedEvidence` a ON nel `STRICT_BUILD_POLICY` (ADR-0026)
+- [x] Mission gate at wind-down in `runHeadless.ts` (exit 4 + spine event)
+- [x] `--strict-done` help updated with the mission default
+- [x] Defaults lock test (`strictDefaults.test.ts`)
+- [x] RC: re-evaluate the Kraken default - **stays opt-in** (ADR-0026)
+- [x] RC: `requireEventBackedEvidence` ON in `STRICT_BUILD_POLICY` (ADR-0026)

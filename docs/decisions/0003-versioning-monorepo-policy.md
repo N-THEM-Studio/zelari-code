@@ -1,90 +1,89 @@
-# ADR-0003: Schema di versionamento per monorepo zelari-code
+# ADR-0003: Versioning schema for the zelari-code monorepo
 
-- **Stato:** ✅ Accettato
-- **Data proposta:** 2026-07-02
-- **Data accettazione:** 2026-07-02 (auto-accettata — versione 0.5.0-dev.0 gia in packages/core/package.json accoppia implicitamente le versioni)
-- **Autore:** MiniMax-M3
-- **Dipende da:** [ADR-0001](0001-monorepo-for-zelari-core.md),
+- **Status:** Accepted
+- **Proposed:** 2026-07-02
+- **Accepted:** 2026-07-02 (self-accepted - version 0.5.0-dev.0 already in packages/core/package.json implicitly couples the versions)
+- **Author:** MiniMax-M3
+- **Depends on:** [ADR-0001](0001-monorepo-for-zelari-core.md),
   [ADR-0002](0002-publish-zelari-core-to-npm.md)
 
-## Contesto
+## Context
 
-Con il monorepo abbiamo due package distinti:
+With the monorepo we have two distinct packages:
 
-| Package           | Path            | Chi lo consuma                     |
+| Package           | Path            | Consumers                          |
 |-------------------|-----------------|------------------------------------|
-| `zelari-code`     | root            | Utenti finali (CLI)                |
-| `@zelari/core`    | packages/core   | `zelari-code` + (futuro) terze parti |
+| `zelari-code`     | root            | End users (CLI)                    |
+| `@zelari/core`    | packages/core   | `zelari-code` + (future) third parties |
 
-Serve una policy: quando bumpa uno, l'altro segue? Versioning
-indipendente (= due cicli di release, due CHANGELOG) o accoppiato
-(un solo tag git, versione uguale)?
+We need a policy: when one bumps, does the other follow? Independent
+versioning (= two release cycles, two CHANGELOGs) or coupled (a single
+git tag, same version)?
 
-## Decisione
+## Decision
 
-**Versioning accoppiato nella fase v0.5.x, indipendente da v0.6+.**
+**Coupled versioning in the v0.5.x phase, independent from v0.6+.**
 
-- v0.5.0 → CLI e core pubblicati entrambi come `0.5.0`, stesso tag
-  git `v0.5.0`.
-- v0.5.1 → entrambi come `0.5.1`, stesso tag `v0.5.1`.
-- Da v0.6.0 in poi: il core pubblica quando ha breaking change o fix
-  significativo, il CLI solo quando serve. Tag distinti:
-  - `v0.6.0/core` → solo `@zelari/core@0.6.0`
-  - `v0.6.0/cli` → solo `zelari-code@0.6.0`
-  - `v0.6.0` → entrambi (release congiunta)
+- v0.5.0 -> CLI and core both published as `0.5.0`, same git tag
+  `v0.5.0`.
+- v0.5.1 -> both as `0.5.1`, same tag `v0.5.1`.
+- From v0.6.0 on: the core publishes when it has breaking changes or
+  significant fixes, the CLI only when needed. Distinct tags:
+  - `v0.6.0/core` -> only `@zelari/core@0.6.0`
+  - `v0.6.0/cli` -> only `zelari-code@0.6.0`
+  - `v0.6.0` -> both (joint release)
 
-### Schema versioning semantico
+### Semantic versioning schema
 
-- `MAJOR` (X.0.0) → breaking change API pubblica del core o cambio UX
-  radicale del CLI.
-- `MINOR` (0.X.0) → nuova funzionalità, backward-compat.
-- `PATCH` (0.0.X) → bug fix, backward-compat.
+- `MAJOR` (X.0.0) -> breaking change in the core's public API or a
+  radical CLI UX change.
+- `MINOR` (0.X.0) -> new feature, backward-compatible.
+- `PATCH` (0.0.X) -> bug fix, backward-compatible.
 
-Pre-1.0 (siamo a `0.X.Y`): ogni MINOR può contenere breaking
-changes documentati nel CHANGELOG. Da 1.0 in poi: semver stretto,
-MAJOR riservato ai breaking.
+Pre-1.0 (we are at `0.X.Y`): every MINOR may contain breaking
+changes documented in the CHANGELOG. From 1.0 on: strict semver,
+MAJOR reserved for breaking changes.
 
-### Pragmatismo nel periodo `0.5.x`
+### Pragmatism during the `0.5.x` period
 
-Perché accoppiato all'inizio:
-- Single team, single release window, niente overhead.
-- Tag unico è banale: `git tag v0.5.0 && git push --tags → CI fa
-  tutto`.
-- Cambiare in indipendente in v0.6 è un'operazione locale (tag scheme
-  + workflow branching), non costa nulla.
+Why coupled at the start:
+- Single team, single release window, no overhead.
+- A single tag is trivial: `git tag v0.5.0 && git push --tags -> CI
+  does everything`.
+- Switching to independent in v0.6 is a local operation (tag scheme
+  + workflow branching), it costs nothing.
 
-## Alternative considerate
+## Alternatives considered
 
-- **Indipendente da subito** — raddoppia l'overhead di release (due
-  PRs, due changelog, due publish) per una flessibilità che non
-  usiamo ancora.
-- **Monolitico forever (CLI = versione del core)** — funziona finché
-  il core non ha vita propria; dopo l'estrazione in @zelari/core
-  sarebbe incoerente.
-- **CalVer (YY.MM.PATCH)** — attraente ma rompe la mentalità
-  semantica del team; in letteratura open-source npm è dominato da
-  semver.
-- **Changesets-style (vendore un changeset per release)** —
-  interessante per scaling a 5+ package; overkill per 2 package.
+- **Independent from day one** - doubles release overhead (two PRs,
+  two changelogs, two publishes) for flexibility we do not use yet.
+- **Monolithic forever (CLI = core version)** - works until the core
+  has a life of its own; after the extraction into @zelari/core it
+  would be incoherent.
+- **CalVer (YY.MM.PATCH)** - attractive but breaks the team's semantic
+  mindset; in open-source npm literature semver dominates.
+- **Changesets-style (one changeset per release)** - interesting when
+  scaling to 5+ packages; overkill for 2 packages.
 
-## Conseguenze
+## Consequences
 
 **Positive**
-- v0.5.x ship semplice, prevedibile.
-- Migration path chiaro: da 0.6 ognuno va per i fatti suoi.
-- Un solo CHANGELOG (`/CHANGELOG.md`) per ora, con sezioni per
-  package. Split in due quando serve.
+- Simple, predictable v0.5.x shipping.
+- Clear migration path: from 0.6 each goes its own way.
+- A single CHANGELOG (`/CHANGELOG.md`) for now, with per-package
+  sections. Split in two when needed.
 
-**Negative / rischi**
-- Versioning accoppiato è anti-pattern per npm a lungo andare
-  (consumer del core non vuole riscaricare patch del CLI).
-- Dovremo ricordarci di splittare a 0.6, altrimenti diventa
-  debito culturale.
+**Negative / risks**
+- Coupled versioning is an anti-pattern for npm in the long run
+  (core consumers do not want to re-download CLI patches).
+- We must remember to split at 0.6, otherwise it becomes cultural
+  debt.
 
 ## TODO
 
-- [ ] Andrea conferma: si parte accoppiato, si splitta a 0.6?
-- [ ] Setup CI matrix in `.github/workflows/release.yml`:
-      detection automatico di quale package è cambiato nel diff
-      tra tag.
-- [ ] `CHANGELOG.md` con sezioni `## @zelari/core` e `## zelari-code`.
+- [ ] Andrea confirms: start coupled, split at 0.6?
+- [ ] CI matrix setup in `.github/workflows/release.yml`:
+      automatic detection of which package changed in the diff
+      between tags.
+- [ ] `CHANGELOG.md` with `## @zelari/core` and `## zelari-code`
+      sections.

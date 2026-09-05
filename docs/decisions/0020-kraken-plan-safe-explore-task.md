@@ -1,35 +1,36 @@
+# ADR-0020 - Kraken plan-safe explore task
 
-- **Stato**: accepted
-- **Data**: 2026-08-18
-- **Governance**: prerequisite slice del piano "Kraken Verified Selection" (Fase 0/1), standard Kraken only — nessuna integrazione Graph
-- **Release**: prossima minor
+- **Status**: accepted
+- **Date**: 2026-08-18
+- **Governance**: prerequisite slice of the "Kraken Verified Selection" plan (Phase 0/1), standard Kraken only - no Graph integration
+- **Release**: next minor
 
 ## Context
 
-Il piano Verified Selection (multi-candidate exploration in PLAN/BUILD) richiede che il tool `task` possa spawnare tentacoli explore in fase PLAN. Oggi tre primitive lo impediscono o lo indeboliscono:
+The Verified Selection plan (multi-candidate exploration in PLAN/BUILD) requires the `task` tool to be able to spawn explore tentacles in the PLAN phase. Today three primitives prevent or weaken this:
 
-1. `createBuiltinToolRegistry` registra `task` solo con `!options.planMode` (`enableTask`), quindi PLAN non può parallelizzare ricerca.
-2. `planMode` e `readOnly` sono accoppiati nella stessa variabile derivata: separare il task richiedeva attenzione a non aprire mutatori.
-3. Il task tool standard non propaga al tentacolo né il provider/model risolto dal turno (i tentacoli ricadevano sul default persistito di `provider.json`, divergendo dalla selezione utente — problema già corretto solo nel percorso kraken-graph) né il cancellation signal del turno (`runTentacle` supporta `opts.signal` ma `execute` non lo passava).
+1. `createBuiltinToolRegistry` registers `task` only with `!options.planMode` (`enableTask`), so PLAN cannot parallelize research.
+2. `planMode` and `readOnly` are coupled in the same derived variable: separating the task required care not to open mutators.
+3. The standard task tool propagates to the tentacle neither the provider/model resolved by the turn (tentacles fell back to the persisted default of `provider.json`, diverging from the user's selection - a problem already fixed only on the kraken-graph path) nor the turn's cancellation signal (`runTentacle` supports `opts.signal` but `execute` did not pass it).
 
 ## Decision
 
-1. **Plan-safe explore task**: il registro in `planMode` registra comunque `task`, ma con `TaskToolPolicy.allowedAgents: ['explore']`. La policy è applicata su tre livelli: enum zod ristretto (i provider conformi non possono emettere `general`/`verify`), gate esplicito in `execute` PRIMA del consumo dello spawn budget, suffisso `RESTRICTED` nella description visibile al modello. Opt-out: `planExploreTask: false` ripristina il comportamento pre-ADR (nessun `task` in PLAN). Il profilo `explore` resta read-only, quindi PLAN non acquisisce reach di scrittura/esecuzione.
-2. **Ancoraggio provider/model**: `CreateRegistryOptions` accetta `subAgentProvider`/`subAgentModel`, inoltrati a `createKrakenSubAgentContextFactory` (che già supportava gli override per il percorso graph). La TUI (`useChatTurn`) passa il provider/model risolto del turno quando esiste; headless (`runHeadlessSingle`) passa il provider/model risolto del run. Chi non li passa mantiene il comportamento precedente (fallback persistito).
-3. **Propagazione cancellation**: `execute` passa `ctx.signal` a `runTentacle`, che già lo inoltra a `runSubAgent` (unwind del generatore: il tentacolo si ferma prima della prossima tool call e non continua a scrivere dopo la cancellazione del parent).
-4. **Invarianti di scope (Fase 0)**: feature target = solo Kraken standard; il comportamento del Graph non cambia (graph/fanout call-site non toccati); PLAN resta project read-only; i tentacoli candidate (futuri) saranno explore-only; in v1 il numero massimo di implementazioni candidate è zero; il verifier di default sarà esattamente il modello parent.
+1. **Plan-safe explore task**: the registry in `planMode` still registers `task`, but with `TaskToolPolicy.allowedAgents: ['explore']`. The policy is enforced at three levels: a restricted zod enum (conforming providers cannot emit `general`/`verify`), an explicit gate in `execute` BEFORE consuming the spawn budget, and a `RESTRICTED` suffix in the description visible to the model. Opt-out: `planExploreTask: false` restores the pre-ADR behavior (no `task` in PLAN). The `explore` profile stays read-only, so PLAN gains no write/exec reach.
+2. **Provider/model anchoring**: `CreateRegistryOptions` accepts `subAgentProvider`/`subAgentModel`, forwarded to `createKrakenSubAgentContextFactory` (which already supported the overrides for the graph path). The TUI (`useChatTurn`) passes the turn's resolved provider/model when present; headless (`runHeadlessSingle`) passes the run's resolved provider/model. Those who do not pass them keep the previous behavior (persisted fallback).
+3. **Cancellation propagation**: `execute` passes `ctx.signal` to `runTentacle`, which already forwards it to `runSubAgent` (generator unwind: the tentacle stops before the next tool call and does not keep writing after the parent's cancellation).
+4. **Scope invariants (Phase 0)**: feature target = standard Kraken only; Graph behavior does not change (graph/fanout call-sites untouched); PLAN stays project read-only; candidate tentacles (future) will be explore-only; in v1 the maximum number of candidate implementations is zero; the default verifier will be exactly the parent model.
 
 ## Consequences
 
-- PLAN può spawnare solo `explore`; `general`/`verify` sono rifiutati con errore chiaro senza consumare budget di spawn.
-- BUILD (profile full, non plan) è invariato: stessi tool, stessa policy illimitata, stesso comportamento pre-ADR.
-- I registri esplicitamente `readOnly` e i sub-profili (`explore`/`verify`/`general`) non registrano `task` (anti-ricorsione): invariato.
-- `inspect_command` e i mutatori restano legati alla sola variabile derivata `readOnly` (che continua a includere `planMode`): la separazione riguarda unicamente il tool `task`.
-- La selezione TUI/Desktop ora governa anche i tentacoli del task standard (prima: solo il parent), allineando il percorso standard a ciò che il graph path già faceva.
-- Test: `src/cli/tools/taskTool.planSafety.test.ts` copre gating del registro, policy explore-only, enum ristretto, propagazione signal e regressioni BUILD/readOnly/sub-profile.
+- PLAN can spawn only `explore`; `general`/`verify` are rejected with a clear error without consuming the spawn budget.
+- BUILD (full profile, non-plan) is unchanged: same tools, same unlimited policy, same pre-ADR behavior.
+- Explicitly `readOnly` registries and sub-profiles (`explore`/`verify`/`general`) do not register `task` (anti-recursion): unchanged.
+- `inspect_command` and the mutators stay tied solely to the derived `readOnly` variable (which still includes `planMode`): the separation concerns only the `task` tool.
+- TUI/Desktop selection now also governs standard-task tentacles (before: only the parent), aligning the standard path with what the graph path already did.
+- Tests: `src/cli/tools/taskTool.planSafety.test.ts` covers registry gating, explore-only policy, restricted enum, signal propagation and BUILD/readOnly/sub-profile regressions.
 
 ## Alternatives considered
 
-- **Registrare il task in PLAN senza policy** (affidarsi al solo profilo explore del chiamante): respinto — il modello parent potrebbe emettere `agent=general` e il tentacolo general scriverebbe fuori dal contratto plan.
-- **Gate solo a livello di prompt**: respinto — policy revocabile dal modello; l'invariante deve stare nel runtime.
-- **Decouplare completamente `readOnly` da `planMode`**: rinviato — avrebbe toccato mutators/bash/inspect_command/world-model/ssh/browser insieme; non necessario per la Fase 1 e fuori dal principio del diff minimo.
+- **Register the task in PLAN without a policy** (relying only on the caller's explore profile): rejected - the parent model could emit `agent=general` and the general tentacle would write outside the plan contract.
+- **Gate only at the prompt level**: rejected - policy revocable by the model; the invariant must live in the runtime.
+- **Fully decouple `readOnly` from `planMode`**: deferred - it would have touched mutators/bash/inspect_command/world-model/ssh/browser together; not necessary for Phase 1 and outside the minimal-diff principle.

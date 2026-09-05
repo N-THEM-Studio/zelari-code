@@ -1,31 +1,23 @@
+# ADR-0035 - Parallel council fan-out + trace view
 
-# ADR-0035 — Council fan-out parallelo + trace view
+> **Renumbering note (2026-09-04):** this ADR was historically the second
+> file numbered `0015` (collision with `0015-companion-host-serve.md`). The S6
+> triage (t37) renumbered it **0035** to remove the ambiguity; content unchanged.
 
-> **Nota di rinumerazione (2026-09-04):** questo ADR era storicamente il secondo
-> file numerato `0015` (collisione con `0015-companion-host-serve.md`). La triage
-> S6 (t37) lo ha rinumerato **0035** per eliminare l'ambiguità; contenuto invariato.
+- **Status:** Accepted (Phase A implemented; Phase B deferred)
+- **Proposed:** 2026-07-20
+- **Author:** Zelari Code (PLAN phase)
+- **Inspiration:** From Loop Engineering to Graph Engineering (Carlos Perez/@IntuitMachine, Jul 2026) - *"graphs force you to admit how much of the workflow you haven't modeled yet"*; divide -> communicate -> synchronize.
+- **Depends on:** `MemberCostTracker` (`src/cli/councilCost.ts`), `SliceRunResult`/`MissionState` (`src/cli/zelariMission.ts`), `checkpointManager.ts` (`src/cli/checkpoint/`).
 
-- **Stato:** ✅ Accettato (Fase A implementata; Fase B deferita)
-- **Data proposta:** 2026-07-20
-- **Autore:** Zelari Code (fase PLAN)
-- **Ispirazione:** From Loop Engineering to Graph Engineering (Carlos
-  Perez/@IntuitMachine, lug 2026) — *"graphs force you to admit how much of
-  the workflow you haven't modeled yet"*; divide → communicate → synchronize.
-- **Dipende da:** `MemberCostTracker` (`src/cli/councilCost.ts`),
-  `SliceRunResult`/`MissionState` (`src/cli/zelariMission.ts`),
-  `checkpointManager.ts` (`src/cli/checkpoint/`).
+## Context
 
-## Contesto
+Two faces of the same coin, both surfaced by the confrontation with "Graph
+Engineering". zelari-code has a **stable org-graph** (the 6 fixed members: Charon -> Lucifero) but hides two weaknesses compared to a real execution graph:
 
-Due facce della stessa medaglia, entrambe emerse dal confronto con "Graph
-Engineering". Zelari-code ha un **org-graph stabile** (i 6 membri fissi:
-Caronte→Lucifero) ma nasconde due debolezze rispetto a un vero grafo di
-esecuzione:
+### 1. Sequential specialists (missing divide -> synchronize)
 
-### 1. Specialisti sequenziali (manca divide→synchronize)
-
-I membri del council girano **in sequenza**, non in parallelo. Conferma nel
-codice, commento esplicito in `councilCost.ts:100`:
+Council members run **in sequence**, not in parallel. Confirmed in the code, an explicit comment in `councilCost.ts:100`:
 
 ```ts
 /** Total wall-clock time across all members. Note: this is sum-of-mems,
@@ -33,16 +25,11 @@ codice, commento esplicito in `councilCost.ts:100`:
 totalDurationMs(): number { ... }
 ```
 
-Il flusso attuale: `dispatchCouncil` (`councilDispatcher.ts:86`) →
-`runCouncilPure` (package `@zelari/core/council`) orchestra i membri **uno dopo
-l'altro**. Il "graph engineering" insiste che i rami indipendenti di un DAG
-dovrebbero girare in parallelo (divide), comunicare allo sync-point
-(communicate), poi procedere (synchronize).
+The current flow: `dispatchCouncil` (`councilDispatcher.ts:86`) -> `runCouncilPure` (package `@zelari/core/council`) orchestrates the members **one after the other**. "Graph engineering" insists that the independent branches of a DAG should run in parallel (divide), communicate at the sync point (communicate), then proceed (synchronize).
 
-### 2. Nessuna osservabilità per-nodo (manca il "graph" visibile)
+### 2. No per-node observability (the visible "graph" is missing)
 
-`MemberCostTracker` raccoglie dati **estremamente ricchi** per ogni membro
-(`councilCost.ts:21-38`):
+`MemberCostTracker` collects **extremely rich** data for every member (`councilCost.ts:21-38`):
 
 ```ts
 export interface MemberCost {
@@ -51,129 +38,87 @@ export interface MemberCost {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
-  durationMs: number;     // latenza di questo membro
-  toolCalls: number;      // tool_execution_start eventi
-  errored: boolean;       // questo ramo ha divergé/fallito
+  durationMs: number;     // this member's latency
+  toolCalls: number;      // tool_execution_start events
+  errored: boolean;       // this branch diverged/failed
 }
 ```
 
-e li serializza già in modo pulito via `toJSON()` → `{ ts, costs[] }`. Ma
-questi dati **non raggiungono mai un'interfaccia di ispezione**:
+and already serializes it cleanly via `toJSON()` -> `{ ts, costs[] }`. But this data **never reaches an inspection interface**:
 
-- `SliceRunResult` (`zelariMission.ts:47-61`) riporta `completionOk`,
-  `writeCount`, `degraded` — **ma NON i costi per membro**.
-- Non esiste un `.zelari/trace/<missionId>.json` persistito.
-- Non esiste un comando `/trace` o `zelari-code trace show`.
-- `MissionState` (`zelariMission.ts:32-44`) non ha campo trace.
+- `SliceRunResult` (`zelariMission.ts:47-61`) reports `completionOk`, `writeCount`, `degraded` - **but NOT per-member costs**.
+- No `.zelari/trace/<missionId>.json` is persisted.
+- No `/trace` command or `zelari-code trace show` exists.
+- `MissionState` (`zelariMission.ts:32-44`) has no trace field.
 
-Il dato c'è; la sua **superficizzazione** manca. È esattamente il gap tra
-"loop che gira" e "graph che puoi debuggare".
+The data exists; its **surfacing** is missing. That is exactly the gap between "a loop that runs" and "a graph you can debug".
 
-## Decisione
+## Decision
 
-Si scinde in **due fasi indipendenti**, perché hanno rischio/opportunità molto
-diversi. **Fase A prima** (basso rischio, alto valore, sblocca il giudizio su
-Fase B).
+It splits into **two independent phases**, because they have very different risk/opportunity. **Phase A first** (low risk, high value, unlocks the judgment on Phase B).
 
-### Fase A — Trace View (implementare ora)
+### Phase A - Trace View (implement now)
 
-Raccogliere, persistere e renderizzare il grafo di esecuzione che **esiste già
-nei dati** ma non viene superfizzato:
+Collect, persist and render the execution graph that **already exists in the data** but is not surfaced:
 
-1. **Estendere `SliceRunResult`** (`zelariMission.ts:47`) con
-   `costs?: MemberCost[]`. Il driver (`runHeadlessZelari`, che crea già il
-   tracker nel council) passa `tracker.finalize()` nel risultato di ogni slice.
+1. **Extend `SliceRunResult`** (`zelariMission.ts:47`) with `costs?: MemberCost[]`. The driver (`runHeadlessZelari`, which already creates the tracker in the council) passes `tracker.finalize()` in each slice's result.
 
-2. **Estendere `MissionState`** (`zelariMission.ts:32`) con
-   `trace?: SliceTrace[]` dove `SliceTrace = { sliceId, iteration, runMode,
-   costs: MemberCost[], completionOk, degraded }`. `runZelariMission`
-   accorpa i costi per slice a ogni iterazione.
+2. **Extend `MissionState`** (`zelariMission.ts:32`) with `trace?: SliceTrace[]` where `SliceTrace = { sliceId, iteration, runMode, costs: MemberCost[], completionOk, degraded }`. `runZelariMission` aggregates per-slice costs at every iteration.
 
-3. **Persistere** `.zelari/trace/<missionId>.json` con il grafo completo:
-   per ogni slice → membri (in ordine di esecuzione), token, costo USD
-   (via `calculateCost` di `modelPricing.ts`), latenza, errore, flag degraded.
-   Questo file è la base di ogni visualizzazione.
+3. **Persist** `.zelari/trace/<missionId>.json` with the full graph: per slice -> members (in execution order), tokens, USD cost (via `calculateCost` from `modelPricing.ts`), latency, error, degraded flag. This file is the base of every visualization.
 
-4. **Nuovo comando** `/trace` (TUI) e `zelari-code trace show <missionId>`
-   (headless): renderizzano il DAG di esecuzione come lista strutturata
-   (ASCII o JSON). Mostra: chi è girato, in che ordine, quanto è costato, dove
-   ha divergé (`errored`/`degraded`).
+4. **New command** `/trace` (TUI) and `zelari-code trace show <missionId>` (headless): they render the execution DAG as a structured list (ASCII or JSON). Shows: who ran, in what order, what it cost, where it diverged (`errored`/`degraded`).
 
-**Risultato:** risposta concreta a *"dove ha divergé il piano?"* senza dover
-scavare nei log.
+**Result:** a concrete answer to *"where did the plan diverge?"* without digging through logs.
 
-### Fase B — Fan-Out Parallelo (DEFERITO — non in questo ADR come lavoro attivo)
+### Phase B - Parallel Fan-Out (DEFERRED - not active work in this ADR)
 
-Parallelizzare i membri **indipendenti** del council. Identificato ma non
-implementato ora, per tre ragioni:
+Parallelize the **independent** council members. Identified but not implemented now, for three reasons:
 
-1. **Il grafo di dipendenze è oggi IMPLICITO** nell'ordine sequenziale. Per
-   parallelizzare serve renderlo esplicito: chi può girare in parallelo, chi
-   deve aspettare. Minosse giudica **dopo** gli specialisti; Lucifero
-   sintetizza **alla fine**. Il grafo è un DAG, non un set — non tutto è
-   parallelizzabile.
-2. **Conflitto di stato**: specialisti paralleli che scrivono sullo stesso
-   working tree si pestano i piedi. Servirebbe `git worktree add` multiplo
-   (estensione di `checkpointManager.ts`, che oggi opera su repo singolo via
-   git plumbing: `createCheckpoint`/`restoreCheckpoint`).
-3. **Non-determinismo nell'accumulazione**: lo stato durevole (Palmer) è
-   sequenziale per costrutto; parallelizzarlo richiede ridefinire il modello
-   di merge.
+1. **The dependency graph is today IMPLICIT** in the sequential order. To parallelize it must be made explicit: who can run in parallel, who must wait. Minosse judges **after** the specialists; Lucifero synthesizes **at the end**. The graph is a DAG, not a set - not everything is parallelizable.
+2. **State conflict**: parallel specialists writing on the same working tree step on each other. It would require multiple `git worktree add` (an extension of `checkpointManager.ts`, which today operates on a single repo via git plumbing: `createCheckpoint`/`restoreCheckpoint`).
+3. **Non-determinism in accumulation**: durable state (Palmer) is sequential by construct; parallelizing it requires redefining the merge model.
 
-**Criterio di sblocco per Fase B:** si implementa solo se la Fase A (trace
-view) mostra che il collo di bottiglia di una missione è **davvero** il tempo
-dei membri sequenziali, non il numero di iterazioni o la qualità del verifier.
+**Unlock criterion for Phase B:** implement only if Phase A (trace view) shows that a mission's bottleneck is **really** the sequential members' time, not the number of iterations or the verifier's quality.
 
-## Consequenze
+## Consequences
 
-**Fase A (ora):**
-- Osservabilità immediata: debug di *"Minosse ha rigettato la slice 3 costing
-  12k token — perché?"* diventa un `cat .zelari/trace/<id>.json`.
-- Zero rischio funzionale: i dati sono già raccolti; si aggiungono solo
-  persistenza + render. Il loop non cambia semantica.
-- Base per futuri miglioramenti: il trace JSON alimenta anche il budget cap
-  (ADR-0013) e potenziali dashboard.
+**Phase A (now):**
+- Immediate observability: debugging *"Minosse rejected slice 3 costing 12k tokens - why?"* becomes a `cat .zelari/trace/<id>.json`.
+- Zero functional risk: the data is already collected; only persistence + render are added. The loop's semantics do not change.
+- Base for future improvements: the JSON trace also feeds the budget cap (ADR-0013) and potential dashboards.
 
-**Fase B (deferito):**
-- Speedup potenziale (N specialisti in parallelo → wall-clock ≈ max anziché
-  sum), MA introduce non-determinismo e conflitti.
-- **Non si fa finché** Fase A non quantifica il win.
+**Phase B (deferred):**
+- Potential speedup (N parallel specialists -> wall-clock ~ max instead of sum), BUT it introduces non-determinism and conflicts.
+- **Not done until** Phase A quantifies the win.
 
-## Alternative considerate
+## Alternatives considered
 
-1. **Trace nello stderr/log esistente.** Rifiutato: non strutturato, non
-   interrogabile, perso al termine della sessione. Preferito JSON persistito
-   per-missione.
-2. **Parallelizzare tutto subito (Fase B prima).** Rifiutato: alto rischio,
-   payoff non dimostrato. Fase A prima serve a *misurare* se il sequenziale è
-   davvero il problema.
-3. **Trace come evento nello stream BrainEvent esistente.** Considerato: il
-   council emette già eventi (`onCouncilStatus`). Ma il trace per-missione
-   ha bisogno di persistenza oltre la sessione (debug post-mortem), quindi un
-   file JSON è più adatto di un evento effimero. Gli eventi possono *alimentare*
-   il file, ma il file resta la source of truth.
+1. **Trace in the existing stderr/log.** Rejected: not structured, not queryable, lost at session end. Persisted per-mission JSON preferred.
+2. **Parallelize everything now (Phase B first).** Rejected: high risk, unproven payoff. Phase A first is needed to *measure* whether sequential is really the problem.
+3. **Trace as an event in the existing BrainEvent stream.** Considered: the council already emits events (`onCouncilStatus`). But the per-mission trace needs persistence beyond the session (post-mortem debugging), so a JSON file is more suitable than an ephemeral event. Events can *feed* the file, but the file remains the source of truth.
 
-## Punti di integrazione concreti (Fase A)
+## Concrete integration points (Phase A)
 
-| File | Modifica | Effort |
+| File | Change | Effort |
 |---|---|---|
-| `src/cli/zelariMission.ts:47` (`SliceRunResult`) | aggiungere `costs?: MemberCost[]` | XS |
-| `src/cli/zelariMission.ts:32` (`MissionState`) | aggiungere `trace?: SliceTrace[]` + tipo | S |
-| `src/cli/zelariMission.ts:200` (`runZelariMission`) | accorpa `result.costs` in `state.trace` a ogni iter | S |
-| `src/cli/runHeadless.ts:996` (dove si costruisce `sliceResult`) | passare `tracker.finalize()` in `costs` | S |
-| nuovo `src/cli/traceStore.ts` | `saveTrace(missionId, trace)`, `loadTrace(missionId)` → `.zelari/trace/<id>.json` | S |
-| nuovo `src/cli/slashHandlers/trace.ts` | comando `/trace` | S |
+| `src/cli/zelariMission.ts:47` (`SliceRunResult`) | add `costs?: MemberCost[]` | XS |
+| `src/cli/zelariMission.ts:32` (`MissionState`) | add `trace?: SliceTrace[]` + type | S |
+| `src/cli/zelariMission.ts:200` (`runZelariMission`) | aggregate `result.costs` into `state.trace` at every iter | S |
+| `src/cli/runHeadless.ts:996` (where `sliceResult` is built) | pass `tracker.finalize()` in `costs` | S |
+| new `src/cli/traceStore.ts` | `saveTrace(missionId, trace)`, `loadTrace(missionId)` -> `.zelari/trace/<id>.json` | S |
+| new `src/cli/slashHandlers/trace.ts` | `/trace` command | S |
 | `src/cli/main.ts` (help) | `trace show <id>` subcommand | S |
-| `modelPricing.ts:112` (`calculateCost`) | già esiste — arricchisce il trace con USD | — |
+| `modelPricing.ts:112` (`calculateCost`) | already exists - enriches the trace with USD | - |
 
-**Tipi proposti:**
+**Proposed types:**
 
 ```ts
 export interface SliceTrace {
   sliceId: string;
   iteration: number;
   runMode: CouncilRunMode;
-  costs: MemberCost[];      // per-membro, in ordine di esecuzione
+  costs: MemberCost[];      // per-member, in execution order
   totalCostUsd?: number;    // via calculateCost
   completionOk: boolean;
   degraded?: boolean;
@@ -182,9 +127,8 @@ export interface SliceTrace {
 }
 ```
 
-**Test di accettazione (Fase A):**
-- Dopo una missione, `.zelari/trace/<missionId>.json` esiste e contiene una
-  entry per slice con i costi per membro.
-- `/trace` renderizza l'ordine dei membri + flag `errored`/`degraded`.
-- Una slice in cui Minosse restituisce `errored: true` è visibile nel trace.
-- Il trace include `totalCostUsd` (richiama ADR-0013 budget cap: stesso dato).
+**Acceptance tests (Phase A):**
+- After a mission, `.zelari/trace/<missionId>.json` exists and contains one entry per slice with per-member costs.
+- `/trace` renders the member order + `errored`/`degraded` flags.
+- A slice where Minosse returns `errored: true` is visible in the trace.
+- The trace includes `totalCostUsd` (recall ADR-0013 budget cap: same data).

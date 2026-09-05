@@ -1,89 +1,88 @@
-# ADR-0004: Policy di stabilità API pubblica di `@zelari/core`
+# ADR-0004: Public API stability policy for `@zelari/core`
 
-- **Stato:** ✅ Accettato
-- **Data proposta:** 2026-07-02
-- **Data accettazione:** 2026-07-02 (auto-accettata — i 9 subpath sono gia scritti e funzionanti in packages/core/package.json exports map)
-- **Autore:** MiniMax-M3
-- **Dipende da:** [ADR-0002](0002-publish-zelari-core-to-npm.md),
+- **Status:** Accepted
+- **Proposed:** 2026-07-02
+- **Accepted:** 2026-07-02 (self-accepted - the 9 subpaths are already written and working in the packages/core/package.json exports map)
+- **Author:** MiniMax-M3
+- **Depends on:** [ADR-0002](0002-publish-zelari-core-to-npm.md),
   [ADR-0003](0003-versioning-monorepo-policy.md)
 
-## Contesto
+## Context
 
-Appena pubblichiamo `@zelari/core`, qualunque rename, signature
-change, o tipo rimosso diventa un breaking change per consumer
-esterni che non controlliamo (potenzialmente).
+As soon as we publish `@zelari/core`, any rename, signature
+change, or removed type becomes a breaking change for external
+consumers we do not control (potentially).
 
-Dobbiamo decidere:
-1. Quale sottoinsieme di `@zelari/core/*` è **API pubblica stabile**?
-2. Come gestiamo le breaking changes durante `0.X.Y` (pre-1.0)?
-3. Qual è il processo di deprecation?
+We must decide:
+1. Which subset of `@zelari/core/*` is **stable public API**?
+2. How do we handle breaking changes during `0.X.Y` (pre-1.0)?
+3. What is the deprecation process?
 
-## Decisione
+## Decision
 
-### API pubblica stabile in v0.5.0
+### Stable public API in v0.5.0
 
-Esportiamo esplicitamente come stabile SOLO i barrel definiti, e **non**
-i subpath interni:
+We explicitly export as stable ONLY the defined barrels, and **not**
+the internal subpaths:
 
-| Subpath                    | Stato v0.5.0 | Note                                  |
+| Subpath                    | Status v0.5.0 | Notes                                  |
 |----------------------------|--------------|---------------------------------------|
-| `@zelari/core`             | **stable**   | Root barrel (subset ristretto, vedi sotto) |
+| `@zelari/core`             | **stable**   | Root barrel (restricted subset, see below) |
 | `@zelari/core/harness`     | **stable**   | `AgentHarness`, provider-neutral loop |
-| `@zelari/core/council`     | **stable**   | Council API, ruoli, promoteMember     |
-| `@zelari/core/skills`      | **stable**   | Registry delle built-in skills        |
+| `@zelari/core/council`     | **stable**   | Council API, roles, promoteMember     |
+| `@zelari/core/skills`      | **stable**   | Registry of built-in skills           |
 | `@zelari/core/events`      | **stable**   | `BrainEvent`, `EventBus`              |
-| `@zelari/core/types`       | **stable**   | Solo i tipi pubblici (no `legacy.ts`) |
+| `@zelari/core/types`       | **stable**   | Public types only (no `legacy.ts`)    |
 | `@zelari/core/harness/tools` | **stable** | `ToolRegistry`, tool types           |
-| `@zelari/core/harness/tools/builtin/*` | **stable** | Le 6 tool built-in            |
-| `@zelari/core/skills/builtin/*` | **stable** | Le 7 skill built-in              |
+| `@zelari/core/harness/tools/builtin/*` | **stable** | The 6 built-in tools       |
+| `@zelari/core/skills/builtin/*` | **stable** | The 7 built-in skills            |
 
-### Root barrel ristretto
+### Restricted root barrel
 
-Il file `packages/core/src/index.ts` espone SOLO:
-- `AgentHarness`, `ProviderStream` (da harness)
-- `Tool`, `ToolContext`, `ToolResult` (da tools)
-- `EventBus`, `BrainEvent` (da events)
-- `createCouncil`, `CouncilMember`, `MemberRole` (da council)
-- `registerBuiltInSkills` (da skills)
-- Tipi di `types/context` e `types/systemTypes`
+The file `packages/core/src/index.ts` exposes ONLY:
+- `AgentHarness`, `ProviderStream` (from harness)
+- `Tool`, `ToolContext`, `ToolResult` (from tools)
+- `EventBus`, `BrainEvent` (from events)
+- `createCouncil`, `CouncilMember`, `MemberRole` (from council)
+- `registerBuiltInSkills` (from skills)
+- Types from `types/context` and `types/systemTypes`
 
-**NON** espone da root:
-- internals di AgentHarness (helpers privati)
-- `legacy.ts` (tipi storici)
+It does **NOT** expose from root:
+- AgentHarness internals (private helpers)
+- `legacy.ts` (historical types)
 - mock/test utilities
-- `councilDirectives` (configurazione interna)
+- `councilDirectives` (internal configuration)
 
-### Tutto il resto è `@internal`
+### Everything else is `@internal`
 
-Qualsiasi export non elencato sopra è considerato **interno** e può
-cambiare senza preavviso tra minor o patch, anche durante 0.5.x. Lo
-marcamiamo con un commento JSDoc `@internal` in cima al file.
+Any export not listed above is considered **internal** and may
+change without notice between minor or patch, even during 0.5.x. We
+mark it with a `@internal` JSDoc comment at the top of the file.
 
 ### Breaking changes in 0.X.Y
 
-Durante la fase pre-1.0 (`0.5.x`, `0.6.x`, ecc.):
+During the pre-1.0 phase (`0.5.x`, `0.6.x`, etc.):
 
 1. **Deprecation cycle:**
-   - Deprecate una export via `/** @deprecated use X */` JSDoc.
-   - Mantieni la export funzionante per **almeno 2 minor release**
-     (es. deprecato in 0.5.0 → rimosso non prima di 0.7.0).
-   - Log a `console.warn` la prima volta che il consumer importa il
-     simbolo deprecato (in dev mode).
+   - Deprecate an export via `/** @deprecated use X */` JSDoc.
+   - Keep the export working for **at least 2 minor releases**
+     (e.g. deprecated in 0.5.0 -> removed no earlier than 0.7.0).
+   - `console.warn` log the first time a consumer imports the
+     deprecated symbol (in dev mode).
 
-2. **Migrazione documentata:**
-   - Ogni deprecation aggiunge una riga in `CHANGELOG.md` con
-     sezione `### Deprecated` + link a snippet di migrazione.
-   - Il nostro CLI stesso (unico consumer iniziale) viene migrato
-     nella stessa release della deprecation.
+2. **Documented migration:**
+   - Every deprecation adds a line in `CHANGELOG.md` under a
+     `### Deprecated` section + a link to a migration snippet.
+   - Our own CLI (the only initial consumer) is migrated in the
+     same release as the deprecation.
 
-3. **MAJOR bump** (1.0) solo quando:
-   - L'API pubblica copre ≥ 90% dei casi d'uso reali (decisione
-     soggettiva di Andrea).
-   - Un audit ha confermato che nessun consumer esterno noto è
-     impattato.
-   - La coverage dei test del barrel supera l'80%.
+3. **MAJOR bump** (1.0) only when:
+   - The public API covers >= 90% of real use cases (Andrea's
+     subjective decision).
+   - An audit confirmed no known external consumer is impacted.
+   - Barrel test coverage exceeds 80%.
 
-### Convenzione JSDoc
+### JSDoc convention
 
 ```typescript
 /**
@@ -94,47 +93,47 @@ Durante la fase pre-1.0 (`0.5.x`, `0.6.x`, ecc.):
 export function createHarness(...): AgentHarness { ... }
 
 /**
- * @deprecated since 0.7.0 — use `createHarness` instead.
+ * @deprecated since 0.7.0 - use `createHarness` instead.
  *             Will be removed in 1.0.0.
  */
 export function legacyHarness(...): AgentHarness { ... }
 
-// internals — no JSDoc, name starts with underscore OK
+// internals - no JSDoc, name starting with underscore OK
 function _internalHelper() {}
 ```
 
-## Alternative considerate
+## Alternatives considered
 
-- **Niente policy, semver "puro" come ogni package npm** — funziona,
-  ma non aiuta i consumer a sapere cosa è stabile; il barrel è
-  l'unica ancora, e i subpath profondi restano "zona grigia".
-- **Tutto è stabile (no `@internal`)** — impossibile da mantenere,
-  ogni refactor diventa breaking.
-- **API freeze totale in 0.5 (zero cambiamenti fino a 1.0)** — blocca
-  l'innovazione; il refactor non è ancora finito.
+- **No policy, "pure" semver like any npm package** - works,
+  but does not help consumers know what is stable; the barrel is
+  the only anchor, and deep subpaths remain a "gray zone".
+- **Everything is stable (no `@internal`)** - impossible to maintain,
+  every refactor becomes breaking.
+- **Total API freeze in 0.5 (zero changes until 1.0)** - blocks
+  innovation; the refactor is not finished yet.
 
-## Conseguenze
+## Consequences
 
 **Positive**
-- Barrel esplicito dà al consumer un punto di ingresso chiaro.
-- Ciclo di deprecation 2-release dà tempo ai consumer di migrare.
-- `console.warn` solo in dev mode non impatta produzione.
+- An explicit barrel gives the consumer a clear entry point.
+- The 2-release deprecation cycle gives consumers time to migrate.
+- `console.warn` only in dev mode does not impact production.
 
-**Negative / rischi**
-- Barrel troppo ristretto = consumer frustrato che deve importare
-  da molti subpath.
-- Disciplina nel marcare `@internal` è facile da perdere.
-- 2-release deprecation è tanto durante 0.X.Y (rilasciamo
-  frequentemente); forse troppo.
-- Serve tooling per generare `@since` automaticamente (TS API
-  extractor, api-extractor) per evitare drift.
+**Negative / risks**
+- A too-restricted barrel frustrates consumers who must import
+  from many subpaths.
+- Discipline in marking `@internal` is easy to lose.
+- A 2-release deprecation is long during 0.X.Y (we release
+  frequently); perhaps too long.
+- Tooling is needed to generate `@since` automatically (TS API
+  extractor, api-extractor) to avoid drift.
 
 ## TODO
 
-- [ ] Andrea rivede la lista "API stabile v0.5.0" e aggiunge/toglie.
-- [ ] Aggiungere JSDoc `@public`/`@internal`/`@deprecated` su
-      tutti gli export dei barrel.
-- [ ] Setup api-extractor per generare `packages/core/api-report.md`
-      (fonte unica di verità per "cosa è pubblico").
-- [ ] Discutere se il ciclo di deprecation va accorciato a 1 minor
-      durante 0.X.Y (rilasci veloci).
+- [ ] Andrea reviews the "stable API v0.5.0" list and adds/removes.
+- [ ] Add `@public`/`@internal`/`@deprecated` JSDoc on all barrel
+      exports.
+- [ ] Set up api-extractor to generate `packages/core/api-report.md`
+      (single source of truth for "what is public").
+- [ ] Discuss whether the deprecation cycle should be shortened to
+      1 minor during 0.X.Y (fast releases).

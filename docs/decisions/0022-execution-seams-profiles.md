@@ -1,50 +1,37 @@
-# ADR-0022 — Execution seams (WorkspaceProvider & friends) e profili versionati
+# ADR-0022 - Execution seams (WorkspaceProvider & friends) and versioned profiles
 
 **Status:** Accepted
 **Date:** 2026-08-19
 
-## Contesto
+## Context
 
-Il worktree Kraken è oggi un flag ambientale sparso (`ZELARI_KRAKEN_WORKTREE` in
-`src/cli/tools/krakenWorktree.ts`); shell e fs sono raggiunti direttamente dai tool.
-Il piano 2.0 chiede seam espliciti per isolamento, confrontabilità dei profili e
-esperimenti futuri (remote sandbox) **senza** introdurre un plugin framework.
+The Kraken worktree is today a scattered environmental flag (`ZELARI_KRAKEN_WORKTREE` in `src/cli/tools/krakenWorktree.ts`); shell and fs are reached directly by tools. The 2.0 plan asks for explicit seams for isolation, profile comparability and future experiments (remote sandbox) **without** introducing a plugin framework.
 
-## Decisione
+## Decision
 
-`@zelari/core/runtime` espone seam minimi, iniettati e jailati:
+`@zelari/core/runtime` exposes minimal, injected, jailed seams:
 
-- **`WorkspaceProvider`** — `{kind: local|worktree|memory|remote, root, resolve(rel), dispose?()}`.
-  `resolve` applica il path jail (errore `WorkspacePathEscapeError` fuori da root).
-  `WorktreeWorkspace` implementa il worktree git (`zelari/worktree-<id>` sotto
-  `.zelari/worktrees/`, create/diff/merge-squash/dispose) — la logica esistente del CLI
-  convergerà su questo provider.
-- **`FsProvider` / `ShellProvider`** — operazioni sempre relative al workspace;
-  `NodeShellProvider` gira comandi con cwd jailato, timeout e cap output;
-  implementazioni in-memory per i test deterministici.
-- **`SubagentProvider`** — seam per la delega (`runTask`); in core esiste solo il
-  no-op (available: false): l'iniezione reale avviene nel CLI (task tool path).
-- **`ExecutionContext`** — bundle {session, workspace, fs, shell, subagent, profile,
-  experimental} creato da `createExecutionContext`.
-- **Profili versionati** — `Profile {id: <name>/v<N>, tools[], orchestration,
-  verification}` con hash del manifest (`toolManifestHash`, sha256 dei tool ordinati):
-  - `minimal/v1`: read_file, edit_file, bash, grep_content, list_files (baseline
-    benchmark immutabile);
-  - `kraken/v1`: orchestrazione completa + verification deterministica;
-  - `council/v1`, `mission/v1` (metadata; mission completa in Fase 4).
-- **Choke point invariato**: i provider sono raggiunti solo via `ToolRegistry.invoke`
-  o dai servizi interni di verifica (SafeExecutionServices path). Nessun bypass P2.
+- **`WorkspaceProvider`** - `{kind: local|worktree|memory|remote, root, resolve(rel), dispose?()}`.
+  `resolve` applies the path jail (`WorkspacePathEscapeError` outside root).
+  `WorktreeWorkspace` implements the git worktree (`zelari/worktree-<id>` under `.zelari/worktrees/`, create/diff/merge-squash/dispose) - the CLI's existing logic will converge onto this provider.
+- **`FsProvider` / `ShellProvider`** - operations always relative to the workspace;
+  `NodeShellProvider` runs commands with a jailed cwd, timeout and output cap;
+  in-memory implementations for deterministic tests.
+- **`SubagentProvider`** - seam for delegation (`runTask`); in core only the no-op exists (available: false): the real injection happens in the CLI (task tool path).
+- **`ExecutionContext`** - bundle {session, workspace, fs, shell, subagent, profile, experimental} created by `createExecutionContext`.
+- **Versioned profiles** - `Profile {id: <name>/v<N>, tools[], orchestration, verification}` with a manifest hash (`toolManifestHash`, sha256 of the sorted tools):
+  - `minimal/v1`: read_file, edit_file, bash, grep_content, list_files (immutable benchmark baseline);
+  - `kraken/v1`: full orchestration + deterministic verification;
+  - `council/v1`, `mission/v1` (metadata; full mission in Phase 4).
+- **Choke point unchanged**: providers are reached only via `ToolRegistry.invoke` or by internal verification services (SafeExecutionServices path). No P2 bypass.
 
-## Alternative considerate
+## Alternatives considered
 
-1. **Plugin framework generico** — rifiutato: P6 right-sizing; solo seams espliciti.
-2. **Worktree nel CLI per sempre** — rifiutato: impedisce remote sandbox e test
-   di isolamento deterministici in core.
+1. **Generic plugin framework** - rejected: P6 right-sizing; explicit seams only.
+2. **Worktree in the CLI forever** - rejected: it prevents remote sandbox and deterministic isolation tests in core.
 
-## Conseguenze
+## Consequences
 
-**Positive** — parallelismo sicuro (worktree come policy path), benchmark
-minimal-vs-kraken confrontabile, superficie per remote/E2B già disegnata.
+**Positive** - safe parallelism (worktree as a policy path), comparable minimal-vs-kraken benchmark, a surface for remote/E2B already designed.
 
-**Negative** — doppio binario temporaneo CLI flag ↔ provider finché i tool critici
-non migrano (migrazione dietro `ZELARI_SEAMS=1`, pianificata in Fase 2.9).
+**Negative** - temporary dual track CLI flag <-> provider until the critical tools migrate (migration behind `ZELARI_SEAMS=1`, planned in Phase 2.9).

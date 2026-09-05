@@ -1,21 +1,21 @@
-# ADR-0018 — Contratto workspace task store su `.zelari/plan.json`
+# ADR-0018 - Workspace task store contract on `.zelari/plan.json`
 
-**Status**: Accettato — slice 3a implementata (v1.43.0)
-**Relazionato a**: `.zelari/docs/plan-desktop-livetasks-multirun-v2.md` (M3), ADR-0016 (event-sourced session log)
+**Status**: Accepted - slice 3a implemented (v1.43.0)
+**Related to**: `.zelari/docs/plan-desktop-livetasks-multirun-v2.md` (M3), ADR-0016 (event-sourced session log)
 
-## Contesto
+## Context
 
-Il Desktop ha bisogno di task di progetto **durable e multi-sessione**, distinti dai session todo (volatili, per-conversation, cap 40 — `src/cli/sessionTodos.ts`). Il commento in testa a quel modulo dichiara già l'intento: *"Not the same as `.zelari/plan.json` workspace tasks (those are multi-session durable plans)"* — ma **nessun tool oggi scrive quel file**: i builtin core sono filesystem/shell/search/web, il registry CLI registra solo `todo_write`/`todo_read` (`src/cli/toolRegistry.ts:268-276`). Il vault `.zelari/plan.json` usato dal council è quindi un formato interno non contrattuale, in evoluzione.
+The Desktop needs **durable, multi-session** project tasks, distinct from session todos (volatile, per-conversation, cap 40 - `src/cli/sessionTodos.ts`). The comment at the top of that module already declares the intent: *"Not the same as `.zelari/plan.json` workspace tasks (those are multi-session durable plans)"* - but **no tool writes that file today**: core builtins are filesystem/shell/search/web, and the CLI registry registers only `todo_write`/`todo_read` (`src/cli/toolRegistry.ts:268-276`). The `.zelari/plan.json` vault used by the council is therefore a non-contractual internal format, still evolving.
 
-M2 ha già pagato il trasporto (envelope `runId+conversationId+cwd` su `agent-event`), M1 la UI unificata (`LiveTasksPanel`, `source` già nel modello `liveTasks/types.ts`). Senza writer, gli acceptance test 5-8 del piano (update ottimistico, riconciliazione, refresh a fine run) restano inevasi.
+M2 already paid the transport (the `runId+conversationId+cwd` envelope on `agent-event`), M1 the unified UI (`LiveTasksPanel`, `source` already in the `liveTasks/types.ts` model). Without a writer, the plan's acceptance tests 5-8 (optimistic update, reconciliation, end-of-run refresh) remain unaddressed.
 
-Forze in gioco: coesistenza col vault council sullo stesso file; policy zero-deps pesanti (P2); concorrenza cross-process (i run Desktop sono processi CLI separati); necessità di stabilità del formato una volta esposto alla UI.
+Forces at play: coexistence with the council vault on the same file; the zero-heavy-deps policy (P2); cross-process concurrency (Desktop runs are separate CLI processes); the need for format stability once exposed to the UI.
 
-## Decisione
+## Decision
 
-`.zelari/plan.json` diventa lo **store canonico e versionato** dei workspace task, scritto **solo** da tre nuovi tool CLI (`task_create`, `task_update`, `task_list`) con write atomica e permessi in classe `write`.
+`.zelari/plan.json` becomes the **canonical, versioned store** of workspace tasks, written **only** by three new CLI tools (`task_create`, `task_update`, `task_list`) with atomic writes and `write`-class permissions.
 
-**Envelope schema v1** (root — i tool toccano SOLO `tasks` e `counter`; ogni altro campo root, es. metadati council, è preservato intatto in pass-through):
+**Envelope schema v1** (root - the tools touch ONLY `tasks` and `counter`; every other root field, e.g. council metadata, is preserved intact in pass-through):
 
 ```json
 {
@@ -37,37 +37,37 @@ Forze in gioco: coesistenza col vault council sullo stesso file; policy zero-dep
 }
 ```
 
-- **Status canonici**: `pending | in_progress | completed | cancelled | blocked`. `blocked` esiste SOLO qui (i session todo restano senza, come oggi). Nessuna FSM rigida sulle transizioni: il modello può correggere (es. `completed → in_progress`).
-- **Id**: `t<N>` sequenziali via `counter` persistito (leggibili in UI/CLI, niente uuid). `title` ≤ 200 char, `notes` ≤ 2000, `agent`/`phaseId` ≤ 64, `priority` ∈ `low|medium|high|critical`, max 100 task. Campi sconosciuti su un task sono preservati da `task_update` se non toccati.
-- **Tool contract** (`src/cli/tools/planTaskTools.ts`, naming snake_case come `todo_write`):
-  - `task_create({ title, priority?, phaseId?, notes? })` → task `pending`, ritorna `{ id }`;
-  - `task_update({ id, status?, title?, priority?, phaseId?, notes?, appendNote? })` → errore tipizzato `PLAN_TASK_NOT_FOUND` se id assente;
-  - `task_list({ status?, phaseId? }?)` → snapshot filtrato + conteggio `done/total`.
-- **Scrittura**: store in `src/cli/workspace/planStore.ts` — read-modify-write singola, tmp + rename nella stessa dir, backup `.plan.json.bak` prima di riscrivere un file esistente, file corrotto → errore chiaro (mai sovrascrittura silenziosa). Path confinato sotto `{root}/.zelari` via sandboxPath, audit via AuditLogger, permessi via `wrapWithPermissions` (classe `write`).
-- **Registrazione**: opzione `enablePlanTasks` in `CreateRegistryOptions` — default attiva per `profile === 'full'` **e** in `planMode` (il piano è il dominio della fase plan; il campo `planMode` a `toolRegistry.ts:128-131` già lo anticipa); mai per readOnly/explore/verify/general nel primo rilascio.
-- **Concorrenza**: atomic write + read-modify-write per chiamata. Nel Desktop la race è già neutralizzata da M2 (`RunRegistry`: max 1 run attivo per cwd). Per CLI multiple concorrenti sulla stessa cwd, hardening futuro: lock file `.zelari/.plan.lock` (fuori scope 3a).
+- **Canonical statuses**: `pending | in_progress | completed | cancelled | blocked`. `blocked` exists ONLY here (session todos stay without it, as today). No rigid FSM on transitions: the model can correct (e.g. `completed -> in_progress`).
+- **Ids**: sequential `t<N>` via a persisted `counter` (readable in UI/CLI, no uuids). `title` = 200 chars, `notes` = 2000, `agent`/`phaseId` = 64, `priority` in `low|medium|high|critical`, max 100 tasks. Unknown fields on a task are preserved by `task_update` if untouched.
+- **Tool contract** (`src/cli/tools/planTaskTools.ts`, snake_case naming like `todo_write`):
+  - `task_create({ title, priority?, phaseId?, notes? })` -> task `pending`, returns `{ id }`;
+  - `task_update({ id, status?, title?, priority?, phaseId?, notes?, appendNote? })` -> typed error `PLAN_TASK_NOT_FOUND` if the id is missing;
+  - `task_list({ status?, phaseId? }?)` -> filtered snapshot + `done/total` count.
+- **Writing**: store in `src/cli/workspace/planStore.ts` - single read-modify-write, tmp + rename in the same dir, `.plan.json.bak` backup before rewriting an existing file, corrupt file -> clear error (never silent overwrite). Path confined under `{root}/.zelari` via sandboxPath, audit via AuditLogger, permissions via `wrapWithPermissions` (`write` class).
+- **Registration**: `enablePlanTasks` option in `CreateRegistryOptions` - active by default for `profile === 'full'` **and** in `planMode` (the plan is the plan-phase domain; the `planMode` field at `toolRegistry.ts:128-131` already anticipates it); never for readOnly/explore/verify/general in the first release.
+- **Concurrency**: atomic write + read-modify-write per call. In the Desktop the race is already neutralized by M2 (`RunRegistry`: max 1 active run per cwd). For multiple concurrent CLIs on the same cwd, future hardening: `.zelari/.plan.lock` lock file (out of scope for 3a).
 
-**Fuori scope di 3a**: eventi first-class `task_update`/`task_snapshot` (slice 3b, canale envelope M2) e consumo Desktop (slice 3c).
+**Out of scope for 3a**: first-class `task_update`/`task_snapshot` events (slice 3b, M2 envelope channel) and Desktop consumption (slice 3c).
 
-## Alternative considerate
+## Alternatives considered
 
-1. **M3-quick read-only** (desktop parsifica `plan.json` senza writer) — rifiutata: lascia inevasi gli acceptance 5-8 e accoppia la UI a un formato non contrattuale.
-2. **File separato `.zelari/tasks.json`** — rifiutato: due fonti di verità; codice e council già puntano a `plan.json` come store dei plan durevoli.
-3. **Estendere `todo_write` con `scope: 'project'`** — rifiutato: semantica opposta (volatile in-process vs persistente condiviso) e permessi diversi nello stesso tool.
-4. **SQLite** — rifiutato: viola P2 (zero deps pesanti) e perde diff-ability/git-friendliness di JSON.
+1. **M3-quick read-only** (Desktop parses `plan.json` without a writer) - rejected: leaves acceptance 5-8 unaddressed and couples the UI to a non-contractual format.
+2. **Separate file `.zelari/tasks.json`** - rejected: two sources of truth; code and council already point to `plan.json` as the durable plan store.
+3. **Extending `todo_write` with `scope: 'project'`** - rejected: opposite semantics (volatile in-process vs shared persistent) and different permissions in the same tool.
+4. **SQLite** - rejected: violates P2 (zero heavy deps) and loses JSON's diff-ability/git-friendliness.
 
-## Conseguenze
+## Consequences
 
-**Positive**: unica fonte di verità per task condivisi CLI/desktop/council; sblocca M3c (pannello PROJECT con optimistic + reconciliation); formato leggibile e diff-able; base naturale per scheduler/queue futuri.
+**Positive**: single source of truth for tasks shared by CLI/desktop/council; unblocks M3c (PROJECT panel with optimistic + reconciliation); readable and diff-able format; natural base for future schedulers/queues.
 
-**Negative**: `plan.json` diventa API pubblica di fatto — ogni breaking change richiede bump di `schemaVersion` + migrazione; il council interno deve rispettare il contratto (vincolo sul prodotto); un'altra famiglia di tool da mantenere e documentare; race cross-process residua per CLI parallele sulla stessa cwd (mitigata, non eliminata, dalla write atomica).
+**Negative**: `plan.json` becomes a de facto public API - every breaking change requires a `schemaVersion` bump + migration; the internal council must respect the contract (a constraint on the product); another tool family to maintain and document; residual cross-process race for parallel CLIs on the same cwd (mitigated, not eliminated, by the atomic write).
 
-## TODO (slice 3a — da spuntare a implementazione)
+## TODO (slice 3a - to be checked off at implementation)
 
-- [x] `src/cli/workspace/planStore.ts` — load/validate/save atomica, caps, pass-through campi root e campi task sconosciuti, backup `.bak`.
-- [x] `src/cli/tools/planTaskTools.ts` — `task_create`/`task_update`/`task_list` con Zod, errori tipizzati.
-- [x] Registrazione in `src/cli/toolRegistry.ts` con `enablePlanTasks` (full + planMode), avvolta in `withPerm`.
-- [x] Unit test vitest: store (happy path, caps, file corrotto, pass-through) + tool (CRUD, `PLAN_TASK_NOT_FOUND`).
-- [x] Documentazione in `docs/TOOLS.md` sezione `task_*`.
-- [x] Slice 3b: `task_update`/`task_snapshot` BrainEvents su envelope M2 (`packages/core/src/shared/events.ts`).
-- [x] Slice 3c: desktop `liveTasks/workspacePlan.ts` + merge nel reducer + reconciliation su `run-finished`.
+- [x] `src/cli/workspace/planStore.ts` - atomic load/validate/save, caps, pass-through of root fields and unknown task fields, `.bak` backup.
+- [x] `src/cli/tools/planTaskTools.ts` - `task_create`/`task_update`/`task_list` with Zod, typed errors.
+- [x] Registration in `src/cli/toolRegistry.ts` with `enablePlanTasks` (full + planMode), wrapped in `withPerm`.
+- [x] Vitest unit tests: store (happy path, caps, corrupt file, pass-through) + tools (CRUD, `PLAN_TASK_NOT_FOUND`).
+- [x] Documentation in `docs/TOOLS.md`, `task_*` section.
+- [x] Slice 3b: `task_update`/`task_snapshot` BrainEvents on the M2 envelope (`packages/core/src/shared/events.ts`).
+- [x] Slice 3c: desktop `liveTasks/workspacePlan.ts` + merge in the reducer + reconciliation on `run-finished`.

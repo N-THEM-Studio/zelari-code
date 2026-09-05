@@ -1,150 +1,63 @@
-# ADR-0024 — Chiusura del dual-write: la spine come unica sorgente del contesto modello
+# ADR-0024 - Closing the dual-write: the spine as the only source of model context
 
-**Status:** Accettato (emendato 2026-08-30; v1.1 2026-08-30)
+**Status:** Accepted (amended 2026-08-30; v1.1 2026-08-30)
 **Date:** 2026-08-19
 
-## Contesto
+## Context
 
-L'ADR-0016 ha definito il contratto della session spine (log JSONL append-only,
-invariante "model-visible ⟺ logged"), ma durante l'alpha il wiring è rimasto
-**dual-write**: lo store 1.x in-process (`hooks/conversationContext.ts`) e il
-sidecar JSONL BrainEvent erano il "transcript of record", mentre la spine era
-un mirror best-effort (`SessionSpineMirror`, `sessionSpine.ts`). Il contesto
-del modello veniva costruito dallo store/`--history` legacy, non dalla spine.
+ADR-0016 defined the session spine contract (append-only JSONL log, "model-visible implies logged" invariant), but during the alpha the wiring remained **dual-write**: the 1.x in-process store (`hooks/conversationContext.ts`) and the BrainEvent JSONL sidecar were the "transcript of record", while the spine was a best-effort mirror (`SessionSpineMirror`, `sessionSpine.ts`). The model's context was built from the legacy store/`--history`, not from the spine.
 
-Con le slice E1.1–E1.4 (2.0.0-alpha.5) i flussi sono stati invertiti:
+With slices E1.1-E1.4 (2.0.0-alpha.5) the flows were inverted:
 
-- **E1.1** — adapter unico `derivedToAgentMessages()` in `@zelari/core/session`
-  (`DerivedMessage[] → AgentMessage[]`), con perdite documentate.
-- **E1.2** — headless (kraken/council/zelari): `--history` diventa import
-  one-shot nella spine (`seedHeadlessModelHistory`); resume deriva dal log.
-- **E1.3** — TUI: `dispatchPrompt` deriva il seed dalla spine prima di loggare
-  il prompt; lo store resta fallback dichiarato.
-- **E1.4** — Desktop: resume via evento `session_started` + `--resume <id>`;
-  la snapshot 1.x resta fallback di import.
-- **E1.6/E1.7** — replay deterministico dal solo `events.jsonl` e invariante
-  model-visible⟺logged come gate CI (`npm run test:session`).
+- **E1.1** - single adapter `derivedToAgentMessages()` in `@zelari/core/session` (`DerivedMessage[] -> AgentMessage[]`), with documented losses.
+- **E1.2** - headless (kraken/council/zelari): `--history` becomes a one-shot import into the spine (`seedHeadlessModelHistory`); resume derives from the log.
+- **E1.3** - TUI: `dispatchPrompt` derives the seed from the spine before logging the prompt; the store remains a declared fallback.
+- **E1.4** - Desktop: resume via the `session_started` event + `--resume <id>`; the 1.x snapshot remains the import fallback.
+- **E1.6/E1.7** - deterministic replay from `events.jsonl` alone and the model-visible-implies-logged invariant as a CI gate (`npm run test:session`).
 
-Residuo al momento di questa ADR: la **budget pipeline** (singolo e council)
-misurava ancora `getHistory()` (store 1.x) invece del seed spine-derived, e il
-path council compattava lo store senza emettere `session_compacted` sulla
-spine (drift del confine di compaction).
+Residual at the time of this ADR: the **budget pipeline** (single and council) still measured `getHistory()` (the 1.x store) instead of the spine-derived seed, and the council path compacted the store without emitting `session_compacted` on the spine (compaction boundary drift).
 
-## Decisione
+## Decision
 
-1. **La spine è l'unica sorgente del contesto modello** su ogni path caldo
-   (headless kraken/council/zelari, TUI singolo/council). Ogni seed harness
-   passa per `deriveMessages()` → `derivedToAgentMessages()` /
-   `derivedModelSeed()`. Nessun nuovo builder di history: chi ha bisogno di
-   contesto deriva dalla spine.
-2. **Lo store 1.x e il sidecar BrainEvent sono superficie mirror** (render UI,
-   export, migrazione), non source of truth. `sessionManager.ts` è deprecato
-   per il model context: persistenza UI (`/sessions`, `/resume`, marker) e
-   sorgente read-only per migrazione.
-3. **La budget pipeline misura il seed spine-derived** (`historyForModel` /
-   `councilHistory`), non lo store. Se la pipeline compatta, il replay
-   sostituisce il seed del turno corrente e l'evento `session_compacted`
-   viene emesso su **entrambi** i path (singolo e council), così la derive
-   successiva vede il confine di compaction.
-4. **Fallback discreto dichiarato**: spine degradata/disabled → seed dallo
-   store 1.x (comportamento pre-spine), testato. Un errore della spine non
-   rompe mai il turno.
-5. **`ZELARI_SESSION_SPINE=0` è kill switch di emergenza/debug**, non un
-   default di release.
-6. **Rimozione del dual-write a 2.0.0-rc**: quando replay/invariante saranno
-   stabili per un ciclo completo (C1–C3 chiusi), lo store 1.x smette di
-   alimentare il fallback e diventa pura vista UI/export; la rimozione
-   definitiva sarà oggetto di ADR separata.
+1. **The spine is the only source of model context** on every hot path (headless kraken/council/zelari, TUI single/council). Every harness seed goes through `deriveMessages()` -> `derivedToAgentMessages()` / `derivedModelSeed()`. No new history builder: whoever needs context derives from the spine.
+2. **The 1.x store and the BrainEvent sidecar are mirror surface** (UI render, export, migration), not source of truth. `sessionManager.ts` is deprecated for model context: UI persistence (`/sessions`, `/resume`, markers) and read-only source for migration.
+3. **The budget pipeline measures the spine-derived seed** (`historyForModel` / `councilHistory`), not the store. If the pipeline compacts, the replay replaces the current turn's seed and the `session_compacted` event is emitted on **both** paths (single and council), so the next derive sees the compaction boundary.
+4. **Declared discrete fallback**: spine degraded/disabled -> seed from the 1.x store (pre-spine behavior), tested. A spine error never breaks the turn.
+5. **`ZELARI_SESSION_SPINE=0` is an emergency/debug kill switch**, not a release default.
+6. **Dual-write removal at 2.0.0-rc**: when replay/invariant are stable for a full cycle (C1-C3 closed), the 1.x store stops feeding the fallback and becomes pure UI/export view; the final removal will be the subject of a separate ADR.
 
-## Alternative
+## Alternatives
 
-- **Mantenere il dual-write a tempo indeterminato** — scartato: due cervelli
-  divergono (bug split-brain v0.4.2), la compaction non era visibile al
-  modello derivato, e ogni feature (resume, fork, export, verification)
-  doveva essere implementata due volte.
-- **Big-bang single-write senza fallback** — scartato: un fallimento I/O
-  della spine renderebbe il prodotto inutilizzabile; il fallback discreto è
-  la politica di sicurezza del turno (P3).
-- **Derivare il model context dal sidecar BrainEvent 1.x** — scartato: il log
-  1.x non registra i prompt utente (buco P1) e non ha confini di compaction
-  affidabili.
+- **Keep dual-write indefinitely** - rejected: two brains diverge (the v0.4.2 split-brain bug), compaction was not visible to the derived model, and every feature (resume, fork, export, verification) had to be implemented twice.
+- **Big-bang single-write without fallback** - rejected: a spine I/O failure would make the product unusable; the discrete fallback is the turn's safety policy (P3).
+- **Derive model context from the 1.x BrainEvent sidecar** - rejected: the 1.x log does not record user prompts (a P1 hole) and has no reliable compaction boundaries.
 
-## Conseguenze
+## Consequences
 
-- **Positive**: una sola storia da ricostruire (replay verificato in CI);
-  resume/fork/export funzionano dallo stesso log; la compaction è visibile al
-  modello; il contratto `@zelari/core/session` è l'unica API di contesto.
-- **Negative**: la derive paga un costo I/O per turno (letto incrementale
-  mitigato dal projection cache); durante l'alpha esistono ancora due
-  rappresentazioni da tenere allineate (mirror).
-- **Neutral**: i builder `buildAgentUserWithHistory` /
-  `buildCouncilTaskWithHistory` restano formattatori di prompt — ricevono
-  solo input spine-derived e sono coperti dai test di replay.
+- **Positive**: a single history to reconstruct (replay verified in CI); resume/fork/export work from the same log; compaction is visible to the model; the `@zelari/core/session` contract is the only context API.
+- **Negative**: the derive pays an I/O cost per turn (incremental read mitigated by the projection cache); during the alpha two representations still exist to keep aligned (the mirror).
+- **Neutral**: the builders `buildAgentUserWithHistory` / `buildCouncilTaskWithHistory` remain prompt formatters - they receive only spine-derived input and are covered by the replay tests.
 
 ## TODO
 
-- [x] E1.5 — budget pipeline su seed spine-derived + `session_compacted` su path council
-- [x] Test architetturale `legacyContextIsolation.test.ts` (nessuna ricaduta nello store per il model context)
-- [ ] A 2.0.0-rc: valutare rimozione fallback store → ADR successiva
+- [x] E1.5 - budget pipeline on the spine-derived seed + `session_compacted` on the council path
+- [x] Architectural test `legacyContextIsolation.test.ts` (no store fallback for model context)
+- [ ] At 2.0.0-rc: evaluate removing the store fallback -> later ADR
 
-## Amendment (2026-08-30) — host graph sulla spine (W1, release 2.17)
+## Amendment (2026-08-30) - graph host on the spine (W1, release 2.17)
 
-Con la 2.17 l'elenco dei **path caldi** del punto 1 della Decisione si estende
-all'**host graph**: `runHeadlessKrakenGraph` (`src/cli/runHeadless.ts`) apre il
-log di sessione (`openHeadlessSpine`, mode `kraken`, workspace risolto), gated
-`session.started` su `--output json`, e lo chiude su ogni uscita
-(completed/error/cancelled, incluso il SIGINT gestito); un fallimento della
-spine non cambia mai l'exit code. Il graph host non bypassa più questa ADR sui
-run default-on.
+With 2.17 the list of **hot paths** in Decision point 1 extends to the **graph host**: `runHeadlessKrakenGraph` (`src/cli/runHeadless.ts`) opens the session log (`openHeadlessSpine`, mode `kraken`, resolved workspace), gates `session.started` on `--output json`, and closes it on every exit (completed/error/cancelled, including handled SIGINT); a spine failure never changes the exit code. The graph host no longer bypasses this ADR on default-on runs.
 
-**Special-case dichiarato — copertura spine v1 sui run graph: ENVELOPE-ONLY.**
-Sui run graph il log spine contiene gli eventi di envelope del run
-(`started` / `user.message` / `ended`) più lo scaffolding host session-level
-node-independent (`session.harness_manifest`, `note`, `resource.*`,
-`task.contract`, scritti dal mirror a ogni apertura/turn-prep, identici con
-grafo vuoto o popolato); gli eventi **per-nodo** e i **turn interni** dei
-tentacoli NON finiscono sul log spine in v1 (i tentacoli scrivono sul canale
-kraken radio JSONL, non sulla spine). Il contratto è pinnato da un test
-differenziale in `src/cli/krakenGraphSpine.test.ts` (run con grafo vuoto vs
-grafo 1-nodo: sequenza spine identica). È un contratto special-case dichiarato
-qui, non una copertura completa: l'approfondimento (per-node events sulla
-spine) è rinviato.
+**Declared special-case - spine v1 coverage on graph runs: ENVELOPE-ONLY.** On graph runs the spine log contains the run's envelope events (`started` / `user.message` / `ended`) plus node-independent host session-level scaffolding (`session.harness_manifest`, `note`, `resource.*`, `task.contract`, written by the mirror at every open/turn-prep, identical with an empty or populated graph); **per-node** events and the tentacles' **inner turns** do NOT land on the spine log in v1 (tentacles write to the kraken radio JSONL channel, not the spine). The contract is pinned by a differential test in `src/cli/krakenGraphSpine.test.ts` (empty-graph run vs 1-node graph: identical spine sequence). It is a declared special-case contract, not full coverage: deepening (per-node events on the spine) is deferred.
 
-- [ ] Approfondire la copertura per-node dei run graph sulla spine (post-v1)
+- [ ] Deepen per-node coverage of graph runs on the spine (post-v1)
 
-## Amendment v1.1 (2026-08-30) — envelope per-nodo sui run graph
+## Amendment v1.1 (2026-08-30) - per-node envelope on graph runs
 
-**Sostituisce lo special-case envelope-only** dell'emendamento del 2026-08-30
-(la voce TODO "Approfondire la copertura per-node" qui sopra è chiusa da
-questo emendamento). Sui run graph la spine ora porta anche l'**envelope
-per-nodo**: eventi di stato `graph.node_started` / `graph.node_ended`
-(aggiunti al vocabolario chiuso di `packages/core/src/session/types.ts` con
-schema review per ADR-0021 — tipi additivi state-only, **senza bump di
-SCHEMA_VERSION**, che resta 1: il replay tollerante dei lettori più vecchi li
-segnala come `schema-mismatch` e li salta, e `deriveMessages()` non cambia —
-non sono model-surface).
+**Replaces the envelope-only special-case** of the 2026-08-30 amendment (the "Deepen per-node coverage" TODO above is closed by this amendment). On graph runs the spine now also carries the **per-node envelope**: state events `graph.node_started` / `graph.node_ended` (added to the closed vocabulary of `packages/core/src/session/types.ts` with schema review per ADR-0021 - additive state-only types, **without a SCHEMA_VERSION bump**, which stays 1: older tolerant readers flag them as `schema-mismatch` and skip them, and `deriveMessages()` does not change - they are not model-surface).
 
-**Chi scrive — solo l'HOST.** L'emissione vive in `runHeadlessKrakenGraph`
-(`src/cli/runHeadless.ts`): l'host avvolge il seam di run del tentacolo
-(`runTentacleFn`, helper `nodeSpineEnvelopeRun`) — lo stesso invocato
-dall'executor per ogni turno di nodo — e appende la coppia started/ended via
-`spine.appendEvent` con `actor: system`. I tentacoli/subagent NON scrivono mai
-sulla spine (né lo stub di test, né il codice reale): il single-writer
-dell'ADR-0024 non cambia.
+**Who writes - the HOST only.** Emission lives in `runHeadlessKrakenGraph` (`src/cli/runHeadless.ts`): the host wraps the tentacle run seam (`runTentacleFn`, helper `nodeSpineEnvelopeRun`) - the same one the executor invokes for each node turn - and appends the started/ended pair via `spine.appendEvent` with `actor: system`. Tentacles/subagents NEVER write to the spine (neither the test stub nor the real code): ADR-0024's single-writer does not change.
 
-**Cosa va sulla spine — solo envelope/metadata.** Payload dichiarato:
-`nodeId`, `agent`, `graphId?` su started; `nodeId`, `agent`, `graphId?`,
-`ok`, `cancelled?` (solo su run cancellato) e `durationMs` misurato
-dall'host su ended. Una coppia per **tentativo** (retry/rework = nuova
-coppia); i nodi `merge` non guidano tentacle e restano radio-only.
-Nessun contenuto modello: label del nodo, prompt, testo assistant, output di
-tool NON finiscono sulla spine — restano sul canale kraken radio JSONL
-(`node_start`/`node_end` con `detail`), correlate dallo stesso `sessionId`.
+**What goes on the spine - envelope/metadata only.** Declared payload: `nodeId`, `agent`, `graphId?` on started; `nodeId`, `agent`, `graphId?`, `ok`, `cancelled?` (only on a cancelled run) and host-measured `durationMs` on ended. One pair per **attempt** (retry/rework = a new pair); `merge` nodes do not drive a tentacle and stay radio-only. No model content: node label, prompt, assistant text, tool output do NOT land on the spine - they stay on the kraken radio JSONL channel (`node_start`/`node_end` with `detail`), correlated by the same `sessionId`.
 
-**Contratto pinnato** dal test differenziale aggiornato in
-`src/cli/krakenGraphSpine.test.ts` (run grafo vuoto vs grafo 1-nodo con turno
-reale: il run 1-nodo aggiunge ESATTAMENTE la coppia `graph.node_started`/
-`graph.node_ended` alla sequenza del grafo vuoto — rimossa la coppia, le
-sequenze coincidono kind-per-kind; assenti `tool.call`/`tool.result`/
-`assistant.message`/`verification.*`; nessun payload della spine contiene
-contenuto del turno).
+**Contract pinned** by the updated differential test in `src/cli/krakenGraphSpine.test.ts` (empty-graph run vs 1-node graph with a real turn: the 1-node run adds EXACTLY the `graph.node_started`/`graph.node_ended` pair to the empty-graph sequence - remove the pair and the sequences coincide kind-for-kind; absent `tool.call`/`tool.result`/`assistant.message`/`verification.*`; no spine payload contains turn content).

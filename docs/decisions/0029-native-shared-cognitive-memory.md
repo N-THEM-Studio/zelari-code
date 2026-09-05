@@ -1,71 +1,41 @@
-# ADR-0029: Memoria cognitiva condivisa native-first
+# ADR-0029: Native-first shared cognitive memory
 
 - **Status**: accepted
 - **Date**: 2026-08-23
 - **Deciders**: Zelari Code council, maintainer
 
-## Contesto
+## Context
 
-La memoria JSONL di Zelari conserva semplici chunk e permette recall lessicale
-tra slice, ma non rappresenta tipo, provenienza strutturata, relazioni,
-supersessioni o revisioni. Council, Kraken e missioni hanno bisogno dello stesso
-substrato locale senza dipendere da un daemon o da MCP.
+Zelari's JSONL memory keeps simple chunks and allows lexical recall across slices, but does not represent type, structured provenance, relations, supersessions or revisions. Council, Kraken and missions need the same local substrate without depending on a daemon or MCP.
 
-La memoria non deve confondersi con:
+Memory must not be confused with:
 
-- `.zelari/state/`, stato verificato e ripristinabile dell'esecuzione;
-- `.zelari/sessions/`, log event-sourced e fonte della cronologia;
-- `AGENTS.MD`, guida stabile, curata e leggibile dagli umani.
+- `.zelari/state/`, verified and restorable execution state;
+- `.zelari/sessions/`, event-sourced log and source of history;
+- `AGENTS.MD`, a stable, curated, human-readable guide.
 
-## Decisione
+## Decision
 
-1. `@zelari/core/memory` espone due livelli additivi: `MemoryService` contiene
-   policy e retrieval; `CognitiveMemoryBackend` contiene persistenza e query.
-   Il contratto `MemoryBackend` V1 resta disponibile tramite adapter.
-2. Il primo backend V2 vive nella CLI e usa SQLite sotto
-   `.zelari/memory/memory.db`. `node:sqlite` gira esclusivamente in un worker;
-   WAL, busy timeout, transazioni brevi e retry limitati consentono più
-   processi senza bloccare l'event loop dell'agente.
-3. L'envelope di dominio v1 contiene nodi tipizzati, archi con vocabolario
-   chiuso e versioni append-only. Lo schema SQLite è migrato forward-only; v2
-   aggiunge visibilità/accesso e indice embedding. Prima della migrazione viene
-   creato un backup sotto lock. Un runtime non apre in scrittura uno schema
-   futuro e non esegue downgrade silenziosi.
-4. Il recall è locale e deterministico: FTS/lessicale, filtri strutturati,
-   ranking configurabile, espansione del grafo, dedupe e budget caratteri
-   rigido. Il semantic recall è un'estensione iniettata e opzionale: model ID e
-   content hash impediscono vettori stale, mentre ogni errore ricade su FTS.
-5. Ogni scrittura attraverso `MemoryService` passa da normalizzazione,
-   validazione di scope, limiti di payload e secret scanner. Per default la
-   memoria è isolata al path canonico del progetto.
-6. Council, AgentHarness, Kraken, headless e missioni consumano la stessa API.
-   Le verifiche creano relazioni `validated_by`/`invalidated_by`; una relazione
-   `supersedes` rende obsoleto il nodo precedente conservandone la storia.
-7. Il rollout è esplicito (`ZELARI_MEMORY_V2=1` o backend `sqlite`). Il backend
-   JSONL resta il default compatibile; l'import V2 è idempotente e non elimina
-   `log.jsonl`.
-8. L'adapter MCP chiama `MemoryService`, non SQL. Rimane esterno, opt-in,
-   sottoposto a folder trust, scope esatto, ownership, secret scan e rate limit.
-9. Desktop usa un bridge CLI JSON di sola lettura e presenta ricerca, dettaglio,
-   provenance, relazioni e storia senza duplicare semantica o persistenza.
+1. `@zelari/core/memory` exposes two additive levels: `MemoryService` holds policy and retrieval; `CognitiveMemoryBackend` holds persistence and queries. The `MemoryBackend` V1 contract remains available via an adapter.
+2. The first V2 backend lives in the CLI and uses SQLite under `.zelari/memory/memory.db`. `node:sqlite` runs exclusively in a worker; WAL, busy timeout, short transactions and bounded retries allow multiple processes without blocking the agent's event loop.
+3. The v1 domain envelope contains typed nodes, closed-vocabulary edges and append-only versions. The SQLite schema is migrated forward-only; v2 adds visibility/access and an embedding index. A backup is created under lock before migration. A runtime never opens a future schema for writing and never silently downgrades.
+4. Recall is local and deterministic: FTS/lexical, structured filters, configurable ranking, graph expansion, dedupe and a hard character budget. Semantic recall is an injected, optional extension: model ID and content hash prevent stale vectors, while every error falls back to FTS.
+5. Every write through `MemoryService` goes through normalization, scope validation, payload limits and a secret scanner. By default memory is isolated to the project's canonical path.
+6. Council, AgentHarness, Kraken, headless and missions consume the same API. Verifications create `validated_by`/`invalidated_by` relations; a `supersedes` relation makes the previous node obsolete while preserving its history.
+7. Rollout is explicit (`ZELARI_MEMORY_V2=1` or the `sqlite` backend). The JSONL backend remains the compatible default; the V2 import is idempotent and does not delete `log.jsonl`.
+8. The MCP adapter calls `MemoryService`, not SQL. It stays external, opt-in, subject to folder trust, exact scope, ownership, secret scan and rate limit.
+9. Desktop uses a read-only JSON CLI bridge and presents search, detail, provenance, relations and history without duplicating semantics or persistence.
 
-## Alternative considerate
+## Alternatives considered
 
-- **MCP come trasporto interno**: respinto; aggiungerebbe disponibilità,
-  trasporto e trust a ogni turno nativo.
-- **Solo JSONL esteso**: respinto per transazioni, FTS, relazioni, revisioni e
-  concorrenza multi-processo.
-- **Embedding obbligatori**: respinto; la memoria deve restare leggibile e utile
-  offline anche senza indice semantico.
-- **Sovrascritture distruttive**: respinte; decisioni e confidenza devono essere
-  ricostruibili temporalmente.
+- **MCP as internal transport**: rejected; it would add availability, transport and trust concerns to every native turn.
+- **Extended JSONL only**: rejected for transactions, FTS, relations, revisions and multi-process concurrency.
+- **Mandatory embeddings**: rejected; memory must stay readable and useful offline even without a semantic index.
+- **Destructive overwrites**: rejected; decisions and confidence must be temporally reconstructible.
 
-## Conseguenze
+## Consequences
 
-- Node 24 è il requisito runtime del backend SQLite nativo.
-- Il database è un artefatto locale del progetto e può essere ispezionato,
-  esportato, retratto o eliminato esplicitamente da `/memory`.
-- I fallimenti di recall/write sono fail-open salvo
-  `ZELARI_MEMORY_STRICT=1`; non cambiano l'esito di un turno o di un grafo.
-- Semantic retrieval, adapter MCP e Desktop explorer sono estensioni
-  post-MVP opzionali e non condizionano il contratto o la disponibilità nativa.
+- Node 24 is the runtime requirement of the native SQLite backend.
+- The database is a local project artifact and can be inspected, exported, retracted or explicitly deleted via `/memory`.
+- Recall/write failures are fail-open except with `ZELARI_MEMORY_STRICT=1`; they never change the outcome of a turn or a graph.
+- Semantic retrieval, the MCP adapter and the Desktop explorer are optional post-MVP extensions and do not condition the contract or native availability.

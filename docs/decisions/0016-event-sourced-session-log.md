@@ -1,102 +1,71 @@
-# ADR-0016 — Log di sessione event-sourced come unica fonte di verità
+# ADR-0016 - Event-sourced session log as the single source of truth
 
 **Status:** Accepted
-**Date:** 2026-08-19 (ratificato; proposto 2026-08-18)
+**Date:** 2026-08-19 (ratified; proposed 2026-08-18)
 
-## Contesto
+## Context
 
-Oggi lo "stato di una sessione" è ricostruito da **più scrittori/lettori paralleli**, ognuno con la propria
-semantica, che possono divergere tra loro:
+Today a session's "state" is reconstructed by **multiple parallel writers/readers**, each with its own semantics, which can diverge from one another:
 
-- `sessionManager.ts` — sidecar JSONL + marker `current.txt` della sessione corrente.
-- `state/fileStateStore.ts` — stato durevole (plan/rischi/ADR) separato dal log eventi.
-- `checkpoint/checkpointManager.ts` — i ref git **sono** la persistenza ("no separate metadata file to drift").
-- `traceStore.ts` — tracce strutturate per la vista fan-out/trace.
-- `hooks/eventsToMessages.ts` — ricostruzione eventi → messaggi per transcript e compaction.
-- `compaction.ts` + `budget/llmCompact.ts` — compattazione della cronologia.
-- `state/restoreState.ts` / `state/loadDurableContext.ts` — resume/ripristino.
+- `sessionManager.ts` - JSONL sidecar + `current.txt` marker of the current session.
+- `state/fileStateStore.ts` - durable state (plan/risks/ADR) separate from the event log.
+- `checkpoint/checkpointManager.ts` - git refs **are** the persistence ("no separate metadata file to drift").
+- `traceStore.ts` - structured traces for the fan-out/trace view.
+- `hooks/eventsToMessages.ts` - events-to-messages reconstruction for transcript and compaction.
+- `compaction.ts` + `budget/llmCompact.ts` - history compaction.
+- `state/restoreState.ts` / `state/loadDurableContext.ts` - resume/restore.
 
-Il sintomo più noto è il bug di *split-brain* documentato in `sessionKindRouter` (v0.4.2): il router scriveva
-`idA` su disco mentre l'hook scriveva `idB` in memoria/writer. Conseguenza di fondo: fork, resume, transcript,
-telemetria e compaction **non sono garantiti concordare**, perché ognuno ri-deriva lo stato a modo proprio.
+The best-known symptom is the *split-brain* bug documented in `sessionKindRouter` (v0.4.2): the router wrote `idA` to disk while the hook wrote `idB` in memory/writer. Root consequence: fork, resume, transcript, telemetry and compaction **are not guaranteed to agree**, because each re-derives state its own way.
 
-*Origine dell'idea:* l'invariante "model-visible ⟺ logged" e l'append-only log come unica fonte di verità
-ispirati a deepseek-harness (Cordis), adattati senza vendoring del framework.
+*Idea origin:* the "model-visible implies logged" invariant and the append-only log as the single source of truth were inspired by deepseek-harness (Cordis), adapted without vendoring the framework.
 
-## Decisione
+## Decision
 
-Adottare un **unico stream JSONL append-only di `SessionEvent`** come fonte di verità di una sessione, con
-l'invariante centrale:
+Adopt a **single append-only JSONL stream of `SessionEvent`** as a session's source of truth, with the central invariant:
 
-> **"model-visible ⟺ logged"** — tutto ciò che raggiunge il modello (frammenti di system prompt, messaggi
-> utente, delta assistant, tool call, tool result, confini di compaction, usage/token) è ricostruibile dal log,
-> verificato da un assert nel punto di assemblaggio messaggi (attivo solo in dev/CI, mai in produzione).
+> **"model-visible implies logged"** - everything that reaches the model (system prompt fragments, user messages, assistant deltas, tool calls, tool results, compaction boundaries, usage/tokens) is reconstructible from the log, verified by an assert at the message-assembly point (active only in dev/CI, never in production).
 
-Regole operative:
+Operational rules:
 
-1. **Un solo writer** (`appendEvent()`) e **un solo reader** (`replaySession()`); nessun altro modulo mantiene
-   stato parallelo della conversazione.
-2. I **consumer derivano viste materializzate** (array messaggi, budget token, transcript, telemetria, costi)
-   tramite replay del log, con un cursore incrementale opzionale per evitare il replay completo a ogni turno.
-3. I **checkpoint git** restano, ma come *puntatori nominati* dentro la timeline del log (il log è la base
-   durevole; i ref git sono indici, non duplicati).
-4. Il formato è **versionato** con un `SCHEMA_VERSION` monotonic crescente (si aggancia a `MIGRATION.md`),
-   così le migrazioni diventano meccaniche invece che "a memoria".
+1. **One writer** (`appendEvent()`) and **one reader** (`replaySession()`); no other module keeps parallel conversation state.
+2. **Consumers derive materialized views** (message arrays, token budget, transcript, telemetry, costs) by replaying the log, with an optional incremental cursor to avoid a full replay every turn.
+3. **Git checkpoints** remain, but as *named pointers* inside the log timeline (the log is the durable base; git refs are indexes, not duplicates).
+4. The format is **versioned** with a monotonically increasing `SCHEMA_VERSION` (tied to `MIGRATION.md`), so migrations become mechanical instead of "from memory".
 
-## Alternative considerate
+## Alternatives considered
 
-1. **Mantenere gli store paralleli + riconciliazione periodica** — rifiutata: la deriva tra store è la causa
-   radice; riconciliare a posteriori non la elimina.
-2. **Port integrale di Cordis** (event-emitter a effetti reversibili, ~100 package) — rifiutata: salto enorme,
-   modello a ciclo di vita diverso e viola la convenzione "zero nuove dipendenze pesanti". Si adotta l'*idea*,
-   non il framework.
-3. **SQLite al posto di JSONL** — rimandata: JSONL è append-only friendly, grep-abile e già la forma su disco;
-   SQLite può essere un'ottimizzazione successiva se l'accesso random diventa collo di bottiglia.
+1. **Keep the parallel stores + periodic reconciliation** - rejected: drift between stores is the root cause; reconciling after the fact does not eliminate it.
+2. **Full Cordis port** (event-emitter with reversible effects, ~100 packages) - rejected: a huge jump, a different lifecycle model, and it violates the "zero new heavy dependencies" convention. We adopt the *idea*, not the framework.
+3. **SQLite instead of JSONL** - deferred: JSONL is append-only friendly, grep-able and already the on-disk shape; SQLite can be a later optimization if random access becomes the bottleneck.
 
-## Conseguenze
+## Consequences
 
 **Positive**
 
-- Un solo invariante da testare (`model-visible ⟺ logged`) invece di N meccanismi.
-- Fork, resume, transcript, compaction e telemetria concordano per costruzione.
-- Il refactor è il ROI più alto: è la base su cui già poggiano compaction, checkpoint, transcript e costi.
+- A single invariant to test ("model-visible implies logged") instead of N mechanisms.
+- Fork, resume, transcript, compaction and telemetry agree by construction.
+- The refactor has the highest ROI: it is the base compaction, checkpoint, transcript and costs already rest on.
 
-**Negative / residuali**
+**Negative / residual**
 
-- Migrazione dagli store sparsi esistenti (work incrementale, non big-bang).
-- Costo di replay per sessioni lunghe — mitigato da snapshot di compaction + cursore.
-- L'assert farà emergere deriva latente preesistente (bene, ma richiede pulizia prima di abilitarlo).
+- Migration from the existing scattered stores (incremental work, not big-bang).
+- Replay cost for long sessions - mitigated by compaction snapshots + cursor.
+- The assert will surface pre-existing latent drift (good, but requires cleanup before enabling it).
 
-## Ratifica (2026-08-19) — decisioni integrate
+## Ratification (2026-08-19) - integrated decisions
 
-1. **Location (era TODO aperto):** le sessioni vivono a livello progetto in
-   `<workspaceRoot>/.zelari/sessions/<sessionId>/events.jsonl`, con override via env
-   `ZELARI_SESSIONS_DIR` (test/CI/Desktop multi-cwd). Il percorso legacy
-   `~/.tmp/zelari-code/sessions/` (sidecar `sessionJsonl.ts`) resta leggibile ma
-   è read-only compat: nessuna nuova scrittura sul sidecar da parte della spine.
-2. **Single writer con ownership lock:** `<sessionDir>/writer.lock` creato con
-   `flag:'wx'` contiene `{ownership, pid, ts}`; un secondo writer riceve
-   `SessionLogLockedError`. Takeover consentito solo su lock stantio
-   (`staleLockMs`, default 10 minuti).
-3. **`seq` monotona senza buchi:** parte da 1, incrementata dal writer dopo la
-   validazione Zod dell'envelope; il replay riporta `corrupt-line`, `seq-gap`,
-   `seq-duplicate`, `seq-nonmonotonic` come `ReplayIssue` senza mai crashare.
-4. **`SCHEMA_VERSION = 1`** nell'envelope di ogni riga; migrazioni meccaniche
-   documentate in `MIGRATION.md`.
-5. **Surface vs state events:** `isModelSurfaceEvent` è l'unico predicato che
-   decide cosa entra in `deriveMessages`; tutto il resto (task, note, mission,
-   verification) è state-event derivabile ma non model-visible di default.
-6. **Lineage:** `forkSession` copia gli eventi fino a `fromSeq` in una nuova
-   sessione e appende `session.forked {parentSessionId, parentSeq}`;
-   `resumeSession` riapre il log e appende `session.resumed`.
-7. **Coesistenza con `plan.json` (ADR-0018):** il file resta store cross-session;
-   la spine logga le transizioni `task.created`/`task.updated` per-sessione. Il
-   file è l'indice, il log la timeline.
+1. **Location (was an open TODO):** sessions live at project level in `<workspaceRoot>/.zelari/sessions/<sessionId>/events.jsonl`, with an override via env `ZELARI_SESSIONS_DIR` (tests/CI/Desktop multi-cwd). The legacy path `~/.tmp/zelari-code/sessions/` (sidecar `sessionJsonl.ts`) stays readable but is read-only compat: no new writes to the sidecar by the spine.
+2. **Single writer with ownership lock:** `<sessionDir>/writer.lock` created with `flag:'wx'` contains `{ownership, pid, ts}`; a second writer gets `SessionLogLockedError`. Takeover allowed only on a stale lock (`staleLockMs`, default 10 minutes).
+3. **Gapless monotonic `seq`:** starts at 1, incremented by the writer after Zod validation of the envelope; replay reports `corrupt-line`, `seq-gap`, `seq-duplicate`, `seq-nonmonotonic` as `ReplayIssue` without ever crashing.
+4. **`SCHEMA_VERSION = 1`** in the envelope of every line; mechanical migrations documented in `MIGRATION.md`.
+5. **Surface vs state events:** `isModelSurfaceEvent` is the only predicate deciding what enters `deriveMessages`; everything else (task, note, mission, verification) is derivable state-event but not model-visible by default.
+6. **Lineage:** `forkSession` copies events up to `fromSeq` into a new session and appends `session.forked {parentSessionId, parentSeq}`; `resumeSession` reopens the log and appends `session.resumed`.
+7. **Coexistence with `plan.json` (ADR-0018):** the file remains the cross-session store; the spine logs per-session `task.created`/`task.updated` transitions. The file is the index, the log is the timeline.
 
 ## TODO
 
-- [x] Definire lo schema `SessionEvent` v1 con `SCHEMA_VERSION`.
-- [x] Introdurre il writer singolo `appendEvent()` e il reader `replaySession()` (`packages/core/src/session/`).
-- [ ] Cablare l'assert "model-visible ⟺ logged" nell'assemblaggio messaggi (solo dev/CI).
-- [ ] Migrare i consumer: `eventsToMessages`, `compaction`, `traceStore`, telemetria, `restoreState`.
-- [ ] Trattare i checkpoint git come puntatori nominati nella timeline del log.
+- [x] Define the `SessionEvent` schema v1 with `SCHEMA_VERSION`.
+- [x] Introduce the single writer `appendEvent()` and the reader `replaySession()` (`packages/core/src/session/`).
+- [ ] Wire the "model-visible implies logged" assert into message assembly (dev/CI only).
+- [ ] Migrate consumers: `eventsToMessages`, `compaction`, `traceStore`, telemetry, `restoreState`.
+- [ ] Treat git checkpoints as named pointers in the log timeline.

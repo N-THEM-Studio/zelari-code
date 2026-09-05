@@ -1,80 +1,66 @@
-# ADR-0005: Deprecation dei path sorgente legacy
+# ADR-0005: Deprecation of legacy source paths
 
-- **Stato:** ✅ Accettato
-- **Data proposta:** 2026-07-02
-- **Data accettazione:** 2026-07-02 (auto-accettata — i path vecchi non esistono piu nel tree post `6ec90be`, e grep ha confermato 0 import residui da src/main/core in src/cli/)
-- **Autore:** MiniMax-M3
-- **Dipende da:** [ADR-0001](0001-monorepo-for-zelari-core.md),
+- **Status:** Accepted
+- **Proposed:** 2026-07-02
+- **Accepted:** 2026-07-02 (self-accepted - the old paths no longer exist in the tree after `6ec90be`, and grep confirmed 0 residual imports from src/main/core in src/cli/)
+- **Author:** MiniMax-M3
+- **Depends on:** [ADR-0001](0001-monorepo-for-zelari-core.md),
   [ADR-0004](0004-public-api-stability-policy.md)
 
-## Contesto
+## Context
 
-Prima del refactor v0.5.0, il codice del core viveva in percorsi
-interni al CLI:
+Before the v0.5.0 refactor, the core code lived in paths internal to the CLI:
 
 ```
-src/main/core/      (AgentHarness, ToolRegistry, ecc.)
-src/agents/         (council, roles, skills built-in)
+src/main/core/      (AgentHarness, ToolRegistry, etc.)
+src/agents/         (council, roles, built-in skills)
 src/shared/         (events)
 src/types/          (context, knowledge, systemTypes)
 ```
 
-Dopo il refactor, questi path sono stati spostati (via `git mv`) in
-`packages/core/src/` e rinominati secondo la nuova struttura:
+After the refactor, these paths were moved (via `git mv`) into `packages/core/src/` and renamed according to the new structure:
 
 ```
 packages/core/src/harness/      (ex src/main/core/)
-packages/core/src/council/      (ex src/agents/councilApi.ts ecc.)
+packages/core/src/council/      (ex src/agents/councilApi.ts etc.)
 packages/core/src/skills/       (ex src/agents/skills/)
 packages/core/src/events/       (ex src/shared/)
-packages/core/src/types/        (ex src/types/, con legacy.ts)
+packages/core/src/types/        (ex src/types/, with legacy.ts)
 ```
 
-I file `src/main/` e `src/agents/` e `src/shared/` e `src/types/` NON
-esistono più nel tree, ma la **conoscenza di quei path è ancora
-diffusa** in:
-- Tutorial / blog post / Discord
-- Snippet di codice in risposte LLM passate
-- Issue GitHub
-- IDE autocomplete history (alcuni utenti usano "Open recent" per
-  navigare)
+The `src/main/`, `src/agents/`, `src/shared/` and `src/types/` files NO longer exist in the tree, but **knowledge of those paths is still widespread** in:
+- Tutorials / blog posts / Discord
+- Code snippets in past LLM answers
+- GitHub issues
+- IDE autocomplete history (some users use "Open recent" to navigate)
 
-Serve una **politica esplicita** per dire alla community:
-1. Quei path sono morti, non tornano.
-2. Le nuove posizioni sono in `@zelari/core/...`.
-3. Se trovi riferimenti a `src/main/core/` → apri issue.
+We need an **explicit policy** to tell the community:
+1. Those paths are dead, they are not coming back.
+2. The new locations are in `@zelari/core/...`.
+3. If you find references to `src/main/core/` -> open an issue.
 
-## Decisione
+## Decision
 
-### Niente `src/legacy-compat/` shim
+### No `src/legacy-compat/` shim
 
-**NON** creiamo file `src/main/core/X.ts` che fanno `export * from
-'@zelari/core/X'`. Motivi:
-- Aggiunge path interni che confondono chi legge il tree.
-- Il barrel di `@zelari/core` è già il punto di ingresso canonico;
-  duplicare l'esposizione crea due fonti di verità.
-- Il nostro stesso CLI consuma solo `@zelari/core/*` dal refactor
-  in poi (verificato: `git grep "from.*src/main/core" src/cli/` →
-  0 risultati).
+We do **NOT** create `src/main/core/X.ts` files doing `export * from '@zelari/core/X'`. Reasons:
+- It adds internal paths that confuse anyone reading the tree.
+- The `@zelari/core` barrel is already the canonical entry point; duplicating the exposure creates two sources of truth.
+- Our own CLI consumes only `@zelari/core/*` from the refactor onward (verified: `git grep "from.*src/main/core" src/cli/` -> 0 results).
 
-### Comunicazione esplicita
+### Explicit communication
 
-Aggiungiamo:
-1. **README.md** del repo: sezione "Migration from pre-v0.5.0 paths"
-   con tabella `vecchio → nuovo`.
-2. **packages/core/README.md**: in cima "If you're upgrading from
-   zelari-code ≤ 0.4.x, see [MIGRATION.md](../../MIGRATION.md)".
-3. **Commenti git blame** non servono (il `git mv` ha preservato la
-   storia).
-4. **Issue template** per bug reports: campo "Did you import from a
-   legacy path? (old: src/main/core/, src/agents/, src/shared/,
-   src/types/)".
+We add:
+1. Repo **README.md**: "Migration from pre-v0.5.0 paths" section with an `old -> new` table.
+2. **packages/core/README.md**: at the top "If you're upgrading from zelari-code <= 0.4.x, see [MIGRATION.md](../../MIGRATION.md)".
+3. **git blame comments** are not needed (`git mv` preserved the history).
+4. **Issue template** for bug reports: field "Did you import from a legacy path? (old: src/main/core/, src/agents/, src/shared/, src/types/)".
 
-### Mappa di migrazione
+### Migration map
 
-Stampata in `MIGRATION.md` (file nuovo, linkato da README):
+Printed in `MIGRATION.md` (new file, linked from README):
 
-| Vecchio path                          | Nuovo subpath @zelari/core             |
+| Old path                              | New @zelari/core subpath                |
 |---------------------------------------|---------------------------------------|
 | `src/main/core/AgentHarness`          | `@zelari/core/harness`                |
 | `src/main/core/providerStream`        | `@zelari/core/harness`                |
@@ -86,54 +72,41 @@ Stampata in `MIGRATION.md` (file nuovo, linkato da README):
 | `src/agents/promoteMember`            | `@zelari/core/council`                |
 | `src/agents/skills`                   | `@zelari/core/skills`                 |
 | `src/agents/skills/builtin/*`         | `@zelari/core/skills/builtin/*`       |
-| `src/agents/systemPromptBuilder`      | `@zelari/core/council` (interno)      |
+| `src/agents/systemPromptBuilder`      | `@zelari/core/council` (internal)     |
 | `src/agents/toolSchemas`              | `@zelari/core/harness/tools`          |
 | `src/agents/tools`                    | `@zelari/core/harness/tools`          |
 | `src/shared/eventBus`                 | `@zelari/core/events`                 |
 | `src/shared/events`                   | `@zelari/core/events`                 |
 | `src/types/context`                   | `@zelari/core/types`                  |
-| `src/types/knowledge`                 | `@zelari/core/types` (interno)        |
+| `src/types/knowledge`                 | `@zelari/core/types` (internal)       |
 | `src/types/systemTypes`               | `@zelari/core/types`                  |
 
-### Direzione per la community
+### Community direction
 
-Quando qualcuno apre una issue / PR con un path legacy:
-- Risposta template: "Quei path sono stati rimossi in v0.5.0. Vedi
-  [MIGRATION.md]. Nessun supporto per path legacy perché il barrel
-  `packages/core/src/index.ts` è già la fonte canonica."
+When someone opens an issue / PR with a legacy path:
+- Template answer: "Those paths were removed in v0.5.0. See [MIGRATION.md]. No support for legacy paths because the `packages/core/src/index.ts` barrel is already the canonical source."
 
-## Alternative considerate
+## Alternatives considered
 
-- **`src/legacy-compat/` shim** — scartato per i motivi sopra
-  (doppia fonte di verità).
-- **Git tag sui path vecchi pre-0.5.0** — esiste già
-  implicitamente tramite git history; non serve tag esplicito.
-- **Hard redirect nei tools (esbuild plugin)** — eccessivo, e rompe
-  il flusso "import X from Y" del consumer.
+- **`src/legacy-compat/` shim** - rejected for the reasons above (double source of truth).
+- **Git tags on the old pre-0.5.0 paths** - already exists implicitly via git history; no explicit tag needed.
+- **Hard redirect in tools (esbuild plugin)** - excessive, and it breaks the consumer's "import X from Y" flow.
 
-## Conseguenze
+## Consequences
 
 **Positive**
-- Zero ambiguità: un solo path per ogni concetto.
-- Niente codice morto da mantenere.
-- Documentazione esplicita aiuta chi migra.
+- Zero ambiguity: one path per concept.
+- No dead code to maintain.
+- Explicit documentation helps people migrating.
 
-**Negative / rischi**
-- Utenti con codice esistente su path vecchi devono migrare
-  manualmente (sforzo unico).
-- Link / snippet di LLM pre-v0.5 restano obsoleti online — serve
-  pazienza.
+**Negative / risks**
+- Users with existing code on old paths must migrate manually (one-off effort).
+- Pre-v0.5 links / LLM snippets remain obsolete online - patience needed.
 
 ## TODO
 
-- [x] Andrea conferma: no shim, no re-export aliasing (implicitly
-      confirmed via "Procedi" instruction in commit 217db8d).
-- [x] Scrivere `MIGRATION.md` con la tabella sopra + esempi di
-      before/after (delivered in v0.5.0 release commit).
-- [x] Aggiornare `README.md` con link a MIGRATION.md (added callout
-      in the "Install" section).
-- [x] Aggiungere `MIGRATION.md` come file creato in v0.5.0
-      (incluso nel CHANGELOG).
-- [ ] Issue template per bug reports (deferred — can be added in a
-      follow-up release; v0.5.0 ships without it because the
-      changelog already documents the migration path).
+- [x] Andrea confirms: no shim, no re-export aliasing (implicitly confirmed via the "Proceed" instruction in commit 217db8d).
+- [x] Write `MIGRATION.md` with the table above + before/after examples (delivered in the v0.5.0 release commit).
+- [x] Update `README.md` with a link to MIGRATION.md (added a callout in the "Install" section).
+- [x] Add `MIGRATION.md` as a file created in v0.5.0 (included in the CHANGELOG).
+- [ ] Issue template for bug reports (deferred - can be added in a follow-up release; v0.5.0 ships without it because the changelog already documents the migration path).

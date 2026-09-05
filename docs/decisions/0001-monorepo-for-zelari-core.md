@@ -1,85 +1,85 @@
-# ADR-0001: Monorepo con npm workspaces per `@zelari/core`
+# ADR-0001: Monorepo with npm workspaces for `@zelari/core`
 
-- **Stato:** ✅ Accettato
-- **Data proposta:** 2026-07-01
-- **Data accettazione:** 2026-07-01 (implicita, via commit `6ec90be`)
-- **Autore:** MiniMax-M3 (proposta) / Andrea (decisione)
+- **Status:** Accepted
+- **Proposed:** 2026-07-01
+- **Accepted:** 2026-07-01 (implicit, via commit `6ec90be`)
+- **Author:** MiniMax-M3 (proposal) / Andrea (decision)
 
-## Contesto
+## Context
 
-Prima della v0.5.0, `zelari-code` era un package monolitico. Il
-codice "logicamente estraggibile" (AgentHarness, ToolRegistry,
-council, skills, eventi) viveva in `src/main/core/` e `src/agents/`,
-ma condivideva `package.json`, `tsconfig.json`, e dipendenze con il
+Before v0.5.0, `zelari-code` was a monolithic package. The
+"logically extractable" code (AgentHarness, ToolRegistry,
+council, skills, events) lived in `src/main/core/` and `src/agents/`,
+but shared `package.json`, `tsconfig.json`, and dependencies with the
 CLI.
 
-Il piano v0.5.0 (`docs/plans/2026-07-01-v0-5-0-roadmap.md`) proponeva
-l'estrazione come prerequisito per la pubblicazione del core come
-package `@zelari/core` riusabile da terzi.
+The v0.5.0 plan (`docs/plans/2026-07-01-v0-5-0-roadmap.md`) proposed
+the extraction as a prerequisite for publishing the core as a
+reusable `@zelari/core` package for third parties.
 
-## Decisione
+## Decision
 
-**Usare un monorepo con npm workspaces**, layout:
+**Use a monorepo with npm workspaces**, layout:
 
 ```
 zelari-code/
-├── package.json          # "workspaces": ["packages/*"]
-├── tsconfig.json         # root, esclude packages/*
-├── packages/
-│   └── core/             # @zelari/core
-│       ├── package.json  # name, version, exports map
-│       ├── tsconfig.json # composite: true
-│       └── src/
-│           ├── harness/      (AgentHarness, providerStream)
-│           ├── council/      (councilApi, roles, promoteMember)
-│           ├── skills/       (registry + built-in)
-│           ├── events/       (BrainEvent, EventBus)
-│           ├── types/        (context + systemTypes + legacy.ts)
-│           └── index.ts      (root barrel)
-├── src/cli/              # zelari-code CLI (consumer @zelari/core)
-└── tests/                # test del CLI
++- package.json          # "workspaces": ["packages/*"]
++- tsconfig.json         # root, excludes packages/*
++- packages/
+|   +- core/             # @zelari/core
+|       +- package.json  # name, version, exports map
+|       +- tsconfig.json # composite: true
+|       +- src/
+|           +- harness/      (AgentHarness, providerStream)
+|           +- council/      (councilApi, roles, promoteMember)
+|           +- skills/       (registry + built-in)
+|           +- events/       (BrainEvent, EventBus)
+|           +- types/        (context + systemTypes + legacy.ts)
+|           +- index.ts      (root barrel)
++- src/cli/              # zelari-code CLI (consumer of @zelari/core)
++- tests/                # CLI tests
 ```
 
-### Motivazioni accettate
+### Accepted motivations
 
-1. **Single team, single repo, single release.** Il core e il CLI
-   evolvono in sync; forzarne la separazione ora aggiunge overhead
-   senza valore.
-2. **Workspace symlink nativo:** npm install crea
-   `node_modules/@zelari/core → ../../packages/core`, zero magia.
-3. **`tsc --build` con `composite: true`** permette incremental
-   builds cross-package senza bundler intermedi (esbuild continua a
-   bundlare il CLI finale).
-4. **Migrazione a repo separato resta possibile** in futuro (è una
-   refactor meccanica: `git subtree split` su `packages/core/` +
-   nuovo repo).
+1. **Single team, single repo, single release.** Core and CLI
+   evolve in sync; forcing separation now adds overhead
+   without value.
+2. **Native workspace symlink:** npm install creates
+   `node_modules/@zelari/core -> ../../packages/core`, zero magic.
+3. **`tsc --build` with `composite: true`** enables incremental
+   cross-package builds without intermediate bundlers (esbuild
+   keeps bundling the final CLI).
+4. **Migration to a separate repo remains possible** in the future (it is a
+   mechanical refactor: `git subtree split` on `packages/core/` +
+   new repo).
 
-### Cose che NON sono state decise qui
+### Things NOT decided here
 
-- Pubblicazione npm → ADR-0002
-- Schema versioning → ADR-0003
-- Stabilità API pubblica → ADR-0004
-- Deprecation path legacy → ADR-0005
+- npm publishing -> ADR-0002
+- Versioning schema -> ADR-0003
+- Public API stability -> ADR-0004
+- Legacy deprecation path -> ADR-0005
 
-## Conseguenze
+## Consequences
 
 **Positive**
-- Refactor fatto in un commit atomico (`6ec90be`), con rename
-  detection al 100% via git.
-- 692/692 test verdi dopo la migrazione.
-- Zero downtime per gli utenti del CLI: nessun cambio di UX.
-- Apre la strada a Fase 2 (wizard) senza dover rinominare ancora.
+- Refactor done in one atomic commit (`6ec90be`), with 100% rename
+  detection via git.
+- 692/692 tests green after the migration.
+- Zero downtime for CLI users: no UX change.
+- Opens the road to Phase 2 (wizard) without further renames.
 
-**Negative / rischi**
-- `node_modules` più pesante (workspaces installa dipendenze sia
-  per root che per `packages/core`, anche se sono uguali).
-- Test count invariato (692 → 692), ma soglia "≥ 800" del piano
-  v0.5.0 non centrata → da recuperare in Fase 2.
+**Negative / risks**
+- Heavier `node_modules` (workspaces installs dependencies both
+  for root and `packages/core`, even if identical).
+- Test count unchanged (692 -> 692), but the plan's "= 800"
+  threshold for v0.5.0 was missed -> to recover in Phase 2.
 
 ## TODO
 
-- [x] Creare `packages/core/` con struttura barrel.
-- [x] Reindirizzare import CLI a `@zelari/core/*`.
-- [x] Aggiungere `workspaces` a root `package.json`.
-- [x] Configurare `exports` map in `packages/core/package.json`.
-- [ ] Pubblicare (dipende da ADR-0002).
+- [x] Create `packages/core/` with barrel structure.
+- [x] Redirect CLI imports to `@zelari/core/*`.
+- [x] Add `workspaces` to root `package.json`.
+- [x] Configure `exports` map in `packages/core/package.json`.
+- [ ] Publish (depends on ADR-0002).

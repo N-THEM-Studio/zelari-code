@@ -1,145 +1,150 @@
+# ADR-0014: Event-driven mission triggers
 
-- **Stato:** ✅ Accettato (implementato)
-- **Data proposta:** 2026-07-20
-- **Autore:** Zelari Code (fase PLAN)
-- **Ispirazione:** Loop Engineering (rari/@0xwhrrari, giu 2026) — la terza
-  frontiera del loop: *"runs while you sleep"* (trigger su cron/evento, non su
-  umano); From Loop Engineering to Graph Engineering (Carlos
-  Perez/@IntuitMachine, lug 2026).
-- **Dipende da:** entry-point headless già completo —
-  `runHeadlessZelari` (`src/cli/runHeadless.ts:758`) + dispatch CLI
-  (`src/cli/main.ts:205` `pickRootComponent`, flag `--mode zelari`).
+- **Status:** Accepted (implemented)
+- **Proposed:** 2026-07-20
+- **Author:** Zelari Code (PLAN phase)
+- **Inspiration:** Loop Engineering (rari/@0xwhrrari, Jun 2026) - the loop's third
+  frontier: *"runs while you sleep"* (triggered by cron/event, not by a human);
+  From Loop Engineering to Graph Engineering (Carlos Perez/@IntuitMachine, Jul
+  2026).
+- **Depends on:** headless entry-point already complete - `runHeadlessZelari`
+  (`src/cli/runHeadless.ts:758`) + CLI dispatch (`src/cli/main.ts:205`
+  `pickRootComponent`, flag `--mode zelari`).
 
-## Contesto
+## Context
 
-La missione Zelari ha oggi **tre trigger, tutti manuali**:
+The Zelari mission today has **three triggers, all manual**:
 
-| Trigger | Dove | Tipo |
+| Trigger | Where | Type |
 |---|---|---|
-| `/zelari` | slash command (TUI) | manuale, interattivo |
-| `--mode zelari` | `main.ts:327` flag CLI | manuale, batch |
-| Shift+Tab | TUI toggle | manuale, interattivo |
+| `/zelari` | slash command (TUI) | manual, interactive |
+| `--mode zelari` | `main.ts:327` CLI flag | manual, batch |
+| Shift+Tab | TUI toggle | manual, interactive |
 
-L'entry point per girare **senza umano** esiste già ed è completo:
+The entry point for running **without a human** already exists and is
+complete:
 
 ```
 zelari-code --headless --mode zelari --task "fix the failing test in auth.ts"
 ```
 
-avvia `runHeadlessZelari` → `runZelariMission` (`zelariMission.ts:200`) senza
-montare la TUI. Quindi **il loop è già automatabile**: manca solo lo *strato di
-trigger* sopra di esso (chi lo lancia, quando, e come evitare sovrapposizioni).
+starts `runHeadlessZelari` -> `runZelariMission` (`zelariMission.ts:200`)
+without mounting the TUI. So **the loop is already automatable**: only the
+*trigger layer* above it is missing (who starts it, when, and how to avoid
+overlaps).
 
-Loop Engineering (rari) è esplicito: il salto da "tool" a "teammate" è il loop
-**event-driven** — attivato da cron, da una PR aperta, da un test rosso, da un
-file cambiato — non da un Enter umano. Oggi l'unico modo di avviare un loop in
-background è una shell ad-hoc: nessun supporto nativo per scheduling, dedup,
-lock, o persistenza del trigger.
+Loop Engineering (rari) is explicit: the jump from "tool" to "teammate" is the
+**event-driven** loop - triggered by cron, an opened PR, a red test, a changed
+file - not by a human Enter. Today the only way to start a loop in the
+background is an ad-hoc shell: no native support for scheduling, dedup, lock,
+or trigger persistence.
 
-## Decisione
+## Decision
 
-Aggiungere uno **strato di trigger opzionale** sopra `runHeadlessZelari`,
-**senza toccare il loop di missione**. Il loop resta passivo: qualcuno deve
-pur chiamarlo. Quello che aggiungiamo è *chi lo chiama*.
+Add an **optional trigger layer** above `runHeadlessZelari`, **without touching
+the mission loop**. The loop stays passive: someone must still call it. What we
+add is *who calls it*.
 
-Si scelgono **due trigger concreti** (ordinate per valore/effort) e si
-documentano gli altri come future-work:
+We pick **two concrete triggers** (ordered by value/effort) and document the
+others as future-work:
 
-### Trigger 1 — Cron di sistema + flag `--once` + lockfile (ZERO nuove dipendenze)
+### Trigger 1 - System cron + `--once` flag + lockfile (ZERO new dependencies)
 
-Non si embedda uno scheduler dentro il CLI (richiederebbe un daemon always-on +
-una nuova dip pesante tipo `node-cron`). Si sfrutta invece il cron già presente
-su ogni OS (crontab / launchd / Task Scheduler) e si rende la missione
-**sicura da invocare ripetutamente**:
+We do not embed a scheduler inside the CLI (it would require an always-on
+daemon + a new heavy dep like `node-cron`). Instead we leverage the cron
+already present on every OS (crontab / launchd / Task Scheduler) and make the
+mission **safe to invoke repeatedly**:
 
-- **Flag `--once`**: garantisce che una missione girata da cron esegua un
-  singolo ciclo e termini (evita loop infiniti se qualcuno omette il phase
-  cap). Si mappa sui parametri esistenti (`ZELARI_MISSION_MAX_ITER=1`), ma con
-  semantica esplicita "trigger run".
-- **Lockfile `.zelari/trigger.lock`**: prima di avviare, `runHeadlessZelari`
-  controlla il lock; se presente e vivo (PID check), esce con code `0` e logga
-  `skip: another mission is running`. Rilascia il lock all'uscita (incluso
-  `SIGINT`/`uncaughtException`).
-- **Documento + script di esempio** (`docs/triggers.md` +
-  `scripts/zelari-cron-example.sh`): riga crontab pronta che lancia
+- **`--once` flag**: guarantees a cron-run mission executes a single cycle and
+  terminates (avoids infinite loops if someone omits the phase cap). It maps
+  onto existing parameters (`ZELARI_MISSION_MAX_ITER=1`), but with an explicit
+  "trigger run" semantic.
+- **Lockfile `.zelari/trigger.lock`**: before starting, `runHeadlessZelari`
+  checks the lock; if present and alive (PID check), it exits with code `0`
+  and logs `skip: another mission is running`. It releases the lock on exit
+  (including `SIGINT`/`uncaughtException`).
+- **Doc + example script** (`docs/triggers.md` +
+  `scripts/zelari-cron-example.sh`): a ready crontab line that starts
   `zelari-code --headless --once --mode zelari --task "..."`.
 
-Caso d'uso: *"ogni mattina alle 8, rigira i test e se rossi tenta il fix"*:
+Use case: *"every morning at 8, re-run the tests and if red attempt the fix"*:
 
 ```cron
 0 8 * * * cd /repo && zelari-code --headless --once --mode zelari \
   --task "run tests; if any fail, fix the top failing test and verify"
 ```
 
-### Trigger 2 — Git hook (`pre-push` / CI su PR)
+### Trigger 2 - Git hook (`pre-push` / CI on PR)
 
-Uno script `scripts/zelari-git-hook.mjs` che, su un evento git, lancia una
-missione headless con un task derivato dal contesto:
+A `scripts/zelari-git-hook.mjs` script that, on a git event, starts a headless
+mission with a task derived from context:
 
-- **`pre-push`** (locale): `--task "review the diff about to be pushed for
-  security/correctness"`, phase `plan` (solo design, nessuna scrittura).
-- **CI on PR** (GitHub Actions): la missione gira in phase `plan` su un
-  worktree pulito e commenta la PR con il synthesis di Minosse.
+- **`pre-push`** (local): `--task "review the diff about to be pushed for
+  security/correctness"`, phase `plan` (design only, no writes).
+- **CI on PR** (GitHub Actions): the mission runs in phase `plan` on a clean
+  worktree and comments on the PR with Minosse's synthesis.
 
-Il flusso: il hook costruisce il task (diff via `git diff`), invoca
-`zelari-code --headless --once --mode council --phase plan --task "..."`, e
-mostra il synthesis. Riutilizza `--once` + lockfile del Trigger 1.
+The flow: the hook builds the task (diff via `git diff`), invokes
+`zelari-code --headless --once --mode council --phase plan --task "..."`, and
+shows the synthesis. It reuses `--once` + lockfile from Trigger 1.
 
-### Future-work (non in questo ADR)
+### Future-work (not in this ADR)
 
-- **`--watch` (file-watch trigger)**: `fs.watch` ricorsivo su un pattern →
-  rilancia missione. Utile ma introduce complessità di debounce/dedup; deferito.
-- **Webhook trigger**: piccolo server HTTP (GitHub PR webhook → missione).
-  Richiede un daemon sempre-on; in conflitto con la decisione "no daemon".
-  Deferito finché non si introduce una modalità `zelari-code serve`.
+- **`--watch` (file-watch trigger)**: recursive `fs.watch` on a pattern ->
+  re-run the mission. Useful but introduces debounce/dedup complexity;
+  deferred.
+- **Webhook trigger**: a small HTTP server (GitHub PR webhook -> mission).
+  Requires an always-on daemon; conflicts with the "no daemon" decision.
+  Deferred until a `zelari-code serve` mode is introduced.
 
-## Consequenze
+## Consequences
 
 **Positive:**
-- La missione diventa un teammate che lavora su evento, non solo su Enter.
-- Integrazione naturale con CI/CD e cron — zero nuove dipendenze runtime
-  (trigger 1 e 2 usano solo `child_process` + `fs`, già in stdlib).
-- `--once` + lockfile rendono il loop **sicuro da cron** anche in presenza del
-  budget cap (ADR-0013): doppia protezione contro run impazziti.
+- The mission becomes a teammate that works on events, not only on Enter.
+- Natural integration with CI/CD and cron - zero new runtime dependencies
+  (triggers 1 and 2 use only `child_process` + `fs`, already in the stdlib).
+- `--once` + lockfile make the loop **cron-safe** even alongside the budget cap
+  (ADR-0013): double protection against runaway runs.
 
 **Negative:**
-- Rischio di **missione sovrapposta** sullo stesso repo (due trigger concorrenti
-  → conflitto git su working tree). Mitigato dal lockfile (PID-checked), ma
-  non risolto se l'utente gira su repo separati/clone.
-- Il lockfile può diventare **stale** su crash forzato (`kill -9`). Mitigato
-  con PID check: se il PID non è più vivo, il lock viene rubato con warning.
+- Risk of **overlapping missions** on the same repo (two concurrent triggers
+  -> git conflict on the working tree). Mitigated by the (PID-checked)
+  lockfile, but not solved if the user runs on separate clones.
+- The lockfile can become **stale** on a forced crash (`kill -9`). Mitigated
+  with a PID check: if the PID is no longer alive, the lock is stolen with a
+  warning.
 
-**Invarianti preservate:**
-- Il loop di missione (`runZelariMission`) non cambia — resta passivo.
-- Nessun daemon always-on introdotto nel CLI (coesiste con cron di sistema).
-- Retrocompatibile: senza `--once`/lockfile, behavior identico a oggi.
+**Preserved invariants:**
+- The mission loop (`runZelariMission`) does not change - it stays passive.
+- No always-on daemon introduced in the CLI (it coexists with system cron).
+- Backward compatible: without `--once`/lockfile, behavior identical to today.
 
-## Alternative considerate
+## Alternatives considered
 
-1. **Embeddare `node-cron` + daemon `zelari-code serve`.** Rifiutato: nuova
-   dip pesante, un processo always-on per un CLI, e duplica ciò che il cron di
-   sistema fa già meglio. Keep it simple: il CLI è un esecutore, non uno
+1. **Embed `node-cron` + `zelari-code serve` daemon.** Rejected: a new heavy
+   dep, an always-on process for a CLI, and it duplicates what system cron
+   already does better. Keep it simple: the CLI is an executor, not a
    scheduler.
-2. **GitHub Actions come unico trigger.** Rifiutato: troppo specifico (cloud),
-   non copre scenari locali / self-hosted. Il trigger git-hook + cron è
-   cloud-agnostic.
-3. **Scheduler interno con `setTimeout` + parsing cron minimo.** Rifiutato per
-   lo stesso motivo di (1): reimplementare cron è fragilissimo. Il cron di OS
-   è battle-tested.
+2. **GitHub Actions as the only trigger.** Rejected: too specific (cloud),
+   does not cover local / self-hosted scenarios. The git-hook + cron trigger
+   is cloud-agnostic.
+3. **Internal scheduler with `setTimeout` + minimal cron parsing.** Rejected
+   for the same reason as (1): reimplementing cron is extremely fragile. OS
+   cron is battle-tested.
 
-## Punti di integrazione concreti
+## Concrete integration points
 
-| File | Modifica | Effort |
+| File | Change | Effort |
 |---|---|---|
-| `src/cli/main.ts:324-331` | aggiungere flag `--once` all'help + parsing | XS |
-| `src/cli/headless.ts` (`parseHeadlessFlags`) | parse `--once` → `HeadlessOptions.once` | XS |
-| `src/cli/runHeadless.ts:758` (`runHeadlessZelari`) | se `opts.once`: forza `MAX_ITER=1`; acquire/rilascia lockfile | S |
-| nuovo `src/cli/triggerLock.ts` | `acquireLock(path) → bool`, `releaseLock`, PID check, `SIGINT` handler | S |
-| `scripts/zelari-cron-example.sh` | esempio crontab | XS |
-| `scripts/zelari-git-hook.mjs` | hook git (pre-push) | S |
-| `docs/triggers.md` | guida trigger | S |
+| `src/cli/main.ts:324-331` | add `--once` flag to help + parsing | XS |
+| `src/cli/headless.ts` (`parseHeadlessFlags`) | parse `--once` -> `HeadlessOptions.once` | XS |
+| `src/cli/runHeadless.ts:758` (`runHeadlessZelari`) | if `opts.once`: force `MAX_ITER=1`; acquire/release lockfile | S |
+| new `src/cli/triggerLock.ts` | `acquireLock(path) -> bool`, `releaseLock`, PID check, `SIGINT` handler | S |
+| `scripts/zelari-cron-example.sh` | crontab example | XS |
+| `scripts/zelari-git-hook.mjs` | git hook (pre-push) | S |
+| `docs/triggers.md` | trigger guide | S |
 
-**Test di accettazione:**
-- `--once` forza `MAX_ITER=1` anche se `ZELARI_MISSION_MAX_ITER=6` nell'env.
-- Due invocazioni concorrenti → la seconda esce `code 0` con `skip:` log.
-- `kill -9` + riesecuzione → il lock stale viene rubato via PID check.
+**Acceptance tests:**
+- `--once` forces `MAX_ITER=1` even with `ZELARI_MISSION_MAX_ITER=6` in env.
+- Two concurrent invocations -> the second exits `code 0` with a `skip:` log.
+- `kill -9` + re-run -> the stale lock is stolen via PID check.

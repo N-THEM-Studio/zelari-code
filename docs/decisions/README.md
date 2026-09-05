@@ -52,6 +52,7 @@ Generated from the real file tree (triage t37/S6, 2026-09-04).
 | 0033 | Anchored edit: file-level snapshot, exact apply, structured error | ✅ Accepted | 2026-09-02 | implemented (slices t72–t79, releases 2.24–2.26) |
 | 0034 | Desktop ships the same contract (guided CLI install first, bundling deferred) | ✅ Accepted | 2026-09-02 | identity wave |
 | 0035 | Parallel council fan-out + trace view | ✅ Accepted | 2026-07-20 | Phase B deferred; **renumbered from duplicate "0015"** (triage 2026-09-04) |
+| 0036 | Evolution Engine: proposer/judge separation | Accepted | 2026-09-04 | ZELARI_EVOLUTION=0 default; JUDGE_PATHS gate in CI |
 
 Numbers never assigned: **0011, 0012** (free slots, do not fill).
 
@@ -84,8 +85,7 @@ from this directory's.
   - `Retracted` — accepted then revoked (rare).
 - **Structure:** Context → Decision → Alternatives →
   Consequences → TODO.
-- **Language:** English (consistent with the rest of zelari-code; ADRs
-  written before the i18n sweep remain in Italian).
+- **Language:** English (consistent with the rest of zelari-code).
 
 ## Process
 

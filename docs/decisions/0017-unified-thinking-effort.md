@@ -1,101 +1,81 @@
-# ADR-0017 — Selezione unificata del "thinking effort" per tutti i provider
+# ADR-0017 - Unified "thinking effort" selection across providers
 
-**Status:** Proposto — **parcheggiato** (triage 2026-09-04, vedi "Esito triage" in fondo)
-**Date:** proposta 2026-08-14 (git)
+**Status:** Proposed - **parked** (triage 2026-09-04, see "Triage outcome" at the bottom)
+**Date:** proposed 2026-08-14 (git)
 
-## Contesto
+## Context
 
-zelari-code supporta 8 provider (`grok`, `glm`, `minimax`, `deepseek`, `openai-compatible`, `chatgpt`,
-`anthropic`, `custom`) con modelli default per ciascuno (`grok-4.5`, `glm-4.6`, `MiniMax-M2.5`,
-`deepseek-v4-pro`, `gpt-5.2-codex`, `claude-sonnet-4-5`).
+zelari-code supports 8 providers (`grok`, `glm`, `minimax`, `deepseek`, `openai-compatible`, `chatgpt`, `anthropic`, `custom`) with default models for each (`grok-4.5`, `glm-4.6`, `MiniMax-M2.5`, `deepseek-v4-pro`, `gpt-5.2-codex`, `claude-sonnet-4-5`).
 
-Molti di questi modelli sono *reasoning-capable*, ma espongono **controlli diversi** sul ragionamento:
+Many of these models are *reasoning-capable*, but expose **different controls** over reasoning:
 
-- OpenAI / xAI → **enum** `reasoning_effort` (`low`/`medium`/`high`).
-- Anthropic → **budget token** `thinking: { type: "enabled", budget_tokens: N }`.
-- DeepSeek / GLM / MiniMax → toggle/budget **provider-specifici**.
+- OpenAI / xAI -> **enum** `reasoning_effort` (`low`/`medium`/`high`).
+- Anthropic -> **token budget** `thinking: { type: "enabled", budget_tokens: N }`.
+- DeepSeek / GLM / MiniMax -> **provider-specific** toggles/budgets.
 
-Oggi **non esiste alcun controllo utente** sull'effort: vale il default del provider (es. `providerConfig.ts`
-documenta che `grok-4.5` ha `reasoning_effort` default `high`). Il harness già **streamma** il thinking
-(`kind: 'thinking'` in `chatgpt.ts` e `anthropic.ts`; scrub di `<think>`/`<thinking>` in `useChatTurn.ts`),
-ma l'utente non può scegliere l'effort. Impatto reale: effort alto = più token di reasoning = più lento e più
-caro; effort basso = più veloce ed economico. L'utente dovrebbe poterlo regolare per modello e per fase
-(plan → alto, build → basso).
+Today **there is no user control** over effort: the provider default applies (e.g. `providerConfig.ts` documents that `grok-4.5` has a default `reasoning_effort` of `high`). The harness already **streams** thinking (`kind: 'thinking'` in `chatgpt.ts` and `anthropic.ts`; scrub of `<think>`/`<thinking>` in `useChatTurn.ts`), but the user cannot choose the effort. Real impact: high effort = more reasoning tokens = slower and more expensive; low effort = faster and cheaper. The user should be able to tune it per model and per phase (plan -> high, build -> low).
 
-## Decisione
+## Decision
 
-Introdurre un'astrazione unica **`ThinkingSpec`** e un **adattatore per provider** che la traduce nei parametri
-di richiesta specifici:
+Introduce a single abstraction **`ThinkingSpec`** and a **per-provider adapter** that translates it into the specific request parameters:
 
 ```ts
 type ThinkingSpec =
-  | 'auto'                                   // default: nessun parametro inviato (default del provider)
-  | { kind: 'off' }                          // niente extended thinking (veloce/economico)
+  | 'auto'                                   // default: no parameter sent (provider default)
+  | { kind: 'off' }                          // no extended thinking (fast/cheap)
   | { kind: 'effort'; effort: 'low' | 'medium' | 'high' }   // enum (OpenAI/xAI)
-  | { kind: 'budget'; budgetTokens: number }                 // budget token (Anthropic/GLM/DeepSeek)
+  | { kind: 'budget'; budgetTokens: number }                 // token budget (Anthropic/GLM/DeepSeek)
 ```
 
-Regole operative:
+Operational rules:
 
-1. **Tabella di capability per modello** (`{ effort?: boolean; budget?: boolean }`): la UI offre solo le scelte
-   valide per il modello attivo. Inviare un `kind` non supportato **degrada a `'auto'`** con warning, mai errore.
-2. **Adattatori per provider** nei tre punti di costruzione richiesta: `openai-compatible.ts`
-   (chat.completions), `chatgpt.ts` (Responses → `reasoning`), `anthropic.ts` (Messages → `thinking`).
-3. **Superficie di controllo**: persistenza per-provider in `provider.json` (`providerConfig.ts`), comando slash
-   `/effort` (o `/thinking`) e flag CLI `--effort`. Default globale `'auto'`.
-4. **Default per modalità**: plan/council → effort alto, build/agent → effort basso, con override utente.
+1. **Per-model capability table** (`{ effort?: boolean; budget?: boolean }`): the UI offers only the choices valid for the active model. Sending an unsupported `kind` **degrades to `'auto'`** with a warning, never an error.
+2. **Per-provider adapters** at the three request-building points: `openai-compatible.ts` (chat.completions), `chatgpt.ts` (Responses -> `reasoning`), `anthropic.ts` (Messages -> `thinking`).
+3. **Control surface:** per-provider persistence in `provider.json` (`providerConfig.ts`), slash command `/effort` (or `/thinking`) and CLI flag `--effort`. Global default `'auto'`.
+4. **Per-mode defaults:** plan/council -> high effort, build/agent -> low effort, with user override.
 
-### Mappatura attuale (DA VERIFICARE a runtime contro ogni API — cambia spesso)
+### Current mapping (TO BE VERIFIED at runtime against each API - it changes often)
 
-| Provider | Kind | Parametro richiesta (da confermare) |
+| Provider | Kind | Request parameter (to confirm) |
 |---|---|---|
 | `openai-compatible` / `grok` (xAI) | effort | `reasoning_effort`: `low`/`high` |
 | `chatgpt` (OpenAI) | effort | Responses: `reasoning.effort`; Chat: `reasoning_effort` |
 | `anthropic` | budget | `thinking: { type: "enabled", budget_tokens: N }` |
 | `glm` (Z.AI) | budget | `thinking: { type: "enabled", budget_tokens: N }` |
-| `deepseek` | toggle/budget | `thinking` / variante `-reasoner` (da verificare) |
-| `minimax` | effort/budget | provider-specific (da verificare) |
+| `deepseek` | toggle/budget | `thinking` / `-reasoner` variant (to verify) |
+| `minimax` | effort/budget | provider-specific (to verify) |
 
-## Alternative considerate
+## Alternatives considered
 
-1. **Passthrough `extraBody` libero per provider** — rifiutata: nessuna semantica cross-provider, nessuna
-   validazione, nessuna UI coerente.
-2. **Solo enum `low/medium/high` per tutti** — rifiutata: Anthropic/GLM/DeepSeek usano budget token; forzare un
-   enum fittizio perde fedeltà.
-3. **Solo budget token** — rifiutata: OpenAI/xAI non accettano budget grezzi, accettano enum di effort.
+1. **Free per-provider `extraBody` passthrough** - rejected: no cross-provider semantics, no validation, no consistent UI.
+2. **Only a `low/medium/high` enum for everyone** - rejected: Anthropic/GLM/DeepSeek use token budgets; forcing a fictional enum loses fidelity.
+3. **Only token budget** - rejected: OpenAI/xAI do not accept raw budgets, they accept effort enums.
 
-## Conseguenze
+## Consequences
 
 **Positive**
 
-- Controllo uniforme costi/latenza su tutti i provider da un'unica superficie.
-- Default consapevoli per modalità (plan alto, build basso).
-- La tabella di capability mantiene la UI onesta (niente scelte invalide).
+- Uniform cost/latency control across all providers from a single surface.
+- Sensible per-mode defaults (plan high, build low).
+- The capability table keeps the UI honest (no invalid choices).
 
-**Negative / residuali**
+**Negative / residual**
 
-- La mappatura per provider deve inseguire API che cambiano in fretta; una mappatura ignota degrada a `'auto'`
-  in modo silenzioso — mitigare con una "versione di mappatura nota" + log di warning.
+- The per-provider mapping must chase APIs that change fast; an unknown mapping degrades silently to `'auto'` - mitigate with a "known mapping version" + warning log.
 
 ## TODO
 
-- [ ] Definire `ThinkingSpec` + tabella capability (`canThinking: { effort?, budget? }`) per modello.
-- [ ] Implementare gli adattatori nei tre provider (`openai-compatible`, `chatgpt`, `anthropic`).
-- [ ] Aggiungere campo config in `provider.json`, comando `/effort`, flag `--effort`.
-- [ ] Verificare i nomi parametro live (`reasoning_effort`, `reasoning`, `thinking.budget_tokens`) per provider
-      prima di finalizzare la mappatura.
+- [ ] Define `ThinkingSpec` + capability table (`canThinking: { effort?, budget? }`) per model.
+- [ ] Implement the adapters in the three providers (`openai-compatible`, `chatgpt`, `anthropic`).
+- [ ] Add config field in `provider.json`, `/effort` command, `--effort` flag.
+- [ ] Verify parameter names live (`reasoning_effort`, `reasoning`, `thinking.budget_tokens`) per provider
+      before finalizing the mapping.
 
-## Esito triage (2026-09-04, task t37/S6)
+## Triage outcome (2026-09-04, task t37/S6)
 
-**Verdetto: parcheggiato** — né accettato né ritirato. Evidenza su disco:
+**Verdict: parked** - neither accepted nor withdrawn. On-disk evidence:
 
-- `ThinkingSpec`, `reasoningEffort`, `reasoning_effort`: **zero occorrenze** in `src/` e
-  `packages/core/src/` (grep 2026-09-04); nessun flag `--effort`, nessun comando `/effort`.
-- La superficie descritta (tabella capability, adattatori per provider, persistenza in
-  `provider.json`) non è mai stata implementata dalla proposta (2026-08-14).
+- `ThinkingSpec`, `reasoningEffort`, `reasoning_effort`: **zero occurrences** in `src/` and `packages/core/src/` (grep 2026-09-04); no `--effort` flag, no `/effort` command.
+- The described surface (capability table, per-provider adapters, persistence in `provider.json`) was never implemented since the proposal (2026-08-14).
 
-**Condizioni di riapertura:** il benchmark competitivo (t31, `bench:competitive` in
-`tools/eval/`) ora misura token/costo per run. Se i dati mostrano che l'effort di
-reasoning è una leva di costo/latenza significativa cross-provider, riprendere questo
-ADR aggiornando la mappatura provider. Fino ad allora restano validi i default per
-provider già documentati in `providerConfig.ts`.
+**Reopening conditions:** the competitive benchmark (t31, `bench:competitive` in `tools/eval/`) now measures tokens/cost per run. If the data shows reasoning effort is a significant cost/latency lever across providers, resume this ADR updating the provider mapping. Until then the per-provider defaults already documented in `providerConfig.ts` remain valid.

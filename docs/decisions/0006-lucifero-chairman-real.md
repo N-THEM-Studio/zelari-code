@@ -1,22 +1,14 @@
-# ADR-0006: Lucifero chairman synthesis reale
+# ADR-0006: Real Lucifero chairman synthesis
 
-- **Stato:** ✅ Accettato
-- **Data proposta:** 2026-07-02
-- **Data accettazione:** 2026-07-02 (auto-accettata con il rilascio v0.6.0;
-  il chairman era già definito in `roles.ts:175-` e i callback
-  `onSynthesisStart`/`onSynthesisChunk`/`onSynthesisDone` erano già
-  presenti in `councilApi.ts:115-117`, quindi lo stub era l'unica
-  parte mancante)
-- **Autore:** MiniMax-M3
-- **Dipende da:** [ADR-0005](0005-deprecate-legacy-src-paths.md) (per i
-  subpath stabili usati da Slice 3 dei test)
+- **Status:** Accepted
+- **Proposed:** 2026-07-02
+- **Accepted:** 2026-07-02 (self-accepted with the v0.6.0 release; the chairman was already defined in `roles.ts:175-` and the `onSynthesisStart`/`onSynthesisChunk`/`onSynthesisDone` callbacks were already present in `councilApi.ts:115-117`, so the stub was the only missing part)
+- **Author:** MiniMax-M3
+- **Depends on:** [ADR-0005](0005-deprecate-legacy-src-paths.md) (for the stable subpaths used by test Slice 3)
 
-## Contesto
+## Context
 
-`Lucifero` (il "Final Synthesizer", nono cerchio dell'Inferno dantesco)
-era dichiarato in `packages/core/src/agents/roles.ts:175-203` con un
-systemPrompt dettagliato, ma in `councilApi.ts:528-557` la sua esecuzione
-era uno **stub**:
+`Lucifero` (the "Final Synthesizer", ninth circle of Dante's Inferno) was declared in `packages/core/src/agents/roles.ts:175-203` with a detailed systemPrompt, but in `councilApi.ts:528-557` its execution was a **stub**:
 
 ```ts
 // Lucifero synthesis (Phase 13 will add full chairman integration)
@@ -29,104 +21,55 @@ if (chairman && !completedIds.has(chairman.id)) {
 }
 ```
 
-Conseguenze operative prima di v0.6.0:
+Operational consequences before v0.6.0:
 
-1. Il council restituiva solo i 5 specialisti (e Minosse se
-   `debateMode: true`). Nessuna sintesi finale reale.
-2. Il callback `onSynthesisChunk` non veniva mai chiamato, quindi
-   l'effetto typewriter sulla TUI non esisteva.
-3. `durationMs: 0` e `usage: null` ingannavano `councilCost.ts` che
-   non conteggiava il chairman.
-4. L'header "· Lucifero" non appariva mai in ChatStream perché non
-   venivano emessi eventi con `memberId='lucifer'`.
+1. The council returned only the 5 specialists (and Minosse if `debateMode: true`). No real final synthesis.
+2. The `onSynthesisChunk` callback was never called, so the typewriter effect on the TUI did not exist.
+3. `durationMs: 0` and `usage: null` fooled `councilCost.ts` which did not count the chairman.
+4. The "Lucifero" header never appeared in ChatStream because no events with `memberId='lucifer'` were emitted.
 
-## Decisione
+## Decision
 
-Promuovere il chairman a un'invocazione reale di `AgentHarness`,
-identica al pattern dei 5 specialisti (riga 322-389 di
-`councilApi.ts`):
+Promote the chairman to a real `AgentHarness` invocation, identical to the 5-specialist pattern (lines 322-389 of `councilApi.ts`):
 
-1. **Costruzione del contesto.** `buildAgentMessages(chairman,
-   userMessage, ..., agentOutputs, ...)` viene chiamato con
-   `agentOutputs` (output dei 5 specialisti e di Minosse) come
-   `priorOutputs`. Il chairman riceve quindi un prompt che contiene
-   la sintesi di tutti i membri precedenti — esattamente come gli
-   specialisti ricevevano i loro predecessori.
+1. **Context construction.** `buildAgentMessages(chairman, userMessage, ..., agentOutputs, ...)` is called with `agentOutputs` (outputs of the 5 specialists and Minosse) as `priorOutputs`. The chairman therefore receives a prompt that contains the synthesis of all previous members - exactly like the specialists received their predecessors.
 
-2. **Tool calls.** `computeAgentTools(chairman, aiConfig)` +
-   `getProviderTools(...)` come per gli specialisti. Il chairman può
-   quindi creare workspace artifacts (phase/task/idea/risk/document)
-   quando il suo systemPrompt lo richiede.
+2. **Tool calls.** `computeAgentTools(chairman, aiConfig)` + `getProviderTools(...)` as for the specialists. The chairman can therefore create workspace artifacts (phase/task/idea/risk/document) when its systemPrompt requires it.
 
-3. **Streaming.** Per ogni `event` emesso dal chairman:
-   - `tool_execution_start` → incrementa `toolCalls`.
-   - `message_end` con `usage` → cattura il token breakdown.
-   - `message_delta` → accumula `fullText` + chiama
-     `callbacks.onSynthesisChunk(delta)` per il typewriter effect.
-   - `error` con `severity !== 'cancelled'` → marca `errored = true`
-     (l'AgentHarness cattura internamente gli errori del provider e
-     li re-emette come BrainErrorEvent; non dobbiamo perdere questo
-     segnale).
+3. **Streaming.** For every `event` emitted by the chairman:
+   - `tool_execution_start` -> increments `toolCalls`.
+   - `message_end` with `usage` -> captures the token breakdown.
+   - `message_delta` -> accumulates `fullText` + calls `callbacks.onSynthesisChunk(delta)` for the typewriter effect.
+   - `error` with `severity !== 'cancelled'` -> marks `errored = true` (the AgentHarness internally captures provider errors and re-emits them as a BrainErrorEvent; we must not lose this signal).
 
-4. **Robustness.** Se l'LLM del chairman fallisce, il council run NON
-   abortisce. I 5 output dei specialisti restano disponibili come
-   fallback synthesis. Il membro `lucifer` viene marcato
-   `errored: true` nel `member_cost` e il `onSynthesisDone` riceve
-   un marker testuale: `[Chairman synthesis failed: <reason>]`.
+4. **Robustness.** If the chairman LLM fails, the council run does NOT abort. The 5 specialist outputs remain available as the fallback synthesis. The `lucifer` member is marked `errored: true` in `member_cost` and `onSynthesisDone` receives a textual marker: `[Chairman synthesis failed: <reason>]`.
 
-5. **Visible reasoning.** `memberId: 'lucifer'` e
-   `memberName: 'Lucifero'` vengono passati a `AgentHarness` (via
-   `memberFields()` di v0.5.0) → ChatStream renderizza `· Lucifero`
-   in viola (#8b5cf6) automaticamente, senza cambi al rendering.
+5. **Visible reasoning.** `memberId: 'lucifer'` and `memberName: 'Lucifero'` are passed to `AgentHarness` (via v0.5.0's `memberFields()`) -> ChatStream renders the Lucifero header in purple (#8b5cf6) automatically, with no rendering changes.
 
-6. **Backward compat.** `councilSize: 3` (default) **esclude**
-   ancora Lucifero (è il 6° membro in `getCouncilAgents(6)`). I test
-   esistenti con `councilSize: 3` non subiscono regressioni. Per
-   attivare il chairman serve `councilSize: 6` (o, in futuro, un
-   nuovo flag dedicated).
+6. **Backward compat.** `councilSize: 3` (default) still **excludes** Lucifero (he is the 6th member in `getCouncilAgents(6)`). Existing tests with `councilSize: 3` see no regressions. Activating the chairman requires `councilSize: 6` (or, in the future, a dedicated flag).
 
-## Alternative considerate
+## Alternatives considered
 
-- **Lasciare lo stub e documentarlo come "by design"**: scartato
-  perché l'utente paga per una sintesi che non esiste, e
-  `onSynthesisChunk` vuoto è un'API bugiarda.
-- **Chairman come LLM separato (non AgentHarness)**: scartato per
-  coerenza con gli specialisti e per riusare tool execution
-  automatica.
-- **Chairman come merge deterministico dei 5 output (no LLM)**:
-  scartato perché il systemPrompt di Lucifero richiede esplicitamente
-  reasoning su conflitti, priorità, e applicazione del feedback di
-  Minosse — non è una semplice concatenazione.
+- **Keep the stub and document it as "by design"**: rejected because the user pays for a synthesis that does not exist, and an empty `onSynthesisChunk` is a lying API.
+- **Chairman as a separate LLM (not AgentHarness)**: rejected for consistency with the specialists and to reuse automatic tool execution.
+- **Chairman as a deterministic merge of the 5 outputs (no LLM)**: rejected because Lucifero's systemPrompt explicitly requires reasoning over conflicts, priorities, and applying Minosse's feedback - it is not a simple concatenation.
 
-## Conseguenze
+## Consequences
 
 **Positive**
-- L'utente riceve una sintesi reale (5 specialisti + Minosse +
-  Lucifero = 6 voices).
-- Il council run è ora coerente con la documentazione e con i
-  systemPrompt definiti in `roles.ts`.
-- La `councilCost` può includere il chairman nei totali (durationMs
-  e token usage reali).
-- La TUI può mostrare un effetto typewriter durante la sintesi.
+- The user receives a real synthesis (5 specialists + Minosse + Lucifero = 6 voices).
+- The council run is now consistent with the documentation and with the systemPrompts defined in `roles.ts`.
+- `councilCost` can include the chairman in totals (real durationMs and token usage).
+- The TUI can show a typewriter effect during the synthesis.
 
-**Negative / rischi**
-- +1 invocazione LLM per ogni `dispatchCouncil` con `councilSize:
-  6` → costo e latenza aumentano. Mitigation: gli utenti che vogliono
-  velocità possono usare `councilSize: 3` (no chairman) o, in futuro,
-  un flag `--no-chairman`.
-- Se il chairman LLM è configurato diversamente dagli specialisti
-  (modello più pesante), il tempo di council cresce. Lo stesso
-  `config.model` viene usato, quindi non c'è differenza per default.
+**Negative / risks**
+- +1 LLM invocation for every `dispatchCouncil` with `councilSize: 6` -> cost and latency increase. Mitigation: users who want speed can use `councilSize: 3` (no chairman) or, in the future, a `--no-chairman` flag.
+- If the chairman LLM is configured differently from the specialists (heavier model), council time grows. The same `config.model` is used, so there is no difference by default.
 
 ## TODO
 
-- [x] Slice 1: chairman reale con harness.run + streaming.
-- [x] Slice 2: visible reasoning (memberId/memberName → ChatStream).
-      Implementato gratis dal pattern v0.5 già esistente.
-- [x] Slice 3: 7 test unit + E2E (`council-chairman.test.ts`).
-- [ ] Slice 4 (grounding helper `groundCouncil()`): spostato a v0.6.1.
-      Era descritto nel piano v0.6 ma è scope aggiuntivo; meglio
-      una release atomica del chairman.
-- [ ] Flag CLI `--no-chairman` per saltare Lucifero senza dover
-      scendere a `councilSize: 3` (Low Ego: serve davvero? vediamo
-      se gli utenti lo chiedono).
+- [x] Slice 1: real chairman with harness.run + streaming.
+- [x] Slice 2: visible reasoning (memberId/memberName -> ChatStream). Implemented for free by the already existing v0.5 pattern.
+- [x] Slice 3: 7 unit + E2E tests (`council-chairman.test.ts`).
+- [ ] Slice 4 (grounding helper `groundCouncil()`): moved to v0.6.1. It was described in the v0.6 plan but is additional scope; better an atomic chairman release.
+- [ ] CLI flag `--no-chairman` to skip Lucifero without dropping to `councilSize: 3` (Low Ego: is it really needed? let's see if users ask for it).

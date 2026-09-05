@@ -1,19 +1,19 @@
-# ADR-0019 — Observation Integrity come clausola esplicita di P1
+# ADR-0019 - Observation Integrity as an explicit clause of P1
 
-- **Stato**: accepted
-- **Data**: 2026-08-17
-- **Governance**: emendamento del manifesto ratificato ([ADR-0010](0010-first-principles-manifesto.md)) — clausola sotto P1, non nuovo principio
+- **Status**: accepted
+- **Date**: 2026-08-17
+- **Governance**: amendment of the ratified manifesto ([ADR-0010](0010-first-principles-manifesto.md)) - a clause under P1, not a new principle
 - **Release**: v1.46 "Ground Truth"
 
 ## Context
 
-La release v1.46 (piano "Loud Tool Errors, Degradazione Diagnostica, Shell Read-Only in Plan") ha corretto tre classi di falsi vuoti osservate in sessioni reali: `grep_content` con glob non ricorsivo che riportava `filesInTree: 1` su alberi da 117 file, `ast_outline` silenzioso su file validi (path non risolto contro il root + quattro cause indistinguibili collassate in `[]`), assenza di shell read-only in plan. Una hardening review esterna ha chiesto di promuovere il principio sottostante a invariante: "OBSERVATION INTEGRITY".
+The v1.46 release (the "Loud Tool Errors, Diagnostic Degradation, Shell Read-Only in Plan" plan) fixed three classes of false empties observed in real sessions: `grep_content` with a non-recursive glob reporting `filesInTree: 1` on trees of 117 files, `ast_outline` being silent on valid files (path not resolved against the root + four indistinguishable causes collapsed into `[]`), and the absence of a read-only shell in plan. An external hardening review asked to promote the underlying principle to an invariant: "OBSERVATION INTEGRITY".
 
-Il metodo del manifesto (§Metodo, ADR-0010) esclude di aggiungerlo come P7: il terzo test ("non è derivabile") fallisce — l'integrità dell'osservazione discende da P1 (*non fidarti di un'asserzione non verificata — inclusa la tua*: un falso vuoto È un'asserzione non verificata). La forma giusta è una clausola esplicita sotto P1.
+The manifesto's method ("Method", ADR-0010) rules out adding it as a P7: the third test ("it is not derivable") fails - observation integrity derives from P1 (*do not trust an unverified assertion - including your own*: a false empty is an unverified assertion). The right shape is an explicit clause under P1.
 
 ## Decision
 
-1. PRINCIPLES.md P1 acquisisce un box invariante con il testo ratificato:
+1. PRINCIPLES.md P1 gains an invariant box with the ratified text:
 
    ```
    OBSERVATION INTEGRITY
@@ -22,19 +22,19 @@ Il metodo del manifesto (§Metodo, ADR-0010) esclude di aggiungerlo come P7: il 
    TRUNCATED is partial evidence only.
    ```
 
-2. La sezione "Come è garantito" di P1 estende la garanzia ai meccanismi v1.46: status discriminati e sentinel nei tool di osservazione (`SEARCH_EMPTY_SCOPE`/`DEPRECATED_INPUT`/`filesWalked` in grep_content; `file-not-found` con path assoluto guardato, `typescript-unavailable`, `read-error` in ast/LSP; `degraded` + `artifactsWritten` e `unsupported_project_shape` in inspect_command).
+2. P1's "How it is guaranteed" section extends the guarantee to the v1.46 mechanisms: discriminated statuses and sentinels in observation tools (`SEARCH_EMPTY_SCOPE`/`DEPRECATED_INPUT`/`filesWalked` in grep_content; `file-not-found` with the absolute path looked at, `typescript-unavailable`, `read-error` in ast/LSP; `degraded` + `artifactsWritten` and `unsupported_project_shape` in inspect_command).
 
-3. La regola epistemica entra nei prompt plan e kraken (explore): "negative evidence is valid only from a completed observation. Never conclude that code/symbols/files do not exist from degraded results, zero files examined, or unavailable backends."
+3. The epistemic rule enters the plan and kraken (explore) prompts: "negative evidence is valid only from a completed observation. Never conclude that code/symbols/files do not exist from degraded results, zero files examined, or unavailable backends."
 
 ## Consequences
 
-- Un risultato vuoto NON è mai accettabile come prova di assenza se l'osservazione non è andata a buon fine e sufficientemente scoped: il modello deve riportare lo status degradato e ampliare l'osservazione, non concludere "il codice non esiste".
-- EMPTY non viene fabbricato dal degradato: i tool devono distinguere le cause e dirle loud (sentinel + campi macchina `status`/`recoverable`/`recommendedFallback`).
-- TRUNCATED vale solo come evidenza parziale: su di esso non si costruiscono conclusioni negative forti.
-- Rollout globale di `ObservationStatus` su TUTTI i tool rinviato a 1.47 (ADR nel piano v1.46, §8): in 1.46 lo status discriminato vive nei soli tool toccati; i dati d'uso collezionati dai campi appena introdotti alimenteranno il futuro tool-health.
+- An empty result is NEVER acceptable as proof of absence if the observation did not succeed and was not sufficiently scoped: the model must report the degraded status and broaden the observation, not conclude "the code does not exist".
+- EMPTY is not fabricated from the degraded: tools must distinguish the causes and state them loudly (sentinel + machine fields `status`/`recoverable`/`recommendedFallback`).
+- TRUNCATED counts only as partial evidence: no strong negative conclusions are built on it.
+- The global rollout of `ObservationStatus` over ALL tools deferred to 1.47 (ADR in the v1.46 plan, section 8): in 1.46 the discriminated status lives only in the touched tools; usage data collected by the newly introduced fields will feed the future tool-health.
 
 ## Alternatives considered
 
-- **P7 "Observation Integrity" come nuovo principio**: respinto — derivabile da P1 (fallisce il terzo test del metodo).
-- **Solo regola prompt, senza box nel manifesto**: respinto — la review l'ha chiesta come invariante stabile tra versioni; il prompt da solo è policy revocabile, il manifesto è governance.
-- **`ObservationMeta` globale su tutti i tool subito**: respinto come scope creep pre-dati-d'uso (rinviato a 1.47).
+- **P7 "Observation Integrity" as a new principle**: rejected - derivable from P1 (fails the method's third test).
+- **Prompt rule only, without a box in the manifesto**: rejected - the review asked for it as an invariant stable across versions; a prompt alone is revocable policy, the manifesto is governance.
+- **Global `ObservationMeta` on all tools right away**: rejected as scope creep before usage data (deferred to 1.47).

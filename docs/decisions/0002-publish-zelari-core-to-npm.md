@@ -1,122 +1,110 @@
-# ADR-0002: Pubblicazione di `@zelari/core` su npm
+# ADR-0002: Publishing `@zelari/core` to npm
 
-> **Nota (2026-07-15):** la dual-license “core MIT / CLI proprietario” è
-> **superseded** da [ADR-0008](./0008-monorepo-mit-oss.md) (intero monorepo MIT,
-> copyright Anathema Studio). Questo ADR resta storico per la decisione di
-> pubblicare il core su npm.
+> **Note (2026-07-15):** the "core MIT / proprietary CLI" dual license is
+> **superseded** by [ADR-0008](./0008-monorepo-mit-oss.md) (whole monorepo MIT,
+> copyright Anathema Studio), which was later replaced by ADR-0009 (Apache-2.0).
+> This ADR remains historical for the decision to
+> publish the core to npm.
 
-- **Stato:** ✅ Accettato
-- **Data proposta:** 2026-07-02
-- **Data accettazione:** 2026-07-02 (auto-accettata da MiniMax-M3, ADR coerente con monorepo gia esistente in `6ec90be` + decisione operativa di rilascio npm)
-- **Autore:** MiniMax-M3
-- **Sostituisce:** —
-- **Dipende da:** [ADR-0001](0001-monorepo-for-zelari-core.md)
+- **Status:** Accepted
+- **Proposed:** 2026-07-02
+- **Accepted:** 2026-07-02 (self-accepted by MiniMax-M3, ADR consistent with the monorepo already existing in `6ec90be` + operational npm release decision)
+- **Author:** MiniMax-M3
+- **Replaces:** -
+- **Depends on:** [ADR-0001](0001-monorepo-for-zelari-core.md)
 
-## Contesto
+## Context
 
-Il refactor v0.5.0 ha estratto `AgentHarness`, `ToolRegistry`, il council
-multi-agente, le skills built-in e la tipologia condivisa in un package
-`@zelari/core` interno (via npm workspaces). Il package esiste ma non è
-ancora pubblicato: nessun consumatore esterno può `npm install
+The v0.5.0 refactor extracted `AgentHarness`, `ToolRegistry`, the
+multi-agent council, built-in skills and shared typings into an
+internal `@zelari/core` package (via npm workspaces). The package exists
+but is not published yet: no external consumer can `npm install
 @zelari/core`.
 
-`zelari-code` (CLI) è oggi l'unico consumer, ma il valore del refactor
-sta nella **pubblicabilità**: se il core è consumabile da altri frontend
-(una futura GUI in Tauri, integrazioni in VS Code, agenti in altri
-tool), la base utenti del core si moltiplica senza sforzo di
-re-implementazione.
+`zelari-code` (CLI) is today the only consumer, but the value of the
+refactor lies in **publishability**: if the core is consumable by other
+frontends (a future Tauri GUI, VS Code integrations, agents in other
+tools), the core's user base multiplies without re-implementation
+effort.
 
-## Decisione
+## Decision
 
-**Pubblichiamo `@zelari/core` su npm registry pubblico sotto lo scope
-`@zelari/`, versione iniziale `0.5.0` (allineata alla release del
-CLI). Accesso: nessun token personale dell'Andrea nel repo — uso di
-**npm Trusted Publishing via GitHub Actions** (OIDC, senza secret
-store manuale).
+**We publish `@zelari/core` to the public npm registry under the
+`@zelari/` scope, initial version `0.5.0` (aligned with the CLI
+release). Access: no personal token from Andrea in the repo - use of
+**npm Trusted Publishing via GitHub Actions** (OIDC, no manual secret
+store).
 
-### Dettagli operativi
+### Operational details
 
-1. **Registry:** npmjs.org pubblico (no scope privato a pagamento).
-2. **Autenticazione CI:** npm Trusted Publishing — leghiamo il package
-   npm all'azione GitHub `N-THEM-Studio/zelari-code/.github/workflows/release.yml`
-   tramite `id-token: write` + configurazione `npm-publish` trust su
-   npmjs.org. **Nessun `NPM_TOKEN` secret** salvato in GitHub.
-3. **Visibility:** package pubblico subito (lo scopo è adozione, non
-   monetizzazione).
-4. **License:** `SEE LICENSE IN LICENSE` (consistente con il repo —
-   verifica con Andrea se va cambiata per il package pubblicato).
-5. **Repository field:** punta a `github.com/N-THEM-Studio/zelari-code`
-   con `directory: packages/core`.
+1. **Registry:** public npmjs.org (no paid private scope).
+2. **CI authentication:** npm Trusted Publishing - we link the npm
+   package to the GitHub Action
+   `N-THEM-Studio/zelari-code/.github/workflows/release.yml`
+   via `id-token: write` + `npm-publish` trust configuration on
+   npmjs.org. **No `NPM_TOKEN` secret** stored in GitHub.
+3. **Visibility:** public package from day one (the goal is adoption,
+   not monetization).
+4. **License:** `SEE LICENSE IN LICENSE` (consistent with the repo -
+   verify with Andrea whether it must change for the published package).
+5. **Repository field:** points to `github.com/N-THEM-Studio/zelari-code`
+   with `directory: packages/core`.
 
-### Workflow release
+### Release workflow
 
 ```
-git tag v0.5.0 → CI → build packages/core → npm publish --workspace packages/core --tag latest
+git tag v0.5.0 -> CI -> build packages/core -> npm publish --workspace packages/core --tag latest
 ```
 
-Il workflow fallisce se:
-- typecheck o test falliscono
-- agy audit agy restituisce CRIT/HIGH
-- esiste già una versione uguale su npm (impossibile per design)
+The workflow fails if:
+- typecheck or tests fail
+- the audit returns CRIT/HIGH
+- an identical version already exists on npm (impossible by design)
 
-## Alternative considerate
+## Alternatives considered
 
-- **Repo separato (`N-THEM-Studio/zelari-core`)** — scartato per ADR-0001:
-  singolo team, versioning accoppiato nella fase iniziale, doppio
-  overhead di release management non giustificato.
-- **GitHub Packages (`@N-THEM-Studio/core`)** — scartato: visibilità
-  inferiore su `npm search`, npm CLI non lo dà gratis nel flusso
-  mentale utente.
-- **Privato a pagamento** — scartato: lo scopo è adozione.
-- **Solo CLI monolitico, niente package** — scartato: vanifica il
-  refactor già fatto.
+- **Separate repo (`N-THEM-Studio/zelari-core`)** - rejected per ADR-0001:
+  single team, coupled versioning in the early phase, double release
+  management overhead not justified.
+- **GitHub Packages (`@N-THEM-Studio/core`)** - rejected: lower
+  visibility on `npm search`, the npm CLI does not give it for free in
+  the user's mental flow.
+- **Paid private** - rejected: the goal is adoption.
+- **Monolithic CLI only, no package** - rejected: defeats the already
+  completed refactor.
 
-## Conseguenze
-
-**Positive** (vedi anche License scelta sopra)
-
----
-
-**License scelta**
-
-### License del package pubblicato
-
-**Scelta: MIT** (testo standard, copyright N-THEM Studio). Razionale:
-- Compatibilità massima (chiunque puo usarlo, anche in prodotti proprietari).
-- Riduce attrito per consumer esterni (leggi "perche' mi fido" in 30 sec).
-- Repo zelari-code resta con la sua `SEE LICENSE IN LICENSE` separata (le sue clausole proprie). Il package npm e' un sotto-prodotto.
-
----
+## Consequences
 
 **Positive**
-- `@zelari/core` diventa riusabile da terze parti (TS tool, altri CLI,
-  integrazioni).
-- npm Trusted Publishing rimuove il rischio di `NPM_TOKEN` leak.
-- Onboarding nuovi contributor semplificato (npm standard).
+- `@zelari/core` becomes reusable by third parties (TS tools, other
+  CLIs, integrations).
+- npm Trusted Publishing removes the `NPM_TOKEN` leak risk.
+- Simplified onboarding for new contributors (npm standard).
 
-**Negative / rischi**
-- Pubblicare un package vincola a una **API stability promise**
-  (vedi ADR-0004).
-- Bug in `@zelari/core` vengono ora vissuti anche da terze parti
-  ignari del CLI.
-- License va chiarita prima del publish (decisione di Andrea).
+**Negative / risks**
+- Publishing a package binds us to an **API stability promise**
+  (see ADR-0004).
+- Bugs in `@zelari/core` are now also experienced by third parties
+  unaware of the CLI.
+- License must be clarified before publish (Andrea's decision).
 
 ## TODO
 
-- [x] License scelta: MIT per @zelari/core pubblicato.
-- [x] Configurare npm Trusted Publishing: workflow aggiornato in
-      `.github/workflows/publish.yml` per usare OIDC
-      (`id-token: write`, niente `NPM_TOKEN` long-lived). Resta da
-      configurare il lato npmjs.com (Andrea: andare su
-      https://www.npmjs.com/package/@zelari/core/access, aggiungere
-      Trusted Publisher con repo `N-THEM-Studio/zelari-code`,
+- [x] License chosen: MIT for the published @zelari/core (later
+      superseded at repo level, see ADR-0008/0009).
+- [x] Configure npm Trusted Publishing: workflow updated in
+      `.github/workflows/publish.yml` to use OIDC
+      (`id-token: write`, no long-lived `NPM_TOKEN`). Still to be
+      configured on the npmjs.com side (Andrea: go to
+      https://www.npmjs.com/package/@zelari/core/access, add the
+      Trusted Publisher with repo `N-THEM-Studio/zelari-code`,
       workflow file `publish.yml`).
-- [x] Workflow `.github/workflows/release.yml` con publish OIDC:
-      stesso `publish.yml` ora pubblica ENTRAMBI i workspace
-      (`zelari-code` CLI + `@zelari/core`) in job paralleli.
-- [ ] `packages/core/README.md` con esempi d'uso consumatore esterno:
-      non bloccante per v0.5.0; gli esempi sono in MIGRATION.md.
-- [x] `packages/core/CHANGELOG.md` con storia releases (a partire da
-      v0.5.0): in v0.5.0 il CHANGELOG del package core coincide con
-      il CHANGELOG root; non serve file separato finché i release
-      notes divergono.
+- [x] Workflow `.github/workflows/release.yml` with OIDC publish:
+      the same `publish.yml` now publishes BOTH workspaces
+      (`zelari-code` CLI + `@zelari/core`) in parallel jobs.
+- [ ] `packages/core/README.md` with usage examples for external
+      consumers: not blocking for v0.5.0; examples are in MIGRATION.md.
+- [x] `packages/core/CHANGELOG.md` with release history (starting from
+      v0.5.0): in v0.5.0 the core package changelog coincides with
+      the root CHANGELOG; no separate file needed until the release
+      notes diverge.

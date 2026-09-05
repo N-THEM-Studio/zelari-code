@@ -1,47 +1,45 @@
-# ADR-0021 — Contratto Session spine v1
+# ADR-0021 - Session spine v1 contract
 
 **Status:** Accepted
 **Date:** 2026-08-19
 
-## Contesto
+## Context
 
-ADR-0016 definisce *cosa* vuole (un unico log append-only come fonte di verità) ma non
-il contratto operativo. La migrazione CLI (render da eventi, resume/fork UX) richiede
-un formato stabile prima di toccare gli host.
+ADR-0016 defines *what* it wants (a single append-only log as source of truth) but not the operational contract. The CLI migration (render from events, resume/fork UX) requires a stable format before touching the hosts.
 
-## Decisione
+## Decision
 
-Il modulo `@zelari/core/session` implementa la spine v1 con questo contratto pubblico:
+The `@zelari/core/session` module implements spine v1 with this public contract:
 
-- **Envelope** (`SessionEventEnvelope`): `{schemaVersion: 1, sessionId, seq, ts, kind, actor, data}` —
-  una riga JSON per evento; `kind` appartiene a `SESSION_EVENT_KINDS` (vocabolario chiuso,
-  estendibile solo con minor schema o nuova schemaVersion).
-- **Writer** (`SessionLogWriter`): single-writer con lock `wx` + takeover su stantio;
-  `seq` assegnata dopo validazione Zod; append concatenato (ordine su disco garantito).
-- **Replay** (`readSessionLog`): tollerante — righe corrotte saltate e riportate come
+- **Envelope** (`SessionEventEnvelope`): `{schemaVersion: 1, sessionId, seq, ts, kind, actor, data}` -
+  one JSON line per event; `kind` belongs to `SESSION_EVENT_KINDS` (a closed vocabulary,
+  extendable only with a schema minor or a new schemaVersion).
+- **Writer** (`SessionLogWriter`): single-writer with a `wx` lock + stale takeover;
+  `seq` assigned after Zod validation; chained appends (on-disk order guaranteed).
+- **Replay** (`readSessionLog`): tolerant - corrupt lines skipped and reported as
   `ReplayIssue` (`corrupt-line`, `seq-gap`, `seq-duplicate`, `seq-nonmonotonic`,
-  `schema-mismatch`); mai eccezione su log parziale.
-- **Proiezione** (`buildProjection`): viste derivate (messaggi, conteggi tool,
-  verification summary, lineage fork) — nessuno stato parallelo persistito.
-- **Path modello unico** (`deriveMessages` + `isModelSurfaceEvent`): solo i kinds della
-  surface entrano nella history; invariant P1 "model-visible ⟺ logged" verificabile
-  staticamente sul vocabolario.
-- **Lineage**: `forkSession` (copia ≤ fromSeq + evento `session.forked`),
-  `resumeSession` (riapre + `session.resumed`), `lineageOf` (catena ancestor).
-- **Export**: formato `zelari-session-export/1` (macchina-leggibile, senza lock).
+  `schema-mismatch`); never an exception on a partial log.
+- **Projection** (`buildProjection`): derived views (messages, tool counts,
+  verification summary, fork lineage) - no persisted parallel state.
+- **Single model path** (`deriveMessages` + `isModelSurfaceEvent`): only surface kinds
+  enter the history; the P1 invariant "model-visible implies logged" is statically
+  checkable on the vocabulary.
+- **Lineage**: `forkSession` (copy = fromSeq + `session.forked` event),
+  `resumeSession` (reopen + `session.resumed`), `lineageOf` (ancestor chain).
+- **Export**: `zelari-session-export/1` format (machine-readable, lock-free).
 
-## Alternative considerate
+## Alternatives considered
 
-1. **Estendere il sidecar `sessionJsonl.ts`** — rifiutata: manca seq/lock/versione e la
-   sua forma è legata a `BrainEvent` (stream live con `message_delta`, non timeline).
-2. **SQLite** — rimandata (come in ADR-0016): JSONL resta grep-abile e append-only.
+1. **Extend the `sessionJsonl.ts` sidecar** - rejected: it lacks seq/lock/version and its
+   shape is tied to `BrainEvent` (a live stream with `message_delta`, not a timeline).
+2. **SQLite** - deferred (as in ADR-0016): JSONL stays grep-able and append-only.
 
-## Conseguenze
+## Consequences
 
-**Positive** — resume/fork/export deterministici sul piano della trajectory; falsi
-"done" ricostruibili; base per profili confrontabili (stesso task → stesso schema eventi).
+**Positive** - deterministic resume/fork/export on the trajectory plane; fake
+"done" reconstructible; the base for comparable profiles (same task -> same event schema).
 
-**Negative** — vocabolario chiuso richiede disciplina nei contributi; replay di sessioni
-molto lunghe andrà mitigato con cursore/snapshot (fase successiva, non bloccante).
+**Negative** - the closed vocabulary requires contribution discipline; replay of very
+long sessions will need cursor/snapshot mitigation (next phase, not blocking).
 
-Riferimenti: `packages/core/src/session/`, `docs/plans/gap-map-model-visible.md`.
+References: `packages/core/src/session/`, `docs/plans/gap-map-model-visible.md`.
