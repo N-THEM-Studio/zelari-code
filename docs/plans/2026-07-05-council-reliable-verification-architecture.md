@@ -1,61 +1,61 @@
 # Council reliable verification architecture (v0.9.x)
 
-> **Goal:** ottenere output verificato e affidabile dal council su progetti **reali multi-file**, non solo sul caso mono-file TESTMCP. Il caso TESTMCP (index.html senza build) è il fixture di regressione minimo; serve anche un fixture multi-file con build.
+> **Goal:** obtain verified, reliable council output on **real multi-file projects**, not just the mono-file TESTMCP case. The TESTMCP case (index.html without build) is the minimal regression fixture; a multi-file fixture with build is also needed.
 
-## Problema
+## Problem
 
-Il gate di verifica v0.8.0 assume "Lucifero implementa → poi lo si verifica" e usa check regex su misura (motion/CSS). Nella realtà:
+The v0.8.0 verification gate assumes "Lucifero implements -> then it gets verified" and uses bespoke regex checks (motion/CSS). In reality:
 
-1. In implementation mode il **primo specialista (Caronte) implementa** subito; ogni membro edita lo stesso file → caos multi-writer, violazioni che si accumulano tra i turni.
-2. Il segnale di "done" viene dal **testo del modello**, non da una verità deterministica.
-3. I check sono **specifici al dominio HTML/CSS** → non scalano ad altri linguaggi/progetti.
-4. Il micro-gate è agganciato **solo alle write del chairman** → riporta le violazioni di Caronte tardi, ripetute, mislabeled come `[error]`, e senza correggerle. `luciferWriteCount === 0` → falso `DEGRADED_RUN`.
+1. In implementation mode the **first specialist (Caronte) implements** immediately; every member edits the same file -> multi-writer chaos, violations accumulating across turns.
+2. The "done" signal comes from the **model's text**, not from deterministic truth.
+3. The checks are **specific to the HTML/CSS domain** -> they do not scale to other languages/projects.
+4. The micro-gate is hooked **only to the chairman's writes** -> it reports Caronte's violations late, repeated, mislabeled as `[error]`, and without fixing them. `luciferWriteCount === 0` -> false `DEGRADED_RUN`.
 
-## Principio
+## Principle
 
-**La verità deterministica la dà il progetto, non il modello.** Su un progetto reale il segnale affidabile è il suo stesso build system (`tsc`/`test`/`lint`/`build`) eseguito sul diff — non un regex custom. Effettività a scala = **un solo implementer** + **verifica scoped sul diff** + **loop di fix limitato**.
+**Deterministic truth comes from the project, not the model.** On a real project the reliable signal is its own build system (`tsc`/`test`/`lint`/`build`) run on the diff - not a custom regex. Effectiveness at scale = **a single implementer** + **diff-scoped verification** + **a bounded fix loop**.
 
-## Architettura target
+## Target architecture
 
 ```
-DESIGN (council 6 = ampiezza)     → plan.json + nfr-spec (artefatti)
-      ↓
-IMPLEMENT (UN solo implementer)    → Lucifero scrive; specialisti READ-ONLY (advisor)
-      ↓
-GATE deterministico (ground truth):
-   1. projectSmoke: typecheck/test/build       ← PRIMARIO, scala a qualsiasi progetto
-   2. domain-check (motion/NFR regex)           ← opzionale: solo se nfr-spec lo chiede o non c'è build
-      ↓ FAIL → inietta l'output GREZZO del fallimento → turno di fix mirato (≤2–3) → ri-gate
-      ↓ PASS
-VERIFIED = gate PASS (non il testo della sintesi). readyToCommit guidato dal gate.
+DESIGN (council 6 = breadth)         -> plan.json + nfr-spec (artifacts)
+      |
+IMPLEMENT (ONE implementer only)     -> Lucifero writes; specialists READ-ONLY (advisors)
+      |
+DETERMINISTIC GATE (ground truth):
+   1. projectSmoke: typecheck/test/build        <- PRIMARY, scales to any project
+   2. domain-check (motion/NFR regex)            <- optional: only if nfr-spec asks or there is no build
+      | FAIL -> inject the RAW failure output -> targeted fix turn (cap 2-3) -> re-gate
+      v PASS
+VERIFIED = gate PASS (not the synthesis text). readyToCommit driven by the gate.
 ```
 
-Unità di lavoro su progetti grandi = **il plan-task** (fasi/task che Nettuno produce), non "tutto in un turno": diff piccoli, gate veloce, fix loop trattabile.
+The unit of work on large projects = **the plan-task** (the phases/tasks Nettuno produces), not "everything in one turn": small diffs, fast gate, tractable fix loop.
 
-## Increment (ordine di merge)
+## Increments (merge order)
 
-### Increment 1 — Specialisti read-only, Lucifero unico implementer  ← QUESTO PR
-**File:** `packages/core/src/council/modeBanners.ts`, `packages/core/src/agents/councilApi.ts`, `tests/unit/`.
-- `councilModeBanner(runMode, { isImplementer })`: banner advisor ("analizza/pianifica, NON scrivere file") vs implementer ("sei tu che implementi").
-- `restrictImplementationWrites(toolNames, { runMode, isImplementer })`: rimuove `write_file`/`edit_file` dai non-implementer in implementation mode (gli specialisti ereditano write via skill — va filtrato sul risultato di `computeAgentTools`).
-- Applica il filtro agli specialisti; il chairman mantiene i write.
-- Effetto collaterale: `luciferWriteCount` torna reale → **elimina il falso DEGRADED_RUN** senza toccare la detection.
+### Increment 1 - Read-only specialists, Lucifero sole implementer   <- THIS PR
+**Files:** `packages/core/src/council/modeBanners.ts`, `packages/core/src/agents/councilApi.ts`, `tests/unit/`.
+- `councilModeBanner(runMode, { isImplementer })`: advisor banner ("analyze/plan, do NOT write files") vs implementer ("you are the one implementing").
+- `restrictImplementationWrites(toolNames, { runMode, isImplementer })`: removes `write_file`/`edit_file` from non-implementers in implementation mode (specialists inherit writes via skills - filter on the result of `computeAgentTools`).
+- Apply the filter to specialists; the chairman keeps writes.
+- Side effect: `luciferWriteCount` becomes real -> **eliminates the false DEGRADED_RUN** without touching the detection.
 
-### Increment 2 — Gate primario = projectSmoke, domain-check opzionale
-- Elevare `runProjectSmoke` (già in `src/cli/workspace/projectSmoke.ts`) a check principale post-implementazione; i check regex diventano attivi solo se `nfr-spec` li richiede o non c'è build.
-- `readyToCommit`/`verified` derivano dal PASS del gate, non dal claim.
+### Increment 2 - Primary gate = projectSmoke, optional domain-check
+- Promote `runProjectSmoke` (already in `src/cli/workspace/projectSmoke.ts`) to the main post-implementation check; regex checks become active only if `nfr-spec` requires them or there is no build.
+- `readyToCommit`/`verified` derive from the gate PASS, not the claim.
 
-### Increment 3 — De-noise del micro-gate
-- Emissione warning UNA volta, `severity:'warn'` (non `console.warn` + evento `error`), deduplicata; niente ri-scan a ogni write.
+### Increment 3 - Micro-gate de-noising
+- Emit a warning ONCE, `severity:'warn'` (not `console.warn` + an `error` event), deduplicated; no re-scan on every write.
 
-### Increment 4 — Fix loop col fallimento grezzo
-- Su gate FAIL, inietta l'output vero (tsc/test/violazioni) in un turno di fix mirato dell'implementer; riusa `applyRetryIfMissing`; cap 2–3.
+### Increment 4 - Fix loop with the raw failure
+- On gate FAIL, inject the real output (tsc/test/violations) into a targeted fix turn of the implementer; reuse `applyRetryIfMissing`; cap 2-3.
 
-### Increment 5 — createNfrSpec schema + fixture multi-file
-- Dare a `createNfrSpec` un parameter schema reale (oggi `parameters: []` → skippato).
-- Aggiungere un fixture di regressione multi-file con `package.json` + build, oltre a TESTMCP.
+### Increment 5 - createNfrSpec schema + multi-file fixture
+- Give `createNfrSpec` a real parameter schema (today `parameters: []` -> skipped).
+- Add a multi-file regression fixture with `package.json` + build, alongside TESTMCP.
 
-## Verifica end-to-end
-- `npm run typecheck` + `npx vitest run` verdi.
-- Test nuovi: banner per ruolo, `restrictImplementationWrites`, e (increment successivi) smoke-as-primary, dedup warning, fix loop.
-- Replay TESTMCP: nessun falso DEGRADED quando Lucifero implementa; su un fixture con build, il gate riflette il PASS/FAIL reale del build.
+## End-to-end verification
+- `npm run typecheck` + `npx vitest run` green.
+- New tests: per-role banner, `restrictImplementationWrites`, and (later increments) smoke-as-primary, warning dedup, fix loop.
+- TESTMCP replay: no false DEGRADED when Lucifero implements; on a fixture with build, the gate reflects the real build PASS/FAIL.

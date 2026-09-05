@@ -1,82 +1,82 @@
-Esatto. Avevo allargato troppo il bersaglio. **Kraken deve restare Kraken**: DAG, tentacoli, parallelismo, worktree, verify/rework. Da DSH prenderei solo alcuni meccanismi interni che possono rendere *questo* modello molto più efficiente.
+Exactly. I had widened the target too much. **Kraken must stay Kraken**: DAG, tentacles, parallelism, worktree, verify/rework. From DSH I would take only some internal mechanisms that can make *this* model much more efficient.
 
-Il punto che vedo più importante nel Kraken attuale è questo: ogni tentacolo costruisce un `SubAgentContext` nuovo, poi un nuovo `AgentHarness` con `system + user + tools`; inoltre il parent riceve solo la conclusione finale del subagent. È una buona architettura di isolamento, ma significa che retry, rework e task correlati tendono a ripartire “freddi”. 
+The most important point I see in the current Kraken is this: every tentacle builds a new `SubAgentContext`, then a new `AgentHarness` with `system + user + tools`; moreover the parent receives only the subagent's final conclusion. It is a good isolation architecture, but it means retries, rework and related tasks tend to restart "cold".
 
-### 1. La cosa che ruberei davvero da DSH: **tentacoli continuabili**
+### 1. The thing I would really steal from DSH: **continuable tentacles**
 
-DSH ha introdotto il concetto di child session persistente/continuabile: il subagent può avere una sessione durabile e una activation riutilizzabile invece di essere sempre un processo cognitivo usa-e-getta. 
+DSH introduced the concept of a persistent/continuable child session: the subagent can have a durable session and a reusable activation instead of always being a disposable cognitive process.
 
-Questo per Kraken sarebbe fortissimo, soprattutto nel ciclo:
+This would be extremely strong for Kraken, especially in the cycle:
 
 ```text
 general writer
-      ↓
+      |
 verify
-      ↓ FAIL
+      | FAIL
 rework
-      ↓
+      |
 verify
 ```
 
-Oggi il rework è comunque guidato come `general`; riusa il worktree del writer, cosa ottima, ma il modello è un nuovo tentacolo. 
+Today the rework is still steered as `general`; it reuses the writer's worktree, which is great, but the model is a new tentacle.
 
-Io farei:
+I would do:
 
 ```text
 Writer lineage W1
-│
-├─ turn 1: implementazione
-│
-├─ verifier esterno
-│
-├─ turn 2: "verifier found these issues..."
-│
-├─ verifier esterno
-│
-└─ turn 3 eventuale
+|
++- turn 1: implementation
+|
++- external verifier
+|
++- turn 2: "verifier found these issues..."
+|
++- external verifier
+|
++- possible turn 3
 ```
 
-**Stesso writer session/harness**.
+**Same writer session/harness.**
 
-Questo significa che al rework il modello ha già:
+This means that at rework the model already has:
 
-- file che ha letto;
-- ragionamento operativo/model-visible precedente;
-- decisioni prese;
-- patch applicate;
-- tool result utili;
-- soprattutto il **prefix provider già caldo**.
+- files it has read;
+- previous operational/model-visible reasoning;
+- decisions made;
+- patches applied;
+- useful tool results;
+- above all the **provider prefix already warm**.
 
-Questa per me è **P0 assoluta**.
+For me this is **absolute P0**.
 
-Non farei sessioni continuabili per tutti i nodi. Solo per una **lineage**:
+I would not make sessions continuable for every node. Only for one **lineage**:
 
 ```ts
 writer root
-   ↳ retry
-   ↳ rework
-   ↳ repair
+   +- retry
+   +- rework
+   +- repair
 ```
 
-Il verifier resta deliberatamente fresh, così conserva indipendenza.
+The verifier stays deliberately fresh, so it keeps its independence.
 
 ---
 
-### 2. `buildUpstreamContext()` va trasformato da testo a **evidence packet**
+### 2. `buildUpstreamContext()` must be transformed from text to an **evidence packet**
 
-Qui Kraken oggi ha già avuto l'intuizione giusta: i risultati delle dipendenze vengono passati downstream e limiti a 2800 char per dependency / 8000 totali. Però attualmente prendi `dep.result` come stringa e fai truncation. 
+Here Kraken already had the right intuition: dependency results are passed downstream with caps of 2800 chars per dependency / 8000 total. But currently `dep.result` is taken as a string and truncated.
 
-Questo:
+This:
 
 ```ts
 raw.slice(0, cap)
 ```
 
-è economico, ma semanticamente cieco.
+is cheap, but semantically blind.
 
-Ruberei da DSH l'idea che la superficie model-visible non debba necessariamente coincidere con tutto ciò che è stato prodotto, e la applicherei in maniera **Kraken-native**. DSH fa pruning deterministico dei risultati tool prima della summarization. 
+I would steal from DSH the idea that the model-visible surface need not coincide with everything that was produced, and apply it in a **Kraken-native** way. DSH does deterministic pruning of tool results before summarization.
 
-Farei produrre ai tentacoli qualcosa del genere:
+I would have tentacles produce something like:
 
 ```ts
 interface KrakenEvidence {
@@ -105,19 +105,19 @@ interface KrakenEvidence {
 }
 ```
 
-E downstream:
+And downstream:
 
 ```text
 explore result 12k tokens
-        ↓
+        |
 KrakenEvidence ~800 tokens
-        ↓
+        |
 general
 ```
 
-Non devi fare LLM summarization: **il tentacolo deve già chiudere con un protocollo strutturato**.
+You do not need LLM summarization: **the tentacle must already close with a structured protocol**.
 
-Questa sostituirebbe gradualmente `TaskNode.result?: string` con qualcosa tipo:
+This would gradually replace `TaskNode.result?: string` with something like:
 
 ```ts
 result?: string;
@@ -128,13 +128,13 @@ backward-compatible.
 
 ---
 
-### 3. **Kraken Observation Cache** condivisa tra tentacoli
+### 3. A shared **Kraken Observation Cache** across tentacles
 
-Questa non la copierei letteralmente da DSH: è una conseguenza particolarmente adatta alla tua architettura.
+I would not copy this literally from DSH: it is a consequence that fits your architecture particularly well.
 
-Hai fino a 12 tentacoli paralleli per default. 
+You have up to 12 parallel tentacles by default.
 
-È molto probabile che più explore/general/verify facciano:
+It is very likely that several explore/general/verify will independently do:
 
 ```text
 read package.json
@@ -145,9 +145,7 @@ git diff
 ...
 ```
 
-indipendentemente.
-
-Aggiungerei una cache **di osservazioni**, non di risposte LLM:
+I would add a cache **of observations**, not of LLM responses:
 
 ```ts
 KrakenObservationCache
@@ -160,24 +158,24 @@ key = hash(
 )
 ```
 
-Esempio:
+Example:
 
 ```text
 tentacle A:
 read_file("src/foo.ts")
-→ filesystem
-→ cache blob SHA abc
+-> filesystem
+-> cache blob SHA abc
 
 tentacle B:
 read_file("src/foo.ts")
-→ cache hit
+-> cache hit
 
 tentacle C:
 read_file("src/foo.ts")
-→ cache hit
+-> cache hit
 ```
 
-Per tool read-only:
+For read-only tools:
 
 - `read_file`
 - `grep_content`
@@ -187,55 +185,55 @@ Per tool read-only:
 - LSP read operations
 - semantic search
 
-potrebbe essere enorme.
+this could be huge.
 
-Invalidazione semplice:
+Simple invalidation:
 
 ```text
 write/edit/apply_diff
-       ↓
+       |
 invalidate(path)
 
 git/worktree change
-       ↓
+       |
 new snapshot namespace
 ```
 
-Questo migliora **wall-clock e I/O**, e indirettamente token usage perché puoi restituire risultati già normalizzati/pruned.
+This improves **wall-clock and I/O**, and indirectly token usage because you can return already normalized/pruned results.
 
 ---
 
-### 4. Creerei un **Kraken Request Profile** per ogni tipo di tentacolo
+### 4. I would create a **Kraken Request Profile** per tentacle kind
 
-Oggi `createSubAgentContext()` viene esplicitamente chiamato per ogni invocation e restituisce provider, model, registry e tool schemas. 
+Today `createSubAgentContext()` is explicitly called per invocation and returns provider, model, registry and tool schemas.
 
-Separerei:
+I would separate:
 
 ```text
-oggi:
+today:
 
 createSubAgentContext()
- ├ provider
- ├ model
- ├ ToolRegistry
- ├ AgentToolSpec[]
- └ cwd-dependent state
+ -> provider
+ -> model
+ -> ToolRegistry
+ -> AgentToolSpec[]
+ -> cwd-dependent state
 ```
 
-in:
+into:
 
 ```text
 KrakenAgentProfile              ExecutionContext
-─────────────────              ────────────────
-provider                       cwd
-model                          worktree
-systemPrompt                   permissions
-toolSchemas                    AbortSignal
-generationConfig               registry executors
++----------------------+       +----------------------+
+provider                        cwd
+model                           worktree
+systemPrompt                    permissions
+toolSchemas                     AbortSignal
+generationConfig                registry executors
 fingerprint
 ```
 
-Il primo è immutabile e cached:
+The first is immutable and cached:
 
 ```ts
 profiles.get('explore')
@@ -243,9 +241,9 @@ profiles.get('general')
 profiles.get('verify')
 ```
 
-Il secondo nasce per ogni node.
+The second is born per node.
 
-Questo rende molto più facile garantire:
+This makes it much easier to guarantee that:
 
 ```text
 general #1
@@ -253,11 +251,11 @@ general #2
 general #3
 ```
 
-abbiano **system prompt, tool schemas, ordine tool e generation config byte-identical**.
+have **byte-identical system prompt, tool schemas, tool order and generation config**.
 
-È il principio dietro la stabilità della prefix cache che DSH cerca di preservare: cambiare configurazioni davanti alla parte nuova rompe la riusabilità del prefisso. 
+It is the principle behind the prefix-cache stability DSH tries to preserve: changing configurations in front of the new part breaks prefix reusability.
 
-Non serve introdurre il loro framework: basta una tua struttura:
+No need to introduce their framework: one structure of yours is enough:
 
 ```ts
 interface KrakenAgentProfile {
@@ -274,11 +272,11 @@ interface KrakenAgentProfile {
 
 ---
 
-### 5. Renderei il **context del grafo append-only**, non riscritto
+### 5. I would make the **graph context append-only**, not rewritten
 
-Questo è un altro principio DSH che vale la pena rubare.
+This is another DSH principle worth stealing.
 
-Nel planner hai:
+In the planner you have:
 
 ```text
 Goal
@@ -286,9 +284,9 @@ workspace
 previousAttempt
 ```
 
-e il workspace viene costruito come summary fino a 24 entry. 
+and the workspace is built as a summary of up to 24 entries.
 
-Per una run Kraken farei invece creare una volta:
+For a Kraken run I would instead create once:
 
 ```ts
 KrakenRunContext {
@@ -301,15 +299,15 @@ KrakenRunContext {
 }
 ```
 
-con fingerprint:
+with a fingerprint:
 
 ```text
 krctx:a3d9...
 ```
 
-e quello resta congelato per tutta la run.
+and that stays frozen for the whole run.
 
-I nodi aggiungono soltanto:
+Nodes only add:
 
 ```text
 RunContext
@@ -317,37 +315,37 @@ RunContext
 + dependency evidence
 ```
 
-non ricostruiscono continuamente la descrizione globale.
+they do not continuously rebuild the global description.
 
-Il concetto corrisponde alla distinzione DSH tra contesto stabile e runtime context materializzato solo quando cambia. 
+The concept corresponds to the DSH distinction between stable context and runtime context materialized only when it changes.
 
-Per Kraken questo è molto più semplice del loro sistema generale.
+For Kraken this is much simpler than their general system.
 
 ---
 
-### 6. Kraken dovrebbe avere **tool-result pruning locale**
+### 6. Kraken should have **local tool-result pruning**
 
-Il parent già riceve solo il risultato finale del tentacolo, quindi sei già messo bene rispetto a molti agent system. 
+The parent already receives only the tentacle's final result, so you are already better off than many agent systems.
 
-Ma *dentro* il tentacolo un `grep`, test output o compiler output può continuare a gonfiare la context window durante i suoi 10–20 tool call. I `general/deep`, ad esempio, arrivano a 20 tool call. 
+But *inside* the tentacle a `grep`, test output or compiler output can keep inflating the context window during its 10-20 tool calls. `general/deep`, for example, reach 20 tool calls.
 
-Quindi implementerei una mini versione Kraken del pruner DSH:
+So I would implement a mini Kraken version of the DSH pruner:
 
 ```text
 tool result < 8k chars
-→ keep
+-> keep
 
 tool result > 8k
-→ head + salient lines + tail
-→ original salvato fuori contesto
+-> head + salient lines + tail
+-> original saved outside the context
 ```
 
-Ancora meglio:
+Even better:
 
 ```text
 test output:
   FAIL lines
-  stack traces rilevanti
+  relevant stack traces
   final summary
 
 grep:
@@ -356,113 +354,113 @@ grep:
 
 read:
   requested symbol/range
-  non intero file
+  not the whole file
 ```
 
-Questa probabilmente vale più di una compaction LLM del tentacolo.
+This is probably worth more than an LLM compaction of the tentacle.
 
 ---
 
-### 7. Ridurrei drasticamente i verifier LLM inutili
+### 7. I would drastically reduce useless LLM verifiers
 
-Qui andrei oltre DSH.
+Here I would go beyond DSH.
 
-Il planner Kraken aggiunge automaticamente un `verify` per ogni `general`, e con più general crea poi il merge. 
+The Kraken planner automatically adds a `verify` for every `general`, and with multiple generals it then creates the merge.
 
-È corretto per qualità, ma costoso.
+This is correct for quality, but expensive.
 
-Fare:
+Do:
 
 ```text
 general
-  ↓
+  |
 deterministic verification
-  │
-  ├─ clean → PASS
-  │
-  └─ ambiguous/risky
-        ↓
+  |
+  +- clean -> PASS
+  |
+  +- ambiguous/risky
+        |
       LLM verifier
 ```
 
-Per esempio:
+For example:
 
 ```text
 TypeScript change
-→ typecheck + targeted tests + lint
+-> typecheck + targeted tests + lint
 
 simple rename
-→ LSP references + tests
+-> LSP references + tests
 
 generated file
-→ schema validation
+-> schema validation
 
 UI semantic behavior
-→ LLM verifier
+-> LLM verifier
 ```
 
-Non eliminerei il verifier. Lo renderei **escalation layer**.
+I would not eliminate the verifier. I would make it an **escalation layer**.
 
-Su grafi con 5 writer potresti passare da:
+On graphs with 5 writers you could go from:
 
 ```text
-5 writer
-5 LLM verifier
+5 writers
+5 LLM verifiers
 ```
 
-a magari:
+to maybe:
 
 ```text
-5 writer
-5 deterministic verifier
-2 LLM verifier
+5 writers
+5 deterministic verifiers
+2 LLM verifiers
 ```
 
-senza perdere la filosofia Kraken.
+without losing the Kraken philosophy.
 
 ---
 
-## Quindi la mia priorità sarebbe
+## So my priority would be
 
-| Priorità | Modifica | Prestazioni | Token | Qualità |
+| Priority | Change | Performance | Tokens | Quality |
 |---|---|---:|---:|---:|
-| **P0** | Continuable writer lineage | ★★★★★ | ★★★★★ | ★★★★★ |
-| **P0** | Structured Evidence Packet | ★★★★☆ | ★★★★★ | ★★★★★ |
-| **P0** | Observation cache condivisa | ★★★★★ | ★★★☆☆ | ★★★★☆ |
-| **P1** | Stable KrakenAgentProfile | ★★★☆☆ | ★★★★★ cache | ★★★☆☆ |
-| **P1** | Tentacle tool-result pruning | ★★★★☆ | ★★★★★ | ★★★★☆ |
-| **P1** | deterministic-first verification | ★★★★★ | ★★★★★ | ★★★★☆ |
-| **P2** | frozen KrakenRunContext | ★★★☆☆ | ★★★★☆ | ★★★★☆ |
+| **P0** | Continuable writer lineage | +++ | +++ | +++ |
+| **P0** | Structured Evidence Packet | ++ | +++ | +++ |
+| **P0** | Shared observation cache | +++ | ++ | ++ |
+| **P1** | Stable KrakenAgentProfile | ++ | ++ (cache) | ++ |
+| **P1** | Tentacle tool-result pruning | ++ | +++ | ++ |
+| **P1** | deterministic-first verification | ++ | +++ | + |
+| **P2** | frozen KrakenRunContext | + | ++ | + |
 
-La cosa che cambierebbe davvero l'identità prestazionale di Kraken è questa:
+The thing that would truly change Kraken's performance identity is this:
 
 ```text
                      KRAKEN
-                        │
-                ┌───────┴────────┐
-                │  Run Context   │
-                │ frozen + hash  │
-                └───────┬────────┘
-                        │
-               ┌────────┴─────────┐
-               │ ObservationCache │
-               └────────┬─────────┘
-                        │
-           ┌────────────┼────────────┐
-           ▼            ▼            ▼
-       explore       writer A     writer B
-         │              │            │
-       evidence      session A     session B
-         │              │            │
-         └──────────────┤            │
-                        ▼            ▼
-                    verifier      verifier
-                        │ FAIL
-                        ▼
-                  resume writer A
-                  ← NOT new agent
+                       |
+               +----------------+
+               |  Run Context   |
+               | frozen + hash  |
+               +----------------+
+                       |
+               +------------------+
+               | ObservationCache |
+               +------------------+
+                       |
+       +---------------+---------------+
+       |               |               |
+   explore         writer A       writer B
+     |                 |               |
+   evidence        session A      session B
+     |                 |               |
+     +---------+-------+               |
+               |                       |
+           verifier                verifier
+                       | FAIL
+                       |
+                 resume writer A
+                 <- NOT a new agent
 ```
 
-**Questa è la direzione che sceglierei.** Non copiare SessionSurface, Cordis, plugin architecture ecc. di DSH. Prenderei da loro essenzialmente **continuation + cache-stable prefix + deterministic pruning**, e li farei diventare feature native del Kraken DAG. 
+**This is the direction I would choose.** Do not copy DSH's SessionSurface, Cordis, plugin architecture etc. I would take from them essentially **continuation + cache-stable prefix + deterministic pruning**, and make them native features of the Kraken DAG.
 
-Se dovessi implementarne **una sola per prima**, farei `continuable writer lineage`: è probabilmente quella con il miglior rapporto modifica/beneficio perché il tuo executor ha già esplicitamente il concetto di `reworks`, lineage e worktree ereditato. Devi far sì che **anche la memoria del writer segua la stessa lineage che oggi segue il filesystem**.
+If I had to implement **only one first**, I would do `continuable writer lineage`: it is probably the one with the best change/benefit ratio because your executor already explicitly has the concept of `reworks`, lineage and inherited worktree. You need to make sure **the writer's memory follows the same lineage the filesystem already follows**.

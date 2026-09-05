@@ -1,23 +1,23 @@
-# Zelari 2.0 Alpha.6 — Stato attuale e cosa manca
+# Zelari 2.0 Alpha.6 - Current state and what is missing
 
-**Riferimento:** `v2.0.0-alpha.6`  
-**Obiettivo:** fotografare lo stato reale dell’implementazione rispetto al piano Zelari 2.0 e definire il lavoro residuo prima di una RC.
+**Reference:** `v2.0.0-alpha.6`
+**Goal:** take a snapshot of the real implementation state versus the Zelari 2.0 plan and define the residual work before an RC.
 
 ---
 
 ## 1. Executive summary
 
-L’alpha.6 è sensibilmente più avanti dell’alpha.4.
+Alpha.6 is noticeably ahead of alpha.4.
 
-I due P0 principali individuati in precedenza risultano chiusi:
+The two main P0s previously identified are closed:
 
-1. **versioni ed exports di `@zelari/core` sono coerenti**;
-2. **la Session spine è ora la source of truth del model context** su headless/TUI, con `deriveMessages()` come percorso canonico e test architetturali che impediscono regressioni.
+1. **the versions and exports of `@zelari/core` are coherent**;
+2. **the Session spine is now the source of truth of the model context** on headless/TUI, with `deriveMessages()` as the canonical path and architectural tests preventing regressions.
 
-La parte fondamentale della 2.0 esiste quindi davvero:
+The fundamental part of 2.0 therefore really exists:
 
 - event-sourced Session spine;
-- replay e resume;
+- replay and resume;
 - execution seams;
 - WorkspaceProvider;
 - versioned profiles;
@@ -26,58 +26,58 @@ La parte fondamentale della 2.0 esiste quindi davvero:
 - optional VerifierService;
 - verifier model `inherit | fixed`;
 - mission projection;
-- Desktop controls per strict done, verifier e BoN alpha.
+- Desktop controls for strict done, verifier and BoN alpha.
 
-Il grosso del lavoro residuo non è più “inventare l’architettura”, ma **chiudere il wiring Verification 2.0**, rendere le evidence realmente traceable ai tool result, completare mission progress e consolidare docs/smoke/CI prima di una RC.
+The bulk of the remaining work is no longer "inventing the architecture", but **closing the Verification 2.0 wiring**, making evidence truly traceable to tool results, completing mission progress and consolidating docs/smoke/CI before an RC.
 
-Valutazione qualitativa:
+Qualitative assessment:
 
 ```text
-Foundation / hygiene        ██████████  100%
-Session spine               ██████████  100%
-Execution seams/profiles    █████████░   ~90%
-Deterministic verification  ████████░░   ~80%
-LLM verifier integration    █████░░░░░   ~50%
-Mission reliability         ██████░░░░   ~60%
-Desktop product surface     ████████░░   ~80%
-Docs / migration / CI       █████░░░░░   ~50%
-────────────────────────────────────────
-Alpha → RC readiness        ~75–80%
+Foundation / hygiene        ##########  100%
+Session spine               ##########  100%
+Execution seams/profiles    #########~   ~90%
+Deterministic verification  ########~#   ~80%
+LLM verifier integration    ####~######   ~50%
+Mission reliability         ######~####   ~60%
+Desktop product surface     ########~#   ~80%
+Docs / migration / CI       ####~######   ~50%
+----------------------------------------
+Alpha -> RC readiness        ~75-80%
 ```
 
-Le percentuali sono orientative, non metriche di progetto.
+The percentages are indicative, not project metrics.
 
 ---
 
-## 2. Cosa è già chiuso
+## 2. What is already closed
 
 ### 2.1 Session spine
 
-La Session spine è ora il percorso canonico:
+The Session spine is now the canonical path:
 
 ```text
 Session log
-    ↓
+    |
 deriveMessages()
-    ↓
+    |
 derivedToAgentMessages()
-    ↓
+    |
 model context
 ```
 
-Il vecchio `sessionManager` può restare come compatibilità/migrazione/UI, ma non è più la seconda source of truth del model context.
+The old `sessionManager` can stay as compatibility/migration/UI, but it is no longer the second source of truth of the model context.
 
-Desktop usa il `sessionId` e i turn successivi possono riprendere tramite resume invece di dipendere dal solo history snapshot.
+Desktop uses the `sessionId` and subsequent turns can resume instead of depending on the history snapshot alone.
 
-**Stato:** chiuso.
+**State:** closed.
 
 ---
 
-### 2.2 Versioning e exports core
+### 2.2 Core versioning and exports
 
-Root e `@zelari/core` risultano allineati sull’alpha.6.
+Root and `@zelari/core` are aligned on alpha.6.
 
-Gli exports pubblici 2.0 sono presenti per:
+The public 2.0 exports are present for:
 
 ```text
 @zelari/core/session
@@ -86,13 +86,13 @@ Gli exports pubblici 2.0 sono presenti per:
 @zelari/core/mission
 ```
 
-**Stato:** chiuso.
+**State:** closed.
 
 ---
 
-### 2.3 Workspace e execution seams
+### 2.3 Workspace and execution seams
 
-Sono presenti le astrazioni relative a:
+The abstractions for the following are present:
 
 - `ExecutionContext`;
 - workspace;
@@ -102,15 +102,15 @@ Sono presenti le astrazioni relative a:
 - subagent;
 - profiles.
 
-Il worktree è stato spostato nella direzione corretta: **workspace policy**, non mero flag di shell.
+The worktree has been moved in the right direction: **workspace policy**, not a mere shell flag.
 
-**Stato:** sostanzialmente chiuso.
+**State:** substantially closed.
 
 ---
 
 ### 2.4 Host / Profile / Phase
 
-La separazione concettuale è corretta:
+The conceptual separation is correct:
 
 ```text
 Host
@@ -130,15 +130,15 @@ Phase
 - build
 ```
 
-`headless` non è stato trasformato in profile.
+`headless` has not been turned into a profile.
 
-**Stato:** chiuso.
+**State:** closed.
 
 ---
 
 ### 2.5 Deterministic verification core
 
-Il core 2.0 contiene:
+The 2.0 core contains:
 
 ```text
 VerificationEngine
@@ -148,194 +148,194 @@ metrics
 VerifierService
 ```
 
-La separazione fra evidence deterministica e verifier probabilistico è corretta.
+The separation between deterministic evidence and probabilistic verifier is correct.
 
-Il verifier LLM:
+The LLM verifier:
 
-- è opt-in;
-- non è autorità finale;
-- può usare `inherit` o un modello dedicato;
-- registra provider/model effettivi;
-- non trasforma output non interpretabili in `pass`;
-- mantiene progress e BoN come superfici sperimentali/advisory.
+- is opt-in;
+- is not the final authority;
+- can use `inherit` or a dedicated model;
+- records the effective provider/model;
+- does not turn uninterpretable output into `pass`;
+- keeps progress and BoN as experimental/advisory surfaces.
 
-**Stato:** core chiuso, wiring runtime ancora incompleto.
+**State:** core closed, runtime wiring still incomplete.
 
 ---
 
-### 2.6 Verifier dedicato / inherit
+### 2.6 Dedicated verifier / inherit
 
-La configurazione supporta:
+The configuration supports:
 
 ```text
 Same as current model
 ```
 
-oppure:
+or:
 
 ```text
 Dedicated provider + model
 ```
 
-Questo è coerente con il piano Zelari 2.0.
+This is coherent with the Zelari 2.0 plan.
 
-**Stato:** backend chiuso.
+**State:** backend closed.
 
 ---
 
 ### 2.7 Desktop verifier controls
 
-La UI Desktop include il controllo:
+The Desktop UI includes the control:
 
 ```text
-Kraken — Verification model
+Kraken - Verification model
 
 Same as current model (recommended)
-Custom provider + model…
+Custom provider + model.
 ```
 
-e sono presenti anche controlli per:
+and controls are also present for:
 
 - strict BUILD gate;
 - Best-of-N alpha;
 - execution profile.
 
-**Stato:** UI presente; manca consolidamento smoke/round-trip.
+**State:** UI present; smoke/round-trip consolidation missing.
 
 ---
 
-## 3. P1 principale — VerifierService runtime wiring
+## 3. Main P1 - VerifierService runtime wiring
 
-Il problema più importante rimasto è il wiring del `VerifierService` nel normale lifecycle Kraken.
+The most important remaining problem is wiring the `VerifierService` into the normal Kraken lifecycle.
 
-Il servizio esiste, ma la chiusura del contratto richiede test end-to-end che dimostrino che:
+The service exists, but closing the contract requires end-to-end tests demonstrating that:
 
 ```text
 deterministic evidence
-       │
-       ▼
+       |
+       v
 CompletionPolicy
-       │
-       ├── PASS
-       ├── BLOCKED
-       └── REPAIR_REQUIRED
+       |
+       +- PASS
+       +- BLOCKED
+       +- REPAIR_REQUIRED
 ```
 
-resta l’autorità finale anche quando il verifier LLM è attivo.
+remains the final authority even when the LLM verifier is active.
 
-### Lock test necessario
+### Required lock test
 
-Caso 1:
+Case 1:
 
 ```text
 deterministic criterion = UNKNOWN/FAIL
 verifier LLM = CONFIRMED
 ```
 
-Risultato atteso:
+Expected result:
 
 ```text
 CompletionPolicy = BLOCKED
 strict mode => no clean success
 ```
 
-Caso 2:
+Case 2:
 
 ```text
 deterministic criteria = PASS
 verifier LLM = REJECTED
 ```
 
-Risultato atteso:
+Expected result:
 
-- deterministic completion non viene riscritto;
-- la review LLM viene mostrata come advisory/risk;
-- il sistema può richiedere attenzione, ma non falsificare il verdict deterministico.
+- deterministic completion is not rewritten;
+- the LLM review is shown as advisory/risk;
+- the system can ask for attention, but must not falsify the deterministic verdict.
 
-### Priorità
+### Priority
 
 **P1 / Exit-2.3**
 
 ---
 
-## 4. Criteria Pack ancora non completamente nativo nel Kraken path
+## 4. Criteria Pack still not fully native in the Kraken path
 
-Il `codingCriteriaPack()` esiste, ma il runtime Kraken continua a dipendere in parte dalla struttura legacy della selection e dal verify tentacle report.
+`codingCriteriaPack()` exists, but the Kraken runtime still partly depends on the legacy selection structure and the verify tentacle report.
 
-Oggi il flusso è ancora troppo vicino a:
+Today the flow is still too close to:
 
 ```text
 Kraken selection
-      ↓
+      |
 required checks
-      ↓
+      |
 verify tentacle
-      ↓
+      |
 verification bridge
-      ↓
+      |
 CompletionPolicy
 ```
 
-Il target 2.0 è:
+The 2.0 target is:
 
 ```text
 Task
- ↓
+ |
 AcceptanceCriteria
  +
 Zelari Coding Criteria Pack
- ↓
+ |
 VerificationEngine
- ↓
+ |
 actual deterministic checks
- ↓
+ |
 EvidenceRef
- ↓
+ |
 CompletionPolicy
 ```
 
-Il bridge è corretto come fase di migrazione, ma non deve restare la forma finale.
+The bridge is correct as a migration phase, but it must not remain the final shape.
 
-### Azione
+### Action
 
-Portare il criteria pack direttamente nel normale verification path di Kraken.
+Bring the criteria pack directly into the normal Kraken verification path.
 
-### Priorità
+### Priority
 
 **P1 / Exit-2.4**
 
 ---
 
-## 5. EvidenceRef deve diventare realmente event-backed
+## 5. EvidenceRef must become truly event-backed
 
-Nel bridge attuale alcune verify note vengono trasformate in pseudo-evidence di tier `tool-output`.
+In the current bridge some verify notes are turned into pseudo-evidence of tier `tool-output`.
 
-Esempio concettuale:
+Conceptual example:
 
 ```text
 verify agent says:
 "npm test: 58 passed"
 ```
 
-e questa stringa viene usata come riferimento evidence.
+and this string is used as the evidence reference.
 
-Questo è più forte della pura narrazione finale, ma non è ancora la forma ideale P1.
+This is stronger than the pure final narrative, but it is not yet the ideal P1 shape.
 
-Il target è:
+The target is:
 
 ```text
 VerificationResult
-       ↓
+       |
 EvidenceRef
-       ↓
+       |
 session seq / event id
-       ↓
+       |
 actual tool/result
-       ↓
+       |
 real command output
 ```
 
-### Target TypeScript
+### TypeScript target
 
 ```ts
 interface EvidenceRef {
@@ -345,19 +345,19 @@ interface EvidenceRef {
 }
 ```
 
-Il verify agent può ancora aggiungere una note, ma la note non deve essere confusa con il tool output originale.
+The verify agent can still add a note, but the note must not be confused with the original tool output.
 
-### Priorità
+### Priority
 
-**P1 prima della stable**
+**P1 before stable**
 
 ---
 
 ## 6. Mission progress / advisory early-stop
 
-Il core mission e `VerifierService.progressScore()` esistono.
+The mission core and `VerifierService.progressScore()` exist.
 
-Manca ancora la vera integrazione:
+The real integration is still missing:
 
 ```text
 mission evidence
@@ -365,40 +365,40 @@ mission evidence
 deterministic progress
       +
 optional verifier trend
-      ↓
+      |
 mission continuation policy
 ```
 
-Il progress deve restare advisory:
+Progress must stay advisory:
 
-- nessun goal rewrite silenzioso;
-- nessun done solo da score;
-- nessun early-stop se required criteria restano incompleti;
-- steer utente sempre sovrano.
+- no silent goal rewrite;
+- no done from score alone;
+- no early-stop while required criteria remain incomplete;
+- user steer always sovereign.
 
-### Priorità
+### Priority
 
-**Exit-2.5, dopo verifier wiring e criteria pack**
+**Exit-2.5, after verifier wiring and the criteria pack**
 
 ---
 
-## 7. Strict Done — decisione di prodotto ancora da congelare
+## 7. Strict Done - product decision still to freeze
 
-Il gate strict esiste e può produrre:
+The strict gate exists and can produce:
 
 ```text
 blocked after repair
-→ non-zero exit
-→ session status stopped
+-> non-zero exit
+-> session status stopped
 ```
 
-È una buona implementazione.
+It is a good implementation.
 
-La questione aperta è il **default**.
+The open question is the **default**.
 
-### Opzione A
+### Option A
 
-Kraken interattivo:
+Interactive Kraken:
 
 ```text
 strict done = opt-in
@@ -410,47 +410,47 @@ Mission:
 strict done = default
 ```
 
-### Opzione B
+### Option B
 
-Tutta la 2.0 build:
+The whole 2.0 build:
 
 ```text
 deterministic verification default
 ```
 
-con intensità adattiva.
+with adaptive intensity.
 
-La soluzione consigliata:
+The recommended solution:
 
 ```text
 Kraken interactive
-→ strict configurable
+-> strict configurable
 
 Mission
-→ strict evidence gate default
+-> strict evidence gate default
 ```
 
-La decisione va congelata prima della stable.
+The decision must be frozen before stable.
 
 ---
 
-## 8. `history_snapshot` legacy
+## 8. Legacy `history_snapshot`
 
-`history_snapshot` è ancora presente in alcuni percorsi.
+`history_snapshot` is still present in some paths.
 
-Ora non è più una source of truth del modello, quindi non è P0.
+It is no longer a source of truth of the model, so it is not P0.
 
-Può restare temporaneamente come:
+It can temporarily stay as:
 
 - UI compatibility;
 - export compatibility;
 - migration helper.
 
-Prima della RC va però valutato:
+Before the RC, however, the following must be evaluated:
 
-- deprecazione;
-- rimozione;
-- oppure documentazione esplicita come mirror non canonico.
+- deprecation;
+- removal;
+- or explicit documentation as a non-canonical mirror.
 
 Target:
 
@@ -461,27 +461,27 @@ history_snapshot = compatibility only
 
 ---
 
-## 9. Desktop — manca il round-trip smoke
+## 9. Desktop - round-trip smoke missing
 
-La UI del verifier esiste.
+The verifier UI exists.
 
-Manca un test/smoke completo:
+A complete test/smoke is missing:
 
 ```text
 Desktop settings
-   ↓
+   |
 Same as session / Dedicated
-   ↓
+   |
 persist
-   ↓
+   |
 restart/load
-   ↓
+   |
 runtime resolution
-   ↓
+   |
 verification event logs actual model
 ```
 
-Il test deve coprire:
+The test must cover:
 
 ### Inherit
 
@@ -505,11 +505,11 @@ effective verifier = B
 
 ```text
 Dedicated B
-→ clear override
-→ inherit A
+-> clear override
+-> inherit A
 ```
 
-### Priorità
+### Priority
 
 **Exit-3.1**
 
@@ -517,9 +517,9 @@ Dedicated B
 
 ## 10. Profile smoke tests
 
-I profili esistono ma serve una matrice smoke reale.
+Profiles exist but a real smoke matrix is needed.
 
-Minimo:
+Minimum:
 
 ```text
 minimal + plan
@@ -533,25 +533,25 @@ council + plan
 mission + build
 ```
 
-Usare provider fake/deterministici dove possibile.
+Use fake/deterministic providers where possible.
 
-Obiettivi:
+Goals:
 
-- profile loader corretto;
-- capability manifest corretto;
-- Session metadata corretto;
-- nessun side effect non consentito in plan;
-- host/profile/phase wiring stabile.
+- correct profile loader;
+- correct capability manifest;
+- correct Session metadata;
+- no unauthorized side effects in plan;
+- stable host/profile/phase wiring.
 
-### Priorità
+### Priority
 
 **Exit-3.2**
 
 ---
 
-## 11. GUIDA 2.0 ancora incompleta
+## 11. GUIDA 2.0 still incomplete
 
-La guida deve documentare chiaramente:
+The guide must clearly document:
 
 ```text
 Host
@@ -570,54 +570,54 @@ Progress
 Best-of-N alpha
 ```
 
-Le sezioni session/history legacy vanno aggiornate per distinguere:
+The legacy session/history sections must be updated to distinguish:
 
 ```text
 legacy session/history compatibility
 ```
 
-da:
+from:
 
 ```text
 2.0 canonical Session spine
 ```
 
-### Priorità
+### Priority
 
 **Exit-3.3**
 
 ---
 
-## 12. MIGRATION 1.x → 2.x da completare
+## 12. MIGRATION 1.x -> 2.x to complete
 
-Il file di migration espone già i nuovi package path 2.0, ma deve spiegare il cambiamento fondamentale:
+The migration file already exposes the new 2.0 package paths, but must explain the fundamental change:
 
-### Prima
+### Before
 
 ```text
 consumer reconstructs/provides history
 ```
 
-### Dopo
+### After
 
 ```text
 append Session events
-       ↓
+       |
 deriveMessages()
-       ↓
+       |
 AgentHarness
 ```
 
-Documentare anche:
+Also document:
 
 - profile metadata;
 - resume/fork;
-- verification contract;
+- the verification contract;
 - EvidenceRef;
-- eventuali legacy adapters;
-- breaking changes effettive.
+- any legacy adapters;
+- effective breaking changes.
 
-### Priorità
+### Priority
 
 **Exit-3.4**
 
@@ -625,9 +625,9 @@ Documentare anche:
 
 ## 13. CI matrix
 
-La CI corrente è un buon gate singolo, ma non una vera matrix.
+The current CI is a good single gate, but not a real matrix.
 
-Zelari tocca componenti sensibili alla piattaforma:
+Zelari touches platform-sensitive components:
 
 - shell;
 - paths;
@@ -636,9 +636,9 @@ Zelari tocca componenti sensibili alla piattaforma:
 - worktrees;
 - locks.
 
-Prima della RC aggiungere almeno smoke multi-OS.
+Before the RC add at least multi-OS smoke.
 
-### Proposta
+### Proposal
 
 Full suite:
 
@@ -654,16 +654,16 @@ Windows
 macOS
 ```
 
-Possibile Node matrix:
+Possible Node matrix:
 
 ```text
 Node 20
 Node 24
 ```
 
-Desktop build smoke dove ragionevole.
+Desktop build smoke where reasonable.
 
-### Priorità
+### Priority
 
 **Exit-3.5**
 
@@ -671,36 +671,36 @@ Desktop build smoke dove ragionevole.
 
 ## 14. Headless Session smoke end-to-end
 
-Serve un test prodotto:
+A product test is needed:
 
 ```text
 headless run
-   ↓
+   |
 session_started
-   ↓
+   |
 session id
-   ↓
+   |
 resume
-   ↓
+   |
 second turn
-   ↓
+   |
 export session
-   ↓
+   |
 fresh reader/replay
-   ↓
+   |
 same semantic trajectory
 ```
 
-Eseguirlo almeno per:
+Run it at least for:
 
 ```text
 Kraken
 Council
 ```
 
-e, se possibile, Mission.
+and, if possible, Mission.
 
-### Priorità
+### Priority
 
 **Exit-3.6**
 
@@ -708,44 +708,44 @@ e, se possibile, Mission.
 
 ## 15. Dependabot / dependency security
 
-Prima di una RC:
+Before an RC:
 
 ```text
 alerts
-  ↓
+  |
 triage
-  ↓
+  |
 runtime vs dev-only
-  ↓
+  |
 reachable vs non-reachable
-  ↓
+  |
 upgrade / mitigate / documented accept
 ```
 
-Gli high alert non dovrebbero restare senza triage prima di una RC.
+High alerts should not remain untriaged before an RC.
 
-Non è necessario bloccare l’alpha su ogni warning moderato, ma serve una fotografia firmata.
-
----
-
-## 16. Cleanup tecnico
-
-Piccoli punti da ripulire prima della RC:
-
-- commenti duplicati / residue nel verification bridge;
-- `@ts-nocheck` nei file centrali quando eliminabile;
-- legacy adapter chiaramente marcati;
-- flag alpha documentati;
-- dead code prodotto dalla migrazione Session;
-- eventuali env flag sostituiti da config/profile policy quando appropriato.
-
-Non sono priorità architetturali, ma migliorano la qualità della RC.
+It is not necessary to block the alpha on every moderate warning, but a signed snapshot is needed.
 
 ---
 
-## 17. Cosa NON va più rifatto
+## 16. Technical cleanup
 
-Non riaprire questi temi salvo bug:
+Small points to clean up before the RC:
+
+- duplicate/residual comments in the verification bridge;
+- `@ts-nocheck` in central files when removable;
+- legacy adapters clearly marked;
+- documented alpha flags;
+- dead code produced by the Session migration;
+- any env flags replaced by config/profile policy when appropriate.
+
+These are not architectural priorities, but they improve the quality of the RC.
+
+---
+
+## 17. What must NOT be redone
+
+Do not reopen these topics except for bugs:
 
 - Session spine;
 - `deriveMessages` canonical path;
@@ -764,74 +764,74 @@ Non riaprire questi temi salvo bug:
 - Desktop strict gate;
 - Desktop BoN alpha control.
 
-Il rischio attuale è scope creep, non carenza di fondamenta.
+The current risk is scope creep, not a lack of foundations.
 
 ---
 
-## 18. Roadmap consigliata
+## 18. Recommended roadmap
 
-### Alpha.7 — chiudere Exit-2
+### Alpha.7 - close Exit-2
 
-Ordine:
+Order:
 
 1. **VerifierService runtime wiring + lock tests**
-2. **Criteria Pack nativo nel Kraken verification path**
+2. **Criteria Pack native in the Kraken verification path**
 3. **EvidenceRef event-backed**
 4. **Mission progress/advisory early-stop**
-5. nessuna nuova grande feature
+5. no new big features
 
-Obiettivo:
+Goal:
 
 ```text
-Verification 2.0 nativa
+Verification 2.0 native
 ```
 
-e non più principalmente:
+and no longer primarily:
 
 ```text
 legacy verify report
-→ 2.0 adapter
+-> 2.0 adapter
 ```
 
 ---
 
-### Alpha.8 / Beta — Exit-3
+### Alpha.8 / Beta - Exit-3
 
 1. Desktop verifier round-trip smoke
 2. profile smoke matrix
 3. GUIDA 2.0
-4. MIGRATION completa
-5. CI multi-OS
+4. complete MIGRATION
+5. multi-OS CI
 6. headless resume/export smoke
 7. dependency triage
-8. cleanup legacy mirrors
+8. legacy mirror cleanup
 
 ---
 
 ### RC.1
 
-Una RC dovrebbe iniziare solo quando il circuito è completo:
+An RC should start only when the circuit is complete:
 
 ```text
 AcceptanceCriteria
-       ↓
+       |
 deterministic checks
-       ↓
+       |
 real event-backed evidence
-       ↓
+       |
 CompletionPolicy
-       ↓
+       |
 optional verifier
-       ↓
+       |
 logged verdict
-       ↓
+       |
 host / mission consume verdict
 ```
 
-A quel punto congelare feature nuove e concentrarsi solo su:
+At that point freeze new features and concentrate only on:
 
-- bug;
-- regressioni;
+- bugs;
+- regressions;
 - portability;
 - docs;
 - security;
@@ -839,7 +839,7 @@ A quel punto congelare feature nuove e concentrarsi solo su:
 
 ---
 
-## 19. Criteri per passare a RC
+## 19. Criteria to move to RC
 
 ### Session
 
@@ -850,10 +850,10 @@ A quel punto congelare feature nuove e concentrarsi solo su:
 
 ### Verification
 
-- [ ] criteria pack realmente usato
+- [ ] criteria pack really used
 - [ ] verifier advisory lock test
-- [ ] evidence refs a tool/session events
-- [ ] strict completion behavior definito
+- [ ] evidence refs to tool/session events
+- [ ] strict completion behavior defined
 - [ ] false-done test suite
 
 ### Profiles/runtime
@@ -878,53 +878,53 @@ A quel punto congelare feature nuove e concentrarsi solo su:
 
 - [ ] GUIDA 2.0
 - [ ] MIGRATION 2.0
-- [ ] flag alpha documentati
+- [ ] documented alpha flags
 
 ### CI/security
 
-- [ ] OS matrix minima
-- [ ] Node versions supportate testate
-- [ ] dependency alerts triaggiati
-- [ ] principles/version/typecheck/tests verdi
+- [ ] minimal OS matrix
+- [ ] supported Node versions tested
+- [ ] dependency alerts triaged
+- [ ] principles/version/typecheck/tests green
 
 ---
 
-## 20. Verdetto
+## 20. Verdict
 
-L’alpha.6 ha superato la fase in cui Zelari 2.0 era principalmente una nuova architettura affiancata alla 1.x.
+Alpha.6 has passed the phase where Zelari 2.0 was mainly a new architecture alongside 1.x.
 
-La nuova spine è ora reale.
+The new spine is now real.
 
-Ciò che manca è soprattutto trasformare Verification 2.0 da:
+What is missing is mainly transforming Verification 2.0 from:
 
 ```text
 legacy verification
-       ↓
+       |
 2.0 bridge
-       ↓
+       |
 CompletionPolicy
 ```
 
-a:
+to:
 
 ```text
 AcceptanceCriteria
-       ↓
+       |
 native deterministic verification
-       ↓
+       |
 event-backed EvidenceRef
-       ↓
+       |
 CompletionPolicy
-       ↓
+       |
 optional independent verifier
 ```
 
-Questa è la milestone qualitativa più importante prima della RC.
+This is the most important qualitative milestone before the RC.
 
-La regola da seguire adesso è:
+The rule to follow now is:
 
-> **Non aggiungere più capacità finché il circuito evidence → completion non è nativo, testato e tracciabile end-to-end.**
+> **Do not add more capability until the evidence -> completion circuit is native, tested and traceable end-to-end.**
 
-E la priorità operativa è:
+And the operational priority is:
 
-> **Alpha.7 = Verification 2.0 completa. Alpha.8/Beta = surface, docs, portability e hardening. Poi RC.**
+> **Alpha.7 = complete Verification 2.0. Alpha.8/Beta = surface, docs, portability and hardening. Then RC.**
