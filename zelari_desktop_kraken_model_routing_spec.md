@@ -1,24 +1,24 @@
-# Zelari Desktop — Kraken Model Routing & Settings Tooltips
+# Zelari Desktop - Kraken Model Routing & Settings Tooltips
 
-**Documento tecnico di implementazione**  
-**Repository target:** `N-THEM-Studio/zelari-code`  
-**Area:** `apps/desktop` + bridge Tauri  
-**Baseline:** branch `main` verificato il 25 agosto 2026
+**Technical implementation document**
+**Target repository:** `N-THEM-Studio/zelari-code`
+**Area:** `apps/desktop` + Tauri bridge
+**Baseline:** `main` branch verified on August 25, 2026
 
 ---
 
-## 1. Obiettivo
+## 1. Goal
 
-Aggiungere a **Zelari Desktop** una configurazione grafica chiara e persistente per scegliere modelli differenti per i principali ruoli interni di Kraken:
+Add to **Zelari Desktop** a clear, persistent graphical configuration to choose different models for the main internal Kraken roles:
 
 - **Explore tentacles**
 - **General tentacles**
 - **Verify tentacles**
 - **Kraken Graph planner**
 
-La modifica deve sfruttare capacità già presenti nel core Kraken, senza introdurre una nuova logica di routing lato agent.
+The change must leverage capabilities already present in the Kraken core, without introducing new agent-side routing logic.
 
-Le variabili già supportate dal core sono:
+The variables already supported by the core are:
 
 ```text
 ZELARI_KRAKEN_EXPLORE_MODEL
@@ -27,193 +27,193 @@ ZELARI_KRAKEN_VERIFY_MODEL
 ZELARI_KRAKEN_PLANNER_MODEL
 ```
 
-Esiste inoltre:
+There is also:
 
 ```text
 ZELARI_KRAKEN_SUB_MODEL
 ```
 
-ma **non va esposto nella prima versione della UI**, perché è un fallback condiviso meno intuitivo rispetto agli override espliciti.
+but it must **not be exposed in the first version of the UI**, because it is a shared fallback that is less intuitive than the explicit overrides.
 
 ---
 
-## 2. Principio di progettazione
+## 2. Design principle
 
-La nuova UI deve rendere semplice questa configurazione:
+The new UI must make this configuration simple:
 
 ```text
 Kraken Lead
-   │
-   ├── Explore      → modello rapido/economico
-   ├── General      → modello forte per coding
-   ├── Verify       → modello affidabile per verifica
-   └── Graph Planner→ modello rapido per planning strutturato
+   |
+   |-> Explore      -> fast/cheap model
+   |-> General      -> strong coding model
+   |-> Verify       -> reliable verification model
+   |-> Graph Planner-> fast model for structured planning
 ```
 
-Il **Lead model** continua a essere controllato dal normale selettore modello della toolbar / Provider settings.
+The **Lead model** remains controlled by the normal toolbar / Provider settings model selector.
 
-La nuova sezione non deve duplicare il selettore principale.
+The new section must not duplicate the main selector.
 
 ---
 
-## 3. Distinzione fondamentale: Verify tentacle vs Advisory verifier
+## 3. Fundamental distinction: Verify tentacle vs Advisory verifier
 
-La Desktop possiede già una configurazione denominata, concettualmente, **Kraken — Verification model**.
+The Desktop already has a configuration conceptually named **Kraken - Verification model**.
 
-Quella configurazione va mantenuta distinta dalla nuova voce **Verify tentacle model**.
+That configuration must be kept distinct from the new **Verify tentacle model** entry.
 
 ### Verify tentacle
 
-È il modello usato dai sub-agent Kraken di tipo `verify`.
+It is the model used by Kraken sub-agents of type `verify`.
 
-Override core:
+Core override:
 
 ```text
 ZELARI_KRAKEN_VERIFY_MODEL
 ```
 
-Scopo:
+Purpose:
 
-- controllare modifiche;
-- eseguire verifiche;
-- analizzare test/build;
-- restituire evidenza al parent Kraken.
+- review changes;
+- run verifications;
+- analyze test/build results;
+- return evidence to the Kraken parent.
 
 ### Advisory verifier
 
-È invece un giudice LLM aggiuntivo e consultivo già previsto dalla Desktop.
+It is instead an additional, advisory LLM judge already provided by the Desktop.
 
-Può avere una configurazione provider/modello separata e non deve essere confuso con il tentacolo `verify`.
+It can have a separate provider/model configuration and must not be confused with the `verify` tentacle.
 
-### Regola UX
+### UX rule
 
-Usare sempre due etichette differenti:
+Always use two different labels:
 
 ```text
 Verify tentacle model
 Advisory verification model
 ```
 
-Non usare semplicemente `Verification model` per entrambi.
+Do not simply use `Verification model` for both.
 
 ---
 
-# 4. Posizione nella UI
+# 4. UI location
 
-Aggiungere una nuova card in:
+Add a new card in:
 
 ```text
 Settings
-└── Defaults
-    └── Kraken — Model Routing
+|-> Defaults
+    |-> Kraken - Model Routing
 ```
 
-Non inserirla nella tab `Provider`, tranne il già esistente **Advisory verification model**.
+Do not put it in the `Provider` tab, except for the already existing **Advisory verification model**.
 
-Motivo:
+Reason:
 
-- `Provider` gestisce il provider/modello principale e il verifier consultivo;
-- `Defaults` gestisce comportamento ed execution profile;
-- il model routing Kraken è una preferenza di esecuzione.
+- `Provider` manages the main provider/model and the advisory verifier;
+- `Defaults` manages behavior and execution profile;
+- Kraken model routing is an execution preference.
 
 ---
 
-# 5. Mockup della nuova sezione
+# 5. Mockup of the new section
 
 ```text
-┌─────────────────────────────────────────────────────┐
-│ Kraken — Model Routing                              │
-│                                                     │
-│ Configure which model Kraken uses for each role.   │
-│ Empty / inherit values fall back to Kraken defaults.│
-│                                                     │
-│ Lead model                                    ⓘ     │
-│ Current toolbar model: <active model>                │
-│                                                     │
-│ Explore tentacles                             ⓘ     │
-│ [ Inherit / Same as default                 ▼ ]     │
-│                                                     │
-│ General tentacles                             ⓘ     │
-│ [ Inherit / Same as Kraken lead             ▼ ]     │
-│                                                     │
-│ Verify tentacles                              ⓘ     │
-│ [ Inherit / Same as default                 ▼ ]     │
-│                                                     │
-│ Graph planner                                 ⓘ     │
-│ [ Inherit / Same as Kraken lead             ▼ ]     │
-│                                                     │
-│ Advisory verifier                            ⓘ     │
-│ Configured separately in Provider settings          │
-└─────────────────────────────────────────────────────┘
++----------------------------------------------------+
+| Kraken - Model Routing                              |
+|                                                     |
+| Configure which model Kraken uses for each role.   |
+| Empty / inherit values fall back to Kraken defaults.|
+|                                                     |
+| Lead model                                    ?     |
+| Current toolbar model: <active model>                |
+|                                                     |
+| Explore tentacles                             ?     |
+| [ Inherit / Same as default                  v ]     |
+|                                                     |
+| General tentacles                             ?     |
+| [ Inherit / Same as Kraken lead              v ]     |
+|                                                     |
+| Verify tentacles                              ?     |
+| [ Inherit / Same as default                  v ]     |
+|                                                     |
+| Graph planner                                 ?     |
+| [ Inherit / Same as Kraken lead              v ]     |
+|                                                     |
+| Advisory verifier                            ?     |
+| Configured separately in Provider settings          |
++----------------------------------------------------+
 ```
 
 ---
 
-# 6. Comportamento dei selector
+# 6. Selector behavior
 
-Ogni selector deve contenere:
+Each selector must contain:
 
-1. una voce **Inherit / Same as default**;
-2. i modelli scoperti per il provider corrente;
-3. opzionalmente una voce **Custom model…** per inserire manualmente un model id.
+1. an **Inherit / Same as default** entry;
+2. the models discovered for the current provider;
+3. optionally a **Custom model...** entry to manually enter a model id.
 
-### Valore vuoto
+### Empty value
 
-Il valore persistito:
+The persisted value:
 
 ```ts
 ""
 ```
 
-significa:
+means:
 
 ```text
-nessun override Desktop
+no Desktop override
 ```
 
-e quindi deve tradursi in assenza della relativa env var nel processo CLI.
+and therefore must translate into the absence of the related env var in the CLI process.
 
-### Modello non più disponibile
+### Model no longer available
 
-Se un modello salvato non compare più nella lista scoperta:
+If a saved model no longer appears in the discovered list:
 
-- non cancellare automaticamente il valore;
-- mostrarlo come `Saved custom model`;
-- permettere all'utente di cambiarlo;
-- evitare silent fallback.
+- do not automatically delete the value;
+- show it as `Saved custom model`;
+- allow the user to change it;
+- avoid silent fallback.
 
-Esempio:
+Example:
 
 ```text
 General tentacles
-[ old-model-id  (saved custom model) ▼ ]
+[ old-model-id  (saved custom model) v ]
 ```
 
 ---
 
-# 7. Tooltip hover — requisiti UX
+# 7. Hover tooltip - UX requirements
 
-Ogni funzione della nuova sezione deve avere un'icona informativa, ad esempio:
+Every function in the new section must have an info icon, for example:
 
 ```text
-ⓘ
+?
 ```
 
-oppure un'icona SVG coerente con lo stile esistente.
+or an SVG icon consistent with the existing style.
 
-Il tooltip deve apparire:
+The tooltip must appear:
 
-- al **mouse hover**;
-- al **keyboard focus**;
-- con `aria-describedby` o equivalente;
-- senza richiedere click;
-- senza bloccare il selector;
-- chiudibile con `Escape`;
-- leggibile anche in tema dark/light.
+- on **mouse hover**;
+- on **keyboard focus**;
+- with `aria-describedby` or equivalent;
+- without requiring a click;
+- without blocking the selector;
+- closable with `Escape`;
+- readable in both dark/light themes.
 
-## Accessibilità minima
+## Minimum accessibility
 
-L'elemento trigger deve essere raggiungibile da tastiera:
+The trigger element must be keyboard reachable:
 
 ```tsx
 <button
@@ -222,19 +222,19 @@ L'elemento trigger deve essere raggiungibile da tastiera:
   aria-label="Help: Explore tentacles"
   aria-describedby="tooltip-kraken-explore"
 >
-  …
+  ?
 </button>
 ```
 
-Non usare un tooltip disponibile esclusivamente con `:hover`.
+Do not use a tooltip available exclusively via `:hover`.
 
 ---
 
-# 8. Testo esatto consigliato per i tooltip
+# 8. Recommended exact tooltip text
 
 ## 8.1 Lead model
 
-**Titolo**
+**Title**
 
 ```text
 Kraken Lead
@@ -248,7 +248,7 @@ work to tentacles, evaluates their results, and produces the final response.
 This model is selected from the main model control in the toolbar.
 ```
 
-Versione breve:
+Short version:
 
 ```text
 Main Kraken coordinator. Uses the model selected in the toolbar.
@@ -258,7 +258,7 @@ Main Kraken coordinator. Uses the model selected in the toolbar.
 
 ## 8.2 Explore tentacles
 
-**Titolo**
+**Title**
 
 ```text
 Explore tentacles
@@ -273,7 +273,7 @@ model is usually sufficient because Explore normally does not implement
 the final code changes.
 ```
 
-Versione breve:
+Short version:
 
 ```text
 Repository exploration and codebase analysis. A fast model is usually enough.
@@ -283,7 +283,7 @@ Repository exploration and codebase analysis. A fast model is usually enough.
 
 ## 8.3 General tentacles
 
-**Titolo**
+**Title**
 
 ```text
 General tentacles
@@ -297,7 +297,7 @@ files and perform delegated coding work. Prefer a strong coding model when
 the task is complex or the changes are high impact.
 ```
 
-Versione breve:
+Short version:
 
 ```text
 Implementation and code-writing sub-agents. Prefer a strong coding model.
@@ -307,7 +307,7 @@ Implementation and code-writing sub-agents. Prefer a strong coding model.
 
 ## 8.4 Verify tentacles
 
-**Titolo**
+**Title**
 
 ```text
 Verify tentacles
@@ -322,7 +322,7 @@ parent agent considers the task complete. This is different from the
 Advisory verification model.
 ```
 
-Versione breve:
+Short version:
 
 ```text
 Checks implementation, tests and regressions. Different from the Advisory verifier.
@@ -332,7 +332,7 @@ Checks implementation, tests and regressions. Different from the Advisory verifi
 
 ## 8.5 Graph planner
 
-**Titolo**
+**Title**
 
 ```text
 Graph planner
@@ -347,7 +347,7 @@ A fast non-reasoning or lower-latency model is often sufficient for this
 structured planning step.
 ```
 
-Versione breve:
+Short version:
 
 ```text
 Plans the Kraken Graph DAG. A fast, low-latency model is usually sufficient.
@@ -357,7 +357,7 @@ Plans the Kraken Graph DAG. A fast, low-latency model is usually sufficient.
 
 ## 8.6 Advisory verifier
 
-**Titolo**
+**Title**
 
 ```text
 Advisory verifier
@@ -371,7 +371,7 @@ It is advisory and does not replace deterministic verification gates.
 Its provider and model are configured separately in Provider settings.
 ```
 
-Versione breve:
+Short version:
 
 ```text
 Optional LLM judge. Configured separately under Provider settings.
@@ -381,20 +381,20 @@ Optional LLM judge. Configured separately under Provider settings.
 
 ## 8.7 Inherit / Same as default
 
-Il tooltip sul valore `Inherit` deve spiegare esplicitamente che non viene impostato un override.
+The tooltip on the `Inherit` value must explicitly explain that no override is set.
 
 ```text
 No Desktop override is sent for this role. Kraken uses its normal model
 selection and fallback rules.
 ```
 
-Questo evita che l'utente interpreti `Inherit` come una copia statica del model id corrente.
+This prevents the user from interpreting `Inherit` as a static copy of the current model id.
 
 ---
 
-# 9. Tooltip consigliati anche per le funzioni esistenti
+# 9. Recommended tooltips for existing functions too
 
-Per coerenza, la stessa UX con icona `ⓘ` dovrebbe essere applicata alle funzioni avanzate già presenti in **Settings → Defaults**.
+For consistency, the same `?` icon UX should be applied to the advanced functions already present in **Settings -> Defaults**.
 
 ## Kraken strict gate
 
@@ -450,11 +450,11 @@ agent workflow and capabilities.
 
 ---
 
-# 10. Tooltip component consigliato
+# 10. Recommended tooltip component
 
-Evitare di duplicare markup/CSS per ogni voce.
+Avoid duplicating markup/CSS for each entry.
 
-Creare un piccolo componente riutilizzabile, ad esempio:
+Create a small reusable component, for example:
 
 ```tsx
 type SettingHelpProps = {
@@ -506,7 +506,7 @@ function SettingHelp({ id, label, children }: SettingHelpProps) {
 }
 ```
 
-CSS indicativo:
+Indicative CSS:
 
 ```css
 .setting-help {
@@ -554,15 +554,15 @@ CSS indicativo:
 }
 ```
 
-### Nota
+### Note
 
-Usare i token/colori già esistenti della Desktop invece di hardcodare colori nel CSS finale.
+Use the Desktop's existing tokens/colors instead of hardcoding colors in the final CSS.
 
-Se Zelari Desktop possiede già un componente Tooltip condiviso, riutilizzare quello al posto di introdurne uno nuovo.
+If Zelari Desktop already has a shared Tooltip component, reuse it instead of introducing a new one.
 
 ---
 
-# 11. Modifica `desktopPrefs.ts`
+# 11. `desktopPrefs.ts` change
 
 File:
 
@@ -570,9 +570,9 @@ File:
 apps/desktop/src/desktopPrefs.ts
 ```
 
-La struttura corrente persiste le execution prefs in `localStorage`.
+The current structure persists execution prefs in `localStorage`.
 
-Estendere `DesktopPrefs`:
+Extend `DesktopPrefs`:
 
 ```ts
 export interface DesktopPrefs {
@@ -598,7 +598,7 @@ export interface DesktopPrefs {
 }
 ```
 
-Aggiornare i default:
+Update the defaults:
 
 ```ts
 export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
@@ -617,7 +617,7 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
 };
 ```
 
-Aggiornare `normalizeDesktopPrefs()`:
+Update `normalizeDesktopPrefs()`:
 
 ```ts
 krakenExploreModel:
@@ -635,27 +635,27 @@ krakenPlannerModel:
 
 ---
 
-# 12. Compatibilità delle preferenze esistenti
+# 12. Compatibility with existing preferences
 
-L'attuale storage key è:
+The current storage key is:
 
 ```text
 zelari-desktop-prefs-v2
 ```
 
-Non è necessario aumentare la versione della key se:
+It is not necessary to bump the key version if:
 
-- i nuovi campi sono opzionali in lettura;
-- `normalizeDesktopPrefs()` assegna `""` ai valori mancanti;
-- le vecchie installazioni continuano a caricarsi correttamente.
+- the new fields are optional on read;
+- `normalizeDesktopPrefs()` assigns `""` to missing values;
+- old installations keep loading correctly.
 
-Se invece si decide di cambiare semanticamente la struttura in modo incompatibile, introdurre `v3`.
+If instead you decide to change the structure incompatibly, introduce `v3`.
 
-Per questa modifica **non è necessario**.
+For this change it is **not necessary**.
 
 ---
 
-# 13. Modifica `SettingsView.tsx`
+# 13. `SettingsView.tsx` change
 
 File:
 
@@ -663,7 +663,7 @@ File:
 apps/desktop/src/components/SettingsView.tsx
 ```
 
-Aggiungere gli state:
+Add the states:
 
 ```ts
 const [krakenExploreModel, setKrakenExploreModel] =
@@ -679,7 +679,7 @@ const [krakenPlannerModel, setKrakenPlannerModel] =
   useState(prefs.krakenPlannerModel);
 ```
 
-Sincronizzarli quando cambiano le props:
+Sync them when the props change:
 
 ```ts
 setKrakenExploreModel(prefs.krakenExploreModel);
@@ -688,7 +688,7 @@ setKrakenVerifyModel(prefs.krakenVerifyModel);
 setKrakenPlannerModel(prefs.krakenPlannerModel);
 ```
 
-Includerli nel payload `prefs` di `onSave()`:
+Include them in the `prefs` payload of `onSave()`:
 
 ```ts
 prefs: {
@@ -709,9 +709,9 @@ prefs: {
 
 ---
 
-# 14. Componente selector riutilizzabile
+# 14. Reusable selector component
 
-Per evitare quattro implementazioni quasi identiche, creare un componente locale o condiviso:
+To avoid four nearly identical implementations, create a local or shared component:
 
 ```tsx
 type KrakenModelSelectProps = {
@@ -750,7 +750,7 @@ function KrakenModelSelect({
 
         {!models.includes(value) && value ? (
           <option value={value}>
-            {value} — saved custom model
+            {value} - saved custom model
           </option>
         ) : null}
 
@@ -767,7 +767,7 @@ function KrakenModelSelect({
 
 ---
 
-# 15. Semantica consigliata dei fallback
+# 15. Recommended fallback semantics
 
 UI:
 
@@ -779,7 +779,7 @@ Inherit / Kraken default
 Backend:
 
 ```text
-"" → non impostare ZELARI_KRAKEN_EXPLORE_MODEL
+"" -> do not set ZELARI_KRAKEN_EXPLORE_MODEL
 ```
 
 UI:
@@ -792,7 +792,7 @@ Inherit / Kraken lead
 Backend:
 
 ```text
-"" → non impostare ZELARI_KRAKEN_GENERAL_MODEL
+"" -> do not set ZELARI_KRAKEN_GENERAL_MODEL
 ```
 
 UI:
@@ -805,7 +805,7 @@ Inherit / Kraken default
 Backend:
 
 ```text
-"" → non impostare ZELARI_KRAKEN_VERIFY_MODEL
+"" -> do not set ZELARI_KRAKEN_VERIFY_MODEL
 ```
 
 UI:
@@ -818,16 +818,16 @@ Inherit / Kraken lead
 Backend:
 
 ```text
-"" → non impostare ZELARI_KRAKEN_PLANNER_MODEL
+"" -> do not set ZELARI_KRAKEN_PLANNER_MODEL
 ```
 
-La UI descrive il fallback per l'utente, ma il bridge non deve tentare di replicare la logica Kraken.
+The UI describes the fallback for the user, but the bridge must not try to replicate Kraken logic.
 
-Il core rimane la source of truth per la risoluzione finale.
+The core remains the source of truth for final resolution.
 
 ---
 
-# 16. Modifica `types.ts`
+# 16. `types.ts` change
 
 File:
 
@@ -835,7 +835,7 @@ File:
 apps/desktop/src/types.ts
 ```
 
-Estendere `RunTaskArgs`:
+Extend `RunTaskArgs`:
 
 ```ts
 /** Model override for Kraken read-only / exploration tentacles. */
@@ -851,11 +851,11 @@ krakenVerifyModel?: string;
 krakenPlannerModel?: string;
 ```
 
-Non è necessario aggiungere provider separati in questa feature.
+No separate providers need to be added in this feature.
 
 ---
 
-# 17. Modifica `App.tsx`
+# 17. `App.tsx` change
 
 File:
 
@@ -863,7 +863,7 @@ File:
 apps/desktop/src/App.tsx
 ```
 
-Nel payload passato a `runTask()` aggiungere:
+In the payload passed to `runTask()` add:
 
 ```ts
 krakenExploreModel: prefs.krakenExploreModel || undefined,
@@ -872,7 +872,7 @@ krakenVerifyModel: prefs.krakenVerifyModel || undefined,
 krakenPlannerModel: prefs.krakenPlannerModel || undefined,
 ```
 
-Questo deve avvenire nello stesso punto in cui vengono già inoltrate:
+This must happen in the same place where the following are already forwarded:
 
 ```text
 profile
@@ -894,22 +894,22 @@ File:
 apps/desktop/src/agentClient.ts
 ```
 
-Se il client continua a inoltrare genericamente/spreadare `RunTaskArgs` nel comando Tauri:
+If the client continues to generically forward/spread `RunTaskArgs` into the Tauri command:
 
 ```ts
 invoke("run_task", ...)
 ```
 
-non dovrebbe essere necessaria logica specifica.
+no specific logic should be needed.
 
-Verificare soltanto che:
+Only verify that:
 
-- nessuna whitelist rimuova i nuovi campi;
-- i nomi arrivino camelCase al bridge Rust.
+- no whitelist strips the new fields;
+- the names arrive camelCase at the Rust bridge.
 
 ---
 
-# 19. Modifica Tauri `RunTaskArgs`
+# 19. Tauri `RunTaskArgs` change
 
 File:
 
@@ -917,7 +917,7 @@ File:
 apps/desktop/src-tauri/src/lib.rs
 ```
 
-Aggiungere alla struct Rust:
+Add to the Rust struct:
 
 ```rust
 #[serde(default)]
@@ -933,26 +933,26 @@ kraken_verify_model: Option<String>,
 kraken_planner_model: Option<String>,
 ```
 
-La struct usa:
+The struct uses:
 
 ```rust
 #[serde(rename_all = "camelCase")]
 ```
 
-quindi i mapping attesi sono:
+so the expected mappings are:
 
 ```text
-krakenExploreModel → kraken_explore_model
-krakenGeneralModel → kraken_general_model
-krakenVerifyModel  → kraken_verify_model
-krakenPlannerModel → kraken_planner_model
+krakenExploreModel -> kraken_explore_model
+krakenGeneralModel -> kraken_general_model
+krakenVerifyModel  -> kraken_verify_model
+krakenPlannerModel -> kraken_planner_model
 ```
 
 ---
 
-# 20. Passaggio a `spawn_headless()`
+# 20. Passing to `spawn_headless()`
 
-Estrarre i nuovi valori da `args` nello stesso percorso delle altre execution prefs:
+Extract the new values from `args` in the same path as the other execution prefs:
 
 ```rust
 let kraken_explore_model = args.kraken_explore_model;
@@ -961,7 +961,7 @@ let kraken_verify_model = args.kraken_verify_model;
 let kraken_planner_model = args.kraken_planner_model;
 ```
 
-Passarli fino alla funzione che crea il processo:
+Pass them down to the function that creates the process:
 
 ```text
 zelari-code --headless
@@ -969,9 +969,9 @@ zelari-code --headless
 
 ---
 
-# 21. Environment variables nel processo CLI
+# 21. Environment variables in the CLI process
 
-Aggiungere una helper:
+Add a helper:
 
 ```rust
 fn set_optional_model_env(
@@ -990,7 +990,7 @@ fn set_optional_model_env(
 }
 ```
 
-Applicazione:
+Application:
 
 ```rust
 set_optional_model_env(
@@ -1020,53 +1020,53 @@ set_optional_model_env(
 
 ---
 
-# 22. Perché usare `env_remove()` quando il valore è vuoto
+# 22. Why use `env_remove()` when the value is empty
 
-La Desktop deve essere autoritativa.
+The Desktop must be authoritative.
 
-Caso:
+Case:
 
-1. l'utente avvia Zelari da una shell contenente:
+1. the user starts Zelari from a shell containing:
 
 ```text
 ZELARI_KRAKEN_GENERAL_MODEL=old-model
 ```
 
-2. nella Desktop seleziona:
+2. in the Desktop selects:
 
 ```text
-General tentacles → Inherit
+General tentacles -> Inherit
 ```
 
-Se il bridge non rimuove esplicitamente la env, il processo figlio potrebbe continuare a ereditare:
+If the bridge does not explicitly remove the env, the child process could keep inheriting:
 
 ```text
 old-model
 ```
 
-contraddicendo la UI.
+contradicting the UI.
 
-Perciò:
+Therefore:
 
 ```text
-Desktop override valorizzato
-→ cmd.env(...)
+Desktop override valued
+-> cmd.env(...)
 
 Desktop = Inherit
-→ cmd.env_remove(...)
+-> cmd.env_remove(...)
 ```
 
 ---
 
-# 23. Provider routing: fuori scope
+# 23. Provider routing: out of scope
 
-Questa feature deve configurare soltanto:
+This feature must only configure:
 
 ```text
 *_MODEL
 ```
 
-Non introdurre:
+Do not introduce:
 
 ```text
 ZELARI_KRAKEN_EXPLORE_PROVIDER
@@ -1075,80 +1075,80 @@ ZELARI_KRAKEN_VERIFY_PROVIDER
 ZELARI_KRAKEN_PLANNER_PROVIDER
 ```
 
-a meno che il core non aggiunga esplicitamente supporto per essi.
+unless the core explicitly adds support for them.
 
-### Prima versione
+### First version
 
-Tutti i tentacoli operano nel normale runtime/provider compatibile con gli override modello previsti dal core.
+All tentacles operate in the normal runtime/provider compatible with the model overrides provided by the core.
 
-### Feature futura separata
+### Separate future feature
 
-Il routing cross-provider potrebbe diventare:
+Cross-provider routing could become:
 
 ```text
-Explore → Provider A / Model X
-General → Provider B / Model Y
-Verify  → Provider C / Model Z
+Explore -> Provider A / Model X
+General -> Provider B / Model Y
+Verify  -> Provider C / Model Z
 ```
 
-ma richiede modifiche al core e non va mescolato con questa patch Desktop.
+but it requires core changes and must not be mixed with this Desktop patch.
 
 ---
 
-# 24. Gestione del modello principale
+# 24. Handling the main model
 
-Il nuovo pannello deve mostrare il Lead model in sola lettura:
+The new panel must show the Lead model read-only:
 
 ```text
 Lead model
 Current toolbar model: <model>
 ```
 
-con eventuale link/bottone:
+with a possible link/button:
 
 ```text
 Change in Provider
 ```
 
-oppure:
+or:
 
 ```text
 Change from toolbar
 ```
 
-Non creare un secondo selector per il Lead dentro `Kraken — Model Routing`.
+Do not create a second selector for the Lead inside `Kraken - Model Routing`.
 
 ---
 
-# 25. Configurazione consigliata visualizzata nella UI
+# 25. Recommended configuration shown in the UI
 
-Facoltativamente la card può mostrare un piccolo hint non prescrittivo:
+Optionally the card can show a small non-prescriptive hint:
 
 ```text
 Typical setup:
-Explore → fast / low-cost
-General → strongest coding model
-Verify → reliable coding/review model
-Planner → fast / low-latency
+Explore -> fast / low-cost
+General -> strongest coding model
+Verify  -> reliable coding/review model
+Planner -> fast / low-latency
 ```
 
-Non scegliere automaticamente modelli specifici.
+Do not automatically pick specific models.
 
-Zelari non deve assumere che un determinato provider o model id sia sempre disponibile.
+Zelari must not assume that a given provider or model id is always available.
 
 ---
 
-# 26. Test unitari — `desktop-prefs.test.ts`
+# 26. Unit tests - `desktop-prefs.test.ts`
 
-File indicato dal codice corrente:
+File indicated by the current code:
 
 ```text
 tests/unit/desktop-prefs.test.ts
 ```
 
-Aggiungere test per:
+Add tests for:
 
-## Default
+## Defaults
 
 ```ts
 expect(DEFAULT_DESKTOP_PREFS.krakenExploreModel).toBe("");
@@ -1157,9 +1157,9 @@ expect(DEFAULT_DESKTOP_PREFS.krakenVerifyModel).toBe("");
 expect(DEFAULT_DESKTOP_PREFS.krakenPlannerModel).toBe("");
 ```
 
-## Normalizzazione legacy
+## Legacy normalization
 
-Dato un vecchio blob senza i nuovi campi:
+Given an old blob without the new fields:
 
 ```ts
 normalizeDesktopPrefs({
@@ -1168,7 +1168,7 @@ normalizeDesktopPrefs({
 })
 ```
 
-atteso:
+expected:
 
 ```text
 krakenExploreModel = ""
@@ -1177,9 +1177,9 @@ krakenVerifyModel  = ""
 krakenPlannerModel = ""
 ```
 
-## Persistenza
+## Persistence
 
-Salvare:
+Save:
 
 ```ts
 {
@@ -1190,11 +1190,11 @@ Salvare:
 }
 ```
 
-e verificare round-trip corretto.
+and verify a correct round-trip.
 
-## Input invalidi
+## Invalid input
 
-Per valori:
+For values:
 
 ```ts
 null
@@ -1203,7 +1203,7 @@ false
 {}
 ```
 
-il normalizer deve ritornare:
+the normalizer must return:
 
 ```text
 ""
@@ -1211,84 +1211,84 @@ il normalizer deve ritornare:
 
 ---
 
-# 27. Test UI
+# 27. UI tests
 
-Aggiungere test, se l'attuale stack Desktop dispone di test componenti, per verificare:
+Add tests, if the current Desktop stack has component tests, to verify:
 
-- la card `Kraken — Model Routing` è visibile in `Defaults`;
-- il valore `Inherit` corrisponde a `""`;
-- i model id scoperti sono mostrati;
-- un model id salvato ma non scoperto resta selezionabile;
-- il save produce i quattro campi;
-- ogni funzione possiede il relativo trigger tooltip;
-- il tooltip appare su hover;
-- il tooltip appare su keyboard focus;
-- `aria-describedby` punta al tooltip corretto.
+- the `Kraken - Model Routing` card is visible in `Defaults`;
+- the `Inherit` value maps to `""`;
+- discovered model ids are shown;
+- a saved but undiscovered model id stays selectable;
+- saving produces the four fields;
+- every function has its tooltip trigger;
+- the tooltip appears on hover;
+- the tooltip appears on keyboard focus;
+- `aria-describedby` points to the correct tooltip.
 
 ---
 
-# 28. Test Rust / bridge
+# 28. Rust / bridge tests
 
-Aggiungere o estendere i test del command building per verificare:
+Add or extend the command-building tests to verify:
 
 ```text
 krakenExploreModel = "model-a"
-→ ZELARI_KRAKEN_EXPLORE_MODEL=model-a
+-> ZELARI_KRAKEN_EXPLORE_MODEL=model-a
 ```
 
 ```text
 krakenGeneralModel = "model-b"
-→ ZELARI_KRAKEN_GENERAL_MODEL=model-b
+-> ZELARI_KRAKEN_GENERAL_MODEL=model-b
 ```
 
 ```text
 krakenVerifyModel = "model-c"
-→ ZELARI_KRAKEN_VERIFY_MODEL=model-c
+-> ZELARI_KRAKEN_VERIFY_MODEL=model-c
 ```
 
 ```text
 krakenPlannerModel = "model-d"
-→ ZELARI_KRAKEN_PLANNER_MODEL=model-d
+-> ZELARI_KRAKEN_PLANNER_MODEL=model-d
 ```
 
-E soprattutto:
+And most importantly:
 
 ```text
 krakenGeneralModel = None / ""
-→ ZELARI_KRAKEN_GENERAL_MODEL non presente
+-> ZELARI_KRAKEN_GENERAL_MODEL not present
 ```
 
 ---
 
 # 29. Acceptance criteria
 
-La feature è completata quando:
+The feature is complete when:
 
-- [ ] In `Settings → Defaults` esiste `Kraken — Model Routing`.
-- [ ] L'utente può configurare Explore, General, Verify e Graph Planner.
-- [ ] Il Lead model continua a essere selezionato dalla toolbar/provider principale.
-- [ ] Le preferenze persistono dopo il riavvio della Desktop.
-- [ ] Le vecchie preferenze `zelari-desktop-prefs-v2` continuano a essere valide.
-- [ ] `Inherit` non salva un model id esplicito.
-- [ ] Un valore `Inherit` rimuove l'eventuale env Kraken ereditata dal processo parent.
-- [ ] Explore imposta `ZELARI_KRAKEN_EXPLORE_MODEL`.
-- [ ] General imposta `ZELARI_KRAKEN_GENERAL_MODEL`.
-- [ ] Verify imposta `ZELARI_KRAKEN_VERIFY_MODEL`.
-- [ ] Planner imposta `ZELARI_KRAKEN_PLANNER_MODEL`.
-- [ ] Verify tentacle e Advisory verifier sono chiaramente distinti nella UI.
-- [ ] Ogni funzione possiede un tooltip hover/focus.
-- [ ] I tooltip sono accessibili da tastiera.
-- [ ] I tooltip funzionano sia in dark mode sia in light mode.
-- [ ] I test di persistenza Desktop passano.
-- [ ] I test del bridge env passano.
-- [ ] Build TypeScript/Desktop passa.
-- [ ] Build Rust/Tauri passa.
+- [ ] In `Settings -> Defaults` there is `Kraken - Model Routing`.
+- [ ] The user can configure Explore, General, Verify and Graph Planner.
+- [ ] The Lead model continues to be selected from the main toolbar/provider.
+- [ ] Preferences persist across Desktop restarts.
+- [ ] Old `zelari-desktop-prefs-v2` preferences remain valid.
+- [ ] `Inherit` does not save an explicit model id.
+- [ ] An `Inherit` value removes any Kraken env inherited from the parent process.
+- [ ] Explore sets `ZELARI_KRAKEN_EXPLORE_MODEL`.
+- [ ] General sets `ZELARI_KRAKEN_GENERAL_MODEL`.
+- [ ] Verify sets `ZELARI_KRAKEN_VERIFY_MODEL`.
+- [ ] Planner sets `ZELARI_KRAKEN_PLANNER_MODEL`.
+- [ ] Verify tentacle and Advisory verifier are clearly distinct in the UI.
+- [ ] Every function has a hover/focus tooltip.
+- [ ] Tooltips are keyboard accessible.
+- [ ] Tooltips work in both dark and light mode.
+- [ ] Desktop persistence tests pass.
+- [ ] Bridge env tests pass.
+- [ ] TypeScript/Desktop build passes.
+- [ ] Rust/Tauri build passes.
 
 ---
 
-# 30. File da modificare
+# 30. Files to modify
 
-## Obbligatori
+## Mandatory
 
 ```text
 apps/desktop/src/desktopPrefs.ts
@@ -1299,63 +1299,63 @@ apps/desktop/src-tauri/src/lib.rs
 tests/unit/desktop-prefs.test.ts
 ```
 
-## Probabili / da verificare
+## Probable / to verify
 
 ```text
 apps/desktop/src/*.css
 apps/desktop/src/components/*.css
 ```
 
-per lo styling del tooltip, a seconda di dove sono definiti gli stili Settings.
+for the tooltip styling, depending on where the Settings styles are defined.
 
-## Probabilmente invariato
+## Probably unchanged
 
 ```text
 apps/desktop/src/agentClient.ts
 ```
 
-se continua a inoltrare genericamente `RunTaskArgs`.
+if it continues to generically forward `RunTaskArgs`.
 
 ---
 
-# 31. Modifiche da NON fare in questa patch
+# 31. Changes NOT to make in this patch
 
-Non modificare il core Kraken se le env attuali vengono già lette correttamente.
+Do not modify the Kraken core if the current envs are already read correctly.
 
-Non introdurre routing cross-provider.
+Do not introduce cross-provider routing.
 
-Non esporre subito `ZELARI_KRAKEN_SUB_MODEL`.
+Do not expose `ZELARI_KRAKEN_SUB_MODEL` right away.
 
-Non fondere `Verify tentacle` e `Advisory verifier`.
+Do not merge `Verify tentacle` and `Advisory verifier`.
 
-Non cambiare il comportamento di Kraken quando tutti i nuovi selector sono su `Inherit`.
+Do not change Kraken behavior when all the new selectors are on `Inherit`.
 
-Non modificare i default del modello principale.
+Do not modify the main model defaults.
 
 ---
 
-# 32. Possibile fase 2
+# 32. Possible phase 2
 
-Dopo questa feature si possono considerare:
+After this feature, consider:
 
 ## Shared sub-agent fallback
 
-Esporre:
+Expose:
 
 ```text
 ZELARI_KRAKEN_SUB_MODEL
 ```
 
-sotto:
+under:
 
 ```text
 Advanced
-└── Shared sub-agent fallback
+|-> Shared sub-agent fallback
 ```
 
-## Preset di routing
+## Routing presets
 
-Esempi:
+Examples:
 
 ```text
 Balanced
@@ -1364,41 +1364,41 @@ Cost saver
 All same as lead
 ```
 
-senza hardcodare model id, ma scegliendo ruoli/fallback in base alle capabilities disponibili.
+without hardcoding model ids, but choosing roles/fallbacks based on available capabilities.
 
 ## Per-project routing
 
-Salvare gli override anche a livello progetto:
+Also save the overrides at the project level:
 
 ```text
 .zelari/
 ```
 
-con priorità:
+with priority:
 
 ```text
 project override
-→ desktop global preference
-→ Kraken core fallback
+-> desktop global preference
+-> Kraken core fallback
 ```
 
-solo dopo aver definito chiaramente la precedenza.
+only after clearly defining precedence.
 
 ## Cross-provider routing
 
-Da sviluppare soltanto dopo supporto esplicito nel core.
+To be developed only after explicit core support.
 
 ---
 
-# 33. Esempio di esperienza finale
+# 33. Example of the final experience
 
-L'utente apre:
+The user opens:
 
 ```text
-Settings → Defaults
+Settings -> Defaults
 ```
 
-e configura:
+and configures:
 
 ```text
 Profile
@@ -1410,7 +1410,7 @@ ON
 Native criteria pack
 ON
 
-Kraken — Model Routing
+Kraken - Model Routing
 
 Lead
 current-main-model
@@ -1428,21 +1428,21 @@ Graph planner
 fast-model
 ```
 
-Passando il mouse su `Explore ⓘ` vede:
+Hovering over `Explore ?` they see:
 
 ```text
 Repository exploration and codebase analysis.
 A fast model is usually enough.
 ```
 
-Passando il mouse su `Verify ⓘ` vede:
+Hovering over `Verify ?` they see:
 
 ```text
 Checks implementation, tests and regressions.
 Different from the Advisory verifier.
 ```
 
-Quando avvia un task, la Desktop costruisce il processo headless con:
+When they start a task, the Desktop builds the headless process with:
 
 ```text
 ZELARI_KRAKEN_EXPLORE_MODEL=fast-model
@@ -1451,80 +1451,80 @@ ZELARI_KRAKEN_VERIFY_MODEL=review-model
 ZELARI_KRAKEN_PLANNER_MODEL=fast-model
 ```
 
-senza alcuna modifica al comportamento interno di Kraken oltre al routing modello già supportato.
+without any change to Kraken's internal behavior beyond the already supported model routing.
 
 ---
 
-# 34. Architettura finale
+# 34. Final architecture
 
 ```text
-┌─────────────────────────────────────────┐
-│ Zelari Desktop                          │
-│                                         │
-│ Settings → Defaults                     │
-│ Kraken — Model Routing                  │
-│                                         │
-│ Explore ───────────── fast-model        │
-│ General ───────────── coding-model      │
-│ Verify  ───────────── review-model      │
-│ Planner ───────────── planner-model     │
-└─────────────────────┬───────────────────┘
-                      │
-                      ▼
++-------------------------------------------+
+| Zelari Desktop                          |
+|                                         |
+| Settings -> Defaults                     |
+| Kraken - Model Routing                  |
+|                                         |
+| Explore ----------> fast-model        |
+| General ----------> coding-model      |
+| Verify  ----------> review-model      |
+| Planner ----------> planner-model     |
++-------------------------------------------+
+                      |
+                      v
              DesktopPrefs / localStorage
-                      │
-                      ▼
+                      |
+                      v
                    App.tsx
-                      │
-                      ▼
+                      |
+                      v
                  RunTaskArgs
-                      │
-                      ▼
+                      |
+                      v
               Tauri run_task
-                      │
-                      ▼
+                      |
+                      v
                spawn_headless
-                      │
-                      ▼
-     ┌────────────────────────────────┐
-     │ Environment                    │
-     │                                │
-     │ KRAKEN_EXPLORE_MODEL           │
-     │ KRAKEN_GENERAL_MODEL           │
-     │ KRAKEN_VERIFY_MODEL            │
-     │ KRAKEN_PLANNER_MODEL           │
-     └───────────────┬────────────────┘
-                     │
-                     ▼
+                      |
+                      v
+     +------------------------------+
+     | Environment                    |
+     |                                |
+     | KRAKEN_EXPLORE_MODEL           |
+     | KRAKEN_GENERAL_MODEL           |
+     | KRAKEN_VERIFY_MODEL            |
+     | KRAKEN_PLANNER_MODEL           |
+     +------------------------------+
+                     |
+                     v
               zelari-code --headless
-                     │
-                     ▼
+                     |
+                     v
                    Kraken
-           ┌─────────┼─────────┐
-           ▼         ▼         ▼
+           +---------+---------+
+           v         v         v
         Explore    General   Verify
-                     │
-                     ▼
+                     |
+                     v
                Graph Planner
 ```
 
 ---
 
-# 35. Sintesi
+# 35. Summary
 
-La feature proposta è principalmente una **estensione della Desktop UI e del bridge Tauri**.
+The proposed feature is mainly a **Desktop UI and Tauri bridge extension**.
 
-Il core Kraken dispone già degli override modello necessari.
+The Kraken core already has the necessary model overrides.
 
-La patch deve quindi:
+The patch must therefore:
 
-1. aggiungere quattro preferenze persistenti;
-2. esporle nella UI `Settings → Defaults`;
-3. aggiungere tooltip hover/focus chiari per ogni funzione;
-4. inoltrare i valori a `RunTaskArgs`;
-5. convertirli nelle env Kraken nel processo headless;
-6. mantenere `Inherit` come assenza reale di override;
-7. mantenere separati Verify tentacle e Advisory verifier;
-8. aggiungere test di persistenza, UI e bridge.
+1. add four persistent preferences;
+2. expose them in the `Settings -> Defaults` UI;
+3. add clear hover/focus tooltips for every function;
+4. forward the values to `RunTaskArgs`;
+5. convert them into Kraken envs in the headless process;
+6. keep `Inherit` as a real absence of override;
+7. keep Verify tentacle and Advisory verifier separate;
+8. add persistence, UI and bridge tests.
 
-Il risultato finale rende configurabile dalla Desktop una capacità Kraken già esistente nel motore, senza alterarne l'architettura interna.
+The final result makes an already-existing Kraken capability configurable from the Desktop, without altering its internal architecture.
