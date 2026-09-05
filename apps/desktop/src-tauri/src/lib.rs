@@ -934,9 +934,9 @@ pub(crate) fn spawn_cli_base(node: &Path, cli: &Path, cwd: Option<&Path>) -> Com
 /// surfaces as `UV_HANDLE_CLOSING` assertions in `async.c`.
 /// Does **not** wait — caller must `wait()` once to reap.
 pub(crate) fn kill_child_tree(child: &mut Child) {
-    let pid = child.id();
     #[cfg(windows)]
     {
+        let pid = child.id();
         let _ = Command::new("taskkill")
             .args(["/PID", &pid.to_string(), "/T", "/F"])
             .stdin(Stdio::null())
@@ -2907,7 +2907,7 @@ fn run_sidecar_turn(
             // native Yes/No dialog; the answer goes back as
             // permission.respond. Everything still rides agent-event too.
             if value.get("type").and_then(|t| t.as_str()) == Some("permission.request") {
-                forward_permission_request(app, sidecar, value);
+                forward_permission_request(app, sidecar, &value);
             }
             let _ = app.emit("agent-event", enveloped(value, envelope));
         },
