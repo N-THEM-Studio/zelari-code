@@ -5,6 +5,8 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
 ## [2.31.0] - 2026-09-06
 
 The "front door" release: 2.30 stops lying about the paths it already ships, and a fresh clone gets an honest path to its first verified PASS. HANDOFF Wave 5 stays frozen: no new runtime surface, no new public API, the judge untouched (ADR-0036).
@@ -1981,171 +1983,17 @@ End-to-end against MiniMax-M3 (the model these failures were first reported on):
 ### Added
 - **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
 
-## [1.12.1] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [1.13.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [1.14.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [1.16.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [1.18.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [1.18.1] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [1.19.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [1.20.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [1.21.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [2.6.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [2.10.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [minor] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [2.17.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [2.19.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [2.25.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-## [2.30.0] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on `workflow_dispatch`; build `@zelari/core` before CLI; optional updater signing (installers still build without `TAURI_SIGNING_PRIVATE_KEY`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
 ## [1.9.3] - 2026-07-10
 
 ### Fixed
 - **Release Desktop CI** — build `@zelari/core` before root `tsc` (clean checkout had no `packages/core/dist` → TS2307 on macOS/Linux). Root `build`/`build:cli` scripts now always build core first.
-## [1.9.2] - 2026-07-10`n`n### Fixed`n- **CI headless-run** — allow leading `[headless]` NDJSON log line (count >= 6).`n- **Desktop** — topbar Update button when a newer release is available.`n`n## [1.9.1] - 2026-07-10
+## [1.9.2] - 2026-07-10
+
+### Fixed
+- **CI headless-run** — allow leading `[headless]` NDJSON log line (count >= 6).
+- **Desktop** — topbar Update button when a newer release is available.
+
+## [1.9.1] - 2026-07-10
 
 ### Added
 - **Desktop auto-update** — Tauri updater plugin checks GitHub Releases (`latest.json`), Settings → “App updates” (check / download & install / relaunch), quiet check on launch. Release workflow signs artifacts via `TAURI_SIGNING_PRIVATE_KEY`.
@@ -2796,9 +2644,6 @@ paths, see [MIGRATION.md](MIGRATION.md).
 
 See [MIGRATION.md](MIGRATION.md). Summary: import paths changed, the
 tool itself is wire-compatible for the CLI use case.
-
-## [Unreleased]
-
 
 ## [1.22.1] - 2026-07-21
 
