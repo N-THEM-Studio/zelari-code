@@ -52,7 +52,7 @@ describe('providerConfig', () => {
     expect(config.modelByProvider.grok).toBe('grok-4.6');
     expect(config.modelByProvider['openai-compatible']).toBe('grok-4.6');
     expect(config.modelByProvider.minimax).toBe('MiniMax-M2.5');
-    expect(config.modelByProvider.glm).toBe('glm-4.6');
+    expect(config.modelByProvider.glm).toBe('glm-5.3');
   });
 
   it('setActiveProviderId() persists + reads back', () => {

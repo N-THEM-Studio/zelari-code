@@ -60,7 +60,7 @@ const DEFAULTS: ProviderConfig = {
     // grok-4.6: flagship; native reasoning_effort includes xhigh
     'openai-compatible': 'grok-4.6',
     'minimax': 'MiniMax-M2.5',
-    'glm': 'glm-4.6',
+    'glm': 'glm-5.3',
     'grok': 'grok-4.6',
     'deepseek': 'deepseek-v4-pro',
     'chatgpt': 'gpt-5.6-codex',
