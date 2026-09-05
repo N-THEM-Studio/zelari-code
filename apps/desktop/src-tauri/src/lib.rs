@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 mod harness_sidecar;
 use harness_sidecar::HarnessSidecar;
@@ -2959,7 +2959,18 @@ fn forward_permission_request(
                 format!("{preview}\n\n")
             }
         );
-        let allowed = app.dialog().blocking_ask("Zelari — approval required", message);
+        let allowed = app
+            .dialog()
+            .message(message)
+            .title("Zelari — approval required")
+            // Explicit Allow/Deny: the plugin default buttons can degrade to
+            // Ok-only on some backends, and a dialog without a deny path
+            // would silently allow — fail-closed forbids that.
+            .buttons(MessageDialogButtons::OkCancelCustom(
+                "Allow".into(),
+                "Deny".into(),
+            ))
+            .blocking_show();
         let decision = if allowed { "allow" } else { "deny" };
         sidecar.send_permission_respond(&request_id, decision);
     });

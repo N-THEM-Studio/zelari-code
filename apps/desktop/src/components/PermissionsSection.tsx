@@ -20,7 +20,7 @@ interface Props {
 
 const PRESET_HELP: Record<PermissionPreset, string> = {
   standard:
-    "Reads and writes allowed; commands and network ask (fail-closed until the ask bridge ships)",
+    "Reads and writes allowed; commands and network ask via the native approval dialog",
   strict:
     "Everything that can ask, asks. Safest for untrusted repos; expect frequent blocks in headless runs",
   yolo:
