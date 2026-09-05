@@ -81,9 +81,20 @@ describe('planFolderSwitch (FIX-3: picking a folder must never rebind a used cha
   it('deterministic ids/timestamps via opts (testability)', () => {
     const used = conv({ id: 'a', messages: [user] });
     const plan = planFolderSwitch([used], 'a', 'E:\\proj-b', { now: 5_000, newId: 'fixed' });
-    const appended = plan.conversations[plan.conversations.length - 1]!;
+    // New chat lands at the HEAD, matching the "New chat" button path.
+    const fresh = plan.conversations[0]!;
     expect(plan.nextActiveId).toBe('fixed');
-    expect(appended).toMatchObject({ id: 'fixed', createdAt: 5_000, updatedAt: 5_000 });
+    expect(fresh).toMatchObject({ id: 'fixed', createdAt: 5_000, updatedAt: 5_000 });
+  });
+
+  it('REGRESSION (P0 storage): with 80 stored chats the new one survives the cap', () => {
+    // 80 existing conversations, newest at the head (App convention).
+    const list = Array.from({ length: 80 }, (_, i) =>
+      conv({ id: `c${i}`, updatedAt: 5_000 - i, messages: [user] }),
+    );
+    const plan = planFolderSwitch(list, 'c0', 'E:\\proj-b', { now: 9_000, newId: 'fresh' });
+    expect(plan.conversations).toHaveLength(81);
+    expect(plan.conversations[0]!.id).toBe('fresh');
   });
 
   it('unknown active id → plan is a no-op keeping the selection', () => {

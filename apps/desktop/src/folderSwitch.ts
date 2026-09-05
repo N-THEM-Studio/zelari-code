@@ -33,7 +33,8 @@ let switchSeq = 0;
  * - virgin active chat → same list, its cwd rebound to `newCwd`, activeId
  *   unchanged (keeps the old "fresh chat, pick folder first" flow);
  * - otherwise → the active chat KEEPS its old cwd and a NEW conversation
- *   bound to `newCwd` is appended; nextActiveId points at the new chat.
+ *   bound to `newCwd` is prepended at the head (same convention as the
+ *   "New chat" button); nextActiveId points at the new chat.
  *   The new chat carries no sessionId, so the first send() in the new
  *   folder starts a fresh spine there.
  */
@@ -71,8 +72,11 @@ export function planFolderSwitch(
     cwd: newCwd || undefined,
     archived: false,
   };
+  // Prepend (newest first) — consistent with the "New chat" button path in
+  // App.tsx. Positional note: chatStorage caps by recency, not by array
+  // position, but keeping one convention avoids surprises.
   return {
-    conversations: [...conversations, fresh],
+    conversations: [fresh, ...conversations],
     nextActiveId: fresh.id,
     reboundInPlace: false,
   };

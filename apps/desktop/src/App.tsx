@@ -717,9 +717,19 @@ export default function App() {
   phaseRef.current = phase;
 
 
-  // Persist chats
+  // Persist chats. The ACTIVE conversation is guaranteed a storage slot
+  // (cap-aware selection in chatStorage); quota failures surface on the
+  // status line instead of being swallowed — in-memory data stays intact.
   useEffect(() => {
-    saveConversations(conversations);
+    const res = saveConversations(conversations, {
+      activeId: activeIdRef.current,
+    });
+    if (!res.ok) {
+      console.warn("[zelari] chat save failed:", res.error);
+      setStatusLine(
+        `Chats not saved (local storage full) — ${res.error ?? "unknown error"}`,
+      );
+    }
   }, [conversations]);
 
   // Theme: persist + sync color-scheme for native form controls
