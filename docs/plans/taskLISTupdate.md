@@ -1,60 +1,60 @@
-Sì. Riformulerei le due modifiche come **un unico intervento architetturale**, perché Live Tasks e multi-chat concorrente hanno lo stesso requisito di fondo: lo stato non può più essere globale in `App.tsx`, ma deve essere associato a una precisa coppia **conversation + workspace**, e ogni run deve essere identificabile indipendentemente.
+Yes. I would reformulate the two changes as **a single architectural intervention**, because Live Tasks and concurrent multi-chat have the same underlying requirement: state can no longer be global in `App.tsx`, it must be associated with a precise **conversation + workspace** pair, and every run must be independently identifiable.
 
-Sul codice attuale ci sono tre vincoli importanti:
+On the current code there are three important constraints:
 
-- `Conversation` non possiede ancora `cwd` né task propri, mentre `RunTaskArgs` supporta già `cwd`, `history` e `todos`: quindi il backend è già predisposto a ricevere una cartella diversa per ogni invocazione. 
-- Desktop mantiene ancora `workdir` e `running` come stato globale; inoltre impedisce cambio chat/nuova chat mentre un run è attivo. 
-- soprattutto, Rust dichiara ancora esplicitamente il run state come **single-flight**, `cancel_run` è globale e gli `agent-event` normali non portano il `runId`. 
+- `Conversation` does not yet own `cwd` or its own tasks, while `RunTaskArgs` already supports `cwd`, `history` and `todos`: so the backend is already prepared to receive a different folder per invocation.
+- Desktop still keeps `workdir` and `running` as global state; moreover it prevents switching chat / new chat while a run is active.
+- above all, Rust still explicitly declares run state as **single-flight**, `cancel_run` is global, and normal `agent-event`s do not carry the `runId`.
 
-Quindi farei così.
+So I would do the following.
 
-# Architettura target
+# Target architecture
 
-Il concetto centrale deve diventare:
+The central concept must become:
 
 ```ts
 Conversation
-   │
-   ├── cwd
-   ├── sessionTasks
-   ├── messages
-   ├── provider/model/mode
-   │
-   └── runtime ──────► runId
-                         │
-                         ├── process
-                         ├── status
-                         ├── tool activity
-                         └── events
+   |
+   +- cwd
+   +- sessionTasks
+   +- messages
+   +- provider/model/mode
+   |
+   +- runtime ------ runId
+                     |
+                     +- process
+                     +- status
+                     +- tool activity
+                     +- events
 ```
 
-Mentre i task di progetto devono vivere per workspace:
+While project tasks must live per workspace:
 
 ```text
 cwd A
- └─ .zelari/plan.json
-       └─ project tasks
+ +-- .zelari/plan.json
+       +-- project tasks
 
 cwd B
- └─ .zelari/plan.json
-       └─ project tasks
+ +-- .zelari/plan.json
+       +-- project tasks
 ```
 
-Quindi:
+So:
 
 ```text
-session task = appartiene alla chat
-project task = appartiene alla cartella
-run          = appartiene alla chat + cartella
+session task = belongs to the chat
+project task = belongs to the folder
+run          = belongs to chat + folder
 ```
 
-Questo è il punto fondamentale.
+This is the fundamental point.
 
 ---
 
-# FASE 1 — rendere Conversation workspace-aware
+# PHASE 1 - make Conversation workspace-aware
 
-## 1. Estendere `Conversation`
+## 1. Extend `Conversation`
 
 In:
 
@@ -62,7 +62,7 @@ In:
 apps/desktop/src/types.ts
 ```
 
-porterei `Conversation` verso:
+I would move `Conversation` toward:
 
 ```ts
 export interface Conversation {
@@ -101,30 +101,30 @@ export interface Conversation {
 }
 ```
 
-Non salverei:
+I would NOT save:
 
 ```ts
 running: true
 runId: ...
 ```
 
-come stato persistente della Conversation.
+as persistent Conversation state.
 
-Il run è runtime state.
+The run is runtime state.
 
 ---
 
-# FASE 2 — eliminare il `workdir` globale come source of truth
+# PHASE 2 - eliminate global `workdir` as source of truth
 
-Oggi Desktop ha ancora il concetto esplicito:
+Today Desktop still has the explicit concept:
 
 ```text
 one window = one folder
 ```
 
-nel relativo state di `App.tsx`. 
+in the relative `App.tsx` state.
 
-Deve diventare:
+It must become:
 
 ```ts
 const activeConversation = conversations.find(
@@ -134,7 +134,7 @@ const activeConversation = conversations.find(
 const activeCwd = activeConversation?.cwd;
 ```
 
-Da quel momento:
+From that moment on:
 
 ```text
 Files panel
@@ -148,33 +148,33 @@ runTask
 Live Tasks
 ```
 
-devono utilizzare `activeConversation.cwd`.
+must use `activeConversation.cwd`.
 
-### UX di Open Folder
+### Open Folder UX
 
-Propongo questa semantica:
+I propose this semantics:
 
-**Chat vuota e idle**
-
-```text
-Open Folder
-    ↓
-assegna cwd alla chat corrente
-```
-
-**Chat che contiene già messaggi**
+**Empty and idle chat**
 
 ```text
 Open Folder
-    ↓
-crea nuova chat associata alla nuova cartella
+    |
+assigns cwd to the current chat
 ```
 
-Non cambierei silenziosamente cwd a una conversazione esistente: rischieresti di avere metà contesto relativo a repo A e metà relativo a repo B.
+**Chat that already contains messages**
+
+```text
+Open Folder
+    |
+creates a new chat associated with the new folder
+```
+
+I would not silently change the cwd of an existing conversation: you would risk having half the context related to repo A and half to repo B.
 
 ### New Chat
 
-`New Chat` dovrebbe normalmente ereditare il workspace corrente:
+`New Chat` should normally inherit the current workspace:
 
 ```ts
 createConversation({
@@ -182,26 +182,26 @@ createConversation({
 });
 ```
 
-Ma permettere anche:
+But also allow:
 
 ```text
 + New Chat
-+ New Workspace Chat…
++ New Workspace Chat
 ```
 
 ---
 
-# FASE 3 — modello canonico Live Tasks
+# PHASE 3 - canonical Live Tasks model
 
-Creerei:
+I would create:
 
 ```text
 apps/desktop/src/liveTasks/
-├── types.ts
-├── normalize.ts
-├── workspacePlan.ts
-├── reducer.ts
-└── useLiveTasks.ts
++- types.ts
++- normalize.ts
++- workspacePlan.ts
++- reducer.ts
++- useLiveTasks.ts
 ```
 
 ### `types.ts`
@@ -236,7 +236,7 @@ export interface LiveTask {
 }
 ```
 
-Serve la normalizzazione perché i vecchi todo usano `completed`, mentre i workspace task usano `done` e supportano anche `blocked`. Il task system persistente modifica già `.zelari/plan.json` e usa gli status `pending`, `in_progress`, `done`, `blocked`. 
+Normalization is needed because the old todos use `completed`, while workspace tasks use `done` and also support `blocked`. The persistent task system already modifies `.zelari/plan.json` and uses the statuses `pending`, `in_progress`, `done`, `blocked`.
 
 ```ts
 function normalizeTodoStatus(status: DesktopTodoStatus): LiveTaskStatus {
@@ -251,9 +251,9 @@ function normalizeTodoStatus(status: DesktopTodoStatus): LiveTaskStatus {
 
 ---
 
-# FASE 4 — distinguere correttamente task di chat e task di progetto
+# PHASE 4 - correctly distinguish chat tasks from project tasks
 
-Non cercherei di unificare le due sorgenti fisicamente.
+I would not try to physically unify the two sources.
 
 ## Session tasks
 
@@ -263,14 +263,14 @@ Source of truth:
 Conversation.sessionTasks
 ```
 
-Aggiornati da:
+Updated by:
 
 ```text
 todo_write
 todo_read
 ```
 
-Il codice attuale fa già l'update optimistic di `todo_write` al `tool_execution_start`; quella caratteristica va mantenuta. 
+The current code already does the optimistic update of `todo_write` at `tool_execution_start`; that characteristic must be kept.
 
 ## Workspace tasks
 
@@ -280,16 +280,16 @@ Source of truth:
 {cwd}/.zelari/plan.json
 ```
 
-Il sistema workspace considera già `plan.json` la rappresentazione machine-readable del piano e `createPlan/createTask/updateTask` modificano quel file. 
+The workspace system already considers `plan.json` the machine-readable representation of the plan and `createPlan/createTask/updateTask` modify that file.
 
-Quindi:
+So:
 
 ```ts
 type WorkspaceTasksState = Record<string, LiveTask[]>;
 // key = normalized cwd
 ```
 
-E:
+And:
 
 ```ts
 const visibleTasks = [
@@ -298,27 +298,27 @@ const visibleTasks = [
 ];
 ```
 
-Questo produce automaticamente la semantica corretta:
+This automatically produces the correct semantics:
 
 ```text
-Chat A / repo Zelari
+Chat A / Zelari repo
   Session tasks A
   Project tasks Zelari
 
-Chat B / repo Zelari
+Chat B / Zelari repo
   Session tasks B
   Project tasks Zelari
 
-Chat C / repo Altro
+Chat C / Other repo
   Session tasks C
-  Project tasks Altro
+  Project tasks Other
 ```
 
-Esattamente quello che vuoi per lavorare contemporaneamente.
+Exactly what you want for working simultaneously.
 
 ---
 
-# FASE 5 — leggere direttamente `.zelari/plan.json`
+# PHASE 5 - read `.zelari/plan.json` directly
 
 `workspacePlan.ts`:
 
@@ -354,15 +354,15 @@ export async function readWorkspaceTasks(
 }
 ```
 
-Non parserei i messaggi di testo restituiti da `createTask`.
+I would not parse the text messages returned by `createTask`.
 
-Il tool event serve per la **reattività**, `plan.json` serve per la **verità**.
+The tool event serves **reactivity**, `plan.json` serves **truth**.
 
 ---
 
-# FASE 6 — Live Tasks optimistic + reconciliation
+# PHASE 6 - Live Tasks optimistic + reconciliation
 
-Questa è la UX che implementerei.
+This is the UX I would implement.
 
 ### `createTask` start
 
@@ -373,13 +373,13 @@ createTask({
 })
 ```
 
-Desktop inserisce subito:
+Desktop immediately inserts:
 
 ```text
-○ Implement RequestMeter     creating…
+-> Implement RequestMeter     creating
 ```
 
-con:
+with:
 
 ```ts
 optimistic: true
@@ -394,15 +394,15 @@ updateTask({
 })
 ```
 
-Desktop aggiorna immediatamente:
+Desktop immediately updates:
 
 ```text
-▶ Implement RequestMeter
+* Implement RequestMeter
 ```
 
 ### Tool end
 
-Su:
+On:
 
 ```text
 createPlan
@@ -411,92 +411,92 @@ createTask
 updateTask
 ```
 
-eseguire sempre:
+always run:
 
 ```ts
 await refreshWorkspaceTasks(cwd);
 ```
 
-ottenendo:
+obtaining:
 
 ```text
 optimistic state
-      ↓
+      |
 actual plan.json
-      ↓
+      |
 canonical state
 ```
 
-Se il tool fallisce, la stessa rilettura elimina automaticamente lo stato optimistic errato.
+If the tool fails, the same re-read automatically removes the wrong optimistic state.
 
-Non serve polling.
+No polling needed.
 
-Fare refresh anche quando:
+Also refresh when:
 
 ```text
-apro una cartella
-seleziono una chat
-termina un run
-Desktop torna in foreground (opzionale)
+I open a folder
+I select a chat
+a run ends
+Desktop returns to foreground (optional)
 ```
 
 ---
 
-# FASE 7 — `LiveTasksPanel`
+# PHASE 7 - `LiveTasksPanel`
 
-Rinominerei/evolverei `SessionTodosPanel`:
+I would rename/evolve `SessionTodosPanel`:
 
 ```text
 SessionTodosPanel
-        ↓
+        |
 LiveTasksPanel
 ```
 
-Non butterei via il componente corrente.
+I would not throw away the current component.
 
-UI proposta:
+Proposed UI:
 
 ```text
-┌─────────────────────────────────┐
-│ TASKS                     ● LIVE│
-│ 4 / 7 done        1 running     │
-│                                 │
-│ THIS CHAT                       │
-│ ▶ Check provider adapter        │
-│ ○ Run integration tests         │
-│                                 │
-│ PROJECT · zelari-code           │
-│ Phase 2 · Desktop               │
-│ ✓ Add RequestSnapshot           │
-│ ▶ Live task routing             │
-│ ○ Multi-session runner          │
-│ ! Windows regression     blocked│
-│                                 │
-│ ▸ 4 completed                   │
-└─────────────────────────────────┘
++-----------------------------------+
+| TASKS                      * LIVE |
+|  4 / 7 done       1 running       |
+|                                   |
+| THIS CHAT                         |
+| * Check provider adapter          |
+| -> Run integration tests          |
+|                                   |
+| PROJECT - zelari-code             |
+| Phase 2 - Desktop                 |
+| + Add RequestSnapshot             |
+| * Live task routing               |
+| -> Multi-session runner           |
+| ! Windows regression      blocked |
+|                                   |
+| v 4 completed                     |
++-----------------------------------+
 ```
 
-`RunActivity` deve rimanere separato:
+`RunActivity` must remain separate:
 
 ```text
 LiveTasks:
-▶ Implement multi-session runner
+* Implement multi-session runner
 
 RunActivity:
-grep_content      ✓
-read_file         ✓
+grep_content      +
+read_file         +
 edit_file         running
 ```
 
-Uno descrive **l'obiettivo**; l'altro descrive **quello che sta facendo il modello in questo istante**.
+One describes **the goal**; the other describes **what the model is doing at this instant**.
 
 ---
 
-# FASE 8 — prima condizione necessaria per il multi-chat: multiplexare i run
+# PHASE 8 - first necessary condition for multi-chat: multiplex the runs
 
-Qui c'è il refactor più importante.
+Here is the most important refactor.
 
-Il backend Rust oggi usa ancora:
+The Rust backend today still uses:
 
 ```rust
 struct RunState {
@@ -505,9 +505,9 @@ struct RunState {
 }
 ```
 
-e rifiuta un secondo task quando il primo è in corso. 
+and refuses a second task while the first is in progress.
 
-Sostituirei con:
+I would replace it with:
 
 ```rust
 struct RunControl {
@@ -522,29 +522,29 @@ struct RunRegistry {
 }
 ```
 
-Quindi:
+So:
 
 ```text
 RunRegistry
 
 run-0187
- ├─ conversation = chat-A
- ├─ cwd = /dev/zelari
- └─ cancel flag
+ +-- conversation = chat-A
+ +-- cwd = /dev/zelari
+ +-- cancel flag
 
 run-0188
- ├─ conversation = chat-B
- ├─ cwd = /dev/api
- └─ cancel flag
+ +-- conversation = chat-B
+ +-- cwd = /dev/api
+ +-- cancel flag
 ```
 
-Non più:
+No longer:
 
 ```text
 there is a run
 ```
 
-ma:
+but:
 
 ```text
 there are N runs
@@ -552,11 +552,11 @@ there are N runs
 
 ---
 
-# FASE 9 — aggiungere `conversationId` a `run_task`
+# PHASE 9 - add `conversationId` to `run_task`
 
-Oggi `run_task` crea già un `run_id` e lo restituisce. 
+Today `run_task` already creates a `run_id` and returns it.
 
-Aggiungerei però al comando:
+However I would add to the command:
 
 ```ts
 interface RunTaskArgs {
@@ -591,7 +591,7 @@ interface RunStarted {
 }
 ```
 
-anziché solo:
+instead of just:
 
 ```ts
 Promise<string>
@@ -599,21 +599,21 @@ Promise<string>
 
 ---
 
-# FASE 10 — ogni evento deve essere correlato al run
+# PHASE 10 - every event must be correlated to the run
 
-Questo è **obbligatorio**.
+This is **mandatory**.
 
-Oggi gli `agent-event` normali sono emessi globalmente e il frontend li associa alla `activeIdRef.current`; quindi questa architettura funzionava solo perché Desktop impediva di cambiare chat durante un run. 
+Today normal `agent-event`s are emitted globally and the frontend associates them with `activeIdRef.current`; so this architecture only worked because Desktop prevented switching chat during a run.
 
-Con due run diventerebbe immediatamente:
+With two runs it would immediately become:
 
 ```text
 run A event
-→ active chat B
-→ messaggio scritto nella chat sbagliata
+-> active chat B
+-> message written in the wrong chat
 ```
 
-### Nuova envelope
+### New envelope
 
 Rust:
 
@@ -627,7 +627,7 @@ struct RunEventEnvelope<T> {
 }
 ```
 
-Evento:
+Event:
 
 ```json
 {
@@ -640,7 +640,7 @@ Evento:
 }
 ```
 
-Tutti devono avere envelope:
+All must have the envelope:
 
 ```text
 agent-event
@@ -652,15 +652,15 @@ run-error
 
 ---
 
-# FASE 11 — modificare `agentClient.ts`
+# PHASE 11 - modify `agentClient.ts`
 
-Da:
+From:
 
 ```ts
 onAgentEvent(handler: (event: AgentEvent) => void)
 ```
 
-a:
+to:
 
 ```ts
 export interface AgentEventEnvelope {
@@ -675,19 +675,19 @@ onAgentEvent(
 )
 ```
 
-E:
+And:
 
 ```ts
 cancelRun(runId: string)
 ```
 
-non più:
+no longer:
 
 ```ts
 cancelRun()
 ```
 
-Il comando Rust corrispondente:
+The corresponding Rust command:
 
 ```rust
 #[tauri::command]
@@ -697,13 +697,13 @@ fn cancel_run(
 ) -> Result<(), String>
 ```
 
-Così:
+So that:
 
 ```text
 Cancel chat A
 ```
 
-non tocca:
+does not touch:
 
 ```text
 chat B
@@ -712,19 +712,19 @@ chat C
 
 ---
 
-# FASE 12 — `RunCoordinator` frontend
+# PHASE 12 - frontend `RunCoordinator`
 
-Estrarrei tutta la logica runtime da `App.tsx`.
+I would extract all the runtime logic from `App.tsx`.
 
 ```text
 apps/desktop/src/runs/
-├── types.ts
-├── reducer.ts
-├── useRunCoordinator.ts
-└── runSelectors.ts
++- types.ts
++- reducer.ts
++- useRunCoordinator.ts
++- runSelectors.ts
 ```
 
-Tipo:
+Type:
 
 ```ts
 export interface RunRuntime {
@@ -761,14 +761,14 @@ interface RunCoordinatorState {
 }
 ```
 
-Quindi:
+So:
 
 ```ts
 const activeRun =
   runCoordinator.getRunForConversation(activeConversationId);
 ```
 
-e non più:
+and no longer:
 
 ```ts
 const [running, setRunning] = useState(false);
@@ -776,61 +776,61 @@ const [running, setRunning] = useState(false);
 
 ---
 
-# FASE 13 — routing corretto degli eventi
+# PHASE 13 - correct event routing
 
-Questa riga concettualmente deve sparire:
+This line must conceptually disappear:
 
 ```ts
 const convId = activeIdRef.current;
 ```
 
-Per eventi del runner.
+For runner events.
 
-Sostituire con:
+Replace with:
 
 ```ts
 const convId = envelope.conversationId;
 ```
 
-Quindi anche se sto guardando Chat B:
+So even while I am looking at Chat B:
 
 ```text
 Chat A running...
-         ↓
+         |
 delta A
-         ↓
+         |
 Conversation A.messages
 
 Chat B active
-         ↓
-UI resta Chat B
+         |
+UI stays on Chat B
 ```
 
-Quando Chat A finisce:
+When Chat A finishes:
 
 ```text
-Chat A         ● done
+Chat A         + done
 ```
 
-e magari appare un badge:
+and maybe a badge appears:
 
 ```text
 Zelari repo
-  Chat A       ✓ 1
-  Chat B       ● running
+  Chat A       + 1
+  Chat B       * running
 ```
 
 ---
 
-# FASE 14 — permettere veramente di cambiare chat durante un run
+# PHASE 14 - really allow switching chat during a run
 
-Rimuovere i guard globali del tipo:
+Remove the global guards of the type:
 
 ```ts
 if (running) return;
 ```
 
-da:
+from:
 
 ```text
 new chat
@@ -838,136 +838,136 @@ select conversation
 select folder
 ```
 
-Il composer deve essere disabilitato solo se:
+The composer must be disabled only if:
 
 ```ts
 const activeConversationRunning =
   Boolean(runIdByConversation[activeConversation.id]);
 ```
 
-Quindi:
+So:
 
 ```text
 Chat A running
-→ composer A disabled / shows Stop
+-> composer A disabled / shows Stop
 
 switch Chat B
-→ composer B enabled
-→ puoi avviare un secondo task
+-> composer B enabled
+-> you can start a second task
 ```
 
 ---
 
-# FASE 15 — policy di concorrenza
+# PHASE 15 - concurrency policy
 
-Qui farei una scelta prudente.
+Here I would make a prudent choice.
 
 ## V1
 
-Permettere liberamente:
+Freely allow:
 
 ```text
-repo A / Chat A    BUILD ─────┐
-                              ├ concurrent
-repo B / Chat B    BUILD ─────┘
+repo A / Chat A    BUILD ----+
+                             |  concurrent
+repo B / Chat B    BUILD ----+
 ```
 
-Ma **non permetterei due agenti write-capable contemporaneamente sulla stessa cwd**.
+But I would **not allow two write-capable agents simultaneously on the same cwd**.
 
-Per esempio:
+For example:
 
 ```text
 /zelari Chat A   build running
 /zelari Chat B   build requested
-                 ↓
+                 |
 "Another build run is already modifying this workspace."
 ```
 
-Motivo: `plan.json` usa già protezioni/atomic write nel processo workspace, ma i run Desktop sono processi CLI separati; un mutex in-process non coordina automaticamente due processi distinti. Questa è quindi una potenziale race non solo sul piano ma, soprattutto, sui file sorgente. 
+Reason: `plan.json` already uses protections/atomic writes in the workspace process, but Desktop runs are separate CLI processes; an in-process mutex does not automatically coordinate two distinct processes. So this is a potential race not only on the plan but, above all, on the source files.
 
-Permetterei invece eventualmente:
+I would instead eventually allow:
 
 ```text
 same cwd:
 plan/read-only + build
 ```
 
-ma per il primo rilascio puoi essere ancora più conservativo:
+but for the first release you can be even more conservative:
 
 ```text
 max 1 active run per cwd
-max N active runs globali
+max N active global runs
 ```
 
-con:
+with:
 
 ```ts
 MAX_PARALLEL_RUNS = 4
 ```
 
-configurabile successivamente.
+configurable later.
 
-È molto più sicuro.
+It is much safer.
 
 ---
 
-# FASE 16 — sidebar multi-workspace
+# PHASE 16 - multi-workspace sidebar
 
-A questo punto cambierei anche la navigazione:
+At this point I would also change the navigation:
 
 ```text
 WORKSPACES
 
-▾ zelari-code                    ● 2
-   Chat · Live tasks             ●
-   Chat · Cache tuning           ●
-   Chat · Release v1.43
+* zelari-code                    * 2
+   Chat - Live tasks             +
+   Chat - Cache tuning           +
+   Chat - Release v1.43
 
-▾ client-api                     ● 1
-   Chat · Fix authentication     ●
+* client-api                     * 1
+   Chat - Fix authentication
 
-▾ website
-   Chat · Landing page
+* website
+   Chat - Landing page
 ```
 
-Dove `● 2` significa due run attivi.
+Where `* 2` means two active runs.
 
-Non serve necessariamente introdurre un'entità persistente `Workspace`: puoi inizialmente derivare i gruppi da:
+It is not strictly necessary to introduce a persistent `Workspace` entity: you can initially derive the groups from:
 
 ```ts
 groupBy(conversations, c => c.cwd)
 ```
 
-e aggiungere un vero `Workspace` model solo se in futuro vuoi proprietà workspace-specifiche.
+and add a real `Workspace` model only if in the future you want workspace-specific properties.
 
 ---
 
-# FASE 17 — stato globalmente visibile dei run
+# PHASE 17 - globally visible run state
 
-La topbar della chat corrente:
+The topbar of the current chat:
 
 ```text
 zelari-code
-● Running · 1m 42s       Tasks 3/7       Stop
+* Running - 1m 42s       Tasks 3/7       Stop
 ```
 
-Sidebar per background job:
+Sidebar for background jobs:
 
 ```text
 client-api
-  Fix auth refresh    ●
+  Fix auth refresh    *
 ```
 
-Al completamento:
+On completion:
 
 ```text
 client-api
-  Fix auth refresh    ✓ 1
+  Fix auth refresh    + 1
 ```
 
-`1` = completion non ancora vista.
+`1` = completion not yet seen.
 
-Quando seleziono la chat:
+When I select the chat:
 
 ```ts
 markRunResultSeen(conversationId);
@@ -975,17 +975,17 @@ markRunResultSeen(conversationId);
 
 ---
 
-# FASE 18 — Live Tasks devono usare il run envelope
+# PHASE 18 - Live Tasks must use the run envelope
 
-Una volta fatto il multiplexing, anche gli aggiornamenti optimistic diventano finalmente corretti.
+Once the multiplexing is done, optimistic updates also finally become correct.
 
-Non:
+Not:
 
 ```ts
 updateWorkspaceTasks(currentWorkdir)
 ```
 
-ma:
+but:
 
 ```ts
 handleToolEvent({
@@ -995,29 +995,29 @@ handleToolEvent({
 });
 ```
 
-Esempio:
+Example:
 
 ```text
-run A / repo Zelari
-updateTask T3 → done
-       ↓
+run A / Zelari repo
+updateTask T3 -> done
+       |
 workspaceTasks["/zelari"]
 
-run B / repo API
-updateTask T8 → in_progress
-       ↓
+run B / API repo
+updateTask T8 -> in_progress
+       |
 workspaceTasks["/api"]
 ```
 
-Non ci può più essere contaminazione.
+There can no longer be any contamination.
 
 ---
 
-# FASE 19 — opzionale ma consigliato: eventi task di prima classe
+# PHASE 19 - optional but recommended: first-class task events
 
-Dopo che tutto funziona farei un ultimo cleanup.
+After everything works I would do a final cleanup.
 
-Invece di far sapere al Desktop:
+Instead of letting the Desktop know:
 
 ```text
 createTask
@@ -1026,7 +1026,7 @@ todo_write
 todo_read
 ```
 
-aggiungere BrainEvents:
+add BrainEvents:
 
 ```ts
 interface TaskUpdateEvent {
@@ -1056,56 +1056,56 @@ interface TaskSnapshotEvent {
 }
 ```
 
-Così Desktop non conosce più l'implementazione interna dei tool.
+So Desktop no longer knows the internal implementation of the tools.
 
-Ma **non lo renderei requisito per la prima release**: tool event + rilettura canonica di `plan.json` è sufficiente.
+But **I would not make it a requirement for the first release**: tool event + canonical re-read of `plan.json` is sufficient.
 
 ---
 
-# File che mi aspetterei modificati
+# Files I would expect to change
 
-Il coding LLM dovrebbe toccare principalmente:
+The coding LLM should mainly touch:
 
 ```text
 apps/desktop/src/
-├── App.tsx
-├── types.ts
-├── agentClient.ts
-├── chatStorage.ts
-│
-├── liveTasks/
-│   ├── types.ts
-│   ├── normalize.ts
-│   ├── workspacePlan.ts
-│   ├── reducer.ts
-│   └── useLiveTasks.ts
-│
-├── runs/
-│   ├── types.ts
-│   ├── reducer.ts
-│   ├── selectors.ts
-│   └── useRunCoordinator.ts
-│
-└── components/
-    └── LiveTasksPanel.tsx
++- App.tsx
++- types.ts
++- agentClient.ts
++- chatStorage.ts
+|
++- liveTasks/
+|   +- types.ts
+|   +- normalize.ts
+|   +- workspacePlan.ts
+|   +- reducer.ts
+|   +- useLiveTasks.ts
+|
++- runs/
+|   +- types.ts
+|   +- reducer.ts
+|   +- selectors.ts
+|   +- useRunCoordinator.ts
+|
++- components/
+    +- LiveTasksPanel.tsx
 
 apps/desktop/src-tauri/src/
-└── lib.rs
++- lib.rs
 ```
 
-Eventualmente:
+Optionally:
 
 ```text
 packages/core/src/shared/events.ts
 ```
 
-solo per la fase `task_update/task_snapshot`.
+only for the `task_update/task_snapshot` phase.
 
 ---
 
-# Sequenza di implementazione che darei al coding LLM
+# Implementation sequence I would give the coding LLM
 
-Farei questi commit separati:
+I would make these separate commits:
 
 ```text
 1. refactor(desktop): bind cwd and session tasks to conversations
@@ -1128,113 +1128,113 @@ Farei questi commit separati:
    // optional follow-up
 ```
 
-Io **non farei 4–7 nello stesso commit**. Il transport multiplex è il punto più delicato.
+I would **not do 4-7 in the same commit**. The multiplex transport is the most delicate point.
 
 ---
 
-# Acceptance tests Live Tasks
+# Live Tasks acceptance tests
 
-Il coding LLM non dovrebbe considerare finito il lavoro finché non passano almeno questi scenari:
+The coding LLM should not consider the work finished until at least these scenarios pass:
 
 ```text
-1. Apro repo A con .zelari/plan.json:
-   → task mostrati immediatamente.
+1. I open repo A with .zelari/plan.json:
+   -> tasks shown immediately.
 
-2. Chat A e Chat B sono entrambe su repo A:
-   → vedono gli stessi project tasks.
+2. Chat A and Chat B are both on repo A:
+   -> they see the same project tasks.
 
 3. todo_write in Chat A:
-   → compare soltanto nei session tasks di A.
+   -> appears only in A's session tasks.
 
-4. Passo a Chat B:
-   → i session todos di A non compaiono.
+4. I switch to Chat B:
+   -> A's session todos do not appear.
 
-5. createTask parte:
-   → task compare optimisticamente.
+5. createTask starts:
+   -> task appears optimistically.
 
-6. createTask termina:
-   → plan.json viene riletto.
+6. createTask ends:
+   -> plan.json gets re-read.
 
-7. updateTask pending → in_progress:
-   → UI cambia immediatamente.
+7. updateTask pending -> in_progress:
+   -> UI changes immediately.
 
-8. updateTask fallisce:
-   → refresh da plan.json ripristina lo stato vero.
+8. updateTask fails:
+   -> refresh from plan.json restores the true state.
 
 9. blocked:
-   → viene visualizzato correttamente.
+   -> displayed correctly.
 
-10. riavvio Desktop:
-    → session tasks vengono dalla Conversation;
-    → project tasks vengono nuovamente da plan.json.
+10. Desktop restart:
+    -> session tasks come from the Conversation;
+    -> project tasks come again from plan.json.
 ```
 
 ---
 
-# Acceptance tests multi-chat / multi-folder
+# Multi-chat / multi-folder acceptance tests
 
-Questi sono ancora più importanti:
+These are even more important:
 
 ```text
-11. Avvio Chat A in repo A.
+11. I start Chat A in repo A.
 
-12. Mentre A lavora posso selezionare Chat B.
+12. While A works I can select Chat B.
 
-13. Avvio Chat B in repo B.
-    → entrambi continuano contemporaneamente.
+13. I start Chat B in repo B.
+    -> both continue simultaneously.
 
-14. Un delta del run A arriva mentre sto guardando B.
-    → viene scritto SOLO nella Conversation A.
+14. A delta of run A arrives while I am watching B.
+    -> it is written ONLY in Conversation A.
 
-15. Tool activity A non compare in B.
+15. Tool activity A does not appear in B.
 
-16. LiveTask update A non modifica i task di repo B.
+16. LiveTask update A does not modify repo B's tasks.
 
-17. Termina A mentre sto guardando B.
-    → B non cambia.
-    → A riceve badge completion.
+17. A finishes while I am watching B.
+    -> B does not change.
+    -> A gets a completion badge.
 
 18. Cancel A.
-    → B continua.
+    -> B continues.
 
 19. Cancel B.
-    → A non viene toccato.
+    -> A is not touched.
 
-20. Due run hanno runId differenti.
+20. Two runs have different runIds.
 
-21. Ogni agent-event contiene runId + conversationId.
+21. Every agent-event contains runId + conversationId.
 
-22. Ogni stderr/error contiene runId + conversationId.
+22. Every stderr/error contains runId + conversationId.
 
-23. RunRegistry elimina correttamente run success/error/cancel.
+23. RunRegistry correctly removes runs on success/error/cancel.
 
-24. New Chat rimane utilizzabile mentre altri run sono attivi.
+24. New Chat remains usable while other runs are active.
 
-25. Open Folder rimane utilizzabile mentre altri workspace lavorano.
+25. Open Folder remains usable while other workspaces work.
 
-26. Il composer è bloccato solo quando la CHAT CORRENTE ha un run.
+26. The composer is blocked only when the CURRENT CHAT has a run.
 
 27. repo A build + repo B build:
-    → consentito.
+    -> allowed.
 
-28. repo A build + repo A secondo build:
-    → rifiutato/queued secondo la policy scelta.
+28. repo A build + repo A second build:
+    -> refused/queued according to the chosen policy.
 
-29. Files/Git/mentions seguono sempre cwd della chat selezionata.
+29. Files/Git/mentions always follow the selected chat's cwd.
 
-30. Nessun uso di activeIdRef.current per decidere a quale chat
-    appartiene un AgentEvent.
+30. No use of activeIdRef.current to decide which chat
+    an AgentEvent belongs to.
 ```
 
-**Il test 30 lo considererei un'invariante architetturale.**
+**I would consider test 30 an architectural invariant.**
 
 ---
 
-# Migrazione delle chat esistenti
+# Migration of existing chats
 
-Hai ancora il vecchio `zelari-desktop-workdir`.
+You still have the old `zelari-desktop-workdir`.
 
-Dato che la vecchia applicazione aveva un'unica folder globale, al primo caricamento puoi fare:
+Since the old application had a single global folder, at first load you can do:
 
 ```ts
 const legacyCwd = localStorage.getItem(
@@ -1248,79 +1248,79 @@ for (const conversation of conversations) {
 }
 ```
 
-Poi mantenere la vecchia key solo come:
+Then keep the old key only as:
 
 ```text
 last opened workspace
 ```
 
-oppure eliminarla dopo la migrazione.
+or remove it after the migration.
 
-`chatStorage.ts` normalizza già le conversation caricate da localStorage, quindi questo è il posto naturale in cui introdurre la compatibilità. 
+`chatStorage.ts` already normalizes conversations loaded from localStorage, so this is the natural place to introduce compatibility.
 
 ---
 
-# La modifica più importante da non sbagliare
+# The most important change not to get wrong
 
-Non partirei dal fare:
+I would not start by doing:
 
 ```ts
 setRunningByConversation(...)
 ```
 
-lasciando invariato il backend.
+leaving the backend unchanged.
 
-Sarebbe una falsa implementazione del parallelismo.
+That would be a fake implementation of parallelism.
 
-Il vero blocco è:
+The real blocker is:
 
 ```text
-Rust RunState single-flight
+Rust single-flight RunState
 +
 global agent-event
 +
 activeIdRef routing
 ```
 
-Solo dopo aver trasformato questa catena in:
+Only after transforming this chain into:
 
 ```text
 RunRegistry
-     ↓
+     |
 runId + conversationId + cwd
-     ↓
+     |
 event envelope
-     ↓
+     |
 RunCoordinator
-     ↓
+     |
 specific Conversation
 ```
 
-puoi togliere in sicurezza i blocchi che oggi impediscono di cambiare chat mentre il modello lavora. Il backend genera già un `runId`, quindi una parte importante della base esiste; manca soprattutto far viaggiare quell'identità con **ogni** evento. 
+can you safely remove the blocks that today prevent switching chat while the model works. The backend already generates a `runId`, so an important part of the base exists; what is mainly missing is making that identity travel with **every** event.
 
-### La forma finale che punterei ad avere
+### The final shape I would aim for
 
 ```text
 ZELARI DESKTOP
-│
-├── Workspace: zelari-code
-│   ├── Chat A
-│   │   ├── run-101 ●
-│   │   └── session tasks
-│   │
-│   ├── Chat B
-│   │   └── idle
-│   │
-│   └── shared .zelari/plan.json tasks
-│
-├── Workspace: api-server
-│   └── Chat C
-│       ├── run-102 ●
-│       └── session tasks
-│
-└── RunRegistry
-    ├── run-101 → Chat A → /zelari-code
-    └── run-102 → Chat C → /api-server
+|
++-- Workspace: zelari-code
+|   +-- Chat A
+|   |   +-- run-101 *
+|   |   +-- session tasks
+|   |
+|   +-- Chat B
+|   |   +-- idle
+|   |
+|   +-- shared .zelari/plan.json tasks
+|
++-- Workspace: api-server
+|   +-- Chat C
+|       +-- run-102 *
+|       +-- session tasks
+|
++-- RunRegistry
+    +-- run-101 -> Chat A -> /zelari-code
+    +-- run-102 -> Chat C -> /api-server
 ```
 
-Questa architettura ti dà contemporaneamente **Live Tasks corretti, multi-chat, multi-folder e background agents**, senza doverli implementare come quattro feature scollegate. Ed è anche una base molto migliore se in seguito vorrai introdurre queue, pause/resume, scheduler o perfino più finestre native del Desktop.
+This architecture gives you simultaneously **correct Live Tasks, multi-chat, multi-folder and background agents**, without having to implement them as four disconnected features. And it is also a much better base if later you want to introduce queues, pause/resume, a scheduler or even more native Desktop windows.
