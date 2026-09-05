@@ -130,3 +130,130 @@ jobs:
           npx tsc -p tsconfig.json
           node scripts/bundle-cli.mjs
           node bin/zelari-code.js --version
+
+  # Alignment plan, phase 5: surface the app shells in PR CI instead of
+  # discovering breakage after the release tag. Desktop regressions used
+  # to surface only in release-desktop.yml; the Android companion had no
+  # CI at all. Path-filtered so ordinary CLI/core PRs do not pay for them,
+  # but shared compile-time deps (root package.json/tsconfig, core) still
+  # trigger the desktop job — desktop typechecks against the root package
+  # through its `zelari-code: file:../..` dependency.
+  changes:
+    name: Path filter
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      desktop: ${{ steps.filter.outputs.desktop }}
+      android: ${{ steps.filter.outputs.android }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute path filters
+        id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          # Push events have no PR base: run both shell jobs (cheap enough,
+          # and main must never break silently).
+          if [ -z "$BASE_SHA" ]; then
+            echo "desktop=true" >> "$GITHUB_OUTPUT"
+            echo "android=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          FILES=$(git diff --name-only "$BASE_SHA"...HEAD || true)
+          DESKTOP=$(printf '%s' "$FILES" | grep -cE '^apps/desktop/|^packages/core/|^package\.json$|^tsconfig\.json$' || true)
+          ANDROID=$(printf '%s' "$FILES" | grep -c '^apps/companion-android/' || true)
+          echo "desktop=$([ "${DESKTOP:-0}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "android=$([ "${ANDROID:-0}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+
+  desktop:
+    name: Desktop · frontend build
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Activate pinned npm
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          npm --version
+
+      # Desktop resolves `zelari-code: file:../..` — the root package must
+      # exist (and be built) before its tsc/vite build runs.
+      - name: Install + build root CLI
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Build Desktop frontend (tsc + vite)
+        run: |
+          cd apps/desktop
+          npm ci --no-audit --no-fund
+          npm run build
+
+  desktop-rust:
+    name: Desktop · cargo check
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Tauri system dependencies (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - name: cargo check (sidecar host)
+        run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  android:
+    name: Android · assembleDebug
+    needs: changes
+    if: needs.changes.outputs.android == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Assemble debug APK
+        run: |
+          cd apps/companion-android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
