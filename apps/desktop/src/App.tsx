@@ -2574,6 +2574,7 @@ export default function App() {
         krakenPlannerModel: prefs.krakenPlannerModel || undefined,
         krakenDelegation:
           prefs.krakenDelegation !== "automatic" ? prefs.krakenDelegation : undefined,
+        permissionPreset: prefs.permissionPreset,
       });
       runCoordinator.started({
         runId,

@@ -201,6 +201,8 @@ export interface RunTaskArgs {
   krakenPlannerModel?: string;
   /** Kraken delegation policy (automatic|prefer|aggressive|lead-only). Omitted/automatic = CLI default. */
   krakenDelegation?: string;
+  /** Tool-permission preset (standard|strict|yolo). Omitted = CLI default (standard). */
+  permissionPreset?: string;
 }
 
 /**

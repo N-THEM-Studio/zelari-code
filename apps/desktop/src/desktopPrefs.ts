@@ -2,7 +2,7 @@
  * Desktop execution prefs (profile, verification gates, experiments).
  *
  * Persisted in localStorage so Settings and the composer stay in lockstep.
- * Pure helpers — unit-tested under tests/unit/desktop-prefs.test.ts.
+ * Pure helpers - unit-tested under tests/unit/desktop-prefs.test.ts.
  */
 export const DESKTOP_PREFS_KEY = "zelari-desktop-prefs-v2";
 
@@ -18,9 +18,13 @@ export type ExecutionProfile = (typeof EXECUTION_PROFILES)[number];
 /** `null` preserves the CLI's automatic verifier-selection behaviour. */
 export type VerifierReviewPreference = boolean | null;
 
+/** Tool-permission preset shipped per-turn to the sidecar (2.32 parity slice). */
+export const PERMISSION_PRESETS = ["standard", "strict", "yolo"] as const;
+export type PermissionPreset = (typeof PERMISSION_PRESETS)[number];
+
 export interface DesktopPrefs {
   profile: ExecutionProfile;
-  /** Strict evidence gate for Kraken runs (on by default — aligned with the CLI, W6/t46 flip after QA t21). */
+  /** Strict evidence gate for Kraken runs (on by default - aligned with the CLI, W6/t46 flip after QA t21). */
   strictDone: boolean;
   /** Strict evidence gate for Mission/Zelari runs (on by default). */
   missionStrict: boolean;
@@ -32,6 +36,9 @@ export interface DesktopPrefs {
   bonAlpha: boolean;
   /** Host-driven Gauntlet loop (`--gauntlet` on the CLI). */
   gauntletLoop: boolean;
+
+  /** Tool-permission preset for every run from this window (standard = fail-closed asks). */
+  permissionPreset: PermissionPreset;
 
   /** Kraken read-oriented exploration model override. Empty = inherit. */
   krakenExploreModel: string;
@@ -53,6 +60,7 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   verifierReview: null,
   bonAlpha: false,
   gauntletLoop: false,
+  permissionPreset: "standard",
   krakenExploreModel: "",
   krakenGeneralModel: "",
   krakenVerifyModel: "",
@@ -89,6 +97,14 @@ export function normalizeDelegation(value: unknown): DelegationPolicy {
     : "automatic";
 }
 
+/** Unknown / missing presets fall back to "standard" (fail-closed default). */
+export function normalizePermissionPreset(value: unknown): PermissionPreset {
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (PERMISSION_PRESETS as readonly string[]).includes(v)
+    ? (v as PermissionPreset)
+    : "standard";
+}
+
 /** Normalize a stored blob; unknown / missing fields fall back to defaults. */
 export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_DESKTOP_PREFS };
@@ -109,6 +125,7 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
       typeof r.verifierReview === "boolean" ? r.verifierReview : null,
     bonAlpha: r.bonAlpha === true,
     gauntletLoop: r.gauntletLoop === true,
+    permissionPreset: normalizePermissionPreset(r.permissionPreset),
     krakenExploreModel: normalizeModelOverride(r.krakenExploreModel),
     krakenGeneralModel: normalizeModelOverride(r.krakenGeneralModel),
     krakenVerifyModel: normalizeModelOverride(r.krakenVerifyModel),

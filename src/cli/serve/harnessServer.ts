@@ -68,6 +68,7 @@ import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { setActiveProofPersistenceSurface } from '../kraken/completionProofPersist.js';
 import { checkStrictPolicyLoad } from '../headless/policyGate.js';
 import { activePolicyLoadMode, setActivePolicyLoadSurface } from '../safety/policyLoadMode.js';
+import { applyTurnPermissionPreset } from './permissionBridge.js';
 import { sweepOrphanSpineLocks } from './spineLockSweep.js';
 
 export interface HarnessServerIo {
@@ -206,6 +207,10 @@ export function createCliRunTurn(): RunTurnFn {
   return async (input, deps) => {
     const { provider, model, stream } = await ensureStream();
     const opts = bindHarnessTurnOptions(input, deps.session.workspaceRoot);
+    // Per-turn permission preset from Desktop Settings. Allowlisted inside
+    // the bridge — unknown values keep the sidecar's current preset (no
+    // arbitrary env injection over the wire).
+    applyTurnPermissionPreset(input);
     // t37: thread the kernel-owned workspace LspManager into the turn so
     // the tool registry registers the LSP tools against THAT server (its
     // lifecycle is refcounted by the kernel per root) instead of deriving

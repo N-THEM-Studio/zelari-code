@@ -2499,6 +2499,9 @@ struct RunTaskArgs {
     /// Kraken delegation policy (automatic|prefer|aggressive|lead-only). None / "automatic" = CLI default.
     #[serde(default)]
     kraken_delegation: Option<String>,
+    /// Tool-permission preset (standard|strict|yolo). None = CLI default.
+    #[serde(default)]
+    permission_preset: Option<String>,
 }
 
 fn default_mode() -> String {
@@ -2693,6 +2696,7 @@ fn run_task(
     let kraken_verify_model = args.kraken_verify_model;
     let kraken_planner_model = args.kraken_planner_model;
     let kraken_delegation = args.kraken_delegation;
+    let permission_preset = args.permission_preset;
     // mission_strict / verify_pack / verifier_review / bon_alpha remain
     // sidecar-spawn knobs (no run.turn field yet). Kraken tentacle routing
     // and delegation ARE per-turn — otherwise Desktop Settings are ignored.
@@ -2729,6 +2733,7 @@ fn run_task(
             kraken_verify_model.as_deref(),
             kraken_planner_model.as_deref(),
             kraken_delegation.as_deref(),
+            permission_preset.as_deref(),
         );
 
         let (exit_code, cancelled) = match result {
@@ -2789,6 +2794,7 @@ fn run_sidecar_turn(
     kraken_verify_model: Option<&str>,
     kraken_planner_model: Option<&str>,
     kraken_delegation: Option<&str>,
+    permission_preset: Option<&str>,
 ) -> Result<i32, String> {
     // Sessions carry the workspace: today's spawn used current_dir(cwd); on
     // the shared sidecar the cwd travels as session.create's workspaceRoot
@@ -2849,6 +2855,12 @@ fn run_sidecar_turn(
     }
     if let Some(d) = kraken_delegation.map(str::trim).filter(|d| !d.is_empty()) {
         input["krakenDelegation"] = serde_json::json!(d);
+    }
+    if let Some(p) = permission_preset.map(str::trim).filter(|p| !p.is_empty()) {
+        // 2.32 parity slice: allowlisted again inside the CLI
+        // (serve/permissionBridge.ts) — the wire value can only be
+        // standard|strict|yolo or it is ignored.
+        input["permissionPreset"] = serde_json::json!(p);
     }
     if kraken_graph {
         // Plan + execute a Kraken task graph instead of a normal dispatch.
