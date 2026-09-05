@@ -96,6 +96,18 @@ describe('permission presets (W3.3 / t48)', () => {
     );
   });
 
+  it('ZELARI_AUTO=1: honest headless escape — asks become auto-approved, categories unchanged', () => {
+    withEnv({ ZELARI_AUTO: '1' }, () => {
+      const p = defaultPermissionPolicy();
+      expect(p.auto).toBe(true); // ask rules auto-allow without a UI handler
+      expect(p.execute).toBe('ask'); // category defaults untouched by auto
+      expect(p.network).toBe('ask');
+    });
+    withEnv({ ZELARI_AUTO: '0' }, () => {
+      expect(defaultPermissionPolicy().auto).toBe(false);
+    });
+  });
+
   it('parsePermissionPreset: case-insensitive, null on garbage', () => {
     expect(parsePermissionPreset('STRICT')).toBe('strict');
     expect(parsePermissionPreset('Standard')).toBe('standard');
