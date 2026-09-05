@@ -5,7 +5,7 @@
 
 This is the English guide. It covers everything you need to install, start, and
 read the UI contract. The deepest reference (every slash command, skills, MCP,
-Desktop, headless) is [`GUIDA.md`](./GUIDA.md) (Italian); the two guides are
+Desktop, headless) is [`GUIDA.md`](./GUIDA.md); the two guides are
 kept in sync release by release.
 
 ---

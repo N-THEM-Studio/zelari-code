@@ -259,9 +259,9 @@ Disable auto-check: `ANATHEMA_DEV=1 zelari-code`
 
 ## Features
 
-- 🤖 **Multi-agent council** — 6 roles (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) with feedback loops and member promotion
-  - **Role legend:** **Caronte** — Council Director (orchestrator, opens the run) · **Nettuno** — Project Planner · **Gerione** — Creative Ideator (diverge→converge) · **Plutone** — Knowledge Architect · **Minosse** — Quality Critic (oracle: literal verification, per-run verdict) · **Lucifero** — Chairman (synthesis + dispatch) — definitions in `packages/core/src/agents/roles.ts`
 - 🐙 **Kraken super-agent** — default mode (aliases `agent`/`single`): lead that spawns `task` tentacles (`explore` / `general` / `verify`), optional git worktrees, and **Kraken Graph** (`/kraken graph`) for a parallel DAG
+- 🤖 **Opt-in council second opinion** — the multi-agent council (6 roles, Caronte → Lucifero, feedback loops + member promotion) runs only when you ask for it (`shift+tab` / `/mode council`); kraken stays the default dispatch
+  - **Role legend:** **Caronte** — Council Director (orchestrator, opens the run) · **Nettuno** — Project Planner · **Gerione** — Creative Ideator (diverge→converge) · **Plutone** — Knowledge Architect · **Minosse** — Quality Critic (oracle: literal verification, per-run verdict) · **Lucifero** — Chairman (synthesis + dispatch) — definitions in `packages/core/src/agents/roles.ts`
 - ⚡ **Zelari-mode** — autonomous multi-run missions: a free-form prompt becomes a mission brief, then **design@council → build@kraken** until the MVP slice's `completion.ok` is green or the iteration budget runs out
 - 🧮 **Budget-aware mission continuation** — after each mission slice a continuation gate decides repair / pivot / hold from the remaining budget and gap history (repeated gap → pivot with reduced roster; exhaustion → hold, never a false done; deterministic PASS stays the only authority)
 - 🧾 **Deep harness manifest** — each session fingerprints its real tool surface (name + description + input schema per tool) alongside profile and resource policy, so tool or schema drift changes the manifest hash and is detectable on resume and in eval provenance
@@ -445,7 +445,7 @@ See [`docs/plans/2026-07-01-council-workspace-cli-stubs.md`](./docs/plans/2026-0
 | Doc | Description |
 |---|---|
 | [PRINCIPLES.md](./PRINCIPLES.md) | First principles (P1–P6) + enforcement map |
-| [docs/GUIDA.md](./docs/GUIDA.md) | **Full user guide** (Italian) |
+| [docs/GUIDA.md](./docs/GUIDA.md) | **Full user guide** |
 | [docs/TOOLS.md](./docs/TOOLS.md) | Tool map (builtin, workspace, MCP, SSH, plan phase) |
 | [docs/media/](./docs/media/) | English marketing stills + trailer |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Dev setup, PR expectations |

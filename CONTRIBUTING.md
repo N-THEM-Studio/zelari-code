@@ -88,12 +88,12 @@ docs/plans/                # Historical design notes (may be outdated)
 |-----|----------|
 | [Product page](https://anathema-studio.com/zelari-code) | Marketing + install CTAs |
 | [README.md](./README.md) | English landing + install |
-| [docs/GUIDA.md](./docs/GUIDA.md) | Full Italian user guide |
+| [docs/GUIDA.md](./docs/GUIDA.md) | Full user guide (English) |
 | [docs/TOOLS.md](./docs/TOOLS.md) | Tool / skill map |
 | [SECURITY.md](./SECURITY.md) | Vulnerability reporting |
 | [CHANGELOG.md](./CHANGELOG.md) | Release notes |
 
-`HANDOFF.md`, `HANDOFF-kraken.md`, `HANDOFF-v0.10.0.md` and `docs/plans/*` are **historical / superseded** and not required reading for new contributors. Current product state (1.35.x): `CHANGELOG.md` + `docs/GUIDA.md`.
+`HANDOFF.md`, `HANDOFF-kraken.md`, `HANDOFF-v0.10.0.md` and `docs/plans/*` are **historical / superseded** and not required reading for new contributors. Current product state: `CHANGELOG.md` + `docs/GUIDA.md` — no version is pinned in this file (the changelog is the source of truth). Release cadence: at most one minor per 48h; batch smaller fixes into patch releases.
 
 ## Code of conduct
 
