@@ -866,10 +866,11 @@ export default function App() {
 
   /**
    * Realtime context stats for the Kraken panel (KrakenContextPanel):
-   * recomputed on every message delta, so the compaction meter breathes
-   * with the stream. Context proxy = chars/4 crossed with the turn's
-   * measured tokens and the last context size reported by the CLI
-   * (best signals until the CLI emits usage events).
+   * recomputed on every message delta, so the meter breathes with the
+   * stream. ctxTokens is the labeled-ESTIMATE numerator only — best proxy
+   * (chars/4, measured turn tokens, last context size reported by the
+   * CLI). The authoritative readout is the spine budget event, resolved
+   * by computeContextMeter; this value only feeds its fallback.
    */
   const liveCtx = useMemo((): LiveCtxStats => {
     const msgs = active?.messages ?? [];

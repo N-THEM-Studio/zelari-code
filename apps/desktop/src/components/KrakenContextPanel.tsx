@@ -18,6 +18,7 @@
  * signal or a kraken phase; a missing/malformed harness event never
  * surfaces as an error.
  */
+import { useEffect, useState } from "react";
 import { useHarnessState } from "../harnessState";
 import type { HarnessVerdict } from "../harnessState";
 import {
@@ -25,17 +26,21 @@ import {
   krakenPhaseLabel,
   type KrakenProgressView,
 } from "./KrakenProgressCard";
+import { computeContextMeter } from "../contextMeter";
 import {
   CONTEXT_LABEL,
   DEFAULT_CONTEXT_LIMIT,
-  contextLevel,
   formatDuration,
   formatTokens,
 } from "./TurnStatsCard";
 import "./chatEnhance.css";
 
 export interface LiveCtxStats {
-  /** Context proxy: max(chars/4 over visible messages, measured turn tokens). */
+  /**
+   * Proxy numerator for the meter's labeled-estimate path: max(chars/4,
+   * measured turn tokens, last prompt size). The authoritative numerator
+   * is the spine budget event — computeContextMeter owns that choice.
+   */
   ctxTokens: number;
   /** Turn-scoped totals (accumulate across members/tentacles). */
   turnTokens: number;
@@ -62,15 +67,36 @@ export function KrakenContextPanel({
   live: LiveCtxStats;
   progress: KrakenProgressView | null;
 }) {
-  const state = useHarnessState();
+  const { view: state, receivedAt } = useHarnessState();
+  // Slow clock tick so a stale budget event flips the meter to its labeled
+  // "est." estimate even when no message delta re-renders the strip.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(id);
+  }, []);
+
   const hasLive =
     live.ctxTokens > 0 || live.turnTokens > 0 || live.toolCount > 0;
   if (!hasLive && !progress) return null;
 
-  const limit = DEFAULT_CONTEXT_LIMIT;
-  const ratio = limit > 0 ? live.ctxTokens / limit : 0;
-  const level = contextLevel(ratio);
-  const pct = Math.min(100, ratio * 100);
+  const support = state?.support;
+  // Honest meter (contextMeter.ts): the spine budget event — occupancy +
+  // real window, same source as the "budget N%" line below — wins while
+  // fresh; anything else renders as the labeled proxy estimate (est.).
+  const meter = computeContextMeter({
+    spine:
+      support?.lastOccupancy !== undefined
+        ? {
+            occupancy: support.lastOccupancy,
+            contextLimit: support.contextLimit,
+            receivedAt: receivedAt ?? 0,
+          }
+        : null,
+    proxyTokens: live.ctxTokens,
+    fallbackLimit: DEFAULT_CONTEXT_LIMIT,
+    now,
+  });
 
   const phaseLabel = progress ? krakenPhaseLabel(progress.phase) : null;
   const phaseLive = !!progress && progress.phase !== KRAKEN_TERMINAL_PHASE;
@@ -99,7 +125,6 @@ export function KrakenContextPanel({
     state && state.turns.length > 0
       ? state.turns[state.turns.length - 1]
       : undefined;
-  const support = state?.support;
   const budget =
     support?.lastOccupancy !== undefined
       ? ` · budget ${Math.round(support.lastOccupancy * 100)}%${
@@ -161,18 +186,19 @@ export function KrakenContextPanel({
       ) : null}
 
       <div
-        className={`turn-stats-ctx is-${level}`}
-        title={`Context proxy: ${live.ctxTokens.toLocaleString()} / ${limit.toLocaleString()} tokens (best of chars/4, measured turn tokens, last reported context)`}
+        className={`turn-stats-ctx is-${meter.level}`}
+        title={meter.tooltip}
       >
         <span className="turn-stats-ctx-bar" aria-hidden>
           <span
             className="turn-stats-ctx-fill"
-            style={{ width: `${pct.toFixed(1)}%` }}
+            style={{ width: `${meter.pct.toFixed(1)}%` }}
           />
         </span>
         <span className="turn-stats-ctx-label">
-          ctx ~{pct.toFixed(pct < 10 ? 1 : 0)}% ·{" "}
-          {support?.lastPolicy ?? CONTEXT_LABEL[level]}
+          ctx ~{meter.pct.toFixed(meter.pct < 10 ? 1 : 0)}%
+          {meter.estimated ? " est." : ""} ·{" "}
+          {support?.lastPolicy ?? CONTEXT_LABEL[meter.level]}
         </span>
       </div>
 
