@@ -1,53 +1,53 @@
 # ZELARI_FRONTIER_RUNTIME_UPGRADE.md
 
-# Zelari Code — Frontier Runtime Upgrade
+# Zelari Code - Frontier Runtime Upgrade
 ## Observer Bus, Steering, Runtime Guards, Kraken Activity, Context Projection, Run Recorder & Evaluation
 
-**Repository target:** `N-THEM-Studio/zelari-code`  
-**Reference project studied:** `ApodexAI/FrontierAgent`  
-**Target area:** `@zelari/core` + CLI/headless protocol + Zelari Desktop  
-**Status:** Implementation specification  
-**Baseline:** repository `main`, 25 agosto 2026
+**Target repository:** `N-THEM-Studio/zelari-code`
+**Reference project studied:** `ApodexAI/FrontierAgent`
+**Target area:** `@zelari/core` + CLI/headless protocol + Zelari Desktop
+**Status:** Implementation specification
+**Baseline:** repository `main`, August 25, 2026
 
 ---
 
 # 0. Executive summary
 
-Questa specifica propone una serie di miglioramenti a Zelari Code ispirati ai pattern architetturali più interessanti osservati in FrontierAgent, senza introdurre una nuova modalità multi-agent concorrente a Kraken.
+This specification proposes a series of improvements to Zelari Code inspired by the most interesting architectural patterns observed in FrontierAgent, without introducing a new concurrent multi-agent mode alongside Kraken.
 
-Il principio guida è:
+The guiding principle is:
 
-> **Non creare un nuovo Agent Team. Migliorare il runtime che già alimenta Kraken, Council e Zelari.**
+> **Do not create a new Agent Team. Improve the runtime that already powers Kraken, Council and Zelari.**
 
-Zelari possiede già componenti molto avanzati:
+Zelari already has very advanced components:
 
-- Kraken lead + tentacoli `explore`, `general`, `verify`;
+- Kraken lead + `explore`, `general`, `verify` tentacles;
 - Kraken Graph DAG;
-- parallelismo e worktree;
+- parallelism and worktrees;
 - strict verification;
 - native criteria pack;
 - durable state;
-- checkpoint;
+- checkpoints;
 - semantic search;
 - diagnostics;
 - mission loop;
 - headless NDJSON;
 - Desktop Tauri.
 
-Le lacune principali da colmare sono invece:
+The main gaps to close are instead:
 
-1. un **Observer / Intervention Runtime** uniforme;
-2. **steering live** durante una run;
-3. **anti-loop / no-progress guard** intelligenti;
-4. una **Kraken Activity UI** che renda visibile ciò che fanno lead e tentacoli;
-5. separazione strutturale tra **Run Record completo** e **Context Projection inviata al modello**;
-6. tool-result spill recuperabile e deduplicato;
+1. a uniform **Observer / Intervention Runtime**;
+2. **live steering** during a run;
+3. intelligent **anti-loop / no-progress guards**;
+4. a **Kraken Activity UI** that makes what lead and tentacles do visible;
+5. structural separation between the complete **Run Record** and the **Context Projection** sent to the model;
+6. recoverable and deduplicated tool-result spill;
 7. **typed compaction state**;
-8. **ContextPolicy per tipo di agente**;
+8. **ContextPolicy per agent type**;
 9. **Run Flight Recorder**;
-10. un **evaluation harness A/B** per misurare realmente miglioramenti, costo e latenza.
+10. an **A/B evaluation harness** to actually measure improvements, cost and latency.
 
-La roadmap consigliata è:
+The recommended roadmap is:
 
 ```text
 PHASE 1  Observer Runtime + Runtime Guards
@@ -60,29 +60,29 @@ PHASE 6  Zelari Eval / A-B Harness
 
 ---
 
-# 1. Cosa prendere da FrontierAgent e cosa NON prendere
+# 1. What to take from FrontierAgent and what NOT to take
 
-## 1.1 Pattern utili
+## 1.1 Useful patterns
 
-FrontierAgent ha alcuni concetti trasferibili molto bene a Zelari:
+FrontierAgent has some concepts that transfer very well to Zelari:
 
-- observer callbacks sul loop;
-- intervention esplicite;
-- input asincrono durante una run;
+- observer callbacks on the loop;
+- explicit interventions;
+- async input during a run;
 - safe turn boundary;
-- task/activity board live;
-- full run record separato dal prompt effettivo;
-- spill di tool output sovradimensionati;
+- live task/activity board;
+- full run record separate from the actual prompt;
+- spill of oversized tool outputs;
 - typed compaction;
 - per-agent context projection;
 - run artifacts;
-- benchmark A/B.
+- A/B benchmark.
 
-Questi concetti migliorano l'affidabilità e l'osservabilità di un runtime agentico senza imporre una nuova architettura di orchestrazione.
+These concepts improve the reliability and observability of an agentic runtime without imposing a new orchestration architecture.
 
-## 1.2 Cosa non duplicare
+## 1.2 What not to duplicate
 
-Non aggiungere una quarta modalità chiamata, per esempio:
+Do not add a fourth mode called, for example:
 
 ```text
 agent-team
@@ -91,139 +91,139 @@ swarm
 multi
 ```
 
-Kraken ha già:
+Kraken already has:
 
 ```text
 Kraken Lead
-├── Explore
-├── General
-├── Verify
-└── Graph DAG
+|-> Explore
+|-> General
+|-> Verify
+|-> Graph DAG
 ```
 
-e Council ha già un workflow multi-agent separato.
+and Council already has a separate multi-agent workflow.
 
-Un ulteriore orchestratore aumenterebbe:
+A further orchestrator would increase:
 
-- complessità;
-- duplicazione;
-- costi di manutenzione;
-- ambiguità UX;
-- difficoltà di test.
+- complexity;
+- duplication;
+- maintenance costs;
+- UX ambiguity;
+- test difficulty.
 
-La direzione corretta è quindi:
+The correct direction is therefore:
 
 ```text
                Shared Runtime Infrastructure
-                          │
-        ┌─────────────────┼─────────────────┐
-        │                 │                 │
+                          |
+        +------------------+------------------+
+        |                  |                  |
       Kraken            Council           Zelari
-        │                                   │
+        |                                    |
      Graph/Tentacles                     Missions
 ```
 
 ---
 
-# 2. Architettura target
+# 2. Target architecture
 
-## 2.1 Vista generale
+## 2.1 Overview
 
 ```text
-┌────────────────────────────────────────────────────────────┐
-│                      Zelari Desktop                        │
-│                                                            │
-│ Chat       Kraken Activity      Run Inspector              │
-│   │               │                  │                     │
-│   └───────────────┼──────────────────┘                     │
-│                   │                                        │
-│        Steer / Queue / Cancel / Retry                      │
-└───────────────────┬────────────────────────────────────────┘
-                    │
-                    │ ControlEvent
-                    ▼
-┌────────────────────────────────────────────────────────────┐
-│                  Headless Control Plane                    │
-│                                                            │
-│ stdin  ← ControlEvent                                      │
-│ stdout → BrainEvent                                        │
-└───────────────────┬────────────────────────────────────────┘
-                    │
-                    ▼
-┌────────────────────────────────────────────────────────────┐
-│                    Agent Runtime                           │
-│                                                            │
-│  Observer Bus                                              │
-│  ├── SteeringObserver                                      │
-│  ├── RepetitionGuard                                       │
-│  ├── NoProgressGuard                                       │
-│  ├── VerificationObserver                                  │
-│  ├── DiagnosticsObserver                                   │
-│  ├── TraceObserver                                         │
-│  ├── MetricsObserver                                       │
-│  └── ContextObserver                                       │
-│                                                            │
-│  AgentHarness                                              │
-│       │                                                    │
-│       ├──── Provider                                        │
-│       ├──── Tools                                           │
-│       └──── Context Engine                                  │
-└───────────────┬───────────────────────────────┬────────────┘
-                │                               │
-                ▼                               ▼
++------------------------------------------------------------+
+|                      Zelari Desktop                        |
+|                                                            |
+| Chat       Kraken Activity      Run Inspector              |
+|   |               |                  |                     |
+|   +---------------------------------+                     |
+|                   |                                        |
+|        Steer / Queue / Cancel / Retry                      |
++------------------------------------------------------------+
+                    |
+                    | ControlEvent
+                    v
++------------------------------------------------------------+
+|                  Headless Control Plane                    |
+|                                                            |
+| stdin  <- ControlEvent                                      |
+| stdout -> BrainEvent                                        |
++------------------------------------------------------------+
+                    |
+                    v
++------------------------------------------------------------+
+|                    Agent Runtime                           |
+|                                                            |
+|  Observer Bus                                              |
+|  |-> SteeringObserver                                      |
+|  |-> RepetitionGuard                                       |
+|  |-> NoProgressGuard                                       |
+|  |-> VerificationObserver                                  |
+|  |-> DiagnosticsObserver                                   |
+|  |-> TraceObserver                                         |
+|  |-> MetricsObserver                                       |
+|  |-> ContextObserver                                       |
+|                                                            |
+|  AgentHarness                                              |
+|       |                                                    |
+|       +-> Provider                                         |
+|       +-> Tools                                            |
+|       +-> Context Engine                                   |
++------------------------------------------------------------+
+                |                               |
+                v                               v
          Kraken / Council                Run Flight Recorder
-                │                               │
-       ┌────────┼────────┐              .zelari/runs/<id>/
-       │        │        │
+                |                               |
+       +--------+--------+              .zelari/runs/<id>/
+       |        |        |
     Explore  General   Verify
 ```
 
 ---
 
-# 3. PHASE 1 — Observer / Intervention Runtime
+# 3. PHASE 1 - Observer / Intervention Runtime
 
-## 3.1 Obiettivo
+## 3.1 Goal
 
-Creare una API comune che permetta a moduli indipendenti di:
+Create a common API that allows independent modules to:
 
-- osservare il ciclo agentico;
-- registrare telemetria;
-- rilevare loop;
-- bloccare o modificare un tool call;
-- chiedere retry;
-- iniettare istruzioni;
-- fermare una run;
-- trasformare un risultato prima che entri nel contesto.
+- observe the agent loop;
+- record telemetry;
+- detect loops;
+- block or modify a tool call;
+- request a retry;
+- inject instructions;
+- stop a run;
+- transform a result before it enters the context.
 
-Il runtime core deve rimanere il più possibile neutrale.
+The core runtime must remain as neutral as possible.
 
 ---
 
-# 4. Nuovo modulo Observer
+# 4. New Observer module
 
-## 4.1 Posizione proposta
+## 4.1 Proposed location
 
-Se `AgentHarness` è in:
+If `AgentHarness` is in:
 
 ```text
 packages/core/src/core/AgentHarness.ts
 ```
 
-creare:
+create:
 
 ```text
 packages/core/src/runtime/observers/
-├── types.ts
-├── ObserverBus.ts
-├── composeObservers.ts
-├── RuntimeGuardObserver.ts
-├── SteeringObserver.ts
-├── TraceObserver.ts
-├── MetricsObserver.ts
-└── index.ts
+|-> types.ts
+|-> ObserverBus.ts
+|-> composeObservers.ts
+|-> RuntimeGuardObserver.ts
+|-> SteeringObserver.ts
+|-> TraceObserver.ts
+|-> MetricsObserver.ts
+|-> index.ts
 ```
 
-Se il repository usa una convenzione differente, mantenere la stessa separazione logica.
+If the repository uses a different convention, keep the same logical separation.
 
 ---
 
@@ -268,7 +268,7 @@ export interface RuntimeEventBase {
 
 ---
 
-## 5.3 Callback principali
+## 5.3 Main callbacks
 
 ```ts
 export interface AgentObserver {
@@ -312,7 +312,7 @@ export interface AgentObserver {
 
 # 6. Intervention contract
 
-## 6.1 Tipo base
+## 6.1 Base type
 
 ```ts
 export type ObserverResult =
@@ -332,20 +332,20 @@ const CONTINUE: ObserverResult = { action: "continue" };
 
 ---
 
-## 6.2 Regole
+## 6.2 Rules
 
-Un observer:
+An observer:
 
-- non deve mutare silenziosamente lo state globale;
-- deve restituire un risultato esplicito;
-- non deve lanciare eccezioni per una decisione di policy normale;
-- può essere `best-effort` oppure `fail-closed`.
+- must not silently mutate global state;
+- must return an explicit result;
+- must not throw exceptions for a normal policy decision;
+- can be `best-effort` or `fail-closed`.
 
 ---
 
 # 7. Observer policy
 
-## 7.1 Classificazione
+## 7.1 Classification
 
 ```ts
 export type ObserverFailureMode =
@@ -354,13 +354,13 @@ export type ObserverFailureMode =
   | "fail-closed";
 ```
 
-Esempi:
+Examples:
 
 ```text
-MetricsObserver          → ignore
-TraceObserver            → warn
-RepetitionGuard          → warn
-AuthorizationObserver    → fail-closed
+MetricsObserver          -> ignore
+TraceObserver            -> warn
+RepetitionGuard          -> warn
+AuthorizationObserver    -> fail-closed
 ```
 
 ---
@@ -390,16 +390,16 @@ export class ObserverBus {
     hook: K,
     event: Parameters<NonNullable<AgentObserver[K]>>[0],
   ): Promise<ObserverResult[]> {
-    // ordinamento stabile per priority
-    // gestione errori secondo failureMode
-    // raccolta interventions
+    // stable ordering by priority
+    // error handling per failureMode
+    // intervention collection
   }
 }
 ```
 
 ---
 
-## 8.1 Priorità consigliate
+## 8.1 Recommended priorities
 
 ```text
 10  authorization / safety
@@ -413,11 +413,11 @@ export class ObserverBus {
 
 ---
 
-# 9. Resolution delle intervention
+# 9. Intervention resolution
 
-Più observer possono rispondere allo stesso evento.
+Multiple observers can respond to the same event.
 
-Priorità semantica:
+Semantic priority:
 
 ```text
 deny_tool
@@ -428,7 +428,7 @@ inject
 continue
 ```
 
-Esempio:
+Example:
 
 ```ts
 function resolveInterventions(
@@ -436,41 +436,41 @@ function resolveInterventions(
 ): ObserverResult
 ```
 
-Se due observer restituiscono `stop`, usare quello con priority più alta e registrare entrambi nel trace.
+If two observers return `stop`, use the one with the higher priority and record both in the trace.
 
 ---
 
-# 10. Integrazione in AgentHarness
+# 10. Integration into AgentHarness
 
-Nel ciclo esistente:
+In the existing loop:
 
 ```text
 model
-→ response
-→ tool calls
-→ tool execution
-→ result
-→ next turn
+-> response
+-> tool calls
+-> tool execution
+-> result
+-> next turn
 ```
 
-inserire:
+insert:
 
 ```text
 onRunStart
 
 onModelAttempt
-  ↓
+  |
 provider
-  ↓
+  |
 onModelDelta*
-  ↓
+  |
 onModelResponse
 
 for each tool:
   onToolCall
-      ↓
+      |
   execute
-      ↓
+      |
   onToolResult
 
 onTurnEnd
@@ -484,29 +484,29 @@ onRunEnd
 
 # 11. Backward compatibility
 
-La prima patch deve funzionare con:
+The first patch must work with:
 
 ```ts
 observers: []
 ```
 
-senza modificare l'output corrente.
+without changing the current output.
 
-Il nuovo runtime deve essere opt-in internamente fino alla stabilizzazione.
+The new runtime must be opt-in internally until stabilization.
 
-Feature flag proposta:
+Proposed feature flag:
 
 ```text
 ZELARI_RUNTIME_OBSERVERS=1
 ```
 
-Durante rollout iniziale:
+During initial rollout:
 
 ```text
 default = 0
 ```
 
-Dopo test:
+After testing:
 
 ```text
 default = 1
@@ -514,30 +514,30 @@ default = 1
 
 ---
 
-# 12. PHASE 1B — Runtime Guards
+# 12. PHASE 1B - Runtime Guards
 
-I guard devono essere observer, non condizioni sparse nel loop.
+Guards must be observers, not scattered conditions in the loop.
 
-Creare:
+Create:
 
 ```text
 packages/core/src/runtime/guards/
-├── RepetitionGuard.ts
-├── NoProgressGuard.ts
-├── FailureSignatureGuard.ts
-├── DuplicateSearchGuard.ts
-├── ToolLoopGuard.ts
-├── ReasoningWatchdog.ts
-└── types.ts
+|-> RepetitionGuard.ts
+|-> NoProgressGuard.ts
+|-> FailureSignatureGuard.ts
+|-> DuplicateSearchGuard.ts
+|-> ToolLoopGuard.ts
+|-> ReasoningWatchdog.ts
+|-> types.ts
 ```
 
 ---
 
 # 13. RepetitionGuard
 
-## 13.1 Obiettivo
+## 13.1 Goal
 
-Rilevare tool call semanticamente identiche ripetute senza nuovo progresso.
+Detect semantically identical tool calls repeated without new progress.
 
 Fingerprint:
 
@@ -561,7 +561,7 @@ sha256(
 
 ---
 
-## 13.2 Soglie
+## 13.2 Thresholds
 
 ```ts
 interface RepetitionGuardConfig {
@@ -572,22 +572,22 @@ interface RepetitionGuardConfig {
 
 ---
 
-## 13.3 Reazione
+## 13.3 Reaction
 
-Alla seconda/terza ripetizione:
+On the second/third repetition:
 
 ```text
 WARN
 ```
 
-Iniettare:
+Inject:
 
 ```text
 The same tool call has produced no new progress multiple times.
 Reassess the current hypothesis before repeating it again.
 ```
 
-Al limite hard:
+At the hard limit:
 
 ```text
 STOP / recovery
@@ -597,24 +597,24 @@ STOP / recovery
 
 # 14. FailureSignatureGuard
 
-## 14.1 Problema
+## 14.1 Problem
 
-L'agente può modificare file diverse volte ma ottenere sempre:
+The agent can edit files multiple times but still get:
 
 ```text
 npm test
 FAIL
 ```
 
-con lo stesso errore.
+with the same error.
 
-Serve rilevare la firma del fallimento, non solo il comando.
+You need to detect the failure signature, not just the command.
 
 ---
 
 ## 14.2 Fingerprint
 
-Per shell/test:
+For shell/test:
 
 ```ts
 interface FailureSignature {
@@ -624,17 +624,17 @@ interface FailureSignature {
 }
 ```
 
-Normalizzare:
+Normalize:
 
-- timestamp;
-- path temporanei;
-- PID;
-- UUID;
-- linee di progress.
+- timestamps;
+- temp paths;
+- PIDs;
+- UUIDs;
+- progress lines.
 
 ---
 
-## 14.3 Esempio
+## 14.3 Example
 
 ```text
 npm test
@@ -642,14 +642,14 @@ FAIL auth.spec.ts
 Expected 200, received 401
 ```
 
-ripetuto 3 volte:
+repeated 3 times:
 
 ```text
 FailureSignatureGuard
-→ inject
+-> inject
 ```
 
-messaggio:
+message:
 
 ```text
 The same failure signature has persisted across multiple attempts.
@@ -661,16 +661,16 @@ inspect upstream state, or delegate a fresh verification/exploration task.
 
 # 15. NoProgressGuard
 
-## 15.1 Segnali
+## 15.1 Signals
 
-Una run è potenzialmente stalled se per N turni:
+A run is potentially stalled if for N turns:
 
-- nessun file cambia;
-- nessun task passa a completed;
-- nessuna nuova discovery;
-- stesso errore;
-- stesso tool family;
-- nessun nuovo graph node completato.
+- no file changes;
+- no task moves to completed;
+- no new discovery;
+- same error;
+- same tool family;
+- no new completed graph node.
 
 ---
 
@@ -689,22 +689,22 @@ export interface ProgressVector {
 
 ---
 
-## 15.3 Soglie
+## 15.3 Thresholds
 
 ```text
-soft stall: 2 turni
-hard stall: 5 turni
+soft stall: 2 turns
+hard stall: 5 turns
 ```
 
-Per Zelari mission esiste già `ZELARI_MISSION_MAX_STALL`.
+For Zelari missions `ZELARI_MISSION_MAX_STALL` already exists.
 
-Il nuovo guard deve generalizzare il concetto al runtime Kraken normale.
+The new guard must generalize the concept to the normal Kraken runtime.
 
 ---
 
 # 16. DuplicateSearchGuard
 
-Rilevare:
+Detect:
 
 ```text
 grep A
@@ -712,9 +712,9 @@ grep A
 grep A
 ```
 
-oppure query semanticamente quasi identiche.
+or semantically near-identical queries.
 
-Per:
+For:
 
 ```text
 grep_content
@@ -723,19 +723,19 @@ web_search
 list_files
 ```
 
-applicare fingerprint dedicati.
+apply dedicated fingerprints.
 
 ---
 
 # 17. Reasoning / Provider watchdog
 
-Zelari possiede già:
+Zelari already has:
 
 ```text
 ZELARI_PROVIDER_TIMEOUT_MS
 ```
 
-Aggiungere telemetria e warning separati:
+Add separate telemetry and warning:
 
 ```text
 model_call_started
@@ -743,7 +743,7 @@ model_first_token
 model_call_finished
 ```
 
-Metriche:
+Metrics:
 
 ```text
 time_to_first_token
@@ -751,26 +751,26 @@ generation_duration
 stream_idle_duration
 ```
 
-Feature env proposte:
+Proposed feature env:
 
 ```text
 ZELARI_MODEL_FIRST_TOKEN_WARN_MS
 ZELARI_MODEL_STREAM_IDLE_MS
 ```
 
-Non interrompere automaticamente provider che supportano reasoning lungo senza evidenza di blocco reale.
+Do not automatically interrupt providers that support long reasoning without evidence of a real block.
 
 ---
 
-# 18. Runtime Guard settings Desktop
+# 18. Runtime Guard settings in Desktop
 
 In:
 
 ```text
-Settings → Defaults → Runtime Guards
+Settings -> Defaults -> Runtime Guards
 ```
 
-aggiungere:
+add:
 
 ```text
 Runtime guardrails           ON
@@ -780,11 +780,11 @@ No-progress guard            ON
 Repeated failure guard       ON
 ```
 
-Nella prima versione usare preset e non esporre tutte le soglie.
+In the first version use presets and do not expose all the thresholds.
 
 ---
 
-# 19. Tooltip Runtime Guards
+# 19. Runtime Guards tooltips
 
 ## Runtime guardrails
 
@@ -817,71 +817,71 @@ attempts and forces a root-cause reassessment instead of blind retries.
 
 ---
 
-# 20. PHASE 2 — Live Steering
+# 20. PHASE 2 - Live Steering
 
-## 20.1 Obiettivo
+## 20.1 Goal
 
-Permettere all'utente di inviare un messaggio mentre Kraken sta lavorando.
+Allow the user to send a message while Kraken is working.
 
-Esempio:
+Example:
 
 ```text
-Non modificare il database.
-Mantieni lo schema esistente.
+Do not modify the database.
+Keep the existing schema.
 ```
 
-Il messaggio:
+The message:
 
-- non cancella il tool corrente;
-- non interrompe una chiamata provider in corso;
-- entra al prossimo safe boundary;
-- viene consegnato al Kraken Lead;
-- non viene inviato retroattivamente ai tentacoli già in esecuzione;
-- influenza nuove deleghe e la sintesi successiva.
+- does not cancel the current tool;
+- does not interrupt an in-progress provider call;
+- enters at the next safe boundary;
+- is delivered to the Kraken Lead;
+- is not retroactively sent to tentacles already running;
+- influences new delegations and the next synthesis.
 
 ---
 
 # 21. Safe boundary semantics
 
-Un `steer` può essere applicato:
+A `steer` can be applied:
 
 ```text
-✓ dopo un tool result
-✓ prima della successiva model call
-✓ dopo fan-in tentacoli
-✓ tra nodi mission
+V after a tool result
+V before the next model call
+V after tentacle fan-in
+V between mission nodes
 ```
 
-Non applicarlo:
+Do not apply it:
 
 ```text
-✗ durante un write_file
-✗ nel mezzo di apply_diff
-✗ nel mezzo di una risposta streaming
-✗ tra tool_call e tool_result
+X during a write_file
+X in the middle of apply_diff
+X in the middle of a streaming response
+X between tool_call and tool_result
 ```
 
 ---
 
-# 22. Control plane headless
+# 22. Headless control plane
 
-La Desktop oggi usa:
+The Desktop today uses:
 
 ```text
 zelari-code --headless
-stdout → NDJSON BrainEvent
+stdout -> NDJSON BrainEvent
 ```
 
-Per live steering il protocollo deve diventare bidirezionale:
+For live steering the protocol must become bidirectional:
 
 ```text
-stdin  ← ControlEvent NDJSON
-stdout → BrainEvent NDJSON
+stdin  <- NDJSON ControlEvent
+stdout -> NDJSON BrainEvent
 ```
 
 ---
 
-# 23. Nuovo ControlEvent
+# 23. New ControlEvent
 
 ```ts
 export type ControlEvent =
@@ -919,11 +919,11 @@ export interface FollowUpControlEvent {
 }
 ```
 
-Semantica:
+Semantics:
 
 ```text
-run corrente finisce
-→ follow-up diventa il prossimo user task
+current run finishes
+-> follow-up becomes the next user task
 ```
 
 ---
@@ -943,7 +943,7 @@ export interface CancelControlEvent {
 
 # 24. Control acknowledgements
 
-Aggiungere BrainEvent:
+Add BrainEvent:
 
 ```ts
 export interface ControlAcceptedEvent {
@@ -970,13 +970,13 @@ export interface ControlRejectedEvent {
 }
 ```
 
-La Desktop non deve mostrare "steered" solo perché ha scritto su stdin.
+The Desktop must not show "steered" just because it wrote to stdin.
 
-Deve aspettare `control_accepted`.
+It must wait for `control_accepted`.
 
 ---
 
-# 25. Queue interna
+# 25. Internal queue
 
 ```ts
 export class RuntimeControlQueue {
@@ -1022,25 +1022,25 @@ export class SteeringObserver implements AgentObserver {
 
 # 27. Multiple steer semantics
 
-Se arrivano:
+If these arrive:
 
 ```text
-1. Non toccare il database
-2. Anzi: puoi aggiungere una migration, ma non cancellare colonne
+1. Do not touch the database
+2. Actually: you can add a migration, but do not drop columns
 ```
 
-non compattare automaticamente.
+do not compact automatically.
 
-Iniettare in ordine:
+Inject in order:
 
 ```text
 Runtime user steering received during execution:
 
 [1]
-Non toccare il database
+Do not touch the database
 
 [2]
-Anzi: puoi aggiungere una migration, ma non cancellare colonne
+Actually: you can add a migration, but do not drop columns
 
 Later instructions may supersede earlier ones.
 ```
@@ -1049,15 +1049,15 @@ Later instructions may supersede earlier ones.
 
 # 28. Late steer
 
-Se la run ha già raggiunto l'ultimo boundary utile:
+If the run has already reached the last useful boundary:
 
 ```text
 steer
-→ preserved
-→ converted to follow-up
+-> preserved
+-> converted to follow-up
 ```
 
-La Desktop deve mostrare:
+The Desktop must show:
 
 ```text
 Queued as follow-up
@@ -1065,69 +1065,69 @@ Queued as follow-up
 
 ---
 
-# 29. Steering con Kraken Graph
+# 29. Steering with Kraken Graph
 
-Regola:
-
-```text
-Steer → Lead / Graph coordinator
-```
-
-Non interrompere direttamente:
+Rule:
 
 ```text
-General #2 già in worktree
-Explore #3 già running
+Steer -> Lead / Graph coordinator
 ```
 
-Il Lead può:
+Do not directly interrupt:
 
-- non lanciare nodi futuri;
-- cambiare verifiche;
-- aggiungere fix node;
-- scartare risultati incompatibili;
-- modificare la sintesi.
+```text
+General #2 already in worktree
+Explore #3 already running
+```
 
-Feature futura opzionale:
+The Lead can:
+
+- not launch future nodes;
+- change verifications;
+- add a fix node;
+- discard incompatible results;
+- modify the synthesis.
+
+Optional future feature:
 
 ```text
 targetAgentId
 ```
 
-Non implementare nella prima versione.
+Do not implement it in the first version.
 
 ---
 
-# 30. Desktop composer durante una run
+# 30. Desktop composer during a run
 
 Mockup:
 
 ```text
-┌─────────────────────────────────────────────────────┐
-│ Non modificare l'API pubblica...                    │
-│                                                     │
-│ [Steer current run] [Queue follow-up]      [Stop]   │
-└─────────────────────────────────────────────────────┘
++----------------------------------------------------+
+| Do not modify the public API...                    |
+|                                                    |
+| [Steer current run] [Queue follow-up]      [Stop]  |
++----------------------------------------------------+
 ```
 
-Default quando run attiva:
+Default when a run is active:
 
 ```text
-Enter → Steer current run
-Shift+Enter → newline
+Enter -> Steer current run
+Shift+Enter -> newline
 ```
 
-Oppure mantenere `Send` e mostrare un menu:
+Or keep `Send` and show a menu:
 
 ```text
 Send as:
-● Steer current run
-○ Queue follow-up
+> Steer current run
+  Queue follow-up
 ```
 
 ---
 
-# 31. Tooltip Steering
+# 31. Steering tooltips
 
 ## Steer current run
 
@@ -1155,13 +1155,13 @@ allowed to finish or terminate according to their cancellation policy.
 
 # 32. Desktop queue display
 
-Nel composer/status:
+In the composer/status:
 
 ```text
 Queued: 2
 ```
 
-Clic:
+Click:
 
 ```text
 Pending controls
@@ -1173,27 +1173,27 @@ FOLLOW-UP
 2. Add regression tests
 ```
 
-Permettere:
+Allow:
 
 ```text
 Remove
 ```
 
-finché non è `control_applied`.
+until it is `control_applied`.
 
 ---
 
 # 33. Tauri bridge
 
-Il bridge Rust oggi gestisce il processo headless.
+The Rust bridge today manages the headless process.
 
-Per steering:
+For steering:
 
-- mantenere handle stdin del child;
-- mantenere child id per run;
-- permettere un comando Tauri aggiuntivo.
+- keep the child's stdin handle;
+- keep the child id per run;
+- allow an additional Tauri command.
 
-Proposta:
+Proposal:
 
 ```rust
 #[tauri::command]
@@ -1206,7 +1206,7 @@ async fn send_control(
 
 ---
 
-# 34. RunManager lato Rust
+# 34. RunManager on the Rust side
 
 ```rust
 struct ActiveRun {
@@ -1220,7 +1220,7 @@ struct RunManager {
 }
 ```
 
-Metodi:
+Methods:
 
 ```text
 start
@@ -1233,7 +1233,7 @@ cleanup
 
 # 35. Protocol version
 
-Aggiungere handshake/event:
+Add handshake/event:
 
 ```json
 {
@@ -1248,40 +1248,40 @@ Aggiungere handshake/event:
 }
 ```
 
-La Desktop deve fallbackare se usa una CLI vecchia:
+The Desktop must fall back if it uses an old CLI:
 
 ```text
 protocol v1
-→ disabilita Steer
-→ mostra tooltip:
+-> disables Steer
+-> shows tooltip:
   "Update Zelari CLI to use live steering."
 ```
 
 ---
 
-# 36. PHASE 3 — Kraken Activity
+# 36. PHASE 3 - Kraken Activity
 
-## 36.1 Obiettivo
+## 36.1 Goal
 
-Rendere visibili:
+Make visible:
 
 - Kraken lead;
-- tentacoli;
+- tentacles;
 - Graph nodes;
-- modello;
-- stato;
-- durata;
+- model;
+- status;
+- duration;
 - scope;
 - worktree;
-- tool correnti;
-- errori;
-- verifica.
+- current tools;
+- errors;
+- verification.
 
-Non sostituire la chat.
+Not a replacement for the chat.
 
 ---
 
-# 37. Nuovi BrainEvent di activity
+# 37. New activity BrainEvents
 
 ## Agent spawned
 
@@ -1368,16 +1368,16 @@ interface AgentEndedEvent {
 
 ---
 
-# 38. Activity store Desktop
+# 38. Desktop activity store
 
-Creare:
+Create:
 
 ```text
 apps/desktop/src/activity/
-├── types.ts
-├── activityReducer.ts
-├── activitySelectors.ts
-└── useRunActivity.ts
+|-> types.ts
+|-> activityReducer.ts
+|-> activitySelectors.ts
+|-> useRunActivity.ts
 ```
 
 State:
@@ -1424,30 +1424,30 @@ interface ActivityAgent {
 
 ---
 
-# 40. UI proposta
+# 40. Proposed UI
 
-Nuovo pannello:
+New panel:
 
 ```text
 KRAKEN ACTIVITY
 
 LEAD
-● Kraken
+@ Kraken
   model: strong-coding-model
   02:31
 
 TENTACLES
 
-⌕ Explore #1                     ✓ 0:18
+@ Explore #1                     V 0:18
    auth architecture
    model: fast-model
 
-⌗ General #2                     ● 1:12
+@ General #2                     ~ 1:12
    src/auth/**
    model: coding-model
    worktree: kraken-82a1
 
-⊙ Verify #3                      ◌ queued
+@ Verify #3                      - queued
    waiting for General #2
    model: review-model
 
@@ -1459,24 +1459,24 @@ GRAPH
 
 # 41. Agent symbols
 
-Proposta:
+Proposal:
 
 ```text
-Lead      ◆
-Explore   ⌕
-General   ⌗
-Verify    ⊙
-Planner   ☑
-Fix       ↻
+Lead      *
+Explore   ?
+General   ~
+Verify    V
+Planner   +
+Fix       !
 ```
 
-Evitare di usare colore come unico indicatore.
+Avoid using color as the only indicator.
 
 ---
 
 # 42. Expanded agent details
 
-Clic su `General #2`:
+Click on `General #2`:
 
 ```text
 General #2
@@ -1491,17 +1491,17 @@ Graph node   auth-implementation
 
 Recent activity
 
-✓ read_file     src/auth/session.ts
-✓ grep_content  refreshToken
-✓ edit_file     src/auth/session.ts
-● bash          npm test -- auth
+V read_file     src/auth/session.ts
+V grep_content  refreshToken
+V edit_file     src/auth/session.ts
+@ bash          npm test -- auth
 ```
 
 ---
 
 # 43. Tool details
 
-Clic tool:
+Click on a tool:
 
 ```text
 Tool
@@ -1526,32 +1526,32 @@ Full result
 [Open from run record]
 ```
 
-Il pannello non deve caricare automaticamente output enormi.
+The panel must not automatically load enormous outputs.
 
 ---
 
 # 44. Kraken Graph UI
 
-Se Graph attivo:
+If Graph is active:
 
 ```text
 Graph
 
-✓ inspect-auth
-├─ ✓ api-change
-├─ ● frontend-change
-└─ ◌ verify
+V inspect-auth
+|-- V api-change
+|-- ? frontend-change
+|-- ? verify
 ```
 
-Mostrare dipendenze senza richiedere una libreria graph complessa nella prima versione.
+Show dependencies without requiring a complex graph library in the first version.
 
-Prima versione:
+First version:
 
 ```text
 indented dependency list
 ```
 
-Fase futura:
+Future phase:
 
 ```text
 visual DAG
@@ -1559,7 +1559,7 @@ visual DAG
 
 ---
 
-# 45. Activity tooltip
+# 45. Activity tooltips
 
 ## Kraken Activity
 
@@ -1584,26 +1584,26 @@ edit the same working tree directly.
 
 ---
 
-# 46. PHASE 4 — Context Engine v2
+# 46. PHASE 4 - Context Engine v2
 
-## 46.1 Principio
+## 46.1 Principle
 
-Il record storico completo e il contesto inviato al provider devono essere oggetti differenti.
+The complete historical record and the context sent to the provider must be different objects.
 
 ```text
 RunRecord
-    │
-    ▼
+    |
+    v
 ContextProjector
-    │
-    ▼
+    |
+    v
 ProjectedContext
-    │
-    ▼
+    |
+    v
 Provider
 ```
 
-Mai:
+Never:
 
 ```text
 truncate/mutate original transcript
@@ -1611,19 +1611,19 @@ truncate/mutate original transcript
 
 ---
 
-# 47. Nuovi moduli
+# 47. New modules
 
 ```text
 packages/core/src/context/
-├── RunRecord.ts
-├── RunRecordStore.ts
-├── ContextProjector.ts
-├── ContextPolicy.ts
-├── ToolResultSpill.ts
-├── CompactionState.ts
-├── renderCompaction.ts
-├── tokenBudget.ts
-└── index.ts
+|-> RunRecord.ts
+|-> RunRecordStore.ts
+|-> ContextProjector.ts
+|-> ContextPolicy.ts
+|-> ToolResultSpill.ts
+|-> CompactionState.ts
+|-> renderCompaction.ts
+|-> tokenBudget.ts
+|-> index.ts
 ```
 
 ---
@@ -1637,7 +1637,7 @@ export interface RunRecord {
 }
 ```
 
-Eventi:
+Events:
 
 ```ts
 export type RunRecordEvent =
@@ -1653,23 +1653,23 @@ export type RunRecordEvent =
 
 ---
 
-# 49. Regola di integrità
+# 49. Integrity rule
 
-Il RunRecord deve mantenere:
+The RunRecord must preserve:
 
-- contenuto completo;
-- tool output completo o pointer lossless;
-- ordine;
+- complete content;
+- complete tool output or a lossless pointer;
+- order;
 - parent/child agent;
 - run id;
 - turn id;
 - tool call id;
-- modello;
-- timestamp.
+- model;
+- timestamps.
 
-La projection può essere lossy.
+The projection can be lossy.
 
-Il record non deve esserlo.
+The record must not be.
 
 ---
 
@@ -1731,7 +1731,7 @@ const KRAKEN_EXPLORE_POLICY: AgentContextPolicy = {
 };
 ```
 
-Explore non dovrebbe ricevere transcript completi di altri tentacoli.
+Explore should not receive full transcripts of other tentacles.
 
 ---
 
@@ -1763,7 +1763,7 @@ const KRAKEN_VERIFY_POLICY: AgentContextPolicy = {
 };
 ```
 
-Verify deve ricevere principalmente:
+Verify should mainly receive:
 
 - goal;
 - diff;
@@ -1814,46 +1814,46 @@ export interface ProjectedContext {
 
 # 54. Tool-result spill
 
-## 54.1 Obiettivo
+## 54.1 Goal
 
-Quando un tool produce output enorme:
+When a tool produces enormous output:
 
 ```text
 full result
-→ spill store
-→ short preview + recovery pointer
+-> spill store
+-> short preview + recovery pointer
 ```
 
 ---
 
 # 55. Spill directory
 
-Proposta:
+Proposal:
 
 ```text
 .zelari/runs/<run-id>/spill/
 ```
 
-Ma il modello non dovrebbe poterla modificare.
+But the model should not be able to modify it.
 
-Se la sandbox Zelari permette policy di accesso:
+If the Zelari sandbox allows access policies:
 
 ```text
-READ  ✓
-WRITE ✗
+READ  V
+WRITE X
 ```
 
-Se ciò non è tecnicamente possibile in tutte le modalità, almeno:
+If that is not technically possible in all modes, at least:
 
-- non includere la directory nei write roots;
-- bloccare `write_file/edit_file` verso spill;
-- bloccare redirect shell se già esiste una authorization layer.
+- do not include the directory in write roots;
+- block `write_file/edit_file` toward spill;
+- block shell redirects if an authorization layer already exists.
 
 ---
 
 # 56. Content-addressed spill
 
-Nome:
+Name:
 
 ```ts
 sha256(toolName + "\0" + fullBody).slice(0, 16)
@@ -1865,7 +1865,7 @@ Path:
 spill/bash-4a81f9a2c19f0b33.txt
 ```
 
-Se già esiste:
+If it already exists:
 
 ```text
 skip write
@@ -1896,7 +1896,7 @@ export interface ToolResultRef {
 
 # 58. Recovery pointer
 
-Il messaggio al modello:
+The message to the model:
 
 ```text
 [Tool output truncated]
@@ -1910,33 +1910,33 @@ Full output:
 Use read_file only if the omitted content is necessary.
 ```
 
-Il pointer deve essere conteggiato nel cap totale.
+The pointer must be counted in the total cap.
 
 ---
 
 # 59. Aggregate tool-result budget
 
-Non limitare solo ciascun risultato.
+Do not limit only each individual result.
 
-Serve un budget per turno.
+A per-turn budget is needed.
 
-Esempio:
+Example:
 
 ```text
 max single tool result inline: 12k chars
 max all tool results in turn: 32k chars
 ```
 
-Se 6 tool paralleli producono 10k ciascuno:
+If 6 parallel tools each produce 10k:
 
 ```text
 60k total
-→ spill / reduce
+-> spill / reduce
 ```
 
 ---
 
-# 60. Config proposta
+# 60. Proposed config
 
 ```text
 ZELARI_TOOL_RESULT_INLINE_CHARS=12000
@@ -1944,9 +1944,9 @@ ZELARI_TOOL_RESULT_TURN_CHARS=32000
 ZELARI_TOOL_RESULT_SPILL=1
 ```
 
-Non esporli subito nella Desktop normale.
+Do not expose them in the normal Desktop right away.
 
-Metterli eventualmente sotto:
+Eventually put them under:
 
 ```text
 Advanced
@@ -1956,33 +1956,33 @@ Advanced
 
 # 61. Truncation strategy
 
-Non ottimizzare prematuramente `head` vs `head+tail`.
+Do not prematurely optimize `head` vs `head+tail`.
 
-Implementazione iniziale consigliata:
+Recommended initial implementation:
 
 ```text
 ranked results
-→ head
+-> head
 
 sequential logs
-→ head + tail
+-> head + tail
 ```
 
-ma dietro policy configurabile.
+but behind a configurable policy.
 
-Importante:
+Important:
 
-- spill completo sempre recuperabile;
+- full spill always recoverable;
 - aggregate budget;
-- pointer nel cap;
+- pointer in the cap;
 - content hash;
-- metriche di recovery read.
+- recovery read metrics.
 
 ---
 
 # 62. Typed CompactionState
 
-Non salvare solo una summary prose.
+Do not save only a prose summary.
 
 ```ts
 export interface CompactionState {
@@ -2050,9 +2050,9 @@ function renderCompactionForModel(
 ): string
 ```
 
-Il modello vede markdown.
+The model sees markdown.
 
-Il runtime conserva JSON tipizzato.
+The runtime keeps the typed JSON.
 
 ---
 
@@ -2060,52 +2060,52 @@ Il runtime conserva JSON tipizzato.
 
 ```text
 .zelari/runs/<run-id>/compactions/
-├── c001.json
-├── c002.json
-└── latest.json
+|-> c001.json
+|-> c002.json
+|-> latest.json
 ```
 
 ---
 
 # 66. Durable state vs Run compaction
 
-Non fondere:
+Do not merge:
 
 ```text
 .zelari/state/
 ```
 
-con:
+with:
 
 ```text
 .zelari/runs/<run>/compactions/
 ```
 
-Semantica:
+Semantics:
 
 ```text
 durable state
-→ conoscenza verificata cross-run
+-> verified cross-run knowledge
 
 compaction
-→ compressione della run corrente
+-> compression of the current run
 ```
 
 ---
 
-# 67. PHASE 5 — Run Flight Recorder
+# 67. PHASE 5 - Run Flight Recorder
 
-## 67.1 Obiettivo
+## 67.1 Goal
 
-Ogni run deve essere ispezionabile e riproducibile abbastanza da:
+Every run must be inspectable and reproducible enough to:
 
-- fare debug;
-- confrontare modelli;
-- capire costi;
-- capire loop;
-- capire routing;
-- visualizzare tentacoli;
-- costruire benchmark.
+- debug;
+- compare models;
+- understand costs;
+- understand loops;
+- understand routing;
+- visualize tentacles;
+- build benchmarks.
 
 ---
 
@@ -2113,27 +2113,27 @@ Ogni run deve essere ispezionabile e riproducibile abbastanza da:
 
 ```text
 .zelari/
-└── runs/
-    └── <run-id>/
-        ├── manifest.json
-        ├── events.jsonl
-        ├── trace.jsonl
-        ├── metrics.json
-        ├── verification.json
-        ├── graph.json
-        ├── controls.jsonl
-        │
-        ├── agents/
-        │   ├── lead.jsonl
-        │   ├── explore-1.jsonl
-        │   ├── general-2.jsonl
-        │   └── verify-3.jsonl
-        │
-        ├── compactions/
-        │   └── ...
-        │
-        └── spill/
-            └── ...
+|-> runs/
+    |-> <run-id>/
+        |-> manifest.json
+        |-> events.jsonl
+        |-> trace.jsonl
+        |-> metrics.json
+        |-> verification.json
+        |-> graph.json
+        |-> controls.jsonl
+        |
+        |-> agents/
+        |   |-> lead.jsonl
+        |   |-> explore-1.jsonl
+        |   |-> general-2.jsonl
+        |   |-> verify-3.jsonl
+        |
+        |-> compactions/
+        |   |-> ...
+        |
+        |-> spill/
+            |-> ...
 ```
 
 ---
@@ -2161,18 +2161,18 @@ Ogni run deve essere ispezionabile e riproducibile abbastanza da:
 }
 ```
 
-Non salvare:
+Do not save:
 
 - API keys;
-- OAuth token;
-- password SSH;
+- OAuth tokens;
+- SSH passwords;
 - secrets.
 
 ---
 
 # 70. trace.jsonl
 
-Eventi completi:
+Complete events:
 
 ```text
 run_start
@@ -2231,15 +2231,15 @@ interface RunMetrics {
 
 ---
 
-# 72. Run Inspector Desktop
+# 72. Desktop Run Inspector
 
-Aggiungere:
+Add:
 
 ```text
 Run details
 ```
 
-Sezioni:
+Sections:
 
 ```text
 Overview
@@ -2298,17 +2298,17 @@ Current compaction
 
 # 75. Runtime warnings UI
 
-Esempio:
+Example:
 
 ```text
-⚠ Repeated failure detected
+! Repeated failure detected
 npm test returned the same auth failure 3 times.
 Kraken was instructed to reassess its hypothesis.
 ```
 
 ---
 
-# 76. Tooltip Run Inspector
+# 76. Run Inspector tooltips
 
 ## Recovery read
 
@@ -2329,7 +2329,7 @@ goal, decisions, open work, failures and recovery handles.
 
 # 77. Retention policy
 
-Non lasciare `.zelari/runs` crescere senza limiti.
+Do not let `.zelari/runs` grow without limits.
 
 Config:
 
@@ -2345,7 +2345,7 @@ Cleanup:
 oldest completed runs first
 ```
 
-Mai eliminare:
+Never delete:
 
 ```text
 active run
@@ -2355,53 +2355,53 @@ active run
 
 # 78. Gitignore
 
-Assicurarsi che:
+Make sure that:
 
 ```text
 .zelari/runs/
 ```
 
-sia gitignored di default.
+is gitignored by default.
 
 ---
 
-# 79. PHASE 6 — Zelari Eval
+# 79. PHASE 6 - Zelari Eval
 
-## 79.1 Obiettivo
+## 79.1 Goal
 
-Avere un harness riproducibile per rispondere a domande come:
+Have a reproducible harness to answer questions like:
 
 ```text
-Il model routing fa risparmiare costo senza peggiorare pass-rate?
+Does model routing save cost without worsening pass-rate?
 
-Il RepetitionGuard riduce i tool loop?
+Does RepetitionGuard reduce tool loops?
 
-Lo spill riduce peak prompt?
+Does spill reduce peak prompt?
 
-Verify con modello piccolo regge?
+Does Verify with a small model hold up?
 
-Graph planner veloce peggiora la qualità del DAG?
+Does a faster Graph planner worsen DAG quality?
 ```
 
 ---
 
-# 80. Struttura
+# 80. Structure
 
 ```text
 packages/eval/
-oppure
+or
 tools/eval/
 ```
 
-Proposta:
+Proposal:
 
 ```text
 tools/eval/
-├── runner.ts
-├── suites/
-├── scorers/
-├── reporters/
-└── experiments/
+|-> runner.ts
+|-> suites/
+|-> scorers/
+|-> reporters/
+|-> experiments/
 ```
 
 ---
@@ -2438,7 +2438,7 @@ interface EvalArm {
 
 ---
 
-# 83. Esperimento model routing
+# 83. Model routing experiment
 
 ```ts
 const arms: EvalArm[] = [
@@ -2463,7 +2463,7 @@ const arms: EvalArm[] = [
 
 ---
 
-# 84. Metriche minime
+# 84. Minimum metrics
 
 ```text
 pass rate
@@ -2485,7 +2485,7 @@ recovery reads
 
 ---
 
-# 85. Risultato tabellare
+# 85. Tabular result
 
 ```text
 Metric               all-lead     routed
@@ -2501,9 +2501,9 @@ Verification fail         7%          6%
 
 ---
 
-# 86. Riproducibilità
+# 86. Reproducibility
 
-Ogni result deve salvare:
+Every result must save:
 
 ```text
 git commit
@@ -2511,7 +2511,7 @@ CLI version
 provider
 model ids
 env diff
-seed se applicabile
+seed if applicable
 fixture hash
 timestamp
 ```
@@ -2520,14 +2520,14 @@ timestamp
 
 # 87. Guard A/B
 
-Esperimento:
+Experiment:
 
 ```text
 A = runtime guards OFF
 B = runtime guards ON
 ```
 
-Misurare:
+Measure:
 
 ```text
 tool calls
@@ -2541,14 +2541,14 @@ pass rate
 
 # 88. Context A/B
 
-Esperimento:
+Experiment:
 
 ```text
 A = current context behavior
 B = Context Engine v2
 ```
 
-Misurare:
+Measure:
 
 ```text
 peak prompt tokens
@@ -2560,9 +2560,9 @@ score/pass
 
 ---
 
-# 89. Nuovi BrainEvent — elenco consolidato
+# 89. New BrainEvents - consolidated list
 
-Aggiungere progressivamente:
+Add progressively:
 
 ```text
 protocol_info
@@ -2676,9 +2676,9 @@ interface ToolResultSpilledEvent {
 
 ---
 
-# 94. Desktop settings proposte
+# 94. Proposed Desktop settings
 
-## Settings → Defaults
+## Settings -> Defaults
 
 ```text
 Runtime Guards
@@ -2688,7 +2688,7 @@ Runtime Guards
   Repeated failure guard    ON
 ```
 
-## Settings → Advanced
+## Settings -> Advanced
 
 ```text
 Runtime
@@ -2702,7 +2702,7 @@ Context
   Tool-result spill         ON
 ```
 
-Durante rollout, alcune opzioni possono essere marcate:
+During rollout, some options can be marked:
 
 ```text
 Experimental
@@ -2710,7 +2710,7 @@ Experimental
 
 ---
 
-# 95. Tooltip Live steering
+# 95. Live steering tooltip
 
 ```text
 Allows new instructions to be sent while an agent is working. They are
@@ -2720,7 +2720,7 @@ tool call or model request.
 
 ---
 
-# 96. Tooltip Run flight recorder
+# 96. Run flight recorder tooltip
 
 ```text
 Stores structured events, metrics, agent activity, verification data and
@@ -2730,7 +2730,7 @@ written to the recorder.
 
 ---
 
-# 97. Tooltip Context Engine v2
+# 97. Context Engine v2 tooltip
 
 ```text
 Separates the complete run record from the smaller context sent to the model.
@@ -2740,7 +2740,7 @@ tool result in every model request.
 
 ---
 
-# 98. Tooltip Tool-result spill
+# 98. Tool-result spill tooltip
 
 ```text
 Stores oversized tool outputs outside the active prompt and gives the agent
@@ -2754,7 +2754,7 @@ when it is actually needed.
 
 ## 99.1 Secrets
 
-Il recorder deve redigere:
+The recorder must redact:
 
 ```text
 Authorization headers
@@ -2764,39 +2764,39 @@ SSH passwords
 secret env vars
 ```
 
-Creare una funzione centralizzata:
+Create a centralized function:
 
 ```ts
 redactRuntimePayload()
 ```
 
-Non affidarsi a singoli writer.
+Do not rely on individual writers.
 
 ---
 
 # 100. Tool result safety
 
-Spill può contenere secrets stampati da shell.
+Spill can contain secrets printed by a shell.
 
-Quindi:
+Therefore:
 
-- directory locale non world-readable quando possibile;
-- non sincronizzare;
-- non includere automaticamente nei report;
-- retention configurabile.
+- local directory not world-readable when possible;
+- do not sync;
+- do not automatically include in reports;
+- configurable retention.
 
 ---
 
 # 101. Control injection safety
 
-`steer` è un nuovo user message e deve essere trattato come user input.
+`steer` is a new user message and must be treated as user input.
 
-Non deve:
+It must not:
 
-- bypassare Plan mode;
-- bypassare folder trust;
-- bypassare tool permissions;
-- bypassare Strict gate.
+- bypass Plan mode;
+- bypass folder trust;
+- bypass tool permissions;
+- bypass the Strict gate.
 
 ---
 
@@ -2814,22 +2814,22 @@ Metrics observer:
 best-effort
 ```
 
-Un failure del recorder non deve bloccare normalmente la run.
+A recorder failure must not normally block the run.
 
-Un failure dell'authorization layer sì.
+An authorization layer failure must.
 
 ---
 
 # 103. Cancellation semantics
 
-Cancellation deve essere cooperativa.
+Cancellation must be cooperative.
 
-Ordine:
+Order:
 
 ```text
 1. mark cancellation requested
 2. stop scheduling new tools/tentacles
-3. abort provider request if AbortController supportato
+3. abort provider request if AbortController is supported
 4. cancel pending graph nodes
 5. allow cleanup hooks
 6. emit run_cancelled
@@ -2840,264 +2840,264 @@ Ordine:
 
 # 104. Kraken tentacle cancellation
 
-Per un tentacolo:
+For a tentacle:
 
 ```text
 running shell
-→ AbortSignal se supportato
-→ grace period
-→ existing Kraken cancel grace logic
+-> AbortSignal if supported
+-> grace period
+-> existing Kraken cancel grace logic
 ```
 
-Riutilizzare:
+Reuse:
 
 ```text
 ZELARI_KRAKEN_CANCEL_GRACE_MS
 ```
 
-non creare un secondo timeout equivalente.
+do not create a second equivalent timeout.
 
 ---
 
-# 105. Integration con Strict Gate
+# 105. Integration with the Strict Gate
 
-I Runtime Guards non devono dichiarare `done`.
+Runtime Guards must not declare `done`.
 
 Pipeline:
 
 ```text
 Agent output
-    ↓
+    |
 Runtime Guards
-    ↓
+    |
 Verification
-    ↓
+    |
 Strict Gate
-    ↓
+    |
 Completed
 ```
 
-Un observer può impedire continuation patologica, ma non sostituire verifica.
+An observer can prevent pathological continuation, but not replace verification.
 
 ---
 
-# 106. Integration con Native Criteria Pack
+# 106. Integration with the Native Criteria Pack
 
-`Native Criteria Pack` deve emettere eventi:
+The `Native Criteria Pack` must emit events:
 
 ```text
 verification_check_started
 verification_check_completed
 ```
 
-e questi devono finire nel Run Recorder.
+and these must end up in the Run Recorder.
 
 ---
 
-# 107. Integration con Advisory verifier
+# 107. Integration with the Advisory verifier
 
-Advisory verifier resta:
+The advisory verifier remains:
 
 ```text
 optional LLM judge
 ```
 
-Non usare Advisory verifier come RepetitionGuard.
+Do not use the advisory verifier as a RepetitionGuard.
 
-Sono responsabilità diverse.
+They are different responsibilities.
 
 ---
 
-# 108. Integration con Kraken Model Routing
+# 108. Integration with Kraken Model Routing
 
-La nuova Activity UI deve mostrare:
+The new Activity UI must show:
 
 ```text
 actual resolved model
 ```
 
-non semplicemente la preferenza Settings.
+not simply the Settings preference.
 
-Esempio:
+Example:
 
 ```text
 Explore configured: Inherit
 Resolved runtime model: fast-model
 ```
 
-L'evento `agent_spawned` deve contenere il model realmente risolto.
+The `agent_spawned` event must contain the actually resolved model.
 
 ---
 
-# 109. Integration con Kraken Graph
+# 109. Integration with Kraken Graph
 
-Il planner deve emettere:
+The planner must emit:
 
 ```text
 agent_spawned role=planner
 ```
 
-Graph state deve essere registrato:
+Graph state must be recorded:
 
 ```text
 graph.json
 ```
 
-e aggiornato atomicamente.
+and updated atomically.
 
 ---
 
-# 110. Integration con `.zelari/radio`
+# 110. Integration with `.zelari/radio`
 
-Non eliminare radio nella prima implementazione.
+Do not remove radio in the first implementation.
 
-Possibili ruoli:
+Possible roles:
 
 ```text
 radio
-→ comunicazione tentacoli
+-> tentacle communication
 
 Observer Bus
-→ lifecycle/intervention/runtime telemetry
+-> lifecycle/intervention/runtime telemetry
 ```
 
-In futuro alcuni radio event possono essere normalizzati come runtime events, ma evitare un refactor simultaneo.
+In the future some radio events can be normalized as runtime events, but avoid a simultaneous refactor.
 
 ---
 
-# 111. Integration con Durable State
+# 111. Integration with Durable State
 
-Solo state verificato deve finire in:
+Only verified state should end up in:
 
 ```text
 .zelari/state/
 ```
 
-Il RunRecord può contenere ipotesi fallite.
+The RunRecord can contain failed hypotheses.
 
-Non promuovere automaticamente tutto.
+Do not automatically promote everything.
 
 ---
 
-# 112. Integration con `/compact`
+# 112. Integration with `/compact`
 
-`/compact` deve diventare:
+`/compact` must become:
 
 ```text
 typed CompactionState
 ```
 
-ma può continuare a mostrare all'utente una summary Markdown.
+but can continue to show the user a Markdown summary.
 
 Backward compatibility:
 
 ```text
 old session prose compact
-→ supported
+-> supported
 new sessions
-→ typed state
+-> typed state
 ```
 
 ---
 
-# 113. Suggested file map — Core
+# 113. Suggested file map - Core
 
-Possibili nuovi file:
+Possible new files:
 
 ```text
 packages/core/src/runtime/
-├── observers/
-│   ├── types.ts
-│   ├── ObserverBus.ts
-│   ├── SteeringObserver.ts
-│   ├── TraceObserver.ts
-│   └── MetricsObserver.ts
-│
-├── guards/
-│   ├── RepetitionGuard.ts
-│   ├── FailureSignatureGuard.ts
-│   ├── NoProgressGuard.ts
-│   └── DuplicateSearchGuard.ts
-│
-├── controls/
-│   ├── types.ts
-│   └── RuntimeControlQueue.ts
-│
-└── recorder/
-    ├── RunRecorder.ts
-    ├── Redactor.ts
-    └── retention.ts
+|-> observers/
+|   |-> types.ts
+|   |-> ObserverBus.ts
+|   |-> SteeringObserver.ts
+|   |-> TraceObserver.ts
+|   |-> MetricsObserver.ts
+|
+|-> guards/
+|   |-> RepetitionGuard.ts
+|   |-> FailureSignatureGuard.ts
+|   |-> NoProgressGuard.ts
+|   |-> DuplicateSearchGuard.ts
+|
+|-> controls/
+|   |-> types.ts
+|   |-> RuntimeControlQueue.ts
+|
+|-> recorder/
+    |-> RunRecorder.ts
+    |-> Redactor.ts
+    |-> retention.ts
 ```
 
 ---
 
-# 114. Suggested file map — Context
+# 114. Suggested file map - Context
 
 ```text
 packages/core/src/context/
-├── ContextPolicy.ts
-├── ContextProjector.ts
-├── RunRecord.ts
-├── RunRecordStore.ts
-├── ToolResultSpill.ts
-├── CompactionState.ts
-├── renderCompaction.ts
-└── tokenBudget.ts
+|-> ContextPolicy.ts
+|-> ContextProjector.ts
+|-> RunRecord.ts
+|-> RunRecordStore.ts
+|-> ToolResultSpill.ts
+|-> CompactionState.ts
+|-> renderCompaction.ts
+|-> tokenBudget.ts
 ```
 
 ---
 
-# 115. Suggested file map — CLI/headless
+# 115. Suggested file map - CLI/headless
 
-Individuare i file attuali che:
+Identify the current files that:
 
-- parsano `--headless`;
-- stampano BrainEvent;
-- gestiscono AgentHarness.
+- parse `--headless`;
+- print BrainEvents;
+- manage AgentHarness.
 
-Aggiungere concettualmente:
+Conceptually add:
 
 ```text
 src/cli/headless/
-├── controlReader.ts
-├── protocol.ts
-└── controlBridge.ts
+|-> controlReader.ts
+|-> protocol.ts
+|-> controlBridge.ts
 ```
 
-Se l'headless è oggi tutto in un singolo file, effettuare prima una piccola estrazione senza modificarne il comportamento.
+If headless is today all in a single file, first do a small extraction without changing its behavior.
 
 ---
 
-# 116. Suggested file map — Desktop
+# 116. Suggested file map - Desktop
 
 ```text
 apps/desktop/src/
-├── activity/
-│   ├── activityReducer.ts
-│   ├── activitySelectors.ts
-│   └── types.ts
-│
-├── components/
-│   ├── KrakenActivity.tsx
-│   ├── RunInspector.tsx
-│   ├── RuntimeControls.tsx
-│   └── RuntimeWarningCard.tsx
-│
-└── runtime/
-    ├── controlClient.ts
-    └── protocolCapabilities.ts
+|-> activity/
+|   |-> activityReducer.ts
+|   |-> activitySelectors.ts
+|   |-> types.ts
+|
+|-> components/
+|   |-> KrakenActivity.tsx
+|   |-> RunInspector.tsx
+|   |-> RuntimeControls.tsx
+|   |-> RuntimeWarningCard.tsx
+|
+|-> runtime/
+    |-> controlClient.ts
+    |-> protocolCapabilities.ts
 ```
 
 Tauri:
 
 ```text
 apps/desktop/src-tauri/src/
-├── run_manager.rs
-├── control.rs
-└── ...
+|-> run_manager.rs
+|-> control.rs
+|-> ...
 ```
 
-Se il progetto preferisce mantenere tutto in `lib.rs`, iniziare lì ma estrarre `RunManager` appena la feature è stabile.
+If the project prefers to keep everything in `lib.rs`, start there but extract `RunManager` as soon as the feature is stable.
 
 ---
 
@@ -3123,18 +3123,18 @@ Retention
 
 # 118. ObserverBus tests
 
-Casi:
+Cases:
 
 ```text
-continue + continue → continue
+continue + continue -> continue
 
-continue + retry → retry
+continue + retry -> retry
 
-retry + stop → stop
+retry + stop -> stop
 
-observer throw + ignore → continue
+observer throw + ignore -> continue
 
-observer throw + fail-closed → stop/error
+observer throw + fail-closed -> stop/error
 ```
 
 ---
@@ -3143,17 +3143,17 @@ observer throw + fail-closed → stop/error
 
 ```text
 steer during tool
-→ not injected mid-tool
-→ applied at next boundary
+-> not injected mid-tool
+-> applied at next boundary
 
 2 steers
-→ preserved order
+-> preserved order
 
 steer after last useful boundary
-→ follow-up
+-> follow-up
 
 cancel
-→ no new tool scheduled
+-> no new tool scheduled
 ```
 
 ---
@@ -3164,9 +3164,9 @@ cancel
 General A running
 General B running
 user steer
-→ A/B finish or cancel only through existing policies
-→ steer delivered to lead
-→ future nodes see updated instruction
+-> A/B finish or cancel only through existing policies
+-> steer delivered to lead
+-> future nodes see updated instruction
 ```
 
 ---
@@ -3177,24 +3177,24 @@ user steer
 
 ```text
 same tool x2
-→ warning
+-> warning
 
 same tool x5
-→ hard intervention
+-> hard intervention
 ```
 
 ### Failure
 
 ```text
 same normalized test failure x3
-→ warning/inject
+-> warning/inject
 ```
 
 ### Progress
 
 ```text
 new completed task
-→ reset stall count
+-> reset stall count
 ```
 
 ---
@@ -3207,10 +3207,10 @@ new completed task
 full tool output = 100k chars
 
 RunRecord
-→ contains pointer/full retained body
+-> contains pointer/full retained body
 
 ProjectedContext
-→ <= configured cap
+-> <= configured cap
 ```
 
 ---
@@ -3219,15 +3219,15 @@ ProjectedContext
 
 ```text
 same body twice
-→ one spill file
+-> one spill file
 
 different body
-→ different hash
+-> different hash
 
 empty body
-→ no spill
+-> no spill
 
-path cannot be written by file tool
+path cannot be written by the file tool
 ```
 
 ---
@@ -3235,12 +3235,12 @@ path cannot be written by file tool
 # 124. Compaction tests
 
 ```text
-serialize → parse
+serialize -> parse
 ```
 
-deve essere lossless per campi tipizzati.
+must be lossless for typed fields.
 
-Non fare test basati su regex Markdown come source of truth.
+Do not make tests based on Markdown regex as the source of truth.
 
 ---
 
@@ -3248,19 +3248,19 @@ Non fare test basati su regex Markdown come source of truth.
 
 ```text
 Activity receives agent_spawned
-→ row appears
+-> row appears
 
 agent_status completed
-→ state changes
+-> state changes
 
 control_accepted
-→ queue state accepted
+-> queue state accepted
 
 control_applied
-→ queued badge removed
+-> queued badge removed
 
 old CLI protocol
-→ steering disabled
+-> steering disabled
 ```
 
 ---
@@ -3273,13 +3273,13 @@ Spawn:
 zelari-code --headless --output json
 ```
 
-scrivere stdin:
+write to stdin:
 
 ```json
 {"type":"steer","id":"s1","text":"Do not edit files","ts":0}
 ```
 
-attendere:
+wait for:
 
 ```text
 control_accepted
@@ -3290,7 +3290,7 @@ control_applied
 
 # 127. Flight Recorder E2E
 
-Run completa:
+Complete run:
 
 ```text
 manifest exists
@@ -3301,91 +3301,91 @@ no API key in any file
 
 ---
 
-# 128. Acceptance criteria — Phase 1
+# 128. Acceptance criteria - Phase 1
 
-- [ ] `ObserverBus` esiste.
-- [ ] AgentHarness emette lifecycle callbacks.
-- [ ] Observer error policies sono testate.
-- [ ] RepetitionGuard funziona.
-- [ ] FailureSignatureGuard funziona.
-- [ ] NoProgressGuard funziona.
-- [ ] Runtime warnings sono BrainEvent.
-- [ ] Nessun cambiamento comportamentale con observers disabilitati.
-- [ ] Existing unit tests restano verdi.
-
----
-
-# 129. Acceptance criteria — Phase 2
-
-- [ ] Headless protocol è bidirezionale.
-- [ ] `protocol_info` espone capability.
-- [ ] Desktop può inviare `steer`.
-- [ ] `steer` viene applicato solo a safe boundary.
-- [ ] Tool in-flight non viene spezzato.
-- [ ] Multiple steer restano FIFO.
-- [ ] Follow-up queue funziona.
-- [ ] Cancel è cooperativo.
-- [ ] Old CLI fallback è gestito.
+- [ ] `ObserverBus` exists.
+- [ ] AgentHarness emits lifecycle callbacks.
+- [ ] Observer error policies are tested.
+- [ ] RepetitionGuard works.
+- [ ] FailureSignatureGuard works.
+- [ ] NoProgressGuard works.
+- [ ] Runtime warnings are BrainEvents.
+- [ ] No behavioral change with observers disabled.
+- [ ] Existing unit tests stay green.
 
 ---
 
-# 130. Acceptance criteria — Phase 3
+# 129. Acceptance criteria - Phase 2
 
-- [ ] Lead visibile in Kraken Activity.
-- [ ] Explore/General/Verify visibili.
-- [ ] Modello reale visibile.
-- [ ] Durata visibile.
-- [ ] Current tool visibile.
-- [ ] Worktree visibile se presente.
-- [ ] Graph node visibile.
-- [ ] Tool details espandibili.
-- [ ] UI non rallenta con centinaia di eventi.
+- [ ] The headless protocol is bidirectional.
+- [ ] `protocol_info` exposes capabilities.
+- [ ] Desktop can send `steer`.
+- [ ] `steer` is applied only at safe boundaries.
+- [ ] In-flight tools are not broken.
+- [ ] Multiple steers stay FIFO.
+- [ ] The follow-up queue works.
+- [ ] Cancel is cooperative.
+- [ ] Old CLI fallback is handled.
 
 ---
 
-# 131. Acceptance criteria — Phase 4
+# 130. Acceptance criteria - Phase 3
 
-- [ ] RunRecord e ProjectedContext sono separati.
-- [ ] Output tool grandi sono spillabili.
-- [ ] Spill content-addressed.
-- [ ] Per-turn aggregate budget applicato.
-- [ ] Typed CompactionState implementato.
+- [ ] Lead visible in Kraken Activity.
+- [ ] Explore/General/Verify visible.
+- [ ] Real model visible.
+- [ ] Duration visible.
+- [ ] Current tool visible.
+- [ ] Worktree visible when present.
+- [ ] Graph node visible.
+- [ ] Tool details expandable.
+- [ ] UI does not slow down with hundreds of events.
+
+---
+
+# 131. Acceptance criteria - Phase 4
+
+- [ ] RunRecord and ProjectedContext are separated.
+- [ ] Large tool outputs are spillable.
+- [ ] Spill is content-addressed.
+- [ ] Per-turn aggregate budget applied.
+- [ ] Typed CompactionState implemented.
 - [ ] ContextPolicy per role.
-- [ ] Durable state resta separato.
-- [ ] Existing provider prompt cache non viene inutilmente destabilizzata.
+- [ ] Durable state stays separate.
+- [ ] The existing provider prompt cache is not needlessly destabilized.
 
 ---
 
-# 132. Acceptance criteria — Phase 5
+# 132. Acceptance criteria - Phase 5
 
-- [ ] `.zelari/runs/<id>` creato.
-- [ ] manifest/trace/metrics salvati.
-- [ ] agent trajectories disponibili.
-- [ ] secrets redatti.
-- [ ] retention implementata.
-- [ ] Desktop Run Inspector legge i dati.
-- [ ] active run non viene cancellata dal cleanup.
+- [ ] `.zelari/runs/<id>` created.
+- [ ] manifest/trace/metrics saved.
+- [ ] Agent trajectories available.
+- [ ] Secrets redacted.
+- [ ] Retention implemented.
+- [ ] The Desktop Run Inspector reads the data.
+- [ ] The active run is not deleted by cleanup.
 
 ---
 
-# 133. Acceptance criteria — Phase 6
+# 133. Acceptance criteria - Phase 6
 
-- [ ] Eval runner supporta almeno due arms.
-- [ ] Environment per arm isolato.
-- [ ] Pass/fail scorer disponibile.
+- [ ] The eval runner supports at least two arms.
+- [ ] Environment per arm isolated.
+- [ ] Pass/fail scorer available.
 - [ ] Token/tool/duration metrics.
-- [ ] Run metadata riproducibile.
-- [ ] Model-routing A/B eseguibile.
-- [ ] Runtime-guards A/B eseguibile.
-- [ ] Context A/B eseguibile.
+- [ ] Reproducible run metadata.
+- [ ] Model-routing A/B executable.
+- [ ] Runtime-guards A/B executable.
+- [ ] Context A/B executable.
 
 ---
 
-# 134. Rollout consigliato
+# 134. Recommended rollout
 
-## Release A — Runtime Observability
+## Release A - Runtime Observability
 
-Feature:
+Features:
 
 ```text
 ObserverBus
@@ -3394,13 +3394,13 @@ MetricsObserver
 runtime_warning
 ```
 
-Nessuna intervention automatica.
+No automatic intervention.
 
 ---
 
-## Release B — Runtime Guards
+## Release B - Runtime Guards
 
-Attivare:
+Enable:
 
 ```text
 RepetitionGuard
@@ -3408,19 +3408,19 @@ FailureSignatureGuard
 NoProgressGuard
 ```
 
-inizialmente:
+initially:
 
 ```text
 warn-only
 ```
 
-Poi hard stop solo per loop chiari.
+Then hard stop only for clear loops.
 
 ---
 
-## Release C — Headless Protocol v2
+## Release C - Headless Protocol v2
 
-Aggiungere:
+Add:
 
 ```text
 stdin ControlEvent
@@ -3428,13 +3428,13 @@ protocol_info
 control acknowledgements
 ```
 
-Senza UI avanzata.
+Without advanced UI.
 
 ---
 
-## Release D — Desktop Steering
+## Release D - Desktop Steering
 
-Aggiungere:
+Add:
 
 ```text
 Steer
@@ -3445,9 +3445,9 @@ Queued badge
 
 ---
 
-## Release E — Kraken Activity
+## Release E - Kraken Activity
 
-Aggiungere:
+Add:
 
 ```text
 agent events
@@ -3457,25 +3457,25 @@ model routing visualization
 
 ---
 
-## Release F — Context Engine v2
+## Release F - Context Engine v2
 
-Dietro:
+Behind:
 
 ```text
 ZELARI_CONTEXT_V2=1
 ```
 
-A/B prima del default.
+A/B before the default.
 
 ---
 
-## Release G — Flight Recorder + Eval
+## Release G - Flight Recorder + Eval
 
-Stabilizzare metriche e benchmark.
+Stabilize metrics and benchmarks.
 
 ---
 
-# 135. Feature flags consigliate
+# 135. Recommended feature flags
 
 ```text
 ZELARI_RUNTIME_OBSERVERS=1
@@ -3490,16 +3490,16 @@ ZELARI_CONTEXT_V2=1
 ZELARI_TOOL_RESULT_SPILL=1
 ```
 
-Non mantenere feature flags per sempre.
+Do not keep feature flags forever.
 
-Dopo stabilizzazione:
+After stabilization:
 
-- rimuovere flag superflui;
-- lasciare kill switch per feature ad alto impatto.
+- remove superfluous flags;
+- keep kill switches for high-impact features.
 
 ---
 
-# 136. Default suggeriti a maturità
+# 136. Suggested defaults at maturity
 
 ```text
 Observer runtime          ON
@@ -3512,11 +3512,11 @@ Tool spill                ON
 
 ---
 
-# 137. Priorità pratica
+# 137. Practical priorities
 
 ## P0
 
-Implementare subito:
+Implement immediately:
 
 ```text
 ObserverBus
@@ -3526,17 +3526,17 @@ FailureSignatureGuard
 NoProgressGuard
 ```
 
-Perché:
+Because:
 
-- impatto alto;
-- rischio architetturale controllabile;
-- abilita le fasi successive.
+- high impact;
+- controllable architectural risk;
+- enables the following phases.
 
 ---
 
 ## P1
 
-Poi:
+Then:
 
 ```text
 Headless Control v2
@@ -3544,13 +3544,13 @@ Steering
 Kraken Activity
 ```
 
-Queste danno il salto UX maggiore alla Desktop.
+These give the Desktop the biggest UX leap.
 
 ---
 
 ## P1 / P2
 
-Poi:
+Then:
 
 ```text
 RunRecord
@@ -3559,26 +3559,26 @@ Tool Spill
 Typed Compaction
 ```
 
-Hanno impatto enorme sulle run lunghe, ma toccano il prompt lifecycle e richiedono A/B.
+They have enormous impact on long runs, but touch the prompt lifecycle and require A/B.
 
 ---
 
 ## P2
 
-Infine:
+Finally:
 
 ```text
-Flight Recorder completo
+Full Flight Recorder
 Eval harness
 ```
 
-Il recorder minimo può arrivare prima; l'eval completo dopo.
+The minimal recorder can arrive earlier; the full eval after.
 
 ---
 
-# 138. Decisioni architetturali da formalizzare come ADR
+# 138. Architectural decisions to formalize as ADRs
 
-Creare ADR per:
+Create ADRs for:
 
 ```text
 Observer intervention contract
@@ -3588,7 +3588,7 @@ Tool spill storage policy
 Runtime run-artifact schema
 ```
 
-Esempio:
+Example:
 
 ```text
 docs/decisions/00xx-runtime-observer-bus.md
@@ -3600,23 +3600,23 @@ docs/decisions/00xx-run-record-context-projection.md
 
 # 139. Non-goals
 
-Questa specifica NON propone:
+This specification does NOT propose:
 
-- nuovo sistema Agent Team;
-- sostituzione Kraken Graph;
-- sostituzione Council;
-- sostituzione `.zelari/state`;
-- cross-provider routing dinamico;
-- remote distributed agent scheduler;
-- cancellazione violenta di processi come default;
-- log completo del chain-of-thought;
-- storage di credenziali nel run recorder.
+- a new Agent Team system;
+- replacing Kraken Graph;
+- replacing Council;
+- replacing `.zelari/state`;
+- dynamic cross-provider routing;
+- a remote distributed agent scheduler;
+- violent process killing as a default;
+- full chain-of-thought logging;
+- storing credentials in the run recorder.
 
 ---
 
 # 140. Privacy / reasoning trace
 
-Il runtime recorder deve registrare:
+The runtime recorder must record:
 
 ```text
 tool calls
@@ -3627,13 +3627,13 @@ metrics
 verification
 ```
 
-Non deve essere progettato per salvare chain-of-thought privata del provider.
+It must not be designed to save the provider's private chain-of-thought.
 
-Se un provider restituisce campi reasoning separati:
+If a provider returns separate reasoning fields:
 
-- trattarli secondo le policy/provider contract;
-- non renderli automaticamente in UI;
-- non basare il debugger su reasoning nascosto.
+- treat them according to the policies/provider contract;
+- do not automatically render them in the UI;
+- do not base the debugger on hidden reasoning.
 
 ---
 
@@ -3642,7 +3642,7 @@ Se un provider restituisce campi reasoning separati:
 Observer:
 
 ```text
-overhead sync target < 2 ms/event
+sync overhead target < 2 ms/event
 ```
 
 Trace writer:
@@ -3657,35 +3657,35 @@ Desktop Activity:
 virtualize / cap rendered events
 ```
 
-Non fare rerender completo della chat per ogni model delta.
+Do not do a full chat rerender for every model delta.
 
 ---
 
 # 142. Event batching
 
-Per streaming:
+For streaming:
 
-Non inviare necessariamente un evento Tauri per ogni token.
+Do not necessarily send one Tauri event per token.
 
 Batch:
 
 ```text
-25–50 ms
+25-50 ms
 ```
 
-o dimensione:
+or size:
 
 ```text
 N chars
 ```
 
-La Activity UI non ha bisogno di model token delta.
+The Activity UI does not need model token deltas.
 
 ---
 
 # 143. Atomic writes
 
-Per:
+For:
 
 ```text
 manifest.json
@@ -3694,34 +3694,34 @@ graph.json
 compactions/latest.json
 ```
 
-usare:
+use:
 
 ```text
 write tmp
-fsync se necessario
-rename atomico
+fsync if necessary
+atomic rename
 ```
 
-JSONL può essere append-only.
+JSONL can be append-only.
 
 ---
 
 # 144. Crash recovery
 
-Se Zelari crasha:
+If Zelari crashes:
 
 ```text
 manifest.status = running
 ```
 
-al prossimo avvio:
+at the next startup:
 
 ```text
 detect stale
-→ mark interrupted
+-> mark interrupted
 ```
 
-Non dichiarare `failed` automaticamente se non noto.
+Do not automatically declare `failed` if not known.
 
 Status:
 
@@ -3733,54 +3733,54 @@ interrupted
 
 # 145. Session vs Run
 
-Definire:
+Define:
 
 ```text
 Session
-→ conversazione persistente multi-turn
+-> persistent multi-turn conversation
 
 Run
-→ singola esecuzione di un task/user turn
+-> single execution of a task/user turn
 ```
 
-Quindi:
+Therefore:
 
 ```text
 sessionId
 runId
 ```
 
-devono essere distinti.
+must be distinct.
 
 ---
 
 # 146. Follow-up
 
-Un follow-up:
+A follow-up:
 
 ```text
-stessa session
-nuovo runId
+same session
+new runId
 ```
 
 Steer:
 
 ```text
-stesso runId
+same runId
 ```
 
 ---
 
 # 147. Tentacle run identity
 
-Ogni tentacolo:
+Every tentacle:
 
 ```text
 same root runId
 unique agentId
 ```
 
-Non creare un root run separato.
+Do not create a separate root run.
 
 ---
 
@@ -3794,7 +3794,7 @@ sum model calls
 sum tools
 ```
 
-ma mantenere breakdown:
+but keep the breakdown:
 
 ```text
 lead
@@ -3808,25 +3808,25 @@ planner
 
 # 149. Cost model
 
-Se il provider espone prezzo o esiste catalogo locale:
+If the provider exposes prices or a local catalog exists:
 
 ```text
 estimatedCost
 ```
 
-Altrimenti:
+Otherwise:
 
 ```text
 null
 ```
 
-Non inventare costi.
+Do not invent costs.
 
 ---
 
 # 150. Final target experience
 
-Utente avvia:
+User starts:
 
 ```text
 Kraken + Build
@@ -3835,8 +3835,8 @@ Kraken + Build
 Prompt:
 
 ```text
-Refactorizza il sistema auth mantenendo compatibilità.
-Verifica con test.
+Refactor the auth system while maintaining compatibility.
+Verify with tests.
 ```
 
 Desktop:
@@ -3844,16 +3844,16 @@ Desktop:
 ```text
 KRAKEN ACTIVITY
 
-◆ Lead           ●
-⌕ Explore #1     ✓
-⌗ General #2     ●
-⊙ Verify #3      queued
+@ Lead           ~
+@ Explore #1     V
+@ General #2     ~
+@ Verify #3      queued
 ```
 
-L'utente scrive:
+The user writes:
 
 ```text
-Non cambiare la struttura del database.
+Do not change the database structure.
 ```
 
 Desktop:
@@ -3862,7 +3862,7 @@ Desktop:
 Steer queued
 ```
 
-Kraken termina il tool corrente.
+Kraken finishes the current tool.
 
 Runtime:
 
@@ -3870,39 +3870,39 @@ Runtime:
 control_applied
 ```
 
-Lead riceve l'istruzione.
+The Lead receives the instruction.
 
-General termina il suo task.
+General finishes its task.
 
-FailureSignatureGuard vede:
+FailureSignatureGuard sees:
 
 ```text
-stesso auth test fallito 3 volte
+same auth test failed 3 times
 ```
 
-inietta:
+injects:
 
 ```text
 Reassess root cause.
 ```
 
-Kraken cambia strategia.
+Kraken changes strategy.
 
-Un output test da 90k viene:
+A 90k test output is:
 
 ```text
-spill
+spilled
 ```
 
-e solo preview entra nel prompt.
+and only a preview enters the prompt.
 
-Verify passa.
+Verify passes.
 
-Strict Gate riceve evidenza.
+The Strict Gate receives evidence.
 
-Run termina.
+The run ends.
 
-Run Inspector mostra:
+The Run Inspector shows:
 
 ```text
 Duration         02:48
@@ -3915,81 +3915,81 @@ Peak context     68k
 Verification     PASS
 ```
 
-Questo è il comportamento target.
+This is the target behavior.
 
 ---
 
-# 151. Roadmap finale sintetica
+# 151. Final condensed roadmap
 
 ```text
                     TODAY
-                      │
-                      ▼
+                      |
+                      v
              Kraken Model Routing
-                      │
-                      ▼
+                      |
+                      v
              Observer Runtime
-                      │
-             ┌────────┴─────────┐
-             │                  │
-             ▼                  ▼
+                      |
+             +--------+---------+
+             |                  |
+             v                  v
         Runtime Guards     Flight events
-             │                  │
-             └────────┬─────────┘
-                      ▼
+             |                  |
+             +--------+---------+
+                      v
               Headless Protocol v2
-                      │
-             ┌────────┴─────────┐
-             ▼                  ▼
+                      |
+             +--------+---------+
+             v                  v
           Steering        Kraken Activity
-             │                  │
-             └────────┬─────────┘
-                      ▼
+             |                  |
+             +--------+---------+
+                      v
                 Context Engine v2
-                      │
-          ┌───────────┼────────────┐
-          ▼           ▼            ▼
+                      |
+          +-----------+------------+
+          v           v            v
        RunRecord   Tool Spill   Typed Compact
-          │
-          ▼
+          |
+          v
       Flight Recorder
-          │
-          ▼
+          |
+          v
         Zelari Eval
 ```
 
 ---
 
-# 152. Conclusione
+# 152. Conclusion
 
-La parte più utile di FrontierAgent per Zelari Code non è il suo workflow multi-agent.
+The most useful part of FrontierAgent for Zelari Code is not its multi-agent workflow.
 
-La vera opportunità è costruire un runtime più:
+The real opportunity is to build a runtime that is more:
 
-- osservabile;
+- observable;
 - steerable;
-- resistente ai loop;
-- misurabile;
-- efficiente nel contesto;
-- trasparente nella Desktop.
+- resistant to loops;
+- measurable;
+- context-efficient;
+- transparent in the Desktop.
 
-L'ordine più sicuro è:
+The safest order is:
 
 ```text
 Observer Bus
-→ Runtime Guards
-→ Steering
-→ Activity
-→ Context Engine
-→ Flight Recorder
-→ Evaluation
+-> Runtime Guards
+-> Steering
+-> Activity
+-> Context Engine
+-> Flight Recorder
+-> Evaluation
 ```
 
-Questa sequenza permette a Zelari di mantenere Kraken come elemento distintivo, rendendolo però molto più controllabile e verificabile nelle run lunghe e multi-agent.
+This sequence allows Zelari to keep Kraken as its distinguishing element, while making it far more controllable and verifiable in long multi-agent runs.
 
 ---
 
-# 153. Riferimenti tecnici
+# 153. Technical references
 
 FrontierAgent:
 
@@ -4012,7 +4012,7 @@ https://github.com/N-THEM-Studio/zelari-code/tree/main/apps/desktop
 
 ---
 
-# 154. Implementation checklist master
+# 154. Master implementation checklist
 
 ## Runtime Core
 
