@@ -2676,6 +2676,7 @@ async function runZelariMissionInTui(
               const hook = await runPostCouncilHook(workspaceCtx, {
                 runMode: "implementation",
                 userMessage: userMessage,
+                sessionId: deps.sessionId,
                 synthesisText: synthesisText || undefined,
                 degradedRun: d.degraded,
                 degradedReasons: d.reasons,
