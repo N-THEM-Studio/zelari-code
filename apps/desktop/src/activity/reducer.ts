@@ -107,8 +107,10 @@ export function activityReducer(
       (a) => ({
         ...a,
         status: status ?? a.status,
+        // t94: persist the phase caption (previously dropped unless failed).
+        phaseMessage: message ?? a.phaseMessage,
       }),
-      () => ({ id: agentId, role: "general", status: status ?? "running", tools: [] }),
+      () => ({ id: agentId, role: "general", status: status ?? "running", phaseMessage: message, tools: [] }),
     );
     if (status === "failed" && message) {
       const warnings = [

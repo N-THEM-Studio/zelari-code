@@ -55,6 +55,7 @@ function AgentRow({
         </span>
         {agent.model ? <span style={{ opacity: 0.7 }}>· {agent.model}</span> : null}
         {agent.currentTool ? <span>· {agent.currentTool}…</span> : null}
+        {agent.phaseMessage ? <span style={{ opacity: 0.85 }}>· {agent.phaseMessage}</span> : null}
       </div>
       {expanded ? (
         <div style={{ fontSize: "0.85em", opacity: 0.9, marginTop: 4 }}>
@@ -83,9 +84,10 @@ function AgentRow({
 export function KrakenActivity() {
   const state = useRunActivity();
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  /** Panel starts collapsed (one summary line) to keep the chat quiet;
-   *  click the header to open the full lead/tentacle breakdown. */
-  const [collapsed, setCollapsed] = useState(true);
+  /** Panel expansion is automatic (t94): open for small runs (≤4 agents) and
+   *  whenever any agent is running, collapsed for large quiet runs. A manual
+   *  click always wins over the default until the next mount. */
+  const [collapsedOverride, setCollapsedOverride] = useState<boolean | null>(null);
   const [, forceTick] = useState(0);
   const lead = selectLead(state);
   const tentacles = selectTentacles(state);
@@ -94,6 +96,7 @@ export function KrakenActivity() {
   const warnings = state.warnings;
   const pending = selectPendingControls(state);
   const hasAgents = state.agentOrder.length > 0;
+  const collapsed = collapsedOverride ?? (state.agentOrder.length > 4 && counts.running === 0);
 
   // 1s ticker while any agent is running (elapsed durations).
   useEffect(() => {
@@ -117,7 +120,7 @@ export function KrakenActivity() {
       <button
         type="button"
         aria-expanded={!collapsed}
-        onClick={() => setCollapsed((c) => !c)}
+        onClick={() => setCollapsedOverride(!collapsed)}
         style={{
           display: "flex",
           gap: 10,
@@ -141,7 +144,6 @@ export function KrakenActivity() {
           {collapsed && warnings.length ? ` · ⚠ ${warnings.length}` : ""}
         </span>
       </button>
-
       {collapsed ? null : (
       <div>
       {lead ? (

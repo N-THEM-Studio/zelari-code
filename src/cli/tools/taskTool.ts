@@ -359,6 +359,31 @@ export async function runAutoVerifyAfterGeneral(opts: {
   // failure must not leave the work silently "verified".
   g.__zelariGeneralVerifyDebt = { description: opts.original.description };
 
+  // t94: live phase captions on the general's activity row (agent_status)
+  // mirrored into the radio 'progress' trail — the parent sees the general
+  // flip to "verifying…" and then to the verdict without polling.
+  const emitVerifyPhase = (detail: string, ok?: boolean) => {
+    const agentId = opts.general.agentId;
+    if (agentId) {
+      opts.deps.onTentacleEvent?.({
+        type: 'agent_status',
+        agentId,
+        status: 'running',
+        message: detail,
+        id: randomUUID(),
+        sessionId: opts.sessionId,
+        ts: Date.now(),
+      } as BrainEvent);
+    }
+    appendKrakenRadio(opts.parentCwd, opts.sessionId, {
+      kind: 'progress',
+      agent: 'verify',
+      description: `verify: ${opts.original.description}`,
+      detail,
+      ...(ok === undefined ? {} : { ok }),
+    });
+  };
+
   // Same worktree when one was used AND still exists (kept); after an
   // auto-merge the worktree is gone and the work lives in the parent tree.
   const inheritedCwd =
@@ -383,6 +408,7 @@ export async function runAutoVerifyAfterGeneral(opts: {
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
 
+  emitVerifyPhase('verifying…');
   let verify = await runVerify(`verify: ${opts.original.description}`);
   // Parsed like the graph executor: last VERDICT trailer wins; a failed run is
   // an unknown (degraded observation is never proof).
@@ -437,9 +463,15 @@ export async function runAutoVerifyAfterGeneral(opts: {
 
   if (verdict === 'pass') {
     g.__zelariGeneralVerifyDebt = null;
+    emitVerifyPhase('verify PASS', true);
     return `\n\n[kraken:auto-verify] verify PASS — general⇒verify obligation satisfied.`;
   }
 
+  // t94: unresolved chain — caption the failure mode before the honest return.
+  emitVerifyPhase(
+    verdict === 'fail' ? 'verify FAIL' : verify.ok ? 'verify unknown' : 'verify failed',
+    verdict === 'fail' || !verify.ok ? false : undefined,
+  );
   const detail =
     verdict === 'fail'
       ? `verify FAIL unresolved (rework budget spent): ${findings || 'no findings reported'}`
@@ -722,6 +754,8 @@ export interface TentacleSuccess {
   ok: true;
   agent: TaskAgentKind;
   thoroughness: TaskThoroughness;
+  /** Live activity row id — same id the agent_* BrainEvents carry (t94). */
+  agentId?: string;
   /** Model actually used by the sub-agent. */
   model: string;
   /** Raw sub-agent conclusion (no prefix, no footer). */
@@ -819,6 +853,13 @@ export interface RunTentacleOptions {
    * `systemPromptForAgent(agent)`.
    */
   systemPromptOverride?: string;
+}
+
+/** Compact path for live phase captions (mirrors the panel's shortWorktree). */
+function shortWorktreeCaption(p: string): string {
+  const parts = p.split(/[\\/]/).filter(Boolean);
+  const short = parts.length > 2 ? `.../${parts.slice(-2).join('/')}` : p;
+  return short.length > 50 ? `...${short.slice(-47)}` : short;
 }
 
 /**
@@ -941,6 +982,23 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ts: Date.now(),
   } as BrainAgentSpawnedEvent);
   emitActivity({ type: 'agent_status', agentId: liveId, status: 'running', ts: Date.now() } as BrainAgentStatusEvent);
+  // t94: live phase trail — agent_status carries the one-line caption to the
+  // desktop panel row, radio 'progress' mirrors it into the persistent
+  // .zelari/radio/<session>.jsonl audit trail (doctor-visible).
+  const emitPhase = (message: string) => {
+    emitActivity({ type: 'agent_status', agentId: liveId, status: 'running', message, ts: Date.now() } as BrainAgentStatusEvent);
+    appendKrakenRadio(parentCwd, sessionId, {
+      kind: 'progress',
+      agent,
+      thoroughness,
+      description: args.description,
+      detail: message,
+    });
+  };
+  // Starting phase = the agent kind itself (explore|general|verify) — also
+  // gives worktree-less tentacles (explore/verify) a first progress event.
+  emitPhase(`phase: ${agent}`);
+  if (worktree) emitPhase(`worktree: ${shortWorktreeCaption(worktree.path)}`);
   const taskUserContent = buildTaskUserPrompt({
     prompt: args.prompt,
     scope: args.scope,
@@ -1069,6 +1127,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     // removed and all edits are lost (the original gap).
     let merge: WorktreeMergeResult | null = null;
     if (!kept && isKrakenWorktreeAutoMergeEnabled()) {
+      emitPhase('merging…');
       try {
         merge = await mergeKrakenWorktree(
           worktree,
@@ -1082,6 +1141,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
           message: `merge threw: ${err instanceof Error ? err.message : String(err)}`,
         };
       }
+      emitPhase(merge.ok ? 'merge ok' : 'merge failed');
     } else if (!kept) {
       // auto-merge disabled — fall back to bare cleanup (old behavior)
       await cleanupKrakenWorktree(worktree);
@@ -1149,6 +1209,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ok: true,
     agent,
     thoroughness,
+    agentId: liveId,
     model: sub.model,
     result,
     footer,

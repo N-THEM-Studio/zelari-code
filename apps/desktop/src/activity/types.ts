@@ -51,6 +51,8 @@ export interface ActivityAgent {
   worktree?: string;
   graphNodeId?: string;
   currentTool?: string;
+  /** Last one-line phase caption (agent_status.message, t94) — e.g. "merging…". */
+  phaseMessage?: string;
   tools: ActivityToolEvent[];
 }
 

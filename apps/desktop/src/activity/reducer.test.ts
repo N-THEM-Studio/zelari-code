@@ -85,6 +85,31 @@ describe("activityReducer", () => {
     expect(s.warnings[0]).toMatchObject({ code: "agent_failed", message: "boom", agentId: "exp-1" });
   });
 
+  it("agent_status message persists as phaseMessage (live captions, t94)", () => {
+    const s = reduceall(
+      SPAWN_EXPLORE,
+      { type: "agent_status", agentId: "exp-1", status: "running", message: "merging…", ts: 3000 },
+    );
+    expect(s.agents["exp-1"].status).toBe("running");
+    expect(s.agents["exp-1"].phaseMessage).toBe("merging…");
+  });
+
+  it("latest phaseMessage wins; status-only events keep the last caption", () => {
+    const s = reduceall(
+      SPAWN_EXPLORE,
+      { type: "agent_status", agentId: "exp-1", status: "running", message: "merging…", ts: 3000 },
+      { type: "agent_status", agentId: "exp-1", status: "running", message: "merge ok", ts: 3100 },
+      { type: "agent_status", agentId: "exp-1", status: "waiting", ts: 3200 },
+    );
+    expect(s.agents["exp-1"].phaseMessage).toBe("merge ok");
+    expect(s.agents["exp-1"].status).toBe("waiting");
+  });
+
+  it("phaseMessage is set on the defensive shell for unknown agents", () => {
+    const s = reduceall({ type: "agent_status", agentId: "ghost", status: "running", message: "verifying…" });
+    expect(s.agents["ghost"].phaseMessage).toBe("verifying…");
+  });
+
   it("agent_status for unknown agent creates a defensive shell", () => {
     const s = reduceall({ type: "agent_status", agentId: "ghost", status: "queued" });
     expect(s.agents["ghost"].status).toBe("queued");
