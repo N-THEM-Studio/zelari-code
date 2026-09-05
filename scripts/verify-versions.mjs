@@ -167,6 +167,58 @@ if (coreReadmeVersion && coreReadmeVersion[1].trim() !== coreVersion) {
   );
 }
 
+// 9. Desktop manifests in lockstep with the root (alignment plan, phase 4):
+//    bump-version.mjs stamps them; this gate proves they cannot drift
+//    silently again. package-lock entries are checked when present (an
+//    npm install with the workspace link may not materialize the
+//    node_modules entry on every platform).
+{
+  const desktopPkg = readJson('apps/desktop/package.json');
+  if (desktopPkg.version !== rootVersion) {
+    failures.push(
+      `apps/desktop/package.json version is "${desktopPkg.version}" but root is "${rootVersion}" — the Desktop shell releases in lockstep.`,
+    );
+  }
+
+  const tauriConf = readJson('apps/desktop/src-tauri/tauri.conf.json');
+  if (tauriConf.version !== rootVersion) {
+    failures.push(
+      `apps/desktop/src-tauri/tauri.conf.json version is "${tauriConf.version}" but root is "${rootVersion}".`,
+    );
+  }
+
+  const cargoToml = readFileSync(path.join(root, 'apps/desktop/src-tauri/Cargo.toml'), 'utf-8');
+  const cargoVersion = cargoToml.match(/^version = "([^"]+)"/m);
+  if (!cargoVersion || cargoVersion[1] !== rootVersion) {
+    failures.push(
+      `apps/desktop/src-tauri/Cargo.toml [package] version is "${cargoVersion?.[1] ?? '<missing>'}" but root is "${rootVersion}".`,
+    );
+  }
+
+  const cargoLock = readFileSync(path.join(root, 'apps/desktop/src-tauri/Cargo.lock'), 'utf-8');
+  const desktopLockVersion = cargoLock.match(/name = "zelari-desktop"\r?\nversion = "([^"]+)"/);
+  if (!desktopLockVersion || desktopLockVersion[1] !== rootVersion) {
+    failures.push(
+      `Cargo.lock zelari-desktop stanza version is "${desktopLockVersion?.[1] ?? '<missing>'}" but root is "${rootVersion}".`,
+    );
+  }
+
+  const lock = readJson('package-lock.json');
+  const lockEntries = [
+    ['packages[""].version', lock.packages?.['']?.version],
+    ['packages["packages/core"].version', lock.packages?.['packages/core']?.version],
+    [
+      'packages["node_modules/@zelari/core"].version',
+      lock.packages?.['node_modules/@zelari/core']?.version,
+    ],
+  ];
+  for (const [label, value] of lockEntries) {
+    if (value !== undefined && value !== rootVersion) {
+      failures.push(`package-lock.json ${label} is "${value}" but root is "${rootVersion}".`);
+    }
+  }
+}
+
 if (failures.length > 0) {
   console.error('[verify-versions] VERSION DRIFT DETECTED:');
   for (const f of failures) console.error(`  - ${f}`);
@@ -174,5 +226,7 @@ if (failures.length > 0) {
 }
 
 console.log(
-  `[verify-versions] coherent: zelari-code@${rootVersion} == @zelari/core@${coreVersion}, devDep exact, CHANGELOG entry present, README/GUIDA version-clean, CORE_VERSION + core README in lockstep.`,
+  `[verify-versions] coherent: zelari-code@${rootVersion} == @zelari/core@${coreVersion}, devDep exact, ` +
+    `Desktop manifests (package.json, tauri.conf.json, Cargo.toml, Cargo.lock) in lockstep, ` +
+    `lockfile entries aligned, CHANGELOG entry present, README/GUIDA version-clean, CORE_VERSION + core README in lockstep.`,
 );

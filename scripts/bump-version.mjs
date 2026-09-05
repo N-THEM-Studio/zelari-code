@@ -1,9 +1,28 @@
+#!/usr/bin/env node
+// bump-version.mjs — monorepo version bump (ADR-0003 lockstep).
+//
+// Updates EVERY version representation that scripts/verify-versions.mjs
+// checks, and NOTHING else:
+//   - package.json + root devDependencies["@zelari/core"]
+//   - packages/core/package.json
+//   - apps/desktop/package.json
+//   - package-lock.json (root, packages[""], packages/core,
+//     node_modules/@zelari/core)
+//   - apps/desktop/src-tauri/Cargo.toml ([package] version)
+//   - apps/desktop/src-tauri/tauri.conf.json
+//   - apps/desktop/src-tauri/Cargo.lock (zelari-desktop stanza)
+//   - docs/GUIDA.md "Versione documento" (when present)
+//   - packages/core/src/version.ts CORE_VERSION
+//   - packages/core/README.md "Current version" (when present)
+//
+// CHANGELOG.md is NOT written by this script: the `## [version]` entry
+// must already exist (fail-fast below — no partial writes). Release notes
+// are authored by humans; the bump only stamps versions. (It used to
+// inject a hardcoded 2026-07-10 entry with unrelated release notes.)
+//
+// Usage: node scripts/bump-version.mjs <version|major|minor|patch>
 import fs from 'node:fs';
 
-// Accepts either an explicit semver version (e.g. `2.15.0`) or a bump
-// keyword (`major` | `minor` | `patch`) that increments the CURRENT root
-// version. Anything else is rejected — the old code wrote whatever string
-// it received (e.g. the literal "minor") into every version field.
 const arg = process.argv[2];
 if (!arg) {
   console.error('usage: node scripts/bump-version.mjs <version|major|minor|patch>');
@@ -27,6 +46,20 @@ if (KEYWORDS.includes(arg)) {
 if (!SEMVER.test(V)) {
   console.error(`bump-version: "${arg}" is neither a bump keyword (${KEYWORDS.join('|')}) nor a valid semver version`);
   process.exit(1);
+}
+
+// Precondition: the changelog entry for the target version must already
+// exist. This is what keeps verify-versions check #3 green right after a
+// bump, without the script ever inventing release notes.
+{
+  const changelog = fs.readFileSync('CHANGELOG.md', 'utf8');
+  if (!changelog.includes(`## [${V}]`)) {
+    console.error(
+      `bump-version: CHANGELOG.md has no "## [${V}]" entry — write the release notes first, then bump. ` +
+        `(The bump stamps versions only; it no longer generates changelog content.)`,
+    );
+    process.exit(1);
+  }
 }
 
 for (const f of ['package.json', 'packages/core/package.json', 'apps/desktop/package.json']) {
@@ -67,21 +100,23 @@ cl = cl.replace(
 );
 fs.writeFileSync('apps/desktop/src-tauri/Cargo.lock', cl);
 
-let ch = fs.readFileSync('CHANGELOG.md', 'utf8');
-if (!ch.includes(`## [${V}]`)) {
-  const insert = `## [${V}] - 2026-07-10
-
-### Fixed
-- **Release workflows** — correct tag version resolution on \`workflow_dispatch\`; build \`@zelari/core\` before CLI; optional updater signing (installers still build without \`TAURI_SIGNING_PRIVATE_KEY\`).
-- **CLI startup** — clean 3-line banner (no messy dual-column ASCII); compact one-line preflight warnings.
-- **Sidebar logo** — exact v1.6.0 Braille emblem restored on the right.
-
-### Added
-- **Desktop Update CLI** — Settings + topbar when npm latest is newer than installed CLI.
-
-`;
-  ch = ch.replace(/## \[1\.9\.3\]/, insert + '## [1.9.3]');
-  fs.writeFileSync('CHANGELOG.md', ch);
+// Doc/const representations — same ones verify-versions checks. Replaced
+// only when the pattern exists (verify-versions treats absence as OK).
+function replaceInFile(file, pattern, replacement) {
+  let text = fs.readFileSync(file, 'utf8');
+  const next = text.replace(pattern, replacement);
+  if (next !== text) fs.writeFileSync(file, next);
 }
+replaceInFile('docs/GUIDA.md', /Versione documento:\*\*\s*\S+/, `Versione documento:** ${V}`);
+replaceInFile(
+  'packages/core/src/version.ts',
+  /(CORE_VERSION\s*=\s*['"])[^'"]+(['"])/,
+  `$1${V}$2`,
+);
+replaceInFile(
+  'packages/core/README.md',
+  /(Current version:\s*\*\*)[^*]+(\*\*)/,
+  `$1${V}$2`,
+);
 
 console.log('bumped to', V);
