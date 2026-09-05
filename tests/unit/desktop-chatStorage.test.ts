@@ -157,8 +157,8 @@ describe("saveConversations / loadConversations round-trip", () => {
   });
 
   it("quota failure: ok=false with error, previous storage untouched", () => {
-    const store = stubLocalStorage({ quotaAfter: 50 });
-    saveConversations(list(2)); // small payload passes, seeds storage
+    const store = stubLocalStorage(); // plain stub: the seed write succeeds
+    saveConversations(list(2)); // seeds storage
     const seeded = store.get("zelari-desktop-chats-v1");
     expect(seeded).toBeTruthy();
     vi.stubGlobal("localStorage", {
