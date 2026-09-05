@@ -161,7 +161,7 @@ The wizard walks you through:
 4. **API key** — choose `env` (use `GROK_API_KEY` etc.), `keystore` (save locally), or `skip` (set later via `/login`).
 5. **Confirm** — review + Enter to commit.
 
-When you press Enter on confirm, the wizard writes `~/.tmp/zelari-code/provider.json` (and `keys.json` if you chose keystore), shows a brief "✓ Setup complete!" banner, **then transparently transitions into the regular TUI** — no need to re-launch.
+When you press Enter on confirm, the wizard writes `~/.zelari-code/provider.json` (and `keys.json` if you chose keystore), shows a brief "✓ Setup complete!" banner, **then transparently transitions into the regular TUI** — no need to re-launch.
 
 ### Skipping / re-running
 

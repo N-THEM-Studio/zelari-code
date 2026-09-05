@@ -1,6 +1,6 @@
 # Zelari Code — User Guide
 
-> **2.30.0**
+> **2.33.0**
 > Multi-agent coding CLI with TUI (Ink + React), **Zelari Desktop** (Tauri 2), 6-role council, **kraken** super-agent, **zelari** missions, slash commands, MCP, SSH and provider-agnostic LLMs (Grok / ChatGPT / Anthropic OAuth).
 > Product: **[Anathema Studio](https://anathema-studio.com/)** · license **Apache-2.0**.
 
@@ -157,7 +157,7 @@ On first launch (or when `provider.json` is missing), a 5-step **wizard** starts
 4. **API key** — `env` (environment variable), `keystore` (save locally) or `skip`
 5. **Confirm** — summary and commit
 
-At the end it writes the configuration to `~/.tmp/zelari-code/` and moves to the TUI automatically.
+At the end it writes the configuration to `~/.zelari-code/` and moves to the TUI automatically.
 
 ### Skip or repeat the wizard
 
@@ -885,7 +885,7 @@ Invocation: `/skill my-skill optional argument`.
 
 ### Skill statistics
 
-Invocations are logged to `~/.tmp/zelari-code/skill-history.jsonl`.
+Invocations are logged to `~/.zelari-code/skill-history.jsonl`.
 
 ```
 /skill-stats                  # all skills
@@ -1046,7 +1046,7 @@ Kill switch: `ZELARI_SSH=0`.
 
 ### Sessions
 
-Every conversation is persisted as JSONL in `~/.tmp/zelari-code/sessions/<id>.jsonl`.
+Every conversation is persisted as JSONL in `~/.zelari-code/sessions/<id>.jsonl`.
 
 ```
 /sessions          # list
@@ -1288,7 +1288,7 @@ Features added between 2.29 and 2.30 (references: `HANDOFF-v2.30.md`, ADR-0036).
 
 ## Configuration files
 
-Everything under `~/.tmp/zelari-code/` (unless overridden by env):
+Everything under `~/.zelari-code/` (unless overridden by env):
 
 | File | Contents |
 |---|---|
@@ -1374,7 +1374,7 @@ Everything under `~/.tmp/zelari-code/` (unless overridden by env):
 | `ZELARI_LSP` | `1` | `0` disables the 5 LSP tools |
 | `ZELARI_AST` | `1` | `0` disables AST tools |
 | `ZELARI_SEMANTIC` | `1` | `0` disables semantic search + `/index` |
-| `ZELARI_SEMANTIC_FILE` | `~/.tmp/zelari-code/semantic.json` | embeddings store path |
+| `ZELARI_SEMANTIC_FILE` | `~/.zelari-code/semantic.json` | embeddings store path |
 | `ZELARI_EMBED_MODEL` | `Xenova/all-MiniLM-L6-v2` | embedding model for semantic search |
 | `ZELARI_BROWSER` | `1` | `0` disables `browser_check` |
 | `ZELARI_DIAGNOSTICS` | `1` | `0` disables the post-edit diagnostics loop |
@@ -1456,7 +1456,7 @@ See [Windows installation](#windows-zelari-code-not-found).
 
 ### Wizard doesn't start / always starts
 
-- Missing `~/.tmp/zelari-code/provider.json` → wizard on first launch
+- Missing `~/.zelari-code/provider.json` → wizard on first launch
 - `--reset-config` forces the wizard
 - `--no-wizard` or `ZELARI_NO_WIZARD=1` suppresses it
 

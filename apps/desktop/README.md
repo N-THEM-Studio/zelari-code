@@ -128,6 +128,8 @@ and applies the Kraken strict gate, Mission strict gate, native criteria pack,
 advisory verifier mode (automatic/on/off), and experimental Best-of-N to every
 new run, including runs started from the floating overlay.
 
+**Settings → Agents → Permissions** picks the permission preset forwarded to every run (`standard` | `strict` | `yolo`, default `standard`). In `standard` and `strict`, commands outside the allowlist raise a native approval dialog; dismissing it, closing it, timing out (120s) or any error means **deny** — fail-closed. `yolo` skips approvals entirely (same as the CLI's `--permissions yolo`).
+
 Also supported from Settings / CLI:
 
 | Action | CLI |
@@ -139,6 +141,8 @@ Also supported from Settings / CLI:
 | SSH targets | `--print-ssh-targets` / `--set-ssh-target` / `--test-ssh-target` |
 
 Chats: Active / Archived filters, archive ⬇, delete × (localStorage); multi-turn history via `--history-file`.
+
+**Chat persistence limits (localStorage):** per folder view, Desktop keeps the most recent **80 conversations** (the active one is always retained) and the **last 200 messages** per conversation; anything older is dropped on save. A failed save is surfaced in the status line — data stays in memory for the session. This cache is a UI convenience, not an archive: the CLI session spine (`.zelari/sessions/`) remains the durable record.
 
 Replies: light structured view (headings, lists, tables, code); tool calls as **ToolCallCard**; thinking animation; run stats.
 
