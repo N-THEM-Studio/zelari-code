@@ -91,6 +91,7 @@ describe("normalizeDesktopPrefs", () => {
       verifierReview: false,
       bonAlpha: false,
       gauntletLoop: true,
+      permissionPreset: "standard",
       krakenDelegation: "automatic",
       krakenExploreModel: "",
       krakenGeneralModel: "",
@@ -114,6 +115,7 @@ describe("normalizeDesktopPrefs", () => {
       verifierReview: null,
       bonAlpha: true,
       gauntletLoop: false,
+      permissionPreset: "standard",
       krakenDelegation: "automatic",
       krakenExploreModel: "",
       krakenGeneralModel: "",
@@ -153,6 +155,16 @@ describe("normalizeDesktopPrefs", () => {
       krakenPlannerModel: "",
     });
   });
+
+  it("normalizes the tool permission preset", () => {
+    expect(DEFAULT_DESKTOP_PREFS.permissionPreset).toBe("standard");
+    expect(
+      normalizeDesktopPrefs({ permissionPreset: "yolo" }),
+    ).toMatchObject({ permissionPreset: "yolo" });
+    expect(
+      normalizeDesktopPrefs({ permissionPreset: "ultra" }),
+    ).toMatchObject({ permissionPreset: "standard" });
+  });
 });
 
 describe("load/saveDesktopPrefs", () => {
@@ -190,6 +202,7 @@ describe("load/saveDesktopPrefs", () => {
       verifierReview: true,
       bonAlpha: true,
       gauntletLoop: true,
+      permissionPreset: "standard",
       krakenDelegation: "prefer",
       krakenExploreModel: "fast-model",
       krakenGeneralModel: "coding-model",
