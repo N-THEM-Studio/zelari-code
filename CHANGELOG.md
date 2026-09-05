@@ -5,6 +5,19 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.33.1] - 2026-09-05
+
+Patch release: the front door stops tripping on informational warnings, and the GLM default points at the current flagship.
+
+### Fixed
+
+- **Doctor gate honors severity** — `--doctor --json` (the Desktop first-run gate and the TUI wizard contract) reported `healthy: false` for ANY red entry, including severity-`warn` informational checks with no fix command ("context growth: no instrumented runs yet", optional plugins, cua-driver, budget hints). `healthy`/`firstRed` are now critical-only, matching `--doctor`'s own exit code (`criticalFails === 0`); WARN entries stay visible in `entries` but never close the front door. Pinned by `doctor-gate-semantics.test.ts`.
+- **Desktop release builds (2.33.0 hot-patch)** — the ask-bridge call site forwarded an owned `serde_json::Value` where `&Value` is expected (`E0308`), breaking every `Release Desktop` build of the original 2.33.0 tag on all three platforms; the npm 2.33.0 tarball predates this fix. Also silenced the `unused variable: pid` warning in `kill_child_tree` (binding moved inside the `#[cfg(windows)]` block that uses it).
+
+### Changed
+
+- **GLM default model is GLM-5.3** — the in-code default for the `glm` provider moves from `glm-4.6` to `glm-5.3` (fresh installs and factory defaults; existing user configs are untouched). `glm-5.3` was already in the model catalog.
+
 ## [2.33.0] - 2026-09-05
 
 Alignment release: what the Desktop UI and the docs say now matches what the code does, and the release tooling can no longer drift silently.
