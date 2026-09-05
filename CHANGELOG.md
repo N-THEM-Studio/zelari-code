@@ -5,6 +5,24 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.34.0] - 2026-09-05
+
+Desktop honesty release: the context meter stops crying wolf, tentacle phases are visible in real time, and the council monolith is finally split.
+
+### Added
+
+- **Live tentacle progress on Desktop** — the task tool now emits phase events (`worktree:`, `verifying…`, `merging…`) through the existing NDJSON activity bridge; the Desktop activity reducer persists `message` events (previously discarded on arrival) and `AgentRow` renders the current phase next to the tool count. Phase transitions dual-write a `kind:'progress'` entry to the Kraken radio (`.zelari/radio/`), giving `/kraken` and `/doctor` a persistent, readable history — the previously declared-but-never-emitted `progress` kind is now real (closes the G3 debt from HANDOFF-kraken).
+- **`contextMeter.ts` (Desktop)** — pure, tested resolver for the context readout: the spine budget event (the same authoritative source as the CLI's budget line) is primary, with staleness handling; the client-side proxy survives only as a labeled-`est.` fallback.
+
+### Fixed
+
+- **Desktop context meter honesty** — `ctx ~100%` after every chat message was a client-side proxy (chars/4 ∨ measured tokens ∨ reported size) divided by a hardcoded 200k, disconnected from the selected model's real window: a 64k-token turn on a 200k model read as 100% while true occupancy was ~16-32% (and "compactions 0" was correct — nothing was ever near the 85% threshold). The panel now leads with the authoritative occupancy over the real model limit and labels estimates as estimates; `useHarnessState` stamps when the last event arrived so stale readouts are visibly stale.
+- **Mission slice `sessionId` wiring (item 5, HANDOFF-v2.30)** — `runZelariMissionInTui`'s `postCouncilHook` call was the only one of four call-sites not passing `sessionId`, so evidence-from-spine never activated on the mission path. Wired, and pinned by a static contract test that fails if any `runPostCouncilHook` call-site loses its `sessionId`.
+
+### Changed
+
+- **`councilApi.ts` split (2180 → 944 LOC)** — the refactor debt carried since two handoffs is paid: the pure pieces live in `packages/core/src/agents/council/` (`types`, `toolEmission`, `outputCleaning`, `memberMessages`, `retryTurn`, `chairmanDelivery`, `chairmanFixLoop`); `councilApi.ts` re-exports everything, so the public API and all consumers are untouched (410 council tests green).
+
 ## [2.33.1] - 2026-09-05
 
 Patch release: the front door stops tripping on informational warnings, and the GLM default points at the current flagship.
