@@ -1,29 +1,29 @@
-Sì. Ho ricontrollato il `main` attuale di Zelari prima di impostare la patch. La direzione giusta è fare un refactor **incrementale**: prima correggere due incongruenze che interferiscono con context/cache, poi introdurre `RequestSnapshot → RequestMeter → cache-aware compaction`. DSH usa esattamente questa separazione concettuale: misura la request reale, fa pruning model-free, rimisura, e solo se serve fa summarization riproducendo il prefisso della request precedente. 
+Yes. I re-checked Zelari's current `main` before setting up the patch. The right direction is an **incremental** refactor: first fix two inconsistencies that interfere with context/cache, then introduce `RequestSnapshot -> RequestMeter -> cache-aware compaction`. DSH uses exactly this conceptual separation: it measures the real request, does model-free pruning, remeasures, and only if needed does summarization by replaying the prefix of the previous request.
 
-## Specifica da dare al coding LLM
+## Spec to hand to the coding LLM
 
-### Obiettivo
+### Goal
 
-Implementare in Zelari Code una pipeline di context management che:
+Implement in Zelari Code a context management pipeline that:
 
-1. misuri **l'intera request**, non solo `history`;
-2. tenga traccia dell'ultima request realmente inviata al provider;
-3. sfrutti il prompt/KV cache durante la compaction;
-4. faccia pruning dei tool result **prima** di spendere una chiamata LLM;
-5. rimisuri dopo ogni trasformazione;
-6. non compatti solo perché è stato superato un numero arbitrario di messaggi;
-7. conservi provider/model/tool schema/system prompt esattamente quando possibile;
-8. esponga metriche utili per capire cache hit/miss.
+1. measures **the entire request**, not just `history`;
+2. tracks the last request actually sent to the provider;
+3. leverages the prompt/KV cache during compaction;
+4. prunes tool results **before** spending an LLM call;
+5. remeasures after every transformation;
+6. does not compact just because an arbitrary message count was exceeded;
+7. preserves provider/model/tool schema/system prompt exactly whenever possible;
+8. exposes useful metrics to understand cache hit/miss.
 
-Non portare Cordis/plugin architecture di DSH e non implementare ancora una SessionSurface completa.
+Do not port the Cordis/plugin architecture from DSH and do not implement a full SessionSurface yet.
 
 ---
 
-# P0 — prima correggere due problemi esistenti
+# P0 - first fix two existing problems
 
-## 0.1 Correggere il bookkeeping della rolling history
+## 0.1 Fix the rolling history bookkeeping
 
-In `useChatTurn.ts` il seed dell'harness è:
+In `useChatTurn.ts` the harness seed is:
 
 ```ts
 messages: [
@@ -33,21 +33,21 @@ messages: [
 ]
 ```
 
-ma nel `finally` il codice assume:
+but in `finally` the code assumes:
 
 ```ts
 const seedLen = 1 /*system*/ + historySeedLen + 1 /*user*/;
 ```
 
-Il problema è che `systemMessagesFromSplit()` può restituire **due** messaggi system — stable e volatile — e lo dice esplicitamente il builder. Di conseguenza il numero di messaggi system non è necessariamente 1. 
+The problem is that `systemMessagesFromSplit()` can return **two** system messages - stable and volatile - and the builder says so explicitly. As a consequence the number of system messages is not necessarily 1.
 
-Inoltre la logica attuale rende l'inclusione del messaggio user nella rolling history dipendente indirettamente dal numero di system messages: con un solo system viene escluso dalla slice, con due può finire incluso per effetto dell'off-by-one. 
+Moreover, the current logic makes the inclusion of the user message in the rolling history indirectly depend on the number of system messages: with a single system message it is excluded from the slice, with two it can end up included due to the off-by-one.
 
-**Non aggiustare semplicemente `1` → `systemMessages.length`.**
+**Do not simply adjust `1` to `systemMessages.length`.**
 
-Meglio eliminare completamente il fragile `historySeedLen`/`seedLen`.
+Better to eliminate the fragile `historySeedLen`/`seedLen` entirely.
 
-Dopo un turno riuscito:
+After a successful turn:
 
 ```ts
 const all = [...harness.getMessages()];
@@ -58,7 +58,7 @@ const providerHistory = all.slice(systemMessages.length);
 setHistory(providerHistory);
 ```
 
-Quindi la rolling history deve rappresentare:
+So the rolling history must represent:
 
 ```text
 user
@@ -72,26 +72,26 @@ assistant
 ...
 ```
 
-e non i system prompt iniziali.
+and not the initial system prompts.
 
-Questo evita anche `appendMessages()` + aritmetica sulla tail.
+This also avoids `appendMessages()` + arithmetic on the tail.
 
-**Importante:** mantenere separati:
+**Important:** keep these separate:
 
 ```text
-providerHistory = contenuto model-facing
-displayHistory  = contenuto scrubbed per UI
+providerHistory = model-facing content
+displayHistory  = scrubbed content for the UI
 ```
 
-Non modificare retroattivamente il provider history dopo che è stato inviato, altrimenti non è più possibile riprodurre byte/token-stabilmente il prefix.
+Never retroactively modify the provider history after it has been sent, otherwise it is no longer possible to reproduce the prefix byte/token-stably.
 
-Se `cleanAgentContent()` è necessario anche per sicurezza prima di rimandare testo al provider, allora il cleaning deve diventare una trasformazione canonica effettuata **prima della request**, non una mutazione successiva.
+If `cleanAgentContent()` is also needed for safety before sending text back to the provider, then the cleaning must become a canonical transformation performed **before the request**, not a subsequent mutation.
 
 ---
 
-## 0.2 Usare il provider reale nell'AgentHarness
+## 0.2 Use the real provider in AgentHarness
 
-Oggi il single-agent path costruisce:
+Today the single-agent path builds:
 
 ```ts
 new AgentHarness({
@@ -101,27 +101,27 @@ new AgentHarness({
 })
 ```
 
-anche se `envConfig.providerId` può essere `deepseek`, `glm`, `grok`, ecc. 
+even though `envConfig.providerId` can be `deepseek`, `glm`, `grok`, etc.
 
-Cambiare in:
+Change it to:
 
 ```ts
 provider: envConfig.providerId,
 ```
 
-Il provider OpenAI-compatible non sembra utilizzare `params.provider` per costruire il body, perché la configurazione concreta è già nella closure, quindi questa modifica serve soprattutto a rendere corretti snapshot, fingerprint, telemetry ed eventuale routing futuro. 
+The OpenAI-compatible provider does not seem to use `params.provider` to build the body, because the concrete configuration is already in the closure, so this change mainly serves to make snapshots, fingerprints, telemetry and any future routing correct.
 
 ---
 
-# P1 — introdurre RoutedRequestSnapshot
+# P1 - introduce RoutedRequestSnapshot
 
-Nuovo file suggerito:
+Suggested new file:
 
 ```text
 packages/core/src/core/requestSnapshot.ts
 ```
 
-Tipi:
+Types:
 
 ```ts
 export interface RoutedRequestSnapshot {
@@ -152,7 +152,7 @@ export interface RequestUsageSnapshot {
 }
 ```
 
-Implementare:
+Implement:
 
 ```ts
 export function createRoutedRequestSnapshot(input: {
@@ -163,7 +163,7 @@ export function createRoutedRequestSnapshot(input: {
 }): RoutedRequestSnapshot;
 ```
 
-La funzione deve:
+The function must:
 
 ```ts
 const firstConversationIndex =
@@ -184,11 +184,11 @@ const tools = [...input.tools].sort(
 );
 ```
 
-Fare snapshot detached, idealmente con `structuredClone()`.
+Make detached snapshots, ideally with `structuredClone()`.
 
-Il sorting dei tool deve essere identico a quello già fatto nel provider OpenAI-compatible, che attualmente ordina alfabeticamente gli schema proprio per mantenere stabile il prompt prefix. 
+The tool sorting must be identical to what the OpenAI-compatible provider already does, which currently sorts schemas alphabetically precisely to keep the prompt prefix stable.
 
-Per fingerprint usare SHA-256 su una serializzazione deterministica con chiavi degli object ordinate.
+For fingerprints use SHA-256 over a deterministic serialization with sorted object keys.
 
 ```ts
 headerFingerprint = sha256(stableStringify({
@@ -206,9 +206,9 @@ requestFingerprint = sha256(stableStringify({
 
 ---
 
-# P2 — far osservare all'harness ogni request realmente inviata
+# P2 - make the harness observe every request actually sent
 
-Estendere `AgentHarnessConfig`:
+Extend `AgentHarnessConfig`:
 
 ```ts
 interface AgentHarnessConfig {
@@ -219,17 +219,17 @@ interface AgentHarnessConfig {
 }
 ```
 
-Immediatamente **prima** di ogni:
+Immediately **before** every:
 
 ```ts
 this.config.providerStream(...)
 ```
 
-creare lo snapshot.
+create the snapshot.
 
-Non farlo solo sulla prima request: un coding-agent turn può fare molte request consecutive attraverso il tool loop. L'ultima request calda è quella più interessante per KV caching. L'harness attualmente richiama il provider con l'intero `this.config.messages`, model e tools ad ogni step. 
+Do not do it only on the first request: a coding-agent turn can make many consecutive requests through the tool loop. The last hot request is the most interesting one for KV caching. The harness currently calls the provider with the entire `this.config.messages`, model and tools at every step.
 
-Creerei un metodo interno:
+I would create an internal method:
 
 ```ts
 private createProviderStream(
@@ -256,13 +256,13 @@ private createProviderStream(
 }
 ```
 
-Usarlo sia nel path normale sia negli altri provider calls.
+Use it both in the normal path and in the other provider calls.
 
 ---
 
-# P3 — aggiungere generation options a ProviderStreamFn
+# P3 - add generation options to ProviderStreamFn
 
-Oggi `ProviderStreamFn` espone sostanzialmente:
+Today `ProviderStreamFn` essentially exposes:
 
 ```ts
 {
@@ -272,10 +272,9 @@ Oggi `ProviderStreamFn` espone sostanzialmente:
   tools,
   signal
 }
-``` 
+```
 
-
-Aggiungere:
+Add:
 
 ```ts
 export interface ProviderGenerationOptions {
@@ -310,21 +309,21 @@ if (params.generation?.maxTokens != null) {
 }
 ```
 
-Non mettere `purpose` nel model-visible prompt.
+Do not put `purpose` in the model-visible prompt.
 
-Gli adapter che non lo supportano possono ignorare le nuove option.
+Adapters that do not support it can ignore the new options.
 
 ---
 
-# P4 — RequestSnapshotStore
+# P4 - RequestSnapshotStore
 
-Nuovo file:
+New file:
 
 ```text
 src/cli/budget/requestSnapshotStore.ts
 ```
 
-Per ora niente infrastruttura complessa:
+For now no complex infrastructure:
 
 ```ts
 const latestRequests = new Map<string, RoutedRequestSnapshot>();
@@ -353,11 +352,11 @@ export function clearRequestSnapshots(
 ): void;
 ```
 
-`recordRequestUsage()` associa l'usage all'ultimo request snapshot.
+`recordRequestUsage()` associates the usage with the last request snapshot.
 
-Zelari ha già `UsageBreakdown` con `promptTokens`, `completionTokens`, `totalTokens` e `cachedPromptTokens`, e il provider normalizza già il campo DeepSeek `prompt_cache_hit_tokens` e quello OpenAI-style `prompt_tokens_details.cached_tokens`. Quindi il dato fondamentale è già disponibile. 
+Zelari already has `UsageBreakdown` with `promptTokens`, `completionTokens`, `totalTokens` and `cachedPromptTokens`, and the provider already normalizes the DeepSeek `prompt_cache_hit_tokens` field and the OpenAI-style `prompt_tokens_details.cached_tokens`. So the fundamental data is already available.
 
-Nel `useChatTurn`:
+In `useChatTurn`:
 
 ```ts
 onRequestSnapshot: snapshot => {
@@ -365,7 +364,7 @@ onRequestSnapshot: snapshot => {
 },
 ```
 
-e quando arriva `message_end`:
+and when `message_end` arrives:
 
 ```ts
 if (event.usage) {
@@ -376,15 +375,15 @@ if (event.usage) {
 
 ---
 
-# P5 — sostituire TokenBudget con RequestMeter
+# P5 - replace TokenBudget with RequestMeter
 
-Non cancellare subito `tokenBudget.ts`; creare prima:
+Do not delete `tokenBudget.ts` right away; first create:
 
 ```text
 src/cli/budget/requestMeter.ts
 ```
 
-Tipi:
+Types:
 
 ```ts
 export interface RequestEnvelope {
@@ -419,9 +418,9 @@ export interface RequestMeasurement {
 }
 ```
 
-L'attuale `estimateHistoryTokens()` conta principalmente `content` e tool calls con l'approssimazione `chars/4`; non conta system/tool schema come request envelope né `reasoningContent`. 
+The current `estimateHistoryTokens()` mainly counts `content` and tool calls with the `chars/4` approximation; it does not count system/tool schema as request envelope, nor `reasoningContent`.
 
-Il nuovo estimator deve includere almeno:
+The new estimator must include at least:
 
 ```text
 system message content
@@ -430,25 +429,25 @@ role/message overhead
 tool call name
 tool call args
 toolCallId
-reasoningContent quando sarà echoed
+reasoningContent when it will be echoed
 tool schema name
 tool schema description
 tool schema parameters JSON
 ```
 
-`reasoningContent` è importante perché Zelari lo rimanda effettivamente a DeepSeek nei turni assistant che hanno tool calls. 
+`reasoningContent` matters because Zelari actually sends it back to DeepSeek in assistant turns that have tool calls.
 
 ### Provider baseline
 
-Implementare il concetto DSH:
+Implement the DSH concept:
 
-Se:
+If:
 
 ```ts
 baseline.request.headerFingerprint === current.headerFingerprint
 ```
 
-allora utilizzare l'ultimo `promptTokens` reale come anchor:
+then use the last real `promptTokens` as the anchor:
 
 ```ts
 currentPromptEstimate =
@@ -466,9 +465,9 @@ Math.max(
 );
 ```
 
-Questa è la versione Zelari semplificata del `surfaceDeltaTokens` usato dal Token Meter di DSH: usage reale come baseline quando l'envelope canonico coincide, più delta euristico della surface. 
+This is the simplified Zelari version of the `surfaceDeltaTokens` used by the DSH Token Meter: real usage as baseline when the canonical envelope matches, plus a heuristic delta of the surface.
 
-Se l'header fingerprint non coincide:
+If the header fingerprint does not match:
 
 ```ts
 baselineKind = "estimated";
@@ -478,70 +477,70 @@ estimatedPromptTokens =
   conversationTokens;
 ```
 
-### Regola fondamentale
+### Fundamental rule
 
 ```ts
 contextPressureTokens =
   estimatedPromptTokens + reservedOutputTokens;
 ```
 
-NON:
+NOT:
 
 ```ts
 estimatedPromptTokens - cachedPromptTokens
 ```
 
-I cached tokens costano meno/sono più veloci, ma continuano a occupare context.
+Cached tokens cost less / are faster, but they still occupy context.
 
 ---
 
-# P6 — cambiare completamente il flusso automatico del budget
+# P6 - completely change the automatic budget flow
 
-Oggi `applyBudgetPolicyAsync()` viene eseguito prima della costruzione di system prompt e tool schemas. 
+Today `applyBudgetPolicyAsync()` runs before the system prompt and tool schemas are built.
 
-Cambiare il flusso a:
+Change the flow to:
 
 ```text
 resolve provider/model
-      ↓
+      v
 build tool registry
-      ↓
+      v
 build stable + volatile system prompt
-      ↓
+      v
 build effective user message
-      ↓
+      v
 construct RequestEnvelope
-      ↓
+      v
 RequestMeter.measure()
-      ↓
+      v
 context policy
-      ↓
+      v
 possibly mutate history
-      ↓
+      v
 rebuild RequestEnvelope
-      ↓
+      v
 AgentHarness
 ```
 
-Inoltre rimuovere dal normale hot path:
+Also remove from the normal hot path:
 
 ```ts
 compactInPlace();
 ```
 
-prima della misurazione.
+before measurement.
 
-Oggi `compactInPlace()` fa ancora compaction sulla base del numero di messaggi, indipendentemente dalla pressione token reale. 
+Today `compactInPlace()` still compacts based on message count, regardless of real token pressure.
 
-Questo può riscrivere inutilmente il prefix e perdere cache anche quando il modello avrebbe ancora molto contesto.
+This can needlessly rewrite the prefix and lose cache even when the model would still have plenty of context left.
 
-`compactInPlace()` può rimanere come utility legacy/manuale finché i call site non sono migrati.
+`compactInPlace()` can remain as a legacy/manual utility until the call sites are migrated.
 
 ---
 
-# P7 — pipeline prune → remeasure → summarize
+# P7 - prune -> remeasure -> summarize pipeline
 
-La nuova `applyBudgetPolicyAsync()` deve essere più simile a:
+The new `applyBudgetPolicyAsync()` should look more like this:
 
 ```ts
 let measurement = requestMeter.measure(envelope);
@@ -579,33 +578,33 @@ if (measurement.occupancy >= 0.95) {
 }
 ```
 
-DSH fa esplicitamente pruning model-free, rimisura e **salta completamente la summarization se il pruning ha riportato la request sotto soglia**. 
+DSH explicitly does model-free pruning, remeasures and **skips summarization entirely if pruning brought the request back under threshold**.
 
-Zelari ha già `pruneToolResultsDetailed()`, quindi non bisogna reimplementarlo. 
+Zelari already has `pruneToolResultsDetailed()`, so it does not need to be reimplemented.
 
-Correggere però questo commento:
+But fix this comment:
 
 ```ts
 "preserve the cache prefix"
 ```
 
-perché non è completamente vero.
+because it is not completely true.
 
-Un tool result modificato invalida il vecchio cache prefix **dal primo token modificato in poi**; il prefix precedente rimane riutilizzabile e la nuova versione può diventare il nuovo prefix caldo nelle request successive. DSH lo documenta esplicitamente. 
+A modified tool result invalidates the old cache prefix **from the first modified token onward**; the preceding prefix remains reusable and the new version can become the new hot prefix in subsequent requests. DSH documents this explicitly.
 
 ---
 
-# P8 — correggere il trigger di compactHistoryAsync
+# P8 - fix the compactHistoryAsync trigger
 
-Attualmente `compactHistoryDetailed()` non compatta se:
+Currently `compactHistoryDetailed()` does not compact if:
 
 ```ts
 messages.length <= maxMessages * 2
 ```
 
-anche se l'occupancy token è enorme. 
+even when token occupancy is huge.
 
-Aggiungere:
+Add:
 
 ```ts
 export interface CompactHistoryOptions {
@@ -614,7 +613,7 @@ export interface CompactHistoryOptions {
 }
 ```
 
-e:
+and:
 
 ```ts
 if (!opts?.force && messages.length <= maxMessages * 2) {
@@ -622,21 +621,21 @@ if (!opts?.force && messages.length <= maxMessages * 2) {
 }
 ```
 
-La compaction invocata dalla **token pressure** deve usare:
+Compaction invoked by **token pressure** must use:
 
 ```ts
 force: true
 ```
 
-Successivamente potrai eliminare del tutto la selezione basata su `maxMessages` e passare a un `retainTokens`, ma non è obbligatorio nel primo PR.
+Later you can drop the `maxMessages`-based selection entirely and move to a `retainTokens`, but it is not mandatory in the first PR.
 
 ---
 
-# P9 — riscrivere `llmCompact.ts`: niente più raw fetch
+# P9 - rewrite `llmCompact.ts`: no more raw fetch
 
-Questa è la modifica con il maggiore ritorno sulla cache.
+This is the change with the biggest cache payoff.
 
-Oggi `llmCompact.ts` crea un HTTP request autonomo con:
+Today `llmCompact.ts` creates a standalone HTTP request with:
 
 ```text
 COMPACT_SYSTEM
@@ -646,11 +645,11 @@ extractive sketch
 transcript flattened
 ```
 
-e può inoltre scegliere un model diverso tramite `ZELARI_COMPACT_MODEL`. 
+and it can also pick a different model via `ZELARI_COMPACT_MODEL`.
 
-È precisamente il pattern corretto da DSH perché distrugge il warm prefix: DSH ha sostituito il system prompt dedicato con **system + tools + conversation prefix originali + una user instruction finale**. 
+That is precisely the wrong pattern according to DSH because it destroys the warm prefix: DSH replaced the dedicated system prompt with **original system + tools + conversation prefix + a final user instruction**.
 
-Nuova API:
+New API:
 
 ```ts
 export interface CompactionReplayInput {
@@ -671,7 +670,7 @@ export async function llmSummarizeHistory(
 ): Promise<string | null>;
 ```
 
-Eliminare da `llmCompact.ts`:
+Remove from `llmCompact.ts`:
 
 ```text
 resolveCompactProviderConfig
@@ -683,7 +682,7 @@ COMPACT_SYSTEM
 flattened transcript request
 ```
 
-Sostituire `COMPACT_SYSTEM` con:
+Replace `COMPACT_SYSTEM` with:
 
 ```ts
 export const COMPACTION_INSTRUCTION = `
@@ -721,7 +720,7 @@ const messages: AgentMessage[] = [
 ];
 ```
 
-E poi:
+And then:
 
 ```ts
 let text = "";
@@ -749,15 +748,15 @@ if (!text.trim()) return null;
 return text.trim();
 ```
 
-**I tools devono essere inclusi anche se non devono essere chiamati.**
+**Tools must be included even though they are not supposed to be called.**
 
-Toglierli modifica il prefix token sequence e riduce drasticamente il cache reuse. È una delle decisioni esplicite del fix DSH. 
+Removing them changes the prefix token sequence and drastically reduces cache reuse. It is one of DSH's explicit decisions.
 
 ---
 
-# P10 — costruire il replay dalla request precedente
+# P10 - build the replay from the previous request
 
-`compactHistoryAsync()` deve ricevere l'ultima request snapshot:
+`compactHistoryAsync()` must receive the last request snapshot:
 
 ```ts
 opts?: {
@@ -767,13 +766,13 @@ opts?: {
 }
 ```
 
-Quando deve compattare:
+When it must compact:
 
 ```ts
 const droppedMsgs = messages.slice(0, cut);
 ```
 
-costruire:
+build:
 
 ```ts
 const snapshot = opts.requestSnapshot;
@@ -791,21 +790,21 @@ const model =
   snapshot?.model ?? currentModel;
 ```
 
-Per default **non usare `ZELARI_COMPACT_MODEL`** se il tuo scopo è KV-cache efficiency.
+By default **do not use `ZELARI_COMPACT_MODEL`** if your goal is KV-cache efficiency.
 
-Puoi mantenere l'env override, ma deve essere trattato esplicitamente come:
+You can keep the env override, but it must be explicitly treated as:
 
 ```text
 cacheReuseExpected = false
 ```
 
-perché un altro provider/model rappresenta un trade-off volontario. Anche DSH consente un summarization model diverso, ma documenta che così si rinuncia al cache reuse. 
+because a different provider/model is a deliberate trade-off. DSH also allows a different summarization model, but documents that this forfeits cache reuse.
 
 ---
 
-# P11 — verificare che il replay sia realmente un prefix
+# P11 - verify the replay is actually a prefix
 
-Aggiungerei:
+I would add:
 
 ```ts
 export function compareReplayPrefix(
@@ -818,9 +817,9 @@ export function compareReplayPrefix(
 };
 ```
 
-Non bloccare la compaction se non coincide.
+Do not block compaction when it does not match.
 
-Serve per telemetry:
+It is for telemetry:
 
 ```text
 compaction replay:
@@ -831,7 +830,7 @@ compaction replay:
   expected KV reuse: ~72k tokens
 ```
 
-oppure:
+or:
 
 ```text
 header match: yes
@@ -840,23 +839,22 @@ reason: pruned tool result
 expected KV reuse: prefix before message 17
 ```
 
-Il cache reuse deve essere **best effort**, mai una precondizione di correttezza.
+Cache reuse must be **best effort**, never a correctness precondition.
 
 ---
 
-# P12 — il checkpoint deve essere `user`, non nuovo `system`
+# P12 - the checkpoint must be `user`, not a new `system`
 
-Oggi Zelari mette il summary come:
+Today Zelari puts the summary as:
 
 ```ts
 {
   role: "system",
   content: summaryText,
 }
-``` 
+```
 
-
-Cambierei in:
+I would change it to:
 
 ```ts
 {
@@ -870,9 +868,9 @@ Cambierei in:
 }
 ```
 
-È lo stesso pattern generale usato da DSH: il checkpoint sostituisce la vecchia surface come model-visible user context anziché inventare un nuovo system policy block. 
+It is the same general pattern DSH uses: the checkpoint replaces the old surface as model-visible user context instead of inventing a new system policy block.
 
-Vantaggi:
+Advantages:
 
 ```text
 stable system
@@ -882,13 +880,13 @@ recent transcript
 current user
 ```
 
-anziché proliferare system messages che semanticamente non sono policy.
+instead of proliferating system messages that are semantically not policy.
 
 ---
 
-# P13 — rifiutare summary che non fanno risparmiare context
+# P13 - reject summaries that do not save context
 
-Prima di commit:
+Before committing:
 
 ```ts
 const sourceTokens = estimateMessages(droppedMsgs);
@@ -900,7 +898,7 @@ if (summaryTokens >= sourceTokens) {
 }
 ```
 
-Meglio ancora:
+Even better:
 
 ```ts
 if (summaryTokens > sourceTokens * 0.65) {
@@ -908,13 +906,13 @@ if (summaryTokens > sourceTokens * 0.65) {
 }
 ```
 
-DSH considera errore una summary che non è più piccola del contenuto che sostituisce. 
+DSH considers a summary that is not smaller than the content it replaces an error.
 
 ---
 
-# P14 — metriche cache
+# P14 - cache metrics
 
-Aggiungere almeno queste informazioni ai metrics/debug logs:
+Add at least this information to metrics/debug logs:
 
 ```ts
 interface RequestCacheMetrics {
@@ -946,15 +944,15 @@ cacheHitRatio =
     : undefined;
 ```
 
-Zelari raccoglie già i cached prompt tokens e li usa per il cost accounting, quindi questa parte richiede soprattutto conservarli insieme al fingerprint della request che li ha prodotti. 
+Zelari already collects cached prompt tokens and uses them for cost accounting, so this part mostly requires keeping them together with the fingerprint of the request that produced them.
 
 ---
 
-# P15 — non implementare ancora SessionSurface completa
+# P15 - do not implement a full SessionSurface yet
 
-Il JSONL di Zelari è già append-only e batcha gli eventi in modo efficiente. 
+Zelari's JSONL is already append-only and batches events efficiently.
 
-Per questo PR basta mantenere:
+For this PR it is enough to keep:
 
 ```text
 full JSONL log
@@ -964,7 +962,7 @@ current provider history
 session_compacted event
 ```
 
-Eventualmente estendere `session_compacted`:
+Optionally extend `session_compacted`:
 
 ```ts
 interface BrainSessionCompactedEvent {
@@ -981,151 +979,150 @@ interface BrainSessionCompactedEvent {
 }
 ```
 
-Una vera `SessionSurface` con operazioni append/replace può essere una fase successiva. DSH la usa per lasciare gli eventi originali nel log ma cambiare in modo durabile la proiezione vista dal modello. 
+A real `SessionSurface` with append/replace operations can be a later phase. DSH uses it to leave the original events in the log while durably changing the projection the model sees.
 
 ---
 
-## Flusso target finale
+## Final target flow
 
-Il coding LLM dovrebbe arrivare a questo:
+The coding LLM should arrive at this:
 
 ```text
 USER TURN
-   │
-   ├─ resolve provider/model
-   ├─ build tools
-   ├─ build stable system
-   ├─ build volatile system
-   ├─ build current user
-   │
-   ▼
+   |
+   v
+ resolve provider/model -> build tools
+        -> build stable system -> build volatile system
+        -> build current user
+   |
+   v
 RequestEnvelope
-   │
-   ▼
+   |
+   v
 RequestMeter.measure()
-   │
-   ├── <70% ──────────────────────────────► send
-   │
-   ├── 70–80% ── warn ───────────────────► send
-   │
-   └── >=80%
-          │
-          ▼
-      prune old oversized tool results
-          │
-          ▼
-      remeasure
-          │
-          ├── safe ───────────────────────► send
-          │
-          └── >=85%
-                 │
-                 ▼
-            select old balanced prefix
-                 │
-                 ▼
+   |
+   +-- <70% ------------------> send
+   |
+   +-- 70-80% -> warn --------> send
+   |
+   +-- >=80%
+         |
+         v
+    prune old oversized tool results
+         |
+         v
+    remeasure
+         |
+         +-- safe ------------> send
+         |
+         +-- >=85%
+                |
+                v
+           select old balanced prefix
+                |
+                v
        last RoutedRequestSnapshot
-                 │
-                 ▼
+                |
+                v
        SYSTEM(original)
        TOOLS(original)
        DROPPED MESSAGES(original/pruned)
        USER(compaction instruction)
-                 │
-                 ▼
+                |
+                v
              summary
-                 │
-                 ▼
-        verify summary shrinks
-                 │
-                 ▼
+                |
+                v
+       verify summary shrinks
+                |
+                v
        replace old prefix with checkpoint
-                 │
-                 ▼
+                |
+                v
               remeasure
-                 │
-                 ├── safe ────────────────► send
-                 │
-                 └── >=95%
-                        │
-                        ▼
+                 |
+                 +-- safe ----> send
+                 |
+                 +-- >=95%
+                        |
+                        v
                   emergency trim
-                        │
-                        ▼
+                        |
+                        v
                        send
 ```
 
-## Test obbligatori
+## Mandatory tests
 
-Chiederei al coding LLM di considerare il lavoro incompleto finché non passano questi casi:
+I would ask the coding LLM to consider the work incomplete until these cases pass:
 
 ```text
-1. systemMessages.length = 2 non causa più history slicing errato.
+1. systemMessages.length = 2 no longer causes wrong history slicing.
 
-2. single-agent rolling history contiene:
-   user → assistant → tool → assistant
-   e NON contiene i system prompt iniziali.
+2. the single-agent rolling history contains:
+   user -> assistant -> tool -> assistant
+   and does NOT contain the initial system prompts.
 
-3. AgentHarness snapshot riporta "deepseek", non "openai-compatible",
-   quando DeepSeek è il provider reale.
+3. the AgentHarness snapshot reports "deepseek", not "openai-compatible",
+   when DeepSeek is the real provider.
 
-4. Tool schemas nello snapshot sono sempre ordinati deterministicamente.
+4. tool schemas in the snapshot are always deterministically sorted.
 
-5. Due RequestEnvelope logicamente identici producono lo stesso fingerprint.
+5. two logically identical RequestEnvelopes produce the same fingerprint.
 
-6. Una modifica al volatile system cambia headerFingerprint.
+6. a change to the volatile system changes headerFingerprint.
 
-7. Una modifica soltanto alla tail conversation cambia requestFingerprint
-   ma mantiene headerFingerprint.
+7. a change only to the tail conversation changes requestFingerprint
+   but keeps headerFingerprint.
 
-8. RequestMeter include system + tools + reasoningContent + history.
+8. RequestMeter includes system + tools + reasoningContent + history.
 
-9. Con usage provider compatibile e stesso header,
-   RequestMeter usa baseline + surface delta.
+9. with compatible provider usage and the same header,
+   RequestMeter uses baseline + surface delta.
 
-10. cachedPromptTokens NON vengono sottratti da contextPressureTokens.
+10. cachedPromptTokens are NOT subtracted from contextPressureTokens.
 
-11. A 80%:
-    prune tool result → remeasure → occupancy 77%
-    => zero chiamate summarizer.
+11. at 80%:
+    prune tool result -> remeasure -> occupancy 77%
+    => zero summarizer calls.
 
-12. A 88% dopo pruning:
-    => una chiamata summarizer.
+12. at 88% after pruning:
+    => one summarizer call.
 
-13. La request summarizer contiene esattamente:
+13. the summarizer request contains exactly:
     old system prefix
     old tool schemas
     dropped message prefix
     trailing COMPACTION_INSTRUCTION
 
-14. Non esiste un COMPACT_SYSTEM prima della conversation.
+14. no COMPACT_SYSTEM exists before the conversation.
 
-15. Il summarizer usa stesso provider/model per default.
+15. the summarizer uses the same provider/model by default.
 
-16. Se ZELARI_COMPACT_MODEL forza altro model:
+16. if ZELARI_COMPACT_MODEL forces a different model:
     cacheReuseExpected === false.
 
-17. Tool call prodotto accidentalmente dal summarizer
-    => summary rejected/fallback extractive.
+17. a tool call accidentally produced by the summarizer
+    => summary rejected / extractive fallback.
 
-18. Summary >= source token size
-    => non viene committata.
+18. summary >= source token size
+    => it is not committed.
 
-19. Nessun cut può separare:
-    assistant(tool_calls) → tool(result).
+19. no cut may separate:
+    assistant(tool_calls) -> tool(result).
 
-20. High token pressure con pochi messaggi enormi
-    forza comunque la compaction.
+20. high token pressure with few huge messages
+    still forces compaction.
 
-21. Provider-reported cachedPromptTokens continua a propagarsi
-    fino alle metriche.
+21. provider-reported cachedPromptTokens keep propagating
+    all the way to metrics.
 
-22. /clear e /new cancellano anche RequestSnapshotStore.
+22. /clear and /new also wipe the RequestSnapshotStore.
 ```
 
-### Ordine dei commit che suggerisco
+### Commit order I suggest
 
-Farei **5 commit separati**, per permettere rollback e benchmark:
+I would do **5 separate commits**, to allow rollback and benchmarks:
 
 ```text
 1. fix(context): canonical rolling history and real provider identity
@@ -1135,11 +1132,11 @@ Farei **5 commit separati**, per permettere rollback e benchmark:
 5. feat(metrics): request/cache observability and regression tests
 ```
 
-Non mescolerei ancora SessionSurface, Code Mode o `run_code` in questi commit.
+I would not mix SessionSurface, Code Mode or `run_code` into these commits yet.
 
-### Risultato che mi aspetterei
+### Result I would expect
 
-La parte più importante non è solo ridurre il numero di token. È ottenere questa proprietà:
+The most important part is not just reducing the token count. It is obtaining this property:
 
 ```text
 request N:
@@ -1154,19 +1151,19 @@ SYSTEM VOLATILE
 TOOLS
 HISTORY A B C D
 USER "compact conversation above"
-                      ↑
-             nuova parte uncached
+                      ^
+             new uncached part
 ```
 
-invece dell'attuale:
+instead of the current:
 
 ```text
 COMPACT_SYSTEM
 USER "flattened A B C D"
 ```
 
-che diverge dal primo token. È precisamente il problema che DeepSeek Harness ha corretto nel luglio 2026. 
+which diverges from the very first token. That is precisely the problem DeepSeek Harness fixed in July 2026.
 
-E c'è una seconda vittoria importante: **non fare più LLM compaction quando basta accorciare due `read_file`/`grep` enormi**. DSH rimisura dopo il pruning proprio per evitare quella chiamata. 
+And there is a second important win: **no more LLM compaction when shortening two huge `read_file`/`grep` outputs is enough**. DSH remeasures after pruning precisely to avoid that call.
 
-Io darei al coding LLM **questa specifica come primo pass** e gli direi esplicitamente: *non implementare SessionSurface o Code Mode finché questi cinque commit non sono verdi*. Una volta fatto questo, il passo successivo che farei è una **seconda RFC per `observe_batch`/Code Mode**, perché è lì che puoi ottenere un'altra grossa riduzione di context growth durante esplorazioni repo con decine di `grep/read_file`.
+I would give the coding LLM **this spec as a first pass** and tell it explicitly: *do not implement SessionSurface or Code Mode until these five commits are green*. Once that is done, the next step I would take is a **second RFC for `observe_batch`/Code Mode**, because that is where another big reduction in context growth can come from during repo explorations with dozens of `grep/read_file` calls.

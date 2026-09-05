@@ -1,208 +1,208 @@
-# Zelari 3 --- Piano completo di evoluzione architetturale
+# Zelari 3 --- Complete architectural evolution plan
 
-**Documento:** Piano tecnico e di prodotto\
-**Target:** evoluzione da Zelari Code 2.14 a Zelari 3\
-**Principio guida:** *Zelari rimane indipendente e sovrano. Gli altri
-ambienti possono integrare Zelari; Zelari non dipende da altri coding
-harness.*\
-**Stato:** proposta architetturale\
-**Data:** 28 agosto 2026
+**Document:** Technical and product plan\
+**Target:** evolution from Zelari Code 2.14 to Zelari 3\
+**Guiding principle:** *Zelari remains independent and sovereign. Other
+environments may integrate Zelari; Zelari does not depend on other coding
+harnesses.*\
+**Status:** architectural proposal\
+**Date:** August 28, 2026
 
 ------------------------------------------------------------------------
 
 ## 0. Executive summary
 
-Zelari 3 non deve essere una riscrittura e non deve diventare un plugin
-di OpenCode, Claude Code, Codex o Grok Build. Deve essere una
-**kernelizzazione e consolidazione del runtime esistente**, trasformando
-Zelari da coding harness avanzato in una **piattaforma indipendente per
-missioni di software engineering agentiche, orchestrate e
-verificabili**.
+Zelari 3 must not be a rewrite and must not become a plugin for OpenCode,
+Claude Code, Codex or Grok Build. It must be a **kernelization and
+consolidation of the existing runtime**, transforming Zelari from an
+advanced coding harness into an **independent platform for orchestrated,
+verifiable agentic software-engineering missions**.
 
-L'obiettivo è preservare e rafforzare ciò che rende Zelari differente:
+The goal is to preserve and strengthen what makes Zelari different:
 
--   runtime proprietario e provider-neutral;
--   Kraken e Kraken Graph;
+-   proprietary, provider-neutral runtime;
+-   Kraken and Kraken Graph;
 -   Council;
--   missioni autonome;
--   memoria condivisa;
--   verificazione deterministica;
--   checkpoint e recovery;
--   eval e regression gate;
--   LSP, AST, semantic search e tool engineering;
--   compatibilità con provider, protocolli e strumenti esterni senza
-    dipendenza strutturale.
+-   autonomous missions;
+-   shared memory;
+-   deterministic verification;
+-   checkpoints and recovery;
+-   evals and regression gate;
+-   LSP, AST, semantic search and tool engineering;
+-   compatibility with providers, protocols and external tools without
+    structural dependency.
 
-Il salto di Zelari 3 consiste nel separare chiaramente:
+The leap of Zelari 3 consists in clearly separating:
 
-1.  **Kernel/runtime agentico** --- esecuzione, context, tools,
-    provider, permissions, events;
-2.  **Orchestration layer** --- Mission, Kraken, DAG, Council, ruoli,
+1.  **Agentic kernel/runtime** --- execution, context, tools,
+    providers, permissions, events;
+2.  **Orchestration layer** --- Mission, Kraken, DAG, Council, roles,
     scheduling, recovery;
 3.  **Verification layer** --- acceptance criteria, deterministic gates,
     critic loop, evidence;
-4.  **Platform layer** --- SDK, protocollo estensioni, headless RPC,
+4.  **Platform layer** --- SDK, extension protocol, headless RPC,
     telemetry, Flight Recorder;
-5.  **Clients/integrations** --- CLI, Desktop, editor, CI/CD,
+5.  **Clients/integrations** --- CLI, Desktop, editors, CI/CD,
     OpenCode/Claude/Codex bridges.
 
-La regola architetturale fondamentale è:
+The fundamental architectural rule is:
 
-> **OpenCode, Claude Code, Codex, Grok Build e futuri harness possono
-> diventare client, worker o integrazioni di Zelari. Non devono
-> diventare fondamenta necessarie al funzionamento di Zelari.**
+> **OpenCode, Claude Code, Codex, Grok Build and future harnesses may
+> become clients, workers or integrations of Zelari. They must not
+> become foundations required for Zelari to work.**
 
-La proposta evita una riscrittura big-bang. La migrazione deve essere
-incrementale, misurata con eval A/B e mantenere Zelari utilizzabile in
-ogni fase.
+The proposal avoids a big-bang rewrite. The migration must be
+incremental, measured with A/B evals, and keep Zelari usable at every
+stage.
 
 ------------------------------------------------------------------------
 
-# 1. Visione di Zelari 3
+# 1. Vision for Zelari 3
 
-## 1.1 Posizionamento
+## 1.1 Positioning
 
-Zelari 3 non dovrebbe essere presentato principalmente come:
+Zelari 3 should not primarily be presented as:
 
-> "un'alternativa open-source a Claude Code".
+> "an open-source alternative to Claude Code".
 
-Il posizionamento più forte è:
+The stronger positioning is:
 
 > **Zelari is an independent agentic software-engineering runtime.**
 
-Oppure:
+Or:
 
 > **Zelari turns coding agents into coordinated, verifiable
 > software-engineering systems.**
 
-La distinzione strategica:
+The strategic distinction:
 
   -----------------------------------------------------------------------
-  Categoria                           Funzione primaria
+  Category                           Primary function
   ----------------------------------- -----------------------------------
-  Coding assistant                    Aiuta un programmatore
+  Coding assistant                    Helps a programmer
 
-  Coding agent                        Esegue task di coding
+  Coding agent                        Executes coding tasks
 
-  Coding harness                      Fornisce runtime, tool e context a
-                                      un agente
+  Coding harness                      Provides runtime, tools and context
+                                      to an agent
 
-  Multi-agent harness                 Esegue e coordina più agenti
+  Multi-agent harness                 Runs and coordinates multiple
+                                      agents
 
-  **Zelari 3**                        **Esegue missioni software con
-                                      orchestrazione, verifica, recovery
-                                      e prove di completamento**
+  **Zelari 3**                        **Runs software missions with
+                                      orchestration, verification,
+                                      recovery and proof of completion**
   -----------------------------------------------------------------------
 
-Il concetto centrale del prodotto diventa quindi **Mission**, non "chat"
-e neppure "agent".
+The central product concept therefore becomes **Mission**, not "chat"
+and not even "agent".
 
 ------------------------------------------------------------------------
 
-# 2. Principi non negoziabili
+# 2. Non-negotiable principles
 
-## 2.1 Sovranità
+## 2.1 Sovereignty
 
-Zelari deve funzionare integralmente senza OpenCode, Claude Code, Codex
-o Grok Build.
+Zelari must work fully without OpenCode, Claude Code, Codex or Grok
+Build.
 
 Test:
 
-> Se domani eliminiamo una specifica integrazione esterna, Zelari perde
-> una capability fondamentale?
+> If tomorrow we remove a specific external integration, does Zelari
+> lose a fundamental capability?
 
-Se sì, la dipendenza è architetturalmente errata.
+If yes, the dependency is architecturally wrong.
 
 ## 2.2 Provider neutrality
 
-Nessun modello deve essere semanticamente obbligatorio. Provider e
-modelli sono risorse selezionabili dal runtime e dallo scheduler.
+No model may be semantically mandatory. Providers and models are
+resources selectable by the runtime and the scheduler.
 
-## 2.3 API aperta, kernel opinionated
+## 2.3 Open API, opinionated kernel
 
-Terze parti devono poter:
+Third parties must be able to:
 
--   creare missioni;
--   osservare eventi;
--   rispondere alle permission;
--   mettere in pausa/riprendere;
--   leggere graph, artifacts e risultati;
--   aggiungere tool e integrazioni;
--   fornire UI.
+-   create missions;
+-   observe events;
+-   answer permissions;
+-   pause/resume;
+-   read graphs, artifacts and results;
+-   add tools and integrations;
+-   provide UIs.
 
-Non devono poter corrompere implicitamente le invarianti del kernel.
+They must not be able to implicitly corrupt kernel invariants.
 
-## 2.4 Completion ≠ dichiarazione del modello
+## 2.4 Completion != model declaration
 
-Un modello può proporre `candidate_complete`.
+A model may propose `candidate_complete`.
 
-Solo una policy di verifica può produrre `PASS`.
+Only a verification policy may produce `PASS`.
 
-## 2.5 Run truth ≠ model context
+## 2.5 Run truth != model context
 
-La storia completa della missione è una fonte di verità persistente.
+The complete history of the mission is a persistent source of truth.
 
-Il contesto inviato a ciascun modello è una **vista derivata, limitata e
-specifica per ruolo**.
+The context sent to each model is a **derived, limited, role-specific
+view**.
 
-## 2.6 Orchestrazione adattiva
+## 2.6 Adaptive orchestration
 
-Non usare Council + Kraken + N worker per un rename di tre righe.
+Do not use Council + Kraken + N workers for a three-line rename.
 
-La complessità del runtime deve adattarsi a:
+The runtime's complexity must adapt to:
 
--   difficoltà;
--   rischio;
--   parallelizzabilità;
--   costo;
--   confidence richiesta.
+-   difficulty;
+-   risk;
+-   parallelizability;
+-   cost;
+-   required confidence.
 
 ## 2.7 Evidence first
 
-Decisioni di architettura e release devono essere validate tramite:
+Architecture and release decisions must be validated through:
 
--   eval;
+-   evals;
 -   regression gate;
--   benchmark A/B;
+-   A/B benchmarks;
 -   tracing;
 -   failure taxonomy;
 -   cost/latency metrics.
 
 ------------------------------------------------------------------------
 
-# 3. Architettura target
+# 3. Target architecture
 
 ``` text
-┌─────────────────────────────────────────────────────────────┐
-│                       ZELARI CLIENTS                        │
-│ CLI │ Desktop │ Web │ VS Code │ JetBrains │ CI │ Bridges  │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
++------------------------------------------------------------+
+|                       ZELARI CLIENTS                        |
+| CLI - Desktop - Web - VS Code - JetBrains - CI - Bridges   |
++------------------------------------------------------------+
+                            |
                   Zelari Public Protocol
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│                     ZELARI PLATFORM                         │
-│ SDK │ Headless RPC │ Extensions │ Flight Recorder │ Eval   │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│                   ZELARI ORCHESTRATOR                       │
-│ Mission │ Router │ Kraken │ Graph │ Council │ Budget       │
-│ Roles │ Scheduling │ Recovery │ Memory │ Completion Policy │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│                    ZELARI VERIFICATION                      │
-│ Acceptance │ Critics │ Tests │ Lint │ Types │ Security     │
-│ Evidence │ Deterministic Gates │ Regression Checks          │
-└───────────────────────────┬─────────────────────────────────┘
-                            │
-┌───────────────────────────▼─────────────────────────────────┐
-│                      ZELARI KERNEL                          │
-│ Agent Harness │ Context Engine │ Events │ Intervention     │
-│ Tool Runtime │ Permissions │ Provider Runtime │ Sessions    │
-└──────────────┬─────────────────┬────────────────┬───────────┘
-               │                 │                │
+                            |
++------------------------------------------------------------+
+|                     ZELARI PLATFORM                         |
+| SDK - Headless RPC - Extensions - Flight Recorder - Eval   |
++------------------------------------------------------------+
+                            |
++------------------------------------------------------------+
+|                   ZELARI ORCHESTRATOR                       |
+| Mission - Router - Kraken - Graph - Council - Budget       |
+| Roles - Scheduling - Recovery - Memory - Completion Policy |
++------------------------------------------------------------+
+                            |
++------------------------------------------------------------+
+|                    ZELARI VERIFICATION                      |
+| Acceptance - Critics - Tests - Lint - Types - Security     |
+| Evidence - Deterministic Gates - Regression Checks          |
++------------------------------------------------------------+
+                            |
++------------------------------------------------------------+
+|                      ZELARI KERNEL                          |
+| Agent Harness - Context Engine - Events - Intervention     |
+| Tool Runtime - Permissions - Provider Runtime - Sessions   |
++------------------------------------------------------------+
+               |                 |                |
           Providers           Tools          Workspace
        OpenAI/Anthropic      MCP/LSP/AST      Git/worktree
        Grok/etc.             Shell/browser    Filesystem
@@ -214,7 +214,7 @@ Decisioni di architettura e release devono essere validate tramite:
 
 ## 4.1 Kernel
 
-Responsabilità:
+Responsibilities:
 
 -   agent loop;
 -   model dispatch;
@@ -229,22 +229,22 @@ Responsabilità:
 -   timeout;
 -   retry primitives.
 
-Il kernel **non deve conoscere** Council, Kraken o logica di prodotto.
+The kernel **must not know about** Council, Kraken or product logic.
 
 ## 4.2 Context Engine
 
-Responsabilità:
+Responsibilities:
 
--   costruire il contesto per ruolo;
+-   build context per role;
 -   compaction;
 -   retrieval;
 -   salience;
 -   context budgets;
 -   artifact references;
--   summaries tipizzati;
--   invalidazione di memoria obsoleta.
+-   typed summaries;
+-   invalidation of stale memory.
 
-Interfaccia concettuale:
+Conceptual interface:
 
 ``` ts
 interface ContextPolicy {
@@ -253,7 +253,7 @@ interface ContextPolicy {
 }
 ```
 
-Policy differenti:
+Different policies:
 
 -   `LeadContextPolicy`
 -   `ExploreContextPolicy`
@@ -264,7 +264,7 @@ Policy differenti:
 
 ## 4.3 Orchestrator
 
-Responsabilità:
+Responsibilities:
 
 -   mission lifecycle;
 -   decomposition;
@@ -275,13 +275,13 @@ Responsabilità:
 -   budgets;
 -   pause/resume;
 -   recovery;
--   policy di completamento.
+-   completion policy.
 
 ## 4.4 Verification
 
-Deve essere un dominio separato dall'implementation.
+It must be a domain separate from implementation.
 
-Ordine consigliato:
+Suggested order:
 
 1.  deterministic checks;
 2.  repository constraints;
@@ -292,9 +292,9 @@ Ordine consigliato:
 
 ## 4.5 Platform
 
-Responsabilità:
+Responsibilities:
 
--   protocollo pubblico;
+-   public protocol;
 -   SDK;
 -   RPC;
 -   extension API;
@@ -305,13 +305,13 @@ Responsabilità:
 
 ------------------------------------------------------------------------
 
-# 5. Mission come API primaria
+# 5. Mission as the primary API
 
-L'API pubblica di alto livello deve essere mission-centric.
+The high-level public API must be mission-centric.
 
 ``` ts
 const mission = await zelari.missions.create({
-  objective: "Migra authentication a OAuth mantenendo compatibilità",
+  objective: "Migrate authentication to OAuth while keeping compatibility",
   workspace: "/repo",
   autonomy: "full",
   acceptance: [
@@ -327,7 +327,7 @@ const mission = await zelari.missions.create({
 });
 ```
 
-API minima:
+Minimal API:
 
 ``` text
 missions.create
@@ -345,47 +345,47 @@ missions.checkpoints
 missions.result
 ```
 
-`AgentHarness` rimane un'API importante per embedding avanzato, ma non
-deve essere il concetto principale del prodotto.
+`AgentHarness` remains an important API for advanced embedding, but must
+not be the product's main concept.
 
 ------------------------------------------------------------------------
 
 # 6. Mission state machine
 
-Stati suggeriti:
+Suggested states:
 
 ``` text
 CREATED
-  ↓
+  v
 ANALYZING
-  ↓
+  v
 PLANNED
-  ↓
+  v
 RUNNING
-  ├── WAITING_APPROVAL
-  ├── PAUSED
-  ├── RECOVERING
-  └── VERIFYING
-          ├── REPAIRING → RUNNING
-          ├── HOLD
-          └── PASSED
+  +-- WAITING_APPROVAL
+  +-- PAUSED
+  +-- RECOVERING
+  +-- VERIFYING
+          +-- REPAIRING -> RUNNING
+          +-- HOLD
+          +-- PASSED
 ```
 
-Terminali:
+Terminals:
 
 -   `PASSED`
 -   `FAILED`
 -   `CANCELLED`
 -   `HOLD`
 
-`HOLD` è importante: budget esaurito o impossibilità di verificare non
-devono essere trasformati falsamente in successo.
+`HOLD` matters: exhausted budget or inability to verify must not be
+falsely turned into success.
 
 ------------------------------------------------------------------------
 
 # 7. Complexity Router
 
-Prima di orchestrare, classificare:
+Before orchestrating, classify:
 
 -   scope;
 -   ambiguity;
@@ -399,38 +399,39 @@ Prima di orchestrare, classificare:
 Routing:
 
 ``` text
-TRIVIAL  → single agent
-NORMAL   → agent + independent verifier
-COMPLEX  → Kraken
-HIGH-RISK → Kraken + specialist critics
-AMBIGUOUS → Council/design → Kraken
-EPIC     → Council + hierarchical Kraken Graph
+TRIVIAL   -> single agent
+NORMAL    -> agent + independent verifier
+COMPLEX   -> Kraken
+HIGH-RISK -> Kraken + specialist critics
+AMBIGUOUS -> Council/design -> Kraken
+EPIC      -> Council + hierarchical Kraken Graph
 ```
 
-Il router deve essere valutabile. Ogni decisione va registrata e
-confrontata con outcome reali.
+The router must be evaluable. Every decision gets recorded and compared
+against real outcomes.
 
 ------------------------------------------------------------------------
 
 # 8. Kraken 3
 
-Kraken deve evolvere da "super-agent" a **mission scheduler agentico**.
+Kraken must evolve from "super-agent" to an **agentic mission
+scheduler**.
 
-Responsabilità:
+Responsibilities:
 
--   decomporre;
--   creare DAG;
--   assegnare ruoli;
--   scegliere model tier;
--   allocare worktree;
--   monitorare progress;
--   riconoscere blocchi;
--   riplanificare;
--   escalare;
--   terminare worker inutili;
--   richiedere verifica.
+-   decompose;
+-   create the DAG;
+-   assign roles;
+-   choose model tiers;
+-   allocate worktrees;
+-   monitor progress;
+-   recognize blockages;
+-   replan;
+-   escalate;
+-   terminate useless workers;
+-   request verification.
 
-Kraken non deve fare personalmente tutto il lavoro.
+Kraken must not personally do all the work.
 
 ## 8.1 Node schema
 
@@ -455,7 +456,7 @@ max_rounds: 3
 
 ## 8.2 Scheduling
 
-Priorità calcolata usando:
+Priority computed using:
 
 -   critical path;
 -   dependency unlock value;
@@ -469,32 +470,31 @@ Priorità calcolata usando:
 
 # 9. Council 3
 
-Council non deve essere obbligatoriamente una pipeline fissa.
+Council must not necessarily be a fixed pipeline.
 
-Passare a **dynamic role assembly**.
+Move to **dynamic role assembly**.
 
-Esempio:
+Example:
 
 ``` text
-Mission: race condition nel transaction engine
+Mission: race condition in the transaction engine
 
-Ruoli:
-✓ concurrency specialist
-✓ repository explorer
-✓ test strategist
-✓ critic
+Roles:
+V concurrency specialist
+V repository explorer
+V test strategist
+V critic
 
-Non necessari:
-✗ product ideator
-✗ documentation planner
+Not needed:
+? product ideator
+? documentation planner
 ```
 
-Il Council deve rispondere a una domanda precisa:
+The Council must answer one precise question:
 
-> Quale decisione richiede pluralità di prospettive prima
-> dell'esecuzione?
+> Which decision requires a plurality of perspectives before execution?
 
-Usarlo per:
+Use it for:
 
 -   architecture;
 -   ambiguous requirements;
@@ -502,13 +502,13 @@ Usarlo per:
 -   security boundaries;
 -   alternative strategies.
 
-Non usarlo automaticamente per task semplici.
+Do not use it automatically for simple tasks.
 
 ------------------------------------------------------------------------
 
 # 10. Role system
 
-Separare `Role` da `AgentInstance`.
+Separate `Role` from `AgentInstance`.
 
 ``` ts
 type Role = {
@@ -534,46 +534,46 @@ type AgentInstance = {
 };
 ```
 
-Vantaggi:
+Advantages:
 
--   riuso;
--   eval per ruolo;
+-   reuse;
+-   per-role evals;
 -   model routing;
--   sicurezza;
--   parallelismo;
--   comparazione A/B.
+-   security;
+-   parallelism;
+-   A/B comparison.
 
 ------------------------------------------------------------------------
 
 # 11. Builder--Critic Gauntlet
 
-Per output importanti:
+For important outputs:
 
 ``` text
 Builder
-  ↓
+  v
 Candidate
-  ↓
+  v
 Fresh-context Critic
-  ↓
+  v
 Biggest gap
-  ├── gap → Builder round N+1
-  └── wins quality bar → verification
+  +-- gap -> Builder round N+1
+  +-- wins quality bar -> verification
 ```
 
-Regole:
+Rules:
 
-1.  critic non eredita il reasoning del builder;
-2.  critic riceve output reale e rubric;
-3.  deve nominare il **singolo gap più importante**;
-4.  il builder riceve il gap, non una riscrittura completa;
-5.  round limit configurabile;
-6.  deterministic gate resta autorità finale.
+1.  the critic does not inherit the builder's reasoning;
+2.  the critic receives the real output and the rubric;
+3.  it must name the **single most important gap**;
+4.  the builder receives the gap, not a full rewrite;
+5.  configurable round limit;
+6.  the deterministic gate remains the final authority.
 
-Quality bar può essere:
+The quality bar can be:
 
--   baseline corrente;
--   implementation di riferimento;
+-   current baseline;
+-   reference implementation;
 -   architecture constraints;
 -   acceptance tests;
 -   benchmark;
@@ -603,7 +603,7 @@ Quality bar può essere:
 
 ## 12.2 Evidence model
 
-Ogni check produce:
+Every check produces:
 
 ``` ts
 type VerificationEvidence = {
@@ -620,19 +620,19 @@ type VerificationEvidence = {
 
 ``` text
 candidate_complete
-        ↓
+        v
 required evidence complete?
-        ↓
-   no → continue/hold
-        ↓ yes
+        v
+   no -> continue/hold
+        v yes
 all hard gates pass?
-        ↓
-   no → repair/fail
-        ↓ yes
+        v
+   no -> repair/fail
+        v yes
 soft confidence acceptable?
-        ↓
-   no → critic/escalate
-        ↓ yes
+        v
+   no -> critic/escalate
+        v yes
       PASS
 ```
 
@@ -640,7 +640,7 @@ soft confidence acceptable?
 
 # 13. Budget Scheduler
 
-Budget come primitive first-class:
+Budget as a first-class primitive:
 
 ``` ts
 type Budget = {
@@ -652,15 +652,15 @@ type Budget = {
 };
 ```
 
-Strategia:
+Strategy:
 
--   cheap/fast model per discovery semplice;
--   frontier reasoning per architecture;
--   coding-specialized model per implementation;
--   deterministic tool prima di LLM verification;
--   escalation solo su failure/low confidence.
+-   cheap/fast model for simple discovery;
+-   frontier reasoning for architecture;
+-   coding-specialized model for implementation;
+-   deterministic tools before LLM verification;
+-   escalation only on failure/low confidence.
 
-Metriche:
+Metrics:
 
 -   cost/pass;
 -   tokens/pass;
@@ -674,29 +674,29 @@ Metriche:
 
 # 14. Speculative execution
 
-Per decisioni ad alta incertezza e verificabili:
+For high-uncertainty, verifiable decisions:
 
 ``` text
-Strategy A ─┐
-            ├─ deterministic comparison → winner
-Strategy B ─┘
+Strategy A -+
+            +--> deterministic comparison -> winner
+Strategy B -+
 ```
 
-Usare quando:
+Use when:
 
--   alternative implementative sono economiche;
--   esiste quality bar oggettiva;
--   il costo di discussione supera il costo di prototipazione.
+-   implementation alternatives are cheap;
+-   an objective quality bar exists;
+-   the cost of discussion exceeds the cost of prototyping.
 
-Non usare indiscriminatamente.
+Do not use indiscriminately.
 
 ------------------------------------------------------------------------
 
-# 15. Event model unificato
+# 15. Unified event model
 
-Ogni componente emette eventi immutabili.
+Every component emits immutable events.
 
-Esempi:
+Examples:
 
 ``` text
 MissionCreated
@@ -741,7 +741,7 @@ type ZelariEvent<T> = {
 };
 ```
 
-Questo diventa il sistema nervoso per:
+This becomes the nervous system for:
 
 -   UI;
 -   tracing;
@@ -755,7 +755,7 @@ Questo diventa il sistema nervoso per:
 
 # 16. Observer & Intervention API
 
-Observer:
+Observers:
 
 ``` text
 onMissionStart
@@ -770,7 +770,7 @@ onTurnEnd
 onMissionEnd
 ```
 
-Interventi:
+Interventions:
 
 ``` text
 continue
@@ -785,7 +785,7 @@ escalate_model
 replan
 ```
 
-Usi:
+Uses:
 
 -   anti-loop;
 -   cost guard;
@@ -796,19 +796,19 @@ Usi:
 
 ------------------------------------------------------------------------
 
-# 17. Anti-loop e no-progress detection
+# 17. Anti-loop and no-progress detection
 
-Segnali:
+Signals:
 
--   stesso tool + stessi args ripetuti;
--   edit revertiti ciclicamente;
--   identico errore dopo N tentativi;
--   nessuna variazione del diff;
--   test failure invariato;
--   context churn senza artifact;
--   repeated exploration su stessi file.
+-   same tool + same args repeated;
+-   cyclically reverted edits;
+-   identical error after N attempts;
+-   no diff variation;
+-   unchanged test failure;
+-   context churn without artifacts;
+-   repeated exploration over the same files.
 
-Azioni:
+Actions:
 
 ``` text
 warn
@@ -825,7 +825,7 @@ hold
 
 # 18. Context Engine
 
-## 18.1 Fonti
+## 18.1 Sources
 
 -   mission objective;
 -   role;
@@ -842,7 +842,7 @@ hold
 
 ## 18.2 Context budgets
 
-Allocazione esplicita:
+Explicit allocation:
 
 ``` text
 system/role       10%
@@ -854,13 +854,13 @@ verification      10%
 reserve            5%
 ```
 
-Percentuali dinamiche, non rigide.
+Dynamic, not rigid, percentages.
 
 ## 18.3 Typed compaction
 
-Non "riassumi la chat".
+Not "summarize the chat".
 
-Produrre strutture:
+Produce structures:
 
 ``` text
 decisions
@@ -875,13 +875,13 @@ next_actions
 
 ## 18.4 Context fingerprint
 
-Registrare hash della vista di contesto per riproducibilità ed eval.
+Record a hash of the context view for reproducibility and evals.
 
 ------------------------------------------------------------------------
 
 # 19. Memory 3
 
-Separare:
+Separate:
 
 1.  **ephemeral working memory**
 2.  **mission memory**
@@ -889,7 +889,7 @@ Separare:
 4.  **verified knowledge**
 5.  **user/team policy**
 
-Ogni memory item:
+Every memory item:
 
 ``` text
 source
@@ -901,18 +901,17 @@ expires/invalidates
 evidence
 ```
 
-Regola:
+Rule:
 
-> La memoria non verificata non deve trasformarsi silenziosamente in
-> verità.
+> Unverified memory must not silently turn into truth.
 
-Supportare invalidazione quando il codice cambia.
+Support invalidation when the code changes.
 
 ------------------------------------------------------------------------
 
 # 20. Workspace & worktree model
 
-Primitive:
+Primitives:
 
 ``` text
 Workspace
@@ -923,22 +922,22 @@ Patch
 Artifact
 ```
 
-Policy:
+Policies:
 
 -   explorer: read-only;
 -   builder: scoped write;
--   critic: preferibilmente read-only;
--   verifier: read-only salvo fixture esplicite;
--   parallel builder: worktree isolati quando collision risk \>
+-   critic: preferably read-only;
+-   verifier: read-only except explicit fixtures;
+-   parallel builders: isolated worktrees when collision risk >
     threshold.
 
-Merge controllato e verificato.
+Controlled and verified merge.
 
 ------------------------------------------------------------------------
 
 # 21. Permission & security model
 
-Livelli:
+Levels:
 
 ``` text
 read
@@ -950,7 +949,7 @@ publish/deploy
 full-access
 ```
 
-Decisione basata su:
+Decision based on:
 
 -   role;
 -   mission policy;
@@ -959,7 +958,7 @@ Decisione basata su:
 -   environment;
 -   trust level.
 
-Supportare:
+Support:
 
 -   allow;
 -   deny;
@@ -968,13 +967,13 @@ Supportare:
 -   allow-for-mission;
 -   scoped allow.
 
-Audit completo tramite event log.
+Full audit via event log.
 
 ------------------------------------------------------------------------
 
 # 22. Tool Runtime
 
-Tool contract uniforme:
+Uniform tool contract:
 
 ``` ts
 interface ZelariTool<I, O> {
@@ -983,7 +982,7 @@ interface ZelariTool<I, O> {
 }
 ```
 
-Categorie:
+Categories:
 
 -   filesystem;
 -   shell;
@@ -996,7 +995,7 @@ Categorie:
 -   web;
 -   custom.
 
-Ogni tool deve dichiarare:
+Every tool must declare:
 
 -   side effects;
 -   permission class;
@@ -1009,7 +1008,7 @@ Ogni tool deve dichiarare:
 
 # 23. Provider Runtime
 
-Provider adapter deve normalizzare:
+The provider adapter must normalize:
 
 -   messages;
 -   tool calls;
@@ -1034,14 +1033,14 @@ supports_structured_output
 max_context
 ```
 
-Lo scheduler seleziona modelli per capability, non per hardcoded brand.
+The scheduler selects models by capability, not by hardcoded brand.
 
 ------------------------------------------------------------------------
 
 # 24. Zelari Extension Protocol (ZEP)
 
-Obiettivo: permettere ad altri ambienti di integrare Zelari senza
-possederne il runtime.
+Goal: allow other environments to integrate Zelari without owning its
+runtime.
 
 ## 24.1 Client capabilities
 
@@ -1064,12 +1063,12 @@ retrieveResult
 
 ## 24.2 Transport
 
-Supportare progressivamente:
+Progressively support:
 
 1.  in-process TypeScript SDK;
 2.  stdio JSON-RPC;
 3.  local socket;
-4.  HTTP/WebSocket per deployment remoto.
+4.  HTTP/WebSocket for remote deployment.
 
 ## 24.3 Versioning
 
@@ -1079,36 +1078,36 @@ Protocol version:
 zep/1
 ```
 
-Capability negotiation obbligatoria.
+Mandatory capability negotiation.
 
 ------------------------------------------------------------------------
 
-# 25. Integrazioni esterne
+# 25. External integrations
 
 ## 25.1 OpenCode
 
-OpenCode può:
+OpenCode can:
 
--   mostrare mission UI;
--   inviare workspace;
--   renderizzare events;
--   rispondere approvals;
--   mostrare diff/artifacts.
+-   show mission UI;
+-   send a workspace;
+-   render events;
+-   answer approvals;
+-   show diffs/artifacts.
 
-Non possiede Kraken o Mission state.
+It does not own Kraken or Mission state.
 
 ## 25.2 Claude Code
 
-Possibili modalità:
+Possible modes:
 
 -   bridge command;
 -   MCP-facing integration;
--   worker adapter sperimentale;
--   import/export di skill compatibili.
+-   experimental worker adapter;
+-   import/export of compatible skills.
 
 ## 25.3 Codex
 
-Possibili modalità:
+Possible modes:
 
 -   external worker;
 -   CI/client integration;
@@ -1116,19 +1115,19 @@ Possibili modalità:
 
 ## 25.4 Grok Build
 
-Possibili modalità:
+Possible modes:
 
 -   skill compatibility;
 -   worker bridge;
 -   comparative eval.
 
-Nessuna integrazione è necessaria al core.
+No integration is required by the core.
 
 ------------------------------------------------------------------------
 
 # 26. External worker adapters
 
-Fase avanzata, opzionale.
+Advanced, optional phase.
 
 ``` ts
 interface ExternalWorkerAdapter {
@@ -1140,7 +1139,7 @@ interface ExternalWorkerAdapter {
 }
 ```
 
-Zelari può quindi orchestrare:
+Zelari can then orchestrate:
 
 ``` text
 native Zelari agent
@@ -1150,21 +1149,21 @@ OpenCode worker
 custom enterprise worker
 ```
 
-ma conserva:
+while keeping:
 
 -   mission state;
--   graph;
+-   the graph;
 -   verification;
--   budget;
+-   the budget;
 -   completion authority.
 
 ------------------------------------------------------------------------
 
 # 27. Flight Recorder
 
-Ogni run importante deve essere ricostruibile.
+Every important run must be reconstructible.
 
-Registrare:
+Record:
 
 -   mission config;
 -   model/version;
@@ -1221,7 +1220,7 @@ long-horizon mission
 
 ## 28.3 A/B
 
-Confronti:
+Comparisons:
 
 ``` text
 single agent vs Kraken
@@ -1233,13 +1232,13 @@ critic off vs on
 memory off vs on
 ```
 
-Cambiare una variabile alla volta.
+Change one variable at a time.
 
 ------------------------------------------------------------------------
 
 # 29. Harness manifest
 
-Fingerprint versionato di:
+Versioned fingerprint of:
 
 -   tools;
 -   schemas;
@@ -1251,27 +1250,27 @@ Fingerprint versionato di:
 -   provider settings;
 -   orchestration version.
 
-Ogni eval deve indicare l'harness fingerprint.
+Every eval must report the harness fingerprint.
 
 ------------------------------------------------------------------------
 
 # 30. Regression gate
 
-Una release candidate non passa se:
+A release candidate does not pass if:
 
--   correctness scende oltre threshold;
--   hard benchmark regredisce;
--   cost esplode senza beneficio;
--   latency degrada oltre budget;
--   safety invariant fallisce.
+-   correctness drops beyond a threshold;
+-   a hard benchmark regresses;
+-   cost explodes without benefit;
+-   latency degrades beyond budget;
+-   a safety invariant fails.
 
-Supportare eccezioni documentate con rationale.
+Support documented exceptions with rationale.
 
 ------------------------------------------------------------------------
 
 # 31. Observability dashboard
 
-Metriche mission:
+Mission metrics:
 
 ``` text
 status
@@ -1287,7 +1286,7 @@ retries
 checkpoints
 ```
 
-Metriche agente:
+Agent metrics:
 
 ``` text
 role
@@ -1305,14 +1304,14 @@ current blocker
 
 # 32. Live progress page
 
-CLI/TUI/Desktop devono derivare lo stato dall'event stream.
+CLI/TUI/Desktop must derive state from the event stream.
 
-Esempio:
+Example:
 
 ``` text
-ZELARI MISSION — OAuth Migration
+ZELARI MISSION - OAuth Migration
 
-Overall              ███████░░░ 72%
+Overall              #######---  72%
 Architecture          PASS
 Backend               ROUND 2
 Frontend              PASS
@@ -1325,13 +1324,13 @@ Cost: $6.41 / $12
 Elapsed: 18m / 40m
 ```
 
-Non mantenere stato UI duplicato se può essere derivato dal runtime.
+Do not keep duplicated UI state when it can be derived from the runtime.
 
 ------------------------------------------------------------------------
 
 # 33. Artifact model
 
-Artifact first-class:
+First-class artifacts:
 
 ``` text
 patch
@@ -1347,7 +1346,7 @@ binary
 release-note
 ```
 
-Ogni artifact:
+Every artifact:
 
 -   id;
 -   type;
@@ -1362,13 +1361,13 @@ Ogni artifact:
 
 # 34. Checkpoint & recovery
 
-Checkpoint automatici:
+Automatic checkpoints:
 
--   prima di high-risk edit;
--   prima di merge;
--   prima di migration;
--   prima di destructive command;
--   dopo milestone verificata.
+-   before high-risk edits;
+-   before merges;
+-   before migrations;
+-   before destructive commands;
+-   after a verified milestone.
 
 Recovery strategies:
 
@@ -1388,7 +1387,7 @@ hold
 
 # 35. Failure taxonomy
 
-Standardizzare:
+Standardize:
 
 ``` text
 MODEL_FAILURE
@@ -1406,15 +1405,15 @@ EXTERNAL_DEPENDENCY
 USER_INTERRUPTION
 ```
 
-Serve per eval e recovery automatico.
+This serves evals and automatic recovery.
 
 ------------------------------------------------------------------------
 
 # 36. Package strategy
 
-Evitare package explosion iniziale.
+Avoid initial package explosion.
 
-Target pragmatico:
+Pragmatic target:
 
 ``` text
 @zelari/core
@@ -1424,7 +1423,7 @@ Target pragmatico:
 zelari-code
 ```
 
-Possibile successiva estrazione:
+Possible later extraction:
 
 ``` text
 @zelari/eval
@@ -1432,47 +1431,46 @@ Possibile successiva estrazione:
 @zelari/mcp
 ```
 
-Regola: creare package solo quando esiste un confine API stabile e
-utile.
+Rule: create a package only when a stable, useful API boundary exists.
 
 ------------------------------------------------------------------------
 
 # 37. Dependency rules
 
 ``` text
-protocol     → nessuna dipendenza runtime
-core         → protocol
-orchestration→ core + protocol
-sdk          → protocol
-cli          → sdk/orchestration
-desktop      → sdk/protocol
-extensions   → sdk/protocol
+protocol     -> no runtime dependencies
+core         -> protocol
+orchestration-> core + protocol
+sdk          -> protocol
+cli          -> sdk/orchestration
+desktop      -> sdk/protocol
+extensions   -> sdk/protocol
 ```
 
-Vietare:
+Forbidden:
 
 ``` text
-core → cli
-core → desktop
-core → OpenCode
-core → Claude Code
-core → Codex
-orchestration → UI
+core -> cli
+core -> desktop
+core -> OpenCode
+core -> Claude Code
+core -> Codex
+orchestration -> UI
 ```
 
-Enforcement tramite lint/architecture tests.
+Enforcement via lint/architecture tests.
 
 ------------------------------------------------------------------------
 
-# 38. Migrazione dal codice 2.14
+# 38. Migration from the 2.14 codebase
 
-## Fase A --- Architectural excavation
+## Phase A --- Architectural excavation
 
-Prima di modificare:
+Before modifying:
 
--   dependency graph reale;
+-   real dependency graph;
 -   import graph;
--   ownership dello state;
+-   state ownership;
 -   entry points;
 -   agent loop;
 -   context construction;
@@ -1491,63 +1489,63 @@ Output:
 
 `docs/architecture/current-state.md`
 
-## Fase B --- Freeze public contracts
+## Phase B --- Freeze public contracts
 
-Definire ciò che deve rimanere compatibile.
+Define what must remain compatible.
 
 Output:
 
 `docs/architecture/compatibility-contract.md`
 
-## Fase C --- Event spine
+## Phase C --- Event spine
 
-Introdurre event model senza cambiare comportamento.
+Introduce the event model without changing behavior.
 
-Gate: stessi eval + stessi output.
+Gate: same evals + same outputs.
 
-## Fase D --- Observer/intervention
+## Phase D --- Observer/intervention
 
-Estrarre policy dal loop.
+Extract policies from the loop.
 
 Gate: agent loop regression-neutral.
 
-## Fase E --- Context Engine
+## Phase E --- Context Engine
 
-Separare run truth e model context.
+Separate run truth and model context.
 
-Gate: qualità \>= baseline, token efficiency migliorata.
+Gate: quality >= baseline, token efficiency improved.
 
-## Fase F --- Mission API
+## Phase F --- Mission API
 
-Mission diventa primitive pubblica.
+Mission becomes a public primitive.
 
-CLI continua a funzionare tramite adapter.
+The CLI keeps working through an adapter.
 
-## Fase G --- Orchestration consolidation
+## Phase G --- Orchestration consolidation
 
-Kraken/Council usano lo stesso kernel/event/context system.
+Kraken/Council use the same kernel/event/context system.
 
-## Fase H --- Verification Engine
+## Phase H --- Verification Engine
 
-Unificare evidence e completion.
+Unify evidence and completion.
 
-## Fase I --- Protocol/SDK
+## Phase I --- Protocol/SDK
 
-Rendere Zelari consumabile da client esterni.
+Make Zelari consumable by external clients.
 
-## Fase J --- External extensions
+## Phase J --- External extensions
 
 VS Code/OpenCode/CI proof-of-concept.
 
 ------------------------------------------------------------------------
 
-# 39. Roadmap proposta
+# 39. Proposed roadmap
 
 ## Milestone 0 --- Baseline & map
 
-**Durata indicativa:** 1--2 settimane
+**Indicative duration:** 1--2 weeks
 
-Deliverable:
+Deliverables:
 
 -   architecture map;
 -   dependency graph;
@@ -1558,13 +1556,13 @@ Deliverable:
 
 Exit gate:
 
-> Sappiamo misurare se Zelari 3 migliora o peggiora Zelari 2.14.
+> We can measure whether Zelari 3 improves or worsens Zelari 2.14.
 
 ## Milestone 1 --- Runtime Spine
 
-**Durata:** 2--4 settimane
+**Duration:** 2--4 weeks
 
-Deliverable:
+Deliverables:
 
 -   unified event model;
 -   run identity;
@@ -1575,13 +1573,13 @@ Deliverable:
 
 Exit gate:
 
-> CLI e Kraken funzionano senza regressioni rilevanti.
+> CLI and Kraken work without significant regressions.
 
 ## Milestone 2 --- Context Engine
 
-**Durata:** 3--5 settimane
+**Duration:** 3--5 weeks
 
-Deliverable:
+Deliverables:
 
 -   ContextPolicy;
 -   typed compaction;
@@ -1591,13 +1589,13 @@ Deliverable:
 
 Exit gate:
 
-> > = baseline correctness con minore context/token waste.
+> >= baseline correctness with less context/token waste.
 
 ## Milestone 3 --- Mission Kernel
 
-**Durata:** 3--5 settimane
+**Duration:** 3--5 weeks
 
-Deliverable:
+Deliverables:
 
 -   mission state machine;
 -   public mission API;
@@ -1607,13 +1605,13 @@ Deliverable:
 
 Exit gate:
 
-> Una missione può essere eseguita headless senza dipendere dalla CLI.
+> A mission can run headless without depending on the CLI.
 
 ## Milestone 4 --- Orchestration 3
 
-**Durata:** 4--6 settimane
+**Duration:** 4--6 weeks
 
-Deliverable:
+Deliverables:
 
 -   Complexity Router;
 -   Kraken scheduler;
@@ -1624,13 +1622,13 @@ Deliverable:
 
 Exit gate:
 
-> Kraken dimostra vantaggio misurabile su benchmark complessi.
+> Kraken demonstrates a measurable advantage on complex benchmarks.
 
 ## Milestone 5 --- Verification 3
 
-**Durata:** 3--4 settimane
+**Duration:** 3--4 weeks
 
-Deliverable:
+Deliverables:
 
 -   evidence model;
 -   builder/critic;
@@ -1640,13 +1638,13 @@ Deliverable:
 
 Exit gate:
 
-> Nessuna missione viene marcata PASS senza evidence richiesta.
+> No mission is marked PASS without the required evidence.
 
 ## Milestone 6 --- Zelari Protocol & SDK
 
-**Durata:** 3--5 settimane
+**Duration:** 3--5 weeks
 
-Deliverable:
+Deliverables:
 
 -   ZEP/1;
 -   TypeScript SDK;
@@ -1656,13 +1654,13 @@ Deliverable:
 
 Exit gate:
 
-> Un client minimale esterno può controllare una missione completa.
+> A minimal external client can drive a complete mission.
 
 ## Milestone 7 --- Ecosystem
 
-**Durata:** iterativa
+**Duration:** iterative
 
-Deliverable:
+Deliverables:
 
 -   VS Code prototype;
 -   CI adapter;
@@ -1672,14 +1670,13 @@ Deliverable:
 
 Exit gate:
 
-> Almeno due client non-Zelari possono usare Zelari senza dipendenze
-> interne.
-
+> At least two non-Zelari clients can use Zelari without internal
+> dependencies.
 ------------------------------------------------------------------------
 
-# 40. Sequenza prioritaria
+# 40. Priority sequence
 
-Ordine raccomandato:
+Recommended order:
 
 ``` text
 1. Measure
@@ -1695,52 +1692,52 @@ Ordine raccomandato:
 11. External workers
 ```
 
-Non iniziare da UI o marketplace.
+Do not start with UI or a marketplace.
 
 ------------------------------------------------------------------------
 
-# 41. Cosa NON fare
+# 41. What NOT to do
 
-## 41.1 Non riscrivere tutto
+## 41.1 Do not rewrite everything
 
-Rischi:
+Risks:
 
--   regressioni;
--   perdita di edge case;
--   mesi senza valore utente;
--   impossibilità di A/B.
+-   regressions;
+-   loss of edge cases;
+-   months without user value;
+-   impossibility of A/B.
 
-## 41.2 Non aumentare il numero di agenti come obiettivo
+## 41.2 Do not increase the number of agents as a goal
 
-Più agenti ≠ migliore harness.
+More agents != better harness.
 
-Ottimizzare:
+Optimize:
 
 ``` text
 quality / cost / latency
 ```
 
-## 41.3 Non creare Council obbligatorio
+## 41.3 Do not make Council mandatory
 
-Usarlo solo quando aggiunge valore.
+Use it only when it adds value.
 
-## 41.4 Non dipendere da un harness esterno
+## 41.4 Do not depend on an external harness
 
-Compatibilità sì; dipendenza no.
+Compatibility yes; dependency no.
 
-## 41.5 Non confondere telemetry con memory
+## 41.5 Do not confuse telemetry with memory
 
-Telemetry descrive ciò che è accaduto.
+Telemetry describes what happened.
 
-Memory influenza decisioni future.
+Memory influences future decisions.
 
-## 41.6 Non permettere "PASS by narrative"
+## 41.6 Do not allow "PASS by narrative"
 
-"Ho completato il task" non è evidence.
+"I completed the task" is not evidence.
 
 ------------------------------------------------------------------------
 
-# 42. KPI
+# 42. KPIs
 
 ## Quality
 
@@ -1771,45 +1768,45 @@ Memory influenza decisioni future.
 -   crash recovery;
 -   replay consistency.
 
-La metrica più importante:
+The most important metric:
 
-> **False PASS rate deve tendere a zero.**
-
-------------------------------------------------------------------------
-
-# 43. Release criteria per Zelari 3.0
-
-Zelari 3.0 non dovrebbe essere dichiarato tale finché:
-
--   [ ] Mission API è stabile;
--   [ ] event model è stabile;
--   [ ] run truth è separato da context;
--   [ ] Kraken e Council usano il kernel condiviso;
--   [ ] verification evidence è first-class;
--   [ ] completion gate non dipende dalla narrativa del modello;
--   [ ] headless execution è completa;
--   [ ] SDK pubblico esiste;
--   [ ] ZEP/1 è versionato;
--   [ ] CLI è client del runtime, non proprietaria dello state;
--   [ ] Desktop è client del runtime;
--   [ ] eval regression gate è obbligatorio;
--   [ ] almeno un'integrazione esterna dimostra il protocollo;
--   [ ] nessun harness esterno è una dipendenza fondamentale;
--   [ ] migration guide da 2.x è disponibile.
+> **False PASS rate must tend to zero.**
 
 ------------------------------------------------------------------------
 
-# 44. Compatibilità 2.x
+# 43. Release criteria for Zelari 3.0
 
-Strategia:
+Zelari 3.0 should not be declared such until:
 
--   deprecazioni graduali;
+-   [ ] the Mission API is stable;
+-   [ ] the event model is stable;
+-   [ ] run truth is separated from context;
+-   [ ] Kraken and Council use the shared kernel;
+-   [ ] verification evidence is first-class;
+-   [ ] the completion gate does not depend on model narrative;
+-   [ ] headless execution is complete;
+-   [ ] a public SDK exists;
+-   [ ] ZEP/1 is versioned;
+-   [ ] the CLI is a client of the runtime, not the owner of its state;
+-   [ ] Desktop is a client of the runtime;
+-   [ ] the eval regression gate is mandatory;
+-   [ ] at least one external integration demonstrates the protocol;
+-   [ ] no external harness is a fundamental dependency;
+-   [ ] a 2.x migration guide is available.
+
+------------------------------------------------------------------------
+
+# 44. 2.x compatibility
+
+Strategy:
+
+-   gradual deprecations;
 -   compatibility facade;
--   warning prima di rimozione;
--   codemod dove possibile;
--   documentazione "2.x → 3.x".
+-   warnings before removal;
+-   codemods where possible;
+-   "2.x -> 3.x" documentation.
 
-Mantenere temporaneamente:
+Temporarily keep:
 
 ``` text
 AgentHarness legacy facade
@@ -1819,7 +1816,7 @@ existing skills
 existing MCP config
 ```
 
-con traduzione verso il nuovo kernel.
+with translation towards the new kernel.
 
 ------------------------------------------------------------------------
 
@@ -1845,17 +1842,17 @@ con traduzione verso il nuovo kernel.
 
 ## Replay
 
-Run registrati rigiocabili contro componenti aggiornati.
+Recorded runs replayable against updated components.
 
 ## Chaos
 
-Simulare:
+Simulate:
 
--   provider timeout;
+-   provider timeouts;
 -   malformed tool output;
--   process crash;
+-   process crashes;
 -   permission denied;
--   worktree conflict;
+-   worktree conflicts;
 -   test flakiness;
 -   context overflow.
 
@@ -1863,7 +1860,7 @@ Simulare:
 
 # 46. Security
 
-Threat model esplicito per:
+Explicit threat model for:
 
 -   prompt injection;
 -   malicious repository;
@@ -1874,13 +1871,13 @@ Threat model esplicito per:
 -   extension abuse;
 -   memory poisoning.
 
-Security invariants devono essere testabili.
+Security invariants must be testable.
 
 ------------------------------------------------------------------------
 
 # 47. Extension trust model
 
-Categorie:
+Categories:
 
 ``` text
 trusted
@@ -1899,13 +1896,13 @@ permissions:
   - tool.register
 ```
 
-Niente accesso implicito all'intero runtime.
+No implicit access to the entire runtime.
 
 ------------------------------------------------------------------------
 
-# 48. Configurazione
+# 48. Configuration
 
-Gerarchia:
+Hierarchy:
 
 ``` text
 defaults
@@ -1915,13 +1912,13 @@ mission
 runtime override
 ```
 
-Ogni valore deve poter indicare provenance per debugging.
+Every value must be able to report its provenance for debugging.
 
 ------------------------------------------------------------------------
 
 # 49. Developer experience
 
-Comandi target:
+Target commands:
 
 ``` text
 zelari mission run
@@ -1951,7 +1948,7 @@ zelari inspect evidence
 
 # 50. Repository governance
 
-Per modifiche al kernel richiedere:
+For kernel changes, require:
 
 -   architecture note;
 -   tests;
@@ -1959,9 +1956,9 @@ Per modifiche al kernel richiedere:
 -   benchmark cost delta;
 -   backward compatibility note.
 
-ADR per decisioni irreversibili.
+ADRs for irreversible decisions.
 
-Directory suggerita:
+Suggested directory:
 
 ``` text
 docs/
@@ -1974,25 +1971,25 @@ docs/
 
 ------------------------------------------------------------------------
 
-# 51. Gauntlet di sviluppo di Zelari 3
+# 51. Development gauntlet for Zelari 3
 
-Ogni componente importante segue:
+Every important component follows:
 
 ``` text
 baseline
-   ↓
+   v
 builder implementation
-   ↓
+   v
 independent critic
-   ↓
+   v
 largest gap
-   ↓
+   v
 revision
-   ↓
+   v
 A/B eval
-   ↓
+   v
 regression gate
-   ↓
+   v
 merge
 ```
 
@@ -2007,8 +2004,8 @@ Critic rubric:
 7.  cost;
 8.  failure behavior.
 
-Il critic deve confrontare contro una baseline concreta, non contro
-impressioni.
+The critic must compare against a concrete baseline, not against
+impressions.
 
 ------------------------------------------------------------------------
 
@@ -2050,139 +2047,139 @@ Owner: product clients
 
 Owner: ecosystem
 
-Workstream indipendenti dove possibile, con contract-first development.
+Independent workstreams where possible, with contract-first development.
 
 ------------------------------------------------------------------------
 
-# 53. Decisioni da validare prima di codificare
+# 53. Decisions to validate before coding
 
-1.  Event store: JSONL, SQLite o dual?
+1.  Event store: JSONL, SQLite or dual?
 2.  Mission persistence schema?
-3.  ZEP transport iniziale?
-4.  In-process API e RPC condividono gli stessi DTO?
-5.  Context compaction deterministica o model-assisted?
-6.  Council dinamico: rule-based, model-routed o ibrido?
-7.  Budget scheduler: heuristic prima, learned dopo?
-8.  Worktree isolation default per quali classi?
+3.  Initial ZEP transport?
+4.  Do in-process API and RPC share the same DTOs?
+5.  Context compaction deterministic or model-assisted?
+6.  Dynamic Council: rule-based, model-routed or hybrid?
+7.  Budget scheduler: heuristic first, learned later?
+8.  Worktree isolation default for which classes?
 9.  Extension sandbox?
-10. External workers inclusi in 3.0 o post-3.0?
+10. External workers included in 3.0 or post-3.0?
 
 ------------------------------------------------------------------------
 
-# 54. Decisioni consigliate
+# 54. Recommended decisions
 
 ### Event persistence
 
-SQLite per query + export JSONL per portability/replay.
+SQLite for queries + JSONL export for portability/replay.
 
 ### Protocol
 
-TypeScript DTO condivisi + stdio JSON-RPC come primo transport esterno.
+Shared TypeScript DTOs + stdio JSON-RPC as the first external transport.
 
 ### Context
 
-Ibrido: struttura deterministica, summarization model-assisted.
+Hybrid: deterministic structure, model-assisted summarization.
 
 ### Complexity Router
 
-Heuristic + model classification, con override deterministico.
+Heuristic + model classification, with deterministic override.
 
 ### Budget scheduler
 
-Heuristic in 3.0; adaptive/learned solo dopo dataset sufficiente.
+Heuristic in 3.0; adaptive/learned only after sufficient data.
 
 ### External workers
 
-Post-3.0 salvo proof-of-concept.
+Post-3.0 except for a proof-of-concept.
 
 ### Extension ecosystem
 
-Protocollo in 3.0; marketplace successivamente.
+Protocol in 3.0; marketplace later.
 
 ------------------------------------------------------------------------
 
-# 55. Rischi principali
+# 55. Main risks
 
 ## R1 --- Overengineering
 
-Mitigazione: ogni nuovo layer deve dimostrare valore in eval.
+Mitigation: every new layer must demonstrate value in evals.
 
 ## R2 --- Package explosion
 
-Mitigazione: bounded contexts prima, package dopo.
+Mitigation: bounded contexts first, packages later.
 
 ## R3 --- Multi-agent cost explosion
 
-Mitigazione: Complexity Router + budgets.
+Mitigation: Complexity Router + budgets.
 
 ## R4 --- Context regressions
 
-Mitigazione: fingerprint + replay + A/B.
+Mitigation: fingerprint + replay + A/B.
 
 ## R5 --- False PASS
 
-Mitigazione: deterministic evidence.
+Mitigation: deterministic evidence.
 
-## R6 --- API freeze troppo precoce
+## R6 --- API freeze too early
 
-Mitigazione: `experimental` namespace fino a stabilizzazione.
+Mitigation: `experimental` namespace until stabilization.
 
 ## R7 --- Extension attack surface
 
-Mitigazione: permissions + sandbox + manifests.
+Mitigation: permissions + sandbox + manifests.
 
-## R8 --- Migrazione infinita
+## R8 --- Endless migration
 
-Mitigazione: milestone verticali utilizzabili.
-
-------------------------------------------------------------------------
-
-# 56. Definition of Done per ogni milestone
-
-Una milestone è completa solo se:
-
--   codice merged;
--   tests verdi;
--   docs aggiornate;
--   eval eseguiti;
--   cost delta noto;
--   regression gate passato;
--   migration impact documentato;
--   observability disponibile;
--   rollback possibile.
+Mitigation: usable vertical milestones.
 
 ------------------------------------------------------------------------
 
-# 57. Primo sprint concreto
+# 56. Definition of Done for each milestone
 
-## Giorni 1--2
+A milestone is complete only if:
 
--   generare import/dependency graph;
--   mappare entry point;
--   mappare state ownership;
--   catalogare runtime loops.
+-   code merged;
+-   tests green;
+-   docs updated;
+-   evals run;
+-   cost delta known;
+-   regression gate passed;
+-   migration impact documented;
+-   observability available;
+-   rollback possible.
 
-## Giorni 3--4
+------------------------------------------------------------------------
 
--   mappare Kraken/Council/Mission execution;
--   mappare verification;
--   mappare context;
--   mappare headless/Desktop boundaries.
+# 57. First concrete sprint
 
-## Giorno 5
+## Days 1--2
+
+-   generate the import/dependency graph;
+-   map entry points;
+-   map state ownership;
+-   catalog runtime loops.
+
+## Days 3--4
+
+-   map Kraken/Council/Mission execution;
+-   map verification;
+-   map context;
+-   map headless/Desktop boundaries.
+
+## Day 5
 
 -   current-state architecture doc;
 -   top 10 coupling problems;
 -   target dependency rules.
 
-## Settimana 2
+## Week 2
 
 -   baseline eval suite;
--   Flight Recorder minimale;
+-   minimal Flight Recorder;
 -   event envelope;
--   instrumentazione non invasiva.
+-   non-invasive instrumentation.
 
-Output sprint:
+Sprint output:
 
 ``` text
 docs/architecture/current-state.md
@@ -2194,11 +2191,11 @@ eval/baseline-3.0.json
 
 ------------------------------------------------------------------------
 
-# 58. Secondo sprint
+# 58. Second sprint
 
-Implementare event spine senza cambiare semantica.
+Implement the event spine without changing semantics.
 
-Target:
+Targets:
 
 ``` text
 AgentHarness
@@ -2208,121 +2205,119 @@ Mission
 Verification
 ```
 
-emettono eventi coerenti.
+emit coherent events.
 
-Non introdurre ancora nuove feature agentiche.
+Do not introduce new agentic features yet.
 
-Questo crea la base osservabile necessaria per tutte le modifiche
-successive.
+This creates the observable base needed for all subsequent changes.
 
 ------------------------------------------------------------------------
 
-# 59. Strategia di branch/release
+# 59. Branch/release strategy
 
-Suggerimento:
-
-``` text
-main          → stabile
-next          → Zelari 3 integration
-feature/*     → workstream
-```
-
-Release:
+Suggestion:
 
 ``` text
-2.15/2.16 → backport compatibili
-3.0-alpha → runtime spine + mission API
-3.0-beta  → orchestration + verification + SDK
-3.0-rc    → migration + ecosystem proof
-3.0       → contracts stabili
+main          -> stable
+next          -> Zelari 3 integration
+feature/*     -> workstreams
 ```
 
-Evitare un lungo branch non integrato.
+Releases:
+
+``` text
+2.15/2.16 -> compatible backports
+3.0-alpha -> runtime spine + mission API
+3.0-beta  -> orchestration + verification + SDK
+3.0-rc    -> migration + ecosystem proof
+3.0       -> stable contracts
+```
+
+Avoid a long-lived non-integrated branch.
 
 ------------------------------------------------------------------------
 
 # 60. North-star architecture
 
-La forma finale:
+The final shape:
 
 ``` text
-                     ┌───────────────┐
-                     │     USER      │
-                     └───────┬───────┘
-                             │
+                     +---------------+
+                     |     USER      |
+                     +---------------+
+                             |
                        Any Zelari Client
-                             │
+                             |
                        ZEP / Zelari SDK
-                             │
-                     ┌───────▼────────┐
-                     │    MISSION     │
-                     └───────┬────────┘
-                             │
+                             |
+                     +---------------+
+                     |    MISSION    |
+                     +---------------+
+                             |
                     Complexity Router
-                             │
-           ┌─────────────────┼──────────────────┐
-           │                 │                  │
+                             |
+           +-----------------+------------------+
+           |                 |                  |
       Single Agent         Kraken            Council
-                             │                  │
-                             └────────┬─────────┘
-                                      │
+                             |                  |
+                             +--------+---------+
+                                      |
                                   Kraken DAG
-                                      │
-                 ┌────────────────────┼────────────────────┐
-                 ▼                    ▼                    ▼
+                                      |
+                 +--------------------+--------------------+
+                 |                    |                    |
               Explorer             Builder              Critic
-                 │                    │                    │
-                 └────────────────────┼────────────────────┘
-                                      │
+                 |                    |                    |
+                 +--------------------+--------------------+
+                                      |
                                Verification
-                                      │
-                              ┌───────┴────────┐
-                              │                │
-                            FAIL              PASS
-                              │                │
+                                      |
+                              +-------+-------+
+                              |               |
+                            FAIL             PASS
+                              |               |
                          repair/replan    Mission Complete
 ```
 
-Sotto tutto:
+Underneath everything:
 
 ``` text
 Zelari Kernel
-├── Event Runtime
-├── Context Engine
-├── Provider Runtime
-├── Tool Runtime
-├── Permissions
-├── Memory
-├── Workspace
-└── Flight Recorder
+  |- Event Runtime
+  |- Context Engine
+  |- Provider Runtime
+  |- Tool Runtime
+  |- Permissions
+  |- Memory
+  |- Workspace
+  |- Flight Recorder
 ```
 
 ------------------------------------------------------------------------
 
-# 61. Criterio strategico finale
+# 61. Final strategic criterion
 
-Ogni nuova feature deve rispondere a una delle seguenti domande:
+Every new feature must answer one of the following questions:
 
-1.  Aumenta la probabilità che una missione sia corretta?
-2.  Riduce il costo per missione corretta?
-3.  Riduce il tempo per missione corretta?
-4.  Aumenta l'osservabilità o la capacità di recovery?
-5.  Migliora l'indipendenza o l'estensibilità di Zelari?
+1.  Does it increase the probability that a mission is correct?
+2.  Does it reduce the cost per correct mission?
+3.  Does it reduce the time to a correct mission?
+4.  Does it increase observability or recovery capability?
+5.  Does it improve Zelari's independence or extensibility?
 
-Se la risposta è "no" a tutte, probabilmente non appartiene al core.
+If the answer is "no" to all, it probably does not belong in the core.
 
 ------------------------------------------------------------------------
 
-# 62. Conclusione
+# 62. Conclusion
 
-Zelari 3 deve essere un'evoluzione della base esistente, non una
-sostituzione.
+Zelari 3 must be an evolution of the existing base, not a replacement.
 
-La priorità non è aggiungere più agenti. È costruire un **runtime
-coerente, osservabile, verificabile e programmabile** nel quale agenti,
-Kraken e Council siano strategie sopra le stesse primitive.
+The priority is not adding more agents. It is building a **coherent,
+observable, verifiable and programmable runtime** in which agents,
+Kraken and Council are strategies over the same primitives.
 
-Il moat tecnico di Zelari deve concentrarsi su:
+Zelari's technical moat should concentrate on:
 
 ``` text
 Mission orchestration
@@ -2334,7 +2329,7 @@ Mission orchestration
 + eval-driven evolution
 ```
 
-Il moat strategico deve essere:
+The strategic moat must be:
 
 ``` text
 independent runtime
@@ -2343,53 +2338,53 @@ independent runtime
 + external integrations without dependency
 ```
 
-La frase che sintetizza Zelari 3:
+The sentence that synthesizes Zelari 3:
 
-> **Zelari non deve semplicemente eseguire agenti. Deve prendere una
-> missione software, organizzare il lavoro necessario, produrre evidenza
-> verificabile e sapere quando il risultato è realmente completo.**
+> **Zelari must not simply run agents. It must take a software mission,
+> organize the necessary work, produce verifiable evidence and know when
+> the result is actually complete.**
 
-E la regola che protegge l'indipendenza del progetto:
+And the rule that protects the project's independence:
 
-> **Gli altri possono installare Zelari, invocare Zelari o lavorare per
-> Zelari. Zelari non deve aver bisogno di loro per essere Zelari.**
+> **Others may install Zelari, invoke Zelari or work for Zelari. Zelari
+> must not need them in order to be Zelari.**
 
 ---
 
-# 63. Aggiornamento architetturale — Model Intelligence & Native Wire
+# 63. Architectural update - Model Intelligence & Native Wire
 
-## 63.1 Nuovo principio: provider neutrality without model homogenization
+## 63.1 New principle: provider neutrality without model homogenization
 
-Zelari 3 deve restare provider-neutral senza ridurre tutti i modelli al minimo comune denominatore. Una API semantica comune deve essere compilata verso il comportamento nativo della famiglia di modello e del provider selezionato.
+Zelari 3 must stay provider-neutral without reducing all models to the lowest common denominator. A common semantic API must be compiled to the native behavior of the selected model family and provider.
 
 ```text
 Zelari semantic intent
   reasoning: HIGH
   latency: FAST
   tool mode: AGGRESSIVE
-        │
-        ▼
+        |
+        v
 Model Intelligence Layer
-        │
-  ┌─────┼─────┐
-  ▼     ▼     ▼
+        |
+  +-----+-----+
+  |     |     |
 Claude GPT   Grok
-  │     │     │
-  ▼     ▼     ▼
+  |     |     |
+  v     v     v
 native wire/native policy
 ```
 
-## 63.2 Separare Provider, Model Family e Wire Policy
+## 63.2 Separate Provider, Model Family and Wire Policy
 
-Il runtime non deve trattare `provider` e `model` come sinonimi. Introduciamo tre concetti distinti:
+The runtime must not treat `provider` and `model` as synonyms. We introduce three distinct concepts:
 
-- **ProviderAdapter**: trasporto, autenticazione, streaming, errori, usage e primitive API.
-- **ModelProfile**: capability, limiti, costo, latency class, punti di forza e risultati eval.
-- **WirePolicy**: traduzione dell'intento Zelari nei parametri, tool dialect, reasoning controls, prompt conventions e altre semantiche native del modello.
+- **ProviderAdapter**: transport, authentication, streaming, errors, usage and API primitives.
+- **ModelProfile**: capabilities, limits, cost, latency class, strengths and eval results.
+- **WirePolicy**: translation of Zelari intent into the model's native parameters, tool dialect, reasoning controls, prompt conventions and other native semantics.
 
 ## 63.3 ModelProfile
 
-Schema concettuale:
+Conceptual schema:
 
 ```yaml
 id: model-id
@@ -2417,39 +2412,39 @@ qualification:
   eval_manifest: sha256:...
 ```
 
-I punteggi empirici devono provenire dagli eval Zelari e non essere confusi con capability dichiarate dal provider.
+Empirical scores must come from Zelari evals and not be confused with provider-declared capabilities.
 
 ## 63.4 Capability Registry
 
-Il registry deve distinguere:
+The registry must distinguish:
 
-1. capability dichiarata;
-2. capability sintatticamente accettata;
-3. capability behavioralmente verificata;
-4. performance osservata negli eval.
+1. declared capability;
+2. syntactically accepted capability;
+3. behaviorally verified capability;
+4. performance observed in evals.
 
-Un HTTP 200 non costituisce prova che una capability sia stata applicata.
+An HTTP 200 is not proof that a capability was applied.
 
-## 63.5 Fail closed sulle capability
+## 63.5 Fail closed on capabilities
 
-Quando una missione richiede una proprietà che non può essere garantita:
+When a mission requires a property that cannot be guaranteed:
 
 ```text
 requested capability
-       │
-       ▼
+       |
+       v
 verified support?
-   ┌───┴───┐
-  YES      NO
-   │        │
+   +---+---+
+  YES     NO
+   |       |
 execute   explicit downgrade / alternate model / reject
 ```
 
-Zelari non deve dichiarare attivo un reasoning level, tool mode o altro controllo se il backend non può provarne l'applicazione.
+Zelari must not declare a reasoning level, tool mode or other control active if the backend cannot prove its application.
 
 ## 63.6 Model-native execution
 
-L'API comune deve esprimere intenzioni Zelari, per esempio:
+The common API must express Zelari intents, for example:
 
 ```ts
 {
@@ -2460,11 +2455,11 @@ L'API comune deve esprimere intenzioni Zelari, per esempio:
 }
 ```
 
-La WirePolicy produce la configurazione appropriata per la famiglia concreta.
+The WirePolicy produces the appropriate configuration for the concrete family.
 
-## 63.7 Model Scheduler capability-based
+## 63.7 Capability-based Model Scheduler
 
-Kraken non dovrebbe richiedere necessariamente un model ID. Dovrebbe poter richiedere capability:
+Kraken should not necessarily require a model ID. It should be able to request capabilities:
 
 ```ts
 spawnAgent({
@@ -2478,45 +2473,45 @@ spawnAgent({
 });
 ```
 
-Il Model Scheduler sceglie il candidato usando:
+The Model Scheduler picks the candidate using:
 
 - capability qualification;
 - role eval score;
-- costo;
+- cost;
 - latency;
-- disponibilità;
+- availability;
 - context requirement;
 - risk;
-- budget residuo;
+- remaining budget;
 - provider health.
 
 ## 63.8 Model escalation
 
-Il modello iniziale non deve necessariamente essere il più costoso. Strategia:
+The initial model need not be the most expensive. Strategy:
 
 ```text
 cheap qualified model
-       │
-       ├─ success → verify
-       │
-       └─ low confidence/failure
-                 ↓
+       |
+       +-- success -> verify
+       |
+       +-- low confidence/failure
+                 |
             stronger model
-                 │
-                 └─ persistent failure → specialist/replan
+                 |
+                 +-- persistent failure -> specialist/replan
 ```
 
-L'escalation deve essere registrata nel Flight Recorder.
+Escalation must be recorded in the Flight Recorder.
 
 # 64. Model Probe
 
-Aggiungere:
+Add:
 
 ```text
 zelari model probe <provider/model>
 ```
 
-La probe deve testare, dove possibile:
+The probe should test, where possible:
 
 - completion;
 - streaming;
@@ -2531,7 +2526,7 @@ La probe deve testare, dove possibile:
 - latency;
 - provider-specific controls.
 
-Output indicativo:
+Indicative output:
 
 ```text
 MODEL PROBE
@@ -2550,45 +2545,45 @@ Qualification: 87/100
 
 # 65. Model Qualification Suite
 
-Prima di marcare un modello come ufficialmente qualificato:
+Before marking a model as officially qualified:
 
 ```text
 Wire Probe
-   ↓
+   v
 Capability Probe
-   ↓
+   v
 Coding Micro-Evals
-   ↓
+   v
 Tool-Use Eval
-   ↓
+   v
 Context Eval
-   ↓
+   v
 Recovery Eval
-   ↓
+   v
 Kraken Worker Eval
-   ↓
+   v
 QUALIFIED
 ```
 
-La suite genera un manifest versionato e firmato/hashato.
+The suite generates a versioned, signed/hashed manifest.
 
 # 66. Model Drift Detection
 
-Provider e modelli possono cambiare senza modifiche Zelari. Il runtime deve rilevare drift di:
+Providers and models can change without Zelari modifications. The runtime must detect drift in:
 
 - schema;
-- capability;
+- capabilities;
 - tool behavior;
 - reasoning behavior;
 - latency;
 - error patterns;
 - context behavior.
 
-Drift significativo invalida la qualification precedente e può attivare regression eval mirati.
+Significant drift invalidates the previous qualification and can trigger targeted regression evals.
 
 # 67. Zelari Doctor 3
 
-`zelari doctor` deve diventare un diagnostico del runtime, non solo dell'installazione.
+`zelari doctor` must become a runtime diagnostic, not just an installation one.
 
 ```text
 ZELARI DOCTOR
@@ -2606,16 +2601,16 @@ Verification runtime    PASS
 Event store             PASS
 ```
 
-Deve distinguere warning, degraded e hard failure.
+It must distinguish warnings, degraded and hard failures.
 
-# 68. Nuovo Workstream WS10 — Model Intelligence & Native Wire
+# 68. New Workstream WS10 - Model Intelligence & Native Wire
 
-Deliverable:
+Deliverables:
 
 - ModelProfile schema;
 - Capability Registry;
 - WirePolicy interface;
-- native policy per principali famiglie;
+- native policy for the main families;
 - model probe;
 - qualification suite;
 - behavioral evidence;
@@ -2626,56 +2621,57 @@ Deliverable:
 
 Exit gate:
 
-> Zelari può selezionare e usare modelli differenti senza omogeneizzarne le capability e senza dichiarare supporto non verificato.
+> Zelari can select and use different models without homogenizing their capabilities and without declaring unverified support.
 
-# 69. Architettura target aggiornata
+# 69. Updated target architecture
 
 ```text
 Clients / Extensions
-        │
-        ▼
+        |
+        v
 ZEP + SDK
-        │
-        ▼
+        |
+        v
 Mission Runtime
-        │
-        ▼
+        |
+        v
 Complexity Router
-        │
-        ▼
+        |
+        v
 Kraken / Council / Single Agent
-        │
-        ▼
+        |
+        v
 Role + Capability Request
-        │
-        ▼
+        |
+        v
 Model Scheduler
-        │
-        ├─────────────── Eval Registry
-        ├─────────────── Budget Scheduler
-        ├─────────────── Provider Health
-        ▼
+        |
+        +----------------- Eval Registry
+        +----------------- Budget Scheduler
+        +----------------- Provider Health
+        |
+        v
 Model Intelligence Layer
-        │
-        ├── ModelProfile
-        ├── Capability Registry
-        └── WirePolicy
-        │
-        ▼
+        |
+        +-- ModelProfile
+        +-- Capability Registry
+        +-- WirePolicy
+        |
+        v
 Provider Runtime
-        │
-   ┌────┼────┬────┐
-   ▼    ▼    ▼    ▼
+        |
+   +----+----+----+----+
+   |    |    |    |    |
 OpenAI Anthropic xAI Other
 ```
 
-Il Model Intelligence Layer rimane interno a Zelari e indipendente da qualsiasi harness esterno.
+The Model Intelligence Layer remains internal to Zelari and independent of any external harness.
 
-# 70. Roadmap aggiornata
+# 70. Updated roadmap
 
-Inserire WS10 in parallelo dopo Runtime Spine e prima del completamento di Orchestration 3.
+Insert WS10 in parallel after Runtime Spine and before completing Orchestration 3.
 
-Ordine aggiornato:
+Updated order:
 
 ```text
 1. Measure & repository excavation
@@ -2692,13 +2688,13 @@ Ordine aggiornato:
 12. External workers
 ```
 
-Motivazione: lo scheduler Kraken deve poter essere progettato direttamente su capability reali invece di essere successivamente rifattorizzato da model-ID routing a capability routing.
+Rationale: the Kraken scheduler must be designed directly on real capabilities instead of being refactored later from model-ID routing to capability routing.
 
-# 71. Milestone aggiuntiva — Model Intelligence
+# 71. Additional milestone - Model Intelligence
 
-**Durata indicativa:** 3–5 settimane, parzialmente parallela.
+**Indicative duration:** 3-5 weeks, partially parallel.
 
-Deliverable:
+Deliverables:
 
 - provider/model/wire separation;
 - ModelProfile;
@@ -2706,32 +2702,32 @@ Deliverable:
 - Capability Registry;
 - `zelari model probe`;
 - qualification manifest;
-- primi eval per ruolo;
+- first per-role evals;
 - fail-closed capability handling.
 
 Exit gate:
 
-> Almeno tre famiglie di modello possono eseguire la stessa intenzione semantica Zelari attraverso policy native verificate, con capability manifest riproducibile.
+> At least three model families can execute the same Zelari semantic intent through verified native policies, with a reproducible capability manifest.
 
-# 72. KPI aggiuntivi per Model Intelligence
+# 72. Additional KPIs for Model Intelligence
 
 - qualification pass rate;
 - behavioral capability confidence;
 - model drift incidents;
 - role-specific pass rate;
-- cost/pass per modello e ruolo;
+- cost/pass per model and role;
 - latency/pass;
 - escalation rate;
 - false capability declaration rate;
-- scheduler regret: differenza tra modello scelto e miglior modello noto post-eval.
+- scheduler regret: the difference between the chosen model and the best model known post-eval.
 
-Target critico:
+Critical target:
 
-> **False capability declaration rate = 0 per capability hard-gated.**
+> **False capability declaration rate = 0 for hard-gated capabilities.**
 
-# 73. Aggiornamento del moat tecnico
+# 73. Updated technical moat
 
-Il moat Zelari 3 diventa:
+The Zelari 3 moat becomes:
 
 ```text
 Mission orchestration
@@ -2746,48 +2742,48 @@ Mission orchestration
 + eval-driven evolution
 ```
 
-Il principio di indipendenza diventa:
+The independence principle becomes:
 
 > **Provider neutrality without model homogenization.**
 
-Zelari deve poter usare il meglio di ogni modello senza trasformarsi in un wrapper di nessun provider o harness.
+Zelari must be able to use the best of every model without turning into a wrapper for any provider or harness.
 
-# 74. Formula finale aggiornata
+# 74. Updated final formula
 
-Zelari 3 deve funzionare come un sistema a quattro livelli di intelligenza:
+Zelari 3 must work as a system with four levels of intelligence:
 
 ```text
 MISSION INTELLIGENCE
-Cosa deve essere ottenuto?
-        ↓
+What must be achieved?
+        |
 ORCHESTRATION INTELLIGENCE
-Come dividiamo, coordiniamo e verifichiamo il lavoro?
-        ↓
+How do we divide, coordinate and verify the work?
+        |
 MODEL INTELLIGENCE
-Quale modello è più adatto a ciascun lavoro e come va pilotato nativamente?
-        ↓
+Which model is best suited to each job and how should it be driven natively?
+        |
 EXECUTION INTELLIGENCE
-Quali tool, workspace, context e recovery servono per completarlo?
+Which tools, workspace, context and recovery are needed to complete it?
 ```
 
-Il completamento rimane governato dall'evidenza:
+Completion remains governed by evidence:
 
 ```text
 Model says done
-      ≠
+      !=
 Mission complete
 
 Candidate
-   ↓
+   v
 Evidence
-   ↓
+   v
 Independent criticism
-   ↓
+   v
 Deterministic verification
-   ↓
+   v
 PASS
 ```
 
-La visione aggiornata può essere riassunta così:
+The updated vision can be summarized as:
 
-> **Zelari è un runtime indipendente per missioni di software engineering che orchestra agenti e modelli in base alle loro capacità reali, li pilota secondo le loro semantiche native, verifica empiricamente ciò che producono e considera il lavoro completo soltanto quando esiste evidenza sufficiente per dimostrarlo.**
+> **Zelari is an independent runtime for software-engineering missions that orchestrates agents and models according to their real capabilities, drives them according to their native semantics, empirically verifies what they produce, and considers the work complete only when sufficient evidence exists to prove it.**

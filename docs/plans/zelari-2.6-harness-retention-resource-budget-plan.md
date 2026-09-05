@@ -1,22 +1,22 @@
-# Zelari 2.5+ — Piano integrato di implementazione
+# Zelari 2.5+ - Integrated implementation plan
 ## Harness Retention, Regression Safety & Resource-Aware Execution
 
 **Baseline:** Zelari 2.5.0  
-**Target suggerito:** Zelari 2.6 per il nucleo; 2.7+ per gli esperimenti successivi  
-**Stato:** proposta operativa consolidata
+**Suggested target:** Zelari 2.6 for the core; 2.7+ for the later experiments  
+**Status:** consolidated operational proposal
 
 ---
 
-# 1. Obiettivo
+# 1. Goal
 
-Il prossimo ciclo di Zelari non dovrebbe aggiungere nuovi agenti o nuove modalità per principio.
+The next Zelari cycle should not add new agents or new modes on principle.
 
-Le priorità sono due:
+The priorities are two:
 
-1. **rendere sicura e misurabile l'evoluzione del harness stesso**;
-2. **rendere l'agente consapevole delle risorse residue senza perdere il controllo host-side**.
+1. **make the evolution of the harness itself safe and measurable**;
+2. **make the agent aware of remaining resources without losing host-side control**.
 
-Il sistema target deve garantire contemporaneamente:
+The target system must guarantee simultaneously:
 
 ```text
 new capability acquisition
@@ -30,15 +30,15 @@ resource-aware execution
 cost/performance measurement
 ```
 
-Principio guida:
+Guiding principle:
 
-> **Una nuova versione di Zelari deve dimostrare sia ciò che ha imparato a fare, sia ciò che non ha dimenticato, e deve spendere le risorse in modo coerente con la probabilità di arrivare a una soluzione verificata.**
+> **A new version of Zelari must demonstrate both what it has learned to do and what it has not forgotten, and must spend resources in a way consistent with the probability of reaching a verified solution.**
 
 ---
 
-# 2. Cosa implementare
+# 2. What to implement
 
-## Track A — Harness evolution safety
+## Track A - Harness evolution safety
 
 1. **Harness Manifest**
 2. **Historical Anchor Set**
@@ -47,15 +47,15 @@ Principio guida:
 5. **Harness Change Classification**
 6. **Eval Result Store**
 
-## Track B — Resource-aware execution
+## Track B - Resource-aware execution
 
 7. **Central ResourceBudget / ResourceLedger**
 8. **Model-visible latest resource snapshot**
 9. **Verification Budget Reserve**
 10. **Budget-aware continuation / repair / pivot**
-11. **Unified Cost Metric negli eval**
+11. **Unified Cost Metric in evals**
 
-## Track successivi, condizionati ai benchmark
+## Later tracks, conditional on benchmarks
 
 12. Gauntlet piece budget allocation
 13. Model/profile-specific budget curves
@@ -66,122 +66,122 @@ Principio guida:
 
 ---
 
-# 3. Cosa NON implementare ora
+# 3. What NOT to implement now
 
-Non entra nel ciclo 2.6:
+Not entering the 2.6 cycle:
 
-- auto-modifica del harness in produzione;
-- BATS completo;
-- tree search general-purpose;
-- continue-after-PASS automatico;
-- auto-installazione di skill;
-- router self-modifying;
+- self-modification of the harness in production;
+- full BATS;
+- general-purpose tree search;
+- automatic continue-after-PASS;
+- auto-installation of skills;
+- self-modifying router;
 - RL/self-play runtime;
-- nuovi Council roles;
-- nuovi agenti;
-- plugin framework general-purpose;
-- nuovo sistema di compaction;
-- database obbligatorio;
-- prompt auto-update su `main`.
+- new Council roles;
+- new agents;
+- general-purpose plugin framework;
+- a new compaction system;
+- a mandatory database;
+- prompt auto-update on `main`.
 
-Zelari 2.5 possiede già una compaction più adatta al coding rispetto a quella del paper budget-aware.
+Zelari 2.5 already has a compaction better suited to coding than the budget-aware paper's one.
 
 ---
 
-# 4. Priorità
+# 4. Priorities
 
-| Priorità | Feature | Valore | Complessità | Target |
+| Priority | Feature | Value | Complexity | Target |
 |---|---|---:|---:|---|
-| P0 | Harness Manifest | Molto alto | Bassa/Media | 2.6 |
-| P0 | Historical Anchors | Molto alto | Media | 2.6 |
-| P0 | Harness Regression Gate | Molto alto | Media | 2.6 |
-| P0 | ResourceBudget / ResourceLedger | Molto alto | Media | 2.6 |
-| P0 | Verification Budget Reserve | Molto alto | Media | 2.6 |
-| P1 | Model-visible budget snapshot | Molto alto | Bassa | 2.6 |
-| P1 | First-class TaskContract | Alto | Media | 2.6 |
-| P1 | Unified Cost Metric | Molto alto | Bassa | 2.6 |
-| P1 | Budget-aware repair/pivot | Alto | Media | 2.6 |
-| P1 | Harness Change Classification | Alto | Bassa | 2.6 |
-| P2 | Eval Result Store | Medio/Alto | Bassa | 2.6 |
-| P2 | Gauntlet piece allocation | Alto | Media | 2.7 |
-| P2 | Model-specific budget curves | Alto R&D | Media | 2.7 |
-| P2 | `--effort` presets | Medio | Bassa | dopo dati |
-| P2 | Guarded Memory | Alto | Medio/Alta | post-2.6 |
-| P2 | Candidate Router Optimization | Medio/Alto | Alta | post-2.6 |
-| P2 | Adaptive Eval Integration | Alto R&D | Alta | separato |
+| P0 | Harness Manifest | Very high | Low/Medium | 2.6 |
+| P0 | Historical Anchors | Very high | Medium | 2.6 |
+| P0 | Harness Regression Gate | Very high | Medium | 2.6 |
+| P0 | ResourceBudget / ResourceLedger | Very high | Medium | 2.6 |
+| P0 | Verification Budget Reserve | Very high | Medium | 2.6 |
+| P1 | Model-visible budget snapshot | Very high | Low | 2.6 |
+| P1 | First-class TaskContract | High | Medium | 2.6 |
+| P1 | Unified Cost Metric | Very high | Low | 2.6 |
+| P1 | Budget-aware repair/pivot | High | Medium | 2.6 |
+| P1 | Harness Change Classification | High | Low | 2.6 |
+| P2 | Eval Result Store | Medium/High | Low | 2.6 |
+| P2 | Gauntlet piece allocation | High | Medium | 2.7 |
+| P2 | Model-specific budget curves | High R&D | Medium | 2.7 |
+| P2 | `--effort` presets | Medium | Low | after data |
+| P2 | Guarded Memory | High | Medium/High | post-2.6 |
+| P2 | Candidate Router Optimization | Medium/High | High | post-2.6 |
+| P2 | Adaptive Eval Integration | High R&D | High | separate |
 
-Ordine consigliato:
+Suggested order:
 
 ```text
 Harness Manifest
-      ↓
+      v
 Historical Anchors
-      ↓
+      v
 Regression Gate
-      ↓
+      v
 ResourceBudget / Ledger
-      ↓
+      v
 resource.snapshot
-      ↓
+      v
 Verification Reserve
-      ↓
+      v
 TaskContract
-      ↓
+      v
 Budget-aware continuation
-      ↓
+      v
 Unified Cost Metric
-      ↓
+      v
 Targeted anchor selection
-      ↓
+      v
 Extended R&D
 ```
 
 ---
 
-# 5. Architettura target
+# 5. Target architecture
 
 ```text
                          USER TASK
-                             │
-                             ▼
+                             |
+                             v
                         TaskContract
-                             │
-                  ┌──────────┴──────────┐
-                  │                     │
-                  ▼                     ▼
+                             |
+                  +----------------------+
+                  |                      |
+                  v                      v
              Harness Manifest      ResourceBudget
-                  │                     │
-                  │                ResourceLedger
-                  │                     │
-                  └──────────┬──────────┘
-                             ▼
+                  |                      |
+                  |                ResourceLedger
+                  |                      |
+                  +----------+-----------+
+                             v
                      Runtime / AgentHarness
-                             │
-                  ┌──────────┼──────────┐
-                  ▼          ▼          ▼
+                             |
+                  +----------+-----------+
+                  v          v           v
               ToolRegistry  Session  Verification
-                  │          Spine       Engine
-                  │            │           │
-                  └────────────┼───────────┘
-                               ▼
+                  |          Spine       Engine
+                  |            |           |
+                  +------------+-----------+
+                               v
                       CompletionPolicy
-                               │
+                               |
                      verified outcome
-                               │
-                               ▼
+                               |
+                               v
                         Eval / Anchors
-                               │
-                               ▼
+                               |
+                               v
                       Regression Gate
 ```
 
 ---
 
-# 6. Workstream A — Harness Manifest
+# 6. Workstream A - Harness Manifest
 
-## 6.1 Problema
+## 6.1 Problem
 
-Il comportamento di Zelari dipende da più elementi del semplice modello/profile:
+Zelari's behavior depends on more elements than just the model/profile:
 
 - system prompt;
 - Kraken/Gauntlet/Council/Mission prompt;
@@ -191,16 +191,16 @@ Il comportamento di Zelari dipende da più elementi del semplice modello/profile
 - criteria pack;
 - verification/completion policy;
 - compaction policy;
-- feature flag comportamentali;
+- behavioral feature flags;
 - resource policy.
 
-Due run con stesso modello possono quindi essere semanticamente diversi.
+Two runs with the same model can therefore be semantically different.
 
-## 6.2 Obiettivo
+## 6.2 Goal
 
-Creare una rappresentazione canonica, versionata e hashabile del harness effettivo.
+Create a canonical, versioned, hashable representation of the effective harness.
 
-## 6.3 Contratto
+## 6.3 Contract
 
 ```ts
 interface HarnessManifestV1 {
@@ -239,9 +239,9 @@ interface HarnessManifestV1 {
 }
 ```
 
-I campi comportamentali contengono hash canonici, non testo raw.
+The behavioral fields contain canonical hashes, not raw text.
 
-## 6.4 Hash canonico
+## 6.4 Canonical hash
 
 ```ts
 function hashHarnessManifest(
@@ -249,17 +249,17 @@ function hashHarnessManifest(
 ): string
 ```
 
-Requisiti:
+Requirements:
 
-- serializzazione canonica;
-- ordine stabile;
-- no timestamp;
-- no valori runtime volatili;
-- stesso harness → stesso hash.
+- canonical serialization;
+- stable order;
+- no timestamps;
+- no volatile runtime values;
+- same harness -> same hash.
 
 ## 6.5 Session integration
 
-Nuovo evento state-only:
+New state-only event:
 
 ```text
 session.harness_manifest
@@ -272,11 +272,11 @@ session.harness_manifest
 }
 ```
 
-## 6.6 Resource policy nel manifest
+## 6.6 Resource policy in the manifest
 
-La policy di budget è comportamentale e deve influenzare il manifest.
+The budget policy is behavioral and must influence the manifest.
 
-Esempio:
+Example:
 
 ```ts
 resourcePolicyHash = hash({
@@ -287,61 +287,61 @@ resourcePolicyHash = hash({
 })
 ```
 
-## 6.7 File suggeriti
+## 6.7 Suggested files
 
 ```text
 packages/core/src/runtime/
-├── harnessManifest.ts
-├── profiles.ts
-└── index.ts
+  |- harnessManifest.ts
+  |- profiles.ts
+  |- index.ts
 
 packages/core/src/session/
-└── types.ts
+  |- types.ts
 
 src/cli/
-└── harnessManifest.ts
+  |- harnessManifest.ts
 ```
 
-## 6.8 Test
+## 6.8 Tests
 
-- stesso harness → stesso hash;
-- prompt cambia → hash diverso;
-- tool description cambia → hash diverso;
-- resource policy cambia → hash diverso;
-- manifest ricostruibile dopo resume.
+- same harness -> same hash;
+- prompt changes -> different hash;
+- tool description changes -> different hash;
+- resource policy changes -> different hash;
+- manifest rebuildable after resume.
 
 ## 6.9 Exit criteria
 
-- ogni nuova sessione registra il manifest;
-- ogni eval outcome è attribuibile a un manifest preciso;
-- le variazioni comportamentali sono tracciabili.
+- every new session records the manifest;
+- every eval outcome is attributable to a precise manifest;
+- behavioral variations are traceable.
 
 ---
 
-# 7. Workstream B — Historical Anchor Set
+# 7. Workstream B - Historical Anchor Set
 
-## 7.1 Obiettivo
+## 7.1 Goal
 
-Costruire una suite piccola, stabile e verificabile di capacità che Zelari non deve perdere.
+Build a small, stable, verifiable suite of capabilities Zelari must not lose.
 
-Domanda:
+Question:
 
-> “La candidate version ha rotto task che la baseline risolveva già?”
+> "Did the candidate version break tasks the baseline already solved?"
 
-## 7.2 Struttura
+## 7.2 Structure
 
 ```text
 eval/anchors/
-├── local-bugfix/
-├── multi-file/
-├── verification/
-├── compaction/
-├── recovery/
-├── resource-budget/
-├── kraken-delegation/
-├── gauntlet/
-├── council/
-└── mission/
+  |- local-bugfix/
+  |- multi-file/
+  |- verification/
+  |- compaction/
+  |- recovery/
+  |- resource-budget/
+  |- kraken-delegation/
+  |- gauntlet/
+  |- council/
+  |- mission/
 ```
 
 ## 7.3 Anchor manifest
@@ -372,32 +372,32 @@ tags:
   - regression
 ```
 
-## 7.4 Proprietà obbligatorie
+## 7.4 Mandatory properties
 
-Ogni anchor:
+Every anchor:
 
-- setup deterministico;
-- task versionato;
-- successo meccanicamente verificabile;
-- limite tool/token/tempo;
-- fixture ripristinabile;
-- niente segreti;
-- niente dipendenza da stato utente.
+- deterministic setup;
+- versioned task;
+- mechanically verifiable success;
+- tool/token/time limits;
+- restorable fixture;
+- no secrets;
+- no dependency on user state.
 
-## 7.5 Tier
+## 7.5 Tiers
 
 ### Tier 0
-Smoke veloci, PR blocking.
+Fast smoke tests, PR blocking.
 
 ### Tier 1
 Core retention, merge/release gate.
 
 ### Tier 2
-Costosi/provider-sensitive, nightly/RC.
+Expensive/provider-sensitive, nightly/RC.
 
 ## 7.6 Bootstrap
 
-15–25 anchor iniziali:
+15-25 initial anchors:
 
 ```text
 5 local bugfix
@@ -427,15 +427,15 @@ interface AnchorBaseline {
 }
 ```
 
-Golden = verified outcome + cost metrics, non output narrativo LLM.
+Golden = verified outcome + cost metrics, not narrative LLM output.
 
 ---
 
-# 8. Workstream C — Harness Regression Gate
+# 8. Workstream C - Harness Regression Gate
 
-## 8.1 Obiettivo
+## 8.1 Goal
 
-Confrontare:
+Compare:
 
 ```text
 baseline H
@@ -443,14 +443,14 @@ vs
 candidate H'
 ```
 
-su:
+on:
 
 - capability acquisition;
 - historical retention;
 - validity;
 - resource efficiency.
 
-## 8.2 Risultato
+## 8.2 Result
 
 ```ts
 interface HarnessEvalResult {
@@ -491,7 +491,7 @@ interface HarnessRetentionPolicy {
 }
 ```
 
-## 8.4 Preset
+## 8.4 Presets
 
 ### Stable
 
@@ -538,15 +538,15 @@ cost efficiency within policy, if configured
 Harness candidate: 8f4b...
 
 New target suite
-18/20 → 20/20
+18/20 -> 20/20
 +2
 
 Historical anchors
-78/80 → 77/80
+78/80 -> 77/80
 -1
 
 Cost / verified solve
-$0.18 → $0.31
+$0.18 -> $0.31
 +72%
 
 Retention budget
@@ -558,11 +558,11 @@ REJECT
 
 ---
 
-# 9. Workstream D — Central ResourceBudget & ResourceLedger
+# 9. Workstream D - Central ResourceBudget & ResourceLedger
 
-## 9.1 Problema
+## 9.1 Problem
 
-Zelari già applica diversi limiti:
+Zelari already applies several limits:
 
 - max tool calls;
 - max tool-loop iterations;
@@ -570,29 +570,29 @@ Zelari già applica diversi limiti:
 - Gauntlet rounds/pieces/parallelism;
 - wall clock.
 
-Ma sono principalmente **host constraints** distribuiti.
+But they are mostly distributed **host constraints**.
 
-Manca una rappresentazione centrale e ricostruibile dello stato delle risorse.
+A central, rebuildable representation of resource state is missing.
 
-## 9.2 Obiettivo
+## 9.2 Goal
 
-Separare:
+Separate:
 
 ```text
 budget enforcement
 ```
 
-da:
+from:
 
 ```text
 budget awareness
 ```
 
-L'host continua a possedere e imporre i limiti.
+The host continues to own and enforce the limits.
 
-Il modello riceve solo una proiezione controllata del budget residuo.
+The model only receives a controlled projection of the remaining budget.
 
-## 9.3 Contratto
+## 9.3 Contract
 
 ```ts
 interface ResourceBudget {
@@ -648,22 +648,22 @@ interface ResourceLedgerEntry {
 }
 ```
 
-Il ResourceLedger è host-owned.
+The ResourceLedger is host-owned.
 
-## 9.5 Invarianti
+## 9.5 Invariants
 
-- `used <= limit` salvo evento finale di hard limit;
+- `used <= limit` except for a final hard-limit event;
 - `remaining = limit - used`;
-- reserve non negativa;
-- il modello non può modificare il budget;
-- ToolRegistry resta il choke point;
-- budget state ricostruibile dal Session log.
+- reserve never negative;
+- the model cannot mutate the budget;
+- ToolRegistry remains the choke point;
+- budget state rebuildable from the Session log.
 
 ---
 
-# 10. Workstream E — `resource.snapshot` nella Session
+# 10. Workstream E - `resource.snapshot` in the Session
 
-## 10.1 Evento
+## 10.1 Event
 
 ```text
 resource.snapshot
@@ -691,15 +691,15 @@ interface ResourceSnapshotEvent {
 
 ## 10.2 Projection rule
 
-Il ledger conserva tutti gli snapshot.
+The ledger keeps all snapshots.
 
-La model surface mostra solo l'ultimo:
+The model surface shows only the latest:
 
 ```text
 resource.snapshot #1
 resource.snapshot #2
 resource.snapshot #3
-        ↓
+        v
 model sees #3
 ```
 
@@ -716,30 +716,30 @@ Phase: implement
 
 ## 10.4 Frequency
 
-Aggiornare almeno dopo:
+Update at least after:
 
-- tool batch;
-- phase change;
-- reserve threshold crossed;
+- a tool batch;
+- a phase change;
+- a reserve threshold crossed;
 - verification start;
 - repair start.
 
 ---
 
-# 11. Workstream F — Verification Budget Reserve
+# 11. Workstream F - Verification Budget Reserve
 
-## 11.1 Problema
+## 11.1 Problem
 
-Un coding agent può consumare quasi tutte le risorse prima di arrivare a:
+A coding agent can burn almost all resources before reaching:
 
-- test;
+- tests;
 - typecheck;
 - build;
 - diff review;
 - repair;
 - retest.
 
-Questo contraddice:
+This contradicts:
 
 > **done = evidence**
 
@@ -756,38 +756,38 @@ interface ResourcePolicy {
 }
 ```
 
-Non creare sub-budget rigidi per ogni fase.
+Do not create rigid sub-budgets for each phase.
 
 ## 11.3 Enforcement
 
-Quando:
+When:
 
 ```text
 remaining <= verificationReserve
 ```
 
-le azioni non essenziali vengono limitate o fortemente scoraggiate.
+non-essential actions are limited or strongly discouraged.
 
-### Consentite/prioritarie
+### Allowed/prioritized
 
-- test;
+- tests;
 - typecheck;
 - build;
 - diff;
-- leggere failure;
-- repair mirato;
+- reading failures;
+- targeted repair;
 - retest.
 
-### Da evitare
+### To avoid
 
-- esplorazione ampia;
-- ricerche speculative;
-- nuova architettura;
-- delegazioni non essenziali.
+- broad exploration;
+- speculative research;
+- new architecture;
+- non-essential delegations.
 
 ## 11.4 Hard vs advisory
 
-Default iniziale consigliato:
+Suggested initial default:
 
 ```text
 verification reserve = protected
@@ -796,25 +796,25 @@ repair reserve = advisory
 
 ## 11.5 Completion interaction
 
-Se il budget residuo non permette evidence required:
+If the remaining budget does not allow the required evidence:
 
 ```text
 CompletionPolicy != PASS
 ```
 
-Preferire:
+Prefer:
 
 ```text
 BLOCKED / resource exhausted
 ```
 
-a falso done.
+over a false done.
 
 ---
 
-# 12. Workstream G — Budget Pressure
+# 12. Workstream G - Budget Pressure
 
-## 12.1 Stati
+## 12.1 States
 
 ```ts
 type BudgetPressure =
@@ -824,33 +824,33 @@ type BudgetPressure =
   | "critical";
 ```
 
-## 12.2 Semantica
+## 12.2 Semantics
 
 ### ample
-- exploration utile;
-- alternative ragionevoli;
-- delegazione utile.
+- useful exploration;
+- reasonable alternatives;
+- useful delegation.
 
 ### normal
-- convergere;
-- ridurre ricerca speculativa.
+- converge;
+- reduce speculative research.
 
 ### constrained
-- chiudere gap noti;
-- evitare nuovo scope;
-- preservare verify reserve.
+- close known gaps;
+- avoid new scope;
+- preserve the verify reserve.
 
 ### critical
-- verification/repair/finalizzazione;
-- oppure BLOCKED onestamente.
+- verification/repair/finalization;
+- or honestly BLOCKED.
 
-## 12.3 Threshold
+## 12.3 Thresholds
 
-Non copiare percentuali da altri domini.
+Do not copy percentages from other domains.
 
-Derivarli da benchmark Zelari.
+Derive them from Zelari benchmarks.
 
-Prima implementazione:
+First implementation:
 
 ```text
 policy configurable
@@ -858,23 +858,23 @@ policy configurable
 
 ---
 
-# 13. Workstream H — Budget-aware Continuation / Repair / Pivot
+# 13. Workstream H - Budget-aware Continuation / Repair / Pivot
 
-## 13.1 Obiettivo
+## 13.1 Goal
 
-Il budget non decide il PASS.
+The budget does not decide the PASS.
 
-Decide **come spendere le risorse residue**.
+It decides **how to spend the remaining resources**.
 
 ```text
 VerificationEngine
-→ deterministic truth
+-> deterministic truth
 
 ResourcePolicy
-→ next-action feasibility
+-> next-action feasibility
 ```
 
-## 13.2 Decisione
+## 13.2 Decision
 
 ```ts
 type ContinuationDecision =
@@ -893,14 +893,14 @@ interface ContinuationInput {
 }
 ```
 
-## 13.3 Esempi
+## 13.3 Examples
 
 ### GAP + ample
 
 ```text
 23 calls remaining
 8 min remaining
-→ repair
+-> repair
 ```
 
 ### repeated GAP
@@ -908,33 +908,33 @@ interface ContinuationInput {
 ```text
 same failure repeated 3 times
 18 calls remaining
-→ pivot
+-> pivot
 ```
 
 ### structural GAP + critical
 
 ```text
 4 calls remaining
-→ hold
+-> hold
 ```
 
 ### deterministic PASS
 
 ```text
-→ complete
+-> complete
 ```
 
-Non continuare solo perché resta budget.
+Do not continue just because budget remains.
 
 ## 13.4 Mission
 
-Integrare nella continuation policy esistente.
+Integrate into the existing continuation policy.
 
-User steer continua a vincere.
+User steer keeps winning.
 
 ## 13.5 Gauntlet
 
-Combinare:
+Combine:
 
 ```text
 PASS/GAP/BLOCKED
@@ -942,25 +942,25 @@ PASS/GAP/BLOCKED
 ResourceBudget
 ```
 
-senza cambiare l'autorità del critic o della CompletionPolicy.
+without changing the authority of the critic or of the CompletionPolicy.
 
 ---
 
-# 14. Workstream I — First-class TaskContract
+# 14. Workstream I - First-class TaskContract
 
-## 14.1 Obiettivo
+## 14.1 Goal
 
-Smettere progressivamente di dedurre constraints e criteria dalla prosa.
+Gradually stop deducing constraints and criteria from prose.
 
 ```text
 User prose
-   ↓
+   v
 TaskContract
-   ↓
+   v
 goal + constraints + acceptance criteria
 ```
 
-## 14.2 Contratto
+## 14.2 Contract
 
 ```ts
 interface TaskContract {
@@ -999,19 +999,19 @@ interface TaskCriterion {
 }
 ```
 
-## 14.3 Autorità
+## 14.3 Authority
 
 ```text
 user > agent-derived
 ```
 
-Un derived criterion non può:
+A derived criterion cannot:
 
-- contraddire user constraint;
-- cambiare goal;
-- eliminare criterion richiesti.
+- contradict a user constraint;
+- change the goal;
+- remove required criteria.
 
-## 14.4 Eventi
+## 14.4 Events
 
 ```text
 task.contract
@@ -1022,34 +1022,34 @@ Append-only.
 
 ## 14.5 Compaction
 
-`CompactionStateSnapshot` usa prima TaskContract.
+`CompactionStateSnapshot` uses TaskContract first.
 
-Regex extraction resta fallback compatibility.
+Regex extraction remains as compatibility fallback.
 
 ## 14.6 Verification
 
-Required criteria entrano nello stesso:
+Required criteria enter the same:
 
 ```text
 VerificationEngine
-→ CompletionPolicy
+-> CompletionPolicy
 ```
 
 ## 14.7 Resource integration
 
-TaskContract può in futuro esporre `risk`, ma non deve possedere il budget.
+TaskContract may expose `risk` in the future, but must not own the budget.
 
-ResourcePolicy resta host-owned.
+ResourcePolicy stays host-owned.
 
 ---
 
-# 15. Workstream J — Unified Cost Metric
+# 15. Workstream J - Unified Cost Metric
 
-## 15.1 Obiettivo
+## 15.1 Goal
 
-Non valutare un harness solo su solve rate.
+Do not evaluate a harness on solve rate alone.
 
-Misurare:
+Measure:
 
 ```text
 quality
@@ -1059,7 +1059,7 @@ cost
 latency
 ```
 
-## 15.2 Tipo
+## 15.2 Type
 
 ```ts
 interface RunCost {
@@ -1076,7 +1076,7 @@ interface RunCost {
 }
 ```
 
-## 15.3 Metriche principali
+## 15.3 Main metrics
 
 ```text
 Verified Solve Rate
@@ -1097,13 +1097,13 @@ A           70%     $0.18        82s
 B           72%     $0.37       151s
 ```
 
-Un aumento di solve rate non implica promozione automatica.
+An increase in solve rate does not imply automatic promotion.
 
 ---
 
-# 16. Workstream K — Harness Change Classification
+# 16. Workstream K - Harness Change Classification
 
-## 16.1 Classi
+## 16.1 Classes
 
 ### Behavioral
 - prompts;
@@ -1130,13 +1130,13 @@ Un aumento di solve rate non implica promozione automatica.
 
 ```text
 behavioral
-→ anchor gate
+-> anchor gate
 
 structural
-→ anchor gate + invariants
+-> anchor gate + invariants
 
 cosmetic
-→ standard CI
+-> standard CI
 ```
 
 ## 16.3 Manifest diff
@@ -1145,13 +1145,13 @@ cosmetic
 diffHarnessManifest(oldManifest, newManifest)
 ```
 
-Usare il diff per targeted anchors.
+Use the diff for targeted anchors.
 
 ---
 
-# 17. Workstream L — Eval Result Store
+# 17. Workstream L - Eval Result Store
 
-Niente DB obbligatorio.
+No mandatory DB.
 
 ```text
 eval/results/
@@ -1178,15 +1178,15 @@ interface EvalRunRecord {
 }
 ```
 
-SQLite solo se i volumi lo richiederanno.
+SQLite only if volumes will require it.
 
 ---
 
-# 18. Gauntlet piece budget allocation — fase successiva
+# 18. Gauntlet piece budget allocation - later phase
 
-Non blocca 2.6.
+Does not block 2.6.
 
-## 18.1 Tipo
+## 18.1 Type
 
 ```ts
 interface PieceBudgetHint {
@@ -1196,43 +1196,43 @@ interface PieceBudgetHint {
 }
 ```
 
-Il decomposer può suggerire pesi.
+The decomposer can suggest weights.
 
-L'host decide la policy reale.
+The host decides the real policy.
 
-> Il modello propone priorità; l'host possiede le risorse.
+> The model proposes priorities; the host owns the resources.
 
 ---
 
-# 19. Model/profile-specific budget curves — fase successiva
+# 19. Model/profile-specific budget curves - later phase
 
-Misurare:
+Measure:
 
 ```text
-model × profile × budget
+model x profile x budget
 ```
 
-Esempio:
+Example:
 
 ```text
 Model A / Kraken
-20 calls → 68%
-40 calls → 80%
-60 calls → 80%
+20 calls -> 68%
+40 calls -> 80%
+60 calls -> 80%
 
 Model B / Kraken
-20 calls → 55%
-40 calls → 70%
-60 calls → 77%
+20 calls -> 55%
+40 calls -> 70%
+60 calls -> 77%
 ```
 
-Usare i dati per default e tuning futuri.
+Use the data for defaults and future tuning.
 
 ---
 
-# 20. `--effort` presets — solo dopo dati
+# 20. `--effort` presets - only after data
 
-Possibile UX futura:
+Possible future UX:
 
 ```text
 --effort efficient
@@ -1240,47 +1240,47 @@ Possibile UX futura:
 --effort thorough
 ```
 
-Non introdurre i preset prima di benchmark empirici.
+Do not introduce presets before empirical benchmarks.
 
 ---
 
-# 21. Guarded Project Memory — fase successiva
+# 21. Guarded Project Memory - later phase
 
 ```text
 verified successful sessions
-      ↓
+      v
 candidate lesson
-      ↓
+      v
 candidate Harness Manifest
-      ↓
+      v
 Historical Anchors
-      ↓
+      v
 Regression Gate
-      ↓
+      v
 commit / reject
 ```
 
-La memory non entra automaticamente.
+Memory does not enter automatically.
 
 ---
 
-# 22. Candidate Router Optimization — fase successiva
+# 22. Candidate Router Optimization - later phase
 
 ```text
 eval data
-↓
+v
 candidate routing policy
-↓
+v
 new Harness Manifest
-↓
+v
 anchors
-↓
+v
 Regression Gate
-↓
+v
 commit / reject
 ```
 
-Mai self-update in produzione.
+Never self-update in production.
 
 ---
 
@@ -1298,27 +1298,27 @@ Pipeline:
 
 ```text
 frontier task
-      ↓
+      v
 candidate improvement
-      ↓
+      v
 candidate manifest
-      ↓
+      v
 new-task eval
-      ↓
+      v
 historical anchors
-      ↓
+      v
 cost comparison
-      ↓
+      v
 retention policy
-      ↓
+      v
 commit / reject
 ```
 
 ---
 
-# 24. Session events proposti
+# 24. Proposed session events
 
-Nuovi state-only events:
+New state-only events:
 
 ```text
 session.harness_manifest
@@ -1329,83 +1329,83 @@ resource.limit_reached
 resource.reserve_entered
 ```
 
-## 24.1 Invarianti
+## 24.1 Invariants
 
 ### Harness Manifest
-- un manifest attivo per session start;
-- update solo tramite nuovo event/versione.
+- one active manifest per session start;
+- update only via a new event/version.
 
 ### TaskContract
-- version monotona;
-- user source seq valido.
+- monotonic version;
+- valid user source seq.
 
 ### Resource
-- used monotono per risorse cumulative;
-- remaining coerente;
-- reserve non negativa;
-- tool budget non contato due volte.
+- monotonic used for cumulative resources;
+- coherent remaining;
+- reserve never negative;
+- tool budget not counted twice.
 
 ---
 
-# 25. File suggeriti
+# 25. Suggested files
 
 ## Core runtime
 
 ```text
 packages/core/src/runtime/
-├── harnessManifest.ts        NEW
-├── resourceBudget.ts         NEW
-├── resourcePolicy.ts         NEW
-└── profiles.ts               UPDATE
+  |- harnessManifest.ts        NEW
+  |- resourceBudget.ts         NEW
+  |- resourcePolicy.ts         NEW
+  |- profiles.ts               UPDATE
 ```
 
 ## Session
 
 ```text
 packages/core/src/session/
-├── types.ts                  UPDATE
-├── invariants.ts             UPDATE
-├── modelSurface.ts           UPDATE
-└── taskContract.ts           NEW
+  |- types.ts                  UPDATE
+  |- invariants.ts             UPDATE
+  |- modelSurface.ts           UPDATE
+  |- taskContract.ts           NEW
 ```
 
 ## Verification / Mission
 
 ```text
 packages/core/src/verification/
-└── types.ts / engine.ts      UPDATE if needed
+  |- types.ts / engine.ts      UPDATE if needed
 
 packages/core/src/mission/
-└── continuationPolicy.ts     UPDATE
+  |- continuationPolicy.ts     UPDATE
 ```
 
 ## CLI
 
 ```text
 src/cli/budget/
-├── resourceLedger.ts         NEW
-├── resourceSnapshot.ts       NEW
-└── modelContextBuilder.ts    UPDATE
+  |- resourceLedger.ts         NEW
+  |- resourceSnapshot.ts       NEW
+  |- modelContextBuilder.ts    UPDATE
 
 src/cli/gauntlet/
-├── loop.ts                   UPDATE
-└── policy.ts                 UPDATE
+  |- loop.ts                   UPDATE
+  |- policy.ts                 UPDATE
 
 src/cli/kraken/
-└── taskContract.ts           NEW/UPDATE
+  |- taskContract.ts           NEW/UPDATE
 ```
 
 ## Eval
 
 ```text
 tools/eval/
-├── anchorRunner.ts
-├── regressionGate.ts
-├── retentionPolicy.ts
-├── cost.ts
-├── report.ts
-├── targetedAnchors.ts
-└── types.ts
+  |- anchorRunner.ts
+  |- regressionGate.ts
+  |- retentionPolicy.ts
+  |- cost.ts
+  |- report.ts
+  |- targetedAnchors.ts
+  |- types.ts
 ```
 
 ---
@@ -1415,8 +1415,8 @@ tools/eval/
 ## 26.1 Harness Manifest
 
 - deterministic hash;
-- resource policy changes hash;
-- prompt/tool change changes hash;
+- resource policy changes the hash;
+- prompt/tool change changes the hash;
 - resume equality.
 
 ## 26.2 ResourceBudget
@@ -1426,28 +1426,28 @@ tools/eval/
 - reserve activation;
 - hard limit;
 - resume reconstruction;
-- model cannot mutate budget.
+- model cannot mutate the budget.
 
 ## 26.3 Resource snapshot
 
-- only latest visible;
-- old snapshots remain nel ledger;
-- compaction preserves latest state;
-- resume produces same surface.
+- only the latest visible;
+- old snapshots remain in the ledger;
+- compaction preserves the latest state;
+- resume produces the same surface.
 
 ## 26.4 Verification reserve
 
-- exploration non consuma protected reserve;
-- verify calls consentite;
-- insufficient resources → BLOCKED, non PASS;
-- deterministic PASS termina anche con budget residuo.
+- exploration does not consume the protected reserve;
+- verify calls allowed;
+- insufficient resources -> BLOCKED, not PASS;
+- a deterministic PASS also ends with budget left.
 
 ## 26.5 Continuation policy
 
-- GAP + ample → repair;
-- repeated GAP + budget → pivot;
-- structural GAP + critical → hold;
-- PASS → complete.
+- GAP + ample -> repair;
+- repeated GAP + budget -> pivot;
+- structural GAP + critical -> hold;
+- PASS -> complete.
 
 ## 26.6 Historical Anchors
 
@@ -1461,13 +1461,13 @@ tools/eval/
 - zero-regression stable;
 - one-regression experimental;
 - validity failure always rejects;
-- cost policy violation riportata correttamente.
+- cost policy violation reported correctly.
 
 ## 26.8 TaskContract
 
 - user constraint preserved;
 - derived criteria logged;
-- user wins conflict;
+- user wins conflicts;
 - steer versioning;
 - compaction preservation.
 
@@ -1475,19 +1475,19 @@ tools/eval/
 
 # 27. Benchmark matrix
 
-Creare benchmark su:
+Build benchmarks over:
 
 ```text
 model
-×
+x
 profile
-×
+x
 resource policy
-×
+x
 task class
 ```
 
-## 27.1 Task class
+## 27.1 Task classes
 
 - local bugfix;
 - multi-file change;
@@ -1505,7 +1505,7 @@ budget visible + verification reserve
 budget visible + reserve + repair/pivot
 ```
 
-## 27.3 Metriche
+## 27.3 Metrics
 
 - verified solve rate;
 - tool calls;
@@ -1520,38 +1520,38 @@ budget visible + reserve + repair/pivot
 
 # 28. CI rollout
 
-## Phase 1 — Shadow
+## Phase 1 - Shadow
 
 - Harness Manifest ON;
 - anchor runner ON;
 - Regression Gate report-only;
 - resource snapshots telemetry-only;
-- budget awareness non blocking.
+- budget awareness non-blocking.
 
-## Phase 2 — Resource awareness
+## Phase 2 - Resource awareness
 
 - latest snapshot model-visible;
 - verification reserve advisory.
 
-## Phase 3 — Protected verification reserve
+## Phase 3 - Protected verification reserve
 
 - Kraken BUILD first;
-- Mission/Gauntlet dopo smoke.
+- Mission/Gauntlet after smoke.
 
-## Phase 4 — Regression gate blocking
+## Phase 4 - Blocking regression gate
 
 - Tier 0 PR blocking;
 - Tier 1 merge/release blocking.
 
-## Phase 5 — Budget-aware repair/pivot
+## Phase 5 - Budget-aware repair/pivot
 
-- prima Gauntlet;
-- poi Mission;
-- Kraken solo con benchmark positivo.
+- Gauntlet first;
+- then Mission;
+- Kraken only with a positive benchmark.
 
 ---
 
-# 29. Sequenza PR consigliata
+# 29. Suggested PR sequence
 
 1. `feat(runtime): add canonical harness manifest`
 2. `feat(eval): add historical anchor format and runner`
@@ -1567,29 +1567,29 @@ budget visible + reserve + repair/pivot
 
 ---
 
-# 30. Milestone proposta — Zelari 2.6
+# 30. Proposed milestone - Zelari 2.6
 
-La 2.6 può essere considerata completa quando:
+2.6 can be considered complete when:
 
-- [ ] ogni sessione registra `HarnessManifest`;
-- [ ] resource policy è inclusa nel manifest;
-- [ ] esistono 15–25 anchor stabili;
-- [ ] Tier 0 gira in CI;
-- [ ] Regression Gate confronta candidate vs baseline;
-- [ ] retention budget è esplicito;
-- [ ] `ResourceBudget` è centrale;
-- [ ] ResourceLedger è ricostruibile;
-- [ ] latest `resource.snapshot` è model-visible;
-- [ ] verification reserve esiste;
-- [ ] deterministic PASS termina senza spendere budget residuo;
-- [ ] resource exhaustion non produce false PASS;
-- [ ] TaskContract è first-class;
-- [ ] compaction usa TaskContract quando disponibile;
-- [ ] Gauntlet/Verification condividono criteria;
-- [ ] cost per verified solve è misurato;
-- [ ] manifest diff identifica behavioral changes.
+- [ ] every session records `HarnessManifest`;
+- [ ] the resource policy is included in the manifest;
+- [ ] 15-25 stable anchors exist;
+- [ ] Tier 0 runs in CI;
+- [ ] the Regression Gate compares candidate vs baseline;
+- [ ] the retention budget is explicit;
+- [ ] `ResourceBudget` is central;
+- [ ] the ResourceLedger is rebuildable;
+- [ ] the latest `resource.snapshot` is model-visible;
+- [ ] a verification reserve exists;
+- [ ] a deterministic PASS ends without spending the remaining budget;
+- [ ] resource exhaustion does not produce false PASSes;
+- [ ] TaskContract is first-class;
+- [ ] compaction uses TaskContract when available;
+- [ ] Gauntlet/Verification share criteria;
+- [ ] cost per verified solve is measured;
+- [ ] manifest diff identifies behavioral changes.
 
-Non è requisito 2.6:
+Not a 2.6 requirement:
 
 - Gauntlet piece allocator;
 - effort presets;
@@ -1599,7 +1599,7 @@ Non è requisito 2.6:
 
 ---
 
-# 31. Metriche di successo
+# 31. Success metrics
 
 ## Retention
 
@@ -1643,13 +1643,13 @@ pivot_success_rate
 false_done_rate
 ```
 
-deve diminuire o restare invariato.
+must decrease or stay unchanged.
 
 ---
 
-# 32. Guardrail contro scope creep
+# 32. Guardrails against scope creep
 
-Una nuova feature entra solo se migliora almeno una delle seguenti:
+A new feature enters only if it improves at least one of:
 
 1. verified solve rate;
 2. false-done rate;
@@ -1659,17 +1659,17 @@ Una nuova feature entra solo se migliora almeno una delle seguenti:
 6. recoverability;
 7. measurability.
 
-Se non migliora nessuna:
+If it improves none:
 
 ```text
-non entra
+it does not enter
 ```
 
 ---
 
-# 33. Decisioni esplicite
+# 33. Explicit decisions
 
-## Prendiamo
+## We take
 
 - retention gate;
 - historical anchors;
@@ -1680,84 +1680,84 @@ non entra
 - budget-aware repair/pivot;
 - unified cost evaluation.
 
-## Non prendiamo
+## We do not take
 
-- BATS completo;
-- continue-after-PASS default;
-- verifier LLM come completion authority;
-- nuova compaction;
+- full BATS;
+- continue-after-PASS by default;
+- LLM verifier as completion authority;
+- a new compaction;
 - auto-self-improvement in production.
 
 ---
 
-# 34. Architettura finale
+# 34. Final architecture
 
 ```text
                            TASK
-                            │
-                            ▼
+                            |
+                            v
                        TaskContract
-                            │
-          ┌─────────────────┼─────────────────┐
-          ▼                 ▼                 ▼
+                            |
+          +-----------------+-----------------+
+          v                 v                 v
    HarnessManifest    ResourceBudget     SessionSpine
-          │                 │                 │
-          │           ResourceLedger          │
-          │                 │                 │
-          └─────────────────┼─────────────────┘
-                            ▼
+          |                 |                 |
+          |           ResourceLedger          |
+          |                 |                 |
+          +-----------------+-----------------+
+                            v
                      AgentHarness
-                            │
+                            |
                       ToolRegistry
-                            │
+                            |
                       real effects
-                            │
-                ┌───────────┴───────────┐
-                ▼                       ▼
+                            |
+                +-----------+-----------+
+                v                       v
          VerificationEngine       resource state
-                │                       │
-                ▼                       ▼
+                |                       |
+                v                       v
          CompletionPolicy      repair/pivot/hold
-                │
-                ▼
+                |
+                v
          verified outcome
-                │
-                ▼
+                |
+                v
             Eval Store
-                │
-        ┌───────┴────────┐
-        ▼                ▼
+                |
+        +-------+-------+
+        v               v
   New-target eval   Historical Anchors
-        │                │
-        └───────┬────────┘
-                ▼
+        |               |
+        +-------+-------+
+                v
          Regression Gate
-                │
-         ┌──────┴──────┐
-         ▼             ▼
-      COMMIT          REJECT
+                |
+         +------+------+
+         v             v
+      COMMIT        REJECT
 ```
 
 ---
 
-# 35. Principio finale
+# 35. Final principle
 
-Zelari non deve diventare un sistema che “usa più risorse perché può”.
+Zelari must not become a system that "uses more resources because it can".
 
-Deve diventare un sistema che sa:
+It must become a system that knows:
 
 ```text
-quale obiettivo deve soddisfare
+which goal it must satisfy
 +
-quali prove deve ancora produrre
+which evidence it still has to produce
 +
-quanto budget gli rimane
+how much budget it has left
 +
-quali capacità storiche non deve perdere
+which historical capabilities it must not lose
 +
-quanto costa davvero ottenere un verified solve
+how much a verified solve really costs
 ```
 
-Regola finale:
+Final rule:
 
-> **Spendere budget è giustificato solo se aumenta la probabilità di arrivare a una soluzione verificata; cambiare il harness è giustificato solo se migliora il sistema senza dimenticare ciò che già sapeva fare.**
+> **Spending budget is justified only if it increases the probability of reaching a verified solution; changing the harness is justified only if it improves the system without forgetting what it already knew how to do.**
