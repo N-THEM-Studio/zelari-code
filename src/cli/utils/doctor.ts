@@ -450,9 +450,11 @@ async function checkContextGrowth(): Promise<CheckResult> {
 /**
  * 2.31 B1: structured doctor report for the first-run gate — the SAME
  * checks as `runDoctor`, collected without printing. The wizard stops on
- * the first red with the exact fix command (the message already carries
- * it: `/login …`, `--trust …`, `--fix-path`); the CLI flag keeps the full
- * human report.
+ * the first BLOCKING red (severity critical — its message already carries
+ * the fix command: `/login …`, `--trust …`, `--fix-path`); WARN entries
+ * stay in `entries` for display but never gate. This mirrors `runDoctor`'s
+ * exit code (`criticalFails === 0`), so `--doctor` and `--doctor --json`
+ * can never disagree; the CLI flag keeps the full human report.
  */
 export interface DoctorEntry {
   name: string;
@@ -465,6 +467,17 @@ export interface DoctorReport {
   entries: DoctorEntry[];
   firstRed: DoctorEntry | null;
   healthy: boolean;
+}
+
+/**
+ * Gate semantics shared by every DoctorReport consumer (wizard gate in
+ * main.ts, `--doctor --json` exit code, Desktop first-run gate): only a
+ * critical failure blocks. A WARN-only report is healthy — informational
+ * checks (context growth, optional plugins, cua-driver, budget hints)
+ * must never close the front door.
+ */
+export function firstBlockingRed(entries: DoctorEntry[]): DoctorEntry | null {
+  return entries.find((e) => !e.ok && e.severity === "critical") ?? null;
 }
 
 function buildDoctorChecks(
@@ -572,8 +585,8 @@ export async function collectDoctorReport(): Promise<DoctorReport> {
       message: result.message,
     });
   }
-  const firstRed = entries.find((e) => !e.ok) ?? null;
-  return { entries, firstRed, healthy: entries.every((e) => e.ok) };
+  const firstRed = firstBlockingRed(entries);
+  return { entries, firstRed, healthy: firstRed === null };
 }
 
 export async function runDoctor(): Promise<boolean> {
