@@ -2499,245 +2499,245 @@ End-to-end against MiniMax-M3 (the model these failures were first reported on):
 ## [1.0.2] - 2026-07-06
 
 ### Fixed
-- **Drift di versione nella CLI.** `src/cli/main.ts` esportava un letterale
-  `VERSION = '1.0.0'` hardcodato, mentre `package.json` era già a `1.0.1`.
-  `--version`, il banner dell'app, la splash, la sidebar e il wizard
-  mostravano quindi `v1.0.0` dopo la pubblicazione di `1.0.1`. Inoltre il
-  self-update check (`updater.ts`) legge correttamente `package.json` via
-  `getCurrentVersion()`, quindi confrontava `1.0.1` con l'`1.0.1` del
-  registro npm e segnalava "nessun aggiornamento disponibile" — l'utente
-  vedeva `v1.0.0` e `/update` non proponeva nulla. `VERSION` ora deriva da
-  `package.json` (unica fonte di verità). Stesso trattamento per
-  `clientInfo.version` nell'handshake MCP (`src/cli/mcp/mcpClient.ts`,
-  era hardcodato a `0.7.9`).
-- **DevDependency `@zelari/core` bloccata a `1.0.0`** in `package.json`
-  (pin esatto, senza caret). Questo faceva fallire il typecheck del root
-  con `TS2305` su tutti i nuovi export del workspace 1.0.1. Aggiornato a
-  `1.0.1` (versione corrente del workspace).
-- **Sezione duplicata in `AGENTS.MD`**: il blocco auto-curato
-  (Tech Stack / Decisions / Conventions / Build / Open Questions) era
-  stato accodato una seconda volta durante un run precedente. La copia
-  duplicata conteneva inoltre riferimenti stale (`@zelari/core 0.7.0`,
-  `esbuild ^0.24.0`, `vitest ^2.1.9`). Rimossa; un futuro run di
-  `/council` rigenera correttamente da `package.json`.
+- **Version drift in the CLI.** `src/cli/main.ts` exported a hardcoded
+  `VERSION = '1.0.0'` literal, while `package.json` was already at `1.0.1`.
+  `--version`, the app banner, the splash, the sidebar and the wizard
+  therefore showed `v1.0.0` after `1.0.1` was published. Moreover, the
+  self-update check (`updater.ts`) correctly read `package.json` via
+  `getCurrentVersion()`, so it compared `1.0.1` against the npm registry's
+  `1.0.1` and reported "no update available" - the user saw `v1.0.0` and
+  `/update` proposed nothing. `VERSION` now derives from `package.json`
+  (single source of truth). Same treatment for
+  `clientInfo.version` in the MCP handshake (`src/cli/mcp/mcpClient.ts`,
+  hardcoded at `0.7.9`).
+- **DevDependency `@zelari/core` pinned to `1.0.0`** in `package.json`
+  (exact pin, no caret). This made the root typecheck fail with `TS2305`
+  on every new export of the 1.0.1 workspace. Updated to `1.0.1`
+  (current workspace version).
+- **Duplicated section in `AGENTS.MD`**: the auto-curated block
+  (Tech Stack / Decisions / Conventions / Build / Open Questions) had
+  been appended a second time during a previous run. The duplicate copy
+  also contained stale references (`@zelari/core 0.7.0`,
+  `esbuild ^0.24.0`, `vitest ^2.1.9`). Removed; a future `/council` run
+  regenerates it correctly from `package.json`.
 
 ## [1.0.1] - 2026-07-06
 
 ### Added
-- **Rilevamento di stallo della missione zelari.** Il loop `runZelariMission`
-  ora riceve dal council il numero di file scritti nello slice
-  (`write_file`/`edit_file`) e il verdetto `degraded`. Quando uno slice di
-  *implementation* scrive **0 file** per N iterazioni consecutive (default 2,
-  configurabile con `ZELARI_MISSION_MAX_STALL`, `0` disabilita) la missione si
-  ferma con stato `stalled` e un messaggio azionabile invece di consumare
-  l'intero budget di iterazioni su run identici a vuoto. È esattamente il caso
-  documentato con composer-2.5: la synthesis dichiara "fatto" ma non produce il
-  deliverable → `DEGRADED_RUN` → `completion.ok=false` all'infinito.
-- Nuovo stato missione `stalled` in `MissionStatus` e nuova variabile
-  d'ambiente `ZELARI_MISSION_MAX_STALL`.
+- **Zelari mission stall detection.** The `runZelariMission` loop now
+  receives from the council the number of files written in the slice
+  (`write_file`/`edit_file`) and the `degraded` verdict. When an
+  *implementation* slice writes **0 files** for N consecutive iterations
+  (default 2, configurable via `ZELARI_MISSION_MAX_STALL`, `0` disables)
+  the mission stops with status `stalled` and an actionable message
+  instead of burning the entire iteration budget on identical empty runs.
+  This is exactly the case documented with composer-2.5: the synthesis
+  declares "done" but never produces the deliverable -> `DEGRADED_RUN` ->
+  `completion.ok=false` forever.
+- New mission status `stalled` in `MissionStatus` and new environment
+  variable `ZELARI_MISSION_MAX_STALL`.
 
 ### Changed
-- **Prompt di implementation più stringente.** Lo slice di implementation ora
-  richiede esplicitamente di creare/modificare i file reali con
-  `write_file`/`edit_file` e dichiara che un run che afferma il completamento
-  senza scrivere alcun file è un run fallito.
-- `dispatchCouncilPromptImpl` e il tipo `SliceRunResult` propagano ora
-  `writeCount` e `degraded` verso il loop di missione; nessun cambiamento per il
-  percorso `/council` normale. I driver che non riportano `writeCount`
-  mantengono il comportamento precedente (nessun rilevamento di stallo).
+- **Stricter implementation prompt.** The implementation slice now
+  explicitly requires creating/modifying the real files with
+  `write_file`/`edit_file` and states that a run claiming completion
+  without writing any file is a failed run.
+- `dispatchCouncilPromptImpl` and the `SliceRunResult` type now propagate
+  `writeCount` and `degraded` to the mission loop; no change for the
+  normal `/council` path. Drivers that do not report `writeCount` keep
+  the previous behavior (no stall detection).
 
 ## [1.0.0] - 2026-07-05
 
-Primo rilascio stabile. Introduce **Zelari-mode** (missioni autonome multi-run),
-la **memoria di progetto file-based** e il supporto **prompt in italiano** per il
-rilevamento della design-phase.
+First stable release. Introduces **Zelari-mode** (multi-run autonomous
+missions), **file-based project memory** and **Italian prompt** support
+for design-phase detection.
 
 ### Added
-- **Zelari-mode — terza modalità della TUI.** `shift+tab` ora cicla `agent → council → zelari`. In modalità zelari un prompt libero diventa un **mission brief** strutturato (intent, stack, deliverable, assunzioni, out-of-scope, slice MVP) e il council gira in loop — design-phase poi implementation per i greenfield — finché `completion.ok` è verde sullo slice MVP o si esaurisce il budget di iterazioni. Comando equivalente `/zelari <prompt>`. Il brief viene mostrato e richiede conferma (`ok`), salvo auto-start con `ZELARI_MISSION_AUTO=1`. Stato persistito in `.zelari/mission-state.json`.
-- **Memoria di progetto (file-based, zero dipendenze).** Nuova interfaccia `MemoryBackend` in `@zelari/core` (subpath `@zelari/core/memory`) e implementazione `FileMemoryBackend` nella CLI: log JSONL per-progetto in `.zelari/memory/log.jsonl` con ricerca per keyword. Gli esiti di ogni slice vengono persistiti e re-iniettati nel council come `ragContext` tra le iterazioni (mai l'intero JSONL). Opt-out con `ZELARI_MEMORY=0` (degrada a no-op). Nessun binario nativo, nessun vector store — l'interfaccia è un seam per un futuro backend semantico.
-- **Mission classifier + brief** (`classifyMission`, `buildMissionBrief` in `@zelari/core/council`): euristiche pure (IT/EN) per intent `greenfield|extend|fix|redesign`, inferenza stack e slice MVP con budget task.
-- **Budget tool dedicato al chairman.** Nuovo `maxToolCallsChairman` in `PureCouncilConfig`: in zelari-mode Lucifero riceve un budget più alto (default 30, `ZELARI_MODE_MAX_TOOLS_LUCIFER`) mentre specialisti e oracle restano sul default condiviso.
-- Nuove variabili d'ambiente: `ZELARI_MEMORY`, `ZELARI_MISSION_AUTO`, `ZELARI_MISSION_MAX_ITER`, `ZELARI_MODE_MAX_TOOLS_LUCIFER`.
-- ~40 nuovi test unitari (keyword IT, memoria file, mission/brief, loop zelari, parsing `/zelari`).
+- **Zelari-mode - third TUI mode.** `shift+tab` now cycles `agent -> council -> zelari`. In zelari mode a free-form prompt becomes a structured **mission brief** (intent, stack, deliverable, assumptions, out-of-scope, MVP slice) and the council runs in a loop - design-phase then implementation for greenfields - until `completion.ok` is green on the MVP slice or the iteration budget is exhausted. Equivalent command `/zelari <prompt>`. The brief is shown and requires confirmation (`ok`), except auto-start with `ZELARI_MISSION_AUTO=1`. State persisted in `.zelari/mission-state.json`.
+- **Project memory (file-based, zero dependencies).** New `MemoryBackend` interface in `@zelari/core` (subpath `@zelari/core/memory`) and `FileMemoryBackend` implementation in the CLI: per-project JSONL log in `.zelari/memory/log.jsonl` with keyword search. Every slice's outcome is persisted and re-injected into the council as `ragContext` across iterations (never the whole JSONL). Opt-out with `ZELARI_MEMORY=0` (degrades to a no-op). No native binaries, no vector store - the interface is a seam for a future semantic backend.
+- **Mission classifier + brief** (`classifyMission`, `buildMissionBrief` in `@zelari/core/council`): pure heuristics (IT/EN) for intent `greenfield|extend|fix|redesign`, stack inference and MVP slice with task budget.
+- **Dedicated chairman tool budget.** New `maxToolCallsChairman` in `PureCouncilConfig`: in zelari mode Lucifero gets a higher budget (default 30, `ZELARI_MODE_MAX_TOOLS_LUCIFER`) while specialists and the oracle stay on the shared default.
+- New environment variables: `ZELARI_MEMORY`, `ZELARI_MISSION_AUTO`, `ZELARI_MISSION_MAX_ITER`, `ZELARI_MODE_MAX_TOOLS_LUCIFER`.
+- ~40 new unit tests (IT keywords, file memory, mission/brief, zelari loop, `/zelari` parsing).
 
 ### Changed
-- **`resolveCouncilRunMode` riconosce l'italiano.** `DESIGN_KEYWORDS` include ora `costruisci|crea|progetta|sviluppa|realizza|vetrina|pannello|gestionale|nuovo progetto|da zero|…`; `IMPLEMENTATION_KEYWORDS` include i verbi di fix IT (`correggi|rifattorizza|implementa|…`) e `PLAN_CONTINUE` i termini IT di continuazione. Il sostantivo `sistema` è **volutamente escluso** dai fix per non declassare i greenfield tipo "costruisci un sistema gestionale".
-- `dispatchCouncilPromptImpl` restituisce l'esito dello slice (`completionOk`/`ran`/`synthesisText`) e accetta override per-slice (`ragContext`, `runMode`, `maxToolCallsChairman`); nessun cambiamento per il percorso `/council` normale.
+- **`resolveCouncilRunMode` understands Italian.** `DESIGN_KEYWORDS` now includes `costruisci|crea|progetta|sviluppa|realizza|vetrina|pannello|gestionale|nuovo progetto|da zero|...`; `IMPLEMENTATION_KEYWORDS` includes the Italian fix verbs (`correggi|rifattorizza|implementa|...`) and `PLAN_CONTINUE` the Italian continuation terms. The noun `sistema` is **deliberately excluded** from fix verbs so as not to downgrade greenfields like "costruisci un sistema gestionale" (build a management system).
+- `dispatchCouncilPromptImpl` returns the slice outcome (`completionOk`/`ran`/`synthesisText`) and accepts per-slice overrides (`ragContext`, `runMode`, `maxToolCallsChairman`); no change for the normal `/council` path.
 
 ### Security
-- Risolte le 5 vulnerabilità Dependabot (1 critical, 1 high, 3 moderate) nella catena di **devDependencies** di test/build (`vitest`/`vite`/`vite-node`/`@vitest/mocker`/`esbuild`): bump `vitest` `^2.1.9 → ^4.1.9` ed `esbuild` `^0.24.0 → ^0.25.0`. `npm audit` ora riporta 0 vulnerabilità. Nota: queste dipendenze non venivano comunque pubblicate (il campo `files` include solo `bin`/`dist`/docs), quindi non esponevano gli utenti finali; l'aggiornamento pulisce l'ambiente di sviluppo/CI. Suite invariata: 1127 test verdi su vitest 4.
+- Fixed the 5 Dependabot vulnerabilities (1 critical, 1 high, 3 moderate) in the test/build **devDependencies** chain (`vitest`/`vite`/`vite-node`/`@vitest/mocker`/`esbuild`): bumped `vitest` `^2.1.9 -> ^4.1.9` and `esbuild` `^0.24.0 -> ^0.25.0`. `npm audit` now reports 0 vulnerabilities. Note: these dependencies were never published anyway (the `files` field includes only `bin`/`dist`/docs), so end users were not exposed; the update cleans the dev/CI environment. Suite unchanged: 1127 tests green on vitest 4.
 
 ## [0.7.12] - 2026-07-04
 
 ### Fixed
-- **Council/agent tool calls falliscono su MiniMax e GLM (`tool result's tool id ... not found (2013)`, HTTP 400).** L'`AgentHarness` accodava il messaggio `role:'tool'` (risultato) al transcript **durante** il delta `tool_call`, ma il messaggio `role:'assistant'` che dichiara quella `tool_calls` solo al `finish` successivo → ordine invalido `[tool, assistant]`. xAI/grok tolleravano l'ordine invertito (match per id a prescindere dalla posizione); MiniMax e GLM validano in modo stretto e rifiutano la richiesta perché il tool result non ha un assistant tool_calls **precedente**. Ora i risultati dei tool vengono bufferizzati durante il turno e scaricati **dopo** il messaggio assistant, dando l'ordine richiesto dallo schema OpenAI: `assistant(tool_calls)` → `tool(result)`. Vale per il percorso normale, la cache anti-duplicati e lo skip di `maxToolCallsPerTurn`. Il fix sblocca ogni provider OpenAI-compatible con validazione stretta, non solo MiniMax/GLM.
+- **Council/agent tool calls fail on MiniMax and GLM (`tool result's tool id ... not found (2013)`, HTTP 400).** The `AgentHarness` appended the `role:'tool'` message (result) to the transcript **during** the `tool_call` delta, but the `role:'assistant'` message declaring that `tool_calls` only at the following `finish` -> invalid order `[tool, assistant]`. xAI/grok tolerated the inverted order (matching by id regardless of position); MiniMax and GLM validate strictly and reject the request because the tool result has no **preceding** assistant tool_calls. Tool results are now buffered during the turn and flushed **after** the assistant message, giving the order required by the OpenAI schema: `assistant(tool_calls)` -> `tool(result)`. Applies to the normal path, the anti-duplicate cache and the `maxToolCallsPerTurn` skip. The fix unblocks every strict-validating OpenAI-compatible provider, not just MiniMax/GLM.
 
 ### Added
-- Test di regressione `core-agentHarness-toolResultOrder` — verifica che l'assistant che dichiara le `tool_calls` preceda sempre i relativi `tool` result (caso singolo e multi-tool nello stesso turno).
+- Regression test `core-agentHarness-toolResultOrder` - verifies that the assistant declaring the `tool_calls` always precedes the related `tool` results (single and multi-tool case in the same turn).
 
 ## [0.7.11] - 2026-07-04
 
 ### Fixed
-- **Il model discovery ora rispetta l'endpoint custom.** `discoverModelsForProvider` risolveva il base URL dalla mappa statica `PROVIDER_BASE_URLS`, ignorando l'endpoint impostato con `/provider custom <url>`: dopo aver puntato `openai-compatible` a un gateway di terze parti, `/model refresh`, `/discover`, il picker `/model` e il refresh automatico all'avvio interrogavano comunque l'host di default (di norma con esito 401 → "discovery failed"). Ora la discovery risolve il base URL con la stessa priorità della chat (`resolveBaseUrl`): `options.baseUrl` (test) → endpoint custom persistito (`getCustomEndpoint`) → `OPENAI_BASE_URL` (per `openai-compatible`) → default statico.
-- **Default di discovery per `openai-compatible` allineato alla chat.** La discovery usava `https://api.openai.com/v1` mentre la chat (`PROVIDER_ENDPOINTS`) usa `https://api.x.ai/v1`: discovery e chat sondavano host diversi. Ora entrambi partono da `https://api.x.ai/v1`.
-- **Endpoint MiniMax corretto** → `https://api.minimax.io/v1` (endpoint internazionale, OpenAI-compatible con `/chat/completions` e `/models`). Prima chat e discovery usavano due host diversi ed entrambi sbagliati (`https://api.MiniMax.chat/v1` e `https://api.minimaxi.chat/v1`), da cui il 401 "invalid api key" sui prompt.
-- **Endpoint GLM / Z.AI corretto** → default sul GLM Coding Plan `https://api.z.ai/api/coding/paas/v4` (chat + discovery). Prima la chat puntava a `https://api.z.ai/v1` (404) e la discovery a `https://api.z.ai/api/paas/v4`: host incoerenti. Chi usa l'API pay-per-token può fare `/provider custom https://api.z.ai/api/paas/v4`.
-- **Coerenza chat ↔ discovery ↔ keyStore.** I tre punti che definivano i base URL per provider (`PROVIDER_ENDPOINTS`, `PROVIDER_BASE_URLS`, `PROVIDERS[].baseUrl`) erano andati fuori sync per glm/minimax; ora concordano.
+- **Model discovery now respects the custom endpoint.** `discoverModelsForProvider` resolved the base URL from the static `PROVIDER_BASE_URLS` map, ignoring the endpoint set with `/provider custom <url>`: after pointing `openai-compatible` at a third-party gateway, `/model refresh`, `/discover`, the `/model` picker and the startup auto-refresh kept querying the default host (usually with a 401 -> "discovery failed"). Discovery now resolves the base URL with the same priority as chat (`resolveBaseUrl`): `options.baseUrl` (tests) -> persisted custom endpoint (`getCustomEndpoint`) -> `OPENAI_BASE_URL` (for `openai-compatible`) -> static default.
+- **Discovery default for `openai-compatible` aligned with chat.** Discovery used `https://api.openai.com/v1` while chat (`PROVIDER_ENDPOINTS`) uses `https://api.x.ai/v1`: discovery and chat probed different hosts. Both now start from `https://api.x.ai/v1`.
+- **MiniMax endpoint fixed** -> `https://api.minimax.io/v1` (international endpoint, OpenAI-compatible with `/chat/completions` and `/models`). Previously chat and discovery used two different and both wrong hosts (`https://api.MiniMax.chat/v1` and `https://api.minimaxi.chat/v1`), hence the 401 "invalid api key" on prompts.
+- **GLM / Z.AI endpoint fixed** -> default to the GLM Coding Plan `https://api.z.ai/api/coding/paas/v4` (chat + discovery). Previously chat pointed to `https://api.z.ai/v1` (404) and discovery to `https://api.z.ai/api/paas/v4`: inconsistent hosts. Pay-per-token API users can run `/provider custom https://api.z.ai/api/paas/v4`.
+- **Chat <-> discovery <-> keyStore consistency.** The three places defining base URLs per provider (`PROVIDER_ENDPOINTS`, `PROVIDER_BASE_URLS`, `PROVIDERS[].baseUrl`) had gone out of sync for glm/minimax; they now agree.
 
 ### Changed
-- Test `v3-U-modelDiscovery` isolati anche rispetto a `provider.json` (`ANATHEMA_PROVIDER_CONFIG_FILE`) e `OPENAI_BASE_URL`, dato che la discovery ora legge l'endpoint custom; nuovi casi per endpoint custom persistito, override `OPENAI_BASE_URL` e precedenza di `options.baseUrl`.
-- `docs/GUIDA.md`: nuova sezione "Endpoint OpenAI-compatible custom" con il flusso consigliato; chiarito che non esiste un provider selezionabile `custom` (l'endpoint custom si imposta sul provider attivo).
+- `v3-U-modelDiscovery` tests isolated also from `provider.json` (`ANATHEMA_PROVIDER_CONFIG_FILE`) and `OPENAI_BASE_URL`, since discovery now reads the custom endpoint; new cases for persisted custom endpoint, `OPENAI_BASE_URL` override and `options.baseUrl` precedence.
+- `docs/GUIDA.md`: new "Custom OpenAI-compatible endpoint" section with the recommended flow; clarified that no selectable `custom` provider exists (the custom endpoint is set on the active provider).
 
 ## [0.7.10] - 2026-07-04
 
 ### Highlights
-- **Status bar a tutta larghezza**: due gruppi giustificati agli estremi del terminale — identità a sinistra (modalità, provider, modello, cwd), stato del run a destra (timer, coda, sessione). Entrambi i gruppi troncano invece di andare a capo (`wrap="truncate"` + `flexShrink` differenziato), quindi la barra è sempre esattamente una riga: prima su terminali stretti wrappava schiacciando la regione dinamica.
-- **Indicatore di lavoro animato**: nuovo `<WorkingIndicator>` (spinner Braille + verbi rotanti thinking/working/reasoning/assembling + puntini animati + tempo trascorso, es. `⠹ thinking... (12s)`). Sostituisce lo statico `⋯ working…` che era **codice morto**: l'early-return della LiveRegion ignorava `busy`, quindi tra il dispatch e il primo token non appariva nulla. Lo spinner compare anche nella status bar accanto al timer durante il run.
-- **Picker interattivi per provider e modelli**: `/provider` e `/model` senza argomenti aprono una lista navigabile (`<SelectList>`: ↑/↓ con wrap-around, invio seleziona, esc annulla, ✓ sull'attivo, finestra scorrevole per liste lunghe). La selezione rientra nella pipeline slash normale (`/provider <id>` / `/model <id>`), quindi persistenza e messaggi sono identici al comando digitato. `/model show` e `/provider list` conservano i vecchi output testuali.
-- **Discovery modelli cablata davvero**: refresh in background all'avvio quando la cache ha più di 6h (il trigger era documentato ma mai collegato), auto-discovery all'apertura del picker `/model` (con fallback a cache/default se fallisce), nuovo alias `/discover` per `/models refresh`.
-- **Fix aggiornamento status bar dopo switch**: `handleProviderSet` passava un `ProviderSpec` invece del `ProviderConfig` allo stato dell'App (il modello mostrato non si aggiornava mai) e `handleModelSet` non aggiornava affatto lo stato.
+- **Full-width status bar**: two groups justified at the terminal edges - identity on the left (mode, provider, model, cwd), run status on the right (timer, queue, session). Both groups truncate instead of wrapping (`wrap="truncate"` + differentiated `flexShrink`), so the bar is always exactly one line: previously on narrow terminals it wrapped, crushing the dynamic region.
+- **Animated work indicator**: new `<WorkingIndicator>` (Braille spinner + rotating verbs thinking/working/reasoning/assembling + animated dots + elapsed time, e.g. `? thinking... (12s)`). Replaces the static `? working.` which was **dead code**: the LiveRegion early-return ignored `busy`, so nothing appeared between dispatch and the first token. The spinner also appears in the status bar next to the timer during a run.
+- **Interactive pickers for providers and models**: `/provider` and `/model` without arguments open a navigable list (`<SelectList>`: up/down with wrap-around, enter selects, esc cancels, V on the active item, scrolling window for long lists). The selection re-enters the normal slash pipeline (`/provider <id>` / `/model <id>`), so persistence and messages are identical to the typed command. `/model show` and `/provider list` keep the old textual outputs.
+- **Model discovery actually wired**: background refresh at startup when the cache is older than 6h (the trigger was documented but never connected), auto-discovery when opening the `/model` picker (with fallback to cache/defaults on failure), new alias `/discover` for `/models refresh`.
+- **Fix status bar update after switching**: `handleProviderSet` passed a `ProviderSpec` instead of the `ProviderConfig` to the App state (the displayed model never updated) and `handleModelSet` did not update the state at all.
 
 ### Added
-- `src/cli/components/Spinner.tsx` (`Spinner` + `WorkingIndicator`, ticker condiviso a 100ms), `src/cli/components/SelectList.tsx` (`windowStart` esportato e testato), `handleProviderPicker`/`handleModelPicker` + `buildModelPickerItems` (pure, testata) in `slashHandlers/provider.ts`.
-- Kind parser `provider_picker`/`model_picker`, comandi `/discover`, `/model show`, `/provider list`; `openPicker` in `useSlashDispatch`.
-- Test: `cli-picker.test.ts` (10 — item builder + windowing), caso busy della LiveRegion, parser picker/discover.
+- `src/cli/components/Spinner.tsx` (`Spinner` + `WorkingIndicator`, shared 100ms ticker), `src/cli/components/SelectList.tsx` (`windowStart` exported and tested), `handleProviderPicker`/`handleModelPicker` + `buildModelPickerItems` (pure, tested) in `slashHandlers/provider.ts`.
+- Kind parser `provider_picker`/`model_picker`, commands `/discover`, `/model show`, `/provider list`; `openPicker` in `useSlashDispatch`.
+- Tests: `cli-picker.test.ts` (10 - item builder + windowing), LiveRegion busy case, picker/discover parser.
 
 ### Changed
-- `StatusBar`: layout space-between a piena larghezza; spinner al posto di `⏱` durante il run; sessione spostata nel gruppo destro.
-- `LiveRegion`: prop `elapsedMs` inoltrata dall'App (timer nell'indicatore di lavoro).
-- `docs/GUIDA.md`: tabella provider/modello aggiornata (picker, `/discover`, `/model show`, `/provider list`).
+- `StatusBar`: full-width space-between layout; spinner instead of `?` during a run; session moved to the right group.
+- `LiveRegion`: `elapsedMs` prop forwarded from the App (timer in the work indicator).
+- `docs/GUIDA.md`: provider/model table updated (pickers, `/discover`, `/model show`, `/provider list`).
 
 ### Fixed
-- Early-return della `LiveRegion` che rendeva irraggiungibile l'indicatore "working" (ora include `busy`).
-- Refresh del `ProviderConfig` nello stato dell'App dopo `/provider <id>` e `/model <nome>`.
+- LiveRegion early-return that made the "working" indicator unreachable (now includes `busy`).
+- `ProviderConfig` refresh in the App state after `/provider <id>` and `/model <name>`.
 
 ## [0.7.9] - 2026-07-04
 
 ### Highlights
-- **Switch agente/council con `shift+tab`**: i prompt liberi (non-slash) vengono instradati all'agente singolo o alla pipeline council a 6 membri in base alla modalità attiva, mostrata nella status line (`⏵ agent` / `⛬ council`). Stesso percorso di `/council <testo>`.
-- **Sidebar destra**: emblema N-THEM in Braille art (griglia punti 2×4 per cella — ~4× più denso dell'ASCII), wordmark + versione + branch, e i file modificati del working tree con `+aggiunte`/`-rimosse` per file (nuovo hook `useGitChanges`: `git status --porcelain` + `diff --numstat` unstaged+staged, polling 4s, re-render solo su snapshot cambiato). Vive nella regione dinamica accanto al blocco input (una colonna full-height non può coesistere con lo scrollback nativo di `<Static>`); auto-nascosta sotto 96 colonne.
-- **Status line ridisegnata e spostata SOTTO l'input box**: via token e costo, dentro modalità, provider, modello, sessione, cwd (con `~` per la home) e il **timer di esecuzione** (`⏱ 12s` durante il run, `last 34s` a run concluso — nuovo hook `useExecutionTimer`).
-- **Fix banner duplicato**: `<Static>` veniva rimontato quando il `sessionId` arrivava dal bootstrap (key change) e ristampava il banner nello scrollback. Ora la Static non riceve item finché la sessione non esiste → banner stampato esattamente una volta. Rimossa anche la lista skill dal banner (doppione di `/help`).
-- **Fix DEP0190 (Node 24)**: tre call-site usavano `spawn(cmd, argsArray, { shell: true })` (args concatenati SENZA escaping). `mcpClient` (spawn MCP server al primo prompt) e `updater` (`npm install -g`) ora costruiscono la command line win32 con quoting esplicito via nuovo helper `utils/cmdline.ts` e passano una stringa singola; `shellResolver` esegue `where bash` senza shell (è un .exe reale).
-- **Council run-mode detection** (`implementation` vs `design-phase`): euristiche su keyword + presenza piano (`planDetect.hasWorkspacePlan`), override `ZELARI_COUNCIL_MODE`; banner di modalità nei prompt dei membri (emissioni workspace obbligatorie solo in design-phase) e skip del post-processor complete-design nei run di implementazione. Tier council esplicito lite(3)/full(6) via `ZELARI_COUNCIL_TIER`/`ZELARI_COUNCIL_SIZE` (`councilConfig.ts`).
+- **Agent/council switch with `shift+tab`**: free-form (non-slash) prompts are routed to the single agent or the 6-member council pipeline depending on the active mode, shown in the status line (`? agent` / `? council`). Same path as `/council <text>`.
+- **Right sidebar**: N-THEM emblem in Braille art (2x4 dot grid per cell - ~4x denser than ASCII), wordmark + version + branch, and the working tree's modified files with `+added`/`-removed` per file (new hook `useGitChanges`: `git status --porcelain` + `diff --numstat` unstaged+staged, 4s polling, re-render only on changed snapshot). Lives in the dynamic region next to the input block (a full-height column cannot coexist with the native `<Static>` scrollback); auto-hidden below 96 columns.
+- **Status line redesigned and moved BELOW the input box**: tokens and cost, current mode, provider, model, session, cwd (with `~` for home) and the **execution timer** (`? 12s` during a run, `last 34s` when finished - new hook `useExecutionTimer`).
+- **Duplicate banner fix**: `<Static>` was remounted when `sessionId` arrived from bootstrap (key change) and reprinted the banner into the scrollback. The Static now receives no items until the session exists -> banner printed exactly once. Also removed the skill list from the banner (duplicate of `/help`).
+- **DEP0190 fix (Node 24)**: three call-sites used `spawn(cmd, argsArray, { shell: true })` (args concatenated WITHOUT escaping). `mcpClient` (MCP server spawn at first prompt) and `updater` (`npm install -g`) now build the win32 command line with explicit quoting via the new `utils/cmdline.ts` helper and pass a single string; `shellResolver` runs `where bash` without a shell (it is a real .exe).
+- **Council run-mode detection** (`implementation` vs `design-phase`): keyword heuristics + plan presence (`planDetect.hasWorkspacePlan`), `ZELARI_COUNCIL_MODE` override; mode banner in member prompts (workspace emissions mandatory only in design-phase) and complete-design post-processor skipped in implementation runs. Explicit council tier lite(3)/full(6) via `ZELARI_COUNCIL_TIER`/`ZELARI_COUNCIL_SIZE` (`councilConfig.ts`).
 
 ### Added
-- `src/cli/hooks/useGitChanges.ts` (parser numstat/porcelain/rename esportati e testati), `src/cli/hooks/useExecutionTimer.ts`, `src/cli/components/Sidebar.tsx`, `src/cli/utils/paths.ts` (`shortenCwd`), `src/cli/utils/cmdline.ts` (`quoteCmdArg`/`buildCmdLine`), `src/cli/councilConfig.ts`, `src/cli/workspace/planDetect.ts`, `packages/core/src/council/runMode.ts` + `modeBanners.ts`.
-- Test: `cli-git-changes` (16), `cli-useExecutionTimer` (4), `cli-cmdline` (6), `cli-councilConfig`, `core-councilRunMode`.
-- README: logo ASCII + feature v0.7.9.
+- `src/cli/hooks/useGitChanges.ts` (numstat/porcelain/rename parsers exported and tested), `src/cli/hooks/useExecutionTimer.ts`, `src/cli/components/Sidebar.tsx`, `src/cli/utils/paths.ts` (`shortenCwd`), `src/cli/utils/cmdline.ts` (`quoteCmdArg`/`buildCmdLine`), `src/cli/councilConfig.ts`, `src/cli/workspace/planDetect.ts`, `packages/core/src/council/runMode.ts` + `modeBanners.ts`.
+- Tests: `cli-git-changes` (16), `cli-useExecutionTimer` (4), `cli-cmdline` (6), `cli-councilConfig`, `core-councilRunMode`.
+- README: ASCII logo + v0.7.9 feature.
 
 ### Changed
-- `StatusBar`: prop `mode`/`cwd`/`elapsedMs`/`lastMs`; rimossi token e costo dalla UI (il tracking interno resta).
-- Banner di avvio: 3 righe (wordmark+versione+provider/model, cwd, hint comandi + shift+tab).
-- `tests/unit/cli-updater.test.ts`: asserzione spawn platform-agnostica (stringa win32 / array POSIX).
-- `.gitignore`: esclusa `mcps/` (cloni locali di server MCP).
+- `StatusBar`: `mode`/`cwd`/`elapsedMs`/`lastMs` props; tokens and cost removed from the UI (internal tracking remains).
+- Startup banner: 3 lines (wordmark+version+provider/model, cwd, command hint + shift+tab).
+- `tests/unit/cli-updater.test.ts`: platform-agnostic spawn assertion (win32 string / POSIX array).
+- `.gitignore`: `mcps/` excluded (local clones of MCP servers).
 
 ## [0.7.5] - 2026-07-03
 
 ### Highlights
-- **Fix radice allucinazioni tool nel council**: `getAllTools()` non conteneva NESSUN tool harness (read_file, bash, list_files…) — i membri leggevano "operi su una codebase reale" con zero file tool in AVAILABLE TOOLS e allucinavano `Read`/`Glob`/`list_dir`. Nuovo `harnessToolBridge` nel core: i builtin harness entrano nel catalogo agents con gli schemi JSON derivati dagli zod reali. In più: filtro executable esteso al testo del prompt (v0.7.5 in `buildAgentMessages`), prosa dei prompt module e delle skill resa tool-agnostica, alias "Did you mean" nel ToolRegistry (`Read`→`read_file`, `searchRAG`→`searchDocuments`, ecc.).
-- **Tool web**: `fetch_url` (http(s)-only, HTML→testo, timeout 15s, cap 40k char) e `web_search` (DuckDuckGo HTML senza chiave; `TAVILY_API_KEY` per Tavily). Registrati nella CLI (10 builtin) e richiesti dalla skill `research-analyst`.
-- **Client MCP stdio minimale**: initialize/tools/list/tools/call via JSON-RPC newline-delimited, zero dipendenze. Config Claude-Desktop-compatibile in `.zelari/mcp.json` o `~/.zelari-code/mcp.json`; tool registrati come `mcp_<server>_<tool>` in entrambi i path (schema JSON del server inoltrato al provider via nuovo campo `ToolDefinition.jsonSchema`). Lazy singleton, warning una-tantum per server rotti, `ZELARI_MCP=0` per disattivare.
-- **Loader SKILL.md** (formato condiviso opencode/Hermes/Claude Code): discovery da `.zelari/skills/`, `.claude/skills/`, `.opencode/skills/`, `~/.zelari-code/skills/` — qualunque skill di quegli ecosistemi funziona con `/skill <name>`.
-- **`/skill` requiredTools wiring**: dispatchPrompt registra gli stub workspace che la skill dichiara (con mapping `searchRAG`→`searchDocuments`) — prima le skill di planning chiedevano al modello di usare tool assenti dal registry.
-- Mappa completa tool/skill/MCP in `docs/TOOLS.md`. +38 test (875 totali).
+- **Root fix for tool hallucinations in the council**: `getAllTools()` contained NO harness tools at all (read_file, bash, list_files...) - members read "you operate on a real codebase" with zero file tools in AVAILABLE TOOLS and hallucinated `Read`/`Glob`/`list_dir`. New `harnessToolBridge` in core: harness built-ins enter the agents catalog with JSON schemas derived from the real zod ones. Plus: executable filter extended to the prompt text (v0.7.5 in `buildAgentMessages`), prompt module and skill prose made tool-agnostic, "Did you mean" aliases in the ToolRegistry (`Read`->`read_file`, `searchRAG`->`searchDocuments`, etc.).
+- **Web tools**: `fetch_url` (http(s)-only, HTML->text, 15s timeout, 40k char cap) and `web_search` (DuckDuckGo HTML without a key; `TAVILY_API_KEY` for Tavily). Registered in the CLI (10 built-ins) and required by the `research-analyst` skill.
+- **Minimal stdio MCP client**: initialize/tools/list/tools/call via newline-delimited JSON-RPC, zero dependencies. Claude-Desktop-compatible config in `.zelari/mcp.json` or `~/.zelari-code/mcp.json`; tools registered as `mcp_<server>_<tool>` on both paths (the server's JSON schema forwarded to the provider via the new `ToolDefinition.jsonSchema` field). Lazy singleton, one-time warning for broken servers, `ZELARI_MCP=0` to disable.
+- **SKILL.md loader** (shared opencode/Hermes/Claude Code format): discovery from `.zelari/skills/`, `.claude/skills/`, `.opencode/skills/`, `~/.zelari-code/skills/` - any skill from those ecosystems works with `/skill <name>`.
+- **`/skill` requiredTools wiring**: dispatchPrompt registers the workspace stubs the skill declares (with `searchRAG`->`searchDocuments` mapping) - previously planning skills asked the model to use tools absent from the registry.
+- Complete tool/skill/MCP map in `docs/TOOLS.md`. +38 tests (875 total).
 
 ## [0.7.4] - 2026-07-03
 
 ### Highlights
-- **Loop council→agente chiuso**: l'agente singolo ora registra lo stub workspace `updateTask` quando esiste un piano (`.zelari/plan.json`), così può marcare i task `in_progress`/`done` passando dal mutex e dalla scrittura atomica invece di editare il JSON a mano. Guideline dedicata nel system prompt (solo quando c'è un piano — zero costo su progetti freschi).
-- **`buildZelariReadHint` + "Next task to work on"**: il plan summary ora indica UN task concreto da cui partire (primo `in_progress`, altrimenti per priorità critical>high>medium>low) e il system prompt dell'agente singolo include workspace summary + hint di lettura `.zelari/`.
-- **Fix popup browser durante i test**: `runGrokOAuthFlow` apriva SEMPRE il browser reale (`cmd /c start`) — il test "fully mocked" del device flow apriva una tab su auth.x.ai con lo user_code fittizio a ogni `npm test`. Aggiunta `openBrowserImpl` (stessa DI di `fetchImpl`/`sleepImpl`); produzione invariata.
-- **Riparato edit automatico corrotto in `useChatTurn.ts`**: il blocco "system prompt + harness + event loop" era duplicato (~218 righe, try/catch rotto, variabili indefinite) da un changeset v0.7.4 applicato a metà. Rimosso il duplicato e ricablato l'intento correttamente.
+- **council->agent loop closed**: the single agent now registers the `updateTask` workspace stub when a plan exists (`.zelari/plan.json`), so it can mark tasks `in_progress`/`done` going through the mutex and atomic write instead of editing the JSON by hand. Dedicated guideline in the system prompt (only when a plan exists - zero cost on fresh projects).
+- **`buildZelariReadHint` + "Next task to work on"**: the plan summary now points to ONE concrete task to start from (first `in_progress`, otherwise by priority critical>high>medium>low) and the single agent's system prompt includes the workspace summary + `.zelari/` reading hint.
+- **Browser popup fix during tests**: `runGrokOAuthFlow` ALWAYS opened the real browser (`cmd /c start`) - the "fully mocked" device-flow test opened a tab on auth.x.ai with the fake user_code on every `npm test`. Added `openBrowserImpl` (same DI as `fetchImpl`/`sleepImpl`); production unchanged.
+- **Repaired corrupted auto-edit in `useChatTurn.ts`**: the "system prompt + harness + event loop" block was duplicated (~218 lines, broken try/catch, undefined variables) from a v0.7.4 changeset applied halfway. Removed the duplicate and rewired the intent correctly.
 
 ### Added
-- `src/cli/workspace/workspaceSummary.ts`: `buildZelariReadHint()` + blocco "**Next task to work on:**" in `buildPlanSummary()` con `pickNextTask()` (in_progress prima, poi priorità).
-- `src/cli/hooks/useChatTurn.ts`: registrazione best-effort di `updateTask` nel tool registry dell'agente singolo quando `buildPlanSummary` trova un piano; `toolList` calcolato dopo la registrazione così il tool compare in "# Available Tools".
-- `src/cli/grokOAuth.ts`: opzione `GrokOAuthOptions.openBrowserImpl` per iniettare il browser-launcher.
-- `tests/unit/cli-useChatTurn.test.ts`: +2 test (updateTask registrato con piano; workspace registry NON creato senza piano) + mock di `workspaceSummary.js` (i test non scansionano più il cwd reale del repo).
+- `src/cli/workspace/workspaceSummary.ts`: `buildZelariReadHint()` + "**Next task to work on:**" block in `buildPlanSummary()` with `pickNextTask()` (in_progress first, then priority).
+- `src/cli/hooks/useChatTurn.ts`: best-effort registration of `updateTask` in the single agent's tool registry when `buildPlanSummary` finds a plan; `toolList` computed after registration so the tool appears in "# Available Tools".
+- `src/cli/grokOAuth.ts`: `GrokOAuthOptions.openBrowserImpl` option to inject the browser-launcher.
+- `tests/unit/cli-useChatTurn.test.ts`: +2 tests (updateTask registered with a plan; workspace registry NOT created without a plan) + mock of `workspaceSummary.js` (tests no longer scan the repo's real cwd).
 
 ### Fixed
-- `tests/unit/cli-workspaceSummary.test.ts`: `describe` di `buildPlanSummary` chiuso troppo presto — i test v0.7.4 erano fuori scope (errore di sintassi esbuild).
-- `tests/unit/cli-grokOAuth.test.ts`: il device-flow test ora stubba il browser e verifica che venga aperto `verification_uri_complete` (URL con codice pre-compilato).
-- `tests/unit/core-shellTool.test.ts`: timeout vitest dedicato (30s) ai 2 test che spawnano la shell reale — su Windows lo spawn di Git Bash impiega ~12s contro i 5s di default.
+- `tests/unit/cli-workspaceSummary.test.ts`: `describe` of `buildPlanSummary` closed too early - the v0.7.4 tests were out of scope (esbuild syntax error).
+- `tests/unit/cli-grokOAuth.test.ts`: the device-flow test now stubs the browser and verifies that `verification_uri_complete` is opened (URL with pre-filled code).
+- `tests/unit/core-shellTool.test.ts`: dedicated vitest timeout (30s) for the 2 tests that spawn a real shell - on Windows spawning Git Bash takes ~12s versus the default 5s.
 
 ## [0.6.2] - 2026-07-02
 
 ### Highlights
-- **TUI flicker eliminato**: stima dell'altezza delle chat messages corretta per il wrap reale (Box paddingX + message marginLeft = `width-4`), `chatWidth` ricalcolato (`columns - 40` invece di `- 44`), `overflow="hidden"` aggiunto su root/row. `pickVisibleMessages` non lascia più che il transcript cresca oltre il terminale, causa del full-screen repaint che provocava flicker visibile.
-- **Tool/agent rendering come CollapsibleToolOutput**: ogni tool invocation ora è un singolo messaggio `role: 'tool'` aggiornato in place (status glyph `⋯`/`✓`/`✗`, summary + expandable body), non più 2-4 loose system lines.
-- **Cross-message text duplication fix**: `streamContent` separato da `assistantContent`, bubble finalizzato su `message_end` / `tool start`. Prima il bubble post-tool ridisegnava l'intero turn text.
-- **Session resume replay tool come `role: 'tool'`**: non più `[tool_result] undefined → ok`, `tool_execution_end` aggiorna in place via `toolCallId`.
-- **CI publish workflow hardened** (v0.6.2 audit): build order, `npm publish` from root, tag/package.json match check, sequential core→CLI publish, smoke test post-bundle, OIDC-only.
-- **`@zelari/core` publishability fix** (v0.6.2 audit CRITICAL-1): `moduleResolution: Bundler` → `NodeNext`, 26 import relativi estesi con `.js` (più 2 inline `import()`). Risolto conflitto `ToolContext` re-export tra `agents/tools.ts` e `core/tools/toolTypes.ts`. Senza questo, il package npm pubblicato avrebbe rotto ogni consumer Node.js ESM con `ERR_MODULE_NOT_FOUND`.
-- **+9 nuovi test** in `tests/unit/cli-toolDisplay.test.ts` (270 LOC): messageHelpers, dispatchPrompt dup, eventsToMessages replay, pickVisibleMessages wrap.
+- **TUI flicker eliminated**: chat message height estimate corrected for real wrapping (Box paddingX + message marginLeft = `width-4`), `chatWidth` recomputed (`columns - 40` instead of `- 44`), `overflow="hidden"` added on root/row. `pickVisibleMessages` no longer lets the transcript grow beyond the terminal, the cause of the full-screen repaint producing visible flicker.
+- **Tool/agent rendering as CollapsibleToolOutput**: every tool invocation is now a single `role: 'tool'` message updated in place (status glyph `?`/`V`/`?`, summary + expandable body), no longer 2-4 loose system lines.
+- **Cross-message text duplication fix**: `streamContent` separated from `assistantContent`, bubble finalized on `message_end` / tool start. Previously the post-tool bubble redrew the entire turn text.
+- **Session resume replays tools as `role: 'tool'`**: no more `[tool_result] undefined -> ok`, `tool_execution_end` updates in place via `toolCallId`.
+- **CI publish workflow hardened** (v0.6.2 audit): build order, `npm publish` from root, tag/package.json match check, sequential core->CLI publish, post-bundle smoke test, OIDC-only.
+- **`@zelari/core` publishability fix** (v0.6.2 audit CRITICAL-1): `moduleResolution: Bundler` -> `NodeNext`, 26 relative imports extended with `.js` (plus 2 inline `import()`). Resolved the `ToolContext` re-export conflict between `agents/tools.ts` and `core/tools/toolTypes.ts`. Without this, the published npm package would have broken every Node.js ESM consumer with `ERR_MODULE_NOT_FOUND`.
+- **+9 new tests** in `tests/unit/cli-toolDisplay.test.ts` (270 LOC): messageHelpers, dispatchPrompt dup, eventsToMessages replay, pickVisibleMessages wrap.
 
 ### Added
-- `src/cli/hooks/messageHelpers.ts`: `finalizeStreamingAssistant()` per sigillare il trailing streaming bubble; `TOOL_RESULT_PREVIEW_CHARS=600` + `TOOL_ARGS_PREVIEW_CHARS=120` costanti; `appendToolStart`/`updateToolMessageEnd` con `toolCallId` + result separato.
-- `src/cli/components/CollapsibleToolOutput.tsx`: status glyph `⋯`/`✓`/`✗` nella summary.
-- `src/cli/app.tsx`: `overflow="hidden"` su root/row.
-- `tests/unit/cli-toolDisplay.test.ts`: 9 test unit per il nuovo rendering.
-- `package-lock.json`: version sync 0.5.0 → 0.6.2.
+- `src/cli/hooks/messageHelpers.ts`: `finalizeStreamingAssistant()` to seal the trailing streaming bubble; `TOOL_RESULT_PREVIEW_CHARS=600` + `TOOL_ARGS_PREVIEW_CHARS=120` constants; `appendToolStart`/`updateToolMessageEnd` with `toolCallId` + separate result.
+- `src/cli/components/CollapsibleToolOutput.tsx`: status glyph `?`/`V`/`?` in the summary.
+- `src/cli/app.tsx`: `overflow="hidden"` on root/row.
+- `tests/unit/cli-toolDisplay.test.ts`: 9 unit tests for the new rendering.
+- `package-lock.json`: version sync 0.5.0 -> 0.6.2.
 
 ### Fixed (post-release audit, agy Gemini 3.5 Flash)
-7 finding agy (1 CRITICAL, 3 HIGH, 2 MEDIUM, 1 LOW) tutti verificati e fixati:
+7 agy findings (1 CRITICAL, 3 HIGH, 2 MEDIUM, 1 LOW) all verified and fixed:
 
-- **CRITICAL-1** — `@zelari/core` import relativi SENZA estensione `.js` + `moduleResolution: Bundler` → package npm pubblicato non funzionante per consumer Node.js ESM (`ERR_MODULE_NOT_FOUND`). Fix: switch a `NodeNext`, 26 import `.js`-estesi, risolto conflitto re-export `ToolContext` (rinominato explicit `export type` in `harness/tools/index.ts`).
-- **HIGH-2** — `workflow_dispatch` ignorava `tag` input, faceva checkout di `main`. Fix: `ref: ${{ github.event.inputs.tag || github.ref }}` su entrambi i job.
-- **HIGH-3** — `publish-cli` e `publish-core` paralleli → CLI pubblicato prima di core. Fix: `needs: publish-core` su `publish-cli`.
-- **HIGH-4** — `@zelari/core: "^0.6.2"` permissivo (accetta 0.6.x futuri) per coupled release. Fix: pin esatto `"0.6.2"`.
-- **MEDIUM-5** (defer): test suite duplicati (`prepublish` rifà typecheck+build+test). Fuori scope fix attuale.
-- **MEDIUM-6** — `package.json` version non validata contro tag. Fix: step `Verify tag matches package.json version` su entrambi i job.
-- **LOW-7** — Smoke test post-bundle mancante. Fix: `npm run smoke` step su `publish-cli`.
-- **LOW-3 (v0.6.2 tool fix)** — `CompactMessage` interface non estesa con `toolResult`/`toolCallId`/`memberName`/`memberId`. Fix: aggiunti.
-- **LOW-4 (v0.6.2 tool fix)** — Status glyph `ok=undefined && durationMs=defined` → `✓` invece di `⋯`. Fix: check diretto.
-- **LOW-5 (v0.6.2 tool fix)** — Session resume `tool_execution_end` troncava a 600 char senza `…`. Fix: append `…`.
-- **MEDIUM-2 (v0.6.2 tool, false positive scartato)**: agy segnalava rimozione backward compat `toolCall`/`toolResult` event. Verificato: `BrainEvent` type include solo `tool_execution_start`/`tool_execution_end`, non i nomi legacy.
+- **CRITICAL-1** - `@zelari/core` relative imports WITHOUT `.js` extension + `moduleResolution: Bundler` -> published npm package non-functional for Node.js ESM consumers (`ERR_MODULE_NOT_FOUND`). Fix: switch to `NodeNext`, 26 `.js`-extended imports, resolved the `ToolContext` re-export conflict (renamed to explicit `export type` in `harness/tools/index.ts`).
+- **HIGH-2** - `workflow_dispatch` ignored the `tag` input, checking out `main`. Fix: `ref: ${{ github.event.inputs.tag || github.ref }}` on both jobs.
+- **HIGH-3** - `publish-cli` and `publish-core` parallel -> CLI published before core. Fix: `needs: publish-core` on `publish-cli`.
+- **HIGH-4** - `@zelari/core: "^0.6.2"` permissive (accepts future 0.6.x) for a coupled release. Fix: exact pin `"0.6.2"`.
+- **MEDIUM-5** (defer): duplicated test suites (`prepublish` re-runs typecheck+build+test). Out of scope for this fix.
+- **MEDIUM-6** - `package.json` version not validated against the tag. Fix: `Verify tag matches package.json version` step on both jobs.
+- **LOW-7** - Missing post-bundle smoke test. Fix: `npm run smoke` step on `publish-cli`.
+- **LOW-3 (v0.6.2 tool fix)** - `CompactMessage` interface not extended with `toolResult`/`toolCallId`/`memberName`/`memberId`. Fix: added.
+- **LOW-4 (v0.6.2 tool fix)** - Status glyph `ok=undefined && durationMs=defined` -> `V` instead of `?`. Fix: direct check.
+- **LOW-5 (v0.6.2 tool fix)** - Session resume `tool_execution_end` truncated at 600 chars without a `.`. Fix: append `.`.
+- **MEDIUM-2 (v0.6.2 tool, false positive discarded)**: agy flagged removal of `toolCall`/`toolResult` event backward compat. Verified: the `BrainEvent` type only includes `tool_execution_start`/`tool_execution_end`, not the legacy names.
 
 ### Changed
-- `packages/core/tsconfig.json`: `module: ESNext + moduleResolution: Bundler` → `module: NodeNext + moduleResolution: NodeNext`.
-- `packages/core/src/**`: 26 import relativi `.js`-estesi (script automatico).
-- `packages/core/src/harness/tools/index.ts`: `export *` rimosso per `toolTypes.js` (conflitto `ToolContext` re-export); ora `export type` esplicito.
-- `package.json`: `@zelari/core: "*"` → `"0.6.2"` (pin esatto per coupled release).
-- `.github/workflows/publish.yml`: build order, sequential core→CLI, version check, smoke test, dispatch tag handling.
+- `packages/core/tsconfig.json`: `module: ESNext + moduleResolution: Bundler` -> `module: NodeNext + moduleResolution: NodeNext`.
+- `packages/core/src/**`: 26 relative imports `.js`-extended (automatic script).
+- `packages/core/src/harness/tools/index.ts`: `export *` removed for `toolTypes.js` (`ToolContext` re-export conflict); now explicit `export type`.
+- `package.json`: `@zelari/core: "*"` -> `"0.6.2"` (exact pin for coupled release).
+- `.github/workflows/publish.yml`: build order, sequential core->CLI, version check, smoke test, dispatch tag handling.
 
-Test: 771 → 771 (0 nuovi, ma 1 regression per HIGH-1 transcript blank in toolDisplay.test.ts).
+Test: 771 -> 771 (0 new, but 1 regression for HIGH-1 blank transcript in toolDisplay.test.ts).
 
 ## [0.6.0] - 2026-07-02
 
 ### Highlights
-- **Lucifero chairman reale**: il chairman della council (Lucifero) ora genera una sintesi effettiva basata sugli output dei 5 specialisti + Minosse, con streaming typewriter, tool calls abilitate e fallback robusto in caso di errore LLM. Sostituisce lo stub che produceva solo `[Chairman synthesis for: ...]`. **No more 5 loose threads — the council now has a single, reasoned final answer.**
-- **Visible reasoning per Lucifero**: gratis via il pattern `memberId`/`memberName` propagato in v0.5.0. La CLI mostra `· Lucifero` (in viola) nell'header del messaggio chairman, allineato agli altri 5 specialisti.
-- **7 nuovi test E2E** in `tests/unit/council-chairman.test.ts` che coprono: presenza di `memberId="lucifer"`, almeno 1 `message_delta` con chairman ID, `member_cost.errored=false` su successo, backward compat con `councilSize: 3` (no chairman), gestione errore LLM chairman.
-- **ADR-0006** documenta la decisione di rendere Lucifero reale in v0.6.0 invece di v0.5.0 (scope creep evitato) e le alternative valutate (graceful fallback vs hard fail).
+- **Real Lucifero chairman**: the council chairman (Lucifero) now generates an actual synthesis based on the outputs of the 5 specialists + Minosse, with typewriter streaming, tool calls enabled and a robust fallback on LLM error. Replaces the stub that only produced `[Chairman synthesis for: ...]`. **No more 5 loose threads - the council now has a single, reasoned final answer.**
+- **Visible reasoning for Lucifero**: free via the `memberId`/`memberName` pattern introduced in v0.5.0. The CLI shows `? Lucifero` (in purple) in the chairman message header, aligned with the other 5 specialists.
+- **7 new E2E tests** in `tests/unit/council-chairman.test.ts` covering: presence of `memberId="lucifer"`, at least 1 `message_delta` with the chairman ID, `member_cost.errored=false` on success, backward compat with `councilSize: 3` (no chairman), chairman LLM error handling.
+- **ADR-0006** documents the decision to make Lucifero real in v0.6.0 instead of v0.5.0 (scope creep avoided) and the alternatives considered (graceful fallback vs hard fail).
 
 ### Added
-- `packages/core/src/agents/councilApi.ts`: loop chairman reale (~110 righe) basato su `AgentHarness`, con `buildAgentMessages(chairman, userMessage, agentOutputs, ...)`, streaming `message_delta` via `onSynthesisChunk`, error detection su `event.severity !== 'cancelled'`, fallback stringa `[Chairman synthesis failed: <reason>]` se LLM chairman fallisce.
-- `tests/unit/council-chairman.test.ts`: 7 test E2E con mock provider.
-- `docs/plans/2026-07-02-v0-6-0-roadmap.md`: piano v0.6.0 (Fase 0 = chairman reale, Fase 1+ = slice future).
-- `docs/decisions/0006-lucifero-chairman-real.md`: ADR con contesto, decisione, alternative, conseguenze.
-- `package.json`: `pretest` script che rebuilda `@zelari/core` prima dei test (previene dist vecchio).
+- `packages/core/src/agents/councilApi.ts`: real chairman loop (~110 lines) based on `AgentHarness`, with `buildAgentMessages(chairman, userMessage, agentOutputs, ...)`, `message_delta` streaming via `onSynthesisChunk`, error detection on `event.severity !== 'cancelled'`, fallback string `[Chairman synthesis failed: <reason>]` if the chairman LLM fails.
+- `tests/unit/council-chairman.test.ts`: 7 E2E tests with mock provider.
+- `docs/plans/2026-07-02-v0-6-0-roadmap.md`: v0.6.0 plan (Phase 0 = real chairman, Phase 1+ = future slices).
+- `docs/decisions/0006-lucifero-chairman-real.md`: ADR with context, decision, alternatives, consequences.
+- `package.json`: `pretest` script rebuilding `@zelari/core` before tests (prevents stale dist).
 
 ### Fixed (post-release audit, agy Gemini 3.5 Flash)
-4 bug runtime trovati dal workflow gate agy audit, tutti fixati con regression test:
+4 runtime bugs found by the agy audit workflow gate, all fixed with regression tests:
 
-- **HIGH-1** — Il `catch` del chairman loop sovrascriveva `fullText` con `"Error: ..."`, impedendo alla fallback string `[Chairman synthesis failed: ...]` di renderizzare mai (perché `fullText.length > 0` rendeva falso il check). Fix: `catch` ora salva l'errore in `lastErrorMessage` separato, lasciando `fullText` intatto.
-- **HIGH-2** — `openaiCompatibleProvider` usava `config.signal` (chiuso nello scope del factory, tipicamente `undefined`) invece di `params.signal` (segnale per-call dell'AgentHarness). Risultato: `cancel()` non abortiva l'HTTP request. Fix: `signal: params.signal`.
-- **HIGH-3** — `openaiCompatibleProvider` usava `config.model` invece di `params.model`, rompendo silenziosamente la config `agentModels` (tutti i council member finivano sul modello di default). Fix: `body.model: params.model`.
-- **HIGH-4** — I loop specialist e oracle NON controllavano `event.type === 'error'`, quindi se AgentHarness convertiva un errore di rete in un BrainErrorEvent (severity='recoverable'), `errored` restava `false` e il fallimento veniva loggato come successo nel `member_cost`. Fix: aggiunto check su entrambi i loop.
+- **HIGH-1** - The chairman loop's `catch` overwrote `fullText` with `"Error: ..."`, preventing the fallback string `[Chairman synthesis failed: ...]` from ever rendering (because `fullText.length > 0` made the check false). Fix: `catch` now saves the error in a separate `lastErrorMessage`, leaving `fullText` intact.
+- **HIGH-2** - `openaiCompatibleProvider` used `config.signal` (closed in the factory scope, typically `undefined`) instead of `params.signal` (the AgentHarness per-call signal). Result: `cancel()` did not abort the HTTP request. Fix: `signal: params.signal`.
+- **HIGH-3** - `openaiCompatibleProvider` used `config.model` instead of `params.model`, silently breaking the `agentModels` config (all council members ended up on the default model). Fix: `body.model: params.model`.
+- **HIGH-4** - The specialist and oracle loops did NOT check `event.type === 'error'`, so if AgentHarness converted a network error into a BrainErrorEvent (severity='recoverable'), `errored` stayed `false` and the failure was logged as success in `member_cost`. Fix: check added to both loops.
 
-Test: 759 → 761 (+2 regression: fallback esatto chairman, errored specialist su error event).
+Test: 759 -> 761 (+2 regressions: exact chairman fallback, errored specialist on error event).
 
 ### Changed
-- Version bump `0.5.0` → `0.6.0` in `package.json` (root), `packages/core/package.json`, `src/cli/main.ts`, `src/cli/wizard/index.tsx`, `README.md`.
+- Version bump `0.5.0` -> `0.6.0` in `package.json` (root), `packages/core/package.json`, `src/cli/main.ts`, `src/cli/wizard/index.tsx`, `README.md`.
 
 ### Deferred to v0.6.1
-- **Grounding helper**: aggiungerebbe 1 chiamata LLM extra + scoring fonti. Rimandato per non bloware lo scope di v0.6.0 (rilascio atomico chairman).
-- Flag `--no-chairman` per opt-out: non necessario finché utenti non lo chiedono.
-
+- **Grounding helper**: would add 1 extra LLM call + source scoring. Postponed to not blow up v0.6.0's scope (atomic chairman release).
+- `--no-chairman` opt-out flag: not needed until users ask for it.
 ## [0.5.0] - 2026-07-02
 
-Fase 4 of the v0.5.0 roadmap: stable release. The CLI, the
+Phase 4 of the v0.5.0 roadmap: stable release. The CLI, the
 `@zelari/core` monorepo package, the first-run wizard, the
 visible-reasoning council, and the headless mode are all in.
 
@@ -2826,7 +2826,7 @@ tool itself is wire-compatible for the CLI use case.
 
 ## [0.5.0-dev.0] - 2026-07-02
 
-Fase 1 + Fase 2 of the v0.5.0 roadmap: monorepo extraction of
+Phase 1 + Phase 2 of the v0.5.0 roadmap: monorepo extraction of
 `@zelari/core` + first-run onboarding wizard (complete slice).
 
 ### Added
@@ -2930,7 +2930,7 @@ Fase 1 + Fase 2 of the v0.5.0 roadmap: monorepo extraction of
 
 ## [0.4.4] - 2026-07-01
 
-Fase 0 of v0.5.0 roadmap: address the two LOW-severity findings left over from the v0.4.3 audit, complete the streaming flicker fix that was only half-implemented in commit 5e0f698.
+Phase 0 of v0.5.0 roadmap: address the two LOW-severity findings left over from the v0.4.3 audit, complete the streaming flicker fix that was only half-implemented in commit 5e0f698.
 
 ### Fixed
 - **LOW: SRP violation in `src/cli/slashHandlers/git.ts`** (v0.4.3 follow-up): the file owned 5 unrelated responsibilities (`/diff`, `/undo`, `/compact`, `/update`, `/promote-member`). Split into 4 files by domain: `git.ts` (kept, now only `/diff` and `/undo`), `transcript.ts` (new, `/compact`), `updater.ts` (new, `/update` + `/update --yes`), `promoteMember.ts` (new, `/promote-member`). Each file defines its own typed `SlashContext` (GitSlashContext / TranscriptSlashContext / UpdaterSlashContext / PromoteMemberSlashContext). `useSlashDispatch` import block updated to import from the 4 new locations. **Zero behavior change** — purely structural refactor.
