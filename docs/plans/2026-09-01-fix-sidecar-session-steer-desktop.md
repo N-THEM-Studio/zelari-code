@@ -1,352 +1,360 @@
-# Piano di fix — Sidecar Desktop, sessioni spine, steering e diagnosi
+# Fix plan - Desktop sidecar, spine sessions, steering and diagnostics
 
-**Data:** 2026-09-01
+**Date:** 2026-09-01
 **Baseline:** zelari-code 2.20.0
-**Origine:** sessione di diagnosi su repo + due PC puliti + Desktop in dev
-**Stato:** proposta operativa, pronta all'esecuzione
+**Origin:** diagnosis session on the repo + two clean PCs + Desktop in dev
+**Status:** operational proposal, ready for execution
 
 ---
 
-# 1. Contesto
+# 1. Context
 
-La diagnosi ha isolato sei difetti accertati (più uno minore), tutti riprodotti o
-verificati a livello di codice, con evidenza ai file. I sintomi utente erano:
+The diagnosis isolated six confirmed defects (plus a minor one), all reproduced or
+verified at code level, with file evidence. The user symptoms were:
 
-- Desktop: "il modello non risponde mai" su macchine pulite (CLI ok, Desktop no).
+- Desktop: "the model never responds" on clean machines (CLI ok, Desktop not).
 - Desktop: `sidecar_died: harness sidecar exited unexpectedly (status: 1)`.
-- Desktop: resume di una vecchia sessione → "l'agente parte ma si blocca senza
-  fare il richiesto".
-- Desktop: il cambio cartella "si porta appresso la sessione" del progetto
-  precedente (contaminazione cross-progetto).
-- `zelari-code --doctor` dà OK con Node 20.20.1 nonostante `engines.node >= 24`.
+- Desktop: resuming an old session | "the agent starts but stalls without
+  doing what was asked".
+- Desktop: changing folder "carries over the session" of the previous
+  project (cross-project contamination).
+- `zelari-code --doctor` gives OK on Node 20.20.1 despite `engines.node >= 24`.
 
-Causa-radice della famiglia "non risponde": **nessun bug di rete o di
-installazione** — una combinazione di (a) agente che può uccidere il proprio
-processo host, (b) lock della session spine senza check di liveness, (c) errori
-del sidecar invisibili nella UI perché il frontend non ascolta gli eventi che il
-backend già emette.
-
----
-
-# 2. I fix
-
-Ordinati per priorità di esecuzione (P0 → P2). Ogni fix = un commit atomico
-(convenzione repo: single-task atomic commits, conventional commits).
+Root cause of the "never responds" family: **no network or installation bug** -
+a combination of (a) an agent that can kill its own host process, (b) the session
+spine lock without a liveness check, (c) sidecar errors invisible in the UI
+because the frontend does not listen to the events the backend already emits.
 
 ---
 
-## FIX-1 (P0) — Guard anti-self-kill nel tool bash/exec
+# 2. The fixes
 
-**Problema.** Un agente può eseguire `taskkill //IM node.exe //F` (o per PID
-enumerati) e uccidere il processo che lo ospita: la TUI, o il sidecar
-`--serve-harness` del Desktop. Riprodotto il 2026-09-01: l'agente, per fermare
-un preview server Vite sulla porta 4173, ha fatto taskkill di *tutti* i
-node.exe → `sidecar_died (status: 1)`, log senza stacktrace (uccisione esterna
-a freddo), supervisor esauriti i 5 restart → silenzio totale.
+Ordered by execution priority (P0 | P2). Each fix = one atomic commit
+(repo convention: single-task atomic commits, conventional commits).
 
-**Evidenza.**
-- Comando letale registrato nella spine:
-  `E:/EasyPeasy/giocoandrea/.zelari/sessions/921987c9-…/events.jsonl` seq 1261.
-- Il tool bash esegue senza alcun filtro: `src/cli/tools/` + `src/cli/safety/`.
+---
 
-**Soluzione.**
-1. Nuovo modulo `src/cli/safety/selfKillGuard.ts`: matcher sui comandi
-   spawnabili che:
-   - targetizzano l'immagine `node.exe`/`node` per nome (`taskkill`, `Stop-Process`,
-     `ps -W | grep node` + `kill`, `pkill -f node`, `wmic process … delete`);
-   - targetizzano PID dell'albero proprio: `process.pid`, parent PID chain
-     (fino al PID del sidecar/TUI), PID dei worker thread e dei child attivi
-     del tool registry.
-2. Il guard **rifiuta** con un errore tool-result che insegna l'alternativa
-   sicura: kill **per porta** (`netstat -ano | findstr :<port>` → `taskkill //PID
-   <pid-listener>`), mai per nome immagine.
-3. Copertura sia `bash` che `exec`-like (stessa pipeline di spawn).
+## FIX-1 (P0) - Anti-self-kill guard in the bash/exec tool
 
-**Test.** Unit sul matcher (pattern taskkill/Stop-Process/pkill, casi negativi
-con PID specifico di un listener non-self); test di integrazione che il
-tool-result di denial contenga la istruzione per-porta.
+**Problem.** An agent can run a taskkill against the node.exe image (or by
+enumerated PIDs) and kill the process hosting it: the TUI, or the Desktop
+`--serve-harness` sidecar. Reproduced on 2026-09-01: the agent, to stop a Vite
+preview server on port 4173, killed *all* node.exe processes | `sidecar_died
+(status: 1)`, log without a stacktrace (cold external kill), supervisors
+exhausted the 5 restarts | total silence.
+
+**Evidence.**
+- Lethal command recorded in the spine:
+  `E:/EasyPeasy/giocoandrea/.zelari/sessions/921987c9-./events.jsonl` seq 1261.
+- The bash tool runs without any filter: `src/cli/tools/` + `src/cli/safety/`.
+
+**Solution.**
+1. New module `src/cli/safety/selfKillGuard.ts`: a matcher on spammable
+   commands that:
+   - target the `node.exe`/`node` image by name (taskkill, `Stop-Process`,
+     `ps -W | grep node` + `kill`, pkill by node pattern, `wmic process . delete`);
+   - target PIDs of its own tree: `process.pid`, parent PID chain
+     (up to the sidecar/TUI PID), worker-thread PIDs and the active children
+     of the tool registry.
+2. The guard **refuses** with a tool-result error that teaches the safe
+   alternative: kill **by port** (`netstat -ano | findstr :<port>` |
+   `taskkill //PID <pid-listener>`), never by image name.
+3. Cover both `bash` and `exec`-like (same spawn pipeline).
+
+**Tests.** Unit tests on the matcher (taskkill/Stop-Process/pkill patterns,
+negative cases with a specific non-self listener PID); integration test that
+the denial tool-result contains the by-port instruction.
 
 **Commit:** `fix(safety): block self-kill patterns targeting the agent host process tree`
 
 ---
 
-## FIX-2 (P0) — Spine writer.lock: takeover per liveness + heartbeat + sweep + visibilità
+## FIX-2 (P0) - Spine writer.lock: liveness takeover + heartbeat + sweep + visibility
 
-**Problema.** Il lock della session spine è solo temporale: un lock orfano con
-PID **morto** ma più recente di 10 minuti blocca il resume
-(`SessionLogLockedError`) anche se il proprietario non esiste più. Il caso
-`locked` poi degrada **in silenzio** (nessun warning, nessun evento): il turno
-riprende senza contesto derivato, senza epoch/budget — l'utente vede "l'agente
-parte ma si blocca / non fa il richiesto". Riprodotto con script dedicato
-(lock con PID morto → `SessionLogLockedError`; solo dopo 11 minuti takeover).
+**Problem.** The session spine lock is only temporal: an orphan lock with a
+**dead** PID but more recent than 10 minutes blocks resume
+(`SessionLogLockedError`) even if the owner no longer exists. The `locked`
+case then degrades **silently** (no warning, no event): the turn resumes
+without derived context, without epoch/budget - the user sees "the agent
+starts but stalls / does not do what was asked". Reproduced with a dedicated
+script (lock with dead PID | `SessionLogLockedError`; takeover only after 11
+minutes).
 
-**Evidenza.**
-- `packages/core/src/session/writer.ts:100-112` — `stale = now - ts > 10min`,
-  `pid` scritto nel lock ma mai usato.
-- `src/cli/sessionSpine.ts:306-309` — il ramo `locked` non emette warning
-  (solo `degraded` chiama `warnOnce`).
-- Trigger reali: taskkill (FIX-1), watchdog `turn_timeout` che fa kill-tree
-  mentre il turno tiene il lock (`harness_sidecar.rs:662-669`, commento esplicito),
-  crash/riavvio del Desktop a turno in corso.
+**Evidence.**
+- `packages/core/src/session/writer.ts:100-112` - `stale = now - ts > 10min`,
+  `pid` written in the lock but never used.
+- `src/cli/sessionSpine.ts:306-309` - the `locked` branch emits no warning
+  (only `degraded` calls `warnOnce`).
+- Real triggers: taskkill (FIX-1), the `turn_timeout` watchdog doing a
+  kill-tree while the turn holds the lock (`harness_sidecar.rs:662-669`,
+  explicit comment), Desktop crash/restart mid-turn.
 
-**Soluzione.**
+**Solution.**
 1. **Liveness takeover** in `SessionLogWriter.acquireLock` (writer.ts):
-   lock non-stale → leggi `pid` → probe `process.kill(pid, 0)`:
-   - PID inesistente → takeover immediato;
-   - PID esistente ma heartbeat fermo (vedi punto 2) oltre soglia → takeover;
-   - fallback finale: regola temporale a 10 minuti (invariata).
-2. **Heartbeat**: il writer aggiorna `ts` in `writer.lock` a ogni `append()`
-   (o al massimo ogni N secondi): distingue un owner vivo da un PID riusato
-   (riuso PID su Windows: mitigato dal heartbeat, non eliminabile del tutto).
-3. **Sweep a boot del sidecar**: all'avvio di `runHarnessServer()` scan di
-   `.zelari/sessions/*/writer.lock` — orfani per liveness/heartbeat → takeover.
-   Cura il caso crash→restart prima che l'utente riprenda la sessione.
-4. **Visibilità**: ramo `locked` → `warnOnce` (parità con `degraded`) + evento
-   note sul canale NDJSON così il Desktop può mostrare "sessione ripresa in
-   modalità degradata (lock orfano)".
+   lock not stale | read `pid` | probe `process.kill(pid, 0)`:
+   - PID nonexistent | immediate takeover;
+   - PID existing but heartbeat stopped (see point 2) past a threshold |
+     takeover;
+   - final fallback: the 10-minute temporal rule (unchanged).
+2. **Heartbeat**: the writer updates `ts` in `writer.lock` on every `append()`
+   (or at most every N seconds): distinguishes a living owner from a reused
+   PID (PID reuse on Windows: mitigated by the heartbeat, not fully
+   eliminable).
+3. **Sweep at sidecar boot**: at `runHarnessServer()` startup, scan
+   `.zelari/sessions/*/writer.lock` - orphans by liveness/heartbeat |
+   takeover. Cures the crash|restart case before the user resumes the
+   session.
+4. **Visibility**: `locked` branch | `warnOnce` (parity with `degraded`) +
+   a note event on the NDJSON channel so the Desktop can show "session
+   resumed in degraded mode (orphan lock)".
 
-**Test.** Unit writer: takeover con PID morto, rigetto con PID vivo e heartbeat
-fresco, takeover con PID vivo ma heartbeat fermo, staleness >10min. Unit sweep.
-Unit warn su `locked`.
+**Tests.** Writer unit tests: takeover with dead PID, rejection with a living
+PID and a fresh heartbeat, takeover with a living PID but stopped heartbeat,
+staleness >10min. Sweep unit tests. Warning unit test on `locked`.
 
-**Commit (suddiviso):**
+**Commits (split):**
 - `fix(core): spine writer lock takeover by owner liveness + append heartbeat`
 - `feat(cli): sweep orphan session spine locks at harness server boot`
 - `fix(cli): surface locked-spine degradation with warning + NDJSON event`
 
-**Nota rimedio utente (finché il fix non è out):** cancellare a mano
-`.zelari/sessions/<id>/writer.lock` o attendere 10 minuti.
+**User remedy note (until the fix is out):** manually delete
+`.zelari/sessions/<id>/writer.lock` or wait 10 minutes.
 
 ---
 
-## FIX-3 (P0) — Desktop: cambio cartella = nuova chat, mai riuso della sessione
+## FIX-3 (P0) - Desktop: folder change = new chat, never session reuse
 
-**Problema.** `pickFolder` ribinda il `cwd` della conversazione attiva ma
-mantiene `sessionId` (spine) e `messages`. Al messaggio successivo il turno fa
-`resumeSessionId=<spine progetto A>` contro `<cartella B>/.zelari/sessions/` →
-la spine riparte silenziosamente da zero **e** il fallback legacy riversa le
-ultime 16 chat del progetto A come contesto dell'agente che lavora in B.
-Contaminazione cross-progetto confermata a livello di flusso completo.
+**Problem.** `pickFolder` rebinds the active conversation's `cwd` but keeps
+`sessionId` (spine) and `messages`. On the next message the turn does
+`resumeSessionId=<project A spine>` against `<folder B>/.zelari/sessions/` |
+the spine silently restarts from zero **and** the legacy fallback pours the
+last 16 chats of project A as context of the agent working in B.
+Cross-project contamination confirmed at full-flow level.
 
-**Evidenza.**
-- `apps/desktop/src/App.tsx:2449-2462` — `pickFolder` cambia solo `cwd`.
-- `apps/desktop/src/App.tsx:1199-1210` — `sessionId` catturato da
-  `session_started`, mai resettato.
-- `apps/desktop/src/App.tsx:2289` — `send()` passa `sessionId: live?.sessionId`
+**Evidence.**
+- `apps/desktop/src/App.tsx:2449-2462` - `pickFolder` changes only `cwd`.
+- `apps/desktop/src/App.tsx:1199-1210` - `sessionId` captured from
+  `session_started`, never reset.
+- `apps/desktop/src/App.tsx:2289` - `send()` passes `sessionId: live?.sessionId`
   + `cwd: activeCwd`.
-- `packages/core/src/session/store.ts:25-31` — sessions dir workspace-relativa.
+- `packages/core/src/session/store.ts:25-31` - sessions dir workspace-relative.
 
-**Soluzione (comportamento scelto).**
-1. Se la conversazione attiva è **vergine** (nessun messaggio, nessun
-   `sessionId`): ribinda il `cwd` in place (comportamento attuale, corretto).
-2. Se invece ha messaggi o `sessionId`: `pickFolder` crea una **nuova
-   conversazione** legata alla nuova cartella e la seleziona; la vecchia resta
-   nella lista col suo progetto. `workdir` globale aggiornato come oggi.
-   - Aggiornare la chat attiva non è un'opzione: ogni ibrido (mantenere
-     messaggi e/o sessionId con un'altra root) ricade nella contaminazione.
-3. Mostare il folder della conversazione nella sidebar (sub-heading) per
-   disinnescare la confusione UI segnalata.
+**Solution (chosen behavior).**
+1. If the active conversation is **virgin** (no messages, no `sessionId`):
+   rebind `cwd` in place (current behavior, correct).
+2. If it has messages or a `sessionId`: `pickFolder` creates a **new
+   conversation** tied to the new folder and selects it; the old one stays
+   in the list with its project. The global `workdir` updated as today.
+   - Updating the active chat is not an option: any hybrid (keeping
+     messages and/or sessionId with another root) falls back into
+     contamination.
+3. Show the conversation's folder in the sidebar (sub-heading) to defuse
+   the reported UI confusion.
 
-**Test.** Unit/it su `pickFolder` (vergine vs uscita); verifica manuale:
-cambio cartella → nuova chat → primo messaggio produce spine `session.started`
-nella cartella giusta e nessuna dir fantasma in `.zelari/sessions/` del nuovo
-progetto.
+**Tests.** Unit/it on `pickFolder` (virgin vs used); manual check:
+folder change | new chat | first message produces a `session.started`
+spine in the right folder and no ghost dir in the new project's
+`.zelari/sessions/`.
 
 **Commit:** `fix(desktop): switching folder starts a new chat instead of rebinding the session spine`
 
 ---
 
-## FIX-4 (P1) — Steering: noop `already_finished` non deve perdere il testo
+## FIX-4 (P1) - Steering: the `already_finished` noop must not lose the text
 
-**Problema.** Se il run termina nella finestra tra il check `running` nel
-composer e la consegna, `session.steer` risponde col noop esplicito
-`already_finished` (§24): il testo viene **scartato** e la bolla steered resta
-bloccata a "sent" per sempre (nessun ack aggiorna lo stato).
+**Problem.** If the run ends in the window between the `running` check in the
+composer and delivery, `session.steer` replies with the explicit noop
+`already_finished` (paragraph 24): the text is **discarded** and the steered
+bubble stays stuck at "sent" forever (no ack updates the state).
 
-**Evidenza.**
-- `apps/desktop/src-tauri/src/harness_sidecar.rs:876-911` — `steer_run` fa
-  roundtrip `session.steer`; `Ok(_) => Ok(())` **scarta il payload del noop**.
-- `src/cli/serve/harnessServer.ts` (session.steer, ramo no live turn) — noop
-  tipizzato, mai finto successo.
-- `apps/desktop/src/App.tsx:2102-2160` — la bolla aggiorna lo stato solo sugli
-  ack-event; il noop non produce eventi.
+**Evidence.**
+- `apps/desktop/src-tauri/src/harness_sidecar.rs:876-911` - `steer_run` does
+  the `session.steer` roundtrip; `Ok(_) => Ok(())` **discards the noop
+  payload**.
+- `src/cli/serve/harnessServer.ts` (session.steer, no live turn branch) -
+  typed noop, never fake success.
+- `apps/desktop/src/App.tsx:2102-2160` - the bubble updates state only on
+  ack-events; the noop produces no events.
 
-**Soluzione.**
-1. `steer_run` ritorna il `result` del roundtrip (non solo `Ok(())`); il
-   comando `send_control` propaga il payload al frontend.
-2. Frontend: su `already_finished` → bolla → stato `not_applied` (visibile),
-   **prefill del composer** col testo (stesso trattamento di
-   `follow_up_queued`) + status line esplicito.
-3. Opzionale (stesso commit): chiudere anche il caso inverso — risposta
-   `unknown_method` già gestita con errore visibile, verificarla nei test.
+**Solution.**
+1. `steer_run` returns the roundtrip `result` (not just `Ok(())`); the
+   `send_control` command propagates the payload to the frontend.
+2. Frontend: on `already_finished` | bubble | `not_applied` state (visible),
+   **composer prefill** with the text (same treatment as
+   `follow_up_queued`) + explicit status line.
+3. Optional (same commit): also close the inverse case - the
+   `unknown_method` reply is already handled with a visible error, verify
+   it in tests.
 
-**Test.** Unit sul plumbing del payload; manuale: steer a fine run → composer
-prefillato, bolla non appesa.
+**Tests.** Unit on the payload plumbing; manual: steer at run end |
+prefilled composer, no hanging bubble.
 
 **Commit:** `fix(desktop): surface already_finished steer noop as composer prefill, never drop the text`
 
 ---
 
-## FIX-5 (P1) — Doctor: validare davvero `engines.node`
+## FIX-5 (P1) - Doctor: actually validate `engines.node`
 
-**Problema.** `checkNode` ignora il `pkg.engines` che riceve e usa una soglia
-hardcoded `major < 20` con messaggio fuorviante "(>= 20.0.0)". Node 20.20.1
-passa come OK benché il requisito sia `>= 24.0.0` — ha mascherato l'intera
-famiglia di problemi sulle macchine pulite.
+**Problem.** `checkNode` ignores the `pkg.engines` it receives and uses a
+hardcoded `major < 20` threshold with a misleading "(>= 20.0.0)" message.
+Node 20.20.1 passes as OK although the requirement is `>= 24.0.0` - it
+masked the whole family of problems on clean machines.
 
-**Evidenza.** `src/cli/utils/doctor.ts:208-232`.
+**Evidence.** `src/cli/utils/doctor.ts:208-232`.
 
-**Soluzione.** Parsare `pkg.engines.node` (formati `>=24.0.0`, `^24`, `24.x`):
-sotto il major richiesto → **FAIL critico** con messaggio corretto e remediation
-("installa Node 24 LTS"); engines assente/illisible → fallback alla soglia
-attuale. `npm i -g` non blocca su engines (solo warning EBADENGINE): il doctor
-è l'ultimo posto onesto dove dirlo.
+**Solution.** Parse `pkg.engines.node` (formats `>=24.0.0`, `^24`, `24.x`):
+below the required major | **critical FAIL** with the correct message and
+remediation ("install Node 24 LTS"); engines missing/unreadable | fallback
+to the current threshold. `npm i -g` does not block on engines (only an
+EBADENGINE warning): the doctor is the last honest place to say it.
 
-**Test.** Unit `checkNode` con pkg fake: engines >=24 con node 20 → FAIL;
-node 24 → OK; engines assente → comportamento fallback.
+**Tests.** Unit `checkNode` with a fake pkg: engines >=24 with node 20 |
+FAIL; node 24 | OK; engines missing | fallback behavior.
 
 **Commit:** `fix(cli): doctor validates node against package engines requirement`
 
 ---
 
-## FIX-6 (P1) — Desktop: listener per `harness-sidecar-status` e `harness-sidecar-log`
+## FIX-6 (P1) - Desktop: listeners for `harness-sidecar-status` and `harness-sidecar-log`
 
-**Problema.** Il backend emette entrambi gli eventi (status del ciclo di vita,
-stderr del sidecar — drenato anche su file in `<app_data_dir>/logs/zelari-sidecar.log`)
-ma il frontend **non ha alcun listener**: ogni errore di boot/spawn/crash è
- invisibile. È la ragione per cui "il modello non risponde mai" appare come
- silenzio invece che come "Node.js not found on PATH" / "did not send the
- protocol_info boot line".
+**Problem.** The backend emits both events (lifecycle status, sidecar
+stderr - also drained to a file in `<app_data_dir>/logs/zelari-sidecar.log`)
+but the frontend **has no listener at all**: every boot/spawn/crash error is
+invisible. That is why "the model never responds" appears as silence instead
+of "Node.js not found on PATH" / "did not send the protocol_info boot line".
 
-**Evidenza.**
+**Evidence.**
 - `apps/desktop/src-tauri/src/harness_sidecar.rs:289-297` (emit_status, "the
-  frontend has no listener yet"), `:445-500` (stderr drain → evento + file).
-- Verifica frontend: nessun `listen('harness-sidecar-status' | 'harness-sidecar-log')`
+  frontend has no listener yet"), `:445-500` (stderr drain | event + file).
+- Frontend check: no `listen('harness-sidecar-status' | 'harness-sidecar-log')`
   in `apps/desktop/src`.
 
-**Soluzione.**
-1. Listener in `agentClient.ts`: `harness-sidecar-status` → banner di stato
-   (ready / failed / down dopo restart exhaustion) con l'ultimo messaggio.
-2. `harness-sidecar-log` → pannello diagnostico collassabile con ring-buffer
-   (cap ~200 righe), raggiungibile dalla chat; errori/stack in evidenza.
-3. Stato "down" persistente nel tempo (dopo MAX_RESTART_ATTEMPTS) deve restare
-   visibile finché il next run non riporta esito.
+**Solution.**
+1. Listener in `agentClient.ts`: `harness-sidecar-status` | status banner
+   (ready / failed / down after restart exhaustion) with the last message.
+2. `harness-sidecar-log` | collapsible diagnostics panel with a ring buffer
+   (cap ~200 lines), reachable from the chat; errors/stacks highlighted.
+3. A persistent "down" state (after MAX_RESTART_ATTEMPTS) must stay visible
+   until the next run reports an outcome.
 
-**Test.** Manuale: avviare il Desktop senza node nel PATH del processo GUI →
-banner visibile con l'errore esatto. Unit sul buffer/normalizzazione eventi.
+**Tests.** Manual: start the Desktop without node in the GUI process PATH |
+visible banner with the exact error. Unit on the event buffer/normalization.
 
 **Commit:** `feat(desktop): surface harness sidecar status and stderr log in the UI`
 
 ---
 
-## FIX-7 (P2, minore) — Follow-up in coda: non perderli alla chiusura
+## FIX-7 (P2, minor) - Queued follow-ups: do not lose them on close
 
-**Problema.** I follow-up (steer tardivi convertiti, `follow_up_queued:`)
-sopravvivono solo come bolla di sistema + prefill del composer: chiusura app o
-nuovo draft = testo perso. La coda in-memory muore col run by design (§28).
+**Problem.** Follow-ups (converted late steers, `follow_up_queued:`) survive
+only as a system bubble + composer prefill: closing the app or a new draft =
+text lost. The in-memory queue dies with the run by design (paragraph 28).
 
-**Evidenza.** `src/cli/headless/runOneTurn.ts:876-878`, `App.tsx:1131-1150`.
+**Evidence.** `src/cli/headless/runOneTurn.ts:876-878`, `App.tsx:1131-1150`.
 
-**Soluzione.** Persistere i follow-up pendenti nella conversazione
-(`chatStorage`, campo `pendingFollowUps`) e ripristinarli come prefill al
-prossimo avvio finché non inviati/scartati dall'utente.
+**Solution.** Persist pending follow-ups in the conversation
+(`chatStorage`, field `pendingFollowUps`) and restore them as a prefill on
+the next start until sent/discarded by the user.
 
 **Commit:** `feat(desktop): persist queued follow-ups across app restarts`
 
 ---
 
-## FIX-8 (P1) — Watchdog turno: idle-based, non wall-based + coerenza soglie
+## FIX-8 (P1) - Turn watchdog: idle-based, not wall-based + threshold coherence
 
-**Problema.** Il watchdog del turno Desktop (`TURN_TIMEOUT_DEFAULT_SECS = 1800`)
-scatta su tempo di muro e **ignora l'attività**: stacca turni che stanno
-lavorando regolarmente. Riprodotto il 2026-09-01 alle 18:49: turno iniziato
-18:19:52, completato 18:49:52 (**esattamente 1800s**) — il watchdog ha fatto
-detach + `session.cancel` cooperativo proprio mentre l'agente concludeva
-(ultimo assistant.message 18:49:51, `session.ended` pulito). L'esito del lavoro
-è stato scartato dalla UI con l'errore `turn_timeout: run.turn did not settle
-within 1800s — the model call may be hanging (network egress?)` — messaggio
-fuorviante: nessun hang di rete.
+**Problem.** The Desktop turn watchdog (`TURN_TIMEOUT_DEFAULT_SECS = 1800`)
+fires on wall time and **ignores activity**: it detaches turns that are
+working regularly. Reproduced on 2026-09-01 at 18:49: turn started at
+18:19:52, completed at 18:49:52 (**exactly 1800s**) - the watchdog did
+detach + cooperative `session.cancel` right as the agent was concluding
+(last assistant.message 18:49:51, clean `session.ended`). The work's outcome
+was discarded by the UI with the error `turn_timeout: run.turn did not settle
+within 1800s - the model call may be hanging (network egress?)` - a
+misleading message: no network hang.
 
-**Composizione del turno da 30' (dalla spine, sessione 921987c9):**
-- **1203s (20') in un singolo gap**: tentacolo Kraken `task` — i turni interni
-  sono off-spine (ADR-0024) → 20 minuti di invisibilità totale, poi
-  `memory_write` + 4 `tool.result` consegnati in blocco + rapporto finale.
-- ~7' di latenze modello (5 gap assistant→tool da 60-110s, provider GLM).
-- 38 tool call di cui 4 `npx vitest run` completi.
+**Composition of the 30' turn (from the spine, session 921987c9):**
+- **1203s (20') in a single gap**: Kraken tentacle `task` - inner turns
+  are off-spine (ADR-0024) | 20 minutes of total invisibility, then
+  `memory_write` + 4 `tool.result` delivered in a block + final report.
+- ~7' of model latencies (5 assistant|tool gaps of 60-110s, GLM provider).
+- 38 tool calls of which 4 complete `npx vitest run`.
 
-**Incoerenza strutturale:** il timeout turno del Desktop (30') è **minore**
-del timeout massimo di un tentacolo (`TASK_TOOL_TIMEOUT_MS = 45'`): per
-costruzione il Desktop può staccare un turno che il CLI porterebbe a termine.
-Inoltre, al detach la risposta `run.turn` finale finisce in un pending che
-nessuno legge → il lavoro completato viene perso dalla UI anche quando arriva
-a fine naturale.
+**Structural incoherence:** the Desktop turn timeout (30') is **lower**
+than the max timeout of a tentacle (`TASK_TOOL_TIMEOUT_MS = 45'`): by
+construction the Desktop can detach a turn the CLI would complete.
+Moreover, on detach the final `run.turn` reply ends up in a pending that
+nobody reads | completed work is lost by the UI even when it ends naturally.
 
-**Soluzione.**
-1. **Idle-deadline invece di wall-deadline** in `long_turn`
-   (`harness_sidecar.rs`): il timer si resetta a ogni evento ricevuto per il
-   run (message_delta, tool_execution_start/end, resource snapshot, note).
-   Soglia idle consigliata: 300-600s (un model call appeso muore comunque; un
-   lavoro vivo non viene mai ammazzato dall'orologio).
-2. Coerenza soglie: `ZELARI_SIDECAR_TURN_TIMEOUT_SECS` (se resta come cap
-   wall) ≥ `TASK_TOOL_TIMEOUT_MS`; oppure cap wall rimosso del tutto a favore
-   del solo idle + budget CLI (40 tool call / wall per epoch).
-3. Al fire del watchdog con cancel cooperativo riuscito: il detach non deve
-   buttare un risultato che arriva pochi secondi dopo — trattenere il pending
-   per una finestra di grazia (es. 60s) prima di abbandonarlo.
+**Solution.**
+1. **Idle-deadline instead of wall-deadline** in `long_turn`
+   (`harness_sidecar.rs`): the timer resets on every event received for
+   the run (message_delta, tool_execution_start/end, resource snapshot,
+   note). Recommended idle threshold: 300-600s (a hung model call dies
+   anyway; live work is never killed by the clock).
+2. Threshold coherence: `ZELARI_SIDECAR_TURN_TIMEOUT_SECS` (if kept as a
+   wall cap) = `TASK_TOOL_TIMEOUT_MS`; or drop the wall cap entirely in
+   favor of idle-only + the CLI budget (40 tool calls / wall per epoch).
+3. On watchdog fire with a successful cooperative cancel: the detach must
+   not throw away a result arriving seconds later - hold the pending for a
+   grace window (e.g. 60s) before abandoning it.
 
-**Test.** Unit su idle-reset (eventi che estendono il deadline); manuale:
-turno lungo con tentacolo > 30' → completa senza turn_timeout; run con model
-call appesa → idle-timeout scatta entro la soglia.
+**Tests.** Unit on idle-reset (events extending the deadline); manual:
+long turn with a tentacle > 30' | completes without turn_timeout; run with
+a hung model call | idle-timeout fires within the threshold.
 
 **Commit:** `fix(desktop): idle-based turn watchdog replaces wall clock timeout`
 
 ---
 
-# 3. Ordine di esecuzione e priorità
+# 3. Execution order and priorities
 
-| # | Fix | Area | Priorità | Rischio |
+| # | Fix | Area | Priority | Risk |
 |---|-----|------|----------|---------|
-| 1 | FIX-1 anti-self-kill | CLI/safety | P0 | basso (solo denial + test) |
-| 2 | FIX-2 lock spine (3 commit) | core+CLI | P0 | medio (tocca il writer — test esaustivi) |
-| 3 | FIX-3 pickFolder nuova chat | Desktop | P0 | basso |
-| 4 | FIX-5 doctor engines | CLI | P1 | basso |
-| 5 | FIX-8 watchdog idle-based | Desktop/Tauri | P1 | medio (timistica long_turn) |
-| 6 | FIX-4 steer noop prefill | Desktop+Tauri | P1 | medio (plumbing Rust→FE) |
-| 7 | FIX-6 listener sidecar | Desktop | P1 | basso |
-| 8 | FIX-7 follow-up persistenti | Desktop | P2 | basso |
+| 1 | FIX-1 anti-self-kill | CLI/safety | P0 | low (denial + tests only) |
+| 2 | FIX-2 spine lock (3 commits) | core+CLI | P0 | medium (touches the writer - exhaustive tests) |
+| 3 | FIX-3 pickFolder new chat | Desktop | P0 | low |
+| 4 | FIX-5 doctor engines | CLI | P1 | low |
+| 5 | FIX-8 idle-based watchdog | Desktop/Tauri | P1 | medium (long_turn timing) |
+| 6 | FIX-4 steer noop prefill | Desktop+Tauri | P1 | medium (Rust|FE plumbing) |
+| 7 | FIX-6 sidecar listeners | Desktop | P1 | low |
+| 8 | FIX-7 persistent follow-ups | Desktop | P2 | low |
 
-Sequenziati così: prima si fermano le emorragie (self-kill e lock: causano il
-"non risponde mai"), poi la correttezza semantica (cartella/sessione, doctor),
-poi osservabilità, infine il minore.
+Sequenced like this: first stop the hemorrhages (self-kill and lock: they
+cause the "never responds"), then semantic correctness (folder/session,
+doctor), then observability, finally the minor one.
 
 ---
 
-# 4. Verifica finale (per ogni commit + a fine piano)
+# 4. Final verification (for every commit + at the end of the plan)
 
 ```
 npm run typecheck
-npm run test          # incluse le nuove suite: selfKillGuard, writer takeover,
+npm run test          # including the new suites: selfKillGuard, writer takeover,
                       # sweep, checkNode, pickFolder, steer noop
 npm run smoke
 ```
 
-Manuale sul Desktop (dev): `npm run desktop:dev` —
-1. turno lungo con preview server + richiesta di "ferma il server" → il guard
-   rifiuta il taskkill globale e propone il kill per porta; il sidecar sopravvive.
-2. kill -9 del sidecar a metà turno → resume immediato della stessa sessione →
-   spine attiva (no `locked`), warning visibile se degradata.
-3. cambio cartella su chat usata → nuova chat, spine del progetto giusto.
-4. steer sparato a run appena finito → bolla `not_applied` + composer prefillato.
-5. Desktop senza node raggiungibile dal processo GUI → banner errore visibile.
-6. `zelari-code --doctor` con Node 20 → FAIL critico engines.
+Manual on the Desktop (dev): `npm run desktop:dev` -
+1. long turn with a preview server + a request to "stop the server" | the
+   guard refuses the global process kill and proposes the by-port kill; the
+   sidecar survives.
+2. kill -9 of the sidecar mid-turn | immediate resume of the same session |
+   active spine (no `locked`), visible warning if degraded.
+3. folder change on a used chat | new chat, spine of the right project.
+4. steer fired at a just-finished run | `not_applied` bubble + prefilled
+   composer.
+5. Desktop without node reachable from the GUI process | visible error
+   banner.
+6. `zelari-code --doctor` on Node 20 | critical engines FAIL.
 
 ---
 
-# 5. Fuori scope (annotato, non in questo piano)
+# 5. Out of scope (annotated, not in this plan)
 
-- Riuso PID su Windows: mitigato dall'heartbeat, non eliminabile senza boot-id
-  (eventuale `process.boottime` come hardening futuro).
-- Renderizzazione dedicata dell'attività tentacoli in Desktop (gli eventi
-  NDJSON già ci sono via `onTentacleEvent`): eventuale card attività —
-  mitigerebbe anche l'opacità dei 20' off-spine vista nel caso FIX-8.
-- Comunicazione requisito Node 24 in README/GUIDA + warning a installazione.
+- PID reuse on Windows: mitigated by the heartbeat, not eliminable without
+  a boot-id (a possible future `process.boottime` as hardening).
+- Dedicated tentacle-activity rendering in Desktop (the NDJSON events
+  already exist via `onTentacleEvent`): a possible activity card - would
+  also mitigate the 20' off-spine opacity seen in the FIX-8 case.
+- Communicating the Node 24 requirement in README/GUIDA + a warning at
+  install time.

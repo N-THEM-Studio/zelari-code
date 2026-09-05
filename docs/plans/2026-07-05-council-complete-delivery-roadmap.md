@@ -1,71 +1,71 @@
-# Council Complete Delivery Roadmap (v0.8.x → v0.9.0)
+# Council Complete Delivery Roadmap (v0.8.x | v0.9.0)
 
-> **Obiettivo:** Council run che produce **progetti completi, funzionanti, aderenti al prompt**, con intelligenza distribuita tra i 6 ruoli — **senza** over-engineering (niente 7° agente, niente NLP su prosa, niente CI browser pesante).
+> **Goal:** a Council run that produces **complete, working projects, faithful to the prompt**, with intelligence distributed across the 6 roles - **without** over-engineering (no 7th agent, no NLP on prose, no heavy browser CI).
 >
-> **Caso di regressione permanente:** `TESTMCP` / motion v0.3.0 (sintesi “verificata” vs codice reale).
+> **Permanent regression case:** `TESTMCP` / motion v0.3.0 ("verified" synthesis vs real code).
 >
-> **Ispirazione esterna (pattern, non dominio):** T3MP3ST — honesty spine, evidence ladder, harness anti-resa, lessons senza fitting, claim ri-derivabili.
+> **External inspiration (patterns, not domain):** T3MP3ST - honesty spine, evidence ladder, anti-give-up harness, lessons without fitting, re-derivable claims.
 
 ---
 
-## 1. North star — cosa significa “progetto completo”
+## 1. North star - what "complete project" means
 
-Un council run in **implementation mode** è “completo” solo se tutte le condizioni sono vere:
+A council run in **implementation mode** is "complete" only if all conditions are true:
 
-| # | Criterio | Verificabile come |
+| # | Criterion | Verifiable as |
 |---|---|---|
-| C1 | Il codice richiesto **esiste su disco** | file target presenti, non solo sintesi |
-| C2 | Il codice **rispetta i vincoli NFR** del task | `verification-report.json` → `ok: true` su errori bloccanti |
-| C3 | La sintesi è **onesta** rispetto al report | niente ✓/“verificato” sopra il tier raggiunto |
-| C4 | Il piano e il codice non sono **confusi** | feature in milestone ma assenti → `PLANNED`, mai “compatibile” |
-| C5 | **Build/test del progetto** passano quando applicabile | `npm test` / `npm run typecheck` se presenti in `package.json` |
-| C6 | **Documentazione minima** allineata | README sezioni/conteggi coerenti (WARN se stale) |
-| C7 | Run **non degradato** | provider error / zero tool verify → banner `DEGRADED_RUN` |
+| C1 | The requested code **exists on disk** | target files present, not just synthesis |
+| C2 | The code **respects the task's NFR constraints** | `verification-report.json` | `ok: true` on blocking errors |
+| C3 | The synthesis is **honest** vs the report | no V/"verified" above the reached tier |
+| C4 | Plan and code are not **confused** | features in milestone but absent | `PLANNED`, never "compatible" |
+| C5 | **Project build/test** pass where applicable | `npm test` / `npm run typecheck` if present in `package.json` |
+| C6 | **Minimal documentation** aligned | README sections/counts coherent (WARN if stale) |
+| C7 | **Non-degraded** run | provider error / zero verify tools | `DEGRADED_RUN` banner |
 
-**Non richiesto per “completo”:** Lighthouse, axe, browser QA, review umana, 100% task plan.json (il piano può avere backlog esplicito).
+**Not required for "complete":** Lighthouse, axe, browser QA, human review, 100% of plan.json tasks (the plan may have an explicit backlog).
 
 ---
 
-## 2. Stato attuale (baseline v0.8.0 — fatto)
+## 2. Current state (baseline v0.8.0 - done)
 
-| Componente | Stato | Path |
+| Component | State | Path |
 |---|---|---|
-| Gate A deterministico | ✅ | `packages/core/src/council/verification/` |
-| Step 3 `postCouncilHook` | ✅ | `src/cli/workspace/postCouncilHook.ts` |
-| UI `[verify] PASS/FAIL` | ✅ | `src/cli/hooks/useChatTurn.ts` |
-| `createNfrSpec` tool | ✅ | `src/cli/workspace/stubs.ts` |
-| Honesty lint sintesi | ✅ | `honesty.ts` |
-| Prompt Lucifero Evidence | ✅ | `packages/core/src/agents/roles.ts` |
-| Test unitari | ✅ | `council-verification.test.ts`, `cli-workspace-verification-hook.test.ts` |
+| Gate A deterministic | ? | `packages/core/src/council/verification/` |
+| Step 3 `postCouncilHook` | ? | `src/cli/workspace/postCouncilHook.ts` |
+| UI `[verify] PASS/FAIL` | ? | `src/cli/hooks/useChatTurn.ts` |
+| `createNfrSpec` tool | ? | `src/cli/workspace/stubs.ts` |
+| Synthesis honesty lint | ? | `honesty.ts` |
+| Lucifero Evidence prompt | ? | `packages/core/src/agents/roles.ts` |
+| Unit tests | ? | `council-verification.test.ts`, `cli-workspace-verification-hook.test.ts` |
 
-**Mancante rispetto al north star:** evidence ladder, in-run gate, retry grep obbligatorio, lessons, cite-verify, verify:council CI, completion artifact, build/test gate, autofix opzionale.
-
----
-
-## 3. Principi anti-over-engineering
-
-1. **Deterministico prima di LLM** — ogni nuovo controllo deve essere grep/parse/fs o npm script, non un altro agente.
-2. **Un solo post-pipeline** — estendere `runPostCouncilHook` (step 4, 5…), non moltiplicare hook in `councilApi`.
-3. **Un solo retry pattern** — generalizzare `applyRetryIfMissing` / `runRetryTurnForMember`, non nuovi harness.
-4. **NFR strutturati** — `createNfrSpec` + `.zelari/nfr-spec.json`; mai regex su prosa council.
-5. **Opt-in per costo** — autofix LLM solo con `ZELARI_VERIFY_AUTOFIX=1`; lesson enforcement solo tier `enforced`.
-6. **WARN vs FAIL** — README stale, plan backlog = WARN; motion NFR violati, honesty, build red = FAIL.
-7. **Espliciti i limiti** — il report dichiara cosa **non** verifica (bug funzionali JS, Lighthouse).
+**Missing vs the north star:** evidence ladder, in-run gate, mandatory grep retry, lessons, cite-verify, verify:council CI, completion artifact, build/test gate, optional autofix.
 
 ---
 
-## 4. Architettura target
+## 3. Anti-over-engineering principles
+
+1. **Deterministic before LLM** - every new check must be grep/parse/fs or an npm script, not another agent.
+2. **One post-pipeline only** - extend `runPostCouncilHook` (steps 4, 5), do not multiply hooks in `councilApi`.
+3. **One retry pattern only** - generalize `applyRetryIfMissing` / `runRetryTurnForMember`, no new harnesses.
+4. **Structured NFR** - `createNfrSpec` + `.zelari/nfr-spec.json`; never regex over council prose.
+5. **Cost opt-in** - LLM autofix only with `ZELARI_VERIFY_AUTOFIX=1`; lesson enforcement only at tier `enforced`.
+6. **WARN vs FAIL** - stale README, plan backlog = WARN; violated motion NFR, honesty, red build = FAIL.
+7. **Limits made explicit** - the report declares what it does **not** verify (functional JS bugs, Lighthouse).
+
+---
+
+## 4. Target architecture
 
 ```mermaid
 flowchart TB
-    subgraph council [Council 6 membri]
+    subgraph council [Council 6 members]
         C[Caronte] --> N[Nettuno + createNfrSpec]
         N --> G[Gerione] --> P[Plutone] --> M[Minosse]
-        M --> L[Lucifero implementa]
+        M --> L[Lucifero implements]
     end
 
-    L -->|write_file/edit_file| Micro[Micro-gate inline WARN]
-    L --> Synth[Sintesi + Verification status table]
+    L -->|write_file/edit_file| Micro[Inline micro-gate WARN]
+    L --> Synth[Synthesis + Verification status table]
 
     Synth --> Hook[runPostCouncilHook]
     Hook --> S1[Step 1: AGENTS.MD]
@@ -77,7 +77,7 @@ flowchart TB
 
     S3 --> Report[verification-report.json]
     S6 --> Done{completion.ok?}
-    Done -->|no + AUTOFIX| Retry[Lucifero fix-turn scoped]
+    Done -->|no + AUTOFIX| Retry[Lucifero scoped fix-turn]
     Retry --> Hook
 
     Lessons[(.zelari/lessons.jsonl)] -.->|enforced inject| council
@@ -86,333 +86,333 @@ flowchart TB
 
 ---
 
-## 5. Evidence ladder (contratto centrale)
+## 5. Evidence ladder (central contract)
 
-Ogni check e ogni riga della sintesi usa un **tier** — la sintesi non può dichiarare un tier superiore a quello del report.
+Every check and every synthesis line uses a **tier** - the synthesis cannot claim a tier higher than the report's.
 
-| Tier | Significato | Come si ottiene |
+| Tier | Meaning | How it is obtained |
 |---|---|---|
-| `claimed` | LLM lo afferma | solo prosa (non sufficiente per “completo”) |
-| `grep` | Verificato staticamente | Gate A PASS su quel check |
-| `tool` | Misurato nel turno | `grep_content` / `bash` / `read_file` emessi da Lucifero |
-| `build` | Progetto compila/testa | Step 4: `npm run typecheck` / `npm test` exit 0 |
-| `n/a` | Fuori scope | es. v0.2.0 pianificato ma non richiesto nel task |
+| `claimed` | The LLM asserts it | prose only (not sufficient for "complete") |
+| `grep` | Statically verified | Gate A PASS on that check |
+| `tool` | Measured in the turn | `grep_content` / `bash` / `read_file` emitted by Lucifero |
+| `build` | Project compiles/tests | Step 4: `npm run typecheck` / `npm test` exit 0 |
+| `n/a` | Out of scope | e.g. v0.2.0 planned but not requested in the task |
 
-**Regola sintesi:** tabella `## Verification status` con colonne `Check | Tier | Evidence`.
+**Synthesis rule:** a `## Verification status` table with columns `Check | Tier | Evidence`.
 
 ---
 
-## 6. Piano di implementazione (DAG)
+## 6. Implementation plan (DAG)
 
-### Fase A — Integrità del claim (v0.8.1) · ~8–10 h
+### Phase A - Claim integrity (v0.8.1) - ~8-10 h
 
-Obiettivo: chiudere il buco “dichiaro verificato senza evidenza” end-to-end.
+Goal: close the "I declare verified without evidence" hole end-to-end.
 
-#### PR-A1 — Evidence ladder nel report e nella sintesi
+#### PR-A1 - Evidence ladder in the report and the synthesis
 
 **Files:**
-- `packages/core/src/council/verification/types.ts` — `EvidenceTier`, `tier` su ogni `VerificationCheckResult`
-- `packages/core/src/council/verification/runChecks.ts` — assegna tier `grep` ai check deterministici
-- `packages/core/src/council/verification/synthesisAudit.ts` — **nuovo**: confronta righe Evidence table vs report; FAIL se tier dichiarato > tier reale
-- `packages/core/src/agents/roles.ts` — template tabella con colonna Tier
+- `packages/core/src/council/verification/types.ts` - `EvidenceTier`, `tier` on every `VerificationCheckResult`
+- `packages/core/src/council/verification/runChecks.ts` - assigns tier `grep` to deterministic checks
+- `packages/core/src/council/verification/synthesisAudit.ts` - **new**: compares Evidence table lines vs report; FAIL if declared tier > real tier
+- `packages/core/src/agents/roles.ts` - table template with a Tier column
 
 **Acceptance:**
-- Sintesi con “✓ verificato” e report FAIL → `synthesis.tier-inflation` error
-- Report JSON include `tier` per ogni risultato
+- Synthesis with "V verified" and a FAIL report | `synthesis.tier-inflation` error
+- The JSON report includes `tier` for every result
 
-**QA:** test con fixture sintesi TESTMCP-like
+**QA:** test with a TESTMCP-like synthesis fixture
 
 ---
 
-#### PR-A2 — Cite-verify (path:riga)
+#### PR-A2 - Cite-verify (path:line)
 
 **Files:**
-- `packages/core/src/council/verification/citeVerify.ts` — **nuovo**
-- Parsa `path:L123` / `path:line` dalla sintesi; verifica che il file contenga snippet atteso o linea non vuota
-- Integrato in `runImplementationVerification` quando `synthesisText` presente
+- `packages/core/src/council/verification/citeVerify.ts` - **new**
+- Parses `path:L123` / `path:line` from the synthesis; verifies the file contains the expected snippet or a non-empty line
+- Integrated into `runImplementationVerification` when `synthesisText` is present
 
 **Acceptance:**
-- `index.html:L9999` in sintesi → FAIL `synthesis.cite-invalid`
-- Citazione valida su riga reale → PASS
+- `index.html:L9999` in the synthesis | FAIL `synthesis.cite-invalid`
+- Valid citation on a real line | PASS
 
-**QA:** unit test 4 casi (valid, invalid line, missing file, no cite)
+**QA:** unit tests for 4 cases (valid, invalid line, missing file, no cite)
 
 ---
 
-#### PR-A3 — Micro-gate inline (WARN in stream, non blocco)
+#### PR-A3 - Inline micro-gate (WARN in stream, not a block)
 
 **Files:**
-- `packages/core/src/agents/councilApi.ts` — dopo tool `write_file`/`edit_file` di Lucifero, se path in `nfr-spec.targets`, run **subset** check (solo file toccato)
-- Emette `console.warn` + opzionale brain event `verification_warn` (lightweight, no new agent)
+- `packages/core/src/agents/councilApi.ts` - after Lucifero's `write_file`/`edit_file` tools, if the path is in `nfr-spec.targets`, run a **subset** check (touched file only)
+- Emits `console.warn` + optional brain event `verification_warn` (lightweight, no new agent)
 
 **Acceptance:**
-- Scrittura `index.html` con `box-shadow` in `@keyframes` → WARN visibile prima di `message_end`
-- Design-phase: micro-gate disattivato
+- Writing `index.html` with `box-shadow` inside `@keyframes` | visible WARN before `message_end`
+- Design-phase: micro-gate disabled
 
-**Non fare:** secondo pass LLM; bloccare il turno a metà.
+**Do not do:** a second LLM pass; blocking the turn mid-flight.
 
 ---
 
-### Fase B — Harness anti-resa (v0.8.2) · ~10–12 h
+### Phase B - Anti-give-up harness (v0.8.2) - ~10-12 h
 
-Obiettivo: Lucifero non può chiudere un implementation run senza almeno un tentativo di verifica tool-based.
+Goal: Lucifero cannot close an implementation run without at least one tool-based verification attempt.
 
-#### PR-B1 — Generalizzare `applyRetryIfMissing` → `applyCompletionRetry`
+#### PR-B1 - Generalize `applyRetryIfMissing` | `applyCompletionRetry`
 
 **Files:**
-- `packages/core/src/agents/councilApi.ts` — nuovo helper `checkImplementationCompletion(emittedTools, reportPreview)`
-- Requisiti OR:
-  - almeno 1 `grep_content` o `bash` dopo l’ultimo `write_file`/`edit_file`, **oppure**
-  - `ZELARI_VERIFY_SKIP_TOOL=1` (escape hatch dev)
-- Se manca → `runRetryTurnForMember` per Lucifero con tools `['grep_content','read_file','bash','edit_file']` e prompt one-liner
+- `packages/core/src/agents/councilApi.ts` - new helper `checkImplementationCompletion(emittedTools, reportPreview)`
+- OR requirements:
+  - at least 1 `grep_content` or `bash` after the last `write_file`/`edit_file`, **or**
+  - `ZELARI_VERIFY_SKIP_TOOL=1` (dev escape hatch)
+- If missing | `runRetryTurnForMember` for Lucifero with tools `['grep_content','read_file','bash','edit_file']` and a one-liner prompt
 
 **Acceptance:**
-- Lucifero scrive file, zero grep, synthesis “completo” → retry forzato 1x
-- Dopo retry con grep → nessun secondo retry
+- Lucifero writes files, zero greps, "complete" synthesis | forced retry 1x
+- After a retry with grep | no second retry
 
-**Pattern:** identico a `buildRetryPrompt` / `applyRetryIfMissing` (v0.7.7).
+**Pattern:** identical to `buildRetryPrompt` / `applyRetryIfMissing` (v0.7.7).
 
 ---
 
-#### PR-B2 — Degraded run detection
+#### PR-B2 - Degraded run detection
 
 **Files:**
-- `packages/core/src/council/verification/degraded.ts` — **nuovo** (port concettuale da T3MP3ST `DegradedTracker`, semplificato)
-- `useChatTurn.ts` — se `chairman errored` OR `provider abort` OR Lucifero zero write ma synthesis “done” → `completion.degraded: true`
-- Sintesi deve contenere banner `DEGRADED_RUN` (lint in `synthesisAudit`)
+- `packages/core/src/council/verification/degraded.ts` - **new** (conceptual port of T3MP3ST `DegradedTracker`, simplified)
+- `useChatTurn.ts` - if `chairman errored` OR `provider abort` OR Lucifero zero writes but "done" synthesis | `completion.degraded: true`
+- The synthesis must contain a `DEGRADED_RUN` banner (lint in `synthesisAudit`)
 
 **Acceptance:**
-- Council abort mid-run → messaggio system esplicito, non “[verify] PASS”
+- Council abort mid-run | explicit system message, not "[verify] PASS"
 
 ---
 
-#### PR-B3 — Autofix opzionale (`ZELARI_VERIFY_AUTOFIX=1`)
+#### PR-B3 - Optional autofix (`ZELARI_VERIFY_AUTOFIX=1`)
 
 **Files:**
-- `postCouncilHook.ts` — se `report.ok === false` e env set, enqueue fix prompt (single turn Lucifero via `dispatchCouncil` follow-up o inline harness)
-- Solo check con severity `error`; max 1 autofix per run
+- `postCouncilHook.ts` - if `report.ok === false` and the env is set, enqueue a fix prompt (single Lucifero turn via `dispatchCouncil` follow-up or inline harness)
+- Only checks with severity `error`; max 1 autofix per run
 
 **Acceptance:**
-- Con env off: solo report FAIL (comportamento attuale)
-- Con env on + TESTMCP fixture: riduce almeno 1 classe FAIL (es. dead-hook)
+- Env off: FAIL report only (current behavior)
+- Env on + TESTMCP fixture: reduces at least 1 FAIL class (e.g. dead-hook)
 
-**Non fare:** loop autofix illimitato.
+**Do not do:** an unlimited autofix loop.
 
 ---
 
-### Fase C — Memoria senza fitting (v0.8.3) · ~6–8 h
+### Phase C - Memory without fitting (v0.8.3) - ~6-8 h
 
-Obiettivo: il sistema impara **metodologia**, non risposte (T3MP3ST `lessons.mjs`).
+Goal: the system learns **methodology**, not answers (T3MP3ST `lessons.mjs`).
 
-#### PR-C1 — `.zelari/lessons.jsonl`
+#### PR-C1 - `.zelari/lessons.jsonl`
 
 **Files:**
-- `packages/core/src/council/lessons/` — **nuovo**
-  - `isAnswerLeak.ts` — flag-shaped secrets, challenge-id + answer pairs
-  - `recordFailure.ts` — advisory → enforced on 2nd recurrence (Jaccard su signature)
-  - `recallLessons.ts` — top-N enforced per keyword overlap con task
-- `postCouncilHook.ts` Step 5 — da ogni FAIL del report, `captureFailure` se non leak
+- `packages/core/src/council/lessons/` - **new**
+  - `isAnswerLeak.ts` - flag-shaped secrets, challenge-id + answer pairs
+  - `recordFailure.ts` - advisory | enforced on 2nd recurrence (Jaccard on signature)
+  - `recallLessons.ts` - top-N enforced by keyword overlap with the task
+- `postCouncilHook.ts` Step 5 - from every report FAIL, `captureFailure` if not a leak
 
 **Acceptance:**
-- Lesson con `flag{...}` → rejected at write
-- Stessa signature 2x → tier `enforced`
+- A lesson with `flag{...}` | rejected at write
+- Same signature 2x | tier `enforced`
 
 ---
 
-#### PR-C2 — Inject lessons nel workspace context
+#### PR-C2 - Inject lessons into the workspace context
 
 **Files:**
-- `src/cli/workspace/planSummary.ts` o nuovo `buildLessonsSummary.ts`
-- `useChatTurn.ts` — append a `workspaceContext` prima del council
+- `src/cli/workspace/planSummary.ts` or a new `buildLessonsSummary.ts`
+- `useChatTurn.ts` - append to `workspaceContext` before the council
 
 **Acceptance:**
-- Lesson enforced su “synthesis tier inflation” appare nel banner Caronte/Nettuno context
-- Max 5 lesson, ~2KB totale
+- An enforced lesson on "synthesis tier inflation" appears in the Caronte/Nettuno context banner
+- Max 5 lessons, ~2KB total
 
 ---
 
-#### PR-C3 — `test-no-fitting` per prompt council
+#### PR-C3 - `test-no-fitting` for council prompts
 
 **Files:**
-- `tests/unit/council-prompt-integrity.test.ts` — **nuovo**
-- Scansiona `roles.ts` + `councilDirectives.ts` per: path assoluti noti, numeri benchmark hardcoded, nomi workspace test (TESTMCP, T3MP3ST)
+- `tests/unit/council-prompt-integrity.test.ts` - **new**
+- Scans `roles.ts` + `councilDirectives.ts` for: known absolute paths, hardcoded benchmark numbers, test workspace names (TESTMCP, T3MP3ST)
 
 **Acceptance:**
-- `npm run test -- council-prompt-integrity` green su main
-- Aggiunta di `48183 bytes` nel prompt → test FAIL
+- `npm run test -- council-prompt-integrity` green on main
+- Adding `48183 bytes` to the prompt | test FAIL
 
 ---
 
-### Fase D — Progetto funzionante (v0.9.0) · ~8–10 h
+### Phase D - Working project (v0.9.0) - ~8-10 h
 
-Obiettivo: “completo” include build/test quando il repo lo supporta.
+Goal: "complete" includes build/test when the repo supports it.
 
-#### PR-D1 — Step 4 postCouncilHook: build/test smoke
+#### PR-D1 - postCouncilHook Step 4: build/test smoke
 
 **Files:**
-- `src/cli/workspace/postCouncilHook.ts` — `runProjectSmoke(ctx)`
-- Legge `package.json` scripts: prova in ordine `typecheck`, `test`, `build` (primo disponibile)
-- Timeout 120s, cattura stdout; tier `build` su PASS
+- `src/cli/workspace/postCouncilHook.ts` - `runProjectSmoke(ctx)`
+- Reads `package.json` scripts: tries in order `typecheck`, `test`, `build` (first available)
+- 120s timeout, captures stdout; tier `build` on PASS
 
 **Acceptance:**
-- zelari-code workspace → `npm run typecheck` in hook dopo council che tocca `src/`
-- Repo senza scripts → step skipped, non FAIL
+- zelari-code workspace | `npm run typecheck` in the hook after a council touching `src/`
+- Repo without scripts | step skipped, not FAIL
 
-**WARN non FAIL** se script mancante; **FAIL** se script esiste e exit ≠ 0.
+**WARN not FAIL** if the script is missing; **FAIL** if the script exists and exit != 0.
 
 ---
 
-#### PR-D2 — `completion.json` artifact
+#### PR-D2 - `completion.json` artifact
 
 **Files:**
-- `packages/core/src/council/completion/` — **nuovo**
-- Aggrega: `verification.ok`, `build.ok`, `degraded`, `tiers`, `openFails[]`, `promptSummary`
-- Scritto in `.zelari/completion.json` Step 6
+- `packages/core/src/council/completion/` - **new**
+- Aggregates: `verification.ok`, `build.ok`, `degraded`, `tiers`, `openFails[]`, `promptSummary`
+- Written to `.zelari/completion.json` in Step 6
 
 **Acceptance:**
 ```json
 { "ok": false, "blocking": ["motion.transitions"], "degraded": false, "readyToCommit": false }
 ```
-- `readyToCommit: true` solo se zero blocking errors e non degraded
+- `readyToCommit: true` only with zero blocking errors and not degraded
 
-**UI:** `[completion] readyToCommit=false — 3 blocking issues` in TUI.
+**UI:** `[completion] readyToCommit=false - 3 blocking issues` in the TUI.
 
 ---
 
-#### PR-D3 — `npm run verify:council` (contract release)
+#### PR-D3 - `npm run verify:council` (release contract)
 
 **Files:**
-- `scripts/verify-council.mjs` — **nuovo**
+- `scripts/verify-council.mjs` - **new**
 - `package.json` script `verify:council`
-- Fixture `tests/fixtures/council-complete/` (minimal + TESTMCP snippet opzionale via env `VERIFY_FIXTURE_ROOT`)
+- Fixture `tests/fixtures/council-complete/` (minimal + optional TESTMCP snippet via env `VERIFY_FIXTURE_ROOT`)
 
 **Acceptance:**
-- Exit 0 su fixture “clean”
-- Exit 1 su fixture “TESTMCP-like” con ≥3 FAIL attesi
-- Documentato in README come `verify-claims` interno
+- Exit 0 on the "clean" fixture
+- Exit 1 on the "TESTMCP-like" fixture with the expected >=3 FAILs
+- Documented in README as the internal `verify-claims`
 
 ---
 
-### Fase E — Aderenza al prompt e al piano (v0.9.1) · ~6–8 h
+### Phase E - Prompt and plan adherence (v0.9.1) - ~6-8 h
 
-Obiettivo: il deliverable corrisponde a **ciò che l’utente ha chiesto**, non al backlog del piano.
+Goal: the deliverable matches **what the user asked for**, not the plan's backlog.
 
-#### PR-E1 — Task scope extraction
+#### PR-E1 - Task scope extraction
 
 **Files:**
-- `packages/core/src/council/scope/extractTaskScope.ts` — **nuovo**
-- Da `userMessage` + `.zelari/nfr-spec.json`: estrae file target, vincoli, espliciti OUT
-- Nessun NLP pesante: keyword + file path regex + nfr-spec
+- `packages/core/src/council/scope/extractTaskScope.ts` - **new**
+- From `userMessage` + `.zelari/nfr-spec.json`: extracts target files, constraints, explicit OUTs
+- No heavy NLP: keywords + file path regex + nfr-spec
 
 **Acceptance:**
-- Task “animare index.html” → scope targets `['index.html']`, non command palette
-- Scope scritto in `completion.json` → `scope`
+- Task "animate index.html" | scope targets `['index.html']`, not the command palette
+- Scope written into `completion.json` | `scope`
 
 ---
 
-#### PR-E2 — `buildPlanSummary` enhancement (plan vs richiesta)
+#### PR-E2 - `buildPlanSummary` enhancement (plan vs request)
 
 **Files:**
 - `src/cli/workspace/planSummary.ts`
-- Sezione: **“In scope for this task”** vs **“Planned but not requested (backlog)”**
-- Usa `extractTaskScope` per non confondere milestone v0.2.0 con task corrente
+- Section: **"In scope for this task"** vs **"Planned but not requested (backlog)"**
+- Uses `extractTaskScope` to avoid confusing the v0.2.0 milestone with the current task
 
 **Acceptance:**
-- Context council su TESTMCP motion task non dice “compatibile con command palette”
+- The council context on the TESTMCP motion task does not say "compatible with the command palette"
 
 ---
 
-#### PR-E3 — Design-phase: `createNfrSpec` enforcement (soft)
+#### PR-E3 - Design-phase: `createNfrSpec` enforcement (soft)
 
 **Files:**
-- `councilApi.ts` — se design-phase + plan contiene keyword motion/perf/budget → warn se `createNfrSpec` non emesso (non retry obbligatorio in v1)
-- `DESIGN_PHASE_REQUIREMENT_SETS.nettun` — aggiungere set alternativo OR: `createNfrSpec min 1` solo se task match `NFR_KEYWORDS`
+- `councilApi.ts` - if design-phase + plan contains motion/perf/budget keywords | warn if `createNfrSpec` was not emitted (no mandatory retry in v1)
+- `DESIGN_PHASE_REQUIREMENT_SETS.nettun` - add an alternative OR set: `createNfrSpec min 1` only if the task matches `NFR_KEYWORDS`
 
 **Acceptance:**
-- Design motion plan senza nfr-spec → warning in console; implementation usa DEFAULT_NFR_SPEC
+- Motion design plan without nfr-spec | warning in console; implementation uses DEFAULT_NFR_SPEC
 
 ---
 
-## 7. Ordine di merge e milestone
+## 7. Merge order and milestones
 
 ```
-Fase A (A1→A2→A3)
-Fase B (B1 dipende da A1; B2 parallelo; B3 dipende da B1)
-Fase C (C1→C2; C3 parallelo)
-Fase D (D1→D2; D3 dipende da D2)
-Fase E (E1→E2; E3 parallelo)
+Phase A (A1|A2|A3)
+Phase B (B1 depends on A1; B2 parallel; B3 depends on B1)
+Phase C (C1|C2; C3 parallel)
+Phase D (D1|D2; D3 depends on D2)
+Phase E (E1|E2; E3 parallel)
 ```
 
-| Milestone | Versione | Criterio |
+| Milestone | Version | Criterion |
 |---|---|---|
 | **M1 Integrity** | v0.8.1 | Evidence ladder + cite-verify + micro-gate WARN |
-| **M2 Anti-stall** | v0.8.2 | Completion retry + degraded + autofix opt-in |
+| **M2 Anti-stall** | v0.8.2 | Completion retry + degraded + opt-in autofix |
 | **M3 Memory** | v0.8.3 | lessons.jsonl + prompt integrity test |
 | **M4 Shippable** | v0.9.0 | build smoke + completion.json + verify:council |
 | **M5 Prompt-true** | v0.9.1 | scope extraction + plan summary fix |
 
-**Stima totale:** ~38–48 h · 15 PR atomici · 5 milestone
+**Total estimate:** ~38-48 h - 15 atomic PRs - 5 milestones
 
 ---
 
 ## 8. Green-light checklist (release v0.9.0)
 
-Prima di taggare v0.9.0:
+Before tagging v0.9.0:
 
-- [ ] `npm run test` green (inclusi `council-verification`, `council-prompt-integrity`, `verify:council`)
-- [ ] Replay TESTMCP: `completion.json` → `readyToCommit: false` con FAIL espliciti
-- [ ] Fixture clean: `readyToCommit: true` dopo council simulato
-- [ ] Lucifero retry grep documentato in CHANGELOG
-- [ ] Nessun nuovo agente; nessuna dipendenza npm pesante
-- [ ] `ZELARI_VERIFY=0` disabilita step 3 (regressione)
+- [ ] `npm run test` green (including `council-verification`, `council-prompt-integrity`, `verify:council`)
+- [ ] TESTMCP replay: `completion.json` | `readyToCommit: false` with explicit FAILs
+- [ ] Clean fixture: `readyToCommit: true` after a simulated council
+- [ ] Lucifero grep retry documented in the CHANGELOG
+- [ ] No new agent; no heavy npm dependency
+- [ ] `ZELARI_VERIFY=0` disables step 3 (regression)
 - [ ] `ZELARI_VERIFY_AUTOFIX` default off
 
 ---
 
-## 9. Esplicitamente fuori scope (non fare)
+## 9. Explicitly out of scope (do not do)
 
-| Idea | Perché no |
+| Idea | Why not |
 |---|---|
-| Minosse pass 2 con tool su ogni run | 7° giro LLM; costo token |
-| Lighthouse / axe in CI | Flaky, lento; WARN manuale in task QA se serve |
-| Refuter panel LLM (T3MP3ST) | cite-verify deterministico basta per coding |
-| Regex NFR su prosa council | Falsi negativi; usare `createNfrSpec` |
-| Nuovo agente “Cerbero” | Duplica Gate A + retry |
-| Swarm / 8 operatori | Dominio T3MP3ST, non zelari-code |
-| Auto-commit / auto-push | L’umano resta nel loop; `readyToCommit` è suggerimento |
-| Knowledge map obbligatoria | Già descoped in TESTMCP |
+| Minosse pass 2 with tools on every run | 7th LLM round; token cost |
+| Lighthouse / axe in CI | Flaky, slow; manual WARN in task QA if needed |
+| LLM refuter panel (T3MP3ST) | deterministic cite-verify is enough for coding |
+| NFR regex over council prose | False negatives; use `createNfrSpec` |
+| New "Cerbero" agent | Duplicates Gate A + retry |
+| Swarm / 8 operators | T3MP3ST domain, not zelari-code |
+| Auto-commit / auto-push | The human stays in the loop; `readyToCommit` is a suggestion |
+| Mandatory knowledge map | Already descoped in TESTMCP |
 
 ---
 
-## 10. Metriche di successo (4 settimane post-release)
+## 10. Success metrics (4 weeks post-release)
 
-| Metrica | Target |
+| Metric | Target |
 |---|---|
-| Council implementation → `readyToCommit: true` su task smoke | ≥ 80% |
-| Sintesi con honesty FAIL | < 5% dei run |
-| Retry grep invocato | tracciato; < 30% dei run (indica meno stalli) |
-| Lesson enforced attive | ≥ 3 metodologiche, 0 answer-leak |
-| Regressioni `verify:council` in CI | 0 |
+| Council implementation | `readyToCommit: true` on smoke tasks | >= 80% |
+| Syntheses with honesty FAIL | < 5% of runs |
+| Grep retry invoked | tracked; < 30% of runs (indicates fewer stalls) |
+| Active enforced lessons | >= 3 methodological, 0 answer-leak |
+| `verify:council` regressions in CI | 0 |
 
 ---
 
-## 11. Fix immediato TESTMCP (opzionale, parallelo al codice)
+## 11. Immediate TESTMCP fix (optional, parallel to the code)
 
-Per avere un workspace demo “green” senza aspettare v0.9:
+To have a "green" demo workspace without waiting for v0.9:
 
-1. Rimuovere `box-shadow` da keyframes / transizioni non ammesse **oppure** aggiornare `nfr-spec.json` se il budget è intenzionale
-2. Rimuovere hook `.rm` o aggiungere regola CSS
-3. Aggiornare README (13 sezioni, ~62 KB)
-4. Eseguire `npm run verify:council` con `VERIFY_FIXTURE_ROOT=Z:/EasyPeasy/TESTMCP` dopo PR-D3
+1. Remove `box-shadow` from keyframes / disallowed transitions **or** update `nfr-spec.json` if the budget is intentional
+2. Remove `.rm` hooks or add a CSS rule
+3. Update the README (13 sections, ~62 KB)
+4. Run `npm run verify:council` with `VERIFY_FIXTURE_ROOT=Z:/EasyPeasy/TESTMCP` after PR-D3
 
 ---
 
-## 12. Riferimenti nel repo
+## 12. References in the repo
 
-| Doc / codice | Ruolo |
+| Doc / code | Role |
 |---|---|
-| `docs/plans/2026-07-05-council-verification-quality-gate.md` | v0.8.0 baseline (completato) |
+| `docs/plans/2026-07-05-council-verification-quality-gate.md` | v0.8.0 baseline (completed) |
 | `packages/core/src/council/verification/` | Gate A |
-| `src/cli/workspace/postCouncilHook.ts` | Pipeline post-run |
-| `packages/core/src/agents/councilApi.ts` | Retry pattern da generalizzare |
-| T3MP3ST `gate.ts`, `lessons.mjs`, `verify-claims.mjs` | Pattern reference (non dipendenza) |
+| `src/cli/workspace/postCouncilHook.ts` | Post-run pipeline |
+| `packages/core/src/agents/councilApi.ts` | Retry pattern to generalize |
+| T3MP3ST `gate.ts`, `lessons.mjs`, `verify-claims.mjs` | Pattern reference (not a dependency) |
