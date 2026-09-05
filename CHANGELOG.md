@@ -5,6 +5,25 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.33.0] - 2026-09-05
+
+Alignment release: what the Desktop UI and the docs say now matches what the code does, and the release tooling can no longer drift silently.
+
+### Added
+
+- **Desktop permission approvals, end to end** — the `ask` permission outcome finally has a way out of the sidecar fail-closed jail: `permission.request` events ride the NDJSON bridge, the Rust host shows a native confirmation dialog (`tauri-plugin-dialog`, on a dedicated thread so the stdout pump never blocks), and the answer flows back as `permission.respond`. Dismiss, close, error, or the 120 s CLI-side timeout all resolve to deny — fail-closed stays non-negotiable. The permission preset selector (`standard`/`strict`/`yolo`, default `standard`) is now mounted in Settings → Agents (`PermissionsSection`, rebuilt on the current settings primitives).
+- **CI catches Desktop and Android before the tag** — `ci.yml` gains path-filtered `desktop` (root build + `tsc && vite build`), `desktop-rust` (`cargo check` with the Tauri Linux system deps and a cargo cache), and `android` (JDK 17 + Gradle `assembleDebug`) jobs; installer signing/publishing stays in `release-desktop.yml`. Shared-dependency paths (`packages/core/`, root `package.json`, `tsconfig.json`) light the Desktop jobs too.
+
+### Changed
+
+- **Honest release bump** — `scripts/bump-version.mjs` no longer injects hardcoded release notes (the 2026-07-10 ghost entry is gone): the `## [version]` CHANGELOG entry is a fail-fast precondition, and the bump stamps every version representation `verify-versions.mjs` checks, now including the Desktop manifests, `CORE_VERSION`, the core README and `docs/GUIDA.md`. `verify-versions.mjs` gains lockstep checks for the Desktop manifests and both lockfiles.
+
+### Fixed
+
+- **New chats can no longer fall out of persistence** — with 80 stored conversations, a chat created via folder switch was appended past the storage cap and silently lost on reload. `planFolderSwitch` now prepends (same convention as "New chat"), and the new `selectConversationsForStorage()` keeps the most recently updated conversations with the active one always granted a slot; quota failures surface in the status line instead of being swallowed, and one corrupt record no longer sinks the whole history.
+- **`package-lock.json` drift** — the lockfile was still at 2.30.0 (two releases shipped without regeneration); all five version fields now ride the release bump.
+- **Docs paths** — `README.md` and `docs/GUIDA.md` no longer point first-run users at the legacy `~/.tmp/zelari-code/` migration path; `apps/desktop/README.md` documents the chat persistence limits (80 conversations / 200 messages per conversation) and the permission presets.
+
 ## [2.32.0] - 2026-09-07
 
 ### Changed
