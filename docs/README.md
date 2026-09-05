@@ -1,19 +1,19 @@
-# Documentazione Zelari Code
+# Zelari Code Documentation
 
-Documentazione per **zelari-code 1.34.x** (monorepo Apache-2.0 — [Anathema Studio](https://anathema-studio.com/)).
+Documentation for **zelari-code 1.34.x** (Apache-2.0 monorepo - [Anathema Studio](https://anathema-studio.com/)).
 
-| Documento | Contenuto |
+| Document | Contents |
 |---|---|
-| **[GUIDA.md](./GUIDA.md)** | Guida completa (IT): installazione, TUI, kraken/council/zelari, phase plan/build, slash, Desktop, Companion, MCP, SSH, folder trust, env |
-| **[TOOLS.md](./TOOLS.md)** | Mappa tool builtin, workspace (`createPlan`, …), SSH, MCP, plan phase, folder trust, hooks, inspect |
-| **[triggers.md](./triggers.md)** | Trigger unattended: cron + git hook (`--once`) |
-| **[../MIGRATION.md](../MIGRATION.md)** | Migrazione da ≤ 0.4.x a `@zelari/core` (solo consumer della libreria) |
-| **[../CONTRIBUTING.md](../CONTRIBUTING.md)** | Setup monorepo, PR, convenzioni |
-| **[../SECURITY.md](../SECURITY.md)** | Segnalazione vulnerabilità |
+| **[GUIDA.md](./GUIDA.md)** | Complete guide: installation, TUI, kraken/council/zelari, plan/build phases, slash commands, Desktop, Companion, MCP, SSH, folder trust, env |
+| **[TOOLS.md](./TOOLS.md)** | Map of builtin tools, workspace (`createPlan`, .), SSH, MCP, plan phase, folder trust, hooks, inspect |
+| **[triggers.md](./triggers.md)** | Unattended triggers: cron + git hook (`--once`) |
+| **[../MIGRATION.md](../MIGRATION.md)** | Migration from <= 0.4.x to `@zelari/core` (library consumers only) |
+| **[../CONTRIBUTING.md](../CONTRIBUTING.md)** | Monorepo setup, PRs, conventions |
+| **[../SECURITY.md](../SECURITY.md)** | Vulnerability reporting |
 | **[decisions/](./decisions/)** | Architecture Decision Records (incl. ADR-0009 Apache-2.0, ADR-0010 first principles) |
-| **[plans/](./plans/)** | *Internal / historical* design notes — **non** source of truth del prodotto |
+| **[plans/](./plans/)** | *Internal / historical* design notes - **not** the product source of truth |
 | **[media/](./media/)** | English marketing stills + ~30s trailer |
 
-Handoff in root (`HANDOFF.md`, `HANDOFF-kraken.md`, `HANDOFF-v0.10.0.md`) sono **storici / superseded**. Per lo stato attuale usa [CHANGELOG.md](../CHANGELOG.md) e questa cartella.
+The root handoffs (`HANDOFF.md`, `HANDOFF-kraken.md`, `HANDOFF-v0.10.0.md`) are **historical / superseded**. For the current state use [CHANGELOG.md](../CHANGELOG.md) and this folder.
 
-Per una panoramica rapida vedi il [README](../README.md) alla root del repository.
+For a quick overview see the [README](../README.md) at the repository root.
