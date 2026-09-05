@@ -1,3 +1,5 @@
+import type { PermissionAskHandler } from '../safety/toolPermissions.js';
+
 /**
  * Serve-harness permission bridge (Pilastro B, desktop parity slice).
  *
@@ -109,9 +111,10 @@ export function createServePermissionBridge(
 }
 
 /**
- * Typed `permission.respond` method body for the serve dispatcher
- * (wired in the follow-up slice; exported + unit-tested now so the
- * protocol contract is pinned before any host depends on it).
+ * Typed `permission.respond` method body for the serve dispatcher.
+ * Shape-invalid params return `accepted:false` + reason; an unknown or
+ * already-settled requestId returns `accepted:false` (idempotent no-op —
+ * a late answer after a deny-timeout must never error the host).
  */
 export function servePermissionRespond(
   bridge: ServePermissionBridge,
@@ -128,4 +131,27 @@ export function servePermissionRespond(
     return { accepted: false, reason: "permission.respond decision must be 'allow' or 'deny'" };
   }
   return { accepted: bridge.respond(requestId, decision) };
+}
+
+/**
+ * Adapt the wire bridge to the tool-registry ask handler contract
+ * (`PermissionAskHandler`: resolves boolean allow). The registry payload
+ * is richer than the wire payload — the adapter projects it (tool name,
+ * categories, policy reason, resource-claim summaries as the preview) so
+ * the host dialog shows WHAT the approval unlocks, not just a tool name.
+ */
+export function asRegistryAskHandler(bridge: ServePermissionBridge): PermissionAskHandler {
+  return async (req) => {
+    const reason =
+      req.policyNote !== undefined ? `${req.reason} ${req.policyNote}`.trim() : req.reason;
+    const decision = await bridge.onPermissionAsk({
+      tool: req.toolName,
+      category: req.categories.join(',') || 'other',
+      reason,
+      ...(req.claims && req.claims.length > 0
+        ? { inputPreview: req.claims.map((c) => c.summary).join(' · ') }
+        : {}),
+    });
+    return decision === 'allow';
+  };
 }

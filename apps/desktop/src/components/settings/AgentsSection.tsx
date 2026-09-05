@@ -11,6 +11,7 @@ import {
 } from "../../desktopPrefs";
 import type { DesktopConfig } from "../../types";
 import { KrakenModelSelect } from "../KrakenModelSelect";
+import { PermissionsSection } from "../PermissionsSection";
 import { SettingHelp } from "../SettingHelp";
 import {
   BusyDot,
@@ -334,6 +335,8 @@ export function AgentsSection({
           />
         </SettingsRow>
       </SettingsCard>
+
+      <PermissionsSection prefs={prefs} onPrefsChange={onPrefsChange} />
     </>
   );
 }

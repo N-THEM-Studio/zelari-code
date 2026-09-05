@@ -14,6 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_dialog::DialogExt;
 
 mod harness_sidecar;
 use harness_sidecar::HarnessSidecar;
@@ -2902,9 +2903,66 @@ fn run_sidecar_turn(
         input,
         cancel,
         &mut |value| {
+            // Ask-bridge: a permission.request from the sidecar becomes a
+            // native Yes/No dialog; the answer goes back as
+            // permission.respond. Everything still rides agent-event too.
+            if value.get("type").and_then(|t| t.as_str()) == Some("permission.request") {
+                forward_permission_request(app, sidecar, value);
+            }
             let _ = app.emit("agent-event", enveloped(value, envelope));
         },
     )
+}
+
+/// Ask-bridge forwarding: show the approval request (native dialog) and
+/// answer over the sidecar transport. Dismiss / close / error ⇒ deny —
+/// the bridge can never silently allow (deny-on-timeout is CLI-side).
+fn forward_permission_request(
+    app: &AppHandle,
+    sidecar: &Arc<HarnessSidecar>,
+    value: &serde_json::Value,
+) {
+    let request_id = value
+        .get("requestId")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    if request_id.is_empty() {
+        return; // Malformed request: CLI-side deny-timeout stays authoritative.
+    }
+    let tool = value
+        .get("tool")
+        .and_then(|v| v.as_str())
+        .unwrap_or("tool")
+        .to_string();
+    let category = value
+        .get("category")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let preview = value
+        .get("inputPreview")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let app = app.clone();
+    let sidecar = Arc::clone(sidecar);
+    thread::spawn(move || {
+        // Native dialog OFF the reader thread so stdout keeps flowing.
+        let message = format!(
+            "Tool: {}\nCategory: {}\n\n{}Allow this action?",
+            tool,
+            if category.is_empty() { "-" } else { category.as_str() },
+            if preview.is_empty() {
+                String::new()
+            } else {
+                format!("{preview}\n\n")
+            }
+        );
+        let allowed = app.dialog().blocking_ask("Zelari — approval required", message);
+        let decision = if allowed { "allow" } else { "deny" };
+        sidecar.send_permission_respond(&request_id, decision);
+    });
 }
 
 

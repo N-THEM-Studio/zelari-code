@@ -68,7 +68,12 @@ import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { setActiveProofPersistenceSurface } from '../kraken/completionProofPersist.js';
 import { checkStrictPolicyLoad } from '../headless/policyGate.js';
 import { activePolicyLoadMode, setActivePolicyLoadSurface } from '../safety/policyLoadMode.js';
-import { applyTurnPermissionPreset } from './permissionBridge.js';
+import {
+  applyTurnPermissionPreset,
+  asRegistryAskHandler,
+  createServePermissionBridge,
+  servePermissionRespond,
+} from './permissionBridge.js';
 import { sweepOrphanSpineLocks } from './spineLockSweep.js';
 
 export interface HarnessServerIo {
@@ -181,7 +186,9 @@ export function resolveTurnLspProvider(
  * (kraken / council / zelari / graph / gauntlet), with the session
  * workspaceRoot threaded as `opts.cwd`.
  */
-export function createCliRunTurn(): RunTurnFn {
+export function createCliRunTurn(
+  onPermissionAsk?: ReturnType<typeof asRegistryAskHandler>,
+): RunTurnFn {
   let streamPromise: Promise<{ provider: string; model: string; stream: unknown }> | null = null;
   const ensureStream = () => {
     if (!streamPromise) {
@@ -207,6 +214,11 @@ export function createCliRunTurn(): RunTurnFn {
   return async (input, deps) => {
     const { provider, model, stream } = await ensureStream();
     const opts = bindHarnessTurnOptions(input, deps.session.workspaceRoot);
+    // Serve ask-bridge: when the host registered a bridge, "ask" rules
+    // become interactive (permission.request over NDJSON, deny-on-timeout)
+    // instead of the fail-closed typedErr. runOneTurn threads this into
+    // the tool registry.
+    if (onPermissionAsk) opts.onPermissionAsk = onPermissionAsk;
     // Per-turn permission preset from Desktop Settings. Allowlisted inside
     // the bridge — unknown values keep the sidecar's current preset (no
     // arbitrary env injection over the wire).
@@ -264,15 +276,37 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
     write(JSON.stringify(envelope));
   };
 
+  // Ask-bridge: policy "ask" rules surface as permission.request events on
+  // this transport and settle via the permission.respond method below.
+  // Deny-on-timeout (120s) is enforced inside the bridge — an unanswered
+  // request can never allow.
+  const permissionBridge = createServePermissionBridge(write);
+
   const dispatch = async (req: RequestEnvelope): Promise<ResponseEnvelope> => {
     if (typeof req.method !== 'string') {
       return { id: req.id ?? null, ok: false, error: { code: 'bad_request', message: 'missing method' } };
     }
     const params = req.params ?? {};
     switch (req.method) {
+      case 'permission.respond': {
+        // Host answer to a permission.request. Shape errors come back as
+        // accepted:false + reason; unknown/late ids are an idempotent
+        // accepted:false no-op (never an error — the deny-timeout already
+        // settled the turn).
+        return {
+          id: req.id ?? null,
+          ok: true,
+          result: servePermissionRespond(permissionBridge, params),
+        };
+      }
       case 'session.create': {
         const root = typeof params.workspaceRoot === 'string' ? params.workspaceRoot : process.cwd();
-        const session = server.createSession({ workspaceRoot: root, runTurn: options.runTurn ?? createCliRunTurn() });
+        // asRegistryAskHandler projects the registry ask payload onto the
+        // wire payload (tool/categories/claims → dialog preview).
+        const session = server.createSession({
+          workspaceRoot: root,
+          runTurn: options.runTurn ?? createCliRunTurn(asRegistryAskHandler(permissionBridge)),
+        });
         return { id: req.id ?? null, ok: true, result: { sessionId: session.id, workspaceRoot: session.workspaceRoot } };
       }
       case 'run.turn': {

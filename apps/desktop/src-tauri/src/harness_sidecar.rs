@@ -622,6 +622,34 @@ impl HarnessSidecar {
     // Request plumbing
     // ------------------------------------------------------------------
 
+    /// Ask-bridge (permission.respond): fire-and-forget write that mirrors
+    /// write_request's locking (proc → stdin) WITHOUT registering pending —
+    /// the CLI side treats the ack as advisory, and a dead sidecar simply
+    /// drops it (deny-on-timeout is enforced CLI-side, never here).
+    pub(crate) fn send_permission_respond(&self, request_id: &str, decision: &str) {
+        let proc = match self
+            .proc
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .map(Arc::clone)
+        {
+            Some(p) => p,
+            None => return,
+        };
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let line = json!({
+            "id": id,
+            "method": "permission.respond",
+            "params": { "requestId": request_id, "decision": decision }
+        })
+        .to_string();
+        let mut stdin_guard = proc.stdin.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(stdin) = stdin_guard.as_mut() {
+            let _ = writeln!(stdin, "{line}").and_then(|_| stdin.flush());
+        }
+    }
+
     fn write_request(&self, method: &str, params: Value) -> Result<InFlight, HarnessError> {
         let proc = self
             .proc

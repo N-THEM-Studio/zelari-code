@@ -296,6 +296,10 @@ export async function runOneTurn(
         ...(ev.type === 'task_update' ? { task: ev.task } : { tasks: ev.tasks }),
       });
     },
+    // Serve/Desktop ask-bridge: an injected handler turns "ask" rules into
+    // an interactive approval (permission.request over NDJSON) instead of
+    // the fail-closed typedErr. Absent handler ⇒ unchanged fail-closed.
+    ...(opts.onPermissionAsk ? { onPermissionAsk: opts.onPermissionAsk } : {}),
     permissionPolicy: defaultPermissionPolicy(),
     ...(nativeMemory ? { memoryService: nativeMemory } : {}),
     memoryAutoWrite,

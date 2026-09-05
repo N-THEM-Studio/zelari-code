@@ -25,6 +25,7 @@ import type { AgentMessage, AgentImage } from '@zelari/core/harness';import { re
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { SessionTodoStatus } from './sessionTodos.js';
+import type { PermissionAskHandler } from './safety/toolPermissions.js';
 
 /** Dispatch mode for headless (mirrors TUI shift+tab modes). */
 export type HeadlessMode = ChatMode; // 'kraken' | 'council' | 'zelari'
@@ -32,6 +33,14 @@ export type HeadlessMode = ChatMode; // 'kraken' | 'council' | 'zelari'
 export interface HeadlessOptions {
   /** The user prompt. */
   task: string;
+  /**
+   * Interactive permission handler (serve ask-bridge). When present,
+   * policy "ask" rules consult it instead of failing closed; the serve
+   * host bridges it to permission.request/respond over NDJSON with
+   * deny-on-timeout. Never parsed from CLI flags or the wire — hosts
+   * inject it in-process.
+   */
+  onPermissionAsk?: PermissionAskHandler;
   /** Output format. 'json' = one NDJSON object per event, 'plain' = streamed text. */
   output: 'json' | 'plain';
   /**
