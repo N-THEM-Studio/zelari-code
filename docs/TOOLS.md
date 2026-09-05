@@ -1,242 +1,279 @@
-# Zelari Code — Tool & Skill Map (≥ 1.34)
+# Zelari Code - Tool & Skill Map (>= 1.34)
 
-Mappa di tool, skill e sorgenti di estensione. Allineata al registry CLI
-(`src/cli/toolRegistry.ts`) e agli stub workspace.
+Map of tools, skills and extension sources. Aligned with the CLI registry
+(`src/cli/toolRegistry.ts`) and the workspace stubs.
 
-Prodotto: [Anathema Studio](https://anathema-studio.com/) · CLI Apache-2.0.
+Product: [Anathema Studio](https://anathema-studio.com/) - CLI Apache-2.0.
 
-## Tool builtin (harness) — disponibili ovunque
+## Built-in (harness) tools - available everywhere
 
-| Tool | Permessi | Note |
+| Tool | Permissions | Notes |
 |------|----------|------|
-| `read_file` / `write_file` / `edit_file` | read/write | sandbox sul project root |
-| `bash` | execute | shell blocklist; Git Bash su Windows |
-| `exec_process` | execute | P0.C2: esecuzione strutturata **senza shell** — spawn diretto di `program`+`args[]`; cwd sandboxed al workspace, timeout, stdin chiuso; ritorna `{exitCode, stdout, stderr, durationMs}` e registra `program+argv+exitCode` nell'audit |
-| `grep_content` | read | regex ricorsiva con include/exclude glob |
-| `list_files` | read | listing ricorsivo con depth |
+| `read_file` / `write_file` / `edit_file` | read/write | sandboxed on the project root |
+| `bash` | execute | shell blocklist; Git Bash on Windows |
+| `exec_process` | execute | P0.C2: structured execution **without a shell** - direct spawn of `program`+`args[]`; cwd sandboxed to the workspace, timeout, closed stdin; returns `{exitCode, stdout, stderr, durationMs}` and records `program+argv+exitCode` in the audit |
+| `grep_content` | read | recursive regex with include/exclude globs |
+| `list_files` | read | recursive listing with depth |
 | `show_diff` / `apply_diff` | read/write | diff preview + patch |
-| `fetch_url` | network | http(s) only, HTML→testo, timeout + char cap |
-| `web_search` | network | DuckDuckGo HTML; `TAVILY_API_KEY` per Tavily |
-| `task` | read / write (`general`) | tentacolo isolato: `explore` (RO), `general` (write bounded), `verify`; no ricorsione |
-| `ask_user` | — | una domanda strutturata (scelte) quando un fatto manca |
+| `fetch_url` | network | http(s) only, HTML->text, timeout + char cap |
+| `web_search` | network | DuckDuckGo HTML; `TAVILY_API_KEY` for Tavily |
+| `task` | read / write (`general`) | isolated tentacle: `explore` (RO), `general` (bounded write), `verify`; no recursion |
+| `ask_user` | - | one structured question (choices) when a fact is missing |
 | `update_world_hypothesis` | write | `.zelari/world/hypothesis.md` (Schema-style notes) |
 | `set_world_checks` | write | `.zelari/world/checks.json` |
-| `run_backtest` | execute | certifica i check; non claim-done se red |
-| `record_world_observation` | write | timeline append-only |
+| `run_backtest` | execute | certifies the checks; no claim-done while red |
+| `record_world_observation` | write | append-only timeline |
 
 World-model tools: kill switch `ZELARI_SCHEMA_LOOP=0`. Skill: `schema-loop`.
 
-**Sandbox P0.D — symlink-safe:** ogni path arg dei tool filesystem passa dal
-gate centralizzato `resolveSandboxedPath` (`src/cli/safety/sandboxPath.ts`),
-ora a due livelli: normalizzazione testuale (`..`, prefissi) **+ realpath del
-più profondo antenato esistente** rispetto al root reale. Link/junction che
-risolvono fuori dal workspace (inclusi chain `a→b→fuori` e cross-drive su
-Windows) sono rifiutati con `SandboxViolationError`; i link interni restano
-validi e il confronto ignora il case solo su win32/darwin. Risoluzione e
-scrittura sono adiacenti nel wrap del registry («garanzia una volta sola»);
-la ri-verifica anti-TOCTOU è esportata come `verifyContainment()`.
+**P0.D sandbox - symlink-safe:** every path argument of the filesystem tools
+goes through the centralized gate `resolveSandboxedPath`
+(`src/cli/safety/sandboxPath.ts`), now two-tier: textual normalization (`..`,
+prefixes) **+ realpath of the deepest existing ancestor** against the real
+root. Links/junctions resolving outside the workspace (including `a->b->out`
+chains and cross-drive links on Windows) are rejected with
+`SandboxViolationError`; internal links stay valid and the comparison ignores
+case only on win32/darwin. Resolution and write are adjacent in the registry
+wrap (guaranteed once); the anti-TOCTOU re-check is exported as
+`verifyContainment()`.
 
-## Capability avanzate (opt-in)
+## Advanced capabilities (opt-in)
 
-| Tool | Permessi | Prereq | Note |
+| Tool | Permissions | Prereq | Notes |
 |------|----------|--------|------|
-| `lsp_definition` / `lsp_references` / `lsp_hover` / `lsp_symbols` / `lsp_rename` | read / write (`rename`) | language server sul PATH | kill switch `ZELARI_LSP=0` |
-| `ast_outline` / `ast_find_symbol` | read | nessuno (TS Compiler API) | `ZELARI_AST=0` |
+| `lsp_definition` / `lsp_references` / `lsp_hover` / `lsp_symbols` / `lsp_rename` | read / write (`rename`) | language server on PATH | kill switch `ZELARI_LSP=0` |
+| `ast_outline` / `ast_find_symbol` | read | none (TS Compiler API) | `ZELARI_AST=0` |
 | `semantic_search` | read | embeddings on first use; `/index` | `ZELARI_SEMANTIC=0` |
-| `browser_check` | sandboxed network | Playwright + chromium | `ZELARI_BROWSER=0`. Actions: `click` / `fill` / `wait` / `goto` / **`evaluate`** / **`press`** / **`waitForText`**. Prefer DOM asserts over `window.*` (ES modules hide symbols). No selector/text/evaluate → result `smokeStrength: "weak"`. |
+| `browser_check` | sandboxed network | Playwright + chromium | `ZELARI_BROWSER=0`. Actions: `click` / `fill` / `wait` / `goto` / **`evaluate`** / **`press`** / **`waitForText`**. Prefer DOM asserts over `window.*` (ES modules hide symbols). No selector/text/evaluate -> result `smokeStrength: "weak"`. |
 
-**Diagnostics loop** (non un tool separato): dopo `write_file` / `edit_file` / `apply_diff` l’harness può lanciare `eslint`/`ruff` e appendere errori al result. `ZELARI_DIAGNOSTICS=0`.
+**Diagnostics loop** (not a separate tool): after `write_file` / `edit_file` /
+`apply_diff` the harness can run `eslint`/`ruff` and append errors to the
+result. `ZELARI_DIAGNOSTICS=0`.
 
 ## SSH (deploy / monitor)
 
-| Tool | Note |
+| Tool | Notes |
 |------|------|
-| `ssh_status` | Health check su target configurato |
-| `ssh_run` | Comando remoto **allowlist-only** |
+| `ssh_status` | Health check on a configured target |
+| `ssh_run` | Remote command **allowlist-only** |
 
-Config: `~/.zelari-code/ssh-targets.json` (+ secrets separati). Kill switch: `ZELARI_SSH=0`.  
-Desktop: Settings → Connections.
+Config: `~/.zelari-code/ssh-targets.json` (+ separate secrets). Kill switch:
+`ZELARI_SSH=0`.
+Desktop: Settings -> Connections.
 
 ## Workspace tools (`.zelari/`)
 
-Usati soprattutto dal **council** (sempre registrati lì). Agente singolo: su skill `requiredTools` o quando esiste un plan.
+Used mostly by the **council** (always registered there). Single agent: on
+skill `requiredTools` or when a plan exists.
 
-| Tool | Note |
+| Tool | Notes |
 |------|------|
-| **`createPlan`** | Batch preferito: fasi + task + milestone in **una** call |
-| `createPhase` / `createTask` / `updateTask` / `createMilestone` | Itemizzati (legacy / partial) |
-| `createNfrSpec` | Spec NFR (motion/perf/a11y) quando serve |
-| `createDocument` / `searchDocuments` / `linkDocuments` / `getDocumentBacklinks` | Knowledge vault progetto |
-| `addIdea` | Ideazione |
+| **`createPlan`** | Preferred batch: phases + tasks + milestones in **one** call |
+| `createPhase` / `createTask` / `updateTask` / `createMilestone` | Itemized (legacy / partial) |
+| `createNfrSpec` | NFR spec (motion/perf/a11y) when needed |
+| `createDocument` / `searchDocuments` / `linkDocuments` / `getDocumentBacklinks` | Project knowledge vault |
+| `addIdea` | Ideation |
 
-Alias: `searchRAG` → `searchDocuments` (via registry “Did you mean”).
+Alias: `searchRAG` -> `searchDocuments` (via registry "Did you mean").
 
-## Memoria cognitiva nativa
+## Native cognitive memory
 
-La memoria non è un tool LLM né un server MCP interno: AgentHarness, Council,
-Kraken e missioni chiamano direttamente `MemoryService`. Con
-`ZELARI_MEMORY_V2=1`, la CLI usa SQLite in un worker e condivide recall e
-scritture tra tentacoli e sessioni. `/memory` espone ricerca, provenienza,
-relazioni, storia, retraction, consolidamento, doctor ed export. Vedi
+Memory is neither an LLM tool nor an internal MCP server: AgentHarness,
+Council, Kraken and missions call `MemoryService` directly. With
+`ZELARI_MEMORY_V2=1`, the CLI uses SQLite in a worker and shares recall and
+writes across tentacles and sessions. `/memory` exposes search, provenance,
+relations, history, retraction, consolidation, doctor and export. See
 [`MEMORY.md`](./MEMORY.md).
 
-Il recall semantico resta opzionale (`ZELARI_MEMORY_SEMANTIC=1`) e degrada a
-FTS; `/memory index` ricostruisce l'indice versionato. Il server esterno
-`--memory-mcp` richiede folder trust e `ZELARI_MEMORY_MCP=1`, mentre le
-integrazioni native e il tab Memory di Desktop continuano a usare direttamente
-`MemoryService`.
+Semantic recall stays optional (`ZELARI_MEMORY_SEMANTIC=1`) and degrades to
+FTS; `/memory index` rebuilds the versioned index. The external server
+`--memory-mcp` requires folder trust and `ZELARI_MEMORY_MCP=1`, while native
+integrations and the Desktop Memory tab keep using `MemoryService` directly.
 
 
 ### Workspace plan tasks (ADR-0018, v1.43.0)
 
-Store durevole dei task di progetto in `.zelari/plan.json` (envelope `schemaVersion`/`counter`/`tasks`), condiviso tra agente singolo, council e Desktop Live Tasks. Distinti dai session todo (`todo_write`/`todo_read`, volatili per sessione).
+Durable store of project tasks in `.zelari/plan.json` (`schemaVersion`/
+`counter`/`tasks` envelope), shared across single agent, council and Desktop
+Live Tasks. Distinct from session todos (`todo_write`/`todo_read`,
+per-session volatile).
 
-| Tool | Perm | Note |
+| Tool | Perm | Notes |
 |------|------|------|
-| **`task_create`** | write | Crea task `pending` con id `t<N>` sequenziale; `title`, `priority?`, `phaseId?`, `notes?` |
-| **`task_update`** | write | Aggiorna per `id`: `status?` (`pending|in_progress|completed|cancelled|blocked`), `title?`, `priority?`, `phaseId?`, `notes?`, `appendNote?`. Errore `PLAN_TASK_NOT_FOUND` su id assente. Accetta anche id council |
-| **`task_list`** | read | Snapshot filtrabile (`status?`, `phaseId?`) + conteggio done/total. Include task council e `t<N>` |
+| **`task_create`** | write | Creates a `pending` task with sequential id `t<N>`; `title`, `priority?`, `phaseId?`, `notes?` |
+| **`task_update`** | write | Update by `id`: `status?` (`pending|in_progress|completed|cancelled|blocked`), `title?`, `priority?`, `phaseId?`, `notes?`, `appendNote?`. `PLAN_TASK_NOT_FOUND` error on missing id. Also accepts council ids |
+| **`task_list`** | read | Filterable snapshot (`status?`, `phaseId?`) + done/total count. Includes council tasks and `t<N>` |
 
-Coesistenza col council: `done` viene normalizzato in lettura a `completed` (e il writer council accetta entrambi in input); gli id `t<N>` non collidono con gli id `<phaseId>-<slug>-<N>`; i campi root estranei al contratto (`phases`, `milestones`, metadati) sono preservati in pass-through; write atomica tmp+rename con backup `plan.json.bak`.
+Coexistence with the council: `done` is normalized on read to `completed`
+(and the council writer accepts both on input); `t<N>` ids do not collide with
+`<phaseId>-<slug>-<N>` ids; root fields outside the contract (`phases`,
+`milestones`, metadata) are preserved in pass-through; atomic tmp+rename write
+with `plan.json.bak` backup.
 
-Registrazione: profilo `full` e `planMode` (mai readOnly/explore/verify/general). Hardening futuro: lock file cross-process.
+Registration: `full` and `planMode` profiles (never readOnly/explore/verify/
+general). Future hardening: cross-process lock file.
 
 ## Plan phase vs build phase
 
-Ortogonale a mode `kraken` | `council` | `zelari` (`/plan`, `/build`, `--phase`; `agent` = alias).
+Orthogonal to mode `kraken` | `council` | `zelari` (`/plan`, `/build`,
+`--phase`; `agent` = alias).
 
-| Phase | Comportamento registry |
+| Phase | Registry behavior |
 |-------|------------------------|
-| **plan** | Bloccati: `write_file`, `edit_file`, `apply_diff`, `bash` (+ spesso `task`). Disponibile `inspect_command` (v0.10.0, ispettore read-only allowlistato). Workspace plan/docs tools **consentiti** |
-| **build** | Tool completi (sandbox + blocklist restano) |
+| **plan** | Blocked: `write_file`, `edit_file`, `apply_diff`, `bash` (and often `task`). `inspect_command` available (v0.10.0, read-only allowlisted inspector). Workspace plan/docs tools **allowed** |
+| **build** | Full tools (sandbox + blocklist remain) |
 
 ## inspect_command (v0.10.0)
 
-Ispettore di comandi **read-only, allowlistato, senza shell** — registrato esattamente dove `bash` non c'è: sessioni `plan`, sub-agent read-only ed `explore` (full/verify mantengono `bash`).
+**Read-only, allowlisted, shell-less** command inspector - registered exactly
+where `bash` is absent: `plan` sessions, read-only sub-agents and `explore`
+(full/verify keep `bash`).
 
-- **API a menu, non pseudo-shell**: input = discriminated union su `operation` — `git_status`, `git_log` (`limit`, `oneline`), `git_diff` (`staged`, `path`), `git_show` (`ref`), `git_branch_current`, `git_ls_files`, `typecheck` (`project`), `node_version`, `npm_ls`, `npm_outdated`, `npm_view` (`package`).
-- Il tool **costruisce argv internamente** e usa `spawn(..., { shell: false })`: niente tokenizer, metacaratteri o injection da quoting per costruzione. Flag forzati su `git diff/show`: `--no-ext-diff --no-textconv`.
-- `inspectionClass` in ogni risultato: `git-inspection` | `project-code-execution` (typecheck esegue la toolchain del progetto) | `env-info`.
-- **typecheck (S3.5 artifact safety)**: `tsc --noEmit` con `--tsBuildInfoFile` rediretto in `<tmp>/zelari-inspect/<hash>` (il redirect prevale sul tsconfig, funziona anche su progetti `composite`/`incremental`), guard pre/post (`git status --porcelain` + scan `**/*.tsbuildinfo`): qualsiasi delta → `status: "degraded"` + `artifactsWritten` + cleanup. Rifiuto compiler-level su shape non supportate → `status: "unsupported_project_shape"`, mai finto vuoto.
-- Output cap 8 KB, timeout 85 s interni / 90 s tool-level.
-- Windows: `typecheck` lancia `node <root>/node_modules/typescript/bin/tsc` (loud `TYPESCRIPT_UNAVAILABLE` se assente); `npm_*` usano `npm-cli.js` via node.
-- Kill-switch: `ZELARI_INSPECT_COMMAND=0`.
+- **Menu API, not a pseudo-shell**: input = discriminated union on
+  `operation` - `git_status`, `git_log` (`limit`, `oneline`), `git_diff`
+  (`staged`, `path`), `git_show` (`ref`), `git_branch_current`,
+  `git_ls_files`, `typecheck` (`project`), `node_version`, `npm_ls`,
+  `npm_outdated`, `npm_view` (`package`).
+- The tool **builds argv internally** and uses `spawn(..., { shell: false })`:
+  no tokenizer, metacharacters or quoting injection by construction. Forced
+  flags on `git diff/show`: `--no-ext-diff --no-textconv`.
+- `inspectionClass` in every result: `git-inspection` |
+  `project-code-execution` (typecheck runs the project toolchain) |
+  `env-info`.
+- **typecheck (S3.5 artifact safety)**: `tsc --noEmit` with
+  `--tsBuildInfoFile` redirected into `<tmp>/zelari-inspect/<hash>` (the
+  redirect wins over tsconfig, works on `composite`/`incremental` projects
+  too), pre/post guards (`git status --porcelain` + scan `**/*.tsbuildinfo`):
+  any delta -> `status: "degraded"` + `artifactsWritten` + cleanup.
+  Compiler-level rejection on unsupported shapes ->
+  `status: "unsupported_project_shape"`, never a fake empty.
+- Output cap 8 KB, timeout 85 s internal / 90 s tool-level.
+- Windows: `typecheck` launches `node <root>/node_modules/typescript/bin/tsc`
+  (loud `TYPESCRIPT_UNAVAILABLE` if missing); `npm_*` use `npm-cli.js` via
+  node.
+- Kill switch: `ZELARI_INSPECT_COMMAND=0`.
 ## Parallel tool batch (harness)
 
-Su un finish multi-`tool_call`, `AgentHarness` segmenta in emission order:
+On a multi-`tool_call` finish, `AgentHarness` segments in emission order:
 
-- run **contigue** di tool read-only → `Promise.all` (chunk `ZELARI_MAX_PARALLEL_TOOLS`, default 6)
-- tool con permission **write** o **execute** → **barrier** seriale
-- ordine risultati = ordine emission (no reorder)
+- **contiguous** runs of read-only tools -> `Promise.all` (chunk
+  `ZELARI_MAX_PARALLEL_TOOLS`, default 6)
+- tools with **write** or **execute** permission -> serial **barrier**
+- result order = emission order (no reorder)
 
 Opt-out: `ZELARI_PARALLEL_TOOLS=0`.
 
-## Tool MCP
+## MCP tools
 
-Config (formato Claude-Desktop-compatibile; il progetto vince sui conflitti):
+Config (Claude-Desktop-compatible format; the project wins on conflicts):
 
 - `<project>/.zelari/mcp.json`
 - `~/.zelari-code/mcp.json`
 
-I tool scoperti sono `mcp_<server>_<tool>`. Kill switch: `ZELARI_MCP=0`.  
-Hermetic / CI: `ZELARI_MCP_USER=0` ignora `~/.zelari-code/mcp.json` (solo project config).
+Discovered tools are `mcp_<server>_<tool>`. Kill switch: `ZELARI_MCP=0`.
+Hermetic / CI: `ZELARI_MCP_USER=0` ignores `~/.zelari-code/mcp.json`
+(project config only).
 
 ### Cua Driver (desktop computer-use)
 
-[Cua Driver](https://cua.ai/cua-driver) (trycua) pilota **app native** in background via MCP (click, type, snapshot finestra senza rubare focus). **Non** è vendored: installi il binary a parte.
+[Cua Driver](https://cua.ai/cua-driver) (trycua) drives **native apps** in the
+background via MCP (click, type, window snapshot without stealing focus). It
+is **not** vendored: you install the binary separately.
 
 ```bash
-# 1) Install binary — https://cua.ai/docs/how-to-guides/driver/install
+# 1) Install binary - https://cua.ai/docs/how-to-guides/driver/install
 # 2) Register MCP preset (user scope):
 zelari-code --set-mcp-preset cua
 
-# Unreal Engine 5.8+ editor (MCP Streamable HTTP su loopback):
-#   1) Editor: abilita il plugin "Model Context Protocol" (Experimental)
-#   2) Edit → Project Settings → Plugins → MCP Server (default 127.0.0.1:8000/mcp)
-#   3) Registra il preset (endpoint overridabile con UNREAL_MCP_URL):
+# Unreal Engine 5.8+ editor (MCP Streamable HTTP on loopback):
+#   1) Editor: enable the "Model Context Protocol" plugin (Experimental)
+#   2) Edit -> Project Settings -> Plugins -> MCP Server (default 127.0.0.1:8000/mcp)
+#   3) Register the preset (endpoint overridable via UNREAL_MCP_URL):
 zelari-code --set-mcp-preset unreal-mcp
 
-# Equivalente manuale:
+# Manual equivalent:
 # zelari-code --set-mcp --name cua-driver --command cua-driver --args '["mcp"]'
 ```
 
-| Env | Effetto |
+| Env | Effect |
 |-----|---------|
-| `ZELARI_CUA=0` | Non avvia server MCP Cua (`cua-driver`, `cua-*`) |
-| `ZELARI_CUA_COUNCIL=1` | Espone tool Cua anche ai turn council (default: **solo agent**, per non saturare i 6 membri) |
-| `ZELARI_MCP=0` | Disabilita tutto MCP (incluso Cua) |
+| `ZELARI_CUA=0` | Does not start Cua MCP servers (`cua-driver`, `cua-*`) |
+| `ZELARI_CUA_COUNCIL=1` | Exposes Cua tools to council turns too (default: **agent only**, to avoid saturating the 6 members) |
+| `ZELARI_MCP=0` | Disables all MCP (including Cua) |
 
-Preferisci `browser_check` (Playwright) per **web**; Cua per **desktop nativo**.  
-Skill: `computer-use-cua` (`/skill computer-use-cua`). Doctor: `zelari-code --doctor` segnala se `cua-driver` manca dal PATH.
+Prefer `browser_check` (Playwright) for the **web**; Cua for **native
+desktop**.
+Skill: `computer-use-cua` (`/skill computer-use-cua`). Doctor:
+`zelari-code --doctor` reports if `cua-driver` is missing from PATH.
 
-## Policy per-comando/per-path (`.zelari/policy.json`)
+## Per-command/per-path policy (`.zelari/policy.json`)
 
-Il policy engine (P0.A) carica `<root>/.zelari/policy.json` (progetto) e
-`~/.zelari/policy.json` (globale = floor utente) e interseca le regole con le
-decisioni di categoria: restrict-only, `deny > ask > allow`.
+The policy engine (P0.A) loads `<root>/.zelari/policy.json` (project) and
+`~/.zelari/policy.json` (global = user floor) and intersects the rules with
+category decisions: restrict-only, `deny > ask > allow`.
 
-Modalità di caricamento dei file (**P0.B**, `ZELARI_POLICY_LOAD_MODE`):
+Policy file loading modes (**P0.B**, `ZELARI_POLICY_LOAD_MODE`):
 
-| Modalità | File esistente ma rotto (JSON/schema) |
+| Mode | Existing but broken file (JSON/schema) |
 |----------|----------------------------------------|
-| `permissive` | warning + file ignorato, mai throw (comportamento v1; default TUI interattiva) |
-| `strict` | il run si **blocca**: exit code 2, ragione macchina `policy-load-failed` |
+| `permissive` | warning + file ignored, never throws (v1 behavior; interactive TUI default) |
+| `strict` | the run **blocks**: exit code 2, machine reason `policy-load-failed` |
 
-Default: `strict` per le run **headless**, in **CI** (`CI=1`) e per le
-missioni **zelari**; `permissive` nella TUI interattiva. L'env esplicito
-vince sempre sui default.
+Default: `strict` for **headless** runs, in **CI** (`CI=1`) and for **zelari**
+missions; `permissive` in the interactive TUI. The explicit env always wins
+over the defaults.
 
-| Env | Effetto |
+| Env | Effect |
 |-----|---------|
-| `ZELARI_POLICY_LOAD_MODE=strict\|permissive` | Forza la modalità di caricamento (valori non validi ignorati) |
-| `ZELARI_POLICY_PRECEDENCE=legacy` | Ripristina l'override v1 project-first (default: restrict-only) |
-| `ZELARI_POLICY=0` | Disattiva il policy engine (sempre empty set) |
+| `ZELARI_POLICY_LOAD_MODE=strict\|permissive` | Forces the loading mode (invalid values ignored) |
+| `ZELARI_POLICY_PRECEDENCE=legacy` | Restores the v1 project-first override (default: restrict-only) |
+| `ZELARI_POLICY=0` | Turns the policy engine off (always empty set) |
 
-In headless/missione un file invalido produce un evento NDJSON `error`
-(`code: "policy-load-failed"`), una nota nel session spine (evidence on-disk)
-ed exit 2 — errore runtime/harness: nessuna esecuzione senza regole valide.
-L'errore macchina è `PolicyLoadError` con `code: 'policy_invalid'`, path del
-file e, quando disponibile, la riga del parse error.
+In headless/mission mode an invalid file produces an NDJSON `error` event
+(`code: "policy-load-failed"`), a note in the session spine (on-disk evidence)
+and exit 2 - runtime/harness error: no execution without valid rules. The
+machine error is `PolicyLoadError` with `code: 'policy_invalid'`, the file
+path and, when available, the parse error line.
 
-**Resource claims (P0.C1, schema `version: 2`):** ogni agente può dichiarare
-una sezione opzionale `claims` con regole a risorsa — ad es.
+**Resource claims (P0.C1, `version: 2` schema):** every agent can declare an
+optional `claims` section with per-resource rules - e.g.
 `{ kind: 'path', operation: 'write', pattern: 'src/auth/**', effect: 'deny',
-reason?: string }` (kinds: `path` · `process` · `network` · `mcp` · `ssh`;
-`ui`/`agent` sono parse ma non ancora emessi). Ogni risorsa che una chiamata
-tocca viene valutata INDEPENDENTEMENTE sui layer global/project e le decisioni
-si intersecano restrict-only (`deny > ask > allow`): basta UNA risorsa negata
-a bloccare la chiamata intera (es. un `apply_diff` il cui diff tocca un path
-negato fallisce anche se l'argomento primario è permesso). I claim di sola
-lettura matchano solo regole `claims`; le regole v1 `shell`/`edit` continuano
-a valere identiche per write/process. I file `version: 1` restano validi senza
-migrazioni. Dettagli tabella tool→claims: `src/cli/safety/resourceClaims.ts`.
+reason?: string }` (kinds: `path` | `process` | `network` | `mcp` | `ssh`;
+`ui`/`agent` are parsed but not yet emitted). Every resource a call touches is
+evaluated INDEPENDENTLY on the global/project layers and the decisions
+intersect restrict-only (`deny > ask > allow`): ONE denied resource is enough
+to block the whole call (e.g. an `apply_diff` whose diff touches a denied path
+fails even if the primary argument is allowed). Read-only claims match only
+`claims` rules; v1 `shell`/`edit` rules keep applying unchanged to
+write/process. `version: 1` files stay valid without migration. Tool->claims
+table details: `src/cli/safety/resourceClaims.ts`.
 
 ### exec_process (P0.C2, v2.1)
 
-Esecuzione di processi **strutturata**: niente stringa di shell, niente
-interpolazione (pipe, glob, `$VAR`, quoting sono semplicemente argomenti).
+**Structured** process execution: no shell string, no interpolation (pipes,
+globs, `$VAR`, quoting are just arguments).
 
-| Arg | Tipo | Note |
+| Arg | Type | Notes |
 |-----|------|------|
-| `program` | string | binario sul PATH o percorso assoluto (spawn diretto, `shell:false`) |
-| `args`? | string[] | argv passato verbatim all'OS |
-| `cwd`? | string | risolto **dentro il sandbox** del workspace (`resolveSandboxedPath`) |
-| `timeoutMs`? | number | default 30s, max 600s; kill + errore esplicito |
+| `program` | string | binary on PATH or absolute path (direct spawn, `shell:false`) |
+| `args`? | string[] | argv passed verbatim to the OS |
+| `cwd`? | string | resolved **inside the workspace sandbox** (`resolveSandboxedPath`) |
+| `timeoutMs`? | number | default 30s, max 600s; kill + explicit error |
 
-Risultato: `{ exitCode, stdout, stderr, durationMs }`; stdin chiuso
-(non-interattivo), stream cap 1 MB. Ogni invocazione passa dal permission
-wrapper (`withPerm`) ed è valutata dalla tabella resource claims come claim
-`{ kind: 'process', executable, argv }`: la regola matcha su program
-(basename, estensione Windows esclusa) + prefisso argv.
+Result: `{ exitCode, stdout, stderr, durationMs }`; stdin closed
+(non-interactive), stream cap 1 MB. Every invocation goes through the
+permission wrapper (`withPerm`) and is evaluated by the resource claims table
+as a `{ kind: 'process', executable, argv }` claim: the rule matches on
+program (basename, Windows extension excluded) + argv prefix.
 
-Perché strutturato > shell grezza: ciò che la policy valuta (argv) È ciò che
-l'OS esegue; con `bash` invece la classificazione è best-effort — la tabella
-claims normalizza i wrapper comuni (`env FOO=x git push`, `command git push`,
-`exec git push`, `bash -lc 'git push'`, `cmd.exe /c git push`, spazi extra)
-perché un comando raw-shell punti al programma che realmente gira (non è un
-parser: ambiguità ⇒ resta l'originale).
+Why structured > raw shell: what the policy evaluates (argv) is what the OS
+executes; with `bash` instead the classification is best-effort - the claims
+table normalizes common wrappers (`env FOO=x git push`, `command git push`,
+`exec git push`, `bash -lc 'git push'`, `cmd.exe /c git push`, extra spaces)
+so that a raw-shell command points to the program that actually runs (it is
+not a parser: ambiguity ? keeps the original).
 
-Regola policy d'esempio (`.zelari/policy.json`, `version: 2`):
+Example policy rule (`.zelari/policy.json`, `version: 2`):
 
 ```json
 {
@@ -245,49 +282,49 @@ Regola policy d'esempio (`.zelari/policy.json`, `version: 2`):
     "general": {
       "claims": [
         { "kind": "process", "pattern": "npm publish*", "effect": "ask" },
-        { "kind": "process", "pattern": "git push*", "effect": "deny", "reason": "no push diretti" }
+        { "kind": "process", "pattern": "git push*", "effect": "deny", "reason": "no direct pushes" }
       ]
     }
   }
 }
 ```
 
-La stessa regola copre anche `bash "git push"` grazie alla normalizzazione.
+The same rule also covers `bash "git push"` thanks to the normalization.
 
 ## Folder trust (v1.32.0)
 
-Il progetto può auto-eseguire codice solo se la cartella è **fidata**. Il trust
-decide se vengono caricati MCP e lifecycle hook **project-scoped**
-(`<project>/.zelari/mcp.json`, `<project>/.zelari/hooks/`). La config
-user-global (`~/.zelari-code/…`) è **sempre** attiva.
+The project can auto-execute code only if the folder is **trusted**. Trust
+decides whether **project-scoped** MCP and lifecycle hooks are loaded
+(`<project>/.zelari/mcp.json`, `<project>/.zelari/hooks/`). The user-global
+config (`~/.zelari-code/.`) is **always** active.
 
-| Comando | Effetto |
+| Command | Effect |
 |---------|---------|
-| `/trust` | Mostra lo stato del trust per la cwd |
-| `/trust <path>` | Fida la cartella (default: cwd) |
-| `/trust remove <path>` | Revoca il trust |
-| `zelari-code --trust [path]` | Stessa operazione da CLI (headless/CI) |
+| `/trust` | Shows the trust status for the cwd |
+| `/trust <path>` | Trusts the folder (default: cwd) |
+| `/trust remove <path>` | Revokes trust |
+| `zelari-code --trust [path]` | Same operation from the CLI (headless/CI) |
 
 Persistence: `~/.zelari-code/trust.json`. Env override:
 
-| Env | Effetto |
+| Env | Effect |
 |-----|---------|
-| `ZELARI_FOLDER_TRUST=1` | Fida ogni cartella (CI / headless) |
-| `ZELARI_FOLDER_TRUST=<path>` | Fida esattamente quella cartella |
-| `ZELARI_FOLDER_TRUST=0` | Trust disabilitato (lockdown) |
+| `ZELARI_FOLDER_TRUST=1` | Trusts every folder (CI / headless) |
+| `ZELARI_FOLDER_TRUST=<path>` | Trusts exactly that folder |
+| `ZELARI_FOLDER_TRUST=0` | Trust disabled (lockdown) |
 
-Quando una cartella non è fidata, `.zelari/mcp.json` e `.zelari/hooks/`
-vengono **ignorati** con un warning (`[mcp] project … ignored — folder not
+When a folder is not trusted, `.zelari/mcp.json` and `.zelari/hooks/` are
+**ignored** with a warning (`[mcp] project . ignored - folder not
 trusted`).
 
 ## Lifecycle hooks (v1.32.0)
 
-Hook esterni (processo o HTTP) su eventi tool/sessione. **Fail-open**: un hook
-che crasha, va in timeout o risponde JSON invalido **non blocca mai** un tool —
-l’unico modo per bloccare è una decisione JSON esplicita.
+External hooks (process or HTTP) on tool/session events. **Fail-open**: a
+hook that crashes, times out or returns invalid JSON **never blocks** a tool -
+the only way to block is an explicit JSON decision.
 
 ```json
-// ~/.zelari-code/hooks/deny-rm.json  (o <progetto>/.zelari/hooks/…)
+// ~/.zelari-code/hooks/deny-rm.json  (or <project>/.zelari/hooks/.)
 {
   "name": "deny-rm",
   "match": { "tools": ["bash"], "events": ["PreToolUse"] },
@@ -296,33 +333,39 @@ l’unico modo per bloccare è una decisione JSON esplicita.
 }
 ```
 
-- `match.tools`: glob stile Claude (`*` = qualsiasi tool); `Bash` e `bash`
-  matchano entrambi `bash` (alias-aware: `Read`→`read_file`, `shell`→`bash`, …).
-- `command` **oppure** `url` (HTTP POST). Il payload JSON va su stdin / body;
-  la decisione arriva su stdout / body: `{ "decision": "allow" }` oppure
-  `{ "decision": "deny", "reason": "…" }`.
-- Eventi: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`.
-- Directory: `~/.zelari-code/hooks/` (global, sempre attive) +
-  `<progetto>/.zelari/hooks/` (solo se la cartella è fidata).
+- `match.tools`: Claude-style globs (`*` = any tool); `Bash` and `bash`
+  both match `bash` (alias-aware: `Read`->`read_file`, `shell`->`bash`, ...).
+- `command` **or** `url` (HTTP POST). The JSON payload goes to stdin / body;
+  the decision arrives on stdout / body: `{ "decision": "allow" }` or
+  `{ "decision": "deny", "reason": "..." }`.
+- Events: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`.
+- Directories: `~/.zelari-code/hooks/` (global, always active) +
+  `<project>/.zelari/hooks/` (only if the folder is trusted).
 
 ## inspect (v1.32.0)
 
-`zelari-code --inspect [--json]` — report unificato dell’ambiente progetto:
-versione, cwd, platform, phase/mode, config sources, skills, MCP (con stato
-trust), lifecycle hooks, plugins, AGENTS.md, trust. `--json` emette un report
-machine-readable con `schemaVersion` stabile per Desktop/script.
+`zelari-code --inspect [--json]` - unified report of the project environment:
+version, cwd, platform, phase/mode, config sources, skills, MCP (with trust
+state), lifecycle hooks, plugins, AGENTS.md, trust. `--json` emits a
+machine-readable report with a stable `schemaVersion` for Desktop/scripts.
 
-## Coerenza prompt ↔ esecuzione
+## Prompt <-> execution coherence
 
-1. **`harnessToolBridge`**: builtin harness nel catalogo `getAllTools()` con schemi dagli zod reali.
-2. **Filtro executable**: AVAILABLE TOOLS e schemi provider filtrati sul registry corrente.
-3. **Alias**: `Read`→`read_file`, `Glob`/`list_dir`→`list_files`, `searchRAG`→`searchDocuments`, `shell`→`bash`, …
+1. **`harnessToolBridge`**: harness built-ins in the `getAllTools()` catalog
+   with schemas from the real zod ones.
+2. **Executable filter**: AVAILABLE TOOLS and provider schemas filtered on
+   the current registry.
+3. **Aliases**: `Read`->`read_file`, `Glob`/`list_dir`->`list_files`,
+   `searchRAG`->`searchDocuments`, `shell`->`bash`, ...
 
 ## Skills
 
-- Catalogo: **26** skill builtin in `@zelari/core` (`systemPromptFragment` + `requiredTools`)
-- Extra rispetto al set originale: `schema-loop`, `computer-use-cua`, `qwen-mm-plugins-install-setup`
-- User skills: `SKILL.md` sotto `.zelari/skills/`, `.claude/skills/`, …
-- Invocazione: `/skill <id>`; master switch via config `enabledSkills` / `enabledTools`
+- Catalog: **26** built-in skills in `@zelari/core` (`systemPromptFragment` +
+  `requiredTools`)
+- Extra over the original set: `schema-loop`, `computer-use-cua`,
+  `qwen-mm-plugins-install-setup`
+- User skills: `SKILL.md` under `.zelari/skills/`, `.claude/skills/`, ...
+- Invocation: `/skill <id>`; master switch via config `enabledSkills` /
+  `enabledTools`
 
-Vedi anche [GUIDA.md](./GUIDA.md) e [README](../README.md).
+See also [GUIDA.md](./GUIDA.md) and [README](../README.md).

@@ -1,123 +1,192 @@
-# PRINCIPI.md — Principi primi di Zelari Code
+# PRINCIPI.md - First principles of Zelari Code
 
-> **Traduzione non normativa.** Il documento canonico è
-> [PRINCIPLES.md](../PRINCIPLES.md) (inglese): in caso di conflitto **vince il
-> canonico**. Questa traduzione è mantenuta per continuità storica.
-> Ratificato da sessione di governance il 2026-08-13
+> **Non-normative mirror.** The canonical document is
+> [PRINCIPLES.md](../PRINCIPLES.md) (English): on conflict **the canonical
+> one wins**. This mirror is kept for historical continuity.
+> Ratified by a governance session on 2026-08-13
 > ([ADR-0010](./decisions/0010-first-principles-manifesto.md)).
 
-## Metodo
+## Method
 
-Un candidato è un *principio primo* — non una convenzione — se supera tre test:
+A candidate is a *first principle* - not a convention - if it passes three
+tests:
 
-1. **Arbitra tradeoff** — quando due desideri confliggono, decide lui.
-2. **È stabile tra versioni** — 1.0 → 1.34 non l'ha cambiato.
-3. **Non è derivabile** — se discende da un principio più profondo, è una convenzione.
+1. **Arbitrates tradeoffs** - when two desires conflict, it decides.
+2. **Is stable across versions** - 1.0 -> 1.34 did not change it.
+3. **Is not derivable** - if it descends from a deeper principle, it is a convention.
 
-## I sei principi
+## The six principles
 
-### P1 · Verificabilità (Verifiability)
+### P1 - Verifiability
 
-**Enunciato.** Ogni asserzione dell'agente è verificata o dichiarata non verificata; il prodotto stesso si sottomette allo stesso standard: nessuna release non banale parte senza audit indipendente ([ADR-0007](./decisions/0007-pre-release-audit-workflow-gate.md)).
+**Statement.** Every agent assertion is verified or declared unverified; the
+product itself submits to the same standard: no non-trivial release ships
+without an independent audit
+([ADR-0007](./decisions/0007-pre-release-audit-workflow-gate.md)).
 
-**Perché è primo.** È il principio più profondo: *non fidarti di un'asserzione non verificata — inclusa la tua*. Ha generato l'evidence ladder (claimed→grep→tool→build), il lint di onestà sulle synthesis, la review di Minosse, il conformance reviewer letterale. Un audit esterno trovò 4 bug runtime che 759 test non vedevano (ADR-0007).
+**Why it is first.** It is the deepest principle: *do not trust an unverified
+assertion - including your own*. It generated the evidence ladder
+(claimed->grep->tool->build), the honesty lint on syntheses, the Minosse
+review, the literal conformance reviewer. An external audit found 4 runtime
+bugs that 759 tests did not see (ADR-0007).
 
-> **Invariante P1 · OBSERVATION INTEGRITY** ([ADR-0019](./decisions/0019-observation-integrity-p1-clause.md), v1.46)
+> **P1 invariant - OBSERVATION INTEGRITY** ([ADR-0019](./decisions/0019-observation-integrity-p1-clause.md), v1.46)
 > A negative conclusion requires a successful and sufficiently scoped observation.
 > EMPTY is evidence. DEGRADED is not evidence. ERROR is not evidence.
 > TRUNCATED is partial evidence only.
 >
-> *Non fidarti di un'asserzione non verificata* include i **falsi vuoti**: un risultato vuoto da un'osservazione degradata, mal scopingata o con backend assente è un'asserzione non verificata, non una prova di assenza.
+> *Do not trust an unverified assertion* includes **false empties**: an empty
+> result from a degraded, badly scoped or backend-less observation is an
+> unverified assertion, not proof of absence.
 
-> **Invariante P1 · PROPOSER/MEASURER SEPARATION** ([ADR-0036](./decisions/0036-evolution-engine-proposer-judge-separation.md))
-> Il motore che propone non è il motore che misura. Nessun artefatto può
-> promuovere se stesso. L'autorità di PASS resta ai gate deterministici (anchor
-> eval, tier ranking, completion policy); un giudizio LLM vale al massimo come
-> tier `claimed` — può proporre, non può mai promuovere.
+> **P1 invariant - PROPOSER/MEASURER SEPARATION** ([ADR-0036](./decisions/0036-evolution-engine-proposer-judge-separation.md))
+> The engine that proposes is not the engine that measures. No artifact can
+> promote itself. PASS authority stays with the deterministic gates (anchor
+> evals, tier ranking, completion policy); an LLM judgment counts at most as
+> tier `claimed` - it can propose, it can never promote.
 
-**Come è garantito.** Meccanismi deterministici (`honesty.ts`, tier ranking, microGate) + gate di processo (audit indipendente sulle release non banali). *Forte sul deterministico; il resto è mitigato, non garantito.*
+**How it is guaranteed.** Deterministic mechanisms (`honesty.ts`, tier
+ranking, microGate) + process gates (independent audit on non-trivial
+releases). *Strong on the deterministic; the rest is mitigated, not
+guaranteed.*
 
-**Come è garantito (observation integrity).** v1.46 (ADR-0019): status discriminati e sentinel nei tool di osservazione — `grep_content` (`SEARCH_EMPTY_SCOPE`, `DEPRECATED_INPUT`, `filesWalked`), ast/LSP (`file-not-found` con path guardato, `typescript-unavailable`, `read-error`), `inspect_command` (`degraded` + `artifactsWritten`, `unsupported_project_shape`) — più la regola epistemica nei prompt plan/kraken. EMPTY non viene mai fabbricato dal degradato.
+**How it is guaranteed (observation integrity).** v1.46 (ADR-0019):
+discriminated statuses and sentinels in the observation tools -
+`grep_content` (`SEARCH_EMPTY_SCOPE`, `DEPRECATED_INPUT`, `filesWalked`),
+ast/LSP (`file-not-found` with the path inspected, `typescript-unavailable`,
+`read-error`), `inspect_command` (`degraded` + `artifactsWritten`,
+`unsupported_project_shape`) - plus the epistemic rule in the plan/kraken
+prompts. EMPTY is never manufactured from DEGRADED.
 
-**Come è garantito (separazione proposer/giudice).** `JUDGE_PATHS` in `scripts/verify-principles.mjs` (hard in CI): il genoma evolutivo non può vivere nei, né essere importato dai, path del giudice — `ToolRegistry.invoke`, sandbox/blocklist/trust/permessi, honesty lint e tier ranking, anchor Tier-0, il runner del gate eval, il retention gate e il gate dei principi stesso (ADR-0036).
+**How it is guaranteed (proposer/judge separation).** `JUDGE_PATHS` in
+`scripts/verify-principles.mjs` (hard in CI): the evolutionary genome cannot
+live in, nor be imported from, the judge paths - `ToolRegistry.invoke`,
+sandbox/blocklist/trust/permissions, honesty lint and tier ranking, Tier-0
+anchors, the eval gate runner, the retention gate and the principles gate
+itself (ADR-0036).
 
-### P2 · Determinismo del controllo (Deterministic control)
+### P2 - Deterministic control
 
-**Enunciato.** Tutto ciò che governa sicurezza, permessi e verifiche è codice deterministico e testato — mai promesse nel prompt. Le promesse di sicurezza non eccedono ciò che il meccanismo garantisce.
+**Statement.** Everything governing security, permissions and verification is
+deterministic, tested code - never prompt promises. Security promises do not
+exceed what the mechanism guarantees.
 
-**Perché è primo.** Arbitra "sicurezza vs velocità": ha scelto il choke-point unico (`ToolRegistry.invoke`), l'ordine fisso phase → sandbox/blocklist → PreToolUse → execute → PostToolUse, il fail-open dichiarato (chip FAIL-OPEN), la detection della lingua senza LLM.
+**Why it is first.** It arbitrates "security vs speed": it chose the single
+choke-point (`ToolRegistry.invoke`), the fixed order
+phase -> sandbox/blocklist -> PreToolUse -> execute -> PostToolUse, the
+declared fail-open (FAIL-OPEN chip), LLM-less language detection.
 
-**Come è garantito.** Code-level: sandbox, shell blocklist, folder trust, lifecycle hooks, phase gate — tutti al choke-point unico, con test unitari dedicati. *Forte.*
+**How it is guaranteed.** Code-level: sandbox, shell blocklist, folder trust,
+lifecycle hooks, phase gate - all at the single choke-point, with dedicated
+unit tests. *Strong.*
 
-### P3 · Sovranità dell'utente (User sovereignty)
+### P3 - User sovereignty
 
-**Enunciato.** L'utente è l'autorità sugli **obiettivi** e sulle **letture ambigue** (conformance letterale al prompt); il sistema governa i **mezzi pericolosi**, con trasparenza totale. I due domini si spartiscono il controllo: obiettivi → utente, mezzi pericolosi → sistema, onere di trasparenza → sistema.
+**Statement.** The user is the authority on **goals** and on **ambiguous
+readings** (literal conformance to the prompt); the system governs the
+**dangerous means**, with total transparency. The two domains split control:
+goals -> user, dangerous means -> system, transparency burden -> system.
 
-**Perché è primo.** Arbitra "il sistema sa meglio" vs "l'utente decide": conformance persona, `/steer`, permission broker, `/trust`, conferme per azioni distruttive.
+**Why it is first.** It arbitrates "the system knows better" vs "the user
+decides": persona conformance, `/steer`, permission broker, `/trust`,
+confirmations for destructive actions.
 
-**Come è garantito.** Semi: gate deterministici sui mezzi pericolosi; prompt/conformance per la fedeltà agli obiettivi; trasparenza obbligatoria (messaggi azionabili, chip FAIL-OPEN).
+**How it is guaranteed.** Hybrid: deterministic gates on dangerous means;
+prompts/conformance for goal fidelity; mandatory transparency (actionable
+messages, FAIL-OPEN chip).
 
-### P4 · Runtime aperto e riusabile (Open, reusable runtime)
+### P4 - Open, reusable runtime
 
-**Enunciato.** L'intero monorepo è **Apache-2.0** ([ADR-0009](./decisions/0009-apache-2-0-license.md)); `@zelari/core` espone un'API pubblica stabile ([ADR-0004](./decisions/0004-public-api-stability-policy.md)) ed è provider-agnostico. Il valore proprietario sta nell'**esperienza in-session**, non nel lock-in.
+**Statement.** The whole monorepo is **Apache-2.0**
+([ADR-0009](./decisions/0009-apache-2-0-license.md)); `@zelari/core` exposes
+a stable public API
+([ADR-0004](./decisions/0004-public-api-stability-policy.md)) and is
+provider-agnostic. The proprietary value is the **in-session experience**,
+not lock-in.
 
-**Perché è primo.** Ha arbitrato "open vs controllato": vinto contro il dual-license (ADR-0008) e contro il deep-linking interno. La secrecy policy protegge l'esperienza (refusal del modello), non rivendica proprietà sul codice.
+**Why it is first.** It arbitrated "open vs controlled": won against
+dual-licensing (ADR-0008) and against internal deep-linking. The secrecy
+policy protects the experience (model refusal), it does not claim property
+over the code.
 
-**Come è garantito.** Publish pipeline (tag==version, OIDC Trusted Publishing), exports map, test di stabilità API. *Forte sul meccanico; l'esperienza è protetta solo da policy comportamentale.*
+**How it is guaranteed.** Publish pipeline (tag==version, OIDC Trusted
+Publishing), exports map, API stability tests. *Strong on the mechanical;
+the experience is protected only by behavioral policy.*
 
-### P5 · Leggerezza (Lightness)
+### P5 - Lightness
 
-**Enunciato.** Std-lib first nel **runtime core**; dipendenze pesanti ammesse solo nell'**interfaccia** (TUI Ink+React, Desktop Tauri), mai nel core. Zero utility pesanti (lodash, immer, …).
+**Statement.** Std-lib first in the **runtime core**; heavy dependencies
+allowed only in the **interface** (Ink+React TUI, Tauri Desktop), never in
+the core. Zero heavy utilities (lodash, immer, ...).
 
-**Perché è primo.** Ha arbitrato "produttività vs semplicità": il core gira con poche dipendenze audibili; React vive nella UI CLI, non nel core — coerente con questa formulazione.
+**Why it is first.** It arbitrated "productivity vs simplicity": the core
+runs with few auditable dependencies; React lives in the CLI UI, not in the
+core - consistent with this formulation.
 
-**Come è garantito.** Gate meccanico `scripts/verify-principles.mjs` (blacklist dipendenze pesanti + allowlist runtime del core) eseguito in CI su ogni PR (`.github/workflows/ci.yml`).
+**How it is guaranteed.** Mechanical gate `scripts/verify-principles.mjs`
+(heavy dependency blacklist + core runtime allowlist) run in CI on every PR
+(`.github/workflows/ci.yml`).
 
-### P6 · Orchestrazione giusta per il lavoro (Right-sized orchestration)
+### P6 - Right-sized orchestration
 
-**Enunciato.** La struttura multi-agente si sceglie per il lavoro, non per identità: kraken (single-agent con tentacoli), council (6 ruoli), zelari (missioni autonome) sono istanze dello stesso principio. Nessun default è sacro.
+**Statement.** The multi-agent structure is chosen for the job, not for
+identity: kraken (single-agent with tentacles), council (6 roles), zelari
+(autonomous missions) are instances of the same principle. No default is
+sacred.
 
-**Perché è primo.** Risolve la tensione identitaria "council-first vs kraken-first": il default kraken è una scelta coerente, non una violazione.
+**Why it is first.** It resolves the identity tension "council-first vs
+kraken-first": the kraken default is a coherent choice, not a violation.
 
-**Come è garantito.** Governance: ogni nuova modalità deve motivare costo/latenza rispetto al lavoro (es. `ZELARI_COUNCIL_TIER=lite`).
+**How it is guaranteed.** Governance: every new mode must justify
+cost/latency against the job (e.g. `ZELARI_COUNCIL_TIER=lite`).
 
-## Derivazioni (convenzioni, non principi)
+## Derivations (conventions, not principles)
 
-Derivano da P1+P2+P5; vanno rispettate, ma non sono prime:
+They derive from P1+P2+P5; they must be respected, but they are not first:
 
-| Convenzione | Deriva da |
+| Convention | Derives from |
 |---|---|
-| Zod per tutti i tool args | P2 (validazione deterministica) |
-| Un tool per file in `builtin/` | P1 (reviewabilità) |
-| Moduli ≤ ~300 LOC | P1 |
-| Commit atomici single-task | P1 |
-| Async-first | P5 (niente blocchi, niente framework inutili) |
-| Language policy (lingua dell'utente) | P3 |
-| Fail-open dichiarato + chip | P2 (non promettere enforcement che non c'è) |
+| Zod for all tool args | P2 (deterministic validation) |
+| One tool per file in `builtin/` | P1 (reviewability) |
+| Modules = ~300 LOC | P1 |
+| Atomic single-task commits | P1 |
+| Async-first | P5 (no blocking, no useless frameworks) |
+| Language policy (user's language) | P3 |
+| Declared fail-open + chip | P2 (do not promise enforcement that is not there) |
 | Evidence ladder, honesty lint, microGate | P1 |
 
-## Garanzia: cosa è garantito e cosa no
+## Guarantee: what is guaranteed and what is not
 
-| Principio | Garanzia attuale |
+| Principle | Current guarantee |
 |---|---|
-| P2 Determinismo del controllo | **Garantito** — code-level, testato |
-| P1 Verificabilità | **Forte sul deterministico** — l'audit pre-release resta processo |
-| P4 Runtime aperto | **Garantito sul meccanico** (CI publish) — l'esperienza è policy |
-| P3 Sovranità dell'utente | **Mitigata** — la fedeltà agli obiettivi è prompt, non meccanismo |
-| P5 Leggerezza | **Garantita** — verify-principles + CI su PR |
-| P6 Orchestrazione giusta | **Governance** — decisioni, non check |
+| P2 Deterministic control | **Guaranteed** - code-level, tested |
+| P1 Verifiability | **Strong on the deterministic** - the pre-release audit remains a process |
+| P4 Open runtime | **Guaranteed on the mechanical** (CI publish) - the experience is policy |
+| P3 User sovereignty | **Mitigated** - goal fidelity is prompt, not mechanism |
+| P5 Lightness | **Guaranteed** - verify-principles + CI on PRs |
+| P6 Right-sized orchestration | **Governance** - decisions, not checks |
 
-## Roadmap di garanzia
+## Guarantee roadmap
 
-1. ✅ `scripts/verify-principles.mjs` — check meccanici per P5 (blacklist + allowlist core), P4 (licenza), P2 (Zod per tool, choke-point hooks), separazione proposer/giudice (ADR-0036), e per le preferenze (1 tool/file, LOC).
-2. ✅ CI su `pull_request` — `.github/workflows/ci.yml`: typecheck + test + verify-principles come gate di merge.
-3. ⬜ P1 sulle release — automatizzare l'audit campionario stile ADR-0007 (previsto via dogfooding del loop evolutivo: PR + report di audit automatico, il gate umano resta).
+1. OK `scripts/verify-principles.mjs` - mechanical checks for P5 (blacklist +
+   core allowlist), P4 (license), P2 (Zod per tool, choke-point hooks),
+   proposer/judge separation (ADR-0036), and the preferences (1 tool/file,
+   LOC).
+2. OK CI on `pull_request` - `.github/workflows/ci.yml`: typecheck + tests +
+   verify-principles as the merge gate.
+3. OK P1 on releases - automate the sampling audit ADR-0007-style (planned
+   via dogfooding of the evolutionary loop: PR + automatic audit report, the
+   human gate stays).
 
-## Decisioni di questa ratifica
+## Decisions of this ratification
 
-1. Il principio identitario è **"l'orchestrazione giusta per il lavoro"** (P6): il default kraken non viola alcun principio.
-2. Licenza dell'intero prodotto: **MIT → Apache-2.0** (ADR-0009); secrecy policy riformulata "runtime aperto, esperienza protetta".
-3. **P5 è primo** con esenzione esplicita per l'interfaccia.
-4. **P3 a domini condivisi**: obiettivi all'utente, mezzi pericolosi al sistema, trasparenza obbligatoria.
-5. **P1 confermata come radice** dell'intero sistema di principi.
-6. (2026-09-04, ADR-0036) Il testo canonico è **inglese**; `docs/PRINCIPI.md` è traduzione non normativa.
+1. The identity principle is **"right-sized orchestration for the job"**
+   (P6): the kraken default violates no principle.
+2. License of the whole product: **MIT -> Apache-2.0** (ADR-0009); secrecy
+   policy reformulated as "open runtime, protected experience".
+3. **P5 is first** with an explicit exemption for the interface.
+4. **P3 with shared domains**: goals to the user, dangerous means to the
+   system, mandatory transparency.
+5. **P1 confirmed as the root** of the whole principles system.
+6. (2026-09-04, ADR-0036) The canonical text is **English**;
+   `docs/PRINCIPI.md` is a non-normative mirror.

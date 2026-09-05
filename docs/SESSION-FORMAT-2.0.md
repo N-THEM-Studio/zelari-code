@@ -1,19 +1,22 @@
-# Session format 2.0 — spine, verifiche, resume (alpha)
+# Session format 2.0 - spine, verification, resume (alpha)
 
-> Versione riferimento: `2.0.0-alpha.0` · ADR-0016 (ratificato), ADR-0021/0022/0023.
-> Questo documento descrive il formato su disco e i contratti `@zelari/core/session`,
-> `@zelari/core/verification`, `@zelari/core/mission` e la configurazione del verifier.
+> Reference version: `2.0.0-alpha.0` - ADR-0016 (ratified), ADR-0021/0022/0023.
+> This document describes the on-disk format and the `@zelari/core/session`,
+> `@zelari/core/verification`, `@zelari/core/mission` contracts and the
+> verifier configuration.
 
-## 1. Log di sessione (spine)
+## 1. Session log (spine)
 
-Una sessione è una directory `.zelari/sessions/<sessionId>/` contenente:
+A session is a directory `.zelari/sessions/<sessionId>/` containing:
 
-- `events.jsonl` — append-only, una riga JSON per evento (l'unica fonte di verità);
-- `writer.lock` — lock di ownership del writer attivo (creato con `flag:'wx'`).
+- `events.jsonl` - append-only, one JSON line per event (the single source of
+  truth);
+- `writer.lock` - ownership lock of the active writer (created with
+  `flag:'wx'`).
 
-Override location: env `ZELARI_SESSIONS_DIR` (test/CI/Desktop multi-cwd). Il
-sidecar legacy `~/.tmp/zelari-code/sessions/` resta leggibile ma non viene
-più scritto dalla spine.
+Location override: env `ZELARI_SESSIONS_DIR` (tests/CI/Desktop multi-cwd).
+The legacy sidecar `~/.tmp/zelari-code/sessions/` stays readable but is no
+longer written by the spine.
 
 ### Envelope
 
@@ -23,32 +26,35 @@ più scritto dalla spine.
  "data":{"callId":"c1","tool":"bash","ok":true,"output":"..."}}
 ```
 
-- `seq`: monotona 1..N, senza buchi; assegnata dal writer DOPO la validazione Zod;
-- `schemaVersion`: oggi `1`; le migrazioni sono meccaniche e documentate in `MIGRATION.md`;
-- `kind`: vocabolario chiuso (`SESSION_EVENT_KINDS` in `packages/core/src/session/types.ts`).
+- `seq`: monotonic 1..N, no gaps; assigned by the writer AFTER Zod validation;
+- `schemaVersion`: today `1`; migrations are mechanical and documented in
+  `MIGRATION.md`;
+- `kind`: closed vocabulary (`SESSION_EVENT_KINDS` in
+  `packages/core/src/session/types.ts`).
 
-### Invariante P1
+### P1 invariant
 
-> **model-visible ⟺ logged**: solo i kinds di `MODEL_SURFACE_KINDS` (`user.message`,
-> `assistant.message`, `tool.call`, `tool.result`, `session.compacted`) entrano in
-> `deriveMessages` — l'unico path della history del modello.
+> **model-visible ? logged**: only the kinds in `MODEL_SURFACE_KINDS`
+> (`user.message`, `assistant.message`, `tool.call`, `tool.result`,
+> `session.compacted`) enter `deriveMessages` - the only path of the model
+> history.
 >
-> **Compact the projection, never the ledger.** Un `session.compacted` con
-> `{fromSeq,toSeq,checkpoint}` **shadowa** l'intervallo chiuso nella model
-> surface (i raw restano nel JSONL). Un compact successivo che copre il seq
-> di un checkpoint precedente lo sostituisce (chaining). Il payload legacy
-> `{summary}` senza range resta additivo.
+> **Compact the projection, never the ledger.** A `session.compacted` with
+> `{fromSeq,toSeq,checkpoint}` **shadows** the closed interval in the model
+> surface (the raw events stay in the JSONL). A later compact covering the
+> seq of a previous checkpoint replaces it (chaining). The legacy `{summary}`
+> payload without a range stays additive.
 
-### Contratto `session.compacted` v2
+### `session.compacted` v2 contract
 
-Un checkpoint durevole conserva il range sostituito, la model surface e lo
-stato deterministico necessario al proseguimento:
+A durable checkpoint keeps the replaced range, the model surface and the
+deterministic state needed to continue:
 
 ```json
 {
   "fromSeq": 12,
   "toSeq": 80,
-  "checkpoint": {"role": "user", "content": "<compaction-state>…"},
+  "checkpoint": {"role": "user", "content": "<compaction-state>..."},
   "strategy": "extractive",
   "sourceEventSeqs": [12, 13, 80],
   "retainedCriterionIds": ["tests"],
@@ -66,54 +72,60 @@ stato deterministico necessario al proseguimento:
 }
 ```
 
-Per i checkpoint LLM sono registrati anche `provider` e `model`. Le
-invarianti richiedono range valido e precedente all'evento compact, endpoint
-e source seq esistenti, checkpoint user/system valido, EvidenceRef risolvibili
-e boundary che non separi una tool call dal relativo result né includa una call
-ancora attiva.
+For LLM checkpoints `provider` and `model` are also recorded. The invariants
+require a valid range preceding the compact event, existing endpoints and
+source seqs, a valid user/system checkpoint, resolvable EvidenceRefs and a
+boundary that neither separates a tool call from its result nor includes a
+still-active call.
 
-`ModelContextBuilder` è il percorso comune di TUI, council e headless
-(Desktop e companion `serve` delegano a headless): deriva dalla spine, misura,
-compatta, persiste, esegue il flush, rilegge la projection durevole e misura
-nuovamente prima di invocare `AgentHarness`. Il blocco
-`<compaction-state version="1">` conserva criteria required, failure aperte,
-latest verification, EvidenceRef, file interessati, vincoli utente e stato
-missione; la narrativa LLM/extractive viene aggiunta dopo questo blocco.
+`ModelContextBuilder` is the common path of TUI, council and headless
+(Desktop and companion `serve` delegate to headless): it derives from the
+spine, measures, compacts, persists, flushes, re-reads the durable projection
+and measures again before invoking `AgentHarness`. The
+`<compaction-state version="1">` block keeps required criteria, open
+failures, latest verification, EvidenceRefs, affected files, user constraints
+and mission state; the LLM/extractive narrative is appended after this block.
 
-La telemetria JSONL usa record `kind:"compaction"` con count, input/output e
-saved tokens, recompaction rate, summary strategy e restore failures.
+JSONL telemetry uses `kind:"compaction"` records with counts, input/output
+and saved tokens, recompaction rate, summary strategy and restore failures.
 
-### Replay tollerante
+### Tolerant replay
 
-`readSessionLog` non crasha mai su log danneggiato: righe corrotte, gap, duplicati
-e mismatch di schema sono riportati come `ReplayIssue` (`corrupt-line`, `seq-gap`,
-`seq-duplicate`, `seq-nonmonotonic`, `schema-mismatch`). Il replay ricostruisce la
-*trajectory*, non il determinismo degli output del modello.
+`readSessionLog` never crashes on a damaged log: corrupt lines, gaps,
+duplicates and schema mismatches are reported as `ReplayIssue`
+(`corrupt-line`, `seq-gap`, `seq-duplicate`, `seq-nonmonotonic`,
+`schema-mismatch`). Replay reconstructs the *trajectory*, not the determinism
+of the model outputs.
 
 ### Fork / resume / export
 
-- `forkSession(store, id, {fromSeq})` — nuova sessione con la traiettoria copiata
-  (re-seq 1..n) + evento `session.forked {parentSessionId, parentSeq}`;
-- `resumeSession(store, id)` — riapre il log (seq continua) + `session.resumed`;
-- `exportSession(store, id)` — formato macchina `zelari-session-export/1`.
+- `forkSession(store, id, {fromSeq})` - new session with the trajectory
+  copied (re-seq 1..n) + `session.forked {parentSessionId, parentSeq}` event;
+- `resumeSession(store, id)` - reopens the log (seq continues) +
+  `session.resumed`;
+- `exportSession(store, id)` - machine format `zelari-session-export/1`.
 
-## 2. Verifica deterministica (Phase 3A)
+## 2. Deterministic verification (Phase 3A)
 
-Contratto: `Criterion → VerificationResult → EvidenceRef → evento spine → tool output`.
+Contract: `Criterion -> VerificationResult -> EvidenceRef -> spine event ->
+tool output`.
 
-- `Criterion {id, text, source, required, check?}` — check deterministici:
+- `Criterion {id, text, source, required, check?}` - deterministic checks:
   `command` (expectExit/expectStdoutIncludes/timeout), `file-exists`,
   `file-contains`, `file-absent`, `none`;
-- `VerificationResult.status ∈ {pass, fail, unknown}` — **unknown ≠ pass ovunque**;
-- `EvidenceRef {seq?, tier, ref, capturedAt, digest}` — digest sha256 dell'output;
-- `CompletionPolicy` (strict) → `PASS | REPAIR_REQUIRED | BLOCKED`:
-  required mancante/unknown (incluso "pass senza evidence") non è mai PASS;
-  `fail` → repair; solo unknown/missing → BLOCKED ("clean done senza evidence
-  sufficiente bloccabile"). Gate BUILD: `strictBuildGate` (`ZELARI_STRICT_DONE=1`).
-- Pack di default: `zelari-coding/v1` (tests/typecheck/build required;
-  scope-discipline e verification-quality advisory).
+- `VerificationResult.status ? {pass, fail, unknown}` - **unknown != pass
+  everywhere**;
+- `EvidenceRef {seq?, tier, ref, capturedAt, digest}` - sha256 digest of the
+  output;
+- `CompletionPolicy` (strict) -> `PASS | REPAIR_REQUIRED | BLOCKED`:
+  a missing/unknown required criterion (including "pass without evidence")
+  is never PASS; `fail` -> repair; only unknown/missing -> BLOCKED ("clean
+  done without sufficient evidence is blockable"). BUILD gate:
+  `strictBuildGate` (`ZELARI_STRICT_DONE=1`).
+- Default pack: `zelari-coding/v1` (tests/typecheck/build required;
+  scope-discipline and verification-quality advisory).
 
-## 3. Verifier opzionale (Phase 3B, alpha)
+## 3. Optional verifier (Phase 3B, alpha)
 
 ```ts
 VerifierConfig = {
@@ -124,32 +136,34 @@ VerifierConfig = {
 }
 ```
 
-- `inherit` = modello di sessione; `fixed` = provider+model dedicati (stessa
-  semantica dei flag 1.49 `--verifier-provider/--verifier-model/--verifier-clear`);
-- il provider/modello EFFETTIVI sono sempre nell'evento `verification.run`
+- `inherit` = session model; `fixed` = dedicated provider+model (same
+  semantics as the 1.49 flags
+  `--verifier-provider/--verifier-model/--verifier-clear`);
+- the EFFECTIVE provider/model are always in the `verification.run` event
   (`source: 'verifier-model'`);
-- output del modello non parsed → **fallback discreto dichiarato**
-  (`verdict:'unknown', fallback:'discrete'`) — mai `pass`;
-- il verdict è **advisory**: NON entra mai in `CompletionPolicy` (nessun done
-  basato solo sullo score, nessun bypass P2);
-- progress score: etichetta `Verifier score: 0.82 · experimental`, mai "% completo";
-- BoN richiede `bon.enabled` **e** `ZELARI_EXPERIMENTAL=bon`; pareggi/assenza di
-  score → fallback dichiarato al primo candidato.
+- unparsed model output -> **declared discrete fallback**
+  (`verdict:'unknown', fallback:'discrete'`) - never `pass`;
+- the verdict is **advisory**: it NEVER enters `CompletionPolicy` (no
+  done based only on the score, no P2 bypass);
+- progress score: label `Verifier score: 0.82 - experimental`, never "%
+  complete";
+- BoN requires `bon.enabled` **and** `ZELARI_EXPERIMENTAL=bon`; ties/missing
+  score -> declared fallback to the first candidate.
 
 ## 4. Mission (Phase 4, core)
 
-`deriveMissionState(projection)` deriva fase (`design → build → verification →
-done`), progress (dall'ultima verification), replan e interruzione direttamente
-dal log. Interrupt = assenza di `session.ended`; resume = `resumeSession`.
-Snapshot: `zelari-mission-snapshot/1`.
+`deriveMissionState(projection)` derives the phase (`design -> build ->
+verification -> done`), progress (from the latest verification), replan and
+interruption directly from the log. Interrupt = absence of `session.ended`;
+resume = `resumeSession`. Snapshot: `zelari-mission-snapshot/1`.
 
-## 5. Flag sperimentali (Phase 5)
+## 5. Experimental flags (Phase 5)
 
-`ZELARI_EXPERIMENTAL=<csv>` con valori in `EXPERIMENTAL_FLAGS` (`bon`,
-`remote-sandbox`, `e2b-provider`, `generated-orchestration`, `nested-delegation`).
-Tutti OFF di default.
+`ZELARI_EXPERIMENTAL=<csv>` with values in `EXPERIMENTAL_FLAGS` (`bon`,
+`remote-sandbox`, `e2b-provider`, `generated-orchestration`,
+`nested-delegation`). All OFF by default.
 
-## 6. Esempio end-to-end (headless, core API)
+## 6. End-to-end example (headless, core API)
 
 ```ts
 import { createExecutionContext } from '@zelari/core/runtime';
@@ -165,7 +179,7 @@ const pack = codingCriteriaPack({ testCommand: 'npm run test' });
 const results = await engine.evaluate(pack.criteria, { packId: pack.id });
 const completion = evaluateCompletion(pack.criteria, results);
 if (completion.verdict !== 'PASS') {
-  // niente clean done: REPAIR_REQUIRED → repair loop; BLOCKED → serve evidenza
+  // no clean done: REPAIR_REQUIRED -> repair loop; BLOCKED -> evidence needed
 }
 const mission = deriveMissionState(await handle.store.projection(handle.ctx.sessionId));
 await handle.close();
