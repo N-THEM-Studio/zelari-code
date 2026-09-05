@@ -5,7 +5,7 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.32.0] - 2026-09-07
 
 ### Changed
 
@@ -24,6 +24,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 The "front door" release: 2.30 stops lying about the paths it already ships, and a fresh clone gets an honest path to its first verified PASS. HANDOFF Wave 5 stays frozen: no new runtime surface, no new public API, the judge untouched (ADR-0036).
 
 ### Added
+- S4 jail honesty: StatusBar `jail:` chip (visible advisory when the platform has no honest backend); `--permissions strict` now carries strict intent into the OS-jail mode resolution (explicit `ZELARI_OS_JAIL` still wins)
+- S5 destructive-command escalation at the permission choke-point: `rm -rf`, `del /s`, `rd /s`, `Remove-Item -Recurse`, `format X:`, `git push --force`, `mkfs`, `dd of=/dev/*`, `chmod -R 777 /` escalate allow to ask in standard/strict even with `execute=allow`; yolo keeps its contract; in-session grants honored
 
 - **A1 - headless honesty** - `--once` and the graph host now pass `sessionId` to the post-council hook, so the evidence lint reads the session spine on headless exactly like the TUI (the bench and headless Kraken no longer see a blinder judge).
 - **A2 - budget HOLD on the Kraken path** - the session cost-budget HOLD guard runs before the provider call on the default single-agent dispatch (shared with the council path); a budget that only stopped council turns was a lying preset.
