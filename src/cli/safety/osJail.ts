@@ -115,7 +115,14 @@ export function resolveJailMode(
   if (v === 'off') return 'off';
   if (v === 'advisory') return 'advisory';
   if (v === 'required') return 'required';
-  if (activePolicyLoadMode(env) !== 'strict') return 'advisory';
+  // v2.32 (S4): `--permissions strict` (ZELARI_PERMISSION_PRESET, set by the
+  // flag at boot) carries the same strict intent as the policy-load strict
+  // mode. Strict intent still NEVER defaults to required without a real
+  // backend — the honest fallback stays a VISIBLE advisory, never silence.
+  const strictIntent =
+    activePolicyLoadMode(env) === 'strict' ||
+    (env.ZELARI_PERMISSION_PRESET ?? '').trim().toLowerCase() === 'strict';
+  if (!strictIntent) return 'advisory';
   // Strict surfaces want a REAL jail — but the backend must exist. Defaulting
   // to `required` on a platform with no honest backend (win32 today, linux
   // without bwrap) would DENY every exec tool call there. The honest default

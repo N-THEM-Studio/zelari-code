@@ -20,6 +20,27 @@ import { shortenCwd } from './utils/paths.js';
 import { formatTodoStatusSummary } from './sessionTodos.js';
 import { formatKrakenLiveSummary } from './tools/krakenLive.js';
 import { getVerifyChip, permissionsChip } from './kraken/verifyStatus.js';
+// v2.32 (S4): jail honesty chip — visible advisory when no backend exists.
+import { activeJailMode, probeJailBackend } from './safety/osJail.js';
+
+/**
+ * Jail chip for the StatusBar (v2.32 S4): "jail: on (bwrap)" when a real
+ * backend is active AND required, "jail: advisory (win32)" when execution is
+ * a VISIBLE fail-open on a platform with no honest backend. ZELARI_OS_JAIL=off
+ * hides the chip (explicit opt-out, stated in the docs). Probe is memoized
+ * per platform inside osJail, so this is cheap on re-render.
+ */
+function jailStatusChip(): { label: string; tone: 'green' | 'yellow' } | null {
+  const mode = activeJailMode();
+  if (mode === 'off') return null;
+  const probe = probeJailBackend();
+  if (!probe.available) {
+    return { label: `jail: advisory (${probe.backend})`, tone: 'yellow' };
+  }
+  return mode === 'required'
+    ? { label: `jail: on (${probe.backend})`, tone: 'green' }
+    : { label: `jail: advisory (${probe.backend})`, tone: 'yellow' };
+}
 import { formatKrakenGraphSummary } from './kraken/graphStatus.js';
 import '@zelari/core/skills/builtin/debugging';
 import '@zelari/core/skills/builtin/docs';
@@ -359,6 +380,7 @@ export function App(): React.ReactElement {
             krakenGraph={formatKrakenGraphSummary() ?? undefined}
             verify={getVerifyChip() ?? undefined}
             permissions={permissionsChip(phase)}
+            jail={jailStatusChip()}
           />
         </Box>
         {sidebarOpen && (

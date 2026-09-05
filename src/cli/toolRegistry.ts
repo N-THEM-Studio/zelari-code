@@ -67,12 +67,16 @@ import { buildProviderStream } from './provider/resolveStream.js';
 import { getKrakenVerifierOverride } from './providerConfig.js';
 import type { ProviderName } from './keyStore.js';
 import {
+  activePermissionPreset,
   defaultPermissionPolicy,
   intersectPermissionPolicy,
+  isSessionGranted,
   resolveToolPermission,
   type PermissionAskHandler,
   type PermissionPolicy,
 } from './safety/toolPermissions.js';
+// v2.32 (S5): destructive-shape escalation at the same choke-point.
+import { destructiveCommandHit } from './safety/destructiveCommands.js';
 import {
   provenanceAppliesTo,
   provenanceMatchIn,
@@ -1108,6 +1112,26 @@ function wrapWithPermissions<I, O>(
           } else {
             actionReason = `${decision.reason} · ${provNote}`;
           }
+        }
+      }
+      // v2.32 (S5): destructive-shape escalation at the SAME choke-point.
+      // A command whose shape is inherently destructive (rm -rf, del /s,
+      // format, git push --force, mkfs, dd-to-device — safety/
+      // destructiveCommands.ts) escalates an "allow" to "ask" even with
+      // execute=allow: outside-write discipline, exec side. yolo keeps its
+      // contract (explicit opt-in stays allow); an in-session grant for this
+      // tool (the user already answered THIS ask) is honored. Deterministic
+      // regex, zero LLM (P2); ask/deny already gated pass through untouched.
+      if (
+        action === 'allow' &&
+        required.includes('execute') &&
+        activePermissionPreset() !== 'yolo' &&
+        !isSessionGranted(original.name, required)
+      ) {
+        const destructiveHit = destructiveCommandHit((input ?? {}) as Record<string, unknown>);
+        if (destructiveHit) {
+          action = 'ask';
+          actionReason = `[destructive] ${destructiveHit} - confirm before execute`;
         }
       }
       const claimHit =

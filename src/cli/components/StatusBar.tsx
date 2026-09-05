@@ -57,6 +57,13 @@ interface StatusBarProps {
    * (plan never writes) plus the strict-done declaration (P2+P3 honesty).
    */
   permissions?: { label: string; tone: 'green' | 'yellow' } | null;
+  /**
+   * OS jail chip — honesty about the exec sandbox: "jail: on (bwrap)" when a
+   * real backend is active and required, "jail: advisory (win32)" when the
+   * platform has no honest backend and execution is a VISIBLE fail-open.
+   * @since v2.32.0 (S4)
+   */
+  jail?: { label: string; tone: 'green' | 'yellow' } | null;
 }
 
 /**
@@ -94,6 +101,7 @@ export function StatusBar({
   krakenGraph = null,
   verify = null,
   permissions = null,
+  jail = null,
 }: StatusBarProps): React.ReactElement {
   const ctxLabel =
     contextLimit > 0
@@ -140,6 +148,14 @@ export function StatusBar({
           </>
         ) : null}
         <Text dimColor> · </Text>
+        {jail ? (
+          <>
+            <Text dimColor> · </Text>
+            <Text bold color={jail.tone}>
+              {jail.label}
+            </Text>
+          </>
+        ) : null}
         <Text bold color="cyan">{provider}</Text>
         <Text dimColor> · </Text>
         <Text>{model}</Text>
