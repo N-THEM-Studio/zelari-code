@@ -558,6 +558,7 @@ async function runHeadlessKrakenGraph(
     // need no SCHEMA_VERSION bump: older readers skip them via the tolerant
     // replay (ADR-0021 schema review recorded in the ADR amendment).
     const { runTentacle } = await import('./kraken/tentacle.js');
+    const { defaultPermissionPolicy } = await import('./safety/toolPermissions.js');
     const executor = new KrakenGraphExecutor({
       taskToolDeps: {
         createSubAgentContext: createKrakenSubAgentContextFactory({
@@ -565,17 +566,11 @@ async function runHeadlessKrakenGraph(
           audit,
           sessionId,
           // P0.4 capability inheritance: tentacles intersect the headless
-          // parent policy. Headless runs are auto-allow (the same literal
-          // the main headless registry below uses), so this is a no-op
-          // today — wired for correctness if that default ever tightens.
-          parentPolicy: {
-            read: 'allow',
-            write: 'allow',
-            execute: 'allow',
-            network: 'allow',
-            ui: 'allow',
-            auto: true,
-          },
+          // parent policy. Headless now uses the shared preset engine
+          // (defaultPermissionPolicy — standard = execute/network ask, and
+          // ask without a UI fails closed), so this intersection actually
+          // bites: tentacles can never exceed the preset.
+          parentPolicy: defaultPermissionPolicy(),
           // Anchor every tentacle to the SAME provider/model this run
           // resolved (Desktop's selector, or --provider/--model), instead
           // of the persisted provider.json default the factory falls back
@@ -730,18 +725,14 @@ async function buildCouncilToolRegistry(
   extras?: TurnExtras,
 ) {
   const cwd = opts ? resolveHeadlessCwd(opts) : process.cwd();
+  // Fail-closed: the shared preset engine replaces the old allow-all literal
+  // (standard = execute/network ask; ask with no UI is a typedErr, not allow).
+  const { defaultPermissionPolicy } = await import('./safety/toolPermissions.js');
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     root: cwd,
     planMode,
     ...(extras?.lspProvider ? { lspProvider: extras.lspProvider } : {}),
-    permissionPolicy: {
-      read: 'allow',
-      write: 'allow',
-      execute: 'allow',
-      network: 'allow',
-      ui: 'allow',
-      auto: true,
-    },
+    permissionPolicy: defaultPermissionPolicy(),
     ...(memoryService ? { memoryService } : {}),
     memoryAutoWrite,
   });
@@ -1359,17 +1350,12 @@ async function runHeadlessZelari(
         const { loadDurableContext } = await import('./state/loadDurableContext.js');
         const { detectDegradedRun } = await import('@zelari/core/council');
 
+        // Fail-closed preset policy on the mission-slice registry too.
+        const { defaultPermissionPolicy } = await import('./safety/toolPermissions.js');
         const { registry: agentRegistry } = createBuiltinToolRegistry({
           root: projectRoot,
           planMode: false,
-          permissionPolicy: {
-            read: 'allow',
-            write: 'allow',
-            execute: 'allow',
-            network: 'allow',
-            ui: 'allow',
-            auto: true,
-          },
+          permissionPolicy: defaultPermissionPolicy(),
         });
         await registerHeadlessMcp(agentRegistry, opts);
 

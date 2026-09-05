@@ -665,6 +665,25 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       return;
     }
 
+    if (result.kind === 'verify') {
+      // `/verify` — deterministic strict completion gate re-check (2.32 S2):
+      // the same evaluator the turn loop uses after every build turn, with
+      // no LLM call and no new claims — the gate teaches, on demand.
+      try {
+        const { evaluateStrictBuildGate } = await import('../kraken/verificationBridge.js');
+        const { formatStrictBlockExplanation } = await import('../kraken/verifyStatus.js');
+        const evaluation = await evaluateStrictBuildGate('build');
+        appendSystem(setMessages, `[verify] ${formatStrictBlockExplanation(evaluation)}`);
+      } catch (err) {
+        appendSystem(
+          setMessages,
+          `[verify] gate unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        );
+      }
+      setInput('');
+      return;
+    }
+
     // ── Promote member ──
     if (result.kind === 'promote_member' && result.promoteMemberId) {
       await handlePromoteMember(baseCtx, result.promoteMemberId);

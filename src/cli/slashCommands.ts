@@ -4,13 +4,13 @@ import { evolutionMode, ledgerStats, readLedger } from './evolution/ledger.js';
 import { proposalSummary, readProposalStore } from './evolution/proposals.js';
 
 export type SlashCommand =
-  | 'login' | 'model' | 'model_refresh' | 'models' | 'discover' | 'skill' | 'skills' | 'skill_stats' | 'skill-stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'zelari' | 'mode' | 'kraken' | 'plan' | 'build' | 'view-plan' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'checkpoint' | 'rollback' | 'index' | 'promote-member' | 'update' | 'plugins' | 'integrations' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state' | 'memory' | 'cache' | 'kraken_fanout' | 'trust' | 'effort' | 'evolve';
+  | 'login' | 'model' | 'model_refresh' | 'models' | 'discover' | 'skill' | 'skills' | 'skill_stats' | 'skill-stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'zelari' | 'mode' | 'kraken' | 'plan' | 'build' | 'view-plan' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'checkpoint' | 'rollback' | 'index' | 'promote-member' | 'update' | 'plugins' | 'integrations' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state' | 'memory' | 'cache' | 'kraken_fanout' | 'trust' | 'effort' | 'evolve' | 'verify';
 
 export interface SlashCommandResult {
   /** Whether the command was recognized. */
   handled: boolean;
   /** Discriminated kind for what the caller should do. */
-  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'model_picker' | 'models_list' | 'models_refresh' | 'skill' | 'skill_picker' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'zelari' | 'provider' | 'provider_set' | 'provider_list' | 'provider_picker' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'checkpoint_create' | 'rollback' | 'rollback_list' | 'index_build' | 'index_status' | 'mode_set' | 'kraken_status' | 'kraken_graph' | 'kraken_fanout' | 'kraken_workbench' | 'phase_set' | 'view_plan' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage' | 'plugins_list' | 'plugins_install' | 'plugins_usage' | 'integrations_list' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state_status' | 'state_commit' | 'state_show' | 'state_restore' | 'state_usage' | 'memory' | 'cache_stats' | 'trust_status' | 'trust_add' | 'trust_remove' | 'effort' | 'effort_show' | 'effort_set' | 'evolve';
+  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'model_picker' | 'models_list' | 'models_refresh' | 'skill' | 'skill_picker' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'zelari' | 'provider' | 'provider_set' | 'provider_list' | 'provider_picker' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'checkpoint_create' | 'rollback' | 'rollback_list' | 'index_build' | 'index_status' | 'mode_set' | 'kraken_status' | 'kraken_graph' | 'kraken_fanout' | 'kraken_workbench' | 'phase_set' | 'view_plan' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage' | 'plugins_list' | 'plugins_install' | 'plugins_usage' | 'integrations_list' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state_status' | 'state_commit' | 'state_show' | 'state_restore' | 'state_usage' | 'memory' | 'cache_stats' | 'trust_status' | 'trust_add' | 'trust_remove' | 'effort' | 'effort_show' | 'effort_set' | 'evolve' | 'verify';
   /** Optional human-readable message (e.g. for `clear` or `help`). */
   message?: string;
   /** For `model`: the new model name. */
@@ -799,6 +799,12 @@ export function handleSlashCommand(
 
     case 'view-plan': {
       return { handled: true, kind: 'view_plan' };
+    }
+
+    case 'verify': {
+      // `/verify` — re-run the strict completion gate for this session
+      // (deterministic evidence evaluation; no LLM call).
+      return { handled: true, kind: 'verify' };
     }
 
     case 'index': {

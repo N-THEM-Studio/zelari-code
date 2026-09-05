@@ -261,9 +261,14 @@ export async function runOneTurn(
     }
   }
 
-  // Headless / Desktop: no interactive permission UI — auto-allow "ask" rules
-  // unless the user set an explicit deny. Override with ZELARI_AUTO=0 and
-  // ZELARI_PERMISSION_*=deny for hard lockdown.
+  // Headless / Desktop: no interactive permission UI, so the policy comes
+  // from the shared preset engine (defaultPermissionPolicy: --permissions /
+  // ZELARI_PERMISSION_PRESET, default standard = execute/network ask). An
+  // "ask" rule with no ask handler FAILS CLOSED (typedErr) — headless is
+  // honest by default instead of a silent allow-all. Escape hatches:
+  // --permissions yolo (full allow), ZELARI_AUTO=1 (auto-allow ask rules),
+  // ZELARI_PERMISSION_EXECUTE=deny (hard lockdown).
+  const { defaultPermissionPolicy } = await import('../safety/toolPermissions.js');
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     root: cwd,
     onTentacleEvent: (ev) => emitEvent(ev as Parameters<typeof emitEvent>[0]),
@@ -291,14 +296,7 @@ export async function runOneTurn(
         ...(ev.type === 'task_update' ? { task: ev.task } : { tasks: ev.tasks }),
       });
     },
-    permissionPolicy: {
-      read: 'allow',
-      write: 'allow',
-      execute: 'allow',
-      network: 'allow',
-      ui: 'allow',
-      auto: true,
-    },
+    permissionPolicy: defaultPermissionPolicy(),
     ...(nativeMemory ? { memoryService: nativeMemory } : {}),
     memoryAutoWrite,
     ...(extensionRuntime ? { extensions: extensionRuntime } : {}),
