@@ -5,6 +5,26 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.34.1] - 2026-09-06
+
+Desktop chat is now the permission and question surface. Stop cancels council. The composer can steer a live run, queue the rest, and auto-send the next turn.
+
+### Added
+
+- **In-chat permission cards** — Allow / Deny / Always on the Desktop transcript instead of the detached OS dialog. Always grants are session-scoped (tool + category, TUI parity) and release sibling tentacle asks that the same grant already covers.
+- **In-chat `ask_user`** — same-turn clarifying questions ride `ask_user.request` / `ask_user.respond` over the NDJSON bridge and render as chat cards.
+- **Live steer + follow-up queue** — the composer stays writable while a run is live. The first send is `session.steer`; later sends queue as chips and auto-dispatch when the run finishes (unless the draft was edited to something else).
+- **Out-of-workspace attach** — `import_user_file` copies a user-picked file into `cwd/.zelari/uploads/` so the agent can read it without breaking the workspace jail.
+- **Council / mission Stop** — Desktop Stop registers live-turn control on the council and Zelari hosts; `AbortSignal` cancels the in-flight member harness and skips the rest of the roster.
+
+### Fixed
+
+- **Clarification truncation** — greedy `---QUESTION---` stripping no longer eats the rest of the reply (including `ClarificationCard`). Only marker + JSON blocks are removed; mentions stay. Serve-harness leaves the block intact so the harness can pause.
+- **Windows doctor / shim** — `npm run tauri:dev` was poisoning `npm_config_prefix` so the Desktop doctor looked for `apps\desktop\zelari-code.cmd`. Doctor now prefers `npm prefix -g`; a missing source-checkout shim is WARN, not a hard gate; spawn strips those env vars. `--doctor` points at `--fix-path`.
+- **Kraken explore tentacles** — explore spawn is read-only (not execute+network), so three permission cards no longer fire for a read pass. A 404 on a missing explore-model id (e.g. `glm-5.3-flash`) retries once with the lead model and surfaces the error on the failed row.
+- **Follow-up auto-send** — `run-finished` used a stale `running` flag, so queued chips sat as "Next 1/1" and never dispatched. Flush now waits for the idle re-render.
+- **Tentacle permission handler** — `onPermissionAsk` is forwarded into task agents; Always no longer shows a check on `ok: false`.
+
 ## [2.34.0] - 2026-09-05
 
 Desktop honesty release: the context meter stops crying wolf, tentacle phases are visible in real time, and the council monolith is finally split.
