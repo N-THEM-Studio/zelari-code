@@ -97,6 +97,20 @@ export async function queryMemory<T = MemorySearchResponse>(
   return invoke<T>("query_memory", { args: { cwd, request } });
 }
 
+export async function permissionRespond(
+  requestId: string,
+  decision: "allow" | "deny" | "always-tool" | "always-category",
+): Promise<void> {
+  await invoke("permission_respond", { requestId, decision });
+}
+
+export async function askUserRespond(
+  requestId: string,
+  answer: string | null,
+): Promise<void> {
+  await invoke("ask_user_respond", { requestId, answer });
+}
+
 export async function setAppConfig(args: {
   provider?: string;
   model?: string;
@@ -295,6 +309,25 @@ export interface ReadProjectTextResult {
   size: number;
   /** Milliseconds since Unix epoch of the last modification (0 if unknown). */
   mtimeMs: number;
+}
+
+export interface ImportUserFileResult {
+  original: string;
+  imported: string;
+  rel: string;
+  text?: string | null;
+  note?: string | null;
+  size: number;
+}
+
+/** User-picked file from anywhere (paperclip). Copies into `.zelari/uploads` when cwd is set. */
+export async function importUserFile(args: {
+  path: string;
+  cwd?: string | null;
+}): Promise<ImportUserFileResult> {
+  return invoke<ImportUserFileResult>("import_user_file", {
+    args: { path: args.path, cwd: args.cwd ?? null },
+  });
 }
 
 /** Read a sandboxed project file for @-mention attach. */

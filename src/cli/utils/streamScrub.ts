@@ -44,14 +44,24 @@ export interface StreamScrubber {
   reset(): void;
 }
 
-export function createStreamScrubber(): StreamScrubber {
+export function createStreamScrubber(opts: {
+  /**
+   * When false, leave `---QUESTION---` blocks in the stream so an interactive
+   * host (Desktop ClarificationCard) can parse them. Default true: strip real
+   * blocks from CLI `--headless --output plain` stdout. Mentions of the
+   * marker without a following `{` are never stripped (see stripQuestionBlocks).
+   */
+  stripQuestion?: boolean;
+} = {}): StreamScrubber {
+  const stripQuestion = opts.stripQuestion !== false;
   let rawBuf = '';
   let emittedLen = 0;
 
   const snapshot = (): string => {
     // cleanAgentContent strips complete + unclosed <think> blocks, orphan
-    // closing tags, minimax wrappers, and (by default) ---QUESTION--- blocks.
-    const cleaned = cleanAgentContent(rawBuf);
+    // closing tags, minimax wrappers, and (by default) real ---QUESTION---
+    // JSON blocks — not prose that merely mentions the marker.
+    const cleaned = cleanAgentContent(rawBuf, { stripQuestion });
     if (cleaned.length <= emittedLen) return '';
     const delta = cleaned.slice(emittedLen);
     emittedLen = cleaned.length;

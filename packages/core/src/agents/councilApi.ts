@@ -55,6 +55,7 @@ import { applyInlineJsAutofix } from '../council/verification/inlineJsAutofix.js
 
 import { NON_RETRY_AGENTS } from './council/types.js';
 import type { PureCouncilConfig, PureCouncilCallbacks } from './council/types.js';
+import { isCouncilCancelled, runHarnessWithAbort } from './council/cancel.js';
 export { NON_RETRY_AGENTS } from './council/types.js';
 export type { FeedbackStoreLike, PureCouncilConfig, PureCouncilCallbacks } from './council/types.js';
 
@@ -70,7 +71,7 @@ export type {
 
 import { cleanAgentContent, parseClarificationRequest, parseThinking } from './council/outputCleaning.js';
 import type { ClarificationRequest } from './council/outputCleaning.js';
-export { cleanAgentContent, hasInteractiveClarification, parseClarificationRequest, parseThinking } from './council/outputCleaning.js';
+export { cleanAgentContent, hasInteractiveClarification, parseClarificationRequest, parseThinking, stripQuestionBlocks } from './council/outputCleaning.js';
 export type { CleanAgentContentOptions, ClarificationRequest } from './council/outputCleaning.js';
 
 
@@ -141,6 +142,18 @@ export async function* runCouncilPure(
     model: config.model,
     provider: config.provider ?? 'minimax',
   };
+
+  if (isCouncilCancelled(config.signal)) {
+    yield {
+      type: 'agent_end',
+      id: crypto.randomUUID(),
+      ts: Date.now(),
+      sessionId,
+      reason: 'cancelled',
+      durationMs: 0,
+    };
+    return;
+  }
 
   /**
    * Build a MemberCost payload and dispatch it via the callback + the
@@ -219,6 +232,7 @@ export async function* runCouncilPure(
     (config.skipSpecialists ? getAgent('lucifer') : undefined);
 
   for (const agent of specialists) {
+    if (isCouncilCancelled(config.signal)) break;
     if (completedIds.has(agent.id)) continue;
     callbacks.onAgentStart?.(agent);
 
@@ -281,7 +295,7 @@ export async function* runCouncilPure(
     const emittedToolNames: string[] = [];
     const memberStart = Date.now();
     try {
-      for await (const event of harness.run()) {
+      for await (const event of runHarnessWithAbort(harness, config.signal)) {
         yield event;
         if (event.type === 'tool_execution_start') {
           toolCalls += 1;
@@ -319,7 +333,12 @@ export async function* runCouncilPure(
     // NON_RETRY_AGENTS (composer-2.5 cannot satisfy the heavy
     // emission budget in the 240s window; the deterministic
     // post-processor fills the gaps from a template).
-    if (isDesignPhase && !errored && !NON_RETRY_AGENTS.has(agent.id)) {
+    if (
+      isDesignPhase &&
+      !errored &&
+      !NON_RETRY_AGENTS.has(agent.id) &&
+      !isCouncilCancelled(config.signal)
+    ) {
       const specialistCheck = enforceDesignPhaseToolEmissions(agent.id, emittedToolNames);
       yield* applyRetryIfMissing({
         agent,
@@ -417,7 +436,7 @@ export async function* runCouncilPure(
   // so 6-member councils silently ran only 5 members. A critic pass is
   // always useful before final synthesis; multi-round debate loops remain
   // debateMode-gated (TODO: see plan 2026-07-03-council-3-bugs-fix.md).
-  if (oracle && !completedIds.has(oracle.id)) {
+  if (oracle && !completedIds.has(oracle.id) && !isCouncilCancelled(config.signal)) {
     callbacks.onAgentStart?.(oracle);
 
     const override = config.agentModels?.[oracle.id];
@@ -493,7 +512,7 @@ export async function* runCouncilPure(
     const emittedToolNames: string[] = [];
     const memberStart = Date.now();
     try {
-      for await (const event of harness.run()) {
+      for await (const event of runHarnessWithAbort(harness, config.signal)) {
         yield event;
         if (event.type === 'tool_execution_start') {
           toolCalls += 1;
@@ -521,7 +540,7 @@ export async function* runCouncilPure(
     // v0.7.6: post-condition check on Minosse's tool emission. The role
     // prompt requires at least one createDocument (for risks.md).
     // v0.7.7 Pass 3: forced retry if missing. Skipped on error.
-    if (isDesignPhase && !errored) {
+    if (isDesignPhase && !errored && !isCouncilCancelled(config.signal)) {
       const oracleCheck = enforceDesignPhaseToolEmissions(oracle.id, emittedToolNames);
       yield* applyRetryIfMissing({
         agent: oracle,
@@ -600,7 +619,7 @@ export async function* runCouncilPure(
   // Robustness: if the chairman's LLM call fails, the council run
   // does NOT abort — the 5 specialist outputs remain available,
   // and we surface the error reason in agent_end.
-  if (chairman && !completedIds.has(chairman.id)) {
+  if (chairman && !completedIds.has(chairman.id) && !isCouncilCancelled(config.signal)) {
     callbacks.onSynthesisStart?.();
     callbacks.onAgentStart?.(chairman);
 
@@ -676,7 +695,7 @@ export async function* runCouncilPure(
     );
     const memberStart = Date.now();
     try {
-      for await (const event of chairmanHarness.run()) {
+      for await (const event of runHarnessWithAbort(chairmanHarness, config.signal)) {
         yield event;
         if (event.type === 'tool_execution_start') {
           toolCalls += 1;
@@ -762,7 +781,7 @@ export async function* runCouncilPure(
     // v0.7.7 Pass 3: forced retry if missing — extracted into the shared
     // helper applyRetryIfMissing. Skipped when the chairman errored (the
     // retry is for tool-emission gaps, not for LLM-level failures).
-    if (isDesignPhase && !errored) {
+    if (isDesignPhase && !errored && !isCouncilCancelled(config.signal)) {
       const chairmanCheck = enforceDesignPhaseToolEmissions(chairman.id, emittedToolNames);
       yield* applyRetryIfMissing({
         agent: chairman,
@@ -781,7 +800,7 @@ export async function* runCouncilPure(
       });
     } else if (isDesignPhase) {
       enforceDesignPhaseToolEmissions(chairman.id, emittedToolNames);
-    } else if (!errored) {
+    } else if (!errored && !isCouncilCancelled(config.signal)) {
       // Increment 5: implementation delivery — force writes when prose-only,
       // replay ---TOOLS---, motion fix, then verify-driven delivery loop.
       if (chairmanProjectRoot) {
@@ -914,7 +933,7 @@ export async function* runCouncilPure(
     id: crypto.randomUUID(),
     ts: Date.now(),
     sessionId,
-    reason: 'completed',
+    reason: isCouncilCancelled(config.signal) ? 'cancelled' : 'completed',
     durationMs: 0,
   };
 }

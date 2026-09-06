@@ -5,6 +5,7 @@
 import type { BrainEvent } from '../../shared/events.js';
 import { AgentHarness } from '../../core/AgentHarness.js';
 import type { AgentToolSpec, ProviderStreamFn } from '../../core/AgentHarness.js';
+import { isCouncilCancelled, runHarnessWithAbort } from './cancel.js';
 import type { AgentRole } from '../../types/index.js';
 import type { SystemPromptConfig, SystemPromptModule } from '../../types/systemTypes.js';
 import type { CouncilRunMode } from '../../council/runMode.js';
@@ -116,10 +117,13 @@ export async function* runRetryTurnForMember(args: {
    * `runCouncilPure` threads the module it built once per run.
    */
   languageModule?: SystemPromptModule;
+  /** Cooperative cancel — skip the retry turn when already aborted. */
+  signal?: AbortSignal;
 }): AsyncGenerator<BrainEvent, string[], void> {
   // Filter the missing tools against what's actually executable in this
   // runtime. If a tool is missing from executableTools, the retry can't
   // emit it — log and skip.
+  if (isCouncilCancelled(args.signal)) return [];
   const executableMissing = args.executableTools
     ? args.missingToolNames.filter((n) => args.executableTools!.has(n))
     : args.missingToolNames;
@@ -179,7 +183,7 @@ export async function* runRetryTurnForMember(args: {
     providerStream: (params) => args.providerStream(params),
   });
   const retryEmitted: string[] = [];
-  for await (const event of retryHarness.run()) {
+  for await (const event of runHarnessWithAbort(retryHarness, args.signal)) {
     if (event.type === 'tool_execution_start') {
       retryEmitted.push(event.toolName);
     }
@@ -227,6 +231,7 @@ export async function* applyRetryIfMissing(args: {
   /** v1.7.0 (Pass-2 agy finding): see applyCompletionRetry. */
   languageModule?: SystemPromptModule;
 }): AsyncGenerator<BrainEvent, void, void> {
+  if (isCouncilCancelled(args.config.signal)) return;
   if (args.check.ok) return;
   const missingToolNames = args.check.missing.map((m) => m.split(' ')[0]);
   if (!shouldRetryMember(missingToolNames, 0)) return;
@@ -263,6 +268,7 @@ export async function* applyRetryIfMissing(args: {
       providerStream: args.config.providerStream,
       runMode: args.config.runMode,
       languageModule: args.languageModule,
+      signal: args.config.signal,
     });
     for await (const event of retryGenerator) {
       if (event.type === 'tool_execution_start') {
@@ -278,4 +284,4 @@ export async function* applyRetryIfMissing(args: {
   // Re-run the check so the final warning reflects the union of
   // original + retry emissions.
   enforceDesignPhaseToolEmissions(args.agent.id, args.emittedToolNames);
-}
+}

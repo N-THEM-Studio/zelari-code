@@ -1,9 +1,14 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, afterEach } from 'vitest';
 import {
   applyTurnPermissionPreset,
+  asRegistryAskHandler,
   createServePermissionBridge,
   servePermissionRespond,
 } from '../../src/cli/serve/permissionBridge.js';
+import {
+  clearSessionPermissionGrants,
+  isSessionGranted,
+} from '../../src/cli/safety/toolPermissions.js';
 
 describe('applyTurnPermissionPreset (run.turn permissionPreset field)', () => {
   it('applies an allowlisted preset to the preset engine env', () => {
@@ -48,6 +53,23 @@ describe('createServePermissionBridge (ask over NDJSON, fail-closed)', () => {
     expect(bridge.respond(event.requestId, 'allow')).toBe(true);
     await expect(decision).resolves.toBe('allow');
     expect(bridge.pendingCount()).toBe(0);
+    const settled = JSON.parse(lines[1]!) as { type: string; decision: string };
+    expect(settled.type).toBe('permission.settled');
+    expect(settled.decision).toBe('allow');
+  });
+
+  it('emits categories on the request event', async () => {
+    const lines: string[] = [];
+    const bridge = createServePermissionBridge((l) => lines.push(l), 60_000);
+    const pending = bridge.onPermissionAsk({
+      tool: 'bash',
+      category: 'execute',
+      categories: ['execute'],
+    });
+    const event = JSON.parse(lines[0]!) as { categories?: string[] };
+    expect(event.categories).toEqual(['execute']);
+    bridge.respond(JSON.parse(lines[0]!).requestId, 'deny');
+    await pending;
   });
 
   it('DENIES when the host never answers (fail-closed, never allow)', async () => {
@@ -74,9 +96,88 @@ describe('servePermissionRespond (dispatch method contract)', () => {
     ).toBe(false);
   });
 
+  it('accepts always-tool / always-category decisions', async () => {
+    const lines: string[] = [];
+    const live = createServePermissionBridge((l) => lines.push(l), 60_000);
+    const pending = live.onPermissionAsk({ tool: 'bash', category: 'execute' });
+    const id = (JSON.parse(lines[0]!) as { requestId: string }).requestId;
+    expect(
+      servePermissionRespond(live, { requestId: id, decision: 'always-tool' }).accepted,
+    ).toBe(true);
+    await expect(pending).resolves.toBe('always-tool');
+  });
+
   it('reports unknown request ids as not accepted (no fake ok)', () => {
     const res = servePermissionRespond(bridge, { requestId: 'ghost', decision: 'deny' });
     expect(res.accepted).toBe(false);
+  });
+});
+
+describe('asRegistryAskHandler (session grants)', () => {
+  afterEach(() => clearSessionPermissionGrants());
+
+  it('always-tool grants the tool for this sidecar session', async () => {
+    const lines: string[] = [];
+    const bridge = createServePermissionBridge((l) => lines.push(l), 60_000);
+    const handler = asRegistryAskHandler(bridge);
+    const pending = handler({
+      toolName: 'bash',
+      reason: 'execute',
+      categories: ['execute'],
+      args: {},
+    });
+    const id = (JSON.parse(lines[0]!) as { requestId: string }).requestId;
+    expect(bridge.respond(id, 'always-tool')).toBe(true);
+    await expect(pending).resolves.toBe(true);
+    expect(isSessionGranted('bash', ['execute'])).toBe(true);
+  });
+
+  it('always-category auto-allows sibling in-flight asks (parallel tentacles)', async () => {
+    const lines: string[] = [];
+    const bridge = createServePermissionBridge((l) => lines.push(l), 60_000);
+    const handler = asRegistryAskHandler(bridge);
+    const a = handler({
+      toolName: 'task',
+      reason: 'execute',
+      categories: ['execute', 'network'],
+      args: {},
+    });
+    const b = handler({
+      toolName: 'task',
+      reason: 'execute',
+      categories: ['execute', 'network'],
+      args: {},
+    });
+    const c = handler({
+      toolName: 'task',
+      reason: 'execute',
+      categories: ['execute', 'network'],
+      args: {},
+    });
+    expect(bridge.pendingCount()).toBe(3);
+    const firstId = (JSON.parse(lines[0]!) as { requestId: string }).requestId;
+    expect(bridge.respond(firstId, 'always-category')).toBe(true);
+    await expect(a).resolves.toBe(true);
+    await expect(b).resolves.toBe(true);
+    await expect(c).resolves.toBe(true);
+    expect(bridge.pendingCount()).toBe(0);
+    expect(isSessionGranted('task', ['execute', 'network'])).toBe(true);
+  });
+
+  it('deny does not grant', async () => {
+    const lines: string[] = [];
+    const bridge = createServePermissionBridge((l) => lines.push(l), 60_000);
+    const handler = asRegistryAskHandler(bridge);
+    const pending = handler({
+      toolName: 'bash',
+      reason: 'execute',
+      categories: ['execute'],
+      args: {},
+    });
+    const id = (JSON.parse(lines[0]!) as { requestId: string }).requestId;
+    expect(bridge.respond(id, 'deny')).toBe(true);
+    await expect(pending).resolves.toBe(false);
+    expect(isSessionGranted('bash', ['execute'])).toBe(false);
   });
 });
 

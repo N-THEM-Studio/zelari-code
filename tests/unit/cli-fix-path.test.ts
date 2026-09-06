@@ -77,7 +77,10 @@ function applyScenario(s: Scenario) {
     value: s.platform ?? REAL_PLATFORM,
     configurable: true,
   });
-  // Inject prefix via env so getGlobalPrefix skips the npm spawn.
+  // Prefix reaches getGlobalPrefix via the mocked `npm prefix -g` spawn
+  // (and npm_config_prefix as fallback). Preferring the spawn is what
+  // keeps `npm run desktop:dev --prefix apps/desktop` from writing the
+  // local package dir into the user PATH.
   if (s.prefix !== undefined) {
     process.env.npm_config_prefix = s.prefix;
   } else {

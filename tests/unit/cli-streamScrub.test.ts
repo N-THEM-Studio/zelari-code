@@ -38,8 +38,35 @@ describe('createStreamScrubber', () => {
 
   it('strips ---QUESTION--- blocks by default', () => {
     const s = createStreamScrubber();
-    const out = s.push('before ---QUESTION---{"q":"x"}---END--- after');
+    const out = s.push(
+      'before ---QUESTION---{"question":"x","choices":["a","b"]}---END--- after',
+    );
     expect(out.replace(/\s+/g, ' ').trim()).toBe('before after');
+  });
+
+  it('does not eat prose that mentions ---QUESTION--- (the truncation bug)', () => {
+    const s = createStreamScrubber();
+    let acc = '';
+    const chunks = [
+      'Il precedente più vicino è `ClarificationCard` (le `',
+      '---',
+      'QUESTION',
+      '---',
+      ' blocks) renderizzano in chat, non come dialog OS.',
+    ];
+    for (const c of chunks) acc += s.push(c);
+    acc += s.flush();
+    expect(acc).toContain('---QUESTION---');
+    expect(acc).toContain('renderizzano in chat');
+  });
+
+  it('preserves ---QUESTION--- blocks when stripQuestion is false (Desktop host)', () => {
+    const s = createStreamScrubber({ stripQuestion: false });
+    const raw =
+      'Ask:\n---QUESTION---\n{"question":"scope?","choices":["A","B"]}\n---END---\n';
+    const out = s.push(raw);
+    expect(out).toContain('---QUESTION---');
+    expect(out).toContain('scope?');
   });
 
   // === THE REGRESSION: text trapped across messages ===

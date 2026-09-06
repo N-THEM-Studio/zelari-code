@@ -8,8 +8,9 @@
  *   - the server's `run.turn` dispatch carries the harness sessionId down the
  *     turn's async call-chain via AsyncLocalStorage (no new HeadlessOptions
  *     field, CLI/protocol surface unchanged, concurrent sessions isolated);
- *   - runOneTurn (serve mode ONLY) registers its per-turn RuntimeControlQueue
- *     + cooperative cancel hook under that session id;
+ *   - runOneTurn, runHeadlessCouncil, and runHeadlessZelari (serve mode ONLY)
+ *     register a per-turn RuntimeControlQueue + cooperative cancel hook under
+ *     that session id;
  *   - the server answers `session.steer` / `session.cancel` NDJSON methods by
  *     targeting the live registration, with protocol-v2 acks (§24:
  *     accepted ≠ applied — `control_applied` still fires from the queue drain
@@ -49,7 +50,8 @@ export function runWithSession<T>(sessionId: string, fn: () => T): T {
 }
 
 /**
- * runOneTurn (serve mode) registers the per-turn control surface. Returns
+ * A serve-mode turn (runOneTurn / council / zelari) registers the per-turn
+ * control surface. Returns
  * the unregister fn (identity-guarded, safe across back-to-back turns on
  * the same session), or undefined when NOT dispatched by the harness server
  * — plain `--headless` keeps its stdin control plane, zero behavior change.

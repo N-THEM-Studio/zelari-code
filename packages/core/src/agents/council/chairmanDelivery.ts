@@ -20,6 +20,7 @@ import { runImplementationVerification } from '../../council/verification/runChe
 import { applyInlineJsAutofix } from '../../council/verification/inlineJsAutofix.js';
 import { runRetryTurnForMember, shouldRetryMember } from './retryTurn.js';
 import type { PureCouncilConfig } from './types.js';
+import { isCouncilCancelled } from './cancel.js';
 
 /**
  * Implementation-mode anti-resa retry: force grep/bash after writes.
@@ -39,6 +40,7 @@ export async function* applyCompletionRetry(args: {
    * turn's response language matches the rest of the council. Optional. */
   languageModule?: SystemPromptModule;
 }): AsyncGenerator<BrainEvent, void, void> {
+  if (isCouncilCancelled(args.config.signal)) return;
   const check = checkImplementationCompletion(args.emittedToolNames);
   if (check.ok) return;
   const retryTool = resolveVerifyRetryTool(args.executableNames);
@@ -69,6 +71,7 @@ export async function* applyCompletionRetry(args: {
       runMode: args.config.runMode,
       retryPrompt: buildImplementationVerifyRetryPrompt(retryTool),
       languageModule: args.languageModule,
+      signal: args.config.signal,
     });
     for await (const event of retryGenerator) {
       if (event.type === 'tool_execution_start') {
@@ -133,6 +136,7 @@ export async function* applyImplementationWriteRetry(args: {
   /** v1.7.0 (Pass-2 agy finding): see applyCompletionRetry. */
   languageModule?: SystemPromptModule;
 }): AsyncGenerator<BrainEvent, void, void> {
+  if (isCouncilCancelled(args.config.signal)) return;
   if (args.check.ok) return;
   if (!shouldRetryMember(['write_file'], 0)) return;
   const statusMsg = `[council] ${args.chairman.id} implementation write retry: ${args.check.missing.join(', ')}`;
@@ -159,6 +163,7 @@ export async function* applyImplementationWriteRetry(args: {
       runMode: 'implementation',
       retryPrompt: buildImplementationWriteRetryPrompt(args.userMessage),
       languageModule: args.languageModule,
+      signal: args.config.signal,
     });
     for await (const event of retryGenerator) {
       if (event.type === 'tool_execution_start') args.onToolCall?.();
@@ -221,6 +226,7 @@ export async function* runChairmanDeliveryLoop(args: {
   const zelariRoot = `${args.projectRoot}/.zelari`;
   let attempt = 0;
   while (attempt < maxAttempts) {
+    if (isCouncilCancelled(args.config.signal)) return false;
     const report = runImplementationVerification({
       projectRoot: args.projectRoot,
       zelariRoot,
@@ -265,6 +271,7 @@ export async function* runChairmanDeliveryLoop(args: {
         runMode: 'implementation',
         retryPrompt: buildDeliveryFixPrompt(blocking, args.userMessage),
         languageModule: args.languageModule,
+        signal: args.config.signal,
       });
       for await (const event of fixGenerator) {
         if (event.type === 'tool_execution_start') args.onToolCall?.();
@@ -287,4 +294,4 @@ export async function* runChairmanDeliveryLoop(args: {
     zelariRoot,
   });
   return filterDeliveryBlockingFails(finalReport.results).length === 0;
-}
+}

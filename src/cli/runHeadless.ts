@@ -84,10 +84,8 @@ import {
   sessionStartedEvent,
   type HeadlessSpineHandle,
 } from './headlessSpine.js';
-import { RuntimeControlQueue } from '@zelari/core/runtime';
-import { attachControlPlane, type ControlPlaneHandle } from './headless/controlBridge.js';
-import { protocolInfoEvent } from './headless/protocol.js';
 import { emitHarnessStateEvent } from './headless/harnessStateEmit.js';
+import { attachHeadlessLiveCancel } from './headless/liveTurnAbort.js';
 import {
   checkStrictPolicyLoad,
   recordPolicyLoadBlockedOnSpine,
@@ -571,6 +569,7 @@ async function runHeadlessKrakenGraph(
           // ask without a UI fails closed), so this intersection actually
           // bites: tentacles can never exceed the preset.
           parentPolicy: defaultPermissionPolicy(),
+          ...(opts.onPermissionAsk ? { onPermissionAsk: opts.onPermissionAsk } : {}),
           // Anchor every tentacle to the SAME provider/model this run
           // resolved (Desktop's selector, or --provider/--model), instead
           // of the persisted provider.json default the factory falls back
@@ -733,6 +732,8 @@ async function buildCouncilToolRegistry(
     planMode,
     ...(extras?.lspProvider ? { lspProvider: extras.lspProvider } : {}),
     permissionPolicy: defaultPermissionPolicy(),
+    ...(opts?.onPermissionAsk ? { onPermissionAsk: opts.onPermissionAsk } : {}),
+    ...(opts?.onAskUser ? { onAskUser: opts.onAskUser } : {}),
     ...(memoryService ? { memoryService } : {}),
     memoryAutoWrite,
   });
@@ -759,6 +760,22 @@ async function runHeadlessCouncil(
   model: string,
   providerStream: ProviderStreamFn,
   extras?: TurnExtras,
+): Promise<number> {
+  const live = attachHeadlessLiveCancel({ output: opts.output });
+  try {
+    return await runHeadlessCouncilBody(opts, provider, model, providerStream, extras, live.signal);
+  } finally {
+    live.dispose();
+  }
+}
+
+async function runHeadlessCouncilBody(
+  opts: HeadlessOptions,
+  provider: string,
+  model: string,
+  providerStream: ProviderStreamFn,
+  extras: TurnExtras | undefined,
+  signal: AbortSignal,
 ): Promise<number> {
   const { dispatchCouncil } = await import('./councilDispatcher.js');
   const sessionId = crypto.randomUUID();
@@ -866,7 +883,7 @@ async function runHeadlessCouncil(
   if (opts.task) spine.userMessage(effectiveTask);
 
   let exitCode = 0;
-  const scrub = createStreamScrubber();
+  const scrub = createStreamScrubber({ stripQuestion: opts.output !== 'json' });
   /** Last finished assistant blob this run (chairman / specialist). */
   let lastAssistantText = '';
   let currentAssistantText = '';
@@ -906,6 +923,7 @@ async function runHeadlessCouncil(
       tools: toolRegistry,
       feedbackStore,
       runMode: councilRunMode,
+      signal,
       // t23: an auto-SELECTED council runs the LITE tier (3 members) unless
       // ZELARI_COUNCIL_TIER / ZELARI_COUNCIL_SIZE explicitly opt into full.
       ...(opts.orchestrationDecision?.strategy === 'council' &&
@@ -969,7 +987,9 @@ async function runHeadlessCouncil(
 
   // Desktop multi-turn: append this turn so the next "procedi" has context.
   try {
-    await spine.close(exitCode === 0 ? 'completed' : 'error');
+    await spine.close(
+      signal.aborted ? 'stopped' : exitCode === 0 ? 'completed' : 'error',
+    );
   } catch { /* spine never fails the run */ }
   // Evolution ledger v0 (ADR-0036): shadow-mode outcome telemetry only.
   // Best-effort and fail-open — the ledger must never change the outcome.
@@ -982,7 +1002,13 @@ async function runHeadlessCouncil(
         at: new Date().toISOString(),
         mode: 'shadow',
         taskClass: classifyTask({ prompt: effectiveTask }).taskClass,
-        verdict: exitCode === 0 ? 'PASS' : exitCode === 3 ? 'FAIL' : 'UNKNOWN',
+        verdict: signal.aborted
+          ? 'UNKNOWN'
+          : exitCode === 0
+            ? 'PASS'
+            : exitCode === 3
+              ? 'FAIL'
+              : 'UNKNOWN',
       });
     }
   } catch { /* ledger never fails the run (ADR-0036) */ }
@@ -1000,7 +1026,7 @@ async function runHeadlessCouncil(
       }
     } catch { /* export is best-effort */ }
   }
-  if (nativeMemory && memoryAutoWrite && lastAssistantText) {
+  if (nativeMemory && memoryAutoWrite && lastAssistantText && !signal.aborted) {
     try {
       await nativeMemory.remember({
         kind: councilRunMode === 'design-phase' ? 'decision' : 'outcome',
@@ -1037,6 +1063,22 @@ async function runHeadlessZelari(
   model: string,
   providerStream: ProviderStreamFn,
   extras?: TurnExtras,
+): Promise<number> {
+  const live = attachHeadlessLiveCancel({ output: opts.output });
+  try {
+    return await runHeadlessZelariBody(opts, provider, model, providerStream, extras, live.signal);
+  } finally {
+    live.dispose();
+  }
+}
+
+async function runHeadlessZelariBody(
+  opts: HeadlessOptions,
+  provider: string,
+  model: string,
+  providerStream: ProviderStreamFn,
+  extras: TurnExtras | undefined,
+  signal: AbortSignal,
 ): Promise<number> {
   const projectRoot = resolveHeadlessCwd(opts);
 
@@ -1167,6 +1209,7 @@ async function runHeadlessZelari(
       memory,
       emit,
       buildViaAgent,
+      signal,
       onMissionPhase: (phase, note) => spine.missionPhase(phase, note),
       onMissionProgress: (advice, iteration) =>
         spine.missionProgress({
@@ -1195,7 +1238,7 @@ async function runHeadlessZelari(
           let writeCount = 0;
           let chairmanErrored = false;
           let membersCompleted = 0;
-          const scrub = createStreamScrubber();
+          const scrub = createStreamScrubber({ stripQuestion: opts.output !== 'json' });
 
           const { composeProjectContext } = await import(
             './workspace/composeContext.js'
@@ -1221,6 +1264,7 @@ async function runHeadlessZelari(
             tools: toolRegistry,
             feedbackStore,
             runMode: effectiveRunMode,
+            signal,
             maxToolCallsChairman: chairmanBudget,
             ...(implementerRetry ? { skipSpecialists: true } : {}),
             workspaceContext: composed.workspaceContext,
@@ -1271,11 +1315,20 @@ async function runHeadlessZelari(
 
           let completionOk = false;
           let degraded = false;
+          if (signal.aborted) {
+            return {
+              completionOk: false,
+              ran: membersCompleted > 0 || synthesisText.length > 0,
+              synthesisText: synthesisText || undefined,
+              writeCount,
+              degraded: true,
+            };
+          }
           try {
             const { detectDegradedRun } = await import('@zelari/core/council');
             const d = detectDegradedRun({
               chairmanErrored,
-              councilAborted: false,
+              councilAborted: signal.aborted,
               luciferWriteCount: writeCount,
               synthesisText,
               runMode: effectiveRunMode,
@@ -1356,6 +1409,8 @@ async function runHeadlessZelari(
           root: projectRoot,
           planMode: false,
           permissionPolicy: defaultPermissionPolicy(),
+          ...(opts.onPermissionAsk ? { onPermissionAsk: opts.onPermissionAsk } : {}),
+          ...(opts.onAskUser ? { onAskUser: opts.onAskUser } : {}),
         });
         await registerHeadlessMcp(agentRegistry, opts);
 
@@ -1430,7 +1485,10 @@ async function runHeadlessZelari(
     });
 
     if (state.status === 'error') exitCode = exitCode || 3;
-    else if (state.status === 'success') {
+    else if (state.status === 'cancelled') {
+      exitCode = 0;
+      spine.missionPhase('verification', 'mission-cancelled');
+    } else if (state.status === 'success') {
       // ADR-0025: missions close under the strict evidence gate by default
       // (opt-out: ZELARI_MISSION_STRICT=0, or the per-run --no-mission-strict /
       // --no-strict-done overlay). A blocked gate never exits 0 —
@@ -1475,7 +1533,8 @@ async function runHeadlessZelari(
     }
     await memory.close().catch(() => undefined);
     try {
-      if (exitCode === 0) await spine.close('completed');
+      if (signal.aborted) await spine.close('stopped');
+      else if (exitCode === 0) await spine.close('completed');
       else await spine.close(exitCode === 2 ? 'error' : 'stopped');
     } catch { /* spine never fails the run */ }
     // HarnessState inc.3: final read-model event for JSON hosts (best-effort).

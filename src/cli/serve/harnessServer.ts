@@ -74,6 +74,11 @@ import {
   createServePermissionBridge,
   servePermissionRespond,
 } from './permissionBridge.js';
+import {
+  createServeAskUserBridge,
+  serveAskUserRespond,
+} from './askUserBridge.js';
+import type { AskUserHandler } from '../tools/askUser.js';
 import { sweepOrphanSpineLocks } from './spineLockSweep.js';
 
 export interface HarnessServerIo {
@@ -188,6 +193,7 @@ export function resolveTurnLspProvider(
  */
 export function createCliRunTurn(
   onPermissionAsk?: ReturnType<typeof asRegistryAskHandler>,
+  onAskUser?: AskUserHandler,
 ): RunTurnFn {
   let streamPromise: Promise<{ provider: string; model: string; stream: unknown }> | null = null;
   const ensureStream = () => {
@@ -219,6 +225,7 @@ export function createCliRunTurn(
     // instead of the fail-closed typedErr. runOneTurn threads this into
     // the tool registry.
     if (onPermissionAsk) opts.onPermissionAsk = onPermissionAsk;
+    if (onAskUser) opts.onAskUser = onAskUser;
     // Per-turn permission preset from Desktop Settings. Allowlisted inside
     // the bridge — unknown values keep the sidecar's current preset (no
     // arbitrary env injection over the wire).
@@ -281,6 +288,7 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
   // Deny-on-timeout (120s) is enforced inside the bridge — an unanswered
   // request can never allow.
   const permissionBridge = createServePermissionBridge(write);
+  const askUserBridge = createServeAskUserBridge(write);
 
   const dispatch = async (req: RequestEnvelope): Promise<ResponseEnvelope> => {
     if (typeof req.method !== 'string') {
@@ -299,13 +307,25 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
           result: servePermissionRespond(permissionBridge, params),
         };
       }
+      case 'ask_user.respond': {
+        return {
+          id: req.id ?? null,
+          ok: true,
+          result: serveAskUserRespond(askUserBridge, params),
+        };
+      }
       case 'session.create': {
         const root = typeof params.workspaceRoot === 'string' ? params.workspaceRoot : process.cwd();
         // asRegistryAskHandler projects the registry ask payload onto the
         // wire payload (tool/categories/claims → dialog preview).
         const session = server.createSession({
           workspaceRoot: root,
-          runTurn: options.runTurn ?? createCliRunTurn(asRegistryAskHandler(permissionBridge)),
+          runTurn:
+            options.runTurn ??
+            createCliRunTurn(
+              asRegistryAskHandler(permissionBridge),
+              askUserBridge.onAskUser,
+            ),
         });
         return { id: req.id ?? null, ok: true, result: { sessionId: session.id, workspaceRoot: session.workspaceRoot } };
       }

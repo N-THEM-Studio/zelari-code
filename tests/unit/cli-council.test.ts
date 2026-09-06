@@ -111,6 +111,29 @@ describe('councilDispatcher', () => {
       }
     });
 
+    it('forwards AbortSignal so Stop skips remaining members', async () => {
+      const ac = new AbortController();
+      ac.abort();
+      const events: BrainEvent[] = [];
+      for await (const e of dispatchCouncil('hello', {
+        apiKey: 'k',
+        model: 'm',
+        provider: 'openai-compatible',
+        councilSize: 6,
+        debateMode: false,
+        providerStream: makeStream([{ kind: 'text', delta: 'x' }, { kind: 'finish', reason: 'stop' }]),
+        signal: ac.signal,
+      })) {
+        events.push(e);
+      }
+      const memberStarts = events.filter(
+        (e) => e.type === 'agent_start' && (e as BrainEvent & { memberName?: string }).memberName,
+      );
+      expect(memberStarts).toHaveLength(0);
+      const outerEnd = [...events].reverse().find((e) => e.type === 'agent_end');
+      expect(outerEnd && (outerEnd as { reason?: string }).reason).toBe('cancelled');
+    });
+
     it('runs Minosse even when debateMode is false (v0.7.5 Bug C fix)', async () => {
       // Bug C fix: the Minosse (oracle / critic) review block was gated on
       // config.debateMode. Default debateMode is false, so a 6-member council

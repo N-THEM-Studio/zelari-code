@@ -7,6 +7,7 @@ import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  isUnknownModelError,
   resolveKrakenPlannerModel,
   resolveKrakenSubModel,
 } from '../../src/cli/tools/krakenModel.js';
@@ -92,6 +93,19 @@ describe('resolveKrakenSubModel (K5)', () => {
     expect(resolveKrakenSubModel('explore', 'grok-4', env)).toBe('explore-special');
     expect(resolveKrakenSubModel('verify', 'grok-4', env)).toBe('verify-special');
     expect(resolveKrakenSubModel('general', 'grok-4', env)).toBe('general-special');
+  });
+});
+
+describe('isUnknownModelError', () => {
+  it('matches GLM/Zhipu 404 model-not-found payloads', () => {
+    expect(
+      isUnknownModelError(
+        'HTTP 404: {"code":"not-found","error":"The model glm-5.3-flash does not exist or your team does not have access to it."}',
+      ),
+    ).toBe(true);
+  });
+  it('does not treat a generic provider 500 as a missing model', () => {
+    expect(isUnknownModelError('HTTP 500: internal server error')).toBe(false);
   });
 });
 
@@ -250,6 +264,47 @@ describe('taskTool K3/K4 integration', () => {
     const radio = readKrakenRadio(root, 'gen-test');
     expect(radio.some((e) => e.kind === 'spawn')).toBe(true);
     expect(radio.some((e) => e.kind === 'verify_hint' || e.kind === 'done')).toBe(true);
+  });
+
+  it('retries a tentacle on routed-model 404 using the parent fallback', async () => {
+    let models: string[] = [];
+    const tool = createTaskTool({
+      allowWorktree: false,
+      createSubAgentContext: async ({ cwd }) => ({
+        ...dummyContext,
+        cwd,
+        model: 'glm-5.3-flash',
+        fallback: {
+          model: 'parent-model',
+          provider: 'openai-compatible',
+          providerStream: dummyContext.providerStream,
+        },
+      }),
+      harnessFactory: (config) => {
+        models.push(config.model);
+        if (config.model === 'glm-5.3-flash') {
+          return fakeHarness([
+            {
+              type: 'error',
+              message:
+                'HTTP 404: {"code":"not-found","error":"The model glm-5.3-flash does not exist"}',
+            } as Partial<BrainEvent>,
+          ]);
+        }
+        return fakeHarness([
+          { type: 'message_start' },
+          { type: 'message_delta', delta: 'layout mapped' } as Partial<BrainEvent>,
+          { type: 'message_end' },
+        ]);
+      },
+    });
+    const res = await tool.execute(
+      { description: 'map repo', prompt: 'p', agent: 'explore' },
+      { ...ctx, cwd: root, sessionId: 'fallback-test' },
+    );
+    expect(models).toEqual(['glm-5.3-flash', 'parent-model']);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.result).toContain('layout mapped');
   });
 
   it('passes cwd into createSubAgentContext', async () => {

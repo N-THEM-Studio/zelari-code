@@ -7,6 +7,7 @@ import type { MessageStats } from "../types";
 import { scrubDisplayText } from "./scrubDisplayText";
 import { CopyButton } from "./CopyButton";
 import {
+  hasIncompleteQuestionBlock,
   hasQuestionMarker,
   parseClarificationRequest,
   stripQuestionBlocks,
@@ -275,7 +276,7 @@ export function MessageContent({
 
   const blocks = parseBlocks(clean);
   const showIncompleteQuestion =
-    !streaming && hasQuestionMarker(raw) && !clarification;
+    !streaming && hasIncompleteQuestionBlock(raw);
 
   return (
     <div className={`md-content${streaming ? " is-streaming" : ""}`}>

@@ -300,6 +300,7 @@ export async function runOneTurn(
     // an interactive approval (permission.request over NDJSON) instead of
     // the fail-closed typedErr. Absent handler ⇒ unchanged fail-closed.
     ...(opts.onPermissionAsk ? { onPermissionAsk: opts.onPermissionAsk } : {}),
+    ...(opts.onAskUser ? { onAskUser: opts.onAskUser } : {}),
     permissionPolicy: defaultPermissionPolicy(),
     ...(nativeMemory ? { memoryService: nativeMemory } : {}),
     memoryAutoWrite,
@@ -594,7 +595,10 @@ export async function runOneTurn(
     let finalReason: 'completed' | 'cancelled' | 'error' = 'completed';
     let exitCode = 0;
     const textBuffer: string[] = [];
-    const scrub = createStreamScrubber();
+    // JSON hosts (Desktop / --serve-harness) need the raw ---QUESTION---
+    // block so ClarificationCard can parse it. Plain CLI stdout still strips
+    // real blocks; mentions of the marker survive either way.
+    const scrub = createStreamScrubber({ stripQuestion: opts.output !== 'json' });
 
     try {
       for await (const event of harness.run()) {

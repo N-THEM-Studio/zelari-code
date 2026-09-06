@@ -74,6 +74,11 @@ export interface CouncilDispatchOptions {
   onCouncilStatus?: PureCouncilCallbacks["onCouncilStatus"];
   /** v1.8.0: interactive clarifying-question pause (SelectList in CLI). */
   onClarification?: PureCouncilCallbacks["onClarification"];
+  /**
+   * Cooperative cancel for the whole council run (Desktop Stop). Forwarded
+   * to runCouncilPure so member harnesses abort and remaining members skip.
+   */
+  signal?: AbortSignal;
 }
 
 export class CouncilDispatchError extends Error {
@@ -133,6 +138,7 @@ export async function* dispatchCouncil(
     maxToolLoopHardCap: options.maxToolLoopHardCap,
     skipSpecialists: options.skipSpecialists,
     feedbackStore: options.feedbackStore,
+    signal: options.signal,
   };
 
   if (!options.disableWorkspaceTools) {

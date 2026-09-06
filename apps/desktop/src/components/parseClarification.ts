@@ -86,15 +86,57 @@ export function parseClarificationRequest(
   }
 }
 
-/** Strip question blocks from prose (closed or trailing open). */
+/**
+ * Strip real clarification blocks from display prose.
+ * Mentions of `---QUESTION---` that are not followed by `{` stay intact.
+ * Incomplete `{` (no ---END---, no balanced JSON) hides marker → EOF.
+ */
 export function stripQuestionBlocks(text: string): string {
-  return text
-    .replace(/---QUESTION---[\s\S]*?---END---/g, "")
-    .replace(/---QUESTION---[\s\S]*$/g, "")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+  let out = "";
+  let rest = text;
+  while (true) {
+    const start = rest.indexOf(QUESTION_MARKER);
+    if (start < 0) {
+      out += rest;
+      break;
+    }
+    out += rest.slice(0, start);
+    const afterMarker = rest.slice(start + QUESTION_MARKER.length);
+    const trimmed = afterMarker.replace(/^\s+/, "");
+    if (!trimmed.startsWith("{")) {
+      out += QUESTION_MARKER;
+      rest = afterMarker;
+      continue;
+    }
+    const endIdx = afterMarker.indexOf(QUESTION_END_MARKER);
+    if (endIdx >= 0) {
+      rest = afterMarker.slice(endIdx + QUESTION_END_MARKER.length);
+      continue;
+    }
+    const json = extractBalancedJsonObject(trimmed);
+    if (json) {
+      const jsonAt = afterMarker.indexOf(json);
+      rest = afterMarker.slice(jsonAt + json.length);
+      continue;
+    }
+    break;
+  }
+  return out.replace(/\n{3,}/g, "\n\n").trim();
 }
 
 export function hasQuestionMarker(text: string): boolean {
   return text.includes(QUESTION_MARKER);
+}
+
+/** Marker followed by `{` but not yet a parseable ClarificationRequest. */
+export function hasIncompleteQuestionBlock(text: string): boolean {
+  if (parseClarificationRequest(text)) return false;
+  let rest = text;
+  while (true) {
+    const start = rest.indexOf(QUESTION_MARKER);
+    if (start < 0) return false;
+    const after = rest.slice(start + QUESTION_MARKER.length);
+    if (after.replace(/^\s+/, "").startsWith("{")) return true;
+    rest = after;
+  }
 }

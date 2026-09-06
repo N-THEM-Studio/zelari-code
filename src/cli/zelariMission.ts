@@ -137,6 +137,11 @@ export interface ZelariMissionDeps {
   runSlice: (args: RunSliceArgs) => Promise<SliceRunResult>;
   /** Emit a status/progress line to the UI. */
   emit: (message: string) => void;
+  /**
+   * Cooperative cancel (Desktop Stop). Checked between slices; the in-flight
+   * `runSlice` must also honor the same signal (council dispatch).
+   */
+  signal?: AbortSignal;
   maxIterations?: number;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
@@ -406,6 +411,13 @@ export async function runZelariMission(
   const missionStartMs = now().getTime();
 
   while (true) {
+    if (deps.signal?.aborted) {
+      state.status = 'cancelled';
+      state.updatedAt = now().toISOString();
+      await persist();
+      deps.emit('[zelari] missione cancellata.');
+      return state;
+    }
     const runMode: CouncilRunMode = pendingDesign ? 'design-phase' : 'implementation';
     if (runMode === 'implementation') {
       deps.onMissionPhase?.('build', `impl-${implStep + 1}`);
@@ -471,6 +483,14 @@ export async function runZelariMission(
       deps.emit(
         `[zelari] errore allo step ${step}: ${err instanceof Error ? err.message : String(err)}`,
       );
+      return state;
+    }
+
+    if (deps.signal?.aborted) {
+      state.status = 'cancelled';
+      state.updatedAt = now().toISOString();
+      await persist();
+      deps.emit('[zelari] missione cancellata.');
       return state;
     }
 

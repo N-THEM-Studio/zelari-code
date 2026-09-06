@@ -230,6 +230,25 @@ export function resolveKrakenSubModel(
 }
 
 /**
+ * True when a tentacle provider error means the *routed* model id is
+ * unknown/unauthorized (HTTP 404 not-found), not that the lead model is
+ * broken. Used to retry once on the parent model.
+ */
+export function isUnknownModelError(message: string | undefined): boolean {
+  if (!message) return false;
+  const m = message.toLowerCase();
+  if (!/model/.test(m)) return false;
+  return (
+    /http\s*404/.test(m) ||
+    /not-found/.test(m) ||
+    /not_found/.test(m) ||
+    /does not exist/.test(m) ||
+    /unknown model/.test(m) ||
+    /model_not_found/.test(m)
+  );
+}
+
+/**
  * Graph planner model. Desktop Settings maps the planner picker to
  * `ZELARI_KRAKEN_PLANNER_MODEL`; `runHeadless` always forwards the lead
  * `--model` as `opts.model`. The env override must therefore win — same

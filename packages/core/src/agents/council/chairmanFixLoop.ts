@@ -12,6 +12,7 @@ import { runChairmanMicroGate, type MicroGateWarning } from '../../council/verif
 import { buildMotionFixPrompt } from './chairmanDelivery.js';
 import { runRetryTurnForMember } from './retryTurn.js';
 import type { PureCouncilConfig } from './types.js';
+import { isCouncilCancelled } from './cancel.js';
 
 /**
  * Re-execute edit_file/write_file calls from a `---TOOLS---` block after the
@@ -105,6 +106,7 @@ export async function* runChairmanFixLoop(args: {
   let current = Array.from(args.violations.values());
   let attempt = 0;
   while (current.length > 0 && attempt < maxAttempts) {
+    if (isCouncilCancelled(args.config.signal)) return;
     attempt++;
     try {
       const fixGenerator = runRetryTurnForMember({
@@ -126,6 +128,7 @@ export async function* runChairmanFixLoop(args: {
         runMode: 'implementation',
         retryPrompt: buildMotionFixPrompt(current),
         languageModule: args.languageModule,
+        signal: args.config.signal,
       });
       for await (const event of fixGenerator) {
         if (event.type === 'tool_execution_start') args.onToolCall?.();

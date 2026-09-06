@@ -7,6 +7,7 @@ import {
   parseClarificationRequest,
   stripQuestionBlocks,
   hasQuestionMarker,
+  hasIncompleteQuestionBlock,
 } from "../../apps/desktop/src/components/parseClarification";
 
 describe("desktop parseClarification", () => {
@@ -34,6 +35,32 @@ describe("desktop parseClarification", () => {
     const text = "Hello\n---QUESTION---\n";
     expect(hasQuestionMarker(text)).toBe(true);
     expect(parseClarificationRequest(text)).toBeNull();
+    // Mention (no `{` after the marker) stays in prose — do not EOF-wipe.
+    expect(stripQuestionBlocks(text)).toContain("---QUESTION---");
+    expect(stripQuestionBlocks(text)).toContain("Hello");
+  });
+
+  it("keeps a marker mention and strips only a following real block", () => {
+    const text = `See \`---QUESTION---\` in the protocol.
+---QUESTION---
+{"question":"Install Playwright?","choices":["Yes","Skip"]}
+---END---
+After.`;
+    expect(stripQuestionBlocks(text)).toContain("---QUESTION---");
+    expect(stripQuestionBlocks(text)).toContain("See");
+    expect(stripQuestionBlocks(text)).toContain("After.");
+    expect(stripQuestionBlocks(text)).not.toContain("Install Playwright");
+  });
+
+  it("hides an incomplete JSON block from the marker through EOF", () => {
+    const text = "Hello\n---QUESTION---\n{\"question\":";
     expect(stripQuestionBlocks(text)).toBe("Hello");
+    expect(hasIncompleteQuestionBlock(text)).toBe(true);
+  });
+
+  it("does not flag a marker mention as an incomplete question", () => {
+    const text = "ClarificationCard renders `---QUESTION---` blocks in chat.";
+    expect(hasQuestionMarker(text)).toBe(true);
+    expect(hasIncompleteQuestionBlock(text)).toBe(false);
   });
 });

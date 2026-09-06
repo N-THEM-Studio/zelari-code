@@ -57,6 +57,19 @@ function AgentRow({
         {agent.currentTool ? <span>· {agent.currentTool}…</span> : null}
         {agent.phaseMessage ? <span style={{ opacity: 0.85 }}>· {agent.phaseMessage}</span> : null}
       </div>
+      {agent.status === "failed" && agent.reason ? (
+        <div
+          style={{
+            fontSize: "0.82em",
+            opacity: 0.9,
+            marginTop: 2,
+            color: "var(--danger, #c44)",
+          }}
+          title={agent.reason}
+        >
+          {agent.reason.length > 180 ? `${agent.reason.slice(0, 177)}…` : agent.reason}
+        </div>
+      ) : null}
       {expanded ? (
         <div style={{ fontSize: "0.85em", opacity: 0.9, marginTop: 4 }}>
           {agent.worktree ? <div>worktree: {shortWorktree(agent.worktree)}</div> : null}

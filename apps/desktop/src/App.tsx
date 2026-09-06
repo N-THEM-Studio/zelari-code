@@ -18,10 +18,20 @@ import {
   onSidecarLog,
   onSidecarStatus,
   type SidecarStatusPayload,
+  permissionRespond,
+  askUserRespond,
   runTask,
   setAppConfig,
   summarizeToolArgs,
 } from "./agentClient";
+import { PermissionCard } from "./components/PermissionCard";
+import { ClarificationCard } from "./components/ClarificationCard";
+import {
+  applyAskUserSettled,
+  applyPermissionSettled,
+  askUserAskFromEvent,
+  permissionAskFromEvent,
+} from "./inChatAsk";
 import { loadConversations, saveConversations } from "./chatStorage";
 import { cleanAssistantContent } from "./exportSession";
 import { MessageContent } from "./components/MessageContent";
@@ -41,6 +51,7 @@ import "./steer.css";
 
 import { planFolderSwitch } from "./folderSwitch";
 import { parseSteerSendResult } from "./steerRecovery";
+import { classifyLiveSend, shouldAutoSendFollowUp } from "./liveSend";
 import {
   isSidecarErrorLine,
   pushSidecarLogLine,
@@ -123,6 +134,7 @@ import {
   expandDesktopSkill,
 } from "./components/SkillPicker";
 import {
+  importUserFile,
   readProjectText,
   type SkillEntryDto,
   type WorkspaceHit,
@@ -496,6 +508,8 @@ export default function App() {
     () => conversations.find((c) => !c.archived)?.id ?? conversations[0].id,
   );
   const [draft, setDraft] = useState("");
+  const draftRef = useRef("");
+  draftRef.current = draft;
   /** Per-conversation live run UI (M2 multiplexing), keyed by conversation. */
   const [liveToolLabelByConv, setLiveToolLabelByConv] = useState<
     Record<string, string | null>
@@ -781,13 +795,6 @@ export default function App() {
   /** Queued follow-ups of the active conversation (§24, persisted — D). */
   const pendingFollowUps = active?.pendingFollowUps ?? [];
   const oldestPendingFollowUp = pendingFollowUps[0];
-  // Restore persisted follow-ups as composer prefill: oldest first, one at
-  // a time, never clobbering text the user already typed. Runs on app
-  // start, on conversation switch, and after one is dispatched.
-  useEffect(() => {
-    if (!oldestPendingFollowUp) return;
-    setDraft((prev) => (prev.trim() ? prev : oldestPendingFollowUp));
-  }, [activeId, oldestPendingFollowUp]);
   /**
    * Workspace project tasks per cwd (`.zelari/plan.json`, ADR-0018).
    * Keyed by normalized cwd so every conversation on the same workspace
@@ -856,8 +863,46 @@ export default function App() {
 
   /** Run registry: multiplexed runs across conversations (M2). */
   const runCoordinator = useRunCoordinator();
+  /** Conversations that just finished a run and should flush the follow-up queue. */
+  const autoSendAfterRunRef = useRef<Set<string>>(new Set());
   /** Composer/Stop state is per-conversation now, never global. */
   const running = runCoordinator.isRunning(active?.id ?? "");
+  // Restore persisted follow-ups as composer prefill only when idle — while
+  // a run is live the queue is shown as chips, not dumped into the draft.
+  useEffect(() => {
+    if (!oldestPendingFollowUp || running) return;
+    setDraft((prev) => (prev.trim() ? prev : oldestPendingFollowUp));
+  }, [activeId, oldestPendingFollowUp, running]);
+  // Auto-dispatch the oldest follow-up AFTER React applies run-finished.
+  // The Tauri handler must not call send() in the same tick: `running` and
+  // `isRunning()` are still stale, so the follow-up was re-steered / dropped.
+  useEffect(() => {
+    const convId = activeId;
+    if (!convId || !autoSendAfterRunRef.current.has(convId)) return;
+    if (runCoordinator.isRunning(convId)) return;
+    const queued = conversations.find((c) => c.id === convId)?.pendingFollowUps?.[0];
+    const text = shouldAutoSendFollowUp({
+      queued,
+      draft: draftRef.current,
+      wasCancelled: false,
+    });
+    if (!text) {
+      if (
+        queued &&
+        draftRef.current.trim() &&
+        draftRef.current.trim() !== queued.trim()
+      ) {
+        autoSendAfterRunRef.current.delete(convId);
+      }
+      return;
+    }
+    autoSendAfterRunRef.current.delete(convId);
+    void sendRef.current(text);
+  }, [activeId, conversations, runCoordinator.state]);
+  const [liveSendMode, setLiveSendMode] = useState<"steer" | "queue">("steer");
+  useEffect(() => {
+    if (!running) setLiveSendMode("steer");
+  }, [running, activeId]);
   const liveToolLabel = liveToolLabelByConv[active?.id ?? ""] ?? null;
   const liveSteps = liveStepsByConv[active?.id ?? ""] ?? [];
   const krakenCard = krakenCardByConv[active?.id ?? ""];
@@ -1222,8 +1267,17 @@ export default function App() {
     Record<string, ProtocolInfoEvent>
   >({});
   const controlInfoRef = useRef<Record<string, ProtocolInfoEvent>>({});
-  const steerSupported =
-    running && supportsControl(controlInfoByConv[active?.id ?? ""], "steer");
+  /** Sidecar boot handshake — not per-chat. Boot protocol_info often has
+   * no conversationId, so keying only by conv locked the composer. */
+  const [sidecarProtocol, setSidecarProtocol] =
+    useState<ProtocolInfoEvent | null>(null);
+  const sidecarProtocolRef = useRef<ProtocolInfoEvent | null>(null);
+  const steeredThisRunRef = useRef<Record<string, boolean>>({});
+  const sendRef = useRef<(text?: string) => Promise<void>>(async () => {});
+  const steerSupported = supportsControl(
+    sidecarProtocol ?? controlInfoByConv[active?.id ?? ""],
+    "steer",
+  );
 
   const speech = useSpeechToText({
     disabled: running,
@@ -1292,11 +1346,123 @@ export default function App() {
               ? (info.capabilities as string[])
               : [],
           };
-          controlInfoRef.current = {
-            ...controlInfoRef.current,
-            [convId]: next,
-          };
-          setControlInfoByConv((prev) => ({ ...prev, [convId]: next }));
+          sidecarProtocolRef.current = next;
+          setSidecarProtocol(next);
+          if (convId) {
+            controlInfoRef.current = {
+              ...controlInfoRef.current,
+              [convId]: next,
+            };
+            setControlInfoByConv((prev) => ({ ...prev, [convId]: next }));
+          }
+          return;
+        }
+        if (ev.type === "permission.request") {
+          const ask = permissionAskFromEvent(ev as unknown as Record<string, unknown>);
+          if (ask) {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === convId
+                  ? {
+                      ...c,
+                      updatedAt: Date.now(),
+                      messages: [
+                        ...c.messages,
+                        {
+                          id: uid("perm"),
+                          role: "system",
+                          content: `Allow tool "${ask.tool}"?`,
+                          createdAt: Date.now(),
+                          permissionAsk: ask,
+                        },
+                      ],
+                    }
+                  : c,
+              ),
+            );
+          }
+          return;
+        }
+        if (ev.type === "permission.settled") {
+          const requestId =
+            typeof (ev as { requestId?: unknown }).requestId === "string"
+              ? (ev as { requestId: string }).requestId
+              : "";
+          const decision =
+            typeof (ev as { decision?: unknown }).decision === "string"
+              ? (ev as { decision: string }).decision
+              : "deny";
+          const timedOut = (ev as { timedOut?: unknown }).timedOut === true;
+          if (requestId) {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === convId
+                  ? {
+                      ...c,
+                      messages: applyPermissionSettled(
+                        c.messages,
+                        requestId,
+                        decision,
+                        timedOut,
+                      ),
+                    }
+                  : c,
+              ),
+            );
+          }
+          return;
+        }
+        if (ev.type === "ask_user.request") {
+          const ask = askUserAskFromEvent(ev as unknown as Record<string, unknown>);
+          if (ask) {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === convId
+                  ? {
+                      ...c,
+                      updatedAt: Date.now(),
+                      messages: [
+                        ...c.messages,
+                        {
+                          id: uid("ask"),
+                          role: "system",
+                          content: ask.question,
+                          createdAt: Date.now(),
+                          askUserAsk: ask,
+                        },
+                      ],
+                    }
+                  : c,
+              ),
+            );
+          }
+          return;
+        }
+        if (ev.type === "ask_user.settled") {
+          const requestId =
+            typeof (ev as { requestId?: unknown }).requestId === "string"
+              ? (ev as { requestId: string }).requestId
+              : "";
+          const rawAnswer = (ev as { answer?: unknown }).answer;
+          const answer = typeof rawAnswer === "string" ? rawAnswer : null;
+          const timedOut = (ev as { timedOut?: unknown }).timedOut === true;
+          if (requestId) {
+            setConversations((prev) =>
+              prev.map((c) =>
+                c.id === convId
+                  ? {
+                      ...c,
+                      messages: applyAskUserSettled(
+                        c.messages,
+                        requestId,
+                        answer,
+                        timedOut,
+                      ),
+                    }
+                  : c,
+              ),
+            );
+          }
           return;
         }
         if (
@@ -1381,7 +1547,11 @@ export default function App() {
             if (convId === activeIdRef.current) {
               setDraft((prev) => (prev.trim() ? prev : followUpText));
             }
-            setStatusLineIfActive("Follow-up ready — review and send");
+            // Run may already have finished (log vs run-finished ordering).
+            // Arm so the idle auto-send effect dispatches instead of parking
+            // the chip as "Next 1/1".
+            autoSendAfterRunRef.current.add(convId);
+            setStatusLineIfActive("Follow-up ready — sending next…");
             return;
           }
           // Do not surface routine headless bootstrap lines in the chat UI
@@ -1984,6 +2154,8 @@ export default function App() {
         setGitRefreshKey((k) => k + 1);
         void refreshCli();
         turnsRef.current.delete(convId);
+        steeredThisRunRef.current[convId] = false;
+        if (!wasCancelled) autoSendAfterRunRef.current.add(convId);
       });
       if (cancelled) u3();
       else unsubs.push(u3);
@@ -2196,7 +2368,27 @@ export default function App() {
   const addFiles = useCallback(async (files: FileList | File[]) => {
     const list = Array.from(files).filter((f) => f && f.size >= 0);
     if (list.length === 0) return;
-    const next = await Promise.all(list.map((f) => readFileAsAttachment(f)));
+    const next = await Promise.all(
+      list.map(async (f) => {
+        const native = fileNativePath(f);
+        if (native && activeCwd) {
+          try {
+            const res = await importUserFile({ path: native, cwd: activeCwd });
+            const base = await readFileAsAttachment(f);
+            return {
+              ...base,
+              path: res.rel || res.imported,
+              text: res.text ?? base.text,
+              note: res.note ?? base.note,
+              size: res.size || base.size,
+            };
+          } catch {
+            return readFileAsAttachment(f);
+          }
+        }
+        return readFileAsAttachment(f);
+      }),
+    );
     setAttachments((prev) => {
       const names = new Set(
         prev.map((p) => (p.path || p.name).toLowerCase()),
@@ -2215,11 +2407,59 @@ export default function App() {
         ? `Attached ${next[0].name}`
         : `Attached ${next.length} files`,
     );
-  }, []);
+  }, [activeCwd]);
 
   const removeAttachment = useCallback((id: string) => {
     setAttachments((prev) => prev.filter((a) => a.id !== id));
   }, []);
+
+  const onPickExternalFiles = useCallback(async () => {
+    try {
+      const selected = await open({ multiple: true });
+      if (!selected) return;
+      const paths = Array.isArray(selected) ? selected : [selected];
+      const atts: PendingAttachment[] = [];
+      for (const p of paths) {
+        if (typeof p !== "string" || !p.trim()) continue;
+        try {
+          const res = await importUserFile({ path: p, cwd: activeCwd });
+          const name =
+            res.rel.split(/[\\/]/).pop() ||
+            res.original.split(/[\\/]/).pop() ||
+            "file";
+          atts.push({
+            id: uid("att"),
+            name,
+            size: res.size,
+            path: res.rel || res.imported,
+            text: res.text ?? undefined,
+            note: res.note ?? undefined,
+          });
+        } catch (e) {
+          setStatusLine(errText(e, "Could not attach file"));
+        }
+      }
+      if (atts.length === 0) return;
+      setAttachments((prev) => {
+        const names = new Set(prev.map((x) => (x.path || x.name).toLowerCase()));
+        const merged = [...prev];
+        for (const a of atts) {
+          const key = (a.path || a.name).toLowerCase();
+          if (names.has(key)) continue;
+          names.add(key);
+          merged.push(a);
+        }
+        return merged.slice(0, 12);
+      });
+      setStatusLine(
+        atts.length === 1
+          ? `Attached ${atts[0]!.name}`
+          : `Attached ${atts.length} files`,
+      );
+    } catch (e) {
+      setStatusLine(errText(e, "File picker failed"));
+    }
+  }, [activeCwd]);
 
   const attachWorkspacePath = useCallback(
     async (hit: WorkspaceHit) => {
@@ -2319,11 +2559,10 @@ export default function App() {
       e.stopPropagation();
       dragDepthRef.current = 0;
       setDragOver(false);
-      if (running) return;
       const files = e.dataTransfer?.files;
       if (files && files.length > 0) void addFiles(files);
     },
-    [addFiles, running],
+    [addFiles],
   );
 
   /**
@@ -2437,21 +2676,54 @@ export default function App() {
     // A dispatched prefilled follow-up (§24/D) leaves the queue: the exact
     // match against the oldest entry guards against dropping a queued
     // follow-up the user never sent.
-    if (
-      oldestPendingFollowUp &&
-      oldestPendingFollowUp.trim() === base.trim()
-    ) {
+    setConversations((prev) =>
+      prev.map((c) => {
+        if (c.id !== convId) return c;
+        const head = c.pendingFollowUps?.[0]?.trim();
+        if (!head || head !== base.trim()) return c;
+        return { ...c, pendingFollowUps: c.pendingFollowUps?.slice(1) };
+      }),
+    );
+
+    const liveRunning = runCoordinator.isRunning(convId);
+    const skillForSend = pendingSkill;
+    if (skillForSend && !liveRunning) {
+      base = expandDesktopSkill(skillForSend, base);
+      setPendingSkill(null);
+    }
+
+    const userVisible =
+      base ||
+      (attachments.length === 1
+        ? `Please review: ${attachments[0].name}`
+        : `Please review the attached files (${attachments.length})`);
+    const prompt = buildPromptWithAttachments(userVisible, attachments);
+
+    if (liveRunning) {
+      const kind = classifyLiveSend({
+        running: true,
+        steerSupported,
+        alreadySteeredThisRun: Boolean(steeredThisRunRef.current[convId]),
+      });
+      if (kind === "steer") {
+        steeredThisRunRef.current[convId] = true;
+        setLiveSendMode("queue");
+        void steerActiveRun(prompt);
+        return;
+      }
       setConversations((prev) =>
         prev.map((c) =>
-          c.id === active.id
-            ? { ...c, pendingFollowUps: c.pendingFollowUps?.slice(1) }
+          c.id === convId
+            ? {
+                ...c,
+                pendingFollowUps: [...(c.pendingFollowUps ?? []), prompt],
+              }
             : c,
         ),
       );
-    }
-    // Running + v2 CLI → steer the live run instead of dispatching a task.
-    if (running) {
-      void steerActiveRun(base);
+      setDraft("");
+      setAttachments([]);
+      setStatusLine("Queued follow-up — sends when this run ends");
       return;
     }
     speech.stop();
@@ -2462,21 +2734,6 @@ export default function App() {
       setStatusLine(cli.message);
       return;
     }
-
-    const skillForSend = pendingSkill;
-    if (skillForSend) {
-      base = expandDesktopSkill(skillForSend, base);
-      setPendingSkill(null);
-    }
-
-    const userVisible =
-      base ||
-      (attachments.length === 1
-        ? `Please review: ${attachments[0].name}`
-        : `Please review the attached files (${attachments.length})`);
-    // Full prompt (with file bodies) is stored so multi-turn history keeps context.
-    // Gauntlet is a CLI flag, not a prompt append (P2).
-    const prompt = buildPromptWithAttachments(userVisible, attachments);
 
     const userMsg: ChatMessage = {
       id: uid("user"),
@@ -2616,6 +2873,8 @@ export default function App() {
       );
     }
   };
+
+  sendRef.current = send;
 
   const onStop = async () => {
     const rid = runCoordinator.state.runIdByConversation[active?.id ?? ""];
@@ -2757,21 +3016,6 @@ export default function App() {
     } catch (e) {
       setStatusLine(e instanceof Error ? e.message : String(e));
     }
-  };
-
-  /** Discard the oldest queued follow-up (§24/D) and clear it from the draft. */
-  const discardOldestPendingFollowUp = () => {
-    const convId = active?.id;
-    if (!convId) return;
-    const first = active?.pendingFollowUps?.[0];
-    setConversations((prev) =>
-      prev.map((c) =>
-        c.id === convId
-          ? { ...c, pendingFollowUps: c.pendingFollowUps?.slice(1) }
-          : c,
-      ),
-    );
-    if (first) setDraft((prev) => (prev.trim() === first.trim() ? "" : prev));
   };
 
   const messages = active?.messages ?? [];
@@ -3301,6 +3545,77 @@ export default function App() {
                               />
                             </div>
                           </>
+                        ) : m.permissionAsk ? (
+                          <PermissionCard
+                            ask={m.permissionAsk}
+                            disabled={m.permissionAsk.status !== "pending"}
+                            onDecide={(decision) => {
+                              const requestId = m.permissionAsk!.requestId;
+                              const conv = active?.id;
+                              void (async () => {
+                                try {
+                                  await permissionRespond(requestId, decision);
+                                } catch {
+                                  // Sidecar never saw the answer — leave the
+                                  // card pending (CLI deny-timeout is authority).
+                                  return;
+                                }
+                                if (!conv) return;
+                                setConversations((prev) =>
+                                  prev.map((c) =>
+                                    c.id === conv
+                                      ? {
+                                          ...c,
+                                          messages: applyPermissionSettled(
+                                            c.messages,
+                                            requestId,
+                                            decision,
+                                          ),
+                                        }
+                                      : c,
+                                  ),
+                                );
+                              })();
+                            }}
+                          />
+                        ) : m.askUserAsk ? (
+                          m.askUserAsk.status === "pending" ? (
+                            <ClarificationCard
+                              request={{
+                                question: m.askUserAsk.question,
+                                choices: m.askUserAsk.choices,
+                                context: m.askUserAsk.context,
+                              }}
+                              onChoose={(choice) => {
+                                void askUserRespond(
+                                  m.askUserAsk!.requestId,
+                                  choice,
+                                );
+                                const conv = active?.id;
+                                if (!conv) return;
+                                setConversations((prev) =>
+                                  prev.map((c) =>
+                                    c.id === conv
+                                      ? {
+                                          ...c,
+                                          messages: applyAskUserSettled(
+                                            c.messages,
+                                            m.askUserAsk!.requestId,
+                                            choice,
+                                          ),
+                                        }
+                                      : c,
+                                  ),
+                                );
+                              }}
+                            />
+                          ) : (
+                            <div className="bubble system-bubble">
+                              {m.askUserAsk.status === "timeout"
+                                ? "No answer — continuing with a documented assumption."
+                                : `Answered: ${m.askUserAsk.answer ?? ""}`}
+                            </div>
+                          )
                         ) : (
                           <div className="bubble system-bubble">{m.content}</div>
                         )}
@@ -3423,22 +3738,49 @@ export default function App() {
               </button>
             </div>
           )}
-          {oldestPendingFollowUp && (
-            <div className="pending-skill-chip" role="status">
-              <span>
-                Queued follow-up
-                {pendingFollowUps.length > 1
-                  ? ` (1 of ${pendingFollowUps.length})`
-                  : ""}
-                <span className="muted"> — restored in the composer</span>
-              </span>
-              <button
-                type="button"
-                className="btn-ghost"
-                onClick={discardOldestPendingFollowUp}
-              >
-                Dismiss
-              </button>
+          {pendingFollowUps.length > 0 && (
+            <div className="attach-strip" aria-label="Queued follow-ups">
+              {pendingFollowUps.map((q, i) => (
+                <div key={`${i}-${q.slice(0, 24)}`} className="attach-chip" title={q}>
+                  <span className="attach-chip-meta">
+                    <span className="attach-chip-name">
+                      {running ? "Queued" : "Next"} {i + 1}/{pendingFollowUps.length}
+                    </span>
+                    <span className="attach-chip-sub">
+                      {q.replace(/\s+/g, " ").slice(0, 72)}
+                      {q.length > 72 ? "…" : ""}
+                    </span>
+                  </span>
+                  <button
+                    type="button"
+                    className="attach-chip-remove"
+                    title="Remove from queue"
+                    onClick={() => {
+                      const convId = active?.id;
+                      if (!convId) return;
+                      setConversations((prev) =>
+                        prev.map((c) =>
+                          c.id === convId
+                            ? {
+                                ...c,
+                                pendingFollowUps: (c.pendingFollowUps ?? []).filter(
+                                  (_x, idx) => idx !== i,
+                                ),
+                              }
+                            : c,
+                        ),
+                      );
+                      if (i === 0) {
+                        setDraft((prev) =>
+                          prev.trim() === q.trim() ? "" : prev,
+                        );
+                      }
+                    }}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))}
             </div>
           )}
           {pendingSkill && (
@@ -3476,7 +3818,6 @@ export default function App() {
                     type="button"
                     className="attach-chip-remove"
                     title="Remove"
-                    disabled={running}
                     onClick={() => removeAttachment(a.id)}
                   >
                     ×
@@ -3501,6 +3842,20 @@ export default function App() {
           <div
             className={`composer glass-capsule${speech.listening ? " is-listening" : ""}`}
           >
+            <button
+              type="button"
+              className="btn-skill-pick"
+              title="Attach files (any folder)"
+              aria-label="Attach files"
+              onClick={() => void onPickExternalFiles()}
+            >
+              <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden>
+                <path
+                  fill="currentColor"
+                  d="M16.5 6.5v10a4.5 4.5 0 1 1-9 0V7a3 3 0 1 1 6 0v9.5a1.5 1.5 0 1 1-3 0V8H12v8.5a3 3 0 1 0 6 0V6.5a4.5 4.5 0 1 0-9 0V16a6 6 0 1 0 12 0V7h-1.5z"
+                />
+              </svg>
+            </button>
             <button
               type="button"
               className="btn-skill-pick"
@@ -3577,8 +3932,10 @@ export default function App() {
                 placeholder={
                   speech.listening
                     ? "Listening… speak now"
-                    : steerSupported
-                      ? "Steer the running agent… (applied at turn end)"
+                    : running
+                      ? liveSendMode === "steer" && steerSupported
+                        ? "Steer the running agent… (applied at the next tool boundary)"
+                        : "Queue a follow-up… (sends when this run ends)"
                       : mode === "zelari"
                       ? "Describe the mission… (@file to tag)"
                       : mode === "council"
@@ -3586,7 +3943,6 @@ export default function App() {
                         : "Message the agent… (@file to tag paths)"
                 }
                 rows={1}
-                disabled={running && !steerSupported}
               />
               {speech.interim ? (
                 <div className="speech-interim" aria-live="polite">
@@ -3602,30 +3958,39 @@ export default function App() {
             <div className="composer-actions">
               {running ? (
                 <>
-                  {steerSupported ? (
-                    <button
-                      type="button"
-                      className="btn-send"
-                      disabled={!(draft.trim() || speech.interim.trim())}
-                      onClick={() => void send()}
-                      title="Steer — queued, applied at the next turn boundary"
-                      aria-label="Steer running agent"
+                  <button
+                    type="button"
+                    className="btn-send"
+                    disabled={
+                      !(draft.trim() || speech.interim.trim()) &&
+                      attachments.length === 0
+                    }
+                    onClick={() => void send()}
+                    title={
+                      liveSendMode === "steer" && steerSupported
+                        ? "Steer — applied at the next tool boundary"
+                        : "Queue follow-up — sends when this run ends"
+                    }
+                    aria-label={
+                      liveSendMode === "steer" && steerSupported
+                        ? "Steer running agent"
+                        : "Queue follow-up"
+                    }
+                  >
+                    <svg
+                      viewBox="0 0 24 24"
+                      width="17"
+                      height="17"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2.2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden
                     >
-                      <svg
-                        viewBox="0 0 24 24"
-                        width="17"
-                        height="17"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="2.2"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                        aria-hidden
-                      >
-                        <path d="M3 12h16M13 6l6 6-6 6" />
-                      </svg>
-                    </button>
-                  ) : null}
+                      <path d="M3 12h16M13 6l6 6-6 6" />
+                    </svg>
+                  </button>
                   <button
                     type="button"
                     className="btn-stop"
@@ -3668,7 +4033,12 @@ export default function App() {
           </div>
           </div>
           <div className="composer-hint">
-            Enter to send · @tag files · Skills ★ · drop to attach · {phase}{" "}
+            {running
+              ? liveSendMode === "steer" && steerSupported
+                ? "Enter steers at the next tool boundary · later sends queue"
+                : "Enter queues a follow-up for when this run ends"
+              : "Enter to send · @tag files · paperclip any file · drop to attach"}{" "}
+            · {phase}{" "}
             · {mode}
             {prefs.gauntletLoop ? " · Gauntlet ON" : ""}
             {provider ? ` · ${provider}` : ""}

@@ -26,6 +26,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { SessionTodoStatus } from './sessionTodos.js';
 import type { PermissionAskHandler } from './safety/toolPermissions.js';
+import type { AskUserHandler } from './tools/askUser.js';
 
 /** Dispatch mode for headless (mirrors TUI shift+tab modes). */
 export type HeadlessMode = ChatMode; // 'kraken' | 'council' | 'zelari'
@@ -41,6 +42,12 @@ export interface HeadlessOptions {
    * inject it in-process.
    */
   onPermissionAsk?: PermissionAskHandler;
+  /**
+   * Interactive ask_user handler (serve ask-bridge). When present, the
+   * tool blocks the harness until the host answers over NDJSON. Omit for
+   * CI `--headless` (soft-proceed with a documented assumption).
+   */
+  onAskUser?: AskUserHandler;
   /** Output format. 'json' = one NDJSON object per event, 'plain' = streamed text. */
   output: 'json' | 'plain';
   /**

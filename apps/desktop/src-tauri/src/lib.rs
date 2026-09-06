@@ -6,7 +6,9 @@
 //! to the web UI via Tauri events.
 
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::fs;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,7 +16,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 mod harness_sidecar;
 use harness_sidecar::HarnessSidecar;
@@ -915,6 +916,12 @@ pub(crate) fn spawn_cli_base(node: &Path, cli: &Path, cwd: Option<&Path>) -> Com
     // extra shells (a common UV_HANDLE_CLOSING trigger on Windows).
     c.env("ZELARI_SKIP_PREFLIGHT", "1");
     c.env("ANATHEMA_DEV", "1"); // no background update check mid-stream
+    // `npm run tauri:dev --prefix apps/desktop` sets npm_config_prefix to the
+    // desktop package dir. The child CLI doctor then looks for
+    // apps/desktop/zelari-code.cmd and the first-run gate goes red. Drop the
+    // local-npm prefix so probes use `npm prefix -g`.
+    c.env_remove("npm_config_prefix");
+    c.env_remove("NPM_CONFIG_PREFIX");
                                 // When the user picks a working folder (Open Folder), the spawned CLI
                                 // must run inside it so process.cwd() reflects the chosen project. All
                                 // CLI subsystems (workspace, council, mission, lsp, safety) read cwd
@@ -1929,6 +1936,129 @@ fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, St
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct ImportUserFileArgs {
+    path: String,
+    #[serde(default)]
+    cwd: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ImportUserFileDto {
+    original: String,
+    imported: String,
+    rel: String,
+    text: Option<String>,
+    note: Option<String>,
+    size: u64,
+}
+
+fn sanitize_upload_name(name: &str) -> String {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return "file".into();
+    }
+    trimmed
+        .chars()
+        .map(|c| match c {
+            '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*' => '_',
+            c if c.is_control() => '_',
+            c => c,
+        })
+        .collect()
+}
+
+fn preview_file_text(abs: &Path, size: u64) -> (Option<String>, Option<String>) {
+    const MAX_B: u64 = 512_000;
+    const TEXT_MAX: usize = 48_000;
+    if size > MAX_B {
+        return (
+            None,
+            Some(format!("too large ({} KB) — path only", (size / 1024).max(1))),
+        );
+    }
+    let bytes = match fs::read(abs) {
+        Ok(b) => b,
+        Err(e) => return (None, Some(format!("read failed: {e}"))),
+    };
+    let head_n = bytes.len().min(800);
+    if bytes[..head_n].contains(&0) {
+        return (None, Some("binary — path in uploads".into()));
+    }
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
+    if text.starts_with('\u{feff}') {
+        text = text.trim_start_matches('\u{feff}').to_string();
+    }
+    if text.len() > TEXT_MAX {
+        let more = text.len() - TEXT_MAX;
+        text.truncate(TEXT_MAX);
+        text.push_str(&format!("\n\n… [truncated, {more} more chars]"));
+    }
+    (Some(text), None)
+}
+
+/// User-picked file (paperclip / OS dialog). Not jailed to the project
+/// folder — picking the path *is* consent. When `cwd` is set, a copy is
+/// placed at `.zelari/uploads/` so agent tools can read it under the
+/// workspace sandbox.
+#[tauri::command]
+fn import_user_file(args: ImportUserFileArgs) -> Result<ImportUserFileDto, String> {
+    let raw = args.path.trim();
+    if raw.is_empty() {
+        return Err("Path is empty".into());
+    }
+    let src = fs::canonicalize(PathBuf::from(raw)).map_err(|e| format!("Cannot open: {e}"))?;
+    if !src.is_file() {
+        return Err("Not a file".into());
+    }
+    let size = fs::metadata(&src).map(|m| m.len()).unwrap_or(0);
+    let original = src.display().to_string();
+
+    let (imported, rel) = if let Some(cwd) = args
+        .cwd
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        let root = fs::canonicalize(PathBuf::from(cwd)).map_err(|e| format!("Cannot resolve cwd: {e}"))?;
+        if path_under_root(&src, &root) {
+            (src.clone(), rel_display(&src, &root))
+        } else {
+            let uploads = root.join(".zelari").join("uploads");
+            fs::create_dir_all(&uploads).map_err(|e| format!("Cannot create uploads dir: {e}"))?;
+            let name = src
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("file");
+            let safe = sanitize_upload_name(name);
+            let mut hasher = DefaultHasher::new();
+            original.hash(&mut hasher);
+            size.hash(&mut hasher);
+            let dest = uploads.join(format!("{:x}-{safe}", hasher.finish()));
+            if src != dest {
+                fs::copy(&src, &dest).map_err(|e| format!("Cannot copy into workspace: {e}"))?;
+            }
+            let abs = fs::canonicalize(&dest).unwrap_or(dest);
+            let rel = rel_display(&abs, &root);
+            (abs, rel)
+        }
+    } else {
+        (src.clone(), original.clone())
+    };
+
+    let (text, note) = preview_file_text(&imported, size);
+    Ok(ImportUserFileDto {
+        original,
+        imported: imported.display().to_string(),
+        rel,
+        text,
+        note,
+        size,
+    })
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct PrintMcpArgs {
     #[serde(default)]
     cwd: Option<String>,
@@ -2903,77 +3033,51 @@ fn run_sidecar_turn(
         input,
         cancel,
         &mut |value| {
-            // Ask-bridge: a permission.request from the sidecar becomes a
-            // native Yes/No dialog; the answer goes back as
-            // permission.respond. Everything still rides agent-event too.
-            if value.get("type").and_then(|t| t.as_str()) == Some("permission.request") {
-                forward_permission_request(app, sidecar, &value);
-            }
+            // permission.request / ask_user.request ride agent-event to the
+            // webview (in-chat cards). The webview answers via
+            // permission_respond / ask_user_respond — Rust is not the UI.
             let _ = app.emit("agent-event", enveloped(value, envelope));
         },
     )
 }
 
-/// Ask-bridge forwarding: show the approval request (native dialog) and
-/// answer over the sidecar transport. Dismiss / close / error ⇒ deny —
-/// the bridge can never silently allow (deny-on-timeout is CLI-side).
-fn forward_permission_request(
-    app: &AppHandle,
-    sidecar: &Arc<HarnessSidecar>,
-    value: &serde_json::Value,
-) {
-    let request_id = value
-        .get("requestId")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
+/// Host answer to a sidecar permission.request. Flattened args (same
+/// shape as send_control) so the webview invoke cannot miss a nested
+/// `args` wrapper. Fail-closed: unknown decisions are rejected here;
+/// an unanswered ask still denies CLI-side after the bridge timeout.
+#[tauri::command]
+fn permission_respond(
+    sidecar: State<'_, Arc<HarnessSidecar>>,
+    request_id: String,
+    decision: String,
+) -> Result<(), String> {
+    let request_id = request_id.trim();
     if request_id.is_empty() {
-        return; // Malformed request: CLI-side deny-timeout stays authoritative.
+        return Err("requestId is required".into());
     }
-    let tool = value
-        .get("tool")
-        .and_then(|v| v.as_str())
-        .unwrap_or("tool")
-        .to_string();
-    let category = value
-        .get("category")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let preview = value
-        .get("inputPreview")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    let app = app.clone();
-    let sidecar = Arc::clone(sidecar);
-    thread::spawn(move || {
-        // Native dialog OFF the reader thread so stdout keeps flowing.
-        let message = format!(
-            "Tool: {}\nCategory: {}\n\n{}Allow this action?",
-            tool,
-            if category.is_empty() { "-" } else { category.as_str() },
-            if preview.is_empty() {
-                String::new()
-            } else {
-                format!("{preview}\n\n")
-            }
-        );
-        let allowed = app
-            .dialog()
-            .message(message)
-            .title("Zelari — approval required")
-            // Explicit Allow/Deny: the plugin default buttons can degrade to
-            // Ok-only on some backends, and a dialog without a deny path
-            // would silently allow — fail-closed forbids that.
-            .buttons(MessageDialogButtons::OkCancelCustom(
-                "Allow".into(),
-                "Deny".into(),
-            ))
-            .blocking_show();
-        let decision = if allowed { "allow" } else { "deny" };
-        sidecar.send_permission_respond(&request_id, decision);
-    });
+    let decision = decision.trim().to_ascii_lowercase();
+    match decision.as_str() {
+        "allow" | "deny" | "always-tool" | "always-category" => {
+            sidecar.send_permission_respond(request_id, &decision);
+            Ok(())
+        }
+        _ => Err("decision must be allow|deny|always-tool|always-category".into()),
+    }
+}
+
+#[tauri::command]
+fn ask_user_respond(
+    sidecar: State<'_, Arc<HarnessSidecar>>,
+    request_id: String,
+    answer: Option<String>,
+) -> Result<(), String> {
+    let request_id = request_id.trim();
+    if request_id.is_empty() {
+        return Err("requestId is required".into());
+    }
+    let answer = answer.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    sidecar.send_ask_user_respond(request_id, answer);
+    Ok(())
 }
 
 
@@ -3191,6 +3295,7 @@ pub fn run() {
             list_dir,
             search_workspace,
             read_project_text,
+            import_user_file,
             print_mcp,
             set_mcp,
             remove_mcp,
@@ -3206,7 +3311,9 @@ pub fn run() {
             remove_ssh_target,
             test_ssh_target,
             print_ssh_pubkey,
-            watch_plan_changes
+            watch_plan_changes,
+            permission_respond,
+            ask_user_respond
         ])
         .build(tauri::generate_context!())
         .expect("error while building Zelari Desktop")

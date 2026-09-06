@@ -156,6 +156,33 @@ describe('AgentHarness build liveness', () => {
     expect(events.find((event) => event.type === 'agent_end')).toMatchObject({ reason: 'error' });
   });
 
+  it('does not treat a ---QUESTION--- mention as a clarification pause', async () => {
+    const provider: ProviderStreamFn = async function* () {
+      yield {
+        kind: 'text',
+        delta:
+          'ClarificationCard renders `---QUESTION---` and a `"choices": ["A","B"]` sample in chat.',
+      };
+      yield { kind: 'finish', reason: 'stop' };
+    };
+    const harness = new AgentHarness({
+      model: 'grok-4.6',
+      provider: 'grok',
+      messages: [{ role: 'user', content: 'implement it' }],
+      tools: [],
+      providerStream: provider,
+      buildLiveness: { mutationRequired: true },
+    });
+    const events = await collect(harness);
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: 'error',
+        severity: 'fatal',
+        code: 'build_liveness_stalled',
+      }),
+    );
+  });
+
   it('allows a structured clarification pause without forcing a mutation', async () => {
     let calls = 0;
     const provider: ProviderStreamFn = async function* () {

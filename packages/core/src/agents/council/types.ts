@@ -135,6 +135,12 @@ export interface PureCouncilConfig {
   skipSpecialists?: boolean;
   /** Council run mode. Default: `implementation`. */
   runMode?: CouncilRunMode;
+  /**
+   * Cooperative cancel (Desktop Stop / session.cancel). When aborted, the
+   * in-flight member harness is cancelled and remaining members, retries,
+   * and delivery loops are skipped. Omitted = no cancel (TUI / tests).
+   */
+  signal?: AbortSignal;
 }
 
 export interface PureCouncilCallbacks {
@@ -176,4 +182,4 @@ export interface PureCouncilCallbacks {
   onClarification?: (
     req: ClarificationRequest,
   ) => Promise<string | null | undefined>;
-}
+}

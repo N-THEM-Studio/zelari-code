@@ -19,6 +19,7 @@ import type { ToolContext } from '@zelari/core/harness/tools/toolTypes';
 import { createBuiltinToolRegistry } from '../toolRegistry.js';
 import {
   createTaskTool,
+  permissionsForTaskAgent,
   resetTaskSpawnCount,
   type SubAgentContext,
   type TaskToolDeps,
@@ -153,6 +154,22 @@ describe('registry gating (ADR-0020 Fase 1)', () => {
   it('explore sub-profile omits task (no nesting, regression)', () => {
     const { tools } = makeRegistry({ profile: 'explore' });
     expect(tools.map((t) => t.name)).not.toContain('task');
+  });
+});
+
+describe('permissionsForTaskAgent (spawn gate vs union schema)', () => {
+  it('explore (default) is read-only — no execute/network ask to launch', () => {
+    expect(permissionsForTaskAgent(undefined)).toEqual(['read']);
+    expect(permissionsForTaskAgent('explore')).toEqual(['read']);
+  });
+  it('verify needs execute; general needs the full union', () => {
+    expect(permissionsForTaskAgent('verify')).toEqual(['read', 'execute', 'network']);
+    expect(permissionsForTaskAgent('general')).toEqual([
+      'read',
+      'write',
+      'execute',
+      'network',
+    ]);
   });
 });
 

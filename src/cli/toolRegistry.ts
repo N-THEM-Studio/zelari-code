@@ -39,7 +39,12 @@ import {
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { BrainEvent } from '@zelari/core/shared/events';
-import { createTaskTool, type TaskAgentKind, type TaskToolDeps } from './tools/taskTool.js';
+import {
+  createTaskTool,
+  permissionsForTaskAgent,
+  type TaskAgentKind,
+  type TaskToolDeps,
+} from './tools/taskTool.js';
 import { createKrakenSelectTool } from './tools/krakenSelectTool.js';
 import { createAskUserTool, type AskUserHandler } from './tools/askUser.js';
 import { createSkillTool } from './tools/skillTool.js';
@@ -726,6 +731,7 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
           // registry's own policy (permPolicy above) — they can never
           // exceed it.
           parentPolicy: permPolicy,
+          ...(options.onPermissionAsk ? { onPermissionAsk: options.onPermissionAsk } : {}),
           ...(options.subAgentProvider ? { provider: options.subAgentProvider } : {}),
           ...(options.subAgentModel ? { model: options.subAgentModel } : {}),
         }),
@@ -961,15 +967,22 @@ export function createKrakenSubAgentContextFactory(opts: {
    * which makes the intersection a no-op rather than an escalation.
    */
   parentPolicy?: PermissionPolicy;
+  /**
+   * Parent ask-bridge. Tentacles used to omit this, so an intersected
+   * `ask` (execute/network under standard) fail-closed in ~0s after the
+   * user had already approved the parent `task` spawn.
+   */
+  onPermissionAsk?: PermissionAskHandler;
 }): TaskToolDeps['createSubAgentContext'] {
-  const { root, audit, sessionId, provider: providerOverride, model: modelOverride, parentPolicy } = opts;
+  const { root, audit, sessionId, provider: providerOverride, model: modelOverride, parentPolicy, onPermissionAsk } = opts;
   return async ({ agent, cwd: subCwd }) => {
     const cfg = providerOverride
       ? await providerConfigFor(providerOverride as ProviderName)
       : await providerFromEnv();
     if (!cfg) return null;
     const { resolveKrakenSubModel, parseQualifiedModelRef } = await import('./tools/krakenModel.js');
-    const resolvedModel = resolveKrakenSubModel(agent, modelOverride || cfg.model);
+    const parentModel = modelOverride || cfg.model;
+    const resolvedModel = resolveKrakenSubModel(agent, parentModel);
     // Cross-provider tentacles (Desktop Settings → ZELARI_KRAKEN_*_MODEL): a
     // provider-qualified ref ("grok/grok-4") selects both provider and model.
     // Unknown provider → keep the raw id (previous behavior: sent to the lead
@@ -995,11 +1008,11 @@ export function createKrakenSubAgentContextFactory(opts: {
     // headless-style auto-allow (a tentacle has no interactive prompt to
     // ask at); the effective policy is its intersection with the parent
     // policy — deny > ask > allow per category, `auto` is the AND of both.
-    // If the intersection downgrades a category to `ask`, resolution must
-    // FAIL CLOSED: the sub-agent context has no interactive ask handler, and
-    // `wrapWithPermissions` already returns typedErr for `ask` without
-    // `onPermissionAsk`, so that guarantee is reused as-is here (no extra
-    // handling needed).
+    // If the intersection downgrades a category to `ask`, the tentacle
+    // reuses the parent's onPermissionAsk (Desktop in-chat card / TUI
+    // picker). Session grants from "Always this category" apply process-
+    // wide, so a granted spawn does not re-ask inside the tentacle.
+    // Without a handler, wrapWithPermissions still fail-closes (typedErr).
     const agentPolicyForSubProfile = defaultPermissionPolicy({ auto: true });
     const effectiveSubPolicy = intersectPermissionPolicy(
       parentPolicy ?? agentPolicyForSubProfile,
@@ -1015,6 +1028,7 @@ export function createKrakenSubAgentContextFactory(opts: {
       diagnostics: false,
       lspProvider: null,
       permissionPolicy: effectiveSubPolicy,
+      ...(onPermissionAsk ? { onPermissionAsk } : {}),
       // P0.5: the tentacle's agent identity drives per-agent policy rules.
       policyAgent: agent,
     });
@@ -1022,6 +1036,15 @@ export function createKrakenSubAgentContextFactory(opts: {
       providerStream: buildProviderStream(subCfg),
       model,
       provider: subCfg.providerId,
+      ...(model !== parentModel
+        ? {
+            fallback: {
+              model: parentModel,
+              provider: cfg.providerId,
+              providerStream: buildProviderStream({ ...cfg, model: parentModel }),
+            },
+          }
+        : {}),
       registry: subRegistry,
       tools: subRegistry.toOpenAITools().map((t) => ({
         name: t.function.name,
@@ -1055,7 +1078,13 @@ function wrapWithPermissions<I, O>(
   return {
     ...original,
     execute: async (input: I, ctx: ToolContext): Promise<TypedResult<O>> => {
-      const decision = resolveToolPermission(original.name, required, policy);
+      const requiredNow: readonly ToolPermission[] =
+        original.name === 'task'
+          ? permissionsForTaskAgent(
+              (input as { agent?: TaskAgentKind } | null | undefined)?.agent,
+            )
+          : required;
+      const decision = resolveToolPermission(original.name, requiredNow, policy);
       // P0.A: resolve this agent's rule across the global+project layers —
       // restrict-only by default (deny > ask > allow; a global deny/ask can
       // never be relaxed by the project file; legacy precedence restores the
@@ -1065,7 +1094,7 @@ function wrapWithPermissions<I, O>(
         ? matchAgentPolicyRuleLayered(
             agentLayers,
             precedence,
-            required,
+            requiredNow,
             (input ?? {}) as Record<string, unknown>,
             root ?? process.cwd(),
           )
@@ -1090,7 +1119,7 @@ function wrapWithPermissions<I, O>(
       // other layer or the category decision (same deny>ask>allow lattice).
       // No scoped contract ⇒ null ⇒ this slot is inert.
       const contractRule = matchContractCapabilityRule(
-        required,
+        requiredNow,
         (input ?? {}) as Record<string, unknown>,
         root ?? process.cwd(),
       );
@@ -1102,13 +1131,13 @@ function wrapWithPermissions<I, O>(
       // defaults. Deterministic substring match, zero LLM (P2); ask/deny
       // already gated pass through; ZELARI_PROVENANCE=0 opts out entirely.
       let actionReason = decision.reason;
-      if (action !== 'deny' && (required.includes('write') || required.includes('execute'))) {
+      if (action !== 'deny' && (requiredNow.includes('write') || requiredNow.includes('execute'))) {
         const provHit = provenanceMatchIn(JSON.stringify(input ?? {}));
-        if (provHit && provenanceAppliesTo(provHit.source, required)) {
+        if (provHit && provenanceAppliesTo(provHit.source, requiredNow)) {
           const provNote = `[provenance] args embed non-user ${provHit.source} content (via ${provHit.tool})`;
           if (action === 'allow') {
             action = 'ask';
-            actionReason = `${provNote} — confirm before ${required.join('+')}`;
+            actionReason = `${provNote} — confirm before ${requiredNow.join('+')}`;
           } else {
             actionReason = `${decision.reason} · ${provNote}`;
           }
@@ -1124,9 +1153,9 @@ function wrapWithPermissions<I, O>(
       // regex, zero LLM (P2); ask/deny already gated pass through untouched.
       if (
         action === 'allow' &&
-        required.includes('execute') &&
+        requiredNow.includes('execute') &&
         activePermissionPreset() !== 'yolo' &&
-        !isSessionGranted(original.name, required)
+        !isSessionGranted(original.name, requiredNow)
       ) {
         const destructiveHit = destructiveCommandHit((input ?? {}) as Record<string, unknown>);
         if (destructiveHit) {
@@ -1189,7 +1218,7 @@ function wrapWithPermissions<I, O>(
       const outcome = await original.execute(input, ctx);
       // W3.1 (t46): fingerprint non-mutating tool results (web/mcp/file) so a
       // LATER write/execute embedding this content escalates to ask.
-      recordResultForProvenance(original.name, required, outcome);
+      recordResultForProvenance(original.name, requiredNow, outcome);
       return outcome;
     },
   };

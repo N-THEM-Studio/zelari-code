@@ -35,25 +35,26 @@ export type FixPathResult =
   | { ok: true; alreadyOk: boolean; prefix: string }
   | { ok: false; prefix: string; error: string };
 
-/** Resolve the npm global prefix. Empty string on failure. */
+/**
+ * npm global prefix. Prefer `npm prefix -g`: `npm run` pollutes
+ * `npm_config_prefix` with the local package dir (`--prefix apps/desktop`
+ * during desktop:dev), and writing THAT into the user PATH would be wrong.
+ */
 function getGlobalPrefix(): string {
+  try {
+    const fromNpm = spawnSync("npm", ["prefix", "-g"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).stdout?.trim() ?? "";
+    if (fromNpm) return fromNpm;
+  } catch {
+    /* fall through to env */
+  }
   return (
-    (
-      process.env.npm_config_prefix ||
-      process.env.NPM_CONFIG_PREFIX ||
-      ""
-    ).trim() ||
-    (() => {
-      try {
-        return spawnSync("npm", ["prefix", "-g"], {
-          encoding: "utf8",
-          stdio: ["ignore", "pipe", "ignore"],
-        }).stdout?.trim() ?? "";
-      } catch {
-        return "";
-      }
-    })()
-  );
+    process.env.npm_config_prefix ||
+    process.env.NPM_CONFIG_PREFIX ||
+    ""
+  ).trim();
 }
 
 /** Run a PowerShell one-liner, return trimmed stdout or "" on failure. */

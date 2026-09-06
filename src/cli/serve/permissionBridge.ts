@@ -1,4 +1,10 @@
-import type { PermissionAskHandler } from '../safety/toolPermissions.js';
+import type { ToolPermission } from '@zelari/core/harness/tools/toolTypes';
+import {
+  grantSessionCategory,
+  grantSessionTool,
+  isSessionGranted,
+  type PermissionAskHandler,
+} from '../safety/toolPermissions.js';
 
 /**
  * Serve-harness permission bridge (Pilastro B, desktop parity slice).
@@ -11,7 +17,8 @@ import type { PermissionAskHandler } from '../safety/toolPermissions.js';
  *   CLI → host : {"type":"permission.request","requestId":…,"tool":…,
  *                 "category":…,"inputPreview":…}   (stdout event)
  *   host → CLI : {"id":N,"method":"permission.respond",
- *                 "params":{"requestId":…,"decision":"allow"|"deny"}}
+ *                 "params":{"requestId":…,"decision":"allow"|"deny"|
+ *                           "always-tool"|"always-category"}}
  *
  * Fail-closed by construction: an unanswered request DENIES after the
  * timeout (default 120s) — the bridge can never silently allow.
@@ -48,15 +55,30 @@ export function applyTurnPermissionPreset(input: unknown): boolean {
 export interface PermissionAskPayload {
   tool: string;
   category: string;
+  categories?: string[];
   inputPreview?: string;
   reason?: string;
 }
 
-export type PermissionDecision = 'allow' | 'deny';
+export const PERMISSION_DECISIONS = [
+  'allow',
+  'deny',
+  'always-tool',
+  'always-category',
+] as const;
+export type PermissionDecision = (typeof PERMISSION_DECISIONS)[number];
+
+function isPermissionDecision(value: unknown): value is PermissionDecision {
+  return (
+    typeof value === 'string' &&
+    (PERMISSION_DECISIONS as readonly string[]).includes(value)
+  );
+}
 
 interface PendingAsk {
   resolve: (decision: PermissionDecision) => void;
   timer: ReturnType<typeof setTimeout>;
+  payload: PermissionAskPayload;
 }
 
 export interface ServePermissionBridge {
@@ -64,6 +86,11 @@ export interface ServePermissionBridge {
   onPermissionAsk: (payload: PermissionAskPayload) => Promise<PermissionDecision>;
   /** Resolve a pending request (idempotent: unknown ids are a no-op). */
   respond: (requestId: string, decision: PermissionDecision) => boolean;
+  /**
+   * After a session grant, allow any in-flight asks now covered so the
+   * user is not asked 3× for the same category (parallel tentacle spawns).
+   */
+  releaseGranted: () => number;
   /** How many requests are awaiting a host answer (observability/tests). */
   pendingCount: () => number;
 }
@@ -75,11 +102,23 @@ export function createServePermissionBridge(
   const pending = new Map<string, PendingAsk>();
   let seq = 0;
 
-  const settle = (requestId: string, decision: PermissionDecision): boolean => {
+  const settle = (
+    requestId: string,
+    decision: PermissionDecision,
+    timedOut = false,
+  ): boolean => {
     const entry = pending.get(requestId);
     if (!entry) return false;
     pending.delete(requestId);
     clearTimeout(entry.timer);
+    write(
+      JSON.stringify({
+        type: 'permission.settled',
+        requestId,
+        decision,
+        ...(timedOut ? { timedOut: true } : {}),
+      }),
+    );
     entry.resolve(decision);
     return true;
   };
@@ -87,25 +126,48 @@ export function createServePermissionBridge(
   return {
     onPermissionAsk(payload) {
       const requestId = `perm-${Date.now()}-${++seq}`;
+      const categories =
+        payload.categories && payload.categories.length > 0
+          ? payload.categories
+          : payload.category
+            ? payload.category.split(',').map((c) => c.trim()).filter(Boolean)
+            : [];
       return new Promise<PermissionDecision>((resolve) => {
         const timer = setTimeout(() => {
           // Fail-closed: no host answer in time ⇒ deny, never allow.
-          settle(requestId, 'deny');
+          settle(requestId, 'deny', true);
         }, timeoutMs);
-        pending.set(requestId, { resolve, timer });
+        pending.set(requestId, { resolve, timer, payload });
         write(
           JSON.stringify({
             type: 'permission.request',
             requestId,
             tool: payload.tool,
             category: payload.category,
+            categories,
             ...(payload.inputPreview !== undefined ? { inputPreview: payload.inputPreview } : {}),
             ...(payload.reason !== undefined ? { reason: payload.reason } : {}),
           }),
         );
       });
     },
-    respond: settle,
+    respond: (requestId, decision) => settle(requestId, decision, false),
+    releaseGranted() {
+      let n = 0;
+      for (const [id, entry] of [...pending]) {
+        const cats = (
+          entry.payload.categories && entry.payload.categories.length > 0
+            ? entry.payload.categories
+            : entry.payload.category
+              ? entry.payload.category.split(',').map((c) => c.trim()).filter(Boolean)
+              : []
+        ) as ToolPermission[];
+        if (isSessionGranted(entry.payload.tool, cats)) {
+          if (settle(id, 'allow', false)) n += 1;
+        }
+      }
+      return n;
+    },
     pendingCount: () => pending.size,
   };
 }
@@ -127,8 +189,12 @@ export function servePermissionRespond(
   if (typeof requestId !== 'string' || requestId.length === 0) {
     return { accepted: false, reason: 'permission.respond requires a non-empty string requestId' };
   }
-  if (decision !== 'allow' && decision !== 'deny') {
-    return { accepted: false, reason: "permission.respond decision must be 'allow' or 'deny'" };
+  if (!isPermissionDecision(decision)) {
+    return {
+      accepted: false,
+      reason:
+        "permission.respond decision must be 'allow' | 'deny' | 'always-tool' | 'always-category'",
+    };
   }
   return { accepted: bridge.respond(requestId, decision) };
 }
@@ -147,11 +213,23 @@ export function asRegistryAskHandler(bridge: ServePermissionBridge): PermissionA
     const decision = await bridge.onPermissionAsk({
       tool: req.toolName,
       category: req.categories.join(',') || 'other',
+      categories: req.categories,
       reason,
       ...(req.claims && req.claims.length > 0
         ? { inputPreview: req.claims.map((c) => c.summary).join(' · ') }
         : {}),
     });
-    return decision === 'allow';
+    if (decision === 'deny') return false;
+    if (decision === 'always-tool') {
+      grantSessionTool(req.toolName);
+      bridge.releaseGranted();
+    } else if (decision === 'always-category') {
+      for (const cat of req.categories) {
+        grantSessionCategory(cat as ToolPermission);
+      }
+      grantSessionTool(req.toolName);
+      bridge.releaseGranted();
+    }
+    return true;
   };
 }

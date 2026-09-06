@@ -36,4 +36,17 @@ describe("parseClarificationRequest (interactive pause)", () => {
     expect(cleaned).not.toContain("---QUESTION---");
     expect(cleaned).toContain("Ask:");
   });
+
+  it("does not treat a marker mention as an interactive clarification", () => {
+    const text =
+      'ClarificationCard renders `---QUESTION---` blocks in chat, not as a dialog.';
+    expect(parseClarificationRequest(text)).toBeNull();
+    expect(hasInteractiveClarification(text)).toBe(false);
+  });
+
+  it("does not pause on a choices code sample that is not a question block", () => {
+    const text =
+      'The picker offers `"choices": ["Allow", "Deny"]` next to `---QUESTION---` docs.';
+    expect(hasInteractiveClarification(text)).toBe(false);
+  });
 });

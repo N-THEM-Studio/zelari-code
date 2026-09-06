@@ -41,6 +41,10 @@ export interface ChatMessage {
     id: string;
     state: "sent" | "accepted" | "applied" | "rejected" | "not_applied";
   };
+  /** In-chat tool permission ask (sidecar permission.request). */
+  permissionAsk?: import("./inChatAsk").PermissionAskState;
+  /** In-chat ask_user (same-turn clarifying question). */
+  askUserAsk?: import("./inChatAsk").AskUserAskState;
 }
 
 export interface MessageStats {
@@ -307,6 +311,34 @@ export type AgentEvent =
     }
   | { type: "error"; message?: string; error?: string }
   | { type: "log"; message?: string }
+  | {
+      type: "permission.request";
+      requestId?: string;
+      tool?: string;
+      category?: string;
+      categories?: string[];
+      inputPreview?: string;
+      reason?: string;
+    }
+  | {
+      type: "permission.settled";
+      requestId?: string;
+      decision?: string;
+      timedOut?: boolean;
+    }
+  | {
+      type: "ask_user.request";
+      requestId?: string;
+      question?: string;
+      choices?: string[];
+      context?: string;
+    }
+  | {
+      type: "ask_user.settled";
+      requestId?: string;
+      answer?: string | null;
+      timedOut?: boolean;
+    }
   | { type: "protocol_info"; version?: number; capabilities?: string[] }
   | { type: "control_accepted"; controlId?: string; controlType?: string }
   | { type: "control_applied"; controlId?: string; controlType?: string; boundary?: string }

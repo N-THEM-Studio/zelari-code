@@ -161,6 +161,20 @@ describe("activityReducer", () => {
     expect(a.currentTool).toBeUndefined();
   });
 
+  it("agent_ended with ok:false marks the tentacle failed (not a green check)", () => {
+    const s = reduceall(
+      SPAWN_EXPLORE,
+      {
+        type: "agent_ended",
+        agentId: "exp-1",
+        ok: false,
+        reason: "failed",
+        durationMs: 400,
+      },
+    );
+    expect(s.agents["exp-1"].status).toBe("failed");
+  });
+
   it("agent_ended preserves failed/cancelled status", () => {
     const s = reduceall(
       SPAWN_EXPLORE,

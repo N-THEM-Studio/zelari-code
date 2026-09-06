@@ -182,7 +182,13 @@ export function activityReducer(
             ? (ev.tokenUsage as { input?: number; output?: number })
             : a.tokenUsage,
         status:
-          a.status === "failed" || a.status === "cancelled" ? a.status : "completed",
+          a.status === "failed" || a.status === "cancelled"
+            ? a.status
+            : ev.ok === false ||
+                (typeof ev.reason === "string" &&
+                  /fail|error|denied|cancel/i.test(ev.reason))
+              ? "failed"
+              : "completed",
         currentTool: undefined,
       }),
       () => ({ id: agentId, role: "general", status: "completed", tools: [] }),

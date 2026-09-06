@@ -132,14 +132,27 @@ function readPackageJson(): {
   }
 }
 
-/** Resolve the npm global prefix. Empty string on failure. */
+/**
+ * npm global prefix. Prefer `npm prefix -g` over `npm_config_prefix`:
+ * `npm run` (and `npm run … --prefix <pkg>`) sets that env to the *local*
+ * package dir, so doctor looked for `<pkg>/zelari-code.cmd` and the
+ * Desktop first-run gate went red during `npm run desktop:dev`.
+ */
 function getGlobalPrefix(): string {
+  const fromNpm = tryExec("npm prefix -g");
+  if (fromNpm) return fromNpm;
   return (
-    (
-      process.env.npm_config_prefix ||
-      process.env.NPM_CONFIG_PREFIX ||
-      ""
-    ).trim() || tryExec("npm prefix -g")
+    process.env.npm_config_prefix ||
+    process.env.NPM_CONFIG_PREFIX ||
+    ""
+  ).trim();
+}
+
+/** True when this process is a git/source checkout, not an `npm i -g` install. */
+function isSourceCheckout(): boolean {
+  return (
+    existsSync(path.join(packageRoot, "src", "cli", "main.ts")) &&
+    existsSync(path.join(packageRoot, "apps", "desktop", "package.json"))
   );
 }
 
@@ -153,6 +166,16 @@ function checkShim(pkgName: string): CheckResult {
   const shimName = isWin ? "zelari-code.cmd" : "zelari-code";
   const shimPath = path.join(prefix, shimName);
   if (!existsSync(shimPath)) {
+    const localBin = path.join(packageRoot, "bin", "zelari-code.js");
+    if (isSourceCheckout() && existsSync(localBin)) {
+      // Desktop `npm run desktop:dev` runs this CLI via bin/zelari-code.js.
+      // A missing global shim must not block the first-run gate.
+      return WARN(
+        `global shim not found at ${shimPath}\n` +
+          `         source checkout — using ${localBin}\n` +
+          `         optional: npm install -g ${pkgName}@latest --force`,
+      );
+    }
     return FAIL(
       `shim not found at ${shimPath}\n` +
         `         fix:  npm install -g ${pkgName}@latest --force`,

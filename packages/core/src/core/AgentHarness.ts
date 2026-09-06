@@ -66,6 +66,7 @@ import {
   buildRuntimeObserverBus,
 } from '../runtime/observers/ObserverBus.js';
 import type { RuntimeControlQueue } from '../runtime/controls/RuntimeControlQueue.js';
+import { hasInteractiveClarification } from '../agents/council/outputCleaning.js';
 
 export {
   collapseLoopedAssistantText,
@@ -1594,12 +1595,10 @@ export class AgentHarness {
             }
             pendingNativeTools.length = 0;
           }
-          // Clarification pause: if the model posed a ---QUESTION--- with choices,
-          // do NOT execute trailing text-format tools (MiniMax often dumps invoke
-          // garbage after the question). Force stop so the UI can open a picker.
-          const clarificationPause =
-            /---QUESTION---/.test(turnText) &&
-            /"choices"\s*:\s*\[/.test(turnText);
+          // Clarification pause: a parseable ---QUESTION--- with ≥2 choices.
+          // Mentions of the marker (or a `choices` code sample in prose) must
+          // not abort the tool-loop — that used to cut meta-replies in half.
+          const clarificationPause = hasInteractiveClarification(turnText);
           if (clarificationPause) {
             finishRef.value = 'stop';
             finishRef.clarificationRequested = true;

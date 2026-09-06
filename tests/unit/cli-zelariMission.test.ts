@@ -76,6 +76,30 @@ describe('runZelariMission', () => {
     expect(state.iteration).toBe(2);
   });
 
+  it('AbortSignal after a slice cancels the mission and skips further slices', async () => {
+    const root = await tmp();
+    const brief = buildMissionBrief({ userMessage: 'costruisci una vetrina e-commerce' });
+    const ac = new AbortController();
+    const runModes: string[] = [];
+    const emits: string[] = [];
+
+    const state = await runZelariMission('costruisci una vetrina e-commerce', brief, {
+      projectRoot: root,
+      memory: new FileMemoryBackend(),
+      emit: (m) => emits.push(m),
+      signal: ac.signal,
+      runSlice: async (a: RunSliceArgs): Promise<SliceRunResult> => {
+        runModes.push(a.runMode);
+        ac.abort();
+        return { completionOk: true, ran: true };
+      },
+    });
+
+    expect(runModes).toEqual(['design-phase']);
+    expect(state.status).toBe('cancelled');
+    expect(emits.some((m) => m.includes('cancellata'))).toBe(true);
+  });
+
   it('does not succeed on completionOk when writeCount is explicitly 0', async () => {
     const root = await tmp();
     const brief = buildMissionBrief({ userMessage: 'correggi il bug', hasPlan: true });

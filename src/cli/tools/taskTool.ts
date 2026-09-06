@@ -38,6 +38,7 @@ import {
   typedOk,
   typedErr,
   type ToolDefinition,
+  type ToolPermission,
   type TypedResult,
 } from '@zelari/core/harness/tools/toolTypes';
 import { appendKrakenRadio } from './krakenRadio.js';
@@ -89,6 +90,15 @@ export interface SubAgentContext {
    * run with this as working directory / sandbox root.
    */
   cwd?: string;
+  /**
+   * Lead identity to retry with when the routed cheap model 404s
+   * (`glm-5.3-flash does not exist` while the lead model works).
+   */
+  fallback?: {
+    model: string;
+    provider: string;
+    providerStream: ProviderStreamFn;
+  };
 }
 
 /** A minimal harness surface — just the event stream. */
@@ -105,6 +115,21 @@ export interface SubAgentHarness {
  * in kraken/executor.
  */
 export const TASK_TOOL_TIMEOUT_MS = 2_700_000;
+
+/**
+ * Runtime permission tags for ONE `task` invocation, from the agent kind.
+ * The tool schema still advertises the union (read/network/write/execute)
+ * so the model can pick any kind — but spawning an explore tentacle is
+ * read-only research and must not pop execute+network approval cards.
+ */
+export function permissionsForTaskAgent(
+  agent: TaskAgentKind | undefined,
+): ToolPermission[] {
+  const kind = agent ?? 'explore';
+  if (kind === 'general') return ['read', 'write', 'execute', 'network'];
+  if (kind === 'verify') return ['read', 'execute', 'network'];
+  return ['read'];
+}
 
 export interface TaskToolDeps {
   /** Optional sink for tentacle activity events (Frontier plan §37). */
@@ -1055,17 +1080,55 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   }
 
   const startedTools = new Map<string, string>();
-  const { result, error, aborted, usage, toolTrace } = await runSubAgent(harness, {
+  const onHarnessEvent = (ev: BrainEvent) => {
+    if (ev.type === 'tool_execution_start') {
+      startedTools.set(ev.toolCallId, ev.toolName);
+      emitActivity({ type: 'agent_tool', agentId: liveId, toolCallId: ev.toolCallId, tool: ev.toolName, status: 'started', ...(ev.args ? { summary: toolCommandHint(ev.args) } : {}), ts: Date.now() } as BrainAgentToolEvent);
+    } else if (ev.type === 'tool_execution_end') {
+      emitActivity({ type: 'agent_tool', agentId: liveId, toolCallId: ev.toolCallId, tool: startedTools.get(ev.toolCallId) ?? 'unknown', status: ev.isError ? 'failed' : 'completed', durationMs: ev.durationMs, ts: Date.now() } as BrainAgentToolEvent);
+    }
+  };
+  let { result, error, aborted, usage, toolTrace } = await runSubAgent(harness, {
     ...(opts.signal ? { signal: opts.signal } : {}),
-    onEvent: (ev) => {
-      if (ev.type === 'tool_execution_start') {
-        startedTools.set(ev.toolCallId, ev.toolName);
-        emitActivity({ type: 'agent_tool', agentId: liveId, toolCallId: ev.toolCallId, tool: ev.toolName, status: 'started', ...(ev.args ? { summary: toolCommandHint(ev.args) } : {}), ts: Date.now() } as BrainAgentToolEvent);
-      } else if (ev.type === 'tool_execution_end') {
-        emitActivity({ type: 'agent_tool', agentId: liveId, toolCallId: ev.toolCallId, tool: startedTools.get(ev.toolCallId) ?? 'unknown', status: ev.isError ? 'failed' : 'completed', durationMs: ev.durationMs, ts: Date.now() } as BrainAgentToolEvent);
-      }
-    },
+    onEvent: onHarnessEvent,
   });
+
+  // Routed cheap model 404 (e.g. Settings explore = glm-5.3-flash while the
+  // lead model works): retry once on the parent identity.
+  if (
+    !aborted &&
+    !result &&
+    sub.fallback &&
+    sub.fallback.model !== sub.model
+  ) {
+    const { isUnknownModelError } = await import('./krakenModel.js');
+    if (isUnknownModelError(error)) {
+      emitPhase(`model ${sub.model} unavailable — retrying with ${sub.fallback.model}`);
+      const retryConfig: AgentHarnessConfig = {
+        ...config,
+        model: sub.fallback.model,
+        provider: sub.fallback.provider,
+        providerStream: sub.fallback.providerStream,
+      };
+      try {
+        harness = deps.harnessFactory
+          ? deps.harnessFactory(retryConfig)
+          : new (await import('@zelari/core/harness')).AgentHarness(retryConfig);
+        const retry = await runSubAgent(harness, {
+          ...(opts.signal ? { signal: opts.signal } : {}),
+          onEvent: onHarnessEvent,
+        });
+        result = retry.result;
+        error = retry.error;
+        aborted = retry.aborted;
+        usage = retry.usage;
+        toolTrace = retry.toolTrace;
+        sub = { ...sub, model: sub.fallback.model, provider: sub.fallback.provider };
+      } catch (err) {
+        error = err instanceof Error ? err.message : String(err);
+      }
+    }
+  }
   const durationMs = Date.now() - started;
 
   if (aborted) {

@@ -20,11 +20,11 @@ interface Props {
 
 const PRESET_HELP: Record<PermissionPreset, string> = {
   standard:
-    "Reads and writes allowed; commands and network ask via the native approval dialog",
+    "Reads and writes allowed; commands and network ask in chat (Allow once / Always this session / Deny)",
   strict:
     "Everything that can ask, asks. Safest for untrusted repos; expect frequent blocks in headless runs",
   yolo:
-    "Everything allowed without asking. Only for scratch work you are ready to lose",
+    "Category defaults become allow. Provenance, policy.json, and ZELARI_PERMISSION_*=ask|deny still win — not a master switch",
 };
 
 export function PermissionsSection({ prefs, onPrefsChange }: Props) {

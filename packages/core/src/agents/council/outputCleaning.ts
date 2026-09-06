@@ -88,6 +88,50 @@ export function hasInteractiveClarification(text: string): boolean {
   return !!(c && c.choices && c.choices.length >= 2);
 }
 
+/**
+ * Strip real clarification blocks from display prose.
+ *
+ * A block is real only when `---QUESTION---` is followed (after whitespace)
+ * by `{`. Mentions of the marker in prose or backticks are left intact —
+ * the old marker→EOF regex ate the rest of any reply that *talked about*
+ * the protocol (Desktop/headless streamScrub then stopped emitting).
+ *
+ * Incomplete `{` (streaming, no balanced JSON, no ---END---) still hides
+ * from the marker through EOF so JSON scaffolding does not flash.
+ */
+export function stripQuestionBlocks(text: string): string {
+  let out = '';
+  let rest = text;
+  while (true) {
+    const start = rest.indexOf(QUESTION_MARKER);
+    if (start < 0) {
+      out += rest;
+      break;
+    }
+    out += rest.slice(0, start);
+    const afterMarker = rest.slice(start + QUESTION_MARKER.length);
+    const trimmed = afterMarker.replace(/^\s+/, '');
+    if (!trimmed.startsWith('{')) {
+      out += QUESTION_MARKER;
+      rest = afterMarker;
+      continue;
+    }
+    const endIdx = afterMarker.indexOf(QUESTION_END_MARKER);
+    if (endIdx >= 0) {
+      rest = afterMarker.slice(endIdx + QUESTION_END_MARKER.length);
+      continue;
+    }
+    const json = extractBalancedJsonObject(trimmed);
+    if (json) {
+      const jsonAt = afterMarker.indexOf(json);
+      rest = afterMarker.slice(jsonAt + json.length);
+      continue;
+    }
+    break;
+  }
+  return out.replace(/\n{3,}/g, '\n\n').trim();
+}
+
 export function parseThinking(text: string): string {
   // Prefer complete blocks; fall back to unclosed trailing block (common mid-stream).
   const complete = text.match(/<think(?:ing)?>([\s\S]*?)<\/think(?:ing)?>/i);
@@ -169,12 +213,9 @@ export function cleanAgentContent(
       '',
     );
   if (stripQuestion) {
-    // Closed block, or unclosed (model often omits ---END--- then dumps tools).
-    out = out
-      .replace(/---QUESTION---[\s\S]*?---END---/g, '')
-      .replace(/---QUESTION---[\s\S]*$/g, '');
+    out = stripQuestionBlocks(out);
   }
   out = out.replace(/\n{3,}/g, '\n\n').trim();
   // Defense-in-depth: strip proprietary prompt dumps that escaped model policy.
   return scrubProprietaryLeak(out);
-}
+}

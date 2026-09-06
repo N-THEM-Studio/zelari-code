@@ -28,6 +28,20 @@ describe('cleanAgentContent / parseThinking (v1.8.1 think leak)', () => {
     expect(cleanAgentContent(raw)).toBe('Ask:\n\nDone.');
   });
 
+  it('preserves prose that mentions ---QUESTION--- without a JSON payload', () => {
+    const raw =
+      'Il precedente più vicino è `ClarificationCard` (le `---QUESTION---` blocks) in chat.';
+    expect(cleanAgentContent(raw)).toContain('---QUESTION---');
+    expect(cleanAgentContent(raw)).toContain('in chat.');
+  });
+
+  it('strips an unclosed real JSON block from the marker through EOF', () => {
+    const raw = 'Intro\n---QUESTION---\n{"question":"still streaming"';
+    const cleaned = cleanAgentContent(raw);
+    expect(cleaned).toBe('Intro');
+    expect(cleaned).not.toContain('---QUESTION---');
+  });
+
   it('preserves <think> when stripThink:false (MiniMax-M3 provider history)', () => {
     const raw =
       '<think>\nplan the tool call\n</think>\n\nI will list providers.';
