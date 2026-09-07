@@ -45,6 +45,9 @@ export interface ChatMessage {
   permissionAsk?: import("./inChatAsk").PermissionAskState;
   /** In-chat ask_user (same-turn clarifying question). */
   askUserAsk?: import("./inChatAsk").AskUserAskState;
+  /** Local image paths the agent produced (screenshot / browser capture):
+   * rendered inline by ChatImageCard instead of a text reply. */
+  imagePaths?: string[];
 }
 
 export interface MessageStats {

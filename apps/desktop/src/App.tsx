@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
 import {
   cancelRun,
@@ -91,6 +92,8 @@ import {
 
 import { LiveTasksPanel } from "./components/LiveTasksPanel";
 import { parseTodosFromUnknown } from "./sessionTodosUi";
+import { extractImagePathsFromToolResult } from "./toolImages";
+import { ChatImageCard } from "./components/ChatImageCard";
 import {
   SESSION_FOLDERS_STORAGE_KEY,
   folderLabelFromCwd,
@@ -169,6 +172,16 @@ const SUGGESTIONS = [
 
 /** Per-suggestion icon (reference mock): refresh · clock · chart · shield. */
 const SUGGESTION_ICONS = ["🔄", "🕒", "📊", "🛡️"];
+
+/** Tools whose results may carry local image paths rendered in chat. */
+const IMAGE_PRODUCING_TOOLS = new Set(["screenshot", "browser_check"]);
+
+/** Sidebar sizing (2.35): default 234px = 20% narrower than the old 292px;
+ * draggable between these bounds, persisted per device. */
+const SIDEBAR_DEFAULT_W = 234;
+const SIDEBAR_MIN_W = 180;
+const SIDEBAR_MAX_W = 480;
+const LS_SIDEBAR_W = "zelari-desktop-sidebar-w";
 
 /** Max chars of file text inlined into the agent prompt per attachment. */
 const ATTACH_TEXT_MAX = 48_000;
@@ -510,6 +523,61 @@ export default function App() {
   const [draft, setDraft] = useState("");
   const draftRef = useRef("");
   draftRef.current = draft;
+  /** Sidebar width: draggable, persisted; default is 20% narrower (2.35). */
+  const [sidebarW, setSidebarW] = useState<number>(() => {
+    try {
+      const saved = Number(localStorage.getItem(LS_SIDEBAR_W));
+      if (
+        Number.isFinite(saved) &&
+        saved >= SIDEBAR_MIN_W &&
+        saved <= SIDEBAR_MAX_W
+      ) {
+        return saved;
+      }
+    } catch {
+      /* ignore */
+    }
+    return SIDEBAR_DEFAULT_W;
+  });
+  const sidebarWRef = useRef(sidebarW);
+  sidebarWRef.current = sidebarW;
+  const sidebarDragRef = useRef<{ startX: number; startW: number } | null>(null);
+
+  const onSidebarResizeStart = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    sidebarDragRef.current = { startX: e.clientX, startW: sidebarWRef.current };
+    e.currentTarget.setPointerCapture(e.pointerId);
+    e.currentTarget.classList.add("is-dragging");
+  };
+
+  const onSidebarResizeMove = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    const drag = sidebarDragRef.current;
+    if (!drag) return;
+    const next = Math.min(
+      SIDEBAR_MAX_W,
+      Math.max(SIDEBAR_MIN_W, drag.startW + (e.clientX - drag.startX)),
+    );
+    setSidebarW(next);
+  };
+
+  const onSidebarResizeEnd = (e: ReactPointerEvent<HTMLDivElement>): void => {
+    if (!sidebarDragRef.current) return;
+    sidebarDragRef.current = null;
+    e.currentTarget.classList.remove("is-dragging");
+    try {
+      localStorage.setItem(LS_SIDEBAR_W, String(sidebarWRef.current));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const resetSidebarWidth = (): void => {
+    setSidebarW(SIDEBAR_DEFAULT_W);
+    try {
+      localStorage.removeItem(LS_SIDEBAR_W);
+    } catch {
+      /* ignore */
+    }
+  };
   /** Per-conversation live run UI (M2 multiplexing), keyed by conversation. */
   const [liveToolLabelByConv, setLiveToolLabelByConv] = useState<
     Record<string, string | null>
@@ -1972,6 +2040,39 @@ export default function App() {
                 : s,
             ),
           );
+          // Screenshot-in-chat: when an image-producing tool (screenshot,
+          // browser_check) returns local image paths, persist them as a
+          // visual card in the conversation — pixels the user asked to see,
+          // not a JSON wall. Tool-gated so a plain list of .png files never
+          // renders as images.
+          if (!isErr && endName && IMAGE_PRODUCING_TOOLS.has(endName)) {
+            const rawResult =
+              typeof (ev as { result?: unknown }).result === "string"
+                ? (ev as { result: string }).result
+                : extractToolResult(ev);
+            const imagePaths = extractImagePathsFromToolResult(rawResult);
+            if (imagePaths.length > 0) {
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id === convId
+                    ? {
+                        ...c,
+                        messages: [
+                          ...c.messages,
+                          {
+                            id: uid("img"),
+                            role: "assistant" as const,
+                            content: "",
+                            imagePaths,
+                            createdAt: Date.now(),
+                          },
+                        ],
+                      }
+                    : c,
+                ),
+              );
+            }
+          }
           // End events omit toolName — look it up from the start event.
           // The in-process CLI todo store is not shared across Desktop's
           // per-message CLI spawns, so we mirror from the tool payload.
@@ -3122,7 +3223,7 @@ export default function App() {
           onContinueAnyway={() => setDoctorDismissed(true)}
         />
       )}
-      <div className="app-body">
+      <div className="app-body" style={{ "--sidebar-w": `${sidebarW}px` } as CSSProperties}>
       <aside className="sidebar">
         <div className="sidebar-top">
           <button
@@ -3281,6 +3382,17 @@ export default function App() {
             </div>
           </div>
         </div>
+        <div
+          className="sidebar-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Ridimensiona la barra laterale (doppio clic: ripristina)"
+          title="Trascina per ridimensionare · doppio clic per ripristinare"
+          onPointerDown={onSidebarResizeStart}
+          onPointerMove={onSidebarResizeMove}
+          onPointerUp={onSidebarResizeEnd}
+          onDoubleClick={resetSidebarWidth}
+        />
       </aside>
 
       <div className="workspace">
@@ -3477,7 +3589,13 @@ export default function App() {
                     return true;
                   })
                   .map((m) =>
-                    m.role === "assistant" ? (
+                    m.role === "assistant" && m.imagePaths?.length ? (
+                      <ChatImageCard
+                        key={m.id}
+                        paths={m.imagePaths}
+                        caption="Screenshot"
+                      />
+                    ) : m.role === "assistant" ? (
                       <div
                         key={m.id}
                         className={`message assistant msg-fade${m.streaming ? " is-streaming" : ""}`}

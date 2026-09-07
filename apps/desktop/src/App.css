@@ -72,7 +72,7 @@
     "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, "SF Mono", "Cascadia Code", "JetBrains Mono", Menlo,
     Consolas, monospace;
-  --sidebar-w: 248px;
+  --sidebar-w: 234px;
   --chrome-gap: 12px;
 }
 
@@ -464,6 +464,7 @@ button {
 
                                                       
 .sidebar {
+  position: relative; /* anchors the resizer handle */
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -1137,10 +1138,12 @@ button {
 .chat-inner {
   max-width: 840px;
   margin: 0 auto;
-  padding: 24px 28px 20px;
+  /* Tight chrome (2.35): side padding and inter-message gap were trimmed
+   * to hand the recovered width/height to the conversation itself. */
+  padding: 10px 16px 12px;
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
 }
 
 .empty-state {
@@ -2278,7 +2281,7 @@ button {
 
                                   
 .composer-wrap {
-  padding: 0 24px 18px;
+  padding: 0 16px 12px;
   background: transparent;
   flex-shrink: 0;
 }
@@ -6099,7 +6102,7 @@ kbd {
   --blob-2: rgba(168, 85, 247, 0.05);
   --blob-3: rgba(0, 229, 255, 0.04);
   --blob-4: rgba(192, 132, 252, 0.04);
-  --sidebar-w: 292px;
+  --sidebar-w: 234px;
 }
 
                                                                                 
@@ -6433,12 +6436,18 @@ kbd {
 }
 
 /* ── Sidecar stderr diagnostics (harness-sidecar-log panel) ────────────── */
+/* Floating top-RIGHT corner (the tasks widget owns the top-left): out of
+ * flow, so the chat column starts at the very top of the shell. */
 .sidecar-diagnostics {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  z-index: 39;
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: flex-end;
   gap: 2px;
-  padding: 0 16px;
+  padding: 0;
 }
 
 .sidecar-log-toggle {
@@ -6512,4 +6521,274 @@ kbd {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+/* --- ChatImageCard: inline pixels the agent produced (screenshots) ------ */
+.chat-image-card {
+  margin: 8px 0;
+  padding: 8px;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.25));
+  border-radius: 12px;
+  background: var(--panel, rgba(127, 127, 127, 0.06));
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(560px, 100%);
+}
+
+.chat-image-caption {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.chat-image {
+  display: block;
+  width: 100%;
+  max-width: 520px;
+  border-radius: 8px;
+  cursor: zoom-in;
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.2));
+}
+
+.chat-image.zoomed {
+  max-width: min(92vw, 1100px);
+  cursor: zoom-out;
+}
+
+.chat-image-fallback {
+  font-size: 12px;
+  color: var(--text-muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  word-break: break-all;
+  padding: 6px 8px;
+  border: 1px dashed var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 8px;
+}
+
+/* --- Unified tasks widget: floating calendar fab + popover (2.35) ------- */
+/* Absolute over the chat shell: ZERO flow space — the chat keeps its full
+ * height both when closed (fab only) and when open (popover drops DOWN).
+ * Anchored top-LEFT (the sidecar log toggle owns the top-right corner). */
+.live-tasks-pop {
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+}
+
+/* Collapsed: ONE small animated calendar icon ("sta lavorando" = pulse).  */
+.live-tasks-fab {
+  position: relative;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: linear-gradient(
+    160deg,
+    rgba(255, 220, 100, 0.12),
+    rgba(255, 255, 255, 0.04)
+  );
+  color: var(--text-secondary, #ccc);
+  cursor: pointer;
+  transition: border-color 0.15s ease, transform 0.15s ease, color 0.15s ease;
+}
+
+.live-tasks-fab:hover {
+  border-color: rgba(240, 193, 75, 0.6);
+  color: #f0c14b;
+  transform: translateY(-1px);
+}
+
+.live-tasks-fab.is-open {
+  border-color: rgba(240, 193, 75, 0.7);
+  color: #f0c14b;
+}
+
+.live-tasks-close {
+  flex-shrink: 0;
+  margin-left: auto;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.live-tasks-close:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.live-tasks-fab-badge {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: #f0c14b;
+  color: #20180a;
+  font-size: 10px;
+  font-weight: 800;
+  line-height: 16px;
+  text-align: center;
+  box-shadow: 0 0 0 2px rgba(20, 20, 24, 0.9);
+}
+
+/* Working: pulsing ring + calendar dots blink in sequence. */
+.live-tasks-fab.is-working {
+  color: #f0c14b;
+  border-color: rgba(240, 193, 75, 0.55);
+}
+
+.live-tasks-fab.is-working::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: 13px;
+  border: 1.5px solid rgba(240, 193, 75, 0.7);
+  animation: live-tasks-pulse 1.6s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes live-tasks-pulse {
+  0% {
+    transform: scale(0.85);
+    opacity: 0.9;
+  }
+  70% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+  100% {
+    transform: scale(1.25);
+    opacity: 0;
+  }
+}
+
+.live-tasks-fab .cal-dot {
+  opacity: 0.35;
+  transition: opacity 0.2s ease;
+}
+
+.live-tasks-fab.is-working .cal-dot {
+  animation: live-tasks-dot 1.4s ease-in-out infinite;
+}
+
+.live-tasks-fab.is-working .d2 { animation-delay: 0.18s; }
+.live-tasks-fab.is-working .d3 { animation-delay: 0.36s; }
+.live-tasks-fab.is-working .d4 { animation-delay: 0.54s; }
+.live-tasks-fab.is-working .d5 { animation-delay: 0.72s; }
+.live-tasks-fab.is-working .d6 { animation-delay: 0.9s; }
+
+@keyframes live-tasks-dot {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+/* Expanded: NARROW popover dropping DOWN from the fab — overlays the chat
+ * margin, never pushes content, never full page width. */
+.live-tasks-card {
+  width: min(264px, calc(100vw - 32px));
+  margin: 0; /* overrides .session-todos-panel flow margin */
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  max-height: min(60vh, 460px);
+  overflow-y: auto;
+  padding: 7px 9px;
+  box-shadow: 0 14px 38px rgba(0, 0, 0, 0.5);
+}
+
+.live-tasks-card .session-todos-list {
+  max-height: 108px;
+}
+
+.live-tasks-card .session-todo {
+  font-size: 12px;
+}
+
+.live-tasks-card .live-tasks-phase-list {
+  max-height: 96px;
+}
+
+.live-tasks-section {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.live-tasks-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-tasks-bar {
+  flex: 1;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  overflow: hidden;
+}
+
+.live-tasks-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #f0c14b, #ffd964);
+  transition: width 0.3s ease;
+}
+
+.live-tasks-progress-label {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* --- Sidebar resizer (2.35): drag handle on the sidebar's right edge ---- */
+.sidebar-resizer {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 9px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 50;
+  touch-action: none;
+  user-select: none;
+  background: transparent;
+  transition: background 0.12s ease;
+}
+
+.sidebar-resizer:hover,
+.sidebar-resizer.is-dragging {
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(240, 193, 75, 0.35),
+    transparent
+  );
 }
