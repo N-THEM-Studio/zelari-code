@@ -5,6 +5,24 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.35.0] - 2026-09-07
+
+The models can finally SEE. Pixels go to every model by default, tools can return images the model actually looks at, screenshots land in the Desktop chat, and the tasks widget stops eating chat space.
+
+### Added
+
+- **Vision ON for every model** — the `VISION_MODEL_HINTS` name allowlist kept missing new vision models (`gpt-6-astra`, `glm-5.x`, `deepseek v4 flash` all fell through), so `modelSupportsVision()` now defaults to true for every model and the provider decides: a non-vision endpoint either ignores the blocks or errors, which is what the user asked for over silent "pixels were not sent". Opt-out: `ZELARI_VISION=0`.
+- **Tool-result images reach the model** — `TypedResult` gains an `images?: AgentImage[]` field; the harness attaches the pixels to the `role:'tool'` message and the OpenAI-compatible provider accumulates them across the tool run and injects ONE synthetic user message with `image_url` blocks after the last consecutive tool result (the OpenAI `tool` role is text-only, and strict providers require tool results to stay contiguous). Pixels never bloat the text payload.
+- **`screenshot` tool** — captures the user's screen as PNG (PowerShell `CopyFromScreen` on Windows, `screencapture` on macOS, gnome-screenshot/scrot/ImageMagick on Linux), saves it under `cwd/.zelari/screenshots/`, and returns it as a vision block. Permission category `ui`, so every capture asks unless policy allows. Gated by `ZELARI_SCREENSHOT=0`.
+- **`browser_check` screenshots are pixels now** — the saved PNG is attached to the tool result as an `AgentImage` (≤8MB), so the agent LOOKS at the page it just verified instead of reading a path string.
+- **Screenshots in the Desktop chat** — tool results from image-producing tools (`screenshot`, `browser_check`) render as inline image cards (`ChatImageCard`) served through the Tauri asset protocol (enabled with scope `**`): zoom on click, graceful path fallback outside the Tauri shell. Path extraction is tested (`toolImages.ts`).
+- **Resizable sidebar** — a drag handle on the sidebar's right edge resizes it between 180–480px, persists the width in localStorage, and double-click restores the default. Default width is 20% narrower (292px → 234px) to hand the space to the chat.
+
+### Changed
+
+- **Tasks/todo widget is a floating popover** — the whole surface collapsed behind ONE animated calendar icon (top-left, pulsing ring + sequential dot animation + active-count badge while any task is `in_progress`/`blocked`); clicking drops a 264px-wide popover downward that overlays the chat margin without pushing content. The sidecar log toggle moved to the floating top-right corner. Neither takes flow space anymore.
+- **Tighter chat chrome** — `chat-inner` padding 24/28→10/16px and inter-message gap 18→12px, `composer-wrap` padding 24/18→16/12px; combined with the floating widgets the chat column recovers ~50px of height and ~24px of width.
+
 ## [2.34.1] - 2026-09-06
 
 Desktop chat is now the permission and question surface. Stop cancels council. The composer can steer a live run, queue the rest, and auto-send the next turn.
