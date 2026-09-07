@@ -62,6 +62,7 @@ import { getSharedLspManager, type LspProvider } from './lsp/manager.js';
 import { createAstTools } from './ast/tools.js';
 import { createSemanticTool } from './semantic/tools.js';
 import { createBrowserTool } from './browser/tools.js';
+import { createScreenshotTool } from './tools/screenshotTool.js';
 import { createSshTools } from './ssh/tools.js';
 import { createWorldModelTools } from './workspace/worldModel.js';
 import {
@@ -679,6 +680,18 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
       name: browserTool.name,
       description: browserTool.description,
       permissions: browserTool.permissions ?? [],
+    });
+  }
+
+  // Screen capture (screenshot) — full registry only; 'ui' permission keeps
+  // the user in control of every capture. Gated by ZELARI_SCREENSHOT=0.
+  if (!readOnly && !gauntletParent && process.env.ZELARI_SCREENSHOT !== '0') {
+    const screenshotTool = createScreenshotTool();
+    registry.register(screenshotTool);
+    tools.push({
+      name: screenshotTool.name,
+      description: screenshotTool.description,
+      permissions: screenshotTool.permissions ?? [],
     });
   }
 

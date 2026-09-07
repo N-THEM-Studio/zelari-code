@@ -22,6 +22,7 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
       'record_world_observation',
       'retrieve_observation',
       'run_backtest',
+      'screenshot',
       'semantic_search',
       'set_world_checks',
       'show_diff',
@@ -65,10 +66,11 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
     const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
-    // 30 HEAD tools (25 builtins + 3 plan-task + exec_process) + observe_batch
-    // + retrieve_observation, with anchored `edit` replacing edit_file and
-    // apply_diff leaving the default catalog (ADR-0033 t77).
-    expect(openAITools).toHaveLength(30);
+    // 31 HEAD tools (25 builtins + 3 plan-task + exec_process + screenshot)
+    // + observe_batch + retrieve_observation, with anchored `edit`
+    // replacing edit_file and apply_diff leaving the default catalog
+    // (ADR-0033 t77).
+    expect(openAITools).toHaveLength(31);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);
