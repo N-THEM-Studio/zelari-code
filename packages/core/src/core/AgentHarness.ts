@@ -140,7 +140,8 @@ export interface AgentImage {
 export interface AgentMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
-  /** Vision input attached to this message (user turns). */
+  /** Vision input attached to this message (user turns and tool results —
+   * screenshots the model must SEE; the provider maps them to image blocks). */
   images?: AgentImage[];
   /** For tool messages: the tool call id this result corresponds to. */
   toolCallId?: string;
@@ -662,6 +663,9 @@ export class AgentHarness {
       isError: boolean;
       endEvent: BrainToolExecutionEndEvent;
       cacheKey?: string;
+      /** Pixels produced by the tool (screenshots) — attached to the tool
+       * message so vision-capable providers see them, never inlined in text. */
+      images?: AgentImage[];
     }>
   > {
     const out: Array<{
@@ -670,6 +674,7 @@ export class AgentHarness {
       isError: boolean;
       endEvent: BrainToolExecutionEndEvent;
       cacheKey?: string;
+      images?: AgentImage[];
     }> = new Array(pending.length);
 
     const maxParallel = Math.max(
@@ -686,7 +691,13 @@ export class AgentHarness {
 
     const invokeOne = async (
       p: (typeof pending)[number],
-    ): Promise<{ content: string; isError: boolean; durationMs: number; cacheKey?: string }> => {
+    ): Promise<{
+      content: string;
+      isError: boolean;
+      durationMs: number;
+      cacheKey?: string;
+      images?: AgentImage[];
+    }> => {
       if (p.skipped || !this.config.toolRegistry) {
         return {
           content: `[skipped] maxToolCallsPerTurn reached (limit=${maxToolCalls})`,
@@ -786,6 +797,9 @@ export class AgentHarness {
           content: resultStr,
           isError: !result.ok,
           durationMs: Date.now() - startMs,
+          ...(result.ok && result.images && result.images.length > 0
+            ? { images: result.images }
+            : {}),
         };
       })();
       inflight.set(callKey, prom);
@@ -796,7 +810,13 @@ export class AgentHarness {
 
     const toOut = (
       p: (typeof pending)[number],
-      r: { content: string; isError: boolean; durationMs: number; cacheKey?: string },
+      r: {
+        content: string;
+        isError: boolean;
+        durationMs: number;
+        cacheKey?: string;
+        images?: AgentImage[];
+      },
     ) => {
       recordToolResult(this.growth, r.content);
       const endEvent = createBrainEvent('tool_execution_end', this.sessionId, {
@@ -810,6 +830,7 @@ export class AgentHarness {
         content: r.content,
         isError: r.isError,
         endEvent,
+        ...(r.images ? { images: r.images } : {}),
         // Cache already written in invokeOne; no need to re-set.
       };
     };
@@ -1416,7 +1437,7 @@ export class AgentHarness {
       // BEFORE the assistant message → strict providers reject the next request
       // (MiniMax: "tool result's tool id ... not found (2013)"). xAI/grok
       // tolerated the reversed order; MiniMax/GLM do not.
-      const turnToolResults: { toolCallId: string; content: string }[] = [];
+      const turnToolResults: { toolCallId: string; content: string; images?: AgentImage[] }[] = [];
       // v1.8.0: queue native tool_call deltas; execute on `finish` so
       // consecutive read-only tools (and multi-`task` explore/verify) run in parallel.
       type PendingNativeTool = {
@@ -1583,6 +1604,7 @@ export class AgentHarness {
               turnToolResults.push({
                 toolCallId: item.toolCallId,
                 content: item.content,
+                ...(item.images ? { images: item.images } : {}),
               });
               if (item.cacheKey && item.content && !item.isError) {
                 this.toolCallCache.set(item.cacheKey, item.content);
@@ -1861,6 +1883,7 @@ export class AgentHarness {
               role: 'tool',
               toolCallId: tr.toolCallId,
               content: tr.content,
+              ...(tr.images ? { images: tr.images } : {}),
             });
           }
           // Inject the recovery guidance into the model context: the

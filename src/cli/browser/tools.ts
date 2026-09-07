@@ -10,9 +10,25 @@
 
 import path from 'node:path';
 import os from 'node:os';
+import { readFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { typedOk, type ToolDefinition } from '@zelari/core/harness/tools/toolTypes';
+import type { AgentImage } from '@zelari/core/harness';
 import { runBrowserCheck, type PlaywrightLoader, type BrowserAction } from './driver.js';
+
+/** Max screenshot bytes attached as a vision block (matches @-mention cap). */
+const SCREENSHOT_MAX_BYTES = 8 * 1024 * 1024;
+
+/** Load a saved PNG as an inline vision block; undefined when unreadable/oversized. */
+async function loadImageBlock(filePath: string): Promise<AgentImage | undefined> {
+  try {
+    const buf = await readFile(filePath);
+    if (buf.byteLength > SCREENSHOT_MAX_BYTES) return undefined;
+    return { mime: 'image/png', dataBase64: buf.toString('base64'), alt: path.basename(filePath) };
+  } catch {
+    return undefined;
+  }
+}
 
 const ActionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('click'), selector: z.string().min(1) }),
@@ -145,7 +161,16 @@ export function createBrowserTool(deps: BrowserToolDeps = {}): ToolDefinition {
               smokeStrength: 'weak' as const,
             }
           : { smokeStrength: 'asserted' as const }),
-      });
+      }, undefined, await toolImages(result.screenshotPath));
     },
   };
+}
+
+/** Screenshot pixels for the model context (vision follow-up block). */
+async function toolImages(
+  screenshotPath: string | undefined,
+): Promise<AgentImage[] | undefined> {
+  if (!screenshotPath) return undefined;
+  const image = await loadImageBlock(screenshotPath);
+  return image ? [image] : undefined;
 }

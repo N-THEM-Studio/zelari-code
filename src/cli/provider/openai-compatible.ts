@@ -213,31 +213,23 @@ export interface OpenAICompatibleConfig {
   extraHeaders?: Record<string, string>;
 }
 
-/** Model name hints that natively accept image inputs (OpenAI-compatible). */
-const VISION_MODEL_HINTS: readonly string[] = [
-  'grok-4', 'grok-3', 'grok-2-vision', 'grok-vision',
-  'glm-4v', 'glm-4.5v', 'glm-4.1v', 'glm-5v',
-  'qwen-vl', 'qwen2-vl', 'qwen2.5-vl', 'qwen3-vl',
-  'gpt-4o', 'gpt-4.1', 'gpt-4.5', 'gpt-4-vision', 'gpt-5',
-  'claude-3', 'claude-4', 'gemini-', 'gemini/',
-  'minimax-m1', 'minimax-m2', 'minimax-m3',
-  'deepseek-vl',
-];
 
 /**
  * Does this model accept image inputs natively? No third-party vision API is
- * involved: the pixels go straight to the model provider (grok / GLM /
- * MiniMax / Qwen-VL / custom vision endpoints) as OpenAI `image_url` content
- * blocks, using the same API key as the text turn.
+ * involved: the pixels go straight to the model provider as OpenAI
+ * `image_url` content blocks, using the same API key as the text turn.
  *
- * Override: ZELARI_VISION=1 (force on) / ZELARI_VISION=0 (force off).
+ * Vision is ON by default for EVERY model (2.35): name-hint allowlists kept
+ * missing new vision models (gpt-6-astra, glm-5.x, deepseek v4 …), so the
+ * pixels are always sent and the provider decides — a non-vision endpoint
+ * either ignores the blocks or errors, and the user explicitly prefers that
+ * over silently degrading to "pixels were not sent".
+ *
+ * Opt-out: ZELARI_VISION=0 (or false/off) keeps the text-only payload.
  */
-export function modelSupportsVision(model: string): boolean {
+export function modelSupportsVision(_model: string): boolean {
   const force = process.env.ZELARI_VISION;
-  if (force === '1' || force === 'true' || force === 'on') return true;
-  if (force === '0' || force === 'false' || force === 'off') return false;
-  const m = model.toLowerCase();
-  return VISION_MODEL_HINTS.some((hint) => m.includes(hint));
+  return !(force === '0' || force === 'false' || force === 'off');
 }
 
 /** Build a data: URI from an inline image block. */
@@ -359,8 +351,7 @@ function mapAgentMessage(m: AgentMessage, vision: boolean): Record<string, unkno
       tool_call_id: m.toolCallId,
       content: m.content,
     };
-  }
-  if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
+  }  if (m.role === 'assistant' && m.toolCalls && m.toolCalls.length > 0) {
     // DeepSeek thinking mode: when an assistant turn issued tool_calls,
     // `reasoning_content` MUST be echoed on every subsequent request or
     // the API returns HTTP 400. Other providers ignore the extra field.
@@ -422,6 +413,31 @@ function mapAgentMessage(m: AgentMessage, vision: boolean): Record<string, unkno
 }
 
 /**
+ * OpenAI's `tool` role only accepts textual content, so pixels produced by
+ * tools (screenshots) travel as ONE synthetic user message injected after
+ * the last consecutive tool result of the run (strict providers require
+ * tool messages to directly follow their assistant tool_calls turn).
+ * Providers that accept image parts natively on tool messages are rare;
+ * the user-message form is spec-valid everywhere.
+ */
+function imagesFollowUpMessage(images: AgentImage[]): Record<string, unknown> {
+  const labels = images.map((img) => img.alt ?? img.mime).join(', ');
+  return {
+    role: 'user' as const,
+    content: [
+      {
+        type: 'text' as const,
+        text: `[Immagine(i) dal tool: ${labels} — usa questi pixel per l'analisi visiva.]`,
+      },
+      ...images.map((img) => ({
+        type: 'image_url' as const,
+        image_url: { url: dataUriFromImage(img) },
+      })),
+    ],
+  };
+}
+
+/**
  * Positive integer from an env var, read at call time (not module load) so
  * runtime updates and per-test mutations are honored. Returns undefined when
  * unset or invalid — callers keep their defaults.
@@ -445,15 +461,29 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     //   - tool result: { role: 'tool', tool_call_id, content }
     // Resolve vision capability once per call (model may vary per call).
     const vision = modelSupportsVision(params.model);
-    const messages = params.messages.map((m) => {
+    const msgsIn = params.messages;
+    // Tool-result pixels accumulated across the current consecutive tool
+    // run, flushed as one follow-up user message after its last tool message.
+    let toolRunImages: AgentImage[] = [];
+    const messages = msgsIn.flatMap((m, i) => {
       const cacheable = !(m.role === 'user' && m.images && m.images.length > 0);
       if (cacheable) {
         const cached = messageMappingCache.get(m);
-        if (cached) return cached;
+        if (cached) return [cached];
       }
       const mapped = mapAgentMessage(m, vision);
       if (cacheable) messageMappingCache.set(m, mapped);
-      return mapped;
+      if (m.role === 'tool') {
+        if (m.images && m.images.length > 0) toolRunImages.push(...m.images);
+        const next = msgsIn[i + 1];
+        const runEnds = !next || next.role !== 'tool';
+        if (runEnds && vision && toolRunImages.length > 0) {
+          const followUp = imagesFollowUpMessage(toolRunImages);
+          toolRunImages = [];
+          return [mapped, followUp];
+        }
+      }
+      return [mapped];
     });
 
     // v1.36.0 (P3): per-request generation knobs. The compaction replay

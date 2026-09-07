@@ -22,16 +22,21 @@ describe('vision provider support (no third-party API)', () => {
     expect(modelSupportsVision('deepseek-vl')).toBe(true);
   });
 
-  it('rejects text-only models by default', () => {
-    expect(modelSupportsVision('deepseek-chat')).toBe(false);
-    expect(modelSupportsVision('deepseek-reasoner')).toBe(false);
+  it('vision is ON for every model by default (2.35) — unknown names included', () => {
+    // Name-hint allowlists kept missing new vision models (gpt-6-astra,
+    // glm-5.x, deepseek v4): pixels are now always sent and the provider
+    // decides. ZELARI_VISION=0 is the explicit opt-out.
+    expect(modelSupportsVision('deepseek-chat')).toBe(true);
+    expect(modelSupportsVision('deepseek-reasoner')).toBe(true);
+    expect(modelSupportsVision('openai/gpt-6-astra')).toBe(true);
+    expect(modelSupportsVision('totally-unknown-model')).toBe(true);
   });
 
   it('honors ZELARI_VISION override', () => {
-    process.env.ZELARI_VISION = '1';
-    expect(modelSupportsVision('deepseek-chat')).toBe(true);
     process.env.ZELARI_VISION = '0';
     expect(modelSupportsVision('grok-4')).toBe(false);
+    process.env.ZELARI_VISION = 'off';
+    expect(modelSupportsVision('deepseek-chat')).toBe(false);
   });
 
   it('builds data URIs from image blocks', () => {

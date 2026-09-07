@@ -1,5 +1,6 @@
 import type { ZodSchema } from 'zod';
 import type { SessionEventInput } from '../../session/types.js';
+import type { AgentImage } from '../AgentHarness.js';
 import type { WriteReject } from './builtin/edit.js';
 
 
@@ -30,9 +31,17 @@ export interface ToolResultMeta {
   reject?: WriteReject;
 }
 
-/** Discriminated union for tool execution results. */
+/**
+ * Discriminated union for tool execution results.
+ *
+ * `images` (ok path only): pixels produced by the tool (screenshot, camera
+ * frame, rendered canvas) that must reach the MODEL context, not just the
+ * UI. The harness attaches them to the role:'tool' AgentMessage; the
+ * provider maps them into vision content blocks. Never serialized into
+ * `value` — base64 in the text payload would bloat every non-vision turn.
+ */
 export type TypedResult<T> =
-  | { ok: true; value: T; meta?: ToolResultMeta }
+  | { ok: true; value: T; meta?: ToolResultMeta; images?: AgentImage[] }
   | { ok: false; error: string; meta?: ToolResultMeta };
 
 /** Tool permission categories. The CLI prompts the user before invoking
@@ -96,7 +105,12 @@ export interface AuditEntry {
 }
 
 /** Helper: wrap a thrown error into TypedResult. */
-export function typedOk<T>(value: T, meta?: ToolResultMeta): TypedResult<T> {
+export function typedOk<T>(
+  value: T,
+  meta?: ToolResultMeta,
+  images?: AgentImage[],
+): TypedResult<T> {
+  if (images && images.length > 0) return { ok: true, value, meta, images };
   return meta ? { ok: true, value, meta } : { ok: true, value };
 }
 
