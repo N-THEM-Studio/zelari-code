@@ -5,6 +5,24 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.37.0] - 2026-09-08
+
+Zelari missions now slice work from the open tasks in `.zelari/plan.json` and can resume mid-run. Headless JSON streams a real usage event so evals stop recording `tokens: null`.
+
+### Added
+
+- **Gated mission increments from the plan** — `buildMissionBrief` accepts `planTaskIds`; TUI and headless pass open (`pending` | `in_progress`) ids from `listOpenPlanTaskIds` (read-only, never creates `plan.json`). Each increment of at most 8 tasks must go green before the next starts. No plan → single MVP slice, byte-identical to 2.36.
+- **`--resume-mission`** — continues `.zelari/mission-state.json` (iteration, current slice, budget accumulators) instead of starting over. Distinct from `--resume <sessionId>` (spine). Refuses a missing or already-successful mission.
+- **Honest run usage** — `RunTelemetryAccumulator` sums provider `message_end.usage` + `tool_execution_end` counts. Headless JSON emits one `usage` event per council run; the evolution ledger and competitive/anchor evals record real tokens and model attribution (never chars/4).
+
+### Fixed
+
+- **Plugin-registry tests isolated from home prefs** — `ZELARI_PLUGINS_PREFS_FILE=""` was treated as unset and read `~/.zelari-code/plugins.json`, so muted plugins vanished from `detectMissingPlugins`.
+
+### Changed
+
+- Help text notes that zelari/mission mode auto-scopes slices from open plan tasks.
+
 ## [2.36.0] - 2026-09-08
 
 OpenAI-compatible providers can now speak the Responses API, `max` reasoning effort is available everywhere it can be sent, and the Anthropic OAuth stack moves to the migrated token endpoint with refresh races eliminated.
