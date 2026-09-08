@@ -5,6 +5,24 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.36.0] - 2026-09-08
+
+OpenAI-compatible providers can now speak the Responses API, `max` reasoning effort is available everywhere it can be sent, and the Anthropic OAuth stack moves to the migrated token endpoint with refresh races eliminated.
+
+### Added
+
+- **`/responses` endpoint, selectable** — a new transport (`provider/responsesApi.ts`) speaks the OpenAI Responses API for every OpenAI-compatible provider (openai-compatible, custom, grok, glm, minimax, deepseek): same message mapping as the ChatGPT transport (`system` → `instructions`, tool results → `function_call_output`), Bearer auth without the ChatGPT OAuth headers, `temperature`/`max_output_tokens` from capabilities plus per-request overrides, 429/5xx retry with `Retry-After` backoff, and connect/idle/max watchdogs. Switch per provider with `/provider api chat|responses` (CLI) or the new **API style** row in Desktop → Settings → Provider; persisted additively in `provider.json` (`apiStyleByProvider`, absent = `chat/completions`). Zero call-site changes: routing lives in `resolveStream`.
+- **`max` reasoning effort on OpenAI-compatible providers** — the effort ladder for `openai-compatible`/`custom` is now `low|medium|high|xhigh|max`: the pointed endpoint decides, an unsupported level surfaces as a visible 400 instead of a silent clamp. `translateResponsesThinking` clamps per provider, so `/responses` sends `reasoning.effort: "max"` intact while ChatGPT keeps its model-based gate.
+
+### Changed
+
+- **Desktop mirrors the new knobs** — `set_app_config` accepts `apiStyle` (mapped to CLI `--api-style`), `--print-config` reports it per provider, the settings UI shows the API style selector only where it applies (hidden on anthropic/chatgpt fixed transports), and the Desktop effort dropdown includes `max`.
+
+### Fixed
+
+- **Anthropic OAuth token endpoint migrated** — token exchange now targets `platform.claude.com/v1/oauth/token` (the migrated endpoint Claude Code and maintained clients already use) instead of the legacy `console.anthropic.com/v1/oauth/token`; the redirect URI stays on the registered client value. Regression-guarded by test.
+- **No more refresh-token races** — token refreshes are serialized per provider (concurrent callers share one exchange instead of burning the rotated refresh token), and `invalid_grant` surfaces as an explicit "run /login <provider>" error instead of a generic failure. Applies to grok/chatgpt/anthropic auto-refresh and `/provider <id> refresh`.
+
 ## [2.35.0] - 2026-09-07
 
 The models can finally SEE. Pixels go to every model by default, tools can return images the model actually looks at, screenshots land in the Desktop chat, and the tasks widget stops eating chat space.
