@@ -10,7 +10,7 @@ import { openBrowser } from './grokOAuth.js';
 
 export const DEFAULT_ANTHROPIC_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 export const ANTHROPIC_AUTHORIZE_URL = 'https://claude.ai/oauth/authorize';
-export const ANTHROPIC_TOKEN_URL = 'https://console.anthropic.com/v1/oauth/token';
+export const ANTHROPIC_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token';
 export const ANTHROPIC_REDIRECT_URI = 'https://console.anthropic.com/oauth/code/callback';
 export const ANTHROPIC_SCOPE = 'org:create_api_key user:profile user:inference';
 

@@ -6,6 +6,9 @@ import {
   listRefreshImpls,
   clearRefreshRegistry,
   grokRefreshAdapter,
+  runRefreshImpl,
+  isRefreshRejected,
+  RefreshRejectedError,
   type RefreshImpl,
 } from '../../src/cli/refreshRegistry.js';
 import { DEFAULT_GROK_OAUTH_CLIENT_ID } from '../../src/cli/grokOAuth.js';
@@ -145,5 +148,71 @@ describe('refreshRegistry (Task F.1)', () => {
     registerRefreshImpl('glm', async () => ({ accessToken: 'l' }));
     clearRefreshRegistry();
     expect(listRefreshImpls()).toEqual([]);
+  });
+});
+
+describe('runRefreshImpl (OpenClaw-style robust refresh)', () => {
+  beforeEach(() => {
+    clearRefreshRegistry();
+  });
+
+  it('throws the classic "no impl" error when nothing is registered', async () => {
+    await expect(runRefreshImpl('minimax', 'rt')).rejects.toThrow(
+      'No refresh impl registered for provider "minimax"',
+    );
+  });
+
+  it('dedups concurrent refreshes for the same provider into one impl call', async () => {
+    let calls = 0;
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fake: RefreshImpl = async () => {
+      calls += 1;
+      await gate;
+      return { accessToken: `tok-${calls}`, refreshToken: 'rotated-rt' };
+    };
+    registerRefreshImpl('anthropic', fake);
+
+    const first = runRefreshImpl('anthropic', 'rt-a');
+    const second = runRefreshImpl('anthropic', 'rt-b');
+    release!();
+    const [a, b] = await Promise.all([first, second]);
+
+    // One exchange, both callers share the outcome — no refresh-token race.
+    expect(calls).toBe(1);
+    expect(a).toEqual(b);
+    expect(a.accessToken).toBe('tok-1');
+
+    // After completion the in-flight entry is cleaned up: a later refresh
+    // runs a fresh exchange with the rotated token.
+    const third = await runRefreshImpl('anthropic', 'rotated-rt');
+    expect(calls).toBe(2);
+    expect(third.accessToken).toBe('tok-2');
+    expect(third.refreshToken).toBe('rotated-rt');
+  });
+
+  it('normalizes invalid_grant failures into RefreshRejectedError', async () => {
+    registerRefreshImpl('anthropic', async () => {
+      const err = new Error('Anthropic token refresh HTTP 400: invalid_grant') as Error & {
+        code?: string;
+      };
+      err.code = 'invalid_grant';
+      throw err;
+    });
+    const err = (await runRefreshImpl('anthropic', 'dead-rt').catch(
+      (e: unknown) => e,
+    )) as RefreshRejectedError;
+    expect(isRefreshRejected(err)).toBe(true);
+    expect(err.providerId).toBe('anthropic');
+    expect(err.message).toContain('/login anthropic');
+  });
+
+  it('passes non-grant errors through untouched', async () => {
+    registerRefreshImpl('chatgpt', async () => {
+      throw new Error('network down');
+    });
+    await expect(runRefreshImpl('chatgpt', 'rt')).rejects.toThrow('network down');
   });
 });

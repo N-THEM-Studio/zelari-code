@@ -18,8 +18,8 @@ import { promises as fs, existsSync, readFileSync, writeFileSync, mkdirSync } fr
 import path from 'node:path';
 import { keyStorePath } from './paths.js';
 import {
-  getRefreshImpl,
   registerDefaultRefreshImpls,
+  runRefreshImpl,
 } from './refreshRegistry.js';
 
 // Idempotent — safe to call on every module load. The registry starts empty
@@ -373,12 +373,8 @@ export async function forceRefreshOAuth(
  * startup (or in a test).
  */
 const defaultRefreshImpl: RefreshImpl = async (providerId, refreshToken) => {
-  const impl = getRefreshImpl(providerId as ProviderName);
-  if (!impl) {
-    // No refresh impl for this provider — signal graceful no-op to the caller.
-    throw new Error(`No refresh impl registered for provider "${providerId}"`);
-  }
-  return impl(providerId, refreshToken);
+  // Serialized per provider + invalid_grant normalization (refreshRegistry).
+  return runRefreshImpl(providerId as ProviderName, refreshToken);
 };
 
 /**

@@ -117,3 +117,99 @@ export function registerDefaultRefreshImpls(): void {
   if (!registry.has('chatgpt')) registry.set('chatgpt', chatgptRefreshAdapter);
   if (!registry.has('anthropic')) registry.set('anthropic', anthropicRefreshAdapter);
 }
+
+/** Result shape shared by every refresh impl (mirrors `RefreshImpl`'s return). */
+export interface RefreshResult {
+  accessToken: string;
+  expiresAt?: number;
+  refreshToken?: string;
+  accountId?: string;
+  idToken?: string;
+}
+
+/**
+ * Thrown when the upstream IdP rejects the refresh token (invalid_grant): the
+ * stored credential is dead and the only fix is a fresh `/login <id>`.
+ * Distinct from transient failures (network, 5xx, 429) where the stale access
+ * token may still work and a later retry can succeed.
+ *
+ * Mirrors OpenClaw's refresh-token-reuse detection (MIT): refresh tokens are
+ * single-use, so when two concurrent refreshes race, the loser receives
+ * invalid_grant — without this signal the loser wrongly concludes "logged out".
+ */
+export class RefreshRejectedError extends Error {
+  /** Marker callers can check without importing the class. */
+  readonly reloginRequired = true;
+
+  constructor(
+    message: string,
+    public readonly providerId: string,
+    public readonly cause?: unknown,
+  ) {
+    super(message);
+    this.name = 'RefreshRejectedError';
+  }
+}
+
+/** Type guard: did a refresh fail because the stored credential is dead? */
+export function isRefreshRejected(err: unknown): err is RefreshRejectedError {
+  if (err instanceof RefreshRejectedError) return true;
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { reloginRequired?: unknown }).reloginRequired === true
+  );
+}
+
+function normalizeRefreshError(providerId: string, err: unknown): unknown {
+  const code = (err as { code?: unknown } | null)?.code;
+  const message = err instanceof Error ? err.message : String(err);
+  if (code === 'invalid_grant' || message.includes('invalid_grant')) {
+    return new RefreshRejectedError(
+      `${providerId}: refresh token rejected (invalid_grant) — run /login ${providerId} to re-authenticate`,
+      providerId,
+      err,
+    );
+  }
+  return err;
+}
+
+/**
+ * In-flight refresh per provider (OpenClaw-style serialization): concurrent
+ * callers for the SAME provider share one impl call instead of racing two
+ * refresh-token exchanges. Anthropic and OpenAI rotate refresh tokens on every
+ * exchange, so an unserialized race burns one of the two tokens — the classic
+ * reuse trap this map prevents.
+ */
+const inflightRefresh = new Map<string, Promise<RefreshResult>>();
+
+/**
+ * Run the registered refresh impl for `id`, serialized per provider.
+ *
+ * - No impl registered → throws the same "No refresh impl registered" error
+ *   `defaultRefreshImpl` in keyStore used to produce (callers/tests match).
+ * - Concurrent calls for the same provider id share the single in-flight
+ *   exchange and observe the same outcome.
+ * - `invalid_grant`-shaped failures are normalized to `RefreshRejectedError`
+ *   so callers can tell "re-login required" apart from transient errors.
+ */
+export async function runRefreshImpl(id: ProviderName, refreshToken: string): Promise<RefreshResult> {
+  const existing = inflightRefresh.get(id);
+  if (existing) return existing;
+  const impl = getRefreshImpl(id);
+  if (!impl) {
+    throw new Error(`No refresh impl registered for provider "${id}"`);
+  }
+  const run = Promise.resolve()
+    .then(() => impl(id, refreshToken))
+    .catch((err: unknown) => {
+      throw normalizeRefreshError(id, err);
+    }) as Promise<RefreshResult>;
+  inflightRefresh.set(id, run);
+  void run
+    .finally(() => {
+      if (inflightRefresh.get(id) === run) inflightRefresh.delete(id);
+    })
+    .catch(() => undefined);
+  return run;
+}

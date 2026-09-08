@@ -50,6 +50,15 @@ describe('anthropicOAuth', () => {
     expect(url).toContain(DEFAULT_ANTHROPIC_CLIENT_ID);
   });
 
+  it('token endpoint points at the migrated platform.claude.com host', () => {
+    // Regression guard: Anthropic moved the OAuth token API off
+    // console.anthropic.com (same migration OpenClaw shipped). Authorize
+    // stays on claude.ai; the redirect URI stays on console.anthropic.com
+    // (registered redirect for the Claude Code public client).
+    expect(ANTHROPIC_TOKEN_URL).toBe('https://platform.claude.com/v1/oauth/token');
+    expect(ANTHROPIC_TOKEN_URL).not.toContain('console.anthropic.com');
+  });
+
   it('start then complete exchanges the pasted code', async () => {
     const started = await startAnthropicOAuth({ openBrowser: false });
     expect(started.authorizeUrl).toContain('claude.ai/oauth/authorize');
