@@ -53,6 +53,8 @@ export interface SlashCommandResult {
   customEndpoint?: string;
   /** For `provider_custom`: true if the user wants to clear the custom endpoint. */
   customClear?: boolean;
+  /** For `provider_custom` with api selection: 'chat' | 'responses' endpoint style. */
+  apiStyle?: string;
   /** For `effort_set`: the thinking-effort spec (auto|off|low|medium|high|xhigh|max|budget:N). */
   effortSpec?: string;
   /** For `steer`: the user prompt to enqueue on the active harness. */
@@ -375,6 +377,24 @@ export function handleSlashCommand(
           kind: 'provider_custom',
           customEndpoint: url,
         };
+      }
+      if (subcommand === 'api') {
+        const target = args[1];
+        if (!target || target === 'show') {
+          return {
+            handled: true,
+            kind: 'provider_custom',
+            message: 'Usage: /provider api chat — POST /chat/completions (default)\n         /provider api responses — POST /responses (OpenAI Responses API)\nApplies to the active provider; chatgpt/anthropic have a fixed transport.',
+          };
+        }
+        if (target !== 'chat' && target !== 'responses') {
+          return {
+            handled: true,
+            kind: 'provider_custom',
+            message: `[provider] unknown api style: ${target}. Use: chat | responses`,
+          };
+        }
+        return { handled: true, kind: 'provider_custom', apiStyle: target };
       }
       // v3-F: /provider <id> refresh | status subcommands.
       // subcommand is the provider id here; args[1] is the sub-subcommand.

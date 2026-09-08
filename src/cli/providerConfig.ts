@@ -45,6 +45,14 @@ export interface ProviderConfig {
    */
   customEndpoints: Partial<Record<ProviderName, string>>;
   /**
+   * HTTP endpoint style per provider: 'chat' (POST /chat/completions,
+   * default) or 'responses' (POST /responses — OpenAI Responses API).
+   * ABSENT = 'chat'. Only meaningful for providers routed through the
+   * OpenAI-compatible adapter (openai-compatible, custom, grok, glm,
+   * minimax, deepseek). Selected via `/provider api chat|responses`.
+   */
+  apiStyleByProvider?: Partial<Record<ProviderName, 'chat' | 'responses'>>;
+  /**
    * Kraken selection verifier override (Fase 9, ADR-0020).
    * ABSENT = `inherit` — the verifier uses the exact current run model
    * (the only default). Old config files without this field therefore
@@ -99,6 +107,7 @@ function mergeStoredProviderConfig(parsed: Partial<ProviderConfig> | null | unde
       modelByProvider: { ...DEFAULTS.modelByProvider, ...parsed.modelByProvider },
       thinkingByProvider: { ...DEFAULTS.thinkingByProvider, ...parsed.thinkingByProvider },
       customEndpoints: mergeCustomEndpoints(parsed.customEndpoints),
+      apiStyleByProvider: mergeApiStyles(parsed.apiStyleByProvider),
       krakenVerifier: mergeKrakenVerifier(parsed.krakenVerifier),
     };
   }
@@ -113,6 +122,24 @@ function cloneDefaults(): ProviderConfig {
     thinkingByProvider: { ...DEFAULTS.thinkingByProvider },
     customEndpoints: { ...DEFAULTS.customEndpoints },
   };
+}
+
+/**
+ * Sanitize a parsed `apiStyleByProvider` blob: keep only known provider ids
+ * with value 'responses' ('chat' entries are dropped — absent means chat).
+ */
+function mergeApiStyles(
+  raw: Partial<Record<ProviderName, 'chat' | 'responses'>> | undefined,
+): Partial<Record<ProviderName, 'chat' | 'responses'>> {
+  if (!raw || typeof raw !== 'object') return {};
+  const result: Partial<Record<ProviderName, 'chat' | 'responses'>> = {};
+  const validIds = new Set<string>(PROVIDERS.map((p) => p.id));
+  for (const [key, value] of Object.entries(raw)) {
+    if (!validIds.has(key)) continue;
+    if (value !== 'responses') continue;
+    result[key as ProviderName] = 'responses';
+  }
+  return result;
 }
 
 /**
@@ -211,6 +238,35 @@ export function clearCustomEndpoint(id: ProviderName): void {
   const config = getProviderConfig();
   if (!(id in config.customEndpoints)) return; // no-op
   delete config.customEndpoints[id];
+  writeProviderConfig(config);
+}
+
+/**
+ * Return the HTTP endpoint style for a provider ('chat' | 'responses').
+ * Absent entry or unknown provider → 'chat' (the legacy default).
+ */
+export function getApiStyleFor(id: ProviderName): 'chat' | 'responses' {
+  return getProviderConfig().apiStyleByProvider?.[id] === 'responses'
+    ? 'responses'
+    : 'chat';
+}
+
+/**
+ * Select the HTTP endpoint style for a provider (`/provider api`).
+ * 'chat' removes the override (falls back to the default transport).
+ */
+export function setApiStyleFor(id: ProviderName, style: 'chat' | 'responses'): void {
+  const spec: ProviderSpec | undefined = PROVIDERS.find((p) => p.id === id);
+  if (!spec) {
+    throw new Error(`Unknown provider id: "${id}". Available: ${PROVIDERS.map((p) => p.id).join(', ')}`);
+  }
+  if (style !== 'chat' && style !== 'responses') {
+    throw new Error(`Invalid api style: "${style}". Use 'chat' or 'responses'.`);
+  }
+  const config = getProviderConfig();
+  if (!config.apiStyleByProvider) config.apiStyleByProvider = {};
+  if (style === 'chat') delete config.apiStyleByProvider[id];
+  else config.apiStyleByProvider[id] = 'responses';
   writeProviderConfig(config);
 }
 

@@ -67,6 +67,7 @@ vi.mock('../../src/cli/providerConfig.js', () => ({
   getActiveProvider: vi.fn(() => ({ id: 'minimax' })),
   getModelForProvider: vi.fn(() => 'MiniMax-M3'),
   getCustomEndpoint: vi.fn(() => undefined),
+  getApiStyleFor: vi.fn(() => 'chat'),
 }));
 
 vi.mock('../../src/cli/toolRegistry.js', () => ({

@@ -54,10 +54,15 @@ export function effortLevelsFor(id: string, model?: string): ThinkingEffort[] {
   const m = (model ?? '').trim();
   switch (id) {
     case 'grok':
-    case 'openai-compatible':
-    case 'custom':
       if (grokHasXhigh(m)) return [...BASE_EFFORTS, 'xhigh'];
       return [...BASE_EFFORTS];
+    case 'openai-compatible':
+    case 'custom':
+      // User-pointed endpoint (custom baseUrl / OPENAI_BASE_URL): the model
+      // list is arbitrary so model gating is unreliable. Expose the full
+      // native ladder (up to 'max'); the endpoint visibly rejects what it
+      // does not support.
+      return [...BASE_EFFORTS, 'xhigh', 'max'];
     case 'chatgpt':
       if (gptHasMax(m)) return [...BASE_EFFORTS, 'xhigh', 'max'];
       if (gptHasXhigh(m)) return [...BASE_EFFORTS, 'xhigh'];

@@ -232,18 +232,20 @@ export function translateOpenAiCompatibleThinking(
   }
 }
 
-/** OpenAI Responses adapter (chatgpt). */
+/** OpenAI Responses adapter (chatgpt + /responses on openai-compatible). */
 export function translateResponsesThinking(
   spec: ThinkingSpec,
   model?: string,
+  providerId?: ProviderName,
 ): ThinkingTranslateResult {
   if (spec === 'auto') return { patch: {}, degraded: false };
+  const id: ProviderName = providerId ?? 'chatgpt';
   switch (spec.kind) {
     case 'off':
       // Responses API has no hard off; 'minimal' is the cheapest effort.
       return { patch: { reasoning: { effort: 'minimal' } }, degraded: false };
     case 'effort': {
-      const resolved = clampEffort('chatgpt', model, spec.effort);
+      const resolved = clampEffort(id, model, spec.effort);
       return withClampNote(
         { reasoning: { effort: resolved.effort } },
         resolved.clamped,
@@ -251,7 +253,7 @@ export function translateResponsesThinking(
       );
     }
     case 'budget':
-      return degrade('thinking "budget" is not supported for chatgpt — use low/medium/high/xhigh/max');
+      return degrade(`thinking "budget" is not supported on the Responses API for "${id}" — use low/medium/high/xhigh/max`);
   }
 }
 

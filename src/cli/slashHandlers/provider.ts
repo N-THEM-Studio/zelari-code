@@ -19,6 +19,8 @@ import {
   setCustomEndpoint,
   clearCustomEndpoint,
   getCustomEndpoint,
+  getApiStyleFor,
+  setApiStyleFor,
   getThinkingForProvider,
   setThinkingForProvider,
 } from '../providerConfig.js';
@@ -148,10 +150,20 @@ export function handleProviderPicker(ctx: ProviderSlashContext, openPicker?: Ope
 
 export function handleProviderCustom(
   ctx: ProviderSlashContext,
-  opts: { endpoint?: string; clear?: boolean; message?: string },
+  opts: { endpoint?: string; clear?: boolean; apiStyle?: string; message?: string },
 ): void {
   const id = ctx.activeProviderSpec.id;
   try {
+    if (opts.apiStyle) {
+      if (id === 'chatgpt' || id === 'anthropic') {
+        appendSystem(ctx.setMessages, `[provider] ${id} has a fixed transport — nothing to select.`);
+        return;
+      }
+      setApiStyleFor(id, opts.apiStyle as 'chat' | 'responses');
+      const target = opts.apiStyle === 'responses' ? 'POST /responses' : 'POST /chat/completions';
+      appendSystem(ctx.setMessages, `[provider] ${id} endpoint style set to ${opts.apiStyle} (${target})`);
+      return;
+    }
     if (opts.clear) {
       clearCustomEndpoint(id);
       appendSystem(ctx.setMessages, `[provider] cleared custom endpoint for ${id} — falling back to default`);

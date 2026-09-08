@@ -294,6 +294,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       handleProviderCustom(providerCtx, {
         endpoint: result.customEndpoint,
         clear: result.customClear,
+        apiStyle: result.apiStyle,
         message: result.message,
       });
       setInput('');
