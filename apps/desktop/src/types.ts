@@ -121,6 +121,7 @@ export interface DesktopProviderInfo {
   models: string[];
   defaultModel: string;
   endpoint?: string | null;
+  apiStyle?: "chat" | "responses";
   baseUrl?: string | null;
   authKind?: "none" | "api_key" | "oauth";
   expiresAt?: number | null;

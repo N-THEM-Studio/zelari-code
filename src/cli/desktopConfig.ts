@@ -4,7 +4,7 @@
  *
  * Flags (handled in main.ts before TUI):
  *   --print-config
- *   --set-config [--provider] [--model] [--endpoint] [--endpoint-clear]
+ *   --set-config [--provider] [--model] [--endpoint] [--endpoint-clear] [--api-style chat|responses]
  *   --set-key --provider <id> --key <secret>
  *   --discover-models [--provider <id>]
  */
@@ -27,6 +27,8 @@ import {
   setThinkingForProvider,
   setCustomEndpoint,
   clearCustomEndpoint,
+  getApiStyleFor,
+  setApiStyleFor,
   setKrakenVerifier,
   clearKrakenVerifier,
   getCustomEndpoint,
@@ -54,6 +56,9 @@ export interface DesktopProviderInfo {
   defaultModel: string;
   /** Custom base URL override if set. */
   endpoint?: string | null;
+  /** Endpoint style for OpenAI-compatible transports. Present only on
+   *  providers where the style is selectable (not anthropic/chatgpt). */
+  apiStyle?: 'chat' | 'responses';
   /** Effective base URL (custom or builtin). */
   baseUrl?: string | null;
   /** How the stored credential was obtained. */
@@ -170,6 +175,8 @@ export interface SetConfigRequest {
   model?: string;
   endpoint?: string;
   endpointClear?: boolean;
+  /** Endpoint style for OpenAI-compatible providers (chat or responses). */
+  apiStyle?: 'chat' | 'responses';
   /** Kraken verifier override — both fields required together. */
   verifierProvider?: string;
   verifierModel?: string;
@@ -196,6 +203,7 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
   let model: string | undefined;
   let endpoint: string | undefined;
   let thinking: string | undefined;
+  let apiStyle: string | undefined;
   let endpointClear = false;
   let verifierProvider: string | undefined;
   let verifierModel: string | undefined;
@@ -215,6 +223,9 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
     } else if (arg === '--thinking') {
       thinking = argv[i + 1];
       i++;
+    } else if (arg === '--api-style') {
+      apiStyle = argv[i + 1];
+      i++;
     } else if (arg === '--endpoint-clear') {
       endpointClear = true;
     } else if (arg === '--verifier-provider') {
@@ -228,7 +239,7 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
     }
   }
 
-  if (!provider && !model && !endpoint && !endpointClear && !thinking
+  if (!provider && !model && !endpoint && !endpointClear && !thinking && !apiStyle
     && !verifierProvider && !verifierModel && !verifierClear) {
     return {
       request: null,
@@ -245,6 +256,9 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
   }
   if (endpoint !== undefined && endpoint.trim().length === 0) {
     return { request: null, error: '--endpoint cannot be empty' };
+  }
+  if (apiStyle !== undefined && apiStyle !== 'chat' && apiStyle !== 'responses') {
+    return { request: null, error: 'invalid --api-style ' + apiStyle + ' (use chat or responses)' };
   }
   if (verifierClear && (verifierProvider || verifierModel)) {
     return { request: null, error: '--verifier-clear conflicts with --verifier-provider/--verifier-model' };
@@ -274,6 +288,7 @@ export function parseSetConfigFlags(argv: readonly string[]): SetConfigParseResu
       model: model?.trim(),
       endpoint: endpoint?.trim(),
       endpointClear: endpointClear || undefined,
+      apiStyle: apiStyle as 'chat' | 'responses' | undefined,
       thinking: thinking?.trim().toLowerCase(),
       verifierProvider: verifierProvider?.trim(),
       verifierModel: verifierModel?.trim(),
@@ -382,6 +397,10 @@ export function buildDesktopConfigSnapshot(): DesktopConfigSnapshot {
       models,
       defaultModel,
       endpoint: custom ?? null,
+      apiStyle:
+        p.id === 'anthropic' || p.id === 'chatgpt'
+          ? undefined
+          : getApiStyleFor(p.id as ProviderName),
       baseUrl: custom ?? builtin,
       authKind: !hasKey ? 'none' : oauth ? 'oauth' : 'api_key',
       expiresAt: stored?.expiresAt ?? null,
@@ -443,6 +462,9 @@ export function applySetConfig(
       setCustomEndpoint(targetProvider, req.endpoint);
     }
 
+    if (req.apiStyle) {
+      setApiStyleFor(targetProvider, req.apiStyle);
+    }
     if (req.model) {
       setModelForProvider(targetProvider, req.model);
     }

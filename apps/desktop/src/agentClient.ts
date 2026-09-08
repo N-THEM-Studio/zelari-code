@@ -116,6 +116,7 @@ export async function setAppConfig(args: {
   model?: string;
   endpoint?: string;
   endpointClear?: boolean;
+  apiStyle?: "chat" | "responses";
   verifierProvider?: string;
   verifierModel?: string;
   verifierClear?: boolean;

@@ -1101,6 +1101,7 @@ struct SetConfigArgs {
     model: Option<String>,
     endpoint: Option<String>,
     thinking: Option<String>,
+    api_style: Option<String>,
     #[serde(default)]
     endpoint_clear: bool,
     verifier_provider: Option<String>,
@@ -1149,6 +1150,15 @@ fn set_app_config(args: SetConfigArgs) -> Result<serde_json::Value, String> {
     {
         argv.push("--thinking".into());
         argv.push(t.to_string());
+    }
+    if let Some(style) = args
+        .api_style
+        .as_ref()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+    {
+        argv.push("--api-style".into());
+        argv.push(style.to_string());
     }
     if args.endpoint_clear {
         argv.push("--endpoint-clear".into());

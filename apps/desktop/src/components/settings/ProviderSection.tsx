@@ -97,6 +97,13 @@ export function ProviderSection({
       return "Endpoint cleared";
     });
 
+  const saveApiStyle = (style: "chat" | "responses") =>
+    void run(async () => {
+      await setAppConfig({ provider: activeId, apiStyle: style });
+      await onRefresh();
+      return "API style: " + (style === "responses" ? "/responses" : "/chat/completions");
+    });
+
   return (
     <>
       <div className="settings-section-head">
@@ -216,6 +223,23 @@ export function ProviderSection({
             Clear
           </button>
         </SettingsRow>
+        {active?.apiStyle ? (
+          <SettingsRow
+            label="API style"
+            hint="responses = POST {baseUrl}/responses (OpenAI Responses API). chat = POST {baseUrl}/chat/completions."
+          >
+            <SelectInput
+              value={active.apiStyle}
+              ariaLabel="API style"
+              disabled={busy}
+              onChange={(v) => saveApiStyle(v as "chat" | "responses")}
+            >
+              <option value="chat">chat (/chat/completions)</option>
+              <option value="responses">responses (/responses)</option>
+            </SelectInput>
+            {busy ? <BusyDot /> : null}
+          </SettingsRow>
+        ) : null}
       </SettingsCard>
 
       {active ? <AuthCard provider={active} onRefresh={onRefresh} /> : null}
