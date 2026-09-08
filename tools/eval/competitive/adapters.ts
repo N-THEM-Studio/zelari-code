@@ -179,11 +179,13 @@ export function allAdapters(): AgentAdapter[] {
 /**
  * Last zelari usage event from the NDJSON headless stream, if any. Honest by
  * construction: returns null unless a parsed event carries numeric
- * inputTokens + outputTokens (the stream does not emit one today — this
- * keeps the bench forward-compatible without inventing numbers).
+ * inputTokens + outputTokens. The headless CLI emits exactly one such event
+ * per run (see src/cli/evolution/runTelemetry.ts) — flat
+ * `{ inputTokens, outputTokens, cacheHitTokens?, model?, provider? }` —
+ * carrying provider-reported usage only, never estimates.
  */
-export function parseZelariUsage(stdout: string): { input: number; output: number; cacheHit?: number } | null {
-  let usage: { input: number; output: number; cacheHit?: number } | null = null;
+export function parseZelariUsage(stdout: string): { input: number; output: number; cacheHit?: number; model?: string; provider?: string } | null {
+  let usage: { input: number; output: number; cacheHit?: number; model?: string; provider?: string } | null = null;
   for (const line of stdout.split(/\r?\n/)) {
     const trimmed = line.trim();
     if (!trimmed.startsWith('{')) continue;
@@ -194,6 +196,8 @@ export function parseZelariUsage(stdout: string): { input: number; output: numbe
           input: obj.inputTokens,
           output: obj.outputTokens,
           cacheHit: typeof obj.cacheHitTokens === 'number' ? obj.cacheHitTokens : undefined,
+          model: typeof obj.model === 'string' ? obj.model : undefined,
+          provider: typeof obj.provider === 'string' ? obj.provider : undefined,
         };
       }
     } catch {
@@ -201,4 +205,24 @@ export function parseZelariUsage(stdout: string): { input: number; output: numbe
     }
   }
   return usage;
+}
+
+/**
+ * Count `tool_execution_end` events in the NDJSON headless stream — the
+ * event-countable tool-call total for anchor budget gates (steal #1). Every
+ * JSON line whose `type` matches counts; non-JSON lines are ignored.
+ */
+export function countZelariToolCalls(stdout: string): number {
+  let toolCalls = 0;
+  for (const line of stdout.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed.startsWith('{')) continue;
+    try {
+      const obj = JSON.parse(trimmed) as Record<string, unknown>;
+      if (obj.type === 'tool_execution_end') toolCalls += 1;
+    } catch {
+      // Non-JSON line — ignore.
+    }
+  }
+  return toolCalls;
 }

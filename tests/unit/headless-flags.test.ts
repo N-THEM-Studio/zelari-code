@@ -167,4 +167,11 @@ describe('parseHeadlessFlags', () => {
     const r = parseHeadlessFlags(['--headless', '--task', 'x', '--todos', 'not-json']);
     expect(r.options?.todos).toBeUndefined();
   });
+
+  it('parses --resume-mission as a boolean distinct from --resume', () => {
+    const r = parseHeadlessFlags(['--headless', '--task', 'x', '--resume-mission']);
+    expect(r.error).toBeUndefined();
+    expect(r.options?.resumeMission).toBe(true);
+    expect(r.options?.resumeSessionId).toBeUndefined();
+  });
 });

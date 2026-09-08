@@ -66,7 +66,13 @@ function applyScenario(s: Scenario) {
   delete process.env.ZELARI_BROWSER;
   delete process.env.ZELARI_LSP;
   delete process.env.ZELARI_DIAGNOSTICS;
-  process.env.ZELARI_PLUGINS_PREFS_FILE = ""; // isolate prefs (isMuted reads file)
+  // Isolate isMuted from ~/.zelari-code/plugins.json. envPath() treats "" as
+  // unset and falls through to the real home prefs (muted plugins then vanish
+  // from detectMissingPlugins). Point at a path that does not exist.
+  process.env.ZELARI_PLUGINS_PREFS_FILE = path.join(
+    tmpdir(),
+    "zelari-plugins-prefs-absent.json",
+  );
 }
 
 /** Create a temp PATH dir with empty shims for the given bare bin names. */

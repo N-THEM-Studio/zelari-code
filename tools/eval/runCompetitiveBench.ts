@@ -182,11 +182,15 @@ function runOne(input: {
     const wallMs = Date.now() - startedAt;
     const checks = runSuccessChecks(anchor, workspaceDir);
     const spawnError = res.error ? `spawn failed: ${res.error.message}` : null;
+    // Steal #1/#2: zelari runs carry real usage + model attribution parsed
+    // from the final NDJSON `usage` event; competitors stay 'undeclared'
+    // until they expose an equivalent (honest absence, never invented).
+    const zelariUsage = adapter.id === 'zelari' ? parseZelariUsage(String(res.stdout ?? '')) : null;
     return CompetitiveRunRecordSchema.parse({
       agent: adapter.id,
       agentLabel: adapter.label,
       agentVersion: input.resolution.version,
-      model: 'undeclared',
+      model: zelariUsage?.model ?? 'undeclared',
       anchorId: anchor.id,
       anchorVersion: anchor.version,
       runIndex,
@@ -194,7 +198,13 @@ function runOne(input: {
       exitCode: res.status ?? null,
       wallMs,
       checksFailed: checks.firstFailure,
-      tokens: adapter.id === 'zelari' ? parseZelariUsage(String(res.stdout ?? '')) : null,
+      tokens: zelariUsage
+        ? {
+            input: zelariUsage.input,
+            output: zelariUsage.output,
+            ...(zelariUsage.cacheHit !== undefined ? { cacheHit: zelariUsage.cacheHit } : {}),
+          }
+        : null,
       costUsd: null,
       detail: [spawnError, res.stderr ? tail(res.stderr) : null, checks.firstFailure].filter(Boolean).join(' | '),
       recordedAt,

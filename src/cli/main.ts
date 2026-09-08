@@ -598,12 +598,14 @@ function pickRootComponent(): {
         "    --task <text>       Task prompt (required in headless mode)\n" +
         "    --output json|plain Output format (default: json)\n" +
         "    --mode kraken|council|zelari  Dispatch mode (default: kraken; agent=alias)\n" +
+        "                      zelari/mission mode auto-scopes slices from open tasks in .zelari/plan.json\n" +
         "    --council          Alias for --mode council\n" +
         "    --phase plan|build  Work phase (default: build)\n" +
         "    --provider <id>    Provider override (default: active)\n" +
         "    --model <id>       Model override (default: provider default)\n" +
         "    --profile <id>     Capability profile (minimal/v1|kraken/v1|council/v1|mission/v1)\n" +
         "    --resume <id>      Continue a 2.0 spine session\n" +
+        "    --resume-mission   Resume .zelari/mission-state.json (not the spine)\n" +
         "    --export-session <path>  Write zelari-session-export/1 after the run\n" +
         "    --strict-done      Evidence-based BUILD completion gate\n" +
         "    --task-file <path>  Read the task prompt from a file (Windows argv cap)\n" +

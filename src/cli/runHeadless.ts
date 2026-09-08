@@ -887,6 +887,13 @@ async function runHeadlessCouncilBody(
   /** Last finished assistant blob this run (chairman / specialist). */
   let lastAssistantText = '';
   let currentAssistantText = '';
+  // HarnessDev steal #1 (2026-09): provider-reported usage + tool-call
+  // accumulator. Declared OUTSIDE the dispatch try so the ledger write below
+  // (after the catch) can project it; pure read-side projection — the spine
+  // stays the only writer and the only model-context source (ADR-0024).
+  const { RunTelemetryAccumulator } = await import('./evolution/runTelemetry.js');
+  const telemetry = new RunTelemetryAccumulator({ model, provider });
+  const councilStartedAt = Date.now();
   try {
     const { composeProjectContext } = await import('./workspace/composeContext.js');
     const { loadDurableContext } = await import('./state/loadDurableContext.js');
@@ -950,6 +957,7 @@ async function runHeadlessCouncilBody(
         currentAssistantText = '';
       }
       spine.observe(event);
+      telemetry.observe(event);
       if (event.type === 'message_delta' && typeof event.delta === 'string') {
         const cleanDelta = scrub.push(event.delta);
         if (cleanDelta.length > 0) currentAssistantText += cleanDelta;
@@ -977,6 +985,14 @@ async function runHeadlessCouncilBody(
         }
       }
     }
+    // Steal #1 cont.: ONE cumulative usage event per run (json hosts only) —
+    // flat { inputTokens, outputTokens, cacheHitTokens, model?, provider? },
+    // exactly the shape parseZelariUsage reads, so the competitive bench and
+    // the anchor runner stop recording tokens:null. Plain output stays clean.
+    // Cast: additive event kind — hosts ignore unknown types (tolerant NDJSON).
+    if (opts.output === 'json') {
+      emitEvent(telemetry.usageEvent() as unknown as Parameters<typeof emitEvent>[0]);
+    }
   } catch (err) {
     process.stderr.write(
       `[zelari-code --headless] council error: ${err instanceof Error ? err.message : String(err)}\n`,
@@ -1002,6 +1018,12 @@ async function runHeadlessCouncilBody(
         at: new Date().toISOString(),
         mode: 'shadow',
         taskClass: classifyTask({ prompt: effectiveTask }).taskClass,
+        // Steal #1/#2 wiring: real efficiency + attribution fields — the
+        // ledger schema carried them since ADR-0036, this site never wrote them.
+        latencyMs: Date.now() - councilStartedAt,
+        model,
+        provider,
+        ...telemetry.ledgerFields(),
         verdict: signal.aborted
           ? 'UNKNOWN'
           : exitCode === 0
@@ -1101,15 +1123,18 @@ async function runHeadlessZelariBody(
   spine.missionPhase('design', 'mission-start');
   const { buildMissionBrief } = await import('@zelari/core/council');
   const { hasWorkspacePlan } = await import('./workspace/planDetect.js');
+  const { listOpenPlanTaskIds } = await import('./workspace/planStore.js');
   const { getMemoryBackend } = await import('./memory/fileBackend.js');
   const { runZelariMission } = await import('./zelariMission.js');
   const { dispatchCouncil } = await import('./councilDispatcher.js');
   const { FeedbackStore } = await import('./councilFeedback.js');
   const { runPostCouncilHook } = await import('./workspace/postCouncilHook.js');
 
+  const planTaskIds = await listOpenPlanTaskIds(projectRoot);
   const brief = buildMissionBrief({
     userMessage: opts.task,
     hasPlan: hasWorkspacePlan(projectRoot),
+    planTaskIds,
   });
   // W2: the mission spine is already open here — mission memory events are
   // noted directly (context.projection / memory_event state-only payloads).
@@ -1204,7 +1229,14 @@ async function runHeadlessZelariBody(
   }
 
   try {
-    const state = await runZelariMission(missionTask, brief, {
+    // --resume-mission: continue the persisted mission instead of starting over.
+    // The resumed run reads brief/prompt/iteration from `.zelari/mission-state.json`.
+    const { resumeZelariMission } = await import('./zelariMission.js');
+    const runMission = (missionDeps: Parameters<typeof runZelariMission>[2]) =>
+      opts.resumeMission
+        ? resumeZelariMission(missionDeps)
+        : runZelariMission(missionTask, brief, missionDeps);
+    const state = await runMission({
       projectRoot,
       memory,
       emit,

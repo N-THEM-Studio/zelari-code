@@ -39,6 +39,15 @@ export interface BuildMissionBriefInput {
   hasPlan?: boolean;
   /** Max tasks in the MVP slice. Default 8. */
   maxSliceTasks?: number;
+  /**
+   * Ordered task ids the driver already resolved from `.zelari/plan.json`.
+   * When present, the brief carries a SEQUENCE of slices (increments of at most
+   * `maxSliceTasks` tasks each) instead of the single MVP slice: each increment
+   * must pass the completion gate before the next one starts (HoH principle
+   * "scope development into small and verifiable increments"). Absent →
+   * single MVP slice, byte-identical to the pre-2.37 behaviour.
+   */
+  planTaskIds?: string[];
   env?: { ZELARI_COUNCIL_MODE?: string };
 }
 
@@ -150,7 +159,43 @@ export function buildMissionBrief(input: BuildMissionBriefInput): MissionBrief {
     ],
     phases,
     sliceMvp,
-    slices: [sliceMvp],
+    slices: buildSlicePlan(sliceMvp, input.planTaskIds, maxTasks),
     userPromptOriginal: userMessage,
   };
+}
+
+/**
+ * Deterministic slice plan for a mission.
+ *
+ * With no resolved plan tasks the plan is the single MVP slice (unchanged
+ * behaviour). With plan tasks it is a SEQUENCE of bounded increments: the MVP
+ * slice carries the first `maxTasks` tasks and each following slice the next
+ * `maxTasks`, so the driver can gate increment N+1 on increment N being green
+ * instead of holding the whole mission behind one monolithic run.
+ */
+export function buildSlicePlan(
+  sliceMvp: MissionSlice,
+  planTaskIds: string[] | undefined,
+  maxTasks: number,
+): MissionSlice[] {
+  const ids = Array.isArray(planTaskIds) ? planTaskIds.filter((t) => typeof t === 'string' && t) : [];
+  if (ids.length === 0) return [{ ...sliceMvp }];
+
+  const size = Number.isFinite(maxTasks) && maxTasks > 0 ? Math.floor(maxTasks) : 8;
+  const slices: MissionSlice[] = [];
+  for (let i = 0; i < ids.length; i += size) {
+    const chunk = ids.slice(i, i + size);
+    const index = i / size;
+    slices.push(
+      index === 0
+        ? { ...sliceMvp, taskIds: chunk, maxTasks: size }
+        : {
+            id: `slice-${index + 1}`,
+            title: `Increment ${index + 1} — ${chunk.length} plan task(s)`,
+            taskIds: chunk,
+            maxTasks: size,
+          },
+    );
+  }
+  return slices;
 }

@@ -32,6 +32,8 @@ export interface AgentRunOutcome {
   inputTokens?: number;
   outputTokens?: number;
   cacheHitTokens?: number;
+  /** Runtime model attribution parsed from the headless stream (steal #2). */
+  model?: string;
   detail?: string;
 }
 
@@ -189,6 +191,9 @@ export async function runAnchor(
         result: 'pass', verified: true, cost, exitCode: 0, recordedAt,
       };
     }
+    // Steal #2: runtime model attribution on every outcome branch (optional
+    // field — absent for stub runners and pre-existing records, replay-safe).
+    if (outcome.model) record.model = outcome.model;
   } finally {
     // Restorable fixture: the scratch workspace is disposable.
     rmSync(workspaceDir, { recursive: true, force: true });

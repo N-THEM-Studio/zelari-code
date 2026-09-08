@@ -2474,13 +2474,16 @@ async function dispatchZelariPromptImpl(
   // ── Fresh prompt → build + show the brief ──
   const { buildMissionBrief } = await import("@zelari/core/council");
   const { hasWorkspacePlan } = await import("../workspace/planDetect.js");
+  const { listOpenPlanTaskIds } = await import("../workspace/planStore.js");
   const { formatBriefForChat, isMissionAutoStart } = await import(
     "../zelariMission.js"
   );
   const projectRoot = process.cwd();
+  const planTaskIds = await listOpenPlanTaskIds(projectRoot);
   const brief = buildMissionBrief({
     userMessage: text,
     hasPlan: hasWorkspacePlan(projectRoot),
+    planTaskIds,
   });
   emit(formatBriefForChat(brief));
 
@@ -2514,12 +2517,15 @@ async function runZelariMissionInTui(
   const projectRoot = process.cwd();
   const { buildMissionBrief } = await import("@zelari/core/council");
   const { hasWorkspacePlan } = await import("../workspace/planDetect.js");
+  const { listOpenPlanTaskIds } = await import("../workspace/planStore.js");
   const { getMemoryBackend } = await import("../memory/fileBackend.js");
   const { runZelariMission } = await import("../zelariMission.js");
 
+  const planTaskIds = await listOpenPlanTaskIds(projectRoot);
   const brief = buildMissionBrief({
     userMessage,
     hasPlan: hasWorkspacePlan(projectRoot),
+    planTaskIds,
   });
   // W2: getter-backed holder — the spine mirror attaches per turn, so mission
   // memory events resolve `deps.writerRef.current?.spine` at emit time.

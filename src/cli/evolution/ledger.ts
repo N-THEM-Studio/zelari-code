@@ -46,6 +46,17 @@ export interface LedgerEntry {
   latencyMs?: number;
   /** Harness manifest hash when known — fitness validity boundary. */
   manifestHash?: string;
+  /**
+   * Runtime model/provider attribution (HarnessDev steal #2): harness gains
+   * are model-dependent, so an entry without them confounds the engine's
+   * fitness. Optional + tolerant replay keeps old lines valid.
+   */
+  model?: string;
+  provider?: string;
+  /** Provider-reported prompt tokens summed over the run (never estimated). */
+  inputTokens?: number;
+  /** Provider-reported completion tokens summed over the run (never estimated). */
+  outputTokens?: number;
 }
 
 /** Resolve the active evolution mode (default off, ADR-0036). */

@@ -84,6 +84,8 @@ export interface AnchorRunRecord {
   reason?: 'budget-exceeded-tool-calls' | 'budget-exceeded-wall' | 'budget-exceeded-tokens' | 'agent-error' | 'checks-failed' | 'setup-failed';
   detail?: string;
   recordedAt: string;
+  /** Runtime model attribution (HarnessDev steal #2) — optional, replay-safe. */
+  model?: string;
 }
 
 /** Golden baseline: the outcome a candidate is compared against (doc §7.7). */

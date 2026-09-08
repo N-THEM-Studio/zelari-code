@@ -132,6 +132,34 @@ export function planJsonPathFor(projectRoot: string = process.cwd()): string {
   return join(resolveWorkspaceRoot(projectRoot), 'plan.json');
 }
 
+/**
+ * Read-only ids of open plan tasks (`pending` | `in_progress`) in store order.
+ * Missing/empty/corrupt plan → `[]`. Never throws; never writes `plan.json`
+ * (`withPlanStore` is RMW and would create the file — do not use it here).
+ */
+export async function listOpenPlanTaskIds(
+  projectRoot: string,
+): Promise<string[]> {
+  try {
+    const jsonPath = planJsonPathFor(projectRoot);
+    if (!existsSync(jsonPath)) return [];
+    const parsed = JSON.parse(readFileSync(jsonPath, 'utf8')) as {
+      tasks?: unknown;
+    };
+    if (!Array.isArray(parsed.tasks)) return [];
+    const ids: string[] = [];
+    for (const raw of parsed.tasks) {
+      if (raw === null || typeof raw !== 'object') continue;
+      const t = raw as { id?: unknown; status?: unknown };
+      if (typeof t.id !== 'string' || t.id.length === 0) continue;
+      if (t.status === 'pending' || t.status === 'in_progress') ids.push(t.id);
+    }
+    return ids;
+  } catch {
+    return [];
+  }
+}
+
 interface LoadedHandle extends PlanStoreHandle {
   /** Other root fields (phases, milestones, …) — rewritten verbatim. */
   rootFields: Record<string, unknown>;

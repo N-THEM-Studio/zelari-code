@@ -120,6 +120,14 @@ export interface HeadlessOptions {
    */
   resumeSessionId?: string;
   /**
+   * Resume the persisted Zelari mission (`.zelari/mission-state.json`) instead
+   * of starting a fresh one: the driver continues from the recorded iteration,
+   * current slice and budget accumulators. Distinct from `resumeSessionId`,
+   * which resumes a SPINE session; this one resumes the MISSION.
+   * @since 2.37.0
+   */
+  resumeMission?: boolean;
+  /**
    * After the run, write a portable session export (`zelari-session-export/1`)
    * to this path (`-` = stdout after NDJSON).
    * @since 2.0.0-alpha.0
@@ -216,6 +224,7 @@ Options:
   --task-file <path>         Same as --task but read from a file (avoids Windows argv cap)
   --output json|plain        Output format (default: json)
   --mode kraken|council|zelari|auto  Dispatch mode (default: kraken; agent=alias; auto=classify the task)
+                             zelari/mission mode auto-scopes slices from open tasks in .zelari/plan.json
   --council                  Alias for --mode council
   --phase plan|build         Work phase (default: build)
   --provider <id>            Provider override (default: active)
@@ -226,6 +235,8 @@ Options:
   --profile <id>             Capability profile: minimal/v1 | kraken/v1 | council/v1 | mission/v1
                              (default by --mode; recorded in the session spine header)
   --resume <sessionId>       Continue an existing 2.0 spine session (seq continues)
+  --resume-mission           Resume the persisted Zelari mission (.zelari/mission-state.json)
+                             Distinct from --resume: this continues the MISSION, not the spine
   --export-session <path>    Write zelari-session-export/1 JSON after the run (- = stdout)
   --strict-done              Force the ADR-0023 evidence gate ON (ON by default since P0.1);
                              --no-strict-done opts THIS run out (per-run overlay, no process
@@ -285,6 +296,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
   let once = false;
   let profile: string | undefined;
   let resumeSessionId: string | undefined;
+  let resumeMission = false;
   let exportSessionPath: string | undefined;
   let strictDone: boolean | undefined;
   let missionStrict: boolean | undefined;
@@ -481,6 +493,10 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       }
       profile = next;
       i++;
+    } else if (arg === '--resume-mission') {
+      // Resumes the persisted Zelari MISSION (`.zelari/mission-state.json`),
+      // not the spine session — hence a distinct flag from --resume <sessionId>.
+      resumeMission = true;
     } else if (arg === '--resume') {
       const next = argv[i + 1];
       if (!next || next.startsWith('--')) {
@@ -565,6 +581,7 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       ...(history && history.length > 0 ? { history } : {}),
       ...(todos && todos.length > 0 ? { todos } : {}),
       ...(once ? { once: true } : {}),
+      ...(resumeMission ? { resumeMission: true } : {}),
       ...(profile ? { profile } : {}),
       ...(resumeSessionId ? { resumeSessionId } : {}),
       ...(exportSessionPath ? { exportSessionPath } : {}),

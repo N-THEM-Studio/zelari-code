@@ -282,26 +282,78 @@ async function writeMissionState(projectRoot: string, state: MissionState): Prom
   }
 }
 
+/**
+ * Tolerant read of the persisted mission state (`.zelari/mission-state.json`).
+ * Returns `undefined` when the file is absent or unparseable: resume is an
+ * explicit operator action, so a corrupt state must not crash the CLI.
+ */
+export async function loadMissionState(projectRoot: string): Promise<MissionState | undefined> {
+  try {
+    const raw = await fs.readFile(
+      path.join(projectRoot, '.zelari', 'mission-state.json'),
+      'utf8',
+    );
+    const parsed = JSON.parse(raw) as MissionState;
+    if (!parsed || typeof parsed.missionId !== 'string' || !parsed.brief) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+}
+
+/** A mission is resumable unless it already completed successfully. */
+export function isResumableMission(state: MissionState | undefined): boolean {
+  return !!state && state.status !== 'success';
+}
+
+/** Thrown when a resume finds nothing (or nothing resumable) on disk. */
+export class MissionResumeError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'MissionResumeError';
+  }
+}
+
+/**
+ * Ordered slice plan of a mission. Falls back to the single MVP slice when the
+ * brief carries no extra increments, so pre-2.37 briefs stay valid.
+ */
+export function resolveMissionSlices(brief: MissionBrief): MissionBrief['slices'] {
+  const slices = Array.isArray(brief.slices) ? brief.slices.filter((s) => s && !!s.id) : [];
+  return slices.length ? slices : [brief.sliceMvp];
+}
+
+/** Implementation attempts already recorded in the persisted trace. */
+function countImplementationSlices(state: MissionState): number {
+  return Array.isArray(state.trace)
+    ? state.trace.filter((t) => t?.runMode === 'implementation').length
+    : 0;
+}
+
 function buildSlicePrompt(
   brief: MissionBrief,
   userMessage: string,
   runMode: CouncilRunMode,
   iteration: number,
+  slice: MissionBrief['slices'][number],
 ): string {
   if (runMode === 'design-phase') {
     return (
       `${userMessage}\n\n[Zelari mission] Produce the design-phase plan for the MVP: ` +
       `${brief.deliverableThisMission}. Keep the first slice to at most ` +
-      `${brief.sliceMvp.maxTasks ?? 8} tasks.`
+      `${slice.maxTasks ?? 8} tasks.`
     );
   }
   const fix =
     iteration > 1
       ? ' Address any remaining verification failures recorded in .zelari/completion.json.'
       : '';
+  const isMvpSlice = slice.id === resolveMissionSlices(brief)[0].id;
+  const target = isMvpSlice ? 'the MVP slice' : `increment "${slice.title}"`;
+  const scope = slice.taskIds?.length ? ` Scope: plan tasks ${slice.taskIds.join(', ')}.` : '';
   return (
-    `${userMessage}\n\n[Zelari mission] Implement the MVP slice: ` +
-    `${brief.deliverableThisMission}.${fix} ` +
+    `${userMessage}\n\n[Zelari mission] Implement ${target}: ` +
+    `${brief.deliverableThisMission}.${scope}${fix} ` +
     'You MUST create or modify the real project files with write_file / edit — ' +
     'not just describe them in prose. A run that claims completion without writing ' +
     'any file is a failed run and will not be accepted.'
@@ -327,7 +379,12 @@ export function formatBriefForChat(brief: MissionBrief): string {
     lines.push('  out of scope:');
     for (const o of brief.outOfScope) lines.push(`    - ${o}`);
   }
+  const slices = resolveMissionSlices(brief);
   lines.push(`  MVP slice:   ${brief.sliceMvp.title} (≤ ${brief.sliceMvp.maxTasks} tasks)`);
+  if (slices.length > 1) {
+    lines.push(`  increments:  ${slices.length} (gated: slice N+1 starts only when N is green)`);
+    for (const s of slices.slice(1)) lines.push(`    - ${s.id}: ${s.title}`);
+  }
   return lines.join('\n');
 }
 
@@ -340,31 +397,84 @@ export async function runZelariMission(
   deps: ZelariMissionDeps,
 ): Promise<MissionState> {
   const now = deps.now ?? (() => new Date());
-  const maxIter = deps.maxIterations ?? resolveMaxIterations(deps.env);
-  const maxStall = resolveMaxStall(deps.env);
-  const maxCost = resolveMaxCost(deps.env);
-  const maxTokens = resolveMaxTokens(deps.env);
-  const missionId = deps.missionId ?? `m_${randomUUID().slice(0, 8)}`;
   const startedAt = now().toISOString();
-
   const state: MissionState = {
-    missionId,
+    missionId: deps.missionId ?? `m_${randomUUID().slice(0, 8)}`,
     userPrompt: userMessage,
     brief,
     iteration: 0,
-    currentSliceId: brief.sliceMvp.id,
+    currentSliceId: resolveMissionSlices(brief)[0].id,
     status: 'running',
     lastCompletionOk: false,
     startedAt,
     updatedAt: startedAt,
   };
+  return driveMission(userMessage, brief, deps, state, false);
+}
+
+/**
+ * Resume a persisted mission instead of restarting from step 0: the loop
+ * continues from the recorded iteration, current slice, budget accumulators and
+ * repair history. Entry point for multi-day / multi-session runs.
+ */
+export async function resumeZelariMission(deps: ZelariMissionDeps): Promise<MissionState> {
+  const loaded = await loadMissionState(deps.projectRoot);
+  if (!loaded) {
+    throw new MissionResumeError(
+      'nessuna missione da riprendere: .zelari/mission-state.json assente o illeggibile.',
+    );
+  }
+  if (!isResumableMission(loaded)) {
+    throw new MissionResumeError(
+      `la missione ${loaded.missionId} è già completata (status=success).`,
+    );
+  }
+  const brief = loaded.brief;
+  const userMessage = loaded.userPrompt ?? brief.userPromptOriginal;
+  deps.emit(
+    `[zelari] resume missione ${loaded.missionId} — step ${loaded.iteration}, ` +
+      `slice ${loaded.currentSliceId}, status precedente ${loaded.status}`,
+  );
+  return driveMission(userMessage, brief, deps, loaded, true);
+}
+
+async function driveMission(
+  userMessage: string,
+  brief: MissionBrief,
+  deps: ZelariMissionDeps,
+  state: MissionState,
+  resumed: boolean,
+): Promise<MissionState> {
+  const now = deps.now ?? (() => new Date());
+  const maxIter = deps.maxIterations ?? resolveMaxIterations(deps.env);
+  const maxStall = resolveMaxStall(deps.env);
+  const maxCost = resolveMaxCost(deps.env);
+  const maxTokens = resolveMaxTokens(deps.env);
+  const missionId = state.missionId;
+
+  // Multi-increment plan (HoH: scope work into small verifiable increments).
+  // Increment N+1 starts only after increment N passed its completion gate.
+  const slices = resolveMissionSlices(brief);
+  let sliceIndex = resumed
+    ? Math.max(
+        0,
+        slices.findIndex((s) => s.id === state.currentSliceId),
+      )
+    : 0;
+  const currentSlice = (): MissionBrief['slices'][number] => slices[sliceIndex] ?? slices[0];
+  state.currentSliceId = currentSlice().id;
+  state.status = 'running';
+  state.updatedAt = now().toISOString();
 
   await deps.memory.init(deps.projectRoot);
   const persist = async (): Promise<void> => {
     await writeMissionState(deps.projectRoot, state);
     await deps.onStatePersisted?.(state);
   };
-  deps.onMissionPhase?.('design', 'mission-start');
+  deps.onMissionPhase?.(
+    resumed ? 'build' : 'design',
+    resumed ? 'mission-resume' : 'mission-start',
+  );
   await persist();
 
   const stateStore =
@@ -378,8 +488,10 @@ export async function runZelariMission(
   // Safety net: snapshot the working tree before the mission mutates files,
   // so a bad run can be rolled back atomically (opt out: ZELARI_CHECKPOINT=0).
   // Best-effort — a non-git project or a git hiccup just skips the checkpoint.
+  // Skipped on resume: the tree is already mid-mission and re-checkpointing
+  // would bury the original snapshot.
   let missionCheckpointId: string | undefined;
-  if ((deps.env ?? process.env).ZELARI_CHECKPOINT !== '0') {
+  if (!resumed && (deps.env ?? process.env).ZELARI_CHECKPOINT !== '0') {
     const cp = await createCheckpoint(deps.projectRoot, `zelari mission ${missionId}`);
     if (cp.ok) {
       missionCheckpointId = cp.value.id;
@@ -395,14 +507,15 @@ export async function runZelariMission(
   // any real write. Drives the `stalled` early-out (see resolveMaxStall).
   let noWriteStreak = 0;
   // Wall-clock step counter (design + impl) for state.iteration / logging.
-  let step = 0;
+  let step = resumed ? state.iteration : 0;
   // Implementation slices only — this is what maxIter budgets.
-  let implStep = 0;
+  let implStep = resumed ? countImplementationSlices(state) : 0;
   // One free design-phase pass when the brief asks for it (does not burn budget).
-  let pendingDesign = designFirst;
-  // Budget cap accumulators (ADR-0013).
-  let cumulativeCostUsd = 0;
-  let cumulativeTokens = 0;
+  // On resume the design phase is already behind us.
+  let pendingDesign = designFirst && !resumed;
+  // Budget cap accumulators (ADR-0013), resumed from the persisted state.
+  let cumulativeCostUsd = resumed ? state.cumulativeCostUsd ?? 0 : 0;
+  let cumulativeTokens = resumed ? state.cumulativeTokens ?? 0 : 0;
   // Budget-aware continuation state (2.6 closure, plan §13).
   const repairHistory: RepairAttempt[] = Array.isArray(state.repairHistory)
     ? [...state.repairHistory]
@@ -439,7 +552,7 @@ export async function runZelariMission(
     // buildSlicePrompt uses iteration>1 for "fix remaining failures" — that
     // should track implementation attempts, not free design steps.
     const promptIter = runMode === 'implementation' ? implStep : 1;
-    const slicePrompt = buildSlicePrompt(brief, userMessage, runMode, promptIter);
+    const slicePrompt = buildSlicePrompt(brief, userMessage, runMode, promptIter, currentSlice());
 
     const implementerRetry = runMode === 'implementation' && (implStep > 1 || forcePivot);
     const sliceStartedAt = now().toISOString();
@@ -447,22 +560,22 @@ export async function runZelariMission(
 
     if (runMode === 'design-phase') {
       deps.emit(
-        `[zelari] design-phase (fuori budget) · step ${step} · slice ${brief.sliceMvp.id}`,
+        `[zelari] design-phase (fuori budget) · step ${step} · slice ${currentSlice().id}`,
       );
     } else if (deps.buildViaAgent) {
       deps.emit(
         `[zelari] implementazione ${implStep}/${maxIter} · step ${step} · ` +
-          `build@agent · slice ${brief.sliceMvp.id}`,
+          `build@agent · slice ${currentSlice().id}`,
       );
     } else if (implementerRetry) {
       deps.emit(
         `[zelari] implementazione ${implStep}/${maxIter} · step ${step} · ` +
-          `roster ridotto (Minosse+Lucifero) · slice ${brief.sliceMvp.id}`,
+          `roster ridotto (Minosse+Lucifero) · slice ${currentSlice().id}`,
       );
     } else {
       deps.emit(
         `[zelari] implementazione ${implStep}/${maxIter} · step ${step} · ` +
-          `council completo · slice ${brief.sliceMvp.id}`,
+          `council completo · slice ${currentSlice().id}`,
       );
     }
 
@@ -509,7 +622,7 @@ export async function runZelariMission(
       {
         projectRoot: deps.projectRoot,
         missionId,
-        sliceId: brief.sliceMvp.id,
+        sliceId: currentSlice().id,
         source: 'council',
         iteration: step,
         memoryKind: result.completionOk ? 'outcome' : runMode === 'design-phase' ? 'decision' : 'episode',
@@ -544,7 +657,7 @@ export async function runZelariMission(
     // Trace view accumulation (ADR-0015-A).
     if (!state.trace) state.trace = [];
     state.trace.push({
-      sliceId: brief.sliceMvp.id,
+      sliceId: currentSlice().id,
       iteration: step,
       runMode,
       completionOk,
@@ -577,8 +690,8 @@ export async function runZelariMission(
           ? `mission:impl-${implStep}`
           : `mission:progress-${implStep}`,
         label: hard
-          ? `zelari ${brief.sliceMvp.id} impl ${implStep} verified`
-          : `zelari ${brief.sliceMvp.id} progress impl ${implStep}`,
+          ? `zelari ${currentSlice().id} impl ${implStep} verified`
+          : `zelari ${currentSlice().id} progress impl ${implStep}`,
         sessionId: missionId,
         verification: { ok: hard, ran: result.ran },
         force: !hard,
@@ -628,13 +741,30 @@ export async function runZelariMission(
     });
     deps.onMissionProgress?.(advice, step);
 
-    // Success only when an IMPLEMENTATION slice completes (and wrote if counted).
+    // Increment gate (HoH: small verifiable increments). A green slice advances
+    // the mission to the NEXT increment; success is the LAST increment green.
+    if (completionOk && sliceIndex < slices.length - 1) {
+      const doneSlice = currentSlice();
+      sliceIndex += 1;
+      state.currentSliceId = currentSlice().id;
+      state.updatedAt = now().toISOString();
+      await persist();
+      deps.emit(
+        `[zelari] ✓ incremento ${sliceIndex}/${slices.length} verde (${doneSlice.id}) — ` +
+          `avvio ${currentSlice().id}`,
+      );
+      continue;
+    }
+
+    // Success only when the LAST implementation slice completes (and wrote if counted).
     if (completionOk) {
       state.status = 'success';
       deps.onMissionPhase?.('done', 'mvp-green');
       await persist();
+      const sliceLabel =
+        slices.length === 1 ? 'slice MVP' : `ultimo incremento (${currentSlice().id})`;
       deps.emit(
-        `[zelari] ✓ missione completata — slice MVP verde all'implementazione ${implStep}/${maxIter} (step ${step}).`,
+        `[zelari] ✓ missione completata — ${sliceLabel} verde all'implementazione ${implStep}/${maxIter} (step ${step}).`,
       );
       return state;
     }

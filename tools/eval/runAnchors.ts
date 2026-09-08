@@ -67,10 +67,14 @@ export function computeSuiteProvenance(profileId: string): {
  * Requires provider credentials in the environment — runGate is only honest
  * if the seeder refuses to run without them (see `--runner` handling).
  *
- * Limitations (documented, honest): token/tool-call counts are not parsed
- * from the headless event stream yet, so per-run budget enforcement relies
- * on wall-time + the deterministic success checks (§7.7 golden signal).
+ * Usage (HarnessDev steal #1, 2026-09): token + tool-call counts ARE parsed
+ * from the headless NDJSON stream (final `usage` event + tool_execution_end
+ * count), so token/tool budget gates now bite on real numbers. Wall-time +
+ * §7.7 deterministic checks remain the golden signals; tokens stay
+ * provider-reported only — no chars/4 estimation anywhere in this path.
  */
+import { countZelariToolCalls, parseZelariUsage } from './competitive/adapters.ts';
+
 export function headlessAgentRunner(cliPath = 'bin/zelari-code.js'): AgentRunner {
   return (anchor: AnchorManifest, workspaceDir: string): AgentRunOutcome => {
     const taskFile = path.join(workspaceDir, '.anchor-task.txt');
@@ -79,17 +83,27 @@ export function headlessAgentRunner(cliPath = 'bin/zelari-code.js'): AgentRunner
     const startedAt = Date.now();
     const res = spawnSync(
       process.execPath,
-      [cliPath, '--headless', '--task-file', taskFile, '--profile', anchor.profile],
+      [cliPath, '--headless', '--task-file', taskFile, '--profile', anchor.profile, '--output', 'json'],
       { cwd: workspaceDir, encoding: 'utf8', timeout: budgetWallMs + 60_000, env },
     );
     const wallMs = Date.now() - startedAt;
     if (res.error) {
       return { ok: false, toolCalls: 0, wallMs, detail: `headless spawn failed: ${res.error.message}` };
     }
+    const stdout = String(res.stdout ?? '');
+    const usage = parseZelariUsage(stdout);
     return {
       ok: res.status === 0,
-      toolCalls: 0,
+      toolCalls: countZelariToolCalls(stdout),
       wallMs,
+      ...(usage
+        ? {
+            inputTokens: usage.input,
+            outputTokens: usage.output,
+            ...(usage.cacheHit !== undefined ? { cacheHitTokens: usage.cacheHit } : {}),
+            ...(usage.model !== undefined ? { model: usage.model } : {}),
+          }
+        : {}),
       detail: `headless exit=${res.status ?? 'null'} ${(res.stderr ?? '').slice(-400)}`,
     };
   };
