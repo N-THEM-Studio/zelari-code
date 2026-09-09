@@ -11,7 +11,7 @@
 //   - apps/desktop/src-tauri/Cargo.toml ([package] version)
 //   - apps/desktop/src-tauri/tauri.conf.json
 //   - apps/desktop/src-tauri/Cargo.lock (zelari-desktop stanza)
-//   - docs/GUIDA.md "Versione documento" (when present)
+//   - docs/GUIDA.md version badge "> **X.Y.Z**" (first quote line under the H1)
 //   - packages/core/src/version.ts CORE_VERSION
 //   - packages/core/README.md "Current version" (when present)
 //
@@ -107,7 +107,11 @@ function replaceInFile(file, pattern, replacement) {
   const next = text.replace(pattern, replacement);
   if (next !== text) fs.writeFileSync(file, next);
 }
-replaceInFile('docs/GUIDA.md', /Versione documento:\*\*\s*\S+/, `Versione documento:** ${V}`);
+replaceInFile(
+  'docs/GUIDA.md',
+  /^>\s*\*\*\d+\.\d+\.\d+(?:[-+][\w.]+)?\*\*\s*$/m,
+  `> **${V}**`,
+);
 replaceInFile(
   'packages/core/src/version.ts',
   /(CORE_VERSION\s*=\s*['"])[^'"]+(['"])/,

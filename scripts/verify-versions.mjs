@@ -12,7 +12,8 @@
  *   4. README.md does not hardcode a CLI line version (the npm version badge
  *      is the live source — hardcoded lines drift, e.g. "Current line:
  *      1.35.1" while the package was on 2.0.0-alpha.x);
- *   5. docs/GUIDA.md "Versione documento" (when present) tracks the package
+ *   5. docs/GUIDA.md version badge (`> **X.Y.Z**` under the H1; legacy
+ *      "Versione documento" honored as fallback) tracks the package
  *      version;
  *   6. packages/core/src/version.ts CORE_VERSION === root version (t32: the
  *      const drifted to 2.6.2 while the monorepo shipped the 2.2x line —
@@ -132,12 +133,17 @@ if (readmeLineVersion) {
   );
 }
 
-// 5. docs/GUIDA.md "Versione documento" must track the package version.
+// 5. docs/GUIDA.md version badge must track the package version.
+//    Canonical format (since 2.37.x): a `> **X.Y.Z**` quote line under the H1.
+//    Legacy `Versione documento:** X.Y.Z` is still honored when present, so
+//    neither format can drift silently.
 const guida = readFileSync(path.join(root, 'docs', 'GUIDA.md'), 'utf-8');
-const guidaVersion = guida.match(/Versione documento:\*\*\s*([^\s]+)/);
+const guidaBadge = guida.match(/^>\s*\*\*(\d+\.\d+\.\d+(?:[-+][\w.]+)?)\*\*\s*$/m);
+const guidaLegacy = guida.match(/Versione documento:\*\*\s*([^\s]+)/);
+const guidaVersion = guidaBadge ?? guidaLegacy;
 if (guidaVersion && guidaVersion[1] !== rootVersion) {
   failures.push(
-    `docs/GUIDA.md "Versione documento" is "${guidaVersion[1]}" but package.json says "${rootVersion}" — keep the doc version in lockstep (E0.3/E0.4).`,
+    `docs/GUIDA.md version badge is "${guidaVersion[1]}" but package.json says "${rootVersion}" — keep the doc version in lockstep (E0.3/E0.4).`,
   );
 }
 
