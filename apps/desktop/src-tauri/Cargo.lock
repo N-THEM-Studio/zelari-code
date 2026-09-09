@@ -5313,7 +5313,7 @@ dependencies = [
 
 [[package]]
 name = "zelari-desktop"
-version = "2.37.1"
+version = "2.37.2"
 dependencies = [
  "serde",
  "serde_json",

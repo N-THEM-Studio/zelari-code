@@ -5,6 +5,16 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.37.2] - 2026-09-09
+
+Kraken BUILD no longer dies on GLM coding (`image_url` → HTTP 400/1210) or on grok-4.6 xhigh sitting quiet behind SSE keep-alives (`idle for 9s` was the leftover slice of a 5-minute budget).
+
+### Fixed
+
+- **GLM chat/coding is text-only on the wire** — `glm-5.3` / `glm-4.5` / `/api/coding/` no longer receive `image_url` (Z.AI 1210: `messages.content.type` allowed `['text']`). Vision stays ON for Grok and GLM `v` SKUs. A 1210 on `content.type` retries once without pixels and remembers the endpoint. Opt-in force: `ZELARI_VISION=1`.
+- **Grok stream idle aligned with Grok Build** — grok-* profiles use `inference_idle_timeout_secs = 600`, 8 retries, and a 1h stream cap (xAI SDK reasoning timeout). Hidden reasoning + keep-alives no longer trip BUILD liveness before the first write. Idle errors now report `Xs of Ys`, not the leftover wait slice. Override: `ZELARI_PROVIDER_STREAM_IDLE_MS` / `ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS`.
+- **Tool-call fragments and opaque `reasoning_details` count as progress** — a long grok/GLM tool-arg stream no longer looks idle. GLM also sends `tool_stream: true` so thinking+tools are not buffered into silence.
+
 ## [2.37.1] - 2026-09-09
 
 ### Added
