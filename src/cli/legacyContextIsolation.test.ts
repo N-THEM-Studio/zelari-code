@@ -61,7 +61,11 @@ describe('strict done gate enforcement (E2.2)', () => {
   it('headless kraken BUILD enforces the strict verdict on the run outcome', () => {
     const src = readCli('runHeadless.ts') + '\n' + readCli('headless/runOneTurn.ts');
     expect(src).toContain('strictGateExitCode(after)');
-    expect(src).toMatch(/strictExit !== 0 \? 'stopped' : 'completed'/);
+    // closeStatus is a nested ternary (cancelled is distinct from strict-done
+    // stopped). Collapse whitespace so the gate still sees the mapping.
+    const closeExpr = src.replace(/\s+/g, ' ');
+    expect(closeExpr).toMatch(/strictExit !== 0 \? 'stopped' : 'completed'/);
+    expect(closeExpr).toContain("pass.finalReason === 'cancelled' ? 'cancelled'");
     expect(src).toMatch(/if \(strictExit !== 0\) return strictExit;/);
   });
 
