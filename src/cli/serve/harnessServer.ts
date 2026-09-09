@@ -396,8 +396,13 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
         if (isCancel) {
           // Nothing drains cancel events mid-run, so application goes
           // through the cooperative harness cancel hook directly; the queue
-          // never holds an undrainable cancel.
-          const delivered = live.cancel();
+          // never holds an undrainable cancel. Forward the host reason
+          // (`user` vs `turn_timeout`) so the lead can explain watchdog kills.
+          const reason =
+            typeof params.reason === 'string' && params.reason.trim().length > 0
+              ? params.reason.trim()
+              : undefined;
+          const delivered = live.cancel(reason);
           if (delivered) {
             write(JSON.stringify(controlAppliedEvent(controlId, 'cancel', 'cancel')));
           }

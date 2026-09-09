@@ -183,7 +183,7 @@ export async function runOneTurn(
   // a TTY stdin never gets a reader attached. protocol_info is the v2
   // handshake Desktop gates its Steer UI on.
   const controlQueue = new RuntimeControlQueue();
-  const harnessHolder: { cancel?: () => void } = {};
+  const harnessHolder: { cancel?: (reason?: string) => void } = {};
   const controlPlane: ControlPlaneHandle | undefined =
     opts.output === 'json' &&
     process.stdin.isTTY !== true &&
@@ -212,10 +212,10 @@ export async function runOneTurn(
     process.env.ZELARI_SERVE_HARNESS === '1'
       ? registerLiveTurnControl({
           queue: controlQueue,
-          cancel: () => {
+          cancel: (reason?: string) => {
             const cancelHook = harnessHolder.cancel;
             if (!cancelHook) return false;
-            cancelHook();
+            cancelHook(reason);
             return true;
           },
         })
@@ -582,7 +582,7 @@ export async function runOneTurn(
           }
         : {}),
     });
-    harnessHolder.cancel = () => harness.cancel();
+    harnessHolder.cancel = (reason?: string) => harness.cancel(reason);
     const readBuildProgress = (): { mutationsAttempted: number; mutationsSucceeded: number } => {
       const getter = (harness as AgentHarness & {
         getBuildProgress?: () => { mutationsAttempted: number; mutationsSucceeded: number };
@@ -857,12 +857,25 @@ export async function runOneTurn(
   // F13 cleanup (2.1 T9): history_snapshot emission removed — the session
   // spine is the canonical model context (ADR-0024); hosts resume via
   // --resume <sessionId> (E1.4). Keep only the zero-write warning signal.
-  if (pass.finalReason !== 'error' && opts.output === 'json' && wantWrites && pass.successfulWrites === 0) {
+  if (
+    pass.finalReason !== 'error' &&
+    pass.finalReason !== 'cancelled' &&
+    opts.output === 'json' &&
+    wantWrites &&
+    pass.successfulWrites === 0
+  ) {
     emitEvent({ type: 'log', message: '[headless] BUILD failed: zero successful mutations after liveness recovery' });
   }
 
   try {
-    const closeStatus = pass.finalReason === 'error' ? 'error' : strictExit !== 0 ? 'stopped' : 'completed';
+    const closeStatus =
+      pass.finalReason === 'error'
+        ? 'error'
+        : pass.finalReason === 'cancelled'
+          ? 'cancelled'
+          : strictExit !== 0
+            ? 'stopped'
+            : 'completed';
     await spine.close(closeStatus);
   } catch { /* spine never fails the run */ }
 

@@ -12,7 +12,7 @@ import { emitEvent } from '../headless.js';
 export interface HeadlessLiveCancel {
   readonly signal: AbortSignal;
   /** Cooperative cancel. Idempotent; always returns true once armed. */
-  cancel(): boolean;
+  cancel(reason?: string): boolean;
   dispose(): void;
 }
 
@@ -26,7 +26,7 @@ export function attachHeadlessLiveCancel(opts?: {
 }): HeadlessLiveCancel {
   const abort = new AbortController();
   const controlQueue = new RuntimeControlQueue();
-  const cancel = (): boolean => {
+  const cancel = (_reason?: string): boolean => {
     if (!abort.signal.aborted) abort.abort();
     return true;
   };

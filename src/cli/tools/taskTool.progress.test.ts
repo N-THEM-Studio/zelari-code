@@ -82,6 +82,7 @@ describe('task tool live progress captions (t94)', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     if (restoreWt === undefined) delete process.env.ZELARI_KRAKEN_WORKTREE;
     else process.env.ZELARI_KRAKEN_WORKTREE = restoreWt;
     if (restoreAutoMerge === undefined) delete process.env.ZELARI_KRAKEN_WORKTREE_AUTO_MERGE;
@@ -116,5 +117,49 @@ describe('task tool live progress captions (t94)', () => {
     expect(progress.some((e) => e.detail === 'phase: general' && e.agent === 'general')).toBe(true);
     expect(progress.some((e) => e.detail === 'merging…')).toBe(true);
     expect(progress.some((e) => e.detail === 'verifying…')).toBe(true);
+  });
+
+  it('emits reasoning heartbeats while the sub-agent is blocked on the model', async () => {
+    vi.useFakeTimers();
+    const events: BrainEvent[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const deps = makeDeps(events);
+    deps.harnessFactory = (() =>
+      ({
+        run: async function* (): AsyncGenerator<BrainEvent> {
+          await gate;
+          const mk = (e: object) =>
+            ({ id: 'e', ts: 0, sessionId: 's', ...e }) as BrainEvent;
+          yield mk({ type: 'message_start' });
+          yield mk({ type: 'message_delta', delta: 'done' });
+          yield mk({ type: 'message_end' });
+        },
+        cancel: () => {},
+      }) as SubAgentHarness) as unknown as TaskToolDeps['harnessFactory'];
+
+    const tool = createTaskTool(deps);
+    const pending = (
+      tool as { execute: (a: unknown, c: unknown) => Promise<unknown> }
+    ).execute(
+      { agent: 'explore', prompt: 'scan', description: 'silent think' },
+      { sessionId: 'hb-test', cwd },
+    );
+    for (let i = 0; i < 50; i += 1) {
+      if (events.some((e) => e.type === 'agent_spawned')) break;
+      await Promise.resolve();
+    }
+    expect(events.some((e) => e.type === 'agent_spawned')).toBe(true);
+    await vi.advanceTimersByTimeAsync(15_000);
+    const captions = events
+      .filter((e) => e.type === 'agent_status')
+      .map((e) => (e as unknown as { message?: string }).message)
+      .filter((m): m is string => typeof m === 'string');
+    expect(captions.some((m) => m.startsWith('reasoning ·'))).toBe(true);
+    release();
+    await pending;
+    vi.useRealTimers();
   });
 });

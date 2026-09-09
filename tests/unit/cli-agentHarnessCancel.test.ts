@@ -43,6 +43,31 @@ describe('AgentHarness.cancel() (Task C.3.1)', () => {
     );
     expect(cancelEvent).toBeDefined();
     expect(cancelEvent?.code).toBe('cancelled');
+    expect(cancelEvent?.message).toBe('Run cancelled by user.');
+  });
+
+  it('cancel("turn_timeout") is not labelled as a user Stop, including after a tool hang', async () => {
+    const harness = new AgentHarness({
+      model: 'm',
+      provider: 'p',
+      messages: [{ role: 'user', content: 'go' }],
+      tools: [],
+      providerStream: slowStream([5, 5, 5, 5, 5]),
+    });
+    const events: BrainEvent[] = [];
+    const runPromise = (async () => {
+      for await (const e of harness.run()) events.push(e);
+    })();
+    await new Promise((r) => setTimeout(r, 12));
+    harness.cancel('turn_timeout');
+    await runPromise;
+    const cancelEvent = events.find(
+      (e): e is BrainErrorEvent => e.type === 'error' && e.severity === 'cancelled',
+    );
+    expect(cancelEvent?.code).toBe('turn_timeout');
+    expect(cancelEvent?.message).toMatch(/idle watchdog/i);
+    expect(cancelEvent?.message).not.toMatch(/cancelled by user/i);
+    expect(events.filter((e) => e.type === 'error' && e.severity === 'cancelled')).toHaveLength(1);
   });
 
   it('cancel() mid-stream results in agent_end reason=cancelled', async () => {

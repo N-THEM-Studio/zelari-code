@@ -400,6 +400,9 @@ export class AgentHarness {
   private readonly maxToolLoopIterations: number;
   private readonly maxToolLoopHardCap: number;
   private cancelled = false;
+  /** Host-supplied cancel cause (`turn_timeout` vs user Stop). */
+  private cancelReason: string | undefined;
+  private cancelEventEmitted = false;
   private activeController: AbortController | null = null;
   private queue: string[] = [];
   /**
@@ -880,11 +883,28 @@ export class AgentHarness {
    * After cancel() returns, the harness should be discarded by the
    * caller (the run() generator finishes after the current turn ends).
    * For mid-stream interrupt + new-prompt injection, see Task C.3.2.
+   *
+   * `reason` is optional host context: `turn_timeout` is the Desktop sidecar
+   * idle watchdog (not a user Stop). The error event message must not claim
+   * the user cancelled when they did not.
    */
-  cancel(): void {
+  cancel(reason?: string): void {
     if (this.cancelled) return; // idempotent — don't re-abort
     this.cancelled = true;
+    if (reason) this.cancelReason = reason;
     this.activeController?.abort();
+  }
+
+  private buildCancelEvent(): BrainEvent {
+    this.cancelEventEmitted = true;
+    const watchdog = this.cancelReason === 'turn_timeout';
+    return createBrainEvent('error', this.sessionId, {
+      severity: 'cancelled',
+      message: watchdog
+        ? 'Turn cancelled: Desktop idle watchdog saw no events (silent model thinking or a tentacle with no tools). This was not a user Stop.'
+        : 'Run cancelled by user.',
+      code: watchdog ? 'turn_timeout' : 'cancelled',
+    });
   }
 
   /** Current size of the queued user-prompt buffer. */
@@ -934,6 +954,7 @@ export class AgentHarness {
   async *run(): AsyncIterable<BrainEvent> {
     const startTime = Date.now();
     this.activeController = new AbortController();
+    this.cancelEventEmitted = false;
     // Reset the per-run duplicate-call cache (v0.7.1 A2) + doom_loop counts.
     this.toolCallCache = new Map();
     this.toolCallCounts = new Map();
@@ -1293,6 +1314,14 @@ export class AgentHarness {
       }
     }
 
+    // Cancel during a long tool (e.g. a silent tentacle) never hits the
+    // stream loop above — still emit so Desktop can show why the turn died.
+    if (this.cancelled && !this.cancelEventEmitted) {
+      const cancelEvent = this.buildCancelEvent();
+      this.emit(cancelEvent);
+      yield cancelEvent;
+    }
+
     // Emit agent_end
     const agentEnd: BrainAgentEndEvent = createBrainEvent('agent_end', this.sessionId, {
       reason: hadError ? 'error' : this.cancelled ? 'cancelled' : 'completed',
@@ -1455,11 +1484,7 @@ export class AgentHarness {
         if (this.cancelled) {
           // Emit a cancellation error event so consumers (CLI, tests) can
           // observe the mid-stream interrupt (Task C.3.1).
-          const cancelEvent = createBrainEvent('error', this.sessionId, {
-            severity: 'cancelled',
-            message: 'Run cancelled by user.',
-            code: 'cancelled',
-          });
+          const cancelEvent = this.buildCancelEvent();
           this.emit(cancelEvent);
           yield cancelEvent;
           break;

@@ -135,6 +135,7 @@ describe('harnessServer session.steer / session.cancel (t32, session-scoped cont
     let registered = false;
     let drainedSteerIds: string[] = [];
     let cancelCalls = 0;
+    let lastCancelReason: string | undefined;
     let releaseTurn!: () => void;
     const gate = new Promise<void>((resolve) => {
       releaseTurn = resolve;
@@ -146,8 +147,9 @@ describe('harnessServer session.steer / session.cancel (t32, session-scoped cont
     const runTurn: RunTurnFn = async () => {
       const unregister = registerLiveTurnControl({
         queue,
-        cancel: () => {
+        cancel: (reason?: string) => {
           cancelCalls++;
+          lastCancelReason = reason;
           return true;
         },
       });
@@ -188,6 +190,7 @@ describe('harnessServer session.steer / session.cancel (t32, session-scoped cont
       expect(cancelled.ok).toBe(true);
       expect(cancelled.result).toMatchObject({ accepted: true, delivered: true, controlType: 'cancel' });
       expect(cancelCalls).toBe(1);
+      expect(lastCancelReason).toBe('user stop');
       const appliedEv = await h.waitFor((e) => e.type === 'control_applied' && e.controlId === 'c1');
       expect(appliedEv.boundary).toBe('cancel');
 

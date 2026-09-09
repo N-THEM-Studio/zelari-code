@@ -5,6 +5,15 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.37.3] - 2026-09-09
+
+Desktop tentacles work again with long GLM-5.3 / Grok thinking. Until 2.37.1 a silent tentacle hit the **5 min** provider stream idle and returned an error to the lead, so the turn continued. 2.37.2 raised first-token idle to **10 min** (Grok Build alignment) — the same number as the sidecar idle watchdog (since 2.23). Tentacle `thinking_delta` never reaches parent NDJSON, so Desktop treated the lead as hung and sent `session.cancel` (`turn_timeout`) at 10 minutes with no explanation.
+
+### Fixed
+
+- **Desktop idle watchdog no longer kills silent tentacles** — tentacles now heartbeat `agent_status` (`reasoning · Nm Ns`) every 15s (`ZELARI_TENTACLE_HEARTBEAT_MS`, `0`/`off` disables) so a GLM/Grok thinking phase keeps the sidecar clock alive. Sidecar idle default raised 600s → 900s so it sits above provider first-token idle instead of racing it.
+- **Watchdog cancel is honest** — `session.cancel reason=turn_timeout` is forwarded into `AgentHarness.cancel`; the error event says it was the idle watchdog, not a user Stop. Cancel during a long `task` still emits that error (previously only mid-stream cancels did). `session.ended` is `cancelled`, not `completed`. Radio detail is `cancelled by parent`, not the misleading `node timeout`.
+
 ## [2.37.2] - 2026-09-09
 
 Kraken BUILD no longer dies on GLM coding (`image_url` → HTTP 400/1210) or on grok-4.6 xhigh sitting quiet behind SSE keep-alives (`idle for 9s` was the leftover slice of a 5-minute budget).

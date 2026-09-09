@@ -30,8 +30,10 @@ export interface LiveTurnControl {
    * Cooperative cancel — wired to the harness cancel handle once the agent
    * loop exists. Returns false when the turn has no cancelable harness yet;
    * the caller surfaces `delivered: false` instead of faking application.
+   * `reason` is the host cause (`user`, `turn_timeout`, …) forwarded into
+   * AgentHarness.cancel so the error event can tell Stop from watchdog.
    */
-  cancel(): boolean;
+  cancel(reason?: string): boolean;
 }
 
 /** Registration bookkeeping: control + the dispatch generation it came from. */

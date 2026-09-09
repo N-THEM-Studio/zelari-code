@@ -71,6 +71,7 @@ import {
 import { allUnknownCheckResults, parseVerifyReport, type TentacleToolTrace } from '../kraken/verifyReport.js';
 import { recordCandidateTokens } from '../kraken/metrics.js';
 import { parseVerifyVerdict } from '@zelari/core';
+import { startTentacleHeartbeat } from './tentacleHeartbeat.js';
 
 /** Sub-agent kinds (OpenCode-inspired). */
 export type TaskAgentKind = 'explore' | 'general' | 'verify';
@@ -1088,60 +1089,83 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       emitActivity({ type: 'agent_tool', agentId: liveId, toolCallId: ev.toolCallId, tool: startedTools.get(ev.toolCallId) ?? 'unknown', status: ev.isError ? 'failed' : 'completed', durationMs: ev.durationMs, ts: Date.now() } as BrainAgentToolEvent);
     }
   };
-  let { result, error, aborted, usage, toolTrace } = await runSubAgent(harness, {
-    ...(opts.signal ? { signal: opts.signal } : {}),
-    onEvent: onHarnessEvent,
+  // Keep the Desktop sidecar idle clock alive: tentacle thinking_delta never
+  // reaches parent NDJSON, and GLM/Grok can sit silent for minutes before
+  // the first tool. Without this, TURN_IDLE_TIMEOUT cancels the lead.
+  const stopHeartbeat = startTentacleHeartbeat((caption) => {
+    emitActivity({
+      type: 'agent_status',
+      agentId: liveId,
+      status: 'running',
+      message: caption,
+      ts: Date.now(),
+    } as BrainAgentStatusEvent);
   });
 
-  // Routed cheap model 404 (e.g. Settings explore = glm-5.3-flash while the
-  // lead model works): retry once on the parent identity.
-  if (
-    !aborted &&
-    !result &&
-    sub.fallback &&
-    sub.fallback.model !== sub.model
-  ) {
-    const { isUnknownModelError } = await import('./krakenModel.js');
-    if (isUnknownModelError(error)) {
-      emitPhase(`model ${sub.model} unavailable — retrying with ${sub.fallback.model}`);
-      const retryConfig: AgentHarnessConfig = {
-        ...config,
-        model: sub.fallback.model,
-        provider: sub.fallback.provider,
-        providerStream: sub.fallback.providerStream,
-      };
-      try {
-        harness = deps.harnessFactory
-          ? deps.harnessFactory(retryConfig)
-          : new (await import('@zelari/core/harness')).AgentHarness(retryConfig);
-        const retry = await runSubAgent(harness, {
-          ...(opts.signal ? { signal: opts.signal } : {}),
-          onEvent: onHarnessEvent,
-        });
-        result = retry.result;
-        error = retry.error;
-        aborted = retry.aborted;
-        usage = retry.usage;
-        toolTrace = retry.toolTrace;
-        sub = { ...sub, model: sub.fallback.model, provider: sub.fallback.provider };
-      } catch (err) {
-        error = err instanceof Error ? err.message : String(err);
+  let result: string | undefined;
+  let error: string | undefined;
+  let aborted: boolean | undefined;
+  let usage: UsageBreakdown | undefined;
+  let toolTrace: TentacleToolTrace[] | undefined;
+  try {
+    ({ result, error, aborted, usage, toolTrace } = await runSubAgent(harness, {
+      ...(opts.signal ? { signal: opts.signal } : {}),
+      onEvent: onHarnessEvent,
+    }));
+
+    // Routed cheap model 404 (e.g. Settings explore = glm-5.3-flash while the
+    // lead model works): retry once on the parent identity.
+    if (
+      !aborted &&
+      !result &&
+      sub.fallback &&
+      sub.fallback.model !== sub.model
+    ) {
+      const { isUnknownModelError } = await import('./krakenModel.js');
+      if (isUnknownModelError(error)) {
+        emitPhase(`model ${sub.model} unavailable — retrying with ${sub.fallback.model}`);
+        const retryConfig: AgentHarnessConfig = {
+          ...config,
+          model: sub.fallback.model,
+          provider: sub.fallback.provider,
+          providerStream: sub.fallback.providerStream,
+        };
+        try {
+          harness = deps.harnessFactory
+            ? deps.harnessFactory(retryConfig)
+            : new (await import('@zelari/core/harness')).AgentHarness(retryConfig);
+          const retry = await runSubAgent(harness, {
+            ...(opts.signal ? { signal: opts.signal } : {}),
+            onEvent: onHarnessEvent,
+          });
+          result = retry.result;
+          error = retry.error;
+          aborted = retry.aborted;
+          usage = retry.usage;
+          toolTrace = retry.toolTrace;
+          sub = { ...sub, model: sub.fallback.model, provider: sub.fallback.provider };
+        } catch (err) {
+          error = err instanceof Error ? err.message : String(err);
+        }
       }
     }
+  } finally {
+    stopHeartbeat();
   }
   const durationMs = Date.now() - started;
 
   if (aborted) {
-    // Cancelled by the caller (node timeout). Leave a worktree in place only
-    // if it would have been kept anyway — otherwise clean up, since no result
-    // is coming and an orphan worktree would linger.
+    // Parent AbortSignal fired: user Stop, Desktop idle watchdog
+    // (session.cancel reason=turn_timeout), or the task-tool wall clock.
+    // Do not label this "node timeout" — that hid watchdog cancels as a
+    // CLI hang.
     if (worktree && !shouldKeepWorktree()) await cleanupKrakenWorktree(worktree);
     appendKrakenRadio(parentCwd, sessionId, {
       kind: 'error',
       agent,
       thoroughness,
       description: args.description,
-      detail: 'cancelled: node timeout',
+      detail: 'cancelled by parent',
       model: sub.model,
       worktree: worktree?.path ?? null,
       durationMs,
@@ -1153,7 +1177,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       detail: 'cancelled',
       durationMs,
     });
-    return { ok: false, agent, error: 'task: sub-agent cancelled (node timeout)', cancelled: true };
+    return { ok: false, agent, error: 'task: sub-agent cancelled by parent', cancelled: true };
   }
 
   if (!result) {

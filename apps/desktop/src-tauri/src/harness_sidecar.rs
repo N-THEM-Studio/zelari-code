@@ -151,7 +151,12 @@ const TURN_TIMEOUT_GRACE: Duration = Duration::from_secs(60);
 /// NDJSON event has been received for it for TURN_IDLE_TIMEOUT — a
 /// legitimately working turn (silent model thinking, a 45-min tentacle)
 /// keeps refreshing the idle clock with every event and is never killed
-/// mid-flight. The wall cap is the structural backstop: TURN_TIMEOUT bounds
+/// mid-flight. Tentacles emit `agent_status` heartbeats while blocked on the
+/// model so a GLM/Grok thinking phase does not look like a hung CLI.
+/// Default idle is 15 min so it sits ABOVE provider first-token idle (10 min):
+/// a silent lead should get a provider idle error, not a sidecar cancel that
+/// closes the session as `completed` with no explanation.
+/// The wall cap is the structural backstop: TURN_TIMEOUT bounds
 /// even a chatty turn (default 3000s = max tentacle 45' via
 /// TASK_TOOL_TIMEOUT_MS + 5' buffer; mission/council turns are legitimately
 /// long). Past either limit the run fails with the typed error
@@ -159,7 +164,7 @@ const TURN_TIMEOUT_GRACE: Duration = Duration::from_secs(60);
 /// Env overrides: ZELARI_SIDECAR_TURN_IDLE_TIMEOUT_SECS (clamped >= 30s)
 /// and ZELARI_SIDECAR_TURN_TIMEOUT_SECS (clamped >= 60s) — a typo cannot
 /// insta-kill legitimate turns.
-const TURN_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 600;
+const TURN_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 900;
 const TURN_IDLE_TIMEOUT_MIN_SECS: u64 = 30;
 const TURN_TIMEOUT_DEFAULT_SECS: u64 = 3000;
 const TURN_TIMEOUT_MIN_SECS: u64 = 60;
