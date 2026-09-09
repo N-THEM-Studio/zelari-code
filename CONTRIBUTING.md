@@ -102,3 +102,18 @@ Participation is governed by [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
 ## License
 
 By contributing, you agree that your contributions are licensed under the **Apache License 2.0** (see [LICENSE](./LICENSE)). Copyright holder: Anathema Studio — https://anathema-studio.com/
+
+## Freeze delle superfici (S0 — piano 2.37, M1 prima di tutto)
+
+Fino a chiusura della fase M1 (morsa sul done) ogni PR deve dichiarare una label:
+
+- `done-gate` — chiude R0/R4b: evidence meccanica sul verdetto (pack nativo, no pattern B, exit 4).
+- `spine` — single-write/session spine. Richiede anche: "il modello vede solo la Session" (o un test che lo provi).
+- `mission` — slice-from-plan / resume-mission.
+- `surface` — tutto il resto (Desktop chrome, nuovi provider/transport, ruoli council, widget). **Richiede un'exception scritta nel body della PR** che motivi il P0 che copre.
+
+Regola di triage per PR fuori piano: *quale criterio P1-P6 o quale residuo chiude?* Se la risposta e "UX" o "parity", slitta.
+
+Gate merge (in ordine): `npm run verify:principles` -> `npm run verify:versions` -> build core -> `tsc --noEmit` -> `npm run test:session` -> test morsa M1 (`src/cli/kraken/*.test.ts`) -> (se aperte) mission e2e.
+
+Escapes: i bug P0 (break turn, evidenza falsa, version drift, fail-open permessi) passano sempre; `--allow-unverified` e l'opt-out `ZELARI_VERIFY_PACK=0` sono opzioni utente, non deroghe di sviluppo.
