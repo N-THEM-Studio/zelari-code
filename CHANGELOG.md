@@ -5,6 +5,27 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.37.1] - 2026-09-09
+
+### Added
+
+- Strict gate UNVERIFIED state: turns with no bound criteria and pack off exit 4 instead of claiming success; `--allow-unverified` / `ZELARI_ALLOW_UNVERIFIED=1` hatch (kraken turns and mission claims).
+- Mission success claims now require at least one event-backed `verification.evidence` on the session spine — otherwise exit 4 with `mission-event-back-missing` (M2.1/R4b), independent of strict opt-outs; `--phase plan` is exempt.
+- Single automatic repair on strict-blocked kraken builds; repair prompts carry only the tail of failed checks (capped at 2000 chars, max 5 excerpts) — never full logs.
+- M1-EXIT regression bench: failing fixture → exit 4 with exactly one repair attempt; green fixture after edit → exit 0 with zero model tokens on the verify path.
+
+### Changed
+
+- Unanchored tentacle notes no longer receive a spine `seq` (pattern B removed): they are observability-only and can never satisfy `requireEventBackedEvidence`.
+- Unanchored notes map to the `verifier-llm` tier (proposal); only notes anchored to a real tool capture are promoted to `tool-output`.
+- Criterion matching uses stable `criterionId` / normalized equality; the 8-char containment heuristic is gone.
+- Docs: GUIDA gains `--allow-unverified`, "When Zelari says done", session-budget HOLD note and "Kraken Graph: two channels"; ADR-0024 amended (v1.2).
+- M1.7: strict-done default ON for kraken is the documented default per ADR-0027/0030 — no silent flip in this release.
+
+### Fixed
+
+- EvidenceRef anchoring on all spine emit seams (headless gate, advisory verifier review, TUI gate): `appendEvent` results are now adapted to `{seq}` — TUI/headless green runs were emitting unanchored command-output evidence.
+
 ## [2.37.0] - 2026-09-08
 
 Zelari missions now slice work from the open tasks in `.zelari/plan.json` and can resume mid-run. Headless JSON streams a real usage event so evals stop recording `tokens: null`.
