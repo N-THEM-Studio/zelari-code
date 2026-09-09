@@ -244,6 +244,10 @@ Options:
                              ZELARI_MISSION_STRICT=0 (missions) semantics
   --mission-strict           Force the mission strict evidence gate ON for this run;
                              --no-mission-strict opts THIS run out (ZELARI_MISSION_STRICT=0)
+  --allow-unverified         M1.2: exit 0 on UNVERIFIED turns (strict ON but no criteria —
+                             pack off/unbound, no selection). Explicit opt-in; never waives a
+                             real REPAIR_REQUIRED/BLOCKED verdict. Sets ZELARI_ALLOW_UNVERIFIED=1
+                             for this process (CLI-only flag: the sidecar never parses argv)
   --kraken-graph <goal>      Plan + execute a Kraken task graph instead of --task
                              (mutually exclusive with --task; ZELARI_KRAKEN_GRAPH=0 disables)
   --kraken-graph-file <path> Same as --kraken-graph but read from a file
@@ -523,6 +527,12 @@ export function parseHeadlessFlags(argv: readonly string[]): HeadlessParseResult
       missionStrict = true;
     } else if (arg === '--no-mission-strict') {
       missionStrict = false;
+    } else if (arg === '--allow-unverified') {
+      // M1.2: explicit escape hatch for UNVERIFIED turns. CLI-process-lifetime
+      // flag — safe to set process.env here because only the single-shot CLI
+      // entry parses argv (the concurrent sidecar receives options, never
+      // flags; see H10-fix1 for why per-turn knobs ride the overlay instead).
+      process.env.ZELARI_ALLOW_UNVERIFIED = '1';
     } else if (arg === '--kraken-graph') {
       krakenGraph = argv[i + 1];
       i++;

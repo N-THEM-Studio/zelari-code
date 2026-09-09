@@ -162,10 +162,18 @@ describe('Exit-2.3 lock: verifier LLM active cannot change the completion author
 
   it('Caso 2 — deterministic PASS + verifier REJECTED → PASS untouched, exit 0, rejection recorded as advisory', async () => {
     selectWithChecks();
-    setKrakenCheckResults([
-      { check: CHECKS[0], status: 'pass', note: 'tsc clean' },
-      { check: CHECKS[1], status: 'pass', note: 'vitest 41/41' },
-    ]);
+    // M1.3 (pattern A): the deterministic PASS is anchored to captured tool
+    // executions — a bare note no longer certifies a check.
+    setKrakenCheckResults(
+      [
+        { check: CHECKS[0], status: 'pass', note: 'tsc clean' },
+        { check: CHECKS[1], status: 'pass', note: 'vitest 41/41' },
+      ],
+      [
+        { tool: 'bash', callId: 'c-tsc', ok: true, command: 'tsc --noEmit', output: 'tsc clean', durationMs: 1, endedAt: Date.now() },
+        { tool: 'bash', callId: 'c-vitest', ok: true, command: 'vitest run', output: '41/41 passed', durationMs: 1, endedAt: Date.now() },
+      ],
+    );
 
     const emitted: unknown[] = [];
     const verifier = activeVerifier(REJECTED, emitted);

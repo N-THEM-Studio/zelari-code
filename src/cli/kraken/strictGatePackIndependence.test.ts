@@ -97,27 +97,49 @@ describe('evaluateStrictBuildGate — pack without selection', () => {
     expect(strictGateExitCode(evaluation)).toBe(4);
   });
 
-  it('pack enabled but nothing bound → honest non-strict open, never an empty PASS', async () => {
+  it('M1.2: pack enabled but nothing bound → UNVERIFIED (blocked, exit 4) — never an empty PASS', async () => {
     const evaluation = await evaluateStrictBuildGate('build', {
       env: { ZELARI_VERIFY_PACK: '1' },
       cwd: '/nonexistent-zelari-test-repo',
       shell: stubShell({}),
       emit: emitSeq() as never,
     });
-    expect(evaluation.strict).toBe(false);
+    expect(evaluation.strict).toBe(true);
+    expect(evaluation.unverified).toBe(true);
     expect(evaluation.evaluation).toBeNull();
-    expect(evaluation.blocked).toBe(false);
-    expect(evaluation.summary).toBe('open (native pack bound no command)');
+    expect(evaluation.blocked).toBe(true);
+    expect(strictGateExitCode(evaluation)).toBe(4);
+    // Escape hatch: --allow-unverified / ZELARI_ALLOW_UNVERIFIED=1 → exit 0.
+    expect(strictGateExitCode(evaluation, { ZELARI_ALLOW_UNVERIFIED: '1' })).toBe(0);
+    // Explicit strict opt-out keeps the legacy open behaviour.
+    const optedOut = await evaluateStrictBuildGate('build', {
+      env: { ZELARI_VERIFY_PACK: '1', ZELARI_STRICT_DONE: '0' },
+      cwd: '/nonexistent-zelari-test-repo',
+      shell: stubShell({}),
+    });
+    expect(optedOut.strict).toBe(false);
+    expect(optedOut.blocked).toBe(false);
+    expect(optedOut.summary).toBe('open (native pack bound no command)');
   });
 
-  it('pack opt-out + no selection stays exactly the 2.0 early-return', async () => {
+  it('M1.2: pack opt-out + no selection → UNVERIFIED under default strict; strict off keeps the 2.0 early-return', async () => {
     const evaluation = await evaluateStrictBuildGate('build', {
       env: { ZELARI_VERIFY_PACK: '0' },
       shell: stubShell({}),
     });
-    expect(evaluation.strict).toBe(false);
+    expect(evaluation.strict).toBe(true);
+    expect(evaluation.unverified).toBe(true);
     expect(evaluation.evaluation).toBeNull();
     expect(evaluation.native).toBeNull();
-    expect(evaluation.blocked).toBe(false);
+    expect(evaluation.blocked).toBe(true);
+    expect(strictGateExitCode(evaluation)).toBe(4);
+    const legacy = await evaluateStrictBuildGate('build', {
+      env: { ZELARI_VERIFY_PACK: '0', ZELARI_STRICT_DONE: '0' },
+      shell: stubShell({}),
+    });
+    expect(legacy.strict).toBe(false);
+    expect(legacy.evaluation).toBeNull();
+    expect(legacy.native).toBeNull();
+    expect(legacy.blocked).toBe(false);
   });
 });

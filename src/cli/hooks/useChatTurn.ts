@@ -30,6 +30,7 @@ import { krakenDelegationPlaybook } from "../kraken/delegationPolicy.js";
 import { buildKrakenRepairPrompt } from "../kraken/completionGate.js";
 import {
   evaluateStrictBuildGate,
+  repairExcerptsFromEvaluation,
   strictGateEventPayload,
   strictDoneEnabled,
   type StrictBuildGateEvaluation,
@@ -912,8 +913,14 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // the finally block are shared with the first pass.
               let krakenSuppressFinish = false;
               // F3: forward engine verification events (verification.evidence/run) onto the spine.
-              const krakenSpineEmit: NonNullable<StrictGateOptions["emit"]> = (input) =>
-                writerRef.current?.spine?.appendEvent(input) ?? Promise.resolve(null);
+              // F3 seam adapter: the core engine reads the anchor as `out.seq`, while the
+              // spine resolves the seq NUMBER (null = degraded). Without the wrapper every
+              // command-output EvidenceRef stays unanchored on the TUI path → strict green
+              // runs close falsely blocked (same fix as runOneTurn.ts headless sites).
+              const krakenSpineEmit: NonNullable<StrictGateOptions["emit"]> = async (input) => {
+                const seq = await (writerRef.current?.spine?.appendEvent(input) ?? Promise.resolve(null));
+                return { seq };
+              };
               // P0.3 (harness-hardening x ADR-0023): persist the completion-proof
               // artifact after every strict gate evaluation — the file always
               // reflects the LAST evaluation of the turn. Best-effort by
@@ -937,7 +944,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 if (krakenGate.blocked) {
                   krakenRepairEnqueued = true; // budget = 1, structural
                   markRepairTriggered();
-                  harness.enqueue(buildKrakenRepairPrompt(krakenGate));
+                  // M1.6: the repair directive carries the SHORT capped fail
+                  // tails from this evaluation — never the full command log.
+                  harness.enqueue(
+                    buildKrakenRepairPrompt(krakenGate, repairExcerptsFromEvaluation(strictGate)),
+                  );
                   appendSystem(
                     setMessages,
                     formatStrictBlockExplanation(strictGate),

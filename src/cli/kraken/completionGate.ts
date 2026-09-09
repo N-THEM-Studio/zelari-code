@@ -128,11 +128,55 @@ export function evaluateKrakenCompletionGate(mode: 'plan' | 'build'): KrakenComp
 }
 
 /**
+ * M1.6: max characters of captured output that may enter the repair prompt
+ * per failing check — the SHORT fail, never the full log (token gate ≈ 0 on
+ * the green path; the repair sees the tail, where the real error sits).
+ */
+export const REPAIR_FAIL_EXCERPT_CAP = 2000;
+
+/** M1.6: at most this many failure excerpts enter ONE repair prompt. */
+const MAX_REPAIR_EXCERPTS = 5;
+
+/** Normalize the excerpts argument (Map or plain record) into entries. */
+function excerptEntries(
+  excerpts?: ReadonlyMap<string, string> | Record<string, string>,
+): Array<[string, string]> {
+  if (!excerpts) return [];
+  return excerpts instanceof Map ? [...excerpts.entries()] : Object.entries(excerpts);
+}
+
+/**
+ * M1.6: one capped failure-excerpt block. Always the TAIL of the captured
+ * output (the actual error sits at the end); when truncation happens, the
+ * omission is marked on the first line so the model knows context is missing.
+ */
+function excerptBlock(name: string, raw: string): string[] {
+  const trimmed = raw.trim();
+  const truncated = trimmed.length > REPAIR_FAIL_EXCERPT_CAP;
+  const tail = truncated ? trimmed.slice(trimmed.length - REPAIR_FAIL_EXCERPT_CAP) : trimmed;
+  const lines = [`Failure excerpt (tail, capped ${REPAIR_FAIL_EXCERPT_CAP} chars) — ${name}:`];
+  if (truncated) lines.push(`…[truncated ${trimmed.length - REPAIR_FAIL_EXCERPT_CAP} chars]`);
+  lines.push(tail, '');
+  return lines;
+}
+
+/**
  * User directive for the single automatic repair pass. The selection itself
  * is settled (no re-running kraken_select); the model must fix, then
  * re-verify ALL required checks via a verify tentacle.
+ *
+ * M1.6: `excerpts` (optional, check name → captured output) adds the SHORT
+ * capped tail of each failing check's output to the directive. Entries whose
+ * key matches a listed failed/unknown check join that check's section;
+ * uncovered entries (deterministic criteria-pack / task-contract results the
+ * legacy gate does not list — the pack-only headless shape) are appended
+ * under their own lead-in. At most MAX_REPAIR_EXCERPTS blocks total. Without
+ * the argument the prompt is byte-identical to the pre-M1.6 directive.
  */
-export function buildKrakenRepairPrompt(gate: KrakenCompletionGate): string {
+export function buildKrakenRepairPrompt(
+  gate: KrakenCompletionGate,
+  excerpts?: ReadonlyMap<string, string> | Record<string, string>,
+): string {
   const lines: string[] = [
     `The BUILD turn is ending, but the required checks from kraken_select are not all satisfied (passed ${gate.passed}/${gate.total}).`,
     '',
@@ -148,6 +192,41 @@ export function buildKrakenRepairPrompt(gate: KrakenCompletionGate): string {
     );
     for (const check of gate.unknownChecks) lines.push(`- ${check}`);
     lines.push('');
+  }
+  // M1.6: capped failure tails — failed checks first, then unknown, then
+  // uncovered deterministic results; never more than MAX_REPAIR_EXCERPTS.
+  const entries = excerptEntries(excerpts);
+  if (entries.length > 0) {
+    const byName = new Map(entries);
+    const used = new Set<string>();
+    const blocks: string[][] = [];
+    let emitted = 0;
+    for (const check of [...gate.failedChecks, ...gate.unknownChecks]) {
+      if (emitted >= MAX_REPAIR_EXCERPTS) break;
+      const raw = byName.get(check);
+      if (raw === undefined || used.has(check)) continue;
+      used.add(check);
+      blocks.push(excerptBlock(check, raw));
+      emitted += 1;
+    }
+    // Deterministic results (criteria pack / task contract) the legacy gate
+    // does not list — the pack-only headless shape: the gate carries no
+    // selection, yet the repair still needs the short fail.
+    let leadInPushed = false;
+    for (const [name, raw] of entries) {
+      if (emitted >= MAX_REPAIR_EXCERPTS) break;
+      if (used.has(name)) continue;
+      if (!leadInPushed) {
+        blocks.push([
+          'DETERMINISTIC check failures with captured output (criteria pack / task contract):',
+          '',
+        ]);
+        leadInPushed = true;
+      }
+      blocks.push(excerptBlock(name, raw));
+      emitted += 1;
+    }
+    for (const block of blocks) lines.push(...block);
   }
   lines.push(
     'Recover this turn:',

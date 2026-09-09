@@ -69,9 +69,20 @@ function selectWithChecks(checks: string[]): void {
   });
 }
 
+/**
+ * M1.3 (pattern A): the deterministic PASS is anchored to a captured tool
+ * execution backing the note — a bare verify-report note no longer counts
+ * as evidence (pattern B is dead).
+ */
+function vitestTrace(ok: boolean) {
+  return [
+    { tool: 'bash', callId: 'c-vitest', ok, command: 'vitest', output: '58/58 passed', durationMs: 1, endedAt: Date.now() },
+  ];
+}
+
 async function evaluatedGate(status: 'pass' | 'fail', emit?: (input: unknown) => Promise<{ seq: number }>): Promise<StrictBuildGateEvaluation> {
   selectWithChecks([CHECK]);
-  setKrakenCheckResults([{ check: CHECK, status, note: 'vitest 58/58' }]);
+  setKrakenCheckResults([{ check: CHECK, status, note: 'vitest 58/58' }], vitestTrace(status === 'pass'));
   return evaluateStrictBuildGate('build', { env: { ZELARI_VERIFY_PACK: '0' }, ...(emit ? { emit: emit as never } : {}) });
 }
 

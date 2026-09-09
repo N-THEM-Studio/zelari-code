@@ -30,6 +30,13 @@ export type KrakenCheckStatus = 'pass' | 'fail' | 'unknown';
 export interface KrakenCheckResult {
   /** Required-check text exactly as produced by kraken_select. */
   check: string;
+  /**
+   * M1.5 stable join key: the criterion id from the selection contract
+   * (`check-<n>-<slug>`, derived deterministically). Optional — producers
+   * migrate incrementally; when absent the verification bridge falls back
+   * to exact normalized-text equality (never fuzzy containment).
+   */
+  criterionId?: string;
   status: KrakenCheckStatus;
   /** One-line evidence note from the tentacle (optional). */
   note?: string;

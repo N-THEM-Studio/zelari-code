@@ -42,7 +42,7 @@ import { createStreamScrubber } from '../utils/streamScrub.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { evaluateStrictBuildGate, strictEnvOverlay, strictGateEventPayload, strictGateExitCode, STRICT_DONE_EXIT_CODE, strictDoneEnabled } from '../kraken/verificationBridge.js';
+import { evaluateStrictBuildGate, repairExcerptsFromEvaluation, strictEnvOverlay, strictGateEventPayload, strictGateExitCode, STRICT_DONE_EXIT_CODE, strictDoneEnabled } from '../kraken/verificationBridge.js';
 // t78 (ADR-0033 slice): runtime general⇒verify obligation on the task tool path.
 import { taskVerifyObligation } from '../tools/taskTool.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
@@ -717,7 +717,10 @@ export async function runOneTurn(
         return null;
       }
     },
-    emit: (input: import('@zelari/core/session').SessionEventInput) => spine.appendEvent(input),
+    // F3 seam adapter (same as the gate sites below): the core engine reads
+    // the anchor as `out.seq`, while the spine resolves the seq NUMBER. A bare
+    // number here leaves the review evidence unanchored on the spine.
+    emit: async (input: import('@zelari/core/session').SessionEventInput) => ({ seq: await spine.appendEvent(input) }),
   };
 
   // H10-fix1: per-invocation env overlay for the strict knobs (strictDone /
@@ -738,7 +741,12 @@ export async function runOneTurn(
     (isKrakenSelectionEnabled() || nativePackEnabled()) &&
     !planModeFromOpts(opts)
   ) {
-    const strictGate = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input), cwd, env: strictEnv });
+    // F3 seam adapter: the core engine's emitEvidence reads the anchor as
+    // `out.seq` (object field), while the headless spine resolves the seq
+    // NUMBER directly (null = degraded/untraceable). Without this wrapper
+    // every command-output EvidenceRef stays unanchored and the strict gate
+    // could never PASS on the headless path (M1-EXIT green → false exit 4).
+    const strictGate = await evaluateStrictBuildGate('build', { emit: async (input) => ({ seq: await spine.appendEvent(input) }), cwd, env: strictEnv });
     // 2.1 T4: opt-in advisory verifier review (dedicated model configured in
     // provider.json, or ZELARI_VERIFIER_REVIEW=1). Advisory only — it can
     // neither un-block nor block the turn; it lands in the verification.run
@@ -755,7 +763,9 @@ export async function runOneTurn(
     await writeProofSafe(strictGate, { surface: 'kraken', sessionId: spine.sessionId }, cwd);
 
     if (strictGate.blocked) {
-      const repairPrompt = buildKrakenRepairPrompt(gate);
+      // M1.6: the repair directive carries the SHORT capped fail tails from
+      // this first evaluation — never the full command log.
+      const repairPrompt = buildKrakenRepairPrompt(gate, repairExcerptsFromEvaluation(strictGate));
       if (opts.output === 'json') {
         emitEvent({
           type: 'log',
@@ -783,7 +793,7 @@ export async function runOneTurn(
         successfulWrites: pass.successfulWrites + repair.successfulWrites,
         emittedWrites: pass.emittedWrites + repair.emittedWrites,
       };
-      const after = await evaluateStrictBuildGate('build', { emit: (input) => spine.appendEvent(input), cwd, env: strictEnv });
+      const after = await evaluateStrictBuildGate('build', { emit: async (input) => ({ seq: await spine.appendEvent(input) }), cwd, env: strictEnv });
       await runAdvisoryVerifierReview(after, verifierReviewDeps).catch((): void => undefined);
       const afterPayload = strictGateEventPayload(after);
       spine.verificationRun(afterPayload);

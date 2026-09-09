@@ -147,9 +147,12 @@ describe('evaluateStrictBuildGate surface wiring (ADR-0025)', () => {
   it('pack default (P0.2) runs but auto-unbinds on repos without npm scripts', async () => {
     await withEnv(undefined, undefined, async () => {
       selectWithChecks([CHECKS[0]]);
-      setKrakenCheckResults([
-        { check: CHECKS[0], status: 'pass', note: 'spine replay ok (stub)' },
-      ]);
+      // M1.3 (pattern A): the note is anchored to a captured execution —
+      // notes without a tool capture no longer certify a check.
+      setKrakenCheckResults(
+        [{ check: CHECKS[0], status: 'pass', note: 'spine replay ok (stub)' }],
+        [{ tool: 'bash', callId: 'c-spine', ok: true, command: 'spine replay', output: 'ok', durationMs: 1, endedAt: Date.now() }],
+      );
       const gate = await evaluateStrictBuildGate('build', {
         surface: 'mission',
         emit: emitSeq(),
@@ -157,7 +160,7 @@ describe('evaluateStrictBuildGate surface wiring (ADR-0025)', () => {
       });
       expect(gate.strict).toBe(true);
       expect(gate.native).toBeNull();
-      expect(gate.blocked).toBe(false); // pass with event-backed note → PASS
+      expect(gate.blocked).toBe(false); // pattern-A anchored note → PASS
     });
   });
 });

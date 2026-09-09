@@ -132,23 +132,24 @@ function normalize(text: string): string {
 }
 
 /**
- * Find the reported result for a required check using the same tolerant
- * matching as the legacy gate (normalized equality, then containment either
- * direction at minimum length 8) so the two gates never disagree on mapping.
+ * Find the reported result for a required check (M1.5: stable joins only).
+ * Join order: criterion id when the tentacle reported one, then exact
+ * normalized-text equality (criterion ids derive deterministically from the
+ * same text, so the two joins agree). The legacy 8-char containment match
+ * is GONE: a near-miss now maps to `unknown` (blockable) instead of
+ * silently satisfying a different check (false pass).
  */
 function matchResult(
   check: string,
   byNormalized: Map<string, KrakenCheckResult>,
+  byId?: Map<string, KrakenCheckResult>,
+  id?: string,
 ): KrakenCheckResult | undefined {
-  const norm = normalize(check);
-  const direct = byNormalized.get(norm);
-  if (direct) return direct;
-  for (const key of byNormalized.keys()) {
-    if (key.length >= 8 && (key.includes(norm) || norm.includes(key))) {
-      return byNormalized.get(key);
-    }
+  if (byId && id) {
+    const byCriterion = byId.get(id);
+    if (byCriterion) return byCriterion;
   }
-  return undefined;
+  return byNormalized.get(normalize(check));
 }
 
 /**
@@ -165,7 +166,11 @@ export function krakenResultsToContract(
   now: number = Date.now(),
 ): KrakenEvidenceContract {
   const byNormalized = new Map<string, KrakenCheckResult>();
-  for (const r of results ?? []) byNormalized.set(normalize(r.check), r); // later duplicates win
+  const byId = new Map<string, KrakenCheckResult>();
+  for (const r of results ?? []) {
+    byNormalized.set(normalize(r.check), r); // later duplicates win
+    if (r.criterionId) byId.set(r.criterionId, r);
+  }
   const criteria: Criterion[] = [];
   const verifications: VerificationResult[] = [];
   requiredChecks.forEach((check, i) => {
@@ -175,14 +180,20 @@ export function krakenResultsToContract(
       text: check,
       source: 'kraken-selection',
       required: true,
-      check: { kind: 'none', reason: 'verified by verify tentacle report' },
+      check: { kind: 'none', reason: 'verify tentacle proposal — runtime evidence required' },
     });
-    const reported = matchResult(check, byNormalized);
+    const reported = matchResult(check, byNormalized, byId, id);
+    // M1.4: the tentacle's note is a PROPOSAL, not the dossier. It enters as
+    // verifier narration (inadmissible tier) and only becomes admissible
+    // evidence when anchorSelectionEvidence ties it to a captured tool
+    // execution (pattern A re-stamps tier 'tool-output' + seq + digest).
+    // The runtime's own dossier is the native pack + contract criteria the
+    // VerificationEngine re-executes.
     const evidence: EvidenceRef[] =
       reported?.note && reported.note.trim().length > 0
         ? [
             {
-              tier: 'tool-output',
+              tier: 'verifier-llm',
               ref: reported.note.trim().slice(0, 500),
               capturedAt: now,
             },
@@ -262,7 +273,10 @@ export async function anchorSelectionEvidence(
   for (const r of results) {
     for (const ev of r.evidence) {
       if (ev.seq !== undefined) continue;
-      if (ev.tier === 'verifier-llm' || ev.tier === 'human') continue;
+      // M1.4: verifier-llm refs from the verify report are proposals waiting
+      // for a pattern-A anchor — do NOT skip them. Only human testimony is
+      // out of scope for automatic anchoring.
+      if (ev.tier === 'human') continue;
       try {
         // 2.1 T5 pattern A (original-tool-backed): match the note to a RAW
         // tool execution captured at run time, and anchor the EvidenceRef to
@@ -294,14 +308,20 @@ export async function anchorSelectionEvidence(
           if (Number.isFinite(toolSeq) && toolSeq > 0) {
             ev.seq = toolSeq;
             ev.digest = digest;
+            // Pattern A made it real captured tool output — re-stamp the
+            // honest narration tier into the admissible one.
+            ev.tier = 'tool-output';
             ev.ref = `${match.tool}${match.command ? ` ${match.command}` : ''} → ${match.ok ? 'ok' : 'error'} @seq`;
             counts.toolResultAnchored += 1;
           }
           continue;
         }
-        // Pattern B (deprecated fallback): no captured execution matches the
-        // note — re-emit the note itself, explicitly marked as note-backed.
-        const appended = await emit({
+        // M1.3 (pattern B killed): no captured execution matches the note —
+        // the note is NOT evidence. Emit it for observability only and leave
+        // the EvidenceRef UNANCHORED (no seq, no digest). STRICT_BUILD_POLICY
+        // (requireEventBackedEvidence) then treats the criterion as unknown →
+        // BLOCKED. A re-emitted note is a proposal, never the dossier.
+        await emit({
           kind: 'verification.evidence',
           actor: { type: 'system', role: 'verification' },
           data: {
@@ -310,16 +330,10 @@ export async function anchorSelectionEvidence(
             criterionId: r.criterionId,
             ref: ev.ref,
             tier: ev.tier,
+            anchored: false,
           },
         });
-        const seq =
-          appended && typeof appended === 'object' && 'seq' in appended
-            ? Number((appended as { seq: unknown }).seq)
-            : NaN;
-        if (Number.isFinite(seq) && seq > 0) {
-          ev.seq = seq;
-          counts.noteFallback += 1;
-        }
+        counts.noteFallback += 1;
       } catch {
         // degrade-and-stop: leave unanchored; policy will BLOCK if required
       }
@@ -399,6 +413,13 @@ export interface StrictBuildGateEvaluation {
    * deprecated). Measurement hook for the 2.1 provenance migration.
    */
   anchoring?: EvidenceAnchoringCounts;
+  /**
+   * M1.2: strict is ON but nothing could be evaluated (no criteria — pack
+   * off/unbound, no selection, no task contract). The turn is UNVERIFIED,
+   * never open/success. Escape hatch: --allow-unverified /
+   * ZELARI_ALLOW_UNVERIFIED=1 (exit 0 again).
+   */
+  unverified?: boolean;
   /** True when the turn may NOT cleanly finish (either gate blocks). */
   blocked: boolean;
   /** One-line machine-readable summary for logging/NDJSON. */
@@ -456,7 +477,8 @@ export async function evaluateStrictBuildGate(
   // when no selection ran and the pack binds nothing (contract-only turn).
   const scopeContract = options.taskContract ?? activeContractScope()?.contract;
   const contractPlan = scopeContract ? compileVerificationCriteria(scopeContract) : [];
-  if ((!selectionAvailable && !nativeOn && contractPlan.length === 0) || (!strictOn && !nativeOn)) {
+  const nothingBindable = !selectionAvailable && !nativeOn && contractPlan.length === 0;
+  if (!strictOn && !nativeOn) {
     return {
       gate,
       strict: false,
@@ -466,6 +488,23 @@ export async function evaluateStrictBuildGate(
       summary: gate.blocked
         ? `blocked: ${gate.failedChecks.length} failed, ${gate.unknownChecks.length} unknown`
         : 'open',
+    };
+  }
+  if (nothingBindable) {
+    // M1.2: strict is ON but no criterion can be produced (pack off or
+    // unbound tree, no selection contract, no task contract) → UNVERIFIED,
+    // not open. A success claim with zero verification is exactly the false
+    // done this gate exists to prevent; --allow-unverified is the explicit
+    // opt-out for scratch/benign runs.
+    return {
+      gate,
+      strict: true,
+      unverified: true,
+      evaluation: null,
+      native: null,
+      blocked: true,
+      summary:
+        'unverified (strict on: no criteria — pack off/unbound, no selection contract, no task contract)',
     };
   }
   const checks = selectionAvailable ? krakenRequiredChecks() : [];
@@ -500,6 +539,21 @@ export async function evaluateStrictBuildGate(
   // Pack enabled but nothing bound (and no selection contract) → nothing to
   // evaluate: stay non-strict rather than certify an empty PASS.
   if (allCriteria.length === 0) {
+    if (strictOn) {
+      // M1.2: pack enabled but the tree bound no deterministic command and
+      // no selection/contract criteria exist — UNVERIFIED, never open.
+      return {
+        gate,
+        strict: true,
+        unverified: true,
+        evaluation: null,
+        native,
+        compiled,
+        results: allResults,
+        blocked: true,
+        summary: 'unverified (strict on: native pack bound no command, no selection contract)',
+      };
+    }
     return {
       gate,
       strict: false,
@@ -533,15 +587,91 @@ export async function evaluateStrictBuildGate(
 }
 
 /**
+ * M1.6: short failure excerpts for the single repair prompt, keyed by check
+ * name (criterion text when resolvable, criterion id as fallback). Only
+ * `fail`/`unknown` results with captured output enter — the output is
+ * `VerificationResult.detail`, which the core engine already tails at
+ * capture time (stdout/stderr capped, never the full log); the prompt layer
+ * enforces the per-excerpt cap (REPAIR_FAIL_EXCERPT_CAP) and the max-5
+ * limit. Pure and total: an all-green evaluation yields an empty map.
+ */
+export function repairExcerptsFromEvaluation(
+  evaluation: StrictBuildGateEvaluation,
+): Map<string, string> {
+  const excerpts = new Map<string, string>();
+  const nameById = new Map<string, string>();
+  // Deterministic criteria (native pack + task contract) carry display text.
+  for (const c of [...(evaluation.native?.criteria ?? []), ...(evaluation.compiled?.criteria ?? [])]) {
+    nameById.set(c.id, c.text);
+  }
+  // Selection-contract criterion ids derive deterministically from the
+  // required-check text (same enumeration krakenResultsToContract used), so
+  // registry-backed names resolve without exposing the contract criteria.
+  try {
+    krakenRequiredChecks().forEach((text, i) => {
+      if (!nameById.has(criterionId(text, i))) nameById.set(criterionId(text, i), text);
+    });
+  } catch {
+    // Registry unavailable — criterion-id fallback keys still carry the detail.
+  }
+  for (const r of evaluation.results ?? []) {
+    if (r.status === 'pass') continue;
+    const detail = r.detail?.trim();
+    if (!detail) continue;
+    excerpts.set(nameById.get(r.criterionId) ?? r.criterionId, detail);
+  }
+  return excerpts;
+}
+
+/**
  * E2.2 exit code for a strict-mode turn whose completion gate is still blocked
  * after the automatic repair pass: the run must NOT close as success.
  * Distinct from transport errors (3) and usage errors (2).
  */
 export const STRICT_DONE_EXIT_CODE = 4;
 
-/** Pure: strict blocked → dedicated exit code; anything else → keep the pass outcome. */
-export function strictGateExitCode(evaluation: StrictBuildGateEvaluation): number {
-  return evaluation.strict && evaluation.blocked ? STRICT_DONE_EXIT_CODE : 0;
+/** M1.2: explicit escape hatch for UNVERIFIED turns (CLI --allow-unverified). */
+export function allowUnverified(env: Record<string, string | undefined> = process.env): boolean {
+  const v = env.ZELARI_ALLOW_UNVERIFIED?.toLowerCase();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'on';
+}
+
+/**
+ * Pure: strict blocked → dedicated exit code; anything else → keep the pass
+ * outcome. M1.2: an UNVERIFIED turn (strict on, nothing bound) exits 4
+ * unless the user explicitly allowed unverified runs — which never waives a
+ * real REPAIR_REQUIRED/BLOCKED verdict, only the "nothing to evaluate" case.
+ */
+export function strictGateExitCode(
+  evaluation: StrictBuildGateEvaluation,
+  env: Record<string, string | undefined> = process.env,
+): number {
+  if (evaluation.strict && evaluation.blocked) {
+    if (evaluation.unverified && allowUnverified(env)) return 0;
+    return STRICT_DONE_EXIT_CODE;
+  }
+  return 0;
+}
+
+/**
+ * M2.1/R4b: a mission `success` claim must be EVENT-BACKED. When the strict
+ * gate above is open (or opted out) but the session spine carries ZERO
+ * `verification.evidence` events, the claim is narration-only and the run
+ * still closes with the strict exit code — the same "done means verified"
+ * guarantee, evidence-flavored, so a strict-off mission cannot dodge it
+ * (strict-on open verdicts always carry event-backed evidence, so this is a
+ * no-op for them). `evidenceCount < 0` means UNKNOWN (spine read failed) —
+ * never block on an infrastructure error. M1.2's escape hatch is honored
+ * mission-side too.
+ */
+export function missionClaimExitCode(
+  evidenceCount: number,
+  env: Record<string, string | undefined> = process.env,
+): number {
+  if (evidenceCount < 0) return 0; // unknown — skip the gate, never fake a count
+  if (evidenceCount > 0) return 0; // event-backed claim
+  if (allowUnverified(env)) return 0; // explicit --allow-unverified hatch
+  return STRICT_DONE_EXIT_CODE;
 }
 
 /** Machine-readable record for the session spine `verification.run` event. */
@@ -550,6 +680,9 @@ export function strictGateEventPayload(evaluation: StrictBuildGateEvaluation): R
     engine: evaluation.native ? 'kraken-legacy+completion-policy+criteria-pack' : 'kraken-legacy+completion-policy',
     strict: evaluation.strict,
     verdict: evaluation.evaluation?.verdict ?? (evaluation.blocked ? 'BLOCKED' : 'PASS'),
+    // M1.2: UNVERIFIED marker — strict on, nothing evaluable. Present only
+    // when true so historical payloads stay byte-identical.
+    ...(evaluation.unverified ? { unverified: true } : {}),
     legacy: {
       total: evaluation.gate.total,
       passed: evaluation.gate.passed,

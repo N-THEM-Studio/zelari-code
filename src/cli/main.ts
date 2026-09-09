@@ -608,6 +608,7 @@ function pickRootComponent(): {
         "    --resume-mission   Resume .zelari/mission-state.json (not the spine)\n" +
         "    --export-session <path>  Write zelari-session-export/1 after the run\n" +
         "    --strict-done      Evidence-based BUILD completion gate\n" +
+        "    --allow-unverified  Exit 0 when strict is ON but nothing could be verified (M1.2)\n" +
         "    --task-file <path>  Read the task prompt from a file (Windows argv cap)\n" +
         "    --once             Single-cycle run (cron/git-hook triggers, ADR-0014)\n" +
         "    --kraken-graph <goal>  Plan + execute a Kraken task graph\n" +

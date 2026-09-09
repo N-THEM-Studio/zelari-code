@@ -95,17 +95,20 @@ describe('anchorSelectionEvidence (T5 provenance)', () => {
     });
   });
 
-  it('pattern B: deprecated note fallback when no capture matches', async () => {
+  it('pattern B (M1.3): unmatched note stays UNANCHORED — a re-emitted note is not evidence', async () => {
     const r = resultWithNote('check-1-manual', 'agent says it reviewed the code by eye');
     const { events, emit } = makeEmitter();
     const counts = await anchorSelectionEvidence([r], emit, VITEST_TRACE);
     expect(counts.toolResultAnchored).toBe(0);
     expect(counts.noteFallback).toBe(1);
-    expect(r.evidence[0]!.seq).toBe(101);
+    // The morsa: the note-fallback event is observability ONLY — no seq, no
+    // digest on the EvidenceRef, so requireEventBackedEvidence BLOCKs.
+    expect(r.evidence[0]!.seq).toBeUndefined();
     expect(r.evidence[0]!.digest).toBeUndefined();
     expect(events[0]).toMatchObject({
       observation: 'verify-report-note',
       provenance: 'note-fallback',
+      anchored: false,
     });
   });
 

@@ -175,7 +175,10 @@ describe('evaluateNativePack', () => {
 describe('evaluateStrictBuildGate × native pack (F2 lock)', () => {
   it('failing typecheck forces REPAIR_REQUIRED even when every selection check passes with notes', async () => {
     selectWithChecks(CHECKS);
-    setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }]);
+    setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }], [
+      // M1.3 (pattern A): anchor the note to a captured tool execution.
+      { tool: 'bash', callId: 'c-vitest', ok: true, command: 'vitest', output: '58/58 passed', durationMs: 1, endedAt: Date.now() },
+    ]);
     const gate = await evaluateStrictBuildGate('build', {
       env: packEnv(),
       emit: emitSeq(),
@@ -195,7 +198,10 @@ describe('evaluateStrictBuildGate × native pack (F2 lock)', () => {
 
   it('all-pass pack + all-pass selection → PASS with native results in the payload', async () => {
     selectWithChecks(CHECKS);
-    setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }]);
+    setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }], [
+      // M1.3 (pattern A): anchor the note to a captured tool execution.
+      { tool: 'bash', callId: 'c-vitest', ok: true, command: 'vitest', output: '58/58 passed', durationMs: 1, endedAt: Date.now() },
+    ]);
     const gate = await evaluateStrictBuildGate('build', {
       env: packEnv(),
       emit: emitSeq(),
@@ -216,7 +222,10 @@ describe('evaluateStrictBuildGate × native pack (F2 lock)', () => {
 
   it('pack opt-out (ZELARI_VERIFY_PACK=0) → native null and identical legacy-only verdict', async () => {
     selectWithChecks(CHECKS);
-    setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }]);
+    setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'vitest 58/58' }], [
+      // M1.3 (pattern A): anchor the note to a captured tool execution.
+      { tool: 'bash', callId: 'c-vitest', ok: true, command: 'vitest', output: '58/58 passed', durationMs: 1, endedAt: Date.now() },
+    ]);
     const gate = await evaluateStrictBuildGate('build', { env: { ZELARI_VERIFY_PACK: '0' }, emit: emitSeq(), shell: stubShell({}) });
     expect(gate.native).toBeNull();
     expect(gate.evaluation!.verdict).toBe('PASS');
