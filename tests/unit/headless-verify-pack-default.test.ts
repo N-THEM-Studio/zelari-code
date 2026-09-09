@@ -7,7 +7,8 @@
  * Locks the DEFAULT on that exact seam (no process.env pack variable set):
  *  - the pack is ON by default (P0.2) → the strict gate evaluates it;
  *  - `ZELARI_VERIFY_PACK=0` turns it off explicitly → native null and the
- *    gate degrades to the legacy contract (strict false with no selection).
+ *    turn is UNVERIFIED under the strict overlay (M1.2): no criterion can be
+ *    produced, so the gate blocks instead of certifying an empty open.
  *
  * Deterministic: env overrides bind a fake typecheck command and the shell
  * seam is a stub — no real npm/tsc command ever runs (same pattern as
@@ -104,8 +105,14 @@ describe('headless BUILD: native pack default (HARNESS-10 §6.4)', () => {
       env: packEnv({ ZELARI_VERIFY_PACK: '0' }),
       shell: stubShell(),
     });
-    // No selection, no contract, pack off → nothing strict to evaluate.
+    // M1.2 morsa: pack explicitly off + nothing bound → NO criterion can be
+    // produced → the turn is UNVERIFIED, never "strict false / open". A
+    // success claim with zero verification is the false done this gate exists
+    // to prevent; the explicit opt-out is --allow-unverified (exit path),
+    // not the pack flag alone.
     expect(gate.native).toBeNull();
-    expect(gate.strict).toBe(false);
+    expect(gate.strict).toBe(true);
+    expect(gate.unverified).toBe(true);
+    expect(gate.blocked).toBe(true);
   });
 });

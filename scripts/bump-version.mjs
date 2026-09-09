@@ -112,6 +112,13 @@ replaceInFile(
   /^>\s*\*\*\d+\.\d+\.\d+(?:[-+][\w.]+)?\*\*\s*$/m,
   `> **${V}**`,
 );
+// Legacy inline format (pre-2.37 GUIDA layout) — kept in lockstep when the
+// line still exists, mirroring the verify-versions defensive fallback.
+replaceInFile(
+  'docs/GUIDA.md',
+  /Versione documento:\*\*\s*\d+\.\d+\.\d+(?:[-+][\w.]+)?/,
+  `Versione documento:** ${V}`,
+);
 replaceInFile(
   'packages/core/src/version.ts',
   /(CORE_VERSION\s*=\s*['"])[^'"]+(['"])/,
