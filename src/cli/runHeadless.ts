@@ -66,7 +66,7 @@ import { writeSessionTodos } from './sessionTodos.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { evaluateStrictBuildGate, strictEnvOverlay, strictGateEventPayload, strictGateExitCode } from './kraken/verificationBridge.js';
+import { evaluateStrictBuildGate, missionClaimExitCode, strictEnvOverlay, strictGateEventPayload, strictGateExitCode, STRICT_DONE_EXIT_CODE } from './kraken/verificationBridge.js';
 
 import { writeCompletionProofDetailed } from './kraken/completionProof.js';
 import {
@@ -1545,6 +1545,23 @@ async function runHeadlessZelariBody(
       if (missionGate.blocked) {
         exitCode = strictGateExitCode(missionGate);
         spine.missionPhase('verification', 'mission-strict-blocked');
+      } else if (
+        // M2.1/R4b: an open strict gate is not enough — the success claim must
+        // be event-backed: zero `verification.evidence` events in the spine
+        // means narration-only done → strict exit code. Same overlay seam as
+        // the gate above (H10-fix1) so --allow-unverified /
+        // ZELARI_ALLOW_UNVERIFIED=1 waives mission-side too. `opts.phase` is
+        // the only phase/mode discriminant on this site: `--phase plan`
+        // missions are design-only (no verification expected), so the gate
+        // applies unconditionally to build-phase claims.
+        opts.phase !== 'plan' &&
+        missionClaimExitCode(await spine.countVerificationEvidence(), strictEnvOverlay(opts)) !== 0
+      ) {
+        exitCode = STRICT_DONE_EXIT_CODE;
+        spine.missionPhase('verification', 'mission-event-back-missing');
+        process.stderr.write(
+          '[zelari-code --headless] mission success claim has zero verification.evidence events (narration-only done) — exit 4 (waive with --allow-unverified / ZELARI_ALLOW_UNVERIFIED=1)\n',
+        );
       } else {
         exitCode = 0;
         spine.missionPhase('done', 'mission-success');

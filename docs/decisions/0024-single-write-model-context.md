@@ -1,6 +1,6 @@
 # ADR-0024 - Closing the dual-write: the spine as the only source of model context
 
-**Status:** Accepted (amended 2026-08-30; v1.1 2026-08-30)
+**Status:** Accepted (amended 2026-08-30; v1.1 2026-08-30; v1.2 2026-09-09)
 **Date:** 2026-08-19
 
 ## Context
@@ -61,3 +61,9 @@ With 2.17 the list of **hot paths** in Decision point 1 extends to the **graph h
 **What goes on the spine - envelope/metadata only.** Declared payload: `nodeId`, `agent`, `graphId?` on started; `nodeId`, `agent`, `graphId?`, `ok`, `cancelled?` (only on a cancelled run) and host-measured `durationMs` on ended. One pair per **attempt** (retry/rework = a new pair); `merge` nodes do not drive a tentacle and stay radio-only. No model content: node label, prompt, assistant text, tool output do NOT land on the spine - they stay on the kraken radio JSONL channel (`node_start`/`node_end` with `detail`), correlated by the same `sessionId`.
 
 **Contract pinned** by the updated differential test in `src/cli/krakenGraphSpine.test.ts` (empty-graph run vs 1-node graph with a real turn: the 1-node run adds EXACTLY the `graph.node_started`/`graph.node_ended` pair to the empty-graph sequence - remove the pair and the sequences coincide kind-for-kind; absent `tool.call`/`tool.result`/`assistant.message`/`verification.*`; no spine payload contains turn content).
+
+## Amendment v1.2 (2026-09-09) — two channels confirmed until a future ADR
+
+Option **A** — the two-channel model, host envelope on the spine + per-node detail on the kraken radio — is **confirmed** as the stable contract for graph runs, until a future ADR declares otherwise. Replaying a graph run means: the Session (spine) for the host envelope and phases, plus the radio file (`.zelari/radio/<session>.jsonl`, correlated by the same `sessionId`) for the nodes' content.
+
+Explicitly out of horizon: `radioRef` on the spine (option B) and the tentacles' inner turn on the spine (option C, forbidden — the single-writer rule of ADR-0024 is unchanged).

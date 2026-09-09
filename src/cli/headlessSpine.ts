@@ -57,6 +57,12 @@ export interface HeadlessSpineHandle {
   appendEvent(input: SessionEventInput): Promise<number | null>;
   /** E2.1: last strict verification record from the spine log (null when none/degraded). */
   lastVerificationRun(): Promise<SessionVerificationRunSnapshot | null>;
+  /**
+   * M2.1/R4b: number of `verification.evidence` events in THIS session's
+   * log. -1 = UNKNOWN (spine disabled/locked/degraded or I/O failure) —
+   * callers must skip the event-back gate, never block on infrastructure.
+   */
+  countVerificationEvidence(): Promise<number>;
   missionPhase(phase: string, note?: string): void;
   /** F4: advisory continuation record (state-only spine event). */
   missionProgress(advice: {
@@ -102,6 +108,31 @@ export function resolveHeadlessProfileId(
 ): string {
   if (explicit) return resolveProfile(explicit).id;
   return defaultProfileForMode(mode ?? 'kraken');
+}
+
+/**
+ * M2.1/R4b — count `verification.evidence` events in the session log, read
+ * the SAME way `SessionSpineMirror.lastVerificationRun()` reads it (flush
+ * first: the NDJSON writer buffers, and the count must never lie about
+ * events this run already appended). -1 = UNKNOWN: a non-readable spine
+ * (disabled/locked/degraded) or a real I/O error must read as "skip the
+ * event-back gate", never as a fake zero — and never block the run.
+ */
+async function countVerificationEvidenceInLog(
+  mirror: SessionSpineMirror,
+  sessionId: string,
+): Promise<number> {
+  if (mirror.status !== 'active' && mirror.status !== 'closed') return -1;
+  try {
+    await mirror.flush().catch(() => undefined);
+    const report = await readSessionLog(path.join(mirror.sessionsDir, sessionId, 'events.jsonl'));
+    return report.events.filter((e) => e.kind === 'verification.evidence').length;
+  } catch (err) {
+    process.stderr.write(
+      `[zelari-code] verification-evidence count unavailable (${err instanceof Error ? err.message : String(err)}) — event-back gate skipped\n`,
+    );
+    return -1;
+  }
 }
 
 export async function openHeadlessSpine(opts: {
@@ -189,6 +220,9 @@ export async function openHeadlessSpine(opts: {
     },
     lastVerificationRun(): Promise<SessionVerificationRunSnapshot | null> {
       return spine.lastVerificationRun();
+    },
+    countVerificationEvidence(): Promise<number> {
+      return countVerificationEvidenceInLog(spine, opts.sessionId);
     },
     missionPhase(phase: string, note?: string): void {
       spine.missionPhase(phase, note);

@@ -1,6 +1,6 @@
 # Zelari Code — User Guide
 
-> **2.33.0**
+> **2.37.1**
 > Multi-agent coding CLI with TUI (Ink + React), **Zelari Desktop** (Tauri 2), 6-role council, **kraken** super-agent, **zelari** missions, slash commands, MCP, SSH and provider-agnostic LLMs (Grok / ChatGPT / Anthropic OAuth).
 > Product: **[Anathema Studio](https://anathema-studio.com/)** · license **Apache-2.0**.
 
@@ -354,6 +354,7 @@ zelari-code --headless --task "Explain what src/cli/main.ts does" --output json
 | `--export-session <path>` | — | Write a `zelari-session-export/1` JSON export at the end (`-` = stdout) |
 | `--strict-done` | off (kraken) | Enables the ADR-0023 evidence gate. Missions have it **by default** (ADR-0025) |
 | `--no-strict-done` | — | Opt out of the strict gate for missions (`ZELARI_MISSION_STRICT=0`) |
+| `--allow-unverified` | — | M1.2 hatch: exit 0 when the strict gate reports UNVERIFIED (no criteria bound, pack off). Never waives a real BLOCKED verdict. Env: `ZELARI_ALLOW_UNVERIFIED=1`. Applies to kraken turns and mission success claims |
 
 ### Examples
 
@@ -388,7 +389,7 @@ zelari-code --headless --task "..." --export-session session.json
 | `1` | User error (missing flags, missing API key) |
 | `2` | Runtime error (provider, council exception) |
 | `3` | Agent run ended with an error |
-| `4` | Strict evidence gate blocked (ADR-0023/0025): details in the `verification.run` event of the session spine |
+| `4` | Strict evidence gate blocked (ADR-0023/0025): details in the `verification.run` event of the session spine. A mission claim without any `verification.evidence` event also exits 4 (`mission-event-back-missing`, M2.1) |
 
 ---
 
@@ -1146,6 +1147,15 @@ When strict is active, a `pass` counts only if the evidence is **event-backed** 
 
 Blocked gate ⇒ exit code **`4`** and stopped session state, with the `verification.run` event carrying criteria, status and blocker.
 
+### When Zelari says done
+
+Done is a **mechanical verdict**, not narration: the runtime executes the native verify pack commands (test/build scripts detected from `package.json` / `pyproject.toml` / `go.mod` / `Cargo.toml`), appends `verification.evidence` + `verification.run` on the spine, and only an event-backed PASS exits 0 (see [Deterministic verification, Strict Done and Verifier LLM](#deterministic-verification-strict-done-and-verifier-llm-20)).
+
+- Exit **4** means BLOCKED (criteria failed) or UNVERIFIED (no criteria bound, pack off); UNVERIFIED can be waived with `--allow-unverified` / `ZELARI_ALLOW_UNVERIFIED=1`, BLOCKED never.
+- Missions: a `mission-success` claim requires at least one `verification.evidence` event on the spine; otherwise exit 4 with `mission-event-back-missing`.
+- Repair: at most one automatic attempt, and the repair prompt carries only the tail of the failure (capped at 2000 chars, max 5 excerpts) — never full logs.
+- Budget: when the session $/token ceiling is exhausted the run goes into **HOLD**/stop (see [Session budget with HOLD](#session-budget-with-hold)) — it does not launch more work.
+
 ### Verifier LLM (advisory)
 
 The LLM verifier is **opt-in and advisory**: it adds information, never authority.
@@ -1545,6 +1555,13 @@ answer: repeating would only double the wait). Raise `ZELARI_KRAKEN_PLANNER_TIME
 a summary of what's done, what failed and what never started — so a "continue" plans the
 **remaining** work instead of restarting from scratch. A plan that contains no `general` node
 is rejected: it would be read-only and would converge without having changed anything.
+
+### Kraken Graph: two channels (spine + radio)
+
+- **Spine = envelope, written by the HOST only.** `graph.node_started` / `graph.node_ended` carry metadata (`nodeId`, `agent`, host-measured `durationMs`) — no turn content ever lands on the spine.
+- **Radio = per-node detail.** Each node writes `node_start` / `node_end` (with `detail`) to `.zelari/radio/<session>.jsonl`, correlated by the same `sessionId`.
+- **Replaying a run:** replay the Session (spine) for envelopes/phases + the radio file for the nodes' content.
+- Tentacles **never** write to the spine (ADR-0024). No `radioRef` and no inner turn on the spine in this horizon (ADR-0024 amendment v1.2).
 
 
 ## Useful links
