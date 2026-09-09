@@ -2,6 +2,7 @@ import { describe, expect, it, afterEach } from 'vitest';
 import {
   modelSupportsVision,
   dataUriFromImage,
+  resetTextOnlyVisionMemory,
 } from '../../src/cli/provider/openai-compatible.js';
 
 describe('vision provider support (no third-party API)', () => {
@@ -10,6 +11,7 @@ describe('vision provider support (no third-party API)', () => {
   afterEach(() => {
     if (prev === undefined) delete process.env.ZELARI_VISION;
     else process.env.ZELARI_VISION = prev;
+    resetTextOnlyVisionMemory();
   });
 
   it('detects known vision models', () => {
@@ -22,14 +24,17 @@ describe('vision provider support (no third-party API)', () => {
     expect(modelSupportsVision('deepseek-vl')).toBe(true);
   });
 
-  it('vision is ON for every model by default (2.35) — unknown names included', () => {
+  it('vision is ON by default for unknown names and Grok; GLM chat is text-only', () => {
     // Name-hint allowlists kept missing new vision models (gpt-6-astra,
-    // glm-5.x, deepseek v4): pixels are now always sent and the provider
-    // decides. ZELARI_VISION=0 is the explicit opt-out.
+    // deepseek v4): pixels stay on unless the wire is a known text-only
+    // GLM chat/coding SKU (glm-5.3 → HTTP 400 code 1210 on image_url).
     expect(modelSupportsVision('deepseek-chat')).toBe(true);
     expect(modelSupportsVision('deepseek-reasoner')).toBe(true);
     expect(modelSupportsVision('openai/gpt-6-astra')).toBe(true);
     expect(modelSupportsVision('totally-unknown-model')).toBe(true);
+    expect(modelSupportsVision('grok-4.6')).toBe(true);
+    expect(modelSupportsVision('glm-5.3')).toBe(false);
+    expect(modelSupportsVision('glm-4.5v')).toBe(true);
   });
 
   it('honors ZELARI_VISION override', () => {

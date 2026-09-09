@@ -18,7 +18,7 @@ import type { ProviderName } from '../keyStore.js';
 import { getOAuthToken, resolveApiKeyWithMeta } from '../keyStore.js';
 import { getProviderConfig, getModelForProvider, getCustomEndpoint, getThinkingForProvider } from '../providerConfig.js';
 import { translateOpenAiCompatibleThinking, type ThinkingSpec } from '../thinking.js';
-import { capabilitiesFor } from './capabilities.js';
+import { capabilitiesFor, type ProviderCapabilities } from './capabilities.js';
 
 /**
  * v1.5.2: transient-HTTP retry. A single 429/5xx/network failure used to flip
@@ -54,11 +54,16 @@ const BACKOFF_CAP_MS = 8000;
  *
  * Now:
  *   - CONNECT: wall clock until response headers (default 90s)
- *   - STREAM_IDLE: max silence between body chunks (default 5 min)
+ *   - FIRST_TOKEN_IDLE: silence allowed before the first useful delta
+ *     (default 10 min — GLM-5.3/Grok thinking can sit quiet or only send
+ *     keep-alives before reasoning_content)
+ *   - STREAM_IDLE: max silence between useful deltas after the first
+ *     (default 5 min)
  *   - STREAM_MAX: hard cap on one stream lifetime (default 30 min)
  *
  * Env overrides:
  *   ZELARI_PROVIDER_CONNECT_TIMEOUT_MS
+ *   ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS
  *   ZELARI_PROVIDER_STREAM_IDLE_MS
  *   ZELARI_PROVIDER_STREAM_MAX_MS
  *   ZELARI_PROVIDER_TIMEOUT_MS — legacy alias for STREAM_IDLE
@@ -78,6 +83,12 @@ export const PROVIDER_STREAM_IDLE_MS: number = (() => {
   return Number.isFinite(n) && n >= 15_000 ? n : 300_000;
 })();
 
+export const PROVIDER_FIRST_TOKEN_IDLE_MS: number = (() => {
+  const raw = process.env.ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS;
+  const n = raw ? Number.parseInt(raw, 10) : 600_000;
+  return Number.isFinite(n) && n >= 15_000 ? n : 600_000;
+})();
+
 export const PROVIDER_STREAM_MAX_MS: number = (() => {
   const raw = process.env.ZELARI_PROVIDER_STREAM_MAX_MS;
   const n = raw ? Number.parseInt(raw, 10) : 1_800_000; // 30 min
@@ -86,6 +97,40 @@ export const PROVIDER_STREAM_MAX_MS: number = (() => {
 
 /** @deprecated use PROVIDER_STREAM_IDLE_MS — kept for tests that import the name. */
 const PROVIDER_TIMEOUT_MS = PROVIDER_STREAM_IDLE_MS;
+
+/**
+ * Per-call stream watchdogs. Env wins when set; otherwise the harness
+ * profile (Grok Build-aligned 600s idle / 3600s max on grok-*).
+ */
+export function resolveStreamTimeouts(capabilities: ProviderCapabilities): {
+  idleMs: number;
+  firstTokenIdleMs: number;
+  maxMs: number;
+  maxRetries: number;
+} {
+  const envIdle = process.env.ZELARI_PROVIDER_STREAM_IDLE_MS ?? process.env.ZELARI_PROVIDER_TIMEOUT_MS;
+  const envFirst = process.env.ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS;
+  const envMax = process.env.ZELARI_PROVIDER_STREAM_MAX_MS;
+  const envRetries = process.env.ZELARI_PROVIDER_MAX_RETRIES;
+  const idleMs = envIdle
+    ? PROVIDER_STREAM_IDLE_MS
+    : (capabilities.stream?.idleMs ?? PROVIDER_STREAM_IDLE_MS);
+  const firstRaw = envFirst
+    ? PROVIDER_FIRST_TOKEN_IDLE_MS
+    : (capabilities.stream?.firstTokenIdleMs ?? PROVIDER_FIRST_TOKEN_IDLE_MS);
+  const maxMs = envMax
+    ? PROVIDER_STREAM_MAX_MS
+    : (capabilities.stream?.maxMs ?? PROVIDER_STREAM_MAX_MS);
+  const maxRetries = envRetries
+    ? MAX_RETRIES
+    : (capabilities.stream?.maxRetries ?? MAX_RETRIES);
+  return {
+    idleMs,
+    firstTokenIdleMs: Math.max(firstRaw, idleMs),
+    maxMs,
+    maxRetries,
+  };
+}
 
 /**
  * Sleep that aborts early if the caller's signal fires (so `.cancel()` during
@@ -113,6 +158,24 @@ function isTimeoutAbortMessage(msg: string): boolean {
     m.includes('aborted due to timeout') ||
     m.includes('timeout') ||
     m.includes('the operation was aborted')
+  );
+}
+
+function formatStreamIdleError(
+  elapsedMs: number,
+  budgetMs: number,
+  kind: 'keep-alive' | 'silence',
+): string {
+  const elapsedS = Math.max(1, Math.round(elapsedMs / 1000));
+  const budgetS = Math.max(1, Math.round(budgetMs / 1000));
+  const why =
+    kind === 'keep-alive'
+      ? 'no content tokens — keep-alive frames don\'t count'
+      : 'no tokens';
+  return (
+    `Provider stream idle for ${elapsedS}s of ${budgetS}s (${why}). ` +
+    `The model/gateway stalled — try again or switch model. ` +
+    `Override with ZELARI_PROVIDER_STREAM_IDLE_MS or ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS.`
   );
 }
 
@@ -155,11 +218,7 @@ export async function readChunkWithTimeout(
     // Even if keep-alive frames keep arriving, no CONTENT has been produced
     // for idleMs — the model/gateway is stalled. Fail fast instead of
     // letting the socket keep the process alive forever.
-    throw new Error(
-      `Provider stream idle for ${Math.round(idleElapsed / 1000)}s ` +
-        `(no content tokens — keep-alive frames don't count). The model/gateway stalled — ` +
-        `try again or switch model. Override with ZELARI_PROVIDER_STREAM_IDLE_MS.`,
-    );
+    throw new Error(formatStreamIdleError(idleElapsed, opts.idleMs, 'keep-alive'));
   }
   const waitMs = Math.min(opts.idleMs - idleElapsed, remaining);
   let idleTimer: ReturnType<typeof setTimeout> | undefined;
@@ -169,13 +228,8 @@ export async function readChunkWithTimeout(
       reader.read(),
       new Promise<never>((_, reject) => {
         idleTimer = setTimeout(() => {
-          reject(
-            new Error(
-              `Provider stream idle for ${Math.round(waitMs / 1000)}s ` +
-                `(no tokens). The model/gateway stalled — try again or switch model. ` +
-                `Override with ZELARI_PROVIDER_STREAM_IDLE_MS.`,
-            ),
-          );
+          const elapsed = Date.now() - opts.lastUsefulAt();
+          reject(new Error(formatStreamIdleError(elapsed, opts.idleMs, 'silence')));
         }, waitMs);
         if (opts.signal) {
           onAbort = () => reject(new Error('aborted'));
@@ -215,21 +269,106 @@ export interface OpenAICompatibleConfig {
 
 
 /**
- * Does this model accept image inputs natively? No third-party vision API is
- * involved: the pixels go straight to the model provider as OpenAI
- * `image_url` content blocks, using the same API key as the text turn.
- *
- * Vision is ON by default for EVERY model (2.35): name-hint allowlists kept
- * missing new vision models (gpt-6-astra, glm-5.x, deepseek v4 …), so the
- * pixels are always sent and the provider decides — a non-vision endpoint
- * either ignores the blocks or errors, and the user explicitly prefers that
- * over silently degrading to "pixels were not sent".
- *
- * Opt-out: ZELARI_VISION=0 (or false/off) keeps the text-only payload.
+ * Optional probe so vision can follow the *wire* (provider + base URL), not
+ * just the model id. Kraken tentacles keep their own model; the lead may be
+ * a text-only GLM coding endpoint on the same machine.
  */
-export function modelSupportsVision(_model: string): boolean {
-  const force = process.env.ZELARI_VISION;
-  return !(force === '0' || force === 'false' || force === 'off');
+export interface VisionProbe {
+  providerId?: string;
+  baseUrl?: string;
+}
+
+/**
+ * Endpoints that rejected `image_url` this process (HTTP 400 code 1210 /
+ * `messages.content.type` only allows `text`). Next turns skip pixels
+ * instead of failing BUILD over and over.
+ */
+const textOnlyVisionMemory = new Set<string>();
+
+function visionMemoryKey(model: string, probe?: VisionProbe): string {
+  return `${probe?.providerId ?? ''}::${model}::${probe?.baseUrl ?? ''}`;
+}
+
+/** @internal test seam */
+export function resetTextOnlyVisionMemory(): void {
+  textOnlyVisionMemory.clear();
+}
+
+/** GLM coding-plan hosts (`/api/coding/`) are text-only on the OpenAI wire. */
+export function isGlmCodingEndpoint(baseUrl?: string): boolean {
+  if (!baseUrl) return false;
+  return /\/coding(\/|$)/i.test(baseUrl);
+}
+
+/**
+ * GLM vision SKUs use a trailing `v` (glm-4.5v, glm-4v-flash) or vl/vision.
+ * Plain glm-5.3 / glm-5.3-flash / glm-4.5 are text-only on chat/completions.
+ */
+export function glmModelLooksVision(model: string): boolean {
+  const n = model.trim().toLowerCase();
+  if (!n) return false;
+  if (/(?:^|[-_/.])(?:vl|vision)(?:[-_/.]|$)/.test(n)) return true;
+  return /^glm[-_.]?[\w.]*v(?:-|$)/.test(n);
+}
+
+function glmModelIsTextOnly(model: string): boolean {
+  const n = model.trim().toLowerCase();
+  if (!n.startsWith('glm')) return false;
+  return !glmModelLooksVision(n);
+}
+
+/**
+ * Z.AI / GLM coding chat: `{"error":{"code":"1210","message":"messages.content.type is invalid, allowed values: ['text']"}}`.
+ * Other 1210s (thinking-off, unknown model) must not strip vision.
+ */
+export function isTextOnlyContentRejection(status: number, body: string): boolean {
+  if (status !== 400) return false;
+  if (!/messages\.content\.type/i.test(body)) return false;
+  return (
+    /allowed values/i.test(body) ||
+    /\[\s*['"]text['"]\s*\]/.test(body) ||
+    /取值范围/.test(body) ||
+    /is invalid/i.test(body)
+  );
+}
+
+function messagesHaveImageUrl(messages: Record<string, unknown>[]): boolean {
+  for (const m of messages) {
+    const content = m.content;
+    if (!Array.isArray(content)) continue;
+    for (const part of content) {
+      if (
+        part &&
+        typeof part === 'object' &&
+        (part as { type?: unknown }).type === 'image_url'
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
+ * Does this model accept image inputs natively? Pixels go to the same
+ * provider as the text turn (`image_url` data URIs). No third-party vision API.
+ *
+ * Default is ON so a Grok (or other vision) lead still receives screenshots.
+ * Known text-only wires are excluded *without* a global opt-out:
+ *   - GLM chat models that are not vision SKUs (glm-5.3, glm-4.5, …)
+ *   - GLM coding-plan base URLs (`/api/coding/`) even for `v` SKUs
+ *   - endpoints that already returned HTTP 400 / 1210 this process
+ *
+ * Overrides: `ZELARI_VISION=0` forces text-only; `ZELARI_VISION=1` forces pixels.
+ */
+export function modelSupportsVision(model: string, probe?: VisionProbe): boolean {
+  const force = (process.env.ZELARI_VISION ?? '').trim().toLowerCase();
+  if (force === '0' || force === 'false' || force === 'off') return false;
+  if (force === '1' || force === 'true' || force === 'on') return true;
+  if (textOnlyVisionMemory.has(visionMemoryKey(model, probe))) return false;
+  if (isGlmCodingEndpoint(probe?.baseUrl)) return false;
+  if (glmModelIsTextOnly(model)) return false;
+  return true;
 }
 
 /** Build a data: URI from an inline image block. */
@@ -452,6 +591,7 @@ function positiveEnvInt(name: string): number | undefined {
 export function openaiCompatibleProvider(config: OpenAICompatibleConfig): ProviderStreamFn {
   return async function* (params): AsyncIterable<ProviderDelta> {
     const capabilities = capabilitiesFor(params.model, config.providerId);
+    const streamTimeouts = resolveStreamTimeouts(capabilities);
     // Map the provider-neutral AgentMessage[] into the OpenAI chat format.
     // The harness keeps tool results as { role: 'tool', toolCallId, content }
     // and assistant tool-call turns as { role: 'assistant', content,
@@ -459,32 +599,42 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     // translate both into the shape OpenAI expects:
     //   - assistant with tool_calls: { role:'assistant', content, tool_calls:[{id,type:'function',function:{name,arguments}}] }
     //   - tool result: { role: 'tool', tool_call_id, content }
-    // Resolve vision capability once per call (model may vary per call).
-    const vision = modelSupportsVision(params.model);
+    // Resolve vision once per call (model may vary). GLM coding / glm-5.3
+    // stay text-only so a Grok tentacle can still receive pixels.
+    const visionProbe: VisionProbe = {
+      providerId: config.providerId,
+      baseUrl: config.baseUrl,
+    };
+    let vision = modelSupportsVision(params.model, visionProbe);
     const msgsIn = params.messages;
-    // Tool-result pixels accumulated across the current consecutive tool
-    // run, flushed as one follow-up user message after its last tool message.
-    let toolRunImages: AgentImage[] = [];
-    const messages = msgsIn.flatMap((m, i) => {
-      const cacheable = !(m.role === 'user' && m.images && m.images.length > 0);
-      if (cacheable) {
-        const cached = messageMappingCache.get(m);
-        if (cached) return [cached];
-      }
-      const mapped = mapAgentMessage(m, vision);
-      if (cacheable) messageMappingCache.set(m, mapped);
-      if (m.role === 'tool') {
-        if (m.images && m.images.length > 0) toolRunImages.push(...m.images);
-        const next = msgsIn[i + 1];
-        const runEnds = !next || next.role !== 'tool';
-        if (runEnds && vision && toolRunImages.length > 0) {
-          const followUp = imagesFollowUpMessage(toolRunImages);
-          toolRunImages = [];
-          return [mapped, followUp];
+    const wireMessages = (visionFlag: boolean): Record<string, unknown>[] => {
+      // Tool-result pixels accumulated across the current consecutive tool
+      // run, flushed as one follow-up user message after its last tool message.
+      let toolRunImages: AgentImage[] = [];
+      return msgsIn.flatMap((m, i) => {
+        const cacheable =
+          visionFlag && !(m.role === 'user' && m.images && m.images.length > 0);
+        if (cacheable) {
+          const cached = messageMappingCache.get(m);
+          if (cached) return [cached];
         }
-      }
-      return [mapped];
-    });
+        const mapped = mapAgentMessage(m, visionFlag);
+        if (cacheable) messageMappingCache.set(m, mapped);
+        if (m.role === 'tool') {
+          if (m.images && m.images.length > 0) toolRunImages.push(...m.images);
+          const next = msgsIn[i + 1];
+          const runEnds = !next || next.role !== 'tool';
+          if (runEnds && visionFlag && toolRunImages.length > 0) {
+            const followUp = imagesFollowUpMessage(toolRunImages);
+            toolRunImages = [];
+            return [mapped, followUp];
+          }
+          if (runEnds) toolRunImages = [];
+        }
+        return [mapped];
+      });
+    };
+    let messages = wireMessages(vision);
 
     // v1.36.0 (P3): per-request generation knobs. The compaction replay
     // passes purpose:'compaction' + temperature 0.1 + maxTokens so the
@@ -568,6 +718,9 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
         capabilities.buildRecovery.forceToolChoice &&
         recoveryAttempt <= capabilities.buildRecovery.maxForcedTurns;
       body.tool_choice = forceRecoveryTool ? 'required' : 'auto';
+      // GLM-5.x buffers tool-call args unless tool_stream=true; without it
+      // the socket sits silent through thinking+tools and trips stream idle.
+      if (config.providerId === 'glm') body.tool_stream = true;
     }
 
     const headers: Record<string, string> = {
@@ -593,7 +746,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     let response: Response | undefined;
     let lastErrText = '';
     let lastStatus = 0;
-    for (let attempt = 0; attempt <= MAX_RETRIES; attempt += 1) {
+    for (let attempt = 0; attempt <= streamTimeouts.maxRetries; attempt += 1) {
       if (params.signal?.aborted) {
         yield { kind: 'error', message: 'aborted' };
         return;
@@ -662,8 +815,8 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
         }
         // Timeouts: at most 1 retry (was up to 3×5min = 20min of freeze).
         const maxAttempts = isTimeoutAbortMessage(lastErrText)
-          ? Math.min(1, MAX_RETRIES)
-          : MAX_RETRIES;
+          ? Math.min(1, streamTimeouts.maxRetries)
+          : streamTimeouts.maxRetries;
         if (attempt < maxAttempts) {
           await abortableSleep(backoffDelay(attempt, null), params.signal);
           continue;
@@ -675,7 +828,20 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       if (response.ok && response.body) break;
       lastStatus = response.status;
       lastErrText = await response.text().catch(() => '');
-      if (!RETRYABLE_STATUSES.has(response.status) || attempt >= MAX_RETRIES) break;
+      // GLM coding / text-only chat: image_url → HTTP 400 code 1210. Strip
+      // pixels once and resend so BUILD does not die; remember the wire.
+      if (
+        vision &&
+        isTextOnlyContentRejection(lastStatus, lastErrText) &&
+        messagesHaveImageUrl(messages)
+      ) {
+        textOnlyVisionMemory.add(visionMemoryKey(params.model, visionProbe));
+        vision = false;
+        messages = wireMessages(false);
+        body.messages = messages;
+        continue;
+      }
+      if (!RETRYABLE_STATUSES.has(response.status) || attempt >= streamTimeouts.maxRetries) break;
       // Retryable: back off honoring Retry-After if the provider set it.
       const retryAfter = response.headers.get('retry-after');
       await abortableSleep(backoffDelay(attempt, retryAfter), params.signal);
@@ -739,20 +905,22 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
       toolCallAccumulator.clear();
     };
 
-    const streamDeadline = Date.now() + PROVIDER_STREAM_MAX_MS;
+    const streamDeadline = Date.now() + streamTimeouts.maxMs;
     // Timestamp of the last delta that actually produced harness-visible
     // content (text/thinking/tool_call/usage). Updated on every useful
     // emission so SSE keep-alive frames cannot reset the idle budget.
     let lastUsefulAt = Date.now();
+    let emittedUseful = false;
     const markUseful = (): void => {
       lastUsefulAt = Date.now();
+      emittedUseful = true;
     };
     try {
       while (true) {
         let chunk: ReadableStreamReadResult<Uint8Array>;
         try {
           chunk = await readChunkWithTimeout(reader, {
-            idleMs: PROVIDER_STREAM_IDLE_MS,
+            idleMs: emittedUseful ? streamTimeouts.idleMs : streamTimeouts.firstTokenIdleMs,
             deadlineMs: streamDeadline,
             signal: params.signal,
             lastUsefulAt: () => lastUsefulAt,
@@ -854,9 +1022,26 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
                 },
               };
             }
-            if (typeof delta?.content === 'string' && delta.content.length > 0) {
+            const content = delta?.content as unknown;
+            if (typeof content === 'string' && content.length > 0) {
               markUseful();
-              yield { kind: 'text', delta: delta.content };
+              yield { kind: 'text', delta: content };
+            } else if (Array.isArray(content)) {
+              for (const part of content) {
+                if (!part || typeof part !== 'object') continue;
+                const p = part as { type?: unknown; text?: unknown };
+                const text = typeof p.text === 'string' ? p.text : '';
+                if (!text) continue;
+                markUseful();
+                const partType = typeof p.type === 'string' ? p.type : 'text';
+                yield {
+                  kind:
+                    partType === 'reasoning' || partType === 'thinking'
+                      ? 'thinking'
+                      : 'text',
+                  delta: text,
+                };
+              }
             }
             // Chain-of-thought / reasoning channel. GLM, DeepSeek, Qwen and
             // MiniMax expose this separately from `content` so it never needs
@@ -864,17 +1049,33 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
             // the harness never emits a `thinking_delta` BrainEvent, the
             // desktop's thinking-render path stays dead, and reasoning either
             // leaks inline as <think> tags or is silently dropped.
-            const reasoning =
+            const reasoningRaw =
               (delta as { reasoning_content?: unknown })?.reasoning_content ??
-              (delta as { reasoning?: unknown })?.reasoning;
-            if (typeof reasoning === 'string' && reasoning.length > 0) {
+              (delta as { reasoning?: unknown })?.reasoning ??
+              (delta as { thinking?: unknown })?.thinking;
+            const reasoning =
+              typeof reasoningRaw === 'string'
+                ? reasoningRaw
+                : reasoningRaw &&
+                    typeof reasoningRaw === 'object' &&
+                    typeof (reasoningRaw as { text?: unknown }).text === 'string'
+                  ? (reasoningRaw as { text: string }).text
+                  : reasoningRaw &&
+                      typeof reasoningRaw === 'object' &&
+                      typeof (reasoningRaw as { content?: unknown }).content === 'string'
+                    ? (reasoningRaw as { content: string }).content
+                    : '';
+            if (reasoning.length > 0) {
               markUseful();
               yield { kind: 'thinking', delta: reasoning };
             }
             // MiniMax-M3 reasoning_split format: reasoning_details[{text}]
             // may be cumulative across chunks (same pattern as content buffer).
             const details = (delta as { reasoning_details?: unknown })?.reasoning_details;
-            if (Array.isArray(details)) {
+            if (Array.isArray(details) && details.length > 0) {
+              // grok-4.6 may stream encrypted/opaque reasoning_details with
+              // no `text` while hidden reasoning is still running.
+              markUseful();
               for (const d of details) {
                 if (!d || typeof d !== 'object') continue;
                 const t = (d as { text?: unknown }).text;
@@ -904,6 +1105,10 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
               // args (e.g. write_file content containing JSON). The
               // harness executes tools only on finish, so deferring the
               // parse has no behavioral effect.
+              // Fragments ARE useful progress — GLM can stream args for
+              // minutes; not marking them left lastUsefulAt at request
+              // start and tripped FIRST_TOKEN / STREAM idle.
+              markUseful();
               for (const tc of delta.tool_calls) {
                 const idx = tc.index ?? 0;
                 const existing = toolCallAccumulator.get(idx) ?? {

@@ -47,6 +47,16 @@ describe('provider capabilities / harness profiles', () => {
     expect(cap.promptCache.conversationAffinityHeader).toBe('x-grok-conv-id');
     expect(cap.buildRecovery).toEqual({ forceToolChoice: true, maxForcedTurns: 1 });
     expect(cap.reasoning.levels).toEqual(['low', 'medium', 'high', 'xhigh']);
+    // Grok Build: inference_idle_timeout_secs=600, max_retries=8, SDK 3600s
+    expect(cap.stream).toEqual({
+      idleMs: 600_000,
+      firstTokenIdleMs: 600_000,
+      maxMs: 3_600_000,
+      maxRetries: 8,
+    });
+    expect(capabilitiesFor('grok-4')).toMatchObject({ profile: 'grok', stream: cap.stream });
+    expect(capabilitiesFor('grok-4.5')).toMatchObject({ profile: 'grok' });
+    expect(capabilitiesFor('grok-4-fast', 'grok')).toMatchObject({ profile: 'grok' });
   });
 
   it('MiniMax and GLM keep their own context/replay profiles', () => {

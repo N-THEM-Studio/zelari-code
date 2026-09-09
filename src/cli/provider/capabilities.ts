@@ -43,6 +43,20 @@ export interface ProviderCapabilities {
   };
   sampling: { temperature: number };
   compaction: { warnAt: number; compactAt: number; hardAt: number };
+  /**
+   * Stream watchdog (Grok Build: `inference_idle_timeout_secs` / xAI SDK
+   * 3600s reasoning timeout). Absent = provider-adapter defaults.
+   */
+  stream?: {
+    /** Silence between useful deltas (ms). */
+    idleMs: number;
+    /** Silence allowed before the first useful delta (ms). */
+    firstTokenIdleMs: number;
+    /** Hard cap on one stream lifetime (ms). */
+    maxMs: number;
+    /** Extra 429/5xx retries on the initial fetch. */
+    maxRetries?: number;
+  };
   profile: HarnessProfileId;
 }
 
@@ -54,6 +68,7 @@ function frozenProfile(input: ProviderCapabilities): Readonly<ProviderCapabiliti
   Object.freeze(input.buildRecovery);
   Object.freeze(input.sampling);
   Object.freeze(input.compaction);
+  if (input.stream) Object.freeze(input.stream);
   return Object.freeze(input);
 }
 
@@ -100,6 +115,18 @@ const GROK_CAPS = frozenProfile({
   buildRecovery: { forceToolChoice: true, maxForcedTurns: 1 },
   sampling: { temperature: 0.7 },
   compaction: { ...SHARED_COMPACTION },
+  // Copied from Grok Build (`~/.grok/config.toml` + user-guide):
+  //   inference_idle_timeout_secs = 600
+  //   max_retries = 8
+  //   xAI SDK timeout = 3600s on reasoning models
+  // grok-4.6 xhigh reasons with hidden tokens + SSE keep-alives and no
+  // content for minutes; a 5-min useful-token idle kills BUILD.
+  stream: {
+    idleMs: 600_000,
+    firstTokenIdleMs: 600_000,
+    maxMs: 3_600_000,
+    maxRetries: 8,
+  },
   profile: 'grok',
 });
 

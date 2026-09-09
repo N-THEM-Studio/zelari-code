@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
-import { readChunkWithTimeout } from './openai-compatible.js';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { readChunkWithTimeout, resolveStreamTimeouts } from './openai-compatible.js';
+import { capabilitiesFor } from './capabilities.js';
 
 /**
  * Regression: the stream idle timeout used to reset on EVERY network chunk,
@@ -49,7 +50,7 @@ describe('readChunkWithTimeout idle budget', () => {
         deadlineMs: deadline,
         lastUsefulAt: () => lastUsefulAt,
       }),
-    ).rejects.toThrow(/idle/);
+    ).rejects.toThrow(/idle for \d+s of 2s/);
 
     // The timeout must fire promptly (not wait for the absolute deadline),
     // because the idle budget is already exhausted.
@@ -77,5 +78,51 @@ describe('readChunkWithTimeout idle budget', () => {
     }
     await reader.cancel('test done');
     stop();
+  });
+
+  it('reports the idle budget, not the leftover wait slice', async () => {
+    // Hang the reader so the timer path fires (leftover wait ~0.5s of a 2s budget).
+    const stream = new ReadableStream<Uint8Array>({ start() { /* never enqueue */ } });
+    const reader = stream.getReader();
+    const lastUsefulAt = Date.now() - 1_500;
+    await expect(
+      readChunkWithTimeout(reader, {
+        idleMs: 2_000,
+        deadlineMs: Date.now() + 30_000,
+        lastUsefulAt: () => lastUsefulAt,
+      }),
+    ).rejects.toThrow(/idle for \d+s of 2s/);
+    await reader.cancel('test done');
+  });
+});
+
+describe('resolveStreamTimeouts (Grok Build alignment)', () => {
+  beforeEach(() => {
+    delete process.env.ZELARI_PROVIDER_STREAM_IDLE_MS;
+    delete process.env.ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS;
+    delete process.env.ZELARI_PROVIDER_STREAM_MAX_MS;
+    delete process.env.ZELARI_PROVIDER_MAX_RETRIES;
+    delete process.env.ZELARI_PROVIDER_TIMEOUT_MS;
+  });
+  afterEach(() => {
+    delete process.env.ZELARI_PROVIDER_STREAM_IDLE_MS;
+    delete process.env.ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS;
+    delete process.env.ZELARI_PROVIDER_STREAM_MAX_MS;
+    delete process.env.ZELARI_PROVIDER_MAX_RETRIES;
+    delete process.env.ZELARI_PROVIDER_TIMEOUT_MS;
+  });
+
+  it('uses Grok Build 600s idle / 3600s max / 8 retries for grok-*', () => {
+    const t = resolveStreamTimeouts(capabilitiesFor('grok-4.6'));
+    expect(t.idleMs).toBe(600_000);
+    expect(t.firstTokenIdleMs).toBe(600_000);
+    expect(t.maxMs).toBe(3_600_000);
+    expect(t.maxRetries).toBe(8);
+  });
+
+  it('leaves GLM on adapter defaults (not the Grok 600s idle)', () => {
+    const t = resolveStreamTimeouts(capabilitiesFor('glm-5.3', 'glm'));
+    expect(t.idleMs).toBe(300_000);
+    expect(t.maxRetries).toBe(3);
   });
 });

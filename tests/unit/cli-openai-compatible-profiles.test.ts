@@ -199,4 +199,40 @@ describe('OpenAI-compatible provider profile serialization', () => {
 
     expect(JSON.parse(String(captured!.body))).not.toHaveProperty('max_tokens');
   });
+
+  it('sends tool_stream=true only for GLM (unblocks thinking+tools SSE)', async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    globalThis.fetch = vi.fn(async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+      return doneResponse();
+    }) as typeof fetch;
+
+    const glm = openaiCompatibleProvider({
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.z.ai/api/coding/paas/v4',
+      model: 'glm-5.3',
+      providerId: 'glm',
+    });
+    await drain(glm, {
+      messages: [{ role: 'user', content: 'implement' }],
+      model: 'glm-5.3',
+      provider: 'glm',
+      tools: [{ name: 'mutate', description: 'write', parameters: {} }],
+    });
+    expect(bodies[0]).toMatchObject({ tool_stream: true });
+
+    const grok = openaiCompatibleProvider({
+      apiKey: 'sk-test',
+      baseUrl: 'https://api.x.ai/v1',
+      model: 'grok-4.6',
+      providerId: 'grok',
+    });
+    await drain(grok, {
+      messages: [{ role: 'user', content: 'implement' }],
+      model: 'grok-4.6',
+      provider: 'grok',
+      tools: [{ name: 'mutate', description: 'write', parameters: {} }],
+    });
+    expect(bodies[1]).not.toHaveProperty('tool_stream');
+  });
 });
