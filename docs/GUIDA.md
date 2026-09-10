@@ -1538,6 +1538,7 @@ The default **kraken** mode (formerly `agent`) is a lead that spawns sub-agents 
 | `ZELARI_KRAKEN_EXPLORE_MODEL` / `ZELARI_KRAKEN_VERIFY_MODEL` / `ZELARI_KRAKEN_GENERAL_MODEL` | Per-type overrides; accept **qualified** `provider/model` refs to send that tentacle to a provider other than the lead's |
 | `ZELARI_KRAKEN_DELEGATION` | Lead delegation policy: `automatic` (default, unchanged behavior) · `prefer` (nudges the lead to use `task` tentacles) · `aggressive` · `lead-only` (the lead works alone). In Desktop: Settings → Kraken → Delegation policy |
 | `ZELARI_KRAKEN_GENERAL_USES_SUB=1` | Makes general use SUB_MODEL too |
+| `ZELARI_KRAKEN_VERIFY_REASK=0` | Disable the one-shot re-ask that recovers an `unknown` verify verdict: a single no-tools completion on the reviewer's own prior output, parsed with the same verdict parser, at most once per node. Default **on** |
 | `ZELARI_KRAKEN_WORKTREE=1` | Isolate `task` general in a git worktree under `.zelari/worktrees/` |
 | `ZELARI_KRAKEN_WORKTREE=auto` | Isolation decided per writer by scope overlap (see below). **Off by default** (`off` / unset) |
 | `ZELARI_KRAKEN_WORKTREE_KEEP=1` | Don't delete worktree/branch when the tentacle ends (manual merge) |
@@ -1570,6 +1571,17 @@ senza cache i tentacoli usano il modello del lead, esattamente come prima.
 
 Il modello effettivo di ogni tentacolo è visibile in **Kraken Activity**
 (`agent_spawned`): se un tentacolo gira sul modello sbagliato, guarda lì.
+
+**Sidecar dei tentacoli e gate del flip `explore` (t57).** Ogni tentacolo salva la conclusione
+completa in `.zelari/radio/tentacles/<sessionId>/<nodeId>.md` (header: agente, `thoroughness`,
+modello, durata, worktree — il radio tronca il dettaglio, il sidecar no) e ogni sessione del grafo
+ne ricava un `coverage.json`: quanti dei file poi toccati erano già emersi da `explore`.
+`npm run explore:gate` legge quei report e decide **con i dati** se `explore` può passare al default
+`quick`: servono **≥5 sessioni valide per fase**, si fa `revert` se la caduta della mediana di
+copertura è **>10pp** (a 10.0 esatti si tiene) e altrimenti `keep` (exit 0). Sotto le 5 sessioni
+risponde `insufficient-data` (exit 2) — mai un verde inventato — e le sessioni scritte prima di
+t57/C4, il cui header non dichiara `thoroughness`, restano **escluse**: un modo non registrato non
+si indovina.
 
 ### Kraken Graph — DAG of parallel tentacles
 

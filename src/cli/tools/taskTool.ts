@@ -1262,11 +1262,16 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // t57 C1: sidecar with the FULL conclusion — the radio caps detail at 240
   // chars (biased against medium/verbose explores), which makes the
   // explore→plan coverage metric incomputable from the radio alone.
+  // t57 C4: the same sidecar records the `thoroughness` this tentacle actually
+  // ran with (the `task` arg, not a config guess): the flip gate phases a
+  // session by what its explores DID, and a session that does not say is
+  // excluded rather than assumed.
   // Fail-open: observability extra, never a dependency of the run.
   try {
     const { writeTentacleSidecar } = await import('../kraken/exploreCoverage.js');
     await writeTentacleSidecar(parentCwd, sessionId, opts.nodeId ?? liveId, {
       agent,
+      thoroughness,
       model: sub.model,
       durationMs,
       result,

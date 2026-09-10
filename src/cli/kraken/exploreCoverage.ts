@@ -18,6 +18,10 @@
  *   C3  computeAndStoreExploreCoverage — overlap between paths mentioned
  *       by EXPLORE sidecars and paths mentioned by WRITER sidecars
  *       (general/fix/verify), persisted as `coverage.json` next to them.
+ *   C4  mode capture — the sidecar header records the tentacle's actual
+ *       `thoroughness`, and the report carries `exploreModes`, so a session
+ *       can be attributed to a phase by the flip gate (`./exploreFlipGate.ts`)
+ *       instead of being guessed from timing or config.
  *
  * The C2 spine side already exists (ADR-0033 t75: `file.applied` /
  * `file.read` / `file.rejected` derived events in sessionSpine.ts) — no
@@ -43,6 +47,13 @@ const SIDECAR_CAP_CHARS = 16 * 1024;
 
 export interface TentacleSidecarInfo {
   agent: string;
+  /**
+   * C4: the thoroughness the tentacle actually ran with (`task` arg:
+   * quick|medium|deep). Recorded so the explore→plan coverage of a session
+   * can be attributed to a phase — without it every session written before
+   * C4 is mode-unknown and the flip gate has to exclude it.
+   */
+  thoroughness?: string;
   model?: string;
   durationMs?: number;
   result: string;
@@ -57,6 +68,9 @@ export function sanitizeNodeId(id: string): string {
 /**
  * C1 — persist a tentacle's full conclusion. Fail-open by design: the
  * sidecar is an observability extra, never a dependency of the run.
+ *
+ * The header grows only additively (`thoroughness:` line, C4): old sidecars
+ * stay parseable, and a reader that does not know the line ignores it.
  */
 export async function writeTentacleSidecar(
   cwd: string,
@@ -70,6 +84,7 @@ export async function writeTentacleSidecar(
     const header = [
       `# tentacle ${nodeId}`,
       `agent: ${info.agent}`,
+      info.thoroughness ? `thoroughness: ${info.thoroughness}` : null,
       info.model ? `model: ${info.model}` : null,
       typeof info.durationMs === 'number' ? `durationMs: ${info.durationMs}` : null,
       info.worktree ? `worktree: ${info.worktree}` : null,
@@ -155,6 +170,21 @@ export interface ExploreCoverageReport {
   covered: string[];
   ratio: number;
   computedAt: string;
+  /**
+   * C4: sorted unique thoroughness values declared by this session's
+   * `agent: explore` sidecar headers. Omitted (not `[]`) when no explore
+   * sidecar declared one — a legacy session is mode-UNKNOWN, and the flip
+   * gate must be able to tell that apart from a session with no explore at
+   * all. `undefined` here is a fact, not a default.
+   */
+  exploreModes?: string[];
+  /** C4: number of explore sidecars whose header carried no thoroughness. */
+  exploreModesUnknown?: number;
+}
+
+/** C4: the thoroughness a sidecar header declared, if any (lowercased). */
+function declaredThoroughness(raw: string): string | null {
+  return /^thoroughness:\s*(\S+)/m.exec(raw)?.[1]?.trim().toLowerCase() ?? null;
 }
 
 /**
@@ -163,6 +193,9 @@ export interface ExploreCoverageReport {
  * `general`/`fix`/`verify` sidecars (an approximation of "what the plan
  * ended up touching", self-contained without spine parsing; the spine's
  * `file.applied` events remain the stricter source for a later revision).
+ *
+ * C4 — the same pass collects the thoroughness of the explore sidecars, so
+ * each session carries its own phase (`exploreModes`) for the flip gate.
  * Returns null (and writes nothing) when no writer sidecar exists.
  */
 export async function computeAndStoreExploreCoverage(
@@ -174,6 +207,8 @@ export async function computeAndStoreExploreCoverage(
     const files = await readdir(dir).catch(() => [] as string[]);
     const mentioned = new Set<string>();
     const touched = new Set<string>();
+    const exploreModes = new Set<string>();
+    let exploreModesUnknown = 0;
     for (const file of files) {
       if (!file.endsWith('.md')) continue;
       const raw = await readFile(path.join(dir, file), 'utf8');
@@ -181,6 +216,9 @@ export async function computeAndStoreExploreCoverage(
       const paths = extractMentionedPaths(raw, cwd);
       if (agent === 'explore') {
         for (const p of paths) mentioned.add(p);
+        const mode = declaredThoroughness(raw);
+        if (mode) exploreModes.add(mode);
+        else exploreModesUnknown += 1;
       } else if (agent === 'general' || agent === 'fix' || agent === 'verify') {
         for (const p of paths) touched.add(p);
       }
@@ -194,6 +232,9 @@ export async function computeAndStoreExploreCoverage(
       covered: [...touched].filter((t) => mentioned.has(t)).sort(),
       ratio: coverage.ratio,
       computedAt: new Date().toISOString(),
+      // Additive: absent when nothing was declared (legacy sidecar headers).
+      ...(exploreModes.size > 0 ? { exploreModes: [...exploreModes].sort() } : {}),
+      ...(exploreModesUnknown > 0 ? { exploreModesUnknown } : {}),
     };
     await writeFile(path.join(dir, 'coverage.json'), JSON.stringify(report, null, 2), 'utf8');
     return report;
