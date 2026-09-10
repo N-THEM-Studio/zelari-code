@@ -75,7 +75,10 @@ export type GraphValidation =
   | { ok: false; errors: string[] };
 
 export interface ValidateGraphOptions {
-  /** Anti-explosion bound on node count. Default 24 ({@link DEFAULT_MAX_NODES}); no env knob reads it. */
+  /**
+   * Anti-explosion bound on node count. Default 24 (DEFAULT_MAX_NODES, defined
+   * in this module and only imported by the CLI planner); no env knob reads it.
+   */
   maxNodes?: number;
 }
 
