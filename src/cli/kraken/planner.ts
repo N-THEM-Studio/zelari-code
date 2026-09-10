@@ -267,6 +267,16 @@ export interface PlanTaskGraphOptions {
   graphId?: string;
   provider?: string;
   model?: string;
+  /**
+   * Cap on the number of planned nodes. This is purely an API parameter the
+   * calling host (tests, slash handlers, headless) may pin; the effective
+   * default is `DEFAULT_MAX_NODES` enforced by `PlannedGraphSchema` above.
+   *
+   * Note: there is deliberately NO env knob — `ZELARI_KRAKEN_MAX_NODES` does
+   * not exist anywhere in src/. Raising the cap is a planner-integration
+   * decision (more nodes = more parallel spend and wider blast radius), not
+   * a user toggle; do not "document" one into existence.
+   */
   maxNodes?: number;
   /** Override the LLM transport (tests only) — default hits the real provider. */
   llmClient?: PlannerLlmClient;
