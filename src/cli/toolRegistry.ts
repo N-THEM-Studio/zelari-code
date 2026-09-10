@@ -71,7 +71,8 @@ import {
 } from './provider/openai-compatible.js';
 import { buildProviderStream } from './provider/resolveStream.js';
 import { getKrakenVerifierOverride } from './providerConfig.js';
-import type { ProviderName } from './keyStore.js';
+import { wrapWithHeadlessFailover } from './crossProviderFailover.js';
+import { PROVIDERS, type ProviderName } from './keyStore.js';
 import {
   activePermissionPreset,
   defaultPermissionPolicy,
@@ -993,9 +994,16 @@ export function createKrakenSubAgentContextFactory(opts: {
       ? await providerConfigFor(providerOverride as ProviderName)
       : await providerFromEnv();
     if (!cfg) return null;
-    const { resolveKrakenSubModel, parseQualifiedModelRef } = await import('./tools/krakenModel.js');
+    const { resolveKrakenSubModelAsync, parseQualifiedModelRef } = await import('./tools/krakenModel.js');
     const parentModel = modelOverride || cfg.model;
-    const resolvedModel = resolveKrakenSubModel(agent, parentModel);
+    // Async resolve (this factory is already async): forwards the ACTIVE
+    // provider's discovered models, so the two routing options that used to be
+    // dead code actually engage — cheap auto-pick for explore/verify and the
+    // cross-family verify pick (P0.6). Without a models registry both lists
+    // stay empty and this resolves the parent model exactly as before.
+    const resolvedModel = await resolveKrakenSubModelAsync(agent, parentModel, process.env, {
+      provider: cfg.providerId,
+    });
     // Cross-provider tentacles (Desktop Settings → ZELARI_KRAKEN_*_MODEL): a
     // provider-qualified ref ("grok/grok-4") selects both provider and model.
     // Unknown provider → keep the raw id (previous behavior: sent to the lead
@@ -1045,8 +1053,24 @@ export function createKrakenSubAgentContextFactory(opts: {
       // P0.5: the tentacle's agent identity drives per-agent policy rules.
       policyAgent: agent,
     });
+    const wrapTentacleStream = (
+      primary: ReturnType<typeof buildProviderStream>,
+      primaryProviderId: string,
+    ) =>
+      wrapWithHeadlessFailover({
+        primary,
+        primaryProviderId,
+        validProviderIds: PROVIDERS.map((p) => p.id),
+        lookupFallbackConfig: (id) => providerConfigFor(id as ProviderName),
+        buildStream: (config) =>
+          buildProviderStream(config as Parameters<typeof buildProviderStream>[0]),
+      });
+    const providerStream = await wrapTentacleStream(
+      buildProviderStream(subCfg),
+      subCfg.providerId,
+    );
     return {
-      providerStream: buildProviderStream(subCfg),
+      providerStream,
       model,
       provider: subCfg.providerId,
       ...(model !== parentModel
@@ -1054,7 +1078,12 @@ export function createKrakenSubAgentContextFactory(opts: {
             fallback: {
               model: parentModel,
               provider: cfg.providerId,
-              providerStream: buildProviderStream({ ...cfg, model: parentModel }),
+              // Wrap the 404-parent fallback too so a later model retry still
+              // has transport failover. Orthogonal to isUnknownModelError.
+              providerStream: await wrapTentacleStream(
+                buildProviderStream({ ...cfg, model: parentModel }),
+                cfg.providerId,
+              ),
             },
           }
         : {}),

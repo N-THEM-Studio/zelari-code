@@ -23,6 +23,7 @@
  */
 
 import type { ProviderStreamFn } from '@zelari/core/harness';
+import { providerFailover, type FailoverNotify } from './providerFailover.js';
 
 export interface ResolveOptions {
   /** Master kill-switch (v3-G). When false, return primary unchanged. */
@@ -135,4 +136,49 @@ export async function resolveFailoverStream(
     warning: '',
     reason: 'resolved',
   };
+}
+
+/** Int5b: headless/tentacle transport failover is opt-in (default off). */
+export function isHeadlessFailoverEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return env.ZELARI_HEADLESS_FAILOVER === '1' && env.ANATHEMA_FAILOVER !== '0';
+}
+
+export interface HeadlessFailoverWrapOptions {
+  primary: ProviderStreamFn;
+  primaryProviderId: string;
+  env?: NodeJS.ProcessEnv;
+  validProviderIds: readonly string[];
+  lookupFallbackConfig: (id: string) => Promise<unknown>;
+  buildStream: (config: unknown) => ProviderStreamFn;
+  onWarning?: (warning: string) => void;
+  onFailover?: (info: FailoverNotify) => void;
+}
+
+/**
+ * Wrap a primary stream with TUI-equivalent first-failure failover when
+ * `ZELARI_HEADLESS_FAILOVER=1`. Flag off → returns the same `primary` (identity).
+ */
+export async function wrapWithHeadlessFailover(
+  options: HeadlessFailoverWrapOptions,
+): Promise<ProviderStreamFn> {
+  const env = options.env ?? process.env;
+  if (!isHeadlessFailoverEnabled(env)) {
+    return options.primary;
+  }
+  const resolved = await resolveFailoverStream({
+    failoverEnabled: true,
+    envValue: env.ANATHEMA_FAILOVER_PROVIDER,
+    primaryProviderId: options.primaryProviderId,
+    primary: options.primary,
+    validProviderIds: options.validProviderIds,
+    lookupFallbackConfig: options.lookupFallbackConfig,
+    buildStream: options.buildStream,
+  });
+  if (resolved.warning) options.onWarning?.(resolved.warning);
+  return providerFailover({
+    primary: options.primary,
+    fallback: resolved.fallback,
+    ...(resolved.fallbackLabel ? { fallbackLabel: resolved.fallbackLabel } : {}),
+    ...(options.onFailover ? { onFailover: options.onFailover } : {}),
+  });
 }

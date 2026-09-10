@@ -37,6 +37,18 @@ export interface FailoverOptions {
    * (e.g. `grok → glm`). When omitted, messages are unchanged from v3-G.
    */
   fallbackLabel?: string;
+  /**
+   * Optional audit hook (Int5b). Fired on swap / fallback-fail.
+   * Callback errors are swallowed so audit never breaks the stream.
+   */
+  onFailover?: (info: FailoverNotify) => void;
+}
+
+/** Audit payload for `onFailover` (Int5b). No spine schema change. */
+export interface FailoverNotify {
+  phase: 'swap-delta' | 'swap-throw' | 'fallback-failed';
+  message: string;
+  label?: string;
 }
 
 const DEFAULT_IS_TRANSIENT = (delta: ProviderDelta): boolean => delta.kind === 'error';
@@ -59,6 +71,18 @@ export function providerFailover(options: FailoverOptions): ProviderStreamFn {
   const fallbackFailedMsg = options.fallbackLabel
     ? `[failover] fallback (${options.fallbackLabel}) also failed: `
     : '[failover] fallback also failed: ';
+  const notify = (phase: FailoverNotify['phase'], message: string) => {
+    if (!options.onFailover) return;
+    try {
+      options.onFailover({
+        phase,
+        message,
+        ...(options.fallbackLabel ? { label: options.fallbackLabel } : {}),
+      });
+    } catch {
+      // audit must never break the stream
+    }
+  };
   return async function* (params) {
     const triedFallback = { value: false };
     try {
@@ -72,6 +96,7 @@ export function providerFailover(options: FailoverOptions): ProviderStreamFn {
             kind: 'error',
             message: primaryFailedMsg,
           };
+          notify('swap-delta', primaryFailedMsg);
           break;
         }
         yield delta;
@@ -79,10 +104,12 @@ export function providerFailover(options: FailoverOptions): ProviderStreamFn {
     } catch (err) {
       // Network-level throw (fetch rejection, etc.) → also failover.
       triedFallback.value = true;
+      const threwMsg = `${primaryThrewMsg}${err instanceof Error ? err.message : String(err)}`;
       yield {
         kind: 'error',
-        message: `${primaryThrewMsg}${err instanceof Error ? err.message : String(err)}`,
+        message: threwMsg,
       };
+      notify('swap-throw', threwMsg);
     }
     if (triedFallback.value) {
       try {
@@ -90,10 +117,12 @@ export function providerFailover(options: FailoverOptions): ProviderStreamFn {
           yield delta;
         }
       } catch (err) {
+        const failedMsg = `${fallbackFailedMsg}${err instanceof Error ? err.message : String(err)}`;
         yield {
           kind: 'error',
-          message: `${fallbackFailedMsg}${err instanceof Error ? err.message : String(err)}`,
+          message: failedMsg,
         };
+        notify('fallback-failed', failedMsg);
         return;
       }
     }

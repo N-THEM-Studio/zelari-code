@@ -193,12 +193,42 @@ export async function runHeadless(opts: HeadlessOptions): Promise<number> {
       return 1;
     }
     const { buildProviderStream } = await import('./provider/resolveStream.js');
-    providerStream = buildProviderStream({
+    const primaryStream = buildProviderStream({
       providerId: provider as import('./keyStore.js').ProviderName,
       apiKey: key.apiKey,
       baseUrl: key.baseUrl,
       model,
     });
+    // Int5b: opt-in transport failover (ZELARI_HEADLESS_FAILOVER=1).
+    // Local-CLI is never wrapped (parity with TUI). Default off = bit-identical:
+    // the wrap block (and its openai-compatible import) only runs when enabled,
+    // so mocks that do not export providerConfigFor stay valid with failover off.
+    const { isHeadlessFailoverEnabled, wrapWithHeadlessFailover } = await import('./crossProviderFailover.js');
+    if (isHeadlessFailoverEnabled()) {
+      const { PROVIDERS } = await import('./keyStore.js');
+      const { providerConfigFor } = await import('./provider/openai-compatible.js');
+      providerStream = await wrapWithHeadlessFailover({
+        primary: primaryStream,
+        primaryProviderId: provider,
+        validProviderIds: PROVIDERS.map((p) => p.id),
+        lookupFallbackConfig: async (id) =>
+          providerConfigFor(id as import('./keyStore.js').ProviderName),
+        buildStream: (config) =>
+          buildProviderStream(config as Parameters<typeof buildProviderStream>[0]),
+        onWarning: (warning) => {
+          try { process.stderr.write(`[zelari-code --headless] ${warning}\n`); } catch { /* ignore */ }
+        },
+        onFailover: (info) => {
+          try {
+            process.stderr.write(
+              `[zelari-code --headless] [failover] ${info.phase}${info.label ? ` → ${info.label}` : ''}: ${info.message}\n`,
+            );
+          } catch { /* ignore */ }
+        },
+      });
+    } else {
+      providerStream = primaryStream;
+    }
   }
 
   return dispatchHeadlessTurn(opts, provider, model, providerStream, {
