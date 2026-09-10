@@ -1609,6 +1609,32 @@ zelari-code/
 └── docs/                     # this documentation
 ```
 
+### Dogfooding this repo (t52)
+
+The deterministic half of the dogfooding loop: check what a chairman synthesis *claims* against
+what the diff actually contains (`git diff --name-only`), in the ADR-0007 sampling-audit style.
+
+```bash
+npm run dogfood:brief                                         # 3-section brief for the first pending plan task
+npm run dogfood:audit -- --synthesis <file|-> --base origin/main   # claim-by-claim report
+npm run dogfood:run                                           # brief → live mission → audit (needs a provider)
+```
+
+- `dogfood:audit` exits `0` when every asserted path is in the diff, `1` on an ungrounded path
+  claim, `2` INSUFFICIENT-DATA (empty synthesis, empty diff, unreadable ref, usage) — an empty
+  run never reports a pass. The report lands in `.zelari/dogfood/audit.md` (gitignored).
+- `dogfood:brief -- --task t52` prints the brief for a specific plan task; without `--task` it
+  picks the first pending task at medium-or-higher priority.
+- `dogfood:run` needs `ZELARI_API_KEY` (or `ZELARI_LOCAL_CLI`); without credentials it refuses to
+  fake a mission and exits `2` (same honesty contract as `npm run explore:gate`).
+- The `Dogfood audit` workflow (`.github/workflows/dogfood.yml`) is **advisory, like
+  `touches-judge`**: it audits the PR body or a committed `.zelari/dogfood/synthesis.md`, warns
+  instead of failing when no synthesis was provided, and never auto-merges. A PR that touches
+  `JUDGE_PATHS` still needs the usual two approvals.
+
+P1 status: the audit script landed; the live loop (a real zelari mission on this repo → PR) still
+needs provider credentials.
+
 ---
 
 ## Troubleshooting

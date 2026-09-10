@@ -59,6 +59,9 @@
     "bench:competitive": "node --experimental-strip-types tools/eval/runCompetitiveBench.ts",
     "test:eval": "vitest run tools/eval",
     "perf:bench": "node scripts/perf-bench.mjs",
+    "dogfood:audit": "node scripts/dogfood-audit.mjs",
+    "dogfood:brief": "node scripts/dogfood-brief.mjs",
+    "dogfood:run": "node scripts/dogfood-driver.mjs",
     "test:memory": "vitest run packages/core/src/memory/scoring.test.ts tests/unit/core-agentHarness-memory.test.ts tests/unit/cli-sqliteMemoryV2.test.ts tests/unit/cli-memorySemantic.test.ts tests/unit/cli-memoryMigration.test.ts tests/unit/cli-memoryMcp.test.ts tests/unit/cli-memoryJsonApi.test.ts tests/unit/cli-memoryCommands.test.ts tests/unit/cli-memoryPerformance.test.ts tests/unit/cli-kraken-sharedMemory.test.ts tests/unit/cli-semantic.test.ts tools/eval/memoryMetrics.test.ts"
   },
   "dependencies": {

@@ -1,0 +1,62 @@
+name: Dogfood audit
+
+# t52 (W5.2): a dogfood mission lands as a PR with its chairman synthesis, and
+# this job samples that synthesis against the diff (ADR-0007 style). Advisory
+# by design, exactly like the `touches-judge` label: it never auto-merges, never
+# requires a secret, and never fails the PR because an author did not paste a
+# synthesis — absence is reported as INSUFFICIENT-DATA, never as green.
+on:
+  pull_request:
+
+concurrency:
+  group: dogfood-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Synthesis-vs-diff audit (advisory)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Collect the chairman synthesis
+        id: synthesis
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [ -f .zelari/dogfood/synthesis.md ]; then
+            echo "path=.zelari/dogfood/synthesis.md" >> "$GITHUB_OUTPUT"
+          elif [ -n "$PR_BODY" ]; then
+            printf '%s\n' "$PR_BODY" > "$RUNNER_TEMP/synthesis.md"
+            echo "path=$RUNNER_TEMP/synthesis.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Audit synthesis vs diff
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          SYNTHESIS: ${{ steps.synthesis.outputs.path }}
+        run: |
+          if [ -z "$SYNTHESIS" ]; then
+            echo "::warning:: no chairman-synthesis; skipping audit (INSUFFICIENT-DATA)"
+            exit 0
+          fi
+          # Advisory: the exit code becomes a PR annotation + step summary, never
+          # a red gate (touches-judge and the human gate stay the hard parts).
+          set +e
+          node scripts/dogfood-audit.mjs --synthesis "$SYNTHESIS" --base "$BASE_SHA" --out audit.md
+          code=$?
+          set -e
+          cat audit.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
+          if [ "$code" -eq 0 ]; then
+            echo "::notice:: dogfood audit: no ungrounded path claim"
+          elif [ "$code" -eq 1 ]; then
+            echo "::warning:: dogfood audit FAILED (exit 1) — the synthesis asserts a path the diff does not contain; see the step summary"
+          else
+            echo "::warning:: dogfood audit INSUFFICIENT-DATA (exit $code) — never treated as a pass"
+          fi
