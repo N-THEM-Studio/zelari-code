@@ -32,6 +32,7 @@ import {
   type PolicyRule,
   type PolicyRuleSet,
 } from '../safety/policyEngine.js';
+import { wrapWithVerifyCache } from './cachedShell.js';
 
 /** Engine packId for contract-derived checks (distinct from the coding pack). */
 export const CONTRACT_CRITERIA_PACK_ID = 'task-contract/v1';
@@ -209,7 +210,11 @@ export async function evaluateContractCriteria(
   const cwd = deps.cwd ?? process.cwd();
   const criteria = compileVerificationCriteria(contract, { timeoutMs: deps.timeoutMs });
   if (criteria.length === 0) return null;
-  const shell = deps.shell ?? new NodeShellProvider(new LocalWorkspace(cwd));
+  // Int2b: same decorator discipline as the native pack — the module-level
+  // LRU is shared, so a contract `Verify:` command already executed in this
+  // process under an unchanged tree is not re-run (ZELARI_VERIFY_CACHE=0 opts
+  // out). An injected shell (tests) is used as is.
+  const shell = deps.shell ?? wrapWithVerifyCache(new NodeShellProvider(new LocalWorkspace(cwd)), { root: cwd });
   const engine = deps.emit
     ? new VerificationEngine({ shell }, { emit: deps.emit })
     : new VerificationEngine({ shell });

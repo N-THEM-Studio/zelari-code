@@ -72,6 +72,14 @@ export interface ShellResult {
   stderr: string;
   durationMs: number;
   timedOut: boolean;
+  /**
+   * Set by caching decorators, not by providers (Int2b): true when this
+   * observation was served from a previous identical execution instead of
+   * being re-run. Absent on every provider-produced result, so existing
+   * consumers are unaffected; verification annotates such observations
+   * (`detail` suffix, `cached: true` in the `verification.evidence` payload).
+   */
+  cached?: boolean;
 }
 
 export interface ShellExecOptions {

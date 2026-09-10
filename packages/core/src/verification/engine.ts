@@ -12,6 +12,23 @@
  * output tails) and, when the emitter resolves to the appended envelope, the
  * assigned seq anchors the EvidenceRef — evidence is traceable to the
  * session event that captured it, not to a narrated summary.
+ *
+ * Int2b: when the injected shell is decorated with a result cache (see
+ * `src/cli/kraken/cachedShell.ts`), a served-from-cache observation is
+ * ANNOTATED, never reinterpreted — `detail` gains a " (cached — tree unchanged
+ * since last run)" suffix and the evidence event carries an optional
+ * `cached: true`. Status, digest and evidence payload shape are untouched, so
+ * caching can change the latency of a verdict but never the verdict.
+ *
+ * Int2a: command criteria MAY be evaluated concurrently with a bounded
+ * fan-out (`commandConcurrency`, default OFF — see `./commandConcurrency.ts`).
+ * Parallelism is about `evaluateOne` concurrency, the cache is about shell
+ * exec reuse; they compose. Only the LATENCY changes: results keep the
+ * criteria order of `verification.run`, and `verification.evidence` events may
+ * interleave because each ref is anchored to its OWN event seq (a seq anchors
+ * an observation, it never depends on the position of the event in the log).
+ * When the fan-out is 1 (default, or the kill-switch) the loop below is the
+ * untouched sequential path.
  */
 
 import { createHash } from 'node:crypto';
@@ -19,6 +36,8 @@ import type { FsProvider, ShellProvider } from '../runtime/providers.js';
 import type { SessionEventInput } from '../session/types.js';
 import type { Criterion, EvidenceRef, VerificationResult } from './types.js';
 import { analyzeScope, type ScopeAnalysisInput } from './scopeDiscipline.js';
+import { resolveCommandConcurrency } from './commandConcurrency.js';
+import { runWithLimit } from './runWithLimit.js';
 
 export interface VerificationServices {
   shell?: ShellProvider;
@@ -34,6 +53,14 @@ export interface VerificationEngineOptions {
   emit?: (input: SessionEventInput) => Promise<unknown>;
   now?: () => number;
   sha256?: (input: string) => string;
+  /**
+   * Max command criteria evaluated concurrently. `undefined` (the default)
+   * resolves through `resolveCommandConcurrency()` — i.e. 1 unless the
+   * environment opts in via `ZELARI_VERIFY_PARALLEL=1`. `<= 1` always means
+   * the plain sequential loop; a host that wires the flag explicitly should
+   * keep passing a value here.
+   */
+  commandConcurrency?: number;
 }
 
 function defaultSha256(input: string): string {
@@ -43,6 +70,14 @@ function defaultSha256(input: string): string {
 function tail(text: string, max = 400): string {
   return text.length > max ? `…${text.slice(text.length - max)}` : text;
 }
+
+/**
+ * Int2b provenance note. A cached observation is the SAME deterministic
+ * observation (identical command, unchanged tree, byte-identical stdout) —
+ * status and digest are therefore untouched; only the detail says where the
+ * observation came from.
+ */
+const CACHED_DETAIL_NOTE = 'cached — tree unchanged since last run';
 
 export class VerificationEngine {
   constructor(
@@ -56,8 +91,18 @@ export class VerificationEngine {
     context: { packId?: string; scope?: ScopeAnalysisInput } = {},
   ): Promise<VerificationResult[]> {
     const results: VerificationResult[] = [];
-    for (const criterion of criteria) {
-      results.push(await this.evaluateOne(criterion, context.scope));
+    const limit = this.options.commandConcurrency ?? resolveCommandConcurrency();
+    if (limit <= 1) {
+      // Default (and kill-switch): the pre-Int2a path, byte for byte.
+      for (const criterion of criteria) {
+        results.push(await this.evaluateOne(criterion, context.scope));
+      }
+    } else {
+      // Int2a: bounded fan-out; slot i is criteria[i], so the result order —
+      // and therefore `verification.run` — is identical to the sequential run.
+      await runWithLimit(criteria, limit, async (criterion, index) => {
+        results[index] = await this.evaluateOne(criterion, context.scope);
+      });
     }
     if (this.options.emit) {
       // Degrade-and-stop discipline: a failing spine must never fail
@@ -173,6 +218,22 @@ export class VerificationEngine {
     }
     const result = await shell.exec(check.command, { timeoutMs: check.timeoutMs });
     const digest = sha256(result.stdout);
+    const cached = result.cached === true;
+    /**
+     * Int2b: annotate provenance, never the verdict. Same status, same digest,
+     * same payload shape — a cached FAIL stays FAIL, a cached pass stays pass.
+     * `cached` is absent on provider-produced results, so an undecorated shell
+     * behaves exactly as before.
+     */
+    const finish = (
+      patch: Pick<VerificationResult, 'status' | 'evidence'> & { detail?: string },
+    ): VerificationResult =>
+      cached
+        ? done({
+            ...patch,
+            detail: patch.detail ? `${patch.detail} (${CACHED_DETAIL_NOTE})` : CACHED_DETAIL_NOTE,
+          })
+        : done(patch);
     // F3: the raw observation lands on the spine; its seq anchors the ref.
     const seq = await this.emitEvidence({
       observation: 'command',
@@ -182,6 +243,8 @@ export class VerificationEngine {
       digest,
       stdoutTail: tail(result.stdout),
       stderrTail: tail(result.stderr),
+      // Additive (optional) field: replay of older logs without it still parses.
+      ...(cached ? { cached: true } : {}),
     });
     const evidence: EvidenceRef[] = [
       {
@@ -193,24 +256,24 @@ export class VerificationEngine {
       },
     ];
     if (result.timedOut) {
-      return done({ status: 'unknown', evidence, detail: `command timed out (${check.timeoutMs ?? 'default'}ms)` });
+      return finish({ status: 'unknown', evidence, detail: `command timed out (${check.timeoutMs ?? 'default'}ms)` });
     }
     const expectExit = check.expectExit ?? 0;
     if (result.exitCode !== expectExit) {
-      return done({
+      return finish({
         status: 'fail',
         evidence,
         detail: `exit ${result.exitCode} (expected ${expectExit}) — stderr: ${tail(result.stderr)}`,
       });
     }
     if (check.expectStdoutIncludes && !result.stdout.includes(check.expectStdoutIncludes)) {
-      return done({
+      return finish({
         status: 'fail',
         evidence,
         detail: `stdout missing "${check.expectStdoutIncludes}" — got: ${tail(result.stdout)}`,
       });
     }
-    return done({ status: 'pass', evidence });
+    return finish({ status: 'pass', evidence });
   }
 
   /**

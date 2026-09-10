@@ -45,6 +45,7 @@ import {
   type VerificationResult,
 } from '@zelari/core/verification';
 import { resolveAdapterForRoot } from './verificationAdapters/index.js';
+import { wrapWithVerifyCache } from './cachedShell.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -199,7 +200,14 @@ export async function evaluateNativePack(deps: NativePackDeps = {}): Promise<Nat
   if (!commands.typecheckCommand && !commands.testCommand && !commands.buildCommand) return null;
   const criteria = buildNativeCriteria(commands, packTimeoutMs(env));
   if (criteria.length === 0) return null;
-  const shell = deps.shell ?? new NodeShellProvider(new LocalWorkspace(cwd));
+  // Int2b: the DEFAULT provider is decorated with the verify cache. The LRU
+  // lives at module level, so the post-repair evaluation and the
+  // end-of-mission one reuse what the first gate observed — same verdicts,
+  // same evidence, no re-running minutes of typecheck/test/build when the
+  // tree did not move (kill-switch: ZELARI_VERIFY_CACHE=0).
+  // A test-injected shell is used AS IS: stubs stay hermetic (no git calls,
+  // no cross-suite cache bleed) and production never injects one.
+  const shell = deps.shell ?? wrapWithVerifyCache(new NodeShellProvider(new LocalWorkspace(cwd)), { root: cwd, env });
   const engine = deps.emit
     ? new VerificationEngine({ shell }, { emit: deps.emit })
     : new VerificationEngine({ shell });
