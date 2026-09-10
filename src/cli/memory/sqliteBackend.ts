@@ -50,6 +50,9 @@ const NODE_COLUMNS = `
 const INSERT_NODE_SQL = `INSERT INTO memory_nodes (${NODE_COLUMNS})
 VALUES (${Array.from({ length: 19 }, () => '?').join(',')})`;
 
+/** Legacy-import ids per `IN` query: 500 placeholders per RPC, well under SQLite limits. */
+const IMPORT_ID_CHUNK = 500;
+
 const SOURCE_COLUMNS: Record<string, string> = {
   agent: 'agent', sessionId: 'sessionId', missionId: 'missionId',
   sliceId: 'sliceId', tentacleId: 'tentacleId', councilMemberId: 'councilMemberId',
@@ -638,12 +641,24 @@ export class SQLiteMemoryBackend implements CognitiveMemoryBackend {
     };
   }
 
-  async hasImport(sourceId: string): Promise<boolean> {
+  /** Batched `hasImport`: one `IN` query per 500 ids instead of one RPC per row. */
+  async hasImports(ids: readonly string[]): Promise<Set<string>> {
     this.assertReady();
-    const row = await this.rpc.statement<SqlRow | undefined>({
-      sql: 'SELECT source_id FROM memory_imports WHERE source_id=?', params: [sourceId], mode: 'get',
-    });
-    return Boolean(row);
+    const found = new Set<string>();
+    const unique = [...new Set(ids)];
+    for (let index = 0; index < unique.length; index += IMPORT_ID_CHUNK) {
+      const chunk = unique.slice(index, index + IMPORT_ID_CHUNK);
+      const rows = await this.rpc.statement<SqlRow[]>({
+        sql: `SELECT source_id FROM memory_imports WHERE source_id IN (${chunk.map(() => '?').join(',')})`,
+        params: chunk, mode: 'all',
+      });
+      for (const row of rows) found.add(String(row.source_id));
+    }
+    return found;
+  }
+
+  async hasImport(sourceId: string): Promise<boolean> {
+    return (await this.hasImports([sourceId])).has(sourceId);
   }
 
   async recordImport(sourceId: string, memoryId: string): Promise<void> {
