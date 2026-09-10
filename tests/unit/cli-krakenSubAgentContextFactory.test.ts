@@ -21,6 +21,9 @@ vi.mock('../../src/cli/provider/openai-compatible.js', () => ({
 
 vi.mock('../../src/cli/tools/krakenModel.js', () => ({
   resolveKrakenSubModel: vi.fn((_agent: string, parentModel: string) => parentModel),
+  // Passthrough async variant (module is mocked out wholesale): routing is
+  // not under test here — provider/model override resolution is.
+  resolveKrakenSubModelAsync: vi.fn(async (_agent: string, parentModel: string) => parentModel),
   // Minimal faithful re-implementation (module is mocked out wholesale).
   parseQualifiedModelRef: (ref: string) => {
     const s = ref?.trim() ?? '';

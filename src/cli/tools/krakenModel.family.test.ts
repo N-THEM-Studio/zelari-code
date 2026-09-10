@@ -143,6 +143,25 @@ describe("resolveKrakenSubModel('verify') × familyCandidates", () => {
     ).toBe('cheap-mini');
   });
 
+  it('ZELARI_KRAKEN_CROSS_MODEL=0 opts out of the family pick', () => {
+    expect(
+      resolveKrakenSubModel(
+        'verify',
+        'gpt-5',
+        { ZELARI_KRAKEN_CROSS_MODEL: '0' },
+        { provider: 'openai', familyCandidates: families },
+      ),
+    ).toBe('gpt-5');
+    expect(
+      resolveKrakenSubModel(
+        'verify',
+        'gpt-5',
+        { ZELARI_KRAKEN_CROSS_MODEL: 'off' },
+        { provider: 'openai', familyCandidates: families },
+      ),
+    ).toBe('gpt-5');
+  });
+
   it('no familyCandidates → unchanged auto-pick/parent behavior', () => {
     expect(resolveKrakenSubModel('verify', 'grok-4', {})).toBe('grok-4');
     expect(

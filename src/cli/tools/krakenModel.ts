@@ -83,6 +83,18 @@ export function isKrakenAutoModelEnabled(env: NodeJS.ProcessEnv = process.env): 
   return true;
 }
 
+/**
+ * Kill-switch for cross-family verification (P0.6). Default ON; set
+ * `ZELARI_KRAKEN_CROSS_MODEL=0` (or false/no/off) to keep the verify tentacle
+ * in the builder's provider family. Honored by BOTH cross-model entry points:
+ * `resolveCrossModelVerifier` (verifierRouting) and the family branch of
+ * `resolveKrakenSubModel` (production sub-agent factory).
+ */
+export function isKrakenCrossModelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const v = (env.ZELARI_KRAKEN_CROSS_MODEL ?? '').trim().toLowerCase();
+  return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
+}
+
 export interface QualifiedModelRef {
   provider: string;
   model: string;
@@ -161,8 +173,7 @@ export function resolveCrossModelVerifier(
   candidates: readonly { provider: string; model: string }[],
   env: NodeJS.ProcessEnv = process.env,
 ): { provider: string; model: string } | null {
-  const cross = (env.ZELARI_KRAKEN_CROSS_MODEL ?? '').trim().toLowerCase();
-  if (cross === '0' || cross === 'false' || cross === 'off') return null;
+  if (!isKrakenCrossModelEnabled(env)) return null;
   const specific = env.ZELARI_KRAKEN_VERIFY_MODEL?.trim();
   if (specific) {
     const qualified = parseQualifiedModelRef(specific);
@@ -203,10 +214,13 @@ export function resolveKrakenSubModel(
   // different provider family for the verify tentacle (explicit env already
   // won above). Returns a QUALIFIED ref so toolRegistry's parseQualifiedModelRef
   // path can split provider/model with graceful fallback.
+  // ZELARI_KRAKEN_CROSS_MODEL=0 opts out — same kill-switch honored by
+  // resolveCrossModelVerifier, so both cross-model entry points agree.
   if (
     agent === 'verify' &&
     opts.familyCandidates &&
-    opts.familyCandidates.length > 0
+    opts.familyCandidates.length > 0 &&
+    isKrakenCrossModelEnabled(env)
   ) {
     const picked = pickDifferentFamily(
       { provider: opts.provider ?? '', model: parentModel },
@@ -302,7 +316,53 @@ export function resolvePersonaModel(
 }
 
 /**
+ * Flatten a discovered models registry into cross-provider candidates.
+ *
+ * `ModelsRegistry` (modelDiscovery) is FLAT — keyed by provider id, each entry
+ * carrying its own model list — so every `(provider, model)` pair becomes one
+ * candidate and `pickDifferentFamily` can pick the first one outside the
+ * builder's family (P0.6 blind verification).
+ *
+ * Defensive by design: the registry is JSON read from disk, so malformed
+ * entries are skipped instead of throwing (fail-open → empty list).
+ */
+export function familyCandidatesFromRegistry(
+  registry: unknown,
+): { provider: string; model: string }[] {
+  if (!registry || typeof registry !== 'object') return [];
+  const out: { provider: string; model: string }[] = [];
+  for (const [key, entry] of Object.entries(registry as Record<string, unknown>)) {
+    const provider = key?.trim() ?? '';
+    if (!provider) continue;
+    const models = (entry as { models?: unknown } | null | undefined)?.models;
+    if (!Array.isArray(models)) continue;
+    for (const raw of models) {
+      const id =
+        typeof raw === 'string'
+          ? raw
+          : raw && typeof (raw as { id?: unknown }).id === 'string'
+            ? (raw as { id: string }).id
+            : '';
+      const model = id.trim();
+      if (model) out.push({ provider, model });
+    }
+  }
+  return out;
+}
+
+/**
  * Async resolve that loads discovery cache (ESM). Prefer this from toolRegistry.
+ *
+ * Beyond the active provider's model ids (cheap auto-pick for explore/verify),
+ * this also builds `familyCandidates` from the same flat registry so the
+ * verify tentacle can be routed to a DIFFERENT provider family (P0.6) — both
+ * routing options used to be dead code because the production call-site never
+ * supplied them.
+ *
+ * Fail-open exactly as before: with no registry (or an unreadable/damaged one)
+ * both lists stay empty and `resolveKrakenSubModel` returns the parent model.
+ * No TTL gate, mirroring `getDiscoveredModelIds` — a stale entry is used as-is
+ * and an id removed upstream falls back through the 404 retry in taskTool.
  */
 export async function resolveKrakenSubModelAsync(
   agent: TaskAgentKind,
@@ -311,17 +371,21 @@ export async function resolveKrakenSubModelAsync(
   opts: { provider?: string } = {},
 ): Promise<string> {
   let candidates: string[] = [];
-  if (opts.provider) {
-    try {
-      const mod = await import('../modelDiscovery.js');
+  let familyCandidates: { provider: string; model: string }[] = [];
+  try {
+    const mod = await import('../modelDiscovery.js');
+    if (opts.provider) {
       const ids = mod.getDiscoveredModelIds(opts.provider as never);
       if (Array.isArray(ids)) candidates = ids;
-    } catch {
-      candidates = [];
     }
+    familyCandidates = familyCandidatesFromRegistry(mod.loadModelsRegistry());
+  } catch {
+    candidates = [];
+    familyCandidates = [];
   }
   return resolveKrakenSubModel(agent, parentModel, env, {
     provider: opts.provider,
     candidates,
+    familyCandidates,
   });
 }
