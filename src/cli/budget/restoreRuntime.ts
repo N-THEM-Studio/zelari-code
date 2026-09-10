@@ -9,21 +9,26 @@
  *   completed 40/40 → new user turn → 0/40 (session total stays 40)
  */
 
-import { readSessionLog, resolveSessionsDir } from '@zelari/core/session';
+import { readSessionLogCached, resolveSessionsDir, type SessionLogCache } from '@zelari/core/session';
 import path from 'node:path';
 import type { BudgetRuntime } from './budgetRuntime.js';
 
 /**
  * Rebuild `budget` usage from `<sessionsDir>/<sessionId>/events.jsonl`.
  * Returns false when there is nothing to resume from (fresh session).
+ *
+ * PERF-4a: session log cache — pass the session's `SessionLogCache` to reuse
+ * the already-parsed prefix (kill switch ZELARI_SPINE_REPLAY_CACHE, default
+ * OFF: without it this is `readSessionLog` verbatim).
  */
 export async function restoreBudgetRuntimeFromSession(
   budget: BudgetRuntime,
   sessionId: string,
   baseDir?: string,
+  cache?: SessionLogCache,
 ): Promise<boolean> {
   const eventsPath = path.join(resolveSessionsDir({ baseDir }), sessionId, 'events.jsonl');
-  const report = await readSessionLog(eventsPath).catch(() => null);
+  const report = await readSessionLogCached(eventsPath, cache).catch(() => null);
   if (!report || report.events.length === 0) return false;
   budget.adoptLedgerFromEvents(report.events);
   return true;
@@ -32,13 +37,15 @@ export async function restoreBudgetRuntimeFromSession(
 /**
  * 2.6.1 (plan §6): hash of the LAST persisted session.harness_manifest
  * (null when the log has none) — the resume-time drift baseline.
+ * PERF-4a: session log cache (see above).
  */
 export async function lastHarnessManifestHash(
   sessionId: string,
   baseDir?: string,
+  cache?: SessionLogCache,
 ): Promise<string | null> {
   const eventsPath = path.join(resolveSessionsDir({ baseDir }), sessionId, 'events.jsonl');
-  const report = await readSessionLog(eventsPath).catch(() => null);
+  const report = await readSessionLogCached(eventsPath, cache).catch(() => null);
   if (!report) return null;
   for (let i = report.events.length - 1; i >= 0; i--) {
     const e = report.events[i]!;

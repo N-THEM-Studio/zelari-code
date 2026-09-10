@@ -27,8 +27,9 @@ import { TOOL_CALL_TRUNCATED_RECOVERY_USER, TEXT_TOOLS_FAILED_USER, TEXT_TOOLS_P
 import {
   SessionLogWriter,
   SessionLogLockedError,
+  SessionLogCache,
   resolveSessionsDir,
-  readSessionLog,
+  readSessionLogCached,
   buildProjection,
   deriveMessages,
   type SessionEventInput,
@@ -255,6 +256,13 @@ export class SessionSpineMirror {
   /** Seq the log continued from when adopting an existing session. */
   resumedFromSeq: number | undefined;
   readonly sessionsDir: string;
+  /**
+   * PERF-4a: session log cache — ONE per session (this mirror). Every read of
+   * `<sessionId>/events.jsonl` goes through it; the kill switch
+   * ZELARI_SPINE_REPLAY_CACHE defaults OFF (see @zelari/core/session
+   * replayCache.ts), and shared with the host helpers that take a cache.
+   */
+  readonly replayCache = new SessionLogCache();
 
   private constructor(
     readonly sessionId: string,
@@ -276,7 +284,11 @@ export class SessionSpineMirror {
     if (!spineEnabled()) return mirror;
     try {
       const sessionDir = path.join(mirror.sessionsDir, sessionId);
-      const report = await readSessionLog(path.join(sessionDir, 'events.jsonl'));
+      // PERF-4a: session log cache
+      const report = await readSessionLogCached(
+        path.join(sessionDir, 'events.jsonl'),
+        mirror.replayCache,
+      );
       const existed = report.events.length > 0 || report.issues.length > 0;
       // 2.6 Track A: a resumed session already carries its contract/user
       // history — never re-seed from a later steer (version authority §14.3).
@@ -489,8 +501,10 @@ export class SessionSpineMirror {
    */
   async derivedPriorTurns(): Promise<DerivedMessage[] | null> {
     if (this.status !== 'active' && this.status !== 'closed') return null;
-    const report = await readSessionLog(
+    // PERF-4a: session log cache
+    const report = await readSessionLogCached(
       path.join(this.sessionsDir, this.sessionId, 'events.jsonl'),
+      this.replayCache,
     ).catch(() => null);
     if (!report || report.events.length === 0) return null;
     return deriveMessages(report.events);
@@ -500,8 +514,10 @@ export class SessionSpineMirror {
   async compactionStateSnapshot(toSeq: number): Promise<CompactionStateSnapshot | null> {
     if (this.status !== 'active' && this.status !== 'closed') return null;
     await this.flush();
-    const report = await readSessionLog(
+    // PERF-4a: session log cache
+    const report = await readSessionLogCached(
       path.join(this.sessionsDir, this.sessionId, 'events.jsonl'),
+      this.replayCache,
     ).catch(() => null);
     if (!report || report.events.length === 0) return null;
     return buildCompactionStateSnapshot(report.events, toSeq);
@@ -514,8 +530,10 @@ export class SessionSpineMirror {
    */
   async lastVerificationRun(): Promise<SessionVerificationRunSnapshot | null> {
     if (this.status !== 'active' && this.status !== 'closed') return null;
-    const report = await readSessionLog(
+    // PERF-4a: session log cache
+    const report = await readSessionLogCached(
       path.join(this.sessionsDir, this.sessionId, 'events.jsonl'),
+      this.replayCache,
     ).catch(() => null);
     if (!report) return null;
     return lastVerificationRunFromLog(report.events);
@@ -702,7 +720,8 @@ export class SessionSpineMirror {
       seq = seq.then(async (s) => {
         try {
           const eventsPath = path.join(this.sessionsDir, this.sessionId, 'events.jsonl');
-          const report = await readSessionLog(eventsPath).catch(() => null);
+          // PERF-4a: session log cache
+          const report = await readSessionLogCached(eventsPath, this.replayCache).catch(() => null);
           if (!report || typeof s !== 'number') return s;
           const current = latestTaskContract(report.events);
           if (!current) return s;
@@ -829,7 +848,8 @@ export async function wrapSessionWriter(
     // active epoch with the SAME helper headless uses. An interrupted 12/40
     // resumes at 28 remaining; the next user turn starts a fresh 0/40 epoch.
     if (spine.resumedFromSeq !== undefined && spine.resumedFromSeq > 0) {
-      await restoreBudgetRuntimeFromSession(budget, sessionId, options.baseDir);
+      // PERF-4a: session log cache (the mirror owns the per-session instance).
+      await restoreBudgetRuntimeFromSession(budget, sessionId, options.baseDir, spine.replayCache);
     }
     spine.attachBudgetRuntime(budget);
     // 2.6.1 (plan §6): manifest presence = 100% + resume drift detection.
@@ -859,10 +879,12 @@ export interface SpineResumeContext {
 export async function resumeSpineContext(
   sessionId: string,
   baseDir?: string,
+  /** PERF-4a: session log cache — omit to read through the plain reader. */
+  cache?: SessionLogCache,
 ): Promise<SpineResumeContext | null> {
   const sessionsDir = resolveSessionsDir({ baseDir });
   const eventsPath = path.join(sessionsDir, sessionId, 'events.jsonl');
-  const report = await readSessionLog(eventsPath).catch(() => null);
+  const report = await readSessionLogCached(eventsPath, cache).catch(() => null);
   if (!report || (report.events.length === 0 && report.issues.length === 0)) return null;
   return {
     projection: buildProjection(report.events, report.issues),
@@ -904,7 +926,8 @@ export async function noteHarnessLifecycle(
       // Resume: backfill only when the log predates harness manifests.
       // (Drift detection on manifest change was retired with W5 — the event
       // kind no longer exists; old logs replay it as a schema-mismatch note.)
-      if ((await lastHarnessManifestHash(sessionId, baseDir)) === null) {
+      // PERF-4a: session log cache (same per-session instance as the spine).
+      if ((await lastHarnessManifestHash(sessionId, baseDir, spine.replayCache)) === null) {
         spine.harnessManifest(manifest, manifestHash);
       }
     } else {

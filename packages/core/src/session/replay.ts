@@ -47,14 +47,34 @@ export async function readSessionLog(filePath: string): Promise<ReplayReport> {
     }
     throw err;
   }
+  return parseSessionLogText(filePath, content);
+}
+
+/** Whole-file text → ReplayReport (shared with the incremental reader, Int4a). */
+export function parseSessionLogText(filePath: string, content: string): ReplayReport {
+  const { events, issues } = parseSessionLogLines(content.split('\n'));
+  return { path: filePath, events, issues, ok: issues.length === 0 };
+}
+
+/**
+ * Parse ONE batch of raw JSONL lines (as produced by `split('\n')`), carrying
+ * the running `expected` seq and the 0-based index of the batch's first line.
+ * The full reader above and the incremental byte-append reader (replayCache.ts)
+ * share this, so both report the SAME events/issues for the same log — that
+ * equivalence is the replay-cache contract.
+ */
+export function parseSessionLogLines(
+  lines: readonly string[],
+  opts: { expected?: number; linesConsumed?: number } = {},
+): { events: SessionEventEnvelope[]; issues: ReplayIssue[]; expected: number; linesConsumed: number } {
   const events: SessionEventEnvelope[] = [];
   const issues: ReplayIssue[] = [];
-  let expected = 1;
-  const lines = content.split('\n');
+  const base = opts.linesConsumed ?? 0;
+  let expected = opts.expected ?? 1;
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed) continue;
-    const lineNo = i + 1;
+    const lineNo = base + i + 1;
     let parsed: unknown;
     try {
       parsed = JSON.parse(trimmed);
@@ -88,7 +108,7 @@ export async function readSessionLog(filePath: string): Promise<ReplayReport> {
       expected = envelope.seq + 1;
     }
   }
-  return { path: filePath, events, issues, ok: issues.length === 0 };
+  return { events, issues, expected, linesConsumed: base + lines.length };
 }
 
 /** Loose summary of a verification.run event (defensive reads). */

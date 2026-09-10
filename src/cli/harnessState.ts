@@ -13,7 +13,7 @@
  * `verification.run` is not admissible (mirrors evaluateStrictBuildGateFromSession).
  */
 import path from 'node:path';
-import { readSessionLog, type SessionEventEnvelope } from '@zelari/core/session';
+import { readSessionLogCached, type SessionEventEnvelope, type SessionLogCache } from '@zelari/core/session';
 
 /** Verdict snapshot of the LAST `verification.run` inside a turn. */
 export interface TurnVerificationRecord {
@@ -334,8 +334,15 @@ function contractFor(t: TurnAcc): TurnCompletionContract {
  * Convenience read-model loader for a session DIR (the `<id>/` folder under
  * `.zelari/sessions` containing `events.jsonl`). Tolerant like readSessionLog:
  * a missing log yields an empty pending state, never a throw.
+ *
+ * PERF-4a: session log cache — pass the session's `SessionLogCache` to reuse
+ * the parsed prefix (kill switch ZELARI_SPINE_REPLAY_CACHE, default OFF:
+ * without a cache this is `readSessionLog` verbatim).
  */
-export async function readHarnessState(sessionDir: string): Promise<HarnessState> {
-  const report = await readSessionLog(path.join(sessionDir, 'events.jsonl'));
+export async function readHarnessState(
+  sessionDir: string,
+  cache?: SessionLogCache,
+): Promise<HarnessState> {
+  const report = await readSessionLogCached(path.join(sessionDir, 'events.jsonl'), cache);
   return deriveHarnessState(report.events);
 }

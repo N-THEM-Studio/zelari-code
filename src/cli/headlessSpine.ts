@@ -22,7 +22,7 @@ import {
   type SessionEventInput,
 } from '@zelari/core/session';
 import { deriveMissionState } from '@zelari/core/mission';
-import { readSessionLog } from '@zelari/core/session';
+import { readSessionLogCached } from '@zelari/core/session';
 import path from 'node:path';
 import { resolveProfile, toolManifestHash } from '@zelari/core/runtime';
 import type { ToolFingerprint } from '@zelari/core';
@@ -125,7 +125,11 @@ async function countVerificationEvidenceInLog(
   if (mirror.status !== 'active' && mirror.status !== 'closed') return -1;
   try {
     await mirror.flush().catch(() => undefined);
-    const report = await readSessionLog(path.join(mirror.sessionsDir, sessionId, 'events.jsonl'));
+    // PERF-4a: session log cache (the mirror owns the per-session instance).
+    const report = await readSessionLogCached(
+      path.join(mirror.sessionsDir, sessionId, 'events.jsonl'),
+      mirror.replayCache,
+    );
     return report.events.filter((e) => e.kind === 'verification.evidence').length;
   } catch (err) {
     process.stderr.write(
@@ -169,7 +173,8 @@ export async function openHeadlessSpine(opts: {
     const budget = new BudgetRuntime(profileId, { enforcement: resolveResourceEnforcement() });
     if (spine.resumedFromSeq !== undefined && spine.resumedFromSeq > 0) {
       // 2.6.1 plan §10: the SAME helper every host uses (parity invariant).
-      await restoreBudgetRuntimeFromSession(budget, opts.sessionId, opts.baseDir);
+      // PERF-4a: session log cache (the mirror owns the per-session instance).
+      await restoreBudgetRuntimeFromSession(budget, opts.sessionId, opts.baseDir, spine.replayCache);
     }
     spine.attachBudgetRuntime(budget);
     // 2.6.1 (plan §6): same lifecycle as the TUI — manifest presence 100%,
@@ -320,6 +325,8 @@ export async function seedHeadlessModelHistory(
   if (mirror.status !== 'active') {
     return { history: legacySeed, importedCount: 0, source: 'legacy-fallback' };
   }
+  // PERF-4a: session log cache — derivedPriorTurns() reads through the
+  // mirror's per-session SessionLogCache (the seed is the hot consumer).
   const existing = await mirror.derivedPriorTurns();
   if (existing && existing.length > 0) {
     return { history: derivedModelSeed(existing), importedCount: 0, source: 'spine' };
