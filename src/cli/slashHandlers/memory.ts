@@ -23,6 +23,7 @@ const USAGE = [
   '/memory index [--force]',
   '/memory promote <id> — append durable knowledge to managed AGENTS.md section',
   '/memory stats | doctor | export [project-relative-path]',
+  '/memory audit — read-only decay + contradiction report (nothing is mutated)',
 ].join('\n  ');
 
 function compact(value: unknown, max = 500): string {

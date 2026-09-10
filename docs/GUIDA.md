@@ -582,9 +582,9 @@ All commands start with `/` and are typed in the TUI input bar.
 | `/memory promote <id>` | Promote durable knowledge into the managed `AGENTS.md` block |
 | `/memory doctor` | Schema, integrity, foreign keys and FTS |
 | `/memory export [path]` | Export JSON within the project |
-| `/memory audit` | Read-only decay + contradiction report (works, but not listed in `/help`) |
+| `/memory audit` | Read-only decay + contradiction report (listed in `/help` and in the `/memory` usage footer) |
 
-> `/memory audit` is missing from both help surfaces (the `/help` list and the `/memory` usage footer) yet it is reachable and strictly read-only: stale confidence is decayed on the fly (30-day half-life, 0.05 floor) and mirror-negation contradictions are flagged for review — nothing is mutated, retracted or auto-promoted.
+> `/memory audit` is listed in both help surfaces (the `/help` list and the `/memory` usage footer). Behaviour is unchanged and strictly read-only: stale confidence is decayed on the fly (30-day half-life, 0.05 floor) and mirror-negation contradictions are flagged for review — nothing is mutated, retracted or auto-promoted.
 
 #### Sessions and transcript
 
