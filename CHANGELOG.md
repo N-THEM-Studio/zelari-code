@@ -5,6 +5,32 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.38.0] - 2026-09-10
+
+Kraken and the verification gate get much faster **without touching a single quality gate**. The 2026-09-10 performance plan (v2, verified against the tree) lands in full: tentacle model routing is finally wired, the gate reuses command results when the tree is unchanged, long sessions stop re-reading the whole spine every turn, and provider failover reaches headless and tentacles.
+
+### Added
+
+- **Tentacle model routing is wired (was dead code)** — the production call-site now feeds discovery candidates into `resolveKrakenSubModelAsync`: `explore`/`verify` auto-pick a cheap model and `verify` prefers a cross-family one when available; `general` stays on the lead model. Fail-open: no discovery registry → parent model, bit-identical to before. `ZELARI_KRAKEN_AUTO_MODEL=0` / `ZELARI_KRAKEN_CROSS_MODEL=0` kill-switches.
+- **Cached gate results (`ZELARI_VERIFY_CACHE=1`, default ON)** — `CachedShellProvider` decorates the gate shell (pack + contract criteria share one LRU-32). Key includes exact command, cwd, timeout and full tree state (`HEAD` + `git status --porcelain --untracked-files=all`), so any tentacle/repair write invalidates. Evidence stays honest: same digest/seq, `cached: true` + `"(cached — tree unchanged since last run)"` detail, `durationMs` ~0. Non-git and hung-git (>10 s) always execute.
+- **Parallel verify pack (`ZELARI_VERIFY_PARALLEL=1`, default OFF)** — engine runs command criteria with bounded concurrency (`ZELARI_VERIFY_CONCURRENCY`, default 3), results stay in criterion order. Off by default: on this repo `typecheck`/`test`/`build` share `packages/core/dist` (clean + rebuild), so enable only when commands are independent.
+- **Incremental spine replay (`ZELARI_SPINE_REPLAY_CACHE=1`, default OFF for dogfood)** — `SessionLogCache` reads only new bytes since the last full parse (partial trailing line never double-counted; truncation → full re-read). Wired into all hot `readSessionLog` call-sites (sessionSpine, headlessSpine, restoreRuntime, harnessState).
+- **requestSnapshot modes (`ZELARI_REQUEST_SNAPSHOT=full|lite|off`, default `full`)** — `lite` drops the double `structuredClone` + per-tool clones via shallow copies and makes the full-request digest lazy (same fingerprint when read); `off` skips snapshot construction in `AgentHarness` (metering base only).
+- **Headless/tentacle transport failover (`ZELARI_HEADLESS_FAILOVER=1`, default OFF)** — same single-shot cross-provider semantics as the TUI, wired into `runHeadless` and the tentacle stream (+ the 404→parent retry path). `[failover]` stderr audit; respects `ANATHEMA_FAILOVER=0` and `ANATHEMA_FAILOVER_PROVIDER`. Local-CLI is never wrapped.
+- **`npm run perf:bench`** — `scripts/perf-bench.mjs` collects radio + completion-proof of a run into a Phase-0 metrics table (wall-clock, per-node-kind durations, gate time, provider round-trips).
+
+### Changed
+
+- **Radio writes no longer reopen the file per event** — fd-cache `writeSync` (1.94× faster on bursts, durable on return; 14 call-sites untouched after the promise-chain variant was rejected: 6 existing tests read the radio synchronously right after emit).
+- **Memory-graph tail is parallel** — `linkMemoryGraph` connects edges with bounded concurrency 8 (`runWithLimit`), `consolidate()` still awaited after all connects, fail-open unchanged.
+- **Worktree lifecycle is cheaper** — `git rev-parse --show-toplevel` memoized per process; branch deletes + `worktree prune` batched at end of run (`ZELARI_KRAKEN_WORKTREE_CLEANUP=eager` restores per-writer cleanup). `ZELARI_KRAKEN_WORKTREE=auto` is now documented as recommended on medium/large repos (default stays `off` until conflict-rate data says otherwise).
+- **Legacy memory import stops rescanning** — completion marker (`.zelari/memory/legacy-import-done.json`) skips `log.jsonl` entirely on later boots; first import batches `hasImports` (chunked `IN` queries of 500) instead of one RPC per row. Delete the marker to force re-import.
+
+### Fixed
+
+- **`ZELARI_KRAKEN_CROSS_MODEL=0` now actually disables cross-family verify** — the kill-switch was never consulted by the routing branch (silently inert since introduction).
+- **Tentacle 404→parent retry is reachable again** — the fallback was dead code while routing never produced a model different from the parent.
+
 ## [2.37.3] - 2026-09-09
 
 Desktop tentacles work again with long GLM-5.3 / Grok thinking. Until 2.37.1 a silent tentacle hit the **5 min** provider stream idle and returned an error to the lead, so the turn continued. 2.37.2 raised first-token idle to **10 min** (Grok Build alignment) — the same number as the sidecar idle watchdog (since 2.23). Tentacle `thinking_delta` never reaches parent NDJSON, so Desktop treated the lead as hung and sent `session.cancel` (`turn_timeout`) at 10 minutes with no explanation.
