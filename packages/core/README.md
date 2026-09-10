@@ -50,6 +50,29 @@ Only the `exports` map in `package.json` is public. Prefer curated subpaths over
 - Core versions are lockstep with the CLI (`verify-versions` gate); `CORE_VERSION`
   never moves independently of a CLI release.
 
+#### Three documented public interfaces (t53)
+
+Everything else in this package is implementation detail. These three are the
+interfaces we document, support, and pin by test:
+
+| Interface | Subpath | Surface you may call |
+|---|---|---|
+| `AgentHarness` (class) | `@zelari/core/harness` | `run()` |
+| `ToolRegistry` (class) + `getToolRegistry()` | `@zelari/core/harness/tools` | `register()`, `invoke()`, `getToolRegistry()` |
+| Resource ledger | `@zelari/core/runtime` | `ResourceLedgerEntry`, `ResourceLedgerReason`, `computeBudget()`, `usageFromLedger()` |
+
+- There is **no `Ledger` class** in this package: the ledger surface is the
+  `ResourceLedgerEntry` / `ResourceLedgerReason` pair plus the pure helpers above.
+- Dropping one of these exports, or `AgentHarness.prototype.run` /
+  `ToolRegistry.prototype.invoke`, is a **breaking change → major**. Adding
+  exports is additive → minor.
+- Pinned mechanically by
+  [`src/publicApi.contract.test.ts`](src/publicApi.contract.test.ts); rationale in
+  [ADR-0037](../../docs/decisions/0037-public-api-contract-tests.md).
+- Note: the root `@zelari/core` barrel is permissive (14 `export *`) and still
+  re-exports `AgentHarness`, `computeBudget`, `usageFromLedger`, `CORE_VERSION`,
+  but **not** `ToolRegistry` — import that one from `@zelari/core/harness/tools`.
+
 Stability policy: [docs/decisions/0004-public-api-stability-policy.md](../../docs/decisions/0004-public-api-stability-policy.md).
 
 If you still import pre-0.5.0 `src/main/core/…` paths, see [MIGRATION.md](../../MIGRATION.md).

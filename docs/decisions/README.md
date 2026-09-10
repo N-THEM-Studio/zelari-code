@@ -53,6 +53,7 @@ Generated from the real file tree (triage t37/S6, 2026-09-04).
 | 0034 | Desktop ships the same contract (guided CLI install first, bundling deferred) | ✅ Accepted | 2026-09-02 | identity wave |
 | 0035 | Parallel council fan-out + trace view | ✅ Accepted | 2026-07-20 | Phase B deferred; **renumbered from duplicate "0015"** (triage 2026-09-04) |
 | 0036 | Evolution Engine: proposer/judge separation | Accepted | 2026-09-04 | ZELARI_EVOLUTION=0 default; JUDGE_PATHS gate in CI |
+| 0037 | Public API contract tests for the three documented interfaces | ✅ Accepted | 2026-09-11 | W5.3 (t53): pins `AgentHarness` / `ToolRegistry` / `ResourceLedger*`; there is no `Ledger` class |
 
 Numbers never assigned: **0011, 0012** (free slots, do not fill).
 
