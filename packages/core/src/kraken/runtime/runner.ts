@@ -317,18 +317,22 @@ export class ScriptRunner {
   finalize(opts: { converged: boolean; cancelled?: boolean }): ScriptRunResult {
     if (opts.cancelled) this.cancelled = true;
     const failed = [...this.tentaclesById.values()].filter((r) => r.status === 'error');
+    const unresolvedFindings = failed.map((r) => ({
+      nodeId: r.id,
+      label: r.label,
+      reason: r.status === 'error' ? 'fail' : 'unknown',
+      findings: r.findings,
+    }));
     return {
       tentacles: this.tentaclesById,
       mergeCount: this.mergeCount,
       converged: opts.converged,
+      // t55: distinguish "converged clean" from "converged degraded" — the
+      // merge/exit semantics stay on `converged`; this is presentation data.
+      convergedClean: opts.converged && unresolvedFindings.length === 0,
       cancelled: this.cancelled,
       durationMs: Date.now() - this.startTime,
-      unresolvedFindings: failed.map((r) => ({
-        nodeId: r.id,
-        label: r.label,
-        reason: r.status === 'error' ? 'fail' : 'unknown',
-        findings: r.findings,
-      })),
+      unresolvedFindings,
     };
   }
 }

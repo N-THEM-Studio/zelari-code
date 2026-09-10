@@ -228,6 +228,13 @@ export interface ScriptRunResult {
   mergeCount: number;
   /** Aggregate verdict surfaced to the workbench / digest. */
   converged: boolean;
+  /**
+   * t55: converged AND zero unresolved findings. `converged` alone collapses
+   * "every node settled and every verdict accounted for" with "settled, but
+   * findings were left on the table" — this flag makes the distinction
+   * machine-readable without changing exit codes or gating semantics.
+   */
+  convergedClean: boolean;
   /** When the run stopped because the abort signal fired. */
   cancelled: boolean;
   /** Wall-clock duration of the whole plan (ms). */

@@ -99,6 +99,15 @@ export interface SliceTrace {
   runMode: CouncilRunMode;
   completionOk: boolean;
   degraded?: boolean;
+  /**
+   * t55 (additive, display-only): whether the slice's underlying graph — when
+   * the slice ran one — converged with ZERO unresolved verify findings.
+   * ABSENT means "unknown" on legacy traces: never coerced to true (which
+   * would mask open findings) nor to false, and never used to gate `status`
+   * or mission completion. Populated only by hosts that actually have the
+   * graph summary; council-only slices leave it unset.
+   */
+  convergedClean?: boolean;
   /** Token totali (prompt+completion) consumati da questa slice. */
   costTokens?: number;
   /** Costo stimato in USD di questa slice. */

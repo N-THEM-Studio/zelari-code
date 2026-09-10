@@ -1259,6 +1259,23 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ok: true,
   });
 
+  // t57 C1: sidecar with the FULL conclusion — the radio caps detail at 240
+  // chars (biased against medium/verbose explores), which makes the
+  // explore→plan coverage metric incomputable from the radio alone.
+  // Fail-open: observability extra, never a dependency of the run.
+  try {
+    const { writeTentacleSidecar } = await import('../kraken/exploreCoverage.js');
+    await writeTentacleSidecar(parentCwd, sessionId, opts.nodeId ?? liveId, {
+      agent,
+      model: sub.model,
+      durationMs,
+      result,
+      worktree: worktree?.path ?? null,
+    });
+  } catch {
+    /* fail-open: the sidecar is best-effort */
+  }
+
   let memoryId: string | undefined;
   if (deps.memoryService && deps.memoryAutoWrite !== false) {
     try {

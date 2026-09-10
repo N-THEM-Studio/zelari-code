@@ -33,6 +33,7 @@ function makeResult(opts: { converged: boolean; refs: TentacleRef[] }): ScriptRu
     tentacles: tentaclesById,
     mergeCount: 1,
     converged: opts.converged,
+    convergedClean: opts.converged,
     cancelled: false,
     durationMs: 1000,
     unresolvedFindings: [],

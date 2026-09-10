@@ -476,6 +476,15 @@ export interface KrakenGraphExecutorOptions {
 export interface KrakenExecutionSummary {
   graph: TaskGraph;
   converged: boolean;
+  /**
+   * t55: converged AND zero unresolved verify findings. `converged` alone
+   * reads as "green" in UI/strict-done/mission while it may hide findings
+   * left on the table; this flag makes "converged — degraded (N unresolved)"
+   * distinguishable everywhere WITHOUT changing exit codes or gating —
+   * degraded convergence still exits 0 by design (the work exists and is
+   * merged; blocking it would fail the whole graph on one prompt drift).
+   */
+  convergedClean: boolean;
   failedNodeIds: string[];
   counts: Record<string, number>;
   backtest?: BacktestResult;
@@ -784,7 +793,9 @@ export class KrakenGraphExecutor {
       const { id, res } = await Promise.race(inFlight.values());
       inFlight.delete(id);
       const settledNode = graph.nodes.get(id);
-      if (settledNode) this.applyResult(graph, settledNode, res);
+      // t56: settle through the re-ask wrapper so an `unknown` verify verdict
+      // gets ONE minimal trailer recovery before being recorded unresolved.
+      if (settledNode) await this.applyResultWithReask(graph, settledNode, res);
       updateKrakenGraphLive(graph);
     }
 
@@ -795,7 +806,7 @@ export class KrakenGraphExecutor {
     if (inFlight.size > 0) {
       for (const { id, res } of await Promise.all(inFlight.values())) {
         const node = graph.nodes.get(id);
-        if (node) this.applyResult(graph, node, res);
+        if (node) await this.applyResultWithReask(graph, node, res);
       }
       inFlight.clear();
     }
@@ -811,6 +822,13 @@ export class KrakenGraphExecutor {
 
     let backtest: BacktestResult | undefined;
     const converged = !this.aborted && isConverged(graph);
+    // t55: `converged` alone collapses two different outcomes — everything
+    // settled AND every verdict accounted for, vs settled with findings left
+    // on the table. The clean flag distinguishes them for UI/radio/mission;
+    // it NEVER gates: exit codes and merge semantics ride `converged` as
+    // before (degraded convergence still exits 0 by design).
+    const unresolvedCount = this.unresolved.length;
+    const convergedClean = converged && unresolvedCount === 0;
     if (converged) {
       const gateOn =
         this.worldModelGateOverride ?? isWorldModelGateEnabled(this.parentCwd);
@@ -819,7 +837,13 @@ export class KrakenGraphExecutor {
       }
       this.radio('graph_converged', {
         description: 'graph executor',
-        detail: backtest ? `backtest: ${backtest.passed}/${backtest.total} passed` : undefined,
+        detail:
+          [
+            backtest ? `backtest: ${backtest.passed}/${backtest.total} passed` : undefined,
+            convergedClean ? undefined : `degraded: ${unresolvedCount} unresolved`,
+          ]
+            .filter((part) => part !== undefined)
+            .join(' — ') || undefined,
         ok: backtest ? backtest.ok : true,
       });
     } else {
@@ -836,9 +860,13 @@ export class KrakenGraphExecutor {
     // Final workbench snapshot: emit the outcome event and force a write so
     // the desktop graph/tail tabs show the settled graph even if the process
     // exits right after (the 500ms debounce alone could drop the last state).
+    // t55: the `graph_converged` token stays the PREFIX so existing desktop
+    // parsers keep matching; degraded runs append the reason as a suffix.
     this.wb?.logEvent(
       converged
-        ? 'graph_converged'
+        ? convergedClean
+          ? 'graph_converged'
+          : `graph_converged (degraded: ${unresolvedCount} unresolved)`
         : `graph_failed: ${this.aborted ? 'cancelled' : (failedNodeIds(graph).join(', ') || 'none')}`,
     );
     await this.wb?.flush();
@@ -860,9 +888,33 @@ export class KrakenGraphExecutor {
       }),
     );
 
+    // t57 C3: explore→plan coverage from the tentacle sidecars (C1). Off the
+    // critical path and fail-open: measurement never blocks the summary. The
+    // report lands as coverage.json next to the sidecars it measured; the
+    // quick-default flip stays gated on baseline data this starts collecting.
+    void (async () => {
+      try {
+        const { computeAndStoreExploreCoverage } = await import('./exploreCoverage.js');
+        const report = await computeAndStoreExploreCoverage(this.parentCwd, this.sessionId);
+        if (report) {
+          this.radio('node_meter', {
+            description: 'explore coverage',
+            agent: 'coverage',
+            detail:
+              `touched=${report.touched.length} covered=${report.covered.length} ` +
+              `ratio=${report.ratio.toFixed(2)}`,
+            ok: true,
+          });
+        }
+      } catch {
+        /* fail-open */
+      }
+    })();
+
     return {
       graph,
       converged,
+      convergedClean,
       failedNodeIds: failedNodeIds(graph),
       counts: countByStatus(graph) as unknown as Record<string, number>,
       durationsMs: Object.fromEntries(this.durationsMs),
@@ -1557,13 +1609,45 @@ export class KrakenGraphExecutor {
     };
   }
 
+  /**
+   * t56: settle a node, running the minimal one-shot trailer re-ask FIRST
+   * when a verify's verdict failed to parse. The re-ask is a single
+   * no-tools completion on the reviewer's own prior output (weaknessMeter
+   * pattern), so "one re-ask" costs a trailer line, not a second verify.
+   * Every non-unknown path is byte-identical to the old `applyResult`.
+   */
+  private async applyResultWithReask(
+    graph: TaskGraph,
+    node: TaskNode,
+    res: TentacleResult,
+  ): Promise<void> {
+    let verifyOverride: 'pass' | 'fail' | undefined;
+    if (node.kind === 'verify' && res.ok && typeof res.result === 'string') {
+      const pre = parseVerifyVerdict(res.result);
+      if (pre.verdict === 'unknown') {
+        verifyOverride = await this.maybeReaskUnknownVerdict(node);
+      }
+    }
+    this.applyResult(graph, node, res, verifyOverride);
+  }
+
   /** Apply a tentacle result to its node: success, retry, fix-spawn, or terminal failure. */
-  private applyResult(graph: TaskGraph, node: TaskNode, res: TentacleResult): void {
-    this.applyResultInner(graph, node, res);
+  private applyResult(
+    graph: TaskGraph,
+    node: TaskNode,
+    res: TentacleResult,
+    verifyOverride?: 'pass' | 'fail',
+  ): void {
+    this.applyResultInner(graph, node, res, verifyOverride);
     this.recordNodeReputation(node, res);
   }
 
-  private applyResultInner(graph: TaskGraph, node: TaskNode, res: TentacleResult): void {
+  private applyResultInner(
+    graph: TaskGraph,
+    node: TaskNode,
+    res: TentacleResult,
+    verifyOverride?: 'pass' | 'fail',
+  ): void {
     if (res.ok) {
       if (res.memoryId) this.memoryIds.set(node.id, res.memoryId);
       node.status = 'done';
@@ -1583,7 +1667,7 @@ export class KrakenGraphExecutor {
       this.reconcileRepairedNode(graph, node);
       // A verify that RAN successfully is not the same thing as work that
       // PASSED. Read what it actually concluded.
-      if (node.kind === 'verify') this.applyVerifyVerdict(graph, node);
+      if (node.kind === 'verify') this.applyVerifyVerdict(graph, node, verifyOverride);
       return;
     }
 
@@ -1866,8 +1950,47 @@ export class KrakenGraphExecutor {
    * every graph — but it is recorded, because a gate that has silently stopped
    * working is worse than no gate.
    */
-  private applyVerifyVerdict(graph: TaskGraph, verify: TaskNode): void {
-    const { verdict, findings } = parseVerifyVerdict(verify.result);
+  /**
+   * t56 — ONE minimal re-ask for an `unknown` verify verdict: a single
+   * no-tools completion on the reviewer's own prior output (weaknessMeter
+   * pattern), parsed with the SAME single-source parser. Default ON,
+   * opt-out ZELARI_KRAKEN_VERIFY_REASK=0. Returns undefined when disabled
+   * or failed — the existing unknown-flow is then unchanged. The node's
+   * raw result is never rewritten; audit sees the original verbatim.
+   */
+  private async maybeReaskUnknownVerdict(verify: TaskNode): Promise<'pass' | 'fail' | undefined> {
+    let reask: typeof import('./verifyReask.js') | undefined;
+    try {
+      reask = await import('./verifyReask.js');
+    } catch {
+      return undefined;
+    }
+    const text = typeof verify.result === 'string' ? verify.result : '';
+    if (text.length === 0) return undefined;
+    const verdict = await reask.reaskVerifyTrailer(text);
+    if (verdict !== 'pass' && verdict !== 'fail') return undefined;
+    this.radio('node_end', {
+      description: verify.label,
+      agent: 'verify',
+      detail: `unknown verdict recovered via one-shot re-ask → ${verdict.toUpperCase()}`,
+      ok: true,
+    });
+    return verdict;
+  }
+
+  private applyVerifyVerdict(
+    graph: TaskGraph,
+    verify: TaskNode,
+    reaskedVerdict?: 'pass' | 'fail',
+  ): void {
+    const parsed = parseVerifyVerdict(verify.result);
+    // t56: a recovered trailer overrides ONLY an `unknown` parse — never a
+    // fail→pass flip and never the node's raw result (audit stays verbatim).
+    const verdict =
+      parsed.verdict === 'unknown' && (reaskedVerdict === 'pass' || reaskedVerdict === 'fail')
+        ? reaskedVerdict
+        : parsed.verdict;
+    const findings = parsed.findings;
     if (verdict === 'pass') return;
 
     const writer = this.writerBehind(verify, graph);
