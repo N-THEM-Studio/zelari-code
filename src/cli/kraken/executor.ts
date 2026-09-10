@@ -58,11 +58,14 @@ import {
   type TaskThoroughness,
 } from './tentacle.js';
 import {
+  beginKrakenWorktreeCleanupBatch,
+  flushKrakenWorktreeCleanupBatch,
   mergeKrakenWorktree,
   type WorktreeHandle,
   type WorktreeMergeResult,
 } from '../tools/krakenWorktree.js';
 import { appendKrakenRadio } from '../tools/krakenRadio.js';
+import { runWithLimit } from '../asyncLimit.js';
 import { runTransactional } from './transactional.js';
 import { runBacktest, type BacktestResult } from '../workspace/worldModel.js';
 import {
@@ -694,11 +697,22 @@ export class KrakenGraphExecutor {
       graphTimer.unref?.();
     }
 
+    // Int3c (plan v2 §7.3): this run owns the worktree cleanup batch. Eager
+    // per-worktree `worktree remove --force` frees the filesystem immediately,
+    // while `worktree prune` + `branch -D` are queued and issued ONCE in the
+    // `finally` below — the real end-of-run site, after `schedule()` has
+    // merged every deferred worktree and written the graph snapshot.
+    const worktreeCleanupBatched = beginKrakenWorktreeCleanupBatch(process.env);
+
     try {
       return await this.schedule(graph);
     } finally {
       if (graphTimer) clearTimeout(graphTimer);
       this.signal?.removeEventListener('abort', onAbort);
+      // Fires on the throw path too: the queue is in-process state, so a
+      // cancelled or failed run must not be the only thing that ever gets to
+      // delete the branches whose worktrees it already removed.
+      if (worktreeCleanupBatched) await flushKrakenWorktreeCleanupBatch();
     }
   }
 
@@ -1737,6 +1751,10 @@ export class KrakenGraphExecutor {
     const memory = this.deps.memoryService;
     if (!memory || this.deps.memoryAutoWrite === false) return;
     try {
+      // Int 3b: collect the edges FIRST, then link them with a bounded fan-out
+      // (8 concurrent connects). The previous loop awaited one round-trip per
+      // edge, so K edges cost K sequential latencies before `remember` ran.
+      const edges: Array<Parameters<NonNullable<typeof memory>['connect']>[0]> = [];
       for (const node of graph.nodes.values()) {
         const nodeMemoryId = this.memoryIds.get(node.id);
         if (!nodeMemoryId) continue;
@@ -1745,7 +1763,7 @@ export class KrakenGraphExecutor {
           if (!dependencyMemoryId) continue;
           if (node.kind === 'verify') {
             const verdict = parseVerifyVerdict(node.result).verdict;
-            await memory.connect({
+            edges.push({
               from: dependencyMemoryId,
               to: nodeMemoryId,
               relation: verdict === 'pass'
@@ -1753,18 +1771,15 @@ export class KrakenGraphExecutor {
                 : verdict === 'fail'
                   ? 'invalidated_by'
                   : 'related_to',
-              createdBy: 'kraken-orchestrator',
             });
           } else {
-            await memory.connect({
-              from: nodeMemoryId,
-              to: dependencyMemoryId,
-              relation: 'derived_from',
-              createdBy: 'kraken-orchestrator',
-            });
+            edges.push({ from: nodeMemoryId, to: dependencyMemoryId, relation: 'derived_from' });
           }
         }
       }
+      await runWithLimit(edges, 8, (edge) =>
+        memory.connect({ ...edge, createdBy: 'kraken-orchestrator' }).catch(() => undefined),
+      );
       const counts = countByStatus(graph) as unknown as Record<string, number>;
       const outcome = await memory.remember({
         kind: converged ? 'outcome' : 'failure',
@@ -1778,14 +1793,15 @@ export class KrakenGraphExecutor {
         metadata: { graphId: graph.id, converged, counts, writeClass: 'auto' },
         writeClass: 'auto',
       });
-      for (const memoryId of this.memoryIds.values()) {
-        await memory.connect({
-          from: outcome.id,
-          to: memoryId,
-          relation: 'derived_from',
-          createdBy: 'kraken-orchestrator',
-        });
-      }
+      const outcomeEdges = [...this.memoryIds.values()].map((memoryId) => ({
+        from: outcome.id,
+        to: memoryId,
+        relation: 'derived_from' as const,
+        createdBy: 'kraken-orchestrator',
+      }));
+      await runWithLimit(outcomeEdges, 8, (edge) =>
+        memory.connect(edge).catch(() => undefined),
+      );
       await memory.consolidate({
         source: { agent: 'kraken-orchestrator', sessionId: this.sessionId },
         minOccurrences: 2,

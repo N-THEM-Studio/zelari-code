@@ -7,7 +7,7 @@
  * @since Kraken v1.x slice 2
  */
 
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeSync } from 'node:fs';
 import path from 'node:path';
 
 export type KrakenRadioKind =
@@ -105,7 +105,63 @@ function radioPath(cwd: string, sessionId: string): string {
   return path.join(radioDir(cwd), `${safe}.jsonl`);
 }
 
-/** Append one radio event (best-effort, sync — sub-agent exit path). */
+/**
+ * Write path (Int 3a — radio append latency).
+ *
+ * `appendKrakenRadio` runs on every graph/tentacle transition (14+ call sites)
+ * and used to pay a full open→append→close per event. The line must be on disk
+ * the moment this function returns: same-process readers exist both through
+ * `readKrakenRadio` and by reading `.zelari/radio/<session>.jsonl` directly
+ * (workspace tests, Desktop), so any deferral or async append is observable —
+ * the `fs.promises` chain variant of this fix turned 6 test files red for
+ * exactly that reason.
+ *
+ * Appends therefore go through ONE cached append-mode descriptor per file: a
+ * single write syscall per event instead of open+write+close, with the same
+ * bytes, order and durability (the OS owns the fd; an explicit `process.exit()`
+ * cannot lose an already-written line).
+ *
+ * Fail-open: any failure drops the descriptor and silently falls back to the
+ * original `appendFileSync` (which also recreates a deleted file) — radio is
+ * pure observability and must never break the agent loop.
+ */
+const MAX_CACHED_RADIO_FDS = 32;
+const radioFds = new Map<string, number>();
+
+/** One fail-open append: cached descriptor when possible, `appendFileSync` otherwise. */
+function appendRadioLine(file: string, line: string): void {
+  try {
+    const cached = radioFds.get(file);
+    if (cached !== undefined) {
+      writeSync(cached, line, null, 'utf8');
+      return;
+    }
+    if (radioFds.size >= MAX_CACHED_RADIO_FDS) {
+      appendFileSync(file, line, 'utf8'); // bounded fd budget: old path, still correct
+      return;
+    }
+    const fd = openSync(file, 'a');
+    writeSync(fd, line, null, 'utf8');
+    radioFds.set(file, fd);
+  } catch {
+    const stale = radioFds.get(file);
+    if (stale !== undefined) {
+      radioFds.delete(file);
+      try {
+        closeSync(stale);
+      } catch {
+        // the descriptor is already unusable — nothing to release
+      }
+    }
+    try {
+      appendFileSync(file, line, 'utf8');
+    } catch {
+      // never break the agent loop for telemetry
+    }
+  }
+}
+
+/** Append one radio event (best-effort, durable on return — sub-agent exit path). */
 export function appendKrakenRadio(
   cwd: string,
   sessionId: string,
@@ -135,7 +191,7 @@ export function appendKrakenRadio(
       ...(event.symbolsA !== undefined ? { symbolsA: event.symbolsA } : {}),
       ...(event.symbolsB !== undefined ? { symbolsB: event.symbolsB } : {}),
     };
-    appendFileSync(radioPath(cwd, sessionId), `${JSON.stringify(row)}\n`, 'utf8');
+    appendRadioLine(radioPath(cwd, sessionId), `${JSON.stringify(row)}\n`);
   } catch {
     // never break the agent loop for telemetry
   }

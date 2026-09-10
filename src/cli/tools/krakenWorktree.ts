@@ -11,6 +11,27 @@
  *      - ZELARI_KRAKEN_WORKTREE_KEEP=1 → never merge/cleanup (manual)
  *   4. On merge conflict: keep worktree + branch, report error in footer
  *
+ * Int3c (plan v2 §7.3) — lifecycle micro-opts:
+ *
+ *   1. `git rev-parse --show-toplevel` is MEMOIZED per process (per resolved
+ *      cwd): the toplevel of a given directory cannot change while we run, and
+ *      every writer paid for that probe at creation time. Only positive
+ *      answers are cached — see `resolveGitRoot` for why a null is re-probed.
+ *
+ *   2. The cleanup is now scoped: the per-writer `worktree remove --force`
+ *      stays EAGER (the directory must be free before the next writer), while
+ *      the repo-level bookkeeping that used to follow it — one
+ *      `git worktree prune` + one `git branch -D <branch>` per removed
+ *      worktree — is DEFERRED and coalesced into a single prune + a single
+ *      `branch -D <list>` at the end of the run. Only a run that explicitly
+ *      opens a scope (`beginKrakenWorktreeCleanupBatch`) defers: outside a
+ *      scope nothing would ever flush the queue, so cleanup stays eager there
+ *      rather than leaking branches.
+ *      Kill-switch `ZELARI_KRAKEN_WORKTREE_CLEANUP=eager` (default `batch`)
+ *      restores the old per-worktree behavior for every caller.
+ *      Policy + queue live in `kraken/worktreeCleanupBatch.ts` (re-exported
+ *      below); this module owns the git calls.
+ *
  * Windows: Git for Windows worktree. Paths are absolute.
  */
 
@@ -19,6 +40,23 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
+import {
+  __resetKrakenWorktreeCleanupQueueForTests,
+  isKrakenWorktreeCleanupBatched,
+  queueWorktreeCleanup,
+  takeQueuedWorktreeCleanup,
+} from '../kraken/worktreeCleanupBatch.js';
+
+/**
+ * Cleanup policy + queue live in `kraken/worktreeCleanupBatch.ts` (Int3c):
+ * re-exported here so worktree callers keep a single entry point.
+ */
+export {
+  beginKrakenWorktreeCleanupBatch,
+  isKrakenWorktreeCleanupBatched,
+  resolveWorktreeCleanupMode,
+  type KrakenWorktreeCleanupMode,
+} from '../kraken/worktreeCleanupBatch.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -63,6 +101,62 @@ export function isKrakenWorktreeAutoMergeEnabled(
   return true;
 }
 
+/**
+ * What a batched cleanup actually did. Honest by construction: the counts are
+ * the git invocations issued (and the branches git confirmed deleting), not an
+ * estimate — nothing is reported that was not observed.
+ */
+export interface WorktreeCleanupBatchResult {
+  /** `git worktree prune` invocations at flush (≤1 per repo root). */
+  pruned: number;
+  /** Branch names handed to the batched `git branch -D` (the request). */
+  branches: string[];
+  /** Of those, the ones git confirmed with `Deleted branch ...`. */
+  deleted: string[];
+  /** Repo roots the flush touched. */
+  repoRoots: string[];
+}
+
+/**
+ * Issue the deferred repo-level cleanup: one `git worktree prune` per repo
+ * root that had a worktree removed, then one `git branch -D <list>` per root.
+ *
+ * Fail-open by construction: `git()` never throws, so a flush in a `finally`
+ * can not mask the error the run is already propagating, and a repo whose
+ * prune fails still gets its branch deletion attempted. Never issues a git
+ * command when the queue is empty (flush on an idle/eager process = 0 spawns).
+ */
+export async function flushKrakenWorktreeCleanupBatch(): Promise<WorktreeCleanupBatchResult> {
+  const { repoRoots, branchesByRoot } = takeQueuedWorktreeCleanup();
+
+  const branches: string[] = [];
+  const deleted: string[] = [];
+  let pruned = 0;
+
+  for (const repoRoot of repoRoots) {
+    await git(repoRoot, ['worktree', 'prune']);
+    pruned += 1;
+
+    const list = branchesByRoot.get(repoRoot);
+    if (list && list.length > 0) {
+      branches.push(...list);
+      const r = await git(repoRoot, ['branch', '-D', ...list]);
+      for (const line of r.stdout.split('\n')) {
+        const m = /^Deleted branch (\S+)/.exec(line.trim());
+        if (m?.[1]) deleted.push(m[1]);
+      }
+    }
+  }
+
+  return { pruned, branches, deleted, repoRoots };
+}
+
+/** Test-only: drop the memo, the cleanup queue and any open scope. */
+export function __resetKrakenWorktreeLifecycleForTests(): void {
+  gitRootMemo.clear();
+  __resetKrakenWorktreeCleanupQueueForTests();
+}
+
 async function git(
   cwd: string,
   args: string[],
@@ -84,12 +178,36 @@ async function git(
   }
 }
 
-/** Resolve git toplevel for worktree add. */
+/**
+ * Int3c: `resolved cwd → git toplevel`. Module-level on purpose: every writer
+ * of a run resolves the SAME parent cwd, and the answer cannot change under
+ * us. Bounded by the number of distinct cwds a process touches (a handful).
+ */
+const gitRootMemo = new Map<string, string>();
+
+/** Resolve git toplevel for worktree add.
+ *
+ * Int3c: memoized per resolved cwd. The toplevel of a directory is a property
+ * of the filesystem layout, not of the run, so re-probing it for every writer
+ * was pure subprocess cost. Negative answers are deliberately NOT cached: a
+ * cwd that is not a repo yet (a fresh temp dir, or a run that includes
+ * `git init`) can become one mid-process, and a cached null would silently
+ * disable worktree isolation for the rest of the process.
+ *
+ * Callers that need the probe repeated (tests) can call
+ * `__resetKrakenWorktreeLifecycleForTests()`.
+ */
 export async function resolveGitRoot(cwd: string): Promise<string | null> {
+  const key = path.resolve(cwd);
+  const memo = gitRootMemo.get(key);
+  if (memo) return memo;
+
   const r = await git(cwd, ['rev-parse', '--show-toplevel']);
   if (!r.ok) return null;
   const root = r.stdout.trim();
-  return root || null;
+  if (!root) return null;
+  gitRootMemo.set(key, root);
+  return root;
 }
 
 /**
@@ -261,6 +379,12 @@ export async function mergeKrakenWorktree(
 /**
  * Remove worktree + delete branch (best-effort).
  * Skipped when ZELARI_KRAKEN_WORKTREE_KEEP=1.
+ *
+ * Int3c split: the `worktree remove --force` (plus the filesystem sweep) is
+ * ALWAYS eager — the directory has to be gone before the next writer, and a
+ * merge node may run right after. Only the repo-level bookkeeping is
+ * deferred when a run scope is open: one `worktree prune` and one
+ * `branch -D` per worktree become a single pair at flush time.
  */
 export async function cleanupKrakenWorktree(
   handle: WorktreeHandle,
@@ -276,9 +400,21 @@ export async function cleanupKrakenWorktree(
   } catch {
     // ignore
   }
+
+  const branch = handle.branch.startsWith('kraken/') ? handle.branch : null;
+
+  if (isKrakenWorktreeCleanupBatched(env)) {
+    // Queue instead of spawning: prune is idempotent and order-independent
+    // (it drops the admin entries of worktrees already removed), and the
+    // branch is unreachable once its worktree is gone, so deferring both to
+    // the end of the run changes nothing except the subprocess count.
+    queueWorktreeCleanup(handle.repoRoot, branch);
+    return;
+  }
+
   await git(handle.repoRoot, ['worktree', 'prune']);
-  if (handle.branch.startsWith('kraken/')) {
-    await git(handle.repoRoot, ['branch', '-D', handle.branch]);
+  if (branch) {
+    await git(handle.repoRoot, ['branch', '-D', branch]);
   }
 }
 
