@@ -296,7 +296,7 @@ The third mode (`⚡ zelari`) turns **a free-form prompt** into a **multi-run mi
 
 ### Project memory
 
-The compatibility backend saves outcomes to `.zelari/memory/log.jsonl`. With `ZELARI_MEMORY_V2=1` (or `ZELARI_MEMORY_BACKEND=sqlite`) the native cognitive memory in `.zelari/memory/memory.db` takes over: typed nodes and relations, provenance, immutable versions, FTS, ranking and a context budget. Council, Kraken, missions, headless mode and later sessions share the same project scope without MCP. The previous JSONL is imported idempotently and left intact.
+The compatibility backend saves outcomes to `.zelari/memory/log.jsonl`. With `ZELARI_MEMORY_V2=1` (or `ZELARI_MEMORY_BACKEND=sqlite`) the native cognitive memory in `.zelari/memory/memory.db` takes over: typed nodes and relations, provenance, immutable versions, FTS, ranking and a context budget. Council, Kraken, missions, headless mode and later sessions share the same project scope without MCP. The previous JSONL is imported idempotently and left intact: once a pass resolves every line, a `.zelari/memory/legacy-import-done.json` marker makes later boots skip `log.jsonl` entirely — delete that marker to force a manual re-import.
 
 Disable with `ZELARI_MEMORY=0` (degrades to a no-op, everything else keeps working). To keep only V2 recall set `ZELARI_MEMORY_AUTO_WRITE=0`. Details, security and diagnostics: [`docs/MEMORY.md`](./MEMORY.md).
 
@@ -783,6 +783,18 @@ On transient errors, the CLI can retry with an alternative provider.
 ```bash
 ANATHEMA_FAILOVER_PROVIDER=grok zelari-code    # fallback provider
 ANATHEMA_FAILOVER=0 zelari-code                # disable failover
+```
+
+Headless and Kraken tentacles honor the same `ANATHEMA_FAILOVER_PROVIDER` target when `ZELARI_HEADLESS_FAILOVER=1` (opt-in, default off). The TUI keeps failover on unless `ANATHEMA_FAILOVER=0`. Local-CLI (`ZELARI_LOCAL_CLI`) is never wrapped.
+
+### Timeout first-token (idle)
+
+The provider waits for the first useful token before treating silence as a stall. Default `ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS=600000` (10 min) — required for reasoning models (grok / GLM-thinking) that stay quiet until `reasoning_content`. Grok profiles already override this in capabilities.
+
+Recommended for **non-reasoning** providers: `120000`–`180000` ms. Do not lower the global default if you use thinking models.
+
+```bash
+ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS=180000 zelari-code   # non-reasoning
 ```
 
 ---
@@ -1343,6 +1355,8 @@ Everything under `~/.zelari-code/` (unless overridden by env):
 | `ANATHEMA_ACTIVE_PROVIDER` | Active provider override |
 | `ANATHEMA_FAILOVER=0` | Disable failover |
 | `ANATHEMA_FAILOVER_PROVIDER` | Fallback provider |
+| `ZELARI_HEADLESS_FAILOVER=1` | Opt-in cross-provider failover on headless + tentacles (default off) |
+| `ZELARI_PROVIDER_FIRST_TOKEN_IDLE_MS` | First-token idle (default 600000; 120000–180000 for non-reasoning) |
 
 ### Council
 
@@ -1400,6 +1414,11 @@ Everything under `~/.zelari-code/` (unless overridden by env):
 | `ZELARI_STRICT_DONE` | `1` | `0` = opt-out of the kraken/TUI/headless strict gate (ON by default, P0.1) |
 | `ZELARI_MISSION_STRICT` | `1` | `0` = opt-out of the mission strict gate (default ON) |
 | `ZELARI_VERIFY_PACK` | `1` | `0` = opt-out of the native criteria pack v1 (ON by default, P0.2; auto-unbind without npm scripts) — independent gate: doesn't require strict-done or Kraken Selection |
+| `ZELARI_VERIFY_CACHE` | `1` | `0` = no reuse of gate command results (Int2b). In-process LRU (32): a command is served from an earlier run only when command + cwd + timeout match AND the git tree is unchanged (`HEAD` + `status --porcelain`) — same verdicts, same evidence; a hit is flagged `cached: true` in the result `detail` and in `verification.evidence` |
+| `ZELARI_VERIFY_PARALLEL` | `0` | `1`/`true`/`yes`/`on` = evaluate the pack's **command** criteria concurrently (Int2a), at most `ZELARI_VERIFY_CONCURRENCY` in flight; results keep the criteria order (same `verification.run`), only the evidence events may interleave (each ref is anchored to its own seq, so an interleaved order changes nothing). Default **OFF**, and the kill-switch: unset, `0` or any unrecognized value runs the sequential loop exactly as before. Enable it only for repos whose pack commands do not share writeable outputs — here `typecheck`/`test`/`build` all write `packages/core/dist`, so leave it OFF |
+| `ZELARI_VERIFY_CONCURRENCY` | `3` | Max commands in flight when `ZELARI_VERIFY_PARALLEL` is on (ignored when it is off; clamped to ≥1, absent or non-numeric → 3). An explicit `commandConcurrency` engine option takes precedence over the env |
+| `ZELARI_SPINE_REPLAY_CACHE` | `0` | `1` = incremental replay of `events.jsonl` (Int4a): the spine parses only the bytes appended since the previous read instead of the whole log (it re-reads it 2–8 times per turn — O(n²) on long sessions). Same report as `readSessionLog`, one cache per session; default **OFF** while dogfooding |
+| `ZELARI_REQUEST_SNAPSHOT` | `full` | `full` (default) = eager deep-clone + fingerprints of every routed request; `lite` = shallow copies + lazy digest (same fingerprint when read, cheaper on the hot path); `off` = skip snapshot construction (reduces the TUI/harness audit trail — occupancy metering still runs). Unknown values fall back to `full` |
 | `ZELARI_VERIFIER_REVIEW` | `0` | `1` = advisory LLM verifier after the gate (headless kraken); `0` forces off even with a dedicated model |
 | `ZELARI_SESSIONS_DIR` | `<workspace>/.zelari/sessions` | Override of the session spine directory (test/CI) |
 | `ZELARI_EVAL_RESULTS_DIR` | `eval/results` | Override of the eval result-store directory — regression gate (test/CI) |
@@ -1520,13 +1539,37 @@ The default **kraken** mode (formerly `agent`) is a lead that spawns sub-agents 
 | `ZELARI_KRAKEN_DELEGATION` | Lead delegation policy: `automatic` (default, unchanged behavior) · `prefer` (nudges the lead to use `task` tentacles) · `aggressive` · `lead-only` (the lead works alone). In Desktop: Settings → Kraken → Delegation policy |
 | `ZELARI_KRAKEN_GENERAL_USES_SUB=1` | Makes general use SUB_MODEL too |
 | `ZELARI_KRAKEN_WORKTREE=1` | Isolate `task` general in a git worktree under `.zelari/worktrees/` |
+| `ZELARI_KRAKEN_WORKTREE=auto` | Isolation decided per writer by scope overlap (see below). **Off by default** (`off` / unset) |
 | `ZELARI_KRAKEN_WORKTREE_KEEP=1` | Don't delete worktree/branch when the tentacle ends (manual merge) |
 | `ZELARI_KRAKEN_WORKTREE_AUTO_MERGE=0` | Disable the worktree squash-merge into the parent at the end of the tentacle (default on) |
+| `ZELARI_KRAKEN_WORKTREE_CLEANUP=batch` | Worktree cleanup granularity (default `batch`): one `git worktree prune` + one `git branch -D` at the end of a Kraken graph run. `eager` restores per-worktree cleanup |
 | `/kraken [sessionId]` | Show the tentacle radio (`.zelari/radio/<session>.jsonl`) |
+
+**Worktree isolation (`ZELARI_KRAKEN_WORKTREE`).** `1` forces a worktree for every `task` general; `auto` lets the scheduler decide per writer — a writer that would otherwise be deferred for overlapping scopes **runs immediately in its own worktree** when its estimated overlap with the racing writer is low (`< 0.75`), while high overlap stays sequential. Merges stay sequential either way. `auto` is **recommended on medium/large repos**: it turns "second writer waits" into real parallelism exactly where the lead serializes most. On **Windows** every worktree is a full checkout, so on short tasks the copy can dominate the saving — leave `off` there, or measure one graph run before turning it on. The default is `off` and stays `off`: this is opt-in.
+
+Worktree teardown is split in two (2.38): removing the directory (`git worktree remove --force`) is always immediate, while the repo-level bookkeeping (`worktree prune`, `branch -D`) is batched to the end of the graph run — one prune and one branch deletion instead of one pair per worktree. `ZELARI_KRAKEN_WORKTREE_CLEANUP=eager` restores the per-worktree behavior (useful when a leftover branch name matters to an external tool, or when debugging cleanup itself).
 
 After a `task` general the result includes a **verify-hint**: the parent must verify (`bash` or `task` verify) before declaring done.
 
 **Model routing (2.11):** a tentacle resolves its model in this order: specific override (`EXPLORE`/`GENERAL`/`VERIFY`) → `SUB_MODEL` → auto-pick → the lead's model. A qualified `provider/model` ref also selects the **provider** (credentials and stream) in addition to the model; if the provider isn't configured the value passes as-is to the lead's provider. The **Kraken Activity** panel in Desktop shows the actually resolved model for every tentacle (`agent_spawned`).
+
+**Configurazione consigliata (routing automatico attivo, nessun setup obbligatorio).**
+`explore` e `verify` scelgono da soli un modello economico tra quelli scoperti del
+provider attivo, `general` resta sul modello del lead e `verify` preferisce un
+provider di **famiglia diversa** (verifica cieca incrociata). Serve la cache dei
+modelli (`~/.zelari-code/models.json`, creata da `/models refresh` dopo il login):
+senza cache i tentacoli usano il modello del lead, esattamente come prima.
+
+| Variabile | Effetto |
+|-----------|---------|
+| `ZELARI_KRAKEN_EXPLORE_MODEL` | Modello del tentacolo `explore` (accetta `provider/modello`) |
+| `ZELARI_KRAKEN_VERIFY_MODEL` | Modello del tentacolo `verify` (accetta `provider/modello`) |
+| `ZELARI_KRAKEN_PLANNER_MODEL` | Modello del planner del grafo: un modello veloce non-reasoning evita i timeout |
+| `ZELARI_KRAKEN_AUTO_MODEL=0` | Kill-switch: disattiva l'auto-pick economico (`explore`/`verify` tornano sul modello del lead) |
+| `ZELARI_KRAKEN_CROSS_MODEL=0` | Kill-switch: disattiva la verifica cross-provider (`verify` resta nella famiglia del lead) |
+
+Il modello effettivo di ogni tentacolo è visibile in **Kraken Activity**
+(`agent_spawned`): se un tentacolo gira sul modello sbagliato, guarda lì.
 
 ### Kraken Graph — DAG of parallel tentacles
 
