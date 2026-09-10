@@ -75,7 +75,7 @@ export type GraphValidation =
   | { ok: false; errors: string[] };
 
 export interface ValidateGraphOptions {
-  /** Anti-explosion bound on node count. Default 24 (ZELARI_KRAKEN_MAX_NODES). */
+  /** Anti-explosion bound on node count. Default 24 ({@link DEFAULT_MAX_NODES}); no env knob reads it. */
   maxNodes?: number;
 }
 
