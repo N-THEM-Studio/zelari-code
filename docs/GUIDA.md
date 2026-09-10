@@ -30,7 +30,7 @@
 17c. [Deterministic verification, Strict Done and Verifier LLM (2.0)](#deterministic-verification-strict-done-and-verifier-llm-20)
 18. [Available tools](#available-tools)
 19. [Advanced capabilities and 1.26–1.34 news](#advanced-capabilities-and-126134-news)
-19a. [What's new in 2.29–2.30 (after your first PASS)](#whats-new-in-229230-after-your-first-pass)
+19a. [What's new in 2.29–2.30 (hardening)](#whats-new-in-229230-hardening)
 20. [Configuration files](#configuration-files)
 21. [Environment variables](#environment-variables)
 22. [Self-update](#self-update)
@@ -324,6 +324,9 @@ zelari-code [options]
 | `serve` | Companion host (Android/Tailscale) — see [Desktop](#zelari-desktop) |
 | `--print-ssh-targets` / `--set-ssh-target` / `--remove-ssh-target` / `--test-ssh-target` | SSH targets |
 | `--print-ssh-pubkey --path <…>` | Show `.pub` content (copy it to the server) |
+| `--print-settings` | Print every `zelari.config.json` knob with the origin of its value (`default` / `user` / `project` / `env`). Read-only — see [`zelari.config.json`](#configuration-files) |
+| `--permissions <strict\|standard\|yolo>` | Tool-permission preset (changes the category defaults only — env vars and policy files still win) |
+| `--evolve-status` | Evolution Engine v0 ledger stats, read-only (the ledger is written only with `ZELARI_EVOLUTION=shadow`) |
 
 ---
 
@@ -561,7 +564,7 @@ All commands start with `/` and are typed in the TUI input bar.
 |---|---|
 | `/council <input>` | Invoke the council on the given text |
 | `/council-feedback <memberId> <1-5> [note]` | Rate a member (e.g. `/council-feedback geryon 4 great ideas`) |
-| `/promote-member <memberId>` | Promote a council member to a standalone skill |
+| `/promote-member <memberId>` | Promote a council member to a standalone skill (lineage-stamped, since 2.29) |
 
 #### Memory
 
@@ -662,6 +665,15 @@ All commands start with `/` and are typed in the TUI input bar.
 |---|---|
 | `/index` | Build / refresh the project vector index. Required before the first `semantic_search`. |
 | `semantic_search "<query>"` (tool) | Conceptual semantic search via local embeddings. |
+
+#### Evolution (opt-in, read-only)
+
+| Command | Description |
+|---|---|
+| `/evolve` or `/evolve status` | Evolution Engine v0 status: mode, ledger runs, verdicts/classes and the deterministic tier-weighted fitness. Read-only. |
+| `/evolve proposals` | Folded view of the proposal store (`.zelari/evolution/proposals.jsonl`). Decisions stay in `npm run evolve:decide` — the TUI never promotes anything. |
+
+Both require `ZELARI_EVOLUTION=shadow` to have any data to show; the ledger is appended at the end of headless runs and of TUI council turns — see [What's new in 2.29–2.30](#whats-new-in-229230-hardening).
 
 #### Update
 
@@ -933,7 +945,15 @@ Feedback influences the ordering of specialist members in future runs.
 /promote-member geryon
 ```
 
-Creates a standalone skill based on the member's system prompt, saved in `~/.zelari-code/skills/`.
+Creates a standalone skill based on the member's system prompt, saved in `~/.zelari-code/skills/<skill-id>.md` (or `<ZELARI_HOME>/skills/`).
+
+Since 2.29 every promoted file is **lineage-stamped** with a trailing HTML comment (not frontmatter — the tolerant skill parser ignores it), so successive promotions of the same member form a verifiable chain:
+
+```html
+<!-- lineage: genome=sha256:<hash of this file> parent=sha256:<hash of the previous version>|none promotedBy=user promotedAt=<ISO 8601> -->
+```
+
+`genome` is the sha256 of the markdown just written, `parent` the sha256 of the file it replaced (`none` on the first promotion), and `/promote-member` reports which of the two it stamped (`genome` or `genome+parent`). Nothing is uploaded anywhere: the lineage is local provenance for the skill you now own.
 
 ---
 
@@ -1288,9 +1308,89 @@ Features added between 2.29 and 2.30 (references: `HANDOFF-v2.30.md`, ADR-0036).
 
 ### `zelari.config.json` and `--print-settings`
 
-- Layered config: builtin defaults → `~/.zelari-code/zelari.config.json` (user) → `<project>/.zelari/zelari.config.json`; last one wins.
-- `zelari-code --print-settings` prints every value with its origin (default / user / project).
-- Single root `~/.zelari-code/` with automatic migration on first launch.
+Optional **file settings**: the same knobs you can already set through env vars, plus a report that tells you which layer is winning.
+
+- **Where.** Two layers share one file name: user `~/.zelari-code/zelari.config.json` and project `<project>/.zelari/zelari.config.json`. Precedence (highest last): documented defaults → user file → project file → env var.
+- **Nine knobs.** `hooksFailure`, `strictDone`, `missionStrict`, `memory`, `toolBudgetHard`, `toolBudgetAgent`, `permissionExecute`, `permissionNetwork`, `evolution` — each maps to one pre-existing env var (table below).
+- **Fail-open.** A layer that is unreadable, is not valid JSON or fails schema validation is **ignored with a warning** (printed at the bottom of the report); unknown keys are dropped by the schema. Settings are UX knobs, not a security gate.
+- **Inspect.** `zelari-code --print-settings` prints every knob with its resolved value and origin (`default` / `user:…` / `project:…` / `env:<VAR>`), the two layer paths (`loaded` / `not found`), the warnings and the precedence rule.
+
+Example of a user layer:
+
+```json
+{
+  "hooksFailure": "fail-closed",
+  "strictDone": true,
+  "memory": false,
+  "toolBudgetHard": 180,
+  "evolution": "shadow"
+}
+```
+
+Real output (user layer loaded; long paths are truncated from the left with `…`):
+
+```text
+$ zelari-code --print-settings
+zelari-code settings — zelari.config.json (origin of every value)
+
+  key                  value              origin
+  ──────────────────── ────────────────── ─────────────────────────────
+  hooksFailure         fail-closed        user:…e\AppData\Local\Temp\zg-home\zelari.config.json
+  strictDone           true               user:…e\AppData\Local\Temp\zg-home\zelari.config.json
+  missionStrict        true               default
+  memory               false              user:…e\AppData\Local\Temp\zg-home\zelari.config.json
+  toolBudgetHard       180                user:…e\AppData\Local\Temp\zg-home\zelari.config.json
+  toolBudgetAgent      (engine default)   default
+  permissionExecute    ask                default
+  permissionNetwork    ask                default
+  evolution            shadow             user:…e\AppData\Local\Temp\zg-home\zelari.config.json
+
+layers:
+  user:    C:\Users\me\AppData\Local\Temp\zg-home\zelari.config.json (loaded)
+  project: C:\work\my-project\.zelari\zelari.config.json (not found)
+
+precedence: default < user < project < env
+```
+
+And the same run with an invalid user file (`env` layer shown too):
+
+```text
+  strictDone           false              env:ZELARI_STRICT_DONE
+  …
+warnings:
+  - user: invalid JSON in C:\…\.zelari-code\zelari.config.json — layer ignored
+```
+
+| Key | Env var (wins over the files) | Accepted values |
+|---|---|---|
+| `hooksFailure` | `ZELARI_HOOKS_FAILURE` | `fail-open` \| `fail-closed` |
+| `strictDone` | `ZELARI_STRICT_DONE` | boolean |
+| `missionStrict` | `ZELARI_MISSION_STRICT` | boolean |
+| `memory` | `ZELARI_MEMORY` | boolean |
+| `toolBudgetHard` | `ZELARI_MAX_TOOL_LOOP_HARD` | positive integer |
+| `toolBudgetAgent` | `ZELARI_MODE_MAX_TOOLS_AGENT` | positive integer |
+| `permissionExecute` | `ZELARI_PERMISSION_EXECUTE` | `ask` \| `allow` \| `deny` |
+| `permissionNetwork` | `ZELARI_PERMISSION_NETWORK` | `ask` \| `allow` \| `deny` |
+| `evolution` | `ZELARI_EVOLUTION` | `0` \| `shadow` |
+
+**Current scope (2.39).** The file is resolved and reported, but the engine still reads the equivalent env var: the env layer remains the operative knob, so `zelari.config.json` is today an inventory/audit surface (`--print-settings`). Set the env var when the behaviour must change now.
+
+### One home for all state: `~/.zelari-code/` (migration + `ZELARI_HOME`)
+
+Until 2.29 the CLI kept state under three coexisting roots; they now collapse into one, non-destructively:
+
+- `~/.zelari-code/` is the single root — keys, provider, sessions, branches, metrics, skills, feedback and friends (see [Configuration files](#configuration-files)).
+- The legacy roots `~/.tmp/zelari-code/` and `~/.tmp/anathema-coder/` (the pre-rename project name) are folded in by a **one-shot boot migration**, run the first time any path is resolved (not at import time):
+  1. each legacy root is copied to `<root>.bak-<timestamp>` **before** anything is touched;
+  2. its entries are moved into the new home **only when the destination does not exist** — the new home always wins;
+  3. a `.migrated` marker in the home makes every later run a strict no-op.
+- **Nothing is deleted.** An entry whose destination already exists simply stays under the legacy root (same for a locked/unmovable file). The migration is fail-open: an unwritable home never takes the CLI down.
+- `ZELARI_HOME` overrides the whole home directory (the value must be set and non-empty; a blank value counts as unset). A specific path variable — e.g. `ANATHEMA_METRICS_FILE` — still wins over `ZELARI_HOME` for its own file.
+
+```bash
+# separate profile for CI or experiments, without touching ~/.zelari-code
+ZELARI_HOME="$HOME/.zelari-ci" zelari-code --print-settings
+```
 
 ### Safety: permissions, provenance, exfiltration
 
@@ -1304,16 +1404,37 @@ Features added between 2.29 and 2.30 (references: `HANDOFF-v2.30.md`, ADR-0036).
 
 ### Evolution engine (ADR-0036, default OFF)
 
-- Pipeline `npm run evolve:propose|validate|decide|seal`; the proposer never measures or promotes itself (proposer ≠ judge, `JUDGE_PATHS` untouchable).
-- Sealed anchors with normalized LF/BOM hash: drift = red gate.
-- Status from the CLI: `zelari-code --evolve-status`; in the TUI: `/evolve status|fitness|proposals`; `/memory audit` inspects memory and costs (W4).
+The Evolution Engine v0 **observes, it never promotes**: an append-only outcome ledger, invented to measure harness changes, disabled by default.
+
+- **Opt in.** `ZELARI_EVOLUTION=shadow` — the env var is the operative switch; `zelari.config.json` accepts the same `0` | `shadow` under its `evolution` key and reports it via `--print-settings`. Default `0` = no ledger, no I/O; every write path is a no-op.
+- **What it records.** One JSON line per run outcome at the end of headless runs and of TUI **council** turns, in the project-local, append-only `<project>/.zelari/evolution/ledger.jsonl`: `runId`, `at`, deterministic bilingual `taskClass` (regex heuristics, no LLM), `verdict` (`PASS` / `FAIL` / `HOLD` / `UNKNOWN`), best `evidenceTier` (ADR-0023 vocabulary), `toolCalls`, `steerCount`, `rollbackUsed`, cost and latency, model/provider, provider-reported tokens and the `manifestHash` (the fitness validity boundary).
+- **Fail-open by contract.** A ledger or filesystem failure never breaks or alters a run — it is telemetry, not a gate; corrupt lines are skipped when the ledger is replayed by tolerant readers.
+- **Read it (read-only).** `zelari-code --evolve-status` for the headless summary; in the TUI `/evolve` (alias `/evolve status`) adds verdicts, classes and the deterministic tier-weighted fitness, and `/evolve proposals` folds the proposal store. Nothing here mutates state:
+
+```text
+$ zelari-code --evolve-status
+evolution mode: 0 (ZELARI_EVOLUTION)
+ledger: .zelari\evolution\ledger.jsonl (project-local, append-only)
+runs: 0
+proposals: npm run evolve:propose — decisions in npm run evolve:decide (P1: nothing self-promotes)
+```
+
+- **Nothing self-promotes (P1: the proposer is not the measurer).** Proposals and decisions stay human-driven in the `npm run evolve:propose|validate|decide|seal` pipeline; evolution code cannot import into the judge (registry, sandbox/jail, blocklist, folder trust, `honesty.ts` — `JUDGE_PATHS`), and sealed anchors with a normalized LF/BOM hash turn any drift into a red CI gate.
+
+### Pointers shipped with 2.29
+
+- [`docs/THREAT_MODEL.md`](./THREAT_MODEL.md) — the attack-vector table (12 when it shipped in 2.29, 13 today) × the gate that covers each × status (guaranteed / mitigated / open), plus the "fresh clone: what loads" table.
+- [`docs/EVALS.md`](./EVALS.md) — the eval method as a public contract: evidence tiers, manifest hash as validity boundary, retention gate vs stable tag, per-release snapshot convention, anti-Goodhart rules.
+- [`PRINCIPLES.md`](../PRINCIPLES.md) — the English-canonical principles (including P1, proposer ≠ measurer); [`docs/PRINCIPI.md`](./PRINCIPI.md) keeps the non-normative Italian translation.
 
 ## Configuration files
 
-Everything under `~/.zelari-code/` (unless overridden by env):
+Everything under `~/.zelari-code/` (unless overridden by env — one root, migrated automatically from the legacy `~/.tmp` roots; see [What's new in 2.29–2.30](#whats-new-in-229230-hardening) and `ZELARI_HOME` [below](#path-overrides-testci)):
 
 | File | Contents |
 |---|---|
+| `zelari.config.json` | Optional layered settings (user here, or per project in `.zelari/zelari.config.json`) — reported knob-by-knob by `--print-settings` |
+| `.migrated` | Migration marker (JSON: legacy `from` roots, `at` timestamp, moved entries) — its presence makes the legacy migration a strict no-op |
 | `provider.json` | Active provider, models, custom endpoint |
 | `keys.json` | API keys and OAuth tokens |
 | `models.json` | Discovered-model cache |
@@ -1423,10 +1544,20 @@ Everything under `~/.zelari-code/` (unless overridden by env):
 | `ZELARI_SESSIONS_DIR` | `<workspace>/.zelari/sessions` | Override of the session spine directory (test/CI) |
 | `ZELARI_EVAL_RESULTS_DIR` | `eval/results` | Override of the eval result-store directory — regression gate (test/CI) |
 
+### Home, settings and Evolution Engine
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ZELARI_HOME` | `~/.zelari-code` | Base home directory for **every** persistent file (see [Configuration files](#configuration-files)); set and non-empty, otherwise it counts as unset. Legacy `~/.tmp/zelari-code/` and `~/.tmp/anathema-coder/` are migrated into it once, non-destructively |
+| `ZELARI_EVOLUTION` | `0` | `shadow` enables the Evolution Engine v0 append-only outcome ledger (`.zelari/evolution/ledger.jsonl`, project-local); `0` (or anything else) = off. Telemetry only: fail-open, never promotes, never alters a run. Read with `--evolve-status` or `/evolve` (ADR-0036) |
+
 ### Path overrides (test/CI)
+
+A specific path variable wins over `ZELARI_HOME` for its own file (`ANATHEMA_METRICS_FILE` > `ZELARI_HOME` > `~/.zelari-code/`).
 
 | Variable | File |
 |---|---|
+| `ZELARI_HOME` | base home (default `~/.zelari-code/`) — every row below is relative to it |
 | `ANATHEMA_PROVIDER_CONFIG_FILE` | provider.json |
 | `ANATHEMA_KEYSTORE_FILE` | keys.json |
 | `ANATHEMA_SESSIONS_DIR` | sessions directory |
