@@ -46,6 +46,7 @@ import {
 } from './contextGrowth.js';
 import {
   createRoutedRequestSnapshot,
+  resolveRequestSnapshotMode,
   type RoutedRequestSnapshot,
   type ProviderGenerationOptions,
 } from './requestSnapshot.js';
@@ -1392,6 +1393,8 @@ export class AgentHarness {
     messages: AgentMessage[] = this.messagesForProvider(),
   ): void {
     if (!this.config.onRequestSnapshot) return;
+    // PERF-4b: ZELARI_REQUEST_SNAPSHOT=off skips construction (audit trail reduced).
+    if (resolveRequestSnapshotMode() === 'off') return;
     try {
       this.config.onRequestSnapshot(
         createRoutedRequestSnapshot({

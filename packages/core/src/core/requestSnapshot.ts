@@ -20,8 +20,17 @@
  *   - tools are sorted by `name.localeCompare` — the same canonical order
  *     the OpenAI-compatible provider applies on the wire, so the snapshot
  *     reflects the actual request bytes,
- *   - snapshots deep-clone their payload: later mutation of the live
- *     message array must not rewrite history.
+ *   - snapshots deep-clone their payload in `full` mode: later mutation of
+ *     the live message array must not rewrite history.
+ *
+ * Int4b (`ZELARI_REQUEST_SNAPSHOT=full|lite|off`, default `full`):
+ *   - `full` — current behavior (eager fingerprints, structuredClone).
+ *   - `lite` — shallow first-level copies; fingerprints are lazy getters
+ *     (same digest as `full` when read); header fingerprint memoized on
+ *     tools-array identity + system key. Messages are not mutated after
+ *     append in the tool loop, so shallow copies are safe on the hot path.
+ *   - `off` — harness skips snapshot construction (metering stays; audit
+ *     trail of routed requests is reduced).
  *
  * @since v1.36.0 — context/cache upgrade (routed request snapshots)
  */
@@ -73,6 +82,17 @@ export interface ProviderGenerationOptions {
   recoveryAttempt?: number;
 }
 
+export type RequestSnapshotMode = 'full' | 'lite' | 'off';
+
+/** Default stays `full` until lite is dogfooded (Int4b). Unknown values → full. */
+export function resolveRequestSnapshotMode(
+  env: Record<string, string | undefined> = process.env,
+): RequestSnapshotMode {
+  const raw = env.ZELARI_REQUEST_SNAPSHOT?.trim().toLowerCase();
+  if (raw === 'lite' || raw === 'off') return raw;
+  return 'full';
+}
+
 /**
  * Deterministic JSON: object keys sorted recursively, arrays in order.
  * No external deps (AGENTS.MD: zero new heavy dependencies).
@@ -96,8 +116,12 @@ export function sha256Hex(input: string): string {
   return createHash('sha256').update(input, 'utf8').digest('hex').slice(0, 32);
 }
 
-function cloneMessages(messages: readonly AgentMessage[]): AgentMessage[] {
+function cloneMessagesDeep(messages: readonly AgentMessage[]): AgentMessage[] {
   return structuredClone(messages as AgentMessage[]);
+}
+
+function cloneMessagesLite(messages: readonly AgentMessage[]): AgentMessage[] {
+  return messages.map((m) => ({ ...m }));
 }
 
 /** Canonical tool order — must match the wire order (openai-compatible.ts). */
@@ -105,52 +129,125 @@ export function canonicalTools(tools: readonly AgentToolSpec[]): AgentToolSpec[]
   return [...tools].sort((a, b) => a.name.localeCompare(b.name));
 }
 
+function cloneToolsDeep(tools: readonly AgentToolSpec[]): AgentToolSpec[] {
+  return canonicalTools(tools).map((t) => structuredClone(t));
+}
+
+function cloneToolsLite(tools: readonly AgentToolSpec[]): AgentToolSpec[] {
+  return canonicalTools(tools).map((t) => ({ ...t }));
+}
+
+interface HeaderMemo {
+  toolsRef: readonly AgentToolSpec[];
+  provider: string;
+  model: string;
+  systemKey: string;
+  tools: AgentToolSpec[];
+  headerFingerprint: string;
+}
+
+let headerMemo: HeaderMemo | null = null;
+
+/** Test-only: drop the lite header memo. */
+export function __resetRequestSnapshotMemoForTests(): void {
+  headerMemo = null;
+}
+
 /**
  * Build a snapshot from the parameters of a provider call.
- * The snapshot owns deep clones — mutating `messages`/`tools` afterwards
- * does not affect it.
+ * `full` (default): the snapshot owns deep clones.
+ * `lite`: shallow first-level copies + lazy fingerprints (same digest).
  */
 export function createRoutedRequestSnapshot(params: {
   messages: readonly AgentMessage[];
   model: string;
   provider: string;
   tools: readonly AgentToolSpec[];
+  mode?: RequestSnapshotMode;
 }): RoutedRequestSnapshot {
-  // Split at the FIRST non-system message: the system prefix is whatever
-  // leading run of role:'system' the request carried (1 or 2 messages in
-  // the current builders — the split must not assume a fixed count).
+  const mode = params.mode ?? resolveRequestSnapshotMode();
   let split = 0;
   while (split < params.messages.length && params.messages[split].role === 'system') {
     split++;
   }
-  const systemMessages = cloneMessages(params.messages.slice(0, split));
-  const conversation = cloneMessages(params.messages.slice(split));
-  const tools = canonicalTools(params.tools).map((t) => structuredClone(t));
+  const lite = mode === 'lite';
+  const cloneMsg = lite ? cloneMessagesLite : cloneMessagesDeep;
+  const systemMessages = cloneMsg(params.messages.slice(0, split));
+  const conversation = cloneMsg(params.messages.slice(split));
 
-  const header = stableStringify({
-    provider: params.provider,
-    model: params.model,
-    systemMessages,
-    tools,
-  });
-  const request = stableStringify({
-    provider: params.provider,
-    model: params.model,
-    systemMessages,
-    tools,
-    conversation,
-  });
+  const createdAt = Date.now();
+  const { provider, model } = params;
 
-  return {
-    provider: params.provider,
-    model: params.model,
+  if (!lite) {
+    const tools = cloneToolsDeep(params.tools);
+    const header = stableStringify({ provider, model, systemMessages, tools });
+    const request = stableStringify({
+      provider,
+      model,
+      systemMessages,
+      tools,
+      conversation,
+    });
+    return {
+      provider,
+      model,
+      systemMessages,
+      conversation,
+      tools,
+      headerFingerprint: sha256Hex(header),
+      requestFingerprint: sha256Hex(request),
+      createdAt,
+    };
+  }
+
+  const systemKey = sha256Hex(stableStringify(systemMessages));
+  let tools: AgentToolSpec[];
+  let headerFp: string | undefined;
+  if (
+    headerMemo &&
+    headerMemo.toolsRef === params.tools &&
+    headerMemo.provider === provider &&
+    headerMemo.model === model &&
+    headerMemo.systemKey === systemKey
+  ) {
+    tools = headerMemo.tools;
+    headerFp = headerMemo.headerFingerprint;
+  } else {
+    tools = cloneToolsLite(params.tools);
+  }
+
+  let requestFp: string | undefined;
+  const snap = {
+    provider,
+    model,
     systemMessages,
     conversation,
     tools,
-    headerFingerprint: sha256Hex(header),
-    requestFingerprint: sha256Hex(request),
-    createdAt: Date.now(),
+    createdAt,
+    get headerFingerprint(): string {
+      if (headerFp === undefined) {
+        headerFp = sha256Hex(stableStringify({ provider, model, systemMessages, tools }));
+        headerMemo = {
+          toolsRef: params.tools,
+          provider,
+          model,
+          systemKey,
+          tools,
+          headerFingerprint: headerFp,
+        };
+      }
+      return headerFp;
+    },
+    get requestFingerprint(): string {
+      if (requestFp === undefined) {
+        requestFp = sha256Hex(
+          stableStringify({ provider, model, systemMessages, tools, conversation }),
+        );
+      }
+      return requestFp;
+    },
   };
+  return snap;
 }
 
 /**
