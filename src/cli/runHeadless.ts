@@ -1556,8 +1556,13 @@ async function runHeadlessZelariBody(
       // --no-strict-done overlay). A blocked gate never exits 0 —
       // the mission "success" becomes the strict exit code and the spine
       // records mission-strict-blocked instead of mission-success.
+      // F3 seam adapter (same as the runOneTurn.ts gate sites): the core
+      // engine's emitEvidence reads the anchor as `out.seq` (object field),
+      // while the headless spine resolves the seq NUMBER. A bare number here
+      // leaves every mission-close EvidenceRef unanchored — the strict gate
+      // can then never PASS on the mission path (green run → false exit 4).
       const missionGate = await evaluateStrictBuildGate('build', {
-        emit: (input) => spine.appendEvent(input),
+        emit: async (input) => ({ seq: await spine.appendEvent(input) }),
         surface: 'mission',
         // H10-fix1: per-invocation env overlay — never process.env.
         env: strictEnvOverlay(opts),
