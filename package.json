@@ -1,6 +1,6 @@
 {
   "name": "zelari-code",
-  "version": "2.39.0",
+  "version": "2.40.0",
   "description": "Zelari Code — open-source coding orchestrator CLI. You choose the model; the proof is mandatory. Kraken by default, council when the work earns it: plan/build phases, provider-agnostic LLM streaming, self-update.",
   "author": "Anathema Studio <https://anathema-studio.com/>",
   "license": "Apache-2.0",

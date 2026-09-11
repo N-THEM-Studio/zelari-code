@@ -5,6 +5,10 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.40.0] - 2026-09-12
+
+The verification story becomes visible end to end: the Desktop card now renders the per-criterion evidence pack (criterion, status, evidence seq) the CLI already emitted, a stopped mission resumes from the TUI via /resume-mission, the composer says when the next Enter would resume it, and mission-close evidence is anchored with a real spine seq (the bare appendEvent return never reached the engine). Strict semantics unchanged: unknown stays unknown.
+
 ## [2.39.0] - 2026-09-10
 
 Convergence stops hiding behind a single boolean: a graph that settled with verify findings left on the table is now reported as **degraded** instead of silently green, a verify verdict that lost its trailer gets one cheap second chance, and the future `explore` quick-default flip receives the measurement harness that will have to authorise it — the flip itself stays unmade. No exit code, gate or merge semantic moves in this release.
