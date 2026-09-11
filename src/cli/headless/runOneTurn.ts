@@ -47,6 +47,7 @@ import { evaluateStrictBuildGate, repairExcerptsFromEvaluation, strictEnvOverlay
 import { taskVerifyObligation } from '../tools/taskTool.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { enforceRequiredProofPersistence } from '../kraken/completionProofPersist.js';
+import { promoteOpsKnowledgeSafe } from '../memory/opsKnowledge.js';
 import { nativePackEnabled } from '../kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from '../kraken/verifierLifecycle.js';
 import { buildModelContext, resourceStatusTail } from '../budget/modelContextBuilder.js';
@@ -155,6 +156,12 @@ export async function writeProofSafe(
       `[zelari-code --headless] required completion proof not persisted: ${outcome.requiredBlockReason}\n`,
     );
   }
+  // Ops-knowledge (slice 1.1): the gate that just produced the proof artifact is
+  // the SAME evidence that makes a deterministic procedure (PASS) or a failure
+  // fingerprint (FAIL) worth remembering. Flag-gated inside opsKnowledge
+  // (ZELARI_PROMOTE_OPS_KNOWLEDGE, default OFF) and never rejects, so the
+  // proof-persistence contract above stays the only gate-affecting write.
+  await promoteOpsKnowledgeSafe(gate, { projectRoot: baseDir, sessionId: meta.sessionId });
 }
 export async function runOneTurn(
   opts: HeadlessOptions,

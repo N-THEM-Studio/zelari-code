@@ -1,5 +1,11 @@
 import { useCallback, useState } from "react";
 import type { LiveTask } from "../liveTasks/types";
+import {
+  isMissionResumable,
+  missionRowLabel,
+  missionStatusLabel,
+  type MissionStateView,
+} from "../liveTasks/missionState";
 import { SessionTodosPanel } from "./SessionTodosPanel";
 import { groupProjectTasks } from "../liveTasks/workspacePlan";
 
@@ -10,6 +16,12 @@ interface Props {
   tasks: LiveTask[];
   /** Workspace project tasks of the active cwd (`.zelari/plan.json`). */
   projectTasks?: LiveTask[];
+  /** Persisted Zelari mission of the active cwd
+   * (`.zelari/mission-state.json`); null/undefined = no mission on disk. */
+  mission?: MissionStateView | null;
+  /** Resume the persisted mission (`--resume-mission`). Omitted = the
+   * Riprendi action is not offered (e.g. a run holds the workspace). */
+  onResumeMission?: () => void;
   onClear?: () => void;
 }
 
@@ -42,7 +54,13 @@ function summaryLabel(
  * `.zelari/plan.json` (shared by every conversation on the same cwd,
  * ADR-0018) and have no "Clear": they are durable workspace state.
  */
-export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
+export function LiveTasksPanel({
+  tasks,
+  projectTasks,
+  mission,
+  onResumeMission,
+  onClear,
+}: Props) {
   const [collapsed, setCollapsed] = useState<boolean>(() => {
     try {
       return localStorage.getItem(LS_COLLAPSED) !== "0";
@@ -79,7 +97,10 @@ export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
       t.flags?.includes("reopened") ||
       t.flags?.includes("stale"),
   );
-  if (!tasks.length && !active.length) return null;
+  const missionView = mission ?? null;
+  // The mission pill is its own reason to exist: a persisted mission shows
+  // even with zero todos and zero project tasks.
+  if (!tasks.length && !active.length && !missionView) return null;
 
   const sessionC = counts(tasks);
   const projectC = counts(project);
@@ -88,6 +109,9 @@ export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
     tasks.filter((t) => t.status === "in_progress" || t.status === "blocked").length +
     project.filter((t) => t.status === "in_progress" || t.status === "blocked").length;
   const parts = [
+    missionView
+      ? `Missione · ${missionStatusLabel(missionView.status)}`
+      : null,
     tasks.length ? summaryLabel("Sessione", sessionC) : null,
     project.length ? summaryLabel("Progetto", projectC) : null,
   ].filter(Boolean) as string[];
@@ -150,6 +174,48 @@ export function LiveTasksPanel({ tasks, projectTasks, onClear }: Props) {
               ✕
             </button>
           </div>
+
+      {missionView ? (
+        <section className="live-tasks-section" aria-label="Missione Zelari">
+          <div className="session-todos-head">
+            <span className="session-todos-title">Missione</span>
+            <span className="session-todos-summary">
+              {missionStatusLabel(missionView.status)}
+            </span>
+            {isMissionResumable(missionView) && onResumeMission ? (
+              <button
+                type="button"
+                className="btn-ghost session-todos-clear"
+                onClick={onResumeMission}
+                title="Riprende la missione salvata in .zelari/mission-state.json"
+              >
+                Riprendi
+              </button>
+            ) : null}
+          </div>
+          <ul className="session-todos-list">
+            <li
+              className={`session-todo${
+                missionView.status === "running"
+                  ? " status-in_progress"
+                  : isMissionResumable(missionView)
+                    ? ""
+                    : " status-completed"
+              }`}
+            >
+              <span className="session-todo-mark" aria-hidden>
+                {isMissionResumable(missionView) ? "▶" : "✓"}
+              </span>
+              <span
+                className="session-todo-text"
+                title={`.zelari/mission-state.json — missionId ${missionView.missionId}`}
+              >
+                {missionRowLabel(missionView)}
+              </span>
+            </li>
+          </ul>
+        </section>
+      ) : null}
 
       {project.length ? (
         <div className="live-tasks-progress" aria-label={`Piano ${progressPct}%`}>

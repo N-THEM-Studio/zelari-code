@@ -34,6 +34,23 @@ Program: "C:\Program Files\Git\bin\bash.exe"
 Arguments: -c '/path/to/zelari-cron-example.sh /e/repo "run tests; fix failures"'
 ```
 
+### Gardener: run only when there is work
+
+`scripts/zelari-gardener.sh` is the cron example's cheaper sibling — it skips
+the mission entirely when the repo is quiet, so it is safe to schedule often.
+Work is detected in this order:
+
+1. `npm test` exits non-zero (and `package.json` defines a `test` script)
+2. `git HEAD` differs from `.zelari/gardener.last-sha`
+3. `.zelari/plan.json` has tasks with status `pending` / `in_progress`
+
+When none apply it exits `0` without spending budget. Otherwise it runs
+`--headless --once --mode zelari --phase plan --output plain` — **plan** phase,
+so the run is **propose-only**: the script never commits or merges. After the
+run (success or failure) it writes the current HEAD to
+`.zelari/gardener.last-sha`, so one broken task cannot re-trigger every tick.
+Concurrency reuses the `--once` lockfile described below.
+
 ### Cost guardrail
 
 Always set a cost cap for unattended runs:

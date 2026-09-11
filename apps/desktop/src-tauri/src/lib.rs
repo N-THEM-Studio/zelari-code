@@ -2591,6 +2591,13 @@ struct RunTaskArgs {
     /// turn 1 and replays it on every following turn of the conversation.
     #[serde(default)]
     session_id: Option<String>,
+    /// 2.37 mission resume (`--resume-mission`): continue the persisted Zelari
+    /// mission in `.zelari/mission-state.json` (iteration, current slice and
+    /// budget accumulators) instead of starting a fresh one. Distinct from
+    /// `session_id` (`--resume`), which resumes the SPINE, not the mission.
+    /// Forwarded per-turn as the `resumeMission` turn field.
+    #[serde(default)]
+    resume_mission: bool,
     /// When true, dispatch via `--kraken-graph <prompt>` (plan + execute a
     /// parallel task DAG) instead of `--task <prompt>` — bypasses `mode`.
     #[serde(default)]
@@ -2826,6 +2833,7 @@ fn run_task(
     let history = args.history;
     let todos = args.todos;
     let session_id = args.session_id;
+    let resume_mission = args.resume_mission;
     let kraken_graph = args.kraken_graph;
     let plan_only = args.plan_only;
     let run_plan = args.run_plan;
@@ -2863,6 +2871,7 @@ fn run_task(
             history.as_deref(),
             todos.as_deref(),
             session_id.as_deref(),
+            resume_mission,
             kraken_graph,
             plan_only,
             run_plan.as_deref(),
@@ -2924,6 +2933,9 @@ fn run_sidecar_turn(
     history: Option<&str>,
     todos: Option<&str>,
     session_id: Option<&str>,
+    // 2.37 mission resume: true → `resumeMission` in the turn input, so the
+    // CLI continues `.zelari/mission-state.json` instead of a fresh mission.
+    resume_mission: bool,
     kraken_graph: bool,
     plan_only: bool,
     run_plan: Option<&str>,
@@ -2961,6 +2973,8 @@ fn run_sidecar_turn(
     //   --gauntlet              → gauntlet
     //   --kraken-graph          → krakenGraph (+ planOnly / runPlan)
     //   --resume <id>           → resumeSessionId
+    //   --resume-mission        → resumeMission (resumes the MISSION state
+    //                             file, not the spine session)
     //   --history-file <json>   → history     (parsed array; invalid JSON is
     //                             ignored → stateless, same as the CLI)
     //   --todos <json>          → todos       (parsed array, same fallback)
@@ -3017,6 +3031,12 @@ fn run_sidecar_turn(
         // E1.4: resume the 2.0 spine session so model context comes from the
         // event log; also pre-binds sidecar event routing for this run.
         input["resumeSessionId"] = serde_json::json!(sid);
+    }
+    if resume_mission {
+        // 2.37: continue the persisted mission (.zelari/mission-state.json).
+        // `task` is still required by run.turn but the mission driver reads
+        // brief/slice/iteration from the state file, so the prompt is inert.
+        input["resumeMission"] = serde_json::json!(true);
     }
     if let Some(h) = history.filter(|h| !h.is_empty()) {
         match serde_json::from_str::<serde_json::Value>(h) {

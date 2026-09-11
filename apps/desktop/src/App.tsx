@@ -108,13 +108,14 @@ import {
   applyWorkspaceUpdate,
   brainTaskToLive,
   clearSessionTasks,
+  loadMissionState,
   loadWorkspaceTasks,
   mergeSessionTasks,
   normalizeCwdKey,
   toSessionTasks,
   toTodoPayload,
 } from "./liveTasks";
-import type { LiveTask } from "./liveTasks";
+import type { LiveTask, MissionStateView } from "./liveTasks";
 import { readRunEnvelope } from "./runs/types";
 import {
   unseenResultsByConversation,
@@ -182,6 +183,12 @@ const SIDEBAR_DEFAULT_W = 234;
 const SIDEBAR_MIN_W = 180;
 const SIDEBAR_MAX_W = 480;
 const LS_SIDEBAR_W = "zelari-desktop-sidebar-w";
+
+/** Prompt sent when the operator resumes a mission from the Live Tasks pill.
+ * It must be non-empty (the sidecar rejects an empty `task`) but the CLI
+ * ignores it while resuming: brief, slice and iteration come from
+ * `.zelari/mission-state.json` (zelariMission.resumeZelariMission). */
+const RESUME_MISSION_PROMPT = "Riprendi la missione.";
 
 /** Max chars of file text inlined into the agent prompt per attachment. */
 const ATTACH_TEXT_MAX = 48_000;
@@ -899,6 +906,35 @@ export default function App() {
     window.addEventListener("focus", onFocus);
     return () => window.removeEventListener("focus", onFocus);
   }, [activeCwd, reloadWorkspaceTasks]);
+
+  /**
+   * Zelari mission of the active workspace (`.zelari/mission-state.json`,
+   * 2.37 resume): drives the Live Tasks mission pill + Riprendi. Keyed by
+   * normalized cwd like the plan (every chat on the same workspace shares the
+   * mission) and runtime-only. `null` = no mission on disk → no pill.
+   */
+  const [missionByCwd, setMissionByCwd] = useState<
+    Record<string, MissionStateView | null>
+  >({});
+  const mission = activeCwd
+    ? missionByCwd[normalizeCwdKey(activeCwd)] ?? null
+    : null;
+  /** Re-read mission-state.json of a workspace (switch + run reconciliation). */
+  const reloadMission = useCallback(async (cwd: string) => {
+    const view = await loadMissionState(cwd);
+    setMissionByCwd((prev) => {
+      const key = normalizeCwdKey(cwd);
+      // Unchanged file → same reference (signature cache): no re-render.
+      if (prev[key] === view) return prev;
+      return { ...prev, [key]: view };
+    });
+  }, []);
+  // Same lifecycle as the project tasks: a mission persisted by the CLI (or by
+  // an earlier session) shows up on workspace switch with no run in flight.
+  useEffect(() => {
+    if (!activeCwd) return;
+    void reloadMission(activeCwd);
+  }, [activeCwd, reloadMission]);
   // t63: the backend watches `.zelari/plan.json` per workspace and
   // emits `plan-changed` on out-of-band writes (CLI/council running
   // while this window is unfocused — the focus guard above only fires
@@ -2164,6 +2200,9 @@ export default function App() {
         // M3: plan.json is the source of truth once the run settles -
         // re-read it to reconcile optimistic task updates (ADR-0018).
         if (payload.cwd) void reloadWorkspaceTasks(payload.cwd);
+        // 2.37: the mission advances one iteration per run — re-read its
+        // resume state so the Live Tasks pill leaves "in corso" on settle.
+        if (payload.cwd) void reloadMission(payload.cwd);
         setLiveToolLabelFor(convId, null);
         setLiveMemberNameFor(convId, null);
         clearToolLabelTimer(convId);
@@ -2768,7 +2807,7 @@ export default function App() {
     }
   };
 
-  const send = async (text?: string) => {
+  const send = async (text?: string, opts?: { resumeMission?: boolean }) => {
     const convId = active.id;
     const turn = turnFor(convId);
     const fromSpeech = [draft, speech.interim].filter(Boolean).join(" ").trim();
@@ -2925,6 +2964,18 @@ export default function App() {
         // E1.4: resume the conversation spine (--resume <id>); history
         // above stays as fallback for legacy chats and degraded spines.
         sessionId: live?.sessionId,
+        // 2.37 / 2.4: resume .zelari/mission-state.json. Explicit "Riprendi"
+        // always sets the flag; follow-up turns in zelari mode auto-resume
+        // when a non-success mission exists (first prompt of a conversation
+        // still starts fresh). Inline predicate so this send() path does not
+        // depend on a new liveTasks import in this constrained pass.
+        resumeMission:
+          opts?.resumeMission ||
+          (mode === "zelari" &&
+            mission != null &&
+            mission.status !== "success" &&
+            (active.messages ?? []).some((m) => m.role === "user")) ||
+          undefined,
 
         todos: toTodoPayload(live?.sessionTasks ?? []),
         krakenGraph: krakenGraph || undefined,
@@ -2976,6 +3027,16 @@ export default function App() {
   };
 
   sendRef.current = send;
+
+  /**
+   * Live Tasks "Riprendi": resume the persisted mission of this workspace.
+   * Reuses the normal send path (history / spine / todos replay) with the
+   * mission flag — the CLI keeps iteration, current slice and budget state in
+   * `.zelari/mission-state.json`, so nothing here has to replay them.
+   */
+  const onResumeMission = () => {
+    void send(RESUME_MISSION_PROMPT, { resumeMission: true });
+  };
 
   const onStop = async () => {
     const rid = runCoordinator.state.runIdByConversation[active?.id ?? ""];
@@ -3464,10 +3525,14 @@ export default function App() {
         </header>
 
         <div className="chat-scroll-shell">
-          {sessionTasks.length > 0 || projectTasks.length > 0 ? (
+          {sessionTasks.length > 0 || projectTasks.length > 0 || mission ? (
             <LiveTasksPanel
               tasks={sessionTasks}
               projectTasks={projectTasks}
+              mission={mission}
+              // One run per workspace (host policy): while a run holds it the
+              // button is not offered instead of steering the in-flight run.
+              onResumeMission={running ? undefined : onResumeMission}
               onClear={() =>
                 setConversations((prev) => clearSessionTasks(prev, active.id))
               }

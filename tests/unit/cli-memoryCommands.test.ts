@@ -86,6 +86,9 @@ describe('/memory command handler', () => {
     const node = await memory.remember({
       kind: 'constraint',
       content: 'Do not hold an LLM request inside a database transaction.',
+      // Promotion bar (memory/promotion.ts): importance ≥ 0.7 AND confidence ≥ 0.8.
+      importance: 0.8,
+      confidence: 0.9,
       source: { agent: 'council' },
     });
     const first = await promoteMemoryToAgentsMd(cwd, node);

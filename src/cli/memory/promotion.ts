@@ -6,10 +6,25 @@ const START = '<!-- zelari:memory-promotions:start -->';
 const END = '<!-- zelari:memory-promotions:end -->';
 const DURABLE_KINDS = new Set(['fact', 'decision', 'constraint', 'preference', 'procedure']);
 
+export const PROMOTE_MIN_IMPORTANCE = 0.7;
+export const PROMOTE_MIN_CONFIDENCE = 0.8;
+
 export interface MemoryPromotionResult {
   added: boolean;
   path: string;
   reason?: string;
+}
+
+/** Numeric floor, or an explicit verified/validated_by mark from ops-knowledge. */
+export function meetsPromoteThreshold(node: MemoryNode): boolean {
+  if (node.metadata?.verified === true) return true;
+  if (node.metadata?.validatedBy === true) return true;
+  return node.importance >= PROMOTE_MIN_IMPORTANCE && node.confidence >= PROMOTE_MIN_CONFIDENCE;
+}
+
+export function formatPromoteNotice(node: MemoryNode): string {
+  const preview = node.content.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return `[memory] candidato AGENTS.MD: ${node.kind} “${preview}” — /memory promote ${node.id}`;
 }
 
 function lineFor(node: MemoryNode): string {
@@ -32,6 +47,12 @@ export async function promoteMemoryToAgentsMd(
   }
   if (!DURABLE_KINDS.has(node.kind)) {
     return { added: false, path: path.join(projectRoot, 'AGENTS.md'), reason: `${node.kind} is not a durable instruction kind` };
+  }
+  // The manual `/memory promote` path carries the SAME bar the notices assume
+  // (importance ≥ 0.7 AND confidence ≥ 0.8, or an explicit verified mark):
+  // nothing below it is worth a permanent AGENTS.md line.
+  if (!meetsPromoteThreshold(node)) {
+    return { added: false, path: path.join(projectRoot, 'AGENTS.md'), reason: 'below-threshold' };
   }
   const root = await fs.realpath(projectRoot).catch(() => path.resolve(projectRoot));
   const target = path.join(root, 'AGENTS.md');

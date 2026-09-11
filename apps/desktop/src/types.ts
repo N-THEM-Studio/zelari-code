@@ -166,6 +166,12 @@ export interface RunTaskArgs {
   /** 2.0 spine session to resume (E1.4): forwarded as --resume <id>; the
    * CLI derives model context from the event log. */
   sessionId?: string;
+  /** 2.37 mission resume: forwarded as the `resumeMission` turn field
+   * (`--resume-mission` on the CLI). The driver continues the persisted
+   * Zelari mission in `.zelari/mission-state.json` (iteration, current slice,
+   * budget accumulators) instead of starting a fresh one. Distinct from
+   * `sessionId`, which resumes the SPINE, not the mission. */
+  resumeMission?: boolean;
 
   /** JSON-encoded prior conversation turns, so the agent keeps multi-turn
    * context across the per-message process boundary. Built from the

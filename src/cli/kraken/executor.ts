@@ -66,6 +66,11 @@ import {
 } from '../tools/krakenWorktree.js';
 import { appendKrakenRadio } from '../tools/krakenRadio.js';
 import { runWithLimit } from '../asyncLimit.js';
+import {
+  formatPromoteNotice,
+  meetsPromoteThreshold,
+} from '../memory/promotion.js';
+import type { MemoryNode } from '@zelari/core/memory';
 import { runTransactional } from './transactional.js';
 import { runBacktest, type BacktestResult } from '../workspace/worldModel.js';
 import {
@@ -1886,13 +1891,33 @@ export class KrakenGraphExecutor {
       await runWithLimit(outcomeEdges, 8, (edge) =>
         memory.connect(edge).catch(() => undefined),
       );
-      await memory.consolidate({
+      const consolidated = await memory.consolidate({
         source: { agent: 'kraken-orchestrator', sessionId: this.sessionId },
         minOccurrences: 2,
       });
+      this.proposeMemoryCandidate(consolidated.created);
     } catch {
       // Memory failure never changes graph status or prevents snapshotting.
     }
+  }
+
+  /**
+   * Ops-knowledge (slice 1.3) — consolidation produced durable nodes; one that
+   * clears the promote threshold deserves a PLACE IN AGENTS.md, but the only
+   * thing the graph does is SAY SO: a radio notice carrying the node id and
+   * the manual `/memory promote <id>` command. No AGENTS.md write ever
+   * originates here (the user's slash command is the sole writer), and at most
+   * ONE candidate is surfaced per run — a graph that converges into fifty
+   * durable nodes must not bury the transcript in proposals.
+   */
+  private proposeMemoryCandidate(created: readonly MemoryNode[]): void {
+    const candidate = created.find((node) => meetsPromoteThreshold(node));
+    if (!candidate) return;
+    this.radio('progress', {
+      agent: 'memory',
+      description: 'AGENTS.MD candidate',
+      detail: formatPromoteNotice(candidate),
+    });
   }
 
   /**
@@ -2236,7 +2261,10 @@ export class KrakenGraphExecutor {
       | 'node_rolled_back'
       | 'graph_converged'
       | 'graph_failed'
-      | 'node_meter',
+      | 'node_meter'
+      // Slice 1.3: graph-level advisory notices that are not node lifecycle
+      // (currently: the AGENTS.MD candidate proposal after consolidation).
+      | 'progress',
     fields: {
       description: string;
       agent?: string;

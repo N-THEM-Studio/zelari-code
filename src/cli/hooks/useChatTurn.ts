@@ -37,6 +37,7 @@ import {
   type StrictGateOptions,
 } from "../kraken/verificationBridge.js";
 import { writeCompletionProof } from "../kraken/completionProof.js";
+import { promoteOpsKnowledgeSafe } from "../memory/opsKnowledge.js";
 import { formatStrictBlockExplanation, recordStrictGateEvaluation } from "../kraken/verifyStatus.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
@@ -925,11 +926,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // artifact after every strict gate evaluation — the file always
               // reflects the LAST evaluation of the turn. Best-effort by
               // contract: never breaks the turn.
-              const writeProofSafe = (gate: StrictBuildGateEvaluation): Promise<void> =>
-                writeCompletionProof(gate, { meta: { surface: "kraken", sessionId } }).then(
+              const writeProofSafe = async (gate: StrictBuildGateEvaluation): Promise<void> => {
+                await writeCompletionProof(gate, { meta: { surface: "kraken", sessionId } }).then(
                   (): void => undefined,
                   (): void => undefined,
                 );
+                // Ops-knowledge (slice 1.1): the same gate evaluation that feeds
+                // the proof artifact feeds Memory V2 — deterministic PASS
+                // procedures and FAIL fingerprints. Flag-gated (default OFF)
+                // and never rejecting, so the turn is never blocked on memory.
+                await promoteOpsKnowledgeSafe(gate, {
+                  projectRoot: process.cwd(),
+                  sessionId,
+                });
+              };
               if (
                 event.reason === "completed" &&
                 !krakenRepairEnqueued &&
