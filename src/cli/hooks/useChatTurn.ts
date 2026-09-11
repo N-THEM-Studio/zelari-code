@@ -163,6 +163,8 @@ export interface UseChatTurnResult {
     opts?: { requiredTools?: readonly string[] },
   ) => Promise<void>;
   dispatchCouncilPrompt: (input: string) => Promise<void>;
+  /** experimental/cursor-learn 2.3 — resume the persisted mission (/resume-mission). */
+  dispatchZelariResume: () => Promise<void>;
   harnessRef: React.MutableRefObject<AgentHarness | null>;
   queueCount: number;
   setQueueCount: (n: number) => void;
@@ -1495,10 +1497,46 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
     ],
   );
 
+  // experimental/cursor-learn 2.3 — /resume-mission: same TUI mission path as
+  // dispatchZelariPrompt, but seeded from the persisted .zelari/mission-state.json
+  // (resumeZelariMission seam, identical to headless --resume-mission).
+  const dispatchZelariResume = useCallback(
+    async () => {
+      await runZelariMissionInTui(
+        "",
+        {
+          sessionId,
+          writerRef,
+          setMessages,
+          commitStreaming,
+          flushStreaming,
+          setBusy,
+          setQueueCount,
+          setLive,
+          liveRef,
+        },
+        (m: string) => appendSystem(setMessages, m, Date.now()),
+        { resume: true },
+      );
+    },
+    [
+      sessionId,
+      writerRef,
+      setMessages,
+      commitStreaming,
+      flushStreaming,
+      setBusy,
+      setQueueCount,
+      setLive,
+      liveRef,
+    ],
+  );
+
   return {
     dispatchPrompt,
     dispatchCouncilPrompt,
     dispatchZelariPrompt,
+    dispatchZelariResume,
     harnessRef,
     queueCount,
     setQueueCount,
@@ -2523,6 +2561,7 @@ async function runZelariMissionInTui(
   userMessage: string,
   deps: UseChatTurnParams & { setQueueCount: (n: number) => void },
   emit: (m: string) => void,
+  opts: { resume?: boolean } = {},
 ): Promise<void> {
   const { setMessages } = deps;
   const envConfig = await providerFromEnv();
@@ -2540,14 +2579,19 @@ async function runZelariMissionInTui(
   const { hasWorkspacePlan } = await import("../workspace/planDetect.js");
   const { listOpenPlanTaskIds } = await import("../workspace/planStore.js");
   const { getMemoryBackend } = await import("../memory/fileBackend.js");
-  const { runZelariMission } = await import("../zelariMission.js");
+  const { runZelariMission, resumeZelariMission } = await import(
+    "../zelariMission.js"
+  );
 
-  const planTaskIds = await listOpenPlanTaskIds(projectRoot);
-  const brief = buildMissionBrief({
-    userMessage,
-    hasPlan: hasWorkspacePlan(projectRoot),
-    planTaskIds,
-  });
+  // Resume reads brief/prompt/iteration from the persisted state — the fresh
+  // brief build is a fresh-start-only cost (mirrors runHeadless --resume-mission).
+  const brief = opts.resume
+    ? null
+    : buildMissionBrief({
+        userMessage,
+        hasPlan: hasWorkspacePlan(projectRoot),
+        planTaskIds: await listOpenPlanTaskIds(projectRoot),
+      });
   // W2: getter-backed holder — the spine mirror attaches per turn, so mission
   // memory events resolve `deps.writerRef.current?.spine` at emit time.
   const missionSpineHolder = {
@@ -2569,7 +2613,13 @@ async function runZelariMissionInTui(
   }
 
   try {
-    await runZelariMission(userMessage, brief, {
+    // Same seam as runHeadless --resume-mission: resume ignores (userMessage,
+    // brief) and rehydrates from .zelari/mission-state.json.
+    const runMission = (missionDeps: Parameters<typeof runZelariMission>[2]) =>
+      opts.resume
+        ? resumeZelariMission(missionDeps)
+        : runZelariMission(userMessage, brief!, missionDeps);
+    await runMission({
       projectRoot,
       memory,
       emit,

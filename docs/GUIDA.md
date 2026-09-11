@@ -276,6 +276,7 @@ The third mode (`⚡ zelari`) turns **a free-form prompt** into a **multi-run mi
 1. **Shift+Tab** until the status bar shows `⚡ zelari` (or `/zelari <prompt>`).
 2. Zelari builds a **mission brief** (intent, inferred stack, deliverables, assumptions, out-of-scope, MVP slice) and shows it in chat.
 3. You confirm with `ok` (or set `ZELARI_MISSION_AUTO=1` for automatic start).
+4. To pick a stopped mission back up: `/resume-mission` (status only: `/resume-mission status`; headless twin: `zelari-code --mode zelari --resume-mission`).
 4. The loop runs: for greenfield projects first **design-phase**, then **implementation** repeatedly. Between iterations only a compact context is re-injected (brief + memory hits), never the whole transcript.
 5. The mission ends with **success** when `completion.ok` is green on the MVP slice, or **stops** when the **implementation** budget is exhausted (`ZELARI_MISSION_MAX_ITER`, default 6). The initial **design-phase** (if planned by the brief) is **outside the budget** and does not consume iterations. **Experiment default:** **implementation** slices use the **single agent** (`build@kraken`); design-phase stays on the council. With `ZELARI_BUILD_VIA_AGENT=0` (legacy) the first implementation uses the full council and from **implementation 2+** the roster is reduced to **Minosse + Lucifero**. State saved in `.zelari/mission-state.json`.
 

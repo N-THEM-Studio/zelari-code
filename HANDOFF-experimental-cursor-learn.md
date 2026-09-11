@@ -29,10 +29,10 @@ Niente cloud-fleet, niente auto-merge.
 
 ## Mancante — riprendere da qui
 
-### 2.3 TUI `/resume-mission` (non fatto)
-- Dispatcher in `src/cli/slashHandlers/` (non esiste ancora uno slash missione).
-- Stesso contratto di `--resume-mission` / `resumeZelariMission` in `src/cli/zelariMission.ts`.
-- Help in `src/cli/main.ts` e `docs/GUIDA.md`.
+### 2.3 TUI `/resume-mission` — FATTO (2026-09-12)
+- `src/cli/slashHandlers/missionResume.ts` (+ `.test.ts`): status + `/resume-mission status`.
+- `src/cli/slashCommands.ts` (comando/kind/help), `useSlashDispatch.ts` (route), `useChatTurn.ts` (`dispatchZelariResume`, stesso seam `resumeZelariMission` di `runHeadless --resume-mission`).
+- `docs/GUIDA.md` passo 4. Nota: `main.ts` non toccato — il flag `--resume-mission` è già in help e il comando TUI vive in `/help` (slashCommands).
 
 ### 2.4 resto
 - `autoResumeHint` esiste ma **non** è cablato sotto l’input composer Desktop (hint visibile tipo “Confermi l’avvio?”).

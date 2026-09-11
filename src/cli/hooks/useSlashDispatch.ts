@@ -24,6 +24,7 @@ import {
 } from '../slashHandlers/state.js';
 import { handleCacheStats } from '../slashHandlers/cache.js';
 import { handleMemoryCommand } from '../slashHandlers/memory.js';
+import { handleResumeMissionStatus } from '../slashHandlers/missionResume.js';
 import {
   handleTrust,
   handleTrustStatus,
@@ -113,6 +114,8 @@ export interface SlashDispatchParams {
   dispatchCouncilPrompt: (text: string) => Promise<void>;
   /** v1.0: dispatch an autonomous Zelari mission (multi-run council loop). */
   dispatchZelariPrompt: (text: string) => Promise<void>;
+  /** experimental/cursor-learn 2.3 — /resume-mission (persisted mission). */
+  dispatchZelariResume: () => Promise<void>;
   /**
    * v0.7.9: dispatch mode for free-form (non-slash) prompts. 'kraken' routes
    * to dispatchPrompt (single LLM turn), 'council' to dispatchCouncilPrompt
@@ -158,6 +161,7 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     setMessages, setInput, setBusy, setSessionId, setSessionActive, setProviderConfig,
     activeProviderSpec, activeModel, providerDefaults,
     harnessRef, setQueueCount, dispatchPrompt, dispatchCouncilPrompt, dispatchZelariPrompt,
+    dispatchZelariResume,
     mode = 'kraken', setMode,
   } = params;
 
@@ -264,6 +268,21 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       setSessionActive(true);
       setInput('');
       await dispatchZelariPrompt(result.zelariInput);
+      return;
+    }
+
+    // ── Zelari mission resume (experimental/cursor-learn 2.3) ──
+    if (result.kind === 'resume_mission_status') {
+      appendUser(setMessages, '/resume-mission status');
+      await handleResumeMissionStatus(baseCtx);
+      setInput('');
+      return;
+    }
+    if (result.kind === 'resume_mission') {
+      appendUser(setMessages, '/resume-mission');
+      setSessionActive(true);
+      setInput('');
+      await dispatchZelariResume();
       return;
     }
 

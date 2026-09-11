@@ -115,7 +115,12 @@ import {
   toSessionTasks,
   toTodoPayload,
 } from "./liveTasks";
-import type { LiveTask, MissionStateView } from "./liveTasks";
+import {
+  shouldAutoResumeMission,
+  autoResumeHint,
+  type LiveTask,
+  type MissionStateView,
+} from "./liveTasks";
 import { readRunEnvelope } from "./runs/types";
 import {
   unseenResultsByConversation,
@@ -4216,6 +4221,20 @@ export default function App() {
           </div>
           </div>
           <div className="composer-hint">
+            {/* experimental/cursor-learn 2.4 — when the next Enter would
+                auto-resume (same predicate as send()), say so under the input. */}
+            {!running &&
+            mode === "zelari" &&
+            mission != null &&
+            shouldAutoResumeMission({
+              mode,
+              mission,
+              hasPriorUserTurn: (active.messages ?? []).some(
+                (m) => m.role === "user",
+              ),
+            })
+              ? `${autoResumeHint(mission)} · `
+              : ""}
             {running
               ? liveSendMode === "steer" && steerSupported
                 ? "Enter steers at the next tool boundary · later sends queue"
