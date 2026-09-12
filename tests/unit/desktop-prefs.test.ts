@@ -5,10 +5,16 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_DESKTOP_PREFS,
   DESKTOP_PREFS_KEY,
+  GARDENER_COST_MAX_USD,
+  GARDENER_COST_MIN_USD,
+  GARDENER_INTERVAL_MAX,
+  GARDENER_INTERVAL_MIN,
   isExecutionProfile,
   loadDesktopPrefs,
   normalizeDelegation,
   normalizeDesktopPrefs,
+  normalizeGardenerInterval,
+  normalizeGardenerMaxCost,
   normalizeModelOverride,
   saveDesktopPrefs,
 } from "../../apps/desktop/src/desktopPrefs";
@@ -97,6 +103,9 @@ describe("normalizeDesktopPrefs", () => {
       krakenGeneralModel: "",
       krakenVerifyModel: "",
       krakenPlannerModel: "",
+      gardenerEnabled: false,
+      gardenerIntervalMin: 30,
+      gardenerMaxCostUsd: 2,
     });
   });
 
@@ -121,6 +130,9 @@ describe("normalizeDesktopPrefs", () => {
       krakenGeneralModel: "",
       krakenVerifyModel: "",
       krakenPlannerModel: "",
+      gardenerEnabled: false,
+      gardenerIntervalMin: 30,
+      gardenerMaxCostUsd: 2,
     });
   });
 
@@ -190,6 +202,9 @@ describe("load/saveDesktopPrefs", () => {
         krakenGeneralModel: "coding-model",
         krakenVerifyModel: "review-model",
         krakenPlannerModel: "planner-model",
+        gardenerEnabled: true,
+        gardenerIntervalMin: 60,
+        gardenerMaxCostUsd: 7.5,
       },
       storage,
     );
@@ -208,6 +223,9 @@ describe("load/saveDesktopPrefs", () => {
       krakenGeneralModel: "coding-model",
       krakenVerifyModel: "review-model",
       krakenPlannerModel: "planner-model",
+      gardenerEnabled: true,
+      gardenerIntervalMin: 60,
+      gardenerMaxCostUsd: 7.5,
     });
   });
 
@@ -217,6 +235,66 @@ describe("load/saveDesktopPrefs", () => {
       getItem: () => "{not-json",
     };
     expect(loadDesktopPrefs(storage)).toEqual(DEFAULT_DESKTOP_PREFS);
+  });
+});
+
+describe("gardener automation prefs (Settings → Automations)", () => {
+  it("defaults: off, 30 minutes, $2 per run", () => {
+    expect(DEFAULT_DESKTOP_PREFS.gardenerEnabled).toBe(false);
+    expect(DEFAULT_DESKTOP_PREFS.gardenerIntervalMin).toBe(30);
+    expect(DEFAULT_DESKTOP_PREFS.gardenerMaxCostUsd).toBe(2);
+  });
+
+  it("missing or invalid values fall back to the defaults", () => {
+    expect(normalizeDesktopPrefs({})).toMatchObject({
+      gardenerEnabled: false,
+      gardenerIntervalMin: 30,
+      gardenerMaxCostUsd: 2,
+    });
+    expect(
+      normalizeDesktopPrefs({
+        gardenerEnabled: "yes",
+        gardenerIntervalMin: "45",
+        gardenerMaxCostUsd: null,
+      }),
+    ).toMatchObject({
+      gardenerEnabled: false,
+      gardenerIntervalMin: 30,
+      gardenerMaxCostUsd: 2,
+    });
+    expect(normalizeGardenerInterval(Number.NaN)).toBe(30);
+    expect(normalizeGardenerMaxCost(Number.POSITIVE_INFINITY)).toBe(2);
+  });
+
+  it("clamps the interval to [5, 1440] minutes", () => {
+    expect(normalizeGardenerInterval(0)).toBe(GARDENER_INTERVAL_MIN);
+    expect(normalizeGardenerInterval(1)).toBe(GARDENER_INTERVAL_MIN);
+    expect(normalizeGardenerInterval(99999)).toBe(GARDENER_INTERVAL_MAX);
+    expect(normalizeGardenerInterval(30)).toBe(30);
+    expect(normalizeDesktopPrefs({ gardenerIntervalMin: 2 }).gardenerIntervalMin).toBe(
+      GARDENER_INTERVAL_MIN,
+    );
+  });
+
+  it("clamps the budget to [0.5, 20] USD with 2 decimals", () => {
+    expect(normalizeGardenerMaxCost(0.1)).toBe(GARDENER_COST_MIN_USD);
+    expect(normalizeGardenerMaxCost(1000)).toBe(GARDENER_COST_MAX_USD);
+    expect(normalizeGardenerMaxCost(1.239)).toBe(1.24);
+    expect(normalizeDesktopPrefs({ gardenerMaxCostUsd: 0.1 }).gardenerMaxCostUsd).toBe(0.5);
+  });
+
+  it("keeps an explicit enable flag, interval and budget", () => {
+    expect(
+      normalizeDesktopPrefs({
+        gardenerEnabled: true,
+        gardenerIntervalMin: 120,
+        gardenerMaxCostUsd: 3.5,
+      }),
+    ).toMatchObject({
+      gardenerEnabled: true,
+      gardenerIntervalMin: 120,
+      gardenerMaxCostUsd: 3.5,
+    });
   });
 });
 

@@ -12,6 +12,7 @@ import { SettingsToastProvider } from "./primitives";
 import { GeneralSection } from "./GeneralSection";
 import { ProviderSection } from "./ProviderSection";
 import { AgentsSection } from "./AgentsSection";
+import { AutomationsSection } from "./AutomationsSection";
 import { ExtensionsSection } from "./ExtensionsSection";
 import { ConnectionsSection } from "./ConnectionsSection";
 import { SystemSection } from "./SystemSection";
@@ -23,6 +24,7 @@ export type SettingsSectionId =
   | "general"
   | "models"
   | "agents"
+  | "automations"
   | "extensions"
   | "connections"
   | "system";
@@ -46,6 +48,7 @@ const SECTIONS: { id: SettingsSectionId; label: string; hint: string }[] = [
   { id: "general", label: "General", hint: "Theme, new-chat defaults" },
   { id: "models", label: "Models & Providers", hint: "Provider, model, auth" },
   { id: "agents", label: "Agents", hint: "Delegation, routing, verification" },
+  { id: "automations", label: "Automations", hint: "Scheduled gardener runs" },
   { id: "extensions", label: "Extensions", hint: "MCP servers, skills" },
   { id: "connections", label: "Connections", hint: "Mobile QR, SSH" },
   { id: "system", label: "System", hint: "Versions, updates, paths" },
@@ -76,6 +79,14 @@ function SectionIcon({ id }: { id: SettingsSectionId }) {
       <svg {...common}>
         <rect x="3" y="5" width="10" height="7" rx="2" fill="none" stroke="currentColor" strokeWidth="1.5" />
         <path d="M8 2v3M1.5 8.5h1.5M13 8.5h1.5M6 8.5h.01M10 8.5h.01" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+      </svg>
+    );
+  }
+  if (id === "automations") {
+    return (
+      <svg {...common}>
+        <circle cx="8" cy="8.5" r="5" fill="none" stroke="currentColor" strokeWidth="1.5" />
+        <path d="M8 5.5v3.2l2 1.3M8 2v1.5" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
       </svg>
     );
   }
@@ -222,6 +233,14 @@ export function SettingsShell(props: SettingsShellProps) {
         prefs={prefs}
         onPrefsChange={onPrefsChange}
         onRefresh={onRefresh}
+      />
+    );
+  } else if (section === "automations") {
+    content = (
+      <AutomationsSection
+        prefs={prefs}
+        onPrefsChange={onPrefsChange}
+        workdir={workdir}
       />
     );
   } else if (section === "extensions") {

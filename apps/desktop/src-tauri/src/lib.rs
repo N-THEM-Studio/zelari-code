@@ -20,6 +20,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 mod harness_sidecar;
 use harness_sidecar::HarnessSidecar;
 
+mod automations;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -3343,7 +3345,8 @@ pub fn run() {
             print_ssh_pubkey,
             watch_plan_changes,
             permission_respond,
-            ask_user_respond
+            ask_user_respond,
+            automations::manage_automation
         ])
         .build(tauri::generate_context!())
         .expect("error while building Zelari Desktop")

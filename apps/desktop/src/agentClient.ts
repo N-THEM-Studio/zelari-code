@@ -636,6 +636,33 @@ export async function printSshPubkey(path: string): Promise<
   return invoke("print_ssh_pubkey", { args: { path } });
 }
 
+// ---------------------------------------------------------------------------
+// Automations — the gardener's OS scheduled task (Settings → Automations).
+// ---------------------------------------------------------------------------
+
+export interface AutomationStatus {
+  /** true when the `ZelariGardener` scheduled task exists. */
+  registered: boolean;
+  /** Human-readable line for the Settings status row. */
+  detail: string;
+  /** Task Scheduler "Next Run Time" when the task reports one, else null. */
+  nextRun?: string | null;
+}
+
+/**
+ * Register / remove / query the gardener scheduled task.
+ * Windows-only: other platforms reject with a typed error string.
+ * camelCase keys on purpose — Tauri maps them onto the snake_case Rust args.
+ */
+export async function manageAutomation(args: {
+  action: "register" | "remove" | "status";
+  intervalMin: number;
+  maxCostUsd: number;
+  repoPath: string;
+}): Promise<AutomationStatus> {
+  return invoke<AutomationStatus>("manage_automation", args);
+}
+
 /** Write UTF-8 text to a user-chosen path (chat export, etc.). Returns the path written. */
 export async function writeTextFile(
   path: string,

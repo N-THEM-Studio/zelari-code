@@ -50,6 +50,13 @@ export interface DesktopPrefs {
   krakenPlannerModel: string;
   /** Kraken delegation policy: when the lead spawns tentacles ("automatic" = CLI default). */
   krakenDelegation: DelegationPolicy;
+
+  /** Register the gardener automation with the OS scheduler (Settings → Automations). */
+  gardenerEnabled: boolean;
+  /** Minutes between gardener runs (normalized to [5, 1440]). */
+  gardenerIntervalMin: number;
+  /** Per-run mission budget cap in USD (normalized to [0.5, 20]). */
+  gardenerMaxCostUsd: number;
 }
 
 export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
@@ -66,6 +73,9 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   krakenVerifyModel: "",
   krakenPlannerModel: "",
   krakenDelegation: "automatic",
+  gardenerEnabled: false,
+  gardenerIntervalMin: 30,
+  gardenerMaxCostUsd: 2,
 };
 
 export function isExecutionProfile(value: unknown): value is ExecutionProfile {
@@ -105,6 +115,30 @@ export function normalizePermissionPreset(value: unknown): PermissionPreset {
     : "standard";
 }
 
+/** Gardener automation bounds (Settings → Automations). Rust clamps to the same window. */
+export const GARDENER_INTERVAL_MIN = 5;
+export const GARDENER_INTERVAL_MAX = 1440;
+export const GARDENER_COST_MIN_USD = 0.5;
+export const GARDENER_COST_MAX_USD = 20;
+
+/** Non-numbers (and NaN) fall back to the default; finite numbers are clamped. */
+export function normalizeGardenerInterval(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_DESKTOP_PREFS.gardenerIntervalMin;
+  }
+  const rounded = Math.round(value);
+  return Math.min(GARDENER_INTERVAL_MAX, Math.max(GARDENER_INTERVAL_MIN, rounded));
+}
+
+/** Non-numbers (and NaN) fall back to the default; finite numbers are clamped to 2 decimals. */
+export function normalizeGardenerMaxCost(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_DESKTOP_PREFS.gardenerMaxCostUsd;
+  }
+  const clamped = Math.min(GARDENER_COST_MAX_USD, Math.max(GARDENER_COST_MIN_USD, value));
+  return Math.round(clamped * 100) / 100;
+}
+
 /** Normalize a stored blob; unknown / missing fields fall back to defaults. */
 export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_DESKTOP_PREFS };
@@ -131,6 +165,9 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
     krakenVerifyModel: normalizeModelOverride(r.krakenVerifyModel),
     krakenPlannerModel: normalizeModelOverride(r.krakenPlannerModel),
     krakenDelegation: normalizeDelegation(r.krakenDelegation),
+    gardenerEnabled: r.gardenerEnabled === true,
+    gardenerIntervalMin: normalizeGardenerInterval(r.gardenerIntervalMin),
+    gardenerMaxCostUsd: normalizeGardenerMaxCost(r.gardenerMaxCostUsd),
   };
 }
 
