@@ -100,6 +100,15 @@ export interface SubAgentContext {
     provider: string;
     providerStream: ProviderStreamFn;
   };
+  /**
+   * Thinking-effort spec ACTUALLY applied to this tentacle, in the canonical
+   * string form (`auto` | `off` | `low` | `medium` | `high` | `xhigh` | `max`
+   * | `budget:<tokens>`). Filled by the context factory after resolving
+   * per-spawn arg > per-kind env > inherited provider default; surfaced on the
+   * `agent_spawned` activity event. Optional so hand-rolled contexts (tests,
+   * alternate hosts) need not report one.
+   */
+  thinking?: string;
 }
 
 /** A minimal harness surface — just the event stream. */
@@ -139,11 +148,15 @@ export interface TaskToolDeps {
    * Build provider + tool registry for one sub-agent run.
    * `agent` selects tool set (explore RO / general write / verify tests).
    * `cwd` is the effective working directory (parent cwd or worktree).
+   * `thinkingEffort` is the per-spawn thinking-effort override requested by the
+   * caller (the `task` tool's `thinkingEffort` arg); 'inherit'/undefined means
+   * "let the factory resolve one" (per-kind env, else the provider default).
    */
   createSubAgentContext: (opts: {
     agent: TaskAgentKind;
     thoroughness: TaskThoroughness;
     cwd: string;
+    thinkingEffort?: string;
   }) => Promise<SubAgentContext | null>;
   /** Construct the harness. Overridable in tests; defaults to AgentHarness. */
   harnessFactory?: (config: AgentHarnessConfig) => SubAgentHarness;
@@ -632,6 +645,16 @@ const TaskArgsSchema = z.object({
     .describe(
       'Optional acceptance checklist (contract). Appended to the prompt as Acceptance criteria.',
     ),
+  thinkingEffort: z
+    .enum(['inherit', 'auto', 'off', 'low', 'medium', 'high', 'xhigh', 'max'])
+    .optional()
+    .describe(
+      'Thinking effort for THIS tentacle only (ADR-0017), overriding the provider ' +
+        "default used by the lead. 'inherit' (and omitting the field) defers to the " +
+        'per-kind default: ZELARI_KRAKEN_<EXPLORE|GENERAL|VERIFY>_THINKING, else the ' +
+        'provider thinkingByProvider value. Token budgets are not accepted here — set ' +
+        "ZELARI_KRAKEN_<KIND>_THINKING='budget:<n>' instead. Invalid values are ignored.",
+    ),
 });
 
 const TaskPurposeSchema = z
@@ -836,6 +859,11 @@ export interface RunTentacleOptions {
     prompt: string;
     scope?: string[];
     acceptance?: string[];
+    /**
+     * Per-spawn thinking-effort override (ADR-0017). 'inherit'/undefined defers
+     * to the per-kind env, else the provider default — see `TaskArgsSchema`.
+     */
+    thinkingEffort?: string;
   };
   agent: TaskAgentKind;
   thoroughness: TaskThoroughness;
@@ -960,6 +988,9 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       agent,
       thoroughness,
       cwd: effectiveCwd,
+      // Per-spawn thinking effort (ADR-0017): the factory applies arg > per-kind
+      // env > inherited provider default and reports the winner back on `sub`.
+      ...(args.thinkingEffort ? { thinkingEffort: args.thinkingEffort } : {}),
     });
   } catch (err) {
     if (worktree) await cleanupKrakenWorktree(worktree);
@@ -996,6 +1027,16 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     };
   }
 
+  // E (thinking): the value ACTUALLY applied, for the spawn event. The context
+  // factory already resolved arg > per-kind env > inherited provider default and
+  // reported the winner as `sub.thinking`; the explicit arg is only a fallback
+  // for hand-rolled factories (tests/alternate hosts) that report nothing.
+  const requestedThinking =
+    args.thinkingEffort && args.thinkingEffort.toLowerCase() !== 'inherit'
+      ? args.thinkingEffort
+      : undefined;
+  const spawnThinking = sub.thinking ?? requestedThinking;
+
   emitActivity({
     type: 'agent_spawned',
     agentId: liveId,
@@ -1003,6 +1044,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     title: args.description,
     ...(sub.model ? { model: sub.model } : {}),
     ...(sub.provider ? { provider: sub.provider } : {}),
+    ...(spawnThinking ? { thinking: spawnThinking } : {}),
     ...(args.scope && args.scope.length > 0 ? { scope: args.scope } : {}),
     ...(worktree ? { worktree: worktree.path } : {}),
     ts: Date.now(),
@@ -1426,6 +1468,7 @@ export function createTaskTool(
           prompt: args.prompt,
           scope: args.scope,
           acceptance: args.acceptance,
+          ...(args.thinkingEffort ? { thinkingEffort: args.thinkingEffort } : {}),
         },
         agent,
         thoroughness,

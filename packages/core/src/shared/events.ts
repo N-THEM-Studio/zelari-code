@@ -96,6 +96,15 @@ export interface BrainAgentSpawnedEvent extends BrainEventBase {
   provider?: string;
   scope?: string[];
   worktree?: string;
+  /**
+   * Thinking-effort spec actually applied to THIS tentacle (ADR-0017), in the
+   * canonical string form (`auto` | `off` | `low` | `medium` | `high` |
+   * `xhigh` | `max` | `budget:<tokens>`). Resolved as: per-spawn `task`
+   * `thinkingEffort` arg > per-kind `ZELARI_KRAKEN_<KIND>_THINKING` env >
+   * inherited `thinkingByProvider` default. Absent when the host context
+   * factory reports no spec.
+   */
+  thinking?: string;
 }
 
 /** Coarse lifecycle status of a tentacle, for live activity UIs. */

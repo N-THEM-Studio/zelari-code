@@ -72,6 +72,7 @@ import {
 } from './provider/openai-compatible.js';
 import { buildProviderStream } from './provider/resolveStream.js';
 import { getKrakenVerifierOverride } from './providerConfig.js';
+import { isValidThinkingInput, parseThinkingSpec, stringifyThinkingSpec } from './thinking.js';
 import { wrapWithHeadlessFailover } from './crossProviderFailover.js';
 import { PROVIDERS, type ProviderName } from './keyStore.js';
 import {
@@ -960,6 +961,54 @@ function taskAgentToProfile(agent: TaskAgentKind): 'explore' | 'verify' | 'gener
 }
 
 /**
+ * Per-kind thinking-effort env var for a tentacle (ADR-0017), mirroring the
+ * `ZELARI_KRAKEN_<KIND>_MODEL` naming used by `resolveKrakenSubModel`.
+ */
+export function tentacleThinkingEnvKey(agent: TaskAgentKind): string {
+  if (agent === 'explore') return 'ZELARI_KRAKEN_EXPLORE_THINKING';
+  if (agent === 'verify') return 'ZELARI_KRAKEN_VERIFY_THINKING';
+  return 'ZELARI_KRAKEN_GENERAL_THINKING';
+}
+
+/** Values already reported as invalid, so a broken env warns (at most) once. */
+const warnedThinkingInputs = new Set<string>();
+
+/**
+ * Resolve the thinking-effort INPUT string for ONE tentacle spawn (ADR-0017).
+ *
+ * Precedence (highest first):
+ *   1. the per-spawn `task` arg — when set and not 'inherit';
+ *   2. the per-kind env var (`ZELARI_KRAKEN_<KIND>_THINKING`);
+ *   3. `undefined` → caller keeps the inherited provider default.
+ *
+ * An invalid value never throws and never falls through to the NEXT level
+ * (arg → env): a bad explicit arg must not silently activate an env the caller
+ * overrode. It degrades to the inherited provider spec with one warning.
+ * Unlike the `task` schema enum this accepts `budget:<n>`, so the env vars can
+ * carry token budgets.
+ */
+export function resolveTentacleThinkingInput(
+  agent: TaskAgentKind,
+  taskArg: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): string | undefined {
+  const fromArg = typeof taskArg === 'string' ? taskArg.trim() : '';
+  const argWins = fromArg.length > 0 && fromArg.toLowerCase() !== 'inherit';
+  const key = tentacleThinkingEnvKey(agent);
+  const raw = (argWins ? fromArg : (env[key] ?? '').trim()).trim();
+  if (!raw) return undefined;
+  if (isValidThinkingInput(raw)) return raw.toLowerCase();
+  if (!warnedThinkingInputs.has(raw)) {
+    warnedThinkingInputs.add(raw);
+    console.warn(
+      `[kraken] ignoring invalid thinking effort "${raw}" for the ${agent} tentacle ` +
+        `(${key}); using the provider default.`,
+    );
+  }
+  return undefined;
+}
+
+/**
  * Build the `TaskToolDeps.createSubAgentContext` closure used by the `task`
  * tool: resolves a cheap/strong sub-model, builds a profile-scoped
  * registry (no nested `task`), and wraps it into a `SubAgentContext`.
@@ -1002,7 +1051,7 @@ export function createKrakenSubAgentContextFactory(opts: {
   onPermissionAsk?: PermissionAskHandler;
 }): TaskToolDeps['createSubAgentContext'] {
   const { root, audit, sessionId, provider: providerOverride, model: modelOverride, parentPolicy, onPermissionAsk } = opts;
-  return async ({ agent, cwd: subCwd }) => {
+  return async ({ agent, cwd: subCwd, thinkingEffort }) => {
     const cfg = providerOverride
       ? await providerConfigFor(providerOverride as ProviderName)
       : await providerFromEnv();
@@ -1035,6 +1084,12 @@ export function createKrakenSubAgentContextFactory(opts: {
       }
     }
     const subCfg = { ...effCfg, model };
+    // PER-TENTACLE thinking effort (ADR-0017): the inherited spec is
+    // `thinkingByProvider[provider]` (set by providerFromEnv/providerConfigFor);
+    // an override only replaces it when it VALIDATES, so a typo in an env var
+    // degrades to the inherited behavior instead of failing the spawn.
+    const thinkingInput = resolveTentacleThinkingInput(agent, thinkingEffort, process.env);
+    if (thinkingInput) subCfg.thinking = parseThinkingSpec(thinkingInput);
     const subProfile = taskAgentToProfile(agent);
     const subRoot = subCwd || root;
     // P0.4 capability inheritance: a tentacle NEVER holds more permission
@@ -1086,6 +1141,11 @@ export function createKrakenSubAgentContextFactory(opts: {
       providerStream,
       model,
       provider: subCfg.providerId,
+      // E (thinking): report the spec actually applied so the parent's
+      // `agent_spawned` event can surface it (arg > kind env > inherited).
+      ...(subCfg.thinking !== undefined
+        ? { thinking: stringifyThinkingSpec(subCfg.thinking) }
+        : {}),
       ...(model !== parentModel
         ? {
             fallback: {

@@ -280,11 +280,22 @@ const KRAKEN_TURN_ENV: Array<[keyof HeadlessOptions, string]> = [
   ['krakenExploreModel', 'ZELARI_KRAKEN_EXPLORE_MODEL'],
   ['krakenGeneralModel', 'ZELARI_KRAKEN_GENERAL_MODEL'],
   ['krakenVerifyModel', 'ZELARI_KRAKEN_VERIFY_MODEL'],
+  // Per-tentacle thinking effort (ADR-0017) — same per-kind mapping as the
+  // models above; the spawn factory reads them to override thinkingByProvider.
+  ['krakenExploreThinking', 'ZELARI_KRAKEN_EXPLORE_THINKING'],
+  ['krakenGeneralThinking', 'ZELARI_KRAKEN_GENERAL_THINKING'],
+  ['krakenVerifyThinking', 'ZELARI_KRAKEN_VERIFY_THINKING'],
   ['krakenPlannerModel', 'ZELARI_KRAKEN_PLANNER_MODEL'],
   ['krakenDelegation', 'ZELARI_KRAKEN_DELEGATION'],
 ];
 
-function applyKrakenTurnEnv(opts: HeadlessOptions): void {
+/**
+ * Publish the per-turn Kraken overrides (`ZELARI_KRAKEN_*_MODEL`,
+ * `ZELARI_KRAKEN_*_THINKING`, delegation policy) to `process.env` for the
+ * tentacle spawn factory. Exported for tests: the mapping is the contract
+ * between `HeadlessOptions` and the spawn-side env reads.
+ */
+export function applyKrakenTurnEnv(opts: HeadlessOptions): void {
   for (const [field, envKey] of KRAKEN_TURN_ENV) {
     const raw = opts[field];
     if (typeof raw === 'string' && raw.trim()) {

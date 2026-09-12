@@ -192,6 +192,26 @@ export interface HeadlessOptions {
   krakenGeneralModel?: string;
   /** Kraken verify tentacle model (`ZELARI_KRAKEN_VERIFY_MODEL`). */
   krakenVerifyModel?: string;
+  /**
+   * Kraken explore tentacle thinking effort (`ZELARI_KRAKEN_EXPLORE_THINKING`).
+   * Canonical spec: 'auto' | 'off' | 'low' | 'medium' | 'high' | 'xhigh' |
+   * 'max' | 'budget:<tokens>'. Empty / omitted → provider default (`auto`
+   * unless `thinkingByProvider` says otherwise). Invalid → ignored (warn).
+   * @since 2.38.0
+   */
+  krakenExploreThinking?: string;
+  /**
+   * Kraken general tentacle thinking effort (`ZELARI_KRAKEN_GENERAL_THINKING`).
+   * Same value space as `krakenExploreThinking`.
+   * @since 2.38.0
+   */
+  krakenGeneralThinking?: string;
+  /**
+   * Kraken verify tentacle thinking effort (`ZELARI_KRAKEN_VERIFY_THINKING`).
+   * Same value space as `krakenExploreThinking`.
+   * @since 2.38.0
+   */
+  krakenVerifyThinking?: string;
   /** Kraken graph planner model (`ZELARI_KRAKEN_PLANNER_MODEL`). */
   krakenPlannerModel?: string;
   /** Kraken delegation policy (`ZELARI_KRAKEN_DELEGATION`). */
