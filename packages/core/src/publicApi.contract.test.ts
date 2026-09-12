@@ -81,7 +81,12 @@ describe('@zelari/core public API contract (t53 / ADR-0037)', () => {
     expect(budget.reserve).toEqual({ verification: 2, repair: 1 });
   });
 
-  it('CORE_VERSION tracks the CLI release (lockstep, verify-versions gate)', () => {
-    expect(rootApi.CORE_VERSION).toBe('2.39.0');
+  it('CORE_VERSION tracks the CLI release (lockstep, verify-versions gate)', async () => {
+    // Lockstep against the package manifest itself — the same source the
+    // verify-versions gate reads — so this contract never false-reds on a
+    // legitimate release bump (lesson from the 2.40.0 drift repair).
+    const { readFileSync } = await import('node:fs');
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    expect(rootApi.CORE_VERSION).toBe(pkg.version);
   });
 });
