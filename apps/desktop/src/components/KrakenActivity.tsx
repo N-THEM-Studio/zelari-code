@@ -94,8 +94,14 @@ function AgentRow({
   );
 }
 
-export function KrakenActivity() {
-  const state = useRunActivity();
+export function KrakenActivity({ conversationId }: { conversationId?: string }) {
+  // The panel mounts only inside the active conversation's view: envelope
+  // events are filtered to THIS conversation (never another chat's run),
+  // un-enveloped legacy events keep flowing (same fallback App uses).
+  const state = useRunActivity({
+    conversationId,
+    activeConversationId: conversationId,
+  });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   /** Panel expansion is automatic (t94): open for small runs (≤4 agents) and
    *  whenever any agent is running, collapsed for large quiet runs. A manual

@@ -968,8 +968,14 @@ export default function App() {
   const runCoordinator = useRunCoordinator();
   /** Kraken activity stream (F1): lifted here so the sidebar can list the
    *  tentacles of the active mission's run. Same `agent-event` channel
-   *  KrakenActivity already consumes - no new channel, no new IPC. */
-  const activity = useRunActivity();
+   *  KrakenActivity already consumes - no new channel, no new IPC.
+   *  Conversation isolation: envelope-tagged events are filtered to the
+   *  active conversation, so a run in another chat never paints this tree
+   *  (M2 routing parity with the onAgentEvent block below). */
+  const activity = useRunActivity({
+    conversationId: active?.id,
+    activeConversationId: active?.id,
+  });
   /**
    * F2: tentacle whose live trace is open in the side panel. Only App owns
    * this state; the sidebar reports the click, the panel reads the file.
@@ -3758,7 +3764,7 @@ export default function App() {
                     progress={gauntletByConv[active?.id ?? ""] ?? null}
                   />
                 ) : null}
-                <KrakenActivity />
+                <KrakenActivity conversationId={active?.id} />
                 {verificationByConv[active?.id ?? ""]?.run ? (
                   <VerificationStatusCard
                     run={verificationByConv[active?.id ?? ""].run ?? null}
