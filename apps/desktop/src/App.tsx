@@ -128,6 +128,8 @@ import {
 } from "./runs";
 import { ReplyAccordion } from "./components/ReplyAccordion";
 import { TentacleTracePanel } from "./components/TentacleTracePanel";
+import { QueuedFollowUps } from "./components/QueuedFollowUps";
+import { readMissionVerdict } from "./components/tentacleVerdict";
 import { friendlyToolLabel } from "./components/toolLabels";
 import { scrubDisplayText } from "./components/scrubDisplayText";
 import { ProjectPanel } from "./components/ProjectPanel";
@@ -2821,6 +2823,30 @@ export default function App() {
     }
   };
 
+  /**
+   * F3: take a queued follow-up out of the queue and hand its text back to the
+   * composer. Removing a chip never sends anything and never drops the text
+   * (the same contract the inline handler had, now shared with the chip UI).
+   */
+  const removeQueuedFollowUp = (index: number) => {
+    const convId = active?.id;
+    if (!convId) return;
+    const queued = pendingFollowUps[index];
+    setConversations((prev) =>
+      prev.map((c) =>
+        c.id === convId
+          ? {
+              ...c,
+              pendingFollowUps: (c.pendingFollowUps ?? []).filter((_x, idx) => idx !== index),
+            }
+          : c,
+      ),
+    );
+    if (index === 0 && queued) {
+      setDraft((prev) => (prev.trim() === queued.trim() ? "" : prev));
+    }
+  };
+
   const send = async (text?: string, opts?: { resumeMission?: boolean }) => {
     const convId = active.id;
     const turn = turnFor(convId);
@@ -3327,6 +3353,7 @@ export default function App() {
         activeRunId={runCoordinator.getRun(active?.id)?.runId}
         onSelectTentacle={setTracedAgent}
         selectedTentacleId={tracedAgent?.id ?? null}
+        missionVerdictFor={(id) => readMissionVerdict(verificationByConv[id]?.run?.verdict ?? null)}
       />
       <TentacleTracePanel
         agent={tracedLive}
@@ -3800,51 +3827,11 @@ export default function App() {
               </button>
             </div>
           )}
-          {pendingFollowUps.length > 0 && (
-            <div className="attach-strip" aria-label="Queued follow-ups">
-              {pendingFollowUps.map((q, i) => (
-                <div key={`${i}-${q.slice(0, 24)}`} className="attach-chip" title={q}>
-                  <span className="attach-chip-meta">
-                    <span className="attach-chip-name">
-                      {running ? "Queued" : "Next"} {i + 1}/{pendingFollowUps.length}
-                    </span>
-                    <span className="attach-chip-sub">
-                      {q.replace(/\s+/g, " ").slice(0, 72)}
-                      {q.length > 72 ? "…" : ""}
-                    </span>
-                  </span>
-                  <button
-                    type="button"
-                    className="attach-chip-remove"
-                    title="Remove from queue"
-                    onClick={() => {
-                      const convId = active?.id;
-                      if (!convId) return;
-                      setConversations((prev) =>
-                        prev.map((c) =>
-                          c.id === convId
-                            ? {
-                                ...c,
-                                pendingFollowUps: (c.pendingFollowUps ?? []).filter(
-                                  (_x, idx) => idx !== i,
-                                ),
-                              }
-                            : c,
-                        ),
-                      );
-                      if (i === 0) {
-                        setDraft((prev) =>
-                          prev.trim() === q.trim() ? "" : prev,
-                        );
-                      }
-                    }}
-                  >
-                    ×
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <QueuedFollowUps
+            items={pendingFollowUps}
+            running={running}
+            onRemove={removeQueuedFollowUp}
+          />
           {pendingSkill && (
             <div className="pending-skill-chip" role="status">
               <span>

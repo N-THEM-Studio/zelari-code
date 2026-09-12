@@ -231,3 +231,63 @@ describe("Sidebar - Missioni / Chat sections", () => {
     expect(rows.map((r) => r.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
   });
 });
+
+/**
+ * F3 — badges. Signal: the real `ActivityAgent.phaseMessage` caption
+ * (`agent_status.message`: `taskTool.ts` `emitVerifyPhase` → `reducer.ts`).
+ * Unknown captions degrade to "—"; a mission verdict is never a row's verdict.
+ */
+describe("Sidebar - per-tentacle verification badges (F3)", () => {
+  /** One row per caption shape `emitVerifyPhase` can send. */
+  function verdictActivity(runId: string): RunActivityState {
+    const rows: Array<[string, string | undefined]> = [
+      ["g-pass", "verify PASS"],
+      ["g-fail", "verify FAIL"],
+      ["g-blocked", "verify BLOCKED"],
+      ["g-unknown", "verify unknown"],
+      ["g-nosilence", undefined],
+    ];
+    const lead: ActivityAgent = { id: "lead", role: "lead", status: "running", tools: [] };
+    const agents: Record<string, ActivityAgent> = { lead };
+    for (const [id, phaseMessage] of rows) {
+      agents[id] = { id, parentId: "lead", role: "general", title: id, status: "completed", ...(phaseMessage ? { phaseMessage } : {}), tools: [] };
+    }
+    return { runId, agentOrder: ["lead", ...rows.map(([id]) => id)], agents, warnings: [], controls: [] };
+  }
+  const badgeFor = (c: HTMLElement, id: string) => c.querySelector(`button.tentacle-row[data-agent-id="${id}"] .verdict-badge`);
+  const renderF3 = (missionVerdictFor?: SidebarProps["missionVerdictFor"]) =>
+    render(<Sidebar {...props({ sessions: [mission, chat], activity: verdictActivity("run-1"), activeRunId: "run-1", ...(missionVerdictFor ? { missionVerdictFor } : {}) })} />);
+
+  it("paints each row from its own caption and degrades to — when there is none", () => {
+    const { container } = renderF3();
+    expect(badgeFor(container, "g-pass")?.getAttribute("data-verdict")).toBe("PASS");
+    expect(badgeFor(container, "g-pass")?.getAttribute("data-scope")).toBe("tentacle");
+    expect(badgeFor(container, "g-pass")?.textContent).toBe("✓ PASS");
+    expect(badgeFor(container, "g-fail")?.getAttribute("data-verdict")).toBe("REPAIR_REQUIRED");
+    expect(badgeFor(container, "g-blocked")?.getAttribute("data-verdict")).toBe("BLOCKED");
+    // "verify unknown" IS a signal but carries no verdict, and a row with no
+    // caption never becomes PASS (ADR-0023: unknown ≠ pass).
+    for (const id of ["g-unknown", "g-nosilence"]) {
+      expect(badgeFor(container, id)?.getAttribute("data-verdict")).toBe("unknown");
+      expect(badgeFor(container, id)?.textContent).toBe("—");
+    }
+    expect(screen.getAllByText("✓ PASS")).toHaveLength(1); // only the PASS caption
+    // And with no verification_run for anyone, no mission badge is invented.
+    expect(container.querySelector('.verdict-badge[data-scope="mission"]')).toBeNull();
+  });
+
+  it("labels the mission verification as mission-level, never as a tentacle's", () => {
+    const { container } = renderF3((id) => (id === "m1" ? { verdict: "BLOCKED", signal: "BLOCKED" } : undefined));
+    const missionBadges = [...container.querySelectorAll('.verdict-badge[data-scope="mission"]')];
+    expect(missionBadges).toHaveLength(1); // m1 only: the chat has no verification_run
+    expect(missionBadges[0].getAttribute("data-verdict")).toBe("BLOCKED");
+    expect(missionBadges[0].textContent).toContain("mission"); // explicitly labelled
+    // Rows keep their OWN signal: no caption stays "—", a PASS caption is not
+    // overwritten by the mission's BLOCKED, and only its own caption says BLOCKED.
+    expect(badgeFor(container, "g-nosilence")?.getAttribute("data-verdict")).toBe("unknown");
+    expect(badgeFor(container, "g-pass")?.getAttribute("data-verdict")).toBe("PASS");
+    const blockedRows = container.querySelectorAll('button.tentacle-row .verdict-badge[data-verdict="BLOCKED"]');
+    expect(blockedRows).toHaveLength(1); // g-blocked's caption, not an inheritance
+    expect(badgeFor(container, "g-nosilence")?.textContent).toBe("—");
+  });
+});

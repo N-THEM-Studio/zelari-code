@@ -19,17 +19,12 @@
  * run - a stale run never lands under a mission.
  */
 import { useMemo, type PointerEvent as ReactPointerEvent } from "react";
-import {
-  formatActivityDuration,
-  roleGlyph,
-  selectLead,
-  selectTentacles,
-  statusGlyph,
-  type ActivityAgent,
-  type RunActivityState,
-} from "../activity";
+import type { ActivityAgent, RunActivityState } from "../activity";
 import { folderLabelFromCwd, groupSessionsByFolder } from "../sessionGroups";
 import type { Conversation, SessionFilter } from "../types";
+import { buildHierarchy, MissionTentacles, type HierarchyRow } from "./MissionTentacles";
+import { VerdictBadge } from "./VerdictBadge";
+import type { TentacleVerdictView } from "./tentacleVerdict";
 
 /** Resize handle handlers; App owns the width it persists (`--sidebar-w`). */
 export interface SidebarResizer {
@@ -71,6 +66,13 @@ export interface SidebarProps {
   onSelectTentacle: (agent: ActivityAgent) => void;
   /** F2: tentacle whose trace is open, highlighted with `aria-pressed`. */
   selectedTentacleId?: string | null;
+  /**
+   * F3: mission-level verification verdict of a conversation, read by App from
+   * the `verification_run` event (the same source as `VerificationStatusCard`).
+   * Rendered with an explicit `mission` label - never attributed to a tentacle.
+   * Absent = no badge at all (never a PASS).
+   */
+  missionVerdictFor?: (convId: string) => TentacleVerdictView | undefined;
 }
 
 function formatTime(ts: number): string {
@@ -84,76 +86,10 @@ function formatTime(ts: number): string {
   }
 }
 
-interface HierarchyRow {
-  agent: ActivityAgent;
-  depth: number;
-}
-
-/** Tentacles of the run in flight, nested by `parentId` (depth-first from the
- * lead, depth capped; flat list when no agent carries a parentId). */
-function buildHierarchy(state: RunActivityState): HierarchyRow[] {
-  const agents = selectTentacles(state);
-  const lead = selectLead(state);
-  const rows: HierarchyRow[] = [];
-  if (lead) {
-    const walk = (parentId: string, depth: number): void => {
-      if (depth > 2) return;
-      for (const agent of agents) {
-        if (agent.parentId !== parentId) continue;
-        rows.push({ agent, depth });
-        walk(agent.id, depth + 1);
-      }
-    };
-    walk(lead.id, 0);
-  }
-  return rows.length ? rows : agents.map((agent) => ({ agent, depth: 0 }));
-}
-
 /**
- * Tentacle rows under the active mission. Read-only with respect to the run
- * (F1) plus the F2 selection: clicking a row asks App to open that tentacle's
- * live trace. A `<button>` keeps it keyboard reachable for free.
+ * Tentacle rows under the active mission live in `MissionTentacles.tsx` (F3
+ * extracted them to make room for the per-tentacle verification badge).
  */
-function MissionTentacles({
-  rows,
-  onSelect,
-  selectedId,
-}: {
-  rows: HierarchyRow[];
-  onSelect: (agent: ActivityAgent) => void;
-  selectedId?: string | null;
-}) {
-  const box = { margin: "2px 0 6px 6px", paddingLeft: 8, borderLeft: "2px solid var(--accent, #4b9cd3)", fontSize: "0.82em" };
-  const name = { maxWidth: 128, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" };
-  /** Button reset so the row looks exactly as it did as a `<div>`. */
-  const row = { display: "flex", gap: 6, alignItems: "baseline", width: "100%", padding: 0, border: 0, background: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer" } as const;
-  return (
-    <div aria-label="Tentacles della missione attiva" style={box}>
-      {rows.map(({ agent, depth }) => (
-        <button
-          key={agent.id}
-          type="button"
-          className="tentacle-row"
-          title={`${agent.title || agent.id} — trace live`}
-          aria-pressed={agent.id === selectedId}
-          data-agent-id={agent.id}
-          onClick={() => onSelect(agent)}
-          style={{ ...row, paddingLeft: depth * 10, opacity: agent.status === "running" ? 1 : 0.75 }}
-        >
-          <span aria-hidden>{roleGlyph(agent.role)}</span>
-          <span aria-hidden>{statusGlyph(agent.status)}</span>
-          <span style={name}>{agent.title || agent.id}</span>
-          {/* Caption or final duration - never a clock read: no ticker here. */}
-          {agent.phaseMessage ? (
-            <span style={{ opacity: 0.75 }}>{agent.phaseMessage}</span>
-          ) : agent.durationMs !== undefined ? (
-            <span style={{ opacity: 0.6 }}>{formatActivityDuration(agent.durationMs)}</span>
-          ) : null}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /** Run / completed / plain bubble badge, unchanged from the inline sidebar. */
 function RunBadge({ running, unseen }: { running: boolean; unseen: boolean }) {
@@ -174,11 +110,14 @@ function SessionRow({
   showHierarchy: boolean;
 }) {
   const { activeId, isRunning, unseenByConv, onSelect, onArchive, onUnarchive, onDelete } = props;
+  /** F3: mission-level verdict of THIS conversation, if the backend sent one. */
+  const missionVerdict = props.missionVerdictFor?.(c.id);
   return (
     <div className={`session-item-wrap${c.id === activeId ? " active" : ""}`}>
       <button type="button" className="session-item" onClick={() => onSelect(c)}>
         <span className="session-title">{c.title}</span>
         <RunBadge running={isRunning(c.id)} unseen={Boolean(unseenByConv[c.id])} />
+        {missionVerdict ? <VerdictBadge scope="mission" {...missionVerdict} /> : null}
         <span className="session-folder" title={c.cwd ? c.cwd : undefined}>
           📁 {c.cwd ? folderLabelFromCwd(c.cwd) : "No folder"}
         </span>
