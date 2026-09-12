@@ -84,6 +84,8 @@ export class McpClient {
   constructor(
     public readonly serverName: string,
     private readonly config: McpServerConfig,
+    /** Optional session project root: stdio servers spawn with this cwd. */
+    private readonly spawnCwd?: string,
   ) {
     this.defaultTimeoutMs = config.timeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
     this.serial = config.serial ?? this.transportKind() === "http";
@@ -123,6 +125,10 @@ export class McpClient {
       stdio: ["pipe", "pipe", "pipe"] as ["pipe", "pipe", "pipe"],
       env: { ...process.env, ...(this.config.env ?? {}) },
       windowsHide: true,
+      // MCP servers are project-scoped: their cwd is the session project
+      // root, not the CLI process cwd (the Desktop launches the CLI from its
+      // install dir, so "." entries would jail themselves to the app folder).
+      cwd: this.spawnCwd,
     };
     // On Windows `npx`/`uvx` resolve to .cmd shims which plain spawn cannot
     // execute, so a shell is required — but passing an args ARRAY together

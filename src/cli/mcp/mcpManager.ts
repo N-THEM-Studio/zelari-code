@@ -121,7 +121,7 @@ async function ensureLoaded(projectRoot: string): Promise<void> {
       );
       continue;
     }
-    const client = new McpClient(name, cfg);
+    const client = new McpClient(name, cfg, projectRoot);
     try {
       await client.start();
       const tools = await client.listTools();
