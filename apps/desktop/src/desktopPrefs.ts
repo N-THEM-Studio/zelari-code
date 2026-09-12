@@ -48,6 +48,15 @@ export interface DesktopPrefs {
   krakenVerifyModel: string;
   /** Kraken Graph planner model override. Empty = inherit. */
   krakenPlannerModel: string;
+  /**
+   * Kraken read-oriented exploration tentacle thinking-effort override
+   * (`ZELARI_KRAKEN_EXPLORE_THINKING`, ADR-0017). Empty = inherit.
+   */
+  krakenExploreThinking: ThinkingEffort;
+  /** Kraken code-writing general tentacle thinking-effort override. Empty = inherit. */
+  krakenGeneralThinking: ThinkingEffort;
+  /** Kraken verify tentacle thinking-effort override. Empty = inherit. */
+  krakenVerifyThinking: ThinkingEffort;
   /** Kraken delegation policy: when the lead spawns tentacles ("automatic" = CLI default). */
   krakenDelegation: DelegationPolicy;
 
@@ -72,6 +81,9 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   krakenGeneralModel: "",
   krakenVerifyModel: "",
   krakenPlannerModel: "",
+  krakenExploreThinking: "",
+  krakenGeneralThinking: "",
+  krakenVerifyThinking: "",
   krakenDelegation: "automatic",
   gardenerEnabled: false,
   gardenerIntervalMin: 30,
@@ -88,6 +100,47 @@ export function isExecutionProfile(value: unknown): value is ExecutionProfile {
 /** Empty / whitespace = no Desktop override (Inherit). */
 export function normalizeModelOverride(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
+}
+
+/**
+ * Per-tentacle thinking-effort overrides (ADR-0017). This is the CLI's effort
+ * enum, mirrored so the composer offers exactly what the spawn factory
+ * accepts: `""` = inherit, i.e. no override — the same convention as the
+ * `*Model` overrides above.
+ */
+export const THINKING_EFFORTS = [
+  "auto",
+  "off",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const;
+
+export type ThinkingEffort = "" | (typeof THINKING_EFFORTS)[number];
+
+/** Composer options: the inherit sentinel first, then the effort enum. */
+export const TENTACLE_THINKING_OPTIONS = [
+  "inherit",
+  ...THINKING_EFFORTS,
+] as const;
+
+/**
+ * Normalize ONE stored thinking-effort override.
+ *
+ * Accepted: the effort enum, `inherit`, or empty — `inherit` and `""` say the
+ * same thing, and the Desktop keeps a single representation of "no override"
+ * (`""`, the `*Model` convention). Everything else is sanitized to `""`, so a
+ * hand-edited localStorage blob can never push a value the CLI would reject
+ * onto `ZELARI_KRAKEN_<KIND>_THINKING` (the sidecar ignores AND warns on those
+ * — see `resolveTentacleThinkingInput`).
+ */
+export function normalizeThinkingEffort(value: unknown): ThinkingEffort {
+  const v = typeof value === "string" ? value.trim().toLowerCase() : "";
+  return (THINKING_EFFORTS as readonly string[]).includes(v)
+    ? (v as ThinkingEffort)
+    : "";
 }
 
 export const DELEGATION_POLICIES = [
@@ -164,6 +217,9 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
     krakenGeneralModel: normalizeModelOverride(r.krakenGeneralModel),
     krakenVerifyModel: normalizeModelOverride(r.krakenVerifyModel),
     krakenPlannerModel: normalizeModelOverride(r.krakenPlannerModel),
+    krakenExploreThinking: normalizeThinkingEffort(r.krakenExploreThinking),
+    krakenGeneralThinking: normalizeThinkingEffort(r.krakenGeneralThinking),
+    krakenVerifyThinking: normalizeThinkingEffort(r.krakenVerifyThinking),
     krakenDelegation: normalizeDelegation(r.krakenDelegation),
     gardenerEnabled: r.gardenerEnabled === true,
     gardenerIntervalMin: normalizeGardenerInterval(r.gardenerIntervalMin),

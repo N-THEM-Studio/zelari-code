@@ -73,6 +73,10 @@ export function activityReducer(
         title: typeof ev.title === "string" ? ev.title : a.title,
         model: typeof ev.model === "string" ? ev.model : a.model,
         provider: typeof ev.provider === "string" ? ev.provider : a.provider,
+        // Per-tentacle thinking effort actually applied (ADR-0017); absent on
+        // spawns that never reported one, so a re-spawn without it keeps the
+        // previous value rather than blanking the chip.
+        thinking: typeof ev.thinking === "string" ? ev.thinking : a.thinking,
         scope: Array.isArray(ev.scope) ? (ev.scope as string[]) : a.scope,
         graphNodeId: typeof ev.graphNodeId === "string" ? ev.graphNodeId : a.graphNodeId,
         worktree: typeof ev.worktree === "string" ? ev.worktree : a.worktree,
@@ -85,6 +89,7 @@ export function activityReducer(
         title: typeof ev.title === "string" ? ev.title : undefined,
         model: typeof ev.model === "string" ? ev.model : undefined,
         provider: typeof ev.provider === "string" ? ev.provider : undefined,
+        thinking: typeof ev.thinking === "string" ? ev.thinking : undefined,
         status: "running",
         startedAt: typeof ev.ts === "number" ? ev.ts : 0,
         scope: Array.isArray(ev.scope) ? (ev.scope as string[]) : undefined,

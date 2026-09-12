@@ -75,6 +75,20 @@ export function formatActivityDuration(ms: number | undefined): string {
   return s > 0 ? `${m}m ${s}s` : `${m}m`;
 }
 
+/**
+ * Thinking-effort chip text for one agent (ADR-0017), or undefined when there
+ * is nothing worth showing: no reported value, or a value that only means
+ * "no explicit override" (`auto` — the provider default — and `inherit`).
+ * Anything else (`off`, `low`…`max`, `budget:<n>`) IS an explicit choice and
+ * is surfaced verbatim.
+ */
+export function displayThinkingEffort(thinking: string | undefined): string | undefined {
+  const v = typeof thinking === "string" ? thinking.trim() : "";
+  if (!v) return undefined;
+  const lower = v.toLowerCase();
+  return lower === "auto" || lower === "inherit" ? undefined : v;
+}
+
 /** Role glyph (§41) — never rely on color alone. */
 export function roleGlyph(role: string | undefined): string {
   switch (role) {

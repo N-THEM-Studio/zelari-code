@@ -211,6 +211,13 @@ export interface RunTaskArgs {
   krakenGeneralModel?: string;
   /** Model override for Kraken verify tentacles. */
   krakenVerifyModel?: string;
+  /** Thinking-effort override for Kraken read-only exploration tentacles
+   * (`ZELARI_KRAKEN_EXPLORE_THINKING`, ADR-0017). Omitted/empty = inherit. */
+  krakenExploreThinking?: string;
+  /** Thinking-effort override for Kraken code-writing general tentacles. */
+  krakenGeneralThinking?: string;
+  /** Thinking-effort override for Kraken verify tentacles. */
+  krakenVerifyThinking?: string;
   /** Model override for Kraken Graph planning. */
   krakenPlannerModel?: string;
   /** Kraken delegation policy (automatic|prefer|aggressive|lead-only). Omitted/automatic = CLI default. */

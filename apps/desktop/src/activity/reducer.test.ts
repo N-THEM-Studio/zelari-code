@@ -9,6 +9,7 @@ import {
   type ActivityAction,
 } from "./reducer";
 import {
+  displayThinkingEffort,
   formatActivityDuration,
   roleGlyph,
   selectGraphGroups,
@@ -266,5 +267,35 @@ describe("activity selectors", () => {
     })));
     const tail = selectRecentTools(s.agents["exp-1"], 3);
     expect(tail.map((t) => t.id)).toEqual(["t8", "t9", "t10"]);
+  });
+});
+
+describe("per-tentacle thinking effort (ADR-0017)", () => {
+  it("copies thinking from the spawn payload and keeps it on a metadata re-spawn", () => {
+    const s = reduceall(
+      { ...SPAWN_EXPLORE, thinking: "high" },
+      { ...SPAWN_EXPLORE, model: "model-C" },
+    );
+    expect(s.agents["exp-1"].thinking).toBe("high");
+    expect(s.agents["exp-1"].model).toBe("model-C");
+  });
+
+  it("leaves thinking undefined when the spawn reported none", () => {
+    const s = reduceall(SPAWN_EXPLORE);
+    expect(s.agents["exp-1"].thinking).toBeUndefined();
+  });
+
+  it("displayThinkingEffort hides the no-override values and shows the chosen effort", () => {
+    expect(displayThinkingEffort(undefined)).toBeUndefined();
+    expect(displayThinkingEffort("")).toBeUndefined();
+    expect(displayThinkingEffort("   ")).toBeUndefined();
+    expect(displayThinkingEffort("auto")).toBeUndefined();
+    expect(displayThinkingEffort("AUTO")).toBeUndefined();
+    expect(displayThinkingEffort("inherit")).toBeUndefined();
+    expect(displayThinkingEffort("Inherit")).toBeUndefined();
+    expect(displayThinkingEffort("off")).toBe("off");
+    expect(displayThinkingEffort("high")).toBe("high");
+    expect(displayThinkingEffort("xhigh")).toBe("xhigh");
+    expect(displayThinkingEffort("budget:4096")).toBe("budget:4096");
   });
 });

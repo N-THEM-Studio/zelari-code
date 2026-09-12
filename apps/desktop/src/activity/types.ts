@@ -40,6 +40,9 @@ export interface ActivityAgent {
   role: ActivityAgentRole;
   title?: string;
   model?: string;
+  /** Thinking effort actually applied to this tentacle (ADR-0017), e.g.
+   *  "high" — absent when the spawn did not report one. */
+  thinking?: string;
   provider?: string;
   status: ActivityAgentStatus;
   startedAt?: number;

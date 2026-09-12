@@ -3062,6 +3062,11 @@ export default function App() {
         krakenGeneralModel: prefs.krakenGeneralModel || undefined,
         krakenVerifyModel: prefs.krakenVerifyModel || undefined,
         krakenPlannerModel: prefs.krakenPlannerModel || undefined,
+        // Per-tentacle thinking effort (ADR-0017), same per-kind keys as the
+        // models above and the same composer popover edits. Empty = inherit.
+        krakenExploreThinking: prefs.krakenExploreThinking || undefined,
+        krakenGeneralThinking: prefs.krakenGeneralThinking || undefined,
+        krakenVerifyThinking: prefs.krakenVerifyThinking || undefined,
         krakenDelegation:
           prefs.krakenDelegation !== "automatic" ? prefs.krakenDelegation : undefined,
         permissionPreset: prefs.permissionPreset,
@@ -4033,6 +4038,18 @@ export default function App() {
               permissionPreset={prefs.permissionPreset}
               onPermissionPresetChange={(permissionPreset) =>
                 setPrefs((prev) => patchDesktopPrefs(prev, { permissionPreset }))
+              }
+              krakenExploreThinking={prefs.krakenExploreThinking}
+              onKrakenExploreThinkingChange={(krakenExploreThinking) =>
+                setPrefs((prev) => patchDesktopPrefs(prev, { krakenExploreThinking }))
+              }
+              krakenGeneralThinking={prefs.krakenGeneralThinking}
+              onKrakenGeneralThinkingChange={(krakenGeneralThinking) =>
+                setPrefs((prev) => patchDesktopPrefs(prev, { krakenGeneralThinking }))
+              }
+              krakenVerifyThinking={prefs.krakenVerifyThinking}
+              onKrakenVerifyThinkingChange={(krakenVerifyThinking) =>
+                setPrefs((prev) => patchDesktopPrefs(prev, { krakenVerifyThinking }))
               }
               mode={mode}
               onModeChange={onModeChange}

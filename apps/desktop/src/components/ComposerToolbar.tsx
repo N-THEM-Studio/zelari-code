@@ -15,7 +15,10 @@
  *     `patchDesktopPrefs` → localStorage path): one store, two UIs, never two
  *     sources of truth;
  *   - Mode / Phase / Graph / Gauntlet keep their own components and their own
- *     disable rules (`ModeToggle` is also disabled while Graph is on).
+ *     disable rules (`ModeToggle` is also disabled while Graph is on);
+ *   - the mode pill also carries the per-tentacle thinking-effort selects
+ *     (ADR-0017): the same three `kraken*Thinking` prefs Settings writes, same
+ *     `patchDesktopPrefs` path, and `inherit` IS the empty inherit value.
  *
  * Popovers are LOCAL state only: a `<button>` + an absolutely positioned
  * `<div>`, dismissed on Escape and on a pointer-down outside. The button and
@@ -28,7 +31,13 @@
  * bar had, so steer/queue is unaffected.
  */
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { PERMISSION_PRESETS, type PermissionPreset } from "../desktopPrefs";
+import {
+  normalizeThinkingEffort,
+  PERMISSION_PRESETS,
+  TENTACLE_THINKING_OPTIONS,
+  type PermissionPreset,
+  type ThinkingEffort,
+} from "../desktopPrefs";
 import type { DesktopConfig, DispatchMode, WorkPhase } from "../types";
 import { GauntletToggle } from "./GauntletToggle";
 import { KrakenGraphToggle } from "./KrakenGraphToggle";
@@ -50,6 +59,16 @@ export interface ComposerToolbarProps {
   /** The same pref Settings → Tool permissions writes. */
   permissionPreset: PermissionPreset;
   onPermissionPresetChange: (preset: PermissionPreset) => void;
+  /**
+   * Per-tentacle thinking-effort overrides (ADR-0017) — the same
+   * `kraken*Thinking` prefs the Settings surface writes; "" = inherit.
+   */
+  krakenExploreThinking: ThinkingEffort;
+  onKrakenExploreThinkingChange: (effort: ThinkingEffort) => void;
+  krakenGeneralThinking: ThinkingEffort;
+  onKrakenGeneralThinkingChange: (effort: ThinkingEffort) => void;
+  krakenVerifyThinking: ThinkingEffort;
+  onKrakenVerifyThinkingChange: (effort: ThinkingEffort) => void;
   mode: DispatchMode;
   onModeChange: (mode: DispatchMode) => void;
   phase: WorkPhase;
@@ -145,6 +164,12 @@ export function ComposerToolbar({
   onStatus,
   permissionPreset,
   onPermissionPresetChange,
+  krakenExploreThinking,
+  onKrakenExploreThinkingChange,
+  krakenGeneralThinking,
+  onKrakenGeneralThinkingChange,
+  krakenVerifyThinking,
+  onKrakenVerifyThinkingChange,
   mode,
   onModeChange,
   phase,
@@ -172,6 +197,34 @@ export function ComposerToolbar({
   ]
     .filter(Boolean)
     .join(" · ");
+
+  /** One row per tentacle kind — label, current pref, and the handler that
+   *  patches THAT pref (`""` = inherit, never a second sentinel string). */
+  const tentacleThinking: Array<{
+    kind: string;
+    label: string;
+    value: ThinkingEffort;
+    onChange: (effort: ThinkingEffort) => void;
+  }> = [
+    {
+      kind: "explore",
+      label: "Explore",
+      value: krakenExploreThinking,
+      onChange: onKrakenExploreThinkingChange,
+    },
+    {
+      kind: "general",
+      label: "General",
+      value: krakenGeneralThinking,
+      onChange: onKrakenGeneralThinkingChange,
+    },
+    {
+      kind: "verify",
+      label: "Verify",
+      value: krakenVerifyThinking,
+      onChange: onKrakenVerifyThinkingChange,
+    },
+  ];
 
   return (
     <div className="composer-pills">
@@ -271,6 +324,33 @@ export function ComposerToolbar({
             disabled={disabled}
             onChange={onGauntletChange}
           />
+        </div>
+        {/* Per-tentacle thinking effort (ADR-0017): the quiet section of this
+            popover. `inherit` (= "") plus the CLI effort enum, one select per
+            tentacle kind, through the same patchDesktopPrefs path. */}
+        <div className="composer-popover-section">
+          <span className="composer-popover-title">Tentacle thinking</span>
+          {tentacleThinking.map((row) => (
+            <label key={row.kind} className="composer-popover-row">
+              <span className="composer-popover-label">{row.label}</span>
+              <select
+                className="composer-popover-select"
+                value={row.value || "inherit"}
+                disabled={disabled}
+                aria-label={`${row.label} tentacle thinking effort`}
+                title="Applies to every run from this window (per-turn, one tentacle kind)"
+                onChange={(e) =>
+                  row.onChange(normalizeThinkingEffort(e.target.value))
+                }
+              >
+                {TENTACLE_THINKING_OPTIONS.map((option) => (
+                  <option key={option} value={option}>
+                    {option}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ))}
         </div>
       </Pill>
     </div>

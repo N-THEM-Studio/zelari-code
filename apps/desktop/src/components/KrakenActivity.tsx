@@ -8,6 +8,7 @@
  */
 import { useEffect, useState } from "react";
 import {
+  displayThinkingEffort,
   formatActivityDuration,
   roleGlyph,
   selectGraphGroups,
@@ -24,6 +25,31 @@ function shortWorktree(path: string | undefined): string | undefined {
   if (!path) return undefined;
   const parts = path.split(/[\\/]/).filter(Boolean);
   return parts.length > 2 ? ".../" + parts.slice(-2).join("/") : path;
+}
+
+/**
+ * Quiet chip next to the model: the thinking effort ACTUALLY applied to this
+ * tentacle (agent_spawned.thinking, ADR-0017). Renders nothing for the
+ * inherit/default cases — an always-present "effort: auto" would be noise.
+ */
+function ThinkingChip({ thinking }: { thinking?: string }) {
+  const effort = displayThinkingEffort(thinking);
+  if (!effort) return null;
+  return (
+    <span
+      className="kraken-thinking-chip"
+      title={`Thinking effort applied to this agent: ${effort}`}
+      style={{
+        opacity: 0.7,
+        border: "1px solid var(--border-subtle)",
+        borderRadius: 6,
+        padding: "0 5px",
+        fontSize: "0.85em",
+      }}
+    >
+      {`effort: ${effort}`}
+    </span>
+  );
 }
 
 function AgentRow({
@@ -54,6 +80,7 @@ function AgentRow({
           {formatActivityDuration(agent.durationMs ?? (agent.startedAt ? Date.now() - agent.startedAt : undefined))}
         </span>
         {agent.model ? <span style={{ opacity: 0.7 }}>· {agent.model}</span> : null}
+        <ThinkingChip thinking={agent.thinking} />
         {agent.currentTool ? <span>· {agent.currentTool}…</span> : null}
         {agent.phaseMessage ? <span style={{ opacity: 0.85 }}>· {agent.phaseMessage}</span> : null}
       </div>
@@ -171,6 +198,7 @@ export function KrakenActivity({ conversationId }: { conversationId?: string }) 
           <span aria-hidden>{statusGlyph(lead.status)}</span>{" "}
           {formatActivityDuration(lead.durationMs ?? (lead.startedAt ? Date.now() - lead.startedAt : undefined))}
           {lead.model ? <span style={{ opacity: 0.7 }}> · {lead.model}</span> : null}
+          <ThinkingChip thinking={lead.thinking} />
         </div>
       ) : null}
 

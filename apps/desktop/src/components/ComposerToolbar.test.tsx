@@ -77,6 +77,12 @@ function props(over: Partial<ComposerToolbarProps> = {}): ComposerToolbarProps {
     onThinkingChange: () => {},
     permissionPreset: DEFAULT_DESKTOP_PREFS.permissionPreset,
     onPermissionPresetChange: () => {},
+    krakenExploreThinking: DEFAULT_DESKTOP_PREFS.krakenExploreThinking,
+    onKrakenExploreThinkingChange: () => {},
+    krakenGeneralThinking: DEFAULT_DESKTOP_PREFS.krakenGeneralThinking,
+    onKrakenGeneralThinkingChange: () => {},
+    krakenVerifyThinking: DEFAULT_DESKTOP_PREFS.krakenVerifyThinking,
+    onKrakenVerifyThinkingChange: () => {},
     mode: "kraken",
     onModeChange: () => {},
     phase: "build",
@@ -313,5 +319,56 @@ describe("ComposerToolbar - live run", () => {
     // A disabled pill cannot be opened, so no control is reachable mid-run.
     fireEvent.click(pill("Tool permissions"));
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+});
+
+describe("ComposerToolbar - tentacle thinking (ADR-0017)", () => {
+  const selectFor = (label: string) =>
+    screen.getByLabelText(`${label} tentacle thinking effort`) as HTMLSelectElement;
+
+  it("renders the quiet section with one labelled select per tentacle kind", () => {
+    render(<ComposerToolbar {...props()} />);
+    fireEvent.click(pill("Run mode"));
+
+    expect(screen.getByText("Tentacle thinking")).toBeTruthy();
+    for (const label of ["Explore", "General", "Verify"]) {
+      const select = selectFor(label);
+      // "" (inherit) renders as the first option, never as a blank select.
+      expect(select.value).toBe("inherit");
+      expect(Array.from(select.options).map((o) => o.value)).toEqual([
+        "inherit",
+        "auto",
+        "off",
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max",
+      ]);
+    }
+  });
+
+  it("shows the stored effort and reports a change through its handler", () => {
+    const calls: string[] = [];
+    render(
+      <ComposerToolbar
+        {...props({
+          krakenGeneralThinking: "medium",
+          onKrakenExploreThinkingChange: (v) => calls.push(`explore:${v}`),
+          onKrakenGeneralThinkingChange: (v) => calls.push(`general:${v}`),
+          onKrakenVerifyThinkingChange: (v) => calls.push(`verify:${v}`),
+        })}
+      />,
+    );
+    fireEvent.click(pill("Run mode"));
+
+    expect(selectFor("General").value).toBe("medium");
+
+    fireEvent.change(selectFor("Explore"), { target: { value: "high" } });
+    fireEvent.change(selectFor("General"), { target: { value: "max" } });
+    fireEvent.change(selectFor("Verify"), { target: { value: "inherit" } });
+
+    // `inherit` comes back as the empty inherit pref, not as "inherit".
+    expect(calls).toEqual(["explore:high", "general:max", "verify:"]);
   });
 });

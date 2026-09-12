@@ -219,3 +219,66 @@ describe("KrakenActivity — conversation isolation (M2)", () => {
     expect(screen.queryByText("Project A lead")).toBeNull();
   });
 });
+
+describe("KrakenActivity — per-tentacle thinking chip (ADR-0017)", () => {
+  beforeEach(() => {
+    handlers = [];
+    vi.mocked(onAgentEvent).mockReset();
+    clearActivityStoreForTests();
+  });
+
+  const SPAWN_T = {
+    type: "agent_spawned",
+    conversationId: "conv-T",
+    runId: "run-T",
+    agentId: "t-explore",
+    parentAgentId: "t-lead",
+    role: "explore",
+    title: "Map auth flow",
+    model: "grok-4",
+    ts: 11,
+  };
+  const SPAWN_T_LEAD = {
+    ...SPAWN_T,
+    agentId: "t-lead",
+    parentAgentId: undefined,
+    role: "lead",
+    title: "Lead",
+  };
+
+  it("shows the applied effort next to the model when the spawn reported one", () => {
+    armMock();
+    render(<KrakenActivity conversationId="conv-T" />);
+    emit({ ...SPAWN_T_LEAD, thinking: "high" });
+    emit({ ...SPAWN_T, thinking: "medium" });
+
+    expect(screen.getAllByText(/^effort: /)).toHaveLength(2);
+    expect(screen.getByText("effort: high")).toBeTruthy();
+    expect(screen.getByText("effort: medium")).toBeTruthy();
+  });
+
+  it("hides the chip for auto, inherit and absent thinking", () => {
+    armMock();
+    render(<KrakenActivity conversationId="conv-T" />);
+    emit({ ...SPAWN_T_LEAD, thinking: "auto" });
+    emit({ ...SPAWN_T, thinking: "high" });
+    emit({
+      ...SPAWN_T,
+      agentId: "t-inherit",
+      role: "general",
+      title: "Inherited",
+      thinking: "inherit",
+    });
+    emit({
+      ...SPAWN_T,
+      agentId: "t-absent",
+      role: "verify",
+      title: "No effort",
+      thinking: undefined,
+    });
+
+    // Only the explicit 'high' tentacle wears a chip.
+    expect(screen.getAllByText(/^effort: /)).toHaveLength(1);
+    expect(screen.getByText("effort: high")).toBeTruthy();
+  });
+});

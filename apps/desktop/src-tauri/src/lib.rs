@@ -2656,6 +2656,16 @@ struct RunTaskArgs {
     /// Kraken verify tentacle model override. Empty / None = inherit.
     #[serde(default)]
     kraken_verify_model: Option<String>,
+    /// Kraken explore tentacle thinking-effort override (ADR-0017,
+    /// `ZELARI_KRAKEN_EXPLORE_THINKING`). Empty / None = inherit.
+    #[serde(default)]
+    kraken_explore_thinking: Option<String>,
+    /// Kraken general tentacle thinking-effort override. Empty / None = inherit.
+    #[serde(default)]
+    kraken_general_thinking: Option<String>,
+    /// Kraken verify tentacle thinking-effort override. Empty / None = inherit.
+    #[serde(default)]
+    kraken_verify_thinking: Option<String>,
     /// Kraken Graph planner model override. Empty / None = inherit.
     #[serde(default)]
     kraken_planner_model: Option<String>,
@@ -2858,6 +2868,9 @@ fn run_task(
     let kraken_explore_model = args.kraken_explore_model;
     let kraken_general_model = args.kraken_general_model;
     let kraken_verify_model = args.kraken_verify_model;
+    let kraken_explore_thinking = args.kraken_explore_thinking;
+    let kraken_general_thinking = args.kraken_general_thinking;
+    let kraken_verify_thinking = args.kraken_verify_thinking;
     let kraken_planner_model = args.kraken_planner_model;
     let kraken_delegation = args.kraken_delegation;
     let permission_preset = args.permission_preset;
@@ -2896,6 +2909,9 @@ fn run_task(
             kraken_explore_model.as_deref(),
             kraken_general_model.as_deref(),
             kraken_verify_model.as_deref(),
+            kraken_explore_thinking.as_deref(),
+            kraken_general_thinking.as_deref(),
+            kraken_verify_thinking.as_deref(),
             kraken_planner_model.as_deref(),
             kraken_delegation.as_deref(),
             permission_preset.as_deref(),
@@ -2960,6 +2976,9 @@ fn run_sidecar_turn(
     kraken_explore_model: Option<&str>,
     kraken_general_model: Option<&str>,
     kraken_verify_model: Option<&str>,
+    kraken_explore_thinking: Option<&str>,
+    kraken_general_thinking: Option<&str>,
+    kraken_verify_thinking: Option<&str>,
     kraken_planner_model: Option<&str>,
     kraken_delegation: Option<&str>,
     permission_preset: Option<&str>,
@@ -2994,7 +3013,8 @@ fn run_sidecar_turn(
     //                             ignored → stateless, same as the CLI)
     //   --todos <json>          → todos       (parsed array, same fallback)
     // Env-only knobs still pinned at sidecar spawn: bon_alpha, verify_pack,
-    // verifier_review. Kraken tentacle models + delegation ARE per-turn.
+    // verifier_review. Kraken tentacle models, per-tentacle thinking effort
+    // and delegation ARE per-turn.
     let mut input = serde_json::json!({
         "task": prompt,
         "mode": mode,
@@ -3019,6 +3039,18 @@ fn run_sidecar_turn(
     }
     if let Some(m) = kraken_verify_model.map(str::trim).filter(|m| !m.is_empty()) {
         input["krakenVerifyModel"] = serde_json::json!(m);
+    }
+    if let Some(t) = kraken_explore_thinking.map(str::trim).filter(|t| !t.is_empty()) {
+        // ADR-0017: same per-kind override the CLI reads off
+        // ZELARI_KRAKEN_EXPLORE_THINKING; the sidecar allowlists the value
+        // and ignores (with one warning) anything it does not recognize.
+        input["krakenExploreThinking"] = serde_json::json!(t);
+    }
+    if let Some(t) = kraken_general_thinking.map(str::trim).filter(|t| !t.is_empty()) {
+        input["krakenGeneralThinking"] = serde_json::json!(t);
+    }
+    if let Some(t) = kraken_verify_thinking.map(str::trim).filter(|t| !t.is_empty()) {
+        input["krakenVerifyThinking"] = serde_json::json!(t);
     }
     if let Some(m) = kraken_planner_model.map(str::trim).filter(|m| !m.is_empty()) {
         input["krakenPlannerModel"] = serde_json::json!(m);
@@ -3479,6 +3511,9 @@ node "{}" %*"#,
         assert_eq!(args.kraken_explore_model, None);
         assert_eq!(args.kraken_general_model, None);
         assert_eq!(args.kraken_verify_model, None);
+        assert_eq!(args.kraken_explore_thinking, None);
+        assert_eq!(args.kraken_general_thinking, None);
+        assert_eq!(args.kraken_verify_thinking, None);
         assert_eq!(args.kraken_planner_model, None);
         assert_eq!(args.kraken_delegation, None);
     }
@@ -3544,6 +3579,20 @@ node "{}" %*"#,
         assert_eq!(args.kraken_verify_model.as_deref(), Some("review-model"));
         assert_eq!(args.kraken_planner_model.as_deref(), Some("planner-model"));
         assert_eq!(args.kraken_delegation.as_deref(), Some("prefer"));
+    }
+
+    #[test]
+    fn desktop_run_deserializes_kraken_thinking_overrides() {
+        let args: RunTaskArgs = serde_json::from_value(serde_json::json!({
+            "prompt": "test",
+            "krakenExploreThinking": "low",
+            "krakenGeneralThinking": "high",
+            "krakenVerifyThinking": "max"
+        }))
+        .unwrap();
+        assert_eq!(args.kraken_explore_thinking.as_deref(), Some("low"));
+        assert_eq!(args.kraken_general_thinking.as_deref(), Some("high"));
+        assert_eq!(args.kraken_verify_thinking.as_deref(), Some("max"));
     }
 
     #[test]
