@@ -3,9 +3,10 @@
  * ComposerToolbar (grok-round) contract under test:
  *   - three pills render with the CURRENT values (model, permission preset,
  *     mode · phase [+ Graph/Gauntlet]) and no panel is open up front;
- *   - the model pill hosts the untouched `ProviderModelBar` — provider, model,
- *     thinking and the discover button all keep their aria-labels and their
- *     handlers, so discovery did not lose anything by moving off the topbar;
+ *   - the model pill hosts the redesigned `ProviderModelBar` (grok-style model
+ *     option list + segmented thinking effort): the provider select, the model
+ *     listbox, the effort radios and the refresh row keep their accessible
+ *     names and their handlers, so discovery lost nothing moving off the topbar;
  *   - the permission pill drives the SAME pref Settings edits (same
  *     `PERMISSION_PRESETS`, same single-value select semantics);
  *   - the mode pill carries Mode / Phase / Graph / Gauntlet, with the graph
@@ -17,7 +18,7 @@
  * its own node_modules copy of React while @testing-library/react at the root
  * uses the root one — two Reacts in one module graph break hooks).
  */
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_DESKTOP_PREFS, PERMISSION_PRESETS } from "../desktopPrefs";
 import type { DesktopConfig } from "../types";
@@ -116,23 +117,38 @@ describe("ComposerToolbar - pills", () => {
 describe("ComposerToolbar - model pill hosts ProviderModelBar", () => {
   const openModel = () => fireEvent.click(pill("Provider and model"));
 
-  it("mounts provider, model, thinking and the discover button", () => {
+  it("mounts provider, the model option list, thinking and the refresh row", () => {
     render(<ComposerToolbar {...props()} />);
     openModel();
 
     const providerSelect = screen.getByLabelText("Provider") as HTMLSelectElement;
-    const modelSelect = screen.getByLabelText("Model") as HTMLSelectElement;
-    const thinkingSelect = screen.getByLabelText("Thinking effort") as HTMLSelectElement;
-
     expect(providerSelect.value).toBe("grok");
-    expect(modelSelect.value).toBe("grok-4");
-    expect(thinkingSelect.value).toBe("high"); // the provider's stored effort
-    expect(screen.getByLabelText("Refresh models")).toBeTruthy();
-    // The option lists come from the config, i.e. discovery data still flows.
-    expect([...modelSelect.options].map((o) => o.value)).toEqual([
+
+    // The option list comes straight from the config, i.e. discovery data
+    // still flows; the selected row is flagged, Grok-style.
+    const options = within(
+      screen.getByRole("listbox", { name: "Model" }),
+    ).getAllByRole("option");
+    expect(options.map((o) => o.getAttribute("aria-label"))).toEqual([
       "grok-4",
       "grok-4-mini",
     ]);
+    expect(
+      options.find((o) => o.getAttribute("aria-selected") === "true"),
+    ).toBeTruthy();
+    expect(
+      options.find((o) => o.getAttribute("aria-selected") === "true")?.getAttribute("aria-label"),
+    ).toBe("grok-4");
+
+    // One of the effort segments is checked: the provider's stored effort.
+    const checked = within(
+      screen.getByRole("radiogroup", { name: "Thinking effort" }),
+    )
+      .queryAllByRole("radio")
+      .find((r) => r.getAttribute("aria-checked") === "true");
+    expect(checked).toBeTruthy();
+
+    expect(screen.getByLabelText("Refresh models")).toBeTruthy();
   });
 
   it("reports provider, model and thinking changes", () => {
@@ -148,22 +164,28 @@ describe("ComposerToolbar - model pill hosts ProviderModelBar", () => {
     );
     openModel();
 
-    fireEvent.change(screen.getByLabelText("Model"), {
-      target: { value: "grok-4-mini" },
-    });
+    fireEvent.click(
+      within(screen.getByRole("listbox", { name: "Model" })).getByRole(
+        "option",
+        { name: "grok-4-mini" },
+      ),
+    );
     fireEvent.change(screen.getByLabelText("Provider"), {
       target: { value: "anthropic" },
     });
     // The effort list is provider/model dependent, so pick a real neighbour
     // instead of hard-coding the capability table here.
-    const thinking = screen.getByLabelText("Thinking effort") as HTMLSelectElement;
-    const other = [...thinking.options].find((o) => o.value !== thinking.value)!;
-    fireEvent.change(thinking, { target: { value: other.value } });
+    const other = within(
+      screen.getByRole("radiogroup", { name: "Thinking effort" }),
+    )
+      .getAllByRole("radio")
+      .find((r) => r.getAttribute("aria-checked") !== "true")!;
+    fireEvent.click(other);
 
     expect(calls).toEqual([
       "model:grok-4-mini",
       "provider:anthropic",
-      `thinking:${other.value}`,
+      `thinking:${other.getAttribute("data-value")}`,
     ]);
   });
 });

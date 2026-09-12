@@ -152,77 +152,101 @@ export function ProviderModelBar({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- only on provider switch
   }, [provider]);
 
+  // Grok-style list: the current model stays visible even when it is not in
+  // the discovered list yet (same rule the old select used for its extra option).
+  const displayModels =
+    model && !models.includes(model) ? [model, ...models] : models;
+
   return (
-    <div className="control-cluster control-cluster-model provider-bar">
-      <div className="toolbar-select-group">
-        <select
-          className="toolbar-select toolbar-select-provider"
-          value={provider}
-          disabled={disabled || !providers.length}
-          aria-label="Provider"
-          title="Provider"
-          onChange={(e) => onProviderChange(e.target.value)}
-        >
-          {!providers.length && (
-            <option value={provider}>{provider || "—"}</option>
-          )}
-          {providers.map((p) => (
-            <option key={p.id} value={p.id}>
-              {p.displayName}
-              {!p.hasKey ? " (no key)" : ""}
-            </option>
-          ))}
-        </select>
-        <select
-          className="toolbar-select toolbar-select-model"
-          value={models.includes(model) ? model : model || ""}
-          disabled={disabled || discovering}
-          aria-label="Model"
-          title="Model"
-          onFocus={() => void refreshModels(false)}
-          onChange={(e) => onModelChange(e.target.value)}
-        >
-          {!models.includes(model) && model && (
-            <option value={model}>{model}</option>
-          )}
-          {models.map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-          {!models.length && (
-            <option value="">{discovering ? "Loading…" : "—"}</option>
-          )}
-        </select>
-        <select
-          className="toolbar-select toolbar-select-thinking"
-          value={thinkingValue}
-          disabled={disabled}
-          aria-label="Thinking effort"
-          title="Thinking effort"
-          onChange={(e) => onThinkingChange(e.target.value)}
-        >
-          {!thinkingOptions.some((o) => o.value === thinkingValue) &&
-            thinkingValue && (
-              <option value={thinkingValue}>{thinkingValue}</option>
+    <div className="provider-bar pmb">
+      <div className="pmb-provider-row">
+        <span className="pmb-label">Provider</span>
+        <span className="pmb-provider-wrap">
+          <select
+            className="pmb-provider-select"
+            value={provider}
+            disabled={disabled || !providers.length}
+            aria-label="Provider"
+            title="Provider"
+            onChange={(e) => onProviderChange(e.target.value)}
+          >
+            {!providers.length && (
+              <option value={provider}>{provider || "—"}</option>
             )}
-          {thinkingOptions.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </select>
-        <button
-          type="button"
-          className="btn-ghost btn-discover toolbar-discover"
-          disabled={disabled || discovering || !provider}
-          title="Refresh model list from provider API"
-          aria-label="Refresh models"
-          onClick={() => void refreshModels(true)}
-        >
-          {discovering ? "…" : "↻"}
-        </button>
+            {providers.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.displayName}
+                {!p.hasKey ? " (no key)" : ""}
+              </option>
+            ))}
+          </select>
+        </span>
       </div>
+
+      <div className="pmb-label">Model</div>
+      <div
+        className="pmb-model-list"
+        role="listbox"
+        aria-label="Model"
+        aria-disabled={disabled || discovering || undefined}
+        onFocus={() => void refreshModels(false)}
+      >
+        {displayModels.map((m) => (
+          <button
+            key={m}
+            type="button"
+            role="option"
+            aria-selected={m === model}
+            aria-label={m}
+            className="pmb-model-option"
+            disabled={disabled || discovering || undefined}
+            onClick={() => onModelChange(m)}
+          >
+            <span className="pmb-model-name">{m}</span>
+            {m === model && (
+              <span className="pmb-model-check" aria-hidden="true">
+                ✓
+              </span>
+            )}
+          </button>
+        ))}
+        {!displayModels.length && (
+          <div className="pmb-model-empty">
+            {discovering ? "Loading…" : "No models — refresh below"}
+          </div>
+        )}
+      </div>
+
+      <div className="pmb-label">Thinking effort</div>
+      <div className="pmb-seg" role="radiogroup" aria-label="Thinking effort">
+        {thinkingOptions.map((o) => (
+          <button
+            key={o.value}
+            type="button"
+            role="radio"
+            data-value={o.value}
+            aria-checked={o.value === thinkingValue}
+            className="pmb-seg-btn"
+            disabled={disabled || undefined}
+            title={o.label}
+            onClick={() => onThinkingChange(o.value)}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+
+      <button
+        type="button"
+        className="pmb-refresh-row"
+        disabled={disabled || discovering || !provider || undefined}
+        title="Refresh model list from provider API"
+        aria-label="Refresh models"
+        onClick={() => void refreshModels(true)}
+      >
+        <span aria-hidden="true">{discovering ? "…" : "↻"}</span>
+        Refresh models
+      </button>
     </div>
   );
 }
