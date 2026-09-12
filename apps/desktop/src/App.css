@@ -7483,3 +7483,89 @@ kbd {
   padding: 0 24px 18px;
 }
 
+/* == grok-round polish r2 (dai screenshot utente: armonia pill/send, il rename
+ * non deve far saltare la riga, crome sidebar più quiete) ================== */
+
+/* send: pill piatta quasi-bianca, stessa riga ottica dei pill — niente
+ * gradient/eredità glow del tema vecchio */
+.composer .btn-send {
+  min-height: 30px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  background: var(--text);
+  color: var(--bg-solid);
+  border: 1px solid transparent;
+  box-shadow: none;
+  font-size: 12.5px;
+}
+
+.composer .btn-send:hover:not(:disabled) {
+  transform: none;
+  filter: none;
+  background: color-mix(in srgb, var(--text) 88%, var(--bg-solid));
+}
+
+.composer .btn-send:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.composer .btn-stop {
+  min-height: 30px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 12.5px;
+}
+
+/* pill: un notch sopra, così la riga sinistra pesa come il send a destra */
+.composer .composer-pill {
+  font-size: 12px;
+  padding: 4px 11px;
+}
+
+/* rinominare non deve cambiare l'altezza della riga (input == metriche riga) */
+.session-item-wrap {
+  align-items: center;
+}
+
+.session-item-rename {
+  padding: 4px 9px;
+  line-height: 1.4;
+}
+
+/* azioni on-hover: compatte, mai su due righe */
+.session-actions {
+  gap: 2px;
+  flex-wrap: nowrap;
+}
+
+.session-actions button {
+  width: 22px;
+  height: 22px;
+  min-width: 22px;
+  padding: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+/* "New chat": pill flat full-width a hairline, quieta come il resto */
+.btn-new {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  box-shadow: none;
+  font-weight: 600;
+}
+
+.btn-new:hover:not(:disabled) {
+  background: var(--hover-tint);
+}
+
+
