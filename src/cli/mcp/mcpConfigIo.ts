@@ -111,6 +111,70 @@ export function listMcpServers(projectRoot?: string | null): {
   return { userPath, projectPath, servers, merged };
 }
 
+/** Process-env key charset — mirrors ENV_KEY_RE in the Desktop MCP form, so
+ *  CLI and Desktop accept exactly the same env names. */
+const ENV_KEY_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+function requireEnvKey(key: string): string {
+  if (!ENV_KEY_RE.test(key)) {
+    throw new Error(
+      `Invalid env key "${key}" — use letters, digits, _ (no leading digit)`,
+    );
+  }
+  return key;
+}
+
+/**
+ * Parse the `--env` value(s) of `--set-mcp` into a KEY→VALUE map.
+ *
+ * Two spellings, because the callers differ:
+ *   - `--env '{"KEY":"VALUE"}'` — JSON object (what the Desktop bridge ships);
+ *   - `--env KEY=VALUE` repeated — hand-typed in a shell (later one wins).
+ *
+ * Returns `undefined` when the flag is absent, which `upsertMcpServer` reads
+ * as "no env channel" and therefore keeps whatever mcp.json already holds. An
+ * explicit `{}` survives as `{}` so it can still clear a stored map.
+ *
+ * Throws on malformed input — the `--set-mcp` block turns that into a clean
+ * message + exit code 1.
+ */
+export function parseMcpEnvFlag(
+  raw: string[],
+): Record<string, string> | undefined {
+  if (raw.length === 0) return undefined;
+  const env: Record<string, string> = {};
+  for (const value of raw) {
+    const text = value.trim();
+    // `{…}` is what the Desktop bridge ships; `[…]` also starts JSON so the
+    // error for a non-object reads "must be an object", not "use KEY=VALUE".
+    if (text.startsWith('{') || text.startsWith('[')) {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+        throw new Error(`--env is not valid JSON: ${text}`);
+      }
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('--env JSON must be an object of "KEY": "VALUE" pairs');
+      }
+      for (const [key, val] of Object.entries(parsed as Record<string, unknown>)) {
+        if (typeof val !== 'string') {
+          throw new Error(`--env "${key}" must map to a string value`);
+        }
+        env[requireEnvKey(key)] = val;
+      }
+      continue;
+    }
+    const eq = text.indexOf('=');
+    const key = eq > 0 ? text.slice(0, eq).trim() : '';
+    if (!key) {
+      throw new Error(`Invalid --env "${text}" — use KEY=VALUE or a JSON object`);
+    }
+    env[requireEnvKey(key)] = text.slice(eq + 1);
+  }
+  return env;
+}
+
 export function upsertMcpServer(opts: {
   scope: McpConfigScope;
   name: string;
@@ -147,10 +211,15 @@ export function upsertMcpServer(opts: {
     path = getProjectMcpPath(root);
   }
   const current = readFile(path);
+  const previous = current[name];
   current[name] = {
     command: hasCommand ? opts.config.command!.trim() : undefined,
     args: opts.config.args,
-    env: opts.config.env,
+    // Back-compat: callers that only flip `enabled` (Desktop toggle) or that
+    // have no env channel at all (`--set-mcp` without `--env`) must not wipe
+    // env written by hand or by another tool. An explicit env always wins —
+    // including `{}`, which clears it.
+    env: opts.config.env ?? previous?.env,
     type: hasUrl ? 'http' : opts.config.type === 'http' ? 'http' : 'stdio',
     url: hasUrl ? opts.config.url!.trim() : undefined,
     timeoutMs: opts.config.timeoutMs,

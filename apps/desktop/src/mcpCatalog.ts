@@ -65,3 +65,14 @@ export const MCP_CATALOG: McpCatalogItem[] = [
     selfHosted: true,
   },
 ];
+
+const CATALOG_BY_ID = new Map(MCP_CATALOG.map((item) => [item.id, item]));
+
+/**
+ * Catalog item owning a server name, or `undefined` for a server the user
+ * added by hand (custom servers are still removable/editable; catalog ones
+ * keep the install/uninstall flow only).
+ */
+export function catalogItemFor(id: string): McpCatalogItem | undefined {
+  return CATALOG_BY_ID.get(id);
+}

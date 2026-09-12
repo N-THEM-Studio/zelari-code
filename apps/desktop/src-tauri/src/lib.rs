@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashMap;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
@@ -2106,6 +2107,10 @@ struct SetMcpArgs {
     scope: Option<String>,
     #[serde(default)]
     enabled: Option<bool>,
+    /// Extra env for the spawned server, forwarded as `--env <json>`. Absent
+    /// (or null) = no env channel: the CLI keeps whatever mcp.json holds.
+    #[serde(default)]
+    env: Option<HashMap<String, String>>,
     #[serde(default)]
     cwd: Option<String>,
 }
@@ -2130,6 +2135,14 @@ fn set_mcp(args: SetMcpArgs) -> Result<serde_json::Value, String> {
     if let Some(a) = args.args {
         argv.push("--args".into());
         argv.push(serde_json::to_string(&a).map_err(|e| e.to_string())?);
+    }
+    // Env travels as a single JSON-object argv element — same trick as --args,
+    // and safe because the CLI is spawned with an argv array (no shell to
+    // escape for). Only a non-empty map is forwarded: empty means "no env
+    // channel", so the CLI keeps the map already stored in mcp.json.
+    if let Some(env) = args.env.as_ref().filter(|m| !m.is_empty()) {
+        argv.push("--env".into());
+        argv.push(serde_json::to_string(env).map_err(|e| e.to_string())?);
     }
     if let Some(cwd) = args
         .cwd

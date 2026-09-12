@@ -49,6 +49,7 @@ import { listCodingSkills } from "@zelari/core/skills";
 import { getCurrentVersion } from "./updater.js";
 import {
   listMcpServers,
+  parseMcpEnvFlag,
   removeMcpServer,
   upsertMcpServer,
 } from "./mcp/mcpConfigIo.js";
@@ -662,6 +663,8 @@ function pickRootComponent(): {
         "    --command <bin>   Executable for stdio servers\n" +
         "    --url <endpoint>  Streamable HTTP endpoint (e.g. UE 5.8 editor)\n" +
         "    --args <json>     JSON array of args (stdio, optional)\n" +
+        "    --env <json|K=V>  Env for the server: JSON object or KEY=VALUE,\n" +
+        "                      repeatable (omit to keep the stored env)\n" +
         "    --timeout <ms>    Per-server request timeout (http, optional)\n" +
         "    --scope user|project  Default: user\n" +
         "    --enabled true|false  Default: true\n" +
@@ -744,6 +747,14 @@ function pickRootComponent(): {
         if (!Array.isArray(parsed)) throw new Error("--args must be a JSON array");
         args = parsed.map(String);
       }
+      // `--env` takes a JSON object (what the Desktop bridge ships) or
+      // repeated KEY=VALUE pairs. Omitted ⇒ undefined ⇒ upsertMcpServer keeps
+      // whatever env mcp.json already holds; `--env '{}'` clears it.
+      const envValues: string[] = [];
+      for (let i = 0; i < argv.length - 1; i++) {
+        if (argv[i] === "--env") envValues.push(argv[i + 1]!);
+      }
+      const env = parseMcpEnvFlag(envValues);
       const timeoutMs =
         timeoutRaw !== undefined ? Number(timeoutRaw) : undefined;
       if (
@@ -764,8 +775,8 @@ function pickRootComponent(): {
         name,
         projectRoot: cwd,
         config: url
-          ? { type: "http", url, timeoutMs, serial: true, enabled }
-          : { command, args, enabled },
+          ? { type: "http", url, timeoutMs, serial: true, enabled, env }
+          : { command, args, env, enabled },
       });
       if (!result.ok) throw new Error(result.error);
       console.log(JSON.stringify({ ok: true, path: result.path, name, scope }));

@@ -1,0 +1,173 @@
+/*
+ * Settings → Extensions → MCP: integrations-manager skin (grok-flat).
+ *
+ * Scoped to the markup McpSection owns; colors come from the settings tokens
+ * (--s-*) with the app tokens (App.css) as fallback so the section keeps its
+ * shape even outside SettingsShell. No hardcoded palette.
+ */
+
+/* ---------- Header + toolbar ---------- */
+
+.mcp-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.mcp-head h2 {
+  margin-bottom: 4px;
+}
+
+.mcp-head p {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.mcp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 14px 0 2px;
+}
+
+.mcp-toolbar-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.mcp-toolbar-actions .btn-ghost,
+.mcp-toolbar-actions .btn-send,
+.mcp-form-actions .btn-ghost,
+.mcp-form-actions .btn-send,
+.mcp-server-actions .btn-ghost {
+  width: auto;
+  min-width: unset;
+  height: auto;
+  min-height: 32px;
+  padding: 6px 12px;
+  border-radius: var(--s-radius-sm, var(--radius-sm));
+  white-space: nowrap;
+}
+
+/* ---------- Add / edit form ---------- */
+
+.mcp-form {
+  margin: 14px 0 4px;
+  padding: 14px;
+  border: 1px solid var(--s-border-strong, var(--border-subtle));
+  border-radius: var(--s-radius-sm, var(--radius-sm));
+  background: var(--s-surface-inset, var(--surface));
+}
+
+.mcp-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.mcp-field {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+
+.mcp-field > span {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--s-text-faint, var(--text-muted));
+}
+
+.mcp-field-inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-field-wide {
+  grid-column: 1 / -1;
+}
+
+.mcp-field textarea.s-input {
+  min-height: 72px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.mcp-field-hint {
+  font-size: 11px;
+  font-style: normal;
+  color: var(--s-text-faint, var(--text-muted));
+}
+
+.mcp-field-error {
+  margin: 0;
+  font-size: 11.5px;
+  color: var(--s-error, var(--danger));
+}
+
+.mcp-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ---------- Installed server cards ---------- */
+
+.mcp-server-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--s-border, var(--border-subtle));
+  border-radius: var(--s-radius-sm, var(--radius-sm));
+  background: var(--s-surface-inset, var(--surface));
+  transition: background 0.2s ease;
+}
+
+.mcp-server-row:hover {
+  background: var(--s-hover, var(--hover-tint));
+}
+
+.mcp-server-info {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.mcp-server-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.mcp-server-name {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--s-text, var(--text));
+}
+
+.mcp-server-desc {
+  margin: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--s-text-dim, var(--text-secondary));
+}
+
+.mcp-server-actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+}

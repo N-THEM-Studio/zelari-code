@@ -398,6 +398,8 @@ export async function setMcp(args: {
   name: string;
   command: string;
   args?: string[];
+  /** Extra env for the spawned stdio server, KEY=VALUE map. */
+  env?: Record<string, string> | null;
   scope?: "user" | "project";
   enabled?: boolean;
   cwd?: string | null;
@@ -407,6 +409,10 @@ export async function setMcp(args: {
       name: args.name,
       command: args.command,
       args: args.args ?? null,
+      // `env` is part of the Claude-compatible record (mcpConfigIo reads and
+      // writes it). The Rust `set_mcp` bridge forwards it to the CLI as
+      // `--env <json>`; omitted/null keeps the stored env (see mcpConfigIo).
+      env: args.env ?? null,
       scope: args.scope ?? "user",
       enabled: args.enabled ?? true,
       cwd: args.cwd ?? null,
