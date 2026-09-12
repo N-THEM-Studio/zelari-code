@@ -28,6 +28,7 @@ vi.mock("../agentClient", () => ({
 }));
 
 import { onAgentEvent } from "../agentClient";
+import { clearActivityStoreForTests } from "./useRunActivity";
 import { KrakenActivity } from "../components/KrakenActivity";
 
 type Handler = (event: AgentEvent) => void;
@@ -84,6 +85,9 @@ describe("KrakenActivity — conversation isolation (M2)", () => {
   beforeEach(() => {
     handlers = [];
     vi.mocked(onAgentEvent).mockReset();
+    // The accumulation store is module-level (it must survive conversation
+    // switches in the app) — wipe it so tests start from a clean slate.
+    clearActivityStoreForTests();
   });
 
   it("envelope-tagged events from another conversation never reach the panel", () => {
@@ -143,5 +147,75 @@ describe("KrakenActivity — conversation isolation (M2)", () => {
     // Empty tree = inert panel by design ("renders nothing until an
     // agent_spawned arrives"): the reset IS the absence of stale rows.
     expect(screen.queryByText("KRAKEN ACTIVITY")).toBeNull();
+  });
+
+  it("switching BACK to a running conversation restores titles and statuses (no skeleton rows)", () => {
+    armMock();
+    const { rerender } = render(<KrakenActivity conversationId="conv-A" />);
+    emit(SPAWN_A);
+    emit({
+      type: "agent_spawned",
+      conversationId: "conv-A",
+      runId: "run-A",
+      agentId: "a-t1",
+      parentAgentId: "a-lead",
+      role: "explore",
+      title: "Map auth flow",
+      ts: 5,
+    });
+    expect(screen.getByText("Map auth flow")).toBeTruthy();
+
+    // Switch away, then back: the tree must come back WITH metadata from
+    // the accumulation store — not as bare agent-id stubs rebuilt from
+    // late ticks (the 2026-09-13 regression: "t1 ● – · reasoning").
+    rerender(<KrakenActivity conversationId="conv-B" />);
+    expect(screen.queryByText("Map auth flow")).toBeNull();
+    rerender(<KrakenActivity conversationId="conv-A" />);
+    expect(screen.getByText("Project A lead")).toBeTruthy();
+    expect(screen.getByText("Map auth flow")).toBeTruthy();
+  });
+
+  it("background runs keep accumulating while another conversation is active", () => {
+    armMock();
+    const { rerender } = render(<KrakenActivity conversationId="conv-B" />);
+    // conv-A's run progresses while conv-B is the active panel.
+    emit(SPAWN_A);
+    emit({
+      type: "agent_status",
+      conversationId: "conv-A",
+      runId: "run-A",
+      agentId: "a-lead",
+      status: "failed",
+      message: "boom in chat A",
+      ts: 6,
+    });
+    expect(screen.queryByText(/boom in chat A/)).toBeNull(); // not painted here
+
+    rerender(<KrakenActivity conversationId="conv-A" />);
+    expect(screen.getByText("Project A lead")).toBeTruthy();
+    expect(screen.getByText(/boom in chat A/)).toBeTruthy(); // accumulated, not lost
+  });
+
+  it("a new mission in the same conversation starts from an empty tree", () => {
+    armMock();
+    const { rerender } = render(<KrakenActivity conversationId="conv-A" />);
+    emit(SPAWN_A);
+    expect(screen.getByText("Project A lead")).toBeTruthy();
+
+    rerender(<KrakenActivity conversationId="conv-B" />);
+    rerender(<KrakenActivity conversationId="conv-A" />);
+    // Second run in the SAME conversation: different runId wipes the
+    // previous mission's agents instead of merging with them.
+    emit({
+      type: "agent_spawned",
+      conversationId: "conv-A",
+      runId: "run-A2",
+      agentId: "a-lead-2",
+      role: "lead",
+      title: "Project A v2 lead",
+      ts: 7,
+    });
+    expect(screen.getByText("Project A v2 lead")).toBeTruthy();
+    expect(screen.queryByText("Project A lead")).toBeNull();
   });
 });

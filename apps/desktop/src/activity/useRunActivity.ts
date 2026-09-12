@@ -2,45 +2,65 @@
  * React hook backing the Kraken Activity panel: subscribes to the
  * `agent-event` Tauri stream and reduces it into RunActivityState.
  *
- * Conversation isolation (M2): when `conversationId` is provided, events
- * are attributed through their run envelope (`readRunEnvelope`) and only
- * that conversation's events are reduced — a background run in another
- * chat (even on another project folder) never paints this panel. This is
- * the same envelope-first routing App applies to run events; before the
- * fix every mounted panel reduced the GLOBAL stream (the Kraken Activity
- * feed leaked across concurrent conversations).
+ * Conversation isolation (M2): events attributed through their run envelope
+ * (`readRunEnvelope`) are ALWAYS accumulated — per conversation, in a
+ * module-level store — but only this panel's conversation is painted. A
+ * background run in another chat (even on another project folder) never
+ * paints this panel, yet keeps building its tree, so switching back to a
+ * conversation restores titles and statuses instead of skeleton rows
+ * rebuilt from late events (regression 2026-09-13: the switch-away reset
+ * dropped the tree, and late agent_status/agent_tool ticks re-created
+ * agent stubs without metadata: "t1 ● – · reasoning").
  *
- * Un-enveloped (legacy) events are accepted only while this panel's
- * conversation is the active one — the same fallback App's routing uses.
- * Switching conversation resets the tree: the panel is a live view, not
- * history (RunsDashboard is the cross-conversation overview).
+ * Panels mounted WITHOUT a conversation id keep the pre-M2 behavior: every
+ * event lands in one catch-all bucket ("") and all of it is painted.
+ *
+ * A new mission in the SAME conversation (agent_spawned with a different
+ * runId) starts from an empty tree, so finished agents from the previous
+ * run never bleed into the new one.
  */
-import { useEffect, useReducer, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { onAgentEvent } from "../agentClient";
 import { readRunEnvelope } from "../runs/types";
 import { activityReducer, emptyActivityState, type ActivityAction } from "./reducer";
+import type { RunActivityState } from "./types";
 
 export interface UseRunActivityOptions {
-  /** Conversation this panel belongs to. Enables envelope filtering. */
+  /** Conversation this panel belongs to. Enables envelope routing. */
   conversationId?: string;
   /** Currently active conversation id: un-enveloped (legacy) events are
    *  accepted only while `conversationId === activeConversationId`. */
   activeConversationId?: string;
 }
 
-export function useRunActivity(opts?: UseRunActivityOptions) {
-  const [state, dispatch] = useReducer(activityReducer, undefined, emptyActivityState);
+/**
+ * Latest activity tree per conversation ("" = legacy un-attributed bucket).
+ * Module-level by design: it must survive panel unmounts and conversation
+ * switches. Bounded by the number of conversations; each entry is a few KB.
+ */
+const activityStore = new Map<string, RunActivityState>();
 
-  // Latest-ref: the Tauri subscription is created once; the filter always
-  // reads the current options, so an active-conversation change needs no
+/** Test-only: wipe the cross-switch accumulation store. */
+export function clearActivityStoreForTests(): void {
+  activityStore.clear();
+}
+
+export function useRunActivity(opts?: UseRunActivityOptions) {
+  const convKey = opts?.conversationId ?? "";
+  const [state, setState] = useState<RunActivityState>(() =>
+    activityStore.get(convKey) ?? emptyActivityState(),
+  );
+
+  // Latest-ref: the Tauri subscription is created once; routing always
+  // reads the current options, so a conversation change needs no
   // re-subscribe (and never drops the unlisten handle).
   const optsRef = useRef(opts);
   optsRef.current = opts;
 
-  // Live view, not history: switching conversation clears the tree.
-  const convKey = opts?.conversationId ?? "";
+  // Follow conversation switches: hydrate the accumulated tree (titles,
+  // statuses, tools) instead of restarting from an empty skeleton.
   useEffect(() => {
-    dispatch({ kind: "reset" });
+    setState(activityStore.get(convKey) ?? emptyActivityState());
   }, [convKey]);
 
   useEffect(() => {
@@ -49,15 +69,41 @@ export function useRunActivity(opts?: UseRunActivityOptions) {
     onAgentEvent((ev) => {
       if (disposed) return;
       const o = optsRef.current;
-      if (o?.conversationId) {
-        const envConv = readRunEnvelope(ev).conversationId;
-        if (envConv) {
-          if (envConv !== o.conversationId) return; // another chat's run
-        } else if (o.conversationId !== o.activeConversationId) {
-          return; // un-attributable: only the active panel may take it
-        }
+      const envConv = readRunEnvelope(ev).conversationId;
+      let target: string;
+      if (!o?.conversationId) {
+        // Legacy panel (no conversation id): pre-M2 behavior — EVERY event
+        // lands in one catch-all bucket and all of it is painted.
+        target = "";
+      } else if (envConv) {
+        // Attributed: accumulate for its conversation — background runs
+        // included — but paint only this panel's conversation.
+        target = envConv;
+      } else if (o.conversationId === o.activeConversationId) {
+        // Un-attributable event while this panel is the active one:
+        // best-effort attribution (same fallback App's routing uses).
+        target = o.conversationId;
+      } else {
+        return; // un-attributable and not the active panel: drop
       }
-      dispatch({ kind: "event", ev } as ActivityAction);
+
+      let prev = activityStore.get(target) ?? emptyActivityState();
+      const rec = ev as Record<string, unknown>;
+      if (
+        target !== "" && // the runId guard is for per-conversation buckets only:
+        // the legacy catch-all keeps the pre-M2 merge-everything semantics.
+        rec.type === "agent_spawned" &&
+        typeof rec.runId === "string" &&
+        prev.runId !== undefined &&
+        prev.runId !== rec.runId
+      ) {
+        prev = emptyActivityState(); // new mission in the same conversation
+      }
+      const next = activityReducer(prev, { kind: "event", ev } as ActivityAction);
+      activityStore.set(target, next);
+      // Paint rule: attributed panels paint only their conversation;
+      // legacy (id-less) panels keep painting everything, as before M2.
+      if (!o?.conversationId || target === o.conversationId) setState(next);
     })
       .then((fn) => {
         if (disposed) fn();
