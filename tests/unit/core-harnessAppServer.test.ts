@@ -135,4 +135,34 @@ describe('HarnessAppServer — per-workspace service reuse (DoD: second run reus
     expect(a.services).not.toBe(b.services);
     expect(a.services.policyCache.workspaceRoot).not.toBe(b.services.policyCache.workspaceRoot);
   });
+
+  it('(d) refuses to invent a workspaceRoot from process.cwd() (blank / relative)', () => {
+    const server = new HarnessAppServer({
+      createWorkspaceServices: (root) => makeServices(root),
+    });
+    // A blank root used to resolve to the SERVER's cwd (app install dir) and
+    // silently share one spine dir + memory.db across every conversation.
+    expect(() => server.createSession({ workspaceRoot: '', runTurn: noopRunTurn })).toThrow(/non-empty/);
+    expect(() => server.createSession({ workspaceRoot: '   ', runTurn: noopRunTurn })).toThrow(/non-empty/);
+    // A relative root would resolve against that same cwd — same leak.
+    expect(() => server.createSession({ workspaceRoot: '.', runTurn: noopRunTurn })).toThrow(/absolute/);
+    expect(() => server.createSession({ workspaceRoot: 'some/project', runTurn: noopRunTurn })).toThrow(/absolute/);
+    // Nothing was registered: the fail-closed path leaves no session behind.
+    expect(server.listSessions()).toEqual([]);
+
+    // Same workspace spelled with a trailing separator stays ONE root, and the
+    // resolved root is what deps.session.workspaceRoot carries into the turn.
+    const ws = path.join(os.tmpdir(), 'zelari-t29-wsD');
+    const seen: string[] = [];
+    const spyRunTurn: RunTurnFn = async (_input, deps) => {
+      seen.push(deps.session.workspaceRoot);
+      return { exitCode: 0 };
+    };
+    const s1 = server.createSession({ workspaceRoot: ws + path.sep, runTurn: spyRunTurn });
+    const s2 = server.createSession({ workspaceRoot: ws, runTurn: spyRunTurn });
+    expect(s1.workspaceRoot).toBe(s2.workspaceRoot);
+    void s1.runTurn({});
+    void s2.runTurn({});
+    expect(seen).toEqual([ws, ws]);
+  });
 });

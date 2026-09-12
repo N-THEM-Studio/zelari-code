@@ -16,7 +16,7 @@
  *     imports — dependency injection only (see appServerTypes.ts).
  */
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { isAbsolute, resolve } from 'node:path';
 import type {
   CompletionProofWriteRequest,
   CompletionProofWriter,
@@ -57,6 +57,37 @@ export interface CreateSessionOptions {
   sessionId?: string | undefined;
 }
 
+/**
+ * Resolve a session workspaceRoot WITHOUT ever inventing one from
+ * `process.cwd()`.
+ *
+ * ADR-0016: the session spine — and the memory store, tool root and policy
+ * snapshot beside it — are PER WORKSPACE. One long-lived server hosts sessions
+ * on different folders inside ONE process, so a blank or relative value run
+ * through `path.resolve()` would silently hand EVERY session the server's own
+ * cwd (the app install dir): one shared `.zelari/sessions`, one `memory.db`,
+ * one tool root. Fail closed with the offending value instead.
+ */
+export function resolveSessionWorkspaceRoot(workspaceRoot: unknown): string {
+  if (typeof workspaceRoot !== 'string' || workspaceRoot.trim() === '') {
+    throw new Error(
+      'HarnessAppServer: createSession requires a non-empty `workspaceRoot` ' +
+        '(it never falls back to process.cwd(): sessions on different workspaces must stay isolated)',
+    );
+  }
+  const raw = workspaceRoot.trim();
+  if (!isAbsolute(raw)) {
+    throw new Error(
+      `HarnessAppServer: createSession workspaceRoot must be an absolute path (got '${raw}') — ` +
+        'a relative root would resolve against the server process.cwd() and mix sessions (ADR-0016)',
+    );
+  }
+  // Absolute only from here on: resolve() normalises (trailing separators,
+  // ., ..) so one workspace cannot be spelled into two services entries,
+  // but it can never reach cwd.
+  return resolve(raw);
+}
+
 export class HarnessAppServer {
   private readonly sessions = new Map<string, HarnessSession>();
   private readonly workspaceServices = new Map<string, WorkspaceServices>();
@@ -75,7 +106,7 @@ export class HarnessAppServer {
   }
 
   createSession(options: CreateSessionOptions): HarnessSession {
-    const root = resolve(options.workspaceRoot);
+    const root = resolveSessionWorkspaceRoot(options.workspaceRoot);
     const factory = options.createWorkspaceServices ?? this.defaultServicesFactory;
     if (!factory) {
       throw new Error('HarnessAppServer: createWorkspaceServices factory is required');

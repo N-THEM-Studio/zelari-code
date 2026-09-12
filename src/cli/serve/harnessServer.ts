@@ -12,6 +12,8 @@
  *
  *   → {"id":1,"method":"session.create","params":{"workspaceRoot":"…"}}
  *   ← {"id":1,"ok":true,"result":{"sessionId":"…"}}
+ *   blank/relative/missing workspaceRoot → bad_request (the sidecar never
+ *   substitutes its own cwd — ADR-0016: one workspace per session)
  *   → {"id":2,"method":"run.turn","params":{"sessionId":"…", …turn input
  *      same shape as a headless single turn (HeadlessOptions)}}
  *   ← {"id":2,"ok":true,"result":{"exitCode":0}}
@@ -46,6 +48,7 @@
  * kernel via runOneTurn — no fork, same code path.
  */
 import { createInterface } from 'node:readline';
+import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import type { Readable, Writable } from 'node:stream';
 import { HarnessAppServer } from '@zelari/core/harness';
@@ -137,6 +140,43 @@ export function createCliWorkspaceServices(workspaceRoot: string): WorkspaceServ
       );
     },
   };
+}
+
+/**
+ * Resolve the workspace a `session.create` is asking for — WITHOUT inventing
+ * one from the sidecar's own `process.cwd()`.
+ *
+ * This sidecar is long-lived: N sessions on different folders share ONE
+ * process, so its cwd (the app install dir) is never a session workspace.
+ * Substituting it made every conversation share one spine dir, one
+ * `.zelari/memory/memory.db` and one tool root, and stamped the install dir as
+ * `session.started.workspace` in all of them (ADR-0016: the spine is PER
+ * WORKSPACE). A blank/relative/missing root is refused with a typed
+ * `bad_request` instead; the `{workspaceRoot}` wire shape itself is unchanged.
+ */
+export function resolveSessionCreateRoot(
+  params: Record<string, unknown>,
+  cwd: string = process.cwd(),
+): { ok: true; root: string } | { ok: false; message: string } {
+  const raw = params.workspaceRoot;
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return {
+      ok: false,
+      message:
+        'session.create requires a non-empty string `workspaceRoot` ' +
+        '(the sidecar never substitutes its own cwd: sessions on different workspaces must stay isolated)',
+    };
+  }
+  const root = raw.trim();
+  if (!path.isAbsolute(root)) {
+    return {
+      ok: false,
+      message:
+        `session.create workspaceRoot must be an absolute path (got '${root}') — ` +
+        `a relative root would resolve against the sidecar cwd (${cwd}) and mix conversations (ADR-0016)`,
+    };
+  }
+  return { ok: true, root };
 }
 
 /**
@@ -315,11 +355,17 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
         };
       }
       case 'session.create': {
-        const root = typeof params.workspaceRoot === 'string' ? params.workspaceRoot : process.cwd();
+        // Never fall back to the sidecar's own cwd: a fabricated root would
+        // put this conversation's spine/memory/tools in the app install dir
+        // (ADR-0016 — one workspace per session, or an explicit typed error).
+        const resolved = resolveSessionCreateRoot(params);
+        if (!resolved.ok) {
+          return { id: req.id ?? null, ok: false, error: { code: 'bad_request', message: resolved.message } };
+        }
         // asRegistryAskHandler projects the registry ask payload onto the
         // wire payload (tool/categories/claims → dialog preview).
         const session = server.createSession({
-          workspaceRoot: root,
+          workspaceRoot: resolved.root,
           runTurn:
             options.runTurn ??
             createCliRunTurn(
