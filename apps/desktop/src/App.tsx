@@ -37,10 +37,7 @@ import { loadConversations, saveConversations } from "./chatStorage";
 import { cleanAssistantContent } from "./exportSession";
 import { MessageContent } from "./components/MessageContent";
 import { CopyButton } from "./components/CopyButton";
-import { ModeToggle } from "./components/ModeToggle";
-import { PhaseToggle } from "./components/PhaseToggle";
-import { KrakenGraphToggle } from "./components/KrakenGraphToggle";
-import { GauntletToggle } from "./components/GauntletToggle";
+import { ComposerToolbar } from "./components/ComposerToolbar";
 import { hasGauntletLoop, stripGauntletLoop } from "./gauntletLoop";
 import {
   controlEvent,
@@ -59,7 +56,6 @@ import {
   sidecarLogLineFromPayload,
 } from "./sidecarLog";
 
-import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsShell } from "./components/settings/SettingsShell";
 import { RunActivity, type LiveToolStep } from "./components/RunActivity";
 import { KrakenActivity } from "./components/KrakenActivity";
@@ -2415,6 +2411,23 @@ export default function App() {
     "then either mark DONE with a short verify list OR give a brief resoconto and ask if I want you to continue. " +
     "No status theater, no full rewrite.";
 
+  /**
+   * grok-round: rename a conversation in place. Exactly the archive/delete
+   * shape — `setConversations` map by id, persistence handled by the existing
+   * save effect (localStorage, cap 80). The title arrives already trimmed and
+   * non-empty from the sidebar; the guard here is the second line of defence
+   * so a nameless row can never be stored. `updatedAt` is deliberately NOT
+   * touched: renaming is metadata, not activity, and must not re-sort a list
+   * that is ordered by `updatedAt` (sessionGroups).
+   */
+  const renameChat = (id: string, title: string) => {
+    const next = title.trim();
+    if (!next) return;
+    setConversations((prev) =>
+      prev.map((c) => (c.id === id ? { ...c, title: next } : c)),
+    );
+  };
+
   const archiveChat = (id: string) => {
     setConversations((prev) =>
       prev.map((c) =>
@@ -3353,6 +3366,7 @@ export default function App() {
         onArchive={archiveChat}
         onUnarchive={unarchiveChat}
         onDelete={deleteChat}
+        onRename={renameChat}
         onFilterChange={setSessionFilter}
         onOpenSettings={() => setView("settings")}
         cliOk={Boolean(cli?.ok)}
@@ -3394,26 +3408,9 @@ export default function App() {
       />
 
       <div className="workspace">
-      <main className="main">
+      <main className={`main${empty && !running ? " is-empty" : ""}`}>
         <header className="topbar glass-capsule">
           <div className="topbar-left">
-            <div className="model-chip">
-              <span
-                className={`model-live-dot${cli?.ok ? " ok" : ""}`}
-                aria-hidden
-              />
-              <ProviderModelBar
-                config={config}
-                provider={provider}
-                model={model}
-                disabled={running}
-                onProviderChange={onProviderChange}
-                onModelChange={onModelChange}
-                onThinkingChange={onThinkingChange}
-                onConfigRefresh={setConfig}
-                onStatus={setStatusLine}
-              />
-            </div>
             <div className="topbar-title" title={active?.title ?? "Zelari"}>
               {active?.title ?? "Zelari"}
             </div>
@@ -3425,27 +3422,6 @@ export default function App() {
             ) : null}
           </div>
           <div className="topbar-right">
-            <ModeToggle
-              value={mode}
-              disabled={running || krakenGraph}
-              onChange={onModeChange}
-            />
-            <PhaseToggle
-              value={phase}
-              disabled={running}
-              onChange={onPhaseChange}
-            />
-            <KrakenGraphToggle
-              value={krakenGraph}
-              disabled={running}
-              onChange={setGraphMode}
-            />
-            <GauntletToggle
-              value={prefs.gauntletLoop}
-              disabled={running}
-              onChange={setGauntletLoop}
-            />
-
             <button
               type="button"
               className="btn-ghost topbar-folder"
@@ -4035,6 +4011,31 @@ export default function App() {
                 </div>
               ) : null}
             </div>
+            {/* grok-round: pills bottom-left, send bottom-right, both on the
+                row under the input (CSS grid in App.css — no wrapper needed here). */}
+            <ComposerToolbar
+              config={config}
+              provider={provider}
+              model={model}
+              disabled={running}
+              onProviderChange={onProviderChange}
+              onModelChange={onModelChange}
+              onThinkingChange={onThinkingChange}
+              onConfigRefresh={setConfig}
+              onStatus={setStatusLine}
+              permissionPreset={prefs.permissionPreset}
+              onPermissionPresetChange={(permissionPreset) =>
+                setPrefs((prev) => patchDesktopPrefs(prev, { permissionPreset }))
+              }
+              mode={mode}
+              onModeChange={onModeChange}
+              phase={phase}
+              onPhaseChange={onPhaseChange}
+              krakenGraph={krakenGraph}
+              onKrakenGraphChange={setGraphMode}
+              gauntlet={prefs.gauntletLoop}
+              onGauntletChange={setGauntletLoop}
+            />
             <div className="composer-actions">
               {running ? (
                 <>

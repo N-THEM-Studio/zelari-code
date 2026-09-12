@@ -97,6 +97,7 @@ function sidebarProps(over: Partial<SidebarProps> = {}): SidebarProps {
     onArchive: () => {},
     onUnarchive: () => {},
     onDelete: () => {},
+    onRename: () => {},
     onFilterChange: () => {},
     onOpenSettings: () => {},
     cliOk: true,

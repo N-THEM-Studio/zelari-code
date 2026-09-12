@@ -95,6 +95,7 @@ function props(over: Partial<SidebarProps> = {}): SidebarProps {
     onArchive: () => {},
     onUnarchive: () => {},
     onDelete: () => {},
+    onRename: () => {},
     onFilterChange: () => {},
     onOpenSettings: () => {},
     cliOk: true,
@@ -298,5 +299,95 @@ describe("Sidebar - per-tentacle verification badges (F3)", () => {
     const blockedRows = container.querySelectorAll('button.tentacle-row .verdict-badge[data-verdict="BLOCKED"]');
     expect(blockedRows).toHaveLength(1); // g-blocked's caption, not an inheritance
     expect(badgeFor(container, "g-nosilence")?.textContent).toBe("—");
+  });
+});
+
+/**
+ * grok-round — inline rename. Contract: the row becomes a prefilled input;
+ * Enter and blur commit the TRIMMED title exactly once (Enter is followed by a
+ * blur in a real window), Esc reverts, and an empty/whitespace-only title is
+ * refused so a nameless row can never reach App's store. The sidebar owns no
+ * storage here: it only reports `(id, title)` — App maps by id.
+ */
+describe("Sidebar - inline rename (grok-round)", () => {
+  const renameField = () =>
+    screen.getByLabelText("Conversation title") as HTMLInputElement;
+
+  function renderRename(onRename: (id: string, title: string) => void) {
+    return render(<Sidebar {...props({ sessions: [mission], onRename })} />);
+  }
+
+  it("opens a prefilled input from the hover action and commits on Enter", () => {
+    const calls: Array<[string, string]> = [];
+    renderRename((id, title) => calls.push([id, title]));
+
+    fireEvent.click(screen.getByTitle("Rename"));
+    const field = renameField();
+    // Prefilled with the stored title, and the row is showing the editor, not
+    // the button — a click can no longer re-select the conversation.
+    expect(field.value).toBe("mission-one");
+    expect(screen.queryByTitle("Rename")).toBeNull();
+
+    fireEvent.change(field, { target: { value: "  renamed  " } });
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    expect(calls).toEqual([["m1", "renamed"]]); // trimmed, once
+    expect(screen.queryByLabelText("Conversation title")).toBeNull();
+    expect(screen.getByText("mission-one")).toBeTruthy(); // App still owns the title
+  });
+
+  it("commits on blur, not on the Enter that precedes it", () => {
+    const calls: Array<[string, string]> = [];
+    renderRename((id, title) => calls.push([id, title]));
+
+    fireEvent.click(screen.getByTitle("Rename"));
+    const field = renameField();
+    fireEvent.change(field, { target: { value: "from-blur" } });
+    // Enter commits and closes the editor; the blur a real browser then fires
+    // on the removed node must not report a second time.
+    fireEvent.keyDown(field, { key: "Enter" });
+    fireEvent.blur(field);
+
+    expect(calls).toEqual([["m1", "from-blur"]]);
+  });
+
+  it("reverts on Escape and reports nothing", () => {
+    const calls: Array<[string, string]> = [];
+    renderRename((id, title) => calls.push([id, title]));
+
+    fireEvent.click(screen.getByTitle("Rename"));
+    const field = renameField();
+    fireEvent.change(field, { target: { value: "discarded" } });
+    fireEvent.keyDown(field, { key: "Escape" });
+
+    expect(calls).toEqual([]);
+    expect(screen.queryByLabelText("Conversation title")).toBeNull();
+    expect(screen.getByText("mission-one")).toBeTruthy(); // the old title stands
+  });
+
+  it("refuses an empty or whitespace-only title and keeps the old one", () => {
+    const calls: Array<[string, string]> = [];
+    renderRename((id, title) => calls.push([id, title]));
+
+    fireEvent.click(screen.getByTitle("Rename"));
+    fireEvent.change(renameField(), { target: { value: "   " } });
+    fireEvent.keyDown(renameField(), { key: "Enter" });
+
+    expect(calls).toEqual([]);
+    expect(screen.queryByLabelText("Conversation title")).toBeNull();
+    expect(screen.getByText("mission-one")).toBeTruthy();
+  });
+
+  it("does not report an unchanged title (reopening rename is not an edit)", () => {
+    const calls: Array<[string, string]> = [];
+    renderRename((id, title) => calls.push([id, title]));
+
+    fireEvent.click(screen.getByTitle("Rename"));
+    const field = renameField();
+    fireEvent.change(field, { target: { value: " mission-one " } }); // same after trim
+    fireEvent.keyDown(field, { key: "Enter" });
+
+    expect(calls).toEqual([]);
+    expect(screen.queryByLabelText("Conversation title")).toBeNull();
   });
 });

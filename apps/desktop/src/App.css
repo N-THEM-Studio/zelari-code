@@ -7273,3 +7273,213 @@ kbd {
 .app[data-theme="light"] .composer.is-listening {
   border-color: color-mix(in srgb, var(--text) 32%, transparent);
 }
+
+/* == grok-round (composer pills / sidebar rename / centered empty state) ====
+ * Three Grok-bot-shaped changes, all of them overrides appended last:
+ *
+ *   1. the composer capsule gets a SECOND row: pills bottom-left, send
+ *      bottom-right. Done with a grid on the existing child order, so the JSX
+ *      was not re-nested (the two icon buttons and the textarea are still the
+ *      same elements in the same order);
+ *   2. the pills + their popovers (dark radius-12 panel, hairline, soft
+ *      shadow, opens UPWARD because the composer sits at the bottom);
+ *   3. the sidebar row turns into an input when renaming, and the empty
+ *      conversation centers greeting + composer as one block.
+ *
+ * No gradients and no cyan/violet: the palette stays the one the grok-flat
+ * block above established (near-white accent, hairline edges).
+ * ========================================================================= */
+
+/* 1. composer: two-row grid — [attach][skills][mic][input] / [pills ...][send] */
+.composer {
+  display: grid;
+  grid-template-columns: auto auto auto minmax(0, 1fr) auto;
+  align-items: flex-end;
+  column-gap: 8px;
+  row-gap: 6px;
+  padding: 8px 10px 10px;
+  border-radius: 22px;
+}
+
+.composer-pills {
+  grid-row: 2;
+  grid-column: 1 / 5;
+  align-self: center;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+/* the input keeps the send button's column free, so the textarea still uses the
+ * whole capsule width instead of stopping short of an empty 5th column */
+.composer .composer-input-wrap {
+  grid-column: 4 / 6;
+}
+
+.composer .composer-actions {
+  grid-row: 2;
+  grid-column: 5;
+  align-self: center;
+  padding-bottom: 0;
+}
+
+/* 2. pills: hairline, fully rounded, transparent until hover ---------------- */
+.composer-pill-wrap {
+  position: relative;
+  display: flex;
+  min-width: 0;
+}
+
+.composer-pill {
+  max-width: 170px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  line-height: 1.5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.composer-pill:hover:not(:disabled) {
+  background: var(--hover-tint);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.composer-pill.is-open {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.composer-pill:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* the panel opens UPWARD: there is no room below a bottom-docked composer */
+.composer-popover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 0;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 250px;
+  max-width: min(440px, 72vw);
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-solid);
+  box-shadow: 0 18px 42px rgba(0, 0, 0, 0.45);
+}
+
+.app[data-theme="light"] .composer-popover {
+  background: var(--bg-solid);
+  border-color: var(--border);
+  box-shadow: 0 14px 32px rgba(15, 20, 35, 0.16);
+}
+
+.composer-popover-title {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.composer-popover-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.composer-popover-select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.composer-popover-help {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-muted);
+}
+
+/* the hosted ProviderModelBar keeps its own markup: let it wrap, never clip */
+.composer-popover .provider-bar {
+  max-width: none;
+}
+
+.composer-popover .toolbar-select-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.composer-popover .toolbar-select {
+  max-width: 100%;
+}
+
+/* 3a. sidebar: the row becomes an input while renaming ---------------------- */
+.session-item-rename {
+  flex: 1;
+  min-width: 0;
+  padding: 9px 10px;
+  border-radius: 11px;
+  border: 1px solid color-mix(in srgb, var(--text) 26%, transparent);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.session-item-rename:focus {
+  outline: none;
+  border-color: color-mix(in srgb, var(--text) 42%, transparent);
+}
+
+.session-item-wrap.is-renaming {
+  background: var(--surface-hover);
+}
+
+/* 3b. empty conversation: greeting + composer centered as ONE block --------- */
+/* `.is-empty` is set by App on `empty && !running`. The shell and the composer
+ * stop filling the column and the free space is split between the shell's
+ * top margin and the composer's bottom margin — i.e. the pair centers without
+ * a single line of JavaScript. */
+.main.is-empty .chat-scroll-shell {
+  flex: 0 1 auto;
+  margin-top: auto;
+}
+
+.main.is-empty .chat-scroll {
+  flex: 0 1 auto;
+}
+
+.main.is-empty .composer-wrap {
+  margin-bottom: auto;
+}
+
+.main.is-empty .empty-state {
+  padding: 0 24px 18px;
+}
+

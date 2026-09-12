@@ -14,11 +14,21 @@
  *     F2 adds the row SELECTION only: App owns the trace panel, nothing is
  *     read or written here.
  *
+ * grok-round adds the inline rename: the row turns into a prefilled input, the
+ * commit is trimmed and non-empty by construction, and the store/persistence
+ * stay in App (`onRename`) exactly like archive/delete.
+ *
  * The activity stream is global (one `RunActivityState`, one `runId`): the
  * hierarchy is painted only when that run id is the active conversation's own
  * run - a stale run never lands under a mission.
  */
-import { useMemo, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import type { ActivityAgent, RunActivityState } from "../activity";
 import { folderLabelFromCwd, groupSessionsByFolder } from "../sessionGroups";
 import type { Conversation, SessionFilter } from "../types";
@@ -50,6 +60,14 @@ export interface SidebarProps {
   onArchive: (id: string) => void;
   onUnarchive: (id: string) => void;
   onDelete: (id: string) => void;
+  /**
+   * Rename a conversation in place (grok-round). App owns the store and the
+   * persistence (the same `setConversations` → localStorage path archive and
+   * delete use); the sidebar only reports the committed title, already
+   * trimmed and non-empty — an empty title is refused here and never reaches
+   * App, so a row can never end up nameless.
+   */
+  onRename: (id: string, title: string) => void;
   onFilterChange: (f: SessionFilter) => void;
   onOpenSettings: () => void;
   cliOk: boolean;
@@ -123,26 +141,108 @@ function SessionRow({
   const { activeId, isRunning, unseenByConv, onSelect, onArchive, onUnarchive, onDelete } = props;
   /** F3: mission-level verdict of THIS conversation, if the backend sent one. */
   const missionVerdict = props.missionVerdictFor?.(c.id);
+
+  /**
+   * grok-round rename: the row becomes an inline `<input>` prefilled with the
+   * title. `renamingRef` is the synchronous twin of `renaming` because Enter
+   * and the blur that follows it can land in the same tick — the guard makes
+   * the commit idempotent, so a keystroke never renames twice.
+   */
+  const [renaming, setRenaming] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(c.title);
+  const renamingRef = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Focus + select-all on open: the whole title is the thing being replaced.
+  useEffect(() => {
+    if (!renaming) return;
+    inputRef.current?.focus();
+    inputRef.current?.select();
+  }, [renaming]);
+
+  const startRename = () => {
+    renamingRef.current = true;
+    setTitleDraft(c.title);
+    setRenaming(true);
+  };
+
+  /** Enter / blur: trim, refuse empty, keep the old title when unchanged. */
+  const commitRename = () => {
+    if (!renamingRef.current) return;
+    renamingRef.current = false;
+    setRenaming(false);
+    const next = titleDraft.trim();
+    if (!next || next === c.title) {
+      setTitleDraft(c.title);
+      return;
+    }
+    props.onRename(c.id, next);
+  };
+
+  /** Esc: back to the stored title, nothing is reported to App. */
+  const cancelRename = () => {
+    if (!renamingRef.current) return;
+    renamingRef.current = false;
+    setRenaming(false);
+    setTitleDraft(c.title);
+  };
+
   return (
-    <div className={`session-item-wrap${c.id === activeId ? " active" : ""}`}>
-      <button type="button" className="session-item" onClick={() => onSelect(c)}>
-        <span className="session-title">{c.title}</span>
-        <RunBadge running={isRunning(c.id)} unseen={Boolean(unseenByConv[c.id])} />
-        {missionVerdict ? <VerdictBadge scope="mission" {...missionVerdict} /> : null}
-        <span className="session-folder" title={c.cwd ? c.cwd : undefined}>
-          📁 {c.cwd ? folderLabelFromCwd(c.cwd) : "No folder"}
-        </span>
-        <span className="session-meta">
-          {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
-        </span>
-      </button>
+    <div
+      className={`session-item-wrap${c.id === activeId ? " active" : ""}${renaming ? " is-renaming" : ""}`}
+    >
+      {renaming ? (
+        <input
+          ref={inputRef}
+          className="session-item-rename"
+          value={titleDraft}
+          aria-label="Conversation title"
+          onChange={(e) => setTitleDraft(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              e.stopPropagation();
+              commitRename();
+            } else if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              cancelRename();
+            }
+          }}
+        />
+      ) : (
+        <button type="button" className="session-item" onClick={() => onSelect(c)}>
+          <span className="session-title">{c.title}</span>
+          <RunBadge running={isRunning(c.id)} unseen={Boolean(unseenByConv[c.id])} />
+          {missionVerdict ? <VerdictBadge scope="mission" {...missionVerdict} /> : null}
+          <span className="session-folder" title={c.cwd ? c.cwd : undefined}>
+            📁 {c.cwd ? folderLabelFromCwd(c.cwd) : "No folder"}
+          </span>
+          <span className="session-meta">
+            {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
+          </span>
+        </button>
+      )}
       <div className="session-actions">
-        {c.archived ? (
-          <button type="button" title="Unarchive" onClick={() => onUnarchive(c.id)}>↩</button>
-        ) : (
-          <button type="button" title="Archive" onClick={() => onArchive(c.id)}>⬇</button>
+        {renaming ? null : (
+          <>
+            <button
+              type="button"
+              title="Rename"
+              aria-label={`Rename ${c.title}`}
+              onClick={startRename}
+            >
+              ✎
+            </button>
+            {c.archived ? (
+              <button type="button" title="Unarchive" onClick={() => onUnarchive(c.id)}>↩</button>
+            ) : (
+              <button type="button" title="Archive" onClick={() => onArchive(c.id)}>⬇</button>
+            )}
+            <button type="button" title="Delete" className="danger" onClick={() => onDelete(c.id)}>×</button>
+          </>
         )}
-        <button type="button" title="Delete" className="danger" onClick={() => onDelete(c.id)}>×</button>
       </div>
       {showHierarchy && hierarchy.length ? (
         <MissionTentacles
