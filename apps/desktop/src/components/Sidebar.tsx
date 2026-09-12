@@ -1,0 +1,300 @@
+/**
+ * Sidebar (Desktop, F1 + the F2 row selection of the lead-chat plan).
+ *
+ * Extracted from the inline block in App.tsx with the behaviour unchanged:
+ * selection, archive/unarchive/delete, folder collapse, run/unseen badges,
+ * footer status, drag-to-resize handle. Two things are new here:
+ *
+ *   - two sections: "Missioni" = conversations owning a 2.0 spine session
+ *     (`Conversation.sessionId`), "Chat" = the rest. Same localStorage store,
+ *     no migration, nothing deleted;
+ *   - under the ACTIVE mission, the tentacles of its run, from the activity
+ *     state App already receives (`agent-event`, `parentId` links). Read-only
+ *     for the run: no new channel, no new IPC, no polling, no new storage.
+ *     F2 adds the row SELECTION only: App owns the trace panel, nothing is
+ *     read or written here.
+ *
+ * The activity stream is global (one `RunActivityState`, one `runId`): the
+ * hierarchy is painted only when that run id is the active conversation's own
+ * run - a stale run never lands under a mission.
+ */
+import { useMemo, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  formatActivityDuration,
+  roleGlyph,
+  selectLead,
+  selectTentacles,
+  statusGlyph,
+  type ActivityAgent,
+  type RunActivityState,
+} from "../activity";
+import { folderLabelFromCwd, groupSessionsByFolder } from "../sessionGroups";
+import type { Conversation, SessionFilter } from "../types";
+
+/** Resize handle handlers; App owns the width it persists (`--sidebar-w`). */
+export interface SidebarResizer {
+  onPointerDown: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (e: ReactPointerEvent<HTMLDivElement>) => void;
+  onDoubleClick: () => void;
+}
+
+export interface SidebarProps {
+  /** Conversations of the current Active/Archived tab (App owns the filter). */
+  sessions: Conversation[];
+  filter: SessionFilter;
+  activeId: string;
+  /** Run registry accessor (M2 multiplexing) - drives the per-chat badge. */
+  isRunning: (id: string) => boolean;
+  unseenByConv: Record<string, boolean>;
+  collapsedFolders: Set<string>;
+  onToggleFolder: (key: string) => void;
+  onNewChat: () => void;
+  newChatDisabled: boolean;
+  onSelect: (c: Conversation) => void;
+  onArchive: (id: string) => void;
+  onUnarchive: (id: string) => void;
+  onDelete: (id: string) => void;
+  onFilterChange: (f: SessionFilter) => void;
+  onOpenSettings: () => void;
+  cliOk: boolean;
+  statusLine: string;
+  resizer: SidebarResizer;
+  /** Latest run activity, lifted to App (`useRunActivity`) - read-only. */
+  activity: RunActivityState;
+  /** Run id of the active conversation; attribution guard for the hierarchy. */
+  activeRunId?: string;
+  /**
+   * F2: a tentacle row was clicked. App owns the trace panel; the sidebar
+   * only reports the selection (no file read, no channel, no state here).
+   */
+  onSelectTentacle: (agent: ActivityAgent) => void;
+  /** F2: tentacle whose trace is open, highlighted with `aria-pressed`. */
+  selectedTentacleId?: string | null;
+}
+
+function formatTime(ts: number): string {
+  try {
+    return new Intl.DateTimeFormat(undefined, {
+      hour: "2-digit",
+      minute: "2-digit",
+    }).format(new Date(ts));
+  } catch {
+    return "";
+  }
+}
+
+interface HierarchyRow {
+  agent: ActivityAgent;
+  depth: number;
+}
+
+/** Tentacles of the run in flight, nested by `parentId` (depth-first from the
+ * lead, depth capped; flat list when no agent carries a parentId). */
+function buildHierarchy(state: RunActivityState): HierarchyRow[] {
+  const agents = selectTentacles(state);
+  const lead = selectLead(state);
+  const rows: HierarchyRow[] = [];
+  if (lead) {
+    const walk = (parentId: string, depth: number): void => {
+      if (depth > 2) return;
+      for (const agent of agents) {
+        if (agent.parentId !== parentId) continue;
+        rows.push({ agent, depth });
+        walk(agent.id, depth + 1);
+      }
+    };
+    walk(lead.id, 0);
+  }
+  return rows.length ? rows : agents.map((agent) => ({ agent, depth: 0 }));
+}
+
+/**
+ * Tentacle rows under the active mission. Read-only with respect to the run
+ * (F1) plus the F2 selection: clicking a row asks App to open that tentacle's
+ * live trace. A `<button>` keeps it keyboard reachable for free.
+ */
+function MissionTentacles({
+  rows,
+  onSelect,
+  selectedId,
+}: {
+  rows: HierarchyRow[];
+  onSelect: (agent: ActivityAgent) => void;
+  selectedId?: string | null;
+}) {
+  const box = { margin: "2px 0 6px 6px", paddingLeft: 8, borderLeft: "2px solid var(--accent, #4b9cd3)", fontSize: "0.82em" };
+  const name = { maxWidth: 128, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" };
+  /** Button reset so the row looks exactly as it did as a `<div>`. */
+  const row = { display: "flex", gap: 6, alignItems: "baseline", width: "100%", padding: 0, border: 0, background: "none", color: "inherit", font: "inherit", textAlign: "left", cursor: "pointer" } as const;
+  return (
+    <div aria-label="Tentacles della missione attiva" style={box}>
+      {rows.map(({ agent, depth }) => (
+        <button
+          key={agent.id}
+          type="button"
+          className="tentacle-row"
+          title={`${agent.title || agent.id} — trace live`}
+          aria-pressed={agent.id === selectedId}
+          data-agent-id={agent.id}
+          onClick={() => onSelect(agent)}
+          style={{ ...row, paddingLeft: depth * 10, opacity: agent.status === "running" ? 1 : 0.75 }}
+        >
+          <span aria-hidden>{roleGlyph(agent.role)}</span>
+          <span aria-hidden>{statusGlyph(agent.status)}</span>
+          <span style={name}>{agent.title || agent.id}</span>
+          {/* Caption or final duration - never a clock read: no ticker here. */}
+          {agent.phaseMessage ? (
+            <span style={{ opacity: 0.75 }}>{agent.phaseMessage}</span>
+          ) : agent.durationMs !== undefined ? (
+            <span style={{ opacity: 0.6 }}>{formatActivityDuration(agent.durationMs)}</span>
+          ) : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+/** Run / completed / plain bubble badge, unchanged from the inline sidebar. */
+function RunBadge({ running, unseen }: { running: boolean; unseen: boolean }) {
+  if (running) return <span className="session-run-badge" title="Run in corso" aria-label="Run in corso">●</span>;
+  if (unseen) return <span className="session-run-badge is-done" title="Run completata" aria-label="Run completata">✓</span>;
+  return <span className="session-bubble" aria-hidden>💬</span>;
+}
+
+function SessionRow({
+  c,
+  props,
+  hierarchy,
+  showHierarchy,
+}: {
+  c: Conversation;
+  props: SidebarProps;
+  hierarchy: HierarchyRow[];
+  showHierarchy: boolean;
+}) {
+  const { activeId, isRunning, unseenByConv, onSelect, onArchive, onUnarchive, onDelete } = props;
+  return (
+    <div className={`session-item-wrap${c.id === activeId ? " active" : ""}`}>
+      <button type="button" className="session-item" onClick={() => onSelect(c)}>
+        <span className="session-title">{c.title}</span>
+        <RunBadge running={isRunning(c.id)} unseen={Boolean(unseenByConv[c.id])} />
+        <span className="session-folder" title={c.cwd ? c.cwd : undefined}>
+          📁 {c.cwd ? folderLabelFromCwd(c.cwd) : "No folder"}
+        </span>
+        <span className="session-meta">
+          {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
+        </span>
+      </button>
+      <div className="session-actions">
+        {c.archived ? (
+          <button type="button" title="Unarchive" onClick={() => onUnarchive(c.id)}>↩</button>
+        ) : (
+          <button type="button" title="Archive" onClick={() => onArchive(c.id)}>⬇</button>
+        )}
+        <button type="button" title="Delete" className="danger" onClick={() => onDelete(c.id)}>×</button>
+      </div>
+      {showHierarchy && hierarchy.length ? (
+        <MissionTentacles
+          rows={hierarchy}
+          onSelect={props.onSelectTentacle}
+          selectedId={props.selectedTentacleId}
+        />
+      ) : null}
+    </div>
+  );
+}
+
+export function Sidebar(props: SidebarProps) {
+  const { sessions, filter, activeId, activity, activeRunId, resizer } = props;
+  const missions = useMemo(() => sessions.filter((c) => Boolean(c.sessionId)), [sessions]);
+  const chats = useMemo(() => sessions.filter((c) => !c.sessionId), [sessions]);
+  const hierarchy = useMemo(() => buildHierarchy(activity), [activity]);
+  /** Only the run of the ACTIVE mission may paint a hierarchy under it. */
+  const hierarchyFor = activeRunId && activity.runId === activeRunId ? activeId : undefined;
+
+  /** One section = label + the folder grouping the sidebar always had. */
+  const section = (label: string, list: Conversation[]) =>
+    list.length ? (
+      <div key={label}>
+        <div className="session-label">{label}</div>
+        {groupSessionsByFolder(list).map((g) => {
+          const groupCollapsed = props.collapsedFolders.has(g.key);
+          return (
+            <div key={g.key} className="session-group">
+              <button
+                type="button"
+                className="session-group-head"
+                title={g.path || undefined}
+                aria-expanded={!groupCollapsed}
+                onClick={() => props.onToggleFolder(g.key)}
+              >
+                <span className="session-group-chevron" aria-hidden>{groupCollapsed ? "▸" : "▾"}</span>
+                <span className="session-group-name">{g.label}</span>
+                <span className="session-group-count">{g.sessions.length}</span>
+              </button>
+              {!groupCollapsed &&
+                g.sessions.map((c) => (
+                  <SessionRow
+                    key={c.id}
+                    c={c}
+                    props={props}
+                    hierarchy={hierarchy}
+                    showHierarchy={c.id === hierarchyFor}
+                  />
+                ))}
+            </div>
+          );
+        })}
+      </div>
+    ) : null;
+
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-top">
+        <button type="button" className="btn-new" onClick={props.onNewChat} disabled={props.newChatDisabled}>
+          <span aria-hidden>+</span> New chat
+        </button>
+        <div className="session-filter">
+          <button type="button" className={filter === "active" ? "active" : ""} onClick={() => props.onFilterChange("active")}>
+            Active
+          </button>
+          <button type="button" className={filter === "archived" ? "active" : ""} onClick={() => props.onFilterChange("archived")}>
+            Archived
+          </button>
+        </div>
+      </div>
+
+      <div className="session-list">
+        {sessions.length === 0 && (
+          <div className="session-empty">
+            {filter === "archived" ? "No archived chats" : "No active chats"}
+          </div>
+        )}
+        {section("Missioni", missions)}
+        {section("Chat", chats)}
+      </div>
+
+      <div className="sidebar-foot">
+        <button type="button" className="btn-settings" onClick={props.onOpenSettings}>⚙ Settings</button>
+        <div className="status-pill">
+          <span className={`status-dot ${props.cliOk ? "ok" : "bad"}`} aria-hidden />
+          <div>
+            <div>{props.statusLine}</div>
+          </div>
+        </div>
+      </div>
+      <div
+        className="sidebar-resizer"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Ridimensiona la barra laterale (doppio clic: ripristina)"
+        title="Trascina per ridimensionare — doppio clic per ripristinare"
+        onPointerDown={resizer.onPointerDown}
+        onPointerMove={resizer.onPointerMove}
+        onPointerUp={resizer.onPointerUp}
+        onDoubleClick={resizer.onDoubleClick}
+      />
+    </aside>
+  );
+}

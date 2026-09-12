@@ -63,6 +63,7 @@ import { ProviderModelBar } from "./components/ProviderModelBar";
 import { SettingsShell } from "./components/settings/SettingsShell";
 import { RunActivity, type LiveToolStep } from "./components/RunActivity";
 import { KrakenActivity } from "./components/KrakenActivity";
+import { Sidebar } from "./components/Sidebar";
 import {
   readKrakenProgress,
   readKrakenMetrics,
@@ -96,8 +97,6 @@ import { extractImagePathsFromToolResult } from "./toolImages";
 import { ChatImageCard } from "./components/ChatImageCard";
 import {
   SESSION_FOLDERS_STORAGE_KEY,
-  folderLabelFromCwd,
-  groupSessionsByFolder,
   loadCollapsedSet,
   persistCollapsedSet,
   toggleCollapsedKey,
@@ -121,12 +120,14 @@ import {
   type LiveTask,
   type MissionStateView,
 } from "./liveTasks";
+import { useRunActivity, type ActivityAgent } from "./activity";
 import { readRunEnvelope } from "./runs/types";
 import {
   unseenResultsByConversation,
   useRunCoordinator,
 } from "./runs";
 import { ReplyAccordion } from "./components/ReplyAccordion";
+import { TentacleTracePanel } from "./components/TentacleTracePanel";
 import { friendlyToolLabel } from "./components/toolLabels";
 import { scrubDisplayText } from "./components/scrubDisplayText";
 import { ProjectPanel } from "./components/ProjectPanel";
@@ -387,17 +388,6 @@ function uid(prefix = "id"): string {
 function titleFromPrompt(prompt: string): string {
   const t = stripGauntletLoop(prompt).trim().replace(/\s+/g, " ");
   return t.length > 48 ? `${t.slice(0, 48)}…` : t || "New chat";
-}
-
-function formatTime(ts: number): string {
-  try {
-    return new Intl.DateTimeFormat(undefined, {
-      hour: "2-digit",
-      minute: "2-digit",
-    }).format(new Date(ts));
-  } catch {
-    return "";
-  }
 }
 
 /**
@@ -972,6 +962,19 @@ export default function App() {
 
   /** Run registry: multiplexed runs across conversations (M2). */
   const runCoordinator = useRunCoordinator();
+  /** Kraken activity stream (F1): lifted here so the sidebar can list the
+   *  tentacles of the active mission's run. Same `agent-event` channel
+   *  KrakenActivity already consumes - no new channel, no new IPC. */
+  const activity = useRunActivity();
+  /**
+   * F2: tentacle whose live trace is open in the side panel. Only App owns
+   * this state; the sidebar reports the click, the panel reads the file.
+   */
+  const [tracedAgent, setTracedAgent] = useState<ActivityAgent | null>(null);
+  /** Live row when the run still knows it, captured row once it is gone. */
+  const tracedLive: ActivityAgent | null = tracedAgent
+    ? activity.agents[tracedAgent.id] ?? tracedAgent
+    : null;
   /** Conversations that just finished a run and should flush the follow-up queue. */
   const autoSendAfterRunRef = useRef<Set<string>>(new Set());
   /** Composer/Stop state is per-conversation now, never global. */
@@ -1104,11 +1107,6 @@ export default function App() {
       sessionFilter === "archived" ? c.archived : !c.archived,
     );
   }, [conversations, sessionFilter]);
-
-  const sessionGroups = useMemo(
-    () => groupSessionsByFolder(visibleSessions),
-    [visibleSessions],
-  );
 
   const toggleSessionFolder = useCallback((key: string) => {
     setCollapsedFolders((prev) => {
@@ -2384,6 +2382,17 @@ export default function App() {
     taRef.current?.focus();
   };
 
+  /** Sidebar selection (F1): body of the inline handler it replaces - clears
+   *  the unseen badge, then rebinds mode/phase/provider/model to that chat. */
+  const onSelectSession = (c: Conversation) => {
+    runCoordinator.markSeen(c.id);
+    setActiveId(c.id);
+    setMode(c.mode);
+    setPhase(c.phase);
+    if (c.provider) setProvider(c.provider);
+    if (c.model) setModel(c.model);
+  };
+
   /** User-facing recovery prompt after assistant_text_loop (keep in sync with core TEXT_LOOP_RECOVERY_USER_PROMPT). */
   const TEXT_LOOP_CONTINUE =
     "Continue from the text-loop stop. Inspect disk, apply at most one missing piece with tools if needed, " +
@@ -3290,176 +3299,41 @@ export default function App() {
         />
       )}
       <div className="app-body" style={{ "--sidebar-w": `${sidebarW}px` } as CSSProperties}>
-      <aside className="sidebar">
-        <div className="sidebar-top">
-          <button
-            type="button"
-            className="btn-new"
-            onClick={startNewChat}
-            disabled={running}
-          >
-            <span aria-hidden>+</span> New chat
-          </button>
-          <div className="session-filter">
-            <button
-              type="button"
-              className={sessionFilter === "active" ? "active" : ""}
-              onClick={() => setSessionFilter("active")}
-            >
-              Active
-            </button>
-            <button
-              type="button"
-              className={sessionFilter === "archived" ? "active" : ""}
-              onClick={() => setSessionFilter("archived")}
-            >
-              Archived
-            </button>
-          </div>
-        </div>
-
-        <div className="session-list">
-          <div className="session-label">Sessions</div>
-          {visibleSessions.length === 0 && (
-            <div className="session-empty">
-              {sessionFilter === "archived"
-                ? "No archived chats"
-                : "No active chats"}
-            </div>
-          )}
-          {sessionGroups.map((g) => {
-            const groupCollapsed = collapsedFolders.has(g.key);
-            return (
-              <div key={g.key} className="session-group">
-                <button
-                  type="button"
-                  className="session-group-head"
-                  title={g.path || undefined}
-                  aria-expanded={!groupCollapsed}
-                  onClick={() => toggleSessionFolder(g.key)}
-                >
-                  <span className="session-group-chevron" aria-hidden>
-                    {groupCollapsed ? "▸" : "▾"}
-                  </span>
-                  <span className="session-group-name">{g.label}</span>
-                  <span className="session-group-count">
-                    {g.sessions.length}
-                  </span>
-                </button>
-                {!groupCollapsed &&
-                  g.sessions.map((c) => (
-            <div
-              key={c.id}
-              className={`session-item-wrap${c.id === activeId ? " active" : ""}`}
-            >
-              <button
-                type="button"
-                className="session-item"
-                onClick={() => {
-                  runCoordinator.markSeen(c.id);
-                  setActiveId(c.id);
-                  setMode(c.mode);
-                  setPhase(c.phase);
-                  if (c.provider) setProvider(c.provider);
-                  if (c.model) setModel(c.model);
-                }}
-              >
-                <span className="session-title">{c.title}</span>
-                {runCoordinator.isRunning(c.id) ? (
-                  <span
-                    className="session-run-badge"
-                    title="Run in corso"
-                    aria-label="Run in corso"
-                  >
-                    ●
-                  </span>
-                ) : unseenByConv[c.id] ? (
-                  <span
-                    className="session-run-badge is-done"
-                    title="Run completata"
-                    aria-label="Run completata"
-                  >
-                    ✓
-                  </span>
-                ) : (
-                  <span className="session-bubble" aria-hidden>
-                    💬
-                  </span>
-                )}
-                <span
-                  className="session-folder"
-                  title={c.cwd ? c.cwd : undefined}
-                >
-                  📁 {c.cwd ? folderLabelFromCwd(c.cwd) : "No folder"}
-                </span>
-                <span className="session-meta">
-                  {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
-                </span>
-              </button>
-              <div className="session-actions">
-                {c.archived ? (
-                  <button
-                    type="button"
-                    title="Unarchive"
-                    onClick={() => unarchiveChat(c.id)}
-                  >
-                    ↩
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    title="Archive"
-                    onClick={() => archiveChat(c.id)}
-                  >
-                    ⬇
-                  </button>
-                )}
-                <button
-                  type="button"
-                  title="Delete"
-                  className="danger"
-                  onClick={() => deleteChat(c.id)}
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-                  ))}
-              </div>
-            );
-          })}
-        </div>
-
-        <div className="sidebar-foot">
-          <button
-            type="button"
-            className="btn-settings"
-            onClick={() => setView("settings")}
-          >
-            ⚙ Settings
-          </button>
-          <div className="status-pill">
-            <span
-              className={`status-dot ${cli?.ok ? "ok" : "bad"}`}
-              aria-hidden
-            />
-            <div>
-              <div>{statusLine}</div>
-            </div>
-          </div>
-        </div>
-        <div
-          className="sidebar-resizer"
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Ridimensiona la barra laterale (doppio clic: ripristina)"
-          title="Trascina per ridimensionare · doppio clic per ripristinare"
-          onPointerDown={onSidebarResizeStart}
-          onPointerMove={onSidebarResizeMove}
-          onPointerUp={onSidebarResizeEnd}
-          onDoubleClick={resetSidebarWidth}
-        />
-      </aside>
+      <Sidebar
+        sessions={visibleSessions}
+        filter={sessionFilter}
+        activeId={activeId}
+        isRunning={runCoordinator.isRunning}
+        unseenByConv={unseenByConv}
+        collapsedFolders={collapsedFolders}
+        onToggleFolder={toggleSessionFolder}
+        onNewChat={startNewChat}
+        newChatDisabled={running}
+        onSelect={onSelectSession}
+        onArchive={archiveChat}
+        onUnarchive={unarchiveChat}
+        onDelete={deleteChat}
+        onFilterChange={setSessionFilter}
+        onOpenSettings={() => setView("settings")}
+        cliOk={Boolean(cli?.ok)}
+        statusLine={statusLine}
+        resizer={{
+          onPointerDown: onSidebarResizeStart,
+          onPointerMove: onSidebarResizeMove,
+          onPointerUp: onSidebarResizeEnd,
+          onDoubleClick: resetSidebarWidth,
+        }}
+        activity={activity}
+        activeRunId={runCoordinator.getRun(active?.id)?.runId}
+        onSelectTentacle={setTracedAgent}
+        selectedTentacleId={tracedAgent?.id ?? null}
+      />
+      <TentacleTracePanel
+        agent={tracedLive}
+        cwd={activeCwd}
+        sessionId={active?.sessionId ?? null}
+        onClose={() => setTracedAgent(null)}
+      />
 
       <div className="workspace">
       <main className="main">

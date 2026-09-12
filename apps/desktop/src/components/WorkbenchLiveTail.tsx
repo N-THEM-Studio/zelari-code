@@ -43,26 +43,52 @@ const WORKBENCH_PREFIX = "workbench-";
 const WORKBENCH_SUFFIX = ".md";
 
 /**
- * Find the most recent workbench file in `<cwd>/.zelari/radio/`. Returns
+ * What a tail target looks like: a directory under the project root plus a
+ * basename selector. Extracted (F2) so the same read/poll logic can tail
+ * something other than the workbench file — the tentacle trace panel tails
+ * `.zelari/radio/<sessionId>.jsonl`. No new polling cadence: same host, same
+ * 1500ms timer, one timer per open panel.
+ */
+export interface TailSource {
+  /** Directory relative to `cwd` that holds the candidates. */
+  dir: string;
+  /** Exact basename; when set, prefix/suffix are ignored. */
+  name?: string;
+  /** Basename prefix filter (e.g. `workbench-`). */
+  prefix?: string;
+  /** Basename suffix filter (e.g. `.md`). */
+  suffix?: string;
+}
+
+/** The workbench tail's source: the newest `workbench-*.md` under the radio dir. */
+export const WORKBENCH_TAIL_SOURCE: TailSource = {
+  dir: WORKBENCH_DIR,
+  prefix: WORKBENCH_PREFIX,
+  suffix: WORKBENCH_SUFFIX,
+};
+
+/**
+ * Find the most recent match for `source` in `<cwd>/<source.dir>`. Returns
  * `null` when no such file exists or the directory is unreachable.
  *
  * Sorting strategy: by mtime would be ideal, but `listDir` returns
  * name/path/isDir only. We sort lexicographically descending — that
- * works because Kraken's `workbench-<id>.md` ids are time-ordered
- * (`crypto.randomUUID()`-derived; new runs have lexicographically
- * greater ids in practice). If that ever stops holding, swap to a
- * stat-based sort by adding size/mtime to DirEntryDto.
+ * works because Kraken's ids (`workbench-<id>.md`, `<sessionId>.jsonl`)
+ * are time-ordered (`crypto.randomUUID()`-derived; new runs have
+ * lexicographically greater ids in practice). If that ever stops holding,
+ * swap to a stat-based sort by adding size/mtime to DirEntryDto.
  */
-async function findLatestWorkbench(cwd: string): Promise<string | null> {
+export async function findLatestTail(cwd: string, source: TailSource): Promise<string | null> {
   try {
-    const res = await listDir({ path: WORKBENCH_DIR, cwd });
+    const res = await listDir({ path: source.dir, cwd });
     if (res.error) return null;
     const candidates = res.entries
       .filter(
         (e) =>
           !e.isDir &&
-          e.name.startsWith(WORKBENCH_PREFIX) &&
-          e.name.endsWith(WORKBENCH_SUFFIX),
+          (source.name === undefined || e.name === source.name) &&
+          (source.prefix === undefined || e.name.startsWith(source.prefix)) &&
+          (source.suffix === undefined || e.name.endsWith(source.suffix)),
       )
       .map((e) => e.path)
       .sort()
@@ -71,6 +97,15 @@ async function findLatestWorkbench(cwd: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** First source (in priority order) that resolves to an existing file. */
+async function resolveTail(cwd: string, sources: TailSource[]): Promise<string | null> {
+  for (const source of sources) {
+    const path = await findLatestTail(cwd, source);
+    if (path) return path;
+  }
+  return null;
 }
 
 /**
@@ -83,7 +118,7 @@ async function findLatestWorkbench(cwd: string): Promise<string | null> {
  * intentional: the workbench file is fully under our control and uses
  * a fixed grammar.
  */
-function renderMiniMarkdown(src: string): ReactNode {
+export function renderMiniMarkdown(src: string): ReactNode {
   const lines = src.replace(/\r\n/g, "\n").split("\n");
   const out: ReactNode[] = [];
   let i = 0;
@@ -201,7 +236,23 @@ function renderMiniMarkdown(src: string): ReactNode {
   return <>{out}</>;
 }
 
-export function WorkbenchLiveTail({ cwd, open }: Props) {
+/**
+ * Read + poll one file from a list of candidate sources (F2 extraction of
+ * the logic WorkbenchLiveTail always had: immediate tick, then 1500ms,
+ * signature-skip when mtime+size are unchanged, stale-resolve guard).
+ *
+ * `sources` is read in priority order and may be an inline array: the timer
+ * is (re)created only when `open`/`cwd` flip, exactly as before.
+ */
+export function useRadioTail({
+  cwd,
+  open,
+  sources,
+}: {
+  cwd: string | null;
+  open: boolean;
+  sources: TailSource[];
+}): State {
   const [state, setState] = useState<State>({
     path: null,
     body: "",
@@ -216,6 +267,17 @@ export function WorkbenchLiveTail({ cwd, open }: Props) {
   // ~1500ms; when the signature is unchanged we skip setState entirely
   // instead of re-rendering identical content.
   const sigRef = useRef<string | null>(null);
+  /** Resolved target path, in a ref so a tick does not re-list the dir. */
+  const pathRef = useRef<string | null>(null);
+  /**
+   * Identity of the current source list. Switching target (another
+   * session's radio file) invalidates the resolved path + signature and
+   * re-creates the interval; a constant list never changes it.
+   */
+  const sourceKey = sources
+    .map((s) => `${s.dir}|${s.name ?? ""}|${s.prefix ?? ""}|${s.suffix ?? ""}`)
+    .join(";");
+  const sourceKeyRef = useRef<string>("");
 
   const tick = useCallback(async () => {
     if (!cwd) {
@@ -224,21 +286,21 @@ export function WorkbenchLiveTail({ cwd, open }: Props) {
     }
     const currentCwd = cwd;
     resolvedCwdRef.current = currentCwd;
+    if (sourceKeyRef.current !== sourceKey) {
+      sourceKeyRef.current = sourceKey;
+      pathRef.current = null;
+      sigRef.current = null;
+    }
 
-    let path = state.path;
+    let path = pathRef.current;
     if (!path) {
-      path = await findLatestWorkbench(currentCwd);
+      path = await resolveTail(currentCwd, sources);
       if (resolvedCwdRef.current !== currentCwd) return; // cwd changed mid-tick
       if (!path) {
-        setState((s) => ({
-          ...s,
-          watching: true,
-          path: null,
-          body: s.path === null ? "(no workbench file found yet — start a Kraken run)" : s.body,
-          error: null,
-        }));
+        setState((s) => ({ ...s, watching: true, path: null, body: "", error: null }));
         return;
       }
+      pathRef.current = path;
       sigRef.current = null; // new file discovered: force a full fetch
     }
 
@@ -274,7 +336,7 @@ export function WorkbenchLiveTail({ cwd, open }: Props) {
       if (resolvedCwdRef.current !== currentCwd) return;
       setState((s) => ({ ...s, watching: true, path, error: String(e) }));
     }
-  }, [cwd, state.path]);
+  }, [cwd, sourceKey, sources]);
 
   useEffect(() => {
     if (!open || !cwd) {
@@ -285,11 +347,18 @@ export function WorkbenchLiveTail({ cwd, open }: Props) {
     void tick();
     const handle = setInterval(() => void tick(), POLL_INTERVAL_MS);
     return () => clearInterval(handle);
-    // We intentionally re-create the interval when `open` flips: the
-    // tick closure depends on `cwd`/`state.path`, and re-creating keeps
-    // the dependency bookkeeping simple. ~3s of work per toggle is fine.
+    // We intentionally re-create the interval when `open` flips (or the
+    // tailed source changes): the tick closure is keyed on `cwd`/sources
+    // and re-creating keeps the dependency bookkeeping simple. ~3s of work
+    // per toggle is fine.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, cwd]);
+  }, [open, cwd, sourceKey]);
+
+  return state;
+}
+
+export function WorkbenchLiveTail({ cwd, open }: Props) {
+  const state = useRadioTail({ cwd, open, sources: [WORKBENCH_TAIL_SOURCE] });
 
   if (!open) return null;
 
