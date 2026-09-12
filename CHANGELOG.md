@@ -5,6 +5,33 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.42.0] - 2026-09-12
+
+The Desktop becomes a Grok-style workbench that actually isolates concurrent chats: each conversation keeps its own workspace, activity tree, and run history, the composer carries model / permissions / mode as pills, and the lead can pick thinking effort per tentacle. MCP servers spawn in the project they belong to, custom MCP servers and agent-authored skills land from Settings, and a CI-red gardener trigger closes the always-on loop.
+
+### Added
+
+- **Runs dashboard** — a global drawer of every run across every conversation, with project chip (directory basename), chat title, the prompt that started that run, relative time, and mode. Two chats in two folders with the same prompt are distinguishable. The trigger sits in the topbar (same side as the drawer), with a live badge of active runs.
+- **Conversation rename** — hover a sidebar row → inline rename (Enter/blur commit, Esc cancel, empty rejected). Titles update in the topbar and dashboard without reordering the list.
+- **Composer pills (Grok-round)** — model, permissions, and mode live as three pills inside the composer capsule; the topbar is stripped of ProviderModelBar and the four mode toggles. Empty chats center the greeting + composer vertically.
+- **Grok-style model picker** — the model pill opens a real list (checkmark on the selected row, segmented thinking-effort control, labeled refresh) instead of stacked native `<select>`s.
+- **MCP integrations manager** — Settings → Extensions is now card-based (toggle, scope badge, catalog vs custom). Custom servers can be added / edited / removed with command, args, and env (`KEY=VALUE`); env round-trips through the Rust `set_mcp` IPC (`--env` JSON or repeated `K=V`) without wiping existing values on toggle.
+- **`create_skill` tool** — the agent can write a SKILL.md via the existing `upsertSkill` store (`project` or `user` scope). Immediately invokable via `/skill <name>` or the `skill` tool (rescans every call). Slug is a strict subset of the parser (no path traversal); overwrite is fail-closed; a name shadowed by an existing skill is reported honestly (`loadable` flag).
+- **Per-tentacle thinking effort** — new `thinkingEffort` arg on the `task` tool (`inherit|auto|off|low|medium|high|xhigh|max`) plus per-kind Desktop prefs (Explore / General / Verify) sent per-turn through the same channel as tentacle models. Precedence: task arg > env per-kind > provider inherit. Applied value rides on `agent_spawned` and shows as a quiet `effort: high` chip (explicit choices only — `auto`/`inherit` stay silent). Invalid env values warn and fall back; they never crash a spawn.
+- **Gardener CI/PR trigger (slice B)** — fourth gardener trigger, after local `npm test` red: poll GitHub (`gh` or public REST) for a failing CI / PR, then propose a one-shot mission. Anti-loop via `.zelari/gardener.ci-state`; skip-protocol is never silent. Mission close now surfaces `checkProposals` (the repeat-failure WorldCheck candidates) instead of discarding them.
+
+### Fixed
+
+- **MCP filesystem jail** — stdio MCP servers now spawn with `cwd = projectRoot`. A catalog default of `"."` no longer incarcerates the filesystem server in the Desktop install directory.
+- **Cross-chat workspace isolation** — a missing / empty / relative `workspaceRoot` is a typed `bad_request`, never a silent `process.cwd()` fallback to the app directory. Spine and `memory.db` are per-project again.
+- **Kraken activity isolation** — the activity tree filters on the M2 envelope `conversationId` (same routing the run registry already used). Switching away and back hydrates from a per-conversation store, so titles and statuses survive instead of reconstructing as `t1 ● –`.
+- **Permissions popover white-on-white** — native `<select>` options inherit a translucent `--surface`; the OS popup fell back to white-on-white. Options now use `--bg-solid` plus `color-scheme`.
+- **Model / thinking controls wrapping** — stacked full-width in the popover instead of wrapping mid-control.
+
+### Changed
+
+- **Grok-flat chrome** — near-black sidebar, centered 840px column, no cyan/violet glow, no glass/aurora. Send button is a flat light pill aligned with the composer pills. Reversible: one commented override block in `App.css`.
+
 ## [2.41.0] - 2026-09-12
 
 The repeat-failure loop closes its circle and the Desktop grows a mission spine: two identical command failures now surface an actionable check proposal instead of a dead-end notice, the shared testing playbook is one command away, and the sidebar finally shows the delegation tree — mission, lead, tentacles — with live trace and per-tentacle verify verdicts. Strict semantics unchanged: a badge is only as true as the token that produced it, and unknown stays unknown.
