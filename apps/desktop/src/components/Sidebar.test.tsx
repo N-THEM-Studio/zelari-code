@@ -26,6 +26,15 @@ vi.mock("react", async () => {
   return await import("../../../../node_modules/react/index.js");
 });
 
+// Same family as TentacleTracePanel.test.tsx: the Sidebar import chain pulls
+// `../activity` (barrel) → `useRunActivity` → `../agentClient` → Tauri APIs,
+// which do not resolve under the root-only CI install (`npm ci` does not
+// populate apps/desktop/node_modules). Mock the first-party seam; the hook
+// itself is never invoked in these tests.
+vi.mock("../agentClient", () => ({
+  onAgentEvent: vi.fn(async () => () => {}),
+}));
+
 afterEach(cleanup);
 
 const HOUR = 1700000000000;
