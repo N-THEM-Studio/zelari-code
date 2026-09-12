@@ -73,6 +73,17 @@ export interface SidebarProps {
    * Absent = no badge at all (never a PASS).
    */
   missionVerdictFor?: (convId: string) => TentacleVerdictView | undefined;
+  /**
+   * F4: runs in flight across ALL conversations (`activeRunCount`), painted as
+   * the badge of the dashboard trigger. Absent/0 = no badge.
+   */
+  runsActiveCount?: number;
+  /**
+   * F4: ask App to open the global runs dashboard. Optional on purpose: with
+   * no handler the trigger is not rendered — the sidebar owns no panel state
+   * and must keep working unchanged where the dashboard is not wired.
+   */
+  onOpenDashboard?: () => void;
 }
 
 function formatTime(ts: number): string {
@@ -146,6 +157,8 @@ function SessionRow({
 
 export function Sidebar(props: SidebarProps) {
   const { sessions, filter, activeId, activity, activeRunId, resizer } = props;
+  /** F4: dashboard trigger badge — runs in flight, ALL conversations. */
+  const runsActive = props.runsActiveCount ?? 0;
   const missions = useMemo(() => sessions.filter((c) => Boolean(c.sessionId)), [sessions]);
   const chats = useMemo(() => sessions.filter((c) => !c.sessionId), [sessions]);
   const hierarchy = useMemo(() => buildHierarchy(activity), [activity]);
@@ -202,6 +215,28 @@ export function Sidebar(props: SidebarProps) {
             Archived
           </button>
         </div>
+        {props.onOpenDashboard ? (
+          <button
+            type="button"
+            className="sidebar-dash-btn"
+            onClick={props.onOpenDashboard}
+            title="Runs dashboard — tutte le run, tutte le chat"
+            aria-label="Apri la dashboard delle run"
+          >
+            <svg className="sidebar-dash-icon" viewBox="0 0 16 16" width="13" height="13" fill="currentColor" aria-hidden focusable="false">
+              <rect x="1.5" y="2.5" width="5" height="4" rx="1" />
+              <rect x="9.5" y="2.5" width="5" height="4" rx="1" />
+              <rect x="1.5" y="9.5" width="5" height="4" rx="1" />
+              <rect x="9.5" y="9.5" width="5" height="4" rx="1" />
+            </svg>
+            <span>Runs</span>
+            {runsActive > 0 ? (
+              <span className="sidebar-dash-badge" title={`${runsActive} run in corso`}>
+                {runsActive}
+              </span>
+            ) : null}
+          </button>
+        ) : null}
       </div>
 
       <div className="session-list">

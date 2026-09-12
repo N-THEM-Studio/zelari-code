@@ -123,11 +123,13 @@ import {
 import { useRunActivity, type ActivityAgent } from "./activity";
 import { readRunEnvelope } from "./runs/types";
 import {
+  activeRunCount,
   unseenResultsByConversation,
   useRunCoordinator,
 } from "./runs";
 import { ReplyAccordion } from "./components/ReplyAccordion";
 import { TentacleTracePanel } from "./components/TentacleTracePanel";
+import { RunsDashboard } from "./components/RunsDashboard";
 import { QueuedFollowUps } from "./components/QueuedFollowUps";
 import { readMissionVerdict } from "./components/tentacleVerdict";
 import { friendlyToolLabel } from "./components/toolLabels";
@@ -973,6 +975,12 @@ export default function App() {
    * this state; the sidebar reports the click, the panel reads the file.
    */
   const [tracedAgent, setTracedAgent] = useState<ActivityAgent | null>(null);
+  /**
+   * F4: global runs dashboard. Same drawer pattern as the trace panel: App
+   * owns the flag because the run registry (`runCoordinator`) is hook-local
+   * here and cannot be imported by a child.
+   */
+  const [dashboardOpen, setDashboardOpen] = useState(false);
   /** Live row when the run still knows it, captured row once it is gone. */
   const tracedLive: ActivityAgent | null = tracedAgent
     ? activity.agents[tracedAgent.id] ?? tracedAgent
@@ -3354,12 +3362,29 @@ export default function App() {
         onSelectTentacle={setTracedAgent}
         selectedTentacleId={tracedAgent?.id ?? null}
         missionVerdictFor={(id) => readMissionVerdict(verificationByConv[id]?.run?.verdict ?? null)}
+        runsActiveCount={activeRunCount(runCoordinator.state)}
+        onOpenDashboard={() => setDashboardOpen(true)}
       />
       <TentacleTracePanel
         agent={tracedLive}
         cwd={activeCwd}
         sessionId={active?.sessionId ?? null}
         onClose={() => setTracedAgent(null)}
+      />
+      {/* F4: global runs dashboard. The registry is hook-local here, so the
+          drawer receives it as a prop; a row only carries an id, and the
+          selection handler needs the Conversation (markSeen + mode/phase). */}
+      <RunsDashboard
+        open={dashboardOpen}
+        state={runCoordinator.state}
+        conversations={conversations}
+        unseenByConv={unseenByConv}
+        onSelectSession={(id) => {
+          const conv = conversations.find((c) => c.id === id);
+          // Run of a deleted chat: nothing to select, the drawer still closes.
+          if (conv) onSelectSession(conv);
+        }}
+        onClose={() => setDashboardOpen(false)}
       />
 
       <div className="workspace">
