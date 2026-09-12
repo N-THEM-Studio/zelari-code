@@ -96,7 +96,7 @@ import {
   setActivePolicyLoadSurface,
 } from './safety/policyLoadMode.js';
 import { HOOKS_FAILURE_ENV, resolveHookFailureMode } from './safety/lifecycleHooks.js';
-import { planModeFromOpts, registerHeadlessMcp, runOneTurn, writeProofSafe, type TurnExtras } from './headless/runOneTurn.js';
+import { planModeFromOpts, registerHeadlessMcp, runOneTurn, surfaceOpsKnowledgeNotices, writeProofSafe, type TurnExtras } from './headless/runOneTurn.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
   resetTaskSpawnCount();
@@ -1575,7 +1575,16 @@ async function runHeadlessZelariBody(
       }
       // P0.3: mission proof — written in BOTH branches below so the artifact
       // always records the final mission verdict, blocked or not.
-      await writeProofSafe(missionGate, { surface: 'mission', sessionId: spine.sessionId }, projectRoot);
+      // Slice A/B: that same write returns the ops-knowledge promotion result
+      // (procedures, failure fingerprints, constraint candidates) and the
+      // mission path used to DROP it — a repeated failure's WorldCheck
+      // candidate stayed invisible to the human who could confirm it. Same
+      // surfacing helper as the kraken gate sites; it never changes the exit
+      // code picked right below and never writes `.zelari/world/checks.json`.
+      surfaceOpsKnowledgeNotices(
+        await writeProofSafe(missionGate, { surface: 'mission', sessionId: spine.sessionId }, projectRoot),
+        opts,
+      );
 
       if (missionGate.blocked) {
         exitCode = strictGateExitCode(missionGate);
