@@ -7410,10 +7410,23 @@ kbd {
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid var(--border-subtle);
-  background: var(--surface);
+  /* solid, never translucent: the native dropdown list cannot render alpha and
+     falls back to white — with light option text that was white-on-white */
+  background: var(--bg-solid);
   color: var(--text);
+  color-scheme: dark;
   font: inherit;
   font-size: 12.5px;
+}
+
+.app[data-theme="light"] .composer-popover-select {
+  color-scheme: light;
+}
+
+/* the popup list draws its own surface: explicit solid pair per theme */
+.composer-popover-select option {
+  background: var(--bg-solid);
+  color: var(--text);
 }
 
 .composer-popover-help {
@@ -7423,19 +7436,32 @@ kbd {
   color: var(--text-muted);
 }
 
-/* the hosted ProviderModelBar keeps its own markup: let it wrap, never clip */
+/* the hosted ProviderModelBar keeps its own markup: stack it like Grok's
+   settings popover — one full-width control per row, never a mid-row wrap */
 .composer-popover .provider-bar {
   max-width: none;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
 }
 
 .composer-popover .toolbar-select-group {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
+  flex-wrap: nowrap;
+  align-items: stretch;
   gap: 6px;
 }
 
 .composer-popover .toolbar-select {
   max-width: 100%;
+  width: 100%;
+}
+
+/* the model panel hosts three stacked selects: give it breathing room */
+.composer-popover:has(.provider-bar) {
+  min-width: 320px;
 }
 
 /* 3a. sidebar: the row becomes an input while renaming ---------------------- */
