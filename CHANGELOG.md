@@ -5,7 +5,19 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.40.0] - 2026-09-12
+## [2.41.0] - 2026-09-12
+
+The repeat-failure loop closes its circle and the Desktop grows a mission spine: two identical command failures now surface an actionable check proposal instead of a dead-end notice, the shared testing playbook is one command away, and the sidebar finally shows the delegation tree — mission, lead, tentacles — with live trace and per-tentacle verify verdicts. Strict semantics unchanged: a badge is only as true as the token that produced it, and unknown stays unknown.
+
+### Added
+
+- **Repeat-failure → WorldCheck proposal** — a second identical command failure (same `sha256(cmd\0exit\digest)` fingerprint) now attaches `checkProposals` to the ops-knowledge result with a suggested check template; nothing is auto-written. The human promotes it via `/memory promote con-<fp> --as-check --command <cmd>`, which appends to `.zelari/world/checks.json` through `appendWorldCheck` (read-modify-write, dedup by id, never a whole-file replace — a corrupt file is refused, not wiped). Promotion notices are wired into both headless runs and the TUI. Writes stay gated behind `ZELARI_PROMOTE_OPS_KNOWLEDGE` (default OFF).
+- **Shared testing playbook (`/memory how-we-test`)** — verified procedures from the memory store are projected into `.zelari/how-we-test.md` (grouped by criterion, atomic tmp+rename write, idempotent); auto-regenerates after a promotion that created procedures, still flag-gated. This is the shared-context artifact: what one agent figured out about testing this repo, every future agent (and human) reads.
+- **Mission-first Desktop sidebar (F1)** — the sidebar now renders two sections, Missions above Chats, with the mission's delegation tree (lead + tentacles, live from the same Tauri `agent_spawned/ended` events, no new channels); `Sidebar` is extracted from the 4.3k-LOC `App.tsx`.
+- **Tentacle live trace panel (F2)** — clicking a tentacle opens a drawer with its live radio feed, remounting the previously orphaned `WorkbenchLiveTail` engine (extracted as `useRadioTail`, same 1.5s cadence, fewer IPC round-trips). Absent per-tentacle transcripts degrade to an explicitly labeled session-radio filter — never a run dump presented as a tentacle's.
+- **Per-tentacle verify verdict badges (F3)** — tentacle rows show a verdict badge driven by a strict whitelist over the `agent_status` verify caption tokens (`PASS`/`FAIL`/`unknown`/`failed`); anything else — in-flight, missing, or a near-miss like `verify PASSED` — renders an em-dash. The mission-level verdict (`PASS/REPAIR_REQUIRED/BLOCKED`) is displayed as a labeled passthrough and is never inherited by tentacle rows. The composer staying responsive during a run is now pinned by tests (steer/queue routing via `classifyLiveSend`), not by folklore.
+
+
 
 The verification story becomes visible end to end: the Desktop card now renders the per-criterion evidence pack (criterion, status, evidence seq) the CLI already emitted, a stopped mission resumes from the TUI via /resume-mission, the composer says when the next Enter would resume it, and mission-close evidence is anchored with a real spine seq (the bare appendEvent return never reached the engine). Strict semantics unchanged: unknown stays unknown.
 
