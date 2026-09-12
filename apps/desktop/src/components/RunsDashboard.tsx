@@ -17,18 +17,33 @@
  * Sorting: active runs first (most recent start first), then the retained ones
  * by end time (`finishedAt ?? startedAt`) descending — the same recency the
  * registry keeps them in.
+ *
+ * Every row describes ITS run, not the selected chat:
+ *   line 1 — status pill, project folder, conversation title, unseen mark,
+ *            relative start ("2 min fa") and duration;
+ *   line 2 — chat mode (the run "type") and the user prompt that started it.
+ * Those derivations (project chip, prompt excerpt, relative time) are pure and
+ * live in `./runDetails`, so they are unit-tested without a DOM.
  */
 import { useMemo } from "react";
 import { activeRunCount } from "../runs/selectors";
 import type { RunRegistryState, RunRuntime, RunStatus } from "../runs/types";
 import type { Conversation } from "../types";
+import {
+  formatClock,
+  formatRelativeTime,
+  projectLabel,
+  promptExcerpt,
+  runCwd,
+} from "./runDetails";
 
 export interface RunsDashboardProps {
   /** Closed → renders nothing (same contract as TentacleTracePanel). */
   open: boolean;
   /** Global run registry, owned by App (`useRunCoordinator`). Read-only here. */
   state: RunRegistryState;
-  /** Title lookup for `run.conversationId`; an unknown id falls back to the id. */
+  /** Lookup for `run.conversationId`: title, cwd, messages and mode of the row.
+   *  An unknown id keeps the raw id as title and the labeled placeholders. */
   conversations: Conversation[];
   /** conversationId → unseen completion (`unseenResultsByConversation` in App). */
   unseenByConv: Record<string, boolean>;
@@ -64,6 +79,14 @@ interface DashRow {
   run: RunRuntime;
   title: string;
   unseen: boolean;
+  /** Basename of the run cwd ("zelari-code") or the labeled fallback ("app"). */
+  project: string;
+  /** Full cwd — only ever the chip tooltip; "" when unknown. */
+  projectPath: string;
+  /** User prompt that started this run, one line and truncated; else "—". */
+  prompt: string;
+  /** Chat mode (kraken/council/zelari): the "type" of the row. */
+  mode?: string;
 }
 
 /** Active first (newest first), then the rest by end time desc. */
@@ -72,17 +95,25 @@ function buildRows(
   conversations: Conversation[],
   unseenByConv: Record<string, boolean>,
 ): DashRow[] {
-  const titles = new Map<string, string>(
-    conversations.map((c): [string, string] => [c.id, c.title]),
+  const byId = new Map<string, Conversation>(
+    conversations.map((c): [string, Conversation] => [c.id, c]),
   );
   return Object.values(state.runsById)
-    .map((run) => ({
-      run,
-      // A chat deleted while its run lived on must not lose its row: the raw
-      // conversationId is the honest fallback title.
-      title: titles.get(run.conversationId)?.trim() || run.conversationId,
-      unseen: Boolean(run.unseenResult || unseenByConv[run.conversationId]),
-    }))
+    .map((run) => {
+      const conv = byId.get(run.conversationId);
+      const cwd = runCwd(run, conv);
+      return {
+        run,
+        // A chat deleted while its run lived on must not lose its row: the raw
+        // conversationId is the honest fallback title.
+        title: conv?.title.trim() || run.conversationId,
+        unseen: Boolean(run.unseenResult || unseenByConv[run.conversationId]),
+        project: projectLabel(cwd),
+        projectPath: cwd,
+        prompt: promptExcerpt(conv?.messages, run.startedAt),
+        mode: conv?.mode,
+      };
+    })
     .sort(
       (a, b) =>
         Number(isActive(b.run.status)) - Number(isActive(a.run.status)) ||
@@ -146,7 +177,7 @@ export function RunsDashboard({
           <div className="runs-dash-empty workbench-empty">Nessun run ancora</div>
         ) : (
           <div className="runs-dash-list">
-            {rows.map(({ run, title, unseen }) => {
+            {rows.map(({ run, title, unseen, project, projectPath, prompt, mode }) => {
               const active = isActive(run.status);
               const elapsed = active
                 ? clock - run.startedAt
@@ -165,29 +196,55 @@ export function RunsDashboard({
                     onClose();
                   }}
                 >
-                  <span className="runs-dash-title">{title}</span>
-                  <span className={`runs-dash-pill status-${run.status}`}>
-                    {active ? <span className="runs-dash-dot" aria-hidden /> : null}
-                    {run.status}
-                  </span>
-                  {unseen ? (
-                    <span
-                      className="runs-dash-unseen"
-                      title="Risultato non visto"
-                      aria-label="Risultato non visto"
-                    >
-                      ★
+                  {/* Line 1: what ran, where, and when. */}
+                  <span className="runs-dash-row-top">
+                    <span className={`runs-dash-pill status-${run.status}`}>
+                      {active ? <span className="runs-dash-dot" aria-hidden /> : null}
+                      {run.status}
                     </span>
-                  ) : null}
-                  <span
-                    className="runs-dash-time"
-                    title={
-                      active
-                        ? `In corso da ${formatDuration(elapsed)}`
-                        : `Durata ${formatDuration(elapsed)}`
-                    }
-                  >
-                    {formatDuration(elapsed)}
+                    <span
+                      className={`runs-dash-project${projectPath ? "" : " is-fallback"}`}
+                      title={projectPath || "Nessuna cartella di lavoro impostata"}
+                    >
+                      {project}
+                    </span>
+                    <span className="runs-dash-title">{title}</span>
+                    {unseen ? (
+                      <span
+                        className="runs-dash-unseen"
+                        title="Risultato non visto"
+                        aria-label="Risultato non visto"
+                      >
+                        ★
+                      </span>
+                    ) : null}
+                    <span
+                      className="runs-dash-ago"
+                      title={`Avviata alle ${formatClock(run.startedAt)}`}
+                    >
+                      {formatRelativeTime(run.startedAt, clock)}
+                    </span>
+                    <span
+                      className="runs-dash-time"
+                      title={
+                        active
+                          ? `In corso da ${formatDuration(elapsed)}`
+                          : `Durata ${formatDuration(elapsed)}`
+                      }
+                    >
+                      {formatDuration(elapsed)}
+                    </span>
+                  </span>
+                  {/* Line 2: the prompt this run was started with. */}
+                  <span className="runs-dash-row-sub">
+                    {mode ? (
+                      <span className="runs-dash-type" title="Modalità della chat">
+                        {mode}
+                      </span>
+                    ) : null}
+                    <span className="runs-dash-prompt" title={prompt}>
+                      {prompt}
+                    </span>
                   </span>
                 </button>
               );

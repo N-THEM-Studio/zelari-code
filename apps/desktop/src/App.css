@@ -6946,9 +6946,10 @@ kbd {
  * chrome, 1px hairlines, a single centered column, quiet composer.
  * Appended last on purpose: everything here overrides an earlier rule, so
  * deleting this block reverts the refresh without touching the rest.
- * Deliberately untouched: .runs-dash* / .sidebar-dash-btn* behaviour, the
- * drawer stack (workbench-panel 1100 / runs-dash 1110), .sidebar-resizer hit
- * area, .project-panel sizing, and the .runs-dash reduced-motion fallback.
+ * Deliberately untouched: the drawer stack (workbench-panel 1100 / runs-dash
+ * 1110), .sidebar-resizer hit area, .project-panel sizing, and the .runs-dash
+ * reduced-motion fallback — the "runs-dashboard detail" block appended below
+ * owns the trigger button and the row layout.
  * ========================================================================= */
 
 /* 1. ambience off: aurora blobs + grain are pure decoration ---------------- */
@@ -7592,6 +7593,127 @@ kbd {
 
 .btn-new:hover:not(:disabled) {
   background: var(--hover-tint);
+}
+
+/* == runs-dashboard detail (overrides) ======================================
+ * F4 polish, appended last so it wins over every earlier block:
+ *   - the trigger moved out of the sidebar rail into the topbar right side
+ *     (next to the folder picker), so button and drawer share one corner;
+ *   - the drawer now opens BELOW the topbar instead of over it;
+ *   - every row describes its own run: project folder, chat title, prompt
+ *     excerpt, relative start, duration, status.
+ * The shell stays `workbench-panel` (fixed right, 480px, z-index 1100) and
+ * `.runs-dash` keeps its 1110 — only the top offset is touched. Tokens only:
+ * no hardcoded accent, no gradient, no glow, so the light theme follows.
+ * ========================================================================= */
+
+/* 1. trigger: the grid glyph of the old sidebar button, topbar-sized -------- */
+.topbar-runs {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.topbar-runs:hover {
+  background: var(--hover-tint);
+  color: var(--text);
+}
+
+.topbar-runs-icon {
+  flex: none;
+  opacity: 0.85;
+}
+
+.topbar-runs-badge {
+  min-width: 18px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--success) 45%, transparent);
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-align: center;
+}
+
+/* 2. drawer under the topbar: `.main` pads 6px and the bar is 34px tall ----- */
+.runs-dash {
+  top: calc(var(--titlebar-h) + 40px);
+}
+
+/* 3. rows: line 1 = status/project/title/clock, line 2 = prompt ------------- */
+.runs-dash-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.runs-dash-row-top,
+.runs-dash-row-sub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* project folder of the run (basename of its cwd) */
+.runs-dash-project {
+  flex: none;
+  max-width: 110px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 10.5px;
+}
+
+/* no cwd bound to the run: the labeled placeholder, never a guessed name */
+.runs-dash-project.is-fallback {
+  border-style: dashed;
+  color: var(--text-muted);
+}
+
+/* chat mode = the "type" of the run */
+.runs-dash-type {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle);
+  color: var(--text-muted);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* the excerpt is one line: JS capped the string, the CSS clips the rest */
+.runs-dash-prompt {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-muted);
+  font-size: 11.5px;
+}
+
+.runs-dash-ago {
+  flex: none;
+  min-width: 52px;
+  text-align: right;
+  color: var(--text-muted);
+  font-size: 11px;
 }
 
 

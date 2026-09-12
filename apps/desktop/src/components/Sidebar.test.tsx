@@ -126,6 +126,16 @@ describe("Sidebar - Missioni / Chat sections", () => {
     expect(screen.getByText("📁 No folder")).toBeTruthy();
   });
 
+  it("no longer hosts the runs-dashboard trigger (F4 moved it to the topbar)", () => {
+    const { container } = render(<Sidebar {...props({ sessions: [mission, chat] })} />);
+    expect(container.querySelector(".sidebar-dash-btn")).toBeNull();
+    expect(screen.queryByLabelText("Apri la dashboard delle run")).toBeNull();
+    // The rail keeps its own controls; "Runs" is nowhere in it any more.
+    expect(container.querySelector(".sidebar-top")?.textContent).not.toContain("Runs");
+    expect(screen.getByText("New chat")).toBeTruthy();
+    expect(screen.getByText("Active")).toBeTruthy();
+  });
+
   it("marks the active entry and hides collapsed folders", () => {
     const { container } = render(
       <Sidebar

@@ -126,6 +126,7 @@ import {
 import { ReplyAccordion } from "./components/ReplyAccordion";
 import { TentacleTracePanel } from "./components/TentacleTracePanel";
 import { RunsDashboard } from "./components/RunsDashboard";
+import { RunsTrigger } from "./components/RunsTrigger";
 import { QueuedFollowUps } from "./components/QueuedFollowUps";
 import { readMissionVerdict } from "./components/tentacleVerdict";
 import { friendlyToolLabel } from "./components/toolLabels";
@@ -983,6 +984,8 @@ export default function App() {
    * here and cannot be imported by a child.
    */
   const [dashboardOpen, setDashboardOpen] = useState(false);
+  /** F4: runs in flight across ALL conversations — badge of the topbar trigger. */
+  const runsActive = activeRunCount(runCoordinator.state);
   /** Live row when the run still knows it, captured row once it is gone. */
   const tracedLive: ActivityAgent | null = tracedAgent
     ? activity.agents[tracedAgent.id] ?? tracedAgent
@@ -3382,8 +3385,6 @@ export default function App() {
         onSelectTentacle={setTracedAgent}
         selectedTentacleId={tracedAgent?.id ?? null}
         missionVerdictFor={(id) => readMissionVerdict(verificationByConv[id]?.run?.verdict ?? null)}
-        runsActiveCount={activeRunCount(runCoordinator.state)}
-        onOpenDashboard={() => setDashboardOpen(true)}
       />
       <TentacleTracePanel
         agent={tracedLive}
@@ -3422,6 +3423,12 @@ export default function App() {
             ) : null}
           </div>
           <div className="topbar-right">
+            {/* F4: the drawer trigger sits here so button and drawer share the
+                same (right) corner of the window. App owns `dashboardOpen`. */}
+            <RunsTrigger
+              activeCount={runsActive}
+              onOpen={() => setDashboardOpen(true)}
+            />
             <button
               type="button"
               className="btn-ghost topbar-folder"
