@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import type { MemoryNode, RememberInput } from '@zelari/core/memory';
 import type { StrictBuildGateEvaluation } from '../kraken/verificationBridge.js';
 import type { CompletionEvaluation } from '@zelari/core/verification';
@@ -11,6 +14,7 @@ import {
   type OpsKnowledgeMemory,
 } from './opsKnowledge.js';
 import { constraintNodeId, failureNodeId, repeatConstraintText } from './repeatFailure.js';
+import { PLACEHOLDER_COMMAND } from './repeatCheck.js';
 
 const OPEN_GATE = {
   total: 0,
@@ -92,6 +96,22 @@ function fakeMemory(): OpsKnowledgeMemory & { store: Map<string, MemoryNode> } {
       store.set(node.id, node);
       return node;
     },
+  };
+}
+
+/** Fake WITH the slice-C enumeration seam (`memory.export()`). */
+function fakeMemoryWithExport(): OpsKnowledgeMemory & { store: Map<string, MemoryNode> } {
+  const memory = fakeMemory();
+  return {
+    ...memory,
+    export: async () => ({
+      schemaVersion: 1 as const,
+      exportedAt: 't',
+      projectId: 'test',
+      nodes: [...memory.store.values()],
+      edges: [],
+      versions: [],
+    }),
   };
 }
 
@@ -355,6 +375,19 @@ describe('repeat failures → constraint candidate (slice 3.2)', () => {
     expect(second.created).toBe(1);
     expect(second.constraintsCreated).toBe(1);
     expect(second.proposals[0]).toContain('/memory promote');
+    // Slice A: the same constraint is now ALSO an applyable check proposal.
+    expect(second.checkProposals).toHaveLength(1);
+    expect(second.checkProposals[0]).toMatchObject({
+      fp: failureFingerprint('npm test → exit 1', 1, 'deadbeef'),
+      exit: 1,
+      digest: 'deadbeef',
+      derivedFromProcedure: false,
+    });
+    expect(second.checkProposals[0]?.suggestedCheck).toEqual({
+      id: constraintNodeId(failureFingerprint('npm test → exit 1', 1, 'deadbeef')),
+      command: PLACEHOLDER_COMMAND,
+      expectExit: 0,
+    });
     expect(kindsOf(memory)).toEqual(['constraint', 'failure']);
 
     const constraint = nodesOfKind(memory, 'constraint')[0]!;
@@ -434,5 +467,64 @@ describe('repeat failures → constraint candidate (slice 3.2)', () => {
     expect(kindsOf(memory)).toEqual(['procedure']);
     expect(nodesOfKind(memory, 'constraint')).toEqual([]);
     expect(second.constraintsCreated).toBe(0);
+  });
+});
+
+/**
+ * Slice A + C file-level guarantees: proposing writes NOTHING outside memory —
+ * `.zelari/world/checks.json` only ever changes through the explicit human
+ * confirmation (`/memory promote … --as-check`), and the how-we-test projection
+ * is a consequence of a promotion, never of a proposal.
+ */
+describe('promoteOpsKnowledge file effects (slice A/C)', () => {
+  const dirs: string[] = [];
+  const env = { ZELARI_PROMOTE_OPS_KNOWLEDGE: '1' };
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+  async function tempRoot(): Promise<string> {
+    const root = await mkdtemp(path.join(os.tmpdir(), 'zelari-ops-'));
+    dirs.push(root);
+    return root;
+  }
+
+  it('never creates .zelari/world/checks.json, not even on a repeated failure', async () => {
+    const root = await tempRoot();
+    const memory = fakeMemory();
+    const gate = failGate();
+    await promoteOpsKnowledge(gate, { projectRoot: root, env, memory });
+    const second = await promoteOpsKnowledge(gate, { projectRoot: root, env, memory });
+
+    expect(second.constraintsCreated).toBe(1);
+    expect(second.checkProposals).toHaveLength(1);
+    // A memory that cannot enumerate has nothing to project either.
+    expect(await readdir(root)).toEqual([]);
+  });
+
+  it('writes how-we-test.md only after a promotion that created something', async () => {
+    const root = await tempRoot();
+    const memory = fakeMemoryWithExport();
+    const first = await promoteOpsKnowledge(passGate(), { projectRoot: root, env, memory });
+    expect(first.created).toBe(1);
+
+    const target = path.join(root, '.zelari', 'how-we-test.md');
+    const body = await readFile(target, 'utf8');
+    expect(body).toContain('generato — non editare');
+    expect(body).toContain('## typecheck');
+    expect(body).toContain('npm run typecheck');
+
+    // Regeneration is idempotent: a second promotion changes no byte.
+    await promoteOpsKnowledge(passGate(), { projectRoot: root, env, memory });
+    expect(await readFile(target, 'utf8')).toBe(body);
+  });
+
+  it('writes nothing at all when the flag is off, even with an enumerable memory', async () => {
+    const root = await tempRoot();
+    const memory = fakeMemoryWithExport();
+    const result = await promoteOpsKnowledge(failGate(), { projectRoot: root, env: {}, memory });
+
+    expect(result.enabled).toBe(false);
+    expect(result.checkProposals).toEqual([]);
+    expect(await readdir(root)).toEqual([]);
   });
 });

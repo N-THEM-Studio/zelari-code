@@ -4,7 +4,10 @@ import type { ChatMessage } from '../components/ChatStream.js';
 import type { MemoryIndexResult } from '@zelari/core/memory';
 import { appendSystem } from '../hooks/messageHelpers.js';
 import { getMemoryService } from '../memory/serviceFactory.js';
-import { promoteMemoryToAgentsMd } from '../memory/promotion.js';
+import { listVerifiedProcedureNodes, regenerateHowWeTest } from '../memory/howWeTest.js';
+import { PROMOTE_USAGE, parsePromoteArgs, promoteMemoryToAgentsMd } from '../memory/promotion.js';
+import { checkConfirmationHint, confirmCheck, constraintFromNode, proposalFromConstraint } from '../memory/repeatCheck.js';
+import { appendWorldCheck } from '../workspace/worldModel.js';
 
 export interface MemorySlashContext {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
@@ -22,6 +25,8 @@ const USAGE = [
   '/memory consolidate [query]',
   '/memory index [--force]',
   '/memory promote <id> — append durable knowledge to managed AGENTS.md section',
+  '/memory promote con-<fp> --as-check --command "<cmd>" [--expect-exit N] — append a WorldCheck',
+  '/memory how-we-test — regenerate .zelari/how-we-test.md from verified procedures',
   '/memory stats | doctor | export [project-relative-path]',
   '/memory audit — read-only decay + contradiction report (nothing is mutated)',
 ].join('\n  ');
@@ -194,11 +199,44 @@ export async function handleMemoryCommand(
         );
         return;
       }
+      case 'how-we-test': {
+        // Slice C, trigger (a): explicit regeneration. The manual path is NOT
+        // flag-gated — the opt-in flag only gates the automatic write.
+        const result = await regenerateHowWeTest(memory, ctx.cwd);
+        emit(result.written
+          ? `[memory] how-we-test written to ${result.path} (${result.rows} procedure(s))`
+          : `[memory] how-we-test not written: ${result.reason ?? 'nothing to project'}.`);
+        return;
+      }
       case 'promote': {
-        const memoryId = args[0];
-        if (!memoryId) { emit('Usage: /memory promote <id>'); return; }
+        const parsed = parsePromoteArgs(args);
+        if (parsed.error) { emit(`[memory] ${parsed.error}\n  ${PROMOTE_USAGE}`); return; }
+        const memoryId = parsed.id;
+        if (!memoryId) { emit(PROMOTE_USAGE); return; }
         const node = await memory.get(memoryId);
         if (!node) { emit(`[memory] ${memoryId} not found in this project.`); return; }
+        if (parsed.asCheck) {
+          // Slice A: turn a repeat-failure constraint into a WorldCheck. Reading
+          // the proposal is free; APPLYING it requires a human-typed command, so
+          // checks.json only ever changes on an explicit instruction.
+          const constraint = constraintFromNode(node);
+          if (!constraint) {
+            emit(`[memory] ${memoryId} is not a repeat-failure constraint (no fingerprint/command/digest) — nothing to turn into a check.`);
+            return;
+          }
+          const nodes = await listVerifiedProcedureNodes(memory);
+          const proposal = proposalFromConstraint(constraint, nodes ?? []);
+          const check = confirmCheck(proposal, {
+            command: parsed.command,
+            ...(parsed.expectExit === undefined ? {} : { expectExit: parsed.expectExit }),
+          });
+          if (!check) { emit(checkConfirmationHint(proposal)); return; }
+          const appended = await appendWorldCheck(ctx.cwd, check);
+          emit(appended.added
+            ? `[memory] check “${check.id}” appended to ${appended.path} (${appended.count} check(s))`
+            : `[memory] check “${check.id}” already present in ${appended.path} — file untouched.`);
+          return;
+        }
         const promoted = await promoteMemoryToAgentsMd(ctx.cwd, node);
         emit(promoted.added
           ? `[memory] promoted ${memoryId} to ${promoted.path}`

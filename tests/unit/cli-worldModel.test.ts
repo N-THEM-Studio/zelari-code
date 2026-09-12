@@ -12,6 +12,7 @@ import {
   recordWorldObservationTool,
   createWorldModelTools,
   runBacktest,
+  appendWorldCheck,
   WORLD_DIR_NAME,
   HYPOTHESIS_FILE,
   CHECKS_FILE,
@@ -150,5 +151,98 @@ describe('worldModel tools', () => {
     const raw = JSON.parse(readFileSync(join(dir, WORLD_DIR_NAME, CHECKS_FILE), 'utf8'));
     expect(raw.checks).toHaveLength(1);
     expect(raw.checks[0].id).toBe('t');
+  });
+});
+
+/**
+ * Slice A: `appendWorldCheck` is the ONLY sanctioned way to add one check
+ * without touching the ones already there (`set_world_checks` REPLACES the whole
+ * file, so it must never be reused for appends).
+ */
+describe('appendWorldCheck', () => {
+  let dir: string;
+  const checksPath = (): string => join(dir, WORLD_DIR_NAME, CHECKS_FILE);
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'world-append-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('creates checks.json when it does not exist yet', async () => {
+    const result = await appendWorldCheck(dir, {
+      id: 'con-abc',
+      command: 'npx vitest run tests/unit/cli-worldModel.test.ts',
+      expectExit: 0,
+    });
+
+    expect(result.added).toBe(true);
+    expect(result.count).toBe(1);
+    const raw = JSON.parse(readFileSync(checksPath(), 'utf8'));
+    expect(raw.checks).toEqual([
+      { id: 'con-abc', command: 'npx vitest run tests/unit/cli-worldModel.test.ts', expectExit: 0 },
+    ]);
+  });
+
+  it('keeps every pre-existing check (merge, never replace)', async () => {
+    await setWorldChecksTool.execute(
+      {
+        checks: [
+          { id: 'typecheck', command: 'npm run typecheck', expectExit: 0 },
+          { id: 'unit', command: 'npx vitest run tests/unit', expectExit: 0, timeoutMs: 600_000 },
+        ],
+      },
+      makeCtx(dir),
+    );
+    const before = JSON.parse(readFileSync(checksPath(), 'utf8'));
+
+    const result = await appendWorldCheck(dir, {
+      id: 'con-abc',
+      command: 'npm test -- --runInBand',
+      expectExit: 0,
+    });
+
+    expect(result.added).toBe(true);
+    expect(result.count).toBe(3);
+    const raw = JSON.parse(readFileSync(checksPath(), 'utf8'));
+    expect(raw.checks.slice(0, 2)).toEqual(before.checks);
+    expect(raw.checks[2].id).toBe('con-abc');
+  });
+
+  it('does not duplicate a check with the same id, and does not rewrite the file', async () => {
+    const check = { id: 'con-dup', command: 'npm run typecheck', expectExit: 0 };
+    await appendWorldCheck(dir, check);
+    const firstBody = readFileSync(checksPath(), 'utf8');
+
+    const second = await appendWorldCheck(dir, { ...check, command: 'npm test', expectExit: 3 });
+
+    expect(second.added).toBe(false);
+    expect(second.reason).toBe('duplicate');
+    expect(second.count).toBe(1);
+    const raw = JSON.parse(readFileSync(checksPath(), 'utf8'));
+    expect(raw.checks).toHaveLength(1);
+    // The stored entry is untouched — a re-confirmation never silently edits it.
+    expect(raw.checks[0]).toEqual(check);
+    expect(readFileSync(checksPath(), 'utf8')).toBe(firstBody);
+  });
+
+  it('refuses to overwrite a checks.json it cannot parse', async () => {
+    const { mkdirSync, writeFileSync } = await import('node:fs');
+    mkdirSync(join(dir, WORLD_DIR_NAME), { recursive: true });
+    writeFileSync(checksPath(), '{ not json', 'utf8');
+
+    await expect(
+      appendWorldCheck(dir, { id: 'con-abc', command: 'npm test', expectExit: 0 }),
+    ).rejects.toThrow(/not valid JSON/);
+    expect(readFileSync(checksPath(), 'utf8')).toBe('{ not json');
+  });
+
+  it('records the append on the world timeline', async () => {
+    await appendWorldCheck(dir, { id: 'con-abc', command: 'npm test', expectExit: 0 });
+    const timeline = readFileSync(join(dir, WORLD_DIR_NAME, TIMELINE_FILE), 'utf8');
+    expect(timeline).toContain('world_check_appended');
+    expect(timeline).toContain('con-abc');
   });
 });

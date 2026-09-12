@@ -38,6 +38,7 @@ import {
 } from "../kraken/verificationBridge.js";
 import { writeCompletionProof } from "../kraken/completionProof.js";
 import { promoteOpsKnowledgeSafe } from "../memory/opsKnowledge.js";
+import { formatCheckProposalNotice } from "../memory/repeatCheck.js";
 import { formatStrictBlockExplanation, recordStrictGateEvaluation } from "../kraken/verifyStatus.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
@@ -937,10 +938,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 // the proof artifact feeds Memory V2 — deterministic PASS
                 // procedures and FAIL fingerprints. Flag-gated (default OFF)
                 // and never rejecting, so the turn is never blocked on memory.
-                await promoteOpsKnowledgeSafe(gate, {
+                const opsKnowledge = await promoteOpsKnowledgeSafe(gate, {
                   projectRoot: process.cwd(),
                   sessionId,
                 });
+                // Slice A: the proposals returned here used to be dropped — the
+                // human never learned a candidate existed. Rendered with the SAME
+                // notice channel as memory promotion; nothing is applied.
+                const notices = [
+                  ...opsKnowledge.proposals,
+                  ...opsKnowledge.checkProposals.map(formatCheckProposalNotice),
+                ];
+                if (notices.length > 0) {
+                  appendSystem(setMessages, notices.join("\n"), Date.now());
+                }
               };
               if (
                 event.reason === "completed" &&

@@ -47,7 +47,8 @@ import { evaluateStrictBuildGate, repairExcerptsFromEvaluation, strictEnvOverlay
 import { taskVerifyObligation } from '../tools/taskTool.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { enforceRequiredProofPersistence } from '../kraken/completionProofPersist.js';
-import { promoteOpsKnowledgeSafe } from '../memory/opsKnowledge.js';
+import { promoteOpsKnowledgeSafe, type OpsKnowledgeResult } from '../memory/opsKnowledge.js';
+import { formatCheckProposalNotice } from '../memory/repeatCheck.js';
 import { nativePackEnabled } from '../kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from '../kraken/verifierLifecycle.js';
 import { buildModelContext, resourceStatusTail } from '../budget/modelContextBuilder.js';
@@ -145,7 +146,7 @@ export async function writeProofSafe(
   gate: Awaited<ReturnType<typeof evaluateStrictBuildGate>>,
   meta: { surface?: string; sessionId?: string },
   baseDir: string = process.cwd(),
-): Promise<void> {
+): Promise<OpsKnowledgeResult> {
   const outcome = await writeCompletionProofDetailed(gate, { baseDir, meta });
   if (enforceRequiredProofPersistence(gate, outcome)) {
     emitEvent({
@@ -161,7 +162,28 @@ export async function writeProofSafe(
   // fingerprint (FAIL) worth remembering. Flag-gated inside opsKnowledge
   // (ZELARI_PROMOTE_OPS_KNOWLEDGE, default OFF) and never rejects, so the
   // proof-persistence contract above stays the only gate-affecting write.
-  await promoteOpsKnowledgeSafe(gate, { projectRoot: baseDir, sessionId: meta.sessionId });
+  return promoteOpsKnowledgeSafe(gate, { projectRoot: baseDir, sessionId: meta.sessionId });
+}
+
+/**
+ * Slice A wiring: the promotion result was discarded at the call site, so a
+ * repeat-failure constraint stayed invisible to the human who could confirm it.
+ * Same dual-channel shape (NDJSON log line / stderr) as the gate notices below;
+ * it never touches the exit code and NEVER writes `.zelari/world/checks.json` —
+ * applying a check stays an explicit `/memory promote … --as-check`.
+ */
+export function surfaceOpsKnowledgeNotices(
+  result: OpsKnowledgeResult,
+  opts: Pick<HeadlessOptions, 'output'>,
+): void {
+  const notices = [
+    ...result.proposals,
+    ...result.checkProposals.map(formatCheckProposalNotice),
+  ];
+  for (const notice of notices) {
+    if (opts.output === 'json') emitEvent({ type: 'log', message: notice });
+    else process.stderr.write(`[zelari-code --headless] ${notice}\n`);
+  }
 }
 export async function runOneTurn(
   opts: HeadlessOptions,
@@ -767,7 +789,12 @@ export async function runOneTurn(
     }
     // P0.3: durable proof-of-work artifact mirroring the verification.run
     // payload above — the turn's decision must be inspectable from disk.
-    await writeProofSafe(strictGate, { surface: 'kraken', sessionId: spine.sessionId }, cwd);
+    // Slice A: the promotion result is surfaced (not discarded) in the turn
+    // summary; it can never change the exit code.
+    surfaceOpsKnowledgeNotices(
+      await writeProofSafe(strictGate, { surface: 'kraken', sessionId: spine.sessionId }, cwd),
+      opts,
+    );
 
     if (strictGate.blocked) {
       // M1.6: the repair directive carries the SHORT capped fail tails from
@@ -808,8 +835,13 @@ export async function runOneTurn(
         emitEvent({ type: 'verification_run', ...afterPayload });
       }
       // P0.3: overwrite the artifact — it must reflect the LAST evaluation
-      // of the turn, not the pre-repair one.
-      await writeProofSafe(after, { surface: 'kraken', sessionId: spine.sessionId }, cwd);
+      // of the turn, not the pre-repair one. Slice A: a second identical
+      // failure is exactly what produces a constraint, so this evaluation
+      // surfaces its proposal too.
+      surfaceOpsKnowledgeNotices(
+        await writeProofSafe(after, { surface: 'kraken', sessionId: spine.sessionId }, cwd),
+        opts,
+      );
 
       if (!after.blocked) markRepairSucceeded();
       else {

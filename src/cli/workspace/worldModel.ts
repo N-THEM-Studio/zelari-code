@@ -311,6 +311,77 @@ export const setWorldChecksTool: ToolDefinition<
   },
 };
 
+export interface AppendWorldCheckResult {
+  /** False when a check with the same id was already present. */
+  added: boolean;
+  /** Total checks in the file after the operation. */
+  count: number;
+  path: string;
+  reason?: 'duplicate';
+}
+
+/**
+ * Read the checks file WITHOUT the silent `[]` fallback `readChecks` uses: an
+ * unparseable or malformed file must fail the append instead of being wiped.
+ */
+async function readChecksStrict(cwd: string): Promise<WorldCheck[]> {
+  const p = path.join(worldDir(cwd), CHECKS_FILE);
+  let raw: string;
+  try {
+    raw = await fs.readFile(p, 'utf8');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+  let parsed: WorldChecksFile;
+  try {
+    parsed = JSON.parse(raw) as WorldChecksFile;
+  } catch {
+    throw new Error(`${p} is not valid JSON — refusing to overwrite it.`);
+  }
+  if (!parsed || !Array.isArray(parsed.checks)) {
+    throw new Error(`${p} has no "checks" array — refusing to overwrite it.`);
+  }
+  return parsed.checks;
+}
+
+/**
+ * Merge ONE check into `.zelari/world/checks.json` (read-modify-write).
+ *
+ * Unlike `set_world_checks` — which REPLACES the whole file — this never drops
+ * the checks already there, never rewrites an entry that shares the id (so a
+ * re-confirmation is a no-op, not a silent edit) and skips the write entirely
+ * when nothing changed. The write itself is atomic (tmp + rename).
+ *
+ * Used by the human confirmation path of a repeat-failure proposal
+ * (`/memory promote con-<fp> --as-check`): applying a check is always explicit.
+ */
+export async function appendWorldCheck(
+  cwd: string,
+  check: WorldCheck,
+): Promise<AppendWorldCheckResult> {
+  const dir = await ensureWorldDir(cwd);
+  const file = path.join(dir, CHECKS_FILE);
+  const checks = await readChecksStrict(cwd);
+  if (checks.some((entry) => entry?.id === check.id)) {
+    return { added: false, count: checks.length, path: file, reason: 'duplicate' };
+  }
+  const next: WorldChecksFile = { checks: [...checks, check] };
+  const temporary = `${file}.tmp-${process.pid}-${Date.now()}`;
+  await fs.writeFile(temporary, JSON.stringify(next, null, 2) + '\n', {
+    encoding: 'utf8',
+    flag: 'wx',
+  });
+  try {
+    await fs.rename(temporary, file);
+  } catch (error) {
+    await fs.unlink(temporary).catch(() => undefined);
+    throw error;
+  }
+  await appendTimeline(cwd, { kind: 'world_check_appended', id: check.id, count: next.checks.length });
+  return { added: true, count: next.checks.length, path: file };
+}
+
 const RunBacktestSchema = z.object({
   /** Reserved for future selective runs. */
   dryRun: z.boolean().optional(),

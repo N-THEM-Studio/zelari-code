@@ -28,6 +28,17 @@ describe('/memory command parser', () => {
   it('is discoverable from /help', () => {
     expect(handleSlashCommand('/help', []).message).toContain('/memory');
   });
+
+  it('parses the slice A/C additions', () => {
+    const howWeTest = handleSlashCommand('/memory how-we-test', []);
+    expect(howWeTest.kind).toBe('memory');
+    expect(howWeTest.memorySubcommand).toBe('how-we-test');
+    expect(howWeTest.memoryArgs).toEqual([]);
+
+    const asCheck = handleSlashCommand('/memory promote con-abc --as-check --command npm test', []);
+    expect(asCheck.memorySubcommand).toBe('promote');
+    expect(asCheck.memoryArgs).toEqual(['con-abc', '--as-check', '--command', 'npm', 'test']);
+  });
 });
 
 const directories: string[] = [];
@@ -105,5 +116,117 @@ describe('/memory command handler', () => {
     });
     expect(await promoteMemoryToAgentsMd(cwd, episode)).toMatchObject({ added: false });
     await memory.close();
+  });
+
+  it('regenerates .zelari/how-we-test.md from verified procedures', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'zelari-memory-howwetest-'));
+    directories.push(cwd);
+    const memory = await getMemoryService(cwd, {} as NodeJS.ProcessEnv, { force: true });
+    await memory.remember({
+      kind: 'procedure',
+      content: 'npm run typecheck → pass (typecheck)',
+      importance: 0.75,
+      confidence: 0.9,
+      source: { agent: 'ops-knowledge' },
+      metadata: {
+        command: 'npm run typecheck',
+        digest: 'abc123456789',
+        criterionId: 'typecheck',
+        opsKnowledgeKey: 'key-typecheck',
+        seq: 7,
+        verified: true,
+      },
+    });
+    await memory.close();
+
+    let messages: ChatMessage[] = [];
+    const setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>> = (update) => {
+      messages = typeof update === 'function' ? update(messages) : update;
+    };
+    await handleMemoryCommand({ cwd, setMessages }, 'how-we-test', []);
+    expect(messages.at(-1)?.content).toContain('how-we-test.md');
+
+    const target = path.join(cwd, '.zelari', 'how-we-test.md');
+    const body = await fs.readFile(target, 'utf8');
+    expect(body).toContain('generato — non editare');
+    expect(body).toContain('## typecheck');
+    expect(body).toContain('`npm run typecheck`');
+
+    // Explicit regeneration is idempotent.
+    await handleMemoryCommand({ cwd, setMessages }, 'how-we-test', []);
+    expect(await fs.readFile(target, 'utf8')).toBe(body);
+  });
+
+  it('appends a confirmed WorldCheck from a repeat-failure constraint (--as-check)', async () => {
+    const cwd = await fs.mkdtemp(path.join(os.tmpdir(), 'zelari-memory-ascheck-'));
+    directories.push(cwd);
+    const checksFile = path.join(cwd, '.zelari', 'world', 'checks.json');
+    await fs.mkdir(path.dirname(checksFile), { recursive: true });
+    const preExisting = { id: 'keep-me', command: 'npm run typecheck', expectExit: 0 };
+    await fs.writeFile(
+      checksFile,
+      JSON.stringify({ checks: [preExisting] }, null, 2) + '\n',
+      'utf8',
+    );
+
+    const memory = await getMemoryService(cwd, {} as NodeJS.ProcessEnv, { force: true });
+    const node = await memory.remember({
+      id: 'con-fp123',
+      kind: 'constraint',
+      content: 'Stesso fallimento ripetuto: npm test exit 1.',
+      importance: 0.72,
+      confidence: 0.85,
+      source: { agent: 'ops-knowledge' },
+      metadata: {
+        fingerprint: 'fp123',
+        command: 'npm test → exit 1',
+        digest: 'deadbeef',
+        exitCode: 1,
+        criterionId: 'tests',
+      },
+    });
+    await memory.close();
+
+    let messages: ChatMessage[] = [];
+    const setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>> = (update) => {
+      messages = typeof update === 'function' ? update(messages) : update;
+    };
+    const readChecks = async (): Promise<Array<{ id: string; command: string }>> =>
+      JSON.parse(await fs.readFile(checksFile, 'utf8')).checks as Array<{ id: string; command: string }>;
+
+    // No human-typed command → the proposal is shown, checks.json is untouched.
+    await handleMemoryCommand({ cwd, setMessages }, 'promote', [node.id, '--as-check']);
+    expect(messages.at(-1)?.content).toContain('--as-check --command');
+    expect(await readChecks()).toEqual([preExisting]);
+
+    // Confirmed → appended, and the check already there survives.
+    await handleMemoryCommand({ cwd, setMessages }, 'promote', [
+      node.id,
+      '--as-check',
+      '--command',
+      'npx',
+      'vitest',
+      'run',
+      'src/cli/memory/opsKnowledge.test.ts',
+    ]);
+    expect(messages.at(-1)?.content).toContain('appended');
+    const checks = await readChecks();
+    expect(checks.map((check) => check.id)).toEqual([preExisting.id, node.id]);
+    expect(checks[1]).toEqual({
+      id: node.id,
+      command: 'npx vitest run src/cli/memory/opsKnowledge.test.ts',
+      expectExit: 0,
+    });
+
+    // Re-confirming the same id never duplicates nor rewrites the file.
+    const before = await fs.readFile(checksFile, 'utf8');
+    await handleMemoryCommand({ cwd, setMessages }, 'promote', [
+      node.id,
+      '--as-check',
+      '--command',
+      'npm test',
+    ]);
+    expect(messages.at(-1)?.content).toContain('already present');
+    expect(await fs.readFile(checksFile, 'utf8')).toBe(before);
   });
 });

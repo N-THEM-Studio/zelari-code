@@ -18,7 +18,9 @@ import { createHash } from 'node:crypto';
 import type { MemoryNode, MemoryService, RememberInput } from '@zelari/core/memory';
 import type { EvidenceRef, VerificationResult } from '@zelari/core/verification';
 import type { StrictBuildGateEvaluation } from '../kraken/verificationBridge.js';
+import { regenerateHowWeTestSafe, listVerifiedProcedureNodes } from './howWeTest.js';
 import { formatPromoteNotice, meetsPromoteThreshold } from './promotion.js';
+import { constraintFromNode, proposalFromConstraint, type CheckProposal } from './repeatCheck.js';
 import {
   CONSTRAINT_CONFIDENCE,
   CONSTRAINT_IMPORTANCE,
@@ -60,11 +62,20 @@ export interface OpsKnowledgeResult {
   /** Slice 3.2: constraints created from a fingerprint seen twice. */
   constraintsCreated: number;
   proposals: string[];
+  /**
+   * Slice A: the same constraints, in applyable form. A proposal lives here
+   * (and in memory) until a HUMAN confirms it with
+   * `/memory promote <checkId> --as-check --command "<cmd>"` — nothing in this
+   * module ever writes `.zelari/world/checks.json`.
+   */
+  checkProposals: CheckProposal[];
 }
 
 export interface OpsKnowledgeMemory {
   get(id: string): Promise<MemoryNode | null>;
   remember(input: RememberInput): Promise<MemoryNode>;
+  /** Slice C enumeration seam (`memory.export()`); absent in narrow hosts. */
+  export?(): Promise<unknown>;
 }
 
 export function opsKnowledgeKey(command: string, digest: string, criterionId: string): string {
@@ -291,6 +302,12 @@ export async function promoteOpsKnowledge(
   let skippedDuplicate = 0;
   let constraintsCreated = 0;
   const proposals: string[] = [];
+  const checkProposals: CheckProposal[] = [];
+  // Slice A: a verified procedure for the SAME digest is the only source of a
+  // *suggested* regression command. Read once, before the fail loop; the
+  // failing command itself is never proposed as a check (repeatCheck.ts).
+  const procedureNodes =
+    fails.length > 0 ? ((await listVerifiedProcedureNodes(memory)) ?? []) : [];
   for (const candidate of pass) {
     const outcome = await rememberProcedure(memory, candidate, { sessionId: deps.sessionId });
     if (outcome === 'created') {
@@ -310,11 +327,18 @@ export async function promoteOpsKnowledge(
       constraintsCreated += 1;
       const node = await memory.get(outcome.constraintId);
       if (node && meetsPromoteThreshold(node)) proposals.push(formatPromoteNotice(node));
+      // Second reading of the SAME node: a constraint already carries
+      // everything a human needs to confirm a WorldCheck.
+      const constraint = constraintFromNode(node);
+      if (constraint) checkProposals.push(proposalFromConstraint(constraint, procedureNodes));
     } else if (outcome.constraint === 'duplicate') {
       skippedDuplicate += 1;
     }
   }
-  return { enabled: true, created, skippedDuplicate, constraintsCreated, proposals };
+  // Slice C trigger (b): a promotion that created something changes the
+  // playbook. Skipped entirely when the backend cannot enumerate.
+  if (created > 0) await regenerateHowWeTestSafe(memory, deps.projectRoot);
+  return { enabled: true, created, skippedDuplicate, constraintsCreated, proposals, checkProposals };
 }
 
 /** Best-effort wrapper: never rejects. */
@@ -342,6 +366,7 @@ function emptyResult(enabled: boolean, skippedReason: string): OpsKnowledgeResul
     skippedDuplicate: 0,
     constraintsCreated: 0,
     proposals: [],
+    checkProposals: [],
   };
 }
 
