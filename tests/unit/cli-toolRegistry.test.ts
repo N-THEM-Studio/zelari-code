@@ -11,6 +11,7 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
       'ast_outline',
       'bash',
       'browser_check',
+      'create_skill', // v2.40.0: persist a SKILL.md that the `skill` tool loads on demand
       'edit', // ADR-0033 t77: anchored edit replaces edit_file (apply_diff left the default catalog)
       'exec_process',
       'fetch_url',
@@ -66,11 +67,11 @@ describe('createBuiltinToolRegistry (Task A1)', () => {
   it('toOpenAITools() returns OpenAI function-calling shape for every tool', () => {
     const { registry } = createBuiltinToolRegistry({ lspProvider: null });
     const openAITools = registry.toOpenAITools();
-    // 31 HEAD tools (25 builtins + 3 plan-task + exec_process + screenshot)
-    // + observe_batch + retrieve_observation, with anchored `edit`
-    // replacing edit_file and apply_diff leaving the default catalog
-    // (ADR-0033 t77).
-    expect(openAITools).toHaveLength(31);
+    // 32 HEAD tools (25 builtins + 3 plan-task + exec_process + screenshot)
+    // + observe_batch + retrieve_observation + create_skill (v2.40.0), with
+    // anchored `edit` replacing edit_file and apply_diff leaving the default
+    // catalog (ADR-0033 t77).
+    expect(openAITools).toHaveLength(32);
     for (const t of openAITools) {
       expect(t.type).toBe('function');
       expect(t.function.name.length).toBeGreaterThan(0);

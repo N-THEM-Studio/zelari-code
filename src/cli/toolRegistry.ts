@@ -48,6 +48,7 @@ import {
 import { createKrakenSelectTool } from './tools/krakenSelectTool.js';
 import { createAskUserTool, type AskUserHandler } from './tools/askUser.js';
 import { createSkillTool } from './tools/skillTool.js';
+import { createCreateSkillTool } from './tools/createSkillTool.js';
 import { createTodoReadTool, createTodoWriteTool } from './tools/todoTools.js';
 import {
   createPlanTaskTools,
@@ -577,6 +578,17 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
   if (skillTool) {
     registry.register(skillTool);
   }
+  // create_skill — persists a new SKILL.md under <root>/.zelari/skills (or the
+  // global ~/.zelari-code/skills with scope=user) and is immediately loadable
+  // by the skill tool, which re-scans those roots on demand. Same gating and
+  // same withPerm choke-point as the skill tool: parent (plan/build) + general
+  // subagent, never explore/verify/read-only.
+  const skillCreateTool = enableSkill
+    ? withPerm(createCreateSkillTool({ cwd: root }))
+    : null;
+  if (skillCreateTool) {
+    registry.register(skillCreateTool);
+  }
 
   // Session todos — parent agent only (not explore/verify; general skips like OpenCode).
   const enableTodos =
@@ -625,6 +637,7 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
     ...(allowBash ? [safeBash, safeExecProcess] : []),
     ...(askUserTool ? [askUserTool] : []),
     ...(skillTool ? [skillTool] : []),
+    ...(skillCreateTool ? [skillCreateTool] : []),
     ...(todoWrite ? [todoWrite] : []),
     ...(todoRead ? [todoRead] : []),
     ...(planTaskToolsWrapped.length > 0 ? planTaskToolsWrapped : []),
