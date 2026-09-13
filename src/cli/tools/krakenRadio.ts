@@ -100,8 +100,35 @@ function radioDir(cwd: string): string {
   return path.join(cwd, '.zelari', 'radio');
 }
 
+/**
+ * Fallback id for a writer that has no session id.
+ *
+ * It used to be the literal `default`, so every sessionId-less process
+ * appended to the SAME `.zelari/radio/default.jsonl` — two runs interleaved
+ * their events in one file and no reader could tell them apart. One id per
+ * process keeps each writer on its own file while staying inside the
+ * `<name>.jsonl` convention every reader globs.
+ *
+ * Memoized on purpose: `radioPath` runs on every event, so a per-call
+ * timestamp would scatter one process's trail across several files.
+ */
+let fallbackRadioId: string | null = null;
+
+function processFallbackRadioId(): string {
+  if (fallbackRadioId === null) {
+    fallbackRadioId = `default-${process.pid}-${Date.now().toString(36)}`;
+  }
+  return fallbackRadioId;
+}
+
+/**
+ * Path of the radio file for `sessionId` — or for this process's unique
+ * fallback id when it has none (see above). Writer and reader in the same
+ * sessionId-less process still agree on one file; two processes never do.
+ */
 function radioPath(cwd: string, sessionId: string): string {
-  const safe = (sessionId || 'default').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+  const id = sessionId.trim() ? sessionId : processFallbackRadioId();
+  const safe = id.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
   return path.join(radioDir(cwd), `${safe}.jsonl`);
 }
 

@@ -1,8 +1,8 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { appendKrakenRadio, readKrakenRadio } from './krakenRadio.js';
+import { appendKrakenRadio, listKrakenRadioSessions, readKrakenRadio } from './krakenRadio.js';
 
 const radioFile = (cwd: string, sessionId: string): string =>
   path.join(cwd, '.zelari', 'radio', `${sessionId}.jsonl`);
@@ -98,6 +98,31 @@ describe('krakenRadio progress events', () => {
       expect(readKrakenRadio(cwd, 'sess-a', 10).map((event) => event.description)).toEqual(['a0', 'a1', 'a2']);
       expect(readKrakenRadio(cwd, 'sess-b', 10).map((event) => event.description)).toEqual(['b0', 'b1', 'b2']);
       expect(lines(radioFile(cwd, 'sess-a'))).toHaveLength(3);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('a sessionId-less writer never collapses onto a shared default.jsonl (Desktop cross-talk)', () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'zelari-radio-nosession-'));
+    try {
+      // Two appends with no session id: one process, so one file (a per-call
+      // timestamp would scatter the trail across several).
+      appendKrakenRadio(cwd, '', { kind: 'progress', agent: 'general', description: 'n0' });
+      appendKrakenRadio(cwd, '', { kind: 'progress', agent: 'general', description: 'n1' });
+
+      const dir = path.join(cwd, '.zelari', 'radio');
+      const files = readdirSync(dir).filter((f) => f.endsWith('.jsonl'));
+      expect(files).toHaveLength(1);
+      // The old fallback was the literal 'default', which made EVERY
+      // sessionId-less process append to the same file: two runs interleaved
+      // their events and a reader could not tell them apart.
+      expect(files[0]).not.toBe('default.jsonl');
+      expect(files[0]).toMatch(/^default-\d+-[0-9a-z]+\.jsonl$/);
+
+      // Writer and reader of the same process agree on that one file.
+      expect(readKrakenRadio(cwd, '', 10).map((event) => event.description)).toEqual(['n0', 'n1']);
+      expect(listKrakenRadioSessions(cwd)).toEqual([files[0].replace(/\.jsonl$/, '')]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }
