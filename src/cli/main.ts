@@ -631,7 +631,8 @@ function pickRootComponent(): {
         "  --print-settings    Print zelari.config.json values + the origin of\n" +
         "                      each (default < user < project < env)\n" +
         "  --permissions <p>   Permission preset: strict | standard | yolo — changes\n" +
-        "                      category DEFAULTS only (env vars and policy files win)\n" +
+        "                      category DEFAULTS only (env vars and policy files win);\n" +
+        "                      yolo also auto-approves residual asks (unattended runs)\n" +
         "  --evolve-status     Evolution ledger stats (read-only; ADR-0036; the\n" +
         "                      ledger is written only when ZELARI_EVOLUTION=shadow)\n" +
         "  --plugins-status    JSON status of optional plugins (Playwright, eslint, …)\n" +

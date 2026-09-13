@@ -1,13 +1,16 @@
 /**
  * W3.3 (t48) — permission presets: UX sugar over the category policy.
  * Acceptance: `standard` reproduces the pre-preset defaults byte-for-byte;
- * strict/yolo change ONLY the defaults; per-category env still wins.
+ * strict/yolo change ONLY the defaults (yolo additionally implies auto:
+ * residual asks resolve as allow, so unattended builds don't pile up
+ * "denied timed out"); per-category env still wins.
  */
 import { describe, expect, it } from 'vitest';
 import {
   activePermissionPreset,
   defaultPermissionPolicy,
   parsePermissionPreset,
+  resolveToolPermission,
   PERMISSION_PRESETS,
 } from './toolPermissions.js';
 
@@ -63,15 +66,39 @@ describe('permission presets (W3.3 / t48)', () => {
     });
   });
 
-  it('yolo: everything allowed by default (still not auto)', () => {
+  it('yolo: everything allowed by default AND residual asks auto-approve', () => {
     withEnv({ ZELARI_PERMISSION_PRESET: 'yolo' }, () => {
       expect(defaultPermissionPolicy()).toMatchObject({
         read: 'allow',
         write: 'allow',
         execute: 'allow',
         network: 'allow',
-        auto: false,
+        auto: true, // "go alone": no ask-timeout deny piles on unattended runs
       });
+    });
+  });
+
+  it('yolo promotes residual asks to allow; standard still asks (and ZELARI_AUTO=1 matches yolo)', () => {
+    withEnv({ ZELARI_PERMISSION_PRESET: 'yolo' }, () => {
+      // Residual ask (e.g. policy `ask` rule or provenance escalation) under
+      // yolo resolves as allow without a UI handler — the fix for
+      // "[permission] ask ... timed out — denied" storms.
+      const p = defaultPermissionPolicy({ execute: 'ask' });
+      expect(p.auto).toBe(true);
+      expect(resolveToolPermission('bash', ['execute'], p).action).toBe('allow');
+      // explicit deny is never promoted
+      const d = defaultPermissionPolicy({ execute: 'deny' });
+      expect(resolveToolPermission('bash', ['execute'], d).action).toBe('deny');
+    });
+    withEnv({ ZELARI_AUTO: '1' }, () => {
+      const p = defaultPermissionPolicy();
+      expect(p.auto).toBe(true);
+      expect(resolveToolPermission('bash', ['execute'], p).action).toBe('allow');
+    });
+    withEnv({}, () => {
+      const p = defaultPermissionPolicy({ execute: 'ask' });
+      expect(p.auto).toBe(false);
+      expect(resolveToolPermission('bash', ['execute'], p).action).toBe('ask');
     });
   });
 

@@ -7,6 +7,8 @@
  *
  * Env (optional):
  *   ZELARI_AUTO=1              — treat "ask" as "allow" (headless / --auto)
+ *                                (--permissions yolo implies this too:
+ *                                "yolo" means "go alone", see presets below)
  *   ZELARI_PERMISSION_WRITE    — allow|ask|deny (default allow)
  *   ZELARI_PERMISSION_EXECUTE  — allow|ask|deny (default ask since v2.20)
  *   ZELARI_PERMISSION_NETWORK  — allow|ask|deny (default ask since v2.20)
@@ -99,9 +101,13 @@ export function isAutoPermissions(): boolean {
  * Permission presets (W3.3 / t48) — UX sugar over the SAME category policy.
  * `standard` is byte-identical to the historical defaults (acceptance: a
  * preset-free session and `--permissions standard` produce the same policy);
- * `strict`/`yolo` only change the DEFAULT of a category. Per-category env
+ * `strict`/`yolo` only change the DEFAULT of a category, and `yolo` also
+ * implies auto (any residual ask — policy `ask` rules, provenance escalation,
+ * a headless run with no ask handler — resolves as allow instead of dying to
+ * the ask timeout). Per-category env
  * (ZELARI_PERMISSION_READ/WRITE/EXECUTE/NETWORK), policy files and session
- * grants still win exactly as before — a preset never touches the lattice.
+ * grants still win exactly as before — a preset never touches the lattice,
+ * and explicit `deny` stays deny.
  */
 export type PermissionPreset = 'strict' | 'standard' | 'yolo';
 
@@ -131,14 +137,18 @@ export function activePermissionPreset(): PermissionPreset {
 export function defaultPermissionPolicy(
   overrides?: Partial<PermissionPolicy>,
 ): PermissionPolicy {
-  const preset = PERMISSION_PRESETS[activePermissionPreset()];
+  const presetName = activePermissionPreset();
+  const preset = PERMISSION_PRESETS[presetName];
   return {
     read: parseAction(process.env.ZELARI_PERMISSION_READ, preset.read),
     write: parseAction(process.env.ZELARI_PERMISSION_WRITE, preset.write),
     execute: parseAction(process.env.ZELARI_PERMISSION_EXECUTE, preset.execute),
     network: parseAction(process.env.ZELARI_PERMISSION_NETWORK, preset.network),
     ui: 'allow',
-    auto: isAutoPermissions(),
+    // yolo means "go alone": residual asks auto-approve without a UI handler
+    // (no more "denied timed out" piles on unattended builds). Explicit
+    // ZELARI_AUTO=1 keeps working for every preset; deny is never promoted.
+    auto: isAutoPermissions() || presetName === 'yolo',
     ...overrides,
   };
 }

@@ -56,7 +56,10 @@ compromised local OS.
 `--permissions strict|standard|yolo` (env `ZELARI_PERMISSION_PRESET`) changes
 ONLY the per-category defaults — `standard` is the historical policy
 (`read allow, write allow, execute ask, network ask`), `strict` tightens
-(`write ask, network deny`), `yolo` allows everything by default. Env vars,
+(`write ask, network deny`), `yolo` allows everything by default AND implies
+auto: residual `ask` resolutions (policy `ask` rules, provenance escalation,
+headless runs with no ask handler) are auto-approved without UI, while explicit
+`deny` stays deny. Env vars,
 policy files and session grants win in both directions; a preset can never
 bypass an explicit restriction.
 

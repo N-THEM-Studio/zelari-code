@@ -326,7 +326,7 @@ zelari-code [options]
 | `--print-ssh-targets` / `--set-ssh-target` / `--remove-ssh-target` / `--test-ssh-target` | SSH targets |
 | `--print-ssh-pubkey --path <…>` | Show `.pub` content (copy it to the server) |
 | `--print-settings` | Print every `zelari.config.json` knob with the origin of its value (`default` / `user` / `project` / `env`). Read-only — see [`zelari.config.json`](#configuration-files) |
-| `--permissions <strict\|standard\|yolo>` | Tool-permission preset (changes the category defaults only — env vars and policy files still win) |
+| `--permissions <strict\|standard\|yolo>` | Tool-permission preset (changes the category defaults only — env vars and policy files still win; `yolo` also auto-approves residual asks, ideal for unattended builds) |
 | `--evolve-status` | Evolution Engine v0 ledger stats, read-only (the ledger is written only with `ZELARI_EVOLUTION=shadow`) |
 
 ---
@@ -1398,7 +1398,7 @@ ZELARI_HOME="$HOME/.zelari-ci" zelari-code --print-settings
 
 ### Safety: permissions, provenance, exfiltration
 
-- `--permissions <strict|standard|yolo>` (or `ZELARI_PERMISSION_PRESET`) selects the tool permission preset.
+- `--permissions <strict|standard|yolo>` (or `ZELARI_PERMISSION_PRESET`) selects the tool permission preset. `yolo` implies auto: any residual ask (policy `ask` rule, provenance escalation) is auto-approved without UI — no "denied timed out" storms on unattended runs.
 - Hardened provenance: excerpts cited by the model are recorded (ring bounded) and verified; `ZELARI_PROVENANCE=0` disables recording and matching.
 - SSH exfiltration guard: remote commands are checked against exfiltration patterns.
 
