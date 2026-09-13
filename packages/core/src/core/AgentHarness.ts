@@ -2301,22 +2301,39 @@ export function parseMinimaxStyleToolCalls(
 /** Extract key/value args from XML-ish or "key>value" / "key: value" fragments. */
 function parseLooseArgs(body: string): Record<string, unknown> {
   const args: Record<string, unknown> = {};
-  // <parameter name="k">v</parameter> or <k>v</k>
+  // Well-formed <parameter name="k">value</parameter>: capture the FULL body so
+  // JSON array/object values stay native (t103 — direct tool calls used to get
+  // stringified arrays that downstream comma-splitting turned into garbage).
+  const paramFull =
+    /<parameter\s+name=["']([a-zA-Z_][\w]*)["']\s*>([\s\S]*?)<\/parameter>/gi;
+  let m: RegExpExecArray | null;
+  while ((m = paramFull.exec(body)) !== null) {
+    const key = m[1]!;
+    if (['invoke', 'minimax', 'tool_call', 'parameter'].includes(key)) continue;
+    args[key] = coerceJsonishValue(m[2]!);
+  }
+  // Everything below scans the body OUTSIDE well-formed parameter tags so a
+  // long parameter body cannot leak garbage keys into the args.
+  const rest = body.replace(
+    /<parameter\s+name=["'][a-zA-Z_][\w]*["']\s*>[\s\S]*?<\/parameter>/gi,
+    ' ',
+  );
+  // <parameter name="k">v</parameter> leftovers or <k>v</k>
   const paramTag =
     /(?:parameter\s+name=|<\s*)["']?([a-zA-Z_][\w]*)["']?\s*(?:>|=\s*["']?)([^<\]\n]+)/gi;
-  let m: RegExpExecArray | null;
-  while ((m = paramTag.exec(body)) !== null) {
+  while ((m = paramTag.exec(rest)) !== null) {
     const key = m[1]!;
     if (key === 'invoke' || key === 'minimax' || key === 'tool_call') continue;
-    args[key] = m[2]!.replace(/^["']|["']$/g, '').trim();
+    if (args[key] !== undefined) continue;
+    args[key] = coerceJsonishValue(m[2]!);
   }
   // key>value or key: value lines
   const lineRe = /(?:^|[\s\[>])([a-zA-Z_][\w]*)\s*[>:=]\s*([^\n<\]]+)/g;
-  while ((m = lineRe.exec(body)) !== null) {
+  while ((m = lineRe.exec(rest)) !== null) {
     const key = m[1]!;
     if (args[key] !== undefined) continue;
     if (['invoke', 'name', 'minimax', 'tool_call', 'parameter'].includes(key)) continue;
-    args[key] = m[2]!.replace(/^["']|["']$/g, '').trim();
+    args[key] = coerceJsonishValue(m[2]!);
   }
   // JSON object somewhere in body
   if (Object.keys(args).length === 0) {
@@ -2333,6 +2350,28 @@ function parseLooseArgs(body: string): Record<string, unknown> {
     }
   }
   return args;
+}
+
+/**
+ * Coerce a raw text parameter value: JSON arrays/objects become native values
+ * (string[] stays string[]), a display-truncated array gets one closing-bracket
+ * repair, and everything else keeps the legacy unquoted-scalar behavior.
+ */
+function coerceJsonishValue(raw: string): unknown {
+  const t = raw.trim();
+  if (t.startsWith('[') || t.startsWith('{')) {
+    try {
+      return JSON.parse(t);
+    } catch {
+      /* try the truncated repair below */
+    }
+    try {
+      return JSON.parse(t + (t.startsWith('[') ? ']' : '}'));
+    } catch {
+      /* fall through to the scalar path */
+    }
+  }
+  return t.replace(/^["']|["']$/g, '').trim();
 }
 
 function tryParseToolArray(
