@@ -457,12 +457,18 @@ export function createBuiltinToolRegistry(
   // t58 declared-vs-observed guard: on parent registries with mutators, flag
   // completed tasks whose declared files are written by a LATER session
   // (radio 'task_reopened' + plan.json flag, total fail-open — taskTouchGuard).
-  if (isParent && allowMutators && sessionId) {
-    registry.setToolResultListener(createTaskTouchGuard({ projectRoot: root, sessionId }));
+  // t101: ONLY with a REAL session id. `sessionId` above falls back to the
+  // registry-internal 'cli' placeholder, which is not a session: letting the
+  // guard run with it mixed every CLI run's task_reopened/task_stale events
+  // into one shared `.zelari/radio/cli.jsonl` no reader could attribute.
+  if (isParent && allowMutators && options.sessionId) {
+    registry.setToolResultListener(
+      createTaskTouchGuard({ projectRoot: root, sessionId: options.sessionId }),
+    );
     // t59 session-start staleness sweep: commits landed after completedAt on
     // declared files of old-enough completed tasks → flag 'stale' + radio
     // 'task_stale'. Fire-and-forget, advisory-only (ADR 0023).
-    void runTaskStalenessCheck({ projectRoot: root, sessionId });
+    void runTaskStalenessCheck({ projectRoot: root, sessionId: options.sessionId });
   }
 
   const permPolicy = options.permissionPolicy ?? defaultPermissionPolicy();
