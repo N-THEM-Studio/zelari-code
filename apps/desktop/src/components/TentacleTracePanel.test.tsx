@@ -22,6 +22,7 @@ import { useState, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TentacleTracePanel } from "./TentacleTracePanel";
 import { Sidebar, type SidebarProps } from "./Sidebar";
+import { WorkbenchLiveTail } from "./WorkbenchLiveTail";
 import { listDir, readProjectTextIfChanged } from "../agentClient";
 import type { ActivityAgent, RunActivityState } from "../activity";
 import type { Conversation, DirEntry } from "../types";
@@ -335,5 +336,47 @@ describe("TentacleTracePanel - polling cadence", () => {
 
     expect(spy.mock.calls.some((call) => call[1] === 1500)).toBe(true);
     expect(screen.getByLabelText("Trace live del tentacle")).toBeTruthy();
+  });
+});
+
+describe("WorkbenchLiveTail - session-scoped tail (shared .zelari/radio)", () => {
+  it("with a spine session: tails ONLY that session's radio file", async () => {
+    stubRadioDir([entry("s-2.jsonl"), entry("s-1.jsonl"), entry("workbench-kraken-b.md")]);
+    stubFile("# Kraken workbench\n\n## Wave\n");
+
+    await act(async () => {
+      render(<WorkbenchLiveTail cwd={CWD} open sessionId="s-1" />);
+    });
+
+    // The exact file, not the newest candidate in a shared directory.
+    expect(screen.getByText("s-1.jsonl")).toBeTruthy();
+    const calls = vi.mocked(readProjectTextIfChanged).mock.calls;
+    expect(calls[calls.length - 1]?.[0].path).toBe(`${RADIO}/s-1.jsonl`);
+  });
+
+  it("unknown session + several live workbench files: refuses to guess, says so", async () => {
+    stubRadioDir([entry("workbench-kraken-a.md"), entry("workbench-kraken-b.md")]);
+    stubFile("# Kraken workbench\n");
+
+    await act(async () => {
+      render(<WorkbenchLiveTail cwd={CWD} open sessionId={null} />);
+    });
+
+    expect(screen.getByText(/Multiple active runs/)).toBeTruthy();
+    expect(screen.getByText("several runs")).toBeTruthy();
+    // Nothing was read: no arbitrary "latest file wins" pick.
+    expect(vi.mocked(readProjectTextIfChanged)).not.toHaveBeenCalled();
+  });
+
+  it("unknown session + exactly one workbench file: single-run UX preserved", async () => {
+    stubRadioDir([entry("workbench-kraken-a.md")]);
+    stubFile("# Kraken workbench\n\n## Wave\n");
+
+    await act(async () => {
+      render(<WorkbenchLiveTail cwd={CWD} open sessionId={null} />);
+    });
+
+    expect(screen.getByText("workbench-kraken-a.md")).toBeTruthy();
+    expect(screen.getByText("Wave")).toBeTruthy();
   });
 });

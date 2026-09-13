@@ -5,6 +5,11 @@
  * status, duration, model routing, worktree, current tool and recent
  * tool activity. Self-subscribes to the agent-event stream and renders
  * nothing until an agent_spawned arrives (inert by default).
+ *
+ * Conversation scope (M2): the panel is scoped by `conversationId` — it
+ * reduces only events whose run envelope names that conversation, and never
+ * self-declares as "the active chat". A background run elsewhere keeps
+ * accumulating in the shared store without painting here.
  */
 import { useEffect, useState } from "react";
 import {
@@ -122,13 +127,11 @@ function AgentRow({
 }
 
 export function KrakenActivity({ conversationId }: { conversationId?: string }) {
-  // The panel mounts only inside the active conversation's view: envelope
-  // events are filtered to THIS conversation (never another chat's run),
-  // un-enveloped legacy events keep flowing (same fallback App uses).
-  const state = useRunActivity({
-    conversationId,
-    activeConversationId: conversationId,
-  });
+  // Scope (M2): the panel renders the activity of ITS conversation only —
+  // `conversationId` is both the routing key and the paint key. It does not
+  // self-declare as the active chat (that made whichever run was streaming
+  // paint here), so two conversations can never share a panel's rows.
+  const state = useRunActivity({ conversationId });
   const [expandedId, setExpandedId] = useState<string | null>(null);
   /** Panel expansion is automatic (t94): open for small runs (≤4 agents) and
    *  whenever any agent is running, collapsed for large quiet runs. A manual

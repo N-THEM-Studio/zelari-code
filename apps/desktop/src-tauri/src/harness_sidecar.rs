@@ -28,6 +28,15 @@
 //! residue of the 1:1 mapping — the harness protocol stamps events with the
 //! spine id, not with the harness session id.
 //!
+//! Conversation identity (M2, cross-talk fix): the routing tables above only
+//! say WHICH RUN gets a line. The desktop also needs to know which CHAT that
+//! run belongs to, and the sidecar must never guess it from "the active
+//! chat". run_turn_full therefore records run_id → conversationId, and every
+//! line fanned out to a sink is stamped with the identity of the run that
+//! RECEIVES it (routed 1:1 and broadcast alike). The `harness-state`
+//! advisory event resolves the same mapping (spine sessionId → run →
+//! conversation) and omits the field when the spine id is unmapped.
+//!
 //! Lifecycle: lazy start on the first run; if the child dies unexpectedly it
 //! is restarted with exponential backoff (0.5s→8s, MAX_RESTART_ATTEMPTS) and
 //! every in-flight request fails with the typed error `sidecar_died`;
@@ -301,6 +310,14 @@ pub(crate) struct HarnessSidecar {
     spine_routes: Mutex<HashMap<String, String>>,
     /// run_id → harness sessionId (steer/cancel targeting).
     run_sessions: Mutex<HashMap<String, String>>,
+    /// run_id → desktop conversationId (M2 conversation isolation). The
+    /// sidecar is ONE process for every chat, so identity must travel WITH
+    /// the run: every event fanned out to a run sink is stamped with this
+    /// conversationId, making the fan-out (broadcast residue included)
+    /// attributable per target instead of per active chat. Empty/unknown
+    /// entries are never stamped (an unstamped line is dropped by the TS
+    /// layer — cosmetic duplication may be dropped, cross-talk may not).
+    run_conversations: Mutex<HashMap<String, String>>,
     /// run_id → live BrainEvent sink (the run thread forwards to the UI).
     sinks: Mutex<HashMap<String, Sender<Value>>>,
     /// run_id → last NDJSON event received for that run (ms since
@@ -331,6 +348,7 @@ impl HarnessSidecar {
             app: Mutex::new(None),
             spine_routes: Mutex::new(HashMap::new()),
             run_sessions: Mutex::new(HashMap::new()),
+            run_conversations: Mutex::new(HashMap::new()),
             sinks: Mutex::new(HashMap::new()),
             run_activity: Mutex::new(HashMap::new()),
             awaiting_spine: Mutex::new(Vec::new()),
@@ -366,6 +384,12 @@ impl HarnessSidecar {
     /// surface it to the UI the same way emit_status does — a global Tauri
     /// event the frontend may or may not listen to (advisory, non-breaking).
     /// Without an AppHandle (no run started yet) it only stores, never emits.
+    ///
+    /// Identity (M2): the payload is resolved through the sidecar's OWN
+    /// binding tables — spine sessionId → run_id (spine_routes) → desktop
+    /// conversationId (run_conversations). When the spine id is unmapped the
+    /// event carries NO conversationId: the frontend then drops it instead
+    /// of attributing the read-model to whichever chat is on screen.
     fn store_and_emit_harness_state(&self, hs: &HarnessStateEvent) {
         {
             let mut last = self
@@ -378,13 +402,36 @@ impl HarnessSidecar {
             let mut map = self.harness_states.lock().unwrap_or_else(|e| e.into_inner());
             map.insert(sid.clone(), hs.state.clone());
         }
+        let conversation_id = hs
+            .session_id
+            .as_ref()
+            .and_then(|sid| self.conversation_for_spine(sid));
         let guard = self.app.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(app) = guard.as_ref() {
             let _ = app.emit(
                 "harness-state",
-                json!({ "sessionId": hs.session_id, "state": hs.state }),
+                json!({
+                    "sessionId": hs.session_id,
+                    "conversationId": conversation_id,
+                    "state": hs.state,
+                }),
             );
         }
+    }
+
+    /// spine sessionId → desktop conversationId, via the two routing tables
+    /// the sidecar already keeps (spine_routes then run_conversations). None
+    /// when either hop is unknown — never a guessed identity.
+    fn conversation_for_spine(&self, spine_id: &str) -> Option<String> {
+        let run_id = {
+            let guard = self.spine_routes.lock().unwrap_or_else(|e| e.into_inner());
+            guard.get(spine_id).cloned()
+        }?;
+        let guard = self
+            .run_conversations
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        guard.get(&run_id).cloned().filter(|c| !c.is_empty())
     }
 
     /// Read-model seam for future consumers (a Tauri command would call
@@ -845,10 +892,16 @@ impl HarnessSidecar {
     /// todos; env-only per-run knobs (bon_alpha, kraken_* model overrides,
     /// verify_pack, verifier_review) have NO protocol field and are pinned
     /// at sidecar spawn (documented limitation).
+    /// Identity note (M2): `conversation_id` is the desktop chat this run
+    /// belongs to. It is stored per run_id so every event this sidecar fans
+    /// out — routed 1:1 or broadcast to the documented residue targets — can
+    /// be stamped with the identity of the run that RECEIVES it. The sidecar
+    /// never guesses an active conversation: an unknown run_id stamps nothing.
     pub(crate) fn run_turn_full(
         self: &Arc<Self>,
         app: &AppHandle,
         run_id: &str,
+        conversation_id: &str,
         workspace_root: &str,
         resume_spine: Option<&str>,
         mut turn_input: Value,
@@ -874,6 +927,14 @@ impl HarnessSidecar {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .insert(run_id.to_string(), session_id.clone());
+        // Conversation identity for this run (see run_turn_full doc note):
+        // stamped on every event the reader fans out to this run's sink.
+        if !conversation_id.is_empty() {
+            self.run_conversations
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(run_id.to_string(), conversation_id.to_string());
+        }
 
         // Routing setup. Resumed runs know their spine id up front; fresh
         // runs take the startup slot so their session_started binds 1:1.
@@ -1203,13 +1264,35 @@ impl HarnessSidecar {
         }
     }
 
-    fn send_to_run(&self, run_id: &str, event: Value) {
+    /// Stamp the receiving run's conversationId on an outgoing event (M2).
+    /// Deterministic per the sidecar's own binding rules: the identity comes
+    /// from the run REGISTERING the sink, never from a global "active chat".
+    /// A run with no conversation (legacy/automation caller) leaves the line
+    /// unstamped — the TS layer drops what it cannot attribute instead of
+    /// guessing, so an unstamped line can never land in the wrong chat.
+    fn stamp_conversation_id(&self, run_id: &str, event: &mut Value) {
+        let cid = {
+            let guard = self
+                .run_conversations
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            guard.get(run_id).cloned()
+        };
+        if let Some(cid) = cid.filter(|c| !c.is_empty()) {
+            if let Some(obj) = event.as_object_mut() {
+                obj.insert("conversationId".into(), json!(cid));
+            }
+        }
+    }
+
+    fn send_to_run(&self, run_id: &str, mut event: Value) {
         self.touch_run_activity(run_id);
         let tx = {
             let sinks = self.sinks.lock().unwrap_or_else(|e| e.into_inner());
             sinks.get(run_id).cloned()
         };
         if let Some(tx) = tx {
+            self.stamp_conversation_id(run_id, &mut event);
             if tx.send(event).is_err() {
                 // Run finished; lazy cleanup.
                 self.sinks
@@ -1227,7 +1310,13 @@ impl HarnessSidecar {
         };
         for (run_id, tx) in targets {
             self.touch_run_activity(&run_id);
-            let _ = tx.send(event.clone());
+            // Per-target identity: every recipient's copy carries ITS OWN
+            // conversation, so the documented broadcast residue (setup logs,
+            // control acks) surfaces in each chat instead of only whichever
+            // chat happens to be on screen.
+            let mut copy = event.clone();
+            self.stamp_conversation_id(&run_id, &mut copy);
+            let _ = tx.send(copy);
         }
     }
 }

@@ -392,6 +392,28 @@ function titleFromPrompt(prompt: string): string {
 }
 
 /**
+ * Event types already reported as un-routable (M2 conversation isolation).
+ * Module-level so the warning fires once per type per session, not once per
+ * event: a permanently un-attributed stream stays visible in the console
+ * without flooding it while a run is streaming.
+ */
+const warnedUnroutedTypes = new Set<string>();
+
+/**
+ * Drop path for an `agent-event` whose run envelope carries no conversationId.
+ * The router NEVER guesses the active conversation: an un-attributed event
+ * would land in whichever chat is on screen, which is exactly the A→B
+ * cross-talk this guard closes. Warning is one-shot per event type.
+ */
+function warnUnroutedEvent(type: string): void {
+  if (warnedUnroutedTypes.has(type)) return;
+  warnedUnroutedTypes.add(type);
+  console.warn(
+    `[desktop] dropping "${type}" agent-event: the run envelope carries no conversationId (never routed to the active chat).`,
+  );
+}
+
+/**
  * Multi-turn history for headless runs — derived from the chat UI.
  *
  * The chat transcript is the source of truth (2.1 T9: the CLI history_snapshot
@@ -966,13 +988,10 @@ export default function App() {
   /** Kraken activity stream (F1): lifted here so the sidebar can list the
    *  tentacles of the active mission's run. Same `agent-event` channel
    *  KrakenActivity already consumes - no new channel, no new IPC.
-   *  Conversation isolation: envelope-tagged events are filtered to the
-   *  active conversation, so a run in another chat never paints this tree
-   *  (M2 routing parity with the onAgentEvent block below). */
-  const activity = useRunActivity({
-    conversationId: active?.id,
-    activeConversationId: active?.id,
-  });
+   *  Conversation isolation: the hook routes by run envelope only, so a run
+   *  in another chat never paints this tree (M2 routing parity with the
+   *  onAgentEvent block below); events with no envelope id are dropped. */
+  const activity = useRunActivity({ conversationId: active?.id });
   /**
    * F2: tentacle whose live trace is open in the side panel. Only App owns
    * this state; the sidebar reports the click, the panel reads the file.
@@ -1415,10 +1434,14 @@ export default function App() {
     (async () => {
       const u1 = await onAgentEvent((ev) => {
         if (cancelled) return;
-        // M2 invariant: run events carry their own conversation identity;
-        // activeIdRef is only a legacy fallback for un-enveloped events.
-        const convId =
-          readRunEnvelope(ev).conversationId ?? activeIdRef.current;
+        // M2 invariant (hardened): every BrainEvent carries its OWN
+        // conversation identity in the run envelope — Rust stamps it per
+        // RECEIVING run, broadcast residue included. There is NO fallback to
+        // the active conversation any more: an id-less line is never guessed
+        // into whichever chat is open (that was the A→B cross-talk: messages,
+        // reasoning, tentacle activity and the spine sessionId of a run
+        // started in A landing in B's panel).
+        const envelopeConv = readRunEnvelope(ev).conversationId;
         // M3 (ADR-0018): first-class workspace task events route by the
         // run envelope's cwd - never by the currently open chat - so a
         // task_update of a background run never contaminates another
@@ -1432,7 +1455,7 @@ export default function App() {
           if (taskEv.source === "workspace_plan") {
             const envCwd =
               readRunEnvelope(ev).cwd ??
-              conversationsRef.current.find((c) => c.id === convId)?.cwd;
+              conversationsRef.current.find((c) => c.id === envelopeConv)?.cwd;
             if (envCwd) {
               const cwdKey = normalizeCwdKey(envCwd);
               if (ev.type === "task_update") {
@@ -1459,6 +1482,11 @@ export default function App() {
         // Control plane (§35): handshake + steering acks. protocol_info
         // gates the composer's steer mode; acks advance the bubble state
         // (sent → accepted → applied — never assume stdin writes, §24).
+        // protocol_info is the ONE event handled before the identity gate:
+        // it is the sidecar's run-capability handshake, not conversation
+        // state (Rust: "sidecar boot handshake — not per-chat"), and the
+        // global protocol object must stay settable for any CLI build. Its
+        // per-conversation projection is written ONLY for an enveloped event.
         if (ev.type === "protocol_info") {
           const info = ev as { version?: unknown; capabilities?: unknown };
           const next: ProtocolInfoEvent = {
@@ -1470,15 +1498,23 @@ export default function App() {
           };
           sidecarProtocolRef.current = next;
           setSidecarProtocol(next);
-          if (convId) {
+          if (envelopeConv) {
             controlInfoRef.current = {
               ...controlInfoRef.current,
-              [convId]: next,
+              [envelopeConv]: next,
             };
-            setControlInfoByConv((prev) => ({ ...prev, [convId]: next }));
+            setControlInfoByConv((prev) => ({ ...prev, [envelopeConv]: next }));
           }
           return;
         }
+        // Routing gate (M2): from here on the handler only ever touches the
+        // conversation named by the envelope. No identity → drop the event
+        // (one-shot console warning); never attribute it to the open chat.
+        if (!envelopeConv) {
+          warnUnroutedEvent(ev.type);
+          return;
+        }
+        const convId = envelopeConv;
         if (ev.type === "permission.request") {
           const ask = permissionAskFromEvent(ev as unknown as Record<string, unknown>);
           if (ask) {
@@ -1714,6 +1750,10 @@ export default function App() {
         // E1.4: capture the 2.0 spine session id emitted at run start; the
         // next runTask resumes the same event log (--resume) so multi-turn
         // context comes from the spine instead of the 1.x history replay.
+        // M2 (cross-talk fix): the id is written into the conversation the
+        // ENVELOPE names — `convId` is `envelopeConv` past the routing gate —
+        // and never into the active conversation. Writing B's sessionId into
+        // A made A resume B's spine on its next turn (wrong event log).
         if (ev.type === "session_started") {
           const sid = (ev as { sessionId?: string }).sessionId;
           if (sid && sid.trim().length > 0) {
@@ -2194,8 +2234,11 @@ export default function App() {
 
       const u2 = await onAgentStderr((payload) => {
         if (cancelled) return;
-        const convId = payload.conversationId ?? activeIdRef.current;
+        // Run-scoped payload: no identity → no attribution (never the active
+        // chat). Rust stamps `agent-stderr` with the run's conversationId.
+        const convId = payload.conversationId ?? "";
         if (
+          convId &&
           convId === activeIdRef.current &&
           /error|fail|missing|no api key/i.test(payload.line)
         ) {
@@ -2208,7 +2251,10 @@ export default function App() {
       const u3 = await onRunFinished((payload) => {
         if (cancelled) return;
         const { exitCode, cancelled: wasCancelled } = payload;
-        const convId = payload.conversationId ?? activeIdRef.current;
+        // Run-scoped payload: the registry is keyed by runId, so a missing
+        // conversationId still settles the run — it only stops the desk from
+        // guessing WHICH chat the run belonged to (no fallback to active).
+        const convId = payload.conversationId ?? "";
         const turn = turnsRef.current.get(convId) ?? turnFor(convId);
         const isActiveConv = convId === activeIdRef.current;
         runCoordinator.finished(

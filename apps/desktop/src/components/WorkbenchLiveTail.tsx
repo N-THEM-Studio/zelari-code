@@ -11,10 +11,19 @@
  * block. Anything else falls through as raw text. This keeps the bundle
  * dependency-free (no react-markdown) at the cost of fidelity.
  *
+ * Scoping (cross-talk fix). `.zelari/radio` is SHARED by every run of a
+ * project, so "newest file wins" leaked run A's tail into chat B's panel.
+ * When the conversation's spine session id is known the panel now tails
+ * exactly one file — `<sessionId>.jsonl`, the per-session radio the CLI
+ * writes (`tools/krakenRadio.ts`) — and nothing else. The workbench
+ * markdown cannot be addressed by session: it is keyed by GRAPH id
+ * (`workbench-<graphId>.md`, `kraken/workbench.ts`), so it survives only
+ * as the no-session fallback, and only while exactly one such file exists.
+ *
  * @since v1.31.x - Bennett's Razor UI surface (Slice N / desktop)
  */
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listDir, readProjectTextIfChanged } from "../agentClient";
 
 interface Props {
@@ -22,6 +31,12 @@ interface Props {
   cwd: string | null;
   /** Whether the panel is open. When false, polling is paused to save cycles. */
   open: boolean;
+  /**
+   * Spine session id of the conversation being rendered (`Conversation.sessionId`).
+   * When set, the tail is scoped to that run's own radio file. When null/absent
+   * the panel falls back to the single-workbench heuristic (see WORKBENCH_TAIL_SOURCE).
+   */
+  sessionId?: string | null;
 }
 
 interface State {
@@ -35,6 +50,12 @@ interface State {
   watching: boolean;
   /** Last error message, if any. Cleared on the next successful fetch. */
   error: string | null;
+  /**
+   * True when the radio dir holds several candidate files and this panel has
+   * no session id to pick one with. The panel then shows an explicit
+   * "multiple active runs" state instead of tailing an arbitrary file.
+   */
+  ambiguous: boolean;
 }
 
 const POLL_INTERVAL_MS = 1500;
@@ -58,13 +79,47 @@ export interface TailSource {
   prefix?: string;
   /** Basename suffix filter (e.g. `.md`). */
   suffix?: string;
+  /**
+   * When true the source only resolves while it matches EXACTLY ONE file.
+   * Several matches mean several live runs, and without an id to address one
+   * there is no honest way to choose — the hook reports `ambiguous` instead.
+   * Sources that name a file (`name`) never need this.
+   */
+  uniqueOnly?: boolean;
 }
 
-/** The workbench tail's source: the newest `workbench-*.md` under the radio dir. */
+/**
+ * Basename the radio writer uses for one session (`tools/krakenRadio.ts`):
+ * reader and writer must sanitize the id identically to land on one file.
+ */
+export function radioSessionFile(sessionId: string): string {
+  return `${sessionId.replace(/[^a-zA-Z0-9._-]/g, "_").slice(0, 80)}.jsonl`;
+}
+
+/**
+ * Session-scoped source: the run's own `.zelari/radio/<sessionId>.jsonl`.
+ *
+ * Exactly one file, addressed by name — this is what stops chat B from
+ * tailing run A. The workbench `workbench-*.md` is deliberately NOT appended
+ * as a fallback here: it is keyed by graph id, not by session, so it cannot
+ * belong to this conversation any more than to another one.
+ */
+export function sessionRadioSource(sessionId: string): TailSource {
+  return { dir: WORKBENCH_DIR, name: radioSessionFile(sessionId) };
+}
+
+/**
+ * Fallback source for a conversation with no spine session bound yet: the
+ * newest `workbench-*.md`, but ONLY while exactly one such file exists
+ * (`uniqueOnly`). This keeps the single-run UX — one graph run in the
+ * project means its tail is unambiguous — without ever guessing between
+ * several live runs.
+ */
 export const WORKBENCH_TAIL_SOURCE: TailSource = {
   dir: WORKBENCH_DIR,
   prefix: WORKBENCH_PREFIX,
   suffix: WORKBENCH_SUFFIX,
+  uniqueOnly: true,
 };
 
 /**
@@ -72,17 +127,29 @@ export const WORKBENCH_TAIL_SOURCE: TailSource = {
  * `null` when no such file exists or the directory is unreachable.
  *
  * Sorting strategy: by mtime would be ideal, but `listDir` returns
- * name/path/isDir only. We sort lexicographically descending — that
- * works because Kraken's ids (`workbench-<id>.md`, `<sessionId>.jsonl`)
+ * name/path/isDir only. `listTailCandidates` sorts lexicographically, newest
+ * last — that works because Kraken's ids (`workbench-<id>.md`, `<sessionId>.jsonl`)
  * are time-ordered (`crypto.randomUUID()`-derived; new runs have
  * lexicographically greater ids in practice). If that ever stops holding,
  * swap to a stat-based sort by adding size/mtime to DirEntryDto.
  */
 export async function findLatestTail(cwd: string, source: TailSource): Promise<string | null> {
+  const candidates = await listTailCandidates(cwd, source);
+  return candidates[candidates.length - 1] ?? null;
+}
+
+/**
+ * Every file in `<cwd>/<source.dir>` matching `source`, oldest first.
+ *
+ * The whole list — not just the newest entry — is what tells "one live run"
+ * apart from "several": a caller that cannot address a file by name must
+ * refuse to guess when more than one candidate exists.
+ */
+export async function listTailCandidates(cwd: string, source: TailSource): Promise<string[]> {
   try {
     const res = await listDir({ path: source.dir, cwd });
-    if (res.error) return null;
-    const candidates = res.entries
+    if (res.error) return [];
+    return res.entries
       .filter(
         (e) =>
           !e.isDir &&
@@ -91,21 +158,35 @@ export async function findLatestTail(cwd: string, source: TailSource): Promise<s
           (source.suffix === undefined || e.name.endsWith(source.suffix)),
       )
       .map((e) => e.path)
-      .sort()
-      .reverse();
-    return candidates[0] ?? null;
+      .sort();
   } catch {
-    return null;
+    return [];
   }
 }
 
-/** First source (in priority order) that resolves to an existing file. */
-async function resolveTail(cwd: string, sources: TailSource[]): Promise<string | null> {
+/** What a source-list walk produced: a target, or a refusal to guess. */
+interface TailResolution {
+  /** Resolved file, or `null` when nothing usable matched. */
+  path: string | null;
+  /** True when a `uniqueOnly` source matched several files. */
+  ambiguous: boolean;
+}
+
+/** First source (in priority order) that resolves to a usable file. */
+async function resolveTail(cwd: string, sources: TailSource[]): Promise<TailResolution> {
+  let ambiguous = false;
   for (const source of sources) {
-    const path = await findLatestTail(cwd, source);
-    if (path) return path;
+    const candidates = await listTailCandidates(cwd, source);
+    if (candidates.length === 0) continue;
+    if (source.uniqueOnly && candidates.length > 1) {
+      // Several live runs, no id to address one of them: never pick the
+      // newest (that is exactly how run A's tail leaked into chat B).
+      ambiguous = true;
+      continue;
+    }
+    return { path: candidates[candidates.length - 1] ?? null, ambiguous: false };
   }
-  return null;
+  return { path: null, ambiguous };
 }
 
 /**
@@ -259,6 +340,7 @@ export function useRadioTail({
     fetchedAt: null,
     watching: false,
     error: null,
+    ambiguous: false,
   });
   // Track the currently-resolved path across async ticks so a stale
   // resolve doesn't stomp a newer one.
@@ -294,12 +376,22 @@ export function useRadioTail({
 
     let path = pathRef.current;
     if (!path) {
-      path = await resolveTail(currentCwd, sources);
+      const resolved = await resolveTail(currentCwd, sources);
       if (resolvedCwdRef.current !== currentCwd) return; // cwd changed mid-tick
-      if (!path) {
-        setState((s) => ({ ...s, watching: true, path: null, body: "", error: null }));
+      if (!resolved.path) {
+        setState((s) => ({
+          ...s,
+          watching: true,
+          path: null,
+          body: "",
+          // Several runs wrote to the radio dir and this panel has no session
+          // id to address one: report it instead of tailing an arbitrary file.
+          ambiguous: resolved.ambiguous,
+          error: null,
+        }));
         return;
       }
+      path = resolved.path;
       pathRef.current = path;
       sigRef.current = null; // new file discovered: force a full fetch
     }
@@ -320,6 +412,7 @@ export function useRadioTail({
           path,
           fetchedAt: Date.now(),
           body: s.body,
+          ambiguous: false, // a file is addressed: no longer guessing
           error: res.note ?? "no content",
         }));
         return;
@@ -330,6 +423,7 @@ export function useRadioTail({
         path,
         body: res.text ?? "",
         fetchedAt: Date.now(),
+        ambiguous: false, // a file is addressed: no longer guessing
         error: null,
       }));
     } catch (e) {
@@ -357,8 +451,15 @@ export function useRadioTail({
   return state;
 }
 
-export function WorkbenchLiveTail({ cwd, open }: Props) {
-  const state = useRadioTail({ cwd, open, sources: [WORKBENCH_TAIL_SOURCE] });
+export function WorkbenchLiveTail({ cwd, open, sessionId = null }: Props) {
+  // A bound session addresses exactly one radio file; without one the panel
+  // keeps the single-workbench fallback, which itself refuses to guess when
+  // several live runs wrote one (see WORKBENCH_TAIL_SOURCE).
+  const sources = useMemo(
+    () => (sessionId ? [sessionRadioSource(sessionId)] : [WORKBENCH_TAIL_SOURCE]),
+    [sessionId],
+  );
+  const state = useRadioTail({ cwd, open, sources });
 
   if (!open) return null;
 
@@ -371,7 +472,7 @@ export function WorkbenchLiveTail({ cwd, open }: Props) {
     <div className="workbench-tail" role="tabpanel" aria-label="Workbench markdown tail">
       <div className="workbench-panel-meta">
         <span className="workbench-meta-item" title={state.path ?? ""}>
-          {fileName ?? "no file yet"}
+          {state.ambiguous ? "several runs" : fileName ?? "no file yet"}
         </span>
         <span className="workbench-meta-item">
           {state.watching ? "● live" : "○ paused"}
@@ -386,7 +487,13 @@ export function WorkbenchLiveTail({ cwd, open }: Props) {
       ) : null}
 
       <div className="workbench-panel-body">
-        {state.body ? (
+        {state.ambiguous ? (
+          <div className="workbench-empty" role="status">
+            Multiple active runs in <code> .zelari/radio</code> and this panel has no
+            session bound — it will not guess which file belongs to this conversation.
+            Pick a conversation with a bound session to see its live tail.
+          </div>
+        ) : state.body ? (
           renderMiniMarkdown(state.body)
         ) : (
           <div className="workbench-empty">

@@ -28,6 +28,15 @@ type MicState = "off" | "listening" | "agent_working";
 const LS_DEFAULTS = "zelari-desktop-defaults-v1";
 const LS_WORKDIR = "zelari-desktop-workdir";
 
+/**
+ * Synthetic conversation id for overlay runs (M2 cross-talk fix). The overlay
+ * is a global hotkey panel, not a chat: its run must be identifiable WITHOUT
+ * naming any main-window conversation. Rust stamps this id on the run's
+ * events, so they route to a bucket no chat panel owns and are dropped
+ * instead of landing in whichever conversation happens to be open.
+ */
+const OVERLAY_CONVERSATION_ID = "overlay";
+
 interface SpeechRecognitionLike extends EventTarget {
   continuous: boolean;
   interimResults: boolean;
@@ -325,6 +334,9 @@ export function OverlayApp() {
           provider: provider || undefined,
           model: model || undefined,
           cwd: workdir || undefined,
+          // Identity for the global agent-event bus: overlay runs are theirs,
+          // not any chat's (see OVERLAY_CONVERSATION_ID).
+          conversationId: OVERLAY_CONVERSATION_ID,
           profile: prefs.profile,
           strictDone: prefs.strictDone,
           missionStrict: prefs.missionStrict,

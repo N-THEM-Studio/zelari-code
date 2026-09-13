@@ -118,22 +118,31 @@ describe("KrakenActivity — conversation isolation (M2)", () => {
     expect(screen.queryByText(/boom in chat A/)).toBeNull();
   });
 
-  it("un-enveloped (legacy) events still flow to the active conversation's panel", () => {
+  it("un-enveloped (legacy) events are dropped, never guessed into the active panel", () => {
     armMock();
-    // The panel mounts only in the active conversation's view, so its
-    // conversation IS the active one: un-attributable events are accepted.
+    // M2 hardening: the panel used to accept un-attributable events while it
+    // was the active one ("best-effort attribution"). That guess is what let
+    // a run started in chat A paint into chat B's panel, so it is gone: an
+    // event with no envelope id is ignored, even by the panel on screen.
     render(<KrakenActivity conversationId="conv-B" />);
     emit(SPAWN_LEGACY);
-    expect(screen.getByText("Legacy lead")).toBeTruthy();
+    expect(screen.queryByText("Legacy lead")).toBeNull();
+    // The attributed stream still reaches the panel: the drop is per event,
+    // not a broken subscription.
+    emit(SPAWN_B);
+    expect(screen.getByText("Project B lead")).toBeTruthy();
   });
 
-  it("without a conversationId prop the panel keeps the previous unfiltered behavior", () => {
+  it("without a conversationId prop the panel is inert (no unfiltered fallback)", () => {
     armMock();
     render(<KrakenActivity />);
     emit(SPAWN_A);
     emit(SPAWN_B);
-    expect(screen.getByText("Project A lead")).toBeTruthy();
-    expect(screen.getByText("Project B lead")).toBeTruthy();
+    // No conversation → no paint key: nothing can match, so nothing renders
+    // (the old catch-all "" bucket painted EVERY conversation's run here).
+    expect(screen.queryByText("Project A lead")).toBeNull();
+    expect(screen.queryByText("Project B lead")).toBeNull();
+    expect(screen.queryByText("KRAKEN ACTIVITY")).toBeNull();
   });
 
   it("switching conversation resets the tree (live view, not history)", () => {

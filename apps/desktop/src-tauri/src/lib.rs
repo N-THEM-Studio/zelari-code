@@ -139,10 +139,18 @@ struct RunEnvelopeCtx {
 fn enveloped(mut value: serde_json::Value, ctx: &RunEnvelopeCtx) -> serde_json::Value {
     if let Some(obj) = value.as_object_mut() {
         obj.insert("runId".into(), serde_json::json!(ctx.run_id));
-        obj.insert(
-            "conversationId".into(),
-            serde_json::json!(ctx.conversation_id),
-        );
+        // Conversation identity is the routing key (M2). The run's own
+        // conversation always wins; when the run has none (legacy caller),
+        // an identity the sidecar already stamped for the RECEIVING run is
+        // kept instead of being overwritten with "" — an empty string reads
+        // as "unattributed" on the TS side and used to fall back to the
+        // active chat (cross-talk A→B).
+        if !ctx.conversation_id.is_empty() || obj.get("conversationId").is_none() {
+            obj.insert(
+                "conversationId".into(),
+                serde_json::json!(ctx.conversation_id),
+            );
+        }
         obj.insert("cwd".into(), serde_json::json!(ctx.cwd));
     }
     value
@@ -3105,6 +3113,7 @@ fn run_sidecar_turn(
     sidecar.run_turn_full(
         app,
         &envelope.run_id,
+        &envelope.conversation_id,
         &workspace_root,
         session_id,
         input,
