@@ -95,6 +95,20 @@ docs/plans/                # Historical design notes (may be outdated)
 
 `HANDOFF.md`, `HANDOFF-kraken.md`, `HANDOFF-v0.10.0.md` and `docs/plans/*` are **historical / superseded** and not required reading for new contributors. Current product state: `CHANGELOG.md` + `docs/GUIDA.md` — no version is pinned in this file (the changelog is the source of truth). Release cadence: at most one minor per 48h; batch smaller fixes into patch releases.
 
+## Releases (tag → npm + desktop)
+
+Releases are **tag-driven**: `publish.yml` (npm `zelari-code` + `@zelari/core` + GitHub Release) and `release-desktop.yml` (3-platform installers + auto-update manifest) trigger only on `v*.*.*` tags. Procedure:
+
+1. Bump **every lockstep point**, not just the four package manifests:
+   - `package.json` × 3 (root, `packages/core`, `apps/desktop`) + `apps/desktop/src-tauri/tauri.conf.json`
+   - `apps/desktop/src-tauri/Cargo.toml` + `Cargo.lock` (desktop version)
+   - root devDependency pin `"@zelari/core": "x.y.z"` (exact match)
+   - `CORE_VERSION` in `packages/core/src/version.ts` (guarded by `publicApi.contract.test.ts` — the publish workflow runs it)
+   - `CHANGELOG.md` entry + any version callouts in `docs/GUIDA.md`, `README.md`, core README
+2. **Run `npm run verify:versions` locally, on the exact commit you are about to tag.** This gate lives in the merge CI (`ci.yml`), NOT in the publish workflow — a green publish run does not prove version coherence. Skipping this ships a tag that turns `main` CI red minutes after npm publish.
+3. Push `main` first, then `git tag vX.Y.Z && git push origin vX.Y.Z`. Release workflows check out the tag ref at runtime, so the tagged commit must be the coherent one already on `main`.
+4. Watch both release workflows; treat `npm view <pkg> version` as the authority (registry CDN may lag minutes behind a green publish). npm unpublish is effectively one-way — **fix forward** on `main` and re-tag only while nothing has been published yet.
+
 ## Code of conduct
 
 Participation is governed by [CODE_OF_CONDUCT.md](./CODE_OF_CONDUCT.md).
