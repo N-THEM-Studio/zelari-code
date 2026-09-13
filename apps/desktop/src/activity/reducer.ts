@@ -189,11 +189,18 @@ export function activityReducer(
         status:
           a.status === "failed" || a.status === "cancelled"
             ? a.status
-            : ev.ok === false ||
-                (typeof ev.reason === "string" &&
-                  /fail|error|denied|cancel/i.test(ev.reason))
-              ? "failed"
-              : "completed",
+            : // t102: an explicit `ok` boolean decides, full stop. A successful
+              // tentacle whose RESULT text mentions "denied"/"failed"/"error"
+              // (it may have researched exactly those) must stay completed —
+              // the reason regex is only the legacy fallback for events with
+              // no boolean at all (unknown ≠ failed).
+              ev.ok === true
+              ? "completed"
+              : ev.ok === false ||
+                  (typeof ev.reason === "string" &&
+                    /fail|error|denied|cancel/i.test(ev.reason))
+                ? "failed"
+                : "completed",
         currentTool: undefined,
       }),
       () => ({ id: agentId, role: "general", status: "completed", tools: [] }),

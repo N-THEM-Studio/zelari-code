@@ -975,7 +975,10 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     emitActivity({
       type: 'agent_ended',
       agentId: id,
-      reason: info.detail ?? (info.ok === false ? 'failed' : 'completed'),
+      // t102: `reason` feeds a failure-heuristic on the Desktop; free text in
+      // it (result excerpt) could flip a SUCCESSFUL tentacle to "failed".
+      // Only genuine failures carry detail; successes are enum-only.
+      reason: info.ok === false ? (info.detail ?? 'failed') : 'completed',
       ok: info.ok !== false,
       durationMs: info.durationMs ?? 0,
       ts: Date.now(),

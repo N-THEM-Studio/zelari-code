@@ -176,6 +176,28 @@ describe("activityReducer", () => {
     expect(s.agents["exp-1"].status).toBe("failed");
   });
 
+  it("agent_ended with ok:true ignores failure-ish reason text (t102: research ABOUT denials ≠ failed)", () => {
+    const s = reduceall(
+      SPAWN_EXPLORE,
+      {
+        type: "agent_ended",
+        agentId: "exp-1",
+        ok: true,
+        reason: "yolo map: requests denied timed out, errors catalogued",
+        durationMs: 400,
+      },
+    );
+    expect(s.agents["exp-1"].status).toBe("completed");
+  });
+
+  it("agent_ended without ok keeps the legacy reason heuristic (old events)", () => {
+    const s = reduceall(
+      SPAWN_EXPLORE,
+      { type: "agent_ended", agentId: "exp-1", reason: "failed", durationMs: 400 },
+    );
+    expect(s.agents["exp-1"].status).toBe("failed");
+  });
+
   it("agent_ended preserves failed/cancelled status", () => {
     const s = reduceall(
       SPAWN_EXPLORE,

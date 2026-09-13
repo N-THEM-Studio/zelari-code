@@ -81,6 +81,35 @@ describe('task tool tentacle activity events (§37)', () => {
     expect(typeof ended.durationMs).toBe('number');
   });
 
+  it('a successful tentacle whose result text mentions "denied/failed" still ends reason=completed (t102)', async () => {
+    const events: BrainEvent[] = [];
+    const deps = makeDeps(events);
+    // Harness whose final message is research ABOUT failures — the text must
+    // never decide the terminal status, only `ok` does.
+    (deps as { harnessFactory: unknown }).harnessFactory = (() =>
+      ({
+        run: async function* (): AsyncGenerator<BrainEvent> {
+          const mk = (e: object) =>
+            ({ id: 'e', ts: 0, sessionId: 's', ...e }) as BrainEvent;
+          yield mk({ type: 'message_start' });
+          yield mk({ type: 'message_delta', delta: 'yolo permissions: many requests denied timed out and failed' });
+          yield mk({ type: 'message_end' });
+        },
+        cancel: () => {},
+      }) as SubAgentHarness) as unknown as TaskToolDeps['harnessFactory'];
+    const tool = createTaskTool(deps);
+    const res = (await (tool as { execute: (a: unknown, c: unknown) => Promise<unknown> }).execute(
+      { agent: 'explore', prompt: 'map yolo permissions', description: 'Mappa modalità yolo' },
+      { sessionId: 'test', cwd: '.' },
+    )) as { ok: boolean };
+
+    expect(res.ok).toBe(true);
+    const ended = events[events.length - 1] as unknown as Record<string, unknown>;
+    expect(ended.type).toBe('agent_ended');
+    expect(ended.ok).toBe(true);
+    expect(ended.reason).toBe('completed');
+  });
+
   it('no sink wired → zero events, run unaffected', async () => {
     const deps = makeDeps([]);
     delete (deps as Partial<TaskToolDeps>).onTentacleEvent;
