@@ -73,11 +73,13 @@
   },
   "devDependencies": {
     "@testing-library/react": "^16.3.2",
-    "@zelari/core": "2.42.0",
     "@types/node": "^25.3.0",
     "@types/react": "^19.0.10",
+    "@zelari/core": "2.42.0",
     "esbuild": "^0.25.0",
+    "eslint": "^10.10.0",
     "jsdom": "^29.1.1",
+    "playwright": "^1.63.0",
     "react-dom": "^19.2.7",
     "vitest": "^4.1.9"
   },
