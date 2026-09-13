@@ -3,6 +3,7 @@
  * Not a full editor — view-only.
  */
 
+import type { ReactNode } from "react";
 import type { MessageStats } from "../types";
 import { scrubDisplayText } from "./scrubDisplayText";
 import { CopyButton } from "./CopyButton";
@@ -23,23 +24,87 @@ type Block =
   | { kind: "table"; headers: string[]; rows: string[][] }
   | { kind: "quote"; text: string };
 
-function stripInlineArtifacts(s: string): string {
-  let t = s
-    .replace(/\*\*(.+?)\*\*/g, "$1")
-    .replace(/__(.+?)__/g, "$1")
-    .replace(/(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/~~(.+?)~~/g, "$1")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, "$1")
-    .replace(/^#{1,6}\s+/, "");
-  // Streaming / unpaired leftovers (keep snake_case underscores intact)
-  t = t
+const INLINE_RE =
+  /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*(?!\s)[^*\n]+?(?<!\s)\*)|(~~[^~\n]+~~)|(\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g;
+
+/** Remove orphan emphasis/code markers left behind by partial streaming. */
+function stripOrphanMarkers(s: string): string {
+  return s
     .replace(/\*\*/g, "")
     .replace(/(?<![\w])\*(?![\w])/g, "")
     .replace(/__/g, "")
     .replace(/~~/g, "")
-    .replace(/`+/g, "");
-  return t.trim();
+    .replace(/`+/g, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim();
+}
+
+/**
+ * Render inline markdown (bold / italic / inline code / strike / links) as
+ * React nodes instead of flattening it, so agent replies stay readable.
+ */
+function renderInline(text: string): ReactNode {
+  const out: ReactNode[] = [];
+  let last = 0;
+  let k = 0;
+  let m: RegExpExecArray | null;
+  INLINE_RE.lastIndex = 0;
+  while ((m = INLINE_RE.exec(text)) !== null) {
+    if (m.index > last) {
+      const gap = stripOrphanMarkers(text.slice(last, m.index));
+      if (gap) out.push(gap);
+    }
+    const tok = m[0];
+    if (tok.startsWith("`")) {
+      out.push(
+        <code key={k++} className="md-inline-code">
+          {tok.slice(1, -1)}
+        </code>,
+      );
+    } else if (tok.startsWith("**") || tok.startsWith("__")) {
+      out.push(
+        <strong key={k++} className="md-strong">
+          {tok.slice(2, -2)}
+        </strong>,
+      );
+    } else if (tok.startsWith("~~")) {
+      out.push(
+        <del key={k++} className="md-del">
+          {tok.slice(2, -2)}
+        </del>,
+      );
+    } else if (tok.startsWith("*")) {
+      out.push(
+        <em key={k++} className="md-em">
+          {tok.slice(1, -1)}
+        </em>,
+      );
+    } else {
+      const lm = /\[([^\]\n]+)\]\((https?:\/\/[^)\s]+)\)/.exec(tok);
+      if (lm) {
+        out.push(
+          <a
+            key={k++}
+            className="md-link"
+            href={lm[2]}
+            target="_blank"
+            rel="noreferrer noopener"
+          >
+            {lm[1]}
+          </a>,
+        );
+      } else {
+        out.push(stripOrphanMarkers(tok));
+      }
+    }
+    last = m.index + tok.length;
+  }
+  if (last < text.length) {
+    const tail = stripOrphanMarkers(text.slice(last));
+    if (tail) out.push(tail);
+  }
+  if (out.length === 0) return stripOrphanMarkers(text);
+  return out;
 }
 
 function isTableSeparator(line: string): boolean {
@@ -50,7 +115,7 @@ function parseTableRow(line: string): string[] {
   let s = line.trim();
   if (s.startsWith("|")) s = s.slice(1);
   if (s.endsWith("|")) s = s.slice(0, -1);
-  return s.split("|").map((c) => stripInlineArtifacts(c.trim()));
+  return s.split("|").map((c) => c.trim());
 }
 
 /**
@@ -146,7 +211,7 @@ function parseBlocks(raw: string): Block[] {
       blocks.push({
         kind: "heading",
         level: hm[1].length,
-        text: stripInlineArtifacts(hm[2]),
+        text: hm[2].trim(),
       });
       i++;
       continue;
@@ -161,7 +226,7 @@ function parseBlocks(raw: string): Block[] {
       }
       blocks.push({
         kind: "quote",
-        text: stripInlineArtifacts(parts.join(" ")),
+        text: parts.join(" ").trim(),
       });
       continue;
     }
@@ -171,9 +236,7 @@ function parseBlocks(raw: string): Block[] {
       const ordered = /^\s*\d+\./.test(line);
       const items: string[] = [];
       while (i < lines.length && /^\s*([-*+]|\d+\.)\s+/.test(lines[i])) {
-        items.push(
-          stripInlineArtifacts(lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, "")),
-        );
+        items.push(lines[i].replace(/^\s*([-*+]|\d+\.)\s+/, "").trim());
         i++;
       }
       blocks.push({ kind: "list", ordered, items });
@@ -201,7 +264,7 @@ function parseBlocks(raw: string): Block[] {
     if (parts.length) {
       blocks.push({
         kind: "paragraph",
-        text: stripInlineArtifacts(parts.join(" ")),
+        text: parts.join(" ").trim(),
       });
     }
   }
@@ -293,26 +356,26 @@ export function MessageContent({
                 key={idx}
                 className={`md-h md-h${Math.min(b.level, 3)}`}
               >
-                {b.text}
+                {renderInline(b.text)}
               </div>
             );
           case "paragraph":
             return (
               <p key={idx} className="md-p">
-                {b.text}
+                {renderInline(b.text)}
               </p>
             );
           case "list":
             return b.ordered ? (
               <ol key={idx} className="md-list">
                 {b.items.map((it, j) => (
-                  <li key={j}>{it}</li>
+                  <li key={j}>{renderInline(it)}</li>
                 ))}
               </ol>
             ) : (
               <ul key={idx} className="md-list">
                 {b.items.map((it, j) => (
-                  <li key={j}>{it}</li>
+                  <li key={j}>{renderInline(it)}</li>
                 ))}
               </ul>
             );
@@ -336,7 +399,7 @@ export function MessageContent({
                   <thead>
                     <tr>
                       {b.headers.map((h, j) => (
-                        <th key={j}>{h}</th>
+                        <th key={j}>{renderInline(h)}</th>
                       ))}
                     </tr>
                   </thead>
@@ -344,7 +407,7 @@ export function MessageContent({
                     {b.rows.map((row, ri) => (
                       <tr key={ri}>
                         {row.map((cell, ci) => (
-                          <td key={ci}>{cell}</td>
+                          <td key={ci}>{renderInline(cell)}</td>
                         ))}
                       </tr>
                     ))}
@@ -355,7 +418,7 @@ export function MessageContent({
           case "quote":
             return (
               <blockquote key={idx} className="md-quote">
-                {b.text}
+                {renderInline(b.text)}
               </blockquote>
             );
           default:
