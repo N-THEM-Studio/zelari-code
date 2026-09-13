@@ -5,6 +5,25 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.43.0] - 2026-09-13
+
+The unattended run release: `--permissions yolo` now actually runs alone, and the telemetry stops lying about it.
+
+### Added
+
+- **Yolo auto-approves residual asks** — `--permissions yolo` (or `ZELARI_PERMISSION_PRESET=yolo`) now implies auto-approval of any remaining `ask` (policy `ask` rules, provenance escalation, headless runs with no UI handler), matching the previous `yolo + ZELARI_AUTO=1` combo. Explicit `deny` rules are never promoted; `standard`/`strict` keep asking.
+- **Human-readable agent replies (Desktop)** — message rendering now parses inline markdown instead of stripping it: bold, italic, inline code chips, strikethrough, and clickable http(s) links, applied across headings, paragraphs, list items, quotes and table cells; streaming-safe cleanup of orphaned markers.
+
+### Fixed
+
+- **Tentacle status no longer inferred from result text** — the CLI emits an enum-only `reason` on `agent_ended` and the Desktop reducer trusts the explicit `ok` flag, so a tentacle studying "denied timed out" failures is no longer marked failed itself (legacy text heuristics apply only to events without a boolean).
+- **Task touch-guard events require a real session id** — guard/staleness events no longer funnel into a shared `cli.jsonl` when no session id exists (fail-closed instead of a fake id); radio fallback is per-process for the same reason.
+- **Loose tool-args parser coerces JSON values** — `parseLooseArgs` now captures full `<parameter>` bodies and coerces JSON arrays/objects natively (repairing display-truncated forms), so tool calls no longer receive stringified arrays that downstream glob parsing silently mis-splits; the search tool also repairs stringified-array glob forms defensively.
+
+### Changed
+
+- Dev dependencies: `eslint`, `playwright` added at the root.
+
 ## [2.42.0] - 2026-09-12
 
 The Desktop becomes a Grok-style workbench that actually isolates concurrent chats: each conversation keeps its own workspace, activity tree, and run history, the composer carries model / permissions / mode as pills, and the lead can pick thinking effort per tentacle. MCP servers spawn in the project they belong to, custom MCP servers and agent-authored skills land from Settings, and a CI-red gardener trigger closes the always-on loop.
