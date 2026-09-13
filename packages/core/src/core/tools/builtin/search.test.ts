@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { grepContentTool, GrepContentArgsSchema } from './search.js';
+import { coerceStringList, grepContentTool, GrepContentArgsSchema } from './search.js';
 import type { ToolContext } from '../toolTypes.js';
 
 /**
@@ -154,5 +154,49 @@ describe('grep_content — path-anchored globs keep the recursive hint', () => {
     const r = await runIn(root2, { path: root2, pattern: 'alpha', contextLines: 0, maxMatches: 50, include: ['*.ts'] });
     expect(r.filesInTree).toBe(2);
     expect(r.warning).toBeUndefined();
+  });
+});
+
+describe('grep_content — stringified-array transport repair (v2.42 field bug)', () => {
+  // Reproduced live: a transport layer flattened string[] args into a single
+  // string ('["a.ts","sub"]'); the comma-split then emitted bracket/quote
+  // garbage globs ('["a.ts"' / '"sub"]') that silently matched nothing.
+
+  it('include as JSON-stringified array: repaired, matches found, warning explains', async () => {
+    const r = await run({ path: root, pattern: 'alpha', contextLines: 0, maxMatches: 50, include: '["*.ts"]' });
+    expect(r.totalMatches).toBe(3);
+    expect(r.effectiveInclude).toEqual(['*.ts']);
+    expect(r.warning).toContain('include repaired from stringified-array form');
+  });
+
+  it('exclude as JSON-stringified array: honors the exclusion, warning explains', async () => {
+    const r = await run({ path: root, pattern: 'alpha', contextLines: 0, maxMatches: 50, exclude: '["a.ts"]' });
+    expect(r.filesInTree).toBe(2);
+    expect(r.totalMatches).toBe(2);
+    expect(r.effectiveExclude).toEqual(['a.ts']);
+    expect(r.warning).toContain('exclude repaired from stringified-array form');
+  });
+
+  it('multi-element stringified array: clean globs, no bracket debris', () => {
+    expect(coerceStringList('["node_modules", "dist"]', [])).toEqual(['node_modules', 'dist']);
+    expect(coerceStringList('["*.yml", "*.yaml"]', [])).toEqual(['*.yml', '*.yaml']);
+  });
+
+  it('already-split transport debris (array of fragments): cleaned per element', () => {
+    expect(coerceStringList(['["node_modules"', '"dist"]'], [])).toEqual(['node_modules', 'dist']);
+  });
+
+  it('quote-wrapped globs: one layer of wrapping quotes stripped', () => {
+    expect(coerceStringList('"*.md"', [])).toEqual(['*.md']);
+    expect(coerceStringList("'*.ts', '*.tsx'", [])).toEqual(['*.ts', '*.tsx']);
+  });
+
+  it('legit character-class globs: preserved (no false-positive repair)', () => {
+    expect(coerceStringList('[abc]', [])).toEqual(['[abc]']);
+    expect(coerceStringList('**/[a-z]*.ts', [])).toEqual(['**/[a-z]*.ts']);
+  });
+
+  it('plain comma-separated globs keep working', () => {
+    expect(coerceStringList('*.ts,*.tsx', [])).toEqual(['*.ts', '*.tsx']);
   });
 });

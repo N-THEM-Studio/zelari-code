@@ -34,21 +34,68 @@ import {
  * Kept OUT of the Zod schema (no `.transform`) so `toJSONSchema` still works
  * for LLM function-calling definitions.
  */
+/**
+ * Strip transport debris from one glob: a leading `["` / trailing `"]`
+ * fragment (the signature of a JSON-stringified array that got comma-split
+ * in transit) and one layer of symmetric wrapping quotes ('"*.ts"' → '*.ts').
+ * Legit character-class globs ('[abc]') are preserved — brackets are only
+ * stripped when adjacent to a quote.
+ */
+function cleanGlobFragment(g: string): string {
+  let out = g.trim();
+  if (out.startsWith('[') && out.charAt(1) === '"') out = out.slice(1);
+  if (out.endsWith(']') && out.charAt(out.length - 2) === '"') out = out.slice(0, -1);
+  if (
+    out.length >= 2 &&
+    ((out.charAt(0) === '"' && out.charAt(out.length - 1) === '"') ||
+      (out.charAt(0) === "'" && out.charAt(out.length - 1) === "'"))
+  ) {
+    out = out.slice(1, -1).trim();
+  }
+  return out;
+}
+
+/** True when the value is a string that parses as a JSON array. */
+export function isJsonArrayString(value: unknown): boolean {
+  if (typeof value !== 'string') return false;
+  const s = value.trim();
+  if (!s.startsWith('[') || !s.endsWith(']')) return false;
+  try {
+    return Array.isArray(JSON.parse(s));
+  } catch {
+    return false;
+  }
+}
+
 export function coerceStringList(value: unknown, fallback: string[]): string[] {
   if (value === undefined || value === null) return fallback;
   if (Array.isArray(value)) {
-    const cleaned = value.filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
+    const cleaned = value
+      .map((x) => (typeof x === 'string' ? cleanGlobFragment(x) : x))
+      .filter((x): x is string => typeof x === 'string' && x.trim().length > 0);
     return cleaned.length > 0 ? cleaned : fallback;
   }
   if (typeof value === 'string') {
     const s = value.trim();
     if (!s) return fallback;
+    // A transport layer may stringify string[] args: '["a.ts","b.ts"]'.
+    // Repair BEFORE the comma-split below, which would otherwise emit
+    // bracket/quote garbage globs that silently match nothing (v2.42 field bug).
+    if (s.startsWith('[') && s.endsWith(']')) {
+      try {
+        const parsed: unknown = JSON.parse(s);
+        if (Array.isArray(parsed)) return coerceStringList(parsed, fallback);
+      } catch {
+        // not JSON (e.g. the character-class glob '[abc]') — treat as plain glob
+      }
+    }
     // Allow comma-separated globs: "*.ts,*.tsx"
     if (s.includes(',') && !s.includes('{')) {
-      const parts = s.split(',').map((x) => x.trim()).filter(Boolean);
+      const parts = s.split(',').map((x) => cleanGlobFragment(x)).filter(Boolean);
       return parts.length > 0 ? parts : fallback;
     }
-    return [s];
+    const single = cleanGlobFragment(s);
+    return single ? [single] : fallback;
   }
   return fallback;
 }
@@ -114,7 +161,8 @@ interface GrepResult {
   /**
    * Non-fatal diagnostics for the caller: empty include scope
    * (SEARCH_EMPTY_SCOPE sentinel), suspicious path-anchored glob,
-   * coerced or deprecated input (DEPRECATED_INPUT sentinel).
+   * coerced, repaired (stringified-array/quoted globs) or deprecated
+   * input (DEPRECATED_INPUT sentinel).
    * Multiple diagnostics are joined with '; '.
    */
   warning?: string;
@@ -239,6 +287,7 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
     'a glob with \'/\' (e.g. "src/*.ts") matches the relative path at exactly that level; ' +
     '"**" is explicit recursion ("**/*.ts" matches at any depth, same as the bare form). ' +
     'include/exclude accept a single glob string (e.g. "*.ts") OR an array of globs. ' +
+    "Stringified-array ('[\"*.ts\"]') or quote-wrapped forms are auto-repaired, with a warning. " +
     'Returns matches with line numbers and context, plus filesWalked/filesInTree counts ' +
     'and a warning when the include globs matched suspiciously few files.',
   permissions: ['read'],
@@ -260,8 +309,13 @@ export const grepContentTool: ToolDefinition<GrepContentArgs, GrepResult> = {
           'DEPRECATED_INPUT: empty include array — omit the field instead; ' +
             'this will become INVALID_ARGUMENT (planned v1.47). Fell back to ["*"]',
         );
+      } else if (isJsonArrayString(rawInclude)) {
+        warnings.push(`include repaired from stringified-array form to ${JSON.stringify(include)}`);
       } else if (typeof rawInclude === 'string') {
         warnings.push(`include coerced from bare string to ${JSON.stringify(include)}`);
+      }
+      if (isJsonArrayString(args.exclude)) {
+        warnings.push(`exclude repaired from stringified-array form to ${JSON.stringify(exclude)}`);
       }
 
       // ── Single-file mode ────────────────────────────────────────
