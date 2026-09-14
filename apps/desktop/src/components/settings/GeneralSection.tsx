@@ -8,6 +8,7 @@ import {
   EXECUTION_PROFILES,
   type ExecutionProfile,
 } from "../../desktopPrefs";
+import { BAFFETTI_PRESETS } from "../../theme/baffetti";
 import { SelectInput, SettingsCard, SettingsRow } from "./primitives";
 
 export interface GeneralSectionProps {
@@ -18,6 +19,9 @@ export interface GeneralSectionProps {
   onDefaultsChange: (mode: DispatchMode, phase: WorkPhase) => void;
   profile: ExecutionProfile;
   onProfileChange: (profile: ExecutionProfile) => void;
+  /** Baffetti (brand mark) master color — #rrggbb. */
+  mustacheColor: string;
+  onMustacheColorChange: (color: string) => void;
 }
 
 const MODE_OPTIONS: { value: DispatchMode; label: string }[] = [
@@ -41,6 +45,8 @@ export function GeneralSection({
   onDefaultsChange,
   profile,
   onProfileChange,
+  mustacheColor,
+  onMustacheColorChange,
 }: GeneralSectionProps) {
   const [mode, setMode] = useState<DispatchMode>(defaultMode);
   const [phase, setPhase] = useState<WorkPhase>(defaultPhase);
@@ -72,6 +78,33 @@ export function GeneralSection({
             Light
           </button>
         </div>
+        <SettingsRow
+          label="Baffetti"
+          hint="Tints the brand mark, borders and dividers — master color plus two intensity variants."
+        >
+          <div className="baffetti-swatches" role="group" aria-label="Baffetti color">
+            {BAFFETTI_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`baffetti-swatch${mustacheColor === p.color ? " active" : ""}`}
+                title={p.label}
+                aria-label={p.label}
+                aria-pressed={mustacheColor === p.color}
+                style={{ background: p.color }}
+                onClick={() => onMustacheColorChange(p.color)}
+              />
+            ))}
+            <input
+              type="color"
+              className="baffetti-custom"
+              aria-label="Custom baffetti color"
+              title="Custom"
+              value={mustacheColor}
+              onChange={(e) => onMustacheColorChange(e.target.value)}
+            />
+          </div>
+        </SettingsRow>
       </SettingsCard>
 
       <SettingsCard

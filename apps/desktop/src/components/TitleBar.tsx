@@ -3,7 +3,6 @@
  */
 import { useCallback, useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import zelariLogo from "../assets/zelari-logo.png";
 import { openOrFocusOverlay } from "../overlayWindow";
 
 export function TitleBar() {
@@ -65,7 +64,7 @@ export function TitleBar() {
     <header className="titlebar" data-tauri-drag-region>
       <div className="titlebar-brand" data-tauri-drag-region>
         <div className="brand-mark titlebar-logo" aria-hidden>
-          <img src={zelariLogo} alt="" className="brand-logo" />
+          <div className="brand-logo" />
         </div>
         <span className="titlebar-app-name">Zelari Desktop</span>
       </div>

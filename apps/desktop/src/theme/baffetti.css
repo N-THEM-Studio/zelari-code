@@ -1,0 +1,74 @@
+/*
+ * Baffetti theme — brand mark tint + border/divider tint.
+ * The logo PNG becomes a mask; the fill is a 3-tone gradient
+ * (strong -> master -> soft) driven by the --baffo-* vars set in JS.
+ * The same variants drive the global --border / --border-subtle /
+ * --glass-border tokens (see App.css): strong -> borders, soft ->
+ * subtle dividers. Other accent surfaces keep --accent.
+ */
+:root {
+  --baffo-master: #d8d8dc;
+  --baffo-strong: #87878d;
+  --baffo-soft: #eaeaf1;
+  --baffo-glow: rgba(216, 216, 220, 0.38);
+}
+
+.brand-logo {
+  background: linear-gradient(
+    155deg,
+    var(--baffo-strong) 0%,
+    var(--baffo-master) 48%,
+    var(--baffo-soft) 100%
+  );
+  -webkit-mask: url("../assets/zelari-logo.png") center / contain no-repeat;
+  mask: url("../assets/zelari-logo.png") center / contain no-repeat;
+}
+
+/* Settings swatches */
+.baffetti-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.baffetti-swatch {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  padding: 0;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+
+.baffetti-swatch:hover {
+  transform: translateY(-1px);
+}
+
+.baffetti-swatch.active {
+  box-shadow:
+    0 0 0 2px var(--bg, #101014),
+    0 0 0 4px var(--baffo-master),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.baffetti-custom {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px dashed rgba(255, 255, 255, 0.25);
+  border-radius: 8px;
+  background: transparent;
+  cursor: pointer;
+}
+
+.baffetti-custom::-webkit-color-swatch-wrapper {
+  padding: 2px;
+}
+
+.baffetti-custom::-webkit-color-swatch {
+  border: none;
+  border-radius: 5px;
+}

@@ -4,6 +4,8 @@
  * Persisted in localStorage so Settings and the composer stay in lockstep.
  * Pure helpers - unit-tested under tests/unit/desktop-prefs.test.ts.
  */
+import { DEFAULT_MUSTACHE_COLOR, normalizeMustacheColor } from "./theme/baffetti";
+
 export const DESKTOP_PREFS_KEY = "zelari-desktop-prefs-v2";
 
 export const EXECUTION_PROFILES = [
@@ -66,6 +68,8 @@ export interface DesktopPrefs {
   gardenerIntervalMin: number;
   /** Per-run mission budget cap in USD (normalized to [0.5, 20]). */
   gardenerMaxCostUsd: number;
+  /** Baffetti (brand mark) master color — #rrggbb; two intensity variants derive from it. */
+  mustacheColor: string;
 }
 
 export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
@@ -88,6 +92,7 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   gardenerEnabled: false,
   gardenerIntervalMin: 30,
   gardenerMaxCostUsd: 2,
+  mustacheColor: DEFAULT_MUSTACHE_COLOR,
 };
 
 export function isExecutionProfile(value: unknown): value is ExecutionProfile {
@@ -224,6 +229,7 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
     gardenerEnabled: r.gardenerEnabled === true,
     gardenerIntervalMin: normalizeGardenerInterval(r.gardenerIntervalMin),
     gardenerMaxCostUsd: normalizeGardenerMaxCost(r.gardenerMaxCostUsd),
+    mustacheColor: normalizeMustacheColor(r.mustacheColor),
   };
 }
 

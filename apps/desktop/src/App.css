@@ -23,8 +23,8 @@
   --sidebar: rgba(14, 14, 16, 0.78);
   --surface: rgba(255, 255, 255, 0.055);
   --surface-hover: rgba(255, 255, 255, 0.1);
-  --border: rgba(255, 255, 255, 0.12);
-  --border-subtle: rgba(255, 255, 255, 0.08);
+  --border: color-mix(in srgb, var(--baffo-strong) 30%, transparent);
+  --border-subtle: color-mix(in srgb, var(--baffo-soft) 15%, transparent);
   --text: rgba(255, 255, 255, 0.94);
   --text-secondary: rgba(255, 255, 255, 0.58);
   --text-muted: rgba(255, 255, 255, 0.38);
@@ -45,7 +45,7 @@
   --update: #6bcf8e;
   --update-fg: #0a1f12;
   --warning: #d4a85a;
-  --glass-border: rgba(255, 255, 255, 0.14);
+  --glass-border: color-mix(in srgb, var(--baffo-soft) 22%, transparent);
   --glass-fill-a: rgba(255, 255, 255, 0.1);
   --glass-fill-b: rgba(255, 255, 255, 0.03);
   --glass-fill-c: rgba(255, 255, 255, 0.06);
@@ -107,8 +107,8 @@
   --sidebar: rgba(250, 250, 252, 0.88);
   --surface: rgba(0, 0, 0, 0.04);
   --surface-hover: rgba(0, 0, 0, 0.07);
-  --border: rgba(0, 0, 0, 0.1);
-  --border-subtle: rgba(0, 0, 0, 0.06);
+  --border: color-mix(in srgb, color-mix(in srgb, var(--baffo-strong) 50%, #0d0d10) 20%, transparent);
+  --border-subtle: color-mix(in srgb, color-mix(in srgb, var(--baffo-strong) 50%, #0d0d10) 10%, transparent);
   --text: rgba(12, 12, 14, 0.92);
   --text-secondary: rgba(40, 40, 46, 0.68);
   --text-muted: rgba(60, 60, 68, 0.48);
@@ -128,7 +128,7 @@
   --update: #2a9a58;
   --update-fg: #052e16;
   --warning: #b07820;
-  --glass-border: rgba(255, 255, 255, 0.65);
+  --glass-border: color-mix(in srgb, var(--baffo-soft) 70%, transparent);
   --glass-fill-a: rgba(255, 255, 255, 0.78);
   --glass-fill-b: rgba(255, 255, 255, 0.48);
   --glass-fill-c: rgba(255, 255, 255, 0.62);
@@ -342,7 +342,7 @@ button {
 
 .glass-lite {
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--border-subtle);
   border-radius: 16px;
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
@@ -478,7 +478,7 @@ button {
   );
   -webkit-backdrop-filter: blur(28px) saturate(160%);
   backdrop-filter: blur(28px) saturate(160%);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
@@ -520,7 +520,7 @@ button {
   overflow: hidden;
   flex-shrink: 0;
   box-shadow:
-    0 0 0 1px color-mix(in srgb, var(--accent-2) 25%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--baffo-master) 30%, transparent),
     0 6px 18px rgba(0, 0, 0, 0.35);
 }
 
@@ -537,8 +537,8 @@ button {
   height: 64px;
   border-radius: 18px;
   box-shadow:
-    0 18px 44px color-mix(in srgb, var(--accent) 35%, transparent),
-    0 0 0 1px color-mix(in srgb, var(--accent-2) 30%, transparent),
+    0 18px 44px var(--baffo-glow),
+    0 0 0 1px color-mix(in srgb, var(--baffo-master) 35%, transparent),
     inset 0 1px 0 rgba(255, 255, 255, 0.25);
 }
 
@@ -574,7 +574,7 @@ button {
   border-radius: 14px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: var(--on-accent);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   font-weight: 600;
   font-size: 13.5px;
   box-shadow:
@@ -722,7 +722,7 @@ button {
 }
 
 .sidebar-foot {
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-top: 1px solid var(--border-subtle);
   padding: 10px 12px 12px;
   display: flex;
   flex-direction: column;
@@ -736,7 +736,7 @@ button {
   padding: 8px 10px;
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--border-subtle);
   font-size: 11.5px;
   color: var(--text-secondary);
   line-height: 1.35;
@@ -791,7 +791,7 @@ button {
   );
   -webkit-backdrop-filter: blur(32px) saturate(180%);
   backdrop-filter: blur(32px) saturate(180%);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border);
   box-shadow:
     0 16px 48px rgba(0, 0, 0, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.16);
@@ -910,7 +910,7 @@ button {
   padding: 4px;
   border-radius: 99px;
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   gap: 2px;
 }
 
@@ -1049,7 +1049,7 @@ button {
   flex-shrink: 0;
   color: var(--text);
   background: rgba(255, 255, 255, 0.1);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2);
 }
 
@@ -1180,7 +1180,7 @@ button {
   margin-top: 14px;
   padding: 14px 16px;
   border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border);
   background: linear-gradient(
     145deg,
     rgba(255, 255, 255, 0.1),
@@ -1228,7 +1228,7 @@ button {
   text-align: left;
   padding: 11px 14px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   font-size: 13.5px;
@@ -1275,7 +1275,7 @@ button {
   align-items: center;
   padding: 0 8px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border);
   background: rgba(255, 255, 255, 0.05);
   font-size: 11.5px;
   line-height: 1.7;
@@ -1321,7 +1321,7 @@ button {
   margin-top: 6px;
   padding: 1px 9px;
   max-width: 100%;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.04);
   font-size: 11.5px;
@@ -1884,7 +1884,7 @@ button {
   text-align: left;
   padding: 14px 16px;
   border-radius: 16px;
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--border-subtle);
   background: rgba(255, 255, 255, 0.05);
   color: var(--text-secondary);
   font-size: 13.5px;
@@ -2017,7 +2017,7 @@ button {
 .tool-card {
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--border-subtle);
   border-left: 3px solid var(--accent);
   padding: 8px 12px;
   min-width: 0;
@@ -2080,7 +2080,7 @@ button {
   width: 11px;
   height: 11px;
   border-radius: 50%;
-  border: 1.5px solid rgba(255, 255, 255, 0.15);
+  border: 1.5px solid var(--border);
   border-top-color: var(--accent);
   animation: tool-spin 0.7s linear infinite;
 }
@@ -2225,7 +2225,7 @@ button {
   padding: 14px 16px;
   border-radius: 14px;
   background: rgba(3, 6, 16, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   overflow-x: auto;
   font-family: var(--mono);
   font-size: 13px;
@@ -2326,7 +2326,7 @@ button {
     rgba(255, 255, 255, 0.08),
     rgba(255, 255, 255, 0.03)
   );
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   -webkit-backdrop-filter: blur(20px) saturate(160%);
   backdrop-filter: blur(20px) saturate(160%);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.28);
@@ -2476,7 +2476,7 @@ button {
     rgba(255, 255, 255, 0.07),
     rgba(255, 255, 255, 0.025)
   );
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
   overflow: hidden;
@@ -2596,7 +2596,7 @@ button {
   padding: 2px 8px;
   border-radius: 99px;
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-subtle);
 }
 
 .app[data-theme="light"] .reply-stats span {
@@ -2637,7 +2637,7 @@ button {
   padding: 14px 16px;
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--border-subtle);
   max-width: 320px;
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
@@ -2803,7 +2803,7 @@ button {
   padding: 6px 8px 6px 10px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.07);
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--border);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
 }
@@ -3038,7 +3038,7 @@ button {
 .btn-send {
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
   color: var(--on-accent);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border);
   box-shadow:
     0 4px 14px rgba(0, 0, 0, 0.28),
     inset 0 1px 0 rgba(255, 255, 255, 0.4);
@@ -3208,7 +3208,7 @@ button {
   padding: 3px;
   border-radius: 99px;
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   gap: 1px;
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
@@ -3285,7 +3285,7 @@ button {
   padding: 3px;
   border-radius: 12px;
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   gap: 2px;
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
@@ -4377,7 +4377,7 @@ kbd {
   margin: 8px 12px 0;
   padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   background: linear-gradient(
     160deg,
     rgba(255, 220, 100, 0.08),
@@ -4488,7 +4488,7 @@ kbd {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 1px solid var(--border);
   background: linear-gradient(
     160deg,
     rgba(255, 255, 255, 0.08),
@@ -4512,7 +4512,7 @@ kbd {
   padding: 3px;
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   gap: 2px;
   flex-shrink: 0;
 }
@@ -4730,7 +4730,7 @@ kbd {
   align-items: center;
   gap: 6px;
   padding: 10px 10px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--border-subtle);
   min-width: 0;
 }
 
@@ -4755,7 +4755,7 @@ kbd {
   padding: 3px 8px;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border-subtle);
 }
 
 .git-muted {
@@ -4818,11 +4818,11 @@ kbd {
 
 .git-file-list li:hover {
   background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.08);
+  border-color: var(--border-subtle);
 }
 
 .git-file-list li.untracked {
-  border-color: rgba(255, 255, 255, 0.04);
+  border-color: var(--border-subtle);
 }
 
 .git-file-path {
@@ -4985,7 +4985,7 @@ kbd {
   top: 8px;
   right: 8px;
   background: rgba(3, 6, 16, 0.55);
-  border-color: rgba(255, 255, 255, 0.12);
+  border-color: var(--border);
 }
 
 .md-code-wrap .code-copy:hover {
@@ -6540,8 +6540,8 @@ kbd {
   --sidebar: #0a0a0b;
   --surface: rgba(255, 255, 255, 0.04);
   --surface-hover: rgba(255, 255, 255, 0.08);
-  --border: rgba(255, 255, 255, 0.08);
-  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border: color-mix(in srgb, var(--baffo-strong) 20%, transparent);
+  --border-subtle: color-mix(in srgb, var(--baffo-soft) 10%, transparent);
   --text-secondary: rgba(255, 255, 255, 0.62);
   --text-muted: rgba(255, 255, 255, 0.42);
   --accent: #e4e4e7;
@@ -6572,13 +6572,13 @@ kbd {
                                    
 .topbar {
   background: rgba(15, 15, 20, 0.82);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
   border-radius: 14px;
   backdrop-filter: blur(14px);
 }
 .model-chip {
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.07);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
 }
 .topbar .seg-toggle {
@@ -6586,7 +6586,7 @@ kbd {
   gap: 4px;
   padding: 3px;
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
 }
 .topbar .seg-toggle button {
@@ -6611,7 +6611,7 @@ kbd {
 }
 .topbar .btn-ghost.topbar-folder {
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
   color: var(--text-secondary);
 }
@@ -6619,7 +6619,7 @@ kbd {
                                                        
 .sidebar {
   background: linear-gradient(180deg, #0c0c12 0%, #0a0a10 100%);
-  border-right: 1px solid rgba(255, 255, 255, 0.05);
+  border-right: 1px solid var(--border-subtle);
 }
 .btn-new {
   background: var(--surface);
@@ -6639,7 +6639,7 @@ kbd {
   gap: 4px;
   padding: 3px;
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
 }
 .session-filter button {
@@ -6831,7 +6831,7 @@ kbd {
                                                                     
 .git-panel.project-panel {
   background: linear-gradient(180deg, #0c0c12 0%, #0a0a10 100%);
-  border-left: 1px solid rgba(255, 255, 255, 0.05);
+  border-left: 1px solid var(--border-subtle);
 }
 @media (min-width: 961px) {
   .git-panel.project-panel:not(.collapsed) {
@@ -6844,7 +6844,7 @@ kbd {
   gap: 4px;
   padding: 3px;
   background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-subtle);
   border-radius: 10px;
 }
 .project-tab {
@@ -7020,7 +7020,7 @@ kbd {
   display: grid;
   place-items: center;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  border: 1px solid var(--border);
   background: linear-gradient(
     160deg,
     rgba(255, 220, 100, 0.12),
