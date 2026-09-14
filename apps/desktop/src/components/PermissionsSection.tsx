@@ -31,7 +31,7 @@ export function PermissionsSection({ prefs, onPrefsChange }: Props) {
   return (
     <SettingsCard
       title="Tool permissions"
-      description="Applies to every agent run from this window (per-turn, sidecar-wide). Unknown presets fall back to standard — the sidecar stays fail-closed."
+      description="Applies per turn to runs from this window — set for the turn, then cleared (never sidecar-wide). Unknown presets fall back to standard — the sidecar stays fail-closed."
     >
       <SettingsRow label="Preset">
         <SelectInput

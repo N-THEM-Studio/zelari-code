@@ -52,6 +52,20 @@ export function runWithSession<T>(sessionId: string, fn: () => T): T {
 }
 
 /**
+ * The harness sessionId of the current dispatch context, when the call
+ * chain runs under `runWithSession` (serve mode). Undefined elsewhere
+ * (plain `--headless`, TUI, early boot) — callers treat undefined as
+ * "no session scope" and keep process-global behavior.
+ *
+ * t59 (chat isolation): the permission/ask-user bridges stamp this id on
+ * `permission.request` / `ask_user.request` events so the Desktop
+ * sidecar can route asks to the owning chat instead of broadcasting.
+ */
+export function getCurrentHarnessSessionId(): string | undefined {
+  return dispatchContext.getStore()?.sessionId;
+}
+
+/**
  * A serve-mode turn (runOneTurn / council / zelari) registers the per-turn
  * control surface. Returns
  * the unregister fn (identity-guarded, safe across back-to-back turns on

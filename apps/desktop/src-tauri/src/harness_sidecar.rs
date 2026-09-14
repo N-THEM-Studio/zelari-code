@@ -21,12 +21,14 @@
 //! spine→run map. Resumed runs pre-bind (resumeSessionId is known up front).
 //! Fresh runs bind on their `session_started`: a startup slot serializes the
 //! tiny pre-spine window so at most ONE fresh run is "awaiting" at a time,
-//! making the bind deterministic. sessionId-less lines (early MCP setup
-//! logs, control acks) go to the single active run when unambiguous,
-//! otherwise they are broadcast to all active runs: duplicated setup logs
-//! are cosmetic, a dropped error would not be. This is the documented
-//! residue of the 1:1 mapping — the harness protocol stamps events with the
-//! spine id, not with the harness session id.
+//! making the bind deterministic. Routing is ISOLATED per chat (Fix B, t60):
+//! a line carrying a mapped spine `sessionId` goes to that run's sink ONLY;
+//! a spine id we cannot map, or a SEMANTIC agent-event with no spine id, is
+//! DROPPED with a diagnostic while ≥2 sinks are live — never broadcast (that
+//! is the cross-chat leak: every copy would be relabelled with the receiving
+//! run's conversationId). Only cosmetic lines (early MCP setup `log`, control
+//! acks) are still broadcast: duplication there is harmless. The single-sink
+//! window stays direct as before — with one run there is no cross-chat hazard.
 //!
 //! Conversation identity (M2, cross-talk fix): the routing tables above only
 //! say WHICH RUN gets a line. The desktop also needs to know which CHAT that
@@ -126,6 +128,33 @@ pub(crate) fn interpret_harness_state(event: &Value) -> Option<HarnessStateEvent
             .map(str::to_string),
         state: event.clone(),
     })
+}
+
+/// Semantic agent-event classifier (Fix B, t60). These types describe a
+/// SPECIFIC chat's agent activity — assistant text/deltas, tool calls, asks,
+/// session lifecycle, run errors — so they must NEVER fan out to more than
+/// one sink (a duplicated semantic event is the cross-chat leak this guard
+/// closes). Everything else (early MCP setup `log`, control acks,
+/// `protocol_info`) is cosmetic: duplication is harmless and stays
+/// broadcastable in the multi-run window.
+pub(crate) fn is_semantic_agent_event(kind: &str) -> bool {
+    matches!(
+        kind,
+        "permission.request"
+            | "permission.settled"
+            | "ask_user.request"
+            | "ask_user.settled"
+            | "session_started"
+            | "harness_state"
+            | "error"
+    ) || kind.starts_with("assistant")
+        || kind.starts_with("message_")
+        || kind.starts_with("tool")
+        || kind.starts_with("turn")
+        || kind.starts_with("agent")
+        || kind.starts_with("task_")
+        || kind.starts_with("session_")
+        || kind.starts_with("error")
 }
 
 /// Bounded wait for the `protocol_info` boot line after spawn.
@@ -320,6 +349,14 @@ pub(crate) struct HarnessSidecar {
     run_conversations: Mutex<HashMap<String, String>>,
     /// run_id → live BrainEvent sink (the run thread forwards to the UI).
     sinks: Mutex<HashMap<String, Sender<Value>>>,
+    /// requestId → spine sessionId of a LIVE ask (Fix B, t60). Learned from
+    /// the `permission.request` / `ask_user.request` events that carry the
+    /// emitter spine id (Fix A) and removed on the matching `*.settled`.
+    /// Consulted by the respond path so an answer is scoped to the ONE
+    /// session that raised the ask (`permission.respond`/`ask_user.respond`
+    /// echo it back in params; a mismatch is rejected CLI-side as
+    /// `session_mismatch`).
+    ask_sessions: Mutex<HashMap<String, String>>,
     /// run_id → last NDJSON event received for that run (ms since
     /// UNIX_EPOCH). The reader stamps it on every routed/broadcast event
     /// line (any type); long_turn's idle watchdog reads it.
@@ -350,6 +387,7 @@ impl HarnessSidecar {
             run_sessions: Mutex::new(HashMap::new()),
             run_conversations: Mutex::new(HashMap::new()),
             sinks: Mutex::new(HashMap::new()),
+            ask_sessions: Mutex::new(HashMap::new()),
             run_activity: Mutex::new(HashMap::new()),
             awaiting_spine: Mutex::new(Vec::new()),
             bind_notify: Mutex::new(HashMap::new()),
@@ -697,18 +735,34 @@ impl HarnessSidecar {
         }
     }
 
+    /// respond path so an answer is scoped to the ONE session that raised the
+    /// ask (`permission.respond`/`ask_user.respond` echo it back in params; a
+    /// mismatch is rejected CLI-side as `session_mismatch`).
+    fn ask_session_of(&self, request_id: &str) -> Option<String> {
+        self.ask_sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(request_id)
+            .cloned()
+    }
+
     pub(crate) fn send_permission_respond(&self, request_id: &str, decision: &str) {
-        self.send_host_respond(
-            "permission.respond",
-            json!({ "requestId": request_id, "decision": decision }),
-        );
+        let mut params = json!({ "requestId": request_id, "decision": decision });
+        // Fix B (t60): scope the answer to the session that raised the ask so
+        // a respond from ANOTHER chat cannot settle this requestId (the CLI
+        // rejects a mismatched sessionId as `session_mismatch`).
+        if let Some(sid) = self.ask_session_of(request_id) {
+            params["sessionId"] = json!(sid);
+        }
+        self.send_host_respond("permission.respond", params);
     }
 
     pub(crate) fn send_ask_user_respond(&self, request_id: &str, answer: Option<&str>) {
-        self.send_host_respond(
-            "ask_user.respond",
-            json!({ "requestId": request_id, "answer": answer }),
-        );
+        let mut params = json!({ "requestId": request_id, "answer": answer });
+        if let Some(sid) = self.ask_session_of(request_id) {
+            params["sessionId"] = json!(sid);
+        }
+        self.send_host_respond("ask_user.respond", params);
     }
 
     fn write_request(&self, method: &str, params: Value) -> Result<InFlight, HarnessError> {
@@ -1181,7 +1235,51 @@ impl HarnessSidecar {
         }
     }
 
+    /// Track requestId → spine sessionId for LIVE asks (Fix B, t60). Fix A
+    /// stamps `permission.request` / `ask_user.request` with the emitter spine
+    /// id; recording it here is what lets the respond path scope an answer to
+    /// the single session that raised the ask. The matching `*.settled`
+    /// removes the entry.
+    fn track_ask_session(&self, event: &Value) {
+        let request_id = match event.get("requestId").and_then(|r| r.as_str()) {
+            Some(r) if !r.is_empty() => r.to_string(),
+            _ => return,
+        };
+        match event.get("type").and_then(|t| t.as_str()) {
+            Some("permission.request") | Some("ask_user.request") => {
+                if let Some(sid) = event
+                    .get("sessionId")
+                    .and_then(|s| s.as_str())
+                    .filter(|s| !s.is_empty())
+                {
+                    self.ask_sessions
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .insert(request_id, sid.to_string());
+                }
+            }
+            Some("permission.settled") | Some("ask_user.settled") => {
+                self.ask_sessions
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .remove(&request_id);
+            }
+            _ => {}
+        }
+    }
+
+    /// The single live sink's run_id, or `None` when 0 or ≥2 sinks are live.
+    fn sole_sink(&self) -> Option<String> {
+        let sinks = self.sinks.lock().unwrap_or_else(|e| e.into_inner());
+        if sinks.len() == 1 {
+            sinks.keys().next().cloned()
+        } else {
+            None
+        }
+    }
+
     fn route_event(&self, event: Value) {
+        self.track_ask_session(&event);
         let spine_id = event
             .get("sessionId")
             .and_then(|s| s.as_str())
@@ -1222,28 +1320,42 @@ impl HarnessSidecar {
                     let _ = tx.send(());
                 }
                 self.send_to_run(&run_id, event);
+            } else if let Some(run_id) = self.sole_sink() {
+                // Single live run whose spine id is not (yet) mapped: no
+                // isolation hazard — the sole run is the only plausible owner
+                // — so keep the historical direct delivery.
+                self.send_to_run(&run_id, event);
             } else {
-                // Ambiguous window (slot timed out / cancel skip) or no
-                // awaiting run: broadcast WITHOUT binding. A mis-bound spine
-                // id would corrupt the desktop's resume chain (wrong session
-                // log); a duplicated session_started line is only cosmetic.
-                self.broadcast(event);
+                // Fix B (t60): a spine id we cannot map, with ≥2 live sinks,
+                // must NOT broadcast. Broadcasting would relabel this event
+                // with EACH receiving run's conversationId — the cross-chat
+                // leak. Drop it with a diagnostic instead.
+                eprintln!(
+                    "[harness-sidecar] dropping unmapped-sessionId event (sessionId={sid}): no run to route to"
+                );
             }
         } else {
-            // No sessionId (setup logs, control acks): single active run →
-            // it; multiple → broadcast. Visible duplication beats dropped
-            // errors (documented 1:1-mapping residue).
-            let single = {
-                let sinks = self.sinks.lock().unwrap_or_else(|e| e.into_inner());
-                if sinks.len() == 1 {
-                    sinks.keys().next().cloned()
-                } else {
-                    None
-                }
-            };
-            match single {
+            // No spine id. Cosmetic lines (early MCP `log`, control acks)
+            // still go to the single run when unambiguous, else broadcast
+            // (duplicated setup logs are harmless). Fix B (t60): SEMANTIC
+            // agent events must NEVER fan out across chats — with ≥2 sinks
+            // they are dropped, never relabelled into an unrelated chat.
+            match self.sole_sink() {
                 Some(run_id) => self.send_to_run(&run_id, event),
-                None => self.broadcast(event),
+                None => {
+                    let kind = event
+                        .get("type")
+                        .and_then(|t| t.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    if is_semantic_agent_event(&kind) {
+                        eprintln!(
+                            "[desktop] dropping semantic agent-event: no session routing (type={kind})"
+                        );
+                    } else {
+                        self.broadcast(event);
+                    }
+                }
             }
         }
     }
@@ -1570,5 +1682,149 @@ mod tests {
         assert_eq!(sidecar.last_harness_state(None), Some(event.clone()));
         assert_eq!(sidecar.last_harness_state(Some("sess-2")), Some(event));
         assert_eq!(sidecar.last_harness_state(Some("other")), None);
+    }
+
+    // --- Fix B (t60): chat-isolated routing --------------------------------
+
+    /// Build a sidecar with one live sink per run id, returning the receivers
+    /// (the per-run forward channels route_event pushes into).
+    fn sidecar_with_sinks(
+        runs: &[&str],
+    ) -> (HarnessSidecar, Vec<std::sync::mpsc::Receiver<serde_json::Value>>) {
+        let sidecar = HarnessSidecar::new();
+        let mut rxs = Vec::new();
+        {
+            let mut sinks = sidecar.sinks.lock().unwrap_or_else(|e| e.into_inner());
+            for run in runs {
+                let (tx, rx) = std::sync::mpsc::channel::<serde_json::Value>();
+                sinks.insert((*run).to_string(), tx);
+                rxs.push(rx);
+            }
+        }
+        (sidecar, rxs)
+    }
+
+    /// Pre-bind a spine session id to a run (what `session_started` does).
+    fn bind(sidecar: &HarnessSidecar, spine: &str, run: &str) {
+        sidecar
+            .spine_routes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(spine.to_string(), run.to_string());
+    }
+
+    #[test]
+    fn semantic_classifier_covers_agent_events_and_spares_cosmetics() {
+        for kind in [
+            "permission.request",
+            "permission.settled",
+            "ask_user.request",
+            "ask_user.settled",
+            "assistant",
+            "message_delta",
+            "tool_use",
+            "tool_execution_start",
+            "session_started",
+            "harness_state",
+            "agent_status",
+            "error",
+        ] {
+            assert!(is_semantic_agent_event(kind), "{kind} must be semantic");
+        }
+        for kind in ["log", "control_accepted", "protocol_info"] {
+            assert!(
+                !is_semantic_agent_event(kind),
+                "{kind} must stay broadcastable"
+            );
+        }
+    }
+
+    #[test]
+    fn route_event_session_id_targets_only_the_owning_sink() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        bind(&sidecar, "sess-a", "run-a");
+        let event = serde_json::json!({
+            "type": "permission.request",
+            "requestId": "perm-1",
+            "sessionId": "sess-a",
+        });
+        sidecar.route_event(event.clone());
+        assert_eq!(
+            rxs[0].try_recv().unwrap(),
+            event,
+            "the owning run receives the event"
+        );
+        assert!(
+            rxs[1].try_recv().is_err(),
+            "the other chat must NOT receive it (no cross-chat broadcast)"
+        );
+    }
+
+    #[test]
+    fn route_event_drops_semantic_event_without_session_id_across_two_sinks() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        sidecar.route_event(serde_json::json!({ "type": "assistant", "text": "hi" }));
+        assert!(rxs[0].try_recv().is_err(), "dropped, not broadcast");
+        assert!(rxs[1].try_recv().is_err(), "dropped, not broadcast");
+    }
+
+    #[test]
+    fn route_event_broadcasts_cosmetic_event_across_two_sinks() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        let event = serde_json::json!({ "type": "log", "message": "mcp ready" });
+        sidecar.route_event(event.clone());
+        assert_eq!(rxs[0].try_recv().unwrap(), event);
+        assert_eq!(rxs[1].try_recv().unwrap(), event);
+    }
+
+    #[test]
+    fn route_event_drops_unmapped_session_id_across_two_sinks() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        sidecar.route_event(serde_json::json!({
+            "type": "assistant",
+            "sessionId": "ghost",
+            "text": "x",
+        }));
+        assert!(rxs[0].try_recv().is_err());
+        assert!(rxs[1].try_recv().is_err());
+    }
+
+    #[test]
+    fn route_event_single_sink_stays_direct_without_session_id() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-only"]);
+        let event = serde_json::json!({ "type": "assistant", "text": "hi" });
+        sidecar.route_event(event.clone());
+        assert_eq!(rxs[0].try_recv().unwrap(), event);
+    }
+
+    #[test]
+    fn route_event_single_sink_delivers_unmapped_session_id() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-only"]);
+        let event = serde_json::json!({
+            "type": "assistant",
+            "sessionId": "ghost",
+            "text": "x",
+        });
+        sidecar.route_event(event.clone());
+        assert_eq!(rxs[0].try_recv().unwrap(), event);
+    }
+
+    #[test]
+    fn respond_session_is_tracked_from_request_and_cleared_on_settled() {
+        let (sidecar, _rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        bind(&sidecar, "sess-a", "run-a");
+        sidecar.route_event(serde_json::json!({
+            "type": "permission.request",
+            "requestId": "perm-9",
+            "sessionId": "sess-a",
+            "tool": "bash",
+        }));
+        assert_eq!(sidecar.ask_session_of("perm-9").as_deref(), Some("sess-a"));
+        sidecar.route_event(serde_json::json!({
+            "type": "permission.settled",
+            "requestId": "perm-9",
+            "sessionId": "sess-a",
+        }));
+        assert_eq!(sidecar.ask_session_of("perm-9"), None);
     }
 }

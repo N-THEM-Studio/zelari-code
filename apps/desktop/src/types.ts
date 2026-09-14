@@ -336,12 +336,16 @@ export type AgentEvent =
       categories?: string[];
       inputPreview?: string;
       reason?: string;
+      /** Spine session that raised the ask (t59) — lets the UI and the
+       * respond path scope the dialog to the owning chat. */
+      sessionId?: string;
     }
   | {
       type: "permission.settled";
       requestId?: string;
       decision?: string;
       timedOut?: boolean;
+      sessionId?: string;
     }
   | {
       type: "ask_user.request";
@@ -349,12 +353,14 @@ export type AgentEvent =
       question?: string;
       choices?: string[];
       context?: string;
+      sessionId?: string;
     }
   | {
       type: "ask_user.settled";
       requestId?: string;
       answer?: string | null;
       timedOut?: boolean;
+      sessionId?: string;
     }
   | { type: "protocol_info"; version?: number; capabilities?: string[] }
   | { type: "control_accepted"; controlId?: string; controlType?: string }

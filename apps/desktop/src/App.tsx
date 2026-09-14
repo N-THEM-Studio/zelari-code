@@ -166,10 +166,11 @@ import type {
   SessionFilter,
   WorkPhase,
 } from "./types";
-import zelariLogo from "./assets/zelari-logo.png";
 import { checkForDesktopUpdate } from "./updater";
 import { useSpeechToText } from "./hooks/useSpeechToText";
+import { applyBaffettiTheme } from "./theme/baffetti";
 import "./App.css";
+import "./theme/baffetti.css";
 
 const SUGGESTIONS = [
   "Explain the architecture of this repo in plain language",
@@ -624,6 +625,11 @@ export default function App() {
     Record<string, boolean>
   >({});
   const [prefs, setPrefs] = useState<DesktopPrefs>(() => loadPrefs());
+
+  // Baffetti theme: master color + two intensity variants, scoped to the brand mark.
+  useEffect(() => {
+    applyBaffettiTheme(prefs.mustacheColor);
+  }, [prefs.mustacheColor]);
   const [liveMemberNameByConv, setLiveMemberNameByConv] = useState<
     Record<string, string | null>
   >({});
@@ -3583,7 +3589,7 @@ export default function App() {
             {empty && !running ? (
               <div className="empty-state">
                 <div className="brand-mark lg" aria-hidden>
-                  <img src={zelariLogo} alt="Zelari" className="brand-logo" />
+                  <div className="brand-logo" role="img" aria-label="Zelari" />
                 </div>
                 <h1>What should we build?</h1>
                 <p>
@@ -4181,6 +4187,7 @@ export default function App() {
           <KrakenContextPanel
             live={liveCtx}
             progress={krakenCard?.progress ?? null}
+            sessionId={active?.sessionId ?? null}
           />
           <div className="composer-hint">
             {/* experimental/cursor-learn 2.4 — when the next Enter would

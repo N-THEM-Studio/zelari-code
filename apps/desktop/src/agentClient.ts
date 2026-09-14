@@ -722,6 +722,11 @@ export async function onSidecarLog(
 }
 
 export interface HarnessStatePayload {
+  /**
+   * Spine session id the state belongs to (Fix E, t62). Kept — never
+   * dropped — so the webview can key the context meter per conversation;
+   * `null` when the sidecar could not attribute the event.
+   */
   sessionId: string | null;
   state: unknown;
 }
@@ -730,6 +735,8 @@ export interface HarnessStatePayload {
  * Advisory `harness-state` event from the harness sidecar: the relayed
  * final NDJSON `harness_state` read-model (ADR-0023) of the last turn.
  * Missing/malformed payloads normalize to an empty view — never an error.
+ * The `sessionId` is delivered verbatim and is the per-conversation routing
+ * key useHarnessState keys on (Fix E, t62).
  */
 export async function onHarnessState(
   handler: (payload: HarnessStatePayload) => void,

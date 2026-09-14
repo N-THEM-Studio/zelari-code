@@ -5,6 +5,7 @@ import {
   isSessionGranted,
   type PermissionAskHandler,
 } from '../safety/toolPermissions.js';
+import { getCurrentHarnessSessionId } from './sessionControl.js';
 
 /**
  * Serve-harness permission bridge (Pilastro B, desktop parity slice).
@@ -79,13 +80,29 @@ interface PendingAsk {
   resolve: (decision: PermissionDecision) => void;
   timer: ReturnType<typeof setTimeout>;
   payload: PermissionAskPayload;
+  /**
+   * Harness session the ask was raised in (t59): stamped on the wire
+   * events and used to scope `permission.respond` so one chat can never
+   * settle another chat's dialog.
+   */
+  sessionId?: string;
 }
 
 export interface ServePermissionBridge {
   /** Registry-compatible ask handler: emits a request event and waits. */
   onPermissionAsk: (payload: PermissionAskPayload) => Promise<PermissionDecision>;
-  /** Resolve a pending request (idempotent: unknown ids are a no-op). */
-  respond: (requestId: string, decision: PermissionDecision) => boolean;
+  /**
+   * Resolve a pending request (idempotent: unknown ids are a no-op).
+   * `scopeSessionId` (t59): when the host answer carries a session id,
+   * it may only settle an ask raised in THAT session.
+   */
+  respond: (
+    requestId: string,
+    decision: PermissionDecision,
+    scopeSessionId?: string,
+  ) => boolean;
+  /** Session a pending request belongs to (undefined = unscoped/legacy). */
+  sessionOf: (requestId: string) => string | undefined;
   /**
    * After a session grant, allow any in-flight asks now covered so the
    * user is not asked 3× for the same category (parallel tentacle spawns).
@@ -116,6 +133,7 @@ export function createServePermissionBridge(
         type: 'permission.settled',
         requestId,
         decision,
+        ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
         ...(timedOut ? { timedOut: true } : {}),
       }),
     );
@@ -137,11 +155,15 @@ export function createServePermissionBridge(
           // Fail-closed: no host answer in time ⇒ deny, never allow.
           settle(requestId, 'deny', true);
         }, timeoutMs);
-        pending.set(requestId, { resolve, timer, payload });
+        // t59: stamp the owning harness session so the Desktop sidecar can
+        // direct-route the ask instead of broadcasting it to every chat.
+        const sessionId = getCurrentHarnessSessionId();
+        pending.set(requestId, { resolve, timer, payload, sessionId });
         write(
           JSON.stringify({
             type: 'permission.request',
             requestId,
+            ...(sessionId ? { sessionId } : {}),
             tool: payload.tool,
             category: payload.category,
             categories,
@@ -151,7 +173,17 @@ export function createServePermissionBridge(
         );
       });
     },
-    respond: (requestId, decision) => settle(requestId, decision, false),
+    respond: (requestId, decision, scopeSessionId) => {
+      const entry = pending.get(requestId);
+      // t59 scoping: a scoped respond may only settle an ask raised in
+      // THAT session (unscoped legacy asks included — a scoped answer to
+      // an unscoped ask has no legitimate producer and is rejected).
+      if (entry && scopeSessionId && entry.sessionId !== scopeSessionId) {
+        return false;
+      }
+      return settle(requestId, decision, false);
+    },
+    sessionOf: (requestId) => pending.get(requestId)?.sessionId,
     releaseGranted() {
       let n = 0;
       for (const [id, entry] of [...pending]) {
@@ -162,7 +194,7 @@ export function createServePermissionBridge(
               ? entry.payload.category.split(',').map((c) => c.trim()).filter(Boolean)
               : []
         ) as ToolPermission[];
-        if (isSessionGranted(entry.payload.tool, cats)) {
+        if (isSessionGranted(entry.payload.tool, cats, entry.sessionId)) {
           if (settle(id, 'allow', false)) n += 1;
         }
       }
@@ -185,7 +217,7 @@ export function servePermissionRespond(
   if (!params || typeof params !== 'object') {
     return { accepted: false, reason: 'permission.respond requires an object params' };
   }
-  const { requestId, decision } = params as Record<string, unknown>;
+  const { requestId, decision, sessionId } = params as Record<string, unknown>;
   if (typeof requestId !== 'string' || requestId.length === 0) {
     return { accepted: false, reason: 'permission.respond requires a non-empty string requestId' };
   }
@@ -196,7 +228,17 @@ export function servePermissionRespond(
         "permission.respond decision must be 'allow' | 'deny' | 'always-tool' | 'always-category'",
     };
   }
-  return { accepted: bridge.respond(requestId, decision) };
+  // t59: optional session scope — a host that knows which chat is
+  // answering may only settle that chat's ask. An ask with NO session
+  // (legacy CLI) rejects a scoped respond too: the only producer of a
+  // scope is a host that registered the ask under a session, so a
+  // scope-on-unscoped-ask is a bug or a spoofing attempt. Legacy hosts
+  // (no id) keep the unscoped behavior on every ask.
+  const scope = typeof sessionId === 'string' && sessionId.length > 0 ? sessionId : undefined;
+  if (scope && bridge.sessionOf(requestId) !== scope) {
+    return { accepted: false, reason: 'session_mismatch: requestId belongs to another session' };
+  }
+  return { accepted: bridge.respond(requestId, decision, scope) };
 }
 
 /**
@@ -220,14 +262,17 @@ export function asRegistryAskHandler(bridge: ServePermissionBridge): PermissionA
         : {}),
     });
     if (decision === 'deny') return false;
+    // t61: "always" grants land in the ASKING session's bucket, never the
+    // process-global one — chat B must re-approve for its own workspace.
+    const sessionId = getCurrentHarnessSessionId();
     if (decision === 'always-tool') {
-      grantSessionTool(req.toolName);
+      grantSessionTool(req.toolName, sessionId);
       bridge.releaseGranted();
     } else if (decision === 'always-category') {
       for (const cat of req.categories) {
-        grantSessionCategory(cat as ToolPermission);
+        grantSessionCategory(cat as ToolPermission, sessionId);
       }
-      grantSessionTool(req.toolName);
+      grantSessionTool(req.toolName, sessionId);
       bridge.releaseGranted();
     }
     return true;

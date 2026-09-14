@@ -77,12 +77,21 @@ import {
   createServePermissionBridge,
   servePermissionRespond,
 } from './permissionBridge.js';
+import { clearSessionPermissionGrants } from '../safety/toolPermissions.js';
 import {
   createServeAskUserBridge,
   serveAskUserRespond,
 } from './askUserBridge.js';
 import type { AskUserHandler } from '../tools/askUser.js';
 import { sweepOrphanSpineLocks } from './spineLockSweep.js';
+
+/**
+ * Env key backing the per-turn permission preset. Mirrors the private
+ * `PRESET_ENV` in permissionBridge.ts (which owns the allowlist); Fix D (t62)
+ * saves/restores this around each turn so the preset is a finite window, not
+ * sidecar-wide state.
+ */
+const PRESET_ENV = 'ZELARI_PERMISSION_PRESET';
 
 export interface HarnessServerIo {
   input: Readable;
@@ -266,24 +275,37 @@ export function createCliRunTurn(
     // the tool registry.
     if (onPermissionAsk) opts.onPermissionAsk = onPermissionAsk;
     if (onAskUser) opts.onAskUser = onAskUser;
-    // Per-turn permission preset from Desktop Settings. Allowlisted inside
-    // the bridge — unknown values keep the sidecar's current preset (no
-    // arbitrary env injection over the wire).
+    // Fix D (t62): the permission preset is a FINITE, per-turn window, not a
+    // sidecar-wide mutation. The Desktop Settings value for THIS turn is
+    // applied for the duration of the turn, and the value the process had
+    // before is restored in `finally` — so a preset never leaks into the next
+    // turn (or a later workspace's turn) on the shared child. Allowlisted
+    // inside the bridge: an unknown value changes nothing, so no arbitrary
+    // env injection rides the wire. Known race (honest): two turns running
+    // in PARALLEL on this one process with different presets still share the
+    // window; the Desktop enforces one active run per workspace, so only a
+    // host that breaks that invariant can hit it.
+    const priorPreset = process.env[PRESET_ENV];
     applyTurnPermissionPreset(input);
-    // t37: thread the kernel-owned workspace LspManager into the turn so
-    // the tool registry registers the LSP tools against THAT server (its
-    // lifecycle is refcounted by the kernel per root) instead of deriving
-    // one from the shared per-root map on every dispatch.
-    const lspProvider = resolveTurnLspProvider(deps.services);
-    const exitCode = await dispatchHeadlessTurn(
-      opts,
-      provider,
-      model,
-      stream as Parameters<typeof dispatchHeadlessTurn>[3],
-      undefined,
-      lspProvider ? { lspProvider } : undefined,
-    );
-    return { exitCode };
+    try {
+      // t37: thread the kernel-owned workspace LspManager into the turn so
+      // the tool registry registers the LSP tools against THAT server (its
+      // lifecycle is refcounted by the kernel per root) instead of deriving
+      // one from the shared per-root map on every dispatch.
+      const lspProvider = resolveTurnLspProvider(deps.services);
+      const exitCode = await dispatchHeadlessTurn(
+        opts,
+        provider,
+        model,
+        stream as Parameters<typeof dispatchHeadlessTurn>[3],
+        undefined,
+        lspProvider ? { lspProvider } : undefined,
+      );
+      return { exitCode };
+    } finally {
+      if (priorPreset === undefined) delete process.env[PRESET_ENV];
+      else process.env[PRESET_ENV] = priorPreset;
+    }
   };
 }
 
@@ -401,6 +423,10 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
           return { id: req.id ?? null, ok: false, error: { code: 'unknown_session', message: `no session '${String(params.sessionId ?? '')}'` } };
         }
         await session.dispose();
+        // t61 (chat isolation): the session's "always this session" grants
+        // die with the session — they must not leak into the next chat on
+        // this workspace (pre-2.44 they survived until sidecar death).
+        clearSessionPermissionGrants(session.id);
         return { id: req.id ?? null, ok: true, result: { disposed: true } };
       }
       // t32: session-scoped steer/cancel over the SAME protocol v2 — no new

@@ -25,6 +25,7 @@
  */
 
 import type { ToolPermission } from '@zelari/core/harness/tools/toolTypes';
+import { getCurrentHarnessSessionId } from '../serve/sessionControl.js';
 
 export type PermissionAction = 'allow' | 'ask' | 'deny';
 
@@ -47,43 +48,85 @@ export interface PermissionDecision {
 }
 
 // ── Session grants ("Allow always this session") ───────────────────────────
+//
+// v2.44 chat isolation (t61): grants are keyed by harness session id.
+// The `--serve-harness` sidecar hosts MANY chats in one process — the
+// old per-process Sets let chat A's "always this tool" leak into chat B
+// (different workspace included). The TUI stays one session per process
+// and keeps the no-arg API (global bucket), so its behavior is
+// unchanged. The harness server clears a session's bucket on
+// `session.dispose`; without that call the grants would outlive the
+// chat until sidecar death.
 
-const sessionToolGrants = new Set<string>();
-const sessionCategoryGrants = new Set<ToolPermission>();
+interface SessionGrants {
+  tools: Set<string>;
+  categories: Set<ToolPermission>;
+}
 
-export function grantSessionTool(toolName: string): void {
+/** Bucket key for the no-session (TUI / process-global) case. */
+const GLOBAL_BUCKET = '';
+const grantsBySession = new Map<string, SessionGrants>();
+
+function grantsBucket(sessionId?: string): SessionGrants {
+  const key = sessionId && sessionId.trim() ? sessionId : GLOBAL_BUCKET;
+  let bucket = grantsBySession.get(key);
+  if (!bucket) {
+    bucket = { tools: new Set(), categories: new Set() };
+    grantsBySession.set(key, bucket);
+  }
+  return bucket;
+}
+
+export function grantSessionTool(toolName: string, sessionId?: string): void {
   const n = toolName.trim();
-  if (n) sessionToolGrants.add(n);
+  if (n) grantsBucket(sessionId).tools.add(n);
 }
 
-export function grantSessionCategory(cat: ToolPermission): void {
-  sessionCategoryGrants.add(cat);
+export function grantSessionCategory(cat: ToolPermission, sessionId?: string): void {
+  grantsBucket(sessionId).categories.add(cat);
 }
 
-export function clearSessionPermissionGrants(): void {
-  sessionToolGrants.clear();
-  sessionCategoryGrants.clear();
+/**
+ * Clear session grants. With a sessionId, drops only that session's
+ * bucket (serve-harness `session.dispose`); with no argument clears
+ * EVERYTHING (TUI exit path — single session per process, identical to
+ * the pre-2.44 behavior).
+ */
+export function clearSessionPermissionGrants(sessionId?: string): void {
+  if (sessionId === undefined) {
+    grantsBySession.clear();
+    return;
+  }
+  grantsBySession.delete(sessionId && sessionId.trim() ? sessionId : GLOBAL_BUCKET);
 }
 
-export function listSessionPermissionGrants(): {
+export function listSessionPermissionGrants(sessionId?: string): {
   tools: string[];
   categories: ToolPermission[];
 } {
+  const bucket = grantsBucket(sessionId);
   return {
-    tools: [...sessionToolGrants].sort(),
-    categories: [...sessionCategoryGrants],
+    tools: [...bucket.tools].sort(),
+    categories: [...bucket.categories],
   };
 }
 
-/** True if this tool is fully covered by session grants (no need to ask). */
+/**
+ * True if this tool is fully covered by session grants (no need to ask).
+ * `sessionId` scopes the lookup; inside a serve-harness turn the scope
+ * resolves automatically from the dispatch context when not passed.
+ */
 export function isSessionGranted(
   toolName: string,
   required: readonly ToolPermission[],
+  sessionId?: string,
 ): boolean {
-  if (sessionToolGrants.has(toolName)) return true;
+  const scope = sessionId ?? getCurrentHarnessSessionId();
+  const bucket = grantsBucket(scope);
+  if (bucket.tools.has(toolName)) return true;
   if (!required.length) return false;
   // All required categories must be granted for a category-only grant to apply.
-  return required.every((c) => sessionCategoryGrants.has(c));
+  return required.every((c) => bucket.categories.has(c));
 }
 
 function parseAction(raw: string | undefined, fallback: PermissionAction): PermissionAction {

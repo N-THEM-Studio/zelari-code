@@ -69,11 +69,15 @@ function compactWindow(n: number): string {
 export function KrakenContextPanel({
   live,
   progress,
+  sessionId,
 }: {
   live: LiveCtxStats;
   progress: KrakenProgressView | null;
+  /** Spine session id of the chat on screen — selects that chat's meter
+   *  (Fix E, t62: state is per-conversation, never the last event globally). */
+  sessionId?: string | null;
 }) {
-  const { view: state, receivedAt } = useHarnessState();
+  const { view: state, receivedAt } = useHarnessState(sessionId);
   // Slow clock tick so a stale budget event flips the meter to its labeled
   // "est." estimate even when no message delta re-renders the strip.
   const [now, setNow] = useState(() => Date.now());
