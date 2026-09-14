@@ -1,26 +1,22 @@
 /**
- * Sidebar (Desktop, F1 + the F2 row selection of the lead-chat plan).
+ * Sidebar (Desktop, the left rail of the lead-chat plan).
  *
  * Extracted from the inline block in App.tsx with the behaviour unchanged:
  * selection, archive/unarchive/delete, folder collapse, run/unseen badges,
- * footer status, drag-to-resize handle. Two things are new here:
+ * footer status, drag-to-resize handle. One thing is new here:
  *
  *   - two sections: "Missioni" = conversations owning a 2.0 spine session
  *     (`Conversation.sessionId`), "Chat" = the rest. Same localStorage store,
- *     no migration, nothing deleted;
- *   - under the ACTIVE mission, the tentacles of its run, from the activity
- *     state App already receives (`agent-event`, `parentId` links). Read-only
- *     for the run: no new channel, no new IPC, no polling, no new storage.
- *     F2 adds the row SELECTION only: App owns the trace panel, nothing is
- *     read or written here.
+ *     no migration, nothing deleted.
  *
  * grok-round adds the inline rename: the row turns into a prefilled input, the
  * commit is trimmed and non-empty by construction, and the store/persistence
  * stay in App (`onRename`) exactly like archive/delete.
  *
- * The activity stream is global (one `RunActivityState`, one `runId`): the
- * hierarchy is painted only when that run id is the active conversation's own
- * run - a stale run never lands under a mission.
+ * Nothing from the Kraken activity stream is rendered here: the tentacle
+ * hierarchy that used to be painted under the ACTIVE mission's row is gone for
+ * good. The stream keeps feeding the chat-area Kraken Activity panel only, so
+ * this file never sees a run at all.
  */
 import {
   useEffect,
@@ -29,10 +25,8 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import type { ActivityAgent, RunActivityState } from "../activity";
 import { folderLabelFromCwd, groupSessionsByFolder } from "../sessionGroups";
 import type { Conversation, SessionFilter } from "../types";
-import { buildHierarchy, MissionTentacles, type HierarchyRow } from "./MissionTentacles";
 import { VerdictBadge } from "./VerdictBadge";
 import type { TentacleVerdictView } from "./tentacleVerdict";
 
@@ -73,17 +67,6 @@ export interface SidebarProps {
   cliOk: boolean;
   statusLine: string;
   resizer: SidebarResizer;
-  /** Latest run activity, lifted to App (`useRunActivity`) - read-only. */
-  activity: RunActivityState;
-  /** Run id of the active conversation; attribution guard for the hierarchy. */
-  activeRunId?: string;
-  /**
-   * F2: a tentacle row was clicked. App owns the trace panel; the sidebar
-   * only reports the selection (no file read, no channel, no state here).
-   */
-  onSelectTentacle: (agent: ActivityAgent) => void;
-  /** F2: tentacle whose trace is open, highlighted with `aria-pressed`. */
-  selectedTentacleId?: string | null;
   /**
    * F3: mission-level verification verdict of a conversation, read by App from
    * the `verification_run` event (the same source as `VerificationStatusCard`).
@@ -105,28 +88,15 @@ function formatTime(ts: number): string {
 }
 
 /**
- * Tentacle rows under the active mission live in `MissionTentacles.tsx` (F3
- * extracted them to make room for the per-tentacle verification badge).
+ * Run / completed / plain bubble badge, unchanged from the inline sidebar.
  */
-
-/** Run / completed / plain bubble badge, unchanged from the inline sidebar. */
 function RunBadge({ running, unseen }: { running: boolean; unseen: boolean }) {
   if (running) return <span className="session-run-badge" title="Run in corso" aria-label="Run in corso">●</span>;
   if (unseen) return <span className="session-run-badge is-done" title="Run completata" aria-label="Run completata">✓</span>;
   return <span className="session-bubble" aria-hidden>💬</span>;
 }
 
-function SessionRow({
-  c,
-  props,
-  hierarchy,
-  showHierarchy,
-}: {
-  c: Conversation;
-  props: SidebarProps;
-  hierarchy: HierarchyRow[];
-  showHierarchy: boolean;
-}) {
+function SessionRow({ c, props }: { c: Conversation; props: SidebarProps }) {
   const { activeId, isRunning, unseenByConv, onSelect, onArchive, onUnarchive, onDelete } = props;
   /** F3: mission-level verdict of THIS conversation, if the backend sent one. */
   const missionVerdict = props.missionVerdictFor?.(c.id);
@@ -233,24 +203,14 @@ function SessionRow({
           </>
         )}
       </div>
-      {showHierarchy && hierarchy.length ? (
-        <MissionTentacles
-          rows={hierarchy}
-          onSelect={props.onSelectTentacle}
-          selectedId={props.selectedTentacleId}
-        />
-      ) : null}
     </div>
   );
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { sessions, filter, activeId, activity, activeRunId, resizer } = props;
+  const { sessions, filter, resizer } = props;
   const missions = useMemo(() => sessions.filter((c) => Boolean(c.sessionId)), [sessions]);
   const chats = useMemo(() => sessions.filter((c) => !c.sessionId), [sessions]);
-  const hierarchy = useMemo(() => buildHierarchy(activity), [activity]);
-  /** Only the run of the ACTIVE mission may paint a hierarchy under it. */
-  const hierarchyFor = activeRunId && activity.runId === activeRunId ? activeId : undefined;
 
   /** One section = label + the folder grouping the sidebar always had. */
   const section = (label: string, list: Conversation[]) =>
@@ -274,13 +234,7 @@ export function Sidebar(props: SidebarProps) {
               </button>
               {!groupCollapsed &&
                 g.sessions.map((c) => (
-                  <SessionRow
-                    key={c.id}
-                    c={c}
-                    props={props}
-                    hierarchy={hierarchy}
-                    showHierarchy={c.id === hierarchyFor}
-                  />
+                  <SessionRow key={c.id} c={c} props={props} />
                 ))}
             </div>
           );

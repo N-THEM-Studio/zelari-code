@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
 /**
  * TentacleTracePanel (F2) contract under test:
- *   - clicking a tentacle row in the Sidebar opens the panel for THAT agent
- *     (the harness wires Sidebar + panel exactly as App does);
+ *   - selecting a tentacle row opens the panel for THAT agent (the rail no
+ *     longer paints those rows, so the harness supplies its own trigger);
  *   - the panel shows the run's live radio trail, filtered to the tentacle
  *     when the spawn title matches, and SAYS SO when it does not (the radio
  *     file is per-run, so a silent whole-run dump would be dishonest);
@@ -21,11 +21,10 @@ import { act, cleanup, fireEvent, render, screen, within } from "@testing-librar
 import { useState, type ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TentacleTracePanel } from "./TentacleTracePanel";
-import { Sidebar, type SidebarProps } from "./Sidebar";
 import { WorkbenchLiveTail } from "./WorkbenchLiveTail";
 import { listDir, readProjectTextIfChanged } from "../agentClient";
-import type { ActivityAgent, RunActivityState } from "../activity";
-import type { Conversation, DirEntry } from "../types";
+import type { ActivityAgent } from "../activity";
+import type { DirEntry } from "../types";
 
 vi.mock("react", async () => {
   // @ts-expect-error tsc: importing the runtime entry loses type info by design
@@ -40,7 +39,6 @@ vi.mock("../agentClient", () => ({
 const CWD = "Z:\\w\\my-app";
 const RADIO = ".zelari/radio";
 
-const LEAD: ActivityAgent = { id: "lead", role: "lead", status: "running", tools: [] };
 const T1: ActivityAgent = {
   id: "t1",
   parentId: "lead",
@@ -58,63 +56,6 @@ const T2: ActivityAgent = {
   status: "completed",
   tools: [],
 };
-
-function activity(runId: string): RunActivityState {
-  return {
-    runId,
-    agentOrder: ["lead", "t1", "t2"],
-    agents: { lead: LEAD, t1: T1, t2: T2 },
-    warnings: [],
-    controls: [],
-  };
-}
-
-function mission(): Conversation {
-  return {
-    id: "m1",
-    title: "mission-one",
-    messages: [],
-    createdAt: 1700000000000,
-    updatedAt: 1700000000000,
-    mode: "kraken",
-    phase: "build",
-    sessionId: "s-1",
-    cwd: CWD,
-  };
-}
-
-function sidebarProps(over: Partial<SidebarProps> = {}): SidebarProps {
-  return {
-    sessions: [mission()],
-    filter: "active",
-    activeId: "m1",
-    isRunning: () => true,
-    unseenByConv: {},
-    collapsedFolders: new Set<string>(),
-    onToggleFolder: () => {},
-    onNewChat: () => {},
-    newChatDisabled: false,
-    onSelect: () => {},
-    onArchive: () => {},
-    onUnarchive: () => {},
-    onDelete: () => {},
-    onRename: () => {},
-    onFilterChange: () => {},
-    onOpenSettings: () => {},
-    cliOk: true,
-    statusLine: "ready",
-    resizer: {
-      onPointerDown: () => {},
-      onPointerMove: () => {},
-      onPointerUp: () => {},
-      onDoubleClick: () => {},
-    },
-    activity: activity("run-1"),
-    activeRunId: "run-1",
-    onSelectTentacle: () => {},
-    ...over,
-  };
-}
 
 function entry(name: string): DirEntry {
   return { name, path: `${RADIO}/${name}`, isDir: false };
@@ -144,7 +85,11 @@ function stubFile(text: string): void {
   });
 }
 
-/** Sidebar + panel wired the way App wires them (the F2 seam under test). */
+/**
+ * The panel + its trigger. The rail paints no tentacle row any more, so the
+ * harness owns the selection: one button per agent, same `data-agent-id`
+ * handle the removed sidebar rows used to expose.
+ */
 function Host({
   sessionId = "s-1",
   cwd = CWD,
@@ -155,9 +100,11 @@ function Host({
   const [agent, setAgent] = useState<ActivityAgent | null>(null);
   return (
     <>
-      <Sidebar
-        {...sidebarProps({ onSelectTentacle: setAgent, selectedTentacleId: agent?.id ?? null })}
-      />
+      {[T1, T2].map((a) => (
+        <button key={a.id} type="button" data-agent-id={a.id} onClick={() => setAgent(a)}>
+          {a.title}
+        </button>
+      ))}
       <TentacleTracePanel
         agent={agent}
         cwd={cwd}
@@ -168,10 +115,10 @@ function Host({
   );
 }
 
-/** Click a tentacle row and flush the immediate poll tick. */
+/** Select a tentacle and flush the immediate poll tick. */
 async function openTrace(agentId: string): Promise<void> {
   const row = document.querySelector<HTMLButtonElement>(
-    `button.tentacle-row[data-agent-id="${agentId}"]`,
+    `button[data-agent-id="${agentId}"]`,
   );
   expect(row).toBeTruthy();
   await act(async () => {
@@ -197,7 +144,7 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-describe("TentacleTracePanel - open from the sidebar (F2)", () => {
+describe("TentacleTracePanel - open on a tentacle selection (F2)", () => {
   it("opening a row shows the live trace of THAT tentacle, filtered and labelled", async () => {
     stubRadioDir([entry("s-1.jsonl"), entry("workbench-kraken-x.md")]);
     stubFile(RADIO_LINES);

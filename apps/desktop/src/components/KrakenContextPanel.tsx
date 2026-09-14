@@ -1,7 +1,8 @@
 /**
- * Kraken context panel — the ONE session strip in the chat activity stack.
+ * Kraken context strip — the ONE session readout, in the COMPOSER (not the
+ * chat flow: it never pushes the conversation up again). One compact line at
+ * rest (`ctx 12.3k/128k · 6%` + phase), the full record on click:
  *
- * Everything live/session-scoped lives here and nowhere else:
  *  - phase / mode / tentacle counters (CLI `kraken_progress` events,
  *    parsed by the KrakenProgressCard readers)
  *  - the context/compaction meter — the only one in the chat; the
@@ -60,6 +61,11 @@ function verdictColor(v: HarnessVerdict): string | undefined {
   return undefined;
 }
 
+/** Denominator in the compact readout: "128k" reads better than "128.0k". */
+function compactWindow(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 100) / 10}k` : String(n);
+}
+
 export function KrakenContextPanel({
   live,
   progress,
@@ -75,6 +81,10 @@ export function KrakenContextPanel({
     const id = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(id);
   }, []);
+  // Details on demand: the strip keeps ONE line at rest and expands to the
+  // full session record only on click (it lives in the composer, not in the
+  // chat — it must never push the conversation up again).
+  const [open, setOpen] = useState(false);
 
   const hasLive =
     live.ctxTokens > 0 || live.turnTokens > 0 || live.toolCount > 0;
@@ -97,6 +107,8 @@ export function KrakenContextPanel({
     fallbackLimit: DEFAULT_CONTEXT_LIMIT,
     now,
   });
+  /** Occupancy in tokens, derived from the very meter that paints the %. */
+  const usedTokens = Math.round((meter.pct / 100) * meter.limit);
 
   const phaseLabel = progress ? krakenPhaseLabel(progress.phase) : null;
   const phaseLive = !!progress && progress.phase !== KRAKEN_TERMINAL_PHASE;
@@ -133,46 +145,75 @@ export function KrakenContextPanel({
       : "";
 
   return (
-    <section className="kraken-ctx-panel" aria-label="Kraken context">
-      <div className="kraken-ctx-head">
-        <span className="kraken-ctx-kicker">
-          {live.streaming ? (
-            <span className="kraken-ctx-dot" aria-hidden />
-          ) : null}
-          Kraken · context
+    <section
+      className={`kraken-ctx-strip is-${meter.level}${open ? " is-open" : ""}`}
+      aria-label="Kraken context"
+    >
+      {/* One line at rest: meter + phase. Everything else is one click away. */}
+      <button
+        type="button"
+        className="kraken-ctx-line"
+        aria-expanded={open}
+        aria-label={
+          open ? "Kraken context details — collapse" : "Kraken context details — expand"
+        }
+        onClick={() => setOpen((v) => !v)}
+      >
+        {live.streaming ? <span className="kraken-ctx-dot" aria-hidden /> : null}
+        <span
+          className={`kraken-ctx-meter is-${meter.level}`}
+          title={meter.tooltip}
+        >
+          ctx {formatTokens(usedTokens)}/{compactWindow(meter.limit)} ·{" "}
+          {meter.pct.toFixed(meter.pct < 10 ? 1 : 0)}%
+          {meter.estimated ? " est." : ""}
         </span>
-        {live.streaming ? (
-          <span className="kraken-ctx-nums">
-            {live.turnTokens > 0 ? (
-              <span
-                title={`Turn tokens — prompt ▲ ${live.promptTokens.toLocaleString()} · completion ▼ ${live.completionTokens.toLocaleString()}`}
-              >
-                ▲ {formatTokens(live.promptTokens)} · ▼{" "}
-                {formatTokens(live.completionTokens)} · Σ{" "}
-                {live.turnTokens.toLocaleString()}
-              </span>
+        <progress
+          className="kraken-ctx-bar"
+          value={meter.pct}
+          max={100}
+          aria-label={`Context ${meter.pct.toFixed(meter.pct < 10 ? 1 : 0)}%`}
+        />
+        {phaseLabel ? (
+          <>
+            <span
+              className={`kraken-ctx-phase-label${phaseLive ? " is-live" : " is-done"}`}
+            >
+              {phaseLive ? <span className="kraken-ctx-dot" aria-hidden /> : null}
+              {phaseLabel}
+            </span>
+            {progress?.mode === "plan" ? (
+              <span className="kraken-ctx-mode">plan</span>
             ) : null}
-            {live.toolCount > 0 ? (
-              <span title="Tool calls this turn">🛠 {live.toolCount}</span>
-            ) : null}
-            {live.elapsedMs != null ? (
-              <span title="Turn elapsed">⏱ {formatDuration(live.elapsedMs)}</span>
-            ) : null}
-          </span>
+          </>
         ) : null}
-      </div>
+        <span className={`kraken-ctx-caret${open ? " is-open" : ""}`} aria-hidden>
+          ▾
+        </span>
+      </button>
 
-      {phaseLabel ? (
-        <div className="kraken-ctx-phase">
-          <span
-            className={`kraken-ctx-phase-label${phaseLive ? " is-live" : " is-done"}`}
-          >
-            {phaseLive ? <span className="kraken-ctx-dot" aria-hidden /> : null}
-            {phaseLabel}
-          </span>
-          {progress?.mode === "plan" ? (
-            <span className="kraken-ctx-mode">plan</span>
+      {open ? (
+        <div className="kraken-ctx-detail">
+          {live.streaming ? (
+            <span className="kraken-ctx-nums">
+              {live.turnTokens > 0 ? (
+                <span
+                  title={`Turn tokens — prompt ▲ ${live.promptTokens.toLocaleString()} · completion ▼ ${live.completionTokens.toLocaleString()}`}
+                >
+                  ▲ {formatTokens(live.promptTokens)} · ▼{" "}
+                  {formatTokens(live.completionTokens)} · Σ{" "}
+                  {live.turnTokens.toLocaleString()}
+                </span>
+              ) : null}
+              {live.toolCount > 0 ? (
+                <span title="Tool calls this turn">🛠 {live.toolCount}</span>
+              ) : null}
+              {live.elapsedMs != null ? (
+                <span title="Turn elapsed">⏱ {formatDuration(live.elapsedMs)}</span>
+              ) : null}
+            </span>
           ) : null}
+
           {counts.length > 0 ? (
             <span className="kraken-ctx-counts">
               {counts.map((c) => (
@@ -182,46 +223,30 @@ export function KrakenContextPanel({
               ))}
             </span>
           ) : null}
-        </div>
-      ) : null}
 
-      <div
-        className={`turn-stats-ctx is-${meter.level}`}
-        title={meter.tooltip}
-      >
-        <span className="turn-stats-ctx-bar" aria-hidden>
-          <span
-            className="turn-stats-ctx-fill"
-            style={{ width: `${meter.pct.toFixed(1)}%` }}
-          />
-        </span>
-        <span className="turn-stats-ctx-label">
-          ctx ~{meter.pct.toFixed(meter.pct < 10 ? 1 : 0)}%
-          {meter.estimated ? " est." : ""} ·{" "}
-          {support?.lastPolicy ?? CONTEXT_LABEL[meter.level]}
-        </span>
-      </div>
-
-      {state ? (
-        <div className="kraken-ctx-session">
-          session {state.turnsTotal} turn{state.turnsTotal === 1 ? "" : "s"}
-          {lastTurn ? (
-            <span style={{ color: verdictColor(lastTurn.verdict) }}>
-              {" "}
-              · last {lastTurn.verdict}
-            </span>
+          {state ? (
+            <div className="kraken-ctx-session">
+              {support?.lastPolicy ?? CONTEXT_LABEL[meter.level]} · session{" "}
+              {state.turnsTotal} turn{state.turnsTotal === 1 ? "" : "s"}
+              {lastTurn ? (
+                <span style={{ color: verdictColor(lastTurn.verdict) }}>
+                  {" "}
+                  · last {lastTurn.verdict}
+                </span>
+              ) : null}
+              {support ? (
+                <>
+                  {" · compactions "}
+                  {support.compactions}
+                  {" · memory "}
+                  {support.memoryEvents}
+                  {" · projections "}
+                  {support.contextProjections}
+                </>
+              ) : null}
+              {budget}
+            </div>
           ) : null}
-          {support ? (
-            <>
-              {" · compactions "}
-              {support.compactions}
-              {" · memory "}
-              {support.memoryEvents}
-              {" · projections "}
-              {support.contextProjections}
-            </>
-          ) : null}
-          {budget}
         </div>
       ) : null}
     </section>

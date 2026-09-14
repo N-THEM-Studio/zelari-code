@@ -985,16 +985,16 @@ export default function App() {
 
   /** Run registry: multiplexed runs across conversations (M2). */
   const runCoordinator = useRunCoordinator();
-  /** Kraken activity stream (F1): lifted here so the sidebar can list the
-   *  tentacles of the active mission's run. Same `agent-event` channel
-   *  KrakenActivity already consumes - no new channel, no new IPC.
+  /** Kraken activity stream: kept here for the live row of the open trace
+   *  panel - the sidebar renders none of it any more. Same `agent-event`
+   *  channel KrakenActivity already consumes - no new channel, no new IPC.
    *  Conversation isolation: the hook routes by run envelope only, so a run
-   *  in another chat never paints this tree (M2 routing parity with the
+   *  in another chat never lands in this one (M2 routing parity with the
    *  onAgentEvent block below); events with no envelope id are dropped. */
   const activity = useRunActivity({ conversationId: active?.id });
   /**
    * F2: tentacle whose live trace is open in the side panel. Only App owns
-   * this state; the sidebar reports the click, the panel reads the file.
+   * this state; the panel reads the file.
    */
   const [tracedAgent, setTracedAgent] = useState<ActivityAgent | null>(null);
   /**
@@ -3431,10 +3431,6 @@ export default function App() {
           onPointerUp: onSidebarResizeEnd,
           onDoubleClick: resetSidebarWidth,
         }}
-        activity={activity}
-        activeRunId={runCoordinator.getRun(active?.id)?.runId}
-        onSelectTentacle={setTracedAgent}
-        selectedTentacleId={tracedAgent?.id ?? null}
         missionVerdictFor={(id) => readMissionVerdict(verificationByConv[id]?.run?.verdict ?? null)}
       />
       <TentacleTracePanel
@@ -3804,10 +3800,6 @@ export default function App() {
                     run={verificationByConv[active?.id ?? ""].run ?? null}
                   />
                 ) : null}
-                <KrakenContextPanel
-                  live={liveCtx}
-                  progress={krakenCard?.progress ?? null}
-                />
               </div>
             )}
           </div>
@@ -4183,6 +4175,13 @@ export default function App() {
             </div>
           </div>
           </div>
+          {/* Kraken context meter: a compact composer row (one line at rest).
+              It used to sit at the bottom of the chat flow, where it ate the
+              conversation and could never be dismissed. */}
+          <KrakenContextPanel
+            live={liveCtx}
+            progress={krakenCard?.progress ?? null}
+          />
           <div className="composer-hint">
             {/* experimental/cursor-learn 2.4 — when the next Enter would
                 auto-resume (same predicate as send()), say so under the input. */}

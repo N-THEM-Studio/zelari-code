@@ -5,6 +5,25 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.43.1] - 2026-09-14
+
+Desktop readability patch: the sidebar lists conversations only, settled tool asks stop hoarding the transcript, and the Kraken run/context panels collapse into the surfaces they belong to.
+
+### Fixed
+
+- **Desktop sidebar lists conversations only** — the tentacle rows rendered under each session are gone, so a busy Kraken run no longer floods the left column; the active-chat indicator is untouched and the activity tree keeps living in the chat-area panel.
+- **Settled tool asks stop hoarding the transcript** — an allowed or denied request now collapses to a single chip (`✓ Allowed once · bash` / `✕ Denied · write`) with no preview and no buttons; the pending preview moved into a collapsed `<details>` with its own scroll unless it is short (≤8 lines and ≤400 chars), so a long diff no longer owns the chat.
+- **Kraken Activity no longer floods the chat** — the run panel body is capped with its own scroll, so a long tentacle list cannot push the conversation off-screen.
+
+### Changed
+
+- **Kraken Activity re-styled** — the ~40 inline styles are replaced by `kraken-act-*` classes in `App.css`: a native `<progress>` bar with compact `n/m done · running · failed` counters, a distinct lead row, one aligned row per tentacle (role glyph, title, state, duration, model, effort chip, current tool/phase), failure reason truncated at 180 chars with the full text on hover, and details (worktree, scope, recent tools) only on expand. `aria-label="Kraken Activity"` and the `effort: <x>` chip are unchanged.
+- **Kraken context moved out of the message flow** — `KrakenContextPanel` renders once inside the composer instead of being appended after the last message: a one-line meter (`ctx 12.0k/200k · 6.0% est.` + bar + phase), with the full record (turn tokens, counters, session/budget/verdict) on click and nothing rendered when it has no signals.
+
+### Removed
+
+- `apps/desktop/src/components/MissionTentacles.tsx` (imported only by the sidebar) and the now-dead sidebar props `showHierarchy`, `hierarchy`, `onSelectTentacle`, `selectedTentacleId`. The chat-area `KrakenActivity` panel and its `useRunActivity` store are untouched.
+
 ## [2.43.0] - 2026-09-13
 
 The unattended run release: `--permissions yolo` now actually runs alone, and the telemetry stops lying about it.

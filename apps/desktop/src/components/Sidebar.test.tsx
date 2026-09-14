@@ -5,9 +5,9 @@
  *     grouping and the collapse wiring preserved;
  *   - selection, archive/unarchive/delete and the Active/Archived tab all call
  *     back to App with the same arguments the inline sidebar used;
- *   - the tentacle hierarchy under the active entry comes from the run activity
- *     (`parentId` children) and is painted ONLY for the run that entry owns -
- *     an unrelated/stale run id must not leak into it.
+ *   - NO Kraken activity is rendered in the rail any more: the tentacle
+ *     hierarchy that used to hang under the active entry is gone for good, and
+ *     handing the rail run activity again must not bring it back;
  *
  * vi.mock('react'): apps/desktop has its own node_modules copy of React
  * (npm --prefix install), while @testing-library/react at the root uses the
@@ -106,8 +106,6 @@ function props(over: Partial<SidebarProps> = {}): SidebarProps {
       onPointerUp: () => {},
       onDoubleClick: () => {},
     },
-    activity: { agentOrder: [], agents: {}, warnings: [], controls: [] },
-    onSelectTentacle: () => {},
     ...over,
   };
 }
@@ -179,136 +177,62 @@ describe("Sidebar - Missioni / Chat sections", () => {
     ]);
   });
 
-  it("renders the active entry's tentacles from the run activity", () => {
-    render(
-      <Sidebar
-        {...props({ sessions: [mission], activity: activity("run-1"), activeRunId: "run-1" })}
-      />,
-    );
-    expect(screen.getByLabelText("Tentacles della missione attiva")).toBeTruthy();
-    expect(screen.getByText("tentacle-one")).toBeTruthy();
-    expect(screen.getByText("tentacle-two")).toBeTruthy();
-    expect(screen.getByText("phase: general")).toBeTruthy();
-  });
+  /**
+   * REOPEN-GUARD: Kraken activity is not the rail's business any more. The
+   * props that used to drive the hierarchy no longer exist on `SidebarProps`,
+   * so the run activity is handed over through a cast: even if it came back,
+   * the rail must not grow tentacle rows again.
+   */
+  it("never paints tentacle rows, even when run activity is handed over", () => {
+    const stale = {
+      ...props({ sessions: [mission, chat] }),
+      activity: activity("run-1"),
+      activeRunId: "run-1",
+      onSelectTentacle: () => {},
+      selectedTentacleId: "t1",
+    } as unknown as SidebarProps;
+    const { container } = render(<Sidebar {...stale} />);
 
-  it("never paints another run's tentacles under the active entry", () => {
-    const { container } = render(
-      <Sidebar
-        {...props({
-          sessions: [mission, conv({ id: "m2", title: "mission-two", sessionId: "s-2" })],
-          activity: activity("run-2"),
-          activeRunId: "run-1",
-        })}
-      />,
-    );
-    expect(container.querySelector('[aria-label="Tentacles della missione attiva"]')).toBeNull();
+    expect(screen.queryByLabelText("Tentacles della missione attiva")).toBeNull();
+    expect(container.querySelectorAll(".tentacle-row")).toHaveLength(0);
     expect(screen.queryByText("tentacle-one")).toBeNull();
-  });
-
-  it("shows no hierarchy when no agent was spawned", () => {
-    const { container } = render(
-      <Sidebar {...props({ sessions: [mission], activeRunId: "run-1" })} />,
-    );
-    expect(container.querySelectorAll(".session-item-wrap")).toHaveLength(1);
-    expect(
-      container.querySelector('[aria-label="Tentacles della missione attiva"]'),
-    ).toBeNull();
-  });
-
-  it("reports the clicked tentacle (F2) and marks the traced row", () => {
-    const picked: string[] = [];
-    const { container } = render(
-      <Sidebar
-        {...props({
-          sessions: [mission],
-          activity: activity("run-1"),
-          activeRunId: "run-1",
-          onSelectTentacle: (a) => picked.push(a.id),
-          selectedTentacleId: "t2",
-        })}
-      />,
-    );
-    const row1 = container.querySelector<HTMLButtonElement>('button.tentacle-row[data-agent-id="t1"]');
-    const row2 = container.querySelector<HTMLButtonElement>('button.tentacle-row[data-agent-id="t2"]');
-    // Keyboard reachable button, not a clickable div.
-    expect(row1?.tagName).toBe("BUTTON");
-    expect(row1?.getAttribute("aria-pressed")).toBe("false");
-    expect(row2?.getAttribute("aria-pressed")).toBe("true");
-
-    fireEvent.click(row1!);
-    fireEvent.keyDown(row1!, { key: "Enter" });
-    // A `<button>` fires click on Enter natively; the keydown alone must not
-    // double-report, and every click reports exactly one agent.
-    expect(picked).toEqual(["t1"]);
-  });
-
-  it("without a selection no row is marked pressed", () => {
-    const { container } = render(
-      <Sidebar {...props({ sessions: [mission], activity: activity("run-1"), activeRunId: "run-1" })} />,
-    );
-    const rows = [...container.querySelectorAll("button.tentacle-row")];
-    expect(rows).toHaveLength(2);
-    expect(rows.map((r) => r.getAttribute("aria-pressed"))).toEqual(["false", "false"]);
+    // The active-chat indicator is untouched by the removal.
+    const active = container.querySelector(".session-item-wrap.active .session-title");
+    expect(active?.textContent).toBe("mission-one");
   });
 });
 
 /**
- * F3 — badges. Signal: the real `ActivityAgent.phaseMessage` caption
- * (`agent_status.message`: `taskTool.ts` `emitVerifyPhase` → `reducer.ts`).
- * Unknown captions degrade to "—"; a mission verdict is never a row's verdict.
+ * F3 — the mission-level badge. Signal: the `verification_run` verdict App
+ * resolves per conversation (`missionVerdictFor`). It is labelled `mission`,
+ * and it is never a tentacle's: the rail paints no tentacle row any more.
  */
-describe("Sidebar - per-tentacle verification badges (F3)", () => {
-  /** One row per caption shape `emitVerifyPhase` can send. */
-  function verdictActivity(runId: string): RunActivityState {
-    const rows: Array<[string, string | undefined]> = [
-      ["g-pass", "verify PASS"],
-      ["g-fail", "verify FAIL"],
-      ["g-blocked", "verify BLOCKED"],
-      ["g-unknown", "verify unknown"],
-      ["g-nosilence", undefined],
-    ];
-    const lead: ActivityAgent = { id: "lead", role: "lead", status: "running", tools: [] };
-    const agents: Record<string, ActivityAgent> = { lead };
-    for (const [id, phaseMessage] of rows) {
-      agents[id] = { id, parentId: "lead", role: "general", title: id, status: "completed", ...(phaseMessage ? { phaseMessage } : {}), tools: [] };
-    }
-    return { runId, agentOrder: ["lead", ...rows.map(([id]) => id)], agents, warnings: [], controls: [] };
-  }
-  const badgeFor = (c: HTMLElement, id: string) => c.querySelector(`button.tentacle-row[data-agent-id="${id}"] .verdict-badge`);
+describe("Sidebar - mission verification badge (F3)", () => {
   const renderF3 = (missionVerdictFor?: SidebarProps["missionVerdictFor"]) =>
-    render(<Sidebar {...props({ sessions: [mission, chat], activity: verdictActivity("run-1"), activeRunId: "run-1", ...(missionVerdictFor ? { missionVerdictFor } : {}) })} />);
-
-  it("paints each row from its own caption and degrades to — when there is none", () => {
-    const { container } = renderF3();
-    expect(badgeFor(container, "g-pass")?.getAttribute("data-verdict")).toBe("PASS");
-    expect(badgeFor(container, "g-pass")?.getAttribute("data-scope")).toBe("tentacle");
-    expect(badgeFor(container, "g-pass")?.textContent).toBe("✓ PASS");
-    expect(badgeFor(container, "g-fail")?.getAttribute("data-verdict")).toBe("REPAIR_REQUIRED");
-    expect(badgeFor(container, "g-blocked")?.getAttribute("data-verdict")).toBe("BLOCKED");
-    // "verify unknown" IS a signal but carries no verdict, and a row with no
-    // caption never becomes PASS (ADR-0023: unknown ≠ pass).
-    for (const id of ["g-unknown", "g-nosilence"]) {
-      expect(badgeFor(container, id)?.getAttribute("data-verdict")).toBe("unknown");
-      expect(badgeFor(container, id)?.textContent).toBe("—");
-    }
-    expect(screen.getAllByText("✓ PASS")).toHaveLength(1); // only the PASS caption
-    // And with no verification_run for anyone, no mission badge is invented.
-    expect(container.querySelector('.verdict-badge[data-scope="mission"]')).toBeNull();
-  });
+    render(
+      <Sidebar
+        {...props({
+          sessions: [mission, chat],
+          ...(missionVerdictFor ? { missionVerdictFor } : {}),
+        })}
+      />,
+    );
 
   it("labels the mission verification as mission-level, never as a tentacle's", () => {
-    const { container } = renderF3((id) => (id === "m1" ? { verdict: "BLOCKED", signal: "BLOCKED" } : undefined));
+    const { container } = renderF3((id) =>
+      id === "m1" ? { verdict: "BLOCKED", signal: "BLOCKED" } : undefined,
+    );
     const missionBadges = [...container.querySelectorAll('.verdict-badge[data-scope="mission"]')];
     expect(missionBadges).toHaveLength(1); // m1 only: the chat has no verification_run
     expect(missionBadges[0].getAttribute("data-verdict")).toBe("BLOCKED");
     expect(missionBadges[0].textContent).toContain("mission"); // explicitly labelled
-    // Rows keep their OWN signal: no caption stays "—", a PASS caption is not
-    // overwritten by the mission's BLOCKED, and only its own caption says BLOCKED.
-    expect(badgeFor(container, "g-nosilence")?.getAttribute("data-verdict")).toBe("unknown");
-    expect(badgeFor(container, "g-pass")?.getAttribute("data-verdict")).toBe("PASS");
-    const blockedRows = container.querySelectorAll('button.tentacle-row .verdict-badge[data-verdict="BLOCKED"]');
-    expect(blockedRows).toHaveLength(1); // g-blocked's caption, not an inheritance
-    expect(badgeFor(container, "g-nosilence")?.textContent).toBe("—");
+    // Nothing tentacle-scoped can be painted by the rail any more.
+    expect(container.querySelector('.verdict-badge[data-scope="tentacle"]')).toBeNull();
+  });
+
+  it("invents no badge when the backend sent no verification_run", () => {
+    const { container } = renderF3();
+    expect(container.querySelector('.verdict-badge[data-scope="mission"]')).toBeNull();
   });
 });
 

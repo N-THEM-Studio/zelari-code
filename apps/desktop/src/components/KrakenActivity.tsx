@@ -44,13 +44,6 @@ function ThinkingChip({ thinking }: { thinking?: string }) {
     <span
       className="kraken-thinking-chip"
       title={`Thinking effort applied to this agent: ${effort}`}
-      style={{
-        opacity: 0.7,
-        border: "1px solid var(--border-subtle)",
-        borderRadius: 6,
-        padding: "0 5px",
-        fontSize: "0.85em",
-      }}
     >
       {`effort: ${effort}`}
     </span>
@@ -69,53 +62,50 @@ function AgentRow({
   const tools = selectRecentTools(agent, 8);
   return (
     <div
-      style={{
-        borderLeft: "2px solid var(--accent, #4b9cd3)",
-        margin: "4px 0 4px 8px",
-        padding: "4px 8px",
-        cursor: "pointer",
-      }}
+      className={`kraken-act-row${expanded ? " is-open" : ""}${agent.status === "running" ? " is-running" : ""}`}
       onClick={onToggle}
     >
-      <div style={{ display: "flex", gap: 8, alignItems: "baseline" }}>
-        <span aria-hidden>{roleGlyph(agent.role)}</span>
-        <strong>{agent.title || agent.id}</strong>
-        <span aria-hidden>{statusGlyph(agent.status)}</span>
-        <span style={{ opacity: 0.8 }}>
+      <div className="kraken-act-line">
+        <span className="kraken-act-glyph" aria-hidden>
+          {roleGlyph(agent.role)}
+        </span>
+        <strong className="kraken-act-agent">{agent.title || agent.id}</strong>
+        <span className={`kraken-act-status is-${agent.status}`} aria-hidden>
+          {statusGlyph(agent.status)}
+        </span>
+        <span className="kraken-act-dur">
           {formatActivityDuration(agent.durationMs ?? (agent.startedAt ? Date.now() - agent.startedAt : undefined))}
         </span>
-        {agent.model ? <span style={{ opacity: 0.7 }}>· {agent.model}</span> : null}
+        {agent.model ? <span className="kraken-act-model">{agent.model}</span> : null}
         <ThinkingChip thinking={agent.thinking} />
-        {agent.currentTool ? <span>· {agent.currentTool}…</span> : null}
-        {agent.phaseMessage ? <span style={{ opacity: 0.85 }}>· {agent.phaseMessage}</span> : null}
+        {agent.currentTool ? (
+          <span className="kraken-act-tool">· {agent.currentTool}…</span>
+        ) : null}
+        {agent.phaseMessage ? (
+          <span className="kraken-act-phase">· {agent.phaseMessage}</span>
+        ) : null}
       </div>
       {agent.status === "failed" && agent.reason ? (
-        <div
-          style={{
-            fontSize: "0.82em",
-            opacity: 0.9,
-            marginTop: 2,
-            color: "var(--danger, #c44)",
-          }}
-          title={agent.reason}
-        >
+        <div className="kraken-act-reason" title={agent.reason}>
           {agent.reason.length > 180 ? `${agent.reason.slice(0, 177)}…` : agent.reason}
         </div>
       ) : null}
       {expanded ? (
-        <div style={{ fontSize: "0.85em", opacity: 0.9, marginTop: 4 }}>
+        <div className="kraken-act-details">
           {agent.worktree ? <div>worktree: {shortWorktree(agent.worktree)}</div> : null}
           {agent.graphNodeId ? <div>graph node: {agent.graphNodeId}</div> : null}
           {agent.scope?.length ? <div>scope: {agent.scope.join(", ")}</div> : null}
           {agent.tokenUsage?.output ? <div>output tokens: {agent.tokenUsage.output}</div> : null}
           {tools.length ? (
-            <div style={{ marginTop: 4 }}>
+            <div className="kraken-act-tools">
               {tools.map((t) => (
-                <div key={t.id} style={{ display: "flex", gap: 6 }}>
+                <div key={t.id} className="kraken-act-toolrow">
                   <span aria-hidden>{t.status === "failed" ? "✗" : t.status === "completed" ? "✓" : "●"}</span>
                   <span>{t.tool}</span>
-                  {t.summary ? <span style={{ opacity: 0.7 }}>{t.summary}</span> : null}
-                  {t.durationMs ? <span style={{ opacity: 0.6 }}>{formatActivityDuration(t.durationMs)}</span> : null}
+                  {t.summary ? <span className="kraken-act-toolsum">{t.summary}</span> : null}
+                  {t.durationMs ? (
+                    <span className="kraken-act-tooldur">{formatActivityDuration(t.durationMs)}</span>
+                  ) : null}
                 </div>
               ))}
             </div>
@@ -154,101 +144,103 @@ export function KrakenActivity({ conversationId }: { conversationId?: string }) 
     return () => clearInterval(t);
   }, [state.agents]);
 
+  /** Progress numerator for the header bar: settled = done ∪ failed ∪ cancelled. */
+  const settled = counts.completed + counts.failed + counts.cancelled;
+
   if (!hasAgents) return null;
 
   return (
-    <section
-      aria-label="Kraken Activity"
-      style={{
-        borderTop: "1px solid rgba(128,128,128,0.4)",
-        marginTop: 8,
-        paddingTop: 8,
-        fontSize: "0.9em",
-      }}
-    >
+    <section className="kraken-act" aria-label="Kraken Activity">
       <button
         type="button"
+        className="kraken-act-head"
         aria-expanded={!collapsed}
         onClick={() => setCollapsedOverride(!collapsed)}
-        style={{
-          display: "flex",
-          gap: 10,
-          alignItems: "baseline",
-          background: "none",
-          border: "none",
-          color: "inherit",
-          font: "inherit",
-          padding: 0,
-          cursor: "pointer",
-          textAlign: "left",
-          width: "100%",
-        }}
       >
-        <span aria-hidden>{collapsed ? "▸" : "▾"}</span>
-        <strong>KRAKEN ACTIVITY</strong>
-        <span style={{ opacity: 0.7 }}>
-          {counts.completed + counts.failed + counts.cancelled}/{state.agentOrder.length} done
+        <span className="kraken-act-caret" aria-hidden>
+          {collapsed ? "▸" : "▾"}
+        </span>
+        <span className="kraken-act-title">Kraken activity</span>
+        <progress
+          className="kraken-act-bar"
+          value={settled}
+          max={state.agentOrder.length}
+          aria-label={`${settled} of ${state.agentOrder.length} agents settled`}
+        />
+        <span className="kraken-act-counts">
+          {settled}/{state.agentOrder.length} done
           {counts.running ? ` · ${counts.running} running` : ""}
           {counts.failed ? ` · ${counts.failed} failed` : ""}
           {collapsed && warnings.length ? ` · ⚠ ${warnings.length}` : ""}
         </span>
       </button>
       {collapsed ? null : (
-      <div>
-      {lead ? (
-        <div style={{ margin: "6px 0" }}>
-          <span aria-hidden>{roleGlyph(lead.role)}</span> <strong>{lead.title || "Lead"}</strong>{" "}
-          <span aria-hidden>{statusGlyph(lead.status)}</span>{" "}
-          {formatActivityDuration(lead.durationMs ?? (lead.startedAt ? Date.now() - lead.startedAt : undefined))}
-          {lead.model ? <span style={{ opacity: 0.7 }}> · {lead.model}</span> : null}
-          <ThinkingChip thinking={lead.thinking} />
-        </div>
-      ) : null}
-
-      {tentacles.length ? (
-        <div style={{ marginTop: 4 }}>
-          {tentacles.map((a) => (
-            <AgentRow
-              key={a.id}
-              agent={a}
-              expanded={expandedId === a.id}
-              onToggle={() => setExpandedId(expandedId === a.id ? null : a.id)}
-            />
-          ))}
-        </div>
-      ) : null}
-
-      {graph.length ? (
-        <div style={{ marginTop: 6, opacity: 0.9 }}>
-          <div style={{ opacity: 0.7 }}>GRAPH</div>
-          {graph.map((g) => (
-            <div key={g.nodeId}>
-              {g.nodeId}{" "}
-              <span style={{ opacity: 0.7 }}>
-                ({g.agents.filter((a) => a.status === "completed").length}/{g.agents.length})
+        <div className="kraken-act-body">
+          {lead ? (
+            <div className="kraken-act-lead">
+              <span className="kraken-act-glyph" aria-hidden>
+                {roleGlyph(lead.role)}
               </span>
+              <strong className="kraken-act-agent">{lead.title || "Lead"}</strong>
+              <span className={`kraken-act-status is-${lead.status}`} aria-hidden>
+                {statusGlyph(lead.status)}
+              </span>
+              <span className="kraken-act-dur">
+                {formatActivityDuration(lead.durationMs ?? (lead.startedAt ? Date.now() - lead.startedAt : undefined))}
+              </span>
+              {lead.model ? <span className="kraken-act-model">{lead.model}</span> : null}
+              <ThinkingChip thinking={lead.thinking} />
             </div>
-          ))}
-        </div>
-      ) : null}
+          ) : null}
 
-      {warnings.length ? (
-        <div style={{ marginTop: 6 }}>
-          {warnings.slice(-3).map((w, i) => (
-            <div key={`${w.agentId}-${i}`} style={{ color: "#d08770" }}>
-              ⚠ {w.agentId ? `${w.agentId}: ` : ""}
-              {w.message}
+          {tentacles.length ? (
+            <div className="kraken-act-rows">
+              {tentacles.map((a) => (
+                <AgentRow
+                  key={a.id}
+                  agent={a}
+                  expanded={expandedId === a.id}
+                  onToggle={() => setExpandedId(expandedId === a.id ? null : a.id)}
+                />
+              ))}
             </div>
-          ))}
-        </div>
-      ) : null}
+          ) : null}
 
-      {pending.length ? (
-        <div style={{ marginTop: 4, opacity: 0.75 }}>
-          Pending controls: {pending.length} ({pending.map((c) => `${c.type}:${c.state}`).join(", ")})
+          {graph.length ? (
+            <div className="kraken-act-graph">
+              <div className="kraken-act-section">GRAPH</div>
+              {graph.map((g) => (
+                <div key={g.nodeId} className="kraken-act-graph-row">
+                  {g.nodeId}{" "}
+                  <span className="kraken-act-muted">
+                    ({g.agents.filter((a) => a.status === "completed").length}/{g.agents.length})
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {warnings.length ? (
+            <div className="kraken-act-warnings">
+              {warnings.slice(-3).map((w, i) => (
+                <div
+                  key={`${w.agentId}-${i}`}
+                  className="kraken-act-warn"
+                  title={w.message}
+                >
+                  ⚠ {w.agentId ? `${w.agentId}: ` : ""}
+                  {w.message}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {pending.length ? (
+            <div className="kraken-act-pending">
+              Pending controls: {pending.length} ({pending.map((c) => `${c.type}:${c.state}`).join(", ")})
+            </div>
+          ) : null}
         </div>
-      ) : null}
-      </div>
       )}
     </section>
   );
