@@ -4,6 +4,26 @@ All notable changes to Zelari Code are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+## [2.44.0] - 2026-09-15
+
+Parallel-chat isolation hardening for the single-sidecar Desktop multiplex, plus selective brand theming (one master color, two intensity variants).
+
+### Fixed
+
+- **Parallel chats no longer merge on one sidecar** — `permission.request` / `permission.settled` / `ask_user.*` now carry the spine `sessionId` from the CLI; the Rust router direct-routes them, and semantic agent events without a `sessionId` are dropped and logged when two or more runs are active (cosmetic lines still broadcast). A pending ask can no longer fan out to every open conversation.
+- **Cross-session ask answers rejected** — `permission.respond` / `ask_user.respond` are scoped to the owning harness session server-side; a respond from another conversation returns `accepted:false, reason:"session_mismatch"` and the ask stays pending. Guardrails also reject scoped responds against unscoped asks.
+- **“Always this session” grants are per-session** — tool/category session grants are keyed by harness session id (single bucket only for the TUI singleton) and `session.dispose` now clears them: grants no longer outlive the chat that made them.
+- **Permission presets are per-turn** — `ZELARI_PERMISSION_PRESET` is applied around each dispatched turn and restored in `finally`, instead of mutating sidecar-wide `process.env` for every later chat.
+- **Context meter keyed per conversation** — the composer meter reads the `sessionId` of its own conversation (the payload id Desktop used to discard), so another chat's budget can no longer leak into the meter.
+- **Regression coverage** — new `permissionBridge.scope.test.ts` (request/settled stamps, cross-session respond rejection, legacy unscoped asks, scoped grant release, per-session buckets with selective clear) and 8 Rust routing unit tests for the semantic whitelist/drop.
+
+### Added
+
+- **Baffetti theme (Settings → General → Appearance)** — the brand mustache is now a CSS mask filled with a three-stop gradient derived from a single master color (a stronger and a softer variant computed at runtime): 8 curated presets plus a free color picker, persisted via `mustacheColor` in Desktop prefs. Default Silver keeps the current look.
+
+### Changed
+
+- **Borders and dividers follow the master color** — `--border`, `--border-subtle` and `--glass-border` are derived from the strong/soft mustache variants via `color-mix` in both dark and light themes; ~30 hardcoded white-alpha borders in `App.css` now use the tokens.
 
 ## [2.43.1] - 2026-09-14
 
