@@ -110,7 +110,7 @@ Releases are **tag-driven**: `publish.yml` (npm `zelari-code` + `@zelari/core` +
    - `CORE_VERSION` in `packages/core/src/version.ts` (guarded by `publicApi.contract.test.ts` — the publish workflow runs it)
    - `CHANGELOG.md` entry + any version callouts in `docs/GUIDA.md`, `README.md`, core README
 2. **Run `npm run verify:versions` locally, on the exact commit you are about to tag, with a CLEAN working tree** (`git status --porcelain` must be empty). The gate reads the working tree; CI reads the committed tree — a green run over uncommitted fixes is worthless (v2.43.0 shipped exactly this way first, and `main` went red minutes after publish). This gate lives in the merge CI (`ci.yml`), NOT in the publish workflow — a green publish run does not prove version coherence either.
-3. Push `main` first, then `git tag vX.Y.Z && git push origin vX.Y.Z`. Release workflows check out the tag ref at runtime, so the tagged commit must be the coherent one already on `main`.
+3. Cut the tag with `npm run tag-release vX.Y.Z`. It refuses to tag unless the working tree is clean, you are on `main` aligned with `origin/main`, the tag does not already exist, root `package.json` matches, and `verify:versions` passes on the exact commit — then it creates the annotated tag and pushes `main` + the tag. Do **not** hand-run `git tag`/`git push` (that is how the v2.43.0 tag landed on a dirty tree).
 4. Watch both release workflows; treat `npm view <pkg> version` as the authority (registry CDN may lag minutes behind a green publish). npm unpublish is effectively one-way — **fix forward** on `main` and re-tag only while nothing has been published yet.
 
 ## Code of conduct

@@ -40,6 +40,7 @@
     "verify:council": "npm run build --workspace=@zelari/core && node scripts/verify-council.mjs",
     "verify:principles": "node scripts/verify-principles.mjs",
     "verify:versions": "node scripts/verify-versions.mjs",
+    "tag-release": "node scripts/tag-release.mjs",
     "desktop:install": "npm install --prefix apps/desktop",
     "desktop:dev": "npm run build:cli && npm run tauri:dev --prefix apps/desktop",
     "companion:android": "cd apps/companion-android && .\\gradlew.bat assembleDebug",
