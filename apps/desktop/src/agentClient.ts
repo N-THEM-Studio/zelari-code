@@ -643,21 +643,22 @@ export async function printSshPubkey(path: string): Promise<
 }
 
 // ---------------------------------------------------------------------------
-// Automations — the gardener's OS scheduled task (Settings → Automations).
+// Automations — the gardener's OS scheduled job (Settings → Automations).
 // ---------------------------------------------------------------------------
 
 export interface AutomationStatus {
-  /** true when the `ZelariGardener` scheduled task exists. */
+  /** true when the gardener job is registered with the OS scheduler. */
   registered: boolean;
   /** Human-readable line for the Settings status row. */
   detail: string;
-  /** Task Scheduler "Next Run Time" when the task reports one, else null. */
+  /** Scheduler "Next Run Time" when it reports one, else null. */
   nextRun?: string | null;
 }
 
 /**
- * Register / remove / query the gardener scheduled task.
- * Windows-only: other platforms reject with a typed error string.
+ * Register / remove / query the gardener OS scheduled job.
+ * Supported on Windows (Task Scheduler), macOS (launchd) and Linux (cron);
+ * any other platform rejects with a typed error string.
  * camelCase keys on purpose — Tauri maps them onto the snake_case Rust args.
  */
 export async function manageAutomation(args: {

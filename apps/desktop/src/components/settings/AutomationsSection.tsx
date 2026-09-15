@@ -22,7 +22,7 @@ import { useSettingAction } from "./useSettingAction";
 export interface AutomationsSectionProps {
   prefs: DesktopPrefs;
   onPrefsChange: (partial: Partial<DesktopPrefs>) => void;
-  /** Repo whose scripts/zelari-gardener.sh the scheduled task runs. */
+  /** Repo the OS-scheduled gardener job runs from. */
   workdir: string | null;
 }
 
@@ -88,7 +88,7 @@ export function AutomationsSection({
       <div className="settings-stack">
         <SettingsCard
           title="Gardener"
-          description="Runs scripts/zelari-gardener.sh on a schedule. Plan phase only — it proposes work and never commits; every run is capped by the budget below, and a quiet repo (no failing tests, no new commits, no pending plan tasks) exits immediately at $0."
+          description="Off by default. Register installs an OS scheduler entry (Task Scheduler / launchd / cron) that runs the repo's gardener launcher (scripts/zelari-gardener.sh when present). It is propose-only — plan phase, it never commits — and each run is capped by the budget below; a quiet repo (no failing tests, no red CI, no new commits, no pending plan tasks) exits immediately at $0."
         >
           <SettingsRow
             label="Enable gardener"
@@ -101,7 +101,10 @@ export function AutomationsSection({
             />
           </SettingsRow>
 
-          <SettingsRow label="Run every" hint="Windows Task Scheduler triggers the task at this interval.">
+          <SettingsRow
+            label="Run every"
+            hint="The OS scheduler (Task Scheduler / launchd / cron) triggers the job at this interval."
+          >
             <SelectInput
               value={String(gardenerIntervalMin)}
               ariaLabel="Gardener interval"

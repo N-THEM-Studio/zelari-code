@@ -160,4 +160,17 @@ describe("AutomationsSection — gardener card", () => {
       gardenerMaxCostUsd: DEFAULT_DESKTOP_PREFS.gardenerMaxCostUsd,
     });
   });
+
+  it("advertises cross-platform registration, never Windows-only", async () => {
+    renderSection();
+    await screen.findByText("Not registered");
+    const text = document.body.textContent ?? "";
+    // The old Windows-only wording is gone…
+    expect(text).not.toMatch(/Windows-only/i);
+    expect(text).not.toMatch(/Windows Task Scheduler/);
+    // …replaced by the three-platform OS-scheduler copy (default off, propose-only).
+    expect(text).toMatch(/Task Scheduler \/ launchd \/ cron/);
+    expect(text).toMatch(/Off by default/);
+    expect(text).toMatch(/propose-only/);
+  });
 });

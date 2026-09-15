@@ -53,6 +53,33 @@ run (success or failure) it writes the current HEAD to
 `.zelari/gardener.last-sha`, so one broken task cannot re-trigger every tick.
 Concurrency reuses the `--once` lockfile described below.
 
+#### Desktop scheduling (Settings → Automations)
+
+The Desktop app registers this same `scripts/zelari-gardener.sh` with the OS
+scheduler from **Settings → Automations**. It is **off by default**; the toggle
+is intent only, the OS entry itself is created by **Register** and undone by
+**Remove**. Register writes a tiny launcher into the repo
+(`.zelari/gardener-task.cmd` on Windows, `.zelari/gardener-task.sh` on unix) and
+points the scheduler at that launcher — never at `scripts/` directly — so the
+scheduled entry keeps working on a tree that later loses `scripts/`: the
+launcher checks at RUN time, `exec`s `scripts/zelari-gardener.sh` when it is
+present, and otherwise logs one line (stderr + `.zelari/gardener.log`) and exits
+`0`. It never falls back to a blind `--phase plan` — that would spend money
+every interval. The launcher also exports `ZELARI_MISSION_MAX_COST` from
+Settings → Max cost per run, so each run stays propose-only and budget-capped.
+
+| OS | Scheduler | Entry |
+| --- | --- | --- |
+| Windows | Task Scheduler (`schtasks`, per-user) | task `ZelariGardener`, MINUTE trigger, `/TR` → `.zelari/gardener-task.cmd` |
+| macOS | launchd LaunchAgent `com.zelari.gardener` in `~/Library/LaunchAgents/` | `StartInterval` = the UI interval in **seconds** (30 min → 1800), `ProgramArguments` → `.zelari/gardener-task.sh` |
+| Linux | user crontab | tagged line `*/N * * * * /bin/bash <repo>/.zelari/gardener-task.sh # ZelariGardener` |
+
+Register is per-user and needs no elevation on any platform. On Linux, Remove
+strips **only** lines carrying the `# ZelariGardener` tag, so the rest of your
+crontab is left intact; if the `crontab` binary is missing, Register returns a
+typed error telling you how to install cron (`sudo apt install cron` /
+`sudo dnf install cronie`).
+
 #### Remote CI / PR trigger
 
 The second trigger probes GitHub **once per tick**, with no daemon and no new
