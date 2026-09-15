@@ -26,6 +26,10 @@ function scaffold(changelogEntries: string[]): string {
     path.join(repoRoot, 'scripts', 'verify-versions.mjs'),
     path.join(dir, 'scripts', 'verify-versions.mjs'),
   );
+  fs.copyFileSync(
+    path.join(repoRoot, 'scripts', 'runtime-floor.mjs'),
+    path.join(dir, 'scripts', 'runtime-floor.mjs'),
+  );
 
   const w = (rel: string, content: string) =>
     fs.writeFileSync(path.join(dir, rel), content, 'utf8');
@@ -34,12 +38,16 @@ function scaffold(changelogEntries: string[]): string {
   wj('package.json', {
     name: 'zelari-code',
     version: '2.32.0',
-    engines: { npm: '>=10.0.0' },
+    engines: { node: '>=20.17.0', npm: '>=10.0.0' },
     packageManager: 'npm@11.7.0',
     devDependencies: { '@zelari/core': '2.32.0' },
   });
   fs.mkdirSync(path.join(dir, 'packages/core/src'), { recursive: true });
-  wj('packages/core/package.json', { name: '@zelari/core', version: '2.32.0' });
+  wj('packages/core/package.json', {
+    name: '@zelari/core',
+    version: '2.32.0',
+    engines: { node: '>=20.17.0' },
+  });
   w('packages/core/src/version.ts', `export const CORE_VERSION = '2.32.0';\n`);
   w('packages/core/README.md', `# core\n\nCurrent version: **2.32.0**\n`);
   fs.mkdirSync(path.join(dir, 'docs'), { recursive: true });
@@ -61,6 +69,26 @@ function scaffold(changelogEntries: string[]): string {
       'node_modules/@zelari/core': { version: '2.32.0' },
     },
   });
+  fs.mkdirSync(path.join(dir, '.github/workflows'), { recursive: true });
+  w(
+    '.github/workflows/ci.yml',
+    [
+      'name: CI',
+      'on:',
+      '  push:',
+      '    branches: [main]',
+      'jobs:',
+      '  smoke:',
+      '    strategy:',
+      '      matrix:',
+      "        node: ['20', '24']",
+      '    steps:',
+      '      - name: activate',
+      '        run: |',
+      '          corepack prepare npm@11.7.0 --activate',
+      '',
+    ].join('\n'),
+  );
   w(
     'CHANGELOG.md',
     changelogEntries.map((v) => `## [${v}] - 2026-01-01\n\n- scaffold entry ${v}\n`).join('\n'),
@@ -180,5 +208,18 @@ describe('verify-versions (temp copy)', () => {
     const res = run(dir, 'verify-versions.mjs');
     expect(res.status).not.toBe(0);
     expect(res.stderr).toContain('zelari-desktop stanza version is "1.0.0"');
+  });
+
+  it('fails when the core engines.node drifts above the floor', () => {
+    const dir = scaffold(['2.32.0']);
+    const corePkgPath = path.join(dir, 'packages/core/package.json');
+    const corePkg = JSON.parse(fs.readFileSync(corePkgPath, 'utf8'));
+    corePkg.engines.node = '>=24.0.0';
+    fs.writeFileSync(corePkgPath, JSON.stringify(corePkg, null, 2) + '\n', 'utf8');
+
+    const res = run(dir, 'verify-versions.mjs');
+    expect(res.status).not.toBe(0);
+    expect(res.stderr).toContain('engines.node');
+    expect(res.stderr).toContain('packages/core');
   });
 });

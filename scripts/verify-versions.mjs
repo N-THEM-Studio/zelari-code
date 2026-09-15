@@ -19,13 +19,19 @@
  *      const drifted to 2.6.2 while the monorepo shipped the 2.2x line —
  *      hosts importing it reported stale versions);
  *   7. packages/core/README.md "Current version" === core version (t32: it
- *      still advertised 1.34.0 at 2.27.0).
+ *      still advertised 1.34.0 at 2.27.0);
+ *   8. the release runtime floor (scripts/runtime-floor.mjs): engines.node on
+ *      the root and @zelari/core, the CI smoke Node matrix, and the pinned
+ *      npm — so the floor is enforced by code, not prose.
  *
  * Exit 0 = coherent; exit 1 = drift (printed to stderr).
  */
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+import { NODE_FLOOR, NPM_PIN, NPM_ENGINES_MIN } from './runtime-floor.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -41,8 +47,8 @@ const corePkg = readJson('packages/core/package.json');
 const rootVersion = rootPkg.version;
 const coreVersion = corePkg.version;
 const devDepVersion = rootPkg.devDependencies?.['@zelari/core'];
-const requiredNpm = '>=10.0.0';
-const requiredPackageManager = 'npm@11.7.0';
+const requiredNpm = NPM_ENGINES_MIN;
+const requiredPackageManager = `npm@${NPM_PIN}`;
 
 if (rootVersion !== coreVersion) {
   failures.push(
@@ -225,6 +231,70 @@ if (coreReadmeVersion && coreReadmeVersion[1].trim() !== coreVersion) {
   }
 }
 
+// 10. Release runtime floor (release-floor F2.1): the root and the workspace
+//     core must advertise the exact Node floor from scripts/runtime-floor.mjs
+//     — the same value the CI smoke matrix exercises. One source of truth
+//     stops the floor from drifting between manifests.
+{
+  const requiredNode = `>=${NODE_FLOOR}`;
+  if (rootPkg.engines?.node !== requiredNode) {
+    failures.push(
+      `package.json engines.node must be "${requiredNode}" (runtime floor); ` +
+        `found "${rootPkg.engines?.node ?? '<missing>'}".`,
+    );
+  }
+  if (corePkg.engines?.node !== requiredNode) {
+    failures.push(
+      `packages/core/package.json engines.node must be "${requiredNode}" (runtime floor); ` +
+        `found "${corePkg.engines?.node ?? '<missing>'}".`,
+    );
+  }
+}
+
+// 11. CI runtime matrix + npm pin (release-floor F2.2): the smoke matrix must
+//     run the floor major and the current Node line, and CI must pin the same
+//     npm as packageManager. Read as text — no YAML dependency in the gate.
+{
+  const ciYaml = readFileSync(path.join(root, '.github', 'workflows', 'ci.yml'), 'utf-8');
+  const nodeMajor = NODE_FLOOR.split('.')[0];
+  const matrixLine = ciYaml.match(/^\s*node:\s*\[[^\]]*\]/m);
+  if (!matrixLine) {
+    failures.push(
+      'ci.yml has no `node: [...]` matrix line — the smoke job must exercise the runtime floor.',
+    );
+  } else {
+    const line = matrixLine[0].trim();
+    if (!matrixLine[0].includes(`'${nodeMajor}'`)) {
+      failures.push(
+        `ci.yml smoke matrix must include Node '${nodeMajor}' (the runtime floor ${NODE_FLOOR}); ` +
+          `found "${line}".`,
+      );
+    }
+    if (!matrixLine[0].includes("'24'")) {
+      failures.push(`ci.yml smoke matrix must include Node '24'; found "${line}".`);
+    }
+  }
+  if (!ciYaml.includes(NPM_PIN)) {
+    failures.push(
+      `ci.yml must pin npm@${NPM_PIN} (corepack) to match packageManager; "${NPM_PIN}" not found.`,
+    );
+  }
+}
+
+// 12. Optional clean-tree gate (release-floor F2.2): when
+//     ZELARI_VERIFY_VERSIONS_REQUIRE_CLEAN=1, the working tree must be clean
+//     so a release gate cannot certify uncommitted drift.
+if (process.env.ZELARI_VERIFY_VERSIONS_REQUIRE_CLEAN === '1') {
+  const git = spawnSync('git', ['status', '--porcelain'], { cwd: root, encoding: 'utf8' });
+  if (git.error || git.status !== 0 || (git.stdout ?? '').trim() !== '') {
+    failures.push('working tree not clean (required by ZELARI_VERIFY_VERSIONS_REQUIRE_CLEAN).');
+  }
+} else {
+  console.log(
+    '[verify-versions] clean-tree check skipped (set ZELARI_VERIFY_VERSIONS_REQUIRE_CLEAN=1 to require a clean tree).',
+  );
+}
+
 if (failures.length > 0) {
   console.error('[verify-versions] VERSION DRIFT DETECTED:');
   for (const f of failures) console.error(`  - ${f}`);
@@ -234,5 +304,6 @@ if (failures.length > 0) {
 console.log(
   `[verify-versions] coherent: zelari-code@${rootVersion} == @zelari/core@${coreVersion}, devDep exact, ` +
     `Desktop manifests (package.json, tauri.conf.json, Cargo.toml, Cargo.lock) in lockstep, ` +
-    `lockfile entries aligned, CHANGELOG entry present, README/GUIDA version-clean, CORE_VERSION + core README in lockstep.`,
+    `lockfile entries aligned, CHANGELOG entry present, README/GUIDA version-clean, CORE_VERSION + core README in lockstep, ` +
+    `runtime floor (node ${NODE_FLOOR}, npm ${NPM_PIN}) enforced.`,
 );
