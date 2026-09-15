@@ -5,24 +5,6 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.45.1] - 2026-09-15
-
-Release pipeline hardening (F2): a tag can no longer publish ahead of red CI, and the pinned npm is actually active where it claims to be.
-
-### Added
-
-- **`release-gate` workflow (F2.4)** — `publish.yml` and `release-desktop.yml` now require a `gate` job that checks out the tag, runs `verify-versions` on a clean tree, rebuilds and bin-smokes the CLI on the exact Node floor (20.17.0), and watches the `ci.yml` run of the tagged SHA (`gh run watch --exit-status`). Absent or failed CI refuses to publish.
-- **`npm run tag-release` (F2.3)** — single local entrypoint for tagging (`node scripts/tag-release.mjs vX.Y.Z`): refuses a dirty tree, a HEAD that is not aligned `main`/`origin/main`, a version mismatch, a red `verify-versions`, or an existing tag; pushes `main` first, then the tag. CONTRIBUTING no longer documents raw `git tag`.
-
-### Changed
-
-- **Runtime floor enforced by code (F2.0/F2.1)** — `scripts/runtime-floor.mjs` is the single source for `NODE_FLOOR` (20.17.0) and `NPM_PIN` (11.7.0); `verify-versions` now checks root and `@zelari/core` `engines.node`, the `packageManager` pin, the CI smoke matrix (floor major and 24), and — pre-tag, opt-in via `ZELARI_VERIFY_VERSIONS_REQUIRE_CLEAN=1` — a clean working tree.
-- **CI runs on `v*.*.*` tags** — so the release gate can always watch the tagged SHA's own run.
-
-### Fixed
-
-- **Smoke npm pin is now real (F2.2)** — the smoke matrix activates the pinned npm in one PATH-safe bash step (`npm i -g npm@11.7.0` → `hash -r` → version assert → `npm ci`). corepack 0.35 `prepare --activate` exits 0 but never redirects the real `npm` binary (the new assert caught 11.16.0/10.8.2 on all six runners right after a "successful" activation); the previous separate-step pattern only printed the version and hid the problem.
-
 ## [2.46.0] - 2026-09-15
 
 Verification-honesty hardening (F3) — the verifier sees only real command output and only verified work reaches memory — plus a cross-platform gardener offer (F4) and the last corepack steps retired.
@@ -40,6 +22,24 @@ Verification-honesty hardening (F3) — the verifier sees only real command outp
 ### Fixed
 
 - **Redundant verify-hint footer removed (F3.1)** — the soft "K4" hint appended to general results is gone: the runtime auto-verify chain and strict-done (exit 4) are the contract. Lead playbook, user guide and ADR-0033 updated to describe the landed behavior (headless exit 4 with `ZELARI_STRICT_DONE=0` opt-out; TUI system message).
+
+## [2.45.1] - 2026-09-15
+
+Release pipeline hardening (F2): a tag can no longer publish ahead of red CI, and the pinned npm is actually active where it claims to be.
+
+### Added
+
+- **`release-gate` workflow (F2.4)** — `publish.yml` and `release-desktop.yml` now require a `gate` job that checks out the tag, runs `verify-versions` on a clean tree, rebuilds and bin-smokes the CLI on the exact Node floor (20.17.0), and watches the `ci.yml` run of the tagged SHA (`gh run watch --exit-status`). Absent or failed CI refuses to publish.
+- **`npm run tag-release` (F2.3)** — single local entrypoint for tagging (`node scripts/tag-release.mjs vX.Y.Z`): refuses a dirty tree, a HEAD that is not aligned `main`/`origin/main`, a version mismatch, a red `verify-versions`, or an existing tag; pushes `main` first, then the tag. CONTRIBUTING no longer documents raw `git tag`.
+
+### Changed
+
+- **Runtime floor enforced by code (F2.0/F2.1)** — `scripts/runtime-floor.mjs` is the single source for `NODE_FLOOR` (20.17.0) and `NPM_PIN` (11.7.0); `verify-versions` now checks root and `@zelari/core` `engines.node`, the `packageManager` pin, the CI smoke matrix (floor major and 24), and — pre-tag, opt-in via `ZELARI_VERIFY_VERSIONS_REQUIRE_CLEAN=1` — a clean working tree.
+- **CI runs on `v*.*.*` tags** — so the release gate can always watch the tagged SHA's own run.
+
+### Fixed
+
+- **Smoke npm pin is now real (F2.2)** — the smoke matrix activates the pinned npm in one PATH-safe bash step (`npm i -g npm@11.7.0` → `hash -r` → version assert → `npm ci`). corepack 0.35 `prepare --activate` exits 0 but never redirects the real `npm` binary (the new assert caught 11.16.0/10.8.2 on all six runners right after a "successful" activation); the previous separate-step pattern only printed the version and hid the problem.
 
 ## [2.45.0] - 2026-09-15
 
