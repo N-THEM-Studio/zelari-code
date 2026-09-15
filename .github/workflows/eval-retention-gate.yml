@@ -44,9 +44,11 @@ jobs:
           node-version: 24
           cache: npm
       - name: Activate pinned npm
+        shell: bash
         run: |
-          corepack enable
-          corepack prepare npm@11.7.0 --activate
+          npm install -g npm@11.7.0 --no-fund --no-audit
+          hash -r 2>/dev/null || true
+          test "$(npm --version)" = "11.7.0"
           npm --version
       - run: npm ci
       - name: Build core (CLI imports resolve from dist)
@@ -70,9 +72,11 @@ jobs:
           node-version: 24
           cache: npm
       - name: Activate pinned npm
+        shell: bash
         run: |
-          corepack enable
-          corepack prepare npm@11.7.0 --activate
+          npm install -g npm@11.7.0 --no-fund --no-audit
+          hash -r 2>/dev/null || true
+          test "$(npm --version)" = "11.7.0"
           npm --version
       - run: npm ci
       - name: Build CLI (headless runner target)
@@ -133,9 +137,11 @@ jobs:
           node-version: 24
           cache: npm
       - name: Activate pinned npm
+        shell: bash
         run: |
-          corepack enable
-          corepack prepare npm@11.7.0 --activate
+          npm install -g npm@11.7.0 --no-fund --no-audit
+          hash -r 2>/dev/null || true
+          test "$(npm --version)" = "11.7.0"
           npm --version
       - run: npm ci
       - name: Build CLI (headless runner target)

@@ -28,9 +28,11 @@ jobs:
           node-version: '24'
 
       - name: Activate pinned npm
+        shell: bash
         run: |
-          corepack enable
-          corepack prepare npm@11.7.0 --activate
+          npm install -g npm@11.7.0 --no-fund --no-audit
+          hash -r 2>/dev/null || true
+          test "$(npm --version)" = "11.7.0"
           npm --version
 
       - name: Install dependencies
@@ -87,7 +89,7 @@ jobs:
   # (shell, paths, process groups, signals, worktrees, session locks), so
   # core/session/runtime/verification/mission + CLI spine tests and the
   # bundled binary must run on every supported OS. Node lines: 20 (the
-  # runtime floor) and 24. The pinned npm@11.7.0 (corepack) resolves the
+  # runtime floor) and 24. The pinned npm@11.7.0 resolves the
   # same tree on both, so the vite 8 peer-esbuild conflict that once forced
   # 24-only no longer applies; the node:sqlite memory suites skip on 20.
   # Desktop build smoke lives in release-desktop.yml.
@@ -198,9 +200,11 @@ jobs:
           cache: npm
 
       - name: Activate pinned npm
+        shell: bash
         run: |
-          corepack enable
-          corepack prepare npm@11.7.0 --activate
+          npm install -g npm@11.7.0 --no-fund --no-audit
+          hash -r 2>/dev/null || true
+          test "$(npm --version)" = "11.7.0"
           npm --version
 
       # Desktop resolves `zelari-code: file:../..` — the root package must
