@@ -1723,7 +1723,7 @@ The default **kraken** mode (formerly `agent`) is a lead that spawns sub-agents 
 
 Worktree teardown is split in two (2.38): removing the directory (`git worktree remove --force`) is always immediate, while the repo-level bookkeeping (`worktree prune`, `branch -D`) is batched to the end of the graph run — one prune and one branch deletion instead of one pair per worktree. `ZELARI_KRAKEN_WORKTREE_CLEANUP=eager` restores the per-worktree behavior (useful when a leftover branch name matters to an external tool, or when debugging cleanup itself).
 
-After a `task` general the result includes a **verify-hint**: the parent must verify (`bash` or `task` verify) before declaring done.
+After a `task` general the runtime **auto-spawns a verify tentacle** (ADR-0033 `general⇒verify` obligation): only a verify PASS extinguishes the debt, and an open obligation at turn end **blocks strict done** — headless exits with code 4 (opt-out `ZELARI_STRICT_DONE=0`), while the TUI shows a "turn is NOT verified-complete" system message instead of exiting. The old textual verify-hint footer was removed as redundant.
 
 **Model routing (2.11):** a tentacle resolves its model in this order: specific override (`EXPLORE`/`GENERAL`/`VERIFY`) → `SUB_MODEL` → auto-pick → the lead's model. A qualified `provider/model` ref also selects the **provider** (credentials and stream) in addition to the model; if the provider isn't configured the value passes as-is to the lead's provider. The **Kraken Activity** panel in Desktop shows the actually resolved model for every tentacle (`agent_spawned`).
 

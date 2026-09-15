@@ -1,6 +1,6 @@
 # ADR-0033 - Anchored edit: file-level snapshot, exact apply, structured error
 
-Status: accepted (implementation in progress - slices t72+t73+t74+t78)
+Status: accepted (implemented - see the status table and the 2026-09-12 addendum)
 Date: 2026-08-30
 
 Relations: extends ADR-0016/0021/0024 (spine), ADR-0022 (profiles), ADR-0023/0025/0027 (strict done);
@@ -63,14 +63,32 @@ Per-line hashing at day 1 - relocate behind a flag - whole `expectedContent` ins
 
 | Task | Content | Status |
 |---|---|---|
-| t72 | `WriteReject` zod + `snapshotId` in `read_file` | this slice |
-| t73 | single engine (hash gate -> exact), `edit` tool | this slice |
-| t74 | kill relocate in `apply_diff` + `minimalDiff`, flipped tests | this slice |
-| t75 | spine events `file.read/applied/rejected` | pending |
-| t76 | write `PostToolUse`: AST gate + auto-revert, loud skip | pending |
-| t77 | Kraken catalog: one write tool (+ `file_exists` guard on `write_file`) | pending |
-| t78 | compiled done: hard `general->verify`, rework = 1, exit 4 | this slice |
-| t79 | bench: 200 patches, cheap model, 3 runs, raw JSON | pending |
+| t72 | `WriteReject` zod + `snapshotId` in `read_file` | landed (2.24.0) |
+| t73 | single engine (hash gate -> exact), `edit` tool | landed (2.24.0) |
+| t74 | kill relocate in `apply_diff` + `minimalDiff`, flipped tests | landed (2.24.0) |
+| t75 | spine events `file.read/applied/rejected` | landed (`c7be1e0`) |
+| t76 | write `PostToolUse`: AST gate + auto-revert, loud skip | landed (`c7be1e0`) |
+| t77 | Kraken catalog: one write tool (+ `file_exists` guard on `write_file`) | landed (`c7be1e0`) |
+| t78 | compiled done: hard `general->verify`, rework = 1, exit 4 | landed (2.24.0) |
+| t79 | bench: 200 patches, cheap model, 3 runs, raw JSON | landed (`daa8758`, `npm run edit:bench`) |
+
+## Addendum (2026-09-12) — compiled done landed; the soft hint removed
+
+t78 shipped in 2.24.0: the `task` tool runs an unconditional runtime chain
+(`runAutoVerifyAfterGeneral` in `src/cli/tools/taskTool.ts`) after every
+successful `general` — same acceptance[] and tree; FAIL gets at most one
+rework round; the debt clears ONLY on a parseable verify PASS; a crash in the
+chain leaves the debt open (never silent). Enforcement differs by surface BY
+DESIGN: headless `runOneTurn` closes the turn blocked with **exit 4**
+(opt-out `ZELARI_STRICT_DONE=0`), while the TUI surfaces a "turn is NOT
+verified-complete" system message (no process exit).
+
+Residual soft artifacts removed on 2026-09-12 as redundant: the
+`verifyHintForGeneral` footer + its call and unit test, the stale soft-gate
+docstring in taskTool, the playbook line and the GUIDA paragraph advertising
+the footer. Kept for telemetry compatibility: the radio event kind `verify_hint`
+(a successful `general` still logs that kind — legacy label, see
+`src/cli/tools/krakenRadio.ts`).
 
 ## Out of scope (separate ADRs, same seams)
 

@@ -7,13 +7,17 @@ import {
   buildTaskUserPrompt,
   buildTaskAutoVerifyPrompt,
   maxTaskSpawnsPerTurn,
+  outcomeMemoryAllowed,
   runAutoVerifyAfterGeneral,
   runSubAgent,
+  runTentacle,
   resetTaskVerifyObligation,
+  seedTaskVerifyObligation,
   taskVerifyObligation,
   TASK_TOOL_TIMEOUT_MS,
   type SubAgentContext,
   type SubAgentHarness,
+  type TaskToolDeps,
   type TentacleSuccess,
 } from '../../src/cli/tools/taskTool.js';
 import { createBuiltinToolRegistry } from '../../src/cli/toolRegistry.js';
@@ -459,5 +463,187 @@ describe('buildTaskAutoVerifyPrompt (t78)', () => {
     expect(prompt).toContain('typecheck clean');
     expect(prompt).toContain('VERDICT: PASS');
     expect(prompt).toContain('VERDICT: FAIL');
+  });
+});
+
+describe('blind verify input (F3.2)', () => {
+  it('carries goal + scope + acceptance and no general result marker', () => {
+    const original = {
+      description: 'fix foo',
+      prompt: 'edit foo',
+      scope: ['src/foo.ts'],
+      acceptance: ['npm test → exit 0', 'typecheck clean'],
+    };
+    // runTentacle builds the verify user payload from the ORIGINAL contract
+    // alone: buildTaskAutoVerifyPrompt prepended, scope + acceptance appended.
+    const payload = buildTaskUserPrompt({
+      prompt: buildTaskAutoVerifyPrompt(original),
+      scope: original.scope,
+      acceptance: original.acceptance,
+    });
+    expect(payload).toContain('npm test → exit 0');
+    expect(payload).toContain('typecheck clean');
+    expect(payload).toContain('src/foo.ts');
+    // The implementer's self-report never reaches the verifier.
+    expect(payload).not.toContain('[sub-agent:general');
+    expect(payload).not.toContain('## Context from completed upstream tasks');
+  });
+
+  it('instructs the verifier to run the commands itself and trust no claim', () => {
+    const prompt = buildTaskAutoVerifyPrompt({ description: 'fix foo', prompt: 'edit foo' });
+    expect(prompt).toMatch(/BLIND/i);
+    expect(prompt).toMatch(/run the acceptance commands yourself/i);
+  });
+});
+
+describe('outcomeMemoryAllowed (F3.3)', () => {
+  afterEach(() => resetTaskVerifyObligation());
+
+  it('is false while a general⇒verify obligation is open, true when none is pending', () => {
+    resetTaskVerifyObligation();
+    expect(outcomeMemoryAllowed()).toBe(true);
+    seedTaskVerifyObligation({ description: 'fix foo', detail: 'verify FAIL unresolved' });
+    expect(outcomeMemoryAllowed()).toBe(false);
+    resetTaskVerifyObligation();
+    expect(outcomeMemoryAllowed()).toBe(true);
+  });
+});
+
+describe('memory only on PASS (F3.3)', () => {
+  let root: string;
+  beforeEach(() => {
+    root = mkdtempSync(path.join(tmpdir(), 'zelari-f33-'));
+    resetTaskVerifyObligation();
+  });
+  afterEach(() => {
+    rmSync(root, { recursive: true, force: true });
+    resetTaskVerifyObligation();
+  });
+
+  function recordingMemory(): { calls: Array<Record<string, unknown>>; memory: TaskToolDeps['memoryService'] } {
+    const calls: Array<Record<string, unknown>> = [];
+    const memory = {
+      remember: async (input: Record<string, unknown>) => {
+        calls.push(input);
+        return { id: `mem-${calls.length}` };
+      },
+    } as unknown as TaskToolDeps['memoryService'];
+    return { calls, memory };
+  }
+
+  function tentacleDeps(conclusion: string): TaskToolDeps {
+    return {
+      createSubAgentContext: async ({ cwd }: { cwd: string }) => ({ ...dummyContext, cwd }),
+      harnessFactory: () =>
+        fakeHarness([
+          { type: 'message_start' },
+          { type: 'message_delta', delta: conclusion } as Partial<BrainEvent>,
+          { type: 'message_end' },
+        ]),
+      allowWorktree: false,
+    };
+  }
+
+  it('writes a verification memory for a verify PASS', async () => {
+    const { calls, memory } = recordingMemory();
+    const res = await runTentacle({
+      deps: { ...tentacleDeps('clean\nVERDICT: PASS'), memoryService: memory, memoryAutoWrite: true },
+      args: { description: 'verify x', prompt: 'p' },
+      agent: 'verify',
+      thoroughness: 'quick',
+      parentCwd: root,
+      sessionId: 'f33',
+    });
+    expect(res.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0].kind).toBe('verification');
+    expect(calls[0].confidence).toBe(0.98);
+  });
+
+  it('writes NO memory for a verify that did not PASS', async () => {
+    const { calls, memory } = recordingMemory();
+    await runTentacle({
+      deps: { ...tentacleDeps('wrong\nVERDICT: FAIL'), memoryService: memory, memoryAutoWrite: true },
+      args: { description: 'verify x', prompt: 'p' },
+      agent: 'verify',
+      thoroughness: 'quick',
+      parentCwd: root,
+      sessionId: 'f33',
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('never writes a general outcome in runTentacle (deferred to the verified chain)', async () => {
+    const { calls, memory } = recordingMemory();
+    await runTentacle({
+      deps: { ...tentacleDeps('did the work'), memoryService: memory, memoryAutoWrite: true },
+      args: { description: 'edit foo', prompt: 'p' },
+      agent: 'general',
+      thoroughness: 'quick',
+      parentCwd: root,
+      sessionId: 'f33',
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  /** Local chain helpers (mirror the t78 block, kept self-contained here). */
+  function fakeGeneral(worktreePath: string | null): TentacleSuccess {
+    return {
+      ok: true,
+      agent: 'general',
+      thoroughness: 'medium',
+      model: 'm',
+      result: 'did the work',
+      footer: '',
+      worktreePath,
+      worktreeHandle: null,
+    };
+  }
+
+  function chainDeps(conclusions: string[]): TaskToolDeps {
+    return {
+      createSubAgentContext: async ({ cwd }: { cwd: string }) => ({ ...dummyContext, cwd }),
+      harnessFactory: () =>
+        fakeHarness([
+          { type: 'message_start' },
+          { type: 'message_delta', delta: conclusions.shift() ?? '' } as Partial<BrainEvent>,
+          { type: 'message_end' },
+        ]),
+    };
+  }
+
+  async function runChain(conclusions: string[]) {
+    const rec = recordingMemory();
+    const deps: TaskToolDeps = {
+      ...chainDeps(conclusions),
+      memoryService: rec.memory,
+      memoryAutoWrite: true,
+    };
+    await runAutoVerifyAfterGeneral({
+      deps,
+      original: { description: 'fix foo', prompt: 'edit foo', acceptance: ['tests pass'] },
+      general: fakeGeneral(root),
+      parentCwd: root,
+      sessionId: 'f33-chain',
+    });
+    return rec.calls;
+  }
+
+  it('writes the general outcome from the auto-verify chain ONLY on PASS', async () => {
+    const passCalls = await runChain(['clean\nVERDICT: PASS']);
+    const outcome = passCalls.find((c) => c.kind === 'outcome');
+    expect(outcome).toBeDefined();
+    expect(outcome?.confidence).toBe(0.98);
+    expect((outcome?.metadata as Record<string, unknown> | undefined)?.verified).toBe(true);
+  });
+
+  it('writes NO general outcome on FAIL', async () => {
+    const calls = await runChain(['wrong\nVERDICT: FAIL']);
+    expect(calls.filter((c) => c.kind === 'outcome')).toHaveLength(0);
+  });
+
+  it('writes NO general outcome on an unknown verdict', async () => {
+    const calls = await runChain(['I could not determine the outcome']);
+    expect(calls.filter((c) => c.kind === 'outcome')).toHaveLength(0);
   });
 });

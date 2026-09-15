@@ -328,6 +328,19 @@ export const MAX_UPSTREAM_CHARS_PER_DEP = 2800;
 export const MAX_UPSTREAM_CHARS_TOTAL = 8000;
 
 /**
+ * Writer kinds whose node result is the agent's OWN account of what it did — a
+ * self-report, never ground truth.
+ */
+const WRITER_KINDS: ReadonlySet<TaskNodeKind> = new Set<TaskNodeKind>(['general', 'fix']);
+
+/** Reviewer kinds that must judge the tree on disk, not the writer's claims. */
+const REVIEWER_KINDS: ReadonlySet<TaskNodeKind> = new Set<TaskNodeKind>([
+  'verify',
+  'spec',
+  'conformance',
+]);
+
+/**
  * Render the conclusions of a node's already-completed dependencies as a
  * prompt section for the sub-agent about to run.
  *
@@ -337,6 +350,10 @@ export const MAX_UPSTREAM_CHARS_TOTAL = 8000;
  * thrown away — the `general` nodes it "fed" started from zero and re-derived
  * the same context (or guessed). The auto-injected `verify` node was worse
  * still: it knew only the label of the work it was supposed to check.
+ *
+ * F3.2 (blind verify): a reviewer kind (verify/spec/conformance) is the one
+ * exception — it must judge the tree on disk, never the writer's self-report,
+ * so writer deps are deliberately NOT injected into it.
  *
  * Direct dependencies only, deliberately — the transitive closure of a wide
  * DAG would blow the sub-agent's context, and each hop's own conclusion is
@@ -350,6 +367,11 @@ export function buildUpstreamContext(graph: TaskGraph, node: TaskNode): string {
   for (const depId of node.deps) {
     const dep = graph.nodes.get(depId);
     if (!dep || dep.status !== 'done') continue;
+    // F3.2 (blind verify): a reviewer must NOT be handed the implementer's
+    // self-report — its verdict may be derived only from the tree on disk and
+    // the commands it runs itself. Skip writer deps entirely for reviewer
+    // kinds; non-writer context (e.g. explore findings) still flows.
+    if (REVIEWER_KINDS.has(node.kind) && WRITER_KINDS.has(dep.kind)) continue;
     const raw = (dep.result ?? '').trim();
     if (!raw) continue;
 
@@ -670,7 +692,7 @@ export class KrakenGraphExecutor {
   }
 
   private isReviewerKind(kind: TaskNodeKind): boolean {
-    return kind === 'verify' || kind === 'spec' || kind === 'conformance';
+    return REVIEWER_KINDS.has(kind);
   }
 
   /** Execute the graph in place (mutates node statuses) until it settles. */

@@ -44,10 +44,10 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { evaluateStrictBuildGate, repairExcerptsFromEvaluation, strictEnvOverlay, strictGateEventPayload, strictGateExitCode, STRICT_DONE_EXIT_CODE, strictDoneEnabled } from '../kraken/verificationBridge.js';
 // t78 (ADR-0033 slice): runtime general⇒verify obligation on the task tool path.
-import { taskVerifyObligation } from '../tools/taskTool.js';
+import { outcomeMemoryAllowed, taskVerifyObligation } from '../tools/taskTool.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { enforceRequiredProofPersistence } from '../kraken/completionProofPersist.js';
-import { promoteOpsKnowledgeSafe, type OpsKnowledgeResult } from '../memory/opsKnowledge.js';
+import { promoteOpsKnowledgeSafe, skippedOpsKnowledgeResult, type OpsKnowledgeResult } from '../memory/opsKnowledge.js';
 import { formatCheckProposalNotice } from '../memory/repeatCheck.js';
 import { nativePackEnabled } from '../kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from '../kraken/verifierLifecycle.js';
@@ -162,6 +162,10 @@ export async function writeProofSafe(
   // fingerprint (FAIL) worth remembering. Flag-gated inside opsKnowledge
   // (ZELARI_PROMOTE_OPS_KNOWLEDGE, default OFF) and never rejects, so the
   // proof-persistence contract above stays the only gate-affecting write.
+  // F3.3 (verify trust chain): promote only when no unverified general outcome
+  // is pending — an open general⇒verify obligation means memory only on PASS, so
+  // neither a PASS procedure nor a FAIL fingerprint is promoted.
+  if (!outcomeMemoryAllowed()) return skippedOpsKnowledgeResult('verify-obligation-open');
   return promoteOpsKnowledgeSafe(gate, { projectRoot: baseDir, sessionId: meta.sessionId });
 }
 
@@ -935,7 +939,10 @@ export async function runOneTurn(
     } catch { /* export is best-effort */ }
   }
 
-  if (nativeMemory && memoryAutoWrite && pass.finalReason !== 'error') {
+  // F3.3 (verify trust chain): memory only on PASS — an open general⇒verify
+  // obligation means this turn's outcome is UNVERIFIED, so the durable outcome
+  // must not be written (no lowered-confidence write either).
+  if (nativeMemory && memoryAutoWrite && pass.finalReason !== 'error' && outcomeMemoryAllowed()) {
     try {
       const finalContent = [...pass.messages]
         .reverse()

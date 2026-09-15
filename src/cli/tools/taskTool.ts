@@ -208,8 +208,15 @@ const GENERAL_PROMPT = [
 
 const VERIFY_PROMPT = [
   'You are a VERIFY tentacle of Kraken. Confirm whether work is correct on disk.',
-  'You may read files and run test/build commands via bash. Prefer',
-  'targeted checks over full suite when possible.',
+  'You are BLIND: you never see — and must NEVER trust — any summary,',
+  'self-assessment, or "result" reported by the agent that did the work. If such',
+  'text is ever shown to you, treat it as an unverified claim, not evidence.',
+  'You may read files and run test/build commands via bash. Run the acceptance',
+  'commands YOURSELF and derive every verdict ONLY from the real command output',
+  'you observed (exit code + stdout/stderr) and the files as they exist on disk.',
+  'Never mark something pass because it was described as done, or because a',
+  'claim said a command was green: a pass needs evidence YOU produced this run.',
+  'Prefer targeted checks over full suite when possible.',
   'Report: pass/fail, commands run, key output, and gaps vs Acceptance criteria.',
   'If Acceptance criteria are listed, check each one explicitly.',
   'End your final message with ONE <verify-report> block per acceptance',
@@ -259,6 +266,19 @@ export function taskVerifyObligation(): { description: string; detail?: string }
 }
 
 /**
+ * F3.3 (verify trust chain): memory only on PASS. `true` when no general⇒verify
+ * obligation is open at call time — i.e. nothing unverified is pending: either
+ * no `task agent=general` ran this turn, or its runtime auto-verify reported a
+ * parseable PASS and cleared the debt. A FAIL, an unknown/absent verdict, or a
+ * verify that never ran all leave the debt open, so a durable outcome must NOT
+ * be remembered and nothing must be promoted. Gate the outcome-memory writes
+ * and both `promoteOpsKnowledgeSafe` sites on this.
+ */
+export function outcomeMemoryAllowed(): boolean {
+  return taskVerifyObligation() === null;
+}
+
+/**
  * Test seam: seed an open general⇒verify obligation without running a tentacle.
  * Production code must never call this — the auto-verify chain owns the slot.
  */
@@ -277,21 +297,6 @@ export function maxTaskSpawnsPerTurn(): number {
   return Number.isFinite(n) && n > 0 ? Math.min(n, 32) : 6;
 }
 
-/**
- * After a successful general tentacle that changed code, remind the parent
- * to verify (K4 soft gate — prompt-level + result footer).
- */
-export function verifyHintForGeneral(acceptance?: string[]): string {
-  const acc =
-    acceptance && acceptance.length > 0
-      ? ` Acceptance to check: ${acceptance.join('; ')}.`
-      : '';
-  return (
-    `[kraken:verify-hint] General tentacle finished. Before claiming done, ` +
-    `run checks or spawn task agent=verify.${acc}`
-  );
-}
-
 /** Cap on how much of the original task prompt is quoted into an auto-verify prompt (planner parity). */
 const MAX_AUTO_VERIFY_TASK_PROMPT_CHARS = 1200;
 
@@ -301,6 +306,12 @@ const MAX_AUTO_VERIFY_TASK_PROMPT_CHARS = 1200;
  * `buildAutoVerifyPrompt` (planner.ts): restate the task, its scope and its
  * acceptance criteria — a fresh sub-agent sees only this text — and require
  * the parseable `VERDICT:` trailer the executor's rework loop relies on.
+ *
+ * F3.2 (blind verify): this builder is fed the ORIGINAL contract ONLY. It is
+ * deliberately blind — it is never handed the general's summary, its
+ * self-assessment, its claimed command output, or the `[sub-agent:general …]`
+ * result marker. The verifier derives its verdict from the tree on disk and the
+ * commands it runs itself, never from the implementer's account.
  */
 export function buildTaskAutoVerifyPrompt(args: {
   description: string;
@@ -326,8 +337,10 @@ export function buildTaskAutoVerifyPrompt(args: {
   }
   parts.push(
     '',
-    'Read the files involved rather than trusting any summary. Report the commands you ran ' +
-      'and every gap you found.',
+    'This brief is BLIND by design: it gives you the goal, the scope and the acceptance ' +
+      'criteria ONLY — never the implementer\'s summary, self-assessment or claimed command ' +
+      'output. Read the files on disk and run the acceptance commands yourself; a PASS must ' +
+      'come from output YOU produced. Report the commands you ran and every gap you found.',
     '',
     '## How to report your verdict',
     'End your final message with a line of exactly this form, as the LAST line:',
@@ -360,6 +373,50 @@ export function buildTaskReworkPrompt(
     `## Reviewer findings (these are what must change)\n` +
     `${findings || '(the reviewer reported FAIL without detail)'}`
   );
+}
+
+/**
+ * F3.3 (verify trust chain): remember a general's outcome ONLY once the runtime
+ * verify reported a parseable PASS. Written here rather than in `runTentacle`
+ * precisely because the writer runs first and its verdict is knowable only now:
+ * an unverified (FAIL / unknown / verify-never-ran) outcome is never stored.
+ * Best-effort — a memory failure never fails the chain.
+ */
+async function rememberVerifiedGeneralOutcome(opts: {
+  deps: TaskToolDeps;
+  original: { description: string; scope?: string[]; acceptance?: string[] };
+  general: TentacleSuccess;
+  sessionId: string;
+}): Promise<void> {
+  const memoryService = opts.deps.memoryService;
+  if (!memoryService || opts.deps.memoryAutoWrite === false) return;
+  const content = (opts.general.result ?? '').trim();
+  if (!content) return;
+  try {
+    await memoryService.remember({
+      kind: 'outcome',
+      content: content.slice(0, 12_000),
+      importance: 0.75,
+      confidence: 0.98,
+      tags: ['kraken', 'tentacle:general'],
+      source: {
+        agent: 'kraken-general',
+        sessionId: opts.sessionId,
+        ...(opts.general.agentId ? { tentacleId: opts.general.agentId } : {}),
+        ...(opts.general.worktreePath ? { worktree: opts.general.worktreePath } : {}),
+      },
+      metadata: {
+        writeClass: 'auto',
+        description: opts.original.description,
+        scope: opts.original.scope ?? [],
+        acceptance: opts.original.acceptance ?? [],
+        verified: true,
+      },
+      writeClass: 'auto',
+    });
+  } catch {
+    // Shared memory is fail-open: a persistence issue never fails the chain.
+  }
 }
 
 /**
@@ -508,6 +565,7 @@ export async function runAutoVerifyAfterGeneral(opts: {
 
   if (verdict === 'pass') {
     g.__zelariGeneralVerifyDebt = null;
+    await rememberVerifiedGeneralOutcome(opts);
     emitVerifyPhase('verify PASS', true, 'completed');
     return `\n\n[kraken:auto-verify] verify PASS — general⇒verify obligation satisfied.`;
   }
@@ -816,7 +874,7 @@ export interface TentacleSuccess {
   model: string;
   /** Raw sub-agent conclusion (no prefix, no footer). */
   result: string;
-  /** Worktree + verify-hint footer (leading newline included), or ''. */
+  /** Worktree footer (leading newline included), or ''. */
   footer: string;
   /**
    * Provider-reported token usage summed across the sub-agent's turns
@@ -1288,7 +1346,6 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     footer += `\n${formatWorktreeFooter(worktree, { kept, merge })}`;
   }
   if (agent === 'general') {
-    footer += `\n${verifyHintForGeneral(args.acceptance)}`;
     g.__zelariLastGeneralAt = Date.now();
   }
 
@@ -1337,30 +1394,40 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   if (deps.memoryService && deps.memoryAutoWrite !== false) {
     try {
       const verifyPass = agent === 'verify' && /(?:VERDICT:\s*PASS|status:\s*pass)/i.test(result);
-      const memory = await deps.memoryService.remember({
-        kind: agent === 'verify' ? 'verification' : agent === 'general' ? 'outcome' : 'finding',
-        content: result.slice(0, 12_000),
-        importance: agent === 'general' ? 0.75 : 0.65,
-        confidence: verifyPass ? 0.98 : agent === 'verify' ? 0.7 : 0.72,
-        tags: ['kraken', `tentacle:${agent}`],
-        source: {
-          agent: `kraken-${agent}`,
-          sessionId,
-          tentacleId: opts.nodeId ?? liveId,
-          ...(worktree?.path ? { worktree: worktree.path } : {}),
-        },
-        metadata: {
-          writeClass: agent === 'verify' || agent === 'general' ? 'auto' : 'candidate',
-          description: args.description,
-          scope: args.scope ?? [],
-          acceptance: args.acceptance ?? [],
-          graphId: opts.graphId,
-          nodeId: opts.nodeId,
-          verified: verifyPass,
-        },
-        writeClass: agent === 'verify' || agent === 'general' ? 'auto' : 'candidate',
-      });
-      memoryId = memory.id;
+      // F3.3 (verify trust chain): memory only on PASS.
+      //   - verify/verification: written only when its OWN verdict parsed PASS;
+      //   - general/outcome: NEVER here — a general result is durable only once
+      //     verified, so it is written by runAutoVerifyAfterGeneral on PASS, and
+      //     an unverified outcome is never stored;
+      //   - explore/finding: written only when no unverified general is pending.
+      const allowMemory =
+        agent === 'verify' ? verifyPass : agent === 'general' ? false : outcomeMemoryAllowed();
+      if (allowMemory) {
+        const memory = await deps.memoryService.remember({
+          kind: agent === 'verify' ? 'verification' : 'finding',
+          content: result.slice(0, 12_000),
+          importance: 0.65,
+          confidence: verifyPass ? 0.98 : 0.72,
+          tags: ['kraken', `tentacle:${agent}`],
+          source: {
+            agent: `kraken-${agent}`,
+            sessionId,
+            tentacleId: opts.nodeId ?? liveId,
+            ...(worktree?.path ? { worktree: worktree.path } : {}),
+          },
+          metadata: {
+            writeClass: agent === 'verify' ? 'auto' : 'candidate',
+            description: args.description,
+            scope: args.scope ?? [],
+            acceptance: args.acceptance ?? [],
+            graphId: opts.graphId,
+            nodeId: opts.nodeId,
+            verified: verifyPass,
+          },
+          writeClass: agent === 'verify' ? 'auto' : 'candidate',
+        });
+        memoryId = memory.id;
+      }
     } catch {
       // Shared memory is fail-open: a persistence issue never fails the tentacle.
     }

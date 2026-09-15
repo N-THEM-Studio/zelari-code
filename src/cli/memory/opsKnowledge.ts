@@ -370,6 +370,16 @@ function emptyResult(enabled: boolean, skippedReason: string): OpsKnowledgeResul
   };
 }
 
+/**
+ * F3.3 (verify trust chain): the inert result returned when a promotion is
+ * deliberately SKIPPED because the turn's general⇒verify obligation is still
+ * open (an unverified outcome must not promote a procedure or fingerprint —
+ * memory only on PASS). Never rejects; carries no proposals.
+ */
+export function skippedOpsKnowledgeResult(reason: string): OpsKnowledgeResult {
+  return emptyResult(true, reason);
+}
+
 async function openMemory(projectRoot: string, env: NodeJS.ProcessEnv): Promise<MemoryService | null> {
   try {
     const factory = await import('./serviceFactory.js');

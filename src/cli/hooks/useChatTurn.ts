@@ -21,7 +21,7 @@ import { PROVIDERS } from "../keyStore.js";
 import { getActiveModel } from "../providerConfig.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
 import { KrakenTurnRuntime } from "../kraken/turnRuntime.js";
-import { resetTaskSpawnCount, resetTaskVerifyObligation, taskVerifyObligation } from "../tools/taskTool.js";
+import { outcomeMemoryAllowed, resetTaskSpawnCount, resetTaskVerifyObligation, taskVerifyObligation } from "../tools/taskTool.js";
 import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from "../kraken/candidateRegistry.js";
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from "../kraken/metrics.js";
 import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
@@ -37,7 +37,7 @@ import {
   type StrictGateOptions,
 } from "../kraken/verificationBridge.js";
 import { writeCompletionProof } from "../kraken/completionProof.js";
-import { promoteOpsKnowledgeSafe } from "../memory/opsKnowledge.js";
+import { promoteOpsKnowledgeSafe, skippedOpsKnowledgeResult } from "../memory/opsKnowledge.js";
 import { formatCheckProposalNotice } from "../memory/repeatCheck.js";
 import { formatStrictBlockExplanation, recordStrictGateEvaluation } from "../kraken/verifyStatus.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
@@ -938,10 +938,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 // the proof artifact feeds Memory V2 — deterministic PASS
                 // procedures and FAIL fingerprints. Flag-gated (default OFF)
                 // and never rejecting, so the turn is never blocked on memory.
-                const opsKnowledge = await promoteOpsKnowledgeSafe(gate, {
-                  projectRoot: process.cwd(),
-                  sessionId,
-                });
+                // F3.3 (verify trust chain): memory only on PASS — an open
+                // general⇒verify obligation means nothing is promoted.
+                const opsKnowledge = outcomeMemoryAllowed()
+                  ? await promoteOpsKnowledgeSafe(gate, { projectRoot: process.cwd(), sessionId })
+                  : skippedOpsKnowledgeResult("verify-obligation-open");
                 // Slice A: the proposals returned here used to be dropped — the
                 // human never learned a candidate existed. Rendered with the SAME
                 // notice channel as memory promotion; nothing is applied.
@@ -1376,7 +1377,16 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // Parsing/picker failure must never break the turn.
             }
           }
-          if (memoryService && memoryAutoWrite && turnSucceeded && assistantContent.trim()) {
+          // F3.3 (verify trust chain): memory only on PASS — an open
+          // general⇒verify obligation leaves this turn's outcome unverified, so
+          // the durable outcome is not written.
+          if (
+            memoryService &&
+            memoryAutoWrite &&
+            turnSucceeded &&
+            assistantContent.trim() &&
+            outcomeMemoryAllowed()
+          ) {
             try {
               const cleanedOutcome = cleanAgentContent(assistantContent, {
                 stripQuestion: true,

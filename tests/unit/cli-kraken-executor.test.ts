@@ -1031,12 +1031,24 @@ describe('upstream context propagation', () => {
 
   it('includes a dependency scope in its heading', () => {
     const graph = createGraph('ctx-scope', [
-      node('g1', [], { kind: 'general', label: 'A', scope: ['src/a'], status: 'done', result: 'wrote src/a/x.ts' }),
+      node('e1', [], { kind: 'explore', label: 'A', scope: ['src/a'], status: 'done', result: 'found src/a/x.ts' }),
+      node('g1', ['e1'], { kind: 'general' }),
+    ]);
+    expect(buildUpstreamContext(graph, graph.nodes.get('g1')!)).toContain(
+      '### A (explore, scope: src/a)',
+    );
+  });
+
+  it('blinds a reviewer node: the writer self-report is never injected (F3.2)', () => {
+    const graph = createGraph('ctx-blind', [
+      node('g1', [], { kind: 'general', label: 'A', scope: ['src/a'], status: 'done', result: 'CLAIM: I fixed src/a/x.ts and tests pass' }),
       node('v1', ['g1'], { kind: 'verify' }),
     ]);
-    expect(buildUpstreamContext(graph, graph.nodes.get('v1')!)).toContain(
-      '### A (general, scope: src/a)',
-    );
+    // A verify/spec/conformance node must derive its verdict from the tree and
+    // the commands it runs itself — never from the implementer's own account.
+    const ctx = buildUpstreamContext(graph, graph.nodes.get('v1')!);
+    expect(ctx).toBe('');
+    expect(ctx).not.toContain('CLAIM:');
   });
 
   it('omits dependencies that are not done, produced nothing, or are unknown', () => {
@@ -1082,7 +1094,7 @@ describe('upstream context propagation', () => {
     expect((ctx.match(/§/g) ?? []).length).toBe(MAX_UPSTREAM_CHARS_TOTAL);
   });
 
-  it('feeds explore findings to the general node and the general result to its verify node', async () => {
+  it('feeds explore findings to the general node but keeps its verify node blind (F3.2)', async () => {
     const prompts: Record<string, string> = {};
     const runTentacleFn = async (opts: RunTentacleOptions): Promise<TentacleResult> => {
       prompts[opts.nodeId ?? '?'] = opts.args.prompt;
@@ -1119,8 +1131,10 @@ describe('upstream context propagation', () => {
     expect(prompts['g1']).toContain('build the thing');
     expect(prompts['g1']).toContain('## Context from completed upstream tasks');
     expect(prompts['g1']).toContain('e1 concluded something specific');
-    // the auto-injected verify node receives what the writer reported
-    expect(prompts['verify-g1']).toContain('g1 concluded something specific');
+    // F3.2: the auto-injected verify node is BLIND — it must not receive the
+    // writer's reported result; it judges the tree on disk itself.
+    expect(prompts['verify-g1']).not.toContain('g1 concluded something specific');
+    expect(prompts['verify-g1']).not.toContain('## Context from completed upstream tasks');
   });
 });
 

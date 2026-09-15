@@ -1,6 +1,7 @@
 /**
  * Kraken slice 2: model routing (K5), radio (K8), worktree helpers (K7),
- * verify-hint + spawn reset (K4/K3).
+ * spawn reset (K3). The K4 verify-hint footer was removed once the runtime
+ * general->verify obligation (ADR-0033 t78) made it redundant.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
@@ -29,7 +30,6 @@ import {
   resetTaskVerifyObligation,
   maxTaskSpawnsPerTurn,
   taskVerifyObligation,
-  verifyHintForGeneral,
   type SubAgentContext,
   type SubAgentHarness,
 } from '../../src/cli/tools/taskTool.js';
@@ -185,7 +185,7 @@ describe('krakenWorktree flags (K7)', () => {
   });
 });
 
-describe('taskTool K3/K4 integration', () => {
+describe('taskTool K3 integration', () => {
   let root: string;
   beforeEach(() => {
     root = mkdtempSync(path.join(tmpdir(), 'kraken-task-'));
@@ -195,12 +195,6 @@ describe('taskTool K3/K4 integration', () => {
   afterEach(() => {
     rmSync(root, { recursive: true, force: true });
     resetTaskSpawnCount();
-  });
-
-  it('verifyHintForGeneral mentions acceptance', () => {
-    const h = verifyHintForGeneral(['typecheck ok']);
-    expect(h).toMatch(/verify-hint/);
-    expect(h).toContain('typecheck ok');
   });
 
   it('resetTaskSpawnCount allows a new budget', async () => {
@@ -234,7 +228,7 @@ describe('taskTool K3/K4 integration', () => {
     }
   });
 
-  it('general result includes verify-hint footer and radio done/verify_hint', async () => {
+  it('general result has no verify-hint footer; the auto-verify chain appends instead', async () => {
     const tool = createTaskTool({
       allowWorktree: false,
       createSubAgentContext: async ({ cwd }) => ({ ...dummyContext, cwd, model: 'm1' }),
@@ -257,9 +251,9 @@ describe('taskTool K3/K4 integration', () => {
     );
     expect(res.ok).toBe(true);
     if (res.ok) {
-      expect(res.value.result).toMatch(/verify-hint/i);
-      expect(res.value.result).toContain('tests pass');
+      expect(res.value.result).not.toMatch(/verify-hint/i);
       expect(res.value.result).toContain('model=m1');
+      expect(res.value.result).toMatch(/kraken:auto-verify/);
     }
     const radio = readKrakenRadio(root, 'gen-test');
     expect(radio.some((e) => e.kind === 'spawn')).toBe(true);
