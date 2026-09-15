@@ -375,6 +375,73 @@ describe('runAutoVerifyAfterGeneral (t78)', () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  it('emits agent_status completed on the general row when verify PASSes (t94 terminal)', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-status-'));
+    try {
+      const seenCwds: string[] = [];
+      const events: BrainEvent[] = [];
+      const deps = {
+        ...chainDeps(['clean\nVERDICT: PASS'], seenCwds),
+        onTentacleEvent: (ev: BrainEvent) => events.push(ev),
+      };
+      const summary = await runAutoVerifyAfterGeneral({
+        deps,
+        original: { description: 'fix foo', prompt: 'edit foo' },
+        general: { ...fakeGeneral(root), agentId: 'gen-1' },
+        parentCwd: root,
+        sessionId: 't78-status',
+      });
+      expect(summary).toContain('verify PASS');
+      const phases = events
+        .filter((e) => e.type === 'agent_status' && e.agentId === 'gen-1')
+        .map((e) => e as unknown as Record<string, unknown>);
+      expect(phases.map((p) => p.message)).toEqual(['verifying…', 'verify PASS']);
+      expect(phases[0].status).toBe('running');
+      expect(phases[1].status).toBe('completed');
+      expect(phases.every((p) => p.agentId === 'gen-1')).toBe(true);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it('emits agent_status failed when a rework round cannot run (row must not stay running)', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'zelari-t78-reworkfail-'));
+    try {
+      const events: BrainEvent[] = [];
+      let calls = 0;
+      const deps = {
+        // First call is the verify tentacle (FAILs); the rework reuses the
+        // same tree and cannot run → the chain must caption the row failed.
+        createSubAgentContext: async ({ cwd }: { cwd: string }) => {
+          calls += 1;
+          return calls === 1 ? { ...dummyContext, cwd } : null;
+        },
+        harnessFactory: () =>
+          fakeHarness([
+            { type: 'message_start' },
+            { type: 'message_delta', delta: 'wrong\nVERDICT: FAIL' } as Partial<BrainEvent>,
+            { type: 'message_end' },
+          ]),
+        onTentacleEvent: (ev: BrainEvent) => events.push(ev),
+      };
+      const summary = await runAutoVerifyAfterGeneral({
+        deps,
+        original: { description: 'fix foo', prompt: 'edit foo' },
+        general: { ...fakeGeneral(root), agentId: 'gen-2' },
+        parentCwd: root,
+        sessionId: 't78-reworkfail',
+      });
+      expect(summary).toContain('rework round 1 failed');
+      const phases = events
+        .filter((e) => e.type === 'agent_status' && e.agentId === 'gen-2')
+        .map((e) => e as unknown as Record<string, unknown>);
+      expect(phases.map((p) => p.message)).toEqual(['verifying…', 'rework round 1 failed']);
+      expect(phases[1].status).toBe('failed');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('buildTaskAutoVerifyPrompt (t78)', () => {

@@ -9,9 +9,10 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { zelariHome } from '../paths.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 
@@ -149,6 +150,40 @@ export function slugFromPath(p: string): string {
     .slice(0, 48) || 'project';
 }
 
+/**
+ * t66 full-fs: resolve an absolute, existing directory from the companion
+ * picker into a project-shaped descriptor. resolveProjectPath flags the
+ * result untrusted so a run there parks as awaiting_trust until the desktop
+ * modal answers. '..' segments and non-absolute paths are rejected; the
+ * directory must exist (the picker only ever proposes real folders).
+ */
+export function resolveFsDirectory(
+  rawPath: string,
+): { ok: true; project: CompanionProject } | { ok: false; error: string } {
+  const trimmed = rawPath.trim();
+  if (!trimmed) return { ok: false, error: 'cwd is required' };
+  const norm = trimmed.replace(/\\/g, '/');
+  const absolute = /^([a-zA-Z]:\/|\/)/.test(norm);
+  if (!absolute || norm.split('/').includes('..')) {
+    return {
+      ok: false,
+      error: `cwd must be an absolute path without '..': ${trimmed}`,
+    };
+  }
+  let stat;
+  try {
+    stat = statSync(trimmed);
+  } catch {
+    return { ok: false, error: `path not found: ${trimmed}` };
+  }
+  if (!stat.isDirectory()) {
+    return { ok: false, error: `not a directory: ${trimmed}` };
+  }
+  const abs = resolve(trimmed);
+  const slug = slugFromPath(abs);
+  return { ok: true, project: { id: slug, name: slug, path: abs } };
+}
+
 /** Merge CLI --project paths into config (in-memory; optionally persist). */
 export function mergeProjects(
   cfg: CompanionConfigFile,
@@ -178,25 +213,30 @@ export function mergeProjects(
 export function resolveProjectPath(
   projects: CompanionProject[],
   cwdOrId: string | undefined | null,
-): { ok: true; project: CompanionProject } | { ok: false; error: string } {
-  if (!projects.length) {
+  opts: { fullFs?: boolean } = {},
+):
+  | { ok: true; project: CompanionProject; trusted: boolean }
+  | { ok: false; error: string } {
+  const key = String(cwdOrId ?? '').trim();
+  // t66: with full-fs an explicit cwd resolves even with an empty allowlist —
+  // the desktop trust gate replaces the allowlist as the run barrier.
+  if (!projects.length && !(opts.fullFs && key)) {
     return {
       ok: false,
       error:
         'No projects configured. Pass --project <path> or edit ~/.zelari-code/companion.json',
     };
   }
-  if (!cwdOrId || !String(cwdOrId).trim()) {
-    return { ok: true, project: projects[0]! };
+  if (!key) {
+    return { ok: true, project: projects[0]!, trusted: true };
   }
-  const key = String(cwdOrId).trim();
   const byId = projects.find((p) => p.id === key || p.name === key);
-  if (byId) return { ok: true, project: byId };
+  if (byId) return { ok: true, project: byId, trusted: true };
   const norm = key.replace(/\\/g, '/').toLowerCase();
   const byPath = projects.find(
     (p) => p.path.replace(/\\/g, '/').toLowerCase() === norm,
   );
-  if (byPath) return { ok: true, project: byPath };
+  if (byPath) return { ok: true, project: byPath, trusted: true };
   // Prefix match under an allowlisted root
   const under = projects.find((p) => {
     const root = p.path.replace(/\\/g, '/').toLowerCase().replace(/\/$/, '');
@@ -206,10 +246,38 @@ export function resolveProjectPath(
     return {
       ok: true,
       project: { ...under, path: key },
+      trusted: true,
     };
+  }
+  // t66 full-fs: any existing absolute directory resolves, flagged
+  // untrusted — the desktop trust modal gates the actual run start.
+  if (opts.fullFs) {
+    const dir = resolveFsDirectory(key);
+    if (dir.ok) return { ok: true, project: dir.project, trusted: false };
+    return { ok: false, error: dir.error };
   }
   return {
     ok: false,
     error: `cwd/project not in allowlist: ${key}. Allowed: ${projects.map((p) => p.id).join(', ')}`,
   };
+}
+
+/**
+ * t63: sandbox check for GET /v1/fs — same normalization/prefix logic as
+ * resolveProjectPath (backslash→slash, case-insensitive, any depth under an
+ * allowlisted root). '..' segments are rejected before any fs access.
+ */
+export function isUnderRoots(
+  rawPath: string,
+  projects: CompanionProject[],
+): { ok: true; root: CompanionProject; normalized: string } | { ok: false } {
+  const norm = rawPath.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+  if (!norm || norm.split('/').includes('..')) return { ok: false };
+  for (const p of projects) {
+    const root = p.path.replace(/\\/g, '/').toLowerCase().replace(/\/+$/, '');
+    if (norm === root || norm.startsWith(root + '/')) {
+      return { ok: true, root: p, normalized: norm };
+    }
+  }
+  return { ok: false };
 }

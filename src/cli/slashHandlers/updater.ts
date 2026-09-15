@@ -27,7 +27,8 @@ export async function handleUpdateCheck(
       appendSystem(
         ctx.setMessages,
         `[update] 🆕 zelari-code ${info.latestVersion} available (current: ${info.currentVersion})\n` +
-          `       Run \`/update --yes\` to install. You'll need to restart manually after.`,
+          `       Run \`/update --yes\` to install (global installs only).\n` +
+          `       On npx/local installs, update with \`npx zelari-code@latest\` — you'll need to restart manually after.`,
       );
     } else {
       appendSystem(
@@ -47,7 +48,20 @@ export async function handleUpdatePerform(
   ctx: UpdaterSlashContext,
 ): Promise<void> {
   try {
-    const { performUpdate, distTagForVersion, getCurrentVersion } = await import("../updater.js");
+    const {
+      performUpdate,
+      resolveInstallKind,
+      nonGlobalUpdateAdvisory,
+      distTagForVersion,
+      getCurrentVersion,
+    } = await import("../updater.js");
+    // An npx/local install has no global shim to update: `/update` is a no-op.
+    // Say so up front instead of spawning npm and printing a failure hint.
+    const kind = resolveInstallKind();
+    if (kind === "npx" || kind === "local") {
+      appendSystem(ctx.setMessages, nonGlobalUpdateAdvisory(kind));
+      return;
+    }
     const tag = distTagForVersion(getCurrentVersion());
     appendSystem(
       ctx.setMessages,

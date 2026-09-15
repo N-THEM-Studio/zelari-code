@@ -108,7 +108,10 @@ afterEach(() => {
     else process.env[k] = v;
   }
   resetKrakenCandidates();
-  return fs.rm(tmp, { recursive: true, force: true });
+  // maxRetries: on win32 the shell-backed pack child (cmd.exe, cwd=tmp) can
+  // still hold the dir handle for an instant after exit — fs.rm retries are
+  // Node's canonical remedy for EBUSY/EPERM on recursive removes.
+  return fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 });
 
 /** Capture (and swallow) stdout+stderr while the turn emits NDJSON. */

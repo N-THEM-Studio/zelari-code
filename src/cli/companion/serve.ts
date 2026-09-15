@@ -8,13 +8,14 @@
  *   - project cwd allowlist only
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readdirSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { getCurrentVersion } from '../updater.js';
 import { buildDesktopConfigSnapshot } from '../desktopConfig.js';
 import {
   DEFAULT_COMPANION_BIND,
   DEFAULT_COMPANION_PORT,
+  isUnderRoots,
   loadCompanionConfig,
   loadOrCreateToken,
   mergeProjects,
@@ -39,6 +40,14 @@ export interface ServeOptions {
   projects?: string[];
   /** Persist CLI projects into companion.json */
   persistProjects?: boolean;
+  /**
+   * t66: filesystem scope for /v1/fs browsing and run-start cwd validation.
+   * 'full' (default) — browse every drive/folder on the host; a run whose
+   * cwd is outside the allowlist parks as awaiting_trust until the desktop
+   * trust modal approves (POST /v1/trust). 'allowlist' — t63 sandbox
+   * behavior (roots = allowlist only, unlisted cwd → 400).
+   */
+  fsMode?: 'full' | 'allowlist';
 }
 
 function readBody(req: IncomingMessage, max = 2_000_000): Promise<string> {
@@ -137,6 +146,11 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
 
   const runs = new RunManager();
 
+  // t66: filesystem scope — 'full' by default (browse every drive; a run
+  // whose cwd is outside the allowlist parks as awaiting_trust until the
+  // desktop modal approves), 'allowlist' restores the t63 sandbox.
+  const fsFull = (opts.fsMode ?? 'full') === 'full';
+
   // v2.16 (t25): CORS allowlist — this server's own loopback origins plus any
   // extra browser origins configured via ZELARI_COMPANION_ALLOWED_ORIGINS
   // (comma-separated). Requests WITHOUT an Origin header (curl / native
@@ -196,6 +210,82 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
         return;
       }
 
+      // t63/t66: folder browsing for the companion picker — directories
+      // only. Full-fs mode (default): roots are the host drives and any
+      // absolute path without '..' browses; runs on folders outside the
+      // allowlist park as awaiting_trust (desktop modal). Allowlist mode:
+      // t63 sandbox behavior unchanged.
+      if (req.method === 'GET' && path === '/v1/fs') {
+        const listFsRootsInline = (): CompanionProject[] => {
+          if (process.platform === 'win32') {
+            const roots: CompanionProject[] = [];
+            for (let code = 65; code <= 90; code++) {
+              const letter = String.fromCharCode(code);
+              const drive = `${letter}:\\`;
+              if (existsSync(drive)) {
+                roots.push({
+                  id: `fs-${letter.toLowerCase()}`,
+                  name: drive,
+                  path: drive,
+                });
+              }
+            }
+            return roots;
+          }
+          return [{ id: 'fs-root', name: '/', path: '/' }];
+        };
+        const rawParam = url.searchParams.get('path')?.trim() ?? '';
+        if (!rawParam) {
+          sendJson(res, 200, {
+            ok: true,
+            roots: fsFull ? listFsRootsInline() : projects,
+            entries: [],
+          });
+          return;
+        }
+        const norm = rawParam.replace(/\\/g, '/').replace(/\/+$/, '');
+        const absolute = /^([a-zA-Z]:\/|\/)/.test(norm);
+        const allowed =
+          fsFull && absolute && !norm.split('/').includes('..')
+            ? true
+            : isUnderRoots(rawParam, projects).ok;
+        if (!allowed) {
+          sendJson(res, 403, { ok: false, error: 'path outside allowed roots' });
+          return;
+        }
+        if (!existsSync(rawParam)) {
+          sendJson(res, 404, { ok: false, error: 'path not found' });
+          return;
+        }
+        const dirs = readdirSync(rawParam, { withFileTypes: true })
+          .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+          .sort((a, b) => a.name.localeCompare(b.name));
+        const slash = norm.lastIndexOf('/');
+        let parent = slash > 0 ? norm.slice(0, slash) : null;
+        // t63: never offer to climb ABOVE an allowlisted root — parent is
+        // null AT the root so the phone's "Up" cannot escape the sandbox
+        // (in full mode this only fires for a path that IS a configured root).
+        const rootHit = isUnderRoots(rawParam, projects);
+        if (rootHit.ok) {
+          const rootNorm = rootHit.root.path
+            .replace(/\\/g, '/')
+            .toLowerCase()
+            .replace(/\/+$/, '');
+          if (rootHit.normalized === rootNorm) parent = null;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          path: rawParam,
+          parent,
+          entries: dirs.map((d) => ({
+            name: d.name,
+            path: join(rawParam, d.name),
+            dir: true,
+          })),
+        });
+        return;
+      }
+
       if (req.method === 'GET' && path === '/v1/projects') {
         sendJson(res, 200, {
           ok: true,
@@ -240,13 +330,26 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
         const mode = String(body.mode ?? 'kraken');
         const phase = String(body.phase ?? 'build');
         const cwdArg = body.cwd != null ? String(body.cwd) : body.projectId != null ? String(body.projectId) : null;
-        const resolved = resolveProjectPath(projects, cwdArg);
+        const resolved = resolveProjectPath(projects, cwdArg, { fullFs: fsFull });
         if (!resolved.ok) {
           sendJson(res, 400, { ok: false, error: resolved.error });
           return;
         }
         const history = Array.isArray(body.history) ? body.history : undefined;
-        const result = runs.start({
+        // t63: per-turn knobs (Desktop parity). Unknown preset values are
+        // dropped — mirroring applyTurnPermissionPreset's allowlist, never a 400.
+        const presetRaw =
+          typeof body.permissionPreset === 'string'
+            ? body.permissionPreset.trim().toLowerCase()
+            : '';
+        const permissionPreset = ['standard', 'strict', 'yolo'].includes(presetRaw)
+          ? presetRaw
+          : undefined;
+        const strictDone = typeof body.strictDone === 'boolean' ? body.strictDone : undefined;
+        const verifyPack = typeof body.verifyPack === 'boolean' ? body.verifyPack : undefined;
+        // t66: full-fs run on a folder outside the allowlist → park the run
+        // as awaiting_trust; the desktop modal decides via POST /v1/trust.
+        const startArgs = {
           prompt,
           mode,
           phase,
@@ -254,13 +357,22 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
           provider: body.provider != null ? String(body.provider) : undefined,
           model: body.model != null ? String(body.model) : undefined,
           history,
-        });
+          permissionPreset,
+          strictDone,
+          verifyPack,
+        };
+        const gate =
+          fsFull && !resolved.trusted
+            ? { awaitingTrust: true as const }
+            : undefined;
+        const result = runs.start(startArgs, gate);
         if (!result.ok) {
           sendJson(res, 409, { ok: false, error: result.error });
           return;
         }
         sendJson(res, 201, {
           ok: true,
+          awaitingTrust: gate ? true : undefined,
           run: {
             id: result.run.id,
             status: result.run.status,
@@ -272,7 +384,61 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
           eventsUrl: `/v1/runs/${result.run.id}/events`,
           cancelUrl: `/v1/runs/${result.run.id}/cancel`,
           steerUrl: `/v1/runs/${result.run.id}/steer`,
+          permissionUrl: `/v1/runs/${result.run.id}/permission`,
+          askUrl: `/v1/runs/${result.run.id}/ask`,
         });
+        return;
+      }
+
+      // t66: desktop trust decisions for full-fs runs parked as
+      // awaiting_trust. Approve also persists the folder into the allowlist
+      // (companion.json) so future runs there start immediately.
+      if (req.method === 'POST' && path === '/v1/trust') {
+        const raw = await readBody(req);
+        let body: Record<string, unknown> = {};
+        try {
+          body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' });
+          return;
+        }
+        const runId = typeof body.runId === 'string' ? body.runId.trim() : '';
+        if (!runId) {
+          sendJson(res, 400, { ok: false, error: 'runId is required' });
+          return;
+        }
+        const current = runs.pendingTrust();
+        if (!current || current.runId !== runId) {
+          sendJson(res, 409, { ok: false, error: 'no such awaiting_trust run' });
+          return;
+        }
+        if (body.approve === true) {
+          projects = mergeProjects({ ...fileCfg, projects }, [current.path]);
+          try {
+            saveCompanionConfig({ ...fileCfg, bind, port, projects });
+          } catch {
+            /* best-effort persist */
+          }
+          const released = runs.releaseTrust();
+          if (!released.ok) {
+            sendJson(res, 409, { ok: false, error: released.error });
+            return;
+          }
+          sendJson(res, 200, { ok: true, approved: runId, path: current.path });
+          return;
+        }
+        const denied = runs.denyTrust('Trust negato sul desktop');
+        if (!denied.ok) {
+          sendJson(res, 409, { ok: false, error: denied.error });
+          return;
+        }
+        sendJson(res, 200, { ok: true, denied: runId });
+        return;
+      }
+
+      // t66: current awaiting_trust run (auth'd) for the desktop gate poll.
+      if (req.method === 'GET' && path === '/v1/trust/pending') {
+        sendJson(res, 200, { ok: true, pending: runs.pendingTrust() });
         return;
       }
 
@@ -304,8 +470,15 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
 
         const unsub = runs.subscribe(runId, writeEv);
 
-        // If already finished, close after replay
-        if (run.status !== 'running' && run.status !== 'queued') {
+        // If already finished, close after replay. awaiting_trust is NOT
+        // finished — keep the phone stream open until the desktop trust modal
+        // settles it (trust.settled → running | error), so the Android banner
+        // can clear on approval/settlement.
+        if (
+          run.status !== 'running' &&
+          run.status !== 'queued' &&
+          run.status !== 'awaiting_trust'
+        ) {
           writeEv({
             type: 'run_finished',
             runId,
@@ -334,7 +507,12 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
         // Poll finish for SSE close when run ends after subscribe
         const check = setInterval(() => {
           const r = runs.getRun(runId);
-          if (!r || (r.status !== 'running' && r.status !== 'queued')) {
+          if (
+            !r ||
+            (r.status !== 'running' &&
+              r.status !== 'queued' &&
+              r.status !== 'awaiting_trust')
+          ) {
             clearInterval(check);
             clearInterval(heartbeat);
             unsub();
@@ -385,6 +563,58 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
           return;
         }
         sendJson(res, 200, { ok: true, steered: runId, result: result.result });
+        return;
+      }
+
+      // t63: mobile approvals — settle permission.request / ask_user.request
+      // events raised on the run SSE (verbatim passthrough of the harness
+      // bridges). Validation mirrors the steer handler's error mapping.
+      const askMatch = /^\/v1\/runs\/([^/]+)\/(permission|ask)$/.exec(path);
+      if (req.method === 'POST' && askMatch) {
+        const runId = askMatch[1]!;
+        const kind = askMatch[2]!;
+        const raw = await readBody(req);
+        let body: Record<string, unknown> = {};
+        try {
+          body = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+        } catch {
+          sendJson(res, 400, { ok: false, error: 'invalid JSON body' });
+          return;
+        }
+        const requestId = typeof body.requestId === 'string' ? body.requestId.trim() : '';
+        if (!requestId) {
+          sendJson(res, 400, { ok: false, error: 'requestId is required' });
+          return;
+        }
+        if (kind === 'permission') {
+          const decision = typeof body.decision === 'string' ? body.decision.trim() : '';
+          if (!['allow', 'deny', 'always-tool', 'always-category'].includes(decision)) {
+            sendJson(res, 400, {
+              ok: false,
+              error: 'decision must be allow|deny|always-tool|always-category',
+            });
+            return;
+          }
+          const result = await runs.permissionRespond(runId, requestId, decision);
+          if (!result.ok) {
+            sendJson(res, 404, { ok: false, error: result.error });
+            return;
+          }
+          sendJson(res, 200, { ok: true, runId, requestId, result: result.result });
+          return;
+        }
+        const answer =
+          body.answer == null ? null : typeof body.answer === 'string' ? body.answer : undefined;
+        if (answer === undefined) {
+          sendJson(res, 400, { ok: false, error: 'answer must be a string or null' });
+          return;
+        }
+        const result = await runs.askUserRespond(runId, requestId, answer);
+        if (!result.ok) {
+          sendJson(res, 404, { ok: false, error: result.error });
+          return;
+        }
+        sendJson(res, 200, { ok: true, runId, requestId, result: result.result });
         return;
       }
 
@@ -475,11 +705,13 @@ export function parseServeFlags(argv: readonly string[]): ServeOptions | null {
   }
   const portRaw = get('--port');
   const port = portRaw ? Number.parseInt(portRaw, 10) : undefined;
+  const fsRaw = get('--fs');
   return {
     bind: get('--bind'),
     port: Number.isFinite(port) ? port : undefined,
     token: get('--token'),
     projects,
     persistProjects: argv.includes('--save-projects'),
+    fsMode: fsRaw === 'allowlist' ? 'allowlist' : fsRaw === 'full' ? 'full' : undefined,
   };
 }

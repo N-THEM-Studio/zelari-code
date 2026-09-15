@@ -41,7 +41,7 @@ const corePkg = readJson('packages/core/package.json');
 const rootVersion = rootPkg.version;
 const coreVersion = corePkg.version;
 const devDepVersion = rootPkg.devDependencies?.['@zelari/core'];
-const requiredNpm = '>=11.7.0';
+const requiredNpm = '>=10.0.0';
 const requiredPackageManager = 'npm@11.7.0';
 
 if (rootVersion !== coreVersion) {

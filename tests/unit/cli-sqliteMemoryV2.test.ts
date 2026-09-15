@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { DefaultMemoryService, MemoryPolicyError } from '@zelari/core/memory';
 import { SQLiteMemoryBackend } from '../../src/cli/memory/sqliteBackend.js';
 import {
@@ -11,6 +10,10 @@ import {
   isMemoryAutoWriteEnabled,
   isMemoryV2Enabled,
 } from '../../src/cli/memory/serviceFactory.js';
+
+// node:sqlite ships with Node >= 22.5 (still experimental). Import it lazily so
+// this suite skips gracefully on the Node 20 floor instead of failing at load.
+const nodeSqlite = (await import('node:sqlite').catch(() => null)) as typeof import('node:sqlite') | null;
 
 const dirs: string[] = [];
 async function project(): Promise<string> {
@@ -30,7 +33,7 @@ async function service(root: string): Promise<{ backend: SQLiteMemoryBackend; me
   return { backend, memory };
 }
 
-describe('SQLite cognitive memory', () => {
+describe.skipIf(!nodeSqlite)('SQLite cognitive memory', () => {
   it('persists typed memories and recalls them after restart', async () => {
     const root = await project();
     const first = await service(root);
@@ -240,14 +243,14 @@ describe('SQLite cognitive memory', () => {
     const seeded = await service(root);
     const databasePath = seeded.backend.databasePath;
     await seeded.memory.close();
-    const database = new DatabaseSync(databasePath);
+    const database = new nodeSqlite!.DatabaseSync(databasePath);
     database.exec('PRAGMA user_version = 99');
     database.close();
 
     const future = new SQLiteMemoryBackend();
     await expect(future.init(root)).rejects.toThrow(/newer than runtime/i);
     await future.close();
-    const unchanged = new DatabaseSync(databasePath);
+    const unchanged = new nodeSqlite!.DatabaseSync(databasePath);
     const version = unchanged.prepare('PRAGMA user_version').get() as { user_version: number };
     unchanged.close();
     expect(version.user_version).toBe(99);

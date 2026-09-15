@@ -6,6 +6,9 @@ import androidx.lifecycle.viewModelScope
 import com.anathemastudio.zelari.companion.data.ChatMessage
 import com.anathemastudio.zelari.companion.data.ConfigPaths
 import com.anathemastudio.zelari.companion.data.ConnState
+import com.anathemastudio.zelari.companion.data.FsEntry
+import com.anathemastudio.zelari.companion.data.PendingAsk
+import com.anathemastudio.zelari.companion.data.PendingPermission
 import com.anathemastudio.zelari.companion.data.HistoryMessage
 import com.anathemastudio.zelari.companion.data.Prefs
 import com.anathemastudio.zelari.companion.data.ProjectDto
@@ -51,6 +54,19 @@ data class UiState(
     val showSettings: Boolean = false,
     val cliVersion: String = "",
     val configPaths: ConfigPaths? = null,
+    // t63: agent controls (Desktop parity).
+    val permissionPreset: String = "standard",
+    val strictDone: Boolean = false,
+    val folderPath: String = "",
+    val showFolders: Boolean = false,
+    val fsPath: String = "",
+    val fsParent: String? = null,
+    val fsRoots: List<ProjectDto> = emptyList(),
+    val fsEntries: List<FsEntry> = emptyList(),
+    val permissionAsk: PendingPermission? = null,
+    val agentAsk: PendingAsk? = null,
+    // t66: full-fs run parked until the desktop trust modal answers.
+    val awaitingTrust: Boolean = false,
 )
 
 class CompanionViewModel(app: Application) : AndroidViewModel(app) {
@@ -71,6 +87,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
             val phase = prefs.phase.first()
             val provider = prefs.provider.first()
             val model = prefs.model.first()
+            val preset = prefs.permissionPreset.first()
+            val strict = prefs.strictDone.first()
+            val folder = prefs.folderPath.first()
             _ui.update {
                 it.copy(
                     baseUrl = base,
@@ -80,6 +99,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                     phase = phase,
                     selectedProvider = provider,
                     selectedModel = model,
+                    permissionPreset = preset,
+                    strictDone = strict,
+                    folderPath = folder,
                 )
             }
             if (base.isNotBlank() && token.isNotBlank()) {
@@ -102,6 +124,95 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     fun setProject(id: String) {
         _ui.update { it.copy(projectId = id) }
         viewModelScope.launch { prefs.saveProject(id) }
+    }
+
+    // ── t63: agent controls (Desktop parity) ──
+
+    fun setPermissionPreset(v: String) {
+        _ui.update { it.copy(permissionPreset = v) }
+        viewModelScope.launch { prefs.saveAgent(v, _ui.value.strictDone) }
+    }
+
+    fun setStrictDone(v: Boolean) {
+        _ui.update { it.copy(strictDone = v) }
+        viewModelScope.launch { prefs.saveAgent(_ui.value.permissionPreset, v) }
+    }
+
+    fun toggleFolders() {
+        val opening = !_ui.value.showFolders
+        _ui.update { it.copy(showFolders = opening) }
+        if (opening) loadFs(null)
+    }
+
+    fun closeFolders() = _ui.update { it.copy(showFolders = false) }
+
+    fun loadFs(path: String?) {
+        viewModelScope.launch {
+            try {
+                val res = api.fs(path)
+                _ui.update {
+                    it.copy(
+                        fsPath = res.path ?: "",
+                        fsParent = res.parent,
+                        fsRoots = res.roots,
+                        fsEntries = res.entries,
+                    )
+                }
+            } catch (e: Exception) {
+                _ui.update {
+                    it.copy(statusLine = "fs: ${e.message?.take(80) ?: e.javaClass.simpleName}")
+                }
+            }
+        }
+    }
+
+    fun selectFolder(path: String) {
+        _ui.update { it.copy(folderPath = path, showFolders = false, projectId = "") }
+        viewModelScope.launch { prefs.saveFolder(path) }
+    }
+
+    fun clearFolder() {
+        _ui.update { it.copy(folderPath = "") }
+        viewModelScope.launch { prefs.saveFolder("") }
+    }
+
+    fun steer() {
+        val state = _ui.value
+        val text = state.draft.trim()
+        val runId = state.activeRunId ?: return
+        if (text.isEmpty()) return
+        viewModelScope.launch {
+            try {
+                api.steer(runId, text)
+                _ui.update { it.copy(draft = "", statusLine = "Steer sent…") }
+            } catch (e: Exception) {
+                _ui.update { it.copy(statusLine = "Steer failed: ${e.message?.take(80)}") }
+            }
+        }
+    }
+
+    fun respondPermission(requestId: String, decision: String) {
+        val runId = _ui.value.activeRunId ?: return
+        _ui.update { it.copy(permissionAsk = null) }
+        viewModelScope.launch {
+            try {
+                api.permissionRespond(runId, requestId, decision)
+            } catch (e: Exception) {
+                appendSystem("Permission respond failed: ${e.message?.take(80)}")
+            }
+        }
+    }
+
+    fun respondAsk(requestId: String, answer: String?) {
+        val runId = _ui.value.activeRunId ?: return
+        _ui.update { it.copy(agentAsk = null) }
+        viewModelScope.launch {
+            try {
+                api.askRespond(runId, requestId, answer)
+            } catch (e: Exception) {
+                appendSystem("Ask respond failed: ${e.message?.take(80)}")
+            }
+        }
     }
 
     fun toggleDrawer() = _ui.update { it.copy(drawerOpen = !it.drawerOpen) }
@@ -283,8 +394,11 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                         prompt = text,
                         mode = state.mode,
                         phase = state.phase,
-                        projectId = state.projectId.ifBlank { null },
+                        projectId = if (state.folderPath.isBlank()) state.projectId.ifBlank { null } else null,
+                        cwd = state.folderPath.ifBlank { null },
                         history = history,
+                        permissionPreset = state.permissionPreset.ifBlank { null },
+                        strictDone = state.strictDone,
                         provider = state.selectedProvider.ifBlank { null },
                         model = state.customModel.ifBlank { state.selectedModel }.ifBlank { null },
                     ),
@@ -294,7 +408,14 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
                 val runId = res.run.id
-                _ui.update { it.copy(activeRunId = runId, statusLine = "Running $runId…") }
+                val awaiting = res.awaitingTrust == true
+                _ui.update {
+                    it.copy(
+                        activeRunId = runId,
+                        awaitingTrust = awaiting,
+                        statusLine = if (awaiting) "Waiting for desktop trust…" else "Running $runId…",
+                    )
+                }
                 streamJob?.cancel()
                 streamJob = launch {
                     try {
@@ -346,12 +467,12 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private fun handleEvent(assistantId: String, ev: JsonObject) {
-        val type = ev.get("type")?.asString ?: return
+        val type = ev.get("type")?.getAsString() ?: return
         when (type) {
             "message_delta", "text_delta" -> {
-                val delta = ev.get("delta")?.asString
-                    ?: ev.get("text")?.asString
-                    ?: ev.get("content")?.asString
+                val delta = ev.get("delta")?.getAsString()
+                    ?: ev.get("text")?.getAsString()
+                    ?: ev.get("content")?.getAsString()
                     ?: return
                 appendAssistantDelta(assistantId, delta)
             }
@@ -359,9 +480,9 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 // keep streaming until run_finished
             }
             "tool_execution_start" -> {
-                val name = ev.get("toolName")?.asString
-                    ?: ev.get("name")?.asString
-                    ?: ev.get("tool")?.asString
+                val name = ev.get("toolName")?.getAsString()
+                    ?: ev.get("name")?.getAsString()
+                    ?: ev.get("tool")?.getAsString()
                     ?: "tool"
                 _ui.update { it.copy(liveTool = name) }
             }
@@ -369,24 +490,94 @@ class CompanionViewModel(app: Application) : AndroidViewModel(app) {
                 _ui.update { it.copy(liveTool = null) }
             }
             "error" -> {
-                val msg = ev.get("message")?.asString
-                    ?: ev.get("error")?.asString
+                val msg = ev.get("message")?.getAsString()
+                    ?: ev.get("error")?.getAsString()
                     ?: "error"
                 appendAssistantDelta(assistantId, "\n\n⚠ $msg")
             }
             "log" -> {
-                val msg = ev.get("message")?.asString ?: return
+                val msg = ev.get("message")?.getAsString() ?: return
                 if (msg.contains("[headless]") || msg.contains("[companion]")) {
                     _ui.update { it.copy(statusLine = msg.take(120)) }
                 }
             }
+            "permission.request" -> {
+                val reqId = ev.get("requestId")?.getAsString() ?: return
+                _ui.update {
+                    it.copy(
+                        permissionAsk = PendingPermission(
+                            requestId = reqId,
+                            tool = ev.get("tool")?.getAsString() ?: "tool",
+                            category = ev.get("category")?.takeIf { c -> c.isJsonPrimitive() }?.getAsString(),
+                            categories = ev.get("categories")?.takeIf { c -> c.isJsonArray() }?.getAsJsonArray()
+                                ?.mapNotNull { el -> if (el.isJsonPrimitive()) el.getAsString() else null }
+                                ?: emptyList(),
+                            reason = ev.get("reason")?.takeIf { c -> c.isJsonPrimitive() }?.getAsString(),
+                        ),
+                    )
+                }
+            }
+            "permission.settled" -> {
+                val decision = ev.get("decision")?.getAsString() ?: "settled"
+                val timedOut = ev.get("timedOut")?.takeIf { c -> c.isJsonPrimitive() }?.getAsBoolean() ?: false
+                _ui.update {
+                    it.copy(
+                        permissionAsk = null,
+                        statusLine = if (timedOut) "Permission timed out — denied" else "Permission $decision",
+                    )
+                }
+            }
+            "ask_user.request" -> {
+                val reqId = ev.get("requestId")?.getAsString() ?: return
+                _ui.update {
+                    it.copy(
+                        agentAsk = PendingAsk(
+                            requestId = reqId,
+                            question = ev.get("question")?.takeIf { c -> c.isJsonPrimitive() }?.getAsString()
+                                ?: "Agent question",
+                            choices = ev.get("choices")?.takeIf { c -> c.isJsonArray() }?.getAsJsonArray()
+                                ?.mapNotNull { el -> if (el.isJsonPrimitive()) el.getAsString() else null }
+                                ?: emptyList(),
+                        ),
+                    )
+                }
+            }
+            "ask_user.settled" -> _ui.update { it.copy(agentAsk = null) }
+            "control_accepted", "control_applied" -> {
+                _ui.update { it.copy(statusLine = type.removePrefix("control_")) }
+            }
+            // t66: full-fs run parked awaiting the desktop trust modal — keep
+            // the user informed instead of a silent spin.
+            "trust.pending" -> {
+                val path = ev.get("path")?.takeIf { c -> c.isJsonPrimitive() }?.getAsString()
+                _ui.update {
+                    it.copy(
+                        awaitingTrust = true,
+                        statusLine = if (path.isNullOrBlank()) {
+                            "Waiting for desktop to trust this folder…"
+                        } else {
+                            "Waiting for desktop to trust $path…"
+                        },
+                    )
+                }
+            }
+            "trust.settled" -> {
+                val approved = ev.get("approved")?.takeIf { c -> c.isJsonPrimitive() }?.getAsBoolean() ?: false
+                _ui.update {
+                    it.copy(
+                        awaitingTrust = false,
+                        statusLine = if (approved) "Trust approved — starting…" else "Trust denied — run cancelled",
+                    )
+                }
+            }
             "run_finished" -> {
-                val status = ev.get("status")?.asString ?: "completed"
+                val status = ev.get("status")?.getAsString() ?: "completed"
                 _ui.update {
                     it.copy(
                         running = false,
                         activeRunId = null,
                         liveTool = null,
+                        awaitingTrust = false,
                         statusLine = "Run $status",
                     )
                 }

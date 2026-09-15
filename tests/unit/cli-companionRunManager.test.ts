@@ -32,6 +32,8 @@ vi.mock('node:child_process', async (importOriginal) => {
 interface TransportSpy {
   requests: Array<Record<string, unknown>>;
   respond(request: Record<string, unknown>, result: unknown): void;
+  /** Server-initiated event injection (permission.request, BrainEvents…). */
+  emitEvent(ev: unknown): void;
   transport: HarnessTransport & { close(): Promise<void> };
   closeCount(): number;
 }
@@ -44,6 +46,9 @@ function spyTransport(): TransportSpy {
     requests,
     respond(request, result) {
       listener?.(JSON.stringify({ id: request['id'], ok: true, result }));
+    },
+    emitEvent(ev) {
+      listener?.(JSON.stringify(ev));
     },
     transport: {
       write: (line: string) => {
@@ -259,5 +264,152 @@ describe('RunManager default spawn path (t32: byte-identical without the env)', 
     expect(flagIndex).toBeGreaterThan(-1);
     expect(argv[flagIndex + 1]).toContain('zelari-companion-hist-');
     fakeChild.emit('close', 0);
+  });
+});
+
+describe('RunManager t66 trust gate + t65 yolo (spawn path)', () => {
+  beforeEach(() => {
+    childProcessMock.spawn.mockReset();
+    delete process.env[HARNESS_SERVER_ENV];
+  });
+  afterEach(() => {
+    delete process.env[HARNESS_SERVER_ENV];
+  });
+
+  it('(f) awaiting_trust gate parks the run without spawning; releaseTrust launches it', () => {
+    const fakeChild = makeFakeChild();
+    childProcessMock.spawn.mockImplementation(() => fakeChild);
+    const manager = new RunManager();
+    const started = manager.start(
+      { prompt: 'parked', cwd: 'Z:\\proj', permissionPreset: 'yolo' },
+      { awaitingTrust: true },
+    );
+    expect(started.ok).toBe(true);
+    expect((started as { awaitingTrust?: boolean }).awaitingTrust).toBe(true);
+    expect(manager.getRun(started.run!.id)?.status).toBe('awaiting_trust');
+    expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    expect(manager.pendingTrust()).toEqual({
+      runId: started.run!.id,
+      path: 'Z:\\proj',
+    });
+
+    // Approve → the parked run launches on the spawn path; listeners survive.
+    expect(manager.releaseTrust().ok).toBe(true);
+    expect(childProcessMock.spawn).toHaveBeenCalledTimes(1);
+    expect(manager.getRun(started.run!.id)?.status).toBe('running');
+    fakeChild.emit('close', 0);
+  });
+
+  it('(g) denyTrust fails the parked run without spawning; pendingTrust clears', () => {
+    const manager = new RunManager();
+    const started = manager.start(
+      { prompt: 'denied', cwd: 'Z:\\proj' },
+      { awaitingTrust: true },
+    );
+    expect(manager.denyTrust('Trust negato sul desktop').ok).toBe(true);
+    expect(manager.getRun(started.run!.id)?.status).toBe('error');
+    expect(childProcessMock.spawn).not.toHaveBeenCalled();
+    expect(manager.pendingTrust()).toBeNull();
+    expect(manager.getActive()).toBeNull();
+  });
+
+  it('(h) yolo rides BOTH the spawn argv (--permissions yolo) and the child env', () => {
+    const fakeChild = makeFakeChild();
+    childProcessMock.spawn.mockImplementation(() => fakeChild);
+    const manager = new RunManager();
+    manager.start({ prompt: 'y', cwd: 'Z:\\proj', permissionPreset: 'yolo' });
+    const [command, argv, options] = childProcessMock.spawn.mock.calls[0] as unknown as [
+      string,
+      string[],
+      Record<string, unknown>,
+    ];
+    expect(command).toBe(process.execPath);
+    const idx = argv.indexOf('--permissions');
+    expect(idx).toBeGreaterThan(-1);
+    expect(argv[idx + 1]).toBe('yolo');
+    expect((options['env'] as Record<string, unknown>).ZELARI_PERMISSION_PRESET).toBe('yolo');
+    fakeChild.emit('close', 0);
+  });
+
+  it('(h2) a run with no preset carries neither --permissions nor the preset env', () => {
+    const fakeChild = makeFakeChild();
+    childProcessMock.spawn.mockImplementation(() => fakeChild);
+    const manager = new RunManager();
+    manager.start({ prompt: 'y', cwd: 'Z:\\proj' });
+    const [, argv, options] = childProcessMock.spawn.mock.calls[0] as unknown as [
+      string,
+      string[],
+      Record<string, unknown>,
+    ];
+    expect(argv).not.toContain('--permissions');
+    expect(
+      (options['env'] as Record<string, unknown>).ZELARI_PERMISSION_PRESET,
+    ).toBeUndefined();
+    fakeChild.emit('close', 0);
+  });
+});
+
+describe('RunManager t65 — permission.request swallow on the emit path (client mode)', () => {
+  beforeEach(() => {
+    childProcessMock.spawn.mockReset();
+    process.env[HARNESS_SERVER_ENV] = '1';
+  });
+  afterEach(() => {
+    delete process.env[HARNESS_SERVER_ENV];
+  });
+
+  it('(i) yolo: permission.request is auto-allowed and never forwarded', async () => {
+    const spy = spyTransport();
+    const manager = new RunManager({ createTransport: () => spy.transport });
+    const started = manager.start({
+      prompt: 'yolo run',
+      cwd: 'Z:\\proj',
+      permissionPreset: 'yolo',
+    }) as { ok: true; run: { id: string } };
+    const create = await vi.waitFor(() => request(spy, 'session.create'));
+    spy.respond(create, { sessionId: 'sess-yolo' });
+    await vi.waitFor(() =>
+      expect(spy.requests.some((r) => r['method'] === 'run.turn')).toBe(true),
+    );
+
+    const seen: unknown[] = [];
+    manager.subscribe(started.run.id, (ev) => seen.push(ev));
+
+    spy.emitEvent({ type: 'permission.request', requestId: 'perm-1', tool: 'bash' });
+    const respond = await vi.waitFor(() => request(spy, 'permission.respond'));
+    expect(respond['params']).toMatchObject({ requestId: 'perm-1', decision: 'allow' });
+    spy.respond(respond, { accepted: true });
+    await Promise.resolve();
+    expect(
+      seen.some((e) => (e as { type?: string }).type === 'permission.request'),
+    ).toBe(false);
+    await manager.close();
+  });
+
+  it('(i2) standard: permission.request IS forwarded and NOT auto-answered (fail-closed)', async () => {
+    const spy = spyTransport();
+    const manager = new RunManager({ createTransport: () => spy.transport });
+    const started = manager.start({
+      prompt: 'std run',
+      cwd: 'Z:\\proj',
+      permissionPreset: 'standard',
+    }) as { ok: true; run: { id: string } };
+    const create = await vi.waitFor(() => request(spy, 'session.create'));
+    spy.respond(create, { sessionId: 'sess-std' });
+    await vi.waitFor(() =>
+      expect(spy.requests.some((r) => r['method'] === 'run.turn')).toBe(true),
+    );
+
+    const seen: unknown[] = [];
+    manager.subscribe(started.run.id, (ev) => seen.push(ev));
+
+    spy.emitEvent({ type: 'permission.request', requestId: 'perm-2', tool: 'bash' });
+    await vi.waitFor(() =>
+      expect(
+        seen.some((e) => (e as { type?: string }).type === 'permission.request'),
+      ).toBe(true),
+    );
+    expect(spy.requests.some((r) => r['method'] === 'permission.respond')).toBe(false);
+    await manager.close();
   });
 });

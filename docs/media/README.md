@@ -25,7 +25,7 @@ Path: `trailer/zelari-code-trailer.mp4`
 | 02 | *Six specialists. One synthesis.* |
 | 03 | *Orchestrate how you work* (modes + phases) |
 | 04 | *CLI core. Desktop when you want it.* |
-| 05 | *Open source · npm install -g zelari-code* |
+| 05 | *Open source · npx zelari-code@latest* |
 
 Individual frames: `trailer/shot-0N.png` · clips: `trailer/shot-0N.mp4`  
 Rebuild: `ffmpeg -f concat -safe 0 -i trailer/concat-list.txt -c copy trailer/zelari-code-trailer.mp4`
@@ -35,6 +35,6 @@ Rebuild: `ffmpeg -f concat -safe 0 -i trailer/concat-list.txt -c copy trailer/ze
 - Multi-agent council coding agent CLI  
 - Modes: agent / council / zelari; phases: plan / build  
 - Optional Desktop shell  
-- Apache-2.0 open source · `npm install -g zelari-code`  
+- Apache-2.0 open source · `npx zelari-code@latest`  
 
 Do **not** invent star counts, download numbers, or benchmark scores in captions.

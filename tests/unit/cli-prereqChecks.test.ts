@@ -168,7 +168,7 @@ afterEach(() => {
 });
 
 describe("prereqChecks — agent-shell-aware probes", () => {
-  it("checkAgentNode OKs when bash sees node >= 24", async () => {
+  it("checkAgentNode OKs when bash sees node >= 20", async () => {
     applyScenario({
       platform: "win32",
       env: { ZELARI_SHELL: "C:\\fake\\bash.exe" },
@@ -204,7 +204,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
     expect(main.ok).toBe(true);
   });
 
-  it("checkAgentNode FAILs when node is too old (< 24)", async () => {
+  it("checkAgentNode FAILs when node is too old (< 20)", async () => {
     // On POSIX the agent shell is /bin/sh, so probeTool uses execSync (not
     // spawnSync). We drive it via mainProbe.stdout.
     applyScenario({
@@ -216,7 +216,7 @@ describe("prereqChecks — agent-shell-aware probes", () => {
     expect(r.ok).toBe(false);
     expect(r.severity).toBe("critical");
     expect(r.message).toContain("18.19.0");
-    expect(r.message).toContain("24");
+    expect(r.message).toContain("20");
   });
 
   it("checkAgentNode WARNs (not fails) when version string is unparseable", async () => {

@@ -6,6 +6,7 @@
  * timestamps come from the events themselves.
  */
 import type { AgentEvent } from "../types";
+import { classifyVerifyCaption } from "../components/tentacleVerdict";
 import {
   ACTIVITY_STATUSES,
   MAX_CONTROLS,
@@ -106,16 +107,33 @@ export function activityReducer(
     if (!agentId) return state;
     const status = isActivityStatus(ev.status) ? ev.status : undefined;
     const message = typeof ev.message === "string" ? ev.message : undefined;
+    // Contract (ADR-0023, "unknown ≠ pass"): an EXACT 'verify PASS' caption is a
+    // terminal PASS verdict. When it arrives without a terminal status (older
+    // CLI, or the caption outliving the row's status) a running general would
+    // otherwise stay ● running forever. Discipline: only the exact PASS token
+    // flips anything, and an explicit valid non-running status always wins.
+    const current = state.agents[agentId];
+    const captionCompleted =
+      message !== undefined &&
+      classifyVerifyCaption(message) === "PASS" &&
+      (status === undefined || status === "running") &&
+      (current === undefined || current.status === "running");
     let next = upsertAgent(
       state,
       agentId,
       (a) => ({
         ...a,
-        status: status ?? a.status,
+        status: captionCompleted ? "completed" : status ?? a.status,
         // t94: persist the phase caption (previously dropped unless failed).
         phaseMessage: message ?? a.phaseMessage,
       }),
-      () => ({ id: agentId, role: "general", status: status ?? "running", phaseMessage: message, tools: [] }),
+      () => ({
+        id: agentId,
+        role: "general",
+        status: captionCompleted ? "completed" : status ?? "running",
+        phaseMessage: message,
+        tools: [],
+      }),
     );
     if (status === "failed" && message) {
       const warnings = [

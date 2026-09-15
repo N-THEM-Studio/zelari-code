@@ -1295,6 +1295,13 @@ function wrapWithPermissions<I, O>(
           : claimHit
             ? `[policy] claim '${claimHit.match}'${claimHit.reason ? ` — ${claimHit.reason}` : ''}`
             : '';
+      // t65: yolo = full access — every residual ask (policy rules, claims,
+      // contract, provenance) auto-approves instead of hitting the phone with
+      // a permission.request. Explicit deny still denies ("deny is never
+      // promoted", toolPermissions.ts contract).
+      if (action === 'ask' && activePermissionPreset() === 'yolo') {
+        action = 'allow';
+      }
       if (action === 'deny') {
         return typedErr(`[permission] ${rulePrefix || decision.reason}`);
       }

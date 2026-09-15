@@ -207,7 +207,7 @@ describe('performUpdate', () => {
       return fake;
     }) as unknown as typeof SpawnType;
 
-    const result = await performUpdate('zelari-code', fakeSpawn);
+    const result = await performUpdate('zelari-code', fakeSpawn, undefined, undefined, 'global');
     expect(result.ok).toBe(true);
     expect(result.exitCode).toBe(0);
     expect(result.output).toContain('added 1 package');
@@ -231,7 +231,7 @@ describe('performUpdate', () => {
       return fake;
     }) as unknown as typeof SpawnType;
 
-    const result = await performUpdate('zelari-code', fakeSpawn, undefined, 'latest');
+    const result = await performUpdate('zelari-code', fakeSpawn, undefined, 'latest', 'global');
     expect(result.ok).toBe(true);
     expect(seen).toEqual(['npm', 'install', '-g', 'zelari-code@latest']);
   });
@@ -251,7 +251,7 @@ describe('performUpdate', () => {
       return fake;
     }) as unknown as typeof SpawnType;
 
-    const result = await performUpdate('zelari-code', fakeSpawn);
+    const result = await performUpdate('zelari-code', fakeSpawn, undefined, undefined, 'global');
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(1);
     expect(result.error).toContain('exited with code 1');
@@ -266,7 +266,7 @@ describe('performUpdate', () => {
     }) as unknown as typeof SpawnType;
     // Resolver returns a path, but the failure is exit 1 (not a broken shim),
     // so the fallback must not fire.
-    const result = await performUpdate('zelari-code', fakeSpawn, () => '/fake/npm-cli.js');
+    const result = await performUpdate('zelari-code', fakeSpawn, () => '/fake/npm-cli.js', undefined, 'global');
     expect(calls).toBe(1);
     expect(result.ok).toBe(false);
     expect(result.output).not.toContain('bundled npm');
@@ -284,7 +284,7 @@ describe('performUpdate', () => {
         : fakeChild('added 1 package in 2s', 0);
     }) as unknown as typeof SpawnType;
 
-    const result = await performUpdate('zelari-code', fakeSpawn, () => '/fake/npm-cli.js', 'latest');
+    const result = await performUpdate('zelari-code', fakeSpawn, () => '/fake/npm-cli.js', 'latest', 'global');
 
     expect(calls).toBe(2);
     expect(result.ok).toBe(true);
@@ -302,7 +302,7 @@ describe('performUpdate', () => {
       calls += 1;
       return fakeChild('Shim target not found: npm.cmd', 127, 'stderr');
     }) as unknown as typeof SpawnType;
-    const result = await performUpdate('zelari-code', fakeSpawn, () => null);
+    const result = await performUpdate('zelari-code', fakeSpawn, () => null, undefined, 'global');
     expect(calls).toBe(1);
     expect(result.ok).toBe(false);
     expect(result.exitCode).toBe(127);

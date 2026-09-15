@@ -235,6 +235,62 @@ describe("activityReducer", () => {
   });
 });
 
+describe("verify caption terminal flip (general row, ADR-0023)", () => {
+  const SPAWN_GEN = {
+    type: "agent_spawned",
+    runId: "run_1",
+    agentId: "gen-1",
+    role: "general",
+    ts: 1000,
+  };
+
+  it("'verifying…' keeps the row running (no premature terminal)", () => {
+    const s = reduceall(
+      SPAWN_GEN,
+      { type: "agent_status", agentId: "gen-1", status: "running", message: "verifying…", ts: 1100 },
+    );
+    expect(s.agents["gen-1"].status).toBe("running");
+    expect(s.agents["gen-1"].phaseMessage).toBe("verifying…");
+  });
+
+  it("explicit terminal status wins: status 'completed' + 'verify PASS' ⇒ completed", () => {
+    const s = reduceall(
+      SPAWN_GEN,
+      { type: "agent_status", agentId: "gen-1", status: "running", message: "verifying…", ts: 1100 },
+      { type: "agent_status", agentId: "gen-1", status: "completed", message: "verify PASS", ts: 1200 },
+    );
+    expect(s.agents["gen-1"].status).toBe("completed");
+    expect(s.agents["gen-1"].phaseMessage).toBe("verify PASS");
+  });
+
+  it("defensive: exact 'verify PASS' with no terminal status still completes a running row", () => {
+    const s = reduceall(
+      SPAWN_GEN,
+      { type: "agent_status", agentId: "gen-1", status: "running", message: "verify PASS", ts: 1100 },
+    );
+    expect(s.agents["gen-1"].status).toBe("completed");
+    expect(s.agents["gen-1"].phaseMessage).toBe("verify PASS");
+  });
+
+  it("non-PASS captions never flip: 'verify FAIL' with status running stays running", () => {
+    const s = reduceall(
+      SPAWN_GEN,
+      { type: "agent_status", agentId: "gen-1", status: "running", message: "verify FAIL", ts: 1100 },
+    );
+    expect(s.agents["gen-1"].status).toBe("running");
+  });
+
+  it("status stays owned by agent_status: a later 'verifying…' re-runs after completion", () => {
+    const s = reduceall(
+      SPAWN_GEN,
+      { type: "agent_status", agentId: "gen-1", status: "completed", message: "verify PASS", ts: 1100 },
+      { type: "agent_status", agentId: "gen-1", status: "running", message: "verifying…", ts: 1200 },
+    );
+    expect(s.agents["gen-1"].status).toBe("running");
+    expect(s.agents["gen-1"].phaseMessage).toBe("verifying…");
+  });
+});
+
 describe("activity selectors", () => {
   const state = reduceall(
     SPAWN_LEAD,

@@ -45,6 +45,10 @@ By **[Anathema Studio](https://anathema-studio.com/)** ·
 **Zelari Code** is an open-source **coding orchestrator** for the terminal — the agent that doesn't trust itself. The default dispatch is the **kraken** super-agent (aliases `agent`/`single`) spawning explore/general/verify tentacles; a six-role **council** pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) is there when the work earns a second opinion; optional **zelari** missions loop until a deliverable is *proven* done — done means verified, not claimed. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (Apache-2.0).
 
 ```bash
+# Zero install — runs from npm's cache (cold-cache start):
+npx zelari-code@latest
+
+# Or install persistently (fast start + `/update` self-update):
 npm install -g zelari-code
 zelari-code
 ```
@@ -53,8 +57,8 @@ zelari-code
 
 | Requirement | Version | Notes |
 |---|---|---|
-| **Node.js** | **≥ 24 LTS** | CI tests Node 24 only; Node 20 was dropped from the matrix (the dependency tree requires it). |
-| **npm** | **≥ 11.7** | Required to reproduce the workspace lockfile; use the version pinned by `packageManager`. |
+| **Node.js** | **≥ 20.17 LTS** | CI tests the Node 20 floor and Node 24. |
+| **npm** | **≥ 10** | Required to reproduce the workspace lockfile; use the version pinned by `packageManager`. |
 | **OS** | Linux, macOS, Windows 10/11 | Tested on Pop!_OS 24.04, macOS 15, Windows 11. Windows requires Git Bash (auto-detected). |
 | **Disk** | ~50 MB for the CLI + `@zelari/core` | Models are not bundled — provider APIs are remote. |
 | **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. |
@@ -75,12 +79,25 @@ Disable any tool group: set `ZELARI_LSP=0`, `ZELARI_AST=0`, `ZELARI_SEMANTIC=0`,
 
 ## Install
 
-If you already ran `npm install -g zelari-code` above, skip to [First Run](#first-run).
+Two supported paths:
 
 ```bash
+# Zero install — runs straight from npm's cache (cold-cache start):
+npx zelari-code@latest
+
+# Persistent install — fast start and `/update` self-update support:
 npm install -g zelari-code
 zelari-code --doctor   # recommended once on Windows
 ```
+
+- **`npx` (zero install)** — nothing to install or maintain; ideal for a quick
+  try. The first run resolves/downloads the package (a few seconds), and
+  `/update` is disabled — re-run `npx zelari-code@latest` for the newest version.
+- **Global (`npm install -g`)** — installs once, starts instantly after, and
+  enables the in-app `/update` self-update. This is what the Windows PATH notes
+  below assume.
+
+If you already ran `npm install -g zelari-code` above, skip to [First Run](#first-run).
 
 ### Optional: Zelari Desktop (Tauri)
 
@@ -97,10 +114,10 @@ npm run desktop:dev           # Tauri dev window
 # npm run desktop:build       # MSI / NSIS / DMG / AppImage
 ```
 
-See [apps/desktop/README.md](./apps/desktop/README.md) and **[docs/GUIDA.md](./docs/GUIDA.md)** (Desktop, MCP, SSH). Requires Rust + Node ≥ 24.
+See [apps/desktop/README.md](./apps/desktop/README.md) and **[docs/GUIDA.md](./docs/GUIDA.md)** (Desktop, MCP, SSH). Requires Rust + Node ≥ 20.17.
 
 **Prerequisites:**
-- **Node.js ≥ 24** — required. Without it the agent cannot run `npm`/`tsc`/builds, so zelari-code refuses to boot.
+- **Node.js ≥ 20.17** — required. Without it the agent cannot run `npm`/`tsc`/builds, so zelari-code refuses to boot.
 - **Git** — recommended. Without it, `/diff`, `/undo` and the git sidebar are disabled. Install from <https://git-scm.com>.
 - **Git Bash** (Windows only) — recommended. The agent's `bash` tool needs real POSIX semantics (`ls`, `which`, `$VAR`, `&&`). Ships with Git for Windows.
 

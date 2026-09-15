@@ -17,6 +17,10 @@ class Prefs(private val context: Context) {
     private val keyPhase = stringPreferencesKey("phase")
     private val keyProvider = stringPreferencesKey("provider")
     private val keyModel = stringPreferencesKey("model")
+    // t63: agent controls (Desktop parity).
+    private val keyPreset = stringPreferencesKey("permission_preset")
+    private val keyStrictDone = stringPreferencesKey("strict_done")
+    private val keyFolder = stringPreferencesKey("folder_path")
 
     val baseUrl: Flow<String> = context.dataStore.data.map { it[keyBase] ?: "" }
     val token: Flow<String> = context.dataStore.data.map { it[keyToken] ?: "" }
@@ -25,6 +29,9 @@ class Prefs(private val context: Context) {
     val phase: Flow<String> = context.dataStore.data.map { it[keyPhase] ?: "build" }
     val provider: Flow<String> = context.dataStore.data.map { it[keyProvider] ?: "" }
     val model: Flow<String> = context.dataStore.data.map { it[keyModel] ?: "" }
+    val permissionPreset: Flow<String> = context.dataStore.data.map { it[keyPreset] ?: "standard" }
+    val strictDone: Flow<Boolean> = context.dataStore.data.map { (it[keyStrictDone] ?: "0") == "1" }
+    val folderPath: Flow<String> = context.dataStore.data.map { it[keyFolder] ?: "" }
 
     suspend fun saveConnection(baseUrl: String, token: String) {
         context.dataStore.edit {
@@ -49,5 +56,16 @@ class Prefs(private val context: Context) {
             it[keyProvider] = provider
             it[keyModel] = model
         }
+    }
+
+    suspend fun saveAgent(preset: String, strictDone: Boolean) {
+        context.dataStore.edit {
+            it[keyPreset] = preset
+            it[keyStrictDone] = if (strictDone) "1" else "0"
+        }
+    }
+
+    suspend fun saveFolder(path: String) {
+        context.dataStore.edit { it[keyFolder] = path }
     }
 }

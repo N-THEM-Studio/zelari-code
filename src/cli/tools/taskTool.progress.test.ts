@@ -57,7 +57,9 @@ function makeDeps(events: BrainEvent[]): TaskToolDeps {
           const mk = (e: object) =>
             ({ id: 'e', ts: 0, sessionId: 's', ...e }) as BrainEvent;
           yield mk({ type: 'message_start' });
-          yield mk({ type: 'message_delta', delta: 'done' });
+          // Ends with the exact verify trailer so the auto-verify parse lands on
+          // 'pass' and the terminal 'verify PASS' caption path is exercised.
+          yield mk({ type: 'message_delta', delta: 'done\n\nVERDICT: PASS' });
           yield mk({ type: 'message_end' });
         },
         cancel: () => {},
@@ -110,6 +112,17 @@ describe('task tool live progress captions (t94)', () => {
     expect(captions).toContain('merging…');
     expect(captions).toContain('merge ok');
     expect(captions).toContain('verifying…');
+    expect(captions).toContain('verify PASS');
+
+    // The PASS caption is TERMINAL: it carries status 'completed' in the same
+    // agent_status event so the general's activity row closes (previously it
+    // stayed ● running forever — the 'verifying…' caption had flipped it back
+    // to running after agent_ended). In-flight captions stay 'running'.
+    const statuses = events
+      .filter((e) => e.type === 'agent_status')
+      .map((e) => e as unknown as Record<string, unknown>);
+    expect(statuses.find((e) => e.message === 'verify PASS')?.status).toBe('completed');
+    expect(statuses.find((e) => e.message === 'verifying…')?.status).toBe('running');
 
     // Radio dual-write: the same trail lands in .zelari/radio/<session>.jsonl.
     const radio = readKrakenRadio(cwd, 'progress-test', 100);
@@ -117,6 +130,7 @@ describe('task tool live progress captions (t94)', () => {
     expect(progress.some((e) => e.detail === 'phase: general' && e.agent === 'general')).toBe(true);
     expect(progress.some((e) => e.detail === 'merging…')).toBe(true);
     expect(progress.some((e) => e.detail === 'verifying…')).toBe(true);
+    expect(progress.some((e) => e.detail === 'verify PASS' && e.ok === true)).toBe(true);
   });
 
   it('emits reasoning heartbeats while the sub-agent is blocked on the model', async () => {

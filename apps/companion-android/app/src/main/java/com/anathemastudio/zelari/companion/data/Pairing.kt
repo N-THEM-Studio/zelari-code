@@ -29,11 +29,11 @@ fun parsePairingPayload(raw: String): CompanionPairing? {
 
     if (s.startsWith("{")) {
         return try {
-            val obj = com.google.gson.JsonParser.parseString(s).asJsonObject
-            val url = obj.get("url")?.asString ?: return null
+            val obj = com.google.gson.JsonParser.parseString(s).getAsJsonObject()
+            val url = obj.get("url")?.getAsString() ?: return null
             CompanionPairing(
                 url = normalizeHostUrl(url),
-                token = obj.get("token")?.asString.orEmpty().trim(),
+                token = obj.get("token")?.getAsString().orEmpty().trim(),
             )
         } catch (_: Exception) {
             null

@@ -2,11 +2,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { DefaultMemoryService, type MemoryEmbeddingProvider } from '@zelari/core/memory';
 import { canonicalProjectId } from '../../src/cli/memory/serviceFactory.js';
 import { SQLiteMemoryBackend } from '../../src/cli/memory/sqliteBackend.js';
 import { evaluateMemoryRecall, semanticGain } from '../../tools/eval/memoryMetrics.ts';
+
+// node:sqlite ships with Node >= 22.5 (still experimental). Import it lazily so
+// this suite skips gracefully on the Node 20 floor instead of failing at load.
+const nodeSqlite = (await import('node:sqlite').catch(() => null)) as typeof import('node:sqlite') | null;
 
 const roots: string[] = [];
 
@@ -41,7 +44,7 @@ async function semanticService(root: string, embedding = provider()) {
   return { backend, memory };
 }
 
-describe('hybrid semantic project memory', () => {
+describe.skipIf(!nodeSqlite)('hybrid semantic project memory', () => {
   it('finds conceptually related memory with no lexical overlap and persists the index', async () => {
     const root = await project();
     const first = await semanticService(root);
@@ -121,7 +124,7 @@ describe('hybrid semantic project memory', () => {
     await working.memory.close();
 
     const dbPath = path.join(root, '.zelari', 'memory', 'memory.db');
-    const db = new DatabaseSync(dbPath);
+    const db = new nodeSqlite!.DatabaseSync(dbPath);
     db.prepare("UPDATE memory_embeddings SET vector_json='not-json'").run();
     db.close();
 
@@ -158,7 +161,7 @@ describe('hybrid semantic project memory', () => {
     await initializer.init(root);
     await initializer.close();
     const projectId = await canonicalProjectId(root);
-    const db = new DatabaseSync(path.join(root, '.zelari', 'memory', 'memory.db'));
+    const db = new nodeSqlite!.DatabaseSync(path.join(root, '.zelari', 'memory', 'memory.db'));
     const insert = db.prepare(`INSERT INTO memory_nodes (
       id,schema_version,project_id,kind,content,importance,confidence,status,visibility,
       tags_json,source_json,created_at,updated_at,valid_from,valid_until,recorded_at,

@@ -2,10 +2,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 import { SQLiteMemoryBackend } from '../../src/cli/memory/sqliteBackend.js';
 import { SqliteWorkerRpc } from '../../src/cli/memory/sqliteRpc.js';
 import { getMemoryService } from '../../src/cli/memory/serviceFactory.js';
+
+// node:sqlite ships with Node >= 22.5 (still experimental). Import it lazily so
+// this suite skips gracefully on the Node 20 floor instead of failing at load.
+const nodeSqlite = (await import('node:sqlite').catch(() => null)) as typeof import('node:sqlite') | null;
 
 const roots: string[] = [];
 const V1_SCHEMA = `
@@ -50,7 +53,7 @@ async function v1Database(root: string): Promise<string> {
   const dir = path.join(root, '.zelari', 'memory');
   await fs.mkdir(dir, { recursive: true });
   const dbPath = path.join(dir, 'memory.db');
-  const db = new DatabaseSync(dbPath);
+  const db = new nodeSqlite!.DatabaseSync(dbPath);
   db.exec(V1_SCHEMA);
   const at = '2026-01-01T00:00:00.000Z';
   const snapshot = {
@@ -70,7 +73,7 @@ async function v1Database(root: string): Promise<string> {
   return dbPath;
 }
 
-describe('SQLite memory migrations', () => {
+describe.skipIf(!nodeSqlite)('SQLite memory migrations', () => {
   it('migrates v1 forward under a lock and preserves an automatic backup', async () => {
     const root = await project();
     const dbPath = await v1Database(root);
@@ -80,13 +83,13 @@ describe('SQLite memory migrations', () => {
     expect((await backend.doctor()).checks.find((check) => check.name === 'schema')?.ok).toBe(true);
     await backend.close();
 
-    const migrated = new DatabaseSync(dbPath);
+    const migrated = new nodeSqlite!.DatabaseSync(dbPath);
     expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 2 });
     expect(migrated.prepare("SELECT name FROM sqlite_master WHERE name='memory_embeddings'").get())
       .toBeTruthy();
     migrated.close();
     const backupPath = `${dbPath}.v1.bak`;
-    const backup = new DatabaseSync(backupPath, { readOnly: true });
+    const backup = new nodeSqlite!.DatabaseSync(backupPath, { readOnly: true });
     expect(backup.prepare('PRAGMA user_version').get()).toEqual({ user_version: 1 });
     backup.close();
     await expect(fs.stat(`${dbPath}.migration.lock`)).rejects.toThrow();
@@ -104,7 +107,7 @@ describe('SQLite memory migrations', () => {
       migrations: [{ version: 2, sql: 'CREATE TABLE partial(id TEXT); INVALID SQL;' }],
     })).rejects.toThrow();
     await rpc.close();
-    const db = new DatabaseSync(dbPath);
+    const db = new nodeSqlite!.DatabaseSync(dbPath);
     expect(db.prepare('PRAGMA user_version').get()).toEqual({ user_version: 1 });
     expect(db.prepare("SELECT name FROM sqlite_master WHERE name='partial'").get()).toBeUndefined();
     expect(db.prepare('SELECT content FROM memory_nodes WHERE id=?').get('legacy-node'))

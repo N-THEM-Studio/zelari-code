@@ -52,6 +52,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
@@ -152,23 +153,33 @@ fun CompanionApp(vm: CompanionViewModel) {
                         .padding(padding),
                 ) {
                     ControlsBar(state, vm)
+                    if (state.awaitingTrust) {
+                        TrustBanner()
+                    }
                     ChatList(
                         messages = state.messages,
                         liveTool = state.liveTool,
                         running = state.running,
                         modifier = Modifier.weight(1f),
                     )
+                    PermissionCard(state, vm)
+                    AskCard(state, vm)
                     Composer(
                         draft = state.draft,
                         running = state.running,
                         connected = state.conn == ConnState.Connected,
                         onDraft = vm::setDraft,
                         onSend = vm::send,
+                        onSteer = vm::steer,
                         onCancel = vm::cancel,
                     )
                 }
             }
         }
+    }
+
+    if (state.showFolders) {
+        FolderBrowser(state, vm)
     }
 
     if (showConnect || state.conn != ConnState.Connected) {
@@ -237,6 +248,60 @@ private fun DrawerContent(state: UiState, vm: CompanionViewModel) {
             )
             Spacer(Modifier.height(8.dp))
             ProjectPicker(state, vm)
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(12.dp))
+
+            // ── Agent (t63: desktop parity controls) ──
+            Text(
+                "AGENT",
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+            )
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Tool permissions",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                listOf("standard", "strict", "yolo").forEach { p ->
+                    FilterChip(
+                        selected = state.permissionPreset == p,
+                        onClick = { vm.setPermissionPreset(p) },
+                        label = { Text(p) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Strict done",
+                    Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Switch(
+                    checked = state.strictDone,
+                    onCheckedChange = { vm.setStrictDone(it) },
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            TextButton(onClick = { vm.toggleFolders() }) {
+                Text(
+                    if (state.folderPath.isBlank()) {
+                        "Browse working folder…"
+                    } else {
+                        "Folder: " + state.folderPath.substringAfterLast('/').ifBlank { state.folderPath }
+                    },
+                )
+            }
+            if (state.folderPath.isNotBlank()) {
+                TextButton(onClick = { vm.clearFolder() }) { Text("Clear folder override") }
+            }
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()
             Spacer(Modifier.height(12.dp))
@@ -575,6 +640,7 @@ private fun Composer(
     connected: Boolean,
     onDraft: (String) -> Unit,
     onSend: () -> Unit,
+    onSteer: () -> Unit,
     onCancel: () -> Unit,
 ) {
     Row(
@@ -589,16 +655,33 @@ private fun Composer(
             onValueChange = onDraft,
             modifier = Modifier.weight(1f),
             placeholder = {
-                Text(if (connected) "Message the agent…" else "Connect first…")
+                Text(
+                    when {
+                        !connected -> "Connect first…"
+                        running -> "Steer the agent…"
+                        else -> "Message the agent…"
+                    },
+                )
             },
             minLines = 1,
             maxLines = 5,
-            enabled = !running,
+            enabled = true,
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { if (!running) onSend() }),
+            keyboardActions = KeyboardActions(onSend = { if (running) onSteer() else onSend() }),
         )
         Spacer(Modifier.width(8.dp))
         if (running) {
+            IconButton(
+                onClick = onSteer,
+                enabled = draft.isNotBlank(),
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.Send,
+                    contentDescription = "Steer",
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
             IconButton(onClick = onCancel) {
                 Icon(
                     Icons.Default.Stop,
@@ -870,6 +953,159 @@ private fun ConnectSheet(
                     ) {
                         Text(if (state.conn == ConnState.Connecting) "Connecting…" else "Connect")
                     }
+                }
+            }
+        }
+    }
+}
+
+// ── Mobile approvals + folder browser (t63) ─────────────────────────────────
+
+@Composable
+private fun PermissionCard(state: UiState, vm: CompanionViewModel) {
+    val ask = state.permissionAsk ?: return
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Permission required", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                ask.tool + (ask.category?.let { " · $it" } ?: ""),
+                style = MaterialTheme.typography.bodySmall,
+                fontFamily = FontFamily.Monospace,
+            )
+            ask.reason?.let {
+                Text(
+                    it,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                TextButton(onClick = { vm.respondPermission(ask.requestId, "allow") }) { Text("Allow") }
+                TextButton(onClick = { vm.respondPermission(ask.requestId, "deny") }) { Text("Deny") }
+                TextButton(onClick = { vm.respondPermission(ask.requestId, "always-tool") }) { Text("Always · tool") }
+            }
+            if (ask.categories.isNotEmpty()) {
+                TextButton(onClick = { vm.respondPermission(ask.requestId, "always-category") }) {
+                    Text("Always this session · category")
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TrustBanner() {
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer),
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    ) {
+        Text(
+            "Waiting for the desktop to trust this folder…",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(12.dp),
+        )
+    }
+}
+
+@Composable
+private fun AskCard(state: UiState, vm: CompanionViewModel) {
+    val ask = state.agentAsk ?: return
+    Card(
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(14.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 10.dp, vertical = 4.dp),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text("Agent question", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(4.dp))
+            Text(ask.question, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(8.dp))
+            ask.choices.forEach { choice ->
+                TextButton(onClick = { vm.respondAsk(ask.requestId, choice) }) { Text(choice) }
+            }
+            TextButton(onClick = { vm.respondAsk(ask.requestId, null) }) { Text("Dismiss") }
+        }
+    }
+}
+
+@Composable
+private fun FolderBrowser(state: UiState, vm: CompanionViewModel) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background.copy(alpha = 0.96f))
+            .padding(20.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Card(
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            shape = RoundedCornerShape(18.dp),
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "Working folder",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(onClick = { vm.closeFolders() }) { Text("Close") }
+                }
+                Text(
+                    state.fsPath.ifBlank { "Browse your PC — pick a drive, then any folder" },
+                    style = MaterialTheme.typography.bodySmall,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(10.dp))
+                if (state.fsParent != null) {
+                    TextButton(onClick = { vm.loadFs(state.fsParent) }) { Text("↑ Up") }
+                }
+                LazyColumn(Modifier.height(320.dp)) {
+                    if (state.fsPath.isBlank()) {
+                        items(state.fsRoots) { root ->
+                            DropdownMenuItem(
+                                text = {
+                                    Column {
+                                        Text(root.name, fontWeight = FontWeight.SemiBold)
+                                        Text(root.path, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                                    }
+                                },
+                                onClick = { vm.loadFs(root.path) },
+                            )
+                        }
+                    }
+                    items(state.fsEntries) { entry ->
+                        DropdownMenuItem(
+                            text = { Text("📁 ${entry.name}") },
+                            onClick = { vm.selectFolder(entry.path) },
+                        )
+                    }
+                }
+                Spacer(Modifier.height(8.dp))
+                if (state.fsPath.isNotBlank()) {
+                    Button(onClick = { vm.selectFolder(state.fsPath) }) { Text("Use this folder") }
+                }
+                if (state.folderPath.isNotBlank()) {
+                    Text(
+                        "Current: ${state.folderPath}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }

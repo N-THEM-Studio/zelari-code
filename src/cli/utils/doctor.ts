@@ -44,6 +44,7 @@ import {
   formatContextGrowthSummary,
   summarizeContextGrowth,
 } from "./contextGrowthSummary.js";
+import { resolveInstallKind } from "../updater.js";
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -174,6 +175,18 @@ function checkShim(pkgName: string): CheckResult {
         `global shim not found at ${shimPath}\n` +
           `         source checkout — using ${localBin}\n` +
           `         optional: npm install -g ${pkgName}@latest --force`,
+      );
+    }
+    // Non-global install (npx cache or local checkout): a shim under the npm
+    // global prefix is not expected. Downgrade the diagnostic to informational
+    // — PATH/shim expectations do not apply here — with the same npx/local
+    // advisory the updater gives. See docs/decisions/0038.
+    const installKind = resolveInstallKind();
+    if (installKind === "npx" || installKind === "local") {
+      return WARN(
+        `non-global install (${installKind}) — no global shim at ${shimPath}\n` +
+          `         PATH/shim expectations do not apply to an npx or local run\n` +
+          `         for a persistent install: npm install -g ${pkgName}@latest`,
       );
     }
     return FAIL(

@@ -31,12 +31,22 @@ Full principles: [`PRINCIPLES.md`](../PRINCIPLES.md).
 
 ## 2. Install
 
+Two supported paths:
+
 ```bash
+# Zero install — runs from npm's cache on first use:
+npx zelari-code@latest
+
+# Or install once (fast start + `/update` self-update):
 npm install -g zelari-code
 zelari-code
 ```
 
-Requirements: **Node ≥ 24**, npm ≥ 11.7, and one of xAI Grok, ChatGPT,
+`npx` starts from npm's cache and disables `/update` (re-run
+`npx zelari-code@latest` to update); the global install starts instantly and
+supports the in-app `/update`.
+
+Requirements: **Node ≥ 20.17**, npm ≥ 10, and one of xAI Grok, ChatGPT,
 Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek. On Windows, Git Bash
 is auto-detected and recommended. First run opens a setup wizard (skip with
 `--no-wizard`).

@@ -2,7 +2,7 @@
 
 Reusable runtime for [Zelari Code](https://github.com/N-THEM-Studio/zelari-code) — **Apache-2.0**.
 
-Current version: **2.44.0** (kept in lockstep with the `zelari-code` CLI).
+Current version: **2.45.0** (kept in lockstep with the `zelari-code` CLI).
 
 ## What it is
 
@@ -14,7 +14,7 @@ Provider-neutral **agent loop** (`AgentHarness`), **6-member council** orchestra
 npm install @zelari/core
 ```
 
-Requires **Node.js ≥ 24**. Runtime dependency: `zod` only.
+Requires **Node.js ≥ 20.17**. Runtime dependency: `zod` only.
 
 ## Public API
 

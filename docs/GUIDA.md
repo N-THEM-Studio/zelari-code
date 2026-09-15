@@ -1,6 +1,6 @@
 # Zelari Code — User Guide
 
-> **2.44.0**
+> **2.45.0**
 > Multi-agent coding CLI with TUI (Ink + React), **Zelari Desktop** (Tauri 2), 6-role council, **kraken** super-agent, **zelari** missions, slash commands, MCP, SSH and provider-agnostic LLMs (Grok / ChatGPT / Anthropic OAuth).
 > Product: **[Anathema Studio](https://anathema-studio.com/)** · license **Apache-2.0**.
 
@@ -59,8 +59,8 @@ The shared runtime is published as the npm package [`@zelari/core`](https://www.
 
 | Requirement | Version | Notes |
 |---|---|---|
-| **Node.js** | **≥ 24 LTS** | CI only tests Node 24; Node 20 was dropped from the matrix (the dependency tree requires it). |
-| **npm** | **≥ 11.7** | Needed to reproduce the workspace lockfile; use the version pinned by `packageManager`. |
+| **Node.js** | **≥ 20.17 LTS** | CI tests the Node 20 floor and Node 24. |
+| **npm** | **≥ 10** | Needed to reproduce the workspace lockfile; use the version pinned by `packageManager`. |
 | **OS** | Linux, macOS, Windows 10/11 | Windows requires Git Bash (auto-detected). |
 | **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth: `/login grok`, `/login chatgpt`, `/login anthropic`. |
 
@@ -80,18 +80,29 @@ Global disable: `ZELARI_LSP=0`, `ZELARI_AST=0`, `ZELARI_SEMANTIC=0`, `ZELARI_BRO
 
 ## Installation
 
-### Global install (CLI — main product)
+Due percorsi supportati:
 
 ```bash
+# Nessuna installazione — parte dalla cache di npm (fetch al primo avvio):
+npx zelari-code@latest
+
+# Installazione persistente — avvio rapido + self-update con `/update`:
 npm install -g zelari-code
 zelari-code --version
 ```
+
+- **`npx` (zero install)** — niente da installare o mantenere; ideale per una
+  prova rapida. Al primo avvio scarica il pacchetto (qualche secondo) e `/update`
+  è disattivato — rilancia `npx zelari-code@latest` per l'ultima versione.
+- **Globale (`npm install -g`)** — installa una volta, poi parte subito e
+  abilita il self-update `/update`. È il percorso a cui si riferiscono le note
+  PATH di Windows qui sotto.
 
 ### Zelari Desktop (optional)
 
 Installers from [GitHub Releases](https://github.com/N-THEM-Studio/zelari-code/releases) do **not** install the global CLI. After the installer (or in dev):
 
-1. Node.js ≥ 24 on PATH
+1. Node.js ≥ 20.17 on PATH
 2. `npm install -g zelari-code` (or **Settings → Update CLI** in Desktop)
 3. API key in Settings → Provider
 
@@ -130,8 +141,9 @@ zelari-code
 One tiny task, start to proof. No ADRs, no `/evolve`, no config files —
 this page is the only map you need.
 
-1. **Install & enter** — `npm i -g zelari-code`, then create a toy folder
-   and start the TUI: `mkdir hello-zelari && cd hello-zelari && zelari-code`.
+1. **Install & enter** — `npx zelari-code@latest` (no install) or
+   `npm i -g zelari-code`, then create a toy folder and start the TUI:
+   `mkdir hello-zelari && cd hello-zelari && zelari-code`.
    Pick a provider with `/login` (grok / chatgpt / anthropic or an API key).
 2. **Ask for one small thing** — type:
    `create hello.js that prints "hello" and hello.test.js, then make the test pass`.

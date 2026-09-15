@@ -13,10 +13,14 @@ Thanks for your interest in contributing. This monorepo ships:
 
 ## Prerequisites
 
-- **Node.js ≥ 24**
-- **npm ≥ 11.7** (the workspace lockfile is pinned for this resolver line)
+- **Node.js ≥ 20.17** (shipped runtime floor)
+- **npm ≥ 10** (the workspace lockfile is pinned for this resolver line)
 - **Git** (and on Windows, **Git Bash** for the agent `bash` tool)
 - Optional: Rust + Tauri deps only if you touch Desktop
+
+> **Dev-only tooling:** the eval/bench scripts (`tools/eval/*`, run via
+> `node --experimental-strip-types`) still require **Node ≥ 22.6**. That tooling
+> is never part of the published CLI, whose runtime floor is **20.17**.
 
 ## Setup
 

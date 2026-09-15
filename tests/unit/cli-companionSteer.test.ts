@@ -28,6 +28,16 @@ const state = vi.hoisted(() => ({
     | { ok: false; error: string }
     | null,
   cancelResult: null as { ok: true } | { ok: false; error: string } | null,
+  permissionCalls: [] as Array<{ runId: string | undefined; requestId: string; decision: string }>,
+  askCalls: [] as Array<{ runId: string | undefined; requestId: string; answer: string | null }>,
+  permissionResult: null as
+    | { ok: true; result: Record<string, unknown> }
+    | { ok: false; error: string }
+    | null,
+  askResult: null as
+    | { ok: true; result: Record<string, unknown> }
+    | { ok: false; error: string }
+    | null,
 }));
 
 vi.mock('../../src/cli/companion/runManager.js', () => {
@@ -65,6 +75,18 @@ vi.mock('../../src/cli/companion/runManager.js', () => {
     async steer(runId: string | undefined, text: string) {
       state.steerCalls.push({ runId, text });
       return state.steerResult ?? { ok: true as const, result: { queued: true } };
+    }
+    async permissionRespond(runId: string | undefined, requestId: string, decision: string) {
+      state.permissionCalls.push({ runId, requestId, decision });
+      return state.permissionResult ?? { ok: true as const, result: { accepted: true } };
+    }
+    async askUserRespond(
+      runId: string | undefined,
+      requestId: string,
+      answer: string | null,
+    ) {
+      state.askCalls.push({ runId, requestId, answer });
+      return state.askResult ?? { ok: true as const, result: { accepted: true } };
     }
   }
   return { RunManager: FakeRunManager };
@@ -200,5 +222,95 @@ describe('companion serve — POST /v1/runs/:id/steer (t40)', () => {
     });
     expect(res.status).toBe(401);
     expect(state.steerCalls).toEqual([]);
+  });
+});
+
+describe('companion serve — mobile approvals POST /v1/runs/:id/{permission,ask} (t63)', () => {
+  beforeEach(() => {
+    state.permissionCalls.length = 0;
+    state.askCalls.length = 0;
+    state.permissionResult = null;
+    state.askResult = null;
+  });
+
+  it('POST /v1/runs 201 exposes permissionUrl/askUrl next to steerUrl', async () => {
+    const res = await post('/v1/runs', { prompt: 'approvals please' });
+    expect(res.status).toBe(201);
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body).toMatchObject({
+      ok: true,
+      permissionUrl: '/v1/runs/run-1/permission',
+      askUrl: '/v1/runs/run-1/ask',
+    });
+  });
+
+  it('permission ok → 200, decision forwarded to RunManager.permissionRespond', async () => {
+    const res = await post('/v1/runs/run-1/permission', {
+      requestId: 'perm-1',
+      decision: 'always-tool',
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, requestId: 'perm-1' });
+    expect(state.permissionCalls).toEqual([
+      { runId: 'run-1', requestId: 'perm-1', decision: 'always-tool' },
+    ]);
+  });
+
+  it('permission invalid body → 400, never forwarded', async () => {
+    const cases: Array<{ raw: unknown; error: string }> = [
+      { raw: {}, error: 'requestId is required' },
+      { raw: { requestId: '' }, error: 'requestId is required' },
+      { raw: { requestId: 'perm-1' }, error: 'decision must be allow|deny|always-tool|always-category' },
+      { raw: { requestId: 'perm-1', decision: 'maybe' }, error: 'decision must be allow|deny|always-tool|always-category' },
+      { raw: 'not-json', error: 'invalid JSON body' },
+    ];
+    for (const { raw, error } of cases) {
+      const res = await post('/v1/runs/run-1/permission', raw);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ ok: false, error });
+    }
+    expect(state.permissionCalls).toEqual([]);
+  });
+
+  it('permission spawn-mode / unknown run → 404 with the functional error', async () => {
+    state.permissionResult = {
+      ok: false,
+      error: 'permission respond requires harness server mode (ZELARI_HARNESS_SERVER=1)',
+    };
+    const res = await post('/v1/runs/run-1/permission', { requestId: 'perm-1', decision: 'deny' });
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      ok: false,
+      error: 'permission respond requires harness server mode (ZELARI_HARNESS_SERVER=1)',
+    });
+  });
+
+  it('ask ok → 200 (string answer and null dismiss both forwarded)', async () => {
+    const res = await post('/v1/runs/run-1/ask', { requestId: 'ask-1', answer: 'option B' });
+    expect(res.status).toBe(200);
+    const res2 = await post('/v1/runs/run-1/ask', { requestId: 'ask-2', answer: null });
+    expect(res2.status).toBe(200);
+    expect(state.askCalls).toEqual([
+      { runId: 'run-1', requestId: 'ask-1', answer: 'option B' },
+      { runId: 'run-1', requestId: 'ask-2', answer: null },
+    ]);
+  });
+
+  it('ask invalid answer type → 400; unknown run → 404', async () => {
+    const bad = await post('/v1/runs/run-1/ask', { requestId: 'ask-1', answer: 42 });
+    expect(bad.status).toBe(400);
+    expect(await bad.json()).toEqual({ ok: false, error: 'answer must be a string or null' });
+    state.askResult = { ok: false, error: 'No active run' };
+    const missing = await post('/v1/runs/none/ask', { requestId: 'ask-1', answer: 'x' });
+    expect(missing.status).toBe(404);
+  });
+
+  it('permission without bearer token → 401', async () => {
+    const res = await fetch(`${BASE}/v1/runs/run-1/permission`, {
+      method: 'POST',
+      body: JSON.stringify({ requestId: 'perm-1', decision: 'allow' }),
+    });
+    expect(res.status).toBe(401);
+    expect(state.permissionCalls).toEqual([]);
   });
 });

@@ -6,8 +6,11 @@
  *   - checkForUpdate(): fetches the registry for the channel matching the
  *     current version (pre-release → `alpha`/`beta`/`next`, stable → `latest`),
  *     compares semver, returns { currentVersion, latestVersion, updateAvailable }
- *   - performUpdate(): spawns `npm install -g zelari-code@latest`,
+ *   - performUpdate(): spawns `npm install -g zelari-code@latest` (GLOBAL
+ *     installs only — an npx/local copy returns an advisory instead),
  *     captures stdout/stderr, returns { ok, output, error? }
+ *   - resolveInstallKind(): classifies this process as global / npx / local /
+ *     unknown so self-update + doctor messaging fit the actual install.
  *
  * All network + spawn operations are injectable for testing (see tests).
  *
@@ -21,14 +24,103 @@
  */
 
 import { createRequire } from 'node:module';
-import { spawn } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildCmdLine } from './utils/cmdline.js';
 
 const require = createRequire(import.meta.url);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Absolute path to this package's root (the directory holding package.json). */
+const PKG_ROOT = path.resolve(__dirname, '..', '..');
+
+/**
+ * How this CLI process was installed — drives the self-updater and doctor so
+ * they don't tell an npx user to update a global install they never made.
+ *   - `global`  — package root is under the npm global prefix (`npm i -g`).
+ *   - `npx`     — package root is a throwaway copy in the npx cache / temp dir.
+ *   - `local`   — package root is a project-local install or source checkout.
+ *   - `unknown` — `npm prefix -g` could not be resolved.
+ */
+export type InstallKind = 'global' | 'npx' | 'local' | 'unknown';
+
+/**
+ * `npm prefix -g` (trimmed), or null when npm can't be reached. Uses a shell
+ * so `npm.cmd` resolves on Windows (a bare spawn would ENOENT).
+ */
+function getGlobalPrefix(): string | null {
+  try {
+    const out = execSync('npm prefix -g', {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+/** Normalize a path for prefix comparison: absolute, forward slashes, lowercase. */
+function normalizeForMatch(p: string): string {
+  return path
+    .resolve(p)
+    .replace(/\\/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+}
+
+/**
+ * Classify the current install so self-update + doctor messaging fit reality.
+ *
+ * The npx/temp markers are checked FIRST: the npx cache lives outside the
+ * global prefix, and detection must still work when `npm prefix -g` fails
+ * (returns `null`). Both inputs are injectable so the classification is
+ * unit-testable without spawning npm or mocking the filesystem.
+ *
+ * @param npmPrefix   `npm prefix -g` output; defaults to a live probe (a spawn
+ *                    failure yields `null` → `unknown`).
+ * @param packageRoot this package's root; defaults to the dir holding the
+ *                    bundled package.json.
+ */
+export function resolveInstallKind(
+  npmPrefix: string | null = getGlobalPrefix(),
+  packageRoot: string = PKG_ROOT,
+): InstallKind {
+  const root = normalizeForMatch(packageRoot);
+
+  // npx unpacks a copy under <cache>/_npx/<hash>/…; npm's cache often sits
+  // under the OS temp dir. Either marker says "throwaway npx install".
+  const tmp = normalizeForMatch(os.tmpdir());
+  const inTmp = tmp !== '' && (root === tmp || root.startsWith(`${tmp}/`));
+  if (root.split('/').includes('_npx') || inTmp) return 'npx';
+
+  if (!npmPrefix) return 'unknown';
+
+  const prefix = normalizeForMatch(npmPrefix);
+  // Global layout: <prefix>/node_modules/<pkg> (some prefixes nest directly).
+  if (root === prefix || root.startsWith(`${prefix}/`)) return 'global';
+  return 'local';
+}
+
+/**
+ * Human-facing advisory shown when `/update` is a no-op for a non-global
+ * install. Shared by the updater and the `/update` slash handler so the two
+ * surfaces can't drift.
+ */
+export function nonGlobalUpdateAdvisory(kind: InstallKind): string {
+  const where =
+    kind === 'npx'
+      ? "was started via npx (from npm's cache)"
+      : 'is a local/source install';
+  return (
+    `[update] this zelari-code ${where}, not a global install — self-update is disabled.\n` +
+    `         update with: npx zelari-code@latest        (always fetches the latest)\n` +
+    `         or install persistently: npm install -g zelari-code   (enables /update)`
+  );
+}
 
 /**
  * Locate the `npm-cli.js` that ships with the Node runtime currently
@@ -107,6 +199,8 @@ export interface UpdatePerformResult {
   error?: string;
   /** Exit code from npm (0 = success). */
   exitCode: number | null;
+  /** Install classification; set when a non-global install short-circuited. */
+  installKind?: InstallKind;
 }
 
 /**
@@ -233,7 +327,22 @@ export async function performUpdate(
   executor: typeof spawn = spawn,
   resolveNpmCli: (execPath?: string) => string | null = resolveBundledNpmCli,
   channel?: string,
+  installKind: InstallKind = resolveInstallKind(),
 ): Promise<UpdatePerformResult> {
+  // Self-update (`npm install -g`) only makes sense for a global install: an
+  // npx/local copy has no global shim to replace and installing a global
+  // package would leave the running copy untouched. Skip the spawn and emit
+  // an advisory instead (never crash).
+  if (installKind === 'npx' || installKind === 'local') {
+    return {
+      ok: false,
+      output: nonGlobalUpdateAdvisory(installKind),
+      error: 'self-update skipped: non-global install',
+      exitCode: null,
+      installKind,
+    };
+  }
+
   const tag = channel ?? distTagForVersion(getCurrentVersion());
   const args = ['install', '-g', `${packageName}@${tag}`];
 

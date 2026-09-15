@@ -1218,6 +1218,29 @@ export default function App() {
     void refreshConfig();
   }, [refreshCli, refreshConfig]);
 
+  // t66: folder-trust gate — poll the companion serve for a parked
+  // awaiting_trust run and pop the trust modal (vanilla overlay; it installs
+  // its own DOM). Fail-open outside the Tauri shell: invoke rejects and the
+  // poller simply never fires.
+  useEffect(() => {
+    let disposed = false;
+    let uninstall: (() => void) | undefined;
+    void (async () => {
+      try {
+        const gate = await import("./components/trustGate");
+        if (disposed) return;
+        gate.installTrustGate();
+        uninstall = gate.uninstallTrustGate;
+      } catch {
+        /* trustGate unavailable (non-Tauri) — non-fatal */
+      }
+    })();
+    return () => {
+      disposed = true;
+      uninstall?.();
+    };
+  }, []);
+
   // Quiet update checks on launch — only status line; install lives in Settings.
   useEffect(() => {
     const t = window.setTimeout(() => {
@@ -3281,6 +3304,13 @@ export default function App() {
     try {
       const selected = await open({ directory: true, multiple: false });
       if (typeof selected === "string") {
+        // t66: trust gate for new folders — the same modal the companion
+        // path uses; once approved the folder persists in the trusted set.
+        const gate = await import("./components/trustGate");
+        if (!(await gate.requestDesktopTrust(selected))) {
+          setStatusLine("Cartella non attendibile — apertura annullata");
+          return;
+        }
         // Persist as "last opened workspace" (unchanged) AND switch chats by
         // folder-switch semantics (P0): a virgin chat is rebound in place; a
         // chat with context KEEPS its cwd and a NEW chat is opened on the

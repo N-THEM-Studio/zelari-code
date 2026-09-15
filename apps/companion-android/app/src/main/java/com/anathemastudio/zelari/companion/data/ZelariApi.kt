@@ -112,6 +112,56 @@ class ZelariApi(
         client.newCall(req).execute().use { it.isSuccessful }
     }
 
+    /** t63: steer the active run (harness client mode hosts only). */
+    suspend fun steer(runId: String, text: String): Boolean = withContext(Dispatchers.IO) {
+        val json = gson.toJson(mapOf("text" to text))
+        val req = authed(
+            Request.Builder()
+                .url(url("/v1/runs/$runId/steer"))
+                .post(json.toRequestBody(jsonMedia)),
+        ).build()
+        client.newCall(req).execute().use { it.isSuccessful }
+    }
+
+    /** t63: sandboxed folder listing — path null lists the allowlist roots. */
+    suspend fun fs(path: String?): FsResponse = withContext(Dispatchers.IO) {
+        val q = if (path.isNullOrBlank()) {
+            ""
+        } else {
+            "?path=" + java.net.URLEncoder.encode(path, "UTF-8")
+        }
+        val req = authed(Request.Builder().url(url("/v1/fs$q")).get()).build()
+        client.newCall(req).execute().use { res ->
+            val body = res.body?.string().orEmpty()
+            if (!res.isSuccessful) error("fs HTTP ${res.code}: $body")
+            gson.fromJson(body, FsResponse::class.java)
+        }
+    }
+
+    /** t63: settle a permission.request (allow/deny/always-tool/always-category). */
+    suspend fun permissionRespond(runId: String, requestId: String, decision: String): Boolean =
+        withContext(Dispatchers.IO) {
+            val json = gson.toJson(mapOf("requestId" to requestId, "decision" to decision))
+            val req = authed(
+                Request.Builder()
+                    .url(url("/v1/runs/$runId/permission"))
+                    .post(json.toRequestBody(jsonMedia)),
+            ).build()
+            client.newCall(req).execute().use { it.isSuccessful }
+        }
+
+    /** t63: settle an ask_user.request (null = dismiss). */
+    suspend fun askRespond(runId: String, requestId: String, answer: String?): Boolean =
+        withContext(Dispatchers.IO) {
+            val json = gson.toJson(mapOf("requestId" to requestId, "answer" to answer))
+            val req = authed(
+                Request.Builder()
+                    .url(url("/v1/runs/$runId/ask"))
+                    .post(json.toRequestBody(jsonMedia)),
+            ).build()
+            client.newCall(req).execute().use { it.isSuccessful }
+        }
+
     /**
      * Stream SSE events from /v1/runs/:id/events.
      * Emits raw JsonObject per data line.
@@ -135,8 +185,8 @@ class ZelariApi(
                 if (data.isBlank()) return
                 try {
                     val el = JsonParser.parseString(data)
-                    if (el.isJsonObject) {
-                        trySend(el.asJsonObject)
+                    if (el.isJsonObject()) {
+                        trySend(el.getAsJsonObject())
                     }
                 } catch (_: Exception) {
                     // ignore malformed

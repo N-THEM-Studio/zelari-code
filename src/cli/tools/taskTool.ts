@@ -401,13 +401,18 @@ export async function runAutoVerifyAfterGeneral(opts: {
   // t94: live phase captions on the general's activity row (agent_status)
   // mirrored into the radio 'progress' trail — the parent sees the general
   // flip to "verifying…" and then to the verdict without polling.
-  const emitVerifyPhase = (detail: string, ok?: boolean) => {
+  // `terminal` lets a caption carry the row's terminal status in the SAME
+  // agent_status event: without it the general's row stays ● running forever
+  // (the 'verifying…' caption flips it back to running after agent_ended, and
+  // the final PASS/FAIL caption used to leave it there). The radio mirror
+  // below is unchanged (no new kinds/fields).
+  const emitVerifyPhase = (detail: string, ok?: boolean, terminal?: 'completed' | 'failed') => {
     const agentId = opts.general.agentId;
     if (agentId) {
       opts.deps.onTentacleEvent?.({
         type: 'agent_status',
         agentId,
-        status: 'running',
+        status: terminal ?? 'running',
         message: detail,
         id: randomUUID(),
         sessionId: opts.sessionId,
@@ -489,6 +494,7 @@ export async function runAutoVerifyAfterGeneral(opts: {
           detail,
           ok: false,
         });
+        emitVerifyPhase(`rework round ${round} failed`, false, 'failed');
         return (
           `\n\n[kraken:auto-verify] verify FAIL — rework round ${round} failed to run ` +
           `(${rework.error}). Work stays UNVERIFIED; strict done will close this turn blocked.`
@@ -502,7 +508,7 @@ export async function runAutoVerifyAfterGeneral(opts: {
 
   if (verdict === 'pass') {
     g.__zelariGeneralVerifyDebt = null;
-    emitVerifyPhase('verify PASS', true);
+    emitVerifyPhase('verify PASS', true, 'completed');
     return `\n\n[kraken:auto-verify] verify PASS — general⇒verify obligation satisfied.`;
   }
 
@@ -510,6 +516,7 @@ export async function runAutoVerifyAfterGeneral(opts: {
   emitVerifyPhase(
     verdict === 'fail' ? 'verify FAIL' : verify.ok ? 'verify unknown' : 'verify failed',
     verdict === 'fail' || !verify.ok ? false : undefined,
+    'failed',
   );
   const detail =
     verdict === 'fail'

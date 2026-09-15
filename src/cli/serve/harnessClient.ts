@@ -137,6 +137,28 @@ export class HarnessClient {
     return (await this.request('session.cancel', params)) as Record<string, unknown>;
   }
 
+  /** t63: settle a permission.request (allow/deny/always-tool/always-category). */
+  async permissionRespond(
+    requestId: string,
+    decision: string,
+    sessionId?: string,
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { requestId, decision };
+    if (sessionId !== undefined) params['sessionId'] = sessionId;
+    return (await this.request('permission.respond', params)) as Record<string, unknown>;
+  }
+
+  /** t63: settle an ask_user.request (null = dismiss). */
+  async askUserRespond(
+    requestId: string,
+    answer: string | null,
+    sessionId?: string,
+  ): Promise<Record<string, unknown>> {
+    const params: Record<string, unknown> = { requestId, answer };
+    if (sessionId !== undefined) params['sessionId'] = sessionId;
+    return (await this.request('ask_user.respond', params)) as Record<string, unknown>;
+  }
+
   async disposeSession(sessionId: string): Promise<void> {
     await this.request('session.dispose', { sessionId });
   }

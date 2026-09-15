@@ -376,6 +376,99 @@ fn companion_health_ok(bind: &str, port: u16) -> bool {
     }
 }
 
+/// t66: read the companion bearer token (~/.zelari-code/companion.token).
+fn companion_token() -> Option<String> {
+    let home = std::env::var("USERPROFILE")
+        .or_else(|_| std::env::var("HOME"))
+        .ok()?;
+    let p = std::path::Path::new(&home)
+        .join(".zelari-code")
+        .join("companion.token");
+    std::fs::read_to_string(p)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// t66: authenticated companion serve call (curl, bearer token). GET when
+/// body is None, POST JSON when Some.
+fn companion_serve_call(
+    bind: &str,
+    port: u16,
+    path: &str,
+    body: Option<&str>,
+) -> Result<String, String> {
+    let token =
+        companion_token().ok_or_else(|| "companion token not found".to_string())?;
+    let host = if bind == "0.0.0.0" || bind == "::" {
+        "127.0.0.1"
+    } else {
+        bind
+    };
+    let url = format!("http://{host}:{port}{path}");
+    let mut cmd = Command::new("curl");
+    cmd.args([
+        "-sS",
+        "--max-time",
+        "3",
+        "-H",
+        &format!("Authorization: Bearer {token}"),
+    ]);
+    if let Some(json) = body {
+        cmd.args(["-X", "POST", "-H", "Content-Type: application/json", "-d", json]);
+    }
+    cmd.arg(&url);
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let out = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("curl failed: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("curl exit {}", out.status));
+    }
+    String::from_utf8(out.stdout).map_err(|e| e.to_string())
+}
+
+/// t66: raw GET /v1/trust/pending body for the desktop trust gate poll.
+/// None when the serve is down/unhealthy (poller treats it as no pending).
+#[tauri::command]
+fn companion_trust_pending(state: State<'_, Arc<CompanionServeState>>) -> Option<String> {
+    let bind = state
+        .bind
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let port = *state.port.lock().unwrap_or_else(|e| e.into_inner());
+    if !companion_health_ok(&bind, port) {
+        return None;
+    }
+    companion_serve_call(&bind, port, "/v1/trust/pending", None).ok()
+}
+
+/// t66: POST the desktop trust decision for a parked awaiting_trust run.
+#[tauri::command]
+fn companion_trust_respond(
+    state: State<'_, Arc<CompanionServeState>>,
+    run_id: String,
+    approve: bool,
+) -> Result<String, String> {
+    let bind = state
+        .bind
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
+    let port = *state.port.lock().unwrap_or_else(|e| e.into_inner());
+    if run_id.trim().is_empty() {
+        return Err("runId is required".into());
+    }
+    let body = format!("{{\"runId\":\"{run_id}\",\"approve\":{approve}}}");
+    companion_serve_call(&bind, port, "/v1/trust", Some(&body))
+}
+
 fn reap_dead_companion(state: &CompanionServeState) {
     let mut guard = state.child.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(child) = guard.as_mut() {
@@ -1031,7 +1124,7 @@ fn get_cli_status() -> CliStatus {
             cli_path: cli.ok().map(|p| p.display().to_string()),
             cli_version: None,
             cwd,
-            message: "Node.js not found on PATH (need Node ≥ 24, see engines.node).".into(),
+            message: "Node.js not found on PATH (need Node ≥ 20.17, see engines.node).".into(),
         },
         (Some(node_path), Err(e)) => CliStatus {
             ok: false,
@@ -3285,6 +3378,11 @@ fn companion_serve_start(
     {
         cmd.arg("--project").arg(proj);
     }
+    // t32/t63: harness client mode — this serve child drives runs over the
+    // App Server instead of one --headless child per run, enabling steer and
+    // mobile approvals. Scoped HERE only: spawn_cli_base is shared by every
+    // CLI spawn and must not inherit this env.
+    cmd.env("ZELARI_HARNESS_SERVER", "1");
     cmd.stdout(Stdio::null()).stderr(Stdio::null());
 
     let child = cmd.spawn().map_err(format_cli_spawn_err)?;
@@ -3391,6 +3489,8 @@ pub fn run() {
             companion_serve_status,
             companion_serve_start,
             companion_serve_stop,
+            companion_trust_pending,
+            companion_trust_respond,
             generate_skill_from_url,
             print_ssh_targets,
             set_ssh_target,

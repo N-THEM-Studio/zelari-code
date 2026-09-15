@@ -34,7 +34,7 @@ function scaffold(changelogEntries: string[]): string {
   wj('package.json', {
     name: 'zelari-code',
     version: '2.32.0',
-    engines: { npm: '>=11.7.0' },
+    engines: { npm: '>=10.0.0' },
     packageManager: 'npm@11.7.0',
     devDependencies: { '@zelari/core': '2.32.0' },
   });

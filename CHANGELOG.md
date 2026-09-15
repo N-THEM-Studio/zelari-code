@@ -4,6 +4,30 @@ All notable changes to Zelari Code are documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [2.45.0] - 2026-09-15
+
+Companion (phone + desktop) can approve tools, pick a working folder, and wait on a desktop trust modal; install docs treat `npx` as first-class; runtime floor is Node 20 LTS as well as 24.
+
+### Added
+
+- **Android companion: desktop-parity agent controls** — drawer chips for `standard` / `strict` / `yolo`, Strict-done switch, in-run **steer**, Allow/Deny/Always cards for `permission.request` and `ask_user`, and a working-folder browser. YOLO swallows permission prompts on the phone.
+- **Folder trust gate** — companion run on an untrusted cwd parks as `awaiting_trust` until Desktop approves (`GET /v1/trust/pending`, `POST /v1/trust`). Same modal on **Open Folder**; trusted paths persist in localStorage. Deny fails closed.
+- **Zelari logo on Android** — adaptive launcher uses the mustache mark (`drawable-nodpi` + mipmap/manifest).
+- **npx-first install** — `npx zelari-code@latest` is the documented zero-install path; `preferGlobal` removed. `/update` and `doctor` detect `global` | `npx` | `local` and refuse a misleading `npm install -g` on non-global copies.
+- **ADR-0038** — Node ≥ 20.17 floor and npx-first install path.
+
+### Changed
+
+- **Runtime floor is Node ≥ 20.17 (npm ≥ 10)** — engines, doctor/prereq, CONTRIBUTING/README/GUIDE. CI smoke matrix is Node **20 and 24**. SQLite memory V2 still opt-in and no-ops on 20. Eval tooling still needs Node ≥ 22.6 (contributors only).
+- **Companion run knobs** — `permissionPreset` / `strictDone` on start; spawn path forwards `--permissions` and `--strict-done`. Harness client can `permission.respond` / `ask_user.respond`.
+- **Kraken auto-verify activity row** — PASS/FAIL captions set the general tentacle to completed/failed so it no longer stays ● running.
+
+### Fixed
+
+- **Gson JSON accessors on Android** — Kotlin uses explicit `getAsString()` / `getAsBoolean()` / `getAsJsonArray()` / `isJsonPrimitive()` so `assembleDebug` compiles on current Gson.
+- Companion/desktop trust and permission paths covered by new unit tests (`cli-companionFs`, `cli-companionTrust`, `cli-updaterInstallKind`); memory/prereq tests follow the Node 20 skip/lazy-import story.
+
 ## [2.44.0] - 2026-09-15
 
 Parallel-chat isolation hardening for the single-sidecar Desktop multiplex, plus selective brand theming (one master color, two intensity variants).

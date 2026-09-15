@@ -28,6 +28,10 @@ data class StartRunRequest(
     val history: List<HistoryMessage>? = null,
     val provider: String? = null,
     val model: String? = null,
+    // t63: per-turn knobs (Desktop parity) — server drops unknown values.
+    val permissionPreset: String? = null,
+    val strictDone: Boolean? = null,
+    val verifyPack: Boolean? = null,
 )
 
 data class HistoryMessage(
@@ -41,6 +45,12 @@ data class StartRunResponse(
     val run: RunDto? = null,
     val eventsUrl: String? = null,
     val cancelUrl: String? = null,
+    val steerUrl: String? = null,
+    val permissionUrl: String? = null,
+    val askUrl: String? = null,
+    // t66: full-fs cwd outside the allowlist — run parked until the desktop
+    // trust modal approves (POST /v1/trust).
+    val awaitingTrust: Boolean? = null,
 )
 
 data class RunDto(
@@ -108,3 +118,33 @@ enum class ConnState {
     Connected,
     Error,
 }
+
+// t63: sandboxed folder browsing (GET /v1/fs).
+data class FsEntry(
+    val name: String = "",
+    val path: String = "",
+    val dir: Boolean = true,
+)
+
+data class FsResponse(
+    val ok: Boolean = false,
+    val path: String? = null,
+    val parent: String? = null,
+    val roots: List<ProjectDto> = emptyList(),
+    val entries: List<FsEntry> = emptyList(),
+)
+
+// t63: pending mobile approvals raised on the run SSE.
+data class PendingPermission(
+    val requestId: String,
+    val tool: String,
+    val category: String? = null,
+    val categories: List<String> = emptyList(),
+    val reason: String? = null,
+)
+
+data class PendingAsk(
+    val requestId: String,
+    val question: String,
+    val choices: List<String> = emptyList(),
+)
