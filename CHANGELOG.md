@@ -23,6 +23,24 @@ Release pipeline hardening (F2): a tag can no longer publish ahead of red CI, an
 
 - **Smoke npm pin is now real (F2.2)** — the smoke matrix activates the pinned npm in one PATH-safe bash step (`npm i -g npm@11.7.0` → `hash -r` → version assert → `npm ci`). corepack 0.35 `prepare --activate` exits 0 but never redirects the real `npm` binary (the new assert caught 11.16.0/10.8.2 on all six runners right after a "successful" activation); the previous separate-step pattern only printed the version and hid the problem.
 
+## [2.46.0] - 2026-09-15
+
+Verification-honesty hardening (F3) — the verifier sees only real command output and only verified work reaches memory — plus a cross-platform gardener offer (F4) and the last corepack steps retired.
+
+### Added
+
+- **Cross-platform gardener offer (F4)** — Desktop automations Register/Remove now dispatch per OS: Windows `schtasks` (unchanged), macOS LaunchAgent `com.zelari.gardener.plist`, Linux cron lines tagged `# ZelariGardener` (Remove deletes only those lines). The unix launcher `~/.zelari/gardener-task.sh` runs the repo's `scripts/zelari-gardener.sh` when present and otherwise logs + `exit 0` — never a blind `--phase plan`. Still default-off, propose-only.
+
+### Changed
+
+- **Blind verify input (F3.2)** — the verify prompt now states the reviewer is BLIND and must derive every verdict from real command output; the kraken graph executor no longer injects a writer node's self-reported `result` into reviewer context (the `fix` rework node still receives verify findings).
+- **Memory only on verified outcomes (F3.3)** — outcome memory for general tentacles is written only when the auto-verify verdict is a parseable PASS (`outcomeMemoryAllowed` gate); turn-level outcome writes and ops-knowledge promotion are skipped with reason `verify-obligation-open` while the general⇒verify debt is open.
+- **npm pin without corepack, everywhere** — the remaining `corepack prepare` steps in `publish.yml` (publish-core/publish-cli), `ci.yml`, `eval-retention-gate.yml` and `release-desktop.yml` are replaced by the single PATH-safe step `npm i -g npm@11.7.0` + `hash -r` + version assert already proven in the release gate.
+
+### Fixed
+
+- **Redundant verify-hint footer removed (F3.1)** — the soft "K4" hint appended to general results is gone: the runtime auto-verify chain and strict-done (exit 4) are the contract. Lead playbook, user guide and ADR-0033 updated to describe the landed behavior (headless exit 4 with `ZELARI_STRICT_DONE=0` opt-out; TUI system message).
+
 ## [2.45.0] - 2026-09-15
 
 Companion (phone + desktop) can approve tools, pick a working folder, and wait on a desktop trust modal; install docs treat `npx` as first-class; runtime floor is Node 20 LTS as well as 24.
