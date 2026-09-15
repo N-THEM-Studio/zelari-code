@@ -1,0 +1,114 @@
+name: release-gate
+
+# Reusable release gate (F2.4) — the single choke point both publish.yml and
+# release-desktop.yml call BEFORE anything leaves the machine. A tag is only
+# publishable if:
+#   gate-verify: the tagged SHA is version-coherent on a CLEAN tree AND its
+#                ci.yml run for that exact SHA is green;
+#   gate-floor:  the CLI installs and runs on the exact advertised Node floor.
+# Lesson (v2.43.0 / v2.45.0): the v2.43.0 tag landed on a dirty tree, and
+# v2.45.0 started publishing while its ci.yml run was still red — CI is not a
+# gate unless the publish path explicitly waits for it.
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Tag being released (e.g. v2.45.1)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  gate-verify:
+    name: Verify tagged SHA (versions + green CI)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Activate pinned npm + install (single step, PATH-safe)
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          hash -r 2>/dev/null || true
+          test "$(npm --version)" = "11.7.0"
+          npm ci --no-audit --no-fund
+
+      - name: verify-versions (clean tree required)
+        env:
+          ZELARI_VERIFY_VERSIONS_REQUIRE_CLEAN: '1'
+        run: node scripts/verify-versions.mjs
+
+      - name: CI of the tagged SHA must be green
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # The SHA of the checked-out TAG (github.sha is the default branch on
+          # workflow_dispatch — never use it here).
+          sha="$(git rev-parse HEAD)"
+          run_id=""
+          for i in $(seq 1 30); do
+            run_id="$(gh run list --workflow ci.yml --commit "$sha" --limit 1 --json databaseId --jq '.[0].databaseId' 2>/dev/null || true)"
+            if [ -n "$run_id" ] && [ "$run_id" != "null" ]; then break; fi
+            sleep 10
+          done
+          if [ -z "$run_id" ] || [ "$run_id" = "null" ]; then
+            echo "::error::no ci.yml run found for SHA $sha — refusing to publish"
+            exit 1
+          fi
+          gh run watch "$run_id" --exit-status --interval 30
+
+  gate-floor:
+    name: CLI smoke on Node floor
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Setup Node.js (exact runtime floor)
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.17.0
+          cache: npm
+
+      - name: Activate pinned npm + install (single step, PATH-safe)
+        shell: bash
+        run: |
+          corepack enable
+          corepack prepare npm@11.7.0 --activate
+          hash -r 2>/dev/null || true
+          test "$(npm --version)" = "11.7.0"
+          npm ci --no-audit --no-fund
+
+      - name: Build CLI on the floor node (mirror of ci smoke)
+        shell: bash
+        run: |
+          npm run build --workspace=@zelari/core
+          npx tsc -p tsconfig.json
+          node scripts/bundle-cli.mjs
+
+      - name: bin smoke on floor node
+        run: node bin/zelari-code.js --version

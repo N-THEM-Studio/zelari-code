@@ -13,8 +13,20 @@ on:
 # Publishes BOTH the CLI (`zelari-code`) and the core library
 # (`@zelari/core`) to the npm registry via Trusted Publishing (OIDC).
 jobs:
+  # F2.4: release gate — the tagged SHA must be version-coherent with a green
+  # ci.yml, and the CLI must run on the advertised Node floor, before any
+  # publish step runs.
+  gate:
+    uses: ./.github/workflows/release-gate.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    permissions:
+      contents: read
+      actions: read
+
   publish-core:
     name: Publish @zelari/core
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       contents: read

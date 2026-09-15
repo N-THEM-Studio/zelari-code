@@ -16,7 +16,18 @@ permissions:
   contents: write
 
 jobs:
+  # F2.4: release gate — never build installers for a tag whose SHA is not
+  # version-coherent with a green ci.yml / does not run on the Node floor.
+  gate:
+    uses: ./.github/workflows/release-gate.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    permissions:
+      contents: read
+      actions: read
+
   desktop:
+    needs: gate
     timeout-minutes: 60
     strategy:
       fail-fast: false
