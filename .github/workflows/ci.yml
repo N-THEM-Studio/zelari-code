@@ -111,16 +111,21 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
-      # F2.2: one bash step (PATH-safe). On the Windows runner a separate
-      # activate step left npm resolving to the pre-baked 10.8.2 (stale shim
-      # in the PATH hash cache), so `npm ci` failed on esbuild. `hash -r`
-      # drops the cached shim and the assertion fails fast if it is still
-      # wrong, before any install runs.
+      # F2.2: one bash step (PATH-safe). Two runner traps, both fatal for
+      # reproducible installs:
+      # 1) Windows: a separate activate step left npm resolving to the
+      #    pre-baked 10.8.2 (stale entry in the bash PATH hash cache), so
+      #    `npm ci` failed on esbuild. `hash -r` drops the cached entry.
+      # 2) corepack 0.35 `prepare --activate` exits 0 but never redirects
+      #    the real `npm` binary: on 2026-09-15 the assert below caught
+      #    11.16.0/10.8.2 on all six smoke runners right after a
+      #    "successful" activation. `npm i -g npm@<pin>` is the only
+      #    deterministic activation; the assert fails fast before any
+      #    install runs.
       - name: Activate pinned npm + install (single step, PATH-safe)
         shell: bash
         run: |
-          corepack enable
-          corepack prepare npm@11.7.0 --activate
+          npm install -g npm@11.7.0 --no-fund --no-audit
           hash -r 2>/dev/null || true
           test "$(npm --version)" = "11.7.0"
           npm ci --no-audit --no-fund

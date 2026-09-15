@@ -276,7 +276,7 @@ if (coreReadmeVersion && coreReadmeVersion[1].trim() !== coreVersion) {
   }
   if (!ciYaml.includes(NPM_PIN)) {
     failures.push(
-      `ci.yml must pin npm@${NPM_PIN} (corepack) to match packageManager; "${NPM_PIN}" not found.`,
+      `ci.yml must pin npm@${NPM_PIN} (npm i -g) to match packageManager; "${NPM_PIN}" not found.`,
     );
   }
 }
