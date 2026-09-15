@@ -42,14 +42,13 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Activate pinned npm
+      - name: Activate pinned npm + install (single step, PATH-safe)
+        shell: bash
         run: |
-          corepack enable
-          corepack prepare npm@11.7.0 --activate
-          npm --version
-
-      - name: Install dependencies
-        run: npm ci
+          npm install -g npm@11.7.0 --no-fund --no-audit
+          hash -r 2>/dev/null || true
+          test "$(npm --version)" = "11.7.0"
+          npm ci --no-audit --no-fund
 
       - name: Resolve expected version
         id: ver
@@ -118,14 +117,13 @@ jobs:
           node-version: '24'
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Activate pinned npm
+      - name: Activate pinned npm + install (single step, PATH-safe)
+        shell: bash
         run: |
-          corepack enable
-          corepack prepare npm@11.7.0 --activate
-          npm --version
-
-      - name: Install dependencies
-        run: npm ci
+          npm install -g npm@11.7.0 --no-fund --no-audit
+          hash -r 2>/dev/null || true
+          test "$(npm --version)" = "11.7.0"
+          npm ci --no-audit --no-fund
 
       - name: Resolve expected version
         id: ver
