@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // CI runs `npm test` at the monorepo root and never installs
 // apps/desktop/node_modules (see
@@ -7,8 +8,11 @@ import { resolve } from 'node:path';
 // specifier used by apps/desktop/src is aliased to a single stub so desktop
 // unit tests resolve on any machine — keep this list in sync with the stub's
 // exports (apps/desktop/src/testSupport/tauriApiStub.ts).
+// Derive the stub path from THIS file (not process.cwd()): `npm test
+// --workspace=@zelari/core` runs vitest with cwd=packages/core and must not
+// silently break this alias (see packages/core/vitest.config.ts).
 const tauriStub = resolve(
-  process.cwd(),
+  fileURLToPath(new URL('.', import.meta.url)),
   'apps/desktop/src/testSupport/tauriApiStub.ts',
 );
 const tauriAliases = [
