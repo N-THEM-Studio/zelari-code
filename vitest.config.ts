@@ -1,8 +1,34 @@
 import { defineConfig } from 'vitest/config';
+import { resolve } from 'node:path';
+
+// CI runs `npm test` at the monorepo root and never installs
+// apps/desktop/node_modules (see
+// apps/desktop/src/liveTasks/workspacePlanIo.ts). Every @tauri-apps/*
+// specifier used by apps/desktop/src is aliased to a single stub so desktop
+// unit tests resolve on any machine — keep this list in sync with the stub's
+// exports (apps/desktop/src/testSupport/tauriApiStub.ts).
+const tauriStub = resolve(
+  process.cwd(),
+  'apps/desktop/src/testSupport/tauriApiStub.ts',
+);
+const tauriAliases = [
+  '@tauri-apps/api/core',
+  '@tauri-apps/api/event',
+  '@tauri-apps/api/app',
+  '@tauri-apps/api/window',
+  '@tauri-apps/api/webviewWindow',
+  '@tauri-apps/plugin-dialog',
+  '@tauri-apps/plugin-opener',
+  '@tauri-apps/plugin-updater',
+  '@tauri-apps/plugin-process',
+].map((spec) => ({ find: spec, replacement: tauriStub }));
 
 // Keep process-heavy Git, SQLite-worker, and Tauri-adjacent suites reliable on
 // developer machines and CI runners without weakening individual timeouts.
 export default defineConfig({
+  resolve: {
+    alias: tauriAliases,
+  },
   test: {
     maxWorkers: '50%',
     setupFiles: ['./tests/setup/jailModeDefault.ts'],
