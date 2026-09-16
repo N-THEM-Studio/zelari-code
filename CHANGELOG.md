@@ -5,6 +5,26 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.46.1] - 2026-09-15
+
+Input-latency and model-desync fixes from the 2026-09-15 diagnosis (`.zelari/docs/2026-09-15-diagnosi-lag-input-e-desync-modelli.md`): every keystroke used to re-render the whole Desktop shell and re-parse the entire transcript, and the chat model selector never talked to the Agents settings view.
+
+### Fixed
+
+- **Chat/Agents model desync** - the Settings → Agents lead model now follows the chat selection and persists through the existing `set_app_config` channel; tentacle preferences are annotated as agent-scoped instead of silently diverging from the chat model. The sticky first-run fill (`prev || …`) no longer freezes the chat bar on the first detected model forever.
+
+### Changed
+
+- **Desktop keystroke isolation** - the chat draft lives in a dedicated `ChatComposer` component, so typing no longer re-renders sidebar, transcript and settings panels.
+- **Memoized transcript** - `ChatTranscript` + `MessageContent` are `React.memo`-wrapped with value-based comparators; markdown/inline parsing no longer scales with conversation length on every render.
+- **Batched sidecar events** - streaming sidecar events are coalesced on a 150ms cadence (`useSidecarBatch`); run-activity state commits once per batch instead of once per event.
+- **TUI input reactivity** - the CLI input draft is lifted out of the app component tree (`inputDraft.ts`) and `StatusBar` is memoized with a chip-aware comparator.
+- **Calmer polling** - the CLI git poll switches from a fixed 4s to an adaptive cadence and the update check is deferred off the boot path.
+
+### Removed
+
+- **Stale baseline tests from the suite** - `vitest.config.ts` now excludes `eval/results/**` (generated bench snapshots that shipped out-of-sync copies of product tests).
+
 ## [2.46.0] - 2026-09-15
 
 Verification-honesty hardening (F3) — the verifier sees only real command output and only verified work reaches memory — plus a cross-platform gardener offer (F4) and the last corepack steps retired.
