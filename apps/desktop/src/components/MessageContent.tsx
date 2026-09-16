@@ -3,7 +3,7 @@
  * Not a full editor — view-only.
  */
 
-import type { ReactNode } from "react";
+import { memo, type ReactNode } from "react";
 import type { MessageStats } from "../types";
 import { scrubDisplayText } from "./scrubDisplayText";
 import { CopyButton } from "./CopyButton";
@@ -294,7 +294,7 @@ interface Props {
   onClarificationChoose?: (choice: string) => void;
 }
 
-export function MessageContent({
+function MessageContentBase({
   content,
   streaming,
   thinking,
@@ -468,6 +468,13 @@ export function MessageContent({
     </div>
   );
 }
+
+/**
+ * W3.1: memoized — a message re-renders only when its own props change. During
+ * streaming only the target turn's `content` changes, and unrelated App state
+ * (sidebar width, composer draft, dialogs) never touches the rendered markup.
+ */
+export const MessageContent = memo(MessageContentBase);
 
 /** Global thinking indicator while a run is active but no assistant text yet. */
 export function ThinkingIndicator({ label = "Working" }: { label?: string }) {

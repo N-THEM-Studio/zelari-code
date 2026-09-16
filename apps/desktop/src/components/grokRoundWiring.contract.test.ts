@@ -34,6 +34,7 @@ function between(src: string, startMarker: string, endMarker: string): string {
 }
 
 const app = read("../App.tsx");
+const composerSrc = read("./Composer.tsx");
 const pills = read("./ComposerToolbar.tsx");
 
 describe("grok-round: the topbar is liberated", () => {
@@ -65,12 +66,19 @@ describe("grok-round: the topbar is liberated", () => {
 });
 
 describe("grok-round: the pills live in the composer", () => {
+  // The capsule moved into Composer.tsx (W3.2): pin its internals there, and
+  // the toolbar wiring where the props are now fed — App passes a `toolbar` bag.
   const composer = between(
-    app,
+    composerSrc,
     "className={`composer glass-capsule",
-    'className="composer-hint"',
+    "\n  );\n});",
   );
-  const mounted = between(composer, "<ComposerToolbar", 'className="composer-actions"');
+  const mounted = between(
+    composerSrc,
+    "<ComposerToolbar {...toolbar} />",
+    'className="composer-actions"',
+  );
+  const toolbarProps = between(app, "toolbar={{", "onSubmit={");
 
   it("mounts ComposerToolbar inside the capsule, before the send row", () => {
     expect(composer).toContain("<ComposerToolbar");
@@ -79,34 +87,37 @@ describe("grok-round: the pills live in the composer", () => {
 
   it("feeds it the same handlers and props the topbar used", () => {
     for (const prop of [
-      "provider={provider}",
-      "model={model}",
-      "onProviderChange={onProviderChange}",
-      "onModelChange={onModelChange}",
-      "onThinkingChange={onThinkingChange}",
-      "onConfigRefresh={setConfig}",
-      "onStatus={setStatusLine}",
-      "permissionPreset={prefs.permissionPreset}",
-      "onModeChange={onModeChange}",
-      "onPhaseChange={onPhaseChange}",
-      "onKrakenGraphChange={setGraphMode}",
-      "onGauntletChange={setGauntletLoop}",
+      "config,",
+      "provider,",
+      "model,",
+      "onProviderChange,",
+      "onModelChange,",
+      "onThinkingChange,",
+      "onConfigRefresh: setConfig,",
+      "onStatus: setStatusLine,",
+      "permissionPreset: prefs.permissionPreset,",
+      "onModeChange,",
+      "onPhaseChange,",
+      "onKrakenGraphChange: setGraphMode,",
+      "onGauntletChange: setGauntletLoop,",
     ]) {
-      expect(mounted).toContain(prop);
+      expect(toolbarProps).toContain(prop);
     }
   });
 
   it("disables only the choices (never the input) while running", () => {
-    expect(mounted).toContain("disabled={running}");
+    expect(toolbarProps).toContain("disabled: running");
     // The pills block holds the choices only — steer/queue are untouched…
     expect(mounted).not.toContain("<textarea");
     // …and the composer's one textarea is never disabled.
-    const textarea = between(composer, "<textarea", "/>");
+    const textarea = between(composerSrc, "<textarea", "/>");
     expect(textarea).not.toContain("disabled");
   });
 
   it("writes the permission preset through the Settings path", () => {
-    expect(mounted).toContain("patchDesktopPrefs(prev, { permissionPreset })");
+    expect(toolbarProps).toContain(
+      "patchDesktopPrefs(prev, { permissionPreset })",
+    );
   });
 });
 

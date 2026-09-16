@@ -66,3 +66,11 @@ describe("MessageContent inline readability", () => {
     expect(table?.querySelector("code")).not.toBeNull();
   });
 });
+
+describe("MessageContent memoization (W3.1)", () => {
+  it("is wrapped in React.memo so unrelated parent re-renders skip it", () => {
+    expect(
+      (MessageContent as { $$typeof?: symbol }).$$typeof,
+    ).toBe(Symbol.for("react.memo"));
+  });
+});

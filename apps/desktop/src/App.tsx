@@ -16,7 +16,6 @@ import {
   onAgentEvent,
   onAgentStderr,
   onRunFinished,
-  onSidecarLog,
   onSidecarStatus,
   type SidecarStatusPayload,
   permissionRespond,
@@ -25,8 +24,6 @@ import {
   setAppConfig,
   summarizeToolArgs,
 } from "./agentClient";
-import { PermissionCard } from "./components/PermissionCard";
-import { ClarificationCard } from "./components/ClarificationCard";
 import {
   applyAskUserSettled,
   applyPermissionSettled,
@@ -34,11 +31,8 @@ import {
   permissionAskFromEvent,
 } from "./inChatAsk";
 import { loadConversations, saveConversations } from "./chatStorage";
-import { cleanAssistantContent } from "./exportSession";
-import { MessageContent } from "./components/MessageContent";
-import { CopyButton } from "./components/CopyButton";
-import { ComposerToolbar } from "./components/ComposerToolbar";
-import { hasGauntletLoop, stripGauntletLoop } from "./gauntletLoop";
+import { useDebouncedSave } from "./hooks/useDebouncedSave";
+import { stripGauntletLoop } from "./gauntletLoop";
 import {
   controlEvent,
   sendControl,
@@ -50,12 +44,6 @@ import "./steer.css";
 import { planFolderSwitch } from "./folderSwitch";
 import { parseSteerSendResult } from "./steerRecovery";
 import { classifyLiveSend, shouldAutoSendFollowUp } from "./liveSend";
-import {
-  isSidecarErrorLine,
-  pushSidecarLogLine,
-  sidecarLogLineFromPayload,
-} from "./sidecarLog";
-
 import { SettingsShell } from "./components/settings/SettingsShell";
 import { RunActivity, type LiveToolStep } from "./components/RunActivity";
 import { KrakenActivity } from "./components/KrakenActivity";
@@ -90,7 +78,6 @@ import {
 import { LiveTasksPanel } from "./components/LiveTasksPanel";
 import { parseTodosFromUnknown } from "./sessionTodosUi";
 import { extractImagePathsFromToolResult } from "./toolImages";
-import { ChatImageCard } from "./components/ChatImageCard";
 import {
   SESSION_FOLDERS_STORAGE_KEY,
   loadCollapsedSet,
@@ -123,7 +110,6 @@ import {
   unseenResultsByConversation,
   useRunCoordinator,
 } from "./runs";
-import { ReplyAccordion } from "./components/ReplyAccordion";
 import { TentacleTracePanel } from "./components/TentacleTracePanel";
 import { RunsDashboard } from "./components/RunsDashboard";
 import { RunsTrigger } from "./components/RunsTrigger";
@@ -135,11 +121,6 @@ import { ProjectPanel } from "./components/ProjectPanel";
 import { CliSetupGuide } from "./components/CliSetupGuide";
 import { DoctorGate } from "./components/DoctorGate";
 import { TitleBar } from "./components/TitleBar";
-import {
-  MentionPopup,
-  applyMentionInsert,
-  detectMentionQuery,
-} from "./components/MentionPopup";
 import {
   SkillPicker,
   expandDesktopSkill,
@@ -163,11 +144,15 @@ import type {
   Conversation,
   DesktopConfig,
   DispatchMode,
+  MessageStats,
   SessionFilter,
   WorkPhase,
 } from "./types";
 import { checkForDesktopUpdate } from "./updater";
 import { useSpeechToText } from "./hooks/useSpeechToText";
+import { Composer, type ComposerHandle } from "./components/Composer";
+import { ChatList, type PermissionDecision } from "./components/ChatList";
+import { SidecarLogPanel } from "./components/SidecarLogPanel";
 import { applyBaffettiTheme } from "./theme/baffetti";
 import "./App.css";
 import "./theme/baffetti.css";
@@ -518,6 +503,158 @@ interface TurnCtx {
   toolCount: number;
   hasAssistantText: boolean;
   pendingToolNames: Map<string, string>;
+  /** W2.1: raw (unscrubbed) text accumulated for this turn's live bubble.
+   *  The source of truth: deltas append here (never one char per event — the
+   *  Rust side coalesces ~40 ms) and the throttled commit reads it, so no
+   *  text can be lost or duplicated by the rAF/throttle. Reset per bubble. */
+  streamRaw: string;
+  /** W2.4: pending requestAnimationFrame id for the streaming commit (0=none). */
+  streamRaf: number;
+  /** W2.1: pending scrub-cadence timeout id (0=none). */
+  streamTimer: number;
+  /** W2.1: epoch ms of the last live scrub commit (throttle anchor). */
+  streamScrubbedAt: number;
+}
+
+/** W2.1: live-scrub cadence for the streaming transcript (ms). The commit
+ *  reads the raw ref, so a slower cadence only makes the visible bubble lag
+ *  the ref by at most this much — it never drops text. */
+const STREAM_SCRUB_MS = 250;
+
+type StreamUsage = {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
+};
+
+/** True if a/b refer to the same council member (id preferred, else name). */
+function isSameMember(
+  a: { name?: string; id?: string },
+  b: { name?: string; id?: string },
+): boolean {
+  if (a.id && b.id) return a.id === b.id;
+  if (a.name && b.name)
+    return (
+      a.name.localeCompare(b.name, undefined, { sensitivity: "accent" }) === 0
+    );
+  // Only one side known → cannot prove switch; treat as same only if both empty
+  if (!a.id && !a.name && !b.id && !b.name) return true;
+  // One known, other empty → keep current bubble (tools mid-turn)
+  if ((!a.id && !a.name) || (!b.id && !b.name)) return true;
+  return false;
+}
+
+function memberMatches(
+  m: ChatMessage,
+  member: { name?: string; id?: string },
+): boolean {
+  if (m.role !== "assistant") return false;
+  return isSameMember({ name: m.memberName, id: m.memberId }, member);
+}
+
+function usageStats(u: StreamUsage): MessageStats {
+  const total =
+    u.totalTokens ?? (u.promptTokens ?? 0) + (u.completionTokens ?? 0);
+  return {
+    promptTokens: u.promptTokens,
+    completionTokens: u.completionTokens,
+    totalTokens: total,
+  };
+}
+
+/** Replace a single conversation in the array, leaving every other element's
+ *  object identity untouched (W2.2: only the active chat + the target message
+ *  are rewritten per streaming commit). */
+function replaceConversation(
+  prev: Conversation[],
+  ci: number,
+  next: Conversation,
+): Conversation[] {
+  const out = prev.slice();
+  out[ci] = next;
+  return out;
+}
+
+/**
+ * W2.1/W2.2: write the (already scrubbed) live text of the turn's target
+ * assistant bubble. Resolves the bubble with the SAME rules the old per-delta
+ * handler used (resume this turn's card, else the trailing assistant of the
+ * same member, else create one) but replaces ONLY that one message inside ONLY
+ * that one conversation — no whole-store remap, no fresh copies of unrelated
+ * objects.
+ */
+function applyStreamContent(
+  prev: Conversation[],
+  convId: string,
+  turn: TurnCtx,
+  text: string,
+  final: boolean,
+  usage?: StreamUsage,
+): Conversation[] {
+  const ci = prev.findIndex((c) => c.id === convId);
+  if (ci === -1) return prev;
+  const conv = prev[ci];
+
+  // Resume the current turn's bubble if it still exists and still belongs to
+  // the current member; otherwise fall back to the trailing assistant card.
+  let aid = turn.assistantId;
+  if (aid) {
+    const open = conv.messages.find((m) => m.id === aid);
+    if (!open || !memberMatches(open, turn.member)) aid = null;
+  }
+  if (!aid) {
+    let lastIdx = -1;
+    for (let i = conv.messages.length - 1; i >= 0; i -= 1) {
+      if (conv.messages[i].role !== "tool") {
+        lastIdx = i;
+        break;
+      }
+    }
+    const last = lastIdx >= 0 ? conv.messages[lastIdx] : undefined;
+    if (last?.role === "assistant" && memberMatches(last, turn.member)) {
+      aid = last.id;
+      turn.assistantId = aid;
+    } else {
+      aid = uid("asst");
+      turn.assistantId = aid;
+      const bubble: ChatMessage = {
+        id: aid,
+        role: "assistant",
+        content: text,
+        createdAt: Date.now(),
+        streaming: !final,
+        memberName: turn.member.name,
+        memberId: turn.member.id,
+        ...(final && usage ? { stats: usageStats(usage) } : {}),
+      };
+      return replaceConversation(prev, ci, {
+        ...conv,
+        updatedAt: Date.now(),
+        messages: [...conv.messages, bubble],
+      });
+    }
+  }
+
+  const targetIdx = conv.messages.findIndex((m) => m.id === aid);
+  if (targetIdx === -1) return prev;
+  const target = conv.messages[targetIdx];
+  const nextMsg: ChatMessage = {
+    ...target,
+    content: text,
+    streaming: !final,
+    memberName: turn.member.name ?? target.memberName,
+    memberId: turn.member.id ?? target.memberId,
+    ...(final && usage
+      ? { stats: { ...target.stats, ...usageStats(usage) } }
+      : {}),
+  };
+  const messages = conv.messages.slice();
+  messages[targetIdx] = nextMsg;
+  return replaceConversation(prev, ci, {
+    ...conv,
+    updatedAt: Date.now(),
+    messages,
+  });
 }
 
 /** Kraken selection card state: live progress + end-of-turn metrics. */
@@ -538,17 +675,32 @@ export default function App() {
   const [defaultPhase, setDefaultPhase] = useState<WorkPhase>(defaults.phase);
   const [sessionFilter, setSessionFilter] = useState<SessionFilter>("active");
 
-  const [conversations, setConversations] = useState<Conversation[]>(() => {
+  // W1.3: start from an EMPTY store and hydrate AFTER first paint. Reading and
+  // parsing the whole localStorage store (~80 chats) inside the useState
+  // initializer blocked the first paint; consumers are all active?.… null-safe,
+  // so one render with the empty store is tolerated before hydration lands.
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [activeId, setActiveId] = useState<string>("");
+  /** True once the initial localStorage load has been applied. Gates the
+   * debounced save so the empty first paint can never overwrite the store. */
+  const hydratedRef = useRef(false);
+
+  // W1.3: mount-only, post-paint hydration. In dev StrictMode the effect runs
+  // twice (mount → cleanup → mount); the ref guard keeps it to a single load.
+  useEffect(() => {
+    if (hydratedRef.current) return;
     const stored = loadConversations();
-    if (stored && stored.length > 0) return stored;
-    return [newConversation(defaults.mode, defaults.phase)];
-  });
-  const [activeId, setActiveId] = useState(
-    () => conversations.find((c) => !c.archived)?.id ?? conversations[0].id,
-  );
-  const [draft, setDraft] = useState("");
-  const draftRef = useRef("");
-  draftRef.current = draft;
+    const next =
+      stored && stored.length > 0
+        ? stored
+        : [newConversation(defaults.mode, defaults.phase)];
+    hydratedRef.current = true;
+    setConversations(next);
+    setActiveId(next.find((c) => !c.archived)?.id ?? next[0].id);
+  }, [defaults.mode, defaults.phase]);
+
+  /** Imperative handle to the Composer, which owns the input text (W3.2). */
+  const composerRef = useRef<ComposerHandle>(null);
   /** Sidebar width: draggable, persisted; default is 20% narrower (2.35). */
   const [sidebarW, setSidebarW] = useState<number>(() => {
     try {
@@ -719,42 +871,6 @@ export default function App() {
     };
   }, []);
 
-  /**
-   * Sidecar stderr ring buffer (diagnostics panel): the child's stderr lines
-   * arrive on harness-sidecar-log; keep the newest 200 for the collapsible
-   * panel rendered at the top of the chat view.
-   */
-  const [sidecarLogLines, setSidecarLogLines] = useState<string[]>([]);
-  const [sidecarLogOpen, setSidecarLogOpen] = useState(false);
-  const sidecarLogPanelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    let disposed = false;
-    let unlisten: (() => void) | undefined;
-    onSidecarLog((payload) => {
-      if (disposed) return;
-      const line = sidecarLogLineFromPayload(payload);
-      if (!line) return;
-      setSidecarLogLines((prev) => pushSidecarLogLine(prev, line));
-    })
-      .then((fn) => {
-        if (disposed) fn();
-        else unlisten = fn;
-      })
-      .catch(() => {
-        // No Tauri backend reachable (e.g. dev browser) — nothing to surface.
-      });
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
-  // Auto-scroll to the newest line while the panel is open.
-  useEffect(() => {
-    if (!sidecarLogOpen) return;
-    const el = sidecarLogPanelRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [sidecarLogLines, sidecarLogOpen]);
-
   const [installingPluginId, setInstallingPluginId] = useState<string | null>(
     null,
   );
@@ -785,19 +901,11 @@ export default function App() {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const dragDepthRef = useRef(0);
-  /** @-mention autocomplete (path after @). */
-  const [mention, setMention] = useState<{
-    start: number;
-    query: string;
-  } | null>(null);
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const [mentionHits, setMentionHits] = useState<WorkspaceHit[]>([]);
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   /** When set, next send expands this skill around the user draft. */
   const [pendingSkill, setPendingSkill] = useState<SkillEntryDto | null>(null);
 
   const scrollRef = useRef<HTMLDivElement>(null);
-  const taRef = useRef<HTMLTextAreaElement>(null);
   /** Per-conversation turn context (M2): replaces the single-run refs so
    * concurrent background runs cannot contaminate each other's stats. */
   const turnsRef = useRef<Map<string, TurnCtx>>(new Map());
@@ -812,6 +920,10 @@ export default function App() {
         toolCount: 0,
         hasAssistantText: false,
         pendingToolNames: new Map(),
+        streamRaw: "",
+        streamRaf: 0,
+        streamTimer: 0,
+        streamScrubbedAt: 0,
       };
       turnsRef.current.set(convId, t);
     }
@@ -821,6 +933,73 @@ export default function App() {
   activeIdRef.current = activeId;
   const conversationsRef = useRef(conversations);
   conversationsRef.current = conversations;
+
+  // W2.1/W2.4: streaming commit pipeline. The raw deltas live in each turn's
+  // `streamRaw` (the source of truth); these helpers coalesce the expensive
+  // scrub + setState so a burst of deltas costs at most one commit per
+  // animation frame and re-scrubs the full accumulated text at most once
+  // every STREAM_SCRUB_MS. Before this it was a full conversations remap plus
+  // a full-text scrub PER TOKEN (the O(N²) the plan targets).
+  const cancelStreamSchedule = useCallback((turn: TurnCtx) => {
+    if (turn.streamTimer) {
+      window.clearTimeout(turn.streamTimer);
+      turn.streamTimer = 0;
+    }
+    if (turn.streamRaf) {
+      cancelAnimationFrame(turn.streamRaf);
+      turn.streamRaf = 0;
+    }
+  }, []);
+
+  const commitStreamText = useCallback(
+    (convId: string, turn: TurnCtx, final: boolean, usage?: StreamUsage) => {
+      turn.streamTimer = 0;
+      turn.streamRaf = 0;
+      const text = scrubDisplayText(turn.streamRaw, { streaming: !final });
+      turn.streamScrubbedAt = Date.now();
+      setConversations((prev) =>
+        applyStreamContent(prev, convId, turn, text, final, usage),
+      );
+      // Seed the ref with the committed (scrubbed) text so a later message
+      // part of the same turn resumes from exactly what the display shows —
+      // matching the old per-delta base (`m.content + delta`).
+      if (final) turn.streamRaw = text;
+    },
+    [],
+  );
+
+  const scheduleStreamCommit = useCallback(
+    (convId: string, turn: TurnCtx) => {
+      if (turn.streamRaf || turn.streamTimer) return;
+      const run = () => {
+        turn.streamRaf = 0;
+        commitStreamText(convId, turn, false);
+      };
+      const since = Date.now() - turn.streamScrubbedAt;
+      if (since >= STREAM_SCRUB_MS) {
+        // Leading edge: the first paint of a bubble lands on the next frame.
+        turn.streamRaf = requestAnimationFrame(run);
+      } else {
+        // Trailing edge: at most one live scrub per STREAM_SCRUB_MS.
+        turn.streamTimer = window.setTimeout(() => {
+          turn.streamTimer = 0;
+          if (turn.streamRaf) return;
+          turn.streamRaf = requestAnimationFrame(run);
+        }, STREAM_SCRUB_MS - since);
+      }
+    },
+    [commitStreamText],
+  );
+
+  const flushStreamCommit = useCallback(
+    (convId: string, turn: TurnCtx, usage?: StreamUsage) => {
+      cancelStreamSchedule(turn);
+      if (!turn.assistantId && !turn.streamRaw) return;
+      commitStreamText(convId, turn, true, usage);
+    },
+    [cancelStreamSchedule, commitStreamText],
+  );
+
   const toolLabelTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
@@ -830,11 +1009,16 @@ export default function App() {
   phaseRef.current = phase;
 
 
-  // Persist chats. The ACTIVE conversation is guaranteed a storage slot
-  // (cap-aware selection in chatStorage); quota failures surface on the
-  // status line instead of being swallowed — in-memory data stays intact.
-  useEffect(() => {
-    const res = saveConversations(conversations, {
+  // W1.2: persist chats through a trailing debounce (~500 ms) instead of on
+  // every `conversations` change — during streaming that was one full
+  // stringify + localStorage write PER TOKEN (typing jank, O(N²) growth). The
+  // ACTIVE conversation keeps its guaranteed storage slot (cap-aware selection
+  // in chatStorage) and quota failures still surface on the status line. EVERY
+  // mutation schedules a save here; critical boundaries call flushSave()
+  // explicitly (run finished, switch/delete/new, page unload) for promptness.
+  const persistConversations = useCallback(() => {
+    if (!hydratedRef.current) return;
+    const res = saveConversations(conversationsRef.current, {
       activeId: activeIdRef.current,
     });
     if (!res.ok) {
@@ -843,7 +1027,34 @@ export default function App() {
         `Chats not saved (local storage full) — ${res.error ?? "unknown error"}`,
       );
     }
-  }, [conversations]);
+  }, []);
+  const { schedule: scheduleSave, flush: flushSave } = useDebouncedSave(
+    persistConversations,
+    500,
+    2500,
+  );
+  useEffect(() => {
+    if (!hydratedRef.current) return;
+    scheduleSave();
+  }, [conversations, scheduleSave]);
+
+  // W1.2 flush point (c): a pending debounced save must survive the window
+  // closing or being hidden. localStorage writes are synchronous, so flush
+  // directly from the unload/hide handlers.
+  useEffect(() => {
+    const onHide = () => flushSave();
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flushSave();
+    };
+    window.addEventListener("beforeunload", onHide);
+    window.addEventListener("pagehide", onHide);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("beforeunload", onHide);
+      window.removeEventListener("pagehide", onHide);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [flushSave]);
 
   // Theme: persist + sync color-scheme for native form controls
   useEffect(() => {
@@ -1019,12 +1230,6 @@ export default function App() {
   const autoSendAfterRunRef = useRef<Set<string>>(new Set());
   /** Composer/Stop state is per-conversation now, never global. */
   const running = runCoordinator.isRunning(active?.id ?? "");
-  // Restore persisted follow-ups as composer prefill only when idle — while
-  // a run is live the queue is shown as chips, not dumped into the draft.
-  useEffect(() => {
-    if (!oldestPendingFollowUp || running) return;
-    setDraft((prev) => (prev.trim() ? prev : oldestPendingFollowUp));
-  }, [activeId, oldestPendingFollowUp, running]);
   // Auto-dispatch the oldest follow-up AFTER React applies run-finished.
   // The Tauri handler must not call send() in the same tick: `running` and
   // `isRunning()` are still stale, so the follow-up was re-steered / dropped.
@@ -1033,16 +1238,17 @@ export default function App() {
     if (!convId || !autoSendAfterRunRef.current.has(convId)) return;
     if (runCoordinator.isRunning(convId)) return;
     const queued = conversations.find((c) => c.id === convId)?.pendingFollowUps?.[0];
+    const composerDraft = composerRef.current?.getValue() ?? "";
     const text = shouldAutoSendFollowUp({
       queued,
-      draft: draftRef.current,
+      draft: composerDraft,
       wasCancelled: false,
     });
     if (!text) {
       if (
         queued &&
-        draftRef.current.trim() &&
-        draftRef.current.trim() !== queued.trim()
+        composerDraft.trim() &&
+        composerDraft.trim() !== queued.trim()
       ) {
         autoSendAfterRunRef.current.delete(convId);
       }
@@ -1241,9 +1447,14 @@ export default function App() {
     };
   }, []);
 
-  // Quiet update checks on launch — only status line; install lives in Settings.
+  // Quiet update checks — only status line; install lives in Settings.
+  // W1.4: schedule the (network) check at browser IDLE so it never competes
+  // with mount/boot work; fall back to a delayed timeout where
+  // requestIdleCallback is unavailable. Same check logic + UX, only WHEN.
   useEffect(() => {
-    const t = window.setTimeout(() => {
+    let cancelled = false;
+    const runCheck = () => {
+      if (cancelled) return;
       void (async () => {
         try {
           const { update, current } = await checkForDesktopUpdate();
@@ -1267,8 +1478,54 @@ export default function App() {
           /* offline */
         }
       })();
-    }, 2500);
-    return () => window.clearTimeout(t);
+    };
+    // StrictMode double-invokes this effect: the cleanup cancels the first
+    // scheduling (and `cancelled` guards a late idle callback), so exactly one
+    // check runs.
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(runCheck, { timeout: 8000 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(id);
+      };
+    }
+    const t = window.setTimeout(runCheck, 8000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, []);
+
+  // W4.3: warm the harness sidecar at browser IDLE so the one-time sidecar
+  // spawn + boot handshake are already paid by the time the first message is
+  // sent. Fire-and-forget: if it has not finished, the lazy path in the first
+  // turn is unchanged. Mirrors the update-check effect above — one guarded
+  // scheduling (StrictMode-safe), no new state/props.
+  useEffect(() => {
+    let cancelled = false;
+    const prefetch = () => {
+      if (cancelled) return;
+      void (async () => {
+        try {
+          const { invoke } = await import("@tauri-apps/api/core");
+          await invoke("prefetch_harness_sidecar");
+        } catch {
+          /* best-effort: the first turn still spawns the sidecar on demand */
+        }
+      })();
+    };
+    if (typeof window.requestIdleCallback === "function") {
+      const id = window.requestIdleCallback(prefetch, { timeout: 4000 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(id);
+      };
+    }
+    const t = window.setTimeout(prefetch, 4000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
   }, []);
 
   // Directional scroll model (fix for "can't scroll up while it
@@ -1452,7 +1709,9 @@ export default function App() {
   const speech = useSpeechToText({
     disabled: running,
     onFinal: (piece) => {
-      setDraft((prev) => (prev ? `${prev.trimEnd()} ${piece}` : piece));
+      composerRef.current?.updateValue((prev) =>
+        prev ? `${prev.trimEnd()} ${piece}` : piece,
+      );
     },
   });
 
@@ -1732,7 +1991,9 @@ export default function App() {
               ),
             );
             if (convId === activeIdRef.current) {
-              setDraft((prev) => (prev.trim() ? prev : followUpText));
+              composerRef.current?.updateValue((prev) =>
+                prev.trim() ? prev : followUpText,
+              );
             }
             // Run may already have finished (log vs run-finished ordering).
             // Arm so the idle auto-send effect dispatches instead of parking
@@ -1797,23 +2058,6 @@ export default function App() {
           return;
         }
 
-        /** True if a/b refer to the same council member (id preferred, else name). */
-        const isSameMember = (
-          a: { name?: string; id?: string },
-          b: { name?: string; id?: string },
-        ) => {
-          if (a.id && b.id) return a.id === b.id;
-          if (a.name && b.name)
-            return a.name.localeCompare(b.name, undefined, {
-              sensitivity: "accent",
-            }) === 0;
-          // Only one side known → cannot prove switch; treat as same only if both empty
-          if (!a.id && !a.name && !b.id && !b.name) return true;
-          // One known, other empty → keep current bubble (tools mid-turn)
-          if ((!a.id && !a.name) || (!b.id && !b.name)) return true;
-          return false;
-        };
-
         const switchToMember = (next: {
           name?: string;
           id?: string;
@@ -1823,15 +2067,12 @@ export default function App() {
           if (!hasNext) return;
           const changed =
             Boolean(prev.name || prev.id) && !isSameMember(prev, next);
-          turn.member = {
-            name: next.name ?? prev.name,
-            id: next.id ?? prev.id,
-          };
-          if (next.name) {
-            setLiveMemberNameFor(convId, next.name);
-            setStatusLineIfActive(`${next.name} speaking…`);
-          }
           if (changed) {
+            // Finalize the outgoing member's bubble from the raw ref while
+            // `turn.member` still carries the OLD attribution, then start a
+            // fresh card for the new member.
+            flushStreamCommit(convId, turn);
+            turn.streamRaw = "";
             const prevAid = turn.assistantId;
             if (prevAid) {
               setConversations((prevC) =>
@@ -1851,6 +2092,14 @@ export default function App() {
             }
             // Force a new accordion for the new member
             turn.assistantId = null;
+          }
+          turn.member = {
+            name: next.name ?? prev.name,
+            id: next.id ?? prev.id,
+          };
+          if (next.name) {
+            setLiveMemberNameFor(convId, next.name);
+            setStatusLineIfActive(`${next.name} speaking…`);
           }
         };
 
@@ -1942,86 +2191,22 @@ export default function App() {
               id: evMember.memberId,
             });
           }
-          const memberName =
-            evMember.memberName ?? turn.member.name;
-          const memberId = evMember.memberId ?? turn.member.id;
-          if (memberName) setLiveMemberNameFor(convId, memberName);
+          if (turn.member.name) setLiveMemberNameFor(convId, turn.member.name);
           // Text is streaming — clear tool line so member focus shows.
           clearToolLabelTimer(convId);
           setLiveToolLabelFor(convId, null);
 
-          const matchesMember = (m: ChatMessage) => {
-            if (m.role !== "assistant") return false;
-            return isSameMember(
-              { name: m.memberName, id: m.memberId },
-              { name: memberName, id: memberId },
-            );
-          };
-
-          setConversations((prev) =>
-            prev.map((c) => {
-              if (c.id !== convId) return c;
-              const messages = [...c.messages];
-              let aid: string | null = turn.assistantId;
-              const open = aid ? messages.find((m) => m.id === aid) : undefined;
-
-              // Open bubble is a different member → close it for a new card
-              if (open && !matchesMember(open)) {
-                aid = null;
-                turn.assistantId = null;
-              }
-
-              // Resume only the *current turn* assistant card:
-              // - ref still points at this turn's bubble, or
-              // - the latest non-tool message is still that assistant
-              //   (multi-part stream / after tools — no user msg after it).
-              // Never append onto an older reply after a new user message.
-              if (!aid || !messages.some((m) => m.id === aid)) {
-                const last = [...messages]
-                  .reverse()
-                  .find((m) => m.role !== "tool");
-                if (
-                  last?.role === "assistant" &&
-                  matchesMember(last)
-                ) {
-                  aid = last.id;
-                  turn.assistantId = aid;
-                } else {
-                  aid = uid("asst");
-                  turn.assistantId = aid;
-                  messages.push({
-                    id: aid,
-                    role: "assistant",
-                    content: "",
-                    createdAt: Date.now(),
-                    streaming: true,
-                    memberName,
-                    memberId,
-                  });
-                }
-              }
-
-              return {
-                ...c,
-                updatedAt: Date.now(),
-                messages: messages.map((m) =>
-                  m.id === aid
-                    ? {
-                        ...m,
-                        // Keep raw stream while live — scrub only closed tool
-                        // blocks so unclosed tags cannot delete later prose.
-                        content: scrubDisplayText(m.content + delta, {
-                          streaming: true,
-                        }),
-                        streaming: true,
-                        memberName: memberName ?? m.memberName,
-                        memberId: memberId ?? m.memberId,
-                      }
-                    : m,
-                ),
-              };
-            }),
-          );
+          // W2.1/W2.2/W2.4: append the raw batch to this turn's ref (the
+          // source of truth — deltas arrive coalesced ~40 ms from the Rust
+          // side, never one char per event) and schedule the throttled commit.
+          // The per-token whole-store remap + full-text scrub that used to sit
+          // here is gone: the commit rewrites at most one message inside the
+          // one active conversation, at most once per animation frame, and
+          // re-scrubs at most once every STREAM_SCRUB_MS. The bubble is
+          // resolved/created by the commit (or by the end-of-turn flush), so
+          // no delta can be dropped.
+          turn.streamRaw += delta;
+          scheduleStreamCommit(convId, turn);
           return;
         }
 
@@ -2057,7 +2242,6 @@ export default function App() {
         }
 
         if (ev.type === "message_end" || ev.type === "agent_end") {
-          const aid = turn.assistantId;
           const usage =
             ev.type === "message_end"
               ? (ev as { usage?: {
@@ -2073,38 +2257,11 @@ export default function App() {
               usage.totalTokens ??
               (usage.promptTokens ?? 0) + (usage.completionTokens ?? 0);
           }
-          if (!aid) return;
-          setConversations((prev) =>
-            prev.map((c) => {
-              if (c.id !== convId) return c;
-              return {
-                ...c,
-                messages: c.messages.map((m) =>
-                  m.id === aid
-                    ? {
-                        ...m,
-                        streaming: false,
-                        // Final scrub: drop trailing unclosed tool scaffolding
-                        content: scrubDisplayText(m.content, {
-                          streaming: false,
-                        }),
-                        stats: usage
-                          ? {
-                              ...m.stats,
-                              promptTokens: usage.promptTokens,
-                              completionTokens: usage.completionTokens,
-                              totalTokens:
-                                usage.totalTokens ??
-                                (usage.promptTokens ?? 0) +
-                                  (usage.completionTokens ?? 0),
-                            }
-                          : m.stats,
-                      }
-                    : m,
-                ),
-              };
-            }),
-          );
+          // W2.1: finalize the turn's bubble with the EXACT final scrub over
+          // the full accumulated text (the same result the old code produced)
+          // and fold in the usage stats — one commit, no whole-store remap.
+          // flushStreamCommit is a no-op when nothing was streamed.
+          flushStreamCommit(convId, turn, usage);
           return;
         }
 
@@ -2299,6 +2456,10 @@ export default function App() {
         setLiveToolLabelFor(convId, null);
         setLiveMemberNameFor(convId, null);
         clearToolLabelTimer(convId);
+        // W2.1: land any throttled live commit as final before reading the
+        // bubble and attaching run stats (the run is settling; no more
+        // deltas). No-op when nothing is pending.
+        flushStreamCommit(convId, turn);
         const durationMs = Date.now() - (turn.startedAt || Date.now());
         const tools = turn.toolCount;
         const tokens = turn.tokens;
@@ -2389,6 +2550,9 @@ export default function App() {
         turnsRef.current.delete(convId);
         steeredThisRunRef.current[convId] = false;
         if (!wasCancelled) autoSendAfterRunRef.current.add(convId);
+        // W1.2 flush point (a): persist the settled run promptly instead of
+        // waiting out the trailing debounce.
+        flushSave();
       });
       if (cancelled) u3();
       else unsubs.push(u3);
@@ -2399,7 +2563,7 @@ export default function App() {
       for (const u of unsubs) u();
       unsubs.length = 0;
     };
-  }, [refreshCli]);
+  }, [refreshCli, flushSave]);
 
   const refreshPlugins = useCallback(async () => {
     try {
@@ -2467,9 +2631,11 @@ export default function App() {
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
     setSessionFilter("active");
-    setDraft("");
+    composerRef.current?.setValue("");
     setTextLoopRecovery(false);
-    taRef.current?.focus();
+    composerRef.current?.focus();
+    // W1.2 flush point (b): new chat.
+    flushSave();
   };
 
   /** Sidebar selection (F1): body of the inline handler it replaces - clears
@@ -2481,6 +2647,9 @@ export default function App() {
     setPhase(c.phase);
     if (c.provider) setProvider(c.provider);
     if (c.model) setModel(c.model);
+    // W1.2 flush point (b): conversation switch — persist the chat we are
+    // leaving before wiring the new one.
+    flushSave();
   };
 
   /** User-facing recovery prompt after assistant_text_loop (keep in sync with core TEXT_LOOP_RECOVERY_USER_PROMPT). */
@@ -2524,6 +2693,8 @@ export default function App() {
         startNewChat();
       }
     }
+    // W1.2 flush point (b): archive switches the active chat when it hits it.
+    flushSave();
   };
 
   const unarchiveChat = (id: string) => {
@@ -2553,6 +2724,8 @@ export default function App() {
       }
       return next;
     });
+    // W1.2 flush point (b): delete — persist immediately, do not wait.
+    flushSave();
   };
 
   const onModeChange = (m: DispatchMode) => {
@@ -2752,46 +2925,10 @@ export default function App() {
     [activeCwd],
   );
 
-  const onPickMention = useCallback(
-    (hit: WorkspaceHit) => {
-      const ta = taRef.current;
-      const caret = ta?.selectionStart ?? draft.length;
-      const det = mention ?? detectMentionQuery(draft, caret);
-      if (!det) return;
-      const { text, caret: nextCaret } = applyMentionInsert(
-        draft,
-        det.start,
-        caret,
-        hit.path,
-      );
-      setDraft(text);
-      setMention(null);
-      void attachWorkspacePath(hit);
-      requestAnimationFrame(() => {
-        const el = taRef.current;
-        if (!el) return;
-        el.focus();
-        el.setSelectionRange(nextCaret, nextCaret);
-      });
-    },
-    [draft, mention, attachWorkspacePath],
-  );
-
-  const onDraftChange = useCallback(
-    (value: string, caret?: number) => {
-      setDraft(value);
-      const c = caret ?? value.length;
-      const det = detectMentionQuery(value, c);
-      setMention(det);
-      if (!det) setMentionIndex(0);
-    },
-    [],
-  );
-
   const onSelectSkill = useCallback((skill: SkillEntryDto) => {
     setPendingSkill(skill);
     setStatusLine(`Skill selected: ${skill.id} — type a task and send`);
-    taRef.current?.focus();
+    composerRef.current?.focus();
   }, []);
 
   const onDragEnter = useCallback((e: React.DragEvent) => {
@@ -2865,7 +3002,7 @@ export default function App() {
           : c,
       ),
     );
-    setDraft("");
+    composerRef.current?.setValue("");
     setAttachments([]);
     setFollowStream(true);
     followStreamRef.current = true;
@@ -2894,7 +3031,9 @@ export default function App() {
               : c,
           ),
         );
-        setDraft((prev) => (prev.trim() ? prev : trimmed));
+        composerRef.current?.updateValue((prev) =>
+          prev.trim() ? prev : trimmed,
+        );
         setStatusLine(
           "Steer not applied — run already finished; text restored to composer",
         );
@@ -2948,14 +3087,19 @@ export default function App() {
       ),
     );
     if (index === 0 && queued) {
-      setDraft((prev) => (prev.trim() === queued.trim() ? "" : prev));
+      composerRef.current?.updateValue((prev) =>
+        prev.trim() === queued.trim() ? "" : prev,
+      );
     }
   };
 
   const send = async (text?: string, opts?: { resumeMission?: boolean }) => {
     const convId = active.id;
     const turn = turnFor(convId);
-    const fromSpeech = [draft, speech.interim].filter(Boolean).join(" ").trim();
+    const fromSpeech = [composerRef.current?.getValue() ?? "", speech.interim]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
     let base = (text ?? fromSpeech).trim();
     if (!base && attachments.length === 0 && !pendingSkill) return;
     // A dispatched prefilled follow-up (§24/D) leaves the queue: the exact
@@ -3006,14 +3150,13 @@ export default function App() {
             : c,
         ),
       );
-      setDraft("");
+      composerRef.current?.setValue("");
       setAttachments([]);
       setStatusLine("Queued follow-up — sends when this run ends");
       return;
     }
     speech.stop();
     setTextLoopRecovery(false);
-    setMention(null);
 
     if (cli && !cli.ok) {
       setStatusLine(cli.message);
@@ -3031,6 +3174,10 @@ export default function App() {
     turn.member = {};
     turn.hasAssistantText = false;
     turn.toolCount = 0;
+    // W2.1/W2.4: drop any streaming schedule/ref from the previous turn.
+    cancelStreamSchedule(turn);
+    turn.streamRaw = "";
+    turn.streamScrubbedAt = 0;
     setLiveToolLabelFor(convId, null);
     setLiveStepsFor(convId, []);
     setKrakenCardByConv((prev) => ({ ...prev, [convId]: {} }));
@@ -3043,7 +3190,7 @@ export default function App() {
     followStreamRef.current = true;
     turn.tokens = { prompt: 0, completion: 0, total: 0 };
     turn.startedAt = Date.now();
-    setDraft("");
+    composerRef.current?.setValue("");
     setAttachments([]);
     runCoordinator.request(convId, activeCwd ?? undefined);
     setStatusLine(
@@ -3178,6 +3325,60 @@ export default function App() {
 
   sendRef.current = send;
 
+  // W3.1: stable handlers for the memoized ChatList / MessageContent.
+  const onClarificationChoose = useCallback((choice: string) => {
+    if (runningRef.current) return;
+    void sendRef.current(choice);
+  }, []);
+  const onPermissionDecide = useCallback(
+    (requestId: string, decision: PermissionDecision) => {
+      const conv = activeIdRef.current;
+      void (async () => {
+        try {
+          await permissionRespond(requestId, decision);
+        } catch {
+          // Sidecar never saw the answer — leave the card pending
+          // (CLI deny-timeout is authority).
+          return;
+        }
+        if (!conv) return;
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === conv
+              ? {
+                  ...c,
+                  messages: applyPermissionSettled(
+                    c.messages,
+                    requestId,
+                    decision,
+                  ),
+                }
+              : c,
+          ),
+        );
+      })();
+    },
+    [],
+  );
+  const onAskUserChoose = useCallback(
+    (requestId: string, choice: string) => {
+      void askUserRespond(requestId, choice);
+      const conv = activeIdRef.current;
+      if (!conv) return;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === conv
+            ? {
+                ...c,
+                messages: applyAskUserSettled(c.messages, requestId, choice),
+              }
+            : c,
+        ),
+      );
+    },
+    [],
+  );
+
   /**
    * Live Tasks "Riprendi": resume the persisted mission of this workspace.
    * Reuses the normal send path (history / spine / todos replay) with the
@@ -3223,8 +3424,8 @@ export default function App() {
         setConversations((prev) => [c, ...prev]);
         setActiveId(c.id);
         setSessionFilter("active");
-        setDraft("");
-        taRef.current?.focus();
+        composerRef.current?.setValue("");
+        composerRef.current?.focus();
         return;
       }
       if (mod && e.shiftKey && e.code === "KeyD") {
@@ -3262,44 +3463,6 @@ export default function App() {
     // provider/model only for new-chat defaults
   }, [provider, model]);
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (mention) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setMention(null);
-        return;
-      }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setMentionIndex((i) =>
-          mentionHits.length ? (i + 1) % mentionHits.length : 0,
-        );
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setMentionIndex((i) =>
-          mentionHits.length
-            ? (i - 1 + mentionHits.length) % mentionHits.length
-            : 0,
-        );
-        return;
-      }
-      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
-        const hit = mentionHits[mentionIndex];
-        if (hit) {
-          e.preventDefault();
-          onPickMention(hit);
-          return;
-        }
-      }
-    }
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void send();
-    }
-  };
-
   const pickFolder = async () => {
     try {
       const selected = await open({ directory: true, multiple: false });
@@ -3324,7 +3487,7 @@ export default function App() {
         setConversations(plan.conversations);
         if (plan.nextActiveId !== activeIdRef.current) {
           setActiveId(plan.nextActiveId);
-          setDraft("");
+          composerRef.current?.setValue("");
         }
         setStatusLine(
           plan.reboundInPlace
@@ -3541,48 +3704,7 @@ export default function App() {
               }
             />
           ) : null}
-          <div className="sidecar-diagnostics">
-            <button
-              type="button"
-              className="sidecar-log-toggle"
-              aria-expanded={sidecarLogOpen}
-              title="Backend CLI stderr (harness sidecar)"
-              onClick={() => setSidecarLogOpen((v) => !v)}
-            >
-              <span aria-hidden>▣</span> Sidecar log
-              {sidecarLogLines.length > 0 ? (
-                <span className="sidecar-log-count">
-                  {sidecarLogLines.length}
-                </span>
-              ) : null}
-            </button>
-            {sidecarLogOpen ? (
-              <div
-                className="sidecar-log-panel"
-                ref={sidecarLogPanelRef}
-                role="log"
-              >
-                {sidecarLogLines.length === 0 ? (
-                  <div className="sidecar-log-empty">
-                    No sidecar stderr captured yet.
-                  </div>
-                ) : (
-                  sidecarLogLines.map((line, i) => (
-                    <div
-                      key={i}
-                      className={
-                        isSidecarErrorLine(line)
-                          ? "sidecar-log-line is-error"
-                          : "sidecar-log-line"
-                      }
-                    >
-                      {line}
-                    </div>
-                  ))
-                )}
-              </div>
-            ) : null}
-          </div>
+          <SidecarLogPanel />
           <div className="chat-scroll" ref={scrollRef}>
             {sidecarNotice ? (
               <div className="chat-inner" style={{ paddingBottom: 0 }}>
@@ -3645,169 +3767,15 @@ export default function App() {
               </div>
             ) : (
               <div className="chat-inner">
-                {messages
-                  .filter((m) => {
-                    if (m.role === "tool") return false;
-                    // Hide legacy bootstrap noise already stored in chat history
-                    if (m.role === "system") {
-                      const t = m.content.trim();
-                      if (/^\[headless\]\s*mode=/i.test(t)) return false;
-                      if (/^\[headless\]\s*MCP tools\s*:/i.test(t)) return false;
-                    }
-                    return true;
-                  })
-                  .map((m) =>
-                    m.role === "assistant" && m.imagePaths?.length ? (
-                      <ChatImageCard
-                        key={m.id}
-                        paths={m.imagePaths}
-                        caption="Screenshot"
-                      />
-                    ) : m.role === "assistant" ? (
-                      <div
-                        key={m.id}
-                        className={`message assistant msg-fade${m.streaming ? " is-streaming" : ""}`}
-                      >
-                        <ReplyAccordion
-                          title={m.memberName || "Zelari"}
-                          badge={m.memberName ? "council" : undefined}
-                          streaming={m.streaming}
-                          defaultOpen
-                          stats={m.stats}
-                          onCopy={() => cleanAssistantContent(m.content)}
-                        >
-                          <MessageContent
-                            content={m.content}
-                            streaming={m.streaming}
-                            thinking={m.meta === "thinking"}
-                            showThinking={
-                              m.streaming &&
-                              m.meta === "thinking" &&
-                              !m.content.trim()
-                            }
-                            clarificationDisabled={running}
-                            onClarificationChoose={(choice) => {
-                              if (running) return;
-                              void send(choice);
-                            }}
-                          />
-                        </ReplyAccordion>
-                      </div>
-                    ) : (
-                      <div
-                        key={m.id}
-                        className={`message ${m.role}${m.steer ? " is-steer" : ""}`}
-                      >
-                        {m.role === "user" ? (
-                          <>
-                            <div className="bubble user-bubble">
-                              {m.steer ? (
-                                <span className={`steer-state ${m.steer.state}`}>
-                                  {m.steer.state === "sent"
-                                    ? "steering…"
-                                    : m.steer.state === "accepted"
-                                      ? "queued · applies at turn end"
-                                      : m.steer.state === "applied"
-                                        ? "applied ✓"
-                                        : m.steer.state === "not_applied"
-                                          ? "not applied — run finished"
-                                          : "rejected ✗"}
-                                </span>
-                              ) : null}
-                              {hasGauntletLoop(m.content) ? (
-                                <>
-                                  <span className="gauntlet-badge">Gauntlet</span>
-                                  {stripGauntletLoop(m.content) ||
-                                    "Gauntlet Loop"}
-                                </>
-                              ) : (
-                                m.content
-                              )}
-                            </div>
-                            <div className="bubble-actions">
-                              <CopyButton
-                                getText={() => m.content}
-                                title="Copy message"
-                              />
-                            </div>
-                          </>
-                        ) : m.permissionAsk ? (
-                          <PermissionCard
-                            ask={m.permissionAsk}
-                            disabled={m.permissionAsk.status !== "pending"}
-                            onDecide={(decision) => {
-                              const requestId = m.permissionAsk!.requestId;
-                              const conv = active?.id;
-                              void (async () => {
-                                try {
-                                  await permissionRespond(requestId, decision);
-                                } catch {
-                                  // Sidecar never saw the answer — leave the
-                                  // card pending (CLI deny-timeout is authority).
-                                  return;
-                                }
-                                if (!conv) return;
-                                setConversations((prev) =>
-                                  prev.map((c) =>
-                                    c.id === conv
-                                      ? {
-                                          ...c,
-                                          messages: applyPermissionSettled(
-                                            c.messages,
-                                            requestId,
-                                            decision,
-                                          ),
-                                        }
-                                      : c,
-                                  ),
-                                );
-                              })();
-                            }}
-                          />
-                        ) : m.askUserAsk ? (
-                          m.askUserAsk.status === "pending" ? (
-                            <ClarificationCard
-                              request={{
-                                question: m.askUserAsk.question,
-                                choices: m.askUserAsk.choices,
-                                context: m.askUserAsk.context,
-                              }}
-                              onChoose={(choice) => {
-                                void askUserRespond(
-                                  m.askUserAsk!.requestId,
-                                  choice,
-                                );
-                                const conv = active?.id;
-                                if (!conv) return;
-                                setConversations((prev) =>
-                                  prev.map((c) =>
-                                    c.id === conv
-                                      ? {
-                                          ...c,
-                                          messages: applyAskUserSettled(
-                                            c.messages,
-                                            m.askUserAsk!.requestId,
-                                            choice,
-                                          ),
-                                        }
-                                      : c,
-                                  ),
-                                );
-                              }}
-                            />
-                          ) : (
-                            <div className="bubble system-bubble">
-                              {m.askUserAsk.status === "timeout"
-                                ? "No answer — continuing with a documented assumption."
-                                : `Answered: ${m.askUserAsk.answer ?? ""}`}
-                            </div>
-                          )
-                        ) : (
-                          <div className="bubble system-bubble">{m.content}</div>
-                        )}
-                      </div>
-                    ),
-                  )}
+                <ChatList
+                  messages={messages}
+                  running={running}
+                  onClarificationChoose={onClarificationChoose}
+                  onPermissionDecide={onPermissionDecide}
+                  onAskUserChoose={onAskUserChoose}
+                  conversationId={active?.id}
+                  scrollRef={scrollRef}
+                />
                 {running && (
                   <RunActivity
                     running={running}
@@ -3968,249 +3936,61 @@ export default function App() {
               ))}
             </div>
           )}
-          <div className="composer-stack">
-          {mention && (
-            <MentionPopup
-              cwd={activeCwd}
-              query={mention.query}
-              open
-              onPick={onPickMention}
-              onClose={() => setMention(null)}
-              activeIndex={mentionIndex}
-              onActiveIndexChange={setMentionIndex}
-              onHitsChange={setMentionHits}
-            />
-          )}
-          <div
-            className={`composer glass-capsule${speech.listening ? " is-listening" : ""}`}
-          >
-            <button
-              type="button"
-              className="btn-skill-pick"
-              title="Attach files (any folder)"
-              aria-label="Attach files"
-              onClick={() => void onPickExternalFiles()}
-            >
-              <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden>
-                <path
-                  fill="currentColor"
-                  d="M16.5 6.5v10a4.5 4.5 0 1 1-9 0V7a3 3 0 1 1 6 0v9.5a1.5 1.5 0 1 1-3 0V8H12v8.5a3 3 0 1 0 6 0V6.5a4.5 4.5 0 1 0-9 0V16a6 6 0 1 0 12 0V7h-1.5z"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className="btn-skill-pick"
-              title="List & select a skill"
-              aria-label="Skills"
-              disabled={running}
-              onClick={() => setSkillPickerOpen(true)}
-            >
-              <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden>
-                <path
-                  fill="currentColor"
-                  d="M12 2l2.4 7.2H22l-6 4.4 2.3 7.2L12 16.8 5.7 20.8 8 13.6 2 9.2h7.6L12 2z"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className={`btn-mic${speech.listening ? " is-on" : ""}${!speech.speechOk ? " is-unavailable" : ""}`}
-              title={
-                !speech.speechOk
-                  ? "Speech recognition not available in this WebView"
-                  : speech.listening
-                    ? "Stop listening"
-                    : "Speech to text"
-              }
-              aria-label="Speech to text"
-              aria-pressed={speech.listening}
-              disabled={!speech.speechOk || running}
-              onClick={() => speech.toggle()}
-            >
-              {speech.listening ? (
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
-                  <path
-                    fill="currentColor"
-                    d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"
-                  />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
-                  <path
-                    fill="currentColor"
-                    d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"
-                  />
-                </svg>
-              )}
-            </button>
-            <div className="composer-input-wrap">
-              <textarea
-                ref={taRef}
-                value={draft}
-                onChange={(e) => {
-                  const el = e.target;
-                  onDraftChange(el.value, el.selectionStart ?? el.value.length);
-                }}
-                onClick={(e) => {
-                  const el = e.currentTarget;
-                  onDraftChange(el.value, el.selectionStart ?? el.value.length);
-                }}
-                onKeyUp={(e) => {
-                  const el = e.currentTarget;
-                  if (
-                    e.key === "ArrowLeft" ||
-                    e.key === "ArrowRight" ||
-                    e.key === "Home" ||
-                    e.key === "End"
-                  ) {
-                    onDraftChange(
-                      el.value,
-                      el.selectionStart ?? el.value.length,
-                    );
-                  }
-                }}
-                onKeyDown={onKeyDown}
-                placeholder={
-                  speech.listening
-                    ? "Listening… speak now"
-                    : running
-                      ? liveSendMode === "steer" && steerSupported
-                        ? "Steer the running agent… (applied at the next tool boundary)"
-                        : "Queue a follow-up… (sends when this run ends)"
-                      : mode === "zelari"
-                      ? "Describe the mission… (@file to tag)"
-                      : mode === "council"
-                        ? "Ask the council… (@file · Skills ★)"
-                        : "Message the agent… (@file to tag paths)"
-                }
-                rows={1}
-              />
-              {speech.interim ? (
-                <div className="speech-interim" aria-live="polite">
-                  {speech.interim}
-                </div>
-              ) : null}
-              {speech.error ? (
-                <div className="speech-error" role="status">
-                  {speech.error}
-                </div>
-              ) : null}
-            </div>
-            {/* grok-round: pills bottom-left, send bottom-right, both on the
-                row under the input (CSS grid in App.css — no wrapper needed here). */}
-            <ComposerToolbar
-              config={config}
-              provider={provider}
-              model={model}
-              disabled={running}
-              onProviderChange={onProviderChange}
-              onModelChange={onModelChange}
-              onThinkingChange={onThinkingChange}
-              onConfigRefresh={setConfig}
-              onStatus={setStatusLine}
-              permissionPreset={prefs.permissionPreset}
-              onPermissionPresetChange={(permissionPreset) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { permissionPreset }))
-              }
-              krakenExploreThinking={prefs.krakenExploreThinking}
-              onKrakenExploreThinkingChange={(krakenExploreThinking) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { krakenExploreThinking }))
-              }
-              krakenGeneralThinking={prefs.krakenGeneralThinking}
-              onKrakenGeneralThinkingChange={(krakenGeneralThinking) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { krakenGeneralThinking }))
-              }
-              krakenVerifyThinking={prefs.krakenVerifyThinking}
-              onKrakenVerifyThinkingChange={(krakenVerifyThinking) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { krakenVerifyThinking }))
-              }
-              mode={mode}
-              onModeChange={onModeChange}
-              phase={phase}
-              onPhaseChange={onPhaseChange}
-              krakenGraph={krakenGraph}
-              onKrakenGraphChange={setGraphMode}
-              gauntlet={prefs.gauntletLoop}
-              onGauntletChange={setGauntletLoop}
-            />
-            <div className="composer-actions">
-              {running ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn-send"
-                    disabled={
-                      !(draft.trim() || speech.interim.trim()) &&
-                      attachments.length === 0
-                    }
-                    onClick={() => void send()}
-                    title={
-                      liveSendMode === "steer" && steerSupported
-                        ? "Steer — applied at the next tool boundary"
-                        : "Queue follow-up — sends when this run ends"
-                    }
-                    aria-label={
-                      liveSendMode === "steer" && steerSupported
-                        ? "Steer running agent"
-                        : "Queue follow-up"
-                    }
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="17"
-                      height="17"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden
-                    >
-                      <path d="M3 12h16M13 6l6 6-6 6" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-stop"
-                    onClick={() => void onStop()}
-                    title="Stop"
-                  >
-                    Stop
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-send"
-                  disabled={
-                    (!(draft.trim() || speech.interim.trim()) &&
-                      attachments.length === 0 &&
-                      !pendingSkill) ||
-                    (cli !== null && !cli.ok)
-                  }
-                  onClick={() => void send()}
-                  title="Send"
-                  aria-label="Send"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="17"
-                    height="17"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden
-                  >
-                    <path d="M12 19V5M5 12l7-7 7 7" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          </div>
-          </div>
+          <Composer
+            ref={composerRef}
+            cwd={activeCwd}
+            prefill={running ? "" : (oldestPendingFollowUp ?? "")}
+            running={running}
+            cliBlocked={cli !== null && !cli.ok}
+            mode={mode}
+            liveSendMode={liveSendMode}
+            steerSupported={steerSupported}
+            attachmentCount={attachments.length}
+            hasPendingSkill={pendingSkill !== null}
+            speech={{
+              listening: speech.listening,
+              speechOk: speech.speechOk,
+              interim: speech.interim,
+              error: speech.error,
+              toggle: speech.toggle,
+            }}
+            toolbar={{
+              config,
+              provider,
+              model,
+              disabled: running,
+              onProviderChange,
+              onModelChange,
+              onThinkingChange,
+              onConfigRefresh: setConfig,
+              onStatus: setStatusLine,
+              permissionPreset: prefs.permissionPreset,
+              onPermissionPresetChange: (permissionPreset) =>
+                setPrefs((prev) => patchDesktopPrefs(prev, { permissionPreset })),
+              krakenExploreThinking: prefs.krakenExploreThinking,
+              onKrakenExploreThinkingChange: (krakenExploreThinking) =>
+                setPrefs((prev) => patchDesktopPrefs(prev, { krakenExploreThinking })),
+              krakenGeneralThinking: prefs.krakenGeneralThinking,
+              onKrakenGeneralThinkingChange: (krakenGeneralThinking) =>
+                setPrefs((prev) => patchDesktopPrefs(prev, { krakenGeneralThinking })),
+              krakenVerifyThinking: prefs.krakenVerifyThinking,
+              onKrakenVerifyThinkingChange: (krakenVerifyThinking) =>
+                setPrefs((prev) => patchDesktopPrefs(prev, { krakenVerifyThinking })),
+              mode,
+              onModeChange,
+              phase,
+              onPhaseChange,
+              krakenGraph,
+              onKrakenGraphChange: setGraphMode,
+              gauntlet: prefs.gauntletLoop,
+              onGauntletChange: setGauntletLoop,
+            }}
+            onSubmit={(text) => void send(text)}
+            onStop={() => void onStop()}
+            onPickExternalFiles={() => void onPickExternalFiles()}
+            onOpenSkillPicker={() => setSkillPickerOpen(true)}
+            onAttachPath={(hit) => void attachWorkspacePath(hit)}
+          />
           {/* Kraken context meter: a compact composer row (one line at rest).
               It used to sit at the bottom of the chat flow, where it ate the
               conversation and could never be dismissed. */}
@@ -4261,7 +4041,7 @@ export default function App() {
         onToggle={() => setGitCollapsed((v) => !v)}
         onStatus={setStatusLine}
         onTagPath={(hit) => {
-          setDraft((d) => {
+          composerRef.current?.updateValue((d) => {
             const tag = `@${hit.path} `;
             return d.trim() ? `${d.replace(/\s*$/, " ")}${tag}` : tag;
           });
