@@ -5,6 +5,30 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.46.2] - 2026-09-16
+
+Desktop performance plan (phases 1-4), reconciled with the v2.46.1 input-latency work: the merge keeps the deeper local refactor (async Rust commands, Rust-side delta coalescing, windowed transcript) and ports the v2.46.1 chat/Agents model-sync fix onto it.
+
+### Added
+
+- **Windowed transcript** - `ChatList` renders a tail-anchored 60-message window with load-earlier (+60 per click, reading position preserved); opening long conversations no longer pays the full-render cost.
+- **Idle sidecar prefetch** - the harness sidecar boots during post-mount idle (`requestIdleCallback`, 4s timeout), moving spawn+handshake off the first message; the lazy path remains as fallback.
+- **`stop_plan_watch` command** - plan watchers can be stopped explicitly and now also stop after 10 idle minutes with no active run.
+
+### Changed
+
+- **Async Tauri commands** - 40 sync commands now run their blocking work on `spawn_blocking`; `--version`/`--doctor`/`--print-config` at mount and `refreshCli()` at run end no longer freeze the UI.
+- **CLI result cache** - entrypoint resolution + version string cached at process level (60s TTL, invalidated after `update_cli`).
+- **Rust-side delta coalescing** - consecutive stream deltas are buffered (40ms window) at the `send_to_run` choke-point; event ordering and contract unchanged, only the text gets longer.
+- **O(1) stream updates** - the live draft lives in a ref (pure append per delta, zero regex per token), scrub is throttled to 250ms with a byte-identical final scrub, and UI commits are capped at one per animation frame.
+- **Debounced persistence** - the full-store stringify+`localStorage` write moved off the per-token path: 500ms debounce, 2.5s maxWait under continuous streaming, mandatory flush on run end / conversation switch / unload.
+- **Component extraction** - `Composer` (+Send/Media buttons, icons), `ChatList`, `SidecarLogPanel` extracted from `App.tsx` (4483 to ~4000 lines); `MessageContent` is memo-wrapped with a value comparator; non-chat sidecar state commits once per batch via `useSidecarBatch`.
+- **Harness state without clones** - harness-state is shared as `Arc<Value>` and emitted only when it actually changes.
+
+### Fixed
+
+- **Plan watch-thread leak** - watcher loops now terminate (explicit stop, take-over of stale slots, or 10-minute idle) instead of polling forever; threads self-deregister.
+
 ## [2.46.1] - 2026-09-15
 
 Input-latency and model-desync fixes from the 2026-09-15 diagnosis (`.zelari/docs/2026-09-15-diagnosi-lag-input-e-desync-modelli.md`): every keystroke used to re-render the whole Desktop shell and re-parse the entire transcript, and the chat model selector never talked to the Agents settings view.
