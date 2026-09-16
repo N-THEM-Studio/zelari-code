@@ -168,21 +168,11 @@ function runPreflight(): void {
 
 async function backgroundUpdateCheck(): Promise<void> {
   if (process.env.ANATHEMA_DEV === "1") return;
-  await new Promise((resolve) => setTimeout(resolve, 3000));
-  try {
-    const { checkForUpdate } = await import("./updater.js");
-    const info = await checkForUpdate();
-    if (info.updateAvailable && !info.error) {
-      // eslint-disable-next-line no-console
-      console.error(
-        `[zelari-code] 🆕 v${info.latestVersion} available (current: v${info.currentVersion}). ` +
-          `Run \`zelari-code\` then \`/update --yes\` to upgrade.`,
-      );
-    }
-  } catch {
-    // Swallow — network failures, malformed responses, etc.
-    // The CLI is fully usable without update awareness.
-  }
+  // v2.34 (slice 7): one-shot ticket, deferred past the first keystrokes — the
+  // registry fetch used to land 3s after mount, in the middle of them. The
+  // dynamic import still keeps updater.ts out of the boot path until then.
+  const { runDeferredUpdateCheck } = await import("./updater.js");
+  await runDeferredUpdateCheck();
 }
 
 async function shutdown(): Promise<void> {
