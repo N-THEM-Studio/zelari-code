@@ -23,6 +23,8 @@ use harness_sidecar::HarnessSidecar;
 
 mod automations;
 
+mod cli_cache;
+
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -93,6 +95,17 @@ impl RunRegistry {
     fn remove(&self, run_id: &str) {
         let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
         runs.retain(|r| r.run_id != run_id);
+    }
+
+    /// W4.1: is any active run targeting this workspace (normalized key)?
+    /// Read by the plan watcher's idle-stop decision so a workspace stays
+    /// observed while a build run is writing plan.json.
+    fn has_active_run_for(&self, cwd_key: &str) -> bool {
+        if cwd_key.is_empty() {
+            return false;
+        }
+        let runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
+        runs.iter().any(|r| r.cwd == cwd_key)
     }
 
     /// Cancel one run (by id) or every active run (legacy no-arg call).
@@ -436,7 +449,13 @@ fn companion_serve_call(
 /// t66: raw GET /v1/trust/pending body for the desktop trust gate poll.
 /// None when the serve is down/unhealthy (poller treats it as no pending).
 #[tauri::command]
-fn companion_trust_pending(state: State<'_, Arc<CompanionServeState>>) -> Option<String> {
+async fn companion_trust_pending(app: AppHandle) -> Option<String> {
+    let state = Arc::clone(app.state::<Arc<CompanionServeState>>().inner());
+    tauri::async_runtime::spawn_blocking(move || companion_trust_pending_inner(&state))
+        .await
+        .unwrap_or(None)
+}
+fn companion_trust_pending_inner(state: &Arc<CompanionServeState>) -> Option<String> {
     let bind = state
         .bind
         .lock()
@@ -451,8 +470,20 @@ fn companion_trust_pending(state: State<'_, Arc<CompanionServeState>>) -> Option
 
 /// t66: POST the desktop trust decision for a parked awaiting_trust run.
 #[tauri::command]
-fn companion_trust_respond(
+async fn companion_trust_respond(
     state: State<'_, Arc<CompanionServeState>>,
+    run_id: String,
+    approve: bool,
+) -> Result<String, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        companion_trust_respond_inner(&state, run_id, approve)
+    })
+    .await
+    .map_err(|e| format!("companion_trust_respond task failed: {e}"))?
+}
+fn companion_trust_respond_inner(
+    state: &Arc<CompanionServeState>,
     run_id: String,
     approve: bool,
 ) -> Result<String, String> {
@@ -531,6 +562,10 @@ pub(crate) fn resolve_cli_entry() -> Result<PathBuf, String> {
 
 /// Locate a CLI path without unwrapping Windows `.cmd` shims to JS.
 fn resolve_cli_entry_raw() -> Result<PathBuf, String> {
+    cli_cache::get().entry(resolve_cli_entry_raw_uncached)
+}
+
+fn resolve_cli_entry_raw_uncached() -> Result<PathBuf, String> {
     if let Ok(raw) = std::env::var("ZELARI_CLI_PATH") {
         let p = PathBuf::from(raw.trim());
         if p.is_file() {
@@ -602,6 +637,10 @@ fn walk_up_for_cli(start: &Path) -> Option<PathBuf> {
 }
 
 fn read_cli_version(node: &Path, cli: &Path) -> Option<String> {
+    cli_cache::get().version(|| read_cli_version_uncached(node, cli))
+}
+
+fn read_cli_version_uncached(node: &Path, cli: &Path) -> Option<String> {
     let mut cmd = spawn_cli_base(node, cli, None);
     cmd.arg("--version")
         .stdout(Stdio::piped())
@@ -749,7 +788,11 @@ struct CliUpdateCheck {
 }
 
 #[tauri::command]
-fn check_cli_update() -> Result<CliUpdateCheck, String> {
+async fn check_cli_update() -> Result<CliUpdateCheck, String> {
+    tauri::async_runtime::spawn_blocking(check_cli_update_inner).await
+        .map_err(|e| format!("check_cli_update task failed: {e}"))?
+}
+fn check_cli_update_inner() -> Result<CliUpdateCheck, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let installed = resolve_cli_entry()
         .ok()
@@ -790,7 +833,11 @@ struct UpdateCliArgs {
 }
 
 #[tauri::command]
-fn update_cli(args: UpdateCliArgs) -> Result<serde_json::Value, String> {
+async fn update_cli(args: UpdateCliArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || update_cli_inner(args)).await
+        .map_err(|e| format!("update_cli task failed: {e}"))?
+}
+fn update_cli_inner(args: UpdateCliArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let ver = args
         .version
@@ -863,6 +910,10 @@ fn update_cli(args: UpdateCliArgs) -> Result<serde_json::Value, String> {
             combined.trim().to_string()
         });
     }
+
+    // The global CLI just changed on disk - drop the memo so the re-read below
+    // (and the next refreshCli) see the new entry point/version, not a stale one.
+    cli_cache::get().invalidate();
 
     // Re-read installed version
     let installed = resolve_cli_entry()
@@ -1098,7 +1149,19 @@ fn run_cli_capture(node: &Path, cli: &Path, args: &[&str]) -> Result<String, Str
 }
 
 #[tauri::command]
-fn get_cli_status() -> CliStatus {
+async fn get_cli_status() -> CliStatus {
+    tauri::async_runtime::spawn_blocking(get_cli_status_inner)
+        .await
+        .unwrap_or_else(|e| CliStatus {
+            ok: false,
+            node: None,
+            cli_path: None,
+            cli_version: None,
+            cwd: String::new(),
+            message: format!("CLI status unavailable: {e}"),
+        })
+}
+fn get_cli_status_inner() -> CliStatus {
     let cwd = std::env::current_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| ".".into());
@@ -1143,7 +1206,11 @@ fn get_cli_status() -> CliStatus {
 /// (same precedent as test_ssh_target), so stdout is parsed before any
 /// error path. Mirrors the TUI first-run gate (main.ts runFirstRunDoctorGate).
 #[tauri::command]
-fn cli_doctor_check() -> Result<serde_json::Value, String> {
+async fn cli_doctor_check() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(cli_doctor_check_inner).await
+        .map_err(|e| format!("cli_doctor_check task failed: {e}"))?
+}
+fn cli_doctor_check_inner() -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut cmd = spawn_cli_base(&node, &cli, None);
@@ -1161,7 +1228,11 @@ fn cli_doctor_check() -> Result<serde_json::Value, String> {
 
 /// Returns the JSON string from `zelari-code --print-config`.
 #[tauri::command]
-fn get_app_config() -> Result<serde_json::Value, String> {
+async fn get_app_config() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(get_app_config_inner).await
+        .map_err(|e| format!("get_app_config task failed: {e}"))?
+}
+fn get_app_config_inner() -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let raw = run_cli_capture(&node, &cli, &["--print-config"])?;
@@ -1181,7 +1252,11 @@ struct MemoryQueryArgs {
 
 /// Read-only Desktop bridge. Domain behavior remains in the Node MemoryService.
 #[tauri::command]
-fn query_memory(args: MemoryQueryArgs) -> Result<serde_json::Value, String> {
+async fn query_memory(args: MemoryQueryArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || query_memory_inner(args)).await
+        .map_err(|e| format!("query_memory task failed: {e}"))?
+}
+fn query_memory_inner(args: MemoryQueryArgs) -> Result<serde_json::Value, String> {
     let cwd = args.cwd.trim();
     if cwd.is_empty() {
         return Err("A project folder is required for memory exploration.".into());
@@ -1215,7 +1290,11 @@ struct SetConfigArgs {
 }
 
 #[tauri::command]
-fn set_app_config(args: SetConfigArgs) -> Result<serde_json::Value, String> {
+async fn set_app_config(args: SetConfigArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || set_app_config_inner(args)).await
+        .map_err(|e| format!("set_app_config task failed: {e}"))?
+}
+fn set_app_config_inner(args: SetConfigArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv: Vec<String> = vec!["--set-config".into()];
@@ -1309,7 +1388,11 @@ struct SetKeyArgs {
 }
 
 #[tauri::command]
-fn set_api_key(args: SetKeyArgs) -> Result<serde_json::Value, String> {
+async fn set_api_key(args: SetKeyArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || set_api_key_inner(args)).await
+        .map_err(|e| format!("set_api_key task failed: {e}"))?
+}
+fn set_api_key_inner(args: SetKeyArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let provider = args.provider.trim();
@@ -1336,7 +1419,11 @@ struct LoginOAuthArgs {
 }
 
 #[tauri::command]
-fn login_oauth(args: LoginOAuthArgs) -> Result<serde_json::Value, String> {
+async fn login_oauth(args: LoginOAuthArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || login_oauth_inner(args)).await
+        .map_err(|e| format!("login_oauth task failed: {e}"))?
+}
+fn login_oauth_inner(args: LoginOAuthArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let provider = args.provider.trim();
@@ -1372,7 +1459,11 @@ struct ProviderOnlyArgs {
 }
 
 #[tauri::command]
-fn refresh_oauth(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
+async fn refresh_oauth(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || refresh_oauth_inner(args)).await
+        .map_err(|e| format!("refresh_oauth task failed: {e}"))?
+}
+fn refresh_oauth_inner(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let provider = args.provider.trim();
@@ -1384,7 +1475,11 @@ fn refresh_oauth(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-fn logout_oauth(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
+async fn logout_oauth(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || logout_oauth_inner(args)).await
+        .map_err(|e| format!("logout_oauth task failed: {e}"))?
+}
+fn logout_oauth_inner(args: ProviderOnlyArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let provider = args.provider.trim();
@@ -1435,7 +1530,11 @@ fn is_discover_success(v: &serde_json::Value) -> bool {
 }
 
 #[tauri::command]
-fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
+async fn discover_models(args: DiscoverArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || discover_models_inner(args)).await
+        .map_err(|e| format!("discover_models task failed: {e}"))?
+}
+fn discover_models_inner(args: DiscoverArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv: Vec<String> = vec!["--discover-models".into()];
@@ -1561,7 +1660,11 @@ fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
 
 /// Lightweight git snapshot for the desktop right rail (branch + changed files).
 #[tauri::command]
-fn get_git_status(args: GitStatusArgs) -> Result<GitStatusDto, String> {
+async fn get_git_status(args: GitStatusArgs) -> Result<GitStatusDto, String> {
+    tauri::async_runtime::spawn_blocking(move || get_git_status_inner(args)).await
+        .map_err(|e| format!("get_git_status task failed: {e}"))?
+}
+fn get_git_status_inner(args: GitStatusArgs) -> Result<GitStatusDto, String> {
     let cwd = args
         .cwd
         .as_ref()
@@ -1762,7 +1865,11 @@ fn rel_display(abs: &std::path::Path, root: &std::path::Path) -> String {
 }
 
 #[tauri::command]
-fn search_workspace(args: SearchWorkspaceArgs) -> Result<SearchWorkspaceDto, String> {
+async fn search_workspace(args: SearchWorkspaceArgs) -> Result<SearchWorkspaceDto, String> {
+    tauri::async_runtime::spawn_blocking(move || search_workspace_inner(args)).await
+        .map_err(|e| format!("search_workspace task failed: {e}"))?
+}
+fn search_workspace_inner(args: SearchWorkspaceArgs) -> Result<SearchWorkspaceDto, String> {
     let root = args
         .cwd
         .as_ref()
@@ -1880,15 +1987,74 @@ struct ReadProjectTextDto {
     mtime_ms: u64,
 }
 
-/// t63: dedup registry for plan.json watchers (one thread per workspace).
+/// W4.1: how often the plan watcher polls `.zelari/plan.json`.
+const PLAN_WATCH_POLL: Duration = Duration::from_millis(1200);
+/// W4.1: a watcher with no plan.json change for this long AND no active run
+/// for its workspace stops itself (bounded lifetime — no thread leak).
+const PLAN_WATCH_IDLE_STOP: Duration = Duration::from_secs(10 * 60);
+
+/// W4.1: should the plan.json poller exit on this tick? Stop when an explicit
+/// stop was requested, or after an idle spell with no run keeping it alive.
+fn should_stop_plan_watch(idle: Duration, has_active_run: bool, stop_requested: bool) -> bool {
+    stop_requested || (!has_active_run && idle >= PLAN_WATCH_IDLE_STOP)
+}
+
+/// W4.1: canonical registry key for a workspace's plan watcher.
+fn plan_watch_key(cwd: &str) -> Option<String> {
+    fs::canonicalize(cwd).ok().map(|p| p.display().to_string())
+}
+
+/// t63/W4.1: dedup registry for plan.json watchers (one thread per workspace),
+/// keyed by canonical path -> the thread's stop flag. The flag lets a caller
+/// stop a watcher explicitly; the thread also removes ITSELF on exit (idle
+/// timeout or stop), so membership tracks live threads and never leaks.
 struct PlanWatchRegistry {
-    watched: std::sync::Mutex<std::collections::HashSet<String>>,
+    watched: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
 
 impl PlanWatchRegistry {
     fn new() -> Self {
         PlanWatchRegistry {
-            watched: std::sync::Mutex::new(std::collections::HashSet::new()),
+            watched: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Claim the slot for `key` with a fresh stop flag. `None` when a live
+    /// watcher already owns it (dedup); `Some(flag)` for the caller to drive a
+    /// new thread. A stale slot (flag already set, thread winding down) is
+    /// taken over so re-observation is never lost.
+    fn claim(&self, key: &str) -> Option<Arc<AtomicBool>> {
+        let mut guard = self.watched.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = guard.get(key) {
+            if !existing.load(Ordering::SeqCst) {
+                return None; // already watching this workspace
+            }
+        }
+        let flag = Arc::new(AtomicBool::new(false));
+        guard.insert(key.to_string(), Arc::clone(&flag));
+        Some(flag)
+    }
+
+    /// Release the slot only if `flag` is still the owner (guards against a
+    /// newer watcher having replaced us). Called by the thread before exit.
+    fn release(&self, key: &str, flag: &Arc<AtomicBool>) {
+        let mut guard = self.watched.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(existing) = guard.get(key) {
+            if Arc::ptr_eq(existing, flag) {
+                guard.remove(key);
+            }
+        }
+    }
+
+    /// Request the watcher for `key` to stop; returns whether one was live.
+    fn stop(&self, key: &str) -> bool {
+        let guard = self.watched.lock().unwrap_or_else(|e| e.into_inner());
+        match guard.get(key) {
+            Some(flag) => {
+                flag.store(true, Ordering::SeqCst);
+                true
+            }
+            None => false,
         }
     }
 }
@@ -1906,24 +2072,71 @@ impl PlanWatchRegistry {
 /// exact key it knows (fs::canonicalize would return a \\?\ verbatim
 /// prefix on Windows).
 #[tauri::command]
-fn watch_plan_changes(
+async fn watch_plan_changes(
     cwd: String,
     app: tauri::AppHandle,
-    state: tauri::State<'_, std::sync::Arc<PlanWatchRegistry>>,
+    registry: tauri::State<'_, Arc<PlanWatchRegistry>>,
+    runs: tauri::State<'_, Arc<RunRegistry>>,
+) -> Result<(), String> {
+    let registry = Arc::clone(registry.inner());
+    let runs = Arc::clone(runs.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        watch_plan_changes_inner(cwd, app, &registry, &runs)
+    })
+    .await
+    .map_err(|e| format!("watch_plan_changes task failed: {e}"))?
+}
+
+/// W4.1: stop the plan.json watcher for a workspace (explicit teardown at
+/// workspace close/deselect). Idempotent: returns whether a live watcher was
+/// found; the thread exits on its next tick and unregisters itself.
+#[tauri::command]
+async fn stop_plan_watch(
+    cwd: String,
+    state: tauri::State<'_, Arc<PlanWatchRegistry>>,
+) -> Result<bool, String> {
+    Ok(plan_watch_key(&cwd).map(|k| state.stop(&k)).unwrap_or(false))
+}
+
+/// W4.3: warm the harness sidecar ahead of the first turn so the one-time
+/// `node --serve-harness` spawn + boot handshake are already paid by the time
+/// the user sends the first message. Fire-and-forget: the ensure (which is
+/// idempotent and blocks on the boot line up to BOOT_TIMEOUT) runs on a
+/// blocking worker and is NEVER awaited here, so the existing lazy path in
+/// run_task is unchanged if the prefetch has not finished yet. Failures are
+/// logged only — never a panic, never a surfaced error (a missing Node is
+/// already reported loudly by the first run).
+#[tauri::command]
+fn prefetch_harness_sidecar(sidecar: State<'_, Arc<HarnessSidecar>>) {
+    let sidecar = Arc::clone(sidecar.inner());
+    tauri::async_runtime::spawn_blocking(move || {
+        if let Err(e) = sidecar.ensure_started() {
+            eprintln!("[harness-sidecar] prefetch failed: {e}");
+        }
+    });
+}
+
+fn watch_plan_changes_inner(
+    cwd: String,
+    app: tauri::AppHandle,
+    registry: &Arc<PlanWatchRegistry>,
+    runs: &Arc<RunRegistry>,
 ) -> Result<(), String> {
     use tauri::Emitter;
     let root = fs::canonicalize(&cwd).map_err(|e| format!("Cannot resolve cwd: {e}"))?;
     let key = root.display().to_string();
-    {
-        let mut guard = state.watched.lock().unwrap_or_else(|e| e.into_inner());
-        if !guard.insert(key.clone()) {
-            return Ok(()); // already watching this workspace
-        }
-    }
+    let run_key = normalize_cwd(Some(&cwd));
+    let flag = match registry.claim(&key) {
+        Some(f) => f,
+        None => return Ok(()), // already watching this workspace
+    };
     let plan_path = root.join(".zelari").join("plan.json");
+    let registry = Arc::clone(registry);
+    let runs = Arc::clone(runs);
     std::thread::spawn(move || {
         let mut last: Option<(u64, u64)> = None;
         let mut primed = false;
+        let mut last_change = std::time::Instant::now();
         loop {
             let sig = fs::metadata(&plan_path).ok().and_then(|m| {
                 let mt = m
@@ -1945,15 +2158,31 @@ fn watch_plan_changes(
                     );
                 }
                 last = sig;
+                last_change = std::time::Instant::now();
             }
-            std::thread::sleep(std::time::Duration::from_millis(1200));
+            // W4.1: bounded lifetime — exit on an explicit stop, or after an
+            // idle spell with no active run, then unregister so the slot frees
+            // and re-observation restarts on the next watch request.
+            if should_stop_plan_watch(
+                last_change.elapsed(),
+                runs.has_active_run_for(&run_key),
+                flag.load(Ordering::SeqCst),
+            ) {
+                break;
+            }
+            std::thread::sleep(PLAN_WATCH_POLL);
         }
+        registry.release(&key, &flag);
     });
     Ok(())
 }
 
 #[tauri::command]
-fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, String> {
+async fn read_project_text(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, String> {
+    tauri::async_runtime::spawn_blocking(move || read_project_text_inner(args)).await
+        .map_err(|e| format!("read_project_text task failed: {e}"))?
+}
+fn read_project_text_inner(args: ReadProjectTextArgs) -> Result<ReadProjectTextDto, String> {
     let root = args
         .cwd
         .as_ref()
@@ -2116,7 +2345,11 @@ fn preview_file_text(abs: &Path, size: u64) -> (Option<String>, Option<String>) 
 /// placed at `.zelari/uploads/` so agent tools can read it under the
 /// workspace sandbox.
 #[tauri::command]
-fn import_user_file(args: ImportUserFileArgs) -> Result<ImportUserFileDto, String> {
+async fn import_user_file(args: ImportUserFileArgs) -> Result<ImportUserFileDto, String> {
+    tauri::async_runtime::spawn_blocking(move || import_user_file_inner(args)).await
+        .map_err(|e| format!("import_user_file task failed: {e}"))?
+}
+fn import_user_file_inner(args: ImportUserFileArgs) -> Result<ImportUserFileDto, String> {
     let raw = args.path.trim();
     if raw.is_empty() {
         return Err("Path is empty".into());
@@ -2179,7 +2412,11 @@ struct PrintMcpArgs {
 }
 
 #[tauri::command]
-fn print_mcp(args: PrintMcpArgs) -> Result<serde_json::Value, String> {
+async fn print_mcp(args: PrintMcpArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || print_mcp_inner(args)).await
+        .map_err(|e| format!("print_mcp task failed: {e}"))?
+}
+fn print_mcp_inner(args: PrintMcpArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv = vec!["--print-mcp".to_string()];
@@ -2217,7 +2454,11 @@ struct SetMcpArgs {
 }
 
 #[tauri::command]
-fn set_mcp(args: SetMcpArgs) -> Result<serde_json::Value, String> {
+async fn set_mcp(args: SetMcpArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || set_mcp_inner(args)).await
+        .map_err(|e| format!("set_mcp task failed: {e}"))?
+}
+fn set_mcp_inner(args: SetMcpArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv = vec![
@@ -2270,7 +2511,11 @@ struct RemoveMcpArgs {
 }
 
 #[tauri::command]
-fn remove_mcp(args: RemoveMcpArgs) -> Result<serde_json::Value, String> {
+async fn remove_mcp(args: RemoveMcpArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || remove_mcp_inner(args)).await
+        .map_err(|e| format!("remove_mcp task failed: {e}"))?
+}
+fn remove_mcp_inner(args: RemoveMcpArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv = vec![
@@ -2302,7 +2547,11 @@ struct PrintSkillsArgs {
 }
 
 #[tauri::command]
-fn print_skills(args: PrintSkillsArgs) -> Result<serde_json::Value, String> {
+async fn print_skills(args: PrintSkillsArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || print_skills_inner(args)).await
+        .map_err(|e| format!("print_skills task failed: {e}"))?
+}
+fn print_skills_inner(args: PrintSkillsArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv = vec!["--print-skills".to_string()];
@@ -2339,7 +2588,11 @@ struct SetSkillArgs {
 }
 
 #[tauri::command]
-fn set_skill(args: SetSkillArgs) -> Result<serde_json::Value, String> {
+async fn set_skill(args: SetSkillArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || set_skill_inner(args)).await
+        .map_err(|e| format!("set_skill task failed: {e}"))?
+}
+fn set_skill_inner(args: SetSkillArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv = vec![
@@ -2392,7 +2645,11 @@ struct RemoveSkillArgs {
 }
 
 #[tauri::command]
-fn remove_skill(args: RemoveSkillArgs) -> Result<serde_json::Value, String> {
+async fn remove_skill(args: RemoveSkillArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || remove_skill_inner(args)).await
+        .map_err(|e| format!("remove_skill task failed: {e}"))?
+}
+fn remove_skill_inner(args: RemoveSkillArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv = vec![
@@ -2428,7 +2685,11 @@ struct GenerateSkillFromUrlArgs {
 
 /// Fetch a URL and draft a skill with the selected model (long-running).
 #[tauri::command]
-fn generate_skill_from_url(args: GenerateSkillFromUrlArgs) -> Result<serde_json::Value, String> {
+async fn generate_skill_from_url(args: GenerateSkillFromUrlArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || generate_skill_from_url_inner(args)).await
+        .map_err(|e| format!("generate_skill_from_url task failed: {e}"))?
+}
+fn generate_skill_from_url_inner(args: GenerateSkillFromUrlArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv = vec![
@@ -2461,7 +2722,11 @@ fn generate_skill_from_url(args: GenerateSkillFromUrlArgs) -> Result<serde_json:
 }
 
 #[tauri::command]
-fn print_ssh_targets() -> Result<serde_json::Value, String> {
+async fn print_ssh_targets() -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(print_ssh_targets_inner).await
+        .map_err(|e| format!("print_ssh_targets task failed: {e}"))?
+}
+fn print_ssh_targets_inner() -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let raw = run_cli_capture(&node, &cli, &["--print-ssh-targets"])?;
@@ -2476,7 +2741,11 @@ struct SetSshTargetArgs {
 }
 
 #[tauri::command]
-fn set_ssh_target(args: SetSshTargetArgs) -> Result<serde_json::Value, String> {
+async fn set_ssh_target(args: SetSshTargetArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || set_ssh_target_inner(args)).await
+        .map_err(|e| format!("set_ssh_target task failed: {e}"))?
+}
+fn set_ssh_target_inner(args: SetSshTargetArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let raw = run_cli_capture(&node, &cli, &["--set-ssh-target", "--json", &args.json])?;
@@ -2490,7 +2759,11 @@ struct SshIdArgs {
 }
 
 #[tauri::command]
-fn remove_ssh_target(args: SshIdArgs) -> Result<serde_json::Value, String> {
+async fn remove_ssh_target(args: SshIdArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || remove_ssh_target_inner(args)).await
+        .map_err(|e| format!("remove_ssh_target task failed: {e}"))?
+}
+fn remove_ssh_target_inner(args: SshIdArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let raw = run_cli_capture(&node, &cli, &["--remove-ssh-target", "--id", &args.id])?;
@@ -2498,7 +2771,11 @@ fn remove_ssh_target(args: SshIdArgs) -> Result<serde_json::Value, String> {
 }
 
 #[tauri::command]
-fn test_ssh_target(args: SshIdArgs) -> Result<serde_json::Value, String> {
+async fn test_ssh_target(args: SshIdArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || test_ssh_target_inner(args)).await
+        .map_err(|e| format!("test_ssh_target task failed: {e}"))?
+}
+fn test_ssh_target_inner(args: SshIdArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     // test may exit non-zero on failure but still print JSON
@@ -2521,7 +2798,11 @@ struct PrintSshPubkeyArgs {
 }
 
 #[tauri::command]
-fn print_ssh_pubkey(args: PrintSshPubkeyArgs) -> Result<serde_json::Value, String> {
+async fn print_ssh_pubkey(args: PrintSshPubkeyArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || print_ssh_pubkey_inner(args)).await
+        .map_err(|e| format!("print_ssh_pubkey task failed: {e}"))?
+}
+fn print_ssh_pubkey_inner(args: PrintSshPubkeyArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut cmd = spawn_cli_base(&node, &cli, None);
@@ -2546,7 +2827,11 @@ struct WriteTextFileArgs {
 }
 
 #[tauri::command]
-fn write_text_file(args: WriteTextFileArgs) -> Result<String, String> {
+async fn write_text_file(args: WriteTextFileArgs) -> Result<String, String> {
+    tauri::async_runtime::spawn_blocking(move || write_text_file_inner(args)).await
+        .map_err(|e| format!("write_text_file task failed: {e}"))?
+}
+fn write_text_file_inner(args: WriteTextFileArgs) -> Result<String, String> {
     let path = args.path.trim();
     if path.is_empty() {
         return Err("Path is empty".into());
@@ -2569,7 +2854,11 @@ fn write_text_file(args: WriteTextFileArgs) -> Result<String, String> {
 
 /// List one directory level under the project workdir (lazy file tree).
 #[tauri::command]
-fn list_dir(args: ListDirArgs) -> Result<ListDirDto, String> {
+async fn list_dir(args: ListDirArgs) -> Result<ListDirDto, String> {
+    tauri::async_runtime::spawn_blocking(move || list_dir_inner(args)).await
+        .map_err(|e| format!("list_dir task failed: {e}"))?
+}
+fn list_dir_inner(args: ListDirArgs) -> Result<ListDirDto, String> {
     let root = args
         .cwd
         .as_ref()
@@ -2827,7 +3116,11 @@ struct PluginsInstallArgs {
 
 /// `zelari-code --plugins-status [--cwd <path>]` → JSON plugin list.
 #[tauri::command]
-fn plugins_status(args: PluginsCwdArgs) -> Result<serde_json::Value, String> {
+async fn plugins_status(args: PluginsCwdArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || plugins_status_inner(args)).await
+        .map_err(|e| format!("plugins_status task failed: {e}"))?
+}
+fn plugins_status_inner(args: PluginsCwdArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let mut argv: Vec<String> = vec!["--plugins-status".into()];
@@ -2846,7 +3139,11 @@ fn plugins_status(args: PluginsCwdArgs) -> Result<serde_json::Value, String> {
 /// `zelari-code --plugins-install <id> [--cwd <path>]` → JSON install result.
 /// Installs Playwright package + Chromium when id=playwright.
 #[tauri::command]
-fn plugins_install(args: PluginsInstallArgs) -> Result<serde_json::Value, String> {
+async fn plugins_install(args: PluginsInstallArgs) -> Result<serde_json::Value, String> {
+    tauri::async_runtime::spawn_blocking(move || plugins_install_inner(args)).await
+        .map_err(|e| format!("plugins_install task failed: {e}"))?
+}
+fn plugins_install_inner(args: PluginsInstallArgs) -> Result<serde_json::Value, String> {
     let node = find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     let cli = resolve_cli_entry()?;
     let id = args.id.trim();
@@ -2906,10 +3203,22 @@ fn send_control(
 }
 
 #[tauri::command]
-fn run_task(
+async fn run_task(
     app: AppHandle,
     state: State<'_, Arc<RunRegistry>>,
     sidecar: State<'_, Arc<HarnessSidecar>>,
+    args: RunTaskArgs,
+) -> Result<String, String> {
+    let registry = Arc::clone(state.inner());
+    let sidecar = Arc::clone(sidecar.inner());
+    tauri::async_runtime::spawn_blocking(move || run_task_inner(app, &registry, &sidecar, args))
+        .await
+        .map_err(|e| format!("run_task task failed: {e}"))?
+}
+fn run_task_inner(
+    app: AppHandle,
+    state: &Arc<RunRegistry>,
+    sidecar: &Arc<HarnessSidecar>,
     args: RunTaskArgs,
 ) -> Result<String, String> {
     let prompt = args.prompt.trim().to_string();
@@ -2949,8 +3258,8 @@ fn run_task(
         },
     );
 
-    let registry = Arc::clone(&state);
-    let sidecar = Arc::clone(&sidecar);
+    let registry = Arc::clone(state);
+    let sidecar = Arc::clone(sidecar);
     let app_handle = app.clone();
     let run_id_thread = run_id.clone();
     let provider = args.provider;
@@ -3298,8 +3607,26 @@ struct CompanionServeStartArgs {
 }
 
 #[tauri::command]
-fn companion_serve_status(state: State<'_, Arc<CompanionServeState>>) -> CompanionServeStatus {
-    reap_dead_companion(&state);
+async fn companion_serve_status(app: AppHandle) -> CompanionServeStatus {
+    let state = Arc::clone(app.state::<Arc<CompanionServeState>>().inner());
+    tauri::async_runtime::spawn_blocking(move || companion_serve_status_inner(&state))
+        .await
+        .unwrap_or_else(|e| CompanionServeStatus {
+            running: false,
+            healthy: false,
+            bind: "0.0.0.0".into(),
+            port: 7421,
+            url: String::new(),
+            phone_url: String::new(),
+            tailscale_ip: None,
+            token: String::new(),
+            token_path: String::new(),
+            pid: None,
+            message: format!("Companion serve status unavailable: {e}"),
+        })
+}
+fn companion_serve_status_inner(state: &Arc<CompanionServeState>) -> CompanionServeStatus {
+    reap_dead_companion(state);
     let bind = state.bind.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let port = *state.port.lock().unwrap_or_else(|e| e.into_inner());
     let pid = state
@@ -3322,11 +3649,20 @@ fn companion_serve_status(state: State<'_, Arc<CompanionServeState>>) -> Compani
 }
 
 #[tauri::command]
-fn companion_serve_start(
+async fn companion_serve_start(
     state: State<'_, Arc<CompanionServeState>>,
     args: CompanionServeStartArgs,
 ) -> Result<CompanionServeStatus, String> {
-    reap_dead_companion(&state);
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || companion_serve_start_inner(&state, args))
+        .await
+        .map_err(|e| format!("companion_serve_start task failed: {e}"))?
+}
+fn companion_serve_start_inner(
+    state: &Arc<CompanionServeState>,
+    args: CompanionServeStartArgs,
+) -> Result<CompanionServeStatus, String> {
+    reap_dead_companion(state);
     // Already healthy → no-op success.
     {
         let bind = state.bind.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -3337,7 +3673,7 @@ fn companion_serve_start(
             .unwrap_or_else(|e| e.into_inner())
             .is_some();
         if companion_health_ok(&bind, port) {
-            return Ok(companion_serve_status(state));
+            return Ok(companion_serve_status_inner(state));
         }
         // Stale child that never became healthy — kill before restart.
         if has_child {
@@ -3430,8 +3766,16 @@ fn companion_serve_start(
 }
 
 #[tauri::command]
-fn companion_serve_stop(
+async fn companion_serve_stop(
     state: State<'_, Arc<CompanionServeState>>,
+) -> Result<CompanionServeStatus, String> {
+    let state = Arc::clone(state.inner());
+    tauri::async_runtime::spawn_blocking(move || companion_serve_stop_inner(&state))
+        .await
+        .map_err(|e| format!("companion_serve_stop task failed: {e}"))?
+}
+fn companion_serve_stop_inner(
+    state: &Arc<CompanionServeState>,
 ) -> Result<CompanionServeStatus, String> {
     {
         let mut guard = state.child.lock().unwrap_or_else(|e| e.into_inner());
@@ -3442,7 +3786,7 @@ fn companion_serve_stop(
     }
     // Brief pause so the port frees.
     thread::sleep(Duration::from_millis(300));
-    Ok(companion_serve_status(state))
+    Ok(companion_serve_status_inner(state))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -3498,8 +3842,10 @@ pub fn run() {
             test_ssh_target,
             print_ssh_pubkey,
             watch_plan_changes,
+            stop_plan_watch,
             permission_respond,
             ask_user_respond,
+            prefetch_harness_sidecar,
             automations::manage_automation
         ])
         .build(tauri::generate_context!())
@@ -3710,5 +4056,69 @@ node "{}" %*"#,
         assert_eq!(desktop_experimental_flags("foo,bar", true), "foo,bar,bon");
         assert_eq!(desktop_experimental_flags("bon", true), "bon");
         assert_eq!(desktop_experimental_flags("", false), "");
+    }
+
+    #[test]
+    fn plan_watch_stops_when_requested() {
+        // Explicit stop wins regardless of idleness or active runs.
+        assert!(should_stop_plan_watch(Duration::from_secs(0), true, true));
+        assert!(should_stop_plan_watch(Duration::from_secs(30), false, true));
+    }
+
+    #[test]
+    fn plan_watch_keeps_alive_while_fresh_or_run_active() {
+        // Fresh (within the idle window): keep polling.
+        assert!(!should_stop_plan_watch(Duration::from_secs(60), false, false));
+        // Idle past the timeout but a run is active: keep polling.
+        assert!(!should_stop_plan_watch(
+            PLAN_WATCH_IDLE_STOP + Duration::from_secs(1),
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn plan_watch_stops_after_idle_timeout_without_run() {
+        assert!(should_stop_plan_watch(PLAN_WATCH_IDLE_STOP, false, false));
+        assert!(should_stop_plan_watch(
+            PLAN_WATCH_IDLE_STOP + Duration::from_secs(120),
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn plan_watch_registry_dedups_then_releases() {
+        let reg = PlanWatchRegistry::new();
+        let key = "z:/ws";
+        let flag = reg.claim(key).expect("first claim wins");
+        assert!(reg.claim(key).is_none(), "a live watcher is deduped");
+        reg.release(key, &flag);
+        // After release the slot is free again: re-observation can restart.
+        let flag2 = reg.claim(key).expect("slot re-claimable after release");
+        assert!(!Arc::ptr_eq(&flag, &flag2));
+    }
+
+    #[test]
+    fn plan_watch_registry_stop_and_takeover() {
+        let reg = PlanWatchRegistry::new();
+        let key = "z:/ws";
+        let flag = reg.claim(key).unwrap();
+        assert!(reg.stop(key), "stop finds the live watcher");
+        assert!(flag.load(Ordering::SeqCst), "stop flag is raised");
+        // A stale (stopped) slot is taken over instead of blocking re-observation.
+        let flag2 = reg.claim(key).expect("stale slot is taken over");
+        assert!(!flag2.load(Ordering::SeqCst), "new owner starts unstopped");
+        // The old thread releasing with its own flag must not evict the new owner.
+        reg.release(key, &flag);
+        assert!(reg.claim(key).is_none(), "new owner is still registered");
+        assert!(reg.stop(key));
+        assert!(flag2.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn plan_watch_registry_stop_unknown_is_false() {
+        let reg = PlanWatchRegistry::new();
+        assert!(!reg.stop("z:/never-watched"));
     }
 }

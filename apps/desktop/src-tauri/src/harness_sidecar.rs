@@ -65,6 +65,15 @@ use std::time::{Duration, Instant};
 use std::fs::OpenOptions;
 use tauri::{AppHandle, Emitter, Manager};
 
+// W2.3 — streaming delta coalescer. Declared with an explicit `#[path]` so the
+// new module lives beside this file WITHOUT touching the crate root (lib.rs):
+// a bare `mod` declared inside harness_sidecar.rs would look for a sibling
+// `harness_sidecar/` directory instead.
+#[path = "delta_coalescer.rs"]
+mod delta_coalescer;
+
+use self::delta_coalescer::{is_delta_type, DeltaCoalescer, FLUSH_WINDOW};
+
 /// The CLI harness speaks headless protocol v2 (HEADLESS_PROTOCOL_VERSION in
 /// src/cli/headless/protocol.ts). Verified on the boot line.
 pub(crate) const HEADLESS_PROTOCOL_VERSION: u32 = 2;
@@ -128,6 +137,30 @@ pub(crate) fn interpret_harness_state(event: &Value) -> Option<HarnessStateEvent
             .map(str::to_string),
         state: event.clone(),
     })
+}
+
+/// The `harness-state` Tauri event payload — byte-for-byte the SAME shape the
+/// frontend already listens for (`{sessionId, conversationId, state}`). W4.2:
+/// it BORROWS the shared read-model via `Arc` and serializes it in place, so
+/// emitting no longer deep-clones the (potentially large) `state`; `Clone`
+/// — which Tauri's emitter requires — is just an `Arc` bump.
+#[derive(Clone)]
+struct HarnessStatePayload {
+    session_id: Option<String>,
+    conversation_id: Option<String>,
+    state: Arc<Value>,
+}
+
+impl serde::Serialize for HarnessStatePayload {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut obj = serializer.serialize_struct("HarnessStatePayload", 3)?;
+        obj.serialize_field("sessionId", &self.session_id)?;
+        obj.serialize_field("conversationId", &self.conversation_id)?;
+        // Serialize the Value by reference — no per-event deep clone.
+        obj.serialize_field("state", self.state.as_ref())?;
+        obj.end()
+    }
 }
 
 /// Semantic agent-event classifier (Fix B, t60). These types describe a
@@ -366,13 +399,24 @@ pub(crate) struct HarnessSidecar {
     /// One-shot bind notification per awaiting fresh run.
     bind_notify: Mutex<HashMap<String, Sender<()>>>,
     /// Last `harness_state` read-model per spine sessionId (advisory UI
-    /// state; replaced wholesale on every event, never diffed or re-parsed).
-    harness_states: Mutex<HashMap<String, Value>>,
-    /// Global last harness_state regardless of session (single-run UX).
-    last_harness_state: Mutex<Option<Value>>,
+    /// state). W4.2: held behind a shared `Arc` so a new event is deep-copied
+    /// at most once and every slot (this map, the global slot, the emitted
+    /// payload) references the SAME allocation.
+    harness_states: Mutex<HashMap<String, Arc<Value>>>,
+    /// Global last harness_state regardless of session (single-run UX) AND the
+    /// dedup anchor: an event whose value equals this is neither stored nor
+    /// emitted (W4.2).
+    last_harness_state: Mutex<Option<Arc<Value>>>,
     /// Startup slot: at most one fresh run between "run.turn sent" and
     /// "spine bound", so session_started binding stays deterministic.
     fresh_slot: Mutex<()>,
+    /// W2.3 — streaming delta coalescer: batches consecutive `message_delta` /
+    /// `thinking_delta` events for a (run id, delta type) into ONE event so the
+    /// frontend re-renders ~1 per flush window instead of per token. See the
+    /// `delta_coalescer` module for the ordering contract.
+    delta_coalescer: Mutex<DeltaCoalescer>,
+    /// One-shot guard: the delta flusher thread starts at most once.
+    flusher_started: AtomicBool,
 }
 
 impl HarnessSidecar {
@@ -394,6 +438,8 @@ impl HarnessSidecar {
             harness_states: Mutex::new(HashMap::new()),
             last_harness_state: Mutex::new(None),
             fresh_slot: Mutex::new(()),
+            delta_coalescer: Mutex::new(DeltaCoalescer::new()),
+            flusher_started: AtomicBool::new(false),
         }
     }
 
@@ -428,33 +474,56 @@ impl HarnessSidecar {
     /// conversationId (run_conversations). When the spine id is unmapped the
     /// event carries NO conversationId: the frontend then drops it instead
     /// of attributing the read-model to whichever chat is on screen.
-    fn store_and_emit_harness_state(&self, hs: &HarnessStateEvent) {
+    ///
+    /// W4.2: takes ownership of the read-model and returns whether a NEW value
+    /// was stored (and therefore emitted). The payload is compared BY VALUE,
+    /// once, against the previous one: a repeat of the last read-model neither
+    /// clones nor emits. On a genuine change exactly ONE deep copy is taken —
+    /// the value is moved into a shared `Arc` referenced by the session map,
+    /// the global slot AND the emitted payload — down from three deep clones
+    /// per event in the old code.
+    fn store_and_emit_harness_state(&self, hs: HarnessStateEvent) -> bool {
+        let HarnessStateEvent { session_id, state } = hs;
+        // Dedup anchor: identical read-model → nothing to store (it would be a
+        // no-op) and nothing for the UI to see. Cheap value compare, no clone.
         {
-            let mut last = self
+            let last = self
                 .last_harness_state
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            *last = Some(hs.state.clone());
+            if let Some(prev) = last.as_ref() {
+                if prev.as_ref() == &state {
+                    return false;
+                }
+            }
         }
-        if let Some(sid) = &hs.session_id {
-            let mut map = self.harness_states.lock().unwrap_or_else(|e| e.into_inner());
-            map.insert(sid.clone(), hs.state.clone());
+        // Changed: own the read-model ONCE and share it everywhere (Arc bumps).
+        let shared = Arc::new(state);
+        *self
+            .last_harness_state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(Arc::clone(&shared));
+        if let Some(sid) = &session_id {
+            self.harness_states
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .insert(sid.clone(), Arc::clone(&shared));
         }
-        let conversation_id = hs
-            .session_id
+        let conversation_id = session_id
             .as_ref()
             .and_then(|sid| self.conversation_for_spine(sid));
         let guard = self.app.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(app) = guard.as_ref() {
             let _ = app.emit(
                 "harness-state",
-                json!({
-                    "sessionId": hs.session_id,
-                    "conversationId": conversation_id,
-                    "state": hs.state,
-                }),
+                HarnessStatePayload {
+                    session_id,
+                    conversation_id,
+                    state: shared,
+                },
             );
         }
+        true
     }
 
     /// spine sessionId → desktop conversationId, via the two routing tables
@@ -484,12 +553,13 @@ impl HarnessSidecar {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .get(sid)
-                .cloned(),
+                .map(|v| v.as_ref().clone()),
             None => self
                 .last_harness_state
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
-                .clone(),
+                .as_ref()
+                .map(|v| v.as_ref().clone()),
         }
     }
 
@@ -519,6 +589,9 @@ impl HarnessSidecar {
     /// Spawn one child generation + supervisor thread. Caller holds
     /// spawn_lock. Returns once the boot line arrived (or visibly Err).
     fn spawn_generation(self: &Arc<Self>) -> Result<(), String> {
+        // W2.3: the delta flusher lives for the whole sidecar lifetime
+        // (idempotent — safe across supervisor restarts).
+        self.ensure_delta_flusher();
         let node = crate::find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
         let cli = crate::resolve_cli_entry()?;
         let mut cmd = crate::spawn_cli_base(&node, &cli, None);
@@ -1064,6 +1137,12 @@ impl HarnessSidecar {
             let _ = bind_rx.recv_timeout(SPINE_BIND_WAIT);
         }
 
+        // W2.3: flush any delta batch this run still has buffered BEFORE its
+        // sink is dropped, so the trailing tokens reach the UI (the later
+        // `pump()` drains the channel they land in). A buffer owned by another
+        // live run is left alone.
+        self.flush_pending_deltas_for(run_id);
+
         // Cleanup routing state (spine_routes is kept: late events still
         // route to the finished run's dropped sink and clean up lazily).
         self.sinks
@@ -1157,6 +1236,8 @@ impl HarnessSidecar {
     /// supervisor force-kills the tree only past DRAIN_TIMEOUT.
     pub(crate) fn shutdown(&self) {
         self.shutting_down.store(true, Ordering::SeqCst);
+        // W2.3: never swallow a trailing delta batch at close.
+        self.flush_pending_deltas();
         let proc = self.proc.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(proc) = proc {
             // Drop stdin → EOF on the server side → graceful close+drain.
@@ -1223,9 +1304,12 @@ impl HarnessSidecar {
             // session.sessionId; without the hoist a harness_state landing
             // in a multi-run window would broadcast instead of binding 1:1).
             if let Some(hs) = interpret_harness_state(&value) {
-                self.store_and_emit_harness_state(&hs);
+                // Move the read-model into the store (W4.2 — no per-event deep
+                // clone); keep the spine id for the routing hoist below.
+                let spine_id = hs.session_id.clone();
+                self.store_and_emit_harness_state(hs);
                 let mut routed = value;
-                if let Some(sid) = &hs.session_id {
+                if let Some(sid) = &spine_id {
                     routed["sessionId"] = json!(sid);
                 }
                 self.route_event(routed);
@@ -1397,7 +1481,50 @@ impl HarnessSidecar {
         }
     }
 
-    fn send_to_run(&self, run_id: &str, mut event: Value) {
+    /// Coalescing entry point for per-run delivery (W2.3). Delta events
+    /// (`message_delta`/`thinking_delta`) are BUFFERED so consecutive chunks of
+    /// the same (run id, delta type) leave as ONE event; every other event
+    /// flushes any pending buffer for this run FIRST (strict ordering) and then
+    /// passes straight through. Raw delivery is `emit_to_run`.
+    fn send_to_run(&self, run_id: &str, event: Value) {
+        let kind = event.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        if is_delta_type(kind) {
+            // Keep the idle watchdog alive: the reader IS receiving events even
+            // though this one is only buffered, not emitted yet.
+            self.touch_run_activity(run_id);
+            let displaced = {
+                let mut coalescer = self
+                    .delta_coalescer
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
+                coalescer.push_delta(run_id, event)
+            };
+            // A different key displaced the previous buffer: emit it FIRST so
+            // the coalesced event always precedes the delta that displaced it.
+            if let Some((prev_run, prev_event)) = displaced {
+                self.emit_to_run(&prev_run, prev_event);
+            }
+            return;
+        }
+        // Non-delta: flush the same-run buffer BEFORE emitting, so a
+        // message_start / message_end / tool / agent_end / error can never
+        // overtake the coalesced deltas that preceded it.
+        let flushed = {
+            let mut coalescer = self
+                .delta_coalescer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            coalescer.flush_for(run_id)
+        };
+        if let Some((prev_run, prev_event)) = flushed {
+            self.emit_to_run(&prev_run, prev_event);
+        }
+        self.emit_to_run(run_id, event);
+    }
+
+    /// Raw per-run delivery: activity stamp + conversation identity + sink send
+    /// (the pre-W2.3 body of `send_to_run`; coalesced buffers re-enter here).
+    fn emit_to_run(&self, run_id: &str, mut event: Value) {
         self.touch_run_activity(run_id);
         let tx = {
             let sinks = self.sinks.lock().unwrap_or_else(|e| e.into_inner());
@@ -1412,6 +1539,71 @@ impl HarnessSidecar {
                     .unwrap_or_else(|e| e.into_inner())
                     .remove(run_id);
             }
+        }
+    }
+
+    /// Start the single delta-flusher thread (idempotent). It holds a `Weak`
+    /// and exits when the sidecar is dropped (app exit), so it never leaks
+    /// across supervisor restarts. The thread is the timer trigger (c): it
+    /// flushes a buffer once its FLUSH_WINDOW elapsed even if no further event
+    /// arrives, bounding batching latency at ~FLUSH_WINDOW.
+    fn ensure_delta_flusher(self: &Arc<Self>) {
+        if self.flusher_started.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let weak = Arc::downgrade(self);
+        thread::spawn(move || loop {
+            // Tick well below the window so the deadline is met within ~1 tick.
+            thread::sleep(FLUSH_WINDOW / 4);
+            match weak.upgrade() {
+                Some(sidecar) => sidecar.flush_due_deltas(),
+                None => break,
+            }
+        });
+    }
+
+    /// Timer tick: flush the pending delta buffer once its window elapsed.
+    fn flush_due_deltas(&self) {
+        let due = {
+            let mut coalescer = self
+                .delta_coalescer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            coalescer.flush_if_due(FLUSH_WINDOW)
+        };
+        if let Some((run_id, event)) = due {
+            self.emit_to_run(&run_id, event);
+        }
+    }
+
+    /// Flush the pending buffer unconditionally (stream end / disconnect /
+    /// shutdown) so a trailing batch is never lost.
+    fn flush_pending_deltas(&self) {
+        let pending = {
+            let mut coalescer = self
+                .delta_coalescer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            coalescer.flush()
+        };
+        if let Some((run_id, event)) = pending {
+            self.emit_to_run(&run_id, event);
+        }
+    }
+
+    /// Flush the pending buffer IFF it belongs to `run_id` (run end). The run
+    /// thread calls this BEFORE dropping the run's sink so a trailing batch is
+    /// not sent to a dead channel.
+    fn flush_pending_deltas_for(&self, run_id: &str) {
+        let pending = {
+            let mut coalescer = self
+                .delta_coalescer
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            coalescer.flush_for(run_id)
+        };
+        if let Some((pending_run, event)) = pending {
+            self.emit_to_run(&pending_run, event);
         }
     }
 
@@ -1482,6 +1674,9 @@ fn supervise_child(
             Err(_) => break,
         }
     }
+    // W2.3: the stream ended (EOF / read error = disconnect). Flush whatever
+    // delta batch is still buffered so the last tokens are not lost.
+    me.flush_pending_deltas();
 
     // Phase 3 — reap. Graceful shutdown drains up to DRAIN_TIMEOUT (the
     // server is inside dispose(): awaiting pending proof writes — never
@@ -1678,10 +1873,69 @@ mod tests {
         });
         let hs = interpret_harness_state(&event).unwrap();
         // No AppHandle in tests → the emit is skipped, the store is not.
-        sidecar.store_and_emit_harness_state(&hs);
+        assert!(sidecar.store_and_emit_harness_state(hs));
         assert_eq!(sidecar.last_harness_state(None), Some(event.clone()));
         assert_eq!(sidecar.last_harness_state(Some("sess-2")), Some(event));
         assert_eq!(sidecar.last_harness_state(Some("other")), None);
+    }
+
+    /// W4.2: an unchanged read-model is neither stored again nor emitted; a
+    /// changed one is, exactly once, with the NEW value.
+    #[test]
+    fn harness_state_emits_only_on_change() {
+        let sidecar = HarnessSidecar::new();
+        let mk = |status: &str| {
+            let event = serde_json::json!({
+                "type": "harness_state",
+                "session": { "sessionId": "sess-3", "status": status }
+            });
+            interpret_harness_state(&event).unwrap()
+        };
+        let status = |sidecar: &HarnessSidecar| {
+            sidecar
+                .last_harness_state(Some("sess-3"))
+                .and_then(|v| {
+                    v.pointer("/session/status")
+                        .and_then(|s| s.as_str())
+                        .map(str::to_string)
+                })
+        };
+
+        // First sighting → stored + (would) emit.
+        assert!(sidecar.store_and_emit_harness_state(mk("running")));
+        assert_eq!(status(&sidecar), Some("running".to_string()));
+
+        // Byte-identical read-model → no store, no emit.
+        assert!(!sidecar.store_and_emit_harness_state(mk("running")));
+
+        // A real change → one emit with the NEW value.
+        assert!(sidecar.store_and_emit_harness_state(mk("completed")));
+        assert_eq!(status(&sidecar), Some("completed".to_string()));
+    }
+
+    /// W4.2: the emitted payload keeps the exact same JSON shape/keys as the
+    /// pre-refactor `json!({sessionId, conversationId, state})`.
+    #[test]
+    fn harness_state_payload_shape_is_unchanged() {
+        let payload = HarnessStatePayload {
+            session_id: Some("sess-9".to_string()),
+            conversation_id: Some("conv-1".to_string()),
+            state: Arc::new(serde_json::json!({ "type": "harness_state" })),
+        };
+        let value = serde_json::to_value(&payload).unwrap();
+        assert_eq!(value["sessionId"], serde_json::json!("sess-9"));
+        assert_eq!(value["conversationId"], serde_json::json!("conv-1"));
+        assert_eq!(value["state"], serde_json::json!({ "type": "harness_state" }));
+
+        // Unmapped identity serializes to null, never a missing key.
+        let bare = HarnessStatePayload {
+            session_id: None,
+            conversation_id: None,
+            state: Arc::new(serde_json::json!({ "type": "harness_state" })),
+        };
+        let value = serde_json::to_value(&bare).unwrap();
+        assert!(value["sessionId"].is_null());
+        assert!(value["conversationId"].is_null());
     }
 
     // --- Fix B (t60): chat-isolated routing --------------------------------
@@ -1826,5 +2080,80 @@ mod tests {
             "sessionId": "sess-a",
         }));
         assert_eq!(sidecar.ask_session_of("perm-9"), None);
+    }
+
+    // --- W2.3: streaming delta coalescing ----------------------------------
+
+    #[test]
+    fn consecutive_deltas_coalesce_and_a_non_delta_flushes_them_first() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a"]);
+        bind(&sidecar, "sess-a", "run-a");
+        for chunk in ["Hel", "lo ", "world"] {
+            sidecar.route_event(serde_json::json!({
+                "type": "message_delta",
+                "sessionId": "sess-a",
+                "delta": chunk,
+            }));
+        }
+        // Still buffered: no per-token emission.
+        assert!(
+            rxs[0].try_recv().is_err(),
+            "deltas must be buffered, not emitted per token"
+        );
+        // The boundary flushes the batch BEFORE itself.
+        sidecar.route_event(serde_json::json!({ "type": "message_end", "sessionId": "sess-a" }));
+        let first = rxs[0].try_recv().unwrap();
+        assert_eq!(first["type"], "message_delta");
+        assert_eq!(first["delta"], "Hello world", "payloads concatenate in order");
+        let second = rxs[0].try_recv().unwrap();
+        assert_eq!(second["type"], "message_end", "coalesced deltas precede the boundary");
+    }
+
+    #[test]
+    fn a_delta_for_a_different_request_flushes_the_previous_buffer_first() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        bind(&sidecar, "sess-a", "run-a");
+        bind(&sidecar, "sess-b", "run-b");
+        sidecar.route_event(serde_json::json!({
+            "type": "message_delta", "sessionId": "sess-a", "delta": "A1",
+        }));
+        sidecar.route_event(serde_json::json!({
+            "type": "message_delta", "sessionId": "sess-a", "delta": "A2",
+        }));
+        // A delta for run-b must flush run-a's pending buffer first.
+        sidecar.route_event(serde_json::json!({
+            "type": "message_delta", "sessionId": "sess-b", "delta": "B1",
+        }));
+        let a = rxs[0].try_recv().unwrap();
+        assert_eq!(a["delta"], "A1A2", "run-a's batch flushed on the run change");
+        assert!(rxs[1].try_recv().is_err(), "run-b is still buffered");
+    }
+
+    #[test]
+    fn a_delta_of_a_different_type_flushes_the_previous_buffer_first() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a"]);
+        bind(&sidecar, "sess-a", "run-a");
+        sidecar.route_event(serde_json::json!({
+            "type": "message_delta", "sessionId": "sess-a", "delta": "hi",
+        }));
+        sidecar.route_event(serde_json::json!({
+            "type": "thinking_delta", "sessionId": "sess-a", "delta": "hmm",
+        }));
+        let first = rxs[0].try_recv().unwrap();
+        assert_eq!(first["type"], "message_delta");
+        assert_eq!(first["delta"], "hi");
+    }
+
+    #[test]
+    fn the_flusher_drains_a_buffered_batch_without_a_trailing_event() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a"]);
+        bind(&sidecar, "sess-a", "run-a");
+        sidecar.route_event(serde_json::json!({
+            "type": "message_delta", "sessionId": "sess-a", "delta": "trailing",
+        }));
+        assert!(rxs[0].try_recv().is_err());
+        // The timer tick / shutdown / EOF path flushes unconditionally.
+        sidecar.flush_pending_deltas();
+        assert_eq!(rxs[0].try_recv().unwrap()["delta"], "trailing");
     }
 }

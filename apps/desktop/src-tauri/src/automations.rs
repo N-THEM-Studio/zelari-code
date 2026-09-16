@@ -713,7 +713,20 @@ mod linux {
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn manage_automation(
+pub async fn manage_automation(
+    action: String,
+    interval_min: u32,
+    max_cost_usd: f64,
+    repo_path: String,
+) -> Result<Value, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        manage_automation_inner(action, interval_min, max_cost_usd, repo_path)
+    })
+    .await
+    .map_err(|e| format!("manage_automation task failed: {e}"))?
+}
+
+fn manage_automation_inner(
     action: String,
     interval_min: u32,
     max_cost_usd: f64,
