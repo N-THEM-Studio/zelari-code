@@ -294,7 +294,7 @@ interface Props {
   onClarificationChoose?: (choice: string) => void;
 }
 
-function MessageContentBase({
+function MessageContentImpl({
   content,
   streaming,
   thinking,
@@ -470,11 +470,64 @@ function MessageContentBase({
 }
 
 /**
- * W3.1: memoized — a message re-renders only when its own props change. During
- * streaming only the target turn's `content` changes, and unrelated App state
- * (sidebar width, composer draft, dialogs) never touches the rendered markup.
+ * SLICE2(transcript-memo): prop equality for the MessageContent React.memo
+ * wrapper (exported at the bottom of this file as `memo(...)`, the same
+ * convention as ChatComposer).
+ *
+ * This component is the expensive one: every render re-runs `parseBlocks` +
+ * `renderInline` (regexes) over the whole message body. App re-renders on
+ * EVERY streaming delta, so without a memo every message already on screen
+ * would be re-parsed for each chunk — O(conversation length) per chunk.
+ *
+ * Design choice: the reducer only spreads the single message that received the
+ * delta (`m.id === aid ? { ...m, ... } : m`), so every other message object —
+ * and therefore the `content`/`streaming`/`stats` props derived from it — keeps
+ * its identity across chunks. Comparing those props by value is enough to skip
+ * the untouched rows; no per-message clone exists that would defeat it.
+ *
+ * `stats` is compared field-by-field rather than by reference so a caller that
+ * rebuilds the object (a spread, a mapped copy) cannot silently kill the memo.
+ * Callbacks are compared by reference: callers must pass a stable handler
+ * (see ChatTranscript + App's useStableHandler).
  */
-export const MessageContent = memo(MessageContentBase);
+function statsEqual(
+  a: MessageStats | undefined,
+  b: MessageStats | undefined,
+): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.durationMs === b.durationMs &&
+    a.toolCount === b.toolCount &&
+    a.charCount === b.charCount &&
+    a.promptTokens === b.promptTokens &&
+    a.completionTokens === b.completionTokens &&
+    a.totalTokens === b.totalTokens &&
+    a.contextTokens === b.contextTokens &&
+    a.contextLimit === b.contextLimit &&
+    a.cachedTokens === b.cachedTokens &&
+    a.cacheHitRate === b.cacheHitRate
+  );
+}
+
+/** Exported for tests — the memo contract, not a public API. */
+export function messageContentPropsEqual(prev: Props, next: Props): boolean {
+  return (
+    prev.content === next.content &&
+    prev.streaming === next.streaming &&
+    prev.thinking === next.thinking &&
+    prev.showThinking === next.showThinking &&
+    prev.clarificationDisabled === next.clarificationDisabled &&
+    prev.onClarificationChoose === next.onClarificationChoose &&
+    statsEqual(prev.stats, next.stats)
+  );
+}
+
+/** React.memo — the comparator above is the whole point (SLICE2). */
+export const MessageContent = memo(
+  MessageContentImpl,
+  messageContentPropsEqual,
+);
 
 /** Global thinking indicator while a run is active but no assistant text yet. */
 export function ThinkingIndicator({ label = "Working" }: { label?: string }) {

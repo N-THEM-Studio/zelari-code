@@ -25,6 +25,7 @@ vi.mock("../agentClient", () => ({
 }));
 
 import { onAgentEvent } from "../agentClient";
+import { flushSidecarBatches } from "../hooks/useSidecarBatch";
 import { clearActivityStoreForTests } from "../activity/useRunActivity";
 import { KrakenActivity } from "./KrakenActivity";
 
@@ -42,9 +43,16 @@ function armMock(): void {
   });
 }
 
+/**
+ * Dispatch one event, then land the coalesced activity paint — the same
+ * boundary flush App performs at message_end / run-finished (SLICE7). The
+ * panel's tree is batched, so without the flush the assertions would read a
+ * mid-window frame instead of the settled one.
+ */
 function emit(ev: unknown): void {
   act(() => {
     for (const h of handlers) h(ev);
+    flushSidecarBatches();
   });
 }
 

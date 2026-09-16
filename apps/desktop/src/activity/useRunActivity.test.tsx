@@ -28,6 +28,7 @@ vi.mock("../agentClient", () => ({
 }));
 
 import { onAgentEvent } from "../agentClient";
+import { flushSidecarBatches } from "../hooks/useSidecarBatch";
 import { clearActivityStoreForTests } from "./useRunActivity";
 import { KrakenActivity } from "../components/KrakenActivity";
 
@@ -45,9 +46,16 @@ function armMock(): void {
   });
 }
 
+/**
+ * Dispatch one event, then land the coalesced activity paint — exactly what
+ * App does with `flushSidecarBatches()` at message/run boundaries. Without it
+ * the DOM assertions below would read a mid-window frame: SLICE7 batches the
+ * tree (many events → one commit), it never drops an update.
+ */
 function emit(ev: unknown): void {
   act(() => {
     for (const h of handlers) h(ev as unknown as AgentEvent);
+    flushSidecarBatches();
   });
 }
 

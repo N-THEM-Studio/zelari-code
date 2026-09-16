@@ -150,6 +150,10 @@ import type {
 } from "./types";
 import { checkForDesktopUpdate } from "./updater";
 import { useSpeechToText } from "./hooks/useSpeechToText";
+import {
+  flushSidecarBatches,
+  useBatchedState,
+} from "./hooks/useSidecarBatch";
 import { Composer, type ComposerHandle } from "./components/Composer";
 import { ChatList, type PermissionDecision } from "./components/ChatList";
 import { SidecarLogPanel } from "./components/SidecarLogPanel";
@@ -757,20 +761,30 @@ export default function App() {
     }
   };
   /** Per-conversation live run UI (M2 multiplexing), keyed by conversation. */
-  const [liveToolLabelByConv, setLiveToolLabelByConv] = useState<
+  /**
+   * SLICE3(sidecar-batching): these five slices are written by the sidecar
+   * event burst and only READ by the render body (the tool carousel, the
+   * kraken/verification/gauntlet cards) — nothing branches on their current
+   * value mid-stream. They go through the coalescing holder so a burst of
+   * tentacle/tool/progress events produces ONE app commit instead of one per
+   * event; `flushSidecarBatches()` lands the pending batch at message and run
+   * boundaries. The chat stream itself is NOT batched here — `message_delta`
+   * is coalesced Rust-side (delta_coalescer.rs) and stays on its own path.
+   */
+  const [liveToolLabelByConv, setLiveToolLabelByConv] = useBatchedState<
     Record<string, string | null>
   >({});
-  const [liveStepsByConv, setLiveStepsByConv] = useState<
+  const [liveStepsByConv, setLiveStepsByConv] = useBatchedState<
     Record<string, LiveToolStep[]>
   >({});
   /** Kraken selection card (kraken_progress / kraken_metrics), per conv. */
-  const [krakenCardByConv, setKrakenCardByConv] = useState<
+  const [krakenCardByConv, setKrakenCardByConv] = useBatchedState<
     Record<string, KrakenCardState>
   >({});
-  const [verificationByConv, setVerificationByConv] = useState<
+  const [verificationByConv, setVerificationByConv] = useBatchedState<
     Record<string, VerificationCardState>
   >({});
-  const [gauntletByConv, setGauntletByConv] = useState<
+  const [gauntletByConv, setGauntletByConv] = useBatchedState<
     Record<string, GauntletProgressView | undefined>
   >({});
   const [reasoningByConv, setReasoningByConv] = useState<
@@ -1007,6 +1021,13 @@ export default function App() {
   const phaseRef = useRef(phase);
   modeRef.current = mode;
   phaseRef.current = phase;
+  /**
+   * SLICE4(model-sync): true once the user picked a provider/model IN THIS
+   * SESSION (chat model bar, Settings → Models & Providers, or binding another
+   * conversation). Until then `refreshConfig` may re-align the chat bar with
+   * the CLI config; after an explicit pick it must never clobber it.
+   */
+  const userPickedModelRef = useRef(false);
 
 
   // W1.2: persist chats through a trailing debounce (~500 ms) instead of on
@@ -1404,14 +1425,21 @@ export default function App() {
     try {
       const c = await getAppConfig();
       setConfig(c);
-      setProvider((prev) => prev || c.activeProviderId);
-      setModel(
-        (prev) =>
-          prev ||
-          c.modelByProvider[c.activeProviderId] ||
-          c.providers.find((p) => p.id === c.activeProviderId)?.defaultModel ||
-          "",
+      // SLICE4(model-sync): anti-sticky. The old `prev ||` fill kept the very
+      // first value forever — a model changed anywhere else (CLI, Settings →
+      // Models & Providers, another panel writing provider.json) never reached
+      // the chat bar, so chat and Settings disagreed permanently. Now the CLI
+      // config wins UNTIL the user picks something in this session
+      // (`userPickedModelRef`), and an explicit pick still wins over it.
+      const cfgModel =
+        c.modelByProvider[c.activeProviderId] ||
+        c.providers.find((p) => p.id === c.activeProviderId)?.defaultModel ||
+        "";
+      const picked = userPickedModelRef.current;
+      setProvider((prev) =>
+        picked ? prev || c.activeProviderId : c.activeProviderId || prev,
       );
+      setModel((prev) => (picked ? prev || cfgModel : cfgModel || prev));
     } catch (e) {
       setStatusLine(
         errText(e, "Failed to load provider config"),
@@ -2242,6 +2270,10 @@ export default function App() {
         }
 
         if (ev.type === "message_end" || ev.type === "agent_end") {
+          // SLICE3(sidecar-batching): a message boundary is a natural paint
+          // point — land every pending batched sidecar update in the SAME
+          // commit as the settled row instead of waiting for the window.
+          flushSidecarBatches();
           const usage =
             ev.type === "message_end"
               ? (ev as { usage?: {
@@ -2456,6 +2488,10 @@ export default function App() {
         setLiveToolLabelFor(convId, null);
         setLiveMemberNameFor(convId, null);
         clearToolLabelTimer(convId);
+        // SLICE3(sidecar-batching): the run settled — force the pending batch
+        // so the final live state (cleared label, finished step list) is on
+        // screen with the stats below, never one window late.
+        flushSidecarBatches();
         // W2.1: land any throttled live commit as final before reading the
         // bubble and attaching run stats (the run is settling; no more
         // deltas). No-op when nothing is pending.
@@ -2647,6 +2683,15 @@ export default function App() {
     setPhase(c.phase);
     if (c.provider) setProvider(c.provider);
     if (c.model) setModel(c.model);
+    // SLICE4(model-sync): a conversation carries its own provider/model. Before
+    // this, rebinding another chat changed the bar but left provider.json on
+    // the previous chat's model — so Settings → Agents kept showing the old one
+    // and the CLI spawned the old one. Push the newly active model through the
+    // same writer (fire-and-forget: no await, no UI block).
+    userPickedModelRef.current = true;
+    const nextProvider = c.provider || provider;
+    const nextModel = c.model || model;
+    if (nextModel) void persistChatModel(nextProvider, nextModel);
     // W1.2 flush point (b): conversation switch — persist the chat we are
     // leaving before wiring the new one.
     flushSave();
@@ -2742,7 +2787,36 @@ export default function App() {
     );
   };
 
+  /**
+   * SLICE4(model-sync): chat → CLI config. The single writer for every place
+   * the CHAT model changes (chat model bar, provider switch, conversation
+   * switch). It goes through the SAME sidecar command the Settings panels
+   * already use — `set_app_config` (agentClient's `setAppConfig`) → the
+   * provider.json the CLI reads at spawn time — so no new IPC is invented.
+   * A failing write lands on the status line and never blocks the chat;
+   * Settings → Agents surfaces the drift with a retry.
+   */
+  const persistChatModel = async (
+    nextProvider: string,
+    nextModel: string,
+    what: "provider" | "model" = "model",
+  ): Promise<boolean> => {
+    if (!nextProvider) return false;
+    try {
+      await setAppConfig({
+        provider: nextProvider,
+        ...(nextModel ? { model: nextModel } : {}),
+      });
+      return true;
+    } catch (e) {
+      setStatusLine(errText(e, `Failed to persist ${what}`));
+      return false;
+    }
+  };
+
   const onProviderChange = async (id: string) => {
+    // SLICE4(model-sync): an explicit pick — refreshConfig must not undo it.
+    userPickedModelRef.current = true;
     setProvider(id);
     const p = config?.providers.find((x) => x.id === id);
     const nextModel =
@@ -2753,33 +2827,24 @@ export default function App() {
         c.id === activeId ? { ...c, provider: id, model: nextModel } : c,
       ),
     );
-    try {
-      await setAppConfig({
-        provider: id,
-        ...(nextModel ? { model: nextModel } : {}),
-      });
-      await refreshConfig();
-    } catch (e) {
-      setStatusLine(
-        errText(e, "Failed to persist provider"),
-      );
-    }
+    // SLICE4(model-sync): the provider switch carries its model to
+    // provider.json, exactly like the Settings → Models & Providers picker.
+    if (!(await persistChatModel(id, nextModel, "provider"))) return;
+    await refreshConfig();
   };
 
   const onModelChange = async (id: string) => {
+    // SLICE4(model-sync): an explicit pick — refreshConfig must not undo it.
+    userPickedModelRef.current = true;
     setModel(id);
     setConversations((prev) =>
       prev.map((c) => (c.id === activeId ? { ...c, model: id } : c)),
     );
     if (!provider) return;
-    try {
-      await setAppConfig({ provider, model: id });
-      await refreshConfig();
-    } catch (e) {
-      setStatusLine(
-        errText(e, "Failed to persist model"),
-      );
-    }
+    // SLICE4(model-sync): chat model → provider.json, so the Agents view and
+    // the CLI agree with what the chat bar shows.
+    if (!(await persistChatModel(provider, id))) return;
+    await refreshConfig();
   };
 
   const onThinkingChange = async (spec: string) => {
@@ -3545,9 +3610,24 @@ export default function App() {
               setPhase(nextPhase);
             }}
             onProviderModelChange={(nextProvider, nextModel) => {
+              // SLICE4(model-sync): Settings → Models & Providers wrote
+              // provider.json already (ProviderSection), so this is the chat
+              // side of the same change: mark it as an explicit pick so
+              // refreshConfig does not revert it, and carry it onto the ACTIVE
+              // conversation so re-opening that chat in the sidebar cannot
+              // resurrect the old model.
+              userPickedModelRef.current = true;
               setProvider(nextProvider);
               setModel(nextModel);
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id === activeId
+                    ? { ...c, provider: nextProvider, model: nextModel }
+                    : c,
+                ),
+              );
             }}
+            activeChatModel={model}
             onPrefsChange={(partial) => {
               setPrefs((prev) => patchDesktopPrefs(prev, partial));
               if (partial.gauntletLoop === true) setKrakenGraph(false);

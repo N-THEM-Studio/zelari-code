@@ -5,7 +5,8 @@ import { execFile } from 'node:child_process';
  * useGitChanges — reactive snapshot of the working-tree changes for the
  * Sidebar (v0.7.9).
  *
- * Polls `git` in the cwd every `pollMs` (default 4s):
+ * Polls `git` in the cwd (default 4s while the panel is being watched, see
+ * CADENCE below):
  *   - `git rev-parse --abbrev-ref HEAD`        → branch name
  *   - `git diff --numstat` + `--cached`        → per-file +added/-removed
  *   - `git status --porcelain=v1`              → untracked files
@@ -14,6 +15,17 @@ import { execFile } from 'node:child_process';
  * transient lock error simply yields `isRepo: false` / the previous
  * snapshot. State is only updated when the snapshot actually changed, so
  * the poll does NOT cause an Ink repaint every tick.
+ *
+ * CADENCE (v2.34, slice 7 of the input-lag diagnosis): the loop used to run
+ * flat out at 4s forever — four `git` processes a minute, on every terminal,
+ * even with the sidebar hidden and nothing moving. It is now adaptive:
+ *   - the FIRST refresh is still immediate (unchanged behaviour);
+ *   - `hot` (sidebar open, turn in flight) holds the fast `pollMs` cadence —
+ *     the reader is watching, so the chip must stay current;
+ *   - otherwise, after `idleAfterTicks` consecutive unchanged snapshots the
+ *     loop idles down to `idlePollMs` (20s), and any change — or a `hot` flip —
+ *     puts it straight back on the fast cadence.
+ * The data still lands on the same code path: only the timer changes.
  */
 
 export interface GitFileChange {
@@ -145,8 +157,61 @@ async function snapshotGitChanges(cwd: string): Promise<GitChanges> {
   };
 }
 
-export function useGitChanges(opts: { pollMs?: number; cwd?: string } = {}): GitChanges {
-  const { pollMs = 4000, cwd = process.cwd() } = opts;
+/**
+ * Fast cadence: the sidebar chip is live-ish while the reader watches.
+ * (Unchanged from the pre-slice value.)
+ */
+export const GIT_POLL_MS = 4000;
+
+/**
+ * Idle cadence: what the loop settles on when nothing has changed for
+ * `GIT_IDLE_AFTER_TICKS` snapshots in a row and nobody is watching. Still
+ * fresh enough that an out-of-band edit shows up within ~20s, at a fifth of
+ * the process churn.
+ */
+export const GIT_IDLE_POLL_MS = 20_000;
+
+/** Unchanged snapshots tolerated at the fast cadence before idling down (12s). */
+export const GIT_IDLE_AFTER_TICKS = 3;
+
+export interface UseGitChangesOptions {
+  /** Fast cadence, and the cadence kept while `hot`. */
+  pollMs?: number;
+  /** Cadence after `idleAfterTicks` unchanged snapshots. */
+  idlePollMs?: number;
+  /** Unchanged snapshots in a row before the loop idles down. */
+  idleAfterTicks?: number;
+  /**
+   * True while someone is watching (sidebar on screen) or while a turn is
+   * writing files: holds the fast cadence, and forces an immediate refresh
+   * when it flips, so the chip is never stale when the panel opens.
+   */
+  hot?: boolean;
+  cwd?: string;
+  /** Injected snapshot source — tests never spawn `git`. */
+  snapshot?: (cwd: string) => Promise<GitChanges>;
+}
+
+/** Delay before the next poll: fast while hot, backed off once quiet. */
+export function nextGitPollDelay(
+  quietTicks: number,
+  opts: { pollMs: number; idlePollMs: number; idleAfterTicks: number; hot: boolean },
+): number {
+  if (opts.hot) return opts.pollMs;
+  return quietTicks >= opts.idleAfterTicks
+    ? Math.max(opts.pollMs, opts.idlePollMs)
+    : opts.pollMs;
+}
+
+export function useGitChanges(opts: UseGitChangesOptions = {}): GitChanges {
+  const {
+    pollMs = GIT_POLL_MS,
+    idlePollMs = GIT_IDLE_POLL_MS,
+    idleAfterTicks = GIT_IDLE_AFTER_TICKS,
+    hot = false,
+    cwd = process.cwd(),
+    snapshot = snapshotGitChanges,
+  } = opts;
   const [changes, setChanges] = useState<GitChanges>(EMPTY_GIT_CHANGES);
   // Serialize the state through a ref + JSON compare so an unchanged poll
   // result does not trigger a re-render (and thus an Ink repaint).
@@ -155,26 +220,41 @@ export function useGitChanges(opts: { pollMs?: number; cwd?: string } = {}): Git
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    // Consecutive unchanged snapshots — the idle back-off's only input.
+    let quiet = 0;
     const tick = async () => {
       try {
-        const snap = await snapshotGitChanges(cwd);
+        const snap = await snapshot(cwd);
         if (cancelled) return;
         const json = JSON.stringify(snap);
         if (json !== lastJson.current) {
           lastJson.current = json;
+          quiet = 0;
           setChanges(snap);
+        } else {
+          quiet += 1;
         }
       } catch {
-        // Best-effort — keep the previous snapshot.
+        // Best-effort — keep the previous snapshot, and count it as quiet: a
+        // broken `git` (missing binary, lock storm) must not keep us hot.
+        quiet += 1;
       }
-      if (!cancelled) timer = setTimeout(tick, pollMs);
+      if (!cancelled) {
+        timer = setTimeout(
+          tick,
+          nextGitPollDelay(quiet, { pollMs, idlePollMs, idleAfterTicks, hot }),
+        );
+      }
     };
     void tick();
     return () => {
       cancelled = true;
       if (timer !== null) clearTimeout(timer);
     };
-  }, [pollMs, cwd]);
+    // `hot` is a dependency on purpose: flipping it (sidebar opened, turn
+    // started) restarts the loop — immediate refresh + fast cadence — so the
+    // panel never opens onto a stale chip.
+  }, [pollMs, idlePollMs, idleAfterTicks, hot, cwd, snapshot]);
 
   return changes;
 }

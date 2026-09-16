@@ -313,6 +313,62 @@ export async function checkForUpdate(
 }
 
 /**
+ * v2.34 (slice 7 of the 2026-09-15 input-lag diagnosis): the boot-time update
+ * check is a single DEFERRED ticket, not something the first keystrokes pay
+ * for.
+ *
+ * Before: `setTimeout(3000)` then fetch — the registry round-trip, the TLS
+ * handshake and the dynamic `import("./updater.js")` all landed ~3s after
+ * mount, i.e. right when the user starts typing in the TUI. Now the ticket is
+ * parked past that window (still exactly ONE check per process; `/update`
+ * remains the explicit path, and `zelari-code --version`/headless never pay
+ * for it because main() only schedules it on the TUI branch).
+ *
+ * Fully injectable (sleep/check/report) so the cadence is testable without a
+ * network round-trip or a registry.
+ */
+export const UPDATE_CHECK_DELAY_MS = 12_000;
+
+export interface DeferredUpdateCheckOptions {
+  /** Deferral before the single check (default `UPDATE_CHECK_DELAY_MS`). */
+  delayMs?: number;
+  /** Injected sleep — tests drive it with fake timers. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Injected check — tests never hit the registry. */
+  check?: () => Promise<UpdateCheckResult>;
+  /** Where the advisory line goes (default: stderr). */
+  report?: (message: string) => void;
+}
+
+export async function runDeferredUpdateCheck(
+  opts: DeferredUpdateCheckOptions = {},
+): Promise<void> {
+  const delayMs = opts.delayMs ?? UPDATE_CHECK_DELAY_MS;
+  const sleep =
+    opts.sleep ??
+    ((ms: number): Promise<void> => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const report =
+    opts.report ??
+    ((message: string): void => {
+      // eslint-disable-next-line no-console
+      console.error(message);
+    });
+  try {
+    await sleep(delayMs);
+    const info = await (opts.check ?? (() => checkForUpdate()))();
+    if (info.updateAvailable && !info.error) {
+      report(
+        `[zelari-code] 🆕 v${info.latestVersion} available (current: v${info.currentVersion}). ` +
+          `Run \`zelari-code\` then \`/update --yes\` to upgrade.`,
+      );
+    }
+  } catch {
+    // Swallow — network failures, malformed responses, etc.
+    // The CLI is fully usable without update awareness.
+  }
+}
+
+/**
  * Spawn `npm install -g <package>@<channel>` (channel defaults to the
  * running version's dist-tag) and stream output.
  * Injectable `executor` for tests.

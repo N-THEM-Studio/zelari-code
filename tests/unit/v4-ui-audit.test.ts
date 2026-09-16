@@ -97,7 +97,12 @@ describe('React.memo wrapping (v0.7.0 components)', () => {
     expect(typeof LiveRegion).toBe('function');
   });
 
-  it('StatusBar is a valid React element factory', () => {
-    expect(typeof StatusBar).toBe('function');
+  it('StatusBar is memoized and a valid React element factory', () => {
+    // v2.33 (slice 5 of the 2026-09-15 input-lag diagnosis): the status line is
+    // wrapped in React.memo with a chip-aware comparator, so the factory is a
+    // memo object instead of a bare function — still a valid component either
+    // way (see src/cli/components/StatusBar.tsx, statusBarPropsEqual).
+    expect(typeof StatusBar).toBe('object');
+    expect(StatusBar.$$typeof).toBe(memoType);
   });
 });

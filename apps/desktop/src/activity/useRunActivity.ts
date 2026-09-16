@@ -25,10 +25,22 @@
  * A new mission in the SAME conversation (agent_spawned with a different
  * runId) starts from an empty tree, so finished agents from the previous
  * run never bleed into the new one.
+ *
+ * SLICE7(run-activity-batching): the tree is PAINTED through the shared
+ * coalescing holder (`useBatchedState`) instead of a plain `useState`.
+ *
+ * Why: `agent-event` is the busiest stream of a Kraken run (spawns, status
+ * ticks, tool starts/ends) and App consumes this same hook, so every single
+ * event used to commit the whole ~4000-line app. The module store below still
+ * reduces EVERY event, in arrival order — batching changes the paint, never
+ * the data: the queue replays each update against the accumulated value, so a
+ * flush (window elapse, or `flushSidecarBatches()` at message/run boundaries
+ * in App) lands the complete tree, byte-identical to the un-batched sequence.
  */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { onAgentEvent } from "../agentClient";
 import { readRunEnvelope } from "../runs/types";
+import { useBatchedState } from "../hooks/useSidecarBatch";
 import { activityReducer, emptyActivityState, type ActivityAction } from "./reducer";
 import type { RunActivityState } from "./types";
 
@@ -56,10 +68,26 @@ export function clearActivityStoreForTests(): void {
   activityStore.clear();
 }
 
+/** Test-only: the accumulated (un-painted) tree for a conversation. */
+export function readActivityStoreForTests(
+  conversationId: string,
+): RunActivityState | undefined {
+  return activityStore.get(conversationId);
+}
+
 export function useRunActivity(opts?: UseRunActivityOptions) {
   const convKey = opts?.conversationId ?? "";
-  const [state, setState] = useState<RunActivityState>(() =>
-    activityStore.get(convKey) ?? emptyActivityState(),
+  /**
+   * Batched paint (see the module header). The shared window
+   * (SIDECAR_BATCH_MS, leading-edge throttle) keeps the tree ~180ms fresh —
+   * far under the 1s ticker the panel already uses for elapsed durations — and
+   * never starves a continuous stream. Panel visibility is deliberately NOT a
+   * gate: App consumes this same hook for the open trace panel's live row, so
+   * an "only while visible" mode would leave that row behind. The store keeps
+   * accumulating per event regardless of what is painted.
+   */
+  const [state, enqueue, flush] = useBatchedState<RunActivityState>(
+    () => activityStore.get(convKey) ?? emptyActivityState(),
   );
 
   // Latest-ref: the Tauri subscription is created once; routing always
@@ -69,10 +97,13 @@ export function useRunActivity(opts?: UseRunActivityOptions) {
   optsRef.current = opts;
 
   // Follow conversation switches: hydrate the accumulated tree (titles,
-  // statuses, tools) instead of restarting from an empty skeleton.
+  // statuses, tools) instead of restarting from an empty skeleton. Flushed in
+  // the same tick — a switch is navigation, not a background tick, so it must
+  // never wait for the batching window.
   useEffect(() => {
-    setState(activityStore.get(convKey) ?? emptyActivityState());
-  }, [convKey]);
+    enqueue(activityStore.get(convKey) ?? emptyActivityState());
+    flush();
+  }, [convKey, enqueue, flush]);
 
   useEffect(() => {
     let disposed = false;
@@ -100,7 +131,9 @@ export function useRunActivity(opts?: UseRunActivityOptions) {
       activityStore.set(target, next);
       // Paint rule: a panel paints its own conversation only; a background
       // conversation keeps accumulating in the store (see module header).
-      if (target === o?.conversationId) setState(next);
+      // Batched: many events inside one window = one App commit; App forces
+      // the pending batch out at message/run boundaries.
+      if (target === o?.conversationId) enqueue(next);
     })
       .then((fn) => {
         if (disposed) fn();
