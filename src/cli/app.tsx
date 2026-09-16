@@ -20,27 +20,10 @@ import { shortenCwd } from './utils/paths.js';
 import { formatTodoStatusSummary } from './sessionTodos.js';
 import { formatKrakenLiveSummary } from './tools/krakenLive.js';
 import { getVerifyChip, permissionsChip } from './kraken/verifyStatus.js';
-// v2.32 (S4): jail honesty chip — visible advisory when no backend exists.
-import { activeJailMode, probeJailBackend } from './safety/osJail.js';
-
-/**
- * Jail chip for the StatusBar (v2.32 S4): "jail: on (bwrap)" when a real
- * backend is active AND required, "jail: advisory (win32)" when execution is
- * a VISIBLE fail-open on a platform with no honest backend. ZELARI_OS_JAIL=off
- * hides the chip (explicit opt-out, stated in the docs). Probe is memoized
- * per platform inside osJail, so this is cheap on re-render.
- */
-function jailStatusChip(): { label: string; tone: 'green' | 'yellow' } | null {
-  const mode = activeJailMode();
-  if (mode === 'off') return null;
-  const probe = probeJailBackend();
-  if (!probe.available) {
-    return { label: `jail: advisory (${probe.backend})`, tone: 'yellow' };
-  }
-  return mode === 'required'
-    ? { label: `jail: on (${probe.backend})`, tone: 'green' }
-    : { label: `jail: advisory (${probe.backend})`, tone: 'yellow' };
-}
+// v2.33 (slice 5): the jail honesty chip is resolved ONCE per env/platform
+// (components/statusChips) — the TUI no longer probes the backend on a paint.
+import { cachedJailStatusChip } from './components/statusChips.js';
+import { createInputDraftStore } from './components/inputDraft.js';
 import { formatKrakenGraphSummary } from './kraken/graphStatus.js';
 import '@zelari/core/skills/builtin/debugging';
 import '@zelari/core/skills/builtin/docs';
@@ -102,7 +85,13 @@ const providerDefaults: Record<string, string> = {
  * (useSession, useChatTurn, useSlashDispatch).
  */
 export function App(): React.ReactElement {
-  const [input, setInput] = useState('');
+  // v2.33 (slice 5): the prompt draft is NOT App state. It lives in a store
+  // owned here and consumed by <InputBar> (see components/inputDraft.ts), so a
+  // keystroke re-renders the input bar alone — not Static / LiveRegion /
+  // StatusBar / Sidebar. `setInput` keeps the exact signature the slash
+  // pipeline already uses (clearing the prompt after a command).
+  const [inputDraft] = useState(() => createInputDraftStore());
+  const setInput = useCallback((value: string) => inputDraft.set(value), [inputDraft]);
   const [busy, setBusy] = useState(false);
   const [providerConfig, setProviderConfig] = useState(() => getProviderConfig());
   const [sessionStats, setSessionStats] = useState({
@@ -146,7 +135,6 @@ export function App(): React.ReactElement {
   // through the existing picker. No-op when the env var is unset.
   usePermissionBroker({ setPicker, setMessages: session.setMessages });
   const size = useTerminalSize();
-  const gitChanges = useGitChanges();
   const cwd = useMemo(() => shortenCwd(process.cwd(), 32), []);
   // v0.7.9: execution timer — elapsed time of the in-flight turn (shown in
   // the StatusBar as `⏱ 12s`, then frozen as `last 34s` when the run ends).
@@ -298,6 +286,13 @@ export function App(): React.ReactElement {
     setSidebarOpen((prev) => sidebarVisibility(size.columns, size.rows, prev));
   }, [size.columns, size.rows]);
 
+  // v2.34 (slice 7): the sidebar is the only reader of the git snapshot, so the
+  // 4s poll stays hot only while that panel is on screen or a turn is in flight
+  // (files are moving); otherwise it idles down to 20s instead of spawning four
+  // `git` processes a minute forever. `hot` also forces an immediate refresh on
+  // the flip, so opening the sidebar never shows a stale chip.
+  const gitChanges = useGitChanges({ hot: busy || sidebarOpen });
+
   // The Static feed: banner first, then finalized messages. `key` lets /clear
   // remount Static so its internal "already printed" index resets. clearEpoch
   // is composed in so /clear forces a remount even within the same session.
@@ -352,8 +347,7 @@ export function App(): React.ReactElement {
             />
           ) : (
             <InputBar
-              value={input}
-              onChange={setInput}
+              draft={inputDraft}
               onSubmit={handleSubmit}
               disabled={busy}
             />
@@ -380,7 +374,7 @@ export function App(): React.ReactElement {
             krakenGraph={formatKrakenGraphSummary() ?? undefined}
             verify={getVerifyChip() ?? undefined}
             permissions={permissionsChip(phase)}
-            jail={jailStatusChip()}
+            jail={cachedJailStatusChip()}
           />
         </Box>
         {sidebarOpen && (

@@ -11,7 +11,7 @@ export type LegacyChatModeAlias = 'agent';
 
 export type WorkPhaseLabel = 'plan' | 'build';
 
-interface StatusBarProps {
+export interface StatusBarProps {
   model: string;
   provider: string;
   sessionId: string;
@@ -79,7 +79,7 @@ interface StatusBarProps {
  * region as short as possible. A single status line + the input bar + the
  * streaming tail is always well under a screen, so no full repaint.
  */
-export function StatusBar({
+function StatusBarImpl({
   model,
   provider,
   sessionId,
@@ -229,3 +229,54 @@ export function StatusBar({
     </Box>
   );
 }
+
+/**
+ * Chip props are plain `{label, tone}` objects recreated on every App render,
+ * so prop IDENTITY is not the contract — the visible chip is. Comparing the
+ * fields keeps `<StatusBar>` from repainting when (and only when) nothing on
+ * the bar actually changed.
+ */
+export function statusChipPropsEqual(
+  prev: { label: string; tone: string } | null | undefined,
+  next: { label: string; tone: string } | null | undefined,
+): boolean {
+  if (prev === next) return true;
+  if (!prev || !next) return false;
+  return prev.label === next.label && prev.tone === next.tone;
+}
+
+/**
+ * Memo comparator — the whole bar is a pure function of its props, so equal
+ * props mean a skipped repaint. During a run App re-renders up to ~30×/s
+ * (streaming deltas + timer); the status line and its chips only re-render
+ * when something shown on it really moved (diagnosi 2026-09-15, slice 5).
+ */
+export function statusBarPropsEqual(prev: StatusBarProps, next: StatusBarProps): boolean {
+  return (
+    prev.model === next.model &&
+    prev.provider === next.provider &&
+    prev.sessionId === next.sessionId &&
+    prev.sessionActive === next.sessionActive &&
+    prev.queueCount === next.queueCount &&
+    prev.busy === next.busy &&
+    prev.mode === next.mode &&
+    prev.phase === next.phase &&
+    prev.cwd === next.cwd &&
+    prev.elapsedMs === next.elapsedMs &&
+    prev.lastMs === next.lastMs &&
+    prev.costUsd === next.costUsd &&
+    prev.cachedTokens === next.cachedTokens &&
+    prev.cacheHitRate === next.cacheHitRate &&
+    prev.contextUsed === next.contextUsed &&
+    prev.contextLimit === next.contextLimit &&
+    prev.todoSummary === next.todoSummary &&
+    prev.krakenLive === next.krakenLive &&
+    prev.krakenGraph === next.krakenGraph &&
+    statusChipPropsEqual(prev.verify, next.verify) &&
+    statusChipPropsEqual(prev.permissions, next.permissions) &&
+    statusChipPropsEqual(prev.jail, next.jail)
+  );
+}
+
+export const StatusBar = React.memo(StatusBarImpl, statusBarPropsEqual);
+

@@ -1,10 +1,16 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
+import { useInputDraft, type InputDraftStore } from './inputDraft.js';
 
-interface InputBarProps {
-  value: string;
-  onChange: (value: string) => void;
+export interface InputBarProps {
+  /**
+   * Prompt draft store. The draft is NOT a prop value: a keystroke writes the
+   * store and re-renders ONLY this bar, never the app tree around it
+   * (diagnosi 2026-09-15, slice 5). `App` writes the same store to clear the
+   * prompt after a submit/slash command.
+   */
+  draft: InputDraftStore;
   onSubmit: (value: string) => void;
   disabled?: boolean;
 }
@@ -12,35 +18,28 @@ interface InputBarProps {
 /**
  * Input bar — the user prompt editor at the bottom of the TUI.
  *
- * Performance: React.memo with custom comparator. `onChange` and `onSubmit`
- * are arrow functions created in App's render (line 2183-2185) which would
- * defeat React.memo's default shallow equal. The custom comparator ignores
- * those function identities — the InputBar re-renders only when value or
- * disabled actually change. This stops the input cursor from being reset on
- * every streaming token delta from the LLM (visible jitter on the bottom
- * row of the terminal).
+ * Performance: React.memo with an explicit comparator over the two props that
+ * actually change the painted bar (`draft` identity + `disabled`). `onSubmit`
+ * is a fresh closure on every App render, so its identity is deliberately
+ * ignored; the latest one is mirrored through a ref and read at call time
+ * (v0.4.3 audit fix: a stale closure would route /submit with pre-stream
+ * values of messages/sessionId). The cursor therefore survives streaming
+ * token deltas — nothing re-renders this bar unless the draft or the disabled
+ * state really changed.
  */
-function InputBarImpl({ value, onChange, onSubmit, disabled }: InputBarProps): React.ReactElement {
-  // The App-level React.memo comparator intentionally ignores onChange/onSubmit
-  // identity changes (those are fresh closures every App render). To still
-  // pick up the latest closures inside the (sometimes-skipped) memo'd
-  // render, mirror them through refs that are always read at call-time.
-  // v0.4.3 audit fix: without this, typing a long prompt while the parent
-  // re-renders (e.g. on streaming tokens) would route /submit through a
-  // stale closure capturing pre-stream values of messages/sessionId/etc.
+function InputBarImpl({ draft, onSubmit, disabled }: InputBarProps): React.ReactElement {
+  const value = useInputDraft(draft);
+
   const onSubmitRef = React.useRef(onSubmit);
-  const onChangeRef = React.useRef(onChange);
   onSubmitRef.current = onSubmit;
-  onChangeRef.current = onChange;
   const stableSubmit = React.useCallback((v: string) => onSubmitRef.current(v), []);
-  const stableChange = React.useCallback((v: string) => onChangeRef.current(v), []);
 
   return (
     <Box borderStyle="single" borderColor="gray" paddingX={1}>
       <Text color="cyan" bold>❯ </Text>
       <TextInput
         value={value}
-        onChange={stableChange}
+        onChange={draft.set}
         onSubmit={stableSubmit}
         placeholder={disabled ? '...' : 'Prompt, /skills, or @path'}
       />
@@ -48,12 +47,9 @@ function InputBarImpl({ value, onChange, onSubmit, disabled }: InputBarProps): R
   );
 }
 
-export const InputBar = React.memo(InputBarImpl, (prev, next) => {
-  return (
-    prev.value === next.value &&
-    prev.disabled === next.disabled
-    // onChange/onSubmit identity changes ignored: App passes fresh arrows each
-    // render. The TextInput handles its own internal state; re-binding to the
-    // new closures is safe.
-  );
-});
+/** Explicit comparator — exported so the contract is pinned by a test. */
+export function inputBarPropsEqual(prev: InputBarProps, next: InputBarProps): boolean {
+  return prev.draft === next.draft && prev.disabled === next.disabled;
+}
+
+export const InputBar = React.memo(InputBarImpl, inputBarPropsEqual);
