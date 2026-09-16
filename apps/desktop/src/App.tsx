@@ -25,8 +25,10 @@ import {
   setAppConfig,
   summarizeToolArgs,
 } from "./agentClient";
-import { PermissionCard } from "./components/PermissionCard";
-import { ClarificationCard } from "./components/ClarificationCard";
+import {
+  ChatTranscript,
+  type PermissionDecision,
+} from "./components/ChatTranscript";
 import {
   applyAskUserSettled,
   applyPermissionSettled,
@@ -34,11 +36,8 @@ import {
   permissionAskFromEvent,
 } from "./inChatAsk";
 import { loadConversations, saveConversations } from "./chatStorage";
-import { cleanAssistantContent } from "./exportSession";
-import { MessageContent } from "./components/MessageContent";
-import { CopyButton } from "./components/CopyButton";
-import { ComposerToolbar } from "./components/ComposerToolbar";
-import { hasGauntletLoop, stripGauntletLoop } from "./gauntletLoop";
+import { ChatComposer, type ChatComposerHandle } from "./components/ChatComposer";
+import { stripGauntletLoop } from "./gauntletLoop";
 import {
   controlEvent,
   sendControl,
@@ -90,7 +89,6 @@ import {
 import { LiveTasksPanel } from "./components/LiveTasksPanel";
 import { parseTodosFromUnknown } from "./sessionTodosUi";
 import { extractImagePathsFromToolResult } from "./toolImages";
-import { ChatImageCard } from "./components/ChatImageCard";
 import {
   SESSION_FOLDERS_STORAGE_KEY,
   loadCollapsedSet,
@@ -123,7 +121,6 @@ import {
   unseenResultsByConversation,
   useRunCoordinator,
 } from "./runs";
-import { ReplyAccordion } from "./components/ReplyAccordion";
 import { TentacleTracePanel } from "./components/TentacleTracePanel";
 import { RunsDashboard } from "./components/RunsDashboard";
 import { RunsTrigger } from "./components/RunsTrigger";
@@ -135,11 +132,6 @@ import { ProjectPanel } from "./components/ProjectPanel";
 import { CliSetupGuide } from "./components/CliSetupGuide";
 import { DoctorGate } from "./components/DoctorGate";
 import { TitleBar } from "./components/TitleBar";
-import {
-  MentionPopup,
-  applyMentionInsert,
-  detectMentionQuery,
-} from "./components/MentionPopup";
 import {
   SkillPicker,
   expandDesktopSkill,
@@ -168,9 +160,33 @@ import type {
 } from "./types";
 import { checkForDesktopUpdate } from "./updater";
 import { useSpeechToText } from "./hooks/useSpeechToText";
+import {
+  flushSidecarBatches,
+  useBatchedState,
+} from "./hooks/useSidecarBatch";
 import { applyBaffettiTheme } from "./theme/baffetti";
 import "./App.css";
 import "./theme/baffetti.css";
+
+/**
+ * SLICE1(composer-isolation): stable identity for a render-scoped handler.
+ *
+ * ChatComposer is wrapped in `React.memo`, but App re-creates several of the
+ * handlers it hands down on every render (plain `function` declarations, e.g.
+ * `onStop` or the pill handlers). Passing those directly would change a prop
+ * identity on every App render — including every streaming delta — and defeat
+ * the memo. The wrapper keeps one identity for the lifetime of the component
+ * and always calls the latest closure.
+ */
+function useStableHandler<A extends unknown[]>(
+  fn: (...args: A) => unknown,
+): (...args: A) => void {
+  const ref = useRef(fn);
+  ref.current = fn;
+  return useCallback((...args: A) => {
+    void ref.current(...args);
+  }, []);
+}
 
 const SUGGESTIONS = [
   "Explain the architecture of this repo in plain language",
@@ -546,9 +562,10 @@ export default function App() {
   const [activeId, setActiveId] = useState(
     () => conversations.find((c) => !c.archived)?.id ?? conversations[0].id,
   );
-  const [draft, setDraft] = useState("");
-  const draftRef = useRef("");
-  draftRef.current = draft;
+  // SLICE1(composer-isolation): the draft no longer lives here. ChatComposer
+  // owns the text (and the @-mention state); App reads/prefills/clears it
+  // through this handle, so a keystroke re-renders the capsule only.
+  const composerRef = useRef<ChatComposerHandle | null>(null);
   /** Sidebar width: draggable, persisted; default is 20% narrower (2.35). */
   const [sidebarW, setSidebarW] = useState<number>(() => {
     try {
@@ -604,21 +621,29 @@ export default function App() {
       /* ignore */
     }
   };
-  /** Per-conversation live run UI (M2 multiplexing), keyed by conversation. */
-  const [liveToolLabelByConv, setLiveToolLabelByConv] = useState<
+  /**
+   * SLICE3(sidecar-batching): these five slices are written by the sidecar
+   * event burst and only READ by the render body (the tool carousel, the
+   * kraken/verification/gauntlet cards) — nothing branches on their current
+   * value mid-stream. They go through the coalescing holder so a burst of
+   * tentacle/tool/progress events produces ONE app commit instead of one per
+   * event. `setLiveToolLabelFor` / `setLiveStepsFor` below wrap these setters,
+   * so their call sites inherit the batching untouched.
+   */
+  const [liveToolLabelByConv, setLiveToolLabelByConv] = useBatchedState<
     Record<string, string | null>
   >({});
-  const [liveStepsByConv, setLiveStepsByConv] = useState<
+  const [liveStepsByConv, setLiveStepsByConv] = useBatchedState<
     Record<string, LiveToolStep[]>
   >({});
   /** Kraken selection card (kraken_progress / kraken_metrics), per conv. */
-  const [krakenCardByConv, setKrakenCardByConv] = useState<
+  const [krakenCardByConv, setKrakenCardByConv] = useBatchedState<
     Record<string, KrakenCardState>
   >({});
-  const [verificationByConv, setVerificationByConv] = useState<
+  const [verificationByConv, setVerificationByConv] = useBatchedState<
     Record<string, VerificationCardState>
   >({});
-  const [gauntletByConv, setGauntletByConv] = useState<
+  const [gauntletByConv, setGauntletByConv] = useBatchedState<
     Record<string, GauntletProgressView | undefined>
   >({});
   const [reasoningByConv, setReasoningByConv] = useState<
@@ -724,7 +749,7 @@ export default function App() {
    * arrive on harness-sidecar-log; keep the newest 200 for the collapsible
    * panel rendered at the top of the chat view.
    */
-  const [sidecarLogLines, setSidecarLogLines] = useState<string[]>([]);
+  const [sidecarLogLines, setSidecarLogLines] = useBatchedState<string[]>([]);
   const [sidecarLogOpen, setSidecarLogOpen] = useState(false);
   const sidecarLogPanelRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -785,13 +810,8 @@ export default function App() {
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [dragOver, setDragOver] = useState(false);
   const dragDepthRef = useRef(0);
-  /** @-mention autocomplete (path after @). */
-  const [mention, setMention] = useState<{
-    start: number;
-    query: string;
-  } | null>(null);
-  const [mentionIndex, setMentionIndex] = useState(0);
-  const [mentionHits, setMentionHits] = useState<WorkspaceHit[]>([]);
+  // SLICE1(composer-isolation): `mention`, `mentionIndex` and `mentionHits`
+  // moved INTO ChatComposer — they only ever drove its popover and its caret.
   const [skillPickerOpen, setSkillPickerOpen] = useState(false);
   /** When set, next send expands this skill around the user draft. */
   const [pendingSkill, setPendingSkill] = useState<SkillEntryDto | null>(null);
@@ -828,6 +848,13 @@ export default function App() {
   const phaseRef = useRef(phase);
   modeRef.current = mode;
   phaseRef.current = phase;
+  /**
+   * SLICE4(model-sync): true once the user picked a provider/model IN THIS
+   * SESSION (chat model bar, Settings → Models & Providers, or binding another
+   * conversation). Until then `refreshConfig` may re-align the chat bar with
+   * the CLI config; after an explicit pick it must never clobber it.
+   */
+  const userPickedModelRef = useRef(false);
 
 
   // Persist chats. The ACTIVE conversation is guaranteed a storage slot
@@ -1023,7 +1050,10 @@ export default function App() {
   // a run is live the queue is shown as chips, not dumped into the draft.
   useEffect(() => {
     if (!oldestPendingFollowUp || running) return;
-    setDraft((prev) => (prev.trim() ? prev : oldestPendingFollowUp));
+    // SLICE1(composer-isolation): prefill the capsule through the handle.
+    composerRef.current?.setText((prev) =>
+      prev.trim() ? prev : oldestPendingFollowUp,
+    );
   }, [activeId, oldestPendingFollowUp, running]);
   // Auto-dispatch the oldest follow-up AFTER React applies run-finished.
   // The Tauri handler must not call send() in the same tick: `running` and
@@ -1033,17 +1063,15 @@ export default function App() {
     if (!convId || !autoSendAfterRunRef.current.has(convId)) return;
     if (runCoordinator.isRunning(convId)) return;
     const queued = conversations.find((c) => c.id === convId)?.pendingFollowUps?.[0];
+    // SLICE1(composer-isolation): the live draft comes from the capsule.
+    const draftNow = composerRef.current?.getText() ?? "";
     const text = shouldAutoSendFollowUp({
       queued,
-      draft: draftRef.current,
+      draft: draftNow,
       wasCancelled: false,
     });
     if (!text) {
-      if (
-        queued &&
-        draftRef.current.trim() &&
-        draftRef.current.trim() !== queued.trim()
-      ) {
+      if (queued && draftNow.trim() && draftNow.trim() !== queued.trim()) {
         autoSendAfterRunRef.current.delete(convId);
       }
       return;
@@ -1198,14 +1226,21 @@ export default function App() {
     try {
       const c = await getAppConfig();
       setConfig(c);
-      setProvider((prev) => prev || c.activeProviderId);
-      setModel(
-        (prev) =>
-          prev ||
-          c.modelByProvider[c.activeProviderId] ||
-          c.providers.find((p) => p.id === c.activeProviderId)?.defaultModel ||
-          "",
+      // SLICE4(model-sync): anti-sticky. The old `prev ||` fill kept the very
+      // first value forever — a model changed anywhere else (CLI, Settings →
+      // Models & Providers, another panel writing provider.json) never reached
+      // the chat bar, so chat and Settings disagreed permanently. Now the CLI
+      // config wins UNTIL the user picks something in this session
+      // (`userPickedModelRef`), and an explicit pick still wins over it.
+      const cfgModel =
+        c.modelByProvider[c.activeProviderId] ||
+        c.providers.find((p) => p.id === c.activeProviderId)?.defaultModel ||
+        "";
+      const picked = userPickedModelRef.current;
+      setProvider((prev) =>
+        picked ? prev || c.activeProviderId : c.activeProviderId || prev,
       );
+      setModel((prev) => (picked ? prev || cfgModel : cfgModel || prev));
     } catch (e) {
       setStatusLine(
         errText(e, "Failed to load provider config"),
@@ -1452,9 +1487,26 @@ export default function App() {
   const speech = useSpeechToText({
     disabled: running,
     onFinal: (piece) => {
-      setDraft((prev) => (prev ? `${prev.trimEnd()} ${piece}` : piece));
+      // SLICE1(composer-isolation): final transcript lands in the capsule.
+      composerRef.current?.setText((prev) =>
+        prev ? `${prev.trimEnd()} ${piece}` : piece,
+      );
     },
   });
+
+  // SLICE1(composer-isolation): the capsule takes the wording as a plain
+  // string, so App needs no <textarea> placeholder logic of its own.
+  const composerPlaceholder = speech.listening
+    ? "Listening… speak now"
+    : running
+      ? liveSendMode === "steer" && steerSupported
+        ? "Steer the running agent… (applied at the next tool boundary)"
+        : "Queue a follow-up… (sends when this run ends)"
+      : mode === "zelari"
+        ? "Describe the mission… (@file to tag)"
+        : mode === "council"
+          ? "Ask the council… (@file · Skills ★)"
+          : "Message the agent… (@file to tag paths)";
 
   useEffect(() => {
     const unsubs: Array<() => void> = [];
@@ -1732,7 +1784,10 @@ export default function App() {
               ),
             );
             if (convId === activeIdRef.current) {
-              setDraft((prev) => (prev.trim() ? prev : followUpText));
+              // SLICE1(composer-isolation): prefill only if untouched.
+              composerRef.current?.setText((prev) =>
+                prev.trim() ? prev : followUpText,
+              );
             }
             // Run may already have finished (log vs run-finished ordering).
             // Arm so the idle auto-send effect dispatches instead of parking
@@ -2057,6 +2112,10 @@ export default function App() {
         }
 
         if (ev.type === "message_end" || ev.type === "agent_end") {
+          // SLICE3(sidecar-batching): a message boundary is a natural paint
+          // point — land every pending batched sidecar update in the SAME
+          // commit as the settled row instead of waiting for the window.
+          flushSidecarBatches();
           const aid = turn.assistantId;
           const usage =
             ev.type === "message_end"
@@ -2299,6 +2358,10 @@ export default function App() {
         setLiveToolLabelFor(convId, null);
         setLiveMemberNameFor(convId, null);
         clearToolLabelTimer(convId);
+        // SLICE3(sidecar-batching): the run settled — force the pending batch
+        // so the final live state (cleared label, finished step list) is on
+        // screen with the stats below, never 180ms late.
+        flushSidecarBatches();
         const durationMs = Date.now() - (turn.startedAt || Date.now());
         const tools = turn.toolCount;
         const tokens = turn.tokens;
@@ -2467,7 +2530,8 @@ export default function App() {
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
     setSessionFilter("active");
-    setDraft("");
+    // SLICE1(composer-isolation): a new chat starts with an empty capsule.
+    composerRef.current?.setText("");
     setTextLoopRecovery(false);
     taRef.current?.focus();
   };
@@ -2481,6 +2545,15 @@ export default function App() {
     setPhase(c.phase);
     if (c.provider) setProvider(c.provider);
     if (c.model) setModel(c.model);
+    // SLICE4(model-sync): a conversation carries its own provider/model. Before
+    // this, rebinding another chat changed the bar but left provider.json on
+    // the previous chat's model — so Settings → Agents kept showing the old one
+    // and the CLI spawned the old one. Push the newly active model through the
+    // same writer (fire-and-forget: no await, no UI block).
+    userPickedModelRef.current = true;
+    const nextProvider = c.provider || provider;
+    const nextModel = c.model || model;
+    if (nextModel) void persistChatModel(nextProvider, nextModel);
   };
 
   /** User-facing recovery prompt after assistant_text_loop (keep in sync with core TEXT_LOOP_RECOVERY_USER_PROMPT). */
@@ -2569,7 +2642,36 @@ export default function App() {
     );
   };
 
+  /**
+   * SLICE4(model-sync): chat → CLI config. The single writer for every place
+   * the CHAT model changes (chat model bar, provider switch, conversation
+   * switch). It goes through the SAME sidecar command the Settings panels
+   * already use — `set_app_config` (agentClient's `setAppConfig`) → the
+   * provider.json the CLI reads at spawn time — so no new IPC is invented.
+   * A failing write lands on the status line and never blocks the chat;
+   * Settings → Agents surfaces the drift with a retry.
+   */
+  const persistChatModel = async (
+    nextProvider: string,
+    nextModel: string,
+    what: "provider" | "model" = "model",
+  ): Promise<boolean> => {
+    if (!nextProvider) return false;
+    try {
+      await setAppConfig({
+        provider: nextProvider,
+        ...(nextModel ? { model: nextModel } : {}),
+      });
+      return true;
+    } catch (e) {
+      setStatusLine(errText(e, `Failed to persist ${what}`));
+      return false;
+    }
+  };
+
   const onProviderChange = async (id: string) => {
+    // SLICE4(model-sync): an explicit pick — refreshConfig must not undo it.
+    userPickedModelRef.current = true;
     setProvider(id);
     const p = config?.providers.find((x) => x.id === id);
     const nextModel =
@@ -2580,33 +2682,24 @@ export default function App() {
         c.id === activeId ? { ...c, provider: id, model: nextModel } : c,
       ),
     );
-    try {
-      await setAppConfig({
-        provider: id,
-        ...(nextModel ? { model: nextModel } : {}),
-      });
-      await refreshConfig();
-    } catch (e) {
-      setStatusLine(
-        errText(e, "Failed to persist provider"),
-      );
-    }
+    // SLICE4(model-sync): the provider switch carries its model to
+    // provider.json, exactly like the Settings → Models & Providers picker.
+    if (!(await persistChatModel(id, nextModel, "provider"))) return;
+    await refreshConfig();
   };
 
   const onModelChange = async (id: string) => {
+    // SLICE4(model-sync): an explicit pick — refreshConfig must not undo it.
+    userPickedModelRef.current = true;
     setModel(id);
     setConversations((prev) =>
       prev.map((c) => (c.id === activeId ? { ...c, model: id } : c)),
     );
     if (!provider) return;
-    try {
-      await setAppConfig({ provider, model: id });
-      await refreshConfig();
-    } catch (e) {
-      setStatusLine(
-        errText(e, "Failed to persist model"),
-      );
-    }
+    // SLICE4(model-sync): chat model → provider.json, so the Agents view and
+    // the CLI agree with what the chat bar shows.
+    if (!(await persistChatModel(provider, id))) return;
+    await refreshConfig();
   };
 
   const onThinkingChange = async (spec: string) => {
@@ -2752,41 +2845,9 @@ export default function App() {
     [activeCwd],
   );
 
-  const onPickMention = useCallback(
-    (hit: WorkspaceHit) => {
-      const ta = taRef.current;
-      const caret = ta?.selectionStart ?? draft.length;
-      const det = mention ?? detectMentionQuery(draft, caret);
-      if (!det) return;
-      const { text, caret: nextCaret } = applyMentionInsert(
-        draft,
-        det.start,
-        caret,
-        hit.path,
-      );
-      setDraft(text);
-      setMention(null);
-      void attachWorkspacePath(hit);
-      requestAnimationFrame(() => {
-        const el = taRef.current;
-        if (!el) return;
-        el.focus();
-        el.setSelectionRange(nextCaret, nextCaret);
-      });
-    },
-    [draft, mention, attachWorkspacePath],
-  );
-
-  const onDraftChange = useCallback(
-    (value: string, caret?: number) => {
-      setDraft(value);
-      const c = caret ?? value.length;
-      const det = detectMentionQuery(value, c);
-      setMention(det);
-      if (!det) setMentionIndex(0);
-    },
-    [],
-  );
+  // SLICE1(composer-isolation): `onPickMention` and `onDraftChange` (the
+  // @-mention insert + detection pair) moved into ChatComposer.tsx, together
+  // with the `draft`/`mention` state they read.
 
   const onSelectSkill = useCallback((skill: SkillEntryDto) => {
     setPendingSkill(skill);
@@ -2865,7 +2926,8 @@ export default function App() {
           : c,
       ),
     );
-    setDraft("");
+    // SLICE1(composer-isolation): the capsule clears through the handle.
+    composerRef.current?.setText("");
     setAttachments([]);
     setFollowStream(true);
     followStreamRef.current = true;
@@ -2894,7 +2956,10 @@ export default function App() {
               : c,
           ),
         );
-        setDraft((prev) => (prev.trim() ? prev : trimmed));
+        // SLICE1(composer-isolation): hand the text back to the capsule.
+        composerRef.current?.setText((prev) =>
+          prev.trim() ? prev : trimmed,
+        );
         setStatusLine(
           "Steer not applied — run already finished; text restored to composer",
         );
@@ -2948,14 +3013,26 @@ export default function App() {
       ),
     );
     if (index === 0 && queued) {
-      setDraft((prev) => (prev.trim() === queued.trim() ? "" : prev));
+      // SLICE1(composer-isolation): a chip returning text edits the capsule.
+      composerRef.current?.setText((prev) =>
+        prev.trim() === queued.trim() ? "" : prev,
+      );
     }
   };
 
   const send = async (text?: string, opts?: { resumeMission?: boolean }) => {
     const convId = active.id;
     const turn = turnFor(convId);
-    const fromSpeech = [draft, speech.interim].filter(Boolean).join(" ").trim();
+    // SLICE1(composer-isolation): the text comes from the capsule (its textarea
+    // state) instead of App's old top-level `draft`; a caller that passes an
+    // explicit text (suggestion chip, plan choice, mission resume) still wins.
+    const fromSpeech = [
+      composerRef.current?.getText() ?? "",
+      speech.interim,
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim();
     let base = (text ?? fromSpeech).trim();
     if (!base && attachments.length === 0 && !pendingSkill) return;
     // A dispatched prefilled follow-up (§24/D) leaves the queue: the exact
@@ -3006,14 +3083,15 @@ export default function App() {
             : c,
         ),
       );
-      setDraft("");
+      // SLICE1(composer-isolation): queued follow-up clears the capsule.
+      composerRef.current?.setText("");
       setAttachments([]);
       setStatusLine("Queued follow-up — sends when this run ends");
       return;
     }
     speech.stop();
     setTextLoopRecovery(false);
-    setMention(null);
+    composerRef.current?.clearMention();
 
     if (cli && !cli.ok) {
       setStatusLine(cli.message);
@@ -3039,11 +3117,17 @@ export default function App() {
     setReasoningByConv((prev) => ({ ...prev, [convId]: false }));
     turn.pendingToolNames.clear();
     setLiveMemberNameFor(convId, null);
+    // SLICE3(sidecar-batching): a new turn starts — paint the reset now
+    // instead of letting the previous run's last batch sit in the window.
+    flushSidecarBatches();
     setFollowStream(true);
     followStreamRef.current = true;
     turn.tokens = { prompt: 0, completion: 0, total: 0 };
     turn.startedAt = Date.now();
-    setDraft("");
+    // SLICE1(composer-isolation): the capsule is cleared only HERE — the
+    // `cli.ok` bail-out above deliberately keeps the typed text, exactly the
+    // order the pre-slice `setDraft("")` had.
+    composerRef.current?.setText("");
     setAttachments([]);
     runCoordinator.request(convId, activeCwd ?? undefined);
     setStatusLine(
@@ -3199,6 +3283,80 @@ export default function App() {
     }
   };
 
+  // SLICE1(composer-isolation): ChatComposer is memoised, so every prop it
+  // receives must keep its identity across App renders or the memo is dead.
+  // `send`/`onStop` and the five pill handlers are render-scoped plain
+  // functions (unlike the useCallback helpers around them), so the capsule
+  // gets stable wrappers that always call the latest closure.
+  const onComposerSend = useCallback((text: string) => {
+    void sendRef.current(text);
+  }, []);
+  const onComposerStop = useStableHandler(onStop);
+  const onComposerProviderChange = useStableHandler(onProviderChange);
+  const onComposerModelChange = useStableHandler(onModelChange);
+  const onComposerThinkingChange = useStableHandler(onThinkingChange);
+  const onComposerModeChange = useStableHandler(onModeChange);
+  const onComposerPhaseChange = useStableHandler(onPhaseChange);
+  const onOpenSkillPicker = useCallback(() => setSkillPickerOpen(true), []);
+
+  // SLICE2(transcript-memo): ChatTranscript is memoised and MessageContent
+  // compares its props by value, so the handlers it receives must keep their
+  // identity across App renders (= every streaming delta). `send`, `running`
+  // and `active?.id` are all render-scoped, hence the stable wrappers below:
+  // the decision logic stays in App, the transcript only forwards the events.
+  const onTranscriptClarification = useStableHandler((choice: string) => {
+    if (runningRef.current) return;
+    void sendRef.current(choice);
+  });
+  /** Conversation the transcript belongs to — stable primitive, not App state. */
+  const activeConvId = active?.id;
+  const onTranscriptPermissionDecide = useCallback(
+    (requestId: string, decision: PermissionDecision) => {
+      void (async () => {
+        try {
+          await permissionRespond(requestId, decision);
+        } catch {
+          // Sidecar never saw the answer — leave the card pending (CLI
+          // deny-timeout is authority).
+          return;
+        }
+        if (!activeConvId) return;
+        setConversations((prev) =>
+          prev.map((c) =>
+            c.id === activeConvId
+              ? {
+                  ...c,
+                  messages: applyPermissionSettled(
+                    c.messages,
+                    requestId,
+                    decision,
+                  ),
+                }
+              : c,
+          ),
+        );
+      })();
+    },
+    [activeConvId],
+  );
+  const onTranscriptAskUserChoose = useCallback(
+    (requestId: string, choice: string) => {
+      void askUserRespond(requestId, choice);
+      if (!activeConvId) return;
+      setConversations((prev) =>
+        prev.map((c) =>
+          c.id === activeConvId
+            ? {
+                ...c,
+                messages: applyAskUserSettled(c.messages, requestId, choice),
+              }
+            : c,
+        ),
+      );
+    },
+    [activeConvId],
+  );
+
   // Global shortcuts — use e.code (layout-stable). Ctrl+Shift+M is stolen by
   // Chromium/WebView2 (device mode), so mode cycles with Ctrl+Shift+D.
   useEffect(() => {
@@ -3223,7 +3381,8 @@ export default function App() {
         setConversations((prev) => [c, ...prev]);
         setActiveId(c.id);
         setSessionFilter("active");
-        setDraft("");
+        // SLICE1(composer-isolation): Ctrl+N starts with an empty capsule.
+        composerRef.current?.setText("");
         taRef.current?.focus();
         return;
       }
@@ -3262,43 +3421,9 @@ export default function App() {
     // provider/model only for new-chat defaults
   }, [provider, model]);
 
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (mention) {
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setMention(null);
-        return;
-      }
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setMentionIndex((i) =>
-          mentionHits.length ? (i + 1) % mentionHits.length : 0,
-        );
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setMentionIndex((i) =>
-          mentionHits.length
-            ? (i - 1 + mentionHits.length) % mentionHits.length
-            : 0,
-        );
-        return;
-      }
-      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
-        const hit = mentionHits[mentionIndex];
-        if (hit) {
-          e.preventDefault();
-          onPickMention(hit);
-          return;
-        }
-      }
-    }
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      void send();
-    }
-  };
+  // SLICE1(composer-isolation): the textarea key handling — @-mention
+  // navigation (Escape/Arrow/Tab) and Enter-to-send — moved into ChatComposer
+  // together with the `mention`/`mentionHits`/`mentionIndex` state it reads.
 
   const pickFolder = async () => {
     try {
@@ -3324,7 +3449,8 @@ export default function App() {
         setConversations(plan.conversations);
         if (plan.nextActiveId !== activeIdRef.current) {
           setActiveId(plan.nextActiveId);
-          setDraft("");
+          // SLICE1(composer-isolation): a folder switch starts clean.
+          composerRef.current?.setText("");
         }
         setStatusLine(
           plan.reboundInPlace
@@ -3382,9 +3508,24 @@ export default function App() {
               setPhase(nextPhase);
             }}
             onProviderModelChange={(nextProvider, nextModel) => {
+              // SLICE4(model-sync): Settings → Models & Providers wrote
+              // provider.json already (ProviderSection), so this is the chat
+              // side of the same change: mark it as an explicit pick so
+              // refreshConfig does not revert it, and carry it onto the ACTIVE
+              // conversation so re-opening that chat in the sidebar cannot
+              // resurrect the old model.
+              userPickedModelRef.current = true;
               setProvider(nextProvider);
               setModel(nextModel);
+              setConversations((prev) =>
+                prev.map((c) =>
+                  c.id === activeId
+                    ? { ...c, provider: nextProvider, model: nextModel }
+                    : c,
+                ),
+              );
             }}
+            activeChatModel={model}
             onPrefsChange={(partial) => {
               setPrefs((prev) => patchDesktopPrefs(prev, partial));
               if (partial.gauntletLoop === true) setKrakenGraph(false);
@@ -3547,7 +3688,12 @@ export default function App() {
               className="sidecar-log-toggle"
               aria-expanded={sidecarLogOpen}
               title="Backend CLI stderr (harness sidecar)"
-              onClick={() => setSidecarLogOpen((v) => !v)}
+              onClick={() => {
+            // SLICE3(sidecar-batching): the diagnostics panel renders the
+            // buffered stderr ring — land the pending batch before it opens.
+            flushSidecarBatches();
+            setSidecarLogOpen((v) => !v);
+          }}
             >
               <span aria-hidden>▣</span> Sidecar log
               {sidecarLogLines.length > 0 ? (
@@ -3645,169 +3791,18 @@ export default function App() {
               </div>
             ) : (
               <div className="chat-inner">
-                {messages
-                  .filter((m) => {
-                    if (m.role === "tool") return false;
-                    // Hide legacy bootstrap noise already stored in chat history
-                    if (m.role === "system") {
-                      const t = m.content.trim();
-                      if (/^\[headless\]\s*mode=/i.test(t)) return false;
-                      if (/^\[headless\]\s*MCP tools\s*:/i.test(t)) return false;
-                    }
-                    return true;
-                  })
-                  .map((m) =>
-                    m.role === "assistant" && m.imagePaths?.length ? (
-                      <ChatImageCard
-                        key={m.id}
-                        paths={m.imagePaths}
-                        caption="Screenshot"
-                      />
-                    ) : m.role === "assistant" ? (
-                      <div
-                        key={m.id}
-                        className={`message assistant msg-fade${m.streaming ? " is-streaming" : ""}`}
-                      >
-                        <ReplyAccordion
-                          title={m.memberName || "Zelari"}
-                          badge={m.memberName ? "council" : undefined}
-                          streaming={m.streaming}
-                          defaultOpen
-                          stats={m.stats}
-                          onCopy={() => cleanAssistantContent(m.content)}
-                        >
-                          <MessageContent
-                            content={m.content}
-                            streaming={m.streaming}
-                            thinking={m.meta === "thinking"}
-                            showThinking={
-                              m.streaming &&
-                              m.meta === "thinking" &&
-                              !m.content.trim()
-                            }
-                            clarificationDisabled={running}
-                            onClarificationChoose={(choice) => {
-                              if (running) return;
-                              void send(choice);
-                            }}
-                          />
-                        </ReplyAccordion>
-                      </div>
-                    ) : (
-                      <div
-                        key={m.id}
-                        className={`message ${m.role}${m.steer ? " is-steer" : ""}`}
-                      >
-                        {m.role === "user" ? (
-                          <>
-                            <div className="bubble user-bubble">
-                              {m.steer ? (
-                                <span className={`steer-state ${m.steer.state}`}>
-                                  {m.steer.state === "sent"
-                                    ? "steering…"
-                                    : m.steer.state === "accepted"
-                                      ? "queued · applies at turn end"
-                                      : m.steer.state === "applied"
-                                        ? "applied ✓"
-                                        : m.steer.state === "not_applied"
-                                          ? "not applied — run finished"
-                                          : "rejected ✗"}
-                                </span>
-                              ) : null}
-                              {hasGauntletLoop(m.content) ? (
-                                <>
-                                  <span className="gauntlet-badge">Gauntlet</span>
-                                  {stripGauntletLoop(m.content) ||
-                                    "Gauntlet Loop"}
-                                </>
-                              ) : (
-                                m.content
-                              )}
-                            </div>
-                            <div className="bubble-actions">
-                              <CopyButton
-                                getText={() => m.content}
-                                title="Copy message"
-                              />
-                            </div>
-                          </>
-                        ) : m.permissionAsk ? (
-                          <PermissionCard
-                            ask={m.permissionAsk}
-                            disabled={m.permissionAsk.status !== "pending"}
-                            onDecide={(decision) => {
-                              const requestId = m.permissionAsk!.requestId;
-                              const conv = active?.id;
-                              void (async () => {
-                                try {
-                                  await permissionRespond(requestId, decision);
-                                } catch {
-                                  // Sidecar never saw the answer — leave the
-                                  // card pending (CLI deny-timeout is authority).
-                                  return;
-                                }
-                                if (!conv) return;
-                                setConversations((prev) =>
-                                  prev.map((c) =>
-                                    c.id === conv
-                                      ? {
-                                          ...c,
-                                          messages: applyPermissionSettled(
-                                            c.messages,
-                                            requestId,
-                                            decision,
-                                          ),
-                                        }
-                                      : c,
-                                  ),
-                                );
-                              })();
-                            }}
-                          />
-                        ) : m.askUserAsk ? (
-                          m.askUserAsk.status === "pending" ? (
-                            <ClarificationCard
-                              request={{
-                                question: m.askUserAsk.question,
-                                choices: m.askUserAsk.choices,
-                                context: m.askUserAsk.context,
-                              }}
-                              onChoose={(choice) => {
-                                void askUserRespond(
-                                  m.askUserAsk!.requestId,
-                                  choice,
-                                );
-                                const conv = active?.id;
-                                if (!conv) return;
-                                setConversations((prev) =>
-                                  prev.map((c) =>
-                                    c.id === conv
-                                      ? {
-                                          ...c,
-                                          messages: applyAskUserSettled(
-                                            c.messages,
-                                            m.askUserAsk!.requestId,
-                                            choice,
-                                          ),
-                                        }
-                                      : c,
-                                  ),
-                                );
-                              }}
-                            />
-                          ) : (
-                            <div className="bubble system-bubble">
-                              {m.askUserAsk.status === "timeout"
-                                ? "No answer — continuing with a documented assumption."
-                                : `Answered: ${m.askUserAsk.answer ?? ""}`}
-                            </div>
-                          )
-                        ) : (
-                          <div className="bubble system-bubble">{m.content}</div>
-                        )}
-                      </div>
-                    ),
-                  )}
+                {/* SLICE2(transcript-memo): the per-message map moved into
+                    the memoised ChatTranscript, so a render that only changed
+                    App state (or a delta for the last message) no longer
+                    re-parses every reply. It renders a fragment: the live run
+                    widgets below stay siblings inside .chat-inner. */}
+                <ChatTranscript
+                  messages={messages}
+                  running={running}
+                  onClarificationChoose={onTranscriptClarification}
+                  onPermissionDecide={onTranscriptPermissionDecide}
+                  onAskUserChoose={onTranscriptAskUserChoose}
+                />
                 {running && (
                   <RunActivity
                     running={running}
@@ -3969,247 +3964,48 @@ export default function App() {
             </div>
           )}
           <div className="composer-stack">
-          {mention && (
-            <MentionPopup
-              cwd={activeCwd}
-              query={mention.query}
-              open
-              onPick={onPickMention}
-              onClose={() => setMention(null)}
-              activeIndex={mentionIndex}
-              onActiveIndexChange={setMentionIndex}
-              onHitsChange={setMentionHits}
-            />
-          )}
-          <div
-            className={`composer glass-capsule${speech.listening ? " is-listening" : ""}`}
-          >
-            <button
-              type="button"
-              className="btn-skill-pick"
-              title="Attach files (any folder)"
-              aria-label="Attach files"
-              onClick={() => void onPickExternalFiles()}
-            >
-              <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden>
-                <path
-                  fill="currentColor"
-                  d="M16.5 6.5v10a4.5 4.5 0 1 1-9 0V7a3 3 0 1 1 6 0v9.5a1.5 1.5 0 1 1-3 0V8H12v8.5a3 3 0 1 0 6 0V6.5a4.5 4.5 0 1 0-9 0V16a6 6 0 1 0 12 0V7h-1.5z"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className="btn-skill-pick"
-              title="List & select a skill"
-              aria-label="Skills"
-              disabled={running}
-              onClick={() => setSkillPickerOpen(true)}
-            >
-              <svg viewBox="0 0 24 24" width="17" height="17" aria-hidden>
-                <path
-                  fill="currentColor"
-                  d="M12 2l2.4 7.2H22l-6 4.4 2.3 7.2L12 16.8 5.7 20.8 8 13.6 2 9.2h7.6L12 2z"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              className={`btn-mic${speech.listening ? " is-on" : ""}${!speech.speechOk ? " is-unavailable" : ""}`}
-              title={
-                !speech.speechOk
-                  ? "Speech recognition not available in this WebView"
-                  : speech.listening
-                    ? "Stop listening"
-                    : "Speech to text"
-              }
-              aria-label="Speech to text"
-              aria-pressed={speech.listening}
-              disabled={!speech.speechOk || running}
-              onClick={() => speech.toggle()}
-            >
-              {speech.listening ? (
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
-                  <path
-                    fill="currentColor"
-                    d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"
-                  />
-                </svg>
-              ) : (
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden>
-                  <path
-                    fill="currentColor"
-                    d="M12 14a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v5a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"
-                  />
-                </svg>
-              )}
-            </button>
-            <div className="composer-input-wrap">
-              <textarea
-                ref={taRef}
-                value={draft}
-                onChange={(e) => {
-                  const el = e.target;
-                  onDraftChange(el.value, el.selectionStart ?? el.value.length);
-                }}
-                onClick={(e) => {
-                  const el = e.currentTarget;
-                  onDraftChange(el.value, el.selectionStart ?? el.value.length);
-                }}
-                onKeyUp={(e) => {
-                  const el = e.currentTarget;
-                  if (
-                    e.key === "ArrowLeft" ||
-                    e.key === "ArrowRight" ||
-                    e.key === "Home" ||
-                    e.key === "End"
-                  ) {
-                    onDraftChange(
-                      el.value,
-                      el.selectionStart ?? el.value.length,
-                    );
-                  }
-                }}
-                onKeyDown={onKeyDown}
-                placeholder={
-                  speech.listening
-                    ? "Listening… speak now"
-                    : running
-                      ? liveSendMode === "steer" && steerSupported
-                        ? "Steer the running agent… (applied at the next tool boundary)"
-                        : "Queue a follow-up… (sends when this run ends)"
-                      : mode === "zelari"
-                      ? "Describe the mission… (@file to tag)"
-                      : mode === "council"
-                        ? "Ask the council… (@file · Skills ★)"
-                        : "Message the agent… (@file to tag paths)"
-                }
-                rows={1}
-              />
-              {speech.interim ? (
-                <div className="speech-interim" aria-live="polite">
-                  {speech.interim}
-                </div>
-              ) : null}
-              {speech.error ? (
-                <div className="speech-error" role="status">
-                  {speech.error}
-                </div>
-              ) : null}
-            </div>
-            {/* grok-round: pills bottom-left, send bottom-right, both on the
-                row under the input (CSS grid in App.css — no wrapper needed here). */}
-            <ComposerToolbar
-              config={config}
-              provider={provider}
-              model={model}
-              disabled={running}
-              onProviderChange={onProviderChange}
-              onModelChange={onModelChange}
-              onThinkingChange={onThinkingChange}
-              onConfigRefresh={setConfig}
-              onStatus={setStatusLine}
-              permissionPreset={prefs.permissionPreset}
-              onPermissionPresetChange={(permissionPreset) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { permissionPreset }))
-              }
-              krakenExploreThinking={prefs.krakenExploreThinking}
-              onKrakenExploreThinkingChange={(krakenExploreThinking) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { krakenExploreThinking }))
-              }
-              krakenGeneralThinking={prefs.krakenGeneralThinking}
-              onKrakenGeneralThinkingChange={(krakenGeneralThinking) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { krakenGeneralThinking }))
-              }
-              krakenVerifyThinking={prefs.krakenVerifyThinking}
-              onKrakenVerifyThinkingChange={(krakenVerifyThinking) =>
-                setPrefs((prev) => patchDesktopPrefs(prev, { krakenVerifyThinking }))
-              }
-              mode={mode}
-              onModeChange={onModeChange}
-              phase={phase}
-              onPhaseChange={onPhaseChange}
-              krakenGraph={krakenGraph}
-              onKrakenGraphChange={setGraphMode}
-              gauntlet={prefs.gauntletLoop}
-              onGauntletChange={setGauntletLoop}
-            />
-            <div className="composer-actions">
-              {running ? (
-                <>
-                  <button
-                    type="button"
-                    className="btn-send"
-                    disabled={
-                      !(draft.trim() || speech.interim.trim()) &&
-                      attachments.length === 0
-                    }
-                    onClick={() => void send()}
-                    title={
-                      liveSendMode === "steer" && steerSupported
-                        ? "Steer — applied at the next tool boundary"
-                        : "Queue follow-up — sends when this run ends"
-                    }
-                    aria-label={
-                      liveSendMode === "steer" && steerSupported
-                        ? "Steer running agent"
-                        : "Queue follow-up"
-                    }
-                  >
-                    <svg
-                      viewBox="0 0 24 24"
-                      width="17"
-                      height="17"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      aria-hidden
-                    >
-                      <path d="M3 12h16M13 6l6 6-6 6" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    className="btn-stop"
-                    onClick={() => void onStop()}
-                    title="Stop"
-                  >
-                    Stop
-                  </button>
-                </>
-              ) : (
-                <button
-                  type="button"
-                  className="btn-send"
-                  disabled={
-                    (!(draft.trim() || speech.interim.trim()) &&
-                      attachments.length === 0 &&
-                      !pendingSkill) ||
-                    (cli !== null && !cli.ok)
-                  }
-                  onClick={() => void send()}
-                  title="Send"
-                  aria-label="Send"
-                >
-                  <svg
-                    viewBox="0 0 24 24"
-                    width="17"
-                    height="17"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2.2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden
-                  >
-                    <path d="M12 19V5M5 12l7-7 7 7" />
-                  </svg>
-                </button>
-              )}
-            </div>
-          </div>
+          {/* SLICE1(composer-isolation): the capsule — textarea, @-mention
+              popup, pills and send row — owns its own draft state now, so
+              typing re-renders it and nothing else (see ChatComposer.tsx). */}
+          <ChatComposer
+            ref={composerRef}
+            running={running}
+            placeholder={composerPlaceholder}
+            textareaRef={taRef}
+            onSend={onComposerSend}
+            onStop={onComposerStop}
+            speechListening={speech.listening}
+            speechOk={speech.speechOk}
+            speechInterim={speech.interim}
+            speechError={speech.error}
+            onToggleSpeech={speech.toggle}
+            cliBlocked={cli !== null && !cli.ok}
+            attachmentsCount={attachments.length}
+            hasPendingSkill={pendingSkill !== null}
+            liveSendMode={liveSendMode}
+            steerSupported={steerSupported}
+            onPickExternalFiles={onPickExternalFiles}
+            onOpenSkillPicker={onOpenSkillPicker}
+            onAttachPath={attachWorkspacePath}
+            mentionCwd={activeCwd}
+            config={config}
+            provider={provider}
+            model={model}
+            onProviderChange={onComposerProviderChange}
+            onModelChange={onComposerModelChange}
+            onThinkingChange={onComposerThinkingChange}
+            setConfig={setConfig}
+            setStatusLine={setStatusLine}
+            prefs={prefs}
+            setPrefs={setPrefs}
+            mode={mode}
+            onModeChange={onComposerModeChange}
+            phase={phase}
+            onPhaseChange={onComposerPhaseChange}
+            krakenGraph={krakenGraph}
+            setGraphMode={setGraphMode}
+            setGauntletLoop={setGauntletLoop}
+          />
           </div>
           {/* Kraken context meter: a compact composer row (one line at rest).
               It used to sit at the bottom of the chat flow, where it ate the
@@ -4261,7 +4057,8 @@ export default function App() {
         onToggle={() => setGitCollapsed((v) => !v)}
         onStatus={setStatusLine}
         onTagPath={(hit) => {
-          setDraft((d) => {
+          // SLICE1(composer-isolation): the tag lands in the capsule.
+          composerRef.current?.setText((d) => {
             const tag = `@${hit.path} `;
             return d.trim() ? `${d.replace(/\s*$/, " ")}${tag}` : tag;
           });

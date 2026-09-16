@@ -35,6 +35,12 @@ function between(src: string, startMarker: string, endMarker: string): string {
 
 const app = read("../App.tsx");
 const pills = read("./ComposerToolbar.tsx");
+// SLICE1(composer-isolation): the capsule itself — textarea, pills, send row —
+// moved out of App.tsx into ChatComposer.tsx, which owns the draft. The
+// `composer-hint` marker below the capsule still lives in App, so the capsule
+// region is read across the two hosts, in that order.
+const composerSrc = read("./ChatComposer.tsx");
+const composerHost = `${composerSrc}${app}`;
 
 describe("grok-round: the topbar is liberated", () => {
   const topbar = between(app, 'className="topbar glass-capsule"', "</header>");
@@ -66,7 +72,7 @@ describe("grok-round: the topbar is liberated", () => {
 
 describe("grok-round: the pills live in the composer", () => {
   const composer = between(
-    app,
+    composerHost,
     "className={`composer glass-capsule",
     'className="composer-hint"',
   );

@@ -25,6 +25,9 @@ import { useSettingAction } from "./useSettingAction";
 export interface AgentsSectionProps {
   config: DesktopConfig | null;
   prefs: DesktopPrefs;
+  /** SLICE4(model-sync): the model the ACTIVE chat will run with (App state,
+   *  kept in sync with provider.json by App's `persistChatModel`). */
+  activeChatModel?: string;
   onPrefsChange: (partial: Partial<DesktopPrefs>) => void;
   onRefresh: () => Promise<void>;
 }
@@ -32,6 +35,7 @@ export interface AgentsSectionProps {
 export function AgentsSection({
   config,
   prefs,
+  activeChatModel = "",
   onPrefsChange,
   onRefresh,
 }: AgentsSectionProps) {
@@ -43,6 +47,26 @@ export function AgentsSection({
   const crossProviderGroups = providers
     .filter((p) => p.id !== activeProvider)
     .map((p) => ({ id: p.id, label: p.displayName, models: p.models ?? [] }));
+
+  // SLICE4(model-sync): the Lead runs on the CHAT model. This card used to echo
+  // only `config.modelByProvider` (what provider.json holds) while the chat bar
+  // kept its own React state — the two could disagree for a whole session with
+  // no way to tell from here. Show the live chat value; when it drifts from the
+  // file, say so and offer the chat → config write (the same `set_app_config`
+  // channel the rest of Settings uses) so the divergence can be closed here.
+  const leadChatModel = activeChatModel.trim();
+  const leadConfigModel = config?.modelByProvider[activeProvider] || "";
+  const leadModel = leadChatModel || leadConfigModel;
+  const leadDrift = Boolean(
+    leadChatModel && leadConfigModel && leadChatModel !== leadConfigModel,
+  );
+
+  const saveLeadModel = () =>
+    void run(async () => {
+      await setAppConfig({ provider: activeProvider, model: leadChatModel });
+      await onRefresh();
+      return `Lead model saved to provider.json (${leadChatModel})`;
+    });
 
   const override = config?.krakenVerifier ?? null;
   const verifierMode = override ? "custom" : "inherit";
@@ -103,11 +127,42 @@ export function AgentsSection({
         title="Kraken — model routing"
         description="Per-role model overrides. Cross-provider picks are stored qualified (e.g. grok/grok-4) and split by the CLI at spawn time."
       >
-        <SettingsRow label="Lead model" hint="Read-only — set it in Models & Providers.">
+        {/* SLICE4(model-sync): the Lead card shows the LIVE chat model (App
+            state) instead of only what provider.json holds, so this view can
+            never disagree with the chat bar about the model in use. */}
+        <SettingsRow
+          label="Lead model"
+          hint="Read-only — the chat model bar sets it; picks are written to provider.json."
+        >
           <span className="muted">
-            {active ? `${active.displayName} / ${config?.modelByProvider[active.id] || "—"}` : "—"}
+            {active
+              ? `${active.displayName} / ${leadModel || "—"}`
+              : leadModel || "—"}
           </span>
         </SettingsRow>
+        {leadDrift ? (
+          <p className="s-card-desc" style={{ marginBottom: 0 }}>
+            The active chat uses {leadChatModel}, while provider.json still stores{" "}
+            {leadConfigModel}.{" "}
+            <button
+              type="button"
+              className="btn-ghost"
+              disabled={busy || !activeProvider}
+              onClick={saveLeadModel}
+            >
+              Save chat model to provider.json
+            </button>
+          </p>
+        ) : null}
+        {/* SLICE4(model-sync): tentacle models are per-sub-agent overrides and
+            live in a different store (localStorage prefs) than the main chat
+            model (chat state + CLI config). Say it here — three model lists in
+            one app looked like one setting and that is what desynced. */}
+        <p className="s-card-desc" style={{ marginTop: 0 }}>
+          Tentacle models apply to the sub-agents Kraken spawns (Explore, General,
+          Verify, Graph planner). They do not change the model of the main chat —
+          that one comes from the chat model bar.
+        </p>
         <KrakenModelSelect
           label="Explore tentacles"
           tooltipId="tooltip-kraken-explore"

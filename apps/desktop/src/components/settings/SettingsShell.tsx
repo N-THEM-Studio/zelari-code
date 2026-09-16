@@ -162,6 +162,10 @@ export interface SettingsShellProps {
   onRefresh: () => Promise<void>;
   onDefaultsChange: (mode: DispatchMode, phase: WorkPhase) => void;
   onProviderModelChange: (provider: string, model: string) => void;
+  /** SLICE4(model-sync): the model the ACTIVE chat will run with. Settings →
+   *  Agents shows it as the Lead model so the card cannot disagree with the
+   *  chat bar. */
+  activeChatModel?: string;
   onPrefsChange: (partial: Partial<DesktopPrefs>) => void;
 }
 
@@ -179,6 +183,7 @@ export function SettingsShell(props: SettingsShellProps) {
     onRefresh,
     onDefaultsChange,
     onProviderModelChange,
+    activeChatModel = "",
     onPrefsChange,
   } = props;
   const [section, setSection] = useState<SettingsSectionId>(() => loadSection());
@@ -233,6 +238,7 @@ export function SettingsShell(props: SettingsShellProps) {
       <AgentsSection
         config={config}
         prefs={prefs}
+        activeChatModel={activeChatModel}
         onPrefsChange={onPrefsChange}
         onRefresh={onRefresh}
       />
