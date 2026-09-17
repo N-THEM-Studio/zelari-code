@@ -54,7 +54,7 @@ export interface SkillsSnapshot {
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 /** Side-effect imports that register built-in coding skills into the catalog. */
-const BUILTIN_SKILL_MODULES = [
+export const BUILTIN_SKILL_MODULES = [
   '@zelari/core/skills/builtin/debugging',
   '@zelari/core/skills/builtin/docs',
   '@zelari/core/skills/builtin/git-ops',
@@ -65,6 +65,7 @@ const BUILTIN_SKILL_MODULES = [
   '@zelari/core/skills/builtin/testing',
   '@zelari/core/skills/builtin/schema-loop',
   '@zelari/core/skills/builtin/computer-use-cua',
+  '@zelari/core/skills/builtin/social-automations',
   '@zelari/core/skills/builtin/qwen-mm-plugins',
 ] as const;
 

@@ -8,6 +8,10 @@
 import { useCallback, useEffect, useState } from "react";
 import { manageAutomation, type AutomationStatus } from "../../agentClient";
 import { DEFAULT_DESKTOP_PREFS, type DesktopPrefs } from "../../desktopPrefs";
+import { AutomationsList } from "./AutomationsList";
+import { ChannelLoginsCard } from "./ChannelLoginsCard";
+import { PendingApprovalsCard } from "./PendingApprovalsCard";
+import { RunsHistoryCard } from "./RunsHistoryCard";
 import {
   BusyDot,
   SelectInput,
@@ -37,6 +41,12 @@ export function AutomationsSection({
   const { busy, run } = useSettingAction();
   const [status, setStatus] = useState<AutomationStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
+  // Shared refresh signal: any child mutation bumps it so the list AND the
+  // approvals inbox reload (single source of truth for "something changed").
+  const [refreshToken, setRefreshToken] = useState(0);
+  const bump = useCallback(() => setRefreshToken((n) => n + 1), []);
+  // Which automation's run history is open (null = the card is hidden).
+  const [historyId, setHistoryId] = useState<string | null>(null);
 
   const repoPath = workdir ?? "";
   const { gardenerEnabled, gardenerIntervalMin, gardenerMaxCostUsd } = prefs;
@@ -179,6 +189,23 @@ export function AutomationsSection({
             </p>
           ) : null}
         </SettingsCard>
+
+        <AutomationsList
+          workdir={workdir}
+          refreshToken={refreshToken}
+          onChanged={bump}
+          onShowHistory={setHistoryId}
+        />
+
+        <RunsHistoryCard
+          workdir={workdir}
+          automationId={historyId}
+          refreshToken={refreshToken}
+        />
+
+        <ChannelLoginsCard workdir={workdir} />
+
+        <PendingApprovalsCard workdir={workdir} refreshToken={refreshToken} onChanged={bump} />
       </div>
     </>
   );

@@ -23,6 +23,8 @@ use harness_sidecar::HarnessSidecar;
 
 mod automations;
 
+mod automations_registry;
+
 mod cli_cache;
 
 #[cfg(windows)]
@@ -1499,7 +1501,7 @@ struct DiscoverArgs {
 /// Parse a JSON object from CLI stdout. Tolerates trailing noise and prefers
 /// the last `{…}` line (Node on Windows can abort after printing valid JSON
 /// with UV_HANDLE_CLOSING, still leaving a good payload on stdout).
-fn parse_cli_json_stdout(stdout: &str) -> Option<serde_json::Value> {
+pub(crate) fn parse_cli_json_stdout(stdout: &str) -> Option<serde_json::Value> {
     let trimmed = stdout.trim();
     if trimmed.is_empty() {
         return None;
@@ -3846,7 +3848,21 @@ pub fn run() {
             permission_respond,
             ask_user_respond,
             prefetch_harness_sidecar,
-            automations::manage_automation
+            automations::manage_automation,
+            automations_registry::list_automations,
+            automations_registry::delete_automation,
+            automations_registry::manage_automation_schedule,
+            automations_registry::list_pending_approvals,
+            automations_registry::resolve_automation_approval,
+            automations_registry::run_automation_once,
+            automations_registry::set_automation_enabled,
+            automations_registry::run_automation_headless,
+            automations_registry::upsert_automation,
+            automations_registry::automation_channel_login,
+            automations_registry::automation_channel_health,
+            automations_registry::list_automation_runs,
+            automations_registry::manage_channel_credential,
+            automations_registry::automation_channel_probe
         ])
         .build(tauri::generate_context!())
         .expect("error while building Zelari Desktop")

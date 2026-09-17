@@ -2,9 +2,7 @@
  * Fetch a URL and ask the active (or flagged) model to draft a SKILL.md skill.
  * Used by Desktop skill-create form and CLI `--generate-skill-from-url`.
  */
-import { getModelForProvider, getProviderConfig } from './providerConfig.js';
-import { resolveApiKeyWithMeta, type ProviderName } from './keyStore.js';
-import { resolveBaseUrl } from './provider/openai-compatible.js';
+import { chatCompletion, resolveLlm } from './llm/oneShot.js';
 import { CODING_CATEGORIES_LIST } from './skillCategories.js';
 
 const MAX_PAGE_CHARS = 24_000;
@@ -183,35 +181,6 @@ function normalizeDraft(
   };
 }
 
-async function resolveLlm(opts: {
-  provider?: string;
-  model?: string;
-}): Promise<{ provider: string; model: string; apiKey: string; baseUrl: string }> {
-  const active = (opts.provider?.trim() ||
-    getProviderConfig().activeProviderId) as ProviderName;
-  const meta = await resolveApiKeyWithMeta(active);
-  if (!meta?.apiKey) {
-    throw new Error(
-      `No API key for provider '${active}'. Save a key in Settings → Provider.`,
-    );
-  }
-  const baseUrl = resolveBaseUrl(active);
-  if (!baseUrl) {
-    throw new Error(
-      `No base URL for provider '${active}'. Set a custom endpoint in Settings.`,
-    );
-  }
-  const model =
-    opts.model?.trim() ||
-    getModelForProvider(active) ||
-    process.env.ZELARI_MODEL ||
-    '';
-  if (!model) {
-    throw new Error(`No model selected for provider '${active}'`);
-  }
-  return { provider: active, model, apiKey: meta.apiKey, baseUrl };
-}
-
 /**
  * Fetch URL page text and generate a skill draft via the selected model.
  */
@@ -230,47 +199,15 @@ export async function generateSkillFromUrl(opts: {
     model: opts.model,
   });
 
-  const controller = new AbortController();
-  const t = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
-  try {
-    const url = `${llm.baseUrl.replace(/\/$/, '')}/chat/completions`;
-    const res = await fetch(url, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'content-type': 'application/json',
-        authorization: `Bearer ${llm.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: llm.model,
-        temperature: 0.2,
-        max_tokens: 4096,
-        stream: false,
-        messages: [
-          { role: 'system', content: SYSTEM },
-          {
-            role: 'user',
-            content:
-              `Source URL: ${opts.url.trim()}\n\n` +
-              `Page content (truncated):\n${page}`,
-          },
-        ],
-      }),
-    });
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => '');
-      throw new Error(
-        `LLM HTTP ${res.status}${errBody ? `: ${errBody.slice(0, 200)}` : ''}`,
-      );
-    }
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string } }>;
-    };
-    const text = json.choices?.[0]?.message?.content?.trim();
-    if (!text) throw new Error('Empty model response');
-    const parsed = extractJsonObject(text);
-    return normalizeDraft(parsed, opts.url.trim(), llm.provider, llm.model);
-  } finally {
-    clearTimeout(t);
-  }
+  const { text } = await chatCompletion(llm, {
+    system: SYSTEM,
+    user:
+      `Source URL: ${opts.url.trim()}\n\n` +
+      `Page content (truncated):\n${page}`,
+    timeoutMs: LLM_TIMEOUT_MS,
+    temperature: 0.2,
+    maxTokens: 4096,
+  });
+  const parsed = extractJsonObject(text);
+  return normalizeDraft(parsed, opts.url.trim(), llm.provider, llm.model);
 }

@@ -34,6 +34,7 @@ import '@zelari/core/skills/builtin/review';
 import '@zelari/core/skills/builtin/testing';
 import '@zelari/core/skills/builtin/schema-loop';
 import '@zelari/core/skills/builtin/computer-use-cua';
+import '@zelari/core/skills/builtin/social-automations';
 import {
   getProviderConfig,
   getActiveProvider as getActiveProviderSpec,

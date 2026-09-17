@@ -112,6 +112,10 @@
       "types": "./dist/agents/skills/builtin/computerUseCua.d.ts",
       "default": "./dist/agents/skills/builtin/computerUseCua.js"
     },
+    "./skills/builtin/social-automations": {
+      "types": "./dist/agents/skills/builtin/socialAutomations.d.ts",
+      "default": "./dist/agents/skills/builtin/socialAutomations.js"
+    },
     "./events": {
       "types": "./dist/events/index.d.ts",
       "default": "./dist/events/index.js"

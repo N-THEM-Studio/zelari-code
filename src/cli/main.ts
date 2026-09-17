@@ -351,7 +351,11 @@ function pickRootComponent(): {
     })();
     return { kind: "done" };
   }
-  if (argv.includes("--doctor") || argv.includes("doctor")) {
+  // Global doctor only on the `--doctor` FLAG or `doctor` as the FIRST
+  // positional — `argv.includes("doctor")` would also swallow subcommands
+  // like `automation doctor` (latently, any `<cmd> doctor`).
+  const firstPositional = argv.slice(2).find((a) => !a.startsWith("-"));
+  if (argv.includes("--doctor") || firstPositional === "doctor") {
     // 2.32 B5: `--doctor --json` prints the structured DoctorReport for the
     // Desktop first-run gate (agentClient.getCliDoctorCheck). The exit code
     // still reflects health so CI can gate on it; the Desktop side parses
@@ -570,6 +574,12 @@ function pickRootComponent(): {
         "  --inspect [--json]  Unified project inspection (config, skills, MCP,\n" +
         "                      hooks, plugins, AGENTS.md, trust status)\n" +
         "  --trust [path]      Trust the cwd (or path) so project MCP + hooks load\n" +
+        "  automation <sub>    Manage automations (list|show|upsert|set-enabled|delete|\n" +
+        "                      register|remove|status|run|runs|pending|approve|login|\n" +
+        "                      health|probe [--publish]) — ADR-0037\n" +
+        "  automation credential website --endpoint <url> [--secret <s>|--show|--remove|--json]\n" +
+        "                      Store the website webhook credentials (HMAC) — ADR-0037\n" +
+        "  --automation <id>   Runtime hook for OS schedulers (needs --headless --once)\n" +
         "  --fix-path          Add the npm global prefix to the user PATH\n" +
         "                      (Windows only; fixes 'command not found' after install)\n" +
         "  --fix-budget        Set recommended ZELARI_MAX_TOOL_LOOP_HARD=180,\n" +
@@ -1226,6 +1236,64 @@ function pickRootComponent(): {
           `[zelari-code --session-export] ${err instanceof Error ? err.message : String(err)}`,
         );
         process.exit(1);
+      });
+    return { kind: "done" };
+  }
+
+  // ADR-0037: Automations Registry (F1). Two entry points, both recognized
+  // here so they are NEVER silently ignored by parseHeadlessFlags (which
+  // tolerates unknown flags):
+  //   1) the OS-launcher runtime hook `--automation <id>` (paired with
+  //      --headless --once);
+  //   2) the `automation <sub>` management subcommand.
+  //
+  // Windows teardown mitigation (ADR-0037 ops): a HARD process.exit() right
+  // after browser work races with Playwright's driver-child pipes still
+  // closing and trips libuv's `!(handle->flags & UV_HANDLE_CLOSING)`
+  // assertion (src\win\async.c) — the CLI dies with 0xC0000409 instead of
+  // the intended code. Automation exits are therefore GRACEFUL: set exitCode,
+  // let the event loop drain on its own, and keep a delayed hard-exit
+  // backstop (unref'd) that only fires if some handle leaks.
+  const exitGracefully = (code: number): void => {
+    process.exitCode = code;
+    const backstop = setTimeout(() => process.exit(code), 2_000);
+    backstop.unref();
+  };
+  const automationFlag = argv.find((a) => a === "--automation" || a.startsWith("--automation="));
+  if (automationFlag !== undefined) {
+    const eq = "--automation=";
+    const rawId = automationFlag.startsWith(eq)
+      ? automationFlag.slice(eq.length)
+      : argv[argv.indexOf(automationFlag) + 1];
+    const autoId = rawId && !rawId.startsWith("--") ? rawId : undefined;
+    if (!autoId) {
+      // eslint-disable-next-line no-console
+      console.error("[zelari-code --automation] --automation requires an id");
+      process.exit(1);
+    }
+    if (!argv.includes("--headless") || !argv.includes("--once")) {
+      // eslint-disable-next-line no-console
+      console.error("[zelari-code --automation] flag --automation requires --headless --once");
+      process.exit(1);
+    }
+    void import("./automations/runAutomation.js")
+      .then(({ runAutomation }) => runAutomation(process.cwd(), autoId))
+      .then((code) => exitGracefully(code))
+      .catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error(`[zelari-code --automation] ${e instanceof Error ? e.message : String(e)}`);
+        exitGracefully(1);
+      });
+    return { kind: "done" };
+  }
+  if (argv.includes("automation")) {
+    void import("./automations/cli.js")
+      .then(({ runAutomationCli }) => runAutomationCli(argv, process.cwd()))
+      .then((code) => exitGracefully(code))
+      .catch((e) => {
+        // eslint-disable-next-line no-console
+        console.error(`[zelari-code automation] ${e instanceof Error ? e.message : String(e)}`);
+        exitGracefully(1);
       });
     return { kind: "done" };
   }

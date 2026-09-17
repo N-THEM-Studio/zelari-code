@@ -13,7 +13,7 @@
  */
 
 import { build } from 'esbuild';
-import { copyFile, mkdir } from 'node:fs/promises';
+import { copyFile, mkdir, readdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -65,5 +65,19 @@ const workerSource = path.join(pkgRoot, 'src', 'cli', 'memory', 'sqliteWorker.mj
 const workerTarget = path.join(pkgRoot, 'dist', 'cli', 'memory', 'sqliteWorker.mjs');
 await mkdir(path.dirname(workerTarget), { recursive: true });
 await copyFile(workerSource, workerTarget);
+
+// Automations browser selectors are DATA (one JSON per channel), loaded at
+// runtime by the bundled CLI via `selectorsDir()` candidate #2
+// (`<here>/automations/browser/selectors`). Without this copy a packaged or
+// globally installed CLI has no selectors next to the bundle and login/health/
+// probe fail from any cwd outside the source repo.
+const selectorsSource = path.join(pkgRoot, 'src', 'cli', 'automations', 'browser', 'selectors');
+const selectorsTarget = path.join(pkgRoot, 'dist', 'cli', 'automations', 'browser', 'selectors');
+await mkdir(selectorsTarget, { recursive: true });
+for (const entry of await readdir(selectorsSource)) {
+  if (entry.endsWith('.json')) {
+    await copyFile(path.join(selectorsSource, entry), path.join(selectorsTarget, entry));
+  }
+}
 
 console.log(`[bundle-cli] bundled → ${path.relative(pkgRoot, outfile)}`);

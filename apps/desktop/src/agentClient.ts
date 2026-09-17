@@ -670,6 +670,335 @@ export async function manageAutomation(args: {
   return invoke<AutomationStatus>("manage_automation", args);
 }
 
+// --- Registry (multiple automations) — thin bridge over `zelari-code automation --json` ---
+
+export interface AutomationScheduleJson {
+  intervalMin?: number;
+  cron?: string;
+  /** Run once at OS logon/boot (`true`). Mutually exclusive with the above. */
+  atLogon?: boolean;
+  timezone?: string;
+}
+
+export interface AutomationLastRun {
+  status: string;
+  exitCode: number;
+}
+
+export interface AutomationSummary {
+  id: string;
+  name: string;
+  kind: "gardener" | "social_post";
+  enabled: boolean;
+  schedule: AutomationScheduleJson;
+  lastRun: AutomationLastRun | null;
+  /** Full stored spec (when the CLI provides it) so the editor can prefill. */
+  spec?: AutomationSpecInput | null;
+}
+
+export interface AutomationScheduleStatus {
+  id: string;
+  registered: boolean;
+  platform: string;
+  detail?: string;
+}
+
+export interface AutomationRunPostJson {
+  channel: string;
+  ok: boolean;
+  url?: string;
+  postId?: string;
+  error?: string;
+  dryRun?: boolean;
+  /** Evidence screenshot path captured by the browser publisher, if any. */
+  screenshot?: string;
+}
+
+/** One human approval decision recorded on a run. */
+export interface AutomationRunApprovalJson {
+  at: string;
+  decision: "allow" | "deny" | "edit";
+  editedText?: string;
+}
+
+/** The draft a run produced (text + provenance), when it has one. */
+export interface AutomationRunDraftJson {
+  text: string;
+  media?: string[];
+  warnings?: string[];
+  generatedBy?: { source: "static" | "llm"; provider?: string; model?: string };
+}
+
+/** One run record — mirrors `automation runs --id <id> --json` (full evidence). */
+export interface AutomationRunJson {
+  runId: string;
+  automationId?: string;
+  status: string;
+  exitCode: number;
+  reason?: string;
+  startedAt?: string;
+  finishedAt?: string;
+  expiresAt?: string;
+  draft?: AutomationRunDraftJson;
+  approvals?: AutomationRunApprovalJson[];
+  posts: AutomationRunPostJson[];
+  costUsd?: number;
+}
+
+export interface PendingApproval {
+  runId: string;
+  automationId: string;
+  draftPreview: string;
+  startedAt: string;
+  expiresAt?: string;
+}
+
+/** Plain outcome of a non-JSON sub (`delete`/`register`/`remove`/`approve`/`run`). */
+export interface AutomationCommandResult {
+  exitCode: number;
+  stdout: string;
+}
+
+/** IPC failures from automations_registry.rs arrive as JSON `{message, exitCode}`. */
+export function formatAutomationError(e: unknown): string {
+  if (typeof e === "string") {
+    try {
+      const parsed = JSON.parse(e) as { message?: unknown; exitCode?: unknown };
+      if (parsed && typeof parsed.message === "string") {
+        return typeof parsed.exitCode === "number"
+          ? `${parsed.message} (exit ${parsed.exitCode})`
+          : parsed.message;
+      }
+    } catch {
+      /* not JSON — a plain string error */
+    }
+    return e;
+  }
+  return e instanceof Error ? e.message : String(e);
+}
+
+export async function listAutomations(
+  repoPath: string,
+): Promise<{ automations: AutomationSummary[] }> {
+  return invoke<{ automations: AutomationSummary[] }>("list_automations", { repoPath });
+}
+
+export async function deleteAutomation(
+  id: string,
+  repoPath: string,
+): Promise<AutomationCommandResult> {
+  return invoke<AutomationCommandResult>("delete_automation", { id, repoPath });
+}
+
+export async function manageAutomationSchedule(
+  id: string,
+  action: "register" | "remove" | "status",
+  repoPath: string,
+): Promise<AutomationScheduleStatus | AutomationCommandResult> {
+  return invoke<AutomationScheduleStatus | AutomationCommandResult>("manage_automation_schedule", {
+    id,
+    action,
+    repoPath,
+  });
+}
+
+export async function listPendingApprovals(
+  repoPath: string,
+): Promise<{ approvals: PendingApproval[] }> {
+  return invoke<{ approvals: PendingApproval[] }>("list_pending_approvals", { repoPath });
+}
+
+export async function resolveAutomationApproval(
+  runId: string,
+  decision: "allow" | "deny" | "edit",
+  repoPath: string,
+  editedText?: string,
+): Promise<AutomationCommandResult> {
+  return invoke<AutomationCommandResult>("resolve_automation_approval", {
+    runId,
+    decision,
+    repoPath,
+    editedText: editedText ?? null,
+  });
+}
+
+export async function runAutomationOnce(
+  id: string,
+  repoPath: string,
+): Promise<AutomationCommandResult> {
+  return invoke<AutomationCommandResult>("run_automation_once", { id, repoPath });
+}
+
+/** Result of flipping an automation's enabled flag (`automation set-enabled`). */
+export interface AutomationEnabledResult {
+  id: string;
+  enabled: boolean;
+}
+
+/** Enable/disable one automation (gardener is reserved — the CLI refuses it). */
+export async function setAutomationEnabled(
+  id: string,
+  enabled: boolean,
+  repoPath: string,
+): Promise<AutomationEnabledResult> {
+  return invoke<AutomationEnabledResult>("set_automation_enabled", { id, enabled, repoPath });
+}
+
+/** Fired when a detached run was spawned. The run itself is tracked on disk. */
+export interface AutomationHeadlessResult {
+  started: boolean;
+}
+
+/**
+ * Spawn one automation run DETACHED from the Desktop — it keeps running (and
+ * survives the app closing). Non-blocking: resolves as soon as the child is
+ * spawned; watch the Cronologia card for the resulting run.
+ */
+export async function runAutomationHeadless(
+  id: string,
+  repoPath: string,
+): Promise<AutomationHeadlessResult> {
+  return invoke<AutomationHeadlessResult>("run_automation_headless", { id, repoPath });
+}
+
+// --- Editor + channel login (create/edit specs, browser session health) ---
+
+/**
+ * Editor/registry spec shape — a client mirror of the CLI zod `AutomationSpec`
+ * (the CLI schema stays the source of truth). Sent as `spec_json` to
+ * `upsert_automation`, which writes it to a temp file and shells out to the CLI.
+ */
+export interface AutomationSpecInput {
+  id: string;
+  name: string;
+  enabled: boolean;
+  kind: "gardener" | "social_post";
+  schedule: AutomationScheduleJson;
+  budget: { maxCostUsd: number };
+  model?: { provider?: string; id: string };
+  social_post?: {
+    channels: string[];
+    topicOrBrief: string;
+    prompt?: string;
+    tone?: string;
+    requireApproval: boolean;
+    publishMode?: "dry-run" | "browser";
+    approvalTtlMin?: number;
+    maxPostsPerDay?: number;
+  };
+}
+
+/** Create/update an automation; resolves with the SAVED spec (validated by the CLI). */
+export async function upsertAutomation(
+  spec: AutomationSpecInput,
+  repoPath: string,
+): Promise<AutomationSpecInput> {
+  return invoke<AutomationSpecInput>("upsert_automation", {
+    specJson: JSON.stringify(spec),
+    repoPath,
+  });
+}
+
+/** Outcome of a manual browser login (`ok:false` = window closed without login). */
+export interface AutomationChannelLoginResult {
+  ok: boolean;
+  message: string;
+}
+
+/** Manual headed login on the channel's persistent browser profile. */
+export async function automationChannelLogin(
+  channel: string,
+  repoPath: string,
+): Promise<AutomationChannelLoginResult> {
+  return invoke<AutomationChannelLoginResult>("automation_channel_login", {
+    channel,
+    repoPath,
+  });
+}
+
+/** Headless login-state report. `loggedIn:false` covers relogin_required (exit 4). */
+export interface AutomationChannelHealthReport {
+  channel: string;
+  loggedIn: boolean;
+  exitCode?: number;
+  message?: string;
+}
+
+/** Probe whether the channel's persistent profile is currently logged in. */
+export async function automationChannelHealth(
+  channel: string,
+  repoPath: string,
+): Promise<AutomationChannelHealthReport> {
+  return invoke<AutomationChannelHealthReport>("automation_channel_health", {
+    channel,
+    repoPath,
+  });
+}
+
+/** Recent runs of one automation (newest first), with full evidence per run. */
+export async function listAutomationRuns(
+  automationId: string,
+  repoPath: string,
+): Promise<{ id: string; runs: AutomationRunJson[] }> {
+  return invoke<{ id: string; runs: AutomationRunJson[] }>("list_automation_runs", {
+    automationId,
+    repoPath,
+  });
+}
+
+/** One diagnostic step of a channel probe. `detail` names what decided it. */
+export interface AutomationProbeStep {
+  step: string;
+  ok: boolean;
+  detail?: string;
+}
+
+/** `automation probe <channel> --json` report. `ok` ⇔ every step passed. */
+export interface AutomationProbeReport {
+  channel: string;
+  ok: boolean;
+  checkedAt: string;
+  steps: AutomationProbeStep[];
+}
+
+/**
+ * Run the session/selector diagnostic for a channel. A failed probe is a VALID
+ * report (exit 1), not a rejection — only spawn/env errors throw.
+ */
+export async function automationChannelProbe(
+  channel: string,
+  repoPath: string,
+): Promise<AutomationProbeReport> {
+  return invoke<AutomationProbeReport>("automation_channel_probe", { channel, repoPath });
+}
+
+/** Machine-readable `credential website --json` result (secret is ALWAYS masked). */
+export interface ChannelCredentialResult {
+  channel: string;
+  configured: boolean;
+  endpoint?: string;
+  /** Masked secret (`abcd…wxyz`) — never the raw value. */
+  secret?: string;
+  pageUrl?: string;
+  /** Only set by `remove`: whether anything was actually deleted. */
+  removed?: boolean;
+}
+
+/** Store / show / remove the website webhook credential. */
+export async function manageChannelCredential(args: {
+  action: "store" | "show" | "remove";
+  repoPath: string;
+  endpoint?: string;
+  secret?: string;
+}): Promise<ChannelCredentialResult> {
+  return invoke<ChannelCredentialResult>("manage_channel_credential", {
+    action: args.action,
+    endpoint: args.endpoint ?? null,
+    secret: args.secret ?? null,
+    repoPath: args.repoPath,
+  });
+}
+
 /** Write UTF-8 text to a user-chosen path (chat export, etc.). Returns the path written. */
 export async function writeTextFile(
   path: string,

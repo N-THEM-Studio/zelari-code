@@ -1,0 +1,44 @@
+{
+  "channel": "x",
+  "loginUrl": "https://x.com/login",
+  "loggedIn": [
+    { "label": "compose-button", "selector": "[data-testid='SideNav_NewTweet_Button']" },
+    { "label": "home-timeline", "selector": "[data-testid='primaryColumn']" },
+    { "label": "home-link", "selector": "a[href='/home']" }
+  ],
+  "loggedOut": [
+    { "label": "login-password", "selector": "input[name='password']" },
+    { "label": "login-password-type", "selector": "input[type='password']" },
+    { "label": "login-username", "selector": "input[autocomplete='username']" },
+    { "label": "login-button", "selector": "[data-testid='loginButton']" }
+  ],
+  "sessionCookies": ["auth_token"],
+  "publish": {
+    "composeEntry": [
+      { "label": "sidenav-compose", "selector": "a[data-testid='SideNav_NewTweet_Button']" },
+      { "label": "compose-href", "selector": "a[href='/compose/post']" }
+    ],
+    "textbox": [
+      { "label": "tweetTextarea_0", "selector": "div[data-testid='tweetTextarea_0'][role='textbox']" },
+      { "label": "role-textbox", "selector": "div[role='textbox'][contenteditable='true']" }
+    ],
+    "postButton": [
+      { "label": "tweetButton", "selector": "button[data-testid='tweetButton']" },
+      { "label": "tweetButtonInline", "selector": "button[data-testid='tweetButtonInline']" }
+    ],
+    "toastView": [
+      { "label": "toast-status-link", "selector": "div[data-testid='toast'] a[href*='/status/']" },
+      { "label": "toast-any-link", "selector": "a[href*='/status/']" }
+    ],
+    "fileInput": [{ "label": "file-input", "selector": "input[type='file']" }],
+    "profileLink": [
+      { "label": "app-tab-profile", "selector": "a[data-testid='AppTabBar_Profile_Link']" }
+    ],
+    "profilePost": [
+      { "label": "article-status", "selector": "article a[href*='/status/']" },
+      { "label": "tweet-status", "selector": "div[data-testid='tweet'] a[href*='/status/']" }
+    ]
+  },
+  "notes": "Best-effort selectors for the X DOM. Within each list the FIRST match wins (fallback order). Verified 2026-09 via `automation probe x` (logged-out matches input[name='password']). Editable at runtime — no recompile.",
+  "_comment": "The `publish` chains (F3.2) are UNVERIFIED-GUESSES against the live x.com DOM; they drift with A/B variants. Recalibrate by editing this file alone (run `automation probe x --publish` to see which selector matched) — no recompile."
+}
