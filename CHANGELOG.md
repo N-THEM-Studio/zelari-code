@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.49.0] - 2026-09-19
+
+UI color pass across the terminal and Desktop: centralized color tokens, a restrained brand palette (cyan primary, magenta secondary), and a user-selectable accent color in Desktop settings. Chrome stays neutral; color lands only on identity and interaction surfaces.
+
+### Added — desktop accent color
+
+- **Accent color picker (Desktop)** — new `General → Appearance → Accent color` setting: five presets (cyan, violet, magenta, amber, emerald) plus a custom picker, or **Auto** (default) to keep the per-mode colors (agent cyan, council violet, zelari magenta). The chosen color is applied inline on the app root so it overrides any CSS cascade — including the per-mode rules and the trailing `grok-flat` token block — and adapts button text by WCAG luminance. Persisted as optional `accentColor` in desktop prefs (backwards-compatible). New `apps/desktop/src/theme/accent.ts` (normalizer + contrast helpers) with test coverage.
+
+### Changed — color system
+
+- **TUI palette tokens** — terminal colors centralized in `src/cli/components/tuiPalette.ts` (`brand`, `brandAlt`, semantic colors, borders, `modeColor()`); eight components (sidebar, input bar, select lists, startup banner, splash, status bar, chat stream, tool output) now read from it instead of hardcoding ink colors. Visible changes: magenta version line in the startup banner, magenta wordmark on splash/sidebar, cyan input border at rest (gray while running), bolder menu selection.
+- **Desktop brand accent** — default accent moved from silver `#d8d8dc` to cyan `#22d3ee` (dark) / `#0891b2` (light), with per-mode tints (council `#8b7cff`, zelari `#e879f9`); residual blue fallbacks in settings CSS removed. The `grok-flat` block at the end of `App.css` was aligned to the new tokens and its mode-flattening overrides removed — they were silently overriding the historical rules above it.
+- **Desktop chat accents** — user bubble tinted with the accent (10% fill, 22% border), accent-colored send button with adaptive text color, accent-tinted composer focus ring and caret, thin accent ring on the active mode chip. Assistant messages, streaming cursor and tool cards stay neutral/semantic.
+
 ## [2.48.0] - 2026-09-18
 
 Kraken reliability hardening, wave 3 (`2026-09-18-kraken-reliability-hardening-plan.md`): orchestration robustness (K3.1–K3.6). K3.7 (semantic-disjoint-plain worktree policy) remains deferred.
