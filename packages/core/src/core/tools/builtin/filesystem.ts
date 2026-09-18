@@ -121,10 +121,21 @@ const WriteFileArgsSchema = z.object({
   /**
    * ADR-0033 file_exists guard. Absent/false: an existing target is NEVER
    * clobbered — the tool rejects with a structured `file_exists` WriteReject
-   * and writes nothing. Explicit `true` restores the legacy overwrite,
-   * on purpose and on record.
+   * and writes nothing. Explicit `true` allows replacement only when
+   * `expectedHash` matches the current snapshotId, or `force` is set.
    */
   overwrite: z.boolean().optional(),
+  /**
+   * K2.2 / F10: sha256[:16] of the current on-disk contents (same as
+   * `read_file` snapshotId). Required with overwrite:true on an existing
+   * file unless `force` is true.
+   */
+  expectedHash: z.string().optional(),
+  /**
+   * K2.2 / F10: explicit unanchored overwrite. Result marks
+   * `forcedOverwrite: true` (not silent). Prefer expectedHash.
+   */
+  force: z.boolean().optional(),
 });
 
 type WriteFileArgs = z.infer<typeof WriteFileArgsSchema>;
@@ -132,6 +143,8 @@ type WriteFileArgs = z.infer<typeof WriteFileArgsSchema>;
 interface WriteFileResult {
   path: string;
   bytesWritten: number;
+  /** Set when overwrite proceeded via force:true without a matching expectedHash. */
+  forcedOverwrite?: boolean;
 }
 
 /**
@@ -159,7 +172,9 @@ export const writeFileTool: ToolDefinition<WriteFileArgs, WriteFileResult> = {
     'Write or create a file. Use createDirs=true to auto-create parent directories. ' +
     'If the target already exists and overwrite is not true, rejects with a structured ' +
     'file_exists WriteReject (meta.reject) and writes nothing — read it first with read_file, ' +
-    'then use edit with its snapshotId, or pass overwrite: true to replace it.',
+    'then use edit with its snapshotId. overwrite:true on an existing file requires expectedHash ' +
+    '(snapshotId of the current contents) or force:true; otherwise rejects with stale_content ' +
+    'and next: {action: "re-read"}.',
   permissions: ['write'],
   sideEffect: 'local',
   timeoutMs: 10000,
@@ -167,19 +182,21 @@ export const writeFileTool: ToolDefinition<WriteFileArgs, WriteFileResult> = {
   execute: async (args, ctx) => {
     try {
       const absPath = path.isAbsolute(args.path) ? args.path : path.join(ctx.cwd, args.path);
-      if (!args.overwrite) {
-        // ADR-0033: write_file creates, it never silently clobbers.
-        let existing: string | null = null;
-        try {
-          const buf = await fs.readFile(absPath, { encoding: 'utf-8', signal: ctx.signal } as never);
-          existing = typeof buf === 'string' ? buf : buf.toString('utf-8');
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
-        }
-        if (existing !== null) {
+      let existing: string | null = null;
+      try {
+        const buf = await fs.readFile(absPath, { encoding: 'utf-8', signal: ctx.signal } as never);
+        existing = typeof buf === 'string' ? buf : buf.toString('utf-8');
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== 'ENOENT') throw err;
+      }
+      let forcedOverwrite = false;
+      if (existing !== null) {
+        if (!args.overwrite) {
+          // ADR-0033: write_file creates, it never silently clobbers.
           return typedErr(
             `write_file: ${args.path} already exists (FILE_EXISTS). ` +
-              'Read it with read_file and use edit with its snapshotId, or pass overwrite: true.',
+              'Read it with read_file and use edit with its snapshotId, or pass overwrite: true ' +
+              'with expectedHash (or force: true).',
             {
               status: 'failed',
               warnings: ['FILE_EXISTS'],
@@ -193,12 +210,66 @@ export const writeFileTool: ToolDefinition<WriteFileArgs, WriteFileResult> = {
             },
           );
         }
+        // K2.2 / F10: overwrite:true is anchored (expectedHash) or explicit (force).
+        const currentHash = snapshotIdOf(existing);
+        const claimed =
+          typeof args.expectedHash === 'string' && args.expectedHash.length > 0
+            ? args.expectedHash
+            : undefined;
+        if (claimed !== undefined) {
+          if (claimed !== currentHash) {
+            return typedErr(
+              `write_file: stale_content: ${args.path} (expected ${claimed}, actual ${currentHash}). ` +
+                'Re-read with read_file and retry with the fresh snapshotId as expectedHash, or pass force: true.',
+              {
+                status: 'failed',
+                warnings: ['STALE_CONTENT'],
+                reject: {
+                  ok: false,
+                  status: 'stale_content',
+                  path: absPath,
+                  expectedHash: claimed,
+                  actualHash: currentHash,
+                  minimalDiff: fileExistsMinimalDiff(existing, args.content, absPath),
+                  next: { action: 're-read', path: absPath },
+                },
+              },
+            );
+          }
+        } else if (args.force === true) {
+          forcedOverwrite = true;
+        } else {
+          return typedErr(
+            `write_file: stale_content: ${args.path}. ` +
+              'Existing-file overwrite requires expectedHash (read_file snapshotId of the current contents) ' +
+              'or force: true.',
+            {
+              status: 'failed',
+              warnings: ['STALE_CONTENT'],
+              reject: {
+                ok: false,
+                status: 'stale_content',
+                path: absPath,
+                actualHash: currentHash,
+                minimalDiff: fileExistsMinimalDiff(existing, args.content, absPath),
+                next: { action: 're-read', path: absPath },
+              },
+            },
+          );
+        }
       }
       if (args.createDirs) {
         await fs.mkdir(path.dirname(absPath), { recursive: true });
       }
       await fs.writeFile(absPath, args.content, { encoding: 'utf-8', signal: ctx.signal } as never);
-      return typedOk({ path: absPath, bytesWritten: args.content.length });
+      return typedOk(
+        {
+          path: absPath,
+          bytesWritten: args.content.length,
+          ...(forcedOverwrite ? { forcedOverwrite: true as const } : {}),
+        },
+        forcedOverwrite ? { status: 'complete', warnings: ['FORCED_OVERWRITE'] } : undefined,
+      );
     } catch (err) {
       return typedErr(err instanceof Error ? err.message : String(err));
     }

@@ -16,8 +16,8 @@ import {
   isWorktreeCapableKind,
   resolveWorktreeMode,
   worktreeSchedulingDecision,
-  type OwnershipNode,
 } from './worktreeScheduling.js';
+import type { OwnershipNode } from './fileOwnership.js';
 
 function node(id: string, kind: string, scope?: string[]): OwnershipNode {
   return { id, kind, ...(scope ? { scope } : {}) };
@@ -196,5 +196,43 @@ describe('worktreeSchedulingDecision', () => {
     );
     expect(d.mode).toBe('parallel-worktree');
     expect(d.overlapScore).toBe(0.5);
+  });
+
+  it('shared-tree-degraded (F12/K2.4) defers a low-overlap pair that would otherwise be rescued', () => {
+    const rescued = worktreeSchedulingDecision(
+      node('g2', 'general', ['src/api/jwt.ts']),
+      [node('g1', 'general', ['src/api'])],
+      auto,
+    );
+    expect(rescued.mode).toBe('parallel-worktree'); // the P2.C rescue, normally
+
+    const degraded = worktreeSchedulingDecision(
+      node('g2', 'general', ['src/api/jwt.ts']),
+      [node('g1', 'general', ['src/api'])],
+      auto,
+      { sharedTreeDegraded: true },
+    );
+    expect(degraded.mode).toBe('defer');
+    expect(degraded.rationaleCode).toBe('shared-tree-degraded');
+    expect(degraded.overlapScore).toBe(0);
+  });
+
+  it('shared-tree-degraded degrades exactly as a non-auto mode would, for any input', () => {
+    const off = worktreeSchedulingDecision(
+      node('g2', 'general', ['src/api/jwt.ts']),
+      [node('g1', 'general', ['src/api'])],
+      {},
+    );
+    const degraded = worktreeSchedulingDecision(
+      node('g2', 'general', ['src/api/jwt.ts']),
+      [node('g1', 'general', ['src/api'])],
+      auto,
+      { sharedTreeDegraded: true },
+    );
+    // Same terminal mode as a non-auto env; the rationale is the more specific
+    // 'shared-tree-degraded' (the run lost isolation, not the mode itself).
+    expect(off.mode).toBe('defer');
+    expect(degraded.mode).toBe(off.mode);
+    expect(degraded.rationaleCode).toBe('shared-tree-degraded');
   });
 });

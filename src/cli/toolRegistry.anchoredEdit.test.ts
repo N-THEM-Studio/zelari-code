@@ -131,14 +131,22 @@ describe('t77 write_file file_exists guard (through the registry)', () => {
     await expect(fs.readFile(target, 'utf8')).resolves.toBe('seed-bytes');
   });
 
-  it('write on an EXISTING file with overwrite:true → proceeds', async () => {
+  it('write on an EXISTING file with overwrite:true + force → proceeds (anchored, K2.2)', async () => {
     const target = path.join(root, 'existing.txt');
     await fs.writeFile(target, 'old', 'utf8');
     const wf = makeRegistry().registry.get('write_file');
     vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
 
-    const ok = await wf!.execute(
+    // K2.2/F10: bare overwrite:true now rejects with stale_content; force is the explicit path.
+    const bare = await wf!.execute(
       { path: target, content: 'new', createDirs: false, overwrite: true },
+      ctx(),
+    );
+    expect(bare.ok).toBe(false);
+    await expect(fs.readFile(target, 'utf8')).resolves.toBe('old');
+
+    const ok = await wf!.execute(
+      { path: target, content: 'new', createDirs: false, overwrite: true, force: true },
       ctx(),
     );
 

@@ -46,6 +46,12 @@ import {
   queueWorktreeCleanup,
   takeQueuedWorktreeCleanup,
 } from '../kraken/worktreeCleanupBatch.js';
+import {
+  captureParentPreMergeState,
+  emitWorktreeMergeAborted,
+  formatRollbackMessage,
+  rollbackParentAfterFailedMerge,
+} from '../kraken/worktreeMergeRollback.js';
 
 /**
  * Cleanup policy + queue live in `kraken/worktreeCleanupBatch.ts` (Int3c):
@@ -290,7 +296,7 @@ export async function commitWorktreeChanges(
  */
 export async function mergeKrakenWorktree(
   handle: WorktreeHandle,
-  opts: { message?: string; cleanup?: boolean } = {},
+  opts: { message?: string; cleanup?: boolean; sessionId?: string } = {},
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<WorktreeMergeResult> {
   if (!handle.branch || handle.branch === 'HEAD') {
@@ -303,9 +309,23 @@ export async function mergeKrakenWorktree(
   }
 
   const commitMsg = (opts.message ?? `kraken: merge ${handle.branch}`).slice(0, 200);
+  const abortBase = {
+    repoRoot: handle.repoRoot,
+    branch: handle.branch,
+    nodeId: handle.id,
+    ...(opts.sessionId !== undefined ? { sessionId: opts.sessionId } : {}),
+  };
 
   const pre = await commitWorktreeChanges(handle, commitMsg);
   if (!pre.ok) {
+    // The worktree commit writes a different tree — no parent mutation has
+    // happened yet, so there is nothing to roll back, but the abort is still
+    // signalled so the audit trail is uniform (K2.3 req.4).
+    emitWorktreeMergeAborted({
+      ...abortBase,
+      reason: `pre-merge commit failed: ${pre.detail}`,
+      phase: 'worktree-commit',
+    });
     return {
       ok: false,
       merged: false,
@@ -331,19 +351,27 @@ export async function mergeKrakenWorktree(
     };
   }
 
+  // K2.3 / F11 — recovery point: the parent tree exactly as it stands BEFORE
+  // the squash touches it. `git merge --squash` below is the first parent
+  // mutation, so any failure past this line (conflict, denied commit, partial
+  // copy) rolls back to `preParent` instead of leaving a half-squashed tree.
+  const preParent = await captureParentPreMergeState(handle.repoRoot);
+
   const merge = await git(handle.repoRoot, ['merge', '--squash', handle.branch]);
   if (!merge.ok) {
-    const conflict =
-      /conflict/i.test(merge.stderr) || /conflict/i.test(merge.stdout);
-    if (conflict) {
-      await git(handle.repoRoot, ['reset', '--merge']);
-    }
+    const reason = `merge conflict or failed: ${(merge.stderr || merge.stdout).trim().slice(0, 300)}`;
+    const rb = await rollbackParentAfterFailedMerge({
+      ...abortBase,
+      reason,
+      phase: 'squash',
+      pre: preParent,
+    });
     return {
       ok: false,
       merged: false,
       committed: false,
       conflict: true,
-      message: `merge conflict or failed: ${(merge.stderr || merge.stdout).trim().slice(0, 300)}`,
+      message: formatRollbackMessage('merge conflict or failed', rb, handle.branch),
     };
   }
 
@@ -352,11 +380,17 @@ export async function mergeKrakenWorktree(
   if (stParent.ok && stParent.stdout.trim()) {
     const c = await git(handle.repoRoot, ['commit', '-m', commitMsg]);
     if (!c.ok) {
+      const rb = await rollbackParentAfterFailedMerge({
+        ...abortBase,
+        reason: `squash staged but commit failed: ${c.stderr.trim().slice(0, 200)}`,
+        phase: 'commit',
+        pre: preParent,
+      });
       return {
         ok: false,
         merged: true,
         committed: false,
-        message: `squash staged but commit failed: ${c.stderr.slice(0, 200)}`,
+        message: formatRollbackMessage('squash staged but commit failed', rb, handle.branch),
       };
     }
     committed = true;

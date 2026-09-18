@@ -16,7 +16,7 @@ import { emitFileEvent, fileAppliedEvent, fileRejectedEvent, reReadHint } from '
  */
 export const WriteRejectSchema = z.object({
   ok: z.literal(false),
-  status: z.enum(['stale_snapshot', 'hunk_mismatch', 'parse_error', 'file_exists']),
+  status: z.enum(['stale_snapshot', 'stale_content', 'hunk_mismatch', 'parse_error', 'file_exists']),
   path: z.string(),
   expectedHash: z.string().optional(),
   actualHash: z.string().optional(),
