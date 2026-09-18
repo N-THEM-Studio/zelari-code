@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
+import { TUI_PALETTE } from './tuiPalette.js';
 
 export interface SelectItem {
   /** Value dispatched on selection (e.g. a provider id or model id). */
@@ -72,16 +73,21 @@ export function SelectList({
   const below = items.length - (start + visible.length);
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor="cyan" paddingX={1}>
-      <Text bold color="cyan">{title}</Text>
+    <Box
+      flexDirection="column"
+      borderStyle="round"
+      borderColor={TUI_PALETTE.borderFocus}
+      paddingX={1}
+    >
+      <Text bold color={TUI_PALETTE.brand}>{title}</Text>
       {start > 0 && <Text dimColor>  ↑ {start} more</Text>}
       {visible.map((item, i) => {
         const selected = start + i === index;
         return (
-          <Text key={item.value} wrap="truncate" color={selected ? 'cyan' : undefined}>
+          <Text key={item.value} wrap="truncate" color={selected ? TUI_PALETTE.brand : undefined}>
             {selected ? '❯ ' : '  '}
             <Text bold={selected}>{item.label}</Text>
-            {item.current ? <Text color="green"> ✓</Text> : null}
+            {item.current ? <Text color={TUI_PALETTE.success}> ✓</Text> : null}
             {item.hint ? <Text dimColor>  {item.hint}</Text> : null}
           </Text>
         );

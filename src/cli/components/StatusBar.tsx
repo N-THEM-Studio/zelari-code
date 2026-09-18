@@ -3,6 +3,7 @@ import { Box, Text } from 'ink';
 import { formatDuration } from '../utils/duration.js';
 import { formatCost, formatTokens } from '../modelPricing.js';
 import { Spinner } from './Spinner.js';
+import { TUI_PALETTE, modeColor } from './tuiPalette.js';
 
 /** Dispatch mode. `kraken` is the single-harness super-agent (legacy alias: agent). */
 export type ChatMode = 'kraken' | 'council' | 'zelari';
@@ -112,23 +113,24 @@ function StatusBarImpl({
 
   const modeLabel =
     mode === 'council' ? 'council' : mode === 'zelari' ? 'zelari' : 'kraken';
-  const modeColor =
-    mode === 'council' ? 'magenta' : mode === 'zelari' ? 'green' : 'red';
+  // TUI palette: the accent follows the label that is actually painted, so the
+  // token and the text can never disagree.
+  const modeTone = modeColor(modeLabel);
 
   return (
     <Box paddingX={1} width="100%" justifyContent="space-between" gap={2}>
       {/* Left group shrinks (truncates) before the right one on narrow panes. */}
       <Box flexShrink={2}>
       <Text wrap="truncate">
-        <Text color={sessionActive ? 'green' : 'gray'}>
+        <Text color={sessionActive ? TUI_PALETTE.success : TUI_PALETTE.muted}>
           {sessionActive ? '●' : '○'}
         </Text>
         <Text dimColor> </Text>
-        <Text bold color={phase === 'plan' ? 'yellow' : 'green'}>
+        <Text bold color={phase === 'plan' ? TUI_PALETTE.warn : TUI_PALETTE.success}>
           {phase === 'plan' ? '◇ plan' : '◆ build'}
         </Text>
         <Text dimColor> · </Text>
-        <Text bold color={modeColor}>
+        <Text bold color={modeTone}>
           {modeLabel}
         </Text>
         {verify ? (
@@ -156,13 +158,13 @@ function StatusBarImpl({
             </Text>
           </>
         ) : null}
-        <Text bold color="cyan">{provider}</Text>
+        <Text bold color={TUI_PALETTE.brand}>{provider}</Text>
         <Text dimColor> · </Text>
         <Text>{model}</Text>
         {cwd ? (
           <>
             <Text dimColor> · </Text>
-            <Text color="blue">{cwd}</Text>
+            <Text color={TUI_PALETTE.info}>{cwd}</Text>
           </>
         ) : null}
       </Text>
@@ -171,8 +173,8 @@ function StatusBarImpl({
       <Text wrap="truncate">
         {busy && elapsedMs !== null ? (
           <>
-            <Spinner color="yellow" />
-            <Text color="yellow"> {formatDuration(elapsedMs)}</Text>
+            <Spinner color={TUI_PALETTE.warn} />
+            <Text color={TUI_PALETTE.warn}> {formatDuration(elapsedMs)}</Text>
             <Text dimColor> · </Text>
           </>
         ) : lastMs !== null ? (
@@ -183,37 +185,37 @@ function StatusBarImpl({
         ) : null}
         {queueCount > 0 ? (
           <>
-            <Text color="magenta">queue {queueCount}</Text>
+            <Text color={TUI_PALETTE.brandAlt}>queue {queueCount}</Text>
             <Text dimColor> · </Text>
           </>
         ) : null}
         {todoSummary ? (
           <>
-            <Text color="yellow">{todoSummary}</Text>
+            <Text color={TUI_PALETTE.warn}>{todoSummary}</Text>
             <Text dimColor> · </Text>
           </>
         ) : null}
         {krakenLive ? (
           <>
-            <Text color="magenta">{krakenLive}</Text>
+            <Text color={TUI_PALETTE.brandAlt}>{krakenLive}</Text>
             <Text dimColor> · </Text>
           </>
         ) : null}
         {krakenGraph ? (
           <>
-            <Text color="magenta">{krakenGraph}</Text>
+            <Text color={TUI_PALETTE.brandAlt}>{krakenGraph}</Text>
             <Text dimColor> · </Text>
           </>
         ) : null}
         {ctxLabel ? (
           <>
-            <Text color="cyan">{ctxLabel}</Text>
+            <Text color={TUI_PALETTE.brand}>{ctxLabel}</Text>
             <Text dimColor> · </Text>
           </>
         ) : null}
         {costUsd > 0 ? (
           <>
-            <Text color="green">{formatCost(costUsd)}</Text>
+            <Text color={TUI_PALETTE.success}>{formatCost(costUsd)}</Text>
             {cachedTokens > 0 ? (
               <Text dimColor> ({formatTokens(cachedTokens)} cached)</Text>
             ) : null}

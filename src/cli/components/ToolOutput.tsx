@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import { useStdout } from 'ink';
 import { formatToolResult } from './toolFormat.js';
+import { TUI_PALETTE, type TuiColor } from './tuiPalette.js';
 
 /**
  * ToolOutput — stateless, policy-driven tool invocation renderer (v0.7.0).
@@ -45,13 +46,14 @@ export type ToolOutputProps = {
   live?: boolean;
 };
 
-function borderColor(toolName: string, ok?: boolean): string {
-  if (ok === false) return 'red';
+function borderColor(toolName: string, ok?: boolean): TuiColor {
+  if (ok === false) return TUI_PALETTE.danger;
   const lower = toolName.toLowerCase();
-  if (lower.includes('read') || lower === 'cat' || lower.includes('grep') || lower.includes('search')) return 'green';
-  if (lower.includes('write') || lower.includes('edit')) return 'yellow';
-  if (lower === 'bash' || lower === 'shell' || lower === 'exec') return 'red';
-  return 'cyan';
+  if (lower.includes('read') || lower === 'cat' || lower.includes('grep') || lower.includes('search'))
+    return TUI_PALETTE.success;
+  if (lower.includes('write') || lower.includes('edit')) return TUI_PALETTE.warn;
+  if (lower === 'bash' || lower === 'shell' || lower === 'exec') return TUI_PALETTE.danger;
+  return TUI_PALETTE.brand;
 }
 
 function ToolOutputImpl(props: ToolOutputProps): React.ReactElement {
@@ -130,6 +132,6 @@ export const ToolOutput = React.memo(ToolOutputImpl);
 /**
  * Pure helper: classify tool color (exported for unit tests).
  */
-export function classifyToolColor(toolName: string, ok?: boolean): string {
+export function classifyToolColor(toolName: string, ok?: boolean): TuiColor {
   return borderColor(toolName, ok);
 }

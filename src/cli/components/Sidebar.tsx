@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import type { GitChanges, GitFileChange } from '../hooks/useGitChanges.js';
+import { TUI_PALETTE } from './tuiPalette.js';
 
 /**
  * The N-THEM emblem as Braille art (v0.7.9 / restored exact v1.6.0 glyph).
@@ -90,17 +91,17 @@ export function Sidebar({ version, changes, rows }: SidebarProps): React.ReactEl
       flexDirection="column"
       width={SIDEBAR_WIDTH}
       borderStyle="single"
-      borderColor="gray"
+      borderColor={TUI_PALETTE.border}
       paddingX={1}
       flexShrink={0}
     >
       {showEmblem && (
         <Box justifyContent="center">
-          <Text color="cyan">{EMBLEM_BRAILLE}</Text>
+          <Text color={TUI_PALETTE.brand}>{EMBLEM_BRAILLE}</Text>
         </Box>
       )}
       <Box justifyContent="center">
-        <Text bold color="white">ZELARI CODE</Text>
+        <Text bold color={TUI_PALETTE.brandAlt}>ZELARI CODE</Text>
       </Box>
       <Box justifyContent="center">
         <Text dimColor>
@@ -131,13 +132,13 @@ function FileRow({ file, pathWidth }: { file: GitFileChange; pathWidth: number }
   return (
     <Box>
       <Text wrap="truncate">
-        <Text color={file.untracked ? 'yellow' : 'white'}>{name}</Text>
+        <Text color={file.untracked ? TUI_PALETTE.warn : TUI_PALETTE.text}>{name}</Text>
         {file.untracked ? (
-          <Text color="yellow"> new</Text>
+          <Text color={TUI_PALETTE.warn}> new</Text>
         ) : (
           <>
-            <Text color="green"> +{file.added ?? '·'}</Text>
-            <Text color="red"> -{file.removed ?? '·'}</Text>
+            <Text color={TUI_PALETTE.success}> +{file.added ?? '·'}</Text>
+            <Text color={TUI_PALETTE.danger}> -{file.removed ?? '·'}</Text>
           </>
         )}
       </Text>

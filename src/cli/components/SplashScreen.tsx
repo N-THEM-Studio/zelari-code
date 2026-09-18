@@ -20,6 +20,7 @@
 // passed in as a prop instead.
 import React, { useEffect, useState } from 'react';
 import { Box, Text, useInput, useStdin } from 'ink';
+import { TUI_PALETTE } from './tuiPalette.js';
 
 /** How long the splash stays up before auto-dismissing (ms). */
 export const SPLASH_DURATION_MS = 2000;
@@ -211,9 +212,9 @@ function Splash({ onDone, version }: { onDone: () => void; version?: string }): 
       width={columns}
       height={rows - 1}
     >
-      <Text color="cyan">{picked.art}</Text>
+      <Text color={TUI_PALETTE.brand}>{picked.art}</Text>
       <Box marginTop={1}>
-        <Text bold color="white">
+        <Text bold color={TUI_PALETTE.brandAlt}>
           {'Z E L A R I   C O D E'}
         </Text>
       </Box>

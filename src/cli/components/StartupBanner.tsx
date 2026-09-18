@@ -7,6 +7,7 @@
  */
 import React from 'react';
 import { Box, Text } from 'ink';
+import { TUI_PALETTE } from './tuiPalette.js';
 
 export interface StartupBannerProps {
   version: string;
@@ -26,8 +27,8 @@ export function StartupBanner({
 }: StartupBannerProps): React.ReactElement {
   return (
     <Box flexDirection="column" marginBottom={1}>
-      <Text color="cyan">
-        zelari-code v{version} — {providerId}/{model}
+      <Text color={TUI_PALETTE.brand}>
+        zelari-code <Text color={TUI_PALETTE.brandAlt}>v{version}</Text> — {providerId}/{model}
       </Text>
       <Text dimColor>cwd: {cwd}</Text>
       <Text dimColor>

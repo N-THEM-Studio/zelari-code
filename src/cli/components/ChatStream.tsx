@@ -1,6 +1,7 @@
 import React from 'react';
 import { Box, Text } from 'ink';
 import { ToolOutput } from './ToolOutput.js';
+import { TUI_PALETTE } from './tuiPalette.js';
 
 export interface ChatMessage {
   id: string;
@@ -73,10 +74,19 @@ export function renderMessage(m: ChatMessage, live = false): React.ReactElement 
   }
   return (
     <Box key={m.id} flexDirection="column" marginBottom={1}>
-      <Text color={m.role === 'user' ? 'cyan' : m.role === 'assistant' ? 'green' : 'yellow'} bold>
+      <Text
+        color={
+          m.role === 'user'
+            ? TUI_PALETTE.brand
+            : m.role === 'assistant'
+              ? TUI_PALETTE.success
+              : TUI_PALETTE.warn
+        }
+        bold
+      >
         {m.role === 'user' ? '❯' : m.role === 'assistant' ? '◆' : 'ℹ'} {m.role}
         {m.role === 'assistant' && m.memberName ? (
-          <Text color="magenta"> · {m.memberName}</Text>
+          <Text color={TUI_PALETTE.brandAlt}> · {m.memberName}</Text>
         ) : null}
       </Text>
       <Box marginLeft={2}>

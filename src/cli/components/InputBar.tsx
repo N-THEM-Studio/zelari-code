@@ -2,6 +2,7 @@ import React from 'react';
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
 import { useInputDraft, type InputDraftStore } from './inputDraft.js';
+import { TUI_PALETTE } from './tuiPalette.js';
 
 export interface InputBarProps {
   /**
@@ -35,8 +36,16 @@ function InputBarImpl({ draft, onSubmit, disabled }: InputBarProps): React.React
   const stableSubmit = React.useCallback((v: string) => onSubmitRef.current(v), []);
 
   return (
-    <Box borderStyle="single" borderColor="gray" paddingX={1}>
-      <Text color="cyan" bold>❯ </Text>
+    // TUI palette: while mounted, this bar is the surface App routes keys to
+    // (the picker swaps in <SelectList> otherwise), so "focus" is the only
+    // signal available here — `disabled`, i.e. a run in flight. No new prop and
+    // no new state is introduced to compute it.
+    <Box
+      borderStyle="single"
+      borderColor={disabled ? TUI_PALETTE.border : TUI_PALETTE.borderFocus}
+      paddingX={1}
+    >
+      <Text color={TUI_PALETTE.brand} bold>❯ </Text>
       <TextInput
         value={value}
         onChange={draft.set}
