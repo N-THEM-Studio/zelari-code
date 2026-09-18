@@ -144,6 +144,22 @@ export function isWorktreeCapableKind(kind: string): boolean {
 export type WorktreeScheduleMode = 'off' | 'on' | 'auto';
 
 /**
+ * Options for {@link worktreeSchedulingDecision}. Extends the arbitration
+ * options (case folding) with the run-level degradation switch.
+ */
+export interface WorktreeSchedulingOptions extends ArbitrationOptions {
+  /**
+   * F12 (K2.4): a worktree creation failure has ALREADY been observed this
+   * run, so writers are now running in the SHARED parent tree. Worktree
+   * isolation is exactly what licenses parallel admission in `auto`, so when
+   * degraded the policy must fall back to the defensive `defer` a non-auto
+   * mode produces — overlapping writers serialize (P2.A) for the rest of the
+   * run instead of being rescued into unisolated parallel runs.
+   */
+  sharedTreeDegraded?: boolean;
+}
+
+/**
  * Resolve the ZELARI_KRAKEN_WORKTREE scheduling mode from a raw env value.
  * `undefined`/''/`0` → 'off' (today's behavior), `1`/`true` → 'on' (always
  * worktree, unchanged), `auto` → 'auto' (scheduler decides per overlap).
@@ -174,7 +190,8 @@ export interface WorktreeSchedulingDecision {
     | 'read-only-node'
     | 'no-racing-overlap'
     | 'low-overlap-worktree'
-    | 'high-overlap';
+    | 'high-overlap'
+    | 'shared-tree-degraded';
   /** Id of the racing writer that produced the best score, when one exists. */
   bestMatchId?: string;
 }
@@ -192,15 +209,26 @@ export interface WorktreeSchedulingDecision {
  * Worktree capability is checked per kind here; the caller still owns the
  * per-node state this module cannot see (rework lineage, a caller-level
  * `allowWorktree: false`).
+ *
+ * `opts.sharedTreeDegraded` (F12/K2.4) is the run-level escape hatch: after a
+ * worktree creation failure the caller sets it so the policy degrades to the
+ * same defensive `defer` a non-auto mode yields — parallel admission assumed
+ * isolation, and without it overlapping writers must serialize again.
  */
 export function worktreeSchedulingDecision(
   node: OwnershipNode,
   racingNodes: readonly OwnershipNode[],
   env: NodeJS.ProcessEnv,
-  opts: ArbitrationOptions = {},
+  opts: WorktreeSchedulingOptions = {},
 ): WorktreeSchedulingDecision {
   if (resolveWorktreeMode(env.ZELARI_KRAKEN_WORKTREE) !== 'auto') {
     return { mode: 'defer', overlapScore: 0, rationaleCode: 'worktree-mode-not-auto' };
+  }
+  if (opts.sharedTreeDegraded) {
+    // The run already fell back to the shared tree: isolation — the sole
+    // licence for parallel worktree admission — is gone, so defer exactly as
+    // a non-auto mode would.
+    return { mode: 'defer', overlapScore: 0, rationaleCode: 'shared-tree-degraded' };
   }
   const nodeScopes = writeScopeOf(node);
   if (!nodeScopes) {

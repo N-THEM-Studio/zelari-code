@@ -28,6 +28,7 @@ const PROVIDER_THINKING_CAPABILITY: Record<string, ThinkingCapability> = {
   grok: { effort: true },
   chatgpt: { effort: true },
   anthropic: { budget: true },
+  muse: { effort: true },
   glm: { budget: true },
   deepseek: { effort: true },
   minimax: { effort: true },
@@ -70,6 +71,7 @@ export function effortLevelsFor(id: string, model?: string): ThinkingEffort[] {
     case 'deepseek':
       return ['high', 'max'];
     case 'minimax':
+    case 'muse':
       return [...BASE_EFFORTS];
     case 'glm':
       if (glmHasEffortScale(m)) return ['low', 'high', 'max'];

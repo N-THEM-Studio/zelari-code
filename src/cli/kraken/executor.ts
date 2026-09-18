@@ -88,6 +88,7 @@ import {
   resolveWorktreeMode,
   worktreeSchedulingDecision,
 } from './worktreeScheduling.js';
+import type { WorktreeFallbackInfo } from '../tools/taskTool.js';
 import {
   semanticConflictDecision,
   type SemanticConflictCtx,
@@ -495,7 +496,7 @@ export interface KrakenGraphExecutorOptions {
   runTentacleFn?: (opts: RunTentacleOptions) => Promise<TentacleResult>;
   mergeFn?: (
     handle: WorktreeHandle,
-    opts?: { message?: string; cleanup?: boolean },
+    opts?: { message?: string; cleanup?: boolean; sessionId?: string },
   ) => Promise<WorktreeMergeResult>;
   backtestFn?: (cwd: string) => Promise<BacktestResult>;
 }
@@ -583,7 +584,7 @@ export class KrakenGraphExecutor {
   private readonly runTentacleFn: (opts: RunTentacleOptions) => Promise<TentacleResult>;
   private readonly mergeFn: (
     handle: WorktreeHandle,
-    opts?: { message?: string; cleanup?: boolean },
+    opts?: { message?: string; cleanup?: boolean; sessionId?: string },
   ) => Promise<WorktreeMergeResult>;
   private readonly backtestFn: (cwd: string) => Promise<BacktestResult>;
   /** P2.F: pure score seam for the ROI gate (default: computeSpawnScore). */
@@ -626,6 +627,16 @@ export class KrakenGraphExecutor {
   /** Set once the run has been cancelled: stops admission, retries and fixes. */
   private aborted = false;
   private fixCounter = 0;
+  /**
+   * F12 (K2.4): set once any tentacle in this run reports a worktree-creation
+   * failure (it fell back to the SHARED parent tree). Latched for the rest of
+   * the run — deliberately NOT cleared: the P2.C rescue path admits
+   * overlapping writers in parallel ONLY because they are worktree-isolated,
+   * so once isolation is known-broken those rescues stop and overlapping
+   * writers serialize (P2.A deferral). There is no safe mid-run boundary at
+   * which to assume isolation recovered.
+   */
+  private worktreeFallbackSeen = false;
 
   constructor(opts: KrakenGraphExecutorOptions) {
     this.deps = opts.taskToolDeps;
@@ -968,6 +979,30 @@ export class KrakenGraphExecutor {
   }
 
   /**
+   * F12 (K2.4): a tentacle reported a worktree-creation failure and is now
+   * writing into the shared parent tree. Latch {@link worktreeFallbackSeen} so
+   * {@link admit} stops rescuing overlapping writers via worktree isolation
+   * (they would no longer be actually isolated), and record the degradation
+   * once on the radio + workbench.
+   */
+  private noteWorktreeFallback(info: WorktreeFallbackInfo): void {
+    if (this.worktreeFallbackSeen) return;
+    this.worktreeFallbackSeen = true;
+    const where = info.nodeId !== undefined ? ` [${info.nodeId}]` : '';
+    this.radio('progress', {
+      description: 'worktree fallback',
+      detail:
+        `worktree creation failed (mode=${info.mode})${where} — run degraded to ` +
+        `serial admission: overlapping writers now defer for the rest of the run` +
+        (info.reason ? ` — ${info.reason}` : ''),
+      ok: false,
+    });
+    this.wb?.logEvent(
+      `worktree fallback${where} — worktree creation failed (mode=${info.mode}); degrading to serial admission (overlapping writers defer for the rest of the run)`,
+    );
+  }
+
+  /**
    * Pick the ready nodes that may start right now: parallel-safe against every
    * node already running AND against each other, within the concurrency cap.
    *
@@ -1040,6 +1075,7 @@ export class KrakenGraphExecutor {
           this.deps.allowWorktree !== false
             ? worktreeSchedulingDecision(node, racing, process.env, {
                 caseInsensitive: this.ownershipCaseFolding,
+                sharedTreeDegraded: this.worktreeFallbackSeen,
               })
             : undefined;
         if (decision && decision.mode === 'parallel-worktree') {
@@ -1090,6 +1126,7 @@ export class KrakenGraphExecutor {
         if (!verdict) continue;
         const isolatable =
           worktreeMode === 'auto' &&
+          !this.worktreeFallbackSeen &&
           isWorktreeCapableKind(node.kind) &&
           !this.reworks.has(node.id) && // a rework edits an EXISTING worktree
           this.deps.allowWorktree !== false;
@@ -1378,7 +1415,13 @@ export class KrakenGraphExecutor {
       // `allowWorktree: false` is what actually stops a rework from opening
       // its own worktree: creation is driven by the agent kind ('general')
       // inside runTentacle, not by anything the executor passes per-call.
-      deps: isRework ? { ...this.deps, allowWorktree: false } : this.deps,
+      deps: {
+        ...this.deps,
+        // F12 (K2.4): latch a worktree-creation failure so the rest of the
+        // run's admission policy degrades (see noteWorktreeFallback).
+        onWorktreeFallback: (info) => this.noteWorktreeFallback(info),
+        ...(isRework ? { allowWorktree: false } : {}),
+      },
       args: {
         description: node.label,
         prompt: upstream ? `${node.prompt}\n${upstream}` : node.prompt,
@@ -1594,6 +1637,7 @@ export class KrakenGraphExecutor {
       try {
         result = await this.mergeFn(handle, {
           message: `kraken: merge ${graph.nodes.get(depId)?.label ?? depId}`.slice(0, 200),
+          sessionId: this.sessionId,
         });
       } catch (err) {
         result = {

@@ -123,6 +123,8 @@ import {
   type JailNetwork,
   type JailSpec,
 } from './safety/osJail.js';
+import { wrapWithBashWriteDetection } from './tools/bashWriteWatch.js';
+import { appendKrakenRadio } from './tools/krakenRadio.js';
 import { withResultCache } from './toolResultCache.js';
 import { inspectCommand } from './safety/selfKillGuard.js';
 import type { ExtensionRegistry, LifecycleHookRunner } from '@zelari/core/harness';
@@ -405,12 +407,28 @@ export function createBuiltinToolRegistry(
       : { outcome: 'failed', reason: res.reason };
   };
 
+  // K2.1: post-exec cwd snapshot → synthetic file.applied origin:'bash'.
+  // Innermost wrap so policy/shell denies skip the scan; fail-open on
+  // snapshot errors (radio loud, command still runs).
+  const withBashWrite = <I extends Record<string, unknown>, O>(t: ToolDefinition<I, O>) =>
+    wrapWithBashWriteDetection(t, {
+      root,
+      radio: (event) =>
+        appendKrakenRadio(root, sessionId, {
+          kind: event.ok ? 'progress' : 'error',
+          agent: 'bash-write',
+          description: event.kind,
+          ...(event.detail !== undefined ? { detail: event.detail } : {}),
+          ok: event.ok,
+        }),
+    });
+
   // Wrap bash: shell blocklist + sandboxed cwd (v2.17 t27) + OS-jail
   // preflight (v2.17 t28) + audit — spawned ONLY through the seam above.
   // t31 (2.21 §6.6): after a successful run, diagnostics run on the source
   // paths the command claims (post-execute, same loop as the edit tools).
   const safeBash = withExecDiag(
-    wrapWithShellSafety(createBashTool(jailedBashSeam), audit, sessionId, root, jailSpec),
+    wrapWithShellSafety(withBashWrite(createBashTool(jailedBashSeam)), audit, sessionId, root, jailSpec),
   );
 
   // P0.C2 (t17): structured exec_process — same shell-safety discipline as
@@ -421,9 +439,11 @@ export function createBuiltinToolRegistry(
   // t31 (2.21 §6.6): post-execute diagnostics on claimed source paths.
   const safeExecProcess = withExecDiag(
     wrapWithExecEvidence(
-      createExecProcessTool(root, {
-        resolveNetwork: (input) => resolveJailNetwork('exec_process', input as unknown as Record<string, unknown>),
-      }),
+      withBashWrite(
+        createExecProcessTool(root, {
+          resolveNetwork: (input) => resolveJailNetwork('exec_process', input as unknown as Record<string, unknown>),
+        }),
+      ),
       audit,
       sessionId,
     ),

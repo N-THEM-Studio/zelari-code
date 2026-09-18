@@ -19,6 +19,7 @@ import { discoverModelsForProvider, type ProviderId } from './modelDiscovery.js'
 import { runGrokOAuthFlow } from './grokOAuth.js';
 import { runChatgptOAuthFlow } from './chatgptOAuth.js';
 import { completeAnthropicOAuth, startAnthropicOAuth } from './anthropicOAuth.js';
+import { runMuseOAuthFlow } from './museOAuth.js';
 
 export interface OAuthActionResult {
   ok: boolean;
@@ -36,6 +37,7 @@ const DEFAULT_MODELS: Partial<Record<ProviderName, string>> = {
   grok: 'grok-4.6',
   chatgpt: 'gpt-5.6-codex',
   anthropic: 'claude-sonnet-4-6',
+  muse: 'muse-spark-1.3',
 };
 
 export async function persistOAuthLogin(
@@ -72,7 +74,7 @@ export async function runLoginOAuth(opts: {
   if (!isOAuthProvider(provider)) {
     return {
       ok: false,
-      error: `provider '${provider}' has no OAuth login. Use: grok, chatgpt, anthropic`,
+      error: `provider '${provider}' has no OAuth login. Use: grok, chatgpt, anthropic, muse`,
     };
   }
   try {
@@ -116,6 +118,22 @@ export async function runLoginOAuth(opts: {
         expiresAt: token.expiresAt,
         hasRefreshToken: Boolean(token.refreshToken),
         message: 'ChatGPT OAuth login saved.',
+      };
+    }
+
+    if (provider === 'muse') {
+      const token = await runMuseOAuthFlow({
+        openBrowserImpl: opts.noBrowser ? async () => undefined : undefined,
+      });
+      await persistOAuthLogin('muse', token);
+      return {
+        ok: true,
+        provider,
+        phase: 'done',
+        masked: maskKey(token.accessToken),
+        expiresAt: token.expiresAt,
+        hasRefreshToken: Boolean(token.refreshToken),
+        message: 'Muse OAuth login saved.',
       };
     }
 

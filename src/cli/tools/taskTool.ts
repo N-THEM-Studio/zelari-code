@@ -55,7 +55,7 @@ import {
   type WorktreeMergeResult,
 } from './krakenWorktree.js';
 import { krakenTentacleStart, krakenTentacleEnd } from './krakenLive.js';
-import { resolveWorktreeMode } from '../kraken/worktreeScheduling.js';
+import { resolveWorktreeMode, type WorktreeScheduleMode } from '../kraken/worktreeScheduling.js';
 import { randomUUID } from 'node:crypto';
 import type { UsageBreakdown } from '@zelari/core/events';
 import type { MemoryService } from '@zelari/core/memory';
@@ -67,11 +67,21 @@ import {
   registerCandidate,
   reserveCandidateSlot,
   setKrakenCheckResults,
+  setLastVerifyToolTrace,
+  getLastVerifyToolTrace,
 } from '../kraken/candidateRegistry.js';
 import { allUnknownCheckResults, parseVerifyReport, type TentacleToolTrace } from '../kraken/verifyReport.js';
 import { recordCandidateTokens } from '../kraken/metrics.js';
 import { parseVerifyVerdict } from '@zelari/core';
 import { startTentacleHeartbeat } from './tentacleHeartbeat.js';
+import {
+  emitVerifyDebtCleared,
+  emitVerifyDebtOpen,
+  enqueueVerifyDebtPersist,
+  loadSessionEventsForVerifyDebt,
+  replayOpenVerifyDebts,
+  type SpineEventLike,
+} from './verifyDebtSpine.js';
 
 /** Sub-agent kinds (OpenCode-inspired). */
 export type TaskAgentKind = 'explore' | 'general' | 'verify';
@@ -141,9 +151,27 @@ export function permissionsForTaskAgent(
   return ['read'];
 }
 
+/** F12 (K2.4): details of a worktree-creation failure that fell back to the shared tree. */
+export interface WorktreeFallbackInfo {
+  /** Error excerpt that forced the fallback (never empty). */
+  reason: string;
+  /** Resolved ZELARI_KRAKEN_WORKTREE scheduling mode at fallback time. */
+  mode: WorktreeScheduleMode;
+  /** Graph node id, when the caller (graph executor) supplied one. */
+  nodeId?: string;
+}
+
 export interface TaskToolDeps {
   /** Optional sink for tentacle activity events (Frontier plan §37). */
   onTentacleEvent?: (ev: BrainEvent) => void;
+  /**
+   * F12 (K2.4): fired when this tentacle WANTED a worktree but creation threw,
+   * so it is now running in the SHARED parent tree. Fail-open in spirit (the
+   * tentacle still runs), but the graph executor uses this signal to STOP
+   * rescuing overlapping writers under ZELARI_KRAKEN_WORKTREE=auto — parallel
+   * admission assumed worktree isolation, which just broke.
+   */
+  onWorktreeFallback?: (info: WorktreeFallbackInfo) => void;
   /**
    * Build provider + tool registry for one sub-agent run.
    * `agent` selects tool set (explore RO / general write / verify tests).
@@ -230,18 +258,35 @@ const VERIFY_PROMPT = [
   'tool, timeout, inconclusive evidence) — never guess pass.',
 ].join('\n');
 
+/** One runtime general⇒verify obligation (K1.1). */
+export interface VerifyDebtRecord {
+  description: string;
+  detail?: string;
+}
+
 type SpawnGlobal = {
   __zelariTaskSpawnCount?: number;
   __zelariLastGeneralAt?: number;
   /**
-   * t78 (ADR-0033 slice): runtime `general ⇒ verify` obligation. Set when a
-   * `task agent=general` finishes and cleared only by the runtime-spawned
-   * verify reporting a parseable PASS. Open debt at end of turn ⇒ strict done
-   * is blocked (exit 4) — see runOneTurn.ts. Single slot: the newest
-   * unresolved general wins, mirroring `__zelariLastGeneralAt`.
+   * t78 (ADR-0033 slice) + K1.1 (2026-09-18 hardening plan): runtime
+   * `general ⇒ verify` obligation, stored as a MAP keyed by task id.
+   * Set when a `task agent=general` finishes and cleared only by the
+   * runtime-spawned verify for THAT task reporting a parseable, instrumental
+   * PASS. Open debt at end of turn ⇒ strict done is blocked (exit 4) — see
+   * runOneTurn.ts. The map (vs the previous single slot) means the PASS of
+   * one general's auto-verify cannot silently clear another general's debt.
    */
-  __zelariGeneralVerifyDebt?: { description: string; detail?: string } | null;
+  __zelariGeneralVerifyDebt?: Map<string, VerifyDebtRecord> | null;
 };
+
+/** Sentinel taskId used by the legacy single-slot seam (tests). */
+const SEED_TASK_ID = '__seed__';
+
+function debtStore(): Map<string, VerifyDebtRecord> {
+  const g = globalThis as unknown as SpawnGlobal;
+  if (!g.__zelariGeneralVerifyDebt) g.__zelariGeneralVerifyDebt = new Map();
+  return g.__zelariGeneralVerifyDebt;
+}
 
 /** Reset spawn counter (call at start of each parent user turn). */
 export function resetTaskSpawnCount(): void {
@@ -252,17 +297,74 @@ export function resetTaskSpawnCount(): void {
 /** Reset the general⇒verify obligation (call at start of each parent user turn). */
 export function resetTaskVerifyObligation(): void {
   const g = globalThis as unknown as SpawnGlobal;
-  g.__zelariGeneralVerifyDebt = null;
+  g.__zelariGeneralVerifyDebt = new Map();
 }
 
 /**
  * Open verify obligation, or null when every general this turn has been
  * verified PASS by the runtime auto-spawn (t78). Consulted by the headless
  * strict-done gate — an open obligation closes the turn blocked (exit 4).
+ *
+ * K1.1: returns the first open record (any one is enough to block). The map
+ * may carry MORE records than this returns; use `listTaskVerifyObligations()`
+ * or `hasOpenTaskVerifyDebt()` to see the full state.
  */
-export function taskVerifyObligation(): { description: string; detail?: string } | null {
-  const g = globalThis as unknown as SpawnGlobal;
-  return g.__zelariGeneralVerifyDebt ?? null;
+export function taskVerifyObligation(): VerifyDebtRecord | null {
+  const store = debtStore();
+  if (store.size === 0) return null;
+  // Map iteration is insertion-ordered; the newest insert wins (matches the
+  // pre-K1.1 "newest wins" semantics for the single open record).
+  const last = store.keys().next().value as string | undefined;
+  return last ? (store.get(last) ?? null) : null;
+}
+
+/**
+ * K1.1: number of open verify obligations (strict-gate invariant: > 0 ⇒
+ * blocked). Useful for diagnostics and tests; the strict gate itself keeps
+ * using the boolean `taskVerifyObligation() != null` check.
+ */
+export function listTaskVerifyObligations(): readonly VerifyDebtRecord[] {
+  return [...debtStore().values()];
+}
+
+/**
+ * K1.1: did any general leave a runtime verify obligation open? Strict-gate
+ * friendly boolean — `true` ⇒ the strict-done gate must block the turn.
+ */
+export function hasOpenTaskVerifyDebt(): boolean {
+  return debtStore().size > 0;
+}
+
+/**
+ * K1.1: register (or replace) the verify obligation for one specific task.
+ * Used by `runAutoVerifyAfterGeneral` to record the debt of EACH general it
+ * services — multiple tasks can be open at the same time.
+ */
+export function addTaskVerifyObligation(
+  taskId: string,
+  debt: VerifyDebtRecord,
+): void {
+  debtStore().set(taskId, debt);
+  enqueueVerifyDebtPersist(() =>
+    emitVerifyDebtOpen(undefined, {
+      taskId,
+      description: debt.description,
+      detail: debt.detail,
+      timestamp: Date.now(),
+    }),
+  );
+}
+
+/**
+ * K1.1: clear the verify obligation for ONE task. Used on a PASS of THAT
+ * task's verify tentacle — clearing is per-task, so a sibling general's
+ * debt stays open.
+ */
+export function clearTaskVerifyObligation(taskId: string): void {
+  const store = debtStore();
+  if (!store.has(taskId)) return;
+  store.delete(taskId);
+  enqueueVerifyDebtPersist(() => emitVerifyDebtCleared(undefined, { taskId }));
 }
 
 /**
@@ -275,18 +377,53 @@ export function taskVerifyObligation(): { description: string; detail?: string }
  * and both `promoteOpsKnowledgeSafe` sites on this.
  */
 export function outcomeMemoryAllowed(): boolean {
-  return taskVerifyObligation() === null;
+  return !hasOpenTaskVerifyDebt();
 }
 
 /**
  * Test seam: seed an open general⇒verify obligation without running a tentacle.
  * Production code must never call this — the auto-verify chain owns the slot.
+ *
+ * K1.1: the optional `taskId` argument disambiguates which slot to seed; when
+ * omitted, the legacy sentinel key `'__seed__'` is used so the existing
+ * strict-exit test (`runOneTurn.strictExit.test.ts`) keeps working unchanged.
  */
 export function seedTaskVerifyObligation(
-  debt: { description: string; detail?: string } | null,
+  debt: VerifyDebtRecord | null,
+  taskId: string = SEED_TASK_ID,
 ): void {
-  const g = globalThis as unknown as SpawnGlobal;
-  g.__zelariGeneralVerifyDebt = debt;
+  const store = debtStore();
+  if (debt === null) {
+    store.delete(taskId);
+    return;
+  }
+  store.set(taskId, debt);
+}
+
+/**
+ * K1.5 / F5: merge un-cleared `verify.debt_open` events into the process
+ * cache WITHOUT emitting (replay must not re-append). Existing slots
+ * (including the test seed) are overwritten for matching taskIds and
+ * otherwise left alone — callers that want a blank cache reset first.
+ */
+export function hydrateTaskVerifyDebtFromEvents(
+  events: readonly SpineEventLike[],
+): number {
+  const open = replayOpenVerifyDebts(events);
+  const store = debtStore();
+  for (const [taskId, debt] of open) {
+    store.set(taskId, debt);
+  }
+  return open.size;
+}
+
+/** K1.5: hydrate the cache from `<sessionsDir>/<sessionId>/events.jsonl`. */
+export async function hydrateTaskVerifyDebtFromSpine(source: {
+  sessionsDir: string;
+  sessionId: string;
+}): Promise<number> {
+  const events = await loadSessionEventsForVerifyDebt(source);
+  return hydrateTaskVerifyDebtFromEvents(events);
 }
 
 /** Max concurrent/serial task spawns per parent turn (env override). */
@@ -450,10 +587,13 @@ export async function runAutoVerifyAfterGeneral(opts: {
   sessionId: string;
   signal?: AbortSignal;
 }): Promise<string> {
-  const g = globalThis as unknown as SpawnGlobal;
   // Debt exists from the moment the general finished — even a mid-chain
   // failure must not leave the work silently "verified".
-  g.__zelariGeneralVerifyDebt = { description: opts.original.description };
+  //
+  // K1.1: key the slot by this general's `agentId` (always populated by
+  // TentacleSuccess) so a sibling general's PASS cannot clear our debt.
+  const debtKey = opts.general.agentId ?? opts.original.description;
+  addTaskVerifyObligation(debtKey, { description: opts.original.description });
 
   // t94: live phase captions on the general's activity row (agent_status)
   // mirrored into the radio 'progress' trail — the parent sees the general
@@ -509,8 +649,21 @@ export async function runAutoVerifyAfterGeneral(opts: {
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
 
+  // K1.3 (rev): every inner-verify return MUST publish its tool trace to
+  // the per-turn channel `__zelariVerifyToolTrace` BEFORE we read it back
+  // at the floor check, because the inner verify is a direct `runTentacle`
+  // call that does NOT go through `createTaskTool.execute` (which is the
+  // only other publisher of that channel). Without this publish, (1) an
+  // honest PASS with tool captures still fails the floor (positive path
+  // broken), and (2) a stale trace from an earlier OUTER verify could be
+  // seen here (stale-trace leakage). The helper centralizes the rule.
+  const publishInnerVerifyTrace = (result: TentacleResult): void => {
+    setLastVerifyToolTrace(result.ok ? result.toolTrace ?? [] : []);
+  };
+
   emitVerifyPhase('verifying…');
   let verify = await runVerify(`verify: ${opts.original.description}`);
+  publishInnerVerifyTrace(verify);
   // Parsed like the graph executor: last VERDICT trailer wins; a failed run is
   // an unknown (degraded observation is never proof).
   let verdict = verify.ok ? parseVerifyVerdict(verify.result).verdict : 'unknown';
@@ -543,7 +696,10 @@ export async function runAutoVerifyAfterGeneral(opts: {
       });
       if (!rework.ok) {
         const detail = `rework round ${round} failed: ${rework.error}`;
-        g.__zelariGeneralVerifyDebt = { description: opts.original.description, detail };
+        addTaskVerifyObligation(debtKey, {
+          description: opts.original.description,
+          detail,
+        });
         appendKrakenRadio(opts.parentCwd, opts.sessionId, {
           kind: 'error',
           agent: 'general',
@@ -558,13 +714,40 @@ export async function runAutoVerifyAfterGeneral(opts: {
         );
       }
       verify = await runVerify(`verify: ${opts.original.description} (rework ${round})`);
+      publishInnerVerifyTrace(verify);
       verdict = verify.ok ? parseVerifyVerdict(verify.result).verdict : 'unknown';
       findings = verify.ok ? parseVerifyVerdict(verify.result).findings : '';
     }
   }
 
   if (verdict === 'pass') {
-    g.__zelariGeneralVerifyDebt = null;
+    // K1.3: the verify trailer may say PASS but the verify must also have
+    // executed ≥ 1 tool (real bash / read / etc.) before the debt is cleared.
+    // A bare-text PASS — "I read the diff and it's fine" with no tool
+    // captures — is narrative-only and cannot clear the obligation.
+    const trace = getLastVerifyToolTrace();
+    const instrumental = Array.isArray(trace) && trace.length > 0;
+    if (!instrumental) {
+      const detail =
+        'verify produced VERDICT: PASS but executed no tool — narrative-only PASS does not satisfy the auto-verify floor';
+      addTaskVerifyObligation(debtKey, {
+        description: opts.original.description,
+        detail,
+      });
+      emitVerifyPhase('verify PASS without tool evidence', false, 'failed');
+      appendKrakenRadio(opts.parentCwd, opts.sessionId, {
+        kind: 'error',
+        agent: 'verify',
+        description: `verify: ${opts.original.description}`,
+        detail,
+        ok: false,
+      });
+      return (
+        `\n\n[kraken:auto-verify] ${detail}. Work stays UNVERIFIED; ` +
+        `strict done will close this turn blocked.`
+      );
+    }
+    clearTaskVerifyObligation(debtKey);
     await rememberVerifiedGeneralOutcome(opts);
     emitVerifyPhase('verify PASS', true, 'completed');
     return `\n\n[kraken:auto-verify] verify PASS — general⇒verify obligation satisfied.`;
@@ -582,7 +765,10 @@ export async function runAutoVerifyAfterGeneral(opts: {
       : verify.ok
         ? 'verify produced no parseable VERDICT — unverified'
         : `verify tentacle failed: ${verify.error}`;
-  g.__zelariGeneralVerifyDebt = { description: opts.original.description, detail };
+  addTaskVerifyObligation(debtKey, {
+    description: opts.original.description,
+    detail,
+  });
   appendKrakenRadio(opts.parentCwd, opts.sessionId, {
     kind: 'error',
     agent: 'verify',
@@ -1001,17 +1187,41 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // never share the parent tree, and merges stay sequential.
   let worktree: WorktreeHandle | null = null;
   let effectiveCwd = opts.cwdOverride || parentCwd;
+  const worktreeMode = resolveWorktreeMode(process.env.ZELARI_KRAKEN_WORKTREE);
   const wantWt =
     agent === 'general' &&
     deps.allowWorktree !== false &&
-    (isKrakenWorktreeEnabled() ||
-      resolveWorktreeMode(process.env.ZELARI_KRAKEN_WORKTREE) === 'auto');
+    (isKrakenWorktreeEnabled() || worktreeMode === 'auto');
   if (wantWt) {
     try {
       worktree = await createKrakenWorktree(parentCwd, args.description);
       if (worktree) effectiveCwd = worktree.path;
-    } catch {
+    } catch (err) {
+      // F12 (K2.4): creation failed → fail OPEN (the tentacle still runs) but
+      // make the degradation LOUD. Under ZELARI_KRAKEN_WORKTREE=auto the graph
+      // scheduler admits overlapping writers in parallel ONLY because it
+      // assumes worktree isolation; falling back silently would run them
+      // unisolated in the shared parent tree with no trace. The radio event
+      // plus the deps callback let the executor stop rescuing overlapping
+      // writers (serial admission) for the rest of the run.
+      const reason = err instanceof Error ? err.message : String(err);
       worktree = null;
+      appendKrakenRadio(parentCwd, sessionId, {
+        kind: 'worktree.fallback_shared_tree',
+        agent,
+        thoroughness,
+        description: args.description,
+        detail: `worktree creation failed — running in the shared parent tree: ${reason}`,
+        mode: worktreeMode,
+        reason,
+        ...(opts.nodeId !== undefined ? { nodeId: opts.nodeId } : {}),
+        ok: false,
+      });
+      deps.onWorktreeFallback?.({
+        reason,
+        mode: worktreeMode,
+        ...(opts.nodeId !== undefined ? { nodeId: opts.nodeId } : {}),
+      });
     }
   }
 
@@ -1328,7 +1538,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       try {
         merge = await mergeKrakenWorktree(
           worktree,
-          { message: `kraken: merge ${args.description.slice(0, 80)}` },
+          { message: `kraken: merge ${args.description.slice(0, 80)}`, sessionId },
         );
       } catch (err) {
         merge = {
@@ -1393,7 +1603,14 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   let memoryId: string | undefined;
   if (deps.memoryService && deps.memoryAutoWrite !== false) {
     try {
-      const verifyPass = agent === 'verify' && /(?:VERDICT:\s*PASS|status:\s*pass)/i.test(result);
+      // F4 (K1.4): memory only when the CANONICAL trailer parser says PASS.
+      // The previous free regex /(?:VERDICT:\s*PASS|status:\s*pass)/i matched
+      // any "status: pass" string inside the body (tables, quotes, prose) and
+      // could turn an actual trailer `VERDICT: FAIL` into a memory PASS.
+      // `parseVerifyVerdict` is the last-trailer-wins parser used everywhere
+      // else in the engine — reuse it so memory writes share the same gate.
+      const verifyPass =
+        agent === 'verify' && parseVerifyVerdict(result).verdict === 'pass';
       // F3.3 (verify trust chain): memory only on PASS.
       //   - verify/verification: written only when its OWN verdict parsed PASS;
       //   - general/outcome: NEVER here — a general result is durable only once
@@ -1607,13 +1824,20 @@ export function createTaskTool(
       // never proof. Only runs when a selection exists this turn (required
       // checks come from a `selected` verdict — Fase 6 routing).
       if (agent === 'verify') {
+        // K1.3: ALWAYS anchor the latest verify tentacle's tool trace on the
+        // per-turn channel so the auto-verify floor (≥ 1 tool execution per
+        // PASS) is observable even when no selection ran this turn (no
+        // required-checks path). The strict gate for PASS is
+        // `getLastVerifyToolTrace().length > 0`.
+        const verifyTrace = res.ok ? res.toolTrace ?? [] : [];
+        setLastVerifyToolTrace(verifyTrace);
         const required = krakenRequiredChecks();
         if (required.length > 0) {
           setKrakenCheckResults(
             res.ok
               ? parseVerifyReport(res.result, required)
               : allUnknownCheckResults(required, `verify tentacle failed: ${res.error}`),
-            res.ok ? res.toolTrace : undefined,
+            verifyTrace,
           );
         }
       }
@@ -1640,11 +1864,13 @@ export function createTaskTool(
           });
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err);
-          const gv = globalThis as unknown as SpawnGlobal;
-          gv.__zelariGeneralVerifyDebt = {
+          // K1.1: key the debt by the runtime agentId (when present) so it
+          // matches the key opened by runAutoVerifyAfterGeneral; fall back
+          // to the description so an early throw still lands in the same slot.
+          addTaskVerifyObligation(res.agentId ?? args.description, {
             description: args.description,
             detail: `auto-verify chain failed: ${msg}`,
-          };
+          });
           result += `\n\n[kraken:auto-verify] auto-verify chain failed (${msg}) — work stays UNVERIFIED.`;
         }
       }

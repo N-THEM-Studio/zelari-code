@@ -26,6 +26,7 @@
 import { computeBudget, defaultResourcePolicy, type ResourcePolicy, type ResourceStage } from '@zelari/core';
 import type { SessionEventEnvelope } from '@zelari/core';
 import { ResourceLedger, rebuildLedgerFromEvents } from './resourceLedger.js';
+import { loadEssentialBashPatterns } from './essentialBashConfig.js';
 import {
   buildResourceSnapshot,
   shouldEmitSnapshot,
@@ -63,18 +64,6 @@ const PROTECTED_DENIAL =
 const HARD_LIMIT_DENIAL =
   'Resource exhausted: this turn\'s execution budget (maxToolCalls) is spent. No further billable tool calls are allowed in this turn — summarize what was verified and report BLOCKED/resource-exhausted with the evidence already collected. A later user turn starts a fresh execution budget.';
 
-/** bash commands that count as verification-essential (plan §13). */
-const ESSENTIAL_BASH = [
-  /\b(npm|pnpm|yarn|bun)\s+(run\s+)?(test|vitest|jest)\b/,
-  /\b(npm|pnpm|yarn|bun)\s+run\s+[\w:-]*(typecheck|lint|build)\b/,
-  /\bnpx\s+(vitest|tsc|typescript|eslint)\b/,
-  /\b(npx\s+)?tsc\b/,
-  /\bvitest\b/,
-  /\bjest\b/,
-  /\bnode\s+--run\b/,
-  /\bgit\s+(diff|status|log|show)\b/,
-];
-
 /** Phase selector — advisory by default (§11.4), protected via env (Phase 3). */
 export function resolveResourceEnforcement(env: NodeJS.ProcessEnv = process.env): ResourceEnforcement {
   return env.ZELARI_RESOURCE_ENFORCEMENT === 'protected' ? 'protected' : 'advisory';
@@ -95,16 +84,23 @@ function bashCommand(args: unknown): string {
  * Essential = test/typecheck/build/lint, git diff/status, targeted
  * read/grep/repair. NOT essential = arbitrary bash, repo-wide speculative
  * grep, dependency install, delegation.
+ *
+ * K2.5 (F21): the bash matchers are now the built-in set ∪ repo-configured
+ * extras (`.zelari/zelari.config.json` → `essentialBash`) ∪ declared
+ * package.json scripts (`<pm> run <script>`), so cargo/pytest/mvn repos can
+ * run their own verification commands in protected mode. `root` defaults to
+ * the process cwd (the CLI project root) — see loadEssentialBashPatterns.
  */
 export function isVerificationEssential(
   toolName: string,
   args: unknown,
   _stage: ResourceStage = 'implement',
+  root: string = process.cwd(),
 ): boolean {
   if (toolName === 'bash') {
     const cmd = bashCommand(args);
     if (!cmd) return false;
-    return ESSENTIAL_BASH.some((re) => re.test(cmd));
+    return loadEssentialBashPatterns(root).some((re) => re.test(cmd));
   }
   if (toolName === 'grep_content') {
     // Targeted grep: bounded by an explicit path/pattern scope is essential;

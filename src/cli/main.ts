@@ -637,7 +637,7 @@ function pickRootComponent(): {
         "  --set-key           Store an API key (never printed back)\n" +
         "    --provider <id>    Provider id (required)\n" +
         "    --key <secret>     API key (required)\n" +
-        "  --login-oauth       Start subscription OAuth (grok, chatgpt, anthropic)\n" +
+        "  --login-oauth       Start subscription OAuth (grok, chatgpt, anthropic, muse)\n" +
         "    --provider <id>    grok | chatgpt | anthropic\n" +
         "    --code <paste>    Anthropic magic-link code (CODE#STATE)\n" +
         "    --no-browser      Do not open the system browser\n" +

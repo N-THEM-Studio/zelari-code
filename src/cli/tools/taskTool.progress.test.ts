@@ -56,6 +56,23 @@ function makeDeps(events: BrainEvent[]): TaskToolDeps {
         run: async function* (): AsyncGenerator<BrainEvent> {
           const mk = (e: object) =>
             ({ id: 'e', ts: 0, sessionId: 's', ...e }) as BrainEvent;
+          // K1.3 floor: emit a tool_execution_start/end pair before the
+          // message so the verify tentacle publishes a non-empty toolTrace
+          // (the auto-verify PASS only sticks when ≥ 1 tool execution is
+          // captured). Mirrors scriptedVerifyDeps in taskTool.verifyDebt.test.ts.
+          yield mk({
+            type: 'tool_execution_start',
+            toolCallId: 'verify-cmd',
+            toolName: 'bash',
+            args: { command: 'npx vitest run' },
+          });
+          yield mk({
+            type: 'tool_execution_end',
+            toolCallId: 'verify-cmd',
+            isError: false,
+            durationMs: 5,
+            result: 'all green',
+          });
           yield mk({ type: 'message_start' });
           // Ends with the exact verify trailer so the auto-verify parse lands on
           // 'pass' and the terminal 'verify PASS' caption path is exercised.

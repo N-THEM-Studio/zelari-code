@@ -110,9 +110,11 @@ afterEach(() => {
   resetKrakenCandidates();
   // maxRetries: on win32 the shell-backed pack child (cmd.exe, cwd=tmp) can
   // still hold the dir handle for an instant after exit — fs.rm retries are
-  // Node's canonical remedy for EBUSY/EPERM on recursive removes.
-  return fs.rm(tmp, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
-});
+  // Node's canonical remedy for EBUSY/EPERM on recursive removes. The explicit
+  // 30s hook timeout covers the observed >10s handle-release window on loaded
+  // win32 machines (pre-existing flake: fails identically on clean HEAD).
+  return fs.rm(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+}, 30_000);
 
 /** Capture (and swallow) stdout+stderr while the turn emits NDJSON. */
 async function captureOutput<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {

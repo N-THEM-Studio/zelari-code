@@ -42,7 +42,7 @@ By **[Anathema Studio](https://anathema-studio.com/)** ·
 
 📖 **[Full user guide](./docs/GUIDA.md)** · **[Reference guide](./docs/GUIDE.md)** — install, TUI, slash commands, council, skills, workspace, headless, MCP, Desktop.
 
-**Zelari Code** is an open-source **coding orchestrator** for the terminal — the agent that doesn't trust itself. The default dispatch is the **kraken** super-agent (aliases `agent`/`single`) spawning explore/general/verify tentacles; a six-role **council** pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) is there when the work earns a second opinion; optional **zelari** missions loop until a deliverable is *proven* done — done means verified, not claimed. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (Apache-2.0).
+**Zelari Code** is an open-source **coding orchestrator** for the terminal — the agent that doesn't trust itself. The default dispatch is the **kraken** super-agent (aliases `agent`/`single`) spawning explore/general/verify tentacles; a six-role **council** pipeline (Caronte, Nettuno, Gerione, Plutone, Minosse, Lucifero) is there when the work earns a second opinion; optional **zelari** missions loop until a deliverable is *proven* done — done means verified, not claimed. It ships a rich TUI (Ink + React), slash commands, plan/build phases, and provider-agnostic LLM streaming (OpenAI-compatible, xAI Grok, ChatGPT, Anthropic, Muse, GLM/Z.AI, MiniMax, DeepSeek). OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`, `/login muse`. The reusable runtime is published as **[`@zelari/core`](https://www.npmjs.com/package/@zelari/core)** (Apache-2.0).
 
 ```bash
 # Zero install — runs from npm's cache (cold-cache start):
@@ -61,7 +61,7 @@ zelari-code
 | **npm** | **≥ 10** | Required to reproduce the workspace lockfile; use the version pinned by `packageManager`. |
 | **OS** | Linux, macOS, Windows 10/11 | Tested on Pop!_OS 24.04, macOS 15, Windows 11. Windows requires Git Bash (auto-detected). |
 | **Disk** | ~50 MB for the CLI + `@zelari/core` | Models are not bundled — provider APIs are remote. |
-| **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`. |
+| **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, Muse, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth via `/login grok`, `/login chatgpt`, `/login anthropic`, `/login muse`. |
 
 ### Optional (advanced tools)
 
@@ -218,7 +218,7 @@ Full reference: **[docs/GUIDA.md](./docs/GUIDA.md#comandi-slash)** (all flags, e
 |---|---|
 | `/help` | List all commands + loaded skills |
 | `/exit` | Exit the CLI |
-| `/login <provider> [key]` | Set API key; `/login grok\|chatgpt\|anthropic` starts OAuth |
+| `/login <provider> [key]` | Set API key; `/login grok\|chatgpt\|anthropic\|muse` starts OAuth |
 | `/provider`, `/provider <id>` | Show / switch LLM provider |
 | `/provider custom <url>` | Self-hosted endpoint (Ollama, LM Studio, …) |
 | `/model <name>`, `/models` | Set model / list discovered models |

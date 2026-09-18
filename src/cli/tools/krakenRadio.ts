@@ -26,6 +26,12 @@ export type KrakenRadioKind =
   // admitted in parallel under git worktree isolation (low scope overlap,
   // ZELARI_KRAKEN_WORKTREE=auto).
   | 'node_worktree_scheduled'
+  // F12 (K2.4): worktree creation FAILED, so this writer fell back to the
+  // SHARED parent tree. Fail-open (the tentacle still runs, just unisolated)
+  // but LOUD: the graph executor stops rescuing overlapping writers in
+  // `auto` once it observes this, because parallel admission assumed
+  // worktree isolation — the safety assumption must never break in silence.
+  | 'worktree.fallback_shared_tree'
   // P2.B semantic ownership: a writer arbitration would have deferred was
   // admitted because BOTH sides declare disjoint ownedSymbols for the
   // contested file (admission-time symbol disjointness — see
@@ -78,6 +84,13 @@ export interface KrakenRadioEvent {
   ok?: boolean;
   /** Graph node id (node_* graph-engine events). */
   nodeId?: string;
+  /**
+   * F12 (K2.4): resolved ZELARI_KRAKEN_WORKTREE scheduling mode at the moment
+   * of a `worktree.fallback_shared_tree` event ('off'|'on'|'auto').
+   */
+  mode?: string;
+  /** F12 (K2.4): error excerpt that forced the shared-tree fallback. */
+  reason?: string;
   /** P2.C: scope-overlap score (0..1) behind a node_worktree_scheduled event. */
   overlapScore?: number;
   /** P2.C: machine-readable why behind a node_worktree_scheduled event. */
@@ -209,6 +222,8 @@ export function appendKrakenRadio(
       ...(event.durationMs !== undefined ? { durationMs: event.durationMs } : {}),
       ...(event.ok !== undefined ? { ok: event.ok } : {}),
       ...(event.nodeId !== undefined ? { nodeId: event.nodeId } : {}),
+      ...(event.mode !== undefined ? { mode: event.mode } : {}),
+      ...(event.reason !== undefined ? { reason: event.reason } : {}),
       ...(event.overlapScore !== undefined ? { overlapScore: event.overlapScore } : {}),
       ...(event.rationaleCode !== undefined ? { rationaleCode: event.rationaleCode } : {}),
       ...(event.runningNode !== undefined ? { runningNode: event.runningNode } : {}),

@@ -33,7 +33,8 @@ export type ProviderId =
   | 'deepseek'
   | 'openai-compatible'
   | 'chatgpt'
-  | 'anthropic';
+  | 'anthropic'
+  | 'muse';
 
 export interface DiscoveredModel {
   /** Model id (e.g. 'grok-4-fast-reasoning', 'glm-4.6'). */
@@ -67,6 +68,7 @@ export interface ModelsRegistry {
   'openai-compatible'?: ProviderModelsEntry;
   chatgpt?: ProviderModelsEntry;
   anthropic?: ProviderModelsEntry;
+  muse?: ProviderModelsEntry;
 }
 
 export interface DiscoverOptions {
@@ -102,6 +104,7 @@ const PROVIDER_BASE_URLS: Record<ProviderId, string> = {
   'openai-compatible': 'https://api.x.ai/v1',
   'chatgpt': 'https://chatgpt.com/backend-api/codex',
   'anthropic': 'https://api.anthropic.com/v1',
+  'muse': 'https://api.meta.ai/v1',
 };
 
 /**
@@ -127,6 +130,9 @@ const STATIC_FALLBACKS: Partial<Record<ProviderId, DiscoveredModel[]>> = {
     { id: 'claude-sonnet-4-6', displayName: 'Claude Sonnet 4.6' },
     { id: 'claude-sonnet-4-5', displayName: 'Claude Sonnet 4.5' },
     { id: 'claude-haiku-4-5', displayName: 'Claude Haiku 4.5' },
+  ],
+  muse: [
+    { id: 'muse-spark-1.3', displayName: 'Muse Spark 1.3' },
   ],
   grok: [
     { id: 'grok-4.6', displayName: 'Grok 4.6' },
@@ -264,7 +270,7 @@ async function resolveAuthToken(
   if (options.authToken) return options.authToken;
   // Late import: keyStore uses node:fs/promises, no Electron deps.
   const { resolveApiKeyWithMeta, getOAuthToken } = await import('./keyStore.js');
-  if (provider === 'grok' || provider === 'chatgpt' || provider === 'anthropic') {
+  if (provider === 'grok' || provider === 'chatgpt' || provider === 'anthropic' || provider === 'muse') {
     const oauth = getOAuthToken(provider);
     if (oauth?.apiKey) return oauth.apiKey;
   }

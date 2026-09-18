@@ -1,0 +1,87 @@
+{
+  "channel": "facebook",
+  "loginUrl": "https://www.facebook.com/",
+  "consentButtons": [
+    { "label": "allow-all-cookies-it", "selector": "[aria-label*='Consenti tutti i cookie' i]" },
+    { "label": "allow-all-cookies-en", "selector": "[aria-label*='Allow all cookies' i]" },
+    { "label": "allow-all-cookies-es-pt", "selector": "[aria-label*='Permitir todas las cookies' i], [aria-label*='Permitir todos os cookies' i]" },
+    { "label": "allow-all-cookies-fr", "selector": "[aria-label*='Autoriser tous les cookies' i]" },
+    { "label": "allow-all-cookies-de", "selector": "[aria-label*='Alle Cookies zulassen' i]" }
+  ],
+  "loggedIn": [
+    { "label": "primary-navigation", "selector": "[role='navigation'][aria-label='Facebook']" },
+    { "label": "composer", "selector": "[aria-label*='Create a post' i]" },
+    { "label": "composer-it", "selector": "[aria-label*='Crea un post' i]" },
+    { "label": "composer-it-feed", "selector": "[aria-label*='stai pensando' i]" }
+  ],
+  "loggedOut": [
+    { "label": "login-email", "selector": "input[name='email']" },
+    { "label": "login-password", "selector": "input[name='pass']" }
+  ],
+  "sessionCookies": ["c_user", "xs"],
+  "publish": {
+    "loggedOutMarkers": [
+      { "label": "login-button-it", "selector": "[role='button'][aria-label='Accedi']" },
+      { "label": "login-link-it", "selector": "a[aria-label='Accedi']" },
+      { "label": "login-button-en", "selector": "[role='button'][aria-label='Log in']" },
+      { "label": "login-form-email", "selector": "input[name='email']" },
+      { "label": "login-button-es", "selector": "[role='button'][aria-label='Iniciar sesión']" },
+      { "label": "login-button-fr", "selector": "[role='button'][aria-label='Se connecter']" },
+      { "label": "login-button-de", "selector": "[role='button'][aria-label='Anmelden']" }
+    ],
+    "composeEntry": [
+      { "label": "whats-on-your-mind-en", "selector": "[aria-label*=\"What's on your mind\" i]" },
+      { "label": "whats-on-your-mind-it", "selector": "[aria-label*='stai pensando' i]" },
+      { "label": "whats-on-your-mind-es", "selector": "[aria-label*='estás pensando' i]" },
+      { "label": "whats-on-your-mind-pt", "selector": "[aria-label*='está pensando' i]" },
+      { "label": "whats-on-your-mind-fr", "selector": "[aria-label*='Quoi de neuf' i]" },
+      { "label": "whats-on-your-mind-de", "selector": "[aria-label*='Was machst du gerade' i]" },
+      { "label": "create-a-post-en", "selector": "[aria-label*='Create a post' i]" },
+      { "label": "create-a-post-it", "selector": "[aria-label*='Crea un post' i]" },
+      { "label": "create-a-post-es", "selector": "[aria-label*='Crear una' i]" },
+      { "label": "create-a-post-fr", "selector": "[aria-label*='Créer une publication' i]" },
+      { "label": "create-a-post-de", "selector": "[aria-label*='Beitrag erstellen' i]" },
+      { "label": "write-something-it", "selector": "[aria-label*='Scrivi qualcosa' i]" },
+      { "label": "photo-video-en-fr", "selector": "[aria-label*='Photo/vid' i]" },
+      { "label": "photo-video-it-es-de", "selector": "[aria-label*='Foto/vid' i]" }
+    ],
+    "textbox": [
+      { "label": "role-textbox-editable", "selector": "[role='textbox'][contenteditable='true']" },
+      { "label": "contenteditable", "selector": "div[contenteditable='true'][role='textbox']" }
+    ],
+    "advanceButtons": [
+      { "label": "advance-it", "selector": "[role='button'][aria-label='Avanti']" },
+      { "label": "advance-en", "selector": "[role='button'][aria-label='Next']" },
+      { "label": "advance-es", "selector": "[role='button'][aria-label='Siguiente']" },
+      { "label": "advance-fr", "selector": "[role='button'][aria-label='Suivant']" },
+      { "label": "advance-de", "selector": "[role='button'][aria-label='Weiter']" }
+    ],
+    "postButton": [
+      { "label": "post-aria-it", "selector": "[role='button'][aria-label='Pubblica']" },
+      { "label": "post-aria-en", "selector": "[role='button'][aria-label='Post']" },
+      { "label": "post-aria-es-pt", "selector": "[role='button'][aria-label='Publicar']" },
+      { "label": "post-aria-fr", "selector": "[role='button'][aria-label='Publier']" },
+      { "label": "post-aria-de", "selector": "[role='button'][aria-label='Posten']" }
+    ],
+    "toastView": [
+      { "label": "toast-posts-link", "selector": "a[href*='/posts/']" },
+      { "label": "toast-permalink", "selector": "a[href*='permalink.php']" },
+      { "label": "toast-story", "selector": "a[href*='story.php']" },
+      { "label": "toast-share", "selector": "a[href*='/share/p/']" }
+    ],
+    "fileInput": [{ "label": "file-input", "selector": "input[type='file']" }],
+    "profileLink": [
+      { "label": "profile-tab", "selector": "a[href*='/profile.php']" },
+      { "label": "own-timeline-en", "selector": "a[aria-label*='profile' i]" },
+      { "label": "own-timeline-it", "selector": "a[aria-label*='profilo' i]" },
+      { "label": "own-timeline-es-pt", "selector": "a[aria-label*='perfil' i]" },
+      { "label": "own-timeline-de", "selector": "a[aria-label*='Profil' i]" }
+    ],
+    "profilePost": [
+      { "label": "role-article-post", "selector": "div[role='article'] a[href*='/posts/']" },
+      { "label": "any-post-link", "selector": "a[href*='/posts/']" }
+    ]
+  },
+  "notes": "Best-effort selectors for the Facebook DOM; they drift with A/B variants, so treat them as a starting point and refresh via `zelari-code automation probe facebook`. Within each list the FIRST match wins. Entry/post-button chains are LOCALIZED (en/it/es/pt/fr/de) because aria-labels follow the account language — the engine is plain CSS (page.$/waitForSelector), so keep selectors attribute-based. NOTE: selector values are single CSS strings — a comma list is ONE selector matching either side.",
+  "_comment": "2026-09-17 LIVE calibration (it-IT, logged-in headless): composer-open VERIFIED via create-a-post-it ('Crea un post') -> dialog textbox YES. consentButtons + publish.loggedOutMarkers added after the same live session (GDPR wall / server-side session rejection were masking as selector-miss). postButton NOT yet verifiable pre-typing: the empty dialog shows a multi-step 'Avanti' flow and NO submit button (FB renders it only with text) — post-any stays LAST on purpose (last resort only). First approved real run calibrates it. Recalibrate by editing this file alone (`automation probe facebook --publish`) — no recompile."
+}

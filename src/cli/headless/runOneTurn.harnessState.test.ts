@@ -163,15 +163,17 @@ describe('runOneTurn — harness_state as the final NDJSON line (json surface)',
       | { sessionId?: string }
       | undefined;
     expect(state.session.sessionId).toBe(started?.sessionId);
-    // …with the session lens closed 'completed' and the ADR-0023 contract:
-    // one turn, evidence-less but lifecycle-complete (R6), zero blockers.
+    // …with the session lens closed 'completed'. K1.7: a non-strict turn now
+    // writes an honest UNEVALUATED verification.run (strict:false), so the
+    // ADR-0023 contract flags R4 `verification-not-strict` instead of the
+    // pre-K1.7 R6 "evidence-less ⇒ complete" silence.
     expect(state.session.status).toBe('completed');
     expect(state.execution.turnsTotal).toBe(1);
     expect(state.execution.contracts).toHaveLength(1);
     expect(state.execution.contracts[0]).toMatchObject({
       turn: 1,
-      complete: true,
-      blockers: [],
+      complete: false,
+      blockers: ['verification-not-strict'],
     });
 
     // Best-effort emission: nothing on stderr in the happy path.
