@@ -5,6 +5,39 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.47.0] - 2026-09-18
+
+Kraken reliability hardening, waves 1+2 (`2026-09-18-kraken-reliability-hardening-plan.md`): no false greens on completion (W1) and an integral write surface (W2), plus the parallel automations/provider-auth workstream that landed in the same tree.
+
+### Added — strict-done gates (W1)
+
+- **Per-tentacle verify debt (K1.1)** — verify debt moved from a single slot to a spawn-id-keyed queue in `taskTool`; a passing verify clears only its own general's debt, and the whole queue feeds the end-of-turn strict gate (general#1 FAIL + general#2 PASS ⇒ exit 4).
+- **Unresolved-findings gate (K1.2)** — the graph runtime's `unresolvedFindings` now compose into the verification bridge: a non-empty set at end of turn ⇒ exit 4 even with no task-tool debt.
+- **Deterministic auto-verify floor (K1.3)** — a post-general auto-verify only counts as PASS when it executed at least one instrumental check; a narrative PASS trailer without executions is `unknown` and re-opens debt.
+- **Persistent verify debt on the spine (K1.5)** — `verify.debt_open` / `verify.debt_cleared` envelope events; the next TUI turn reloads outstanding debt, footer and exit surface stay consistent with headless.
+- **Strict waiver event (K1.6)** — every strict-done opt-out emits a `strict.waived` spine event (reason, env/flag, timestamp).
+- **Honest verdict representation (K1.7)** — non-strict turns report `verdict: null` / `UNEVALUATED` with replay summary `unverified-open` instead of an implicit pass.
+- **Per-claim mission gate (K1.8)** — a mission claim is event-backed only when the evidence references that claim's own criteria (claim→criterion id match), not any evidence event.
+
+### Added — write-surface integrity (W2)
+
+- **Bash write detection (K2.1)** — post-exec fs diff on `bash`/`exec_process` emits synthetic `file.applied` events with `origin: 'bash'` plus a `bash.write_detected` radio audit; the spine is no longer blind to shell writes.
+- **Anchored `overwrite: true` (K2.2)** — overwrite now requires `expectedHash` (recent read) or an explicit `force`; anything else is a `stale_content` WriteReject carrying the actual hash and a re-read next action.
+- **Failed-merge rollback (K2.3)** — worktree merges capture a pre-squash recovery point and roll the parent back on conflict/commit failure, emitting `worktree.merge_aborted` (branch and worktree kept).
+- **Loud worktree fallback (K2.4)** — a failed worktree spawn emits `worktree.fallback_shared_tree` and latches `sharedTreeDegraded` for the rest of the run: overlapping writers are admitted serially from then on, so the safety assumption never degrades silently.
+- **Extensible ESSENTIAL_BASH (K2.5)** — the protected-mode allowlist extends via `.zelari/zelari.config.json` (`essentialBash`) and declared `package.json` scripts, so cargo/pytest/mvn verify commands are no longer denied.
+- K2.6 (multi-file transactionality on the non-graph path) is formally deferred — residual risk absorbed by W1 + K2.1/K2.2/K2.4.
+
+### Added — automations & provider auth (parallel workstream)
+
+- **Muse OAuth flow** — `src/cli/museOAuth.ts` provider login with unit coverage (`tests/unit/cli-museOAuth.test.ts`).
+- **Browser session layer for automations** — persistent cookie disk, page adapter and per-platform selectors (Facebook/X) under `src/cli/automations/browser/`.
+- **Desktop channel logins** — new `ChannelLoginsCard` settings panel plus the Rust automations-registry entries backing it; key store, model discovery and provider slash-handlers updated to match.
+
+### Fixed
+
+- **Canonical verdict parser (K1.4)** — `taskTool` reuses the canonical `verdict.ts` last-trailer-wins parser; no more ad-hoc regex over the assistant body.
+
 ## [2.46.2] - 2026-09-16
 
 Desktop performance plan (phases 1-4), reconciled with the v2.46.1 input-latency work: the merge keeps the deeper local refactor (async Rust commands, Rust-side delta coalescing, windowed transcript) and ports the v2.46.1 chat/Agents model-sync fix onto it.
