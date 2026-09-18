@@ -27,6 +27,7 @@
 import { refreshGrokToken, DEFAULT_GROK_OAUTH_CLIENT_ID } from './grokOAuth.js';
 import { refreshChatgptToken } from './chatgptOAuth.js';
 import { refreshAnthropicToken } from './anthropicOAuth.js';
+import { refreshMuseToken } from './museOAuth.js';
 import type { ProviderName } from './keyStore.js';
 
 /**
@@ -104,6 +105,10 @@ export const chatgptRefreshAdapter: RefreshImpl = async (_providerId, refreshTok
   return refreshChatgptToken({ refreshToken });
 };
 
+export const museRefreshAdapter: RefreshImpl = async (_providerId, refreshToken) => {
+  return refreshMuseToken({ refreshToken });
+};
+
 export const anthropicRefreshAdapter: RefreshImpl = async (_providerId, refreshToken) => {
   return refreshAnthropicToken({ refreshToken });
 };
@@ -116,6 +121,7 @@ export function registerDefaultRefreshImpls(): void {
   if (!registry.has('grok')) registry.set('grok', grokRefreshAdapter);
   if (!registry.has('chatgpt')) registry.set('chatgpt', chatgptRefreshAdapter);
   if (!registry.has('anthropic')) registry.set('anthropic', anthropicRefreshAdapter);
+  if (!registry.has('muse')) registry.set('muse', museRefreshAdapter);
 }
 
 /** Result shape shared by every refresh impl (mirrors `RefreshImpl`'s return). */

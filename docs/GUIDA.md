@@ -1,6 +1,6 @@
 # Zelari Code — User Guide
 
-> **2.46.2**
+> **2.47.0**
 > Multi-agent coding CLI with TUI (Ink + React), **Zelari Desktop** (Tauri 2), 6-role council, **kraken** super-agent, **zelari** missions, slash commands, MCP, SSH and provider-agnostic LLMs (Grok / ChatGPT / Anthropic OAuth).
 > Product: **[Anathema Studio](https://anathema-studio.com/)** · license **Apache-2.0**.
 
@@ -62,7 +62,7 @@ The shared runtime is published as the npm package [`@zelari/core`](https://www.
 | **Node.js** | **≥ 20.17 LTS** | CI tests the Node 20 floor and Node 24. |
 | **npm** | **≥ 10** | Needed to reproduce the workspace lockfile; use the version pinned by `packageManager`. |
 | **OS** | Linux, macOS, Windows 10/11 | Windows requires Git Bash (auto-detected). |
-| **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth: `/login grok`, `/login chatgpt`, `/login anthropic`. |
+| **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, Muse, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth: `/login grok`, `/login chatgpt`, `/login anthropic`, `/login muse`. |
 
 ### Optional dependencies (advanced capabilities)
 
@@ -710,6 +710,7 @@ Both require `ZELARI_EVOLUTION=shadow` to have any data to show; the ledger is a
 | `grok` | xAI Grok | `GROK_API_KEY` | OAuth via `/login grok` (RFC 8628) |
 | `chatgpt` | ChatGPT (subscription) | `CHATGPT_API_KEY` | OAuth magic-link / device: `/login chatgpt` |
 | `anthropic` | Claude Pro/Max | `ANTHROPIC_API_KEY` | OAuth magic-link: `/login anthropic` then paste `CODE#STATE` |
+| `muse` | Muse (Meta) | `MUSE_API_KEY` | OAuth device flow + key mint: `/login muse` (or import from `muse login`); endpoints overridable via `MUSE_OAUTH_*` |
 | `minimax` | MiniMax | `MINIMAX_API_KEY` | Base URL: `https://api.minimax.io/v1` (international endpoint) |
 | `glm` | GLM / Z.AI | `GLM_API_KEY` | Base URL: `https://api.z.ai/api/coding/paas/v4` (GLM Coding Plan). For the pay-per-token API: `/provider custom https://api.z.ai/api/paas/v4`. The provider id is `glm`, not `zai`. |
 
@@ -800,6 +801,7 @@ zelari-code --login-oauth --provider grok
 zelari-code --login-oauth --provider chatgpt
 zelari-code --login-oauth --provider anthropic
 zelari-code --login-oauth --provider anthropic --code 'CODE#STATE'
+zelari-code --login-oauth --provider muse
 zelari-code --refresh-oauth --provider grok
 zelari-code --logout-oauth --provider chatgpt
 ```

@@ -14,6 +14,7 @@ import { getApiStyleFor } from '../providerConfig.js';
 export function buildProviderStream(config: OpenAICompatibleConfig): ProviderStreamFn {
   if (config.providerId === 'anthropic') return anthropicMessagesProvider(config);
   if (config.providerId === 'chatgpt') return chatgptResponsesProvider(config);
+  if (config.providerId === 'muse') return responsesApiProvider(config);
   // Endpoint-style override: any OpenAI-compatible provider can be switched
   // to the Responses API (`POST /responses`) via `/provider api responses`.
   // The selection is persisted per-provider (providerConfig.apiStyleByProvider).

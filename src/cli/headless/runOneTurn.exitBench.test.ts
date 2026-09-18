@@ -120,8 +120,11 @@ afterEach(() => {
     else process.env[k] = v;
   }
   resetKrakenCandidates();
-  return fs.rm(tmp, { recursive: true, force: true });
-});
+  // maxRetries: same win32 remedy as strictExit — the pack child can hold the
+  // tmp dir handle briefly (EBUSY on recursive rm); the explicit 30s hook
+  // timeout covers the release window (pre-existing flake, not W1).
+  return fs.rm(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+}, 30_000);
 
 /** Capture (and swallow) stdout+stderr while the turn emits NDJSON. */
 async function captureOutput<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {

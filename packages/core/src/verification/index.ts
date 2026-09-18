@@ -12,3 +12,4 @@ export * from './verifier.js';
 export * from './scopeDiscipline.js';
 export * from './commandConcurrency.js';
 export * from './resourceReserveGate.js';
+export * from './claimGate.js';

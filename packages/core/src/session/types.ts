@@ -94,6 +94,14 @@ export const SESSION_EVENT_KINDS = [
   'file.read',
   'file.applied',
   'file.rejected',
+  // K1.4 / F6: explicit strict-done waiver. State-only (never model-surface).
+  // Additive kind — no SCHEMA_VERSION bump (ADR-0021): older readers report
+  // schema-mismatch and skip via tolerant replay; deriveMessages ignores it.
+  'strict.waived',
+  // K1.5 / F5: runtime general⇒verify obligation. State-only (never
+  // model-surface). Additive kinds — no SCHEMA_VERSION bump (ADR-0021).
+  'verify.debt_open',
+  'verify.debt_cleared',
   'note',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];

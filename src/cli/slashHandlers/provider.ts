@@ -51,7 +51,7 @@ export interface ProviderSlashContext {
 }
 
 const UNKNOWN_PROVIDER_MSG =
-  (id: string) => `[provider] unknown: ${id}. Available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, custom`;
+  (id: string) => `[provider] unknown: ${id}. Available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, custom`;
 
 // ---------------------------------------------------------------------------
 // Interactive picker plumbing (v0.7.10) — /provider and /model with no args
@@ -91,7 +91,7 @@ export interface PickerRequest {
 export type OpenPicker = (req: PickerRequest) => void;
 
 /** Provider ids that support /v1/models discovery. */
-const DISCOVERABLE_PROVIDERS: readonly string[] = ['grok', 'glm', 'minimax', 'deepseek', 'openai-compatible', 'chatgpt', 'anthropic'];
+const DISCOVERABLE_PROVIDERS: readonly string[] = ['grok', 'glm', 'minimax', 'deepseek', 'openai-compatible', 'chatgpt', 'anthropic', 'muse'];
 
 export function handleProviderList(ctx: ProviderSlashContext): void {
   const list = getActiveProviderSpec();
@@ -99,7 +99,7 @@ export function handleProviderList(ctx: ProviderSlashContext): void {
   const epHint = customEp ? ` — custom endpoint: ${customEp}` : '';
   appendSystem(
     ctx.setMessages,
-    `[provider] current: ${list.displayName} (model: ${ctx.activeModel})${epHint} — available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, custom`,
+    `[provider] current: ${list.displayName} (model: ${ctx.activeModel})${epHint} — available: openai-compatible, minimax, glm, grok, deepseek, chatgpt, anthropic, muse, custom`,
   );
 }
 
@@ -155,7 +155,7 @@ export function handleProviderCustom(
   const id = ctx.activeProviderSpec.id;
   try {
     if (opts.apiStyle) {
-      if (id === 'chatgpt' || id === 'anthropic') {
+      if (id === 'chatgpt' || id === 'anthropic' || id === 'muse') {
         appendSystem(ctx.setMessages, `[provider] ${id} has a fixed transport — nothing to select.`);
         return;
       }
@@ -332,6 +332,24 @@ export async function handleLoginOAuth(
       appendSystem(
         ctx.setMessages,
         `[login oauth] ✓ ChatGPT authenticated (${maskKey(token.accessToken)}). Active provider switched — try a prompt now.`,
+      );
+      return;
+    }
+
+    if (provider === 'muse') {
+      appendSystem(ctx.setMessages, '[login oauth] Muse device login — open the URL and enter the code…');
+      const { runMuseOAuthFlow } = await import('../museOAuth.js');
+      const museToken = await runMuseOAuthFlow({
+        onUserCode: (info) =>
+          appendSystem(
+            ctx.setMessages,
+            `[login oauth] Open ${info.verificationUri} and enter:\n  ${info.userCode}\n(Opening your browser…)`,
+          ),
+      });
+      await persistOAuthLogin('muse', museToken);
+      appendSystem(
+        ctx.setMessages,
+        `[login oauth] ✓ Muse authenticated (${maskKey(museToken.accessToken)}). Active provider switched — try a prompt now.`,
       );
       return;
     }

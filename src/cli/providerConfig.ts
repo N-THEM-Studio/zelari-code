@@ -73,6 +73,7 @@ const DEFAULTS: ProviderConfig = {
     'deepseek': 'deepseek-v4-pro',
     'chatgpt': 'gpt-5.6-codex',
     'anthropic': 'claude-sonnet-4-6',
+    'muse': 'muse-spark-1.3',
     'custom': '',
   },
   thinkingByProvider: {
@@ -83,6 +84,7 @@ const DEFAULTS: ProviderConfig = {
     'deepseek': 'auto',
     'chatgpt': 'auto',
     'anthropic': 'auto',
+    'muse': 'auto',
     'custom': 'auto',
   },
   customEndpoints: {},

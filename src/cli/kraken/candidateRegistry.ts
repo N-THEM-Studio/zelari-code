@@ -160,6 +160,20 @@ export function getLastVerifyToolTrace(): TentacleToolTrace[] | null {
 }
 
 /**
+ * K1.3: publish the raw tool executions of the latest verify tentacle on
+ * the per-turn channel independently of `setKrakenCheckResults` — so the
+ * auto-verify PASS-floor (≥ 1 captured tool execution) is observable even
+ * when no `selected` verdict ran this turn (no required-checks path).
+ *
+ * The existing channel `__zelariVerifyToolTrace` is reused; no new global.
+ * The argument may be empty (clears the slot to null) or any bounded ring.
+ */
+export function setLastVerifyToolTrace(trace: readonly TentacleToolTrace[]): void {
+  const g = globalThis as unknown as CandidateGlobal;
+  g.__zelariVerifyToolTrace = trace.length > 0 ? [...trace] : null;
+}
+
+/**
  * Passed-check counter (Fase 7): how many required checks carry an explicit
  * `pass`. `unknown` NEVER counts — a degraded observation is not proof
  * (§23). undefined when no verify report landed yet this turn.

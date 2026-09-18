@@ -34,7 +34,8 @@ export type ProviderName =
   | 'openai-compatible'
   | 'custom'
   | 'chatgpt'
-  | 'anthropic';
+  | 'anthropic'
+  | 'muse';
 
 export interface ProviderSpec {
   /** Stable id used in storage + slash commands. */
@@ -55,6 +56,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
   { id: 'deepseek', displayName: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com' },
   { id: 'chatgpt', displayName: 'ChatGPT (OAuth)', envVar: 'CHATGPT_API_KEY', baseUrl: 'https://chatgpt.com/backend-api/codex' },
   { id: 'anthropic', displayName: 'Anthropic Claude (OAuth)', envVar: 'ANTHROPIC_API_KEY', baseUrl: 'https://api.anthropic.com' },
+  { id: 'muse', displayName: 'Muse (OAuth)', envVar: 'MUSE_API_KEY', baseUrl: 'https://api.meta.ai/v1' },
 ] as const;
 
 /** Providers that support subscription OAuth (no API key required). */
@@ -62,6 +64,7 @@ export const OAUTH_PROVIDER_IDS: readonly ProviderName[] = [
   'grok',
   'chatgpt',
   'anthropic',
+  'muse',
 ];
 
 export function isOAuthProvider(id: string): id is ProviderName {

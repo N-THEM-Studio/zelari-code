@@ -32,8 +32,12 @@ import {
   compileVerificationCriteria,
   type ContractCriteriaEvaluation,
 } from './contractCompiler.js';
+import type { UnresolvedFinding } from '@zelari/core';
 import type { ShellProvider } from '@zelari/core/runtime';
 import type { SessionEventInput } from '@zelari/core/session';
+import { unresolvedFindingsToContract, formatUnresolvedNodeIds } from './unresolvedGate.js';
+import { emitStrictWaiver } from './strictWaiver.js';
+import { applyInstrumentalFloor } from './narrativeFloor.js';
 import {
   evaluateCompletion,
   STRICT_BUILD_POLICY,
@@ -45,6 +49,8 @@ import {
   type VerificationResult,
   type VerifierReview,
 } from '@zelari/core/verification';
+
+export { evaluateClaimReport } from '@zelari/core/verification';
 
 /**
  * Strict done gate defaults: per-surface.
@@ -420,6 +426,12 @@ export interface StrictBuildGateEvaluation {
    * ZELARI_ALLOW_UNVERIFIED=1 (exit 0 again).
    */
   unverified?: boolean;
+  /**
+   * K1.4 / F6: whether a strict-done waiver was recorded on the spine.
+   * `false` = attempted and failed (fail-closed). Omitted when no waiver
+   * was attempted so historical payloads and the M1.2 env hatch stay intact.
+   */
+  waiverRecorded?: boolean;
   /** True when the turn may NOT cleanly finish (either gate blocks). */
   blocked: boolean;
   /** One-line machine-readable summary for logging/NDJSON. */
@@ -452,6 +464,28 @@ export interface StrictGateOptions {
    * Neither present ⇒ no contract contribution to the gate.
    */
   taskContract?: import('@zelari/core').TaskContract;
+  /**
+   * K1.2 / F2: graph `unresolved` findings join the strict composition as
+   * unsatisfied required criteria (same weight as failed). Additive blocker
+   * only — never rescues a green selection/pack.
+   */
+  unresolvedFindings?: readonly UnresolvedFinding[];
+}
+
+/** K1.4: record `--allow-unverified` on the spine. `undefined` = not attempted. */
+async function recordAllowUnverifiedWaiver(
+  options: StrictGateOptions,
+): Promise<boolean | undefined> {
+  const env = options.env ?? process.env;
+  if (!allowUnverified(env)) return undefined;
+  const rec = await emitStrictWaiver(options.emit, {
+    reason: 'allow-unverified',
+    flag: 'ZELARI_ALLOW_UNVERIFIED',
+    value: String(env.ZELARI_ALLOW_UNVERIFIED ?? '1'),
+    surface: options.surface ?? 'kraken',
+    ts: Date.now(),
+  });
+  return rec.recorded;
 }
 
 /**
@@ -469,15 +503,31 @@ export async function evaluateStrictBuildGate(
   // kraken_select. Selection criteria join the same evaluation when present.
   // H10-fix1: consult the per-invocation env overlay first (undefined ⇒
   // process.env via the default param) — never the bare ambient env.
-  const strictOn = strictDoneEnabled(options.surface ?? 'kraken', options.env);
-  const nativeOn = nativePackEnabled(options.env ?? process.env);
+  const env = options.env ?? process.env;
+  const surface = options.surface ?? 'kraken';
+  let strictOn = strictDoneEnabled(surface, options.env);
+  const nativeOn = nativePackEnabled(env);
   const selectionAvailable = gate.selectionUsed && gate.total > 0;
   // t22: TaskContract-compiled criteria participate under the SAME switches
   // as the pack. They can rescue a bare "nothing to evaluate" early-return
   // when no selection ran and the pack binds nothing (contract-only turn).
   const scopeContract = options.taskContract ?? activeContractScope()?.contract;
   const contractPlan = scopeContract ? compileVerificationCriteria(scopeContract) : [];
-  const nothingBindable = !selectionAvailable && !nativeOn && contractPlan.length === 0;
+  // K1.2 / F2: unresolved graph nodes are bindable criteria (never nothing-to-evaluate).
+  const unresolved = unresolvedFindingsToContract(options.unresolvedFindings ?? []);
+  // K1.4 / F6: opt-out is a waiver — emit before taking the non-strict path.
+  // Emit failure is fail-closed: the opt-out does not apply.
+  if (!strictOn && options.emit) {
+    const flag = surface === 'mission' ? 'ZELARI_MISSION_STRICT' : 'ZELARI_STRICT_DONE';
+    const rec = await emitStrictWaiver(options.emit, {
+      reason: surface === 'mission' ? 'mission-strict-opt-out' : 'strict-done-opt-out',
+      flag,
+      value: String(env[flag] ?? '0'),
+      surface,
+      ts: Date.now(),
+    });
+    if (!rec.recorded) strictOn = true;
+  }
   if (!strictOn && !nativeOn) {
     return {
       gate,
@@ -490,12 +540,15 @@ export async function evaluateStrictBuildGate(
         : 'open',
     };
   }
+  const nothingBindable =
+    !selectionAvailable && !nativeOn && contractPlan.length === 0 && unresolved.criteria.length === 0;
   if (nothingBindable) {
     // M1.2: strict is ON but no criterion can be produced (pack off or
     // unbound tree, no selection contract, no task contract) → UNVERIFIED,
     // not open. A success claim with zero verification is exactly the false
     // done this gate exists to prevent; --allow-unverified is the explicit
-    // opt-out for scratch/benign runs.
+    // opt-out for scratch/benign runs. K1.4: the hatch must be spine-recorded.
+    const waiverRecorded = await recordAllowUnverifiedWaiver(options);
     return {
       gate,
       strict: true,
@@ -503,6 +556,7 @@ export async function evaluateStrictBuildGate(
       evaluation: null,
       native: null,
       blocked: true,
+      ...(typeof waiverRecorded === 'boolean' ? { waiverRecorded } : {}),
       summary:
         'unverified (strict on: no criteria — pack off/unbound, no selection contract, no task contract)',
     };
@@ -534,14 +588,25 @@ export async function evaluateStrictBuildGate(
         emit: options.emit,
       }).catch((): ContractCriteriaEvaluation | null => null)
     : null;
-  const allCriteria = [...contract.criteria, ...(native?.criteria ?? []), ...(compiled?.criteria ?? [])];
-  const allResults = [...contract.results, ...(native?.results ?? []), ...(compiled?.results ?? [])];
+  const allCriteria = [
+    ...contract.criteria,
+    ...(native?.criteria ?? []),
+    ...(compiled?.criteria ?? []),
+    ...unresolved.criteria,
+  ];
+  const allResults = [
+    ...contract.results,
+    ...(native?.results ?? []),
+    ...(compiled?.results ?? []),
+    ...unresolved.results,
+  ];
   // Pack enabled but nothing bound (and no selection contract) → nothing to
   // evaluate: stay non-strict rather than certify an empty PASS.
   if (allCriteria.length === 0) {
     if (strictOn) {
       // M1.2: pack enabled but the tree bound no deterministic command and
       // no selection/contract criteria exist — UNVERIFIED, never open.
+      const waiverRecorded = await recordAllowUnverifiedWaiver(options);
       return {
         gate,
         strict: true,
@@ -551,6 +616,7 @@ export async function evaluateStrictBuildGate(
         compiled,
         results: allResults,
         blocked: true,
+        ...(typeof waiverRecorded === 'boolean' ? { waiverRecorded } : {}),
         summary: 'unverified (strict on: native pack bound no command, no selection contract)',
       };
     }
@@ -567,8 +633,15 @@ export async function evaluateStrictBuildGate(
     };
   }
   const evaluation = evaluateCompletion(allCriteria, allResults, STRICT_BUILD_POLICY);
+  // K1.5: trailer VERDICT: PASS is advisory. Applied AFTER the policy so
+  // existing inadmissible-tier reasons stay intact; the floor then demotes
+  // narrative-only `pass` in the returned dossier (PASS requires ≥1
+  // instrumental artifact — same as K1.3 in taskTool).
+  applyInstrumentalFloor(allResults);
   const blocked = gate.blocked || evaluation.verdict !== 'PASS';
   const legacyPart = selectionAvailable ? `${gate.passed}/${gate.total} legacy-pass, ` : 'no selection contract, ';
+  const unresolvedNote =
+    unresolved.nodeIds.length > 0 ? `; ${formatUnresolvedNodeIds(unresolved.nodeIds)}` : '';
   return {
     gate,
     strict: true,
@@ -581,7 +654,7 @@ export async function evaluateStrictBuildGate(
     summary: blocked
       ? `blocked (strict ${evaluation?.verdict ?? 'n/a'}): ${legacyPart}evidence ${
           evaluation?.evidenceComplete ? 'complete' : 'incomplete'
-        }`
+        }${unresolvedNote}`
       : `open (strict PASS): ${evaluation?.satisfied.length ?? 0}/${allCriteria.length} criteria pass with evidence`,
   };
 }
@@ -647,7 +720,9 @@ export function strictGateExitCode(
   env: Record<string, string | undefined> = process.env,
 ): number {
   if (evaluation.strict && evaluation.blocked) {
-    if (evaluation.unverified && allowUnverified(env)) return 0;
+    // K1.4: hatch applies only when the waiver was recorded (or never
+    // attempted — M1.2 env-only call). `waiverRecorded === false` is fail-closed.
+    if (evaluation.unverified && allowUnverified(env) && evaluation.waiverRecorded !== false) return 0;
     return STRICT_DONE_EXIT_CODE;
   }
   return 0;
@@ -774,3 +849,11 @@ export function evaluateStrictBuildGateFromSession(
       : 'open (no strict verification record in session log)',
   };
 }
+
+export {
+  honestUnevaluatedPayload,
+  replayVerificationFlag,
+  UNEVALUATED_STATUS,
+  UNVERIFIED_OPEN,
+  STRICT_OFF_REASON,
+} from './verifyHonestVerdict.js';

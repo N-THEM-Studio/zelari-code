@@ -21,7 +21,8 @@ import { PROVIDERS } from "../keyStore.js";
 import { getActiveModel } from "../providerConfig.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
 import { KrakenTurnRuntime } from "../kraken/turnRuntime.js";
-import { outcomeMemoryAllowed, resetTaskSpawnCount, resetTaskVerifyObligation, taskVerifyObligation } from "../tools/taskTool.js";
+import { outcomeMemoryAllowed, hydrateTaskVerifyDebtFromSpine, resetTaskSpawnCount, resetTaskVerifyObligation, taskVerifyObligation } from "../tools/taskTool.js";
+import { bindVerifyDebtSpineEmit, flushVerifyDebtSpine, formatTuiVerifyDebtNotice } from "../tools/verifyDebtSpine.js";
 import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from "../kraken/candidateRegistry.js";
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from "../kraken/metrics.js";
 import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
@@ -219,9 +220,25 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
     ) => {
       // Kraken: fresh tentacle spawn budget each parent user turn.
       resetTaskSpawnCount();
-      // t78: same for the runtime general⇒verify obligation — debt never
-      // leaks across parent turns.
+      // K1.5 / F5: the in-memory cache is per-turn, but open debt is durable
+      // on the spine. Flush pending emits from the previous turn, wipe the
+      // cache, rebind emit, then replay un-cleared `verify.debt_open` so the
+      // strict-done gate still sees turn-N debt at turn N+1.
+      await flushVerifyDebtSpine();
       resetTaskVerifyObligation();
+      {
+        const spine = writerRef.current?.spine;
+        if (spine) {
+          bindVerifyDebtSpineEmit(async (input) => {
+            const seq = await spine.appendEvent(input);
+            return { seq };
+          });
+          await hydrateTaskVerifyDebtFromSpine({
+            sessionsDir: spine.sessionsDir,
+            sessionId: spine.sessionId,
+          });
+        }
+      }
       // Fase 3 (ADR-0020): fresh per-turn candidate registry.
       resetKrakenCandidates();
       resetKrakenTurnMetrics();
@@ -925,6 +942,7 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                 const seq = await (writerRef.current?.spine?.appendEvent(input) ?? Promise.resolve(null));
                 return { seq };
               };
+              bindVerifyDebtSpineEmit(krakenSpineEmit);
               // P0.3 (harness-hardening x ADR-0023): persist the completion-proof
               // artifact after every strict gate evaluation — the file always
               // reflects the LAST evaluation of the turn. Best-effort by
@@ -1008,17 +1026,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // t78: runtime general⇒verify obligation — TUI must not silently
               // complete a turn whose writer work is unverified. Rework already
               // ran inside the task tool (budget ≤ 1); here we only shout.
+              // Shared with headless via formatTuiVerifyDebtNotice: finished without a passing verify
+              // — turn is NOT verified-complete.
               if (
                 !krakenSuppressFinish &&
                 event.reason === "completed" &&
                 workPhase === "build" &&
                 strictDoneEnabled("kraken")
               ) {
+                await flushVerifyDebtSpine();
                 const verifyDebt = taskVerifyObligation();
                 if (verifyDebt) {
                   appendSystem(
                     setMessages,
-                    `[kraken] strict done: task general "${verifyDebt.description}" finished without a passing verify (${verifyDebt.detail ?? "unverified work"}) — turn is NOT verified-complete`,
+                    formatTuiVerifyDebtNotice(verifyDebt),
                     Date.now(),
                   );
                 }

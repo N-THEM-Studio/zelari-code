@@ -393,6 +393,7 @@ export const PROVIDER_ENDPOINTS: Record<ProviderName, string> = {
   'deepseek': 'https://api.deepseek.com',
   'chatgpt': 'https://chatgpt.com/backend-api/codex',
   'anthropic': 'https://api.anthropic.com',
+  'muse': 'https://api.meta.ai/v1',
   'custom': '',
 };
 

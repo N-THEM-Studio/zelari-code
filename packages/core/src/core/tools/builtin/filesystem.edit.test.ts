@@ -101,15 +101,16 @@ describe('write_file file_exists guard (t77)', () => {
     }
   });
 
-  it('overwrite: true replaces an existing file', async () => {
+  it('overwrite: true with force:true replaces an existing file', async () => {
     const file = path.join(tmpRoot, 'swap.ts');
     await fs.writeFile(file, 'old\n', 'utf-8');
     const r = await writeFileTool.execute(
-      { path: 'swap.ts', content: 'new\n', overwrite: true },
+      { path: 'swap.ts', content: 'new\n', overwrite: true, force: true },
       ctx,
     );
     expect(r.ok).toBe(true);
     await expect(fs.readFile(file, 'utf-8')).resolves.toBe('new\n');
+    if (r.ok) expect(r.value.forcedOverwrite).toBe(true);
   });
 
   it('the file_exists minimalDiff contrasts existing (-) vs incoming (+), bounded', async () => {

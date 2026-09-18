@@ -120,7 +120,7 @@ When Kraken delegates, live tentacles appear as
 
 `/provider` picks the engine, `/model` picks the model, `/provider custom <url>`
 points at self-hosted endpoints (Ollama, LM Studio, vLLM). OAuth:
-`/login grok`, `/login chatgpt`, `/login anthropic` — or
+`/login grok`, `/login chatgpt`, `/login anthropic`, `/login muse` — or
 `/login <provider> <key>` for API keys. `/provider <name> status` shows key
 source and token expiry.
 
