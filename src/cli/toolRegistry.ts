@@ -1091,6 +1091,10 @@ export function createKrakenSubAgentContextFactory(opts: {
     // stay empty and this resolves the parent model exactly as before.
     const resolvedModel = await resolveKrakenSubModelAsync(agent, parentModel, process.env, {
       provider: cfg.providerId,
+      // K3.6 (F20): this factory is where a REAL general spawn resolves its
+      // model, so it also owns the radio half of the "SUB_MODEL set but
+      // general stays on the parent" warn (stderr half lives in krakenModel).
+      radio: { cwd: root, sessionId },
     });
     // Cross-provider tentacles (Desktop Settings → ZELARI_KRAKEN_*_MODEL): a
     // provider-qualified ref ("grok/grok-4") selects both provider and model.

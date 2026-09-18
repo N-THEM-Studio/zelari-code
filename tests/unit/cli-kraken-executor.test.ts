@@ -31,6 +31,7 @@ import type {
 import {
   resetKrakenGraphLive,
   getKrakenGraphLive,
+  formatKrakenGraphDigest,
 } from '../../src/cli/kraken/graphStatus.js';
 import { listCheckpoints } from '../../src/cli/checkpoint/checkpointManager.js';
 import { readKrakenRadio } from '../../src/cli/tools/krakenRadio.js';
@@ -1771,6 +1772,114 @@ describe('graph cancellation', () => {
     expect(summary.converged).toBe(true);
     expect(summary.durationsMs['g1']).toBeGreaterThanOrEqual(1);
   });
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // K3.1 (F14): the loop can break with tentacles still running, and the old
+  // post-loop `Promise.all` waited on them WITHOUT bound — one stuck tentacle
+  // hung `execute()` forever, returned no summary at all, and was never even
+  // told to stop. The drain cancels first, waits with a deadline, and names
+  // what it had to abandon.
+  // ───────────────────────────────────────────────────────────────────────────
+  describe('in-flight drain (K3.1)', () => {
+    /**
+     * Fails forever, so the scheduler re-admits it — the only way a unit test
+     * reaches the iteration cap (max(64, nodes × 8)) without spawning real
+     * work. The pair below is the cap scenario: one node cycles
+     * pending→running→pending while another never settles at all.
+     */
+    const alwaysFails = (opts: RunTentacleOptions): Promise<TentacleResult> =>
+      Promise.resolve({ ok: false, agent: opts.agent, error: 'boom' });
+
+    const capGraph = () =>
+      createGraph('drain-cap', [
+        node('hung', [], { kind: 'general', label: 'hung', scope: ['src/hung'], maxRetries: 0 }),
+        node('flaky', [], { kind: 'general', label: 'flaky', scope: ['src/flaky'], maxRetries: 200 }),
+      ]);
+
+    it('cancels, drains within the grace, and reports the abandoned node', async () => {
+      let hungAborted = false;
+      const runTentacleFn = (opts: RunTentacleOptions): Promise<TentacleResult> => {
+        if (opts.nodeId !== 'hung') return alwaysFails(opts);
+        opts.signal?.addEventListener('abort', () => {
+          hungAborted = true;
+        });
+        // Never resolves, never honours the abort: only the drain's deadline
+        // can end this run.
+        return new Promise<TentacleResult>(() => {});
+      };
+
+      const graph = capGraph();
+      const startedAt = Date.now();
+      const summary = await new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'drain-cap',
+        runTentacleFn,
+        // No per-node bound: `hung` must still be in flight when the cap fires.
+        nodeTimeoutMs: 0,
+        cancelGraceMs: 25,
+        worldModelGate: false,
+      }).execute(graph);
+
+      // Bounded: the drain's deadline ended the wait (the old code hung here).
+      expect(Date.now() - startedAt).toBeLessThan(10_000);
+      // The cap branch cancelled eagerly — the abort reached the stuck node.
+      expect(hungAborted).toBe(true);
+      expect(summary.cancelled).toBe(true);
+      expect(summary.converged).toBe(false);
+      // No summary is ever returned with a node still `running` …
+      expect(summary.counts.running).toBe(0);
+      expect(graph.nodes.get('hung')?.status).toBe('error');
+      // … and what was abandoned is named, not silently marked failed.
+      expect(summary.abandonedNodeIds).toEqual(['hung']);
+      expect(graph.nodes.get('hung')?.error).toMatch(/abandoned after drain \(max-iterations\)/);
+      // The digest and the radio tail say the same thing.
+      expect(formatKrakenGraphDigest(graph)).toContain('abandoned after drain');
+      const events = readKrakenRadio('/tmp/repo', 'drain-cap');
+      expect(
+        events.some(
+          (e) =>
+            e.kind === 'node_end' &&
+            e.description === 'hung' &&
+            (e.detail ?? '').includes('abandoned after drain (max-iterations)'),
+        ),
+      ).toBe(true);
+    }, 30_000);
+
+    it('records a tentacle that does unwind inside the grace instead of abandoning it', async () => {
+      const runTentacleFn = (opts: RunTentacleOptions): Promise<TentacleResult> => {
+        if (opts.nodeId !== 'hung') return alwaysFails(opts);
+        return new Promise<TentacleResult>((resolve) => {
+          opts.signal?.addEventListener('abort', () => {
+            // Cooperative: stops when told to — just after the loop broke.
+            setTimeout(
+              () => resolve({ ok: false, agent: opts.agent, error: 'stopped', cancelled: true }),
+              5,
+            );
+          });
+        });
+      };
+
+      const graph = capGraph();
+      const summary = await new KrakenGraphExecutor({
+        taskToolDeps: fakeTaskToolDeps,
+        parentCwd: '/tmp/repo',
+        sessionId: 'drain-cooperative',
+        runTentacleFn,
+        nodeTimeoutMs: 0,
+        cancelGraceMs: 500,
+        worldModelGate: false,
+      }).execute(graph);
+
+      // It settled inside the window, so it went through the ordinary settle
+      // path: the drain abandons only what is genuinely still running.
+      expect(summary.abandonedNodeIds).toEqual([]);
+      expect(summary.counts.running).toBe(0);
+      expect(graph.nodes.get('hung')?.status).toBe('error');
+      expect(graph.nodes.get('hung')?.error).toMatch(/stopped/);
+      expect(graph.nodes.get('hung')?.error).not.toMatch(/abandoned/);
+    }, 30_000);
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2705,12 +2814,12 @@ describe('spawn ROI gate (P2.F)', () => {
     expect(evt?.threshold).toBe(0.15); // untouched default
   });
 
-  it('(c) fail-open: a throwing score seam never breaks the run', async () => {
+  it('(c) fail-closed: a throwing score seam vetoes (defer + roi_gate_error), never spawns', async () => {
     let ran = 0;
     const executor = new KrakenGraphExecutor({
       taskToolDeps: fakeTaskToolDeps,
       parentCwd: '/tmp/repo',
-      sessionId: 'roi-failopen-score',
+      sessionId: 'roi-gate-error-score',
       runTentacleFn: okRunner(() => {
         ran += 1;
       }),
@@ -2723,14 +2832,59 @@ describe('spawn ROI gate (P2.F)', () => {
     const graph = singleWriter();
     const summary = await executor.execute(graph);
 
-    expect(summary.converged).toBe(true);
-    expect(ran).toBe(1);
-    expect(graph.nodes.get('w')?.status).toBe('done');
-    expect(
-      readKrakenRadio('/tmp/repo', 'roi-failopen-score').some(
-        (e) => e.kind === 'node_roi_vetoed',
-      ),
-    ).toBe(false);
+    // K3.2 (F15/I3): an internal gate error is a VETO, not a pass.
+    expect(ran).toBe(0); // the spawn never happened
+    expect(graph.nodes.get('w')?.status).toBe('pending'); // deferred path, not failed
+    expect(summary.failedNodeIds).toEqual([]);
+    const events = readKrakenRadio('/tmp/repo', 'roi-gate-error-score');
+    const evt = events.find((e) => e.kind === 'roi_gate_error');
+    expect(evt).toBeDefined();
+    expect(evt?.ok).toBe(false);
+    expect(evt?.nodeId).toBe('w');
+    expect(evt?.detail).toContain('roi seam exploded');
+    // Not a score veto: the score never existed, so `node_roi_vetoed` stays silent.
+    expect(events.some((e) => e.kind === 'node_roi_vetoed')).toBe(false);
+  });
+
+  it('(d) fail-closed batch: an error before the loop defers every node (no spawn, loud event)', async () => {
+    let ran = 0;
+    const executor = new KrakenGraphExecutor({
+      taskToolDeps: fakeTaskToolDeps,
+      parentCwd: '/tmp/repo',
+      sessionId: 'roi-gate-error-batch',
+      runTentacleFn: okRunner(() => {
+        ran += 1;
+      }),
+      worldModelGate: false,
+      reputationRecords: [],
+    });
+    // White-box on purpose: the reputation load is the only gate step outside
+    // the per-node guard, so it is the single seam that reaches the
+    // batch-level catch — and it has no public injection point (the real store
+    // degrades to "no history" inside `roiReputationRecords`, by design).
+    (executor as unknown as { roiReputationRecords(): Promise<never> }).roiReputationRecords =
+      async () => {
+        throw new Error('reputation load exploded');
+      };
+    const graph = createGraph('roi-batch', [
+      node('w1', [], { kind: 'general', label: 'w1', scope: ['src/roi-a'], maxRetries: 0 }),
+      node('w2', [], { kind: 'general', label: 'w2', scope: ['src/roi-b'], maxRetries: 0 }),
+    ]);
+    const summary = await executor.execute(graph);
+
+    expect(ran).toBe(0); // the whole batch was deferred, not spawned
+    expect(graph.nodes.get('w1')?.status).toBe('pending');
+    expect(graph.nodes.get('w2')?.status).toBe('pending');
+    expect(summary.failedNodeIds).toEqual([]);
+    const evt = readKrakenRadio('/tmp/repo', 'roi-gate-error-batch').find(
+      (e) => e.kind === 'roi_gate_error',
+    );
+    expect(evt).toBeDefined();
+    expect(evt?.ok).toBe(false);
+    expect(evt?.detail).toContain('reputation load exploded');
+    expect(evt?.detail).toContain('2 node(s)');
+    expect(evt?.detail).toContain('w1');
+    expect(evt?.detail).toContain('w2');
   });
 
   it('(c2) invalid threshold string falls back to the default (all-null ⇒ spawn)', async () => {

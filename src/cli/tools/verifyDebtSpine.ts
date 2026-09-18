@@ -1,7 +1,10 @@
 /**
  * K1.5 / F5 — persist the runtime general⇒verify obligation on the session spine.
  *
- * `globalThis.__zelariGeneralVerifyDebt` is the process cache. The spine is
+ * The task tool's debt cache is the process cache — the legacy
+ * `globalThis.__zelariGeneralVerifyDebt` bucket for id-less callers, plus
+ * `__zelariGeneralVerifyDebtBySession` for every caller with a sessionId
+ * (K3.3 / F16: sessions in one process never share debt). The spine is
  * durability: `verify.debt_open` when a slot is registered, `verify.debt_cleared`
  * when a verify PASS drops that slot. Replay of un-cleared opens hydrates the
  * cache at the start of the next TUI/headless turn so the debt cannot evaporate.

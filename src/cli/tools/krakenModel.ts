@@ -19,6 +19,7 @@
  */
 
 import type { TaskAgentKind } from './taskTool.js';
+import { appendKrakenRadio } from './krakenRadio.js';
 
 export interface ResolveKrakenModelOpts {
   /** Provider id for discovery cache (e.g. grok, glm, openai-compatible). */
@@ -32,6 +33,12 @@ export interface ResolveKrakenModelOpts {
    * QUALIFIED ref ("provider/model").
    */
   familyCandidates?: { provider: string; model: string }[];
+  /**
+   * K3.6 (F20): radio sink for the general-parent routing warn. Optional — the
+   * sync resolvers stay pure when it is omitted (tests, callers without a
+   * session); the stderr half of the warn fires either way.
+   */
+  radio?: { cwd: string; sessionId: string };
 }
 
 /** Heuristic: model ids that look cheaper / faster than flagship. */
@@ -184,6 +191,56 @@ export function resolveCrossModelVerifier(
   return pickDifferentFamily(builder, candidates);
 }
 
+/**
+ * K3.6 (F20): `ZELARI_KRAKEN_SUB_MODEL` is set, yet this *general* tentacle is
+ * still on the parent model because `ZELARI_KRAKEN_GENERAL_USES_SUB` is not
+ * `'1'`. The routing decision itself is deliberate (general keeps the strong
+ * writer) and must not change here — but an env var that is silently ignored
+ * looks exactly like one that was honored, so this is LOUD once per process:
+ * one stderr line plus one `model_routing_warn` radio event.
+ *
+ * Process-wide on purpose: the condition is a property of the environment, not
+ * of a single spawn, and a graph run spawns many generals. Best-effort by
+ * contract — stderr/radio failures never reach the spawn path.
+ */
+let generalParentWarned = false;
+
+/** Test seam: the warn is once per process, so tests must clear it. */
+export function __resetGeneralSubModelWarnForTests(): void {
+  generalParentWarned = false;
+}
+
+function warnGeneralParentRouting(
+  shared: string,
+  parentModel: string,
+  opts?: ResolveKrakenModelOpts,
+): void {
+  if (generalParentWarned) return;
+  generalParentWarned = true;
+
+  const message =
+    `[kraken] WARN general tentacle uses the parent model '${parentModel}', not ` +
+    `ZELARI_KRAKEN_SUB_MODEL='${shared}': set ZELARI_KRAKEN_GENERAL_USES_SUB=1 to route ` +
+    `general to the shared sub model (or set ZELARI_KRAKEN_GENERAL_MODEL to give it its own).\n`;
+  try {
+    process.stderr.write(message);
+  } catch {
+    // diagnostics must never break a tentacle spawn
+  }
+
+  const radio = opts?.radio;
+  if (!radio?.cwd?.trim() || !radio.sessionId?.trim()) return;
+  appendKrakenRadio(radio.cwd, radio.sessionId, {
+    kind: 'model_routing_warn',
+    agent: 'general',
+    description: `general kept the parent model '${parentModel}' although ZELARI_KRAKEN_SUB_MODEL='${shared}' is set (set ZELARI_KRAKEN_GENERAL_USES_SUB=1 to opt in)`,
+    model: parentModel,
+    ok: false,
+    reason: 'general_uses_parent',
+    detail: shared,
+  });
+}
+
 /** Resolve model id for a tentacle given the parent/active model. */
 export function resolveKrakenSubModel(
   agent: TaskAgentKind,
@@ -205,6 +262,9 @@ export function resolveKrakenSubModel(
   if (shared) {
     if (agent === 'general' && !env.ZELARI_KRAKEN_GENERAL_MODEL) {
       if (env.ZELARI_KRAKEN_GENERAL_USES_SUB === '1') return shared;
+      // Routing stays as-is (general keeps the strong parent writer); only the
+      // fact that SUB_MODEL was set and ignored is made loud (K3.6 / F20).
+      warnGeneralParentRouting(shared, parentModel, opts);
       return parentModel;
     }
     return shared;
@@ -368,7 +428,7 @@ export async function resolveKrakenSubModelAsync(
   agent: TaskAgentKind,
   parentModel: string,
   env: NodeJS.ProcessEnv = process.env,
-  opts: { provider?: string } = {},
+  opts: { provider?: string; radio?: { cwd: string; sessionId: string } } = {},
 ): Promise<string> {
   let candidates: string[] = [];
   let familyCandidates: { provider: string; model: string }[] = [];
@@ -387,5 +447,8 @@ export async function resolveKrakenSubModelAsync(
     provider: opts.provider,
     candidates,
     familyCandidates,
+    // K3.6 (F20): keep the radio sink for the general-parent warn — the
+    // production caller (toolRegistry factory) has root + sessionId.
+    ...(opts.radio ? { radio: opts.radio } : {}),
   });
 }

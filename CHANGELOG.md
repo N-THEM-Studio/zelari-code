@@ -5,6 +5,25 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [2.48.0] - 2026-09-18
+
+Kraken reliability hardening, wave 3 (`2026-09-18-kraken-reliability-hardening-plan.md`): orchestration robustness (K3.1–K3.6). K3.7 (semantic-disjoint-plain worktree policy) remains deferred.
+
+### Added — orchestration robustness (W3)
+
+- **Drain of in-flight tentacles (K3.1 / F14)** — after `maxIterations` (or any loop exit with work still outstanding) `KrakenGraphExecutor` now eagerly `cancelRun()`s, waits up to `cancelGraceMs`, and marks leftovers `error` with `abandoned after drain (<reason>)`. Summary always has `counts.running === 0` and lists `abandonedNodeIds`. A hung tentacle that ignores abort can no longer block the graph summary forever.
+- **ROI gate fail-closed (K3.2 / F15 / I3)** — an *internal* error inside the spawn-ROI gate (throwing score seam, unreadable reputation, anything escaping the per-node guard) no longer fails open: the node — or the whole batch, when the error escapes the loop — stays READY and is re-offered next round, and the broker fires a loud `roi_gate_error` radio event (`ok: false`) instead of spawning unvetted work. Missing score data is unchanged: unknowns still score the defaults and spawn.
+- **K3.3 / F16:** spawn-count e verify-debt keyed per `sessionId` (legacy default key per i test); run concorrenti nello stesso processo non si contaminano.
+- **Planner fallback (K3.4 / F17)** — when the graph planner throws, opt-in `ZELARI_KRAKEN_PLANNER_FALLBACK=1` degrades to the same-process single-agent path (`runOneTurn`) instead of exit 2, and notes `kraken.planner_fallback` + digest on the spine. Default remains fail-the-run (exit 2) until dogfood.
+- **Radio fd revalidation (K3.5 / F18)** — the cached append descriptor of `.zelari/radio/<session>.jsonl` is now revalidated against its path on *every* cached append (`dev`+`ino` compared with the values captured at `openSync`). Unlink or a logrotate-style rename used to leave the fd on the orphan inode — where `writeSync` keeps *succeeding*, so the fail-open catch never fired and the event was written, reported OK, and invisible to every reader of the live file. Mismatch or missing path now closes the descriptor and reopens (`'a'`, recreating a deleted file) before writing. Fail-open and durable-on-return are unchanged; the 32-fd budget still applies.
+- **General routing warn (K3.6 / F20)** — when `ZELARI_KRAKEN_SUB_MODEL` is set and a general tentacle still uses the parent (because `ZELARI_KRAKEN_GENERAL_USES_SUB` is not `1`), emit one process-wide stderr warning and a radio `model_routing_warn` event. Routing itself is unchanged: general stays on the parent unless the opt-in (or `ZELARI_KRAKEN_GENERAL_MODEL`) is set.
+
+### Fixed
+
+- **Win32 afterEach hang (c7)** — `runOneTurn.strictExit` / `exitBench` `afterEach` is now bounded (`Promise.race` 1.5s, hook 5s) so EBUSY on `rmSync` cannot stall the suite for 30s. `cli-kraken-slice2` retries `rmSync` and emits `tool_execution_*` so the K1.3 auto-verify floor can PASS. Desktop `grokRoundWiring.contract` normalizes CRLF before matching markers.
+
 ## [2.47.0] - 2026-09-18
 
 Kraken reliability hardening, waves 1+2 (`2026-09-18-kraken-reliability-hardening-plan.md`): no false greens on completion (W1) and an integral write surface (W2), plus the parallel automations/provider-auth workstream that landed in the same tree.

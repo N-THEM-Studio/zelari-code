@@ -190,6 +190,34 @@ describe('K1.5 — replay of un-cleared opens', () => {
   });
 });
 
+/**
+ * K3.3 / F16 — replay of one session's log must land in THAT session's bucket.
+ * Fail-before: hydrate filled the single process-wide map, so a concurrent
+ * session replayed its debt into every other session's view.
+ */
+describe('K3.3 — hydrate/read are scoped to the session that owns the log (F16)', () => {
+  it('replays into the owning session, stays invisible to a sibling, feeds the id-less gate', () => {
+    hydrateTaskVerifyDebtFromEvents(
+      [{ kind: VERIFY_DEBT_OPEN, data: { taskId: 'h-1', description: 'hydrated' } }],
+      'sess-h',
+    );
+
+    // Owned by the session whose log it is…
+    expect(hasOpenTaskVerifyDebt('sess-h')).toBe(true);
+    expect(taskVerifyObligation('sess-h')?.description).toBe('hydrated');
+    // …invisible to a concurrent session…
+    expect(hasOpenTaskVerifyDebt('sess-other')).toBe(false);
+    // …and still seen (fail-closed) by the id-less strict-done gate.
+    expect(hasOpenTaskVerifyDebt()).toBe(true);
+    expect(taskVerifyObligation()?.description).toBe('hydrated');
+
+    // A session-scoped reset drops only that session's replayed debt.
+    resetTaskVerifyObligation('sess-h');
+    expect(hasOpenTaskVerifyDebt('sess-h')).toBe(false);
+    expect(hasOpenTaskVerifyDebt()).toBe(false);
+  });
+});
+
 describe('K1.5 — TUI and headless share the debt notice', () => {
   it('formatOpenVerifyDebtMessage is the shared core', () => {
     const debt = { description: 'fix foo', detail: 'VERDICT: FAIL after rework' };

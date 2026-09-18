@@ -7,7 +7,18 @@
  * @since Kraken v1.x slice 2
  */
 
-import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, writeSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  readdirSync,
+  statSync,
+  writeSync,
+} from 'node:fs';
 import path from 'node:path';
 
 export type KrakenRadioKind =
@@ -45,6 +56,11 @@ export type KrakenRadioKind =
   // failed) — deterministic score in kraken/spawnRoi.ts, vetoed at the
   // executor's tentacle spawn site.
   | 'node_roi_vetoed'
+  // K3.2 (F15/I3): the spawn-ROI gate hit an INTERNAL error (throwing score
+  // seam, unreadable reputation) and refused to spawn — fail-closed: the
+  // node(s) stay READY and are re-offered next round, never failed. Loud on
+  // purpose: the same error used to fail OPEN and run the batch unvetted.
+  | 'roi_gate_error'
   | 'graph_converged'
   | 'graph_failed'
   // Bennett's Razor weakness-meter refinement (Slice L/N+3 wiring).
@@ -68,7 +84,15 @@ export type KrakenRadioKind =
   // never blocks (writer serialization stays the lead policy).
   // contestedFile carries the shared glob/path; agent is 'task-guard'
   // (taskOverlap.ts, wired from planTaskTools.ts).
-  | 'task_overlap';
+  | 'task_overlap'
+  // K3.6 (F20) model-routing audit: ZELARI_KRAKEN_SUB_MODEL is set but a
+  // general tentacle still runs on the PARENT model, because
+  // ZELARI_KRAKEN_GENERAL_USES_SUB is not '1'. Routing is deliberately
+  // unchanged — this is the "your SUB_MODEL is set and ignored" signal, so a
+  // silently-unused setting is visible instead of looking honored. Emitted at
+  // most once per process (krakenModel.ts); agent is 'general', model is the
+  // parent, detail carries the ignored shared id.
+  | 'model_routing_warn';
 
 export interface KrakenRadioEvent {
   ts: string;
@@ -164,31 +188,81 @@ function radioPath(cwd: string, sessionId: string): string {
  * Fail-open: any failure drops the descriptor and silently falls back to the
  * original `appendFileSync` (which also recreates a deleted file) — radio is
  * pure observability and must never break the agent loop.
+ *
+ * F18 (K3.5) — fd revalidation. A cached descriptor is a handle on an INODE,
+ * not on a path: `rm .zelari/radio/<s>.jsonl` or a logrotate-style rename
+ * leaves it pointing at the orphan inode while the path is gone (or came back
+ * as a different file). `writeSync` on that orphan keeps SUCCEEDING, so the
+ * fail-open catch never runs and the event is written, reported OK, and
+ * invisible to every reader of the live file. Each cached append therefore
+ * re-checks the descriptor's `dev`+`ino` against the current path and reopens
+ * on mismatch or a missing path (`appendFileSync` on the old path would not
+ * have helped here either — it silently re-creates the file, but the cached fd
+ * would keep swallowing the following events).
+ *
+ * Honest limit: a filesystem reporting `dev`/`ino` as 0 cannot discriminate a
+ * replaced inode, so only the missing-path branch catches it there. The
+ * revalidation costs one `statSync` per cached append.
  */
 const MAX_CACHED_RADIO_FDS = 32;
-const radioFds = new Map<string, number>();
+
+/** Cached append descriptor + the identity of the inode it was opened on. */
+interface CachedRadioFd {
+  fd: number;
+  dev: number;
+  ino: number;
+}
+
+const radioFds = new Map<string, CachedRadioFd>();
+
+/**
+ * Is the cached descriptor still the live inode behind `file`?
+ * False on mismatch (rotated/replaced), missing path (unlinked) or any stat
+ * failure — every "not provably the same inode" answer must reopen.
+ */
+function radioFdIsLive(cached: CachedRadioFd, file: string): boolean {
+  try {
+    const live = statSync(file);
+    return live.dev === cached.dev && live.ino === cached.ino;
+  } catch {
+    // Unlinked, rotated away or unreadable: not provably the same inode →
+    // reopen (fail-open, the reopen recreates a missing path).
+    return false;
+  }
+}
 
 /** One fail-open append: cached descriptor when possible, `appendFileSync` otherwise. */
 function appendRadioLine(file: string, line: string): void {
   try {
     const cached = radioFds.get(file);
-    if (cached !== undefined) {
-      writeSync(cached, line, null, 'utf8');
+    if (cached !== undefined && radioFdIsLive(cached, file)) {
+      writeSync(cached.fd, line, null, 'utf8');
       return;
+    }
+    if (cached !== undefined) {
+      // Stale descriptor: release it (an fd on an orphan inode leaks forever)
+      // and fall through to a fresh open on the live path.
+      radioFds.delete(file);
+      try {
+        closeSync(cached.fd);
+      } catch {
+        // the descriptor is already unusable — nothing to release
+      }
     }
     if (radioFds.size >= MAX_CACHED_RADIO_FDS) {
       appendFileSync(file, line, 'utf8'); // bounded fd budget: old path, still correct
       return;
     }
     const fd = openSync(file, 'a');
+    const stat = fstatSync(fd);
+    radioFds.set(file, { fd, dev: stat.dev, ino: stat.ino });
     writeSync(fd, line, null, 'utf8');
-    radioFds.set(file, fd);
   } catch {
     const stale = radioFds.get(file);
     if (stale !== undefined) {
       radioFds.delete(file);
       try {
-        closeSync(stale);
+        closeSync(stale.fd);
       } catch {
         // the descriptor is already unusable — nothing to release
       }

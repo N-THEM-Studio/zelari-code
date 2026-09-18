@@ -265,6 +265,12 @@ export interface VerifyDebtRecord {
 }
 
 type SpawnGlobal = {
+  /**
+   * K3.3 / F16: spawn counter of the LEGACY bucket (`LEGACY_SESSION_KEY`) —
+   * the slot used by callers that carry no session id. Sessions that DO have
+   * an id keep theirs in `__zelariTaskSpawnCountBySession`, so two concurrent
+   * sessions in the same process (companion serve) cannot charge each other.
+   */
   __zelariTaskSpawnCount?: number;
   __zelariLastGeneralAt?: number;
   /**
@@ -275,29 +281,143 @@ type SpawnGlobal = {
    * PASS. Open debt at end of turn ⇒ strict done is blocked (exit 4) — see
    * runOneTurn.ts. The map (vs the previous single slot) means the PASS of
    * one general's auto-verify cannot silently clear another general's debt.
+   *
+   * K3.3 / F16: this slot is the LEGACY session bucket only; every session
+   * with an id lives in `__zelariGeneralVerifyDebtBySession`.
    */
   __zelariGeneralVerifyDebt?: Map<string, VerifyDebtRecord> | null;
+  /** K3.3 / F16: spawn counters of every session EXCEPT the legacy bucket. */
+  __zelariTaskSpawnCountBySession?: Map<string, number>;
+  /**
+   * K3.3 / F16: verify-debt map of every session EXCEPT the legacy bucket,
+   * keyed by sessionId (TUI session, headless spine session, executor
+   * `sessionId`) → the same `taskId → VerifyDebtRecord` map K1.1 introduced.
+   */
+  __zelariGeneralVerifyDebtBySession?: Map<string, Map<string, VerifyDebtRecord>>;
 };
 
 /** Sentinel taskId used by the legacy single-slot seam (tests). */
 const SEED_TASK_ID = '__seed__';
 
-function debtStore(): Map<string, VerifyDebtRecord> {
-  const g = globalThis as unknown as SpawnGlobal;
-  if (!g.__zelariGeneralVerifyDebt) g.__zelariGeneralVerifyDebt = new Map();
-  return g.__zelariGeneralVerifyDebt;
+/**
+ * K3.3 / F16: bucket key for callers with NO session id (the unit-test seam
+ * and pre-session turn boundaries). It IS the legacy `globalThis` slot, so an
+ * id-less caller keeps exactly the process-wide behaviour it had before.
+ */
+const LEGACY_SESSION_KEY = 'default';
+
+/** K3.3 / F16: did the caller hand us a real session id? */
+function isSessionScoped(sessionId?: string): sessionId is string {
+  return typeof sessionId === 'string' && sessionId.trim().length > 0;
 }
 
-/** Reset spawn counter (call at start of each parent user turn). */
-export function resetTaskSpawnCount(): void {
-  const g = globalThis as unknown as SpawnGlobal;
-  g.__zelariTaskSpawnCount = 0;
+/** K3.3 / F16: bucket key of a session id (the legacy slot when id-less). */
+function sessionKey(sessionId?: string): string {
+  return isSessionScoped(sessionId) ? sessionId : LEGACY_SESSION_KEY;
 }
 
-/** Reset the general⇒verify obligation (call at start of each parent user turn). */
-export function resetTaskVerifyObligation(): void {
+/** K3.3 / F16: spawn counters of every non-legacy session. */
+function spawnCountMap(): Map<string, number> {
   const g = globalThis as unknown as SpawnGlobal;
-  g.__zelariGeneralVerifyDebt = new Map();
+  if (!g.__zelariTaskSpawnCountBySession) g.__zelariTaskSpawnCountBySession = new Map();
+  return g.__zelariTaskSpawnCountBySession;
+}
+
+/**
+ * K3.3 / F16: charge one task spawn to `sessionId` and return THAT session's
+ * new count. Counting per session (same numeric cap as before) is what stops a
+ * concurrent session in the same process from eating another one's budget.
+ */
+function bumpTaskSpawnCount(sessionId?: string): number {
+  const g = globalThis as unknown as SpawnGlobal;
+  const key = sessionKey(sessionId);
+  if (key === LEGACY_SESSION_KEY) {
+    g.__zelariTaskSpawnCount = (g.__zelariTaskSpawnCount ?? 0) + 1;
+    return g.__zelariTaskSpawnCount;
+  }
+  const next = (spawnCountMap().get(key) ?? 0) + 1;
+  spawnCountMap().set(key, next);
+  return next;
+}
+
+/**
+ * K3.3 / F16: verify-debt bucket of ONE session — the legacy `globalThis` slot
+ * for an id-less caller, `__zelariGeneralVerifyDebtBySession` otherwise.
+ */
+function debtStore(sessionId?: string): Map<string, VerifyDebtRecord> {
+  const g = globalThis as unknown as SpawnGlobal;
+  const key = sessionKey(sessionId);
+  if (key === LEGACY_SESSION_KEY) {
+    if (!g.__zelariGeneralVerifyDebt) g.__zelariGeneralVerifyDebt = new Map();
+    return g.__zelariGeneralVerifyDebt;
+  }
+  if (!g.__zelariGeneralVerifyDebtBySession) g.__zelariGeneralVerifyDebtBySession = new Map();
+  let bucket = g.__zelariGeneralVerifyDebtBySession.get(key);
+  if (!bucket) {
+    bucket = new Map();
+    g.__zelariGeneralVerifyDebtBySession.set(key, bucket);
+  }
+  return bucket;
+}
+
+/** K3.3 / F16: every non-legacy session bucket (aggregate gate reads). */
+function sessionDebtStores(): readonly Map<string, VerifyDebtRecord>[] {
+  const g = globalThis as unknown as SpawnGlobal;
+  const bySession = g.__zelariGeneralVerifyDebtBySession;
+  return bySession ? [...bySession.values()] : [];
+}
+
+/**
+ * K3.3 / F16: the buckets a read must consult — ONE session when `sessionId`
+ * is given, EVERY session (legacy bucket first) when it is omitted. The
+ * id-less read is the strict-done gate's view (`runOneTurn.ts` and
+ * `useChatTurn.ts` call it with no argument) and stays FAIL-CLOSED: debt open
+ * in ANY session blocks the turn.
+ */
+function debtScopes(sessionId?: string): readonly Map<string, VerifyDebtRecord>[] {
+  return isSessionScoped(sessionId) ? [debtStore(sessionId)] : [debtStore(), ...sessionDebtStores()];
+}
+
+/**
+ * Reset the spawn counter (call at start of each parent user turn).
+ *
+ * K3.3 / F16: `sessionId` resets ONLY that session's budget and never touches
+ * a concurrent session; omitting it keeps the legacy process-wide reset used
+ * by the unit-test seam and the headless per-turn boundary.
+ */
+export function resetTaskSpawnCount(sessionId?: string): void {
+  const g = globalThis as unknown as SpawnGlobal;
+  if (!isSessionScoped(sessionId)) {
+    g.__zelariTaskSpawnCount = 0;
+    g.__zelariTaskSpawnCountBySession?.clear();
+    return;
+  }
+  if (sessionKey(sessionId) === LEGACY_SESSION_KEY) {
+    g.__zelariTaskSpawnCount = 0;
+    return;
+  }
+  g.__zelariTaskSpawnCountBySession?.delete(sessionId);
+}
+
+/**
+ * Reset the general⇒verify obligation (call at start of each parent user turn).
+ *
+ * K3.3 / F16: `sessionId` drops ONLY that session's debt and never a
+ * concurrent session's; omitting it keeps the legacy process-wide reset used
+ * by the unit-test seam and the headless per-turn boundary.
+ */
+export function resetTaskVerifyObligation(sessionId?: string): void {
+  const g = globalThis as unknown as SpawnGlobal;
+  if (!isSessionScoped(sessionId)) {
+    g.__zelariGeneralVerifyDebt = new Map();
+    g.__zelariGeneralVerifyDebtBySession?.clear();
+    return;
+  }
+  if (sessionKey(sessionId) === LEGACY_SESSION_KEY) {
+    g.__zelariGeneralVerifyDebt = new Map();
+    return;
+  }
+  g.__zelariGeneralVerifyDebtBySession?.delete(sessionId);
 }
 
 /**
@@ -308,43 +428,55 @@ export function resetTaskVerifyObligation(): void {
  * K1.1: returns the first open record (any one is enough to block). The map
  * may carry MORE records than this returns; use `listTaskVerifyObligations()`
  * or `hasOpenTaskVerifyDebt()` to see the full state.
+ *
+ * K3.3 / F16: scoped to ONE session when `sessionId` is given; an id-less read
+ * aggregates every session (fail-closed), so no session's debt is invisible.
  */
-export function taskVerifyObligation(): VerifyDebtRecord | null {
-  const store = debtStore();
-  if (store.size === 0) return null;
-  // Map iteration is insertion-ordered; the newest insert wins (matches the
-  // pre-K1.1 "newest wins" semantics for the single open record).
-  const last = store.keys().next().value as string | undefined;
-  return last ? (store.get(last) ?? null) : null;
+export function taskVerifyObligation(sessionId?: string): VerifyDebtRecord | null {
+  for (const store of debtScopes(sessionId)) {
+    if (store.size === 0) continue;
+    // Map iteration is insertion-ordered; the newest insert wins (matches the
+    // pre-K1.1 "newest wins" semantics for the single open record).
+    const last = store.keys().next().value as string | undefined;
+    if (last) return store.get(last) ?? null;
+  }
+  return null;
 }
 
 /**
  * K1.1: number of open verify obligations (strict-gate invariant: > 0 ⇒
  * blocked). Useful for diagnostics and tests; the strict gate itself keeps
  * using the boolean `taskVerifyObligation() != null` check.
+ * K3.3 / F16: `sessionId` scopes the listing (id-less = every session).
  */
-export function listTaskVerifyObligations(): readonly VerifyDebtRecord[] {
-  return [...debtStore().values()];
+export function listTaskVerifyObligations(sessionId?: string): readonly VerifyDebtRecord[] {
+  return debtScopes(sessionId).flatMap((store) => [...store.values()]);
 }
 
 /**
  * K1.1: did any general leave a runtime verify obligation open? Strict-gate
  * friendly boolean — `true` ⇒ the strict-done gate must block the turn.
+ * K3.3 / F16: `sessionId` scopes the check (id-less = every session).
  */
-export function hasOpenTaskVerifyDebt(): boolean {
-  return debtStore().size > 0;
+export function hasOpenTaskVerifyDebt(sessionId?: string): boolean {
+  return debtScopes(sessionId).some((store) => store.size > 0);
 }
 
 /**
  * K1.1: register (or replace) the verify obligation for one specific task.
  * Used by `runAutoVerifyAfterGeneral` to record the debt of EACH general it
  * services — multiple tasks can be open at the same time.
+ *
+ * K3.3 / F16: `sessionId` writes the debt into THAT session's bucket (id-less
+ * callers keep the legacy bucket), so a companion-serve session never opens
+ * debt in another session's view.
  */
 export function addTaskVerifyObligation(
   taskId: string,
   debt: VerifyDebtRecord,
+  sessionId?: string,
 ): void {
-  debtStore().set(taskId, debt);
+  debtStore(sessionId).set(taskId, debt);
   enqueueVerifyDebtPersist(() =>
     emitVerifyDebtOpen(undefined, {
       taskId,
@@ -359,9 +491,13 @@ export function addTaskVerifyObligation(
  * K1.1: clear the verify obligation for ONE task. Used on a PASS of THAT
  * task's verify tentacle — clearing is per-task, so a sibling general's
  * debt stays open.
+ *
+ * K3.3 / F16: clear inside ONE bucket — the session that opened the debt
+ * (id-less callers keep the legacy bucket); a concurrent session's debt with
+ * the same taskId is never touched.
  */
-export function clearTaskVerifyObligation(taskId: string): void {
-  const store = debtStore();
+export function clearTaskVerifyObligation(taskId: string, sessionId?: string): void {
+  const store = debtStore(sessionId);
   if (!store.has(taskId)) return;
   store.delete(taskId);
   enqueueVerifyDebtPersist(() => emitVerifyDebtCleared(undefined, { taskId }));
@@ -387,12 +523,15 @@ export function outcomeMemoryAllowed(): boolean {
  * K1.1: the optional `taskId` argument disambiguates which slot to seed; when
  * omitted, the legacy sentinel key `'__seed__'` is used so the existing
  * strict-exit test (`runOneTurn.strictExit.test.ts`) keeps working unchanged.
+ * K3.3 / F16: the optional `sessionId` seeds that session's bucket (omitted ⇒
+ * the legacy bucket, which the id-less strict gate still sees).
  */
 export function seedTaskVerifyObligation(
   debt: VerifyDebtRecord | null,
   taskId: string = SEED_TASK_ID,
+  sessionId?: string,
 ): void {
-  const store = debtStore();
+  const store = debtStore(sessionId);
   if (debt === null) {
     store.delete(taskId);
     return;
@@ -405,28 +544,35 @@ export function seedTaskVerifyObligation(
  * cache WITHOUT emitting (replay must not re-append). Existing slots
  * (including the test seed) are overwritten for matching taskIds and
  * otherwise left alone — callers that want a blank cache reset first.
+ *
+ * K3.3 / F16: hydrate the bucket of the session the log belongs to
+ * (`sessionId`), never the process-wide/other-session view.
  */
 export function hydrateTaskVerifyDebtFromEvents(
   events: readonly SpineEventLike[],
+  sessionId?: string,
 ): number {
   const open = replayOpenVerifyDebts(events);
-  const store = debtStore();
+  const store = debtStore(sessionId);
   for (const [taskId, debt] of open) {
     store.set(taskId, debt);
   }
   return open.size;
 }
 
-/** K1.5: hydrate the cache from `<sessionsDir>/<sessionId>/events.jsonl`. */
+/**
+ * K1.5: hydrate the cache from `<sessionsDir>/<sessionId>/events.jsonl`.
+ * K3.3 / F16: the replay lands in the bucket of the session that owns the log.
+ */
 export async function hydrateTaskVerifyDebtFromSpine(source: {
   sessionsDir: string;
   sessionId: string;
 }): Promise<number> {
   const events = await loadSessionEventsForVerifyDebt(source);
-  return hydrateTaskVerifyDebtFromEvents(events);
+  return hydrateTaskVerifyDebtFromEvents(events, source.sessionId);
 }
 
-/** Max concurrent/serial task spawns per parent turn (env override). */
+/** Max concurrent/serial task spawns per parent turn, PER SESSION (env override). */
 export function maxTaskSpawnsPerTurn(): number {
   const raw = process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS;
   if (raw === undefined || raw === '') return 6;
@@ -593,7 +739,8 @@ export async function runAutoVerifyAfterGeneral(opts: {
   // K1.1: key the slot by this general's `agentId` (always populated by
   // TentacleSuccess) so a sibling general's PASS cannot clear our debt.
   const debtKey = opts.general.agentId ?? opts.original.description;
-  addTaskVerifyObligation(debtKey, { description: opts.original.description });
+  // K3.3 / F16: the debt is opened in THIS session's bucket (opts.sessionId).
+  addTaskVerifyObligation(debtKey, { description: opts.original.description }, opts.sessionId);
 
   // t94: live phase captions on the general's activity row (agent_status)
   // mirrored into the radio 'progress' trail — the parent sees the general
@@ -696,10 +843,14 @@ export async function runAutoVerifyAfterGeneral(opts: {
       });
       if (!rework.ok) {
         const detail = `rework round ${round} failed: ${rework.error}`;
-        addTaskVerifyObligation(debtKey, {
-          description: opts.original.description,
-          detail,
-        });
+        addTaskVerifyObligation(
+          debtKey,
+          {
+            description: opts.original.description,
+            detail,
+          },
+          opts.sessionId,
+        );
         appendKrakenRadio(opts.parentCwd, opts.sessionId, {
           kind: 'error',
           agent: 'general',
@@ -730,10 +881,14 @@ export async function runAutoVerifyAfterGeneral(opts: {
     if (!instrumental) {
       const detail =
         'verify produced VERDICT: PASS but executed no tool — narrative-only PASS does not satisfy the auto-verify floor';
-      addTaskVerifyObligation(debtKey, {
-        description: opts.original.description,
-        detail,
-      });
+      addTaskVerifyObligation(
+        debtKey,
+        {
+          description: opts.original.description,
+          detail,
+        },
+        opts.sessionId,
+      );
       emitVerifyPhase('verify PASS without tool evidence', false, 'failed');
       appendKrakenRadio(opts.parentCwd, opts.sessionId, {
         kind: 'error',
@@ -747,7 +902,7 @@ export async function runAutoVerifyAfterGeneral(opts: {
         `strict done will close this turn blocked.`
       );
     }
-    clearTaskVerifyObligation(debtKey);
+    clearTaskVerifyObligation(debtKey, opts.sessionId);
     await rememberVerifiedGeneralOutcome(opts);
     emitVerifyPhase('verify PASS', true, 'completed');
     return `\n\n[kraken:auto-verify] verify PASS — general⇒verify obligation satisfied.`;
@@ -765,10 +920,14 @@ export async function runAutoVerifyAfterGeneral(opts: {
       : verify.ok
         ? 'verify produced no parseable VERDICT — unverified'
         : `verify tentacle failed: ${verify.error}`;
-  addTaskVerifyObligation(debtKey, {
-    description: opts.original.description,
-    detail,
-  });
+  addTaskVerifyObligation(
+    debtKey,
+    {
+      description: opts.original.description,
+      detail,
+    },
+    opts.sessionId,
+  );
   appendKrakenRadio(opts.parentCwd, opts.sessionId, {
     kind: 'error',
     agent: 'verify',
@@ -1742,14 +1901,15 @@ export function createTaskTool(
         candidateSlot = slot.index;
       }
       const thoroughness: TaskThoroughness = args.thoroughness ?? 'medium';
-      const sessionId = ctx.sessionId || 'default';
+      const sessionId = ctx.sessionId || LEGACY_SESSION_KEY;
       const parentCwd = ctx.cwd || process.cwd();
 
-      // Per-process spawn cap (Kraken K3). Reset via resetTaskSpawnCount() each parent turn.
-      const g = globalThis as unknown as SpawnGlobal;
-      g.__zelariTaskSpawnCount = (g.__zelariTaskSpawnCount ?? 0) + 1;
+      // Per-SESSION spawn cap (Kraken K3 + K3.3 / F16): the numeric limit is
+      // unchanged, but it is counted per sessionId — a concurrent session in
+      // the same process (companion serve) cannot exhaust this session's
+      // budget. Reset via resetTaskSpawnCount(sessionId) each parent turn.
       const spawnCap = maxTaskSpawnsPerTurn();
-      if (g.__zelariTaskSpawnCount > spawnCap) {
+      if (bumpTaskSpawnCount(sessionId) > spawnCap) {
         return typedErr(
           `task: spawn cap reached (${spawnCap}). Finish the current slice or raise ZELARI_KRAKEN_MAX_TASK_SPAWNS.`,
         );
@@ -1867,10 +2027,14 @@ export function createTaskTool(
           // K1.1: key the debt by the runtime agentId (when present) so it
           // matches the key opened by runAutoVerifyAfterGeneral; fall back
           // to the description so an early throw still lands in the same slot.
-          addTaskVerifyObligation(res.agentId ?? args.description, {
-            description: args.description,
-            detail: `auto-verify chain failed: ${msg}`,
-          });
+          addTaskVerifyObligation(
+            res.agentId ?? args.description,
+            {
+              description: args.description,
+              detail: `auto-verify chain failed: ${msg}`,
+            },
+            sessionId,
+          );
           result += `\n\n[kraken:auto-verify] auto-verify chain failed (${msg}) — work stays UNVERIFIED.`;
         }
       }

@@ -14,7 +14,11 @@ import { appendSystem } from '../hooks/messageHelpers.js';
 import type { ChatMessage } from '../components/ChatStream.js';
 import { AuditLogger } from '../safety/auditLogger.js';
 import { createKrakenSubAgentContextFactory } from '../toolRegistry.js';
-import { planTaskGraph } from '../kraken/planner.js';
+import {
+  planTaskGraph,
+  isKrakenPlannerFallbackEnabled,
+  plannerFallbackDigest,
+} from '../kraken/planner.js';
 import { loadGraphSnapshot, formatSnapshotForPlanner } from '../kraken/graphMemory.js';
 import { KrakenGraphExecutor, isKrakenGraphEnabled } from '../kraken/executor.js';
 import { formatKrakenGraphAscii, formatKrakenGraphDigest } from '../kraken/graphStatus.js';
@@ -36,6 +40,14 @@ export interface KrakenGraphSlashContext {
    * When present, memory telemetry projects onto the session spine mirror.
    */
   writerRef?: React.MutableRefObject<SpineMirroringWriter | null>;
+  /**
+   * K3.4 / F17: the same-process degradation target. When the planner throws
+   * and `ZELARI_KRAKEN_PLANNER_FALLBACK=1`, the host passes its ordinary
+   * single-agent turn runner here instead of letting the handler report a
+   * failure. Optional: without it the fallback is still announced (never
+   * `graph run failed`) and the executor is never started.
+   */
+  fallbackToSingleAgent?: (prompt: string) => void | Promise<void>;
 }
 
 export async function handleKrakenGraph(
@@ -91,12 +103,31 @@ export async function handleKrakenGraph(
     if (previousAttempt) {
       appendSystem(ctx.setMessages, '[kraken] resuming from the previous unfinished graph');
     }
-    const graph = await planTaskGraph({
-      prompt,
-      graphId: `kraken-${Date.now().toString(36)}`,
-      cwd: ctx.cwd,
-      ...(previousAttempt ? { previousAttempt } : {}),
-    });
+    // K3.4 / F17: ONLY the planner call is wrapped — an executor failure below
+    // is not a planner failure and keeps the existing `graph run failed` line.
+    let graph: Awaited<ReturnType<typeof planTaskGraph>>;
+    try {
+      graph = await planTaskGraph({
+        prompt,
+        graphId: `kraken-${Date.now().toString(36)}`,
+        cwd: ctx.cwd,
+        ...(previousAttempt ? { previousAttempt } : {}),
+      });
+    } catch (planErr) {
+      if (!isKrakenPlannerFallbackEnabled()) throw planErr;
+      const { reason, digest } = plannerFallbackDigest(planErr);
+      // The spine may be absent (tests, detached writer): optional chain, same
+      // idiom as the memory telemetry sink above.
+      ctx.writerRef?.current?.spine?.note('kraken.planner_fallback', { reason, digest });
+      appendSystem(
+        ctx.setMessages,
+        `[kraken] planner failed — falling back to single-agent (${digest})`,
+      );
+      // Host-owned single-agent turn; without the callback the message above is
+      // still the honest report (never also `graph run failed`).
+      await ctx.fallbackToSingleAgent?.(prompt);
+      return;
+    }
     appendSystem(ctx.setMessages, formatKrakenGraphAscii(graph));
 
     const executor = new KrakenGraphExecutor({

@@ -218,14 +218,16 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         requiredTools?: readonly string[];
       },
     ) => {
-      // Kraken: fresh tentacle spawn budget each parent user turn.
-      resetTaskSpawnCount();
+      // Kraken: fresh tentacle spawn budget each parent user turn, scoped to
+      // THIS session (K3.3 / F16) — a concurrent session in the same process
+      // keeps its own budget and its own debt.
+      resetTaskSpawnCount(sessionId);
       // K1.5 / F5: the in-memory cache is per-turn, but open debt is durable
       // on the spine. Flush pending emits from the previous turn, wipe the
       // cache, rebind emit, then replay un-cleared `verify.debt_open` so the
       // strict-done gate still sees turn-N debt at turn N+1.
       await flushVerifyDebtSpine();
-      resetTaskVerifyObligation();
+      resetTaskVerifyObligation(sessionId);
       {
         const spine = writerRef.current?.spine;
         if (spine) {

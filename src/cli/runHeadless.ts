@@ -99,6 +99,9 @@ import { HOOKS_FAILURE_ENV, resolveHookFailureMode } from './safety/lifecycleHoo
 import { planModeFromOpts, registerHeadlessMcp, runOneTurn, surfaceOpsKnowledgeNotices, writeProofSafe, type TurnExtras } from './headless/runOneTurn.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
+  // K3.3 / F16: the one-shot CLI entry owns its process (one turn per run), so
+  // the legacy process-wide reset stays correct here; the per-session reset is
+  // for the long-lived hosts (TUI turn loop, `dispatchHeadlessTurn`).
   resetTaskSpawnCount();
   resetTaskVerifyObligation();
   // H10-fix1: strictDone/missionStrict NEVER touch process.env (not even
@@ -326,6 +329,11 @@ export async function dispatchHeadlessTurn(
   // Each parent user turn gets a fresh tentacle budget (GUIDA: default 6).
   // Desktop sidecar never enters runHeadless(), so without this the counter
   // lives for the whole Node process — 6 tentacles total, then spawn cap.
+  // K3.3 / F16: this stays the LEGACY process-wide reset on purpose — the
+  // spine session id is minted inside runOneTurn (or resumed from
+  // opts.resumeSessionId), i.e. AFTER this point, so there is no session to
+  // scope it to. The COUNTS themselves are per session (the task tool keys
+  // them by ctx.sessionId), and the strict-done gate reads every session.
   resetTaskSpawnCount();
   // t78: the general⇒verify obligation is per-turn too — a turn that ends
   // with open debt is closed blocked by the strict-done gate in runOneTurn.
@@ -403,7 +411,7 @@ export async function dispatchHeadlessTurn(
   }
 
   if (opts.krakenGraph) {
-    return runHeadlessKrakenGraph(opts, provider, model);
+    return runHeadlessKrakenGraph(opts, provider, model, providerStream, extras);
   }
 
   const { shouldRunGauntletHostLoop } = await import('./gauntlet/policy.js');
@@ -432,6 +440,29 @@ export async function dispatchHeadlessTurn(
 }
 
 /**
+ * K3.4 / F17: the planner fallback gate + digest, read off the dynamically
+ * imported planner module. Returns the digest helper when
+ * `ZELARI_KRAKEN_PLANNER_FALLBACK` is on, else null.
+ *
+ * Tolerant by design: `./kraken/planner.js` also doubles as the LLM seam that
+ * hosts and several suites stub with a partial namespace (`planTaskGraph`
+ * only), and touching a missing export throws before the planner is called.
+ * A partial mock therefore degrades to the pre-K3.4 behavior: fail the run.
+ */
+function plannerFallbackDigestIfEnabled(
+  mod: typeof import('./kraken/planner.js'),
+): ((err: unknown) => { reason: string; digest: string }) | null {
+  try {
+    const enabled = mod.isKrakenPlannerFallbackEnabled;
+    const digest = mod.plannerFallbackDigest;
+    if (typeof enabled !== 'function' || typeof digest !== 'function') return null;
+    return enabled() ? digest : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * `--kraken-graph <goal>`: plan (F4) + execute (F3) a Kraken task graph,
  * bypassing the normal single-agent/council/zelari dispatch entirely.
  * Gated by ZELARI_KRAKEN_GRAPH (kill-switch, default on).
@@ -440,6 +471,11 @@ async function runHeadlessKrakenGraph(
   opts: HeadlessOptions,
   provider: string,
   model: string,
+  // K3.4 / F17: the fallback re-enters this process as an ordinary
+  // single-agent turn, so this host must carry the turn seam (provider stream
+  // + host extras) down to the tail — same objects dispatchHeadlessTurn holds.
+  providerStream: ProviderStreamFn,
+  extras?: TurnExtras,
 ): Promise<number> {
   const { isKrakenGraphEnabled, KrakenGraphExecutor } = await import('./kraken/executor.js');
   if (!isKrakenGraphEnabled()) {
@@ -453,7 +489,13 @@ async function runHeadlessKrakenGraph(
     return 1;
   }
 
-  const { planTaskGraph } = await import('./kraken/planner.js');
+  // K3.4 / F17: same module, extended — the fallback gate + digest travel with
+  // the planner they describe. They are read through
+  // `plannerFallbackDigestIfEnabled` (see above): this module doubles as the
+  // LLM seam that host suites stub with just `planTaskGraph`, and touching a
+  // missing export would throw before the planner is ever called.
+  const plannerModule = await import('./kraken/planner.js');
+  const { planTaskGraph } = plannerModule;
   const { loadGraphSnapshot, formatSnapshotForPlanner } = await import('./kraken/graphMemory.js');
   const { formatKrakenGraphAscii, formatKrakenGraphDigest } = await import(
     './kraken/graphStatus.js'
@@ -504,6 +546,11 @@ async function runHeadlessKrakenGraph(
   // W1: every return below records its code first so the finally can close
   // the spine with the matching status (completed / error / cancelled).
   let exitCode = 0;
+  // K3.4 / F17: armed only when the planner throws AND the opt-in fallback is
+  // enabled (the flag alone never skips the planner). The degraded turn is
+  // launched from the tail of this function, never from inside the try, so the
+  // graph spine and the single-agent spine never overlap.
+  let fallbackToSingleAgent = false;
 
   try {
     // ---- Pre-flight: run a pre-built plan from disk, skipping the planner.
@@ -547,123 +594,149 @@ async function runHeadlessKrakenGraph(
     const previous = await loadGraphSnapshot(cwd);
     const previousAttempt = formatSnapshotForPlanner(previous);
     if (previousAttempt) log('resuming from the previous unfinished graph');
-    const graph =
-      preflightGraph ??
-      (await planTaskGraph({
-        prompt,
-        provider,
-        model,
-        cwd,
-        ...(previousAttempt ? { previousAttempt } : {}),
-      }));
-    log(formatKrakenGraphAscii(graph));
-
-    // ---- Plan-only mode: serialize and exit before executing.
-    if (opts.planOnly) {
-      const planId = randomUUID();
-      const planDir = path.join(cwd, '.zelari', 'radio');
-      const planPath = path.join(planDir, `plan-${planId}.json`);
-      await fs.mkdir(planDir, { recursive: true });
-      await fs.writeFile(
-        planPath,
-        JSON.stringify(
-          { id: graph.id, nodes: [...graph.nodes.values()] },
-          null,
-          2,
-        ),
-        'utf8',
-      );
-      log(`plan-only: wrote ${planPath} (${graph.nodes.size} nodes)`);
-      log(
-        `re-run with ZELARI_KRAKEN_RUN_PLAN=${planId} to execute (or --run-plan <id> when the desktop wiring is in place)`,
-      );
-      if (opts.output === 'json') {
-        emitEvent({ type: 'log', message: `plan_only_id=${planId}` });
-        emitEvent({ type: 'log', message: `plan_only_path=${planPath}` });
-      }
-      exitCode = 0;
-      return exitCode;
-    }
-
-    const audit = new AuditLogger();
-    // ADR-0024 v1.1: per-node ENVELOPE events on the spine — written HERE, by
-    // the host (the sole spine writer), around the executor's tentacle-run
-    // seam. Tentacles/subagents never touch the spine: their turn internals
-    // (assistant text, tool calls/results) stay on the kraken radio JSONL.
-    // Envelope/metadata only — nodeId, agent, graphId, ok/cancelled and
-    // host-measured durationMs; never label/prompt/result (model content).
-    // One pair per ATTEMPT (a retry/rework produces a fresh pair); merge
-    // nodes drive no tentacle, so they stay radio-only. Additive state kinds
-    // need no SCHEMA_VERSION bump: older readers skip them via the tolerant
-    // replay (ADR-0021 schema review recorded in the ADR amendment).
-    const { runTentacle } = await import('./kraken/tentacle.js');
-    const { defaultPermissionPolicy } = await import('./safety/toolPermissions.js');
-    const executor = new KrakenGraphExecutor({
-      taskToolDeps: {
-        createSubAgentContext: createKrakenSubAgentContextFactory({
-          root: cwd,
-          audit,
-          sessionId,
-          // P0.4 capability inheritance: tentacles intersect the headless
-          // parent policy. Headless now uses the shared preset engine
-          // (defaultPermissionPolicy — standard = execute/network ask, and
-          // ask without a UI fails closed), so this intersection actually
-          // bites: tentacles can never exceed the preset.
-          parentPolicy: defaultPermissionPolicy(),
-          ...(opts.onPermissionAsk ? { onPermissionAsk: opts.onPermissionAsk } : {}),
-          // Anchor every tentacle to the SAME provider/model this run
-          // resolved (Desktop's selector, or --provider/--model), instead
-          // of the persisted provider.json default the factory falls back
-          // to otherwise — the graph executor is ~all tentacles, so without
-          // this the provider picker silently did nothing for Kraken Graph.
+    // K3.4 / F17: ONLY the planner call is wrapped. A pre-flight plan never
+    // reaches it, and an executor/runtime failure further down is NOT a
+    // planner failure — that one keeps exiting 2 (outer catch below).
+    let graph: import('@zelari/core').TaskGraph | undefined;
+    try {
+      graph =
+        preflightGraph ??
+        (await planTaskGraph({
+          prompt,
           provider,
           model,
-        }),
-        ...(graphMemory ? { memoryService: graphMemory } : {}),
-        memoryAutoWrite: isMemoryAutoWriteEnabled(),
-      },
-      parentCwd: cwd,
-      sessionId,
-      goal: prompt,
-      signal: abort.signal,
-      // ADR-0024 v1.1: same delegate (`runTentacle`), wrapped so each node
-      // turn leaves a graph.node_started / graph.node_ended envelope pair on
-      // the spine. The executor owns scheduling; the HOST owns the spine.
-      runTentacleFn: (runOpts) => nodeSpineEnvelopeRun(spine, runOpts, () => runTentacle(runOpts)),
-    });
-    const summary = await executor.execute(graph);
-    if (summary.cancelled) log('graph cancelled — partial results below');
-    // Topology answers "did it converge"; the digest answers "what did the
-    // eight tentacles actually do", which otherwise meant reading the radio
-    // JSONL by hand.
-    const finalAscii = `${formatKrakenGraphAscii(summary.graph)}\n\n${formatKrakenGraphDigest(
-      summary.graph,
-      {
-        durationsMs: summary.durationsMs,
-        unresolvedFindings: summary.unresolvedFindings,
-      },
-    )}`;
-
-    if (opts.output === 'json') {
-      // Desktop's chat transcript is built ONLY from a message_start ->
-      // message_delta -> message_end/agent_end sequence (assistantIdRef is
-      // set on message_start; agent_end never reads a `message` field on
-      // its own — see apps/desktop/src/App.tsx's onAgentEvent handler).
-      // Emitting bare log/agent_end events (the previous behavior) left the
-      // result completely invisible in the UI even though the graph ran
-      // and converged/failed correctly — it just looked like nothing
-      // happened. Match the same event shape every other dispatch path
-      // produces so this renders as a normal assistant reply.
-      emitEvent({ type: 'message_start' });
-      emitEvent({ type: 'message_delta', delta: finalAscii });
-      emitEvent({ type: 'message_end' });
-      emitEvent({ type: 'agent_end', reason: summary.converged ? 'completed' : 'error' });
-    } else {
-      process.stdout.write(`${finalAscii}\n`);
+          cwd,
+          ...(previousAttempt ? { previousAttempt } : {}),
+        }));
+    } catch (planErr) {
+      const digestOf = plannerFallbackDigestIfEnabled(plannerModule);
+      if (digestOf) {
+        const { reason, digest } = digestOf(planErr);
+        spine.note('kraken.planner_fallback', { reason, digest });
+        log(`planner failed — falling back to single-agent (${digest})`);
+        // Record the planner failure for the spine closeReason, then let the
+        // finally close THIS spine (and detach SIGINT) before the fallback
+        // turn starts: `return await runOneTurn(...)` from in here would leave
+        // two live spine owners. This exitCode is NOT the run code — the
+        // single-agent turn reports its own (see the tail of this function).
+        exitCode = 2;
+        fallbackToSingleAgent = true;
+      } else {
+        throw planErr;
+      }
     }
+    // Fallback armed ⇒ `graph` is deliberately undefined and the graph path is
+    // skipped: the degraded turn runs after the finally, never in here.
+    if (!fallbackToSingleAgent && graph) {
+      log(formatKrakenGraphAscii(graph));
 
-    exitCode = summary.converged ? 0 : 3;
-    return exitCode;
+      // ---- Plan-only mode: serialize and exit before executing.
+      if (opts.planOnly) {
+        const planId = randomUUID();
+        const planDir = path.join(cwd, '.zelari', 'radio');
+        const planPath = path.join(planDir, `plan-${planId}.json`);
+        await fs.mkdir(planDir, { recursive: true });
+        await fs.writeFile(
+          planPath,
+          JSON.stringify(
+            { id: graph.id, nodes: [...graph.nodes.values()] },
+            null,
+            2,
+          ),
+          'utf8',
+        );
+        log(`plan-only: wrote ${planPath} (${graph.nodes.size} nodes)`);
+        log(
+          `re-run with ZELARI_KRAKEN_RUN_PLAN=${planId} to execute (or --run-plan <id> when the desktop wiring is in place)`,
+        );
+        if (opts.output === 'json') {
+          emitEvent({ type: 'log', message: `plan_only_id=${planId}` });
+          emitEvent({ type: 'log', message: `plan_only_path=${planPath}` });
+        }
+        exitCode = 0;
+        return exitCode;
+      }
+
+      const audit = new AuditLogger();
+      // ADR-0024 v1.1: per-node ENVELOPE events on the spine — written HERE, by
+      // the host (the sole spine writer), around the executor's tentacle-run
+      // seam. Tentacles/subagents never touch the spine: their turn internals
+      // (assistant text, tool calls/results) stay on the kraken radio JSONL.
+      // Envelope/metadata only — nodeId, agent, graphId, ok/cancelled and
+      // host-measured durationMs; never label/prompt/result (model content).
+      // One pair per ATTEMPT (a retry/rework produces a fresh pair); merge
+      // nodes drive no tentacle, so they stay radio-only. Additive state kinds
+      // need no SCHEMA_VERSION bump: older readers skip them via the tolerant
+      // replay (ADR-0021 schema review recorded in the ADR amendment).
+      const { runTentacle } = await import('./kraken/tentacle.js');
+      const { defaultPermissionPolicy } = await import('./safety/toolPermissions.js');
+      const executor = new KrakenGraphExecutor({
+        taskToolDeps: {
+          createSubAgentContext: createKrakenSubAgentContextFactory({
+            root: cwd,
+            audit,
+            sessionId,
+            // P0.4 capability inheritance: tentacles intersect the headless
+            // parent policy. Headless now uses the shared preset engine
+            // (defaultPermissionPolicy — standard = execute/network ask, and
+            // ask without a UI fails closed), so this intersection actually
+            // bites: tentacles can never exceed the preset.
+            parentPolicy: defaultPermissionPolicy(),
+            ...(opts.onPermissionAsk ? { onPermissionAsk: opts.onPermissionAsk } : {}),
+            // Anchor every tentacle to the SAME provider/model this run
+            // resolved (Desktop's selector, or --provider/--model), instead
+            // of the persisted provider.json default the factory falls back
+            // to otherwise — the graph executor is ~all tentacles, so without
+            // this the provider picker silently did nothing for Kraken Graph.
+            provider,
+            model,
+          }),
+          ...(graphMemory ? { memoryService: graphMemory } : {}),
+          memoryAutoWrite: isMemoryAutoWriteEnabled(),
+        },
+        parentCwd: cwd,
+        sessionId,
+        goal: prompt,
+        signal: abort.signal,
+        // ADR-0024 v1.1: same delegate (`runTentacle`), wrapped so each node
+        // turn leaves a graph.node_started / graph.node_ended envelope pair on
+        // the spine. The executor owns scheduling; the HOST owns the spine.
+        runTentacleFn: (runOpts) => nodeSpineEnvelopeRun(spine, runOpts, () => runTentacle(runOpts)),
+      });
+      const summary = await executor.execute(graph);
+      if (summary.cancelled) log('graph cancelled — partial results below');
+      // Topology answers "did it converge"; the digest answers "what did the
+      // eight tentacles actually do", which otherwise meant reading the radio
+      // JSONL by hand.
+      const finalAscii = `${formatKrakenGraphAscii(summary.graph)}\n\n${formatKrakenGraphDigest(
+        summary.graph,
+        {
+          durationsMs: summary.durationsMs,
+          unresolvedFindings: summary.unresolvedFindings,
+        },
+      )}`;
+
+      if (opts.output === 'json') {
+        // Desktop's chat transcript is built ONLY from a message_start ->
+        // message_delta -> message_end/agent_end sequence (assistantIdRef is
+        // set on message_start; agent_end never reads a `message` field on
+        // its own — see apps/desktop/src/App.tsx's onAgentEvent handler).
+        // Emitting bare log/agent_end events (the previous behavior) left the
+        // result completely invisible in the UI even though the graph ran
+        // and converged/failed correctly — it just looked like nothing
+        // happened. Match the same event shape every other dispatch path
+        // produces so this renders as a normal assistant reply.
+        emitEvent({ type: 'message_start' });
+        emitEvent({ type: 'message_delta', delta: finalAscii });
+        emitEvent({ type: 'message_end' });
+        emitEvent({ type: 'agent_end', reason: summary.converged ? 'completed' : 'error' });
+      } else {
+        process.stdout.write(`${finalAscii}\n`);
+      }
+
+      exitCode = summary.converged ? 0 : 3;
+      return exitCode;
+    }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     if (opts.output === 'json') {
@@ -703,6 +776,22 @@ async function runHeadlessKrakenGraph(
     // HarnessState inc.3: final read-model event for JSON hosts (best-effort).
     await emitHarnessStateEvent({ spine, workspaceRoot: cwd, output: opts.output, emitEvent });
   }
+  // K3.4 / F17: the planner failed and the opt-in fallback below is armed.
+  // The graph spine is already closed and SIGINT detached (finally above), so
+  // the same process can carry the goal as an ordinary single-agent turn
+  // instead of dying with exit 2. `exitCode` here is only the spine closeReason
+  // for the failed graph — the degraded turn reports its own code.
+  if (fallbackToSingleAgent) {
+    log('planner fallback — running the goal as a single-agent turn');
+    return runOneTurn(
+      { ...opts, task: prompt, krakenGraph: undefined },
+      provider,
+      model,
+      providerStream,
+      extras,
+    );
+  }
+  return exitCode;
 }
 
 /**

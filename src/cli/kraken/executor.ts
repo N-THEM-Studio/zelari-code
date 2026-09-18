@@ -103,7 +103,9 @@ import {
   type ReputationRecord,
 } from './modelReputation.js';
 // t30 (§17): spawn-ROI gate — deterministic score, threshold parsing and the
-// duplication-risk heuristic; the veto itself lives in this class (fail-open).
+// duplication-risk heuristic; the veto itself lives in this class and is
+// fail-CLOSED on an internal error (K3.2: defer + `roi_gate_error`, never
+// spawn).
 import {
   computeSpawnScore,
   duplicationRiskFor,
@@ -480,7 +482,8 @@ export interface KrakenGraphExecutorOptions {
   reputationRecords?: readonly ReputationRecord[];
   /**
    * P2.F: pure score seam for the ROI gate (default {@link computeSpawnScore}).
-   * Tests inject a throwing stub to prove the gate's fail-open contract.
+   * Tests inject a throwing stub to prove the gate's fail-CLOSED contract
+   * (K3.2: an internal error vetoes + fires `roi_gate_error`, never spawns).
    */
   roiScoreFn?: (input: SpawnRoiInput) => SpawnScoreResult;
   /**
@@ -520,6 +523,15 @@ export interface KrakenExecutionSummary {
   durationsMs: Record<string, number>;
   /** True when the run stopped because its `signal` aborted. */
   cancelled: boolean;
+  /**
+   * K3.1 (F14): nodes the scheduler gave up on. The loop can break with work
+   * still in flight (iteration cap, or a cancellation whose tentacle has not
+   * unwound yet); after an eager cancel and a bounded drain grace, whatever is
+   * still running is marked `error` and listed here. These are NOT ordinary
+   * failures: a failed node ran and lost, an abandoned one never settled at
+   * all — nothing may treat its scope as untouched.
+   */
+  abandonedNodeIds: string[];
   /**
    * Verify verdicts the run could not resolve: either the rework budget ran
    * out with the verify still failing, or the verify never emitted a parseable
@@ -770,6 +782,8 @@ export class KrakenGraphExecutor {
     // graph to always shrink monotonically (fix-node spawns grow it).
     const maxIterations = Math.max(64, graph.nodes.size * 8);
     let iterations = 0;
+    /** Why the loop broke early — the drain reports it on what it abandons. */
+    let stopReason: 'max-iterations' | 'abort' = 'abort';
 
     /** Node id → its running tentacle. One entry per in-flight node. */
     const inFlight = new Map<string, Promise<SettledNode>>();
@@ -785,6 +799,10 @@ export class KrakenGraphExecutor {
           detail: `exceeded ${maxIterations} scheduling iterations without settling`,
           ok: false,
         });
+        stopReason = 'max-iterations';
+        // K3.1 (F14): the work still in flight is exactly what we are breaking
+        // OUT of waiting for — tell it to stop before the drain waits on it.
+        this.cancelRun();
         break;
       }
       if (this.aborted && inFlight.size === 0) break;
@@ -840,14 +858,13 @@ export class KrakenGraphExecutor {
     // The loop can break with work still in flight (iteration cap, or a
     // cancellation whose tentacles have not unwound yet). Let those settle
     // rather than returning a summary while they are still writing, and
-    // record what they produced.
-    if (inFlight.size > 0) {
-      for (const { id, res } of await Promise.all(inFlight.values())) {
-        const node = graph.nodes.get(id);
-        if (node) await this.applyResultWithReask(graph, node, res);
-      }
-      inFlight.clear();
-    }
+    // record what they produced — but under K3.1's BOUNDED drain, because the
+    // tentacle that made the loop break is precisely the one that may never
+    // settle on its own.
+    const abandonedNodeIds = await this.drainInFlight(graph, inFlight, {
+      reason: stopReason,
+      timeoutMs: this.cancelGraceMs ?? resolveCancelGraceMs(),
+    });
 
     // A cancelled run leaves nodes that never started: `skipped` says exactly
     // that, and lets the graph settle so a summary can be returned.
@@ -957,6 +974,7 @@ export class KrakenGraphExecutor {
       counts: countByStatus(graph) as unknown as Record<string, number>,
       durationsMs: Object.fromEntries(this.durationsMs),
       cancelled: this.aborted,
+      abandonedNodeIds,
       unresolvedFindings: [...this.unresolved],
       ...(backtest ? { backtest } : {}),
     };
@@ -976,6 +994,111 @@ export class KrakenGraphExecutor {
       ok: false,
     });
     for (const controller of this.nodeControllers.values()) controller.abort();
+  }
+
+  /**
+   * K3.1 (F14): settle the work still in flight when the scheduling loop breaks
+   * early — the iteration cap, or a cancellation whose tentacles have not
+   * unwound yet.
+   *
+   * This used to be a bare `Promise.all(inFlight)`, i.e. an UNBOUNDED wait: a
+   * tentacle stuck on a provider call that never yields hung `execute()`
+   * forever, so the cap that exists to escape the stall never produced a
+   * summary at all — and nothing had even told the stuck tentacle to stop. The
+   * order here is the point: cancel FIRST (a tentacle cannot unwind if nobody
+   * asked it to), then let the run settle inside one shared deadline, the same
+   * `cancelGraceMs` {@link withNodeTimeout} grants a cancelled run. What
+   * settles in that window is recorded exactly as the loop would have recorded
+   * it; what is still running when the deadline fires is a leftover, marked
+   * terminal here so no summary is ever emitted with a node still `running`.
+   *
+   * @returns the ids abandoned at the deadline (empty for a clean drain).
+   */
+  private async drainInFlight(
+    graph: TaskGraph,
+    inFlight: Map<string, Promise<SettledNode>>,
+    opts: { reason: 'max-iterations' | 'abort'; timeoutMs: number },
+  ): Promise<string[]> {
+    if (inFlight.size === 0) return [];
+
+    // Idempotent: reaches the AbortController of every node we are about to
+    // stop waiting for.
+    this.cancelRun();
+
+    // ONE timer for the whole drain (not one per node), so the total wait is
+    // bounded by `timeoutMs`. Unref'd like `graphTimer` — a cancellation grace
+    // must never be what keeps the process alive.
+    const DRAIN_TIMED_OUT = Symbol('drain-timeout');
+    /**
+     * True when this drained entry holds the deadline sentinel instead of a
+     * settled node. (A plain `v !== DRAIN_TIMED_OUT` does not narrow here: the
+     * raced value is typed `SettledNode | symbol`, and TS will not subtract a
+     * unique symbol from the `symbol` member.)
+     */
+    const hitDeadline = (v: SettledNode | symbol): v is symbol => v === DRAIN_TIMED_OUT;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<typeof DRAIN_TIMED_OUT>((resolve) => {
+      timer = setTimeout(() => resolve(DRAIN_TIMED_OUT), opts.timeoutMs);
+      timer.unref?.();
+    });
+
+    const drained = await Promise.all(
+      [...inFlight].map(async ([id, promise]) => ({
+        id,
+        outcome: await Promise.race([promise, deadline]),
+      })),
+    ).finally(() => {
+      if (timer) clearTimeout(timer);
+    });
+    inFlight.clear();
+
+    const abandoned: string[] = [];
+    for (const { id, outcome } of drained) {
+      const node = graph.nodes.get(id);
+      if (!hitDeadline(outcome)) {
+        // Unwound inside the grace: an ordinary outcome, applied through the
+        // usual path. `applyResult` refuses to retry or spawn repairs because
+        // the run is aborted by now — right for a run that is stopping.
+        if (node) await this.applyResultWithReask(graph, node, outcome.res);
+        continue;
+      }
+      abandoned.push(id);
+      if (!node) continue;
+      const error =
+        `abandoned after drain (${opts.reason}): tentacle did not stop within ` +
+        `${opts.timeoutMs}ms of being cancelled`;
+      node.status = 'error';
+      node.error = error;
+      // Same terminal bookkeeping as any other node that ends in `error`: the
+      // radio tail, the workbench graph tab and the digest must all stop
+      // showing it as running.
+      this.radio('node_end', {
+        description: node.label,
+        agent: node.kind,
+        detail: `abandoned after drain (${opts.reason})`,
+        ok: false,
+      });
+      this.wb?.markEnd(node.id, {
+        status: 'error',
+        error,
+        durationMs: this.durationsMs.get(node.id),
+      });
+    }
+
+    if (abandoned.length > 0) {
+      this.radio('progress', {
+        description: 'in-flight drain',
+        detail:
+          `drain timed out after ${opts.timeoutMs}ms (${opts.reason}) — ` +
+          `${abandoned.length} abandoned: ${abandoned.join(', ')}`,
+        ok: false,
+      });
+      this.wb?.logEvent(
+        `drain: ${abandoned.length} node(s) did not stop within ${opts.timeoutMs}ms ` +
+          `(${opts.reason}) — abandoned: ${abandoned.join(', ')}`,
+      );
+    }
+    return abandoned;
   }
 
   /**
@@ -1169,16 +1292,18 @@ export class KrakenGraphExecutor {
     // value. Runs AFTER ownership arbitration and both rescues, so it can only
     // shrink the final spawn list; a node scoring below the threshold goes
     // back the deferred path (stays READY, re-offered next round — never
-    // failed) with a `node_roi_vetoed` radio trail. Fail-open: any error
-    // inside the gate spawns the batch (see roiGate).
+    // failed) with a `node_roi_vetoed` radio trail. Fail-CLOSED (K3.2/I3): an error
+    // inside the gate defers the batch with a `roi_gate_error` radio (see roiGate).
     return (await this.roiGate([...admitted, ...rescued, ...semAdmitted], running)).spawn;
   }
 
   /**
    * P2.F: resolve the ROI gate's reputation source once per run — the
-   * injected fixture when given, else the repo's t29 store. Fail-open: a
+   * injected fixture when given, else the repo's t29 store. A
    * missing/corrupt store already degrades to [] inside loadRecords, and an
-   * unexpected error is swallowed the same way ("no history").
+   * unexpected error is swallowed the same way ("no history"). Either way the
+   * gate sees an unknown node and scores the sane defaults — K3.2 vetoes gate
+   * ERRORS only; missing data still spawns.
    */
   private async roiReputationRecords(): Promise<readonly ReputationRecord[]> {
     if (this.roiReputation !== null) return this.roiReputation;
@@ -1241,9 +1366,11 @@ export class KrakenGraphExecutor {
    * ZELARI_KRAKEN_ROI_THRESHOLD (raw env string parsed per admit — invalid ⇒
    * default) and returns the survivors. Vetoed nodes are NOT failed: they are
    * simply not returned, so they stay READY and are re-offered next round,
-   * each with a `node_roi_vetoed` radio trail. Fail-open twice over: an error
-   * while scoring ONE node spawns that node, and an error that escapes the
-   * loop spawns the whole batch — the gate must never break a run.
+   * each with a `node_roi_vetoed` radio trail. Fail-CLOSED (K3.2/I3) twice
+   * over: an internal error while scoring ONE node defers that node, and an
+   * error that escapes the loop defers the whole batch — the gate must never
+   * break a run, but it never lets an unvetted batch through either: every
+   * gate failure fires a loud `roi_gate_error` radio.
    */
   private async roiGate(
     spawnList: readonly TaskNode[],
@@ -1285,14 +1412,55 @@ export class KrakenGraphExecutor {
           this.wb?.logEvent(
             `roi-vetoed ${node.id} "${node.label}" — spawnScore ${pinned} < ${threshold} (${score.rationaleCode}); deferred, not failed`,
           );
-        } catch {
-          spawn.push(node); // per-node fail-open
+        } catch (err) {
+          // K3.2 (F15/I3): fail-CLOSED. An internal gate error is a veto, not
+          // a spawn: the node goes back the deferred path (stays READY,
+          // re-offered next round, never failed) and the failure is loud.
+          vetoed.push(node);
+          this.roiGateErrorRadio([node], err, threshold);
         }
       }
-    } catch {
-      return { spawn: [...spawnList], vetoed: [] }; // whole-gate fail-open
+    } catch (err) {
+      // K3.2 (F15/I3): fail-CLOSED for the whole batch. An internal error
+      // must never hand the original spawnList back as survivors, whatever
+      // partial verdicts the loop reached before it threw.
+      this.roiGateErrorRadio(spawnList, err);
+      return { spawn: [], vetoed: [...spawnList] };
     }
     return { spawn, vetoed };
+  }
+
+  /**
+   * K3.2 (F15/I3): the ROI gate refused to spawn because of an INTERNAL error
+   * (throwing score seam, unreadable reputation, whole-batch escape). Loud by
+   * design and never silent: one `roi_gate_error` radio event plus a workbench
+   * line, so a gate that never clears stays visible instead of reading as an
+   * ordinary deferral. `deferred` is the node (or whole batch) pushed back the
+   * READY / deferred path — nothing here fails a node.
+   */
+  private roiGateErrorRadio(
+    deferred: readonly TaskNode[],
+    err: unknown,
+    threshold: number | null = null,
+  ): void {
+    const reason = err instanceof Error ? err.message : String(err);
+    const only: TaskNode | undefined = deferred.length === 1 ? deferred[0] : undefined;
+    this.radio('roi_gate_error', {
+      description: only ? only.label : `roi gate (${deferred.length} node(s))`,
+      ...(only ? { agent: only.kind, nodeId: only.id } : {}),
+      ...(threshold !== null ? { threshold } : {}),
+      detail: only
+        ? `roi gate error: ${reason} — ${only.id} stays READY (not failed), never spawned`
+        : `roi gate error: ${reason} — deferred ${deferred.length} node(s) [${deferred
+            .map((n) => n.id)
+            .join(', ')}], nothing spawned`,
+      ok: false,
+    });
+    this.wb?.logEvent(
+      only
+        ? `roi-gate-error ${only.id} "${only.label}" — ${reason}; deferred, not failed`
+        : `roi-gate-error — ${reason}; deferred ${deferred.length} node(s); nothing spawned`,
+    );
   }
 
   /**
@@ -2324,6 +2492,8 @@ export class KrakenGraphExecutor {
       | 'node_worktree_scheduled'
       | 'node_semantic_admitted'
       | 'node_roi_vetoed'
+      // K3.2 (F15/I3): internal ROI-gate error ⇒ fail-closed defer + loud event.
+      | 'roi_gate_error'
       | 'node_rolled_back'
       | 'graph_converged'
       | 'graph_failed'

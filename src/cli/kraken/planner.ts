@@ -220,6 +220,34 @@ function resolveBennettsRazorEnabled(env: NodeJS.ProcessEnv = process.env): bool
 }
 
 /**
+ * K3.4 / F17: may a planner failure degrade to the same-process single-agent
+ * path instead of failing the run? Opt-in via
+ * `ZELARI_KRAKEN_PLANNER_FALLBACK=1`; default off (the run fails with exit 2)
+ * until dogfood shows the degraded path is worth more than a loud failure.
+ *
+ * Only *callers* read this — `planTaskGraph` keeps throwing, so a caller with
+ * no single-agent alternative (or one that wants the hard stop) still sees the
+ * error.
+ */
+export function isKrakenPlannerFallbackEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.ZELARI_KRAKEN_PLANNER_FALLBACK;
+  if (raw === undefined || raw === '') return false;
+  return raw === '1' || raw.toLowerCase() === 'true';
+}
+
+/**
+ * K3.4 / F17: split a planner error into the full `reason` (spine payload) and
+ * a bounded `digest` (one log line). An LLM transport error can carry an
+ * entire HTML error page or a JSON blob; the transcript and the spine both
+ * want one readable line, not that.
+ */
+export function plannerFallbackDigest(err: unknown): { reason: string; digest: string } {
+  const reason = err instanceof Error ? err.message : String(err);
+  const digest = reason.length > 240 ? `${reason.slice(0, 237)}...` : reason;
+  return { reason, digest };
+}
+
+/**
  * Build the planner system prompt, optionally appending Bennett's Razor
  * directive. Pure: same env → same prompt, so test-snapshottable.
  *

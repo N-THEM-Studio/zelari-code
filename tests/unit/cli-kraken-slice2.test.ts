@@ -3,11 +3,12 @@
  * spawn reset (K3). The K4 verify-hint footer was removed once the runtime
  * general->verify obligation (ADR-0033 t78) made it redundant.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
+  __resetGeneralSubModelWarnForTests,
   isUnknownModelError,
   resolveKrakenPlannerModel,
   resolveKrakenSubModel,
@@ -25,7 +26,11 @@ import {
   type WorktreeHandle,
 } from '../../src/cli/tools/krakenWorktree.js';
 import {
+  addTaskVerifyObligation,
+  clearTaskVerifyObligation,
   createTaskTool,
+  hasOpenTaskVerifyDebt,
+  listTaskVerifyObligations,
   resetTaskSpawnCount,
   resetTaskVerifyObligation,
   maxTaskSpawnsPerTurn,
@@ -62,6 +67,24 @@ const dummyContext: SubAgentContext = {
 };
 
 describe('resolveKrakenSubModel (K5)', () => {
+  // K3.6 (F20): the general-parent routing warn is process-wide (once per
+  // process) and writes to stderr — clear the flag and capture the line here;
+  // the nested F20 describe asserts on `stderrLines`.
+  let stderrLines: string[] = [];
+
+  beforeEach(() => {
+    __resetGeneralSubModelWarnForTests();
+    stderrLines = [];
+    vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      stderrLines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it('defaults to parent model when env unset', () => {
     expect(resolveKrakenSubModel('explore', 'grok-4', {})).toBe('grok-4');
     expect(resolveKrakenSubModel('general', 'grok-4', {})).toBe('grok-4');
@@ -93,6 +116,98 @@ describe('resolveKrakenSubModel (K5)', () => {
     expect(resolveKrakenSubModel('explore', 'grok-4', env)).toBe('explore-special');
     expect(resolveKrakenSubModel('verify', 'grok-4', env)).toBe('verify-special');
     expect(resolveKrakenSubModel('general', 'grok-4', env)).toBe('general-special');
+  });
+
+  describe('general parent routing warn (K3.6 / F20)', () => {
+    const env = { ZELARI_KRAKEN_SUB_MODEL: 'cheap-mini' };
+
+    it('keeps the parent model and warns on stderr when GENERAL_USES_SUB is not 1', () => {
+      expect(resolveKrakenSubModel('general', 'grok-4', env)).toBe('grok-4');
+      const out = stderrLines.join('');
+      expect(out).toContain('ZELARI_KRAKEN_SUB_MODEL');
+      expect(out).toContain('cheap-mini');
+      expect(out).toContain('general');
+      expect(out).toContain('grok-4');
+      expect(out).toContain('ZELARI_KRAKEN_GENERAL_USES_SUB=1');
+    });
+
+    it('warns ONCE per process, not on every general spawn', () => {
+      resolveKrakenSubModel('general', 'grok-4', env);
+      const afterFirst = stderrLines.length;
+      expect(afterFirst).toBeGreaterThan(0);
+      resolveKrakenSubModel('general', 'grok-4', env);
+      resolveKrakenSubModel('general', 'grok-4', env);
+      expect(stderrLines.length).toBe(afterFirst);
+    });
+
+    it('GENERAL_USES_SUB=1 routes general to the shared model with no warn', () => {
+      expect(
+        resolveKrakenSubModel('general', 'grok-4', { ...env, ZELARI_KRAKEN_GENERAL_USES_SUB: '1' }),
+      ).toBe('cheap-mini');
+      expect(stderrLines).toEqual([]);
+    });
+
+    it('explore still takes the shared model with no warn', () => {
+      expect(resolveKrakenSubModel('explore', 'grok-4', env)).toBe('cheap-mini');
+      expect(resolveKrakenSubModel('verify', 'grok-4', env)).toBe('cheap-mini');
+      expect(stderrLines).toEqual([]);
+    });
+
+    it('kind-specific GENERAL_MODEL still wins, with no warn', () => {
+      expect(
+        resolveKrakenSubModel('general', 'grok-4', {
+          ...env,
+          ZELARI_KRAKEN_GENERAL_MODEL: 'general-special',
+        }),
+      ).toBe('general-special');
+      expect(stderrLines).toEqual([]);
+    });
+
+    it('emits one radio model_routing_warn event when a radio target is given', () => {
+      const tmp = mkdtempSync(path.join(tmpdir(), 'kraken-k36-radio-'));
+      try {
+        expect(
+          resolveKrakenSubModel('general', 'grok-4', env, {
+            radio: { cwd: tmp, sessionId: 'k36' },
+          }),
+        ).toBe('grok-4');
+        const events = readKrakenRadio(tmp, 'k36');
+        expect(events).toHaveLength(1);
+        expect(events[0].kind).toBe('model_routing_warn');
+        expect(events[0].agent).toBe('general');
+        expect(events[0].ok).toBe(false);
+        expect(events[0].model).toBe('grok-4');
+        expect(events[0].detail).toBe('cheap-mini');
+      } finally {
+        try {
+          rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        } catch {
+          /* win32 EBUSY */
+        }
+      }
+    });
+
+    it('writes no radio event when the opt-in is set', () => {
+      const tmp = mkdtempSync(path.join(tmpdir(), 'kraken-k36-radio-off-'));
+      try {
+        expect(
+          resolveKrakenSubModel(
+            'general',
+            'grok-4',
+            { ...env, ZELARI_KRAKEN_GENERAL_USES_SUB: '1' },
+            { radio: { cwd: tmp, sessionId: 'k36' } },
+          ),
+        ).toBe('cheap-mini');
+        expect(readKrakenRadio(tmp, 'k36')).toEqual([]);
+        expect(existsSync(path.join(tmp, '.zelari', 'radio', 'k36.jsonl'))).toBe(false);
+      } finally {
+        try {
+          rmSync(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+        } catch {
+          /* win32 EBUSY */
+        }
+      }
+    });
   });
 });
 
@@ -128,7 +243,13 @@ describe('krakenRadio (K8)', () => {
   beforeEach(() => {
     root = mkdtempSync(path.join(tmpdir(), 'kraken-radio-'));
   });
-  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  afterEach(() => {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      /* win32 EBUSY */
+    }
+  });
 
   it('appends and reads JSONL events', () => {
     appendKrakenRadio(root, 'sess1', {
@@ -193,7 +314,11 @@ describe('taskTool K3 integration', () => {
     delete process.env.ZELARI_KRAKEN_WORKTREE;
   });
   afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      /* win32 EBUSY */
+    }
     resetTaskSpawnCount();
   });
 
@@ -344,7 +469,16 @@ describe('runtime general⇒verify obligation (t78)', () => {
         const delta = queue.shift() ?? '';
         const user = config.messages.find((m) => m.role === 'user');
         seenUserPrompts.push(user?.content ?? '');
+        // K1.3 floor: `runAutoVerifyAfterGeneral` only honors a verify PASS
+        // when the verify tentacle published ≥ 1 captured tool execution
+        // (`getLastVerifyToolTrace().length > 0`). Emit a tool_execution pair
+        // before the message events so runSubAgent sees a non-empty toolTrace —
+        // same pattern as chainDeps in cli-taskTool.test.ts.
         return fakeHarness([
+          { type: 'tool_execution_start', toolCallId: 'verify-cmd', toolName: 'bash',
+            args: { command: 'npx vitest run' } } as Partial<BrainEvent>,
+          { type: 'tool_execution_end', toolCallId: 'verify-cmd', isError: false,
+            durationMs: 5, result: 'all green' } as Partial<BrainEvent>,
           { type: 'message_start' },
           { type: 'message_delta', delta } as Partial<BrainEvent>,
           { type: 'message_end' },
@@ -393,7 +527,11 @@ describe('runtime general⇒verify obligation (t78)', () => {
       }
       expect(taskVerifyObligation()).toBeNull();
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      try {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        /* win32 EBUSY */
+      }
     }
   });
 
@@ -423,7 +561,11 @@ describe('runtime general⇒verify obligation (t78)', () => {
       }
       expect(taskVerifyObligation()).toBeNull();
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      try {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        /* win32 EBUSY */
+      }
     }
   });
 
@@ -449,7 +591,11 @@ describe('runtime general⇒verify obligation (t78)', () => {
       expect(debt?.description).toBe('fix foo');
       expect(debt?.detail).toMatch(/FAIL/);
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      try {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        /* win32 EBUSY */
+      }
     }
   });
 
@@ -471,7 +617,11 @@ describe('runtime general⇒verify obligation (t78)', () => {
       }
       expect(taskVerifyObligation()?.description).toBe('fix foo');
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      try {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        /* win32 EBUSY */
+      }
     }
   });
 
@@ -489,7 +639,11 @@ describe('runtime general⇒verify obligation (t78)', () => {
       expect(seenAgents).toEqual(['explore']);
       expect(taskVerifyObligation()).toBeNull();
     } finally {
-      rmSync(root, { recursive: true, force: true });
+      try {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        /* win32 EBUSY */
+      }
     }
   });
 
@@ -502,6 +656,99 @@ describe('runtime general⇒verify obligation (t78)', () => {
     expect(src).toMatch(/\bstrictDoneEnabled\b/);
     expect(src).toMatch(/turn is NOT verified-complete/);
     expect(src).toMatch(/finished without a passing verify/);
+  });
+});
+
+/**
+ * K3.3 / F16 — spawn budget and verify debt are keyed by SESSION, not by
+ * process. Fail-before: both lived in process-wide `globalThis` scalars, so a
+ * second session running in the same process (companion serve) inherited the
+ * first session's spent budget and had its debt cleared by it.
+ */
+describe('taskTool K3.3 — spawn budget + verify debt are per session (F16)', () => {
+  let root: string;
+  const prevCap = process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS;
+
+  beforeEach(() => {
+    root = mkdtempSync(path.join(tmpdir(), 'zelari-k33-'));
+    resetTaskSpawnCount();
+    resetTaskVerifyObligation();
+  });
+
+  afterEach(() => {
+    try {
+      rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+    } catch {
+      /* win32 EBUSY */
+    }
+    resetTaskSpawnCount();
+    resetTaskVerifyObligation();
+    if (prevCap === undefined) delete process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS;
+    else process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS = prevCap;
+  });
+
+  it('session A at its spawn cap does not block session B', async () => {
+    process.env.ZELARI_KRAKEN_MAX_TASK_SPAWNS = '2';
+    const tool = createTaskTool({
+      allowWorktree: false,
+      createSubAgentContext: async () => dummyContext,
+      harnessFactory: () =>
+        fakeHarness([
+          { type: 'message_start' },
+          { type: 'message_delta', delta: 'ok' } as Partial<BrainEvent>,
+          { type: 'message_end' },
+        ]),
+    });
+    const sessionA = { ...ctx, cwd: root, sessionId: 'k33-a' };
+    const sessionB = { ...ctx, cwd: root, sessionId: 'k33-b' };
+
+    expect((await tool.execute({ description: 'a1', prompt: 'p' }, sessionA)).ok).toBe(true);
+    expect((await tool.execute({ description: 'a2', prompt: 'p' }, sessionA)).ok).toBe(true);
+    const blockedA = await tool.execute({ description: 'a3', prompt: 'p' }, sessionA);
+    expect(blockedA.ok).toBe(false);
+    if (!blockedA.ok) expect(blockedA.error).toMatch(/spawn cap/i);
+
+    // The process-global counter made this fail: B had inherited A's cap.
+    const okB = await tool.execute({ description: 'b1', prompt: 'p' }, sessionB);
+    expect(okB.ok).toBe(true);
+
+    // Resetting B's budget never refunds A's.
+    resetTaskSpawnCount('k33-b');
+    expect((await tool.execute({ description: 'b2', prompt: 'p' }, sessionB)).ok).toBe(true);
+    const stillBlockedA = await tool.execute({ description: 'a4', prompt: 'p' }, sessionA);
+    expect(stillBlockedA.ok).toBe(false);
+  });
+
+  it('session B clearing/resetting its debt never clears session A’s', () => {
+    addTaskVerifyObligation('t-a', { description: 'A work' }, 'k33-a');
+    addTaskVerifyObligation('t-b', { description: 'B work' }, 'k33-b');
+
+    expect(listTaskVerifyObligations('k33-a').map((d) => d.description)).toEqual(['A work']);
+    expect(hasOpenTaskVerifyDebt('k33-b')).toBe(true);
+
+    // B's verify PASSes → only B's slot closes.
+    clearTaskVerifyObligation('t-b', 'k33-b');
+    expect(hasOpenTaskVerifyDebt('k33-b')).toBe(false);
+    expect(listTaskVerifyObligations('k33-a').map((d) => d.description)).toEqual(['A work']);
+
+    // B's turn ends (session-scoped reset) → A's debt survives.
+    addTaskVerifyObligation('t-b2', { description: 'B work 2' }, 'k33-b');
+    resetTaskVerifyObligation('k33-b');
+    expect(hasOpenTaskVerifyDebt('k33-b')).toBe(false);
+    expect(taskVerifyObligation('k33-a')?.description).toBe('A work');
+
+    // The id-less read is the strict-done gate's view (runOneTurn / useChatTurn
+    // call it that way): it must stay FAIL-CLOSED and still see A's debt.
+    expect(hasOpenTaskVerifyDebt()).toBe(true);
+    expect(taskVerifyObligation()?.description).toBe('A work');
+  });
+
+  it('id-less reset still clears the legacy default bucket (unit-test seam)', () => {
+    addTaskVerifyObligation('legacy-1', { description: 'legacy' });
+    expect(hasOpenTaskVerifyDebt()).toBe(true);
+
+    resetTaskVerifyObligation();
+    expect(hasOpenTaskVerifyDebt()).toBe(false);
   });
 });
 

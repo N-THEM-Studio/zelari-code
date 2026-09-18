@@ -113,18 +113,26 @@ beforeEach(async () => {
   delete process.env.ZELARI_MISSION_STRICT;
 });
 
-afterEach(() => {
+afterEach(async () => {
   for (const k of ENV_KEYS) {
     const v = savedEnv[k];
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
   resetKrakenCandidates();
-  // maxRetries: same win32 remedy as strictExit — the pack child can hold the
-  // tmp dir handle briefly (EBUSY on recursive rm); the explicit 30s hook
-  // timeout covers the release window (pre-existing flake, not W1).
-  return fs.rm(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
-}, 30_000);
+  // Bounded cleanup: same win32 remedy as strictExit — maxRetries absorbs the
+  // transient EBUSY/EPERM window while the pack child releases the tmp dir
+  // handle, and the race caps the hook so a still-locked dir is left behind
+  // instead of stalling for 30s.
+  try {
+    await Promise.race([
+      fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+      new Promise((resolve) => setTimeout(resolve, 1500)),
+    ]);
+  } catch {
+    /* win32 EBUSY / already gone — leftover %TEMP% dirs are OK */
+  }
+}, 5_000);
 
 /** Capture (and swallow) stdout+stderr while the turn emits NDJSON. */
 async function captureOutput<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {

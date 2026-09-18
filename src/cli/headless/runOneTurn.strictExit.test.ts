@@ -101,20 +101,27 @@ beforeEach(async () => {
   delete process.env.ZELARI_MISSION_STRICT;
 });
 
-afterEach(() => {
+afterEach(async () => {
   for (const k of ENV_KEYS) {
     const v = savedEnv[k];
     if (v === undefined) delete process.env[k];
     else process.env[k] = v;
   }
   resetKrakenCandidates();
-  // maxRetries: on win32 the shell-backed pack child (cmd.exe, cwd=tmp) can
-  // still hold the dir handle for an instant after exit — fs.rm retries are
-  // Node's canonical remedy for EBUSY/EPERM on recursive removes. The explicit
-  // 30s hook timeout covers the observed >10s handle-release window on loaded
-  // win32 machines (pre-existing flake: fails identically on clean HEAD).
-  return fs.rm(tmp, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
-}, 30_000);
+  // Bounded cleanup: maxRetries is Node's canonical remedy for the transient
+  // EBUSY/EPERM window on win32 (the shell-backed pack child can still hold the
+  // tmp dir handle for an instant after exit), while the race caps the wait —
+  // a dir that is still locked after 1.5s is left behind (%TEMP% junk) instead
+  // of stalling the hook for 30s.
+  try {
+    await Promise.race([
+      fs.rm(tmp, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }),
+      new Promise((resolve) => setTimeout(resolve, 1500)),
+    ]);
+  } catch {
+    /* win32 EBUSY / already gone — leftover %TEMP% dirs are OK */
+  }
+}, 5_000);
 
 /** Capture (and swallow) stdout+stderr while the turn emits NDJSON. */
 async function captureOutput<T>(fn: () => Promise<T>): Promise<{ result: T; lines: string[] }> {

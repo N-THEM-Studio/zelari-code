@@ -12,6 +12,8 @@ import { describe, expect, it } from 'vitest';
 import {
   KRAKEN_PLANNER_SYSTEM_PROMPT,
   buildPlannerSystemPrompt,
+  isKrakenPlannerFallbackEnabled,
+  plannerFallbackDigest,
 } from './planner.js';
 
 describe('buildPlannerSystemPrompt', () => {
@@ -55,5 +57,44 @@ describe('buildPlannerSystemPrompt', () => {
     expect(baseIdx).toBe(0);
     expect(razorIdx).toBeGreaterThan(0);
     expect(razorIdx).toBeGreaterThan(KRAKEN_PLANNER_SYSTEM_PROMPT.length);
+  });
+});
+
+// K3.4 / F17: the planner-fallback gate is read by CALLERS (planTaskGraph
+// keeps throwing). Same env idiom as Bennett's Razor: '1' | 'true' (any case).
+describe('isKrakenPlannerFallbackEnabled', () => {
+  it('is off by default and for empty/non-truthy values', () => {
+    expect(isKrakenPlannerFallbackEnabled({})).toBe(false);
+    expect(isKrakenPlannerFallbackEnabled({ ZELARI_KRAKEN_PLANNER_FALLBACK: '' })).toBe(false);
+    expect(isKrakenPlannerFallbackEnabled({ ZELARI_KRAKEN_PLANNER_FALLBACK: '0' })).toBe(false);
+    expect(isKrakenPlannerFallbackEnabled({ ZELARI_KRAKEN_PLANNER_FALLBACK: 'false' })).toBe(false);
+    expect(isKrakenPlannerFallbackEnabled({ ZELARI_KRAKEN_PLANNER_FALLBACK: 'no' })).toBe(false);
+  });
+
+  it('is on for 1 and true (case-insensitive)', () => {
+    expect(isKrakenPlannerFallbackEnabled({ ZELARI_KRAKEN_PLANNER_FALLBACK: '1' })).toBe(true);
+    expect(isKrakenPlannerFallbackEnabled({ ZELARI_KRAKEN_PLANNER_FALLBACK: 'true' })).toBe(true);
+    expect(isKrakenPlannerFallbackEnabled({ ZELARI_KRAKEN_PLANNER_FALLBACK: 'TRUE' })).toBe(true);
+  });
+});
+
+describe('plannerFallbackDigest', () => {
+  it('keeps the full message as the reason and the digest for short errors', () => {
+    const { reason, digest } = plannerFallbackDigest(new Error('LLM HTTP 500'));
+    expect(reason).toBe('LLM HTTP 500');
+    expect(digest).toBe('LLM HTTP 500');
+  });
+
+  it('stringifies non-Error throws (PlannerTransportError → message, raw throw → String)', () => {
+    expect(plannerFallbackDigest('boom').reason).toBe('boom');
+    expect(plannerFallbackDigest({ code: 500 }).reason).toBe('[object Object]');
+  });
+
+  it('truncates a >240-char message in the digest but not in the reason', () => {
+    const long = 'x'.repeat(500);
+    const { reason, digest } = plannerFallbackDigest(new Error(long));
+    expect(reason).toBe(long);
+    expect(digest).toBe(`${'x'.repeat(237)}...`);
+    expect(digest.length).toBe(240);
   });
 });

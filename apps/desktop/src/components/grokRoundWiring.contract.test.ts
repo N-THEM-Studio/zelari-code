@@ -26,11 +26,15 @@ const read = (rel: string): string =>
 
 /** Everything between two markers, starting the search for `end` after `start`. */
 function between(src: string, startMarker: string, endMarker: string): string {
-  const start = src.indexOf(startMarker);
+  // Sources are checked out CRLF on win32, but every end marker in this file is
+  // written with LF ("\n  );\n});"). Normalize before indexing so the contract
+  // pins the wiring, not the checkout's line endings.
+  const n = src.replace(/\r\n/g, "\n");
+  const start = n.indexOf(startMarker);
   expect(start, `missing marker: ${startMarker}`).toBeGreaterThan(-1);
-  const end = src.indexOf(endMarker, start);
+  const end = n.indexOf(endMarker, start);
   expect(end, `missing marker: ${endMarker}`).toBeGreaterThan(start);
-  return src.slice(start, end);
+  return n.slice(start, end);
 }
 
 const app = read("../App.tsx");

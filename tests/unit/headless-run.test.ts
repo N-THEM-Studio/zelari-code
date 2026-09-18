@@ -88,9 +88,12 @@ const { plannerMock, executeMock } = vi.hoisted(() => ({
   executeMock: vi.fn(),
 }));
 
-vi.mock('../../src/cli/kraken/planner.js', () => ({
-  planTaskGraph: (...args: unknown[]) => plannerMock(...args),
-}));
+vi.mock('../../src/cli/kraken/planner.js', async (importOriginal) => {
+  // K3.4: only the planner CALL is stubbed — the fallback gate/digest stay the
+  // real implementations, so the env contract under test is production's.
+  const actual = await importOriginal<typeof import('../../src/cli/kraken/planner.js')>();
+  return { ...actual, planTaskGraph: (...args: unknown[]) => plannerMock(...args) };
+});
 
 vi.mock('../../src/cli/kraken/executor.js', () => ({
   isKrakenGraphEnabled: () => true,
@@ -109,6 +112,7 @@ vi.mock('../../src/cli/safety/auditLogger.js', () => ({
 
 import { runHeadless } from '../../src/cli/runHeadless.js';
 import * as keyStore from '../../src/cli/keyStore.js';
+import { SessionSpineMirror } from '../../src/cli/sessionSpine.js';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -398,5 +402,52 @@ describe('runHeadless — kraken graph', () => {
     expect(plannerMock).toHaveBeenCalledWith(
       expect.objectContaining({ cwd: path.resolve(workspace) }),
     );
+  });
+
+  it('K3.4: planner throw + ZELARI_KRAKEN_PLANNER_FALLBACK=1 does not exit 2 (same-process single-agent)', async () => {
+    plannerMock.mockRejectedValue(new Error('LLM HTTP 500'));
+    // The degraded turn's own events: proof that the SAME process carried on
+    // as a single agent instead of dying with exit 2.
+    harnessEvents.length = 0;
+    harnessEvents.push(
+      { type: 'message_start', role: 'assistant', ts: 1 },
+      { type: 'message_delta', delta: 'fallback-ok', ts: 2 },
+      { type: 'message_end', role: 'assistant', ts: 3 },
+      { type: 'agent_end', reason: 'completed', durationMs: 4, ts: 4 },
+    );
+    const noteSpy = vi.spyOn(SessionSpineMirror.prototype, 'note');
+    const prev = process.env.ZELARI_KRAKEN_PLANNER_FALLBACK;
+    process.env.ZELARI_KRAKEN_PLANNER_FALLBACK = '1';
+    const out = captureStdout();
+    let code: number;
+    // `mockRestore()` doubles as mockReset, i.e. it WIPES the recorded calls —
+    // snapshot the `kraken.planner_fallback` ones before restoring.
+    let fallbackNotes: unknown[][] = [];
+    try {
+      code = await runHeadless({
+        task: '',
+        krakenGraph: 'fix the auth bug',
+        output: 'json',
+        useCouncil: false,
+      });
+    } finally {
+      out.restore();
+      fallbackNotes = noteSpy.mock.calls.filter((args) => args[0] === 'kraken.planner_fallback');
+      noteSpy.mockRestore();
+      if (prev === undefined) delete process.env.ZELARI_KRAKEN_PLANNER_FALLBACK;
+      else process.env.ZELARI_KRAKEN_PLANNER_FALLBACK = prev;
+    }
+
+    // F17: a planner outage must not kill a run that has a same-process
+    // alternative — and the graph executor is never started.
+    expect(code).not.toBe(2);
+    expect(executeMock).not.toHaveBeenCalled();
+    expect(fallbackNotes).toHaveLength(1);
+    expect(fallbackNotes[0]?.[1]).toEqual(
+      expect.objectContaining({ reason: 'LLM HTTP 500', digest: 'LLM HTTP 500' }),
+    );
+    const text = out.read();
+    expect(text).toMatch(/falling back to single-agent \(LLM HTTP 500\)/);
+    expect(text).toMatch(/fallback-ok/);
   });
 });

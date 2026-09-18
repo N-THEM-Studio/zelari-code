@@ -1,4 +1,12 @@
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,6 +17,10 @@ const radioFile = (cwd: string, sessionId: string): string =>
 
 const lines = (file: string): string[] =>
   (readFileSync(file, 'utf8').split(/\r?\n/).filter(Boolean));
+
+/** Raw-file reader: what a Desktop / workspace test sees without the module. */
+const rawDescriptions = (file: string): string[] =>
+  lines(file).map((line) => (JSON.parse(line) as { description: string }).description);
 
 describe('krakenRadio progress events', () => {
   it('append + read roundtrip keeps kind/agent/detail (tmp dir)', () => {
@@ -123,6 +135,86 @@ describe('krakenRadio progress events', () => {
       // Writer and reader of the same process agree on that one file.
       expect(readKrakenRadio(cwd, '', 10).map((event) => event.description)).toEqual(['n0', 'n1']);
       expect(listKrakenRadioSessions(cwd)).toEqual([files[0].replace(/\.jsonl$/, '')]);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // F18 (K3.5): the fd cache keeps an append-mode descriptor per file. An
+  // unlink/rotation leaves that descriptor pointing at the ORPHAN inode, and
+  // because `writeSync` on it keeps succeeding the old catch-with-fallback
+  // never fired: the event was written, reported OK, and was invisible to
+  // every reader of the live `.jsonl`. Revalidate the fd against the path on
+  // EVERY cached append.
+  it('after-unlink: a cached fd on a deleted inode is reopened so the new line lands on the live path', () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'zelari-radio-unlink-'));
+    try {
+      appendKrakenRadio(cwd, 'unlink', { kind: 'progress', agent: 'general', description: 'before-unlink' });
+      const file = radioFile(cwd, 'unlink');
+      // The append above cached an fd on this inode (same process, same path).
+      expect(rawDescriptions(file)).toEqual(['before-unlink']);
+
+      rmSync(file, { force: true });
+      expect(existsSync(file)).toBe(false);
+
+      appendKrakenRadio(cwd, 'unlink', { kind: 'progress', agent: 'general', description: 'after-unlink' });
+
+      // The pre-unlink line died with its inode — that is expected and not
+      // what this test asserts. The NEW line must be on the live path.
+      expect(existsSync(file)).toBe(true);
+      expect(rawDescriptions(file)).toEqual(['after-unlink']);
+      expect(readKrakenRadio(cwd, 'unlink', 10).map((event) => event.description)).toEqual(['after-unlink']);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('after-rotate: a renamed jsonl keeps its old line while new appends go to the live path', () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'zelari-radio-rotate-'));
+    try {
+      appendKrakenRadio(cwd, 'rotate', { kind: 'progress', agent: 'general', description: 'before-rotate' });
+      const file = radioFile(cwd, 'rotate');
+      const rotated = `${file}.1`;
+      renameSync(file, rotated); // logrotate-style rotation, cached fd still open
+      expect(existsSync(file)).toBe(false);
+
+      appendKrakenRadio(cwd, 'rotate', { kind: 'progress', agent: 'general', description: 'after-rotate' });
+
+      expect(existsSync(file)).toBe(true);
+      expect(readKrakenRadio(cwd, 'rotate', 10).map((event) => event.description)).toEqual(['after-rotate']);
+      // The rotated file keeps exactly the pre-rotation line: a write into the
+      // orphan inode would append 'after-rotate' into the archive instead.
+      expect(rawDescriptions(rotated)).toEqual(['before-rotate']);
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  it('after-replace: a new file at the same path (fresh inode) is not shadowed by the cached fd', () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), 'zelari-radio-replace-'));
+    try {
+      appendKrakenRadio(cwd, 'replace', { kind: 'progress', agent: 'general', description: 'before-replace' });
+      const file = radioFile(cwd, 'replace');
+
+      // The path exists throughout, but the INODE behind it changed:
+      // comparing dev+ino (not just an existsSync check) is what catches this.
+      // Honest limit: on a filesystem reporting dev/ino as 0 the comparison
+      // cannot discriminate and this test would not hold.
+      rmSync(file, { force: true });
+      writeFileSync(
+        file,
+        `${JSON.stringify({ ts: new Date().toISOString(), kind: 'progress', agent: 'other', description: 'handwritten' })}\n`,
+        'utf8',
+      );
+      expect(existsSync(file)).toBe(true);
+
+      appendKrakenRadio(cwd, 'replace', { kind: 'progress', agent: 'general', description: 'after-replace' });
+
+      expect(rawDescriptions(file)).toEqual(['handwritten', 'after-replace']);
+      expect(readKrakenRadio(cwd, 'replace', 10).map((event) => event.description)).toEqual([
+        'handwritten',
+        'after-replace',
+      ]);
     } finally {
       rmSync(cwd, { recursive: true, force: true });
     }

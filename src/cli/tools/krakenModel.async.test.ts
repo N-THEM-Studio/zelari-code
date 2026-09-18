@@ -9,16 +9,18 @@
  * explore/verify, cross-family pick for verify) and that the fail-open path —
  * missing/damaged registry → parent model — is untouched.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {
+  __resetGeneralSubModelWarnForTests,
   familyCandidatesFromRegistry,
   parseQualifiedModelRef,
   resolveKrakenSubModel,
   resolveKrakenSubModelAsync,
 } from './krakenModel.js';
+import { readKrakenRadio } from './krakenRadio.js';
 import { AuditLogger } from '../safety/auditLogger.js';
 import { setApiKey } from '../keyStore.js';
 import { createKrakenSubAgentContextFactory } from '../toolRegistry.js';
@@ -314,6 +316,34 @@ describe('production call-site — createKrakenSubAgentContextFactory', () => {
     } finally {
       delete process.env.ZELARI_KRAKEN_AUTO_MODEL;
       delete process.env.ZELARI_KRAKEN_CROSS_MODEL;
+    }
+  });
+
+  it('general on the lead model with SUB_MODEL set → routing warn (stderr + radio, K3.6/F20)', async () => {
+    // The factory is the ONLY call-site that knows root + sessionId, so it is
+    // where the radio half of the warn must actually land.
+    __resetGeneralSubModelWarnForTests();
+    const stderrLines: string[] = [];
+    const spy = vi.spyOn(process.stderr, 'write').mockImplementation(((chunk: unknown) => {
+      stderrLines.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    process.env.ZELARI_KRAKEN_SUB_MODEL = 'grok-3-mini';
+    try {
+      const ctx = await factory()({ agent: 'general', cwd: dir });
+      // Routing is untouched: general still runs on the lead model.
+      expect(ctx?.model).toBe('grok-4.6');
+      expect(stderrLines.join('')).toContain('ZELARI_KRAKEN_GENERAL_USES_SUB=1');
+      const warn = readKrakenRadio(dir, 'kraken-routing-e2e').filter(
+        (e) => e.kind === 'model_routing_warn',
+      );
+      expect(warn).toHaveLength(1);
+      expect(warn[0].ok).toBe(false);
+      expect(warn[0].model).toBe('grok-4.6');
+      expect(warn[0].detail).toBe('grok-3-mini');
+    } finally {
+      delete process.env.ZELARI_KRAKEN_SUB_MODEL;
+      spy.mockRestore();
     }
   });
 });
