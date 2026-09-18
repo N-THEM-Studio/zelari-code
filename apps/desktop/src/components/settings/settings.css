@@ -19,9 +19,9 @@
   --s-text-faint: rgba(150, 154, 170, 0.55);
   --s-hover: rgba(255, 255, 255, 0.06);
   --s-active: rgba(255, 255, 255, 0.1);
-  --s-accent: var(--accent, #8ea6ff);
-  --s-accent-soft: rgba(142, 166, 255, 0.16);
-  --s-accent-text: #c9d6ff;
+  --s-accent: var(--accent, #22d3ee);
+  --s-accent-soft: rgba(34, 211, 238, 0.16);
+  --s-accent-text: #a5f3fc;
   --s-ok: #57c99b;
   --s-ok-soft: rgba(87, 201, 155, 0.14);
   --s-warn: #e0b34d;
@@ -53,8 +53,8 @@
   --s-text-faint: rgba(35, 45, 75, 0.55);
   --s-hover: rgba(20, 34, 72, 0.06);
   --s-active: rgba(20, 34, 72, 0.1);
-  --s-accent-soft: rgba(64, 96, 220, 0.14);
-  --s-accent-text: #2d4bb4;
+  --s-accent-soft: rgba(8, 145, 178, 0.14);
+  --s-accent-text: #0e7490;
   --s-ok-soft: rgba(24, 138, 100, 0.14);
   --s-warn-soft: rgba(178, 130, 20, 0.16);
   --s-error-soft: rgba(198, 50, 76, 0.13);

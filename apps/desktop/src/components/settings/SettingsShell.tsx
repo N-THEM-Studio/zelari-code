@@ -223,6 +223,8 @@ export function SettingsShell(props: SettingsShellProps) {
         onProfileChange={(profile) => onPrefsChange({ profile })}
         mustacheColor={prefs.mustacheColor}
         onMustacheColorChange={(color) => onPrefsChange({ mustacheColor: color })}
+        accentColor={prefs.accentColor}
+        onAccentColorChange={(color) => onPrefsChange({ accentColor: color })}
       />
     );
   } else if (section === "models") {

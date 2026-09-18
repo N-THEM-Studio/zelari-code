@@ -29,10 +29,12 @@
   --text-secondary: rgba(255, 255, 255, 0.58);
   --text-muted: rgba(255, 255, 255, 0.38);
                                                        
-  --accent: #d8d8dc;
+  --accent: #22d3ee;
   --accent-2: #f4f4f5;
-  --accent-soft: rgba(255, 255, 255, 0.1);
-  --accent-strong: #c4c4c8;
+  --accent-soft: rgba(34, 211, 238, 0.12);
+  --accent-strong: #67e8f9;
+  --brand-alt: #e879f9;
+  --brand-alt-strong: #f0abfc;
   --user-bg: rgba(255, 255, 255, 0.1);
   --input-bg: #1a1a1e;
   --input-bg-hover: #222228;
@@ -63,7 +65,7 @@
   --blob-4: #222228;
   --code-bg: rgba(8, 8, 10, 0.78);
   --code-text: #e4e4e7;
-  --on-accent: #0a0a0b;
+  --on-accent: #06222b;
   --radius: 18px;
   --radius-sm: 12px;
   --radius-lg: 22px;
@@ -78,19 +80,19 @@
 
                                                                          
 .app[data-mode="agent"] {
-  --accent: #d4d4d8;
+  --accent: #22d3ee;
   --accent-2: #fafafa;
-  --accent-strong: #c0c0c4;
+  --accent-strong: #67e8f9;
 }
 .app[data-mode="council"] {
-  --accent: #c8c8cc;
+  --accent: #8b7cff;
   --accent-2: #ececee;
-  --accent-strong: #b0b0b4;
+  --accent-strong: #a394ff;
 }
 .app[data-mode="zelari"] {
-  --accent: #bcbcc0;
+  --accent: #e879f9;
   --accent-2: #e4e4e8;
-  --accent-strong: #a8a8ac;
+  --accent-strong: #f0abfc;
 }
 
                                             
@@ -112,10 +114,10 @@
   --text: rgba(12, 12, 14, 0.92);
   --text-secondary: rgba(40, 40, 46, 0.68);
   --text-muted: rgba(60, 60, 68, 0.48);
-  --accent: #3a3a40;
+  --accent: #0891b2;
   --accent-2: #1a1a1e;
   --accent-soft: rgba(0, 0, 0, 0.07);
-  --accent-strong: #2a2a30;
+  --accent-strong: #0e7490;
   --user-bg: rgba(255, 255, 255, 0.72);
   --input-bg: #ffffff;
   --input-bg-hover: #f4f4f5;
@@ -146,23 +148,23 @@
   --blob-4: #bcbcc0;
   --code-bg: rgba(244, 244, 246, 0.95);
   --code-text: #1a1a1e;
-  --on-accent: #fafafa;
+  --on-accent: #ffffff;
 }
 
 .app[data-theme="light"][data-mode="agent"] {
-  --accent: #3a3a40;
+  --accent: #0891b2;
   --accent-2: #1a1a1e;
-  --accent-strong: #2a2a30;
+  --accent-strong: #0e7490;
 }
 .app[data-theme="light"][data-mode="council"] {
-  --accent: #48484e;
+  --accent: #7c3aed;
   --accent-2: #2a2a30;
-  --accent-strong: #3a3a40;
+  --accent-strong: #6d28d9;
 }
 .app[data-theme="light"][data-mode="zelari"] {
-  --accent: #2a2a30;
+  --accent: #c026d3;
   --accent-2: #121214;
-  --accent-strong: #1e1e22;
+  --accent-strong: #a21caf;
 }
 
 * {
@@ -6544,11 +6546,11 @@ kbd {
   --border-subtle: color-mix(in srgb, var(--baffo-soft) 10%, transparent);
   --text-secondary: rgba(255, 255, 255, 0.62);
   --text-muted: rgba(255, 255, 255, 0.42);
-  --accent: #e4e4e7;
+  --accent: #22d3ee;
   --accent-2: #f4f4f5;
-  --accent-strong: #cfcfd4;
-  --accent-soft: rgba(255, 255, 255, 0.1);
-  --on-accent: #050508;
+  --accent-strong: #67e8f9;
+  --accent-soft: rgba(34, 211, 238, 0.12);
+  --on-accent: #06222b;
   --input-bg: #101012;
   --input-bg-hover: #16161a;
   --user-bg: rgba(255, 255, 255, 0.07);
@@ -6563,9 +6565,7 @@ kbd {
 
                                                                                 
 .app[data-mode] {
-  --accent: #e4e4e7;
   --accent-2: #f4f4f5;
-  --accent-strong: #cfcfd4;
   --accent-soft: rgba(255, 255, 255, 0.1);
 }
 
@@ -7495,9 +7495,14 @@ kbd {
 }
 
 .seg-btn.active,
-.seg-btn.phase-plan.active,
-.seg-btn.phase-build.active,
 .mode-btn.active {
+  background: var(--surface-hover);
+  color: var(--text);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.seg-btn.phase-plan.active,
+.seg-btn.phase-build.active {
   background: var(--surface-hover);
   color: var(--text);
   box-shadow: none;
@@ -7527,7 +7532,7 @@ kbd {
 }
 
 .composer:focus-within {
-  border-color: color-mix(in srgb, var(--text) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   box-shadow: none;
 }
 
@@ -7584,8 +7589,8 @@ kbd {
 
 /* 8. user message: right-aligned muted pill ------------------------------- */
 .user-bubble {
-  background: var(--user-bg);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 10%, var(--user-bg));
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, var(--border));
   box-shadow: none;
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -7727,7 +7732,7 @@ kbd {
  * a matching (light-prefixed) selector: focus only lifts the hairline. */
 .composer:focus-within,
 .app[data-theme="light"] .composer:focus-within {
-  border-color: color-mix(in srgb, var(--text) 24%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
 }
 
 .composer.is-listening,
@@ -7760,6 +7765,7 @@ kbd {
   row-gap: 6px;
   padding: 8px 10px 10px;
   border-radius: 22px;
+  caret-color: var(--accent);
 }
 
 .composer-pills {
@@ -8157,14 +8163,14 @@ kbd {
 /* == grok-round polish r2 (dai screenshot utente: armonia pill/send, il rename
  * non deve far saltare la riga, crome sidebar più quiete) ================== */
 
-/* send: pill piatta quasi-bianca, stessa riga ottica dei pill — niente
+/* send: pill piatta accent, stessa riga ottica dei pill — niente
  * gradient/eredità glow del tema vecchio */
 .composer .btn-send {
   min-height: 30px;
   padding: 5px 14px;
   border-radius: 999px;
-  background: var(--text);
-  color: var(--bg-solid);
+  background: var(--accent);
+  color: var(--on-accent);
   border: 1px solid transparent;
   box-shadow: none;
   font-size: 12.5px;
@@ -8173,7 +8179,7 @@ kbd {
 .composer .btn-send:hover:not(:disabled) {
   transform: none;
   filter: none;
-  background: color-mix(in srgb, var(--text) 88%, var(--bg-solid));
+  background: var(--accent-strong);
 }
 
 .composer .btn-send:active:not(:disabled) {
@@ -8358,6 +8364,59 @@ kbd {
   text-align: right;
   color: var(--text-muted);
   font-size: 11px;
+}
+
+/* == accent color (Settings → Appearance) ===================================
+ * A custom accent arrives inline on .app (--accent / --on-accent), which beats
+ * every stylesheet declaration, the per-mode palettes included: every
+ * var(--accent) consumer follows. The derived tokens re-resolve from it here,
+ * guarded by [data-accent] so Auto keeps the flat block's values untouched.
+ * --accent-2 is a CONTRAST token (near-white on dark, near-black on light), not
+ * a tint, so it only takes a 12% hint; soft keeps the visual weight of the
+ * neutral rgba(255,255,255,0.1) it replaces; strong lifts the accent the way
+ * the shipped per-mode tones do (#8b7cff -> #a394ff).
+ * ========================================================================= */
+.app[data-accent] {
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-strong: color-mix(in srgb, var(--accent) 80%, white);
+  --accent-2: color-mix(in srgb, var(--accent) 12%, #f4f4f5);
+}
+
+.app[data-accent][data-theme="light"] {
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-strong: color-mix(in srgb, var(--accent) 78%, black);
+  --accent-2: color-mix(in srgb, var(--accent) 12%, #1a1a1e);
+}
+
+/* Accent swatches reuse the baffetti geometry, but the selection ring and the
+   Auto chip speak the live accent instead of the brand mark. */
+.accent-swatch.active {
+  box-shadow:
+    0 0 0 2px var(--bg, #101014),
+    0 0 0 4px var(--accent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.accent-auto {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+  transition: color 0.12s ease, border-color 0.12s ease;
+}
+
+.accent-auto:hover {
+  color: var(--text);
+}
+
+.accent-auto.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--text);
 }
 
 

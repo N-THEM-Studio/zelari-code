@@ -8,6 +8,7 @@ import {
   EXECUTION_PROFILES,
   type ExecutionProfile,
 } from "../../desktopPrefs";
+import { ACCENT_PRESETS, DEFAULT_ACCENT_COLOR } from "../../theme/accent";
 import { BAFFETTI_PRESETS } from "../../theme/baffetti";
 import { SelectInput, SettingsCard, SettingsRow } from "./primitives";
 
@@ -22,6 +23,10 @@ export interface GeneralSectionProps {
   /** Baffetti (brand mark) master color — #rrggbb. */
   mustacheColor: string;
   onMustacheColorChange: (color: string) => void;
+  /** UI accent override — #rrggbb. `undefined` = Auto (follow the mode). */
+  accentColor?: string;
+  /** Empty string clears back to Auto. */
+  onAccentColorChange: (color: string) => void;
 }
 
 const MODE_OPTIONS: { value: DispatchMode; label: string }[] = [
@@ -47,6 +52,8 @@ export function GeneralSection({
   onProfileChange,
   mustacheColor,
   onMustacheColorChange,
+  accentColor,
+  onAccentColorChange,
 }: GeneralSectionProps) {
   const [mode, setMode] = useState<DispatchMode>(defaultMode);
   const [phase, setPhase] = useState<WorkPhase>(defaultPhase);
@@ -102,6 +109,49 @@ export function GeneralSection({
               title="Custom"
               value={mustacheColor}
               onChange={(e) => onMustacheColorChange(e.target.value)}
+            />
+          </div>
+        </SettingsRow>
+        <SettingsRow
+          label="Accent color"
+          hint="Colors buttons, focus and chat accents. Auto follows the mode."
+        >
+          <div
+            className="baffetti-swatches"
+            role="group"
+            aria-label="Accent color"
+          >
+            <button
+              type="button"
+              className={`accent-auto${accentColor ? "" : " active"}`}
+              aria-label="Auto — follow the mode"
+              title="Auto — follow the mode"
+              aria-pressed={!accentColor}
+              onClick={() => onAccentColorChange("")}
+            >
+              Auto
+            </button>
+            {ACCENT_PRESETS.map((p) => (
+              <button
+                key={p.id}
+                type="button"
+                className={`baffetti-swatch accent-swatch${
+                  accentColor === p.color ? " active" : ""
+                }`}
+                title={p.label}
+                aria-label={p.label}
+                aria-pressed={accentColor === p.color}
+                style={{ background: p.color }}
+                onClick={() => onAccentColorChange(p.color)}
+              />
+            ))}
+            <input
+              type="color"
+              className="baffetti-custom"
+              aria-label="Custom accent color"
+              title="Custom"
+              value={accentColor ?? DEFAULT_ACCENT_COLOR}
+              onChange={(e) => onAccentColorChange(e.target.value)}
             />
           </div>
         </SettingsRow>

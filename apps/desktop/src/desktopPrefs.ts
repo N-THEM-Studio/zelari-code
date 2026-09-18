@@ -4,6 +4,7 @@
  * Persisted in localStorage so Settings and the composer stay in lockstep.
  * Pure helpers - unit-tested under tests/unit/desktop-prefs.test.ts.
  */
+import { normalizeAccentColor } from "./theme/accent";
 import { DEFAULT_MUSTACHE_COLOR, normalizeMustacheColor } from "./theme/baffetti";
 
 export const DESKTOP_PREFS_KEY = "zelari-desktop-prefs-v2";
@@ -70,6 +71,12 @@ export interface DesktopPrefs {
   gardenerMaxCostUsd: number;
   /** Baffetti (brand mark) master color — #rrggbb; two intensity variants derive from it. */
   mustacheColor: string;
+
+  /**
+   * UI accent override — #rrggbb. ABSENT = Auto: the per-mode palette (cyan /
+   * violet / magenta) stays, so the key is never written for Auto.
+   */
+  accentColor?: string;
 }
 
 export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
@@ -201,6 +208,9 @@ export function normalizeGardenerMaxCost(value: unknown): number {
 export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
   if (!raw || typeof raw !== "object") return { ...DEFAULT_DESKTOP_PREFS };
   const r = raw as Record<string, unknown>;
+  // Absent / invalid / cleared = Auto: the key stays out of the object (and so
+  // out of the persisted JSON), and the CSS palette is left alone.
+  const accentColor = normalizeAccentColor(r.accentColor);
   return {
     profile: isExecutionProfile(r.profile)
       ? r.profile
@@ -230,6 +240,7 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
     gardenerIntervalMin: normalizeGardenerInterval(r.gardenerIntervalMin),
     gardenerMaxCostUsd: normalizeGardenerMaxCost(r.gardenerMaxCostUsd),
     mustacheColor: normalizeMustacheColor(r.mustacheColor),
+    ...(accentColor ? { accentColor } : {}),
   };
 }
 

@@ -157,6 +157,7 @@ import {
 import { Composer, type ComposerHandle } from "./components/Composer";
 import { ChatList, type PermissionDecision } from "./components/ChatList";
 import { SidecarLogPanel } from "./components/SidecarLogPanel";
+import { accentStyle } from "./theme/accent";
 import { applyBaffettiTheme } from "./theme/baffetti";
 import "./App.css";
 import "./theme/baffetti.css";
@@ -3578,12 +3579,21 @@ export default function App() {
     </div>
   );
 
+  // Settings → Accent color: an inline custom property on `.app` beats every
+  // stylesheet `--accent` (per-mode palettes + the flat token block), so all
+  // var(--accent) consumers follow, chat included. Auto → undefined (no-op).
+  // `data-accent` switches on the color-mix re-derivation of the derived tokens.
+  const accentColor = prefs.accentColor;
+  const accentVars = accentStyle(accentColor);
+
   if (view === "settings") {
     return (
       <div
         className="app app-chrome app-settings"
         data-mode={mode}
         data-theme={theme}
+        data-accent={accentColor}
+        style={accentVars}
       >
         {aurora}
         <TitleBar />
@@ -3650,6 +3660,8 @@ export default function App() {
       className={`app app-chrome${dragOver ? " is-drag-over" : ""}`}
       data-mode={mode}
       data-theme={theme}
+      data-accent={accentColor}
+      style={accentVars}
       onDragEnter={onDragEnter}
       onDragLeave={onDragLeave}
       onDragOver={onDragOver}
