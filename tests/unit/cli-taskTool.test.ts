@@ -304,8 +304,17 @@ describe('runAutoVerifyAfterGeneral (t78)', () => {
         seenCwds.push(cwd);
         return { ...dummyContext, cwd };
       },
+      // K1.3 floor: a verify PASS is only honored when the verify tentacle
+      // published ≥ 1 captured tool execution. Emit a tool_execution pair
+      // before each message so runSubAgent sees a non-empty toolTrace and
+      // runTentacle publishes it via setLastVerifyToolTrace — same pattern
+      // as scriptedVerifyDeps in taskTool.verifyDebt.test.ts.
       harnessFactory: () =>
         fakeHarness([
+          { type: 'tool_execution_start', toolCallId: 'verify-cmd', toolName: 'bash',
+            args: { command: 'npx vitest run' } } as Partial<BrainEvent>,
+          { type: 'tool_execution_end', toolCallId: 'verify-cmd', isError: false,
+            durationMs: 5, result: 'all green' } as Partial<BrainEvent>,
           { type: 'message_start' },
           { type: 'message_delta', delta: conclusions.shift() ?? '' } as Partial<BrainEvent>,
           { type: 'message_end' },
@@ -603,8 +612,16 @@ describe('memory only on PASS (F3.3)', () => {
   function chainDeps(conclusions: string[]): TaskToolDeps {
     return {
       createSubAgentContext: async ({ cwd }: { cwd: string }) => ({ ...dummyContext, cwd }),
+      // K1.3 floor: see the parallel chainDeps in the t78 describe block —
+      // every harness invocation must emit a tool_execution pair so the
+      // verify tentacle's toolTrace is non-empty (PASS is only honored when
+      // instrumental evidence backs the trailer).
       harnessFactory: () =>
         fakeHarness([
+          { type: 'tool_execution_start', toolCallId: 'verify-cmd', toolName: 'bash',
+            args: { command: 'npx vitest run' } } as Partial<BrainEvent>,
+          { type: 'tool_execution_end', toolCallId: 'verify-cmd', isError: false,
+            durationMs: 5, result: 'all green' } as Partial<BrainEvent>,
           { type: 'message_start' },
           { type: 'message_delta', delta: conclusions.shift() ?? '' } as Partial<BrainEvent>,
           { type: 'message_end' },

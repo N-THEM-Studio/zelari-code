@@ -43,8 +43,10 @@ import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { evaluateStrictBuildGate, repairExcerptsFromEvaluation, strictEnvOverlay, strictGateEventPayload, strictGateExitCode, STRICT_DONE_EXIT_CODE, strictDoneEnabled } from '../kraken/verificationBridge.js';
+import { honestUnevaluatedPayload } from '../kraken/verifyHonestVerdict.js';
 // t78 (ADR-0033 slice): runtime general⇒verify obligation on the task tool path.
-import { outcomeMemoryAllowed, taskVerifyObligation } from '../tools/taskTool.js';
+import { hydrateTaskVerifyDebtFromSpine, outcomeMemoryAllowed, taskVerifyObligation } from '../tools/taskTool.js';
+import { bindVerifyDebtSpineEmit, flushVerifyDebtSpine, formatHeadlessVerifyDebtNotice } from '../tools/verifyDebtSpine.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { enforceRequiredProofPersistence } from '../kraken/completionProofPersist.js';
 import { promoteOpsKnowledgeSafe, skippedOpsKnowledgeResult, type OpsKnowledgeResult } from '../memory/opsKnowledge.js';
@@ -353,6 +355,17 @@ export async function runOneTurn(
     // 2.6.1 (plan §7): deep specs from THIS run’s registry.
     toolSpecs: typeof toolRegistry.fingerprints === 'function' ? toolRegistry.fingerprints() : undefined,
   });
+  // K1.5 / F5: bind debt emit to this turn's spine, then merge un-cleared
+  // opens from the log (do not wipe — callers/tests may have seeded debt).
+  bindVerifyDebtSpineEmit(async (input) => ({ seq: await spine.appendEvent(input) }));
+  // Fresh sessions have no prior debt; only `--resume` must replay the log
+  // (and must not race the just-opened writer on win32).
+  if (opts.resumeSessionId) {
+    await hydrateTaskVerifyDebtFromSpine({
+      sessionsDir: spine.spine.sessionsDir,
+      sessionId: spine.sessionId,
+    }).catch(() => 0);
+  }
   // W2: bind the memory telemetry sink to the now-open spine.
   spineHolder.current = spine;
   // T4-S3: drain pre-bind buffered memory events (cap 32) onto the spine.
@@ -786,7 +799,10 @@ export async function runOneTurn(
     // payload and as its own spine event. Never fails the parent run.
     await runAdvisoryVerifierReview(strictGate, verifierReviewDeps).catch((): void => undefined);
     const gate = strictGate.gate;
-    const verificationPayload = strictGateEventPayload(strictGate);
+    // K1.7: strict-off evaluations are UNEVALUATED, never a silent/fake PASS.
+    const verificationPayload = strictGate.strict
+      ? strictGateEventPayload(strictGate)
+      : honestUnevaluatedPayload('kraken');
     spine.verificationRun(verificationPayload);
     if (opts.output === 'json') {
       emitEvent({ type: 'verification_run', ...verificationPayload });
@@ -833,7 +849,9 @@ export async function runOneTurn(
       };
       const after = await evaluateStrictBuildGate('build', { emit: async (input) => ({ seq: await spine.appendEvent(input) }), cwd, env: strictEnv });
       await runAdvisoryVerifierReview(after, verifierReviewDeps).catch((): void => undefined);
-      const afterPayload = strictGateEventPayload(after);
+      const afterPayload = after.strict
+        ? strictGateEventPayload(after)
+        : honestUnevaluatedPayload('kraken');
       spine.verificationRun(afterPayload);
       if (opts.output === 'json') {
         emitEvent({ type: 'verification_run', ...afterPayload });
@@ -857,6 +875,19 @@ export async function runOneTurn(
         else process.stderr.write(`[zelari-code --headless] ${gateMsg}\n`);
       }
     }
+  } else if (
+    pass.finalReason === 'completed' &&
+    pass.exitCode === 0 &&
+    isKrakenMode(opts.mode) &&
+    !planModeFromOpts(opts)
+  ) {
+    // K1.7: no selection/pack → the gate above never ran. Silence would be
+    // indistinguishable from "never verified" on --resume / TUI replay.
+    const honest = honestUnevaluatedPayload('kraken');
+    spine.verificationRun(honest);
+    if (opts.output === 'json') {
+      emitEvent({ type: 'verification_run', ...honest });
+    }
   }
 
   // t78 (ADR-0033 slice): a `task agent=general` that finished this turn
@@ -864,6 +895,8 @@ export async function runOneTurn(
   // after the rework budget, produced no parseable verdict, or could not run —
   // must NOT close as success. Strict done is blocked ⇒ dedicated exit code.
   // `ZELARI_STRICT_DONE=0` remains the only opt-out (no new env flag).
+  await flushVerifyDebtSpine();
+  bindVerifyDebtSpineEmit(undefined);
   const verifyDebt = taskVerifyObligation();
   if (
     strictExit === 0 &&
@@ -875,10 +908,7 @@ export async function runOneTurn(
     strictDoneEnabled('kraken', strictEnv)
   ) {
     strictExit = STRICT_DONE_EXIT_CODE;
-    const debtMsg =
-      `[headless] Kraken BUILD: task general "${verifyDebt.description}" finished without a ` +
-      `passing verify — strict done blocked (exit ${STRICT_DONE_EXIT_CODE}): ` +
-      `${verifyDebt.detail ?? 'unverified work'}`;
+    const debtMsg = formatHeadlessVerifyDebtNotice(verifyDebt, STRICT_DONE_EXIT_CODE);
     if (opts.output === 'json') emitEvent({ type: 'log', message: debtMsg });
     else process.stderr.write(`[zelari-code --headless] ${debtMsg}\n`);
   }
