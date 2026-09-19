@@ -51,6 +51,20 @@ export interface MetricsRecord {
   toolName?: string;
   /** Tool call id (for `kind: 'tool'` records). */
   toolCallId?: string;
+  /**
+   * Provider-verified prompt tokens of ONE LLM call (attached to
+   * `kind: 'message'`; cache-hit-rate plan M1.1). Distinct from `tokens`,
+   * which is the approximate turn-level total.
+   */
+  promptTokens?: number;
+  /** Provider-reported completion tokens of one LLM call (`kind: 'message'`, M1.1). */
+  completionTokens?: number;
+  /**
+   * Subset of `promptTokens` served from the provider prompt cache
+   * (`kind: 'message'`, M1.1) — the numerator of the hit rate the `--doctor`
+   * "prompt cache" section reports (M1.2).
+   */
+  cachedPromptTokens?: number;
 
     /** Fase M: context-growth per-run counters (attached to `kind: 'run'`). */
     toolRoundTrips?: number;

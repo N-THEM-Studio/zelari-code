@@ -6,6 +6,7 @@ import { AgentHarness } from "@zelari/core/harness";
 import type { AgentMessage } from "@zelari/core/harness";
 import { ingestLiveEvent } from "./observationStore.js";
 import { MetricsLogger, getMetricsLogger, recordCompactionMetrics } from "../metrics.js";
+import { recordMessageUsage } from "../budget/messageUsage.js";
 import type { BrainContextMetricsEvent } from "@zelari/core/events";
 import { calculateCost } from "../modelPricing.js";
 import {
@@ -50,7 +51,8 @@ import { armPickerTimeout, askUserTimeoutMs } from "./askUserTimeout.js";
 import { defaultPermissionPolicy } from "../safety/toolPermissions.js";
 import {
   buildSystemPromptSplit,
-  systemMessagesFromSplit,
+  assembleRequestMessages,
+  resolvePromptLayout,
   getAllTools,
   KRAKEN_IDENTITY_MODULE,
   KRAKEN_LEAD_PLAYBOOK_MODULE,
@@ -266,6 +268,15 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       let historySeedLen = 0;
       // v1.36.0: system prefix count captured at seed-build time.
       let systemPrefixLen = 0;
+      // M2.1: ephemeral trailing-context messages of this request (0 in the
+      // `legacy` layout / degraded fallback). Part of the seed — so the
+      // finally snapshot must slice them off too, otherwise the volatile
+      // segment would re-enter rolling history and duplicate every turn.
+      let trailingSeedLen = 0;
+      // M2.1: the request seed assembled by the layout helper (trailing layout
+      // = [stable system][history][trailing context][user]). Undefined when the
+      // builder failed and the fallback system prompt was used.
+      let seedMessages: AgentMessage[] | undefined;
       // v1.6.0: set true only after the stream loop completes without
       // throwing, so the finally snapshot is skipped on error (a failed
       // turn — provider 500, abort — must not pollute rolling history
@@ -761,6 +772,12 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // usable system prompt and the turn proceeds.
         // Cache Wars: stable/volatile split so plan/workspace updates do not
         // bust the cached prefix (identity + tools + platform).
+        // M2.1 (cache-hit-rate plan): volatile no longer sits BEFORE the
+        // history as a second system message — the layout helper moves it to an
+        // EPHEMERAL trailing user message after the history, so a workspace /
+        // plan / RAG change busts only the request tail. `ZELARI_PROMPT_LAYOUT=legacy`
+        // restores the pre-M2 shape.
+        const promptLayout = resolvePromptLayout();
         let systemMessages: AgentMessage[] = [];
         let lastStableHash: string | undefined;
         try {
@@ -795,7 +812,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             ragContext: undefined,
           });
           lastStableHash = hashStablePrompt(split.stable);
-          systemMessages = systemMessagesFromSplit(split) as AgentMessage[];
+          // M2.1: full request seed in the selected layout. `historyForModel`
+          // is final by now (post-compaction) and the current user turn is the
+          // last element, so the ephemeral trailing lands exactly between the
+          // history and the new turn.
+          const assembled = assembleRequestMessages({
+            split,
+            history: historyForModel,
+            turn: [{ role: "user", content: effectiveUserText }],
+            layout: promptLayout,
+          });
+          seedMessages = assembled.messages as AgentMessage[];
+          systemMessages = assembled.messages.slice(0, assembled.systemCount) as AgentMessage[];
+          systemPrefixLen = assembled.systemCount;
+          trailingSeedLen = assembled.trailingCount;
         } catch {
           // Fallback: identity + platform/shell + tool list. Keeps the turn
           // runnable even if the builder or catalog is unavailable.
@@ -811,14 +841,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           ].join("\n");
           lastStableHash = hashStablePrompt(fallback);
           systemMessages = [{ role: "system", content: fallback }];
+          // No split prompt ⇒ no trailing context: the degraded fallback keeps
+          // its single system message (workspace inlined) and seedMessages
+          // stays undefined so the harness builds the plain seed below.
+          seedMessages = undefined;
+          trailingSeedLen = 0;
         }
 
         // v1.36.0: capture the ACTUAL system prefix length (1 from the
-        // fallback builder, 2 from the stable/volatile split) — the finally
-        // snapshot slices on this, fixing the off-by-one that leaked the
-        // current user message into rolling history when 2 system messages
-        // were present.
-        systemPrefixLen = systemMessages.length;
+        // fallback builder, 2 from the legacy stable/volatile split) — the
+        // finally snapshot slices on this, fixing the off-by-one that leaked
+        // the current user message into rolling history when 2 system messages
+        // were present. M2.1: the split path already recorded the count from
+        // the assembled seed (stable-only ⇒ 1 + ephemeral trailing).
+        if (seedMessages === undefined) systemPrefixLen = systemMessages.length;
 
         // v0.7.1 (A2): per-turn tool-call budget for single-prompt turns.
         // The harness cap is advisory anti-spam and is clamped by the active
@@ -846,14 +882,20 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // hardcode "openai-compatible" (the transport family) so snapshots
           // and telemetry mislabeled deepseek/glm/minimax routing.
           provider: envConfig.providerId,
-          messages: [
-            ...systemMessages,
-            // v1.8.0: shared rolling history (agent/council/zelari) so short
-            // answers bind to prior ---QUESTION--- blocks. Possibly empty
-            // when ZELARI_HISTORY_TURNS=0.
-            ...historyForModel,
-            { role: "user", content: effectiveUserText },
-          ],
+          // M2.1: the seed assembled by the layout helper when the split prompt
+          // built (trailing layout = [stable system][history][trailing
+          // context][user]); the degraded fallback keeps the plain
+          // [system][history][user] shape.
+          messages:
+            seedMessages ??
+            ([
+              ...systemMessages,
+              // v1.8.0: shared rolling history (agent/council/zelari) so short
+              // answers bind to prior ---QUESTION--- blocks. Possibly empty
+              // when ZELARI_HISTORY_TURNS=0.
+              ...historyForModel,
+              { role: "user", content: effectiveUserText },
+            ] satisfies AgentMessage[]),
           tools: toolRegistry.toOpenAITools().map((t) => ({
             name: t.function.name,
             description: t.function.description,
@@ -1058,6 +1100,21 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
                   completionTokens: event.usage.completionTokens,
                   totalTokens: event.usage.totalTokens,
                   cachedPromptTokens: event.usage.cachedPromptTokens,
+                });
+                // M1.1 (cache-hit-rate plan): persist the provider-verified
+                // usage as its own row, BEFORE it is only folded into the
+                // turn-level `kind: 'run'` cost. Without this, metrics.jsonl
+                // stayed cache-blind (cachedPromptTokens was never a field)
+                // and `--doctor` could not measure a hit rate offline.
+                // The session spine still drops usage on message_end — that
+                // enrich stays backlog M4.
+                recordMessageUsage({
+                  sessionId,
+                  provider: envConfig.providerId,
+                  model: envConfig.model,
+                  promptTokens: event.usage.promptTokens,
+                  completionTokens: event.usage.completionTokens,
+                  cachedPromptTokens: event.usage.cachedPromptTokens ?? 0,
                 });
               }
               // Message boundary: seal with a full scrub so the last tokens
@@ -1304,7 +1361,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               // hardcoded "1 system" dropped the current user message from
               // rolling history whenever the builder emitted 2 system
               // messages (stable + volatile) and corrupted the cache prefix.
-              const seedLen = systemPrefixLen + historySeedLen + 1 /*user*/;
+              // M2.1: the seed also carries the EPHEMERAL trailing context
+              // message (trailingSeedLen) — slicing it off here is what keeps
+              // the volatile segment out of rolling history (it would
+              // otherwise re-enter the next turn and duplicate every turn).
+              const seedLen = systemPrefixLen + historySeedLen + trailingSeedLen + 1 /*user*/;
               if (all.length > seedLen) {
                 // Provider history: KEEP <think> (MiniMax-M3 interleaved tool
                 // use requires full assistant content) and KEEP ---QUESTION---

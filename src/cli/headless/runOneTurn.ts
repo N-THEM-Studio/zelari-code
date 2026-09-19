@@ -36,7 +36,7 @@ import { isKrakenMode } from '../mode.js';
 // LspManager into the turn so the tool registry stops re-deriving one from
 // the shared per-root map on every dispatch.
 import type { LspProvider } from '../lsp/manager.js';
-import { buildSystemPromptSplit, systemMessagesFromSplit, getAllTools, KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE, buildLanguagePolicyModuleFor } from '@zelari/core/skills';
+import { buildSystemPromptSplit, systemMessagesFromSplit, assembleRequestMessages, isTrailingContextContent, resolvePromptLayout, getAllTools, KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE, buildLanguagePolicyModuleFor } from '@zelari/core/skills';
 import { envNumber } from '../utils/envNumber.js';
 import { createStreamScrubber } from '../utils/streamScrub.js';
 import { promises as fs } from 'node:fs';
@@ -55,6 +55,7 @@ import { nativePackEnabled } from '../kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from '../kraken/verifierLifecycle.js';
 import { buildModelContext, resourceStatusTail } from '../budget/modelContextBuilder.js';
 import { recordCompactionMetrics } from '../metrics.js';
+import { flushMessageUsage, recordMessageUsage } from '../budget/messageUsage.js';
 import { openHeadlessSpine, seedHeadlessModelHistory, sessionStartedEvent } from '../headlessSpine.js';
 // HarnessState inc.3: shared final-NDJSON read-model emitter (ADR-0023 lens)
 // for this host + council/mission/kraken-graph (H1 inc.2 → inc.3).
@@ -396,7 +397,15 @@ export async function runOneTurn(
   }));
   const toolNames = tools.map((t) => t.name);
 
+  // Header/measurement shape: `[stable, volatile]` exactly as before M2.1 —
+  // the budget pipeline measures occupancy and fingerprints the system surface
+  // from this array, so keeping the pre-M2 bytes here leaves compaction policy
+  // and cache anchoring untouched. The WIRE shape is `wireSplit` below.
   let systemMessages: AgentMessage[];
+  // M2.1 wire split: the request layout moves the volatile segment out of the
+  // system prefix (see `initialMessages`). In the degraded fallback the single
+  // fallback system message becomes `stable` with an empty volatile part.
+  let wireSplit: { stable: string; volatile: string };
   let languageDirectiveContent: string;
   try {
     languageDirectiveContent = buildLanguagePolicyModuleFor(opts.task).content;
@@ -509,7 +518,12 @@ export async function runOneTurn(
         },
       },
     );
-    systemMessages = systemMessagesFromSplit(split) as AgentMessage[];
+    // Measurement/header shape (pre-M2 bytes): occupancy + header fingerprint.
+    systemMessages = systemMessagesFromSplit(split, { includeVolatile: true }) as AgentMessage[];
+    // Wire shape (M2.1): the volatile segment is no longer a second system
+    // message — `initialMessages` places it as an EPHEMERAL trailing user
+    // message after the history (stable-only system prefix = cacheable).
+    wireSplit = split;
   } catch {
     // Minimal fallback if buildSystemPromptSplit fails — still include IP secrecy.
     systemMessages = [
@@ -525,6 +539,9 @@ export async function runOneTurn(
         ].join('\n'),
       },
     ];
+    // Same single-message shape on the wire, expressed as a split so the
+    // request assembly stays uniform (no trailing context in this path).
+    wireSplit = { stable: systemMessages[0].content, volatile: '' };
   }
 
   // Exit-1/E1.2: prior turns come from the session spine (see
@@ -650,6 +667,20 @@ export async function runOneTurn(
       for await (const event of harness.run()) {
         progressRuntime.observe(event);
         spine.observe(event);
+        // M1.1 (cache-hit-rate plan): the headless path used to persist NO
+        // per-call usage at all (only compaction counters), so metrics.jsonl
+        // stayed cache-blind for every autonomous run. One `kind:'message'`
+        // row per LLM call, carrying the provider-verified cache split.
+        if (event.type === 'message_end' && event.usage) {
+          recordMessageUsage({
+            sessionId: passSessionId,
+            provider,
+            model,
+            promptTokens: event.usage.promptTokens,
+            completionTokens: event.usage.completionTokens,
+            cachedPromptTokens: event.usage.cachedPromptTokens ?? 0,
+          });
+        }
         if (event.type === 'message_start') {
           scrub.reset();
         }
@@ -698,6 +729,9 @@ export async function runOneTurn(
     }
 
     const buildProgress = readBuildProgress();
+    // M1.1: drain the metrics queue before this call returns — the headless
+    // process must not exit with the last usage row still in memory.
+    await flushMessageUsage();
     return {
       finalReason,
       exitCode,
@@ -723,17 +757,26 @@ export async function runOneTurn(
   });
   progressRuntime.beginTurn();
 
-  const initialMessages: AgentMessage[] = [
-    ...systemMessages,
-    ...historySeed,
-    {
-      role: 'user',
-      content: effectiveTask,
-      ...(opts.images && opts.images.length > 0
-        ? { images: opts.images }
-        : {}),
-    },
-  ];
+  // M2.1 (cache-hit-rate plan): the request seed is assembled by the layout
+  // helper — `trailing` (default) = [stable system][history][EPHEMERAL trailing
+  // context][task], `legacy` = [stable, volatile system][history][task]. The
+  // trailing message exists only in this array (the HTTP body): it must never
+  // reach the session spine or the seeded history, or the volatile context
+  // would duplicate on every turn.
+  const initialMessages: AgentMessage[] = assembleRequestMessages({
+    split: wireSplit,
+    history: historySeed,
+    turn: [
+      {
+        role: 'user',
+        content: effectiveTask,
+        ...(opts.images && opts.images.length > 0
+          ? { images: opts.images }
+          : {}),
+      },
+    ],
+    layout: resolvePromptLayout(),
+  }).messages as AgentMessage[];
 
   let pass = await runSinglePass(initialMessages, sessionId);
 
@@ -833,11 +876,20 @@ export async function runOneTurn(
       }
       // Same continuation shape as the write-retry: full prior messages
       // plus a hard user directive, so the model sees what it already did.
-      const withSystem: AgentMessage[] = [
-        ...systemMessages,
-        ...pass.messages.filter((m) => m.role !== 'system'),
-        { role: 'user', content: repairPrompt },
-      ];
+      // M2.1: the previous pass' trailing context is EPHEMERAL — drop it and
+      // let the assembler put a fresh one right before the repair directive,
+      // instead of carrying a stale volatile snapshot mid-transcript.
+      const withSystem: AgentMessage[] = assembleRequestMessages({
+        split: wireSplit,
+        history: [],
+        turn: [
+          ...pass.messages.filter(
+            (m) => m.role !== 'system' && !isTrailingContextContent(m.content),
+          ),
+          { role: 'user', content: repairPrompt },
+        ],
+        layout: resolvePromptLayout(),
+      }).messages as AgentMessage[];
       progressRuntime.beginPass(true);
       markRepairTriggered();
       const repair = await runSinglePass(withSystem, `${sessionId}-check-repair`);

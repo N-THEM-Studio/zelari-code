@@ -39,6 +39,13 @@ const { FakeWriter, harnessState } = vi.hoisted(() => ({
     lastMessages: [] as unknown[],
     /** Delta the next run() will stream as assistant content. */
     nextAssistantDelta: 'hello' as string,
+    /**
+     * M2.1: volatile segment returned by the mocked `buildSystemPromptSplit`.
+     * Empty by default so the pre-M2 assertions in this file keep their
+     * [system][history][user] seed shape; the trailing-context tests set it to
+     * a workspace-like blob to exercise the cache-first layout.
+     */
+    volatileSegment: '' as string,
   },
 }));
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -153,8 +160,42 @@ vi.mock('@zelari/core/skills', () => ({
     priority: 25,
     content: 'playbook',
   },
-  buildSystemPromptSplit: () => ({ stable: 'stub single-agent prompt', volatile: '' }),
-  systemMessagesFromSplit: (s) => (s.stable ? [{ role: 'system', content: s.stable }] : []),
+  // M2.1: empty by default → the seed shape stays [system][history][user] for
+  // the pre-M2 assertions above; `harnessState.volatileSegment` drives the
+  // trailing-context tests in the dedicated describe block at the end of this
+  // file. Breakpoint placement for the trailing message lives in
+  // tests/unit/cli-anthropicCaching.test.ts.
+  buildSystemPromptSplit: () => ({
+    stable: 'stub single-agent prompt',
+    volatile: harnessState.volatileSegment,
+  }),
+  systemMessagesFromSplit: (s, opts) =>
+    opts?.includeVolatile && s.volatile
+      ? [{ role: 'system', content: s.stable }, { role: 'system', content: s.volatile }]
+      : s.stable
+        ? [{ role: 'system', content: s.stable }]
+        : [],
+  // M2.1 (cache-hit-rate plan): the layout helpers consumed by useChatTurn.
+  // Mirror of the real contract — default `trailing` place the volatile
+  // segment as an EPHEMERAL user message after the history.
+  resolvePromptLayout: () => 'trailing',
+  assembleRequestMessages: ({ split, history, turn, layout = 'trailing' }) => {
+    const systemMessages =
+      layout === 'legacy' && split.volatile
+        ? [{ role: 'system', content: split.stable }, { role: 'system', content: split.volatile }]
+        : split.stable
+          ? [{ role: 'system', content: split.stable }]
+          : [];
+    const trailing =
+      layout === 'legacy' || !split.volatile
+        ? []
+        : [{ role: 'user', content: `<context-update>\n${split.volatile}\n</context-update>` }];
+    return {
+      messages: [...systemMessages, ...history, ...trailing, ...turn],
+      systemCount: systemMessages.length,
+      trailingCount: trailing.length,
+    };
+  },
   registerCustomTool: () => {},
   cliToolToEnhanced: () => ({ name: 'x', description: 'x', category: 'core', parameters: {}, execute: () => '' }),
   // v1.7.0 (agy audit L1): language-policy helpers. The real implementation
@@ -691,5 +732,85 @@ describe('useChatTurn — rolling history (v1.6.0)', () => {
     });
 
     expect(pickerCalls.length).toBe(0);
+  });
+});
+
+// ─── M2.1 (cache-hit-rate plan): ephemeral trailing context ─────────────
+// The volatile segment (workspace / plan / RAG / durable state) no longer
+// rides in the system prefix: the layout helper appends it as an EPHEMERAL
+// `[context]` message between the history and the new turn, and the rolling
+// history snapshot must slice it off — otherwise the volatile context would
+// re-enter the next turn's transcript and duplicate on every turn.
+describe('useChatTurn — M2.1 trailing context is ephemeral', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    process.env['ZELARI_MCP'] = '0';
+    harnessState.nextAssistantDelta = 'hello';
+    harnessState.lastMessages = [];
+    harnessState.volatileSegment = '';
+    const { _resetConversationContextForTests } = await import(
+      '../../src/cli/hooks/conversationContext.js'
+    );
+    _resetConversationContextForTests();
+  });
+
+  it('seeds [system][trailing context][user] and keeps the volatile out of rolling history', async () => {
+    const w = makeWrapper();
+    const { result } = renderHook(() =>
+      useChatTurn({
+        sessionId: 'trailing-session',
+        writerRef: w.writerRef,
+        setMessages: w.setMessages,
+        commitStreaming: w.commitStreaming,
+        flushStreaming: w.flushStreaming,
+        setBusy: w.setBusy,
+        setSessionActive: w.setSessionActive,
+        setSessionStats: w.setSessionStats,
+      }),
+    );
+
+    // Turn 1 — volatile segment present: exactly one trailing message, placed
+    // between the stable system prefix and the new user turn.
+    harnessState.volatileSegment = 'WORKSPACE-V1';
+    harnessState.nextAssistantDelta = 'turn1-answer';
+    await act(async () => {
+      await result.current.dispatchPrompt('turn1-question');
+    });
+
+    const turn1 = harnessState.lastMessages as Array<{ role: string; content: string }>;
+    expect(turn1[0].role).toBe('system');
+    expect(turn1[0].content).toBe('stub single-agent prompt');
+    // Seed order on a first turn: [stable system][trailing context][user].
+    expect(turn1[1].content).toBe('<context-update>\nWORKSPACE-V1\n</context-update>');
+    expect(turn1[2].content).toBe('turn1-question');
+    expect(turn1.filter((m) => m.content.includes('WORKSPACE-V1'))).toHaveLength(1);
+
+    // Turn 2 — the volatile changed: the seed carries the FRESH snapshot only.
+    harnessState.volatileSegment = 'WORKSPACE-V2';
+    harnessState.nextAssistantDelta = 'turn2-answer';
+    await act(async () => {
+      await result.current.dispatchPrompt('turn2-question');
+    });
+
+    const turn2 = harnessState.lastMessages as Array<{ role: string; content: string }>;
+    const trailing = turn2.filter((m) => m.content.startsWith('<context-update>'));
+    // Anti-duplication invariant: turn 1's trailing message was NOT snapshotted
+    // into rolling history (a leaked one would show up here as a second block).
+    expect(trailing).toHaveLength(1);
+    expect(trailing[0].content).toBe('<context-update>\nWORKSPACE-V2\n</context-update>');
+    expect(turn2.some((m) => m.content.includes('WORKSPACE-V1'))).toBe(false);
+    // The prior ASSISTANT turn is still carried (rolling history works)…
+    const trailingIdx = turn2.indexOf(trailing[0]);
+    expect(turn2.some((m) => m.role === 'assistant' && m.content === 'turn1-answer')).toBe(true);
+    // …and the trailing sits immediately before the new turn, after the
+    // carried history: [stable system][<assistant turn1>][trailing][user turn2].
+    expect(turn2[trailingIdx - 1]).toMatchObject({
+      role: 'assistant',
+      content: 'turn1-answer',
+    });
+    expect(turn2[trailingIdx + 1]).toMatchObject({
+      role: 'user',
+      content: 'turn2-question',
+    });
   });
 });
