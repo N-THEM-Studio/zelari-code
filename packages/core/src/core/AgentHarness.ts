@@ -57,6 +57,13 @@ import {
   TEXT_LOOP_RECOVERY_SYSTEM,
   TEXT_LOOP_RECOVERY_USER_PROMPT,
 } from './textLoopDetect.js';
+// v2.51: agent-loop policy modules (core/modules/…). The runaway guard is
+// consulted at the two points where the loop can act on it — before a tool
+// dispatch and at the turn boundary. The system-reminder module is
+// deliberately NOT wired here: its projection seam is the CLI budget pipeline
+// (ADR-0032), outside this package — see the TODO(seam) note on
+// messagesForProvider().
+import { RunawayGuard, guardSafely, toolCallHash } from './modules/runaway-guard/index.js';
 import type { MemoryService } from '../memory/types.js';
 import type {
   ObserverDescriptor,
@@ -423,6 +430,21 @@ export class AgentHarness {
   private toolCallCounts: Map<string, number> = new Map();
 
   /**
+   * v2.51: anti-loop tracker (core/modules/runaway-guard). Warns when the same
+   * tool+args repeats consecutively, aborts the turn when several turns in a
+   * row produced nothing new. Always constructed — the module resolves the
+   * ZELARI_RUNAWAY_GUARD kill-switch itself (a disabled guard allows).
+   */
+  private readonly runawayGuard = new RunawayGuard();
+  /**
+   * Call keys already warned about this run. The guard keeps returning
+   * `'warn'` for every further identical call (monotone verdict — hosts
+   * decide), but logging all of them would flood stderr: one line per key
+   * per run is enough signal.
+   */
+  private runawayWarnedKeys = new Set<string>();
+
+  /**
    * Frontier PHASE 1: observer bus, or `null` when observers are off. Every
    * hook site guards on `this.observerBus` so the off-path stays identical
    * to the pre-observer loop.
@@ -593,6 +615,36 @@ export class AgentHarness {
     }
   }
 
+  /**
+   * v2.51: anti-loop consult BEFORE a registry dispatch (core/modules/
+   * runaway-guard). A `'warn'` verdict only logs — the call still proceeds:
+   * the module never escalates repetition to an abort, and the harness's own
+   * doom_loop counter remains the hard stop for identical repeats. The
+   * stall → `'abort'` verdict is a turn-level decision, consumed at the turn
+   * boundary in runSingleTurn. Fail-soft: a tracker crash degrades to allow
+   * with a warning (P1 degrade-and-stop) — a guard bug never blocks tools.
+   */
+  private noteRunawayToolCall(toolName: string, args: Record<string, unknown>): void {
+    const verdict = guardSafely(
+      () => this.runawayGuard.checkToolCall(toolName, args),
+      (message) => console.error(`[runaway-guard] ${message}`),
+    );
+    if (verdict.policy !== 'warn') return;
+    // Once per identical-call key per run: the verdict stays 'warn' for every
+    // further repetition (the model keeps repeating), but the log must not.
+    let key: string;
+    try {
+      key = toolCallHash(toolName, args);
+    } catch {
+      // Pathological args (a getter that throws on a second read): dedupe on
+      // the tool name alone rather than lose the warning.
+      key = toolName;
+    }
+    if (this.runawayWarnedKeys.has(key)) return;
+    this.runawayWarnedKeys.add(key);
+    console.error(`[runaway-guard] ${verdict.reason}`);
+  }
+
   /** Base fields shared by every observer event this harness emits. */
   private observerEventBase(turn: number): RuntimeEventBase {
     return {
@@ -737,6 +789,9 @@ export class AgentHarness {
           durationMs: 0,
         };
       }
+
+      // v2.51: anti-loop consult (identical tool+args repeats → warn).
+      this.noteRunawayToolCall(p.toolName, p.args);
 
       const callKey = hashToolCall(p.toolName, p.args);
       const nextCount = (this.toolCallCounts.get(callKey) ?? 0) + 1;
@@ -959,6 +1014,9 @@ export class AgentHarness {
     // Reset the per-run duplicate-call cache (v0.7.1 A2) + doom_loop counts.
     this.toolCallCache = new Map();
     this.toolCallCounts = new Map();
+    // v2.51: the anti-loop tracker is per run too (no cross-run stall carryover).
+    this.runawayGuard.reset();
+    this.runawayWarnedKeys = new Set();
     this.textToolReentries = 0;
     this.growth = emptyContextGrowthStats();
     this.buildProgress = {
@@ -1361,6 +1419,16 @@ export class AgentHarness {
 
   /** Build a provider-only view with memory after the stable system prefix. */
   private messagesForProvider(): AgentMessage[] {
+    // TODO(seam): system-reminder (core/modules/system-reminder) is complete +
+    // exported but NOT wired here. Its text belongs to the canonical model
+    // context compiler — the CLI budget pipeline (ADR-0032,
+    // src/cli/budget/modelContextBuilder.ts, volatile `requestTail`), which
+    // lives outside @zelari/core. This projector is the nearest seam inside
+    // the package: wiring the reminder here would need a new host-supplied
+    // todo/budget source plus a turn counter (a new seam, not a hook), and
+    // would duplicate the budget pipeline. Callers that want it today should
+    // run `buildSystemReminder(...)` in their own projection step and append
+    // the result to the request tail.
     let messages: AgentMessage[] = this.config.messages;
     let prefixEnd = 0;
     if (this.activeMemoryContext) {
@@ -1770,6 +1838,8 @@ export class AgentHarness {
                 executedAny = true;
                 continue;
               }
+              // v2.51: anti-loop consult (identical tool+args repeats → warn).
+              this.noteRunawayToolCall(tt.name, tt.args);
               let resultStr = '';
               let isError = false;
               const startMs = Date.now();
@@ -1861,6 +1931,31 @@ export class AgentHarness {
             // the outer loop doesn't re-enter the provider for the same doomed
             // truncated call.
             finishRef.value = 'stop';
+          }
+          // === Anti-loop turn boundary (v2.51, core/modules/runaway-guard) ===
+          // The tracker sees EVERYTHING the turn produced. When K turns in a
+          // row added neither a new tool call nor a new result, the run is
+          // repeating itself: close THIS turn cleanly (flag → the outer loop
+          // emits the existing message_end with finishReason 'stop' and stops
+          // re-entering the provider) instead of paying for another identical
+          // round-trip. No throw, no cancel: the run itself stays resumable.
+          const runawayTurn = guardSafely(
+            () =>
+              this.runawayGuard.checkTurn({
+                callKeys: turnToolCalls.map((tc) => toolCallHash(tc.name, tc.args)),
+                results: turnToolResults.map((tr) => tr.content),
+              }),
+            (message) => console.error(`[runaway-guard] ${message}`),
+          );
+          if (runawayTurn.policy === 'abort') {
+            finishRef.value = 'stop';
+            const runawayEvent = createBrainEvent('error', this.sessionId, {
+              severity: 'recoverable',
+              message: `Runaway guard ended the turn: ${runawayTurn.reason}`,
+              code: 'runaway_guard_abort',
+            });
+            this.emit(runawayEvent);
+            yield runawayEvent;
           }
           // Append the assistant turn (text + any tool_calls + reasoning) to
           // the transcript. This MUST happen before the loop re-enters the
