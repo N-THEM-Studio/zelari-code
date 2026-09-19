@@ -590,6 +590,20 @@ function positiveEnvInt(name: string): number | undefined {
 }
 
 export function openaiCompatibleProvider(config: OpenAICompatibleConfig): ProviderStreamFn {
+  // M3.1 (cache-hit-rate plan): session-scoped wire parameters, resolved ONCE
+  // here instead of re-read on every provider call. The prompt cache is keyed
+  // on the request prefix, so a body that can flip mid-session (thinking
+  // on/off, effort high↔max) turns every later call into a full miss — and a
+  // chat↔reasoner model switch is a different cache entirely. One provider
+  // instance covers a session (and a whole turn's tool loop), so the
+  // environment is sampled at THIS boundary: every call in the session then
+  // sends byte-identical params. Tests that mutate the env build their own
+  // instance (no module-level memo to reset).
+  const sessionDeepSeekThinking = resolveDeepSeekThinking();
+  // Happy-path `tool_choice`, constant for the session. The Grok recovery
+  // override in the body builder is the ONE deliberate exception to this
+  // freeze (correctness > cache) — see the comment there.
+  const sessionToolChoice = 'auto' as const;
   return async function* (params): AsyncIterable<ProviderDelta> {
     const capabilities = capabilitiesFor(params.model, config.providerId);
     const streamTimeouts = resolveStreamTimeouts(capabilities);
@@ -684,7 +698,8 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     // preserving the existing env-driven behavior below.
     const thinkingSpec: ThinkingSpec = config.thinking ?? 'auto';
     if (config.providerId === 'deepseek' && thinkingSpec === 'auto') {
-      const thinking = resolveDeepSeekThinking();
+      // M3.1: frozen at construction — identical for every call in the session.
+      const thinking = sessionDeepSeekThinking;
       if (thinking.thinking) body.thinking = { type: thinking.thinking };
       if (thinking.reasoningEffort) body.reasoning_effort = thinking.reasoningEffort;
     } else if (thinkingSpec !== 'auto') {
@@ -714,11 +729,16 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
         },
       }));
       const recoveryAttempt = generation?.recoveryAttempt ?? 1;
+      // M3.1: the ONLY case where `tool_choice` may deviate from the
+      // session-frozen happy-path value. This override is load-bearing — a
+      // model that stopped calling tools cannot finish the turn — so it wins
+      // over prefix-cache stability: the price is one cache miss on the
+      // forced turn, versus a run stuck in a tool-call loop.
       const forceRecoveryTool =
         generation?.toolChoice === 'required' &&
         capabilities.buildRecovery.forceToolChoice &&
         recoveryAttempt <= capabilities.buildRecovery.maxForcedTurns;
-      body.tool_choice = forceRecoveryTool ? 'required' : 'auto';
+      body.tool_choice = forceRecoveryTool ? 'required' : sessionToolChoice;
       // GLM-5.x buffers tool-call args unless tool_stream=true; without it
       // the socket sits silent through thinking+tools and trips stream idle.
       if (config.providerId === 'glm') body.tool_stream = true;
