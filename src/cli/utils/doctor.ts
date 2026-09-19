@@ -44,6 +44,11 @@ import {
   formatContextGrowthSummary,
   summarizeContextGrowth,
 } from "./contextGrowthSummary.js";
+import {
+  formatCacheHitSummary,
+  summarizeCacheHits,
+  type CacheHitMessageRecord,
+} from "../budget/cacheHitReport.js";
 import { resolveInstallKind } from "../updater.js";
 
 const require = createRequire(import.meta.url);
@@ -484,6 +489,35 @@ async function checkContextGrowth(): Promise<CheckResult> {
 }
 
 /**
+ * M1.2 (cache-hit-rate plan): "Prompt cache" section. Folds the
+ * provider-verified `kind: 'message'` rows written by recordMessageUsage into
+ * the hit% the plan is measured against (overall + top provider/model).
+ *
+ * Informational and honest: with no such row yet (fresh install, or every
+ * session predating M1.1) it WARNs "no data" instead of printing a fake 0% —
+ * the live baseline needs real sessions, it cannot be synthesized here.
+ * `/cache stats` stays the in-memory view for the current process.
+ */
+async function checkPromptCache(): Promise<CheckResult> {
+  try {
+    const logger = getMetricsLogger();
+    const records = await readMetrics(logger.filePath);
+    const summary = summarizeCacheHits(
+      records.filter(r => r.kind === "message") as CacheHitMessageRecord[],
+    );
+    if (!summary) {
+      return WARN(
+        `no data: sessions running the new per-message telemetry are needed for the baseline (${logger.filePath})`,
+      );
+    }
+    const lines = formatCacheHitSummary(summary);
+    return OK(lines.join("\n\n         "));
+  } catch (err) {
+    return WARN(`metrics unreadable: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
  * 2.31 B1: structured doctor report for the first-run gate — the SAME
  * checks as `runDoctor`, collected without printing. The wizard stops on
  * the first BLOCKING red (severity critical — its message already carries
@@ -590,6 +624,10 @@ function buildDoctorChecks(
     // Informational aggregate over metrics.jsonl: tool round-trips,
     // intermediate tool bytes, history@request size, cache-hit tokens.
     { name: "context growth", run: () => checkContextGrowth() },
+    // --- prompt-cache metrics (cache-hit-rate plan M1.2) ---
+    // Provider-verified cache hit% over the `kind: 'message'` rows. WARN-only
+    // ("no data") until sessions run the M1.1 telemetry.
+    { name: "prompt cache", run: () => checkPromptCache() },
     // --- optional tool plugins (v1.5.0) ---
     // Playwright / eslint / ruff / LSP servers. WARN-only (never critical):
     // these power edge features that degrade silently when absent. Surfaced
