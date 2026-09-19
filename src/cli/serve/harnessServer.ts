@@ -84,6 +84,7 @@ import {
 } from './askUserBridge.js';
 import type { AskUserHandler } from '../tools/askUser.js';
 import { sweepOrphanSpineLocks } from './spineLockSweep.js';
+import { assertCompanionFramePolicy } from '../companion/framePolicy.js';
 
 /**
  * Env key backing the per-turn permission preset. Mirrors the private
@@ -329,6 +330,12 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
   server: HarnessAppServer;
   close(): Promise<void>;
 } {
+  // v2.53 frame-policy gate (OpenHarness post-mortem): a frame type the serve
+  // / companion emitters can produce but the companion display allowlist does
+  // not know would be dropped SILENTLY on the phone/desktop. Fail loudly —
+  // BEFORE the protocol_info boot line and before any client can connect, so a
+  // drifted process never looks healthy.
+  assertCompanionFramePolicy();
   const io = options.io ?? { input: process.stdin, output: process.stdout };
   const server = new HarnessAppServer({
     createWorkspaceServices: options.createWorkspaceServices ?? createCliWorkspaceServices,
