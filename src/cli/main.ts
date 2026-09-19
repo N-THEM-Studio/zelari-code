@@ -211,10 +211,11 @@ async function shutdown(): Promise<void> {
  * these print to stdout and exit, leaving the TTY untouched.
  */
 function pickRootComponent(): {
-  kind: "wizard" | "app" | "headless" | "done" | "serve" | "harness-server";
+  kind: "wizard" | "app" | "headless" | "done" | "serve" | "harness-server" | "acp";
   element?: React.ReactElement;
   headlessOpts?: Parameters<typeof runHeadless>[0];
   serveOpts?: import("./companion/serve.js").ServeOptions;
+  acpOpts?: import("./acp/command.js").AcpCommandOptions;
 } {
   const argv = process.argv.slice(2);
 
@@ -307,6 +308,16 @@ function pickRootComponent(): {
     // promise is the last thing keeping the process alive.
     const { parseServeFlags } = require("./companion/serve.js") as typeof import("./companion/serve.js");
     return { kind: "serve", serveOpts: parseServeFlags(argv) ?? {} };
+  }
+  // ACP front door (`zelari-code acp`): Agent Client Protocol server for
+  // editors, stdio JSON-RPC. Same host discipline as serve/--serve-harness
+  // (no TUI, no preflight, transport owns stdin/stdout). Matched on the FIRST
+  // positional only — unlike `serve`, a loose `argv.includes('acp')` could
+  // collide with a task prompt that happens to be the word "acp".
+  // No flag parsing here: the subcommand parses its own flags once loaded
+  // (dynamic import in main(), same shape as --serve-harness).
+  if (argv[0] === "acp") {
+    return { kind: "acp", acpOpts: {} };
   }
   // t29 (Pilastro B): long-lived harness kernel over stdio NDJSON. Same
   // host discipline as --serve: no TUI, no preflight, transport owns
@@ -617,6 +628,9 @@ function pickRootComponent(): {
         "    --save-projects   Persist --project list to companion.json\n" +
         "  --serve-harness     Long-lived harness kernel for hosts (NDJSON JSON-RPC\n" +
         "                      on stdin/stdout; Desktop/companion transport)\n" +
+        "  acp                 Agent Client Protocol server on stdio (editors, e.g.\n" +
+        "                      Zed): LSP-style framed JSON-RPC. Subcommand flags:\n" +
+        "                      --cwd <path> | --provider <id> | --model <id> | --help\n" +
         "  --print-config      Print provider/model config as JSON (no secrets)\n" +
         "  --print-settings    Print zelari.config.json values + the origin of\n" +
         "                      each (default < user < project < env)\n" +
@@ -1330,6 +1344,28 @@ function main() {
         console.error(
           `[zelari-code --serve-harness] ${err instanceof Error ? err.message : String(err)}`,
         );
+        process.exit(1);
+      });
+    return;
+  }
+
+  // `zelari-code acp`: Agent Client Protocol server on stdio, for editors.
+  // Host pre-flight is skipped like --serve/--serve-harness — a missing
+  // git/bash must not kill the server. The subcommand parses its own flags
+  // (`--cwd`, `--provider`, `--model`, `--help`); the exit code comes from the
+  // transport (0 on a clean EOF/SIGINT shutdown).
+  if (picked.kind === "acp") {
+    void import("./acp/command.js")
+      .then(({ parseAcpFlags, runAcpCommand }) =>
+        runAcpCommand({
+          ...parseAcpFlags(process.argv.slice(2)),
+          ...(picked.acpOpts ?? {}),
+        }),
+      )
+      .then((code) => process.exit(code))
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(`[zelari-code acp] ${err instanceof Error ? err.message : String(err)}`);
         process.exit(1);
       });
     return;

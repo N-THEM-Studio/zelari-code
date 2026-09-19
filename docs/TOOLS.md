@@ -123,6 +123,24 @@ Orthogonal to mode `kraken` | `council` | `zelari` (`/plan`, `/build`,
 | **plan** | Blocked: `write_file`, `edit_file`, `apply_diff`, `bash` (and often `task`). `inspect_command` available (v0.10.0, read-only allowlisted inspector). Workspace plan/docs tools **allowed** |
 | **build** | Full tools (sandbox + blocklist remain) |
 
+## ACP front door (v2.50) — editor integration
+
+`zelari-code acp` starts an **Agent Client Protocol** server on stdio — the
+third front door after the TUI and headless. Speaks JSON-RPC 2.0 with
+LSP-style framing (`Content-Length: <bytes>\r\n\r\n<json>`), implemented
+in-tree (`src/cli/acp/`) with **zero new dependencies**.
+
+- Methods v1: `initialize`, `session/new`, `session/prompt` (streaming
+  `agent_message_chunk` + `tool_call` / `tool_call_update` notifications),
+  `session/cancel`.
+- Flags: `--cwd`, `--model`, `--provider`; `--help` prints the protocol summary.
+- Fail-soft: any transport/parse error is reported as a JSON-RPC error and the
+  server keeps running; EOF exits cleanly with code 0.
+- Kill switch: `ZELARI_ACP=0` disables the subcommand.
+
+Smoke test: `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}`
+(framed) piped to `zelari-code acp` answers with `protocolVersion: 1`.
+
 ## inspect_command (v0.10.0)
 
 **Read-only, allowlisted, shell-less** command inspector - registered exactly
