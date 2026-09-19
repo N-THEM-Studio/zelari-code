@@ -541,6 +541,7 @@ All commands start with `/` and are typed in the TUI input bar.
 |---|---|
 | `/mode [kraken\|council\|zelari]` | Force the dispatch mode (`agent`/`single` = kraken aliases). Portable equivalent of `shift+tab`. |
 | `shift+tab` (TUI) | Cycle `kraken` → `council` → `zelari`. |
+| `ctrl+O` (TUI) | Toggle verbose tool output: new tool results print untruncated (scrollback is immutable, so the flip applies from that point on). |
 | `/kraken [sessionId]` | Tentacle radio (`.zelari/radio/`). |
 | `/kraken graph <goal>` | Plan and run a DAG of tentacles in parallel. |
 | `/plan [goal]` | Enter **plan** phase (no project write/edit/bash). Optional: send `goal` right away. |

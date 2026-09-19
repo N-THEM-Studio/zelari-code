@@ -51,6 +51,7 @@ import { nextMode } from './mode.js';
 import { useBatchedMessages } from './hooks/useBatchedMessages.js';
 import { useTerminalSize } from './hooks/useTerminalSize.js';
 import type { LiveState } from './hooks/chatState.js';
+import { appendSystem } from './hooks/messageHelpers.js';
 
 const MODEL = process.env.OPENAI_MODEL ?? 'grok-4.5';
 const PROVIDER = 'openai-compatible';
@@ -140,13 +141,29 @@ export function App(): React.ReactElement {
   // the StatusBar as `⏱ 12s`, then frozen as `last 34s` when the run ends).
   const timer = useExecutionTimer(busy);
 
+  // v2.51 ctrl+O (mcode steal): toggle verbose tool output. <Static>
+  // scrollback is immutable, so the flip affects only tool messages
+  // finalized AFTER it — the appendSystem ack makes the change visible.
+  const [verboseTools, setVerboseTools] = useState(false);
+
   // shift+tab → cycle agent → council → zelari. ink-text-input ignores tab
   // keys, so this never fights the InputBar. Guarded: useInput needs raw mode.
   const { isRawModeSupported } = useStdin();
   useInput(
-    (_input, key) => {
+    (input, key) => {
       if (key.tab && key.shift) {
         setMode(nextMode);
+      }
+      // ctrl+O → verbose tool output toggle (see comment above).
+      if (key.ctrl && input === 'o') {
+        const next = !verboseTools;
+        setVerboseTools(next);
+        appendSystem(
+          session.setMessages,
+          next
+            ? '⤢ verbose tool output ON — new tool results print untruncated (ctrl+O to toggle)'
+            : '⤢ verbose tool output OFF — new tool results print truncated (ctrl+O to toggle)',
+        );
       }
     },
     { isActive: isRawModeSupported === true },
@@ -322,7 +339,7 @@ export function App(): React.ReactElement {
               rows={size.rows || 24}
             />
           ) : (
-            renderMessage(item)
+            renderMessage(item, false, verboseTools)
           )
         }
       </Static>

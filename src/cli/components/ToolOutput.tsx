@@ -44,6 +44,12 @@ export type ToolOutputProps = {
   durationMs?: number;
   /** Pending invocation (dynamic region). Renders the one-liner only. */
   live?: boolean;
+  /**
+   * v2.51 ctrl+O: print the stored body UNTRUNCATED (no line cap). Only
+   * affects finalized renderings — scrollback is immutable, so the toggle
+   * applies to tool messages printed after the flip.
+   */
+  verbose?: boolean;
 };
 
 function borderColor(toolName: string, ok?: boolean): TuiColor {
@@ -57,7 +63,7 @@ function borderColor(toolName: string, ok?: boolean): TuiColor {
 }
 
 function ToolOutputImpl(props: ToolOutputProps): React.ReactElement {
-  const { toolName, summary, body, ok, durationMs, live = false } = props;
+  const { toolName, summary, body, ok, durationMs, live = false, verbose = false } = props;
   const color = borderColor(toolName, ok);
   const { stdout } = useStdout();
   // B3: clamp bordered box width so boxes don't stretch to full terminal and
@@ -79,7 +85,7 @@ function ToolOutputImpl(props: ToolOutputProps): React.ReactElement {
 
   // Finalized — format the body per tool policy (B1).
   const isError = ok === false;
-  const formatted = formatToolResult(toolName, body);
+  const formatted = formatToolResult(toolName, body, { verbose });
   const status = ok ? '✓' : '✗';
   const summaryLine = [
     status,

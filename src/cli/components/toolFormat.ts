@@ -54,9 +54,13 @@ function tryParseJson<T = unknown>(s: string): T | null {
   }
 }
 
-/** Truncate an array of lines to the cap, appending a `… (+K lines)` marker. */
-function truncateLines(lines: string[]): string[] {
-  const cap = toolOutputLineCap();
+/**
+ * Truncate an array of lines to the cap, appending a `… (+K lines)` marker.
+ * `capOverride < 0` disables truncation entirely (ctrl+O verbose mode).
+ */
+function truncateLines(lines: string[], capOverride?: number): string[] {
+  const cap = capOverride ?? toolOutputLineCap();
+  if (cap < 0) return lines;
   if (lines.length <= cap) return lines;
   return [...lines.slice(0, cap), `… (+${lines.length - cap} lines)`];
 }
@@ -88,7 +92,9 @@ export function toolResultForStorage(
   if (isError) {
     return result.length > maxChars ? `${result.slice(0, maxChars)}…` : result;
   }
-  const formatted = formatToolResult(toolName, result);
+  // v2.51 ctrl+O: store the UNTRUNCATED body (line-wise) so the verbose
+  // toggle can reveal it at render time; the 8000-char bound still applies.
+  const formatted = formatToolResult(toolName, result, { verbose: true });
   let display = formatted.lines.join("\n");
   if (formatted.meta) display += `\n${formatted.meta}`;
   if (display.length > maxChars) return `${display.slice(0, maxChars)}…`;
@@ -177,7 +183,11 @@ function formatGrepContentResult(
 export function formatToolResult(
   toolName: string,
   resultStr: string,
+  opts?: { verbose?: boolean },
 ): FormattedToolResult {
+  // v2.51 ctrl+O: verbose disables the display line cap (storage keeps the
+  // full body anyway; only the renderer truncates by default).
+  const capOverride = opts?.verbose ? -1 : undefined;
   const preLine = resultStr.trim().split("\n")[0] ?? "";
   if (
     PREFORMATTED_RESULT_RE.test(preLine) &&
@@ -221,7 +231,7 @@ export function formatToolResult(
         );
       }
       return {
-        lines: truncateLines(lines),
+        lines: truncateLines(lines, capOverride),
         meta: metaParts.length > 0 ? metaParts.join(" · ") : undefined,
       };
     }
@@ -338,7 +348,12 @@ export function formatToolResult(
 
   // Fallback: treat as plain text (split on real newlines; if it's JSON we
   // already failed to match a known shape, so show it verbatim).
-  return { lines: truncateLines(resultStr.replace(/\r\n/g, "\n").split("\n")) };
+  return {
+    lines: truncateLines(
+      resultStr.replace(/\r\n/g, "\n").split("\n"),
+      capOverride,
+    ),
+  };
 }
 
 /** Make a path relative to cwd when possible (shorter display). */

@@ -58,7 +58,11 @@ export interface ChatMessage {
  * duration (the invocation hasn't ended yet). Finalized tool messages
  * render via the stateless `ToolOutput` policy (Phase 3).
  */
-export function renderMessage(m: ChatMessage, live = false): React.ReactElement {
+export function renderMessage(
+  m: ChatMessage,
+  live = false,
+  verbose = false,
+): React.ReactElement {
   if (m.role === 'tool') {
     return (
       <ToolOutput
@@ -69,6 +73,7 @@ export function renderMessage(m: ChatMessage, live = false): React.ReactElement 
         ok={m.toolOk}
         durationMs={m.toolDurationMs}
         live={live}
+        verbose={verbose}
       />
     );
   }
