@@ -129,6 +129,14 @@ export function newSessionId(): string {
   return randomUUID();
 }
 
+/**
+ * Rows the session listing surfaces (the textual `/sessions` output and the
+ * v2.53 fuzzy picker) show at once. ONE shared cap: the picker must not
+ * invent a second limit, and an empty query must show exactly what the
+ * textual list prints.
+ */
+export const SESSION_LIST_LIMIT = 10;
+
 /** List all sessions in the base directory, sorted by mtime desc. */
 export async function listSessions(): Promise<SessionInfo[]> {
   const baseDir = getSessionBaseDir();
@@ -187,12 +195,12 @@ export async function sessionKindRouter(
     try {
       const sessions = await listSessions();
       if (sessions.length === 0) return { message: '[sessions] no past sessions' };
-      const lines = sessions.slice(0, 10).map((s) => {
+      const lines = sessions.slice(0, SESSION_LIST_LIMIT).map((s) => {
         const dt = new Date(s.mtimeMs).toISOString().replace('T', ' ').slice(0, 16);
         return `  ${s.id.slice(0, 8)}…  ${s.eventCount} events  ${dt}`;
       });
       return {
-        message: `[sessions] showing ${Math.min(sessions.length, 10)} of ${sessions.length}:\n${lines.join('\n')}`,
+        message: `[sessions] showing ${Math.min(sessions.length, SESSION_LIST_LIMIT)} of ${sessions.length}:\n${lines.join('\n')}`,
       };
     } catch (err) {
       return { message: `[sessions] error: ${err instanceof Error ? err.message : String(err)}` };

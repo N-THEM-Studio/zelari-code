@@ -65,10 +65,17 @@ export interface PickerItem {
   label: string;
   hint?: string;
   current?: boolean;
+  /**
+   * v2.53: fuzzy haystack for the picker's live filter (multi-term AND, see
+   * components/fuzzyMatch.ts). Defining it on any item makes the rendered
+   * SelectList filterable; absent (provider/model/skill pickers) keeps the
+   * arrow-key-only behavior.
+   */
+  searchText?: string;
 }
 
 export interface PickerRequest {
-  kind: 'provider' | 'model' | 'clarification' | 'skill';
+  kind: 'provider' | 'model' | 'clarification' | 'skill' | 'session';
   title: string;
   items: PickerItem[];
   /** Slash command the selected value is dispatched through (provider/model/skill). */

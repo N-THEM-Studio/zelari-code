@@ -11,6 +11,7 @@ import { appendSystem, appendUser } from './messageHelpers.js';
 import { sessionKindRouter } from '../sessionManager.js';
 import { newSessionId } from '../sessionManager.js';
 import { handleDiff, handleUndo } from '../slashHandlers/git.js';
+import { handleSessionsPicker } from '../slashHandlers/sessions.js';
 import {
   handleCheckpointCreate,
   handleRollback,
@@ -224,8 +225,10 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
       // to the helpers exported from sessionManager and apply the writerRef
       // + messages reset ourselves.
       if (result.kind === 'session') {
-        const { message: sysMsg } = await sessionKindRouter('session');
-        appendSystem(setMessages, sysMsg);
+        // v2.53: /sessions opens the fuzzy SelectList when the TUI wired a
+        // picker; the handler falls back to the unchanged textual list (the
+        // same sessionKindRouter message) in headless/scripted callers.
+        await handleSessionsPicker({ setMessages }, params.openPicker);
       } else if (result.kind === 'resume' && result.targetSessionId) {
         const { message: sysMsg } = await sessionKindRouter('resume', result.targetSessionId);
         appendSystem(setMessages, sysMsg);
