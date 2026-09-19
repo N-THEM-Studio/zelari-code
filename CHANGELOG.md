@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.51.0] - 2026-09-19
+
+Feature slice **mcode-steal** (plan tasks t112–t119): a gap analysis against [MiniMax mcode](https://github.com/MiniMax-AI/minimax-code) picked the four real gaps (ACP, runaway-guard, system-reminder, configurable status line) plus sandbox behaviors worth porting; everything already at parity or ahead (win32 jail, SQLite memory, skills, MCP) stayed untouched. Gate t119 before release: typecheck exit 0, 3413 tests green, build + bundle smoke, `verify:principles` PASS, ACP `initialize` roundtrip on the built bundle.
+
+### Added — harness modules (phase A)
+
+- **runaway-guard (t112)** — anti-loop detection on `AgentHarness`: N≥3 identical tool calls → warning; no-progress stall → hard stop with a spine event. New `packages/core/src/core/modules/runaway-guard/` (unit + harness tests). Kill-switch `ZELARI_RUNAWAY_GUARD=0`.
+- **system-reminder (t113)** — cadenced context reminders (pending todos, budget percentage) injected through the projection seam only (spine-only model-context path, ADR-0024/0031). New `packages/core/src/core/modules/system-reminder/`. Kill-switch `ZELARI_SYSTEM_REMINDER=0`.
+
+### Added — CLI UX (phase B)
+
+- **Configurable status line (t114)** — `/statusline` toggles/reorders built-in items and registers custom ones: an external script receives session JSON on stdin and must emit ANSI-free machine-readable output (1.5s timeout, fail-soft — a broken script never crashes the TUI). New `src/cli/statusline/` + `slashHandlers/statusline.ts`; `statusChips.ts` renders from config.
+- **/report (t115)** — end-of-session aggregate (files touched, tool calls, verify outcomes, tokens/cost) computed from the session spine via `deriveMessages` — the single model-history path (ADR-0021). Fail-soft on missing/corrupt spines. New `src/cli/commands/report.ts`.
+
+### Added — platform (phase C)
+
+- **Jail hardening (t116)** — behaviors ported from the Anthropic sandbox-runtime fork mcode vendors: per-invocation sanitized `baseEnv` (deny-first), network deny-first with allowlist, executable lookup via Node `fs.access` (drops the 1s `which` timeout), caller-provided temp dirs with independent unlink scopes. Applies to every jail backend including win32 restricted-token; the new tests also caught and fixed a real isolation gap. New `src/cli/safety/jails/{baseEnv,execPath}.ts`.
+- **ACP front door (t117)** — `zelari-code acp`: stdio JSON-RPC server (LSP-style framing, hand-rolled — zero new dependencies) speaking the Agent Client Protocol for editor integrations (Zed, Neovim), reusing the headless run core. Third front door beside TUI and headless. Kill-switch `ZELARI_ACP=0`. New `src/cli/acp/`.
+
+### Added — docs (phase D)
+
+- **Capability matrix (t118)** — `docs/CAPABILITIES.md`: feature → state → test evidence, linked from the README.
+
 ## [2.50.1] - 2026-09-19
 
 Patch release: `v2.50.0` was tagged and pushed, but its CI run failed on ubuntu — the new tag-release guard tests passed on Windows (where a global git identity exists) and failed on the CI runner, where none does: the release script's `git tag -a` could not inherit the fixture's inline `-c user.*` flags, so the annotated-tag step died. The release gate held — npm was never touched — and `v2.50.0` remains an unpublished red tag (do not move it; see the v2.43.0 lesson).
