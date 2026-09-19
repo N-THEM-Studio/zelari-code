@@ -24,8 +24,25 @@ export {
   buildSystemPrompt,
   buildSystemPromptSplit,
   systemMessagesFromSplit,
+  // M2.1 (cache-hit-rate plan): cache-first layout — volatile → ephemeral
+  // trailing context after the history. `resolvePromptLayout` reads
+  // ZELARI_PROMPT_LAYOUT once per process (frozen per session).
+  resolvePromptLayout,
+  resetPromptLayoutCache,
+  assembleRequestMessages,
+  trailingContextFromSplit,
+  trailingContextMessagesFromSplit,
+  isTrailingContextContent,
+  wrapTrailingContext,
+  PROMPT_LAYOUT_ENV,
+  TRAILING_CONTEXT_OPEN_TAG,
+  TRAILING_CONTEXT_CLOSE_TAG,
 } from '../agents/systemPromptBuilder.js';
-export type { BuildSystemPromptOptions } from '../agents/systemPromptBuilder.js';
+export type {
+  BuildSystemPromptOptions,
+  PromptLayout,
+  PromptLayoutMessage,
+} from '../agents/systemPromptBuilder.js';
 export {
   detectResponseLanguage,
   resolveResponseLanguage,

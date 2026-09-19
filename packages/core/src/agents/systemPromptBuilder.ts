@@ -288,16 +288,159 @@ export function buildSystemPrompt(
 }
 
 /**
+ * Layout of the volatile prompt segment (M2.1, cache-hit-rate plan).
+ *
+ * - `trailing` (default): the volatile segment travels as an EPHEMERAL user
+ *   message AFTER the history, so a workspace/RAG/durable change busts only the
+ *   request tail instead of the whole system prefix.
+ * - `legacy`: pre-M2 assembly — `[stable, volatile]` system messages emitted
+ *   BEFORE the history. Rollback switch, kept for one release cycle.
+ */
+export type PromptLayout = 'trailing' | 'legacy';
+
+/** Env switch: `ZELARI_PROMPT_LAYOUT=legacy` opts back into the pre-M2 layout. */
+export const PROMPT_LAYOUT_ENV = 'ZELARI_PROMPT_LAYOUT';
+
+/** Opening tag of the ephemeral trailing context message. */
+export const TRAILING_CONTEXT_OPEN_TAG = '<context-update>';
+/** Closing tag of the ephemeral trailing context message. */
+export const TRAILING_CONTEXT_CLOSE_TAG = '</context-update>';
+
+let promptLayoutCache: PromptLayout | undefined;
+
+/**
+ * Resolve the prompt layout ONCE per process and reuse it (same freeze
+ * discipline as the M3.1 session provider params): a layout flip mid-session
+ * would re-shuffle the request prefix on every call and destroy the cache for
+ * the rest of the session.
+ */
+export function resolvePromptLayout(
+  env: Record<string, string | undefined> = process.env,
+): PromptLayout {
+  if (promptLayoutCache === undefined) {
+    promptLayoutCache =
+      env[PROMPT_LAYOUT_ENV]?.trim().toLowerCase() === 'legacy' ? 'legacy' : 'trailing';
+  }
+  return promptLayoutCache;
+}
+
+/** Test seam: forget the memoized layout so a test can re-read the env. */
+export function resetPromptLayoutCache(): void {
+  promptLayoutCache = undefined;
+}
+
+/** Last (volatile → trailing body) render, so an unchanged input is reused verbatim. */
+let lastTrailingRender: { volatile: string; body: string } | undefined;
+
+/**
+ * Wrap the volatile segment as the body of an ephemeral trailing message.
+ * Returns '' when the volatile segment is empty (callers then add NO message).
+ *
+ * Pure in content; the one-entry memo only guarantees that consecutive renders
+ * of an unchanged volatile segment hand back the same byte-identical string
+ * (M2.3 determinism: a byte of drift here costs a cache miss on the tail).
+ */
+export function wrapTrailingContext(volatile: string): string {
+  const body = volatile.trim();
+  if (lastTrailingRender?.volatile === body) return lastTrailingRender.body;
+  const wrapped = body ? `${TRAILING_CONTEXT_OPEN_TAG}\n${body}\n${TRAILING_CONTEXT_CLOSE_TAG}` : '';
+  lastTrailingRender = { volatile: body, body: wrapped };
+  return wrapped;
+}
+
+/** Ephemeral trailing body for a split prompt ('' when nothing is volatile). */
+export function trailingContextFromSplit(split: { stable: string; volatile: string }): string {
+  return wrapTrailingContext(split.volatile);
+}
+
+/**
+ * True when `content` is a trailing context message built by
+ * {@link wrapTrailingContext}. Callers use this to drop the ephemeral message
+ * when they re-seed a follow-up pass instead of carrying it over.
+ */
+export function isTrailingContextContent(content: string): boolean {
+  const trimmed = content.trim();
+  return (
+    trimmed.startsWith(TRAILING_CONTEXT_OPEN_TAG) && trimmed.endsWith(TRAILING_CONTEXT_CLOSE_TAG)
+  );
+}
+
+/** Minimal message shape produced/consumed by the layout helpers. */
+export type PromptLayoutMessage = {
+  role: 'system' | 'user' | 'assistant' | 'tool';
+  content: string;
+};
+
+/**
+ * The ephemeral trailing context message (0 or 1 message) for a split prompt.
+ *
+ * EPHEMERAL BY CONTRACT: it belongs to the request body only — never persist it
+ * to the session spine or the rolling history, or it re-enters the next turn's
+ * transcript and duplicates the volatile context on every turn.
+ */
+export function trailingContextMessagesFromSplit(split: {
+  stable: string;
+  volatile: string;
+}): Array<{ role: 'user'; content: string }> {
+  const body = trailingContextFromSplit(split);
+  return body ? [{ role: 'user', content: body }] : [];
+}
+
+/**
+ * Assemble the model-facing message list for one request (M2.1).
+ *
+ * - `trailing` (default): `[stable system][history][trailing context][new turn]`
+ * - `legacy`:             `[stable, volatile system][history][new turn]`
+ *
+ * Pure and provider-agnostic: the array returned here is what the harness puts
+ * on the wire, so the trailing context lives only in the HTTP body.
+ */
+export function assembleRequestMessages(input: {
+  /** Split prompt (builder output). */
+  split: { stable: string; volatile: string };
+  /** Prior turns (spine-derived history). */
+  history: readonly PromptLayoutMessage[];
+  /** The new turn's messages (usually a single user message). */
+  turn: readonly PromptLayoutMessage[];
+  /** Defaults to the session-frozen {@link resolvePromptLayout}. */
+  layout?: PromptLayout;
+}): {
+  messages: PromptLayoutMessage[];
+  /** System-prefix length, for seed slicing `[..system, ...history, ..]`. */
+  systemCount: number;
+  /** Trailing message count (0 or 1) — part of the seed, never of the history. */
+  trailingCount: number;
+} {
+  const layout = input.layout ?? resolvePromptLayout();
+  const systemMessages = systemMessagesFromSplit(input.split, {
+    includeVolatile: layout === 'legacy',
+  });
+  const trailingMessages =
+    layout === 'legacy' ? [] : trailingContextMessagesFromSplit(input.split);
+  return {
+    messages: [...systemMessages, ...input.history, ...trailingMessages, ...input.turn],
+    systemCount: systemMessages.length,
+    trailingCount: trailingMessages.length,
+  };
+}
+
+/**
  * Assemble AgentMessage system slots from a split prompt.
  * Multi-system when both parts present (stable first — required for prefix cache).
  * Set `singleSystem: true` to concatenate for providers that reject multi-system.
+ *
+ * M2.1 default: **stable only** — the volatile segment moves to the ephemeral
+ * trailing message after the history (see {@link assembleRequestMessages}), so a
+ * workspace/RAG change cannot bust the cached system prefix. Pass
+ * `includeVolatile: true` for the pre-M2 shape `[stable, volatile]` (rollback
+ * layout `legacy`).
  */
 export function systemMessagesFromSplit(
   split: { stable: string; volatile: string },
-  opts?: { singleSystem?: boolean },
+  opts?: { singleSystem?: boolean; includeVolatile?: boolean },
 ): Array<{ role: 'system'; content: string }> {
   const stable = split.stable.trim();
-  const volatile = split.volatile.trim();
+  const volatile = opts?.includeVolatile ? split.volatile.trim() : '';
   if (!stable && !volatile) return [];
   if (opts?.singleSystem) {
     const content = [stable, volatile].filter(Boolean).join('\n\n---\n\n');
