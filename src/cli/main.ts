@@ -815,6 +815,31 @@ function pickRootComponent(): {
       process.exit(1);
     }
   }
+  // `zelari-code skills:check`: PURE-STATIC validator for every discovered
+  // SKILL.md (project .zelari/.claude/.opencode + user-global). Nothing from a
+  // skill is ever executed — the report is the only output. Exit 0 when the
+  // catalog is clean, 1 on any error (CI gate). Also reachable as
+  // `--skills-check` for hosts that only pass flags.
+  if (argv[0] === "skills:check" || argv.includes("--skills-check")) {
+    try {
+      const cwdIdx = argv.indexOf("--cwd");
+      const cwd =
+        cwdIdx >= 0 && argv[cwdIdx + 1] ? argv[cwdIdx + 1] : process.cwd();
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { checkSkillFiles, formatSkillsCheckReport } =
+        require("./skillsCheck.js") as typeof import("./skillsCheck.js");
+      const report = checkSkillFiles({ projectRoot: cwd });
+      // eslint-disable-next-line no-console
+      console.log(formatSkillsCheckReport(report));
+      process.exit(report.ok ? 0 : 1);
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error(
+        `[zelari-code skills:check] ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
+    }
+  }
   // Skill config helpers (Desktop Extensions store — parity with MCP).
   if (argv.includes("--print-skills")) {
     try {
