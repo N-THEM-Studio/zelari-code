@@ -21,7 +21,7 @@ import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
 import { attachFrameReader, createFrameWriter, type FrameSink } from './framing.js';
 import {
-  ACP_PROTOCOL_VERSION,
+  ACP_ERROR_CODES,
   AcpError,
   JSON_RPC_ERRORS,
   parseJsonRpcMessage,
@@ -30,11 +30,13 @@ import {
   readSessionIdParams,
   readSessionNewParams,
   sessionUpdateNotification,
+  type AcpErrorCode,
   type JsonRpcId,
   type SessionUpdate,
   type StopReason,
 } from './protocol.js';
-import type { AcpTurnDispatcher } from './turnAdapter.js';
+import { createTurnStream, type TurnStream } from './invariants.js';
+import type { AcpTurnDispatcher, AcpTurnResult } from './turnAdapter.js';
 
 /** Agent capabilities advertised on `initialize` (no reverse requests). */
 export const ACP_AGENT_CAPABILITIES = {
@@ -70,6 +72,8 @@ interface InflightRecord {
   cancelled: boolean;
   settled: boolean;
   abort: AbortController;
+  /** Invariant 1 state for THIS turn: one stream, exactly one terminal frame. */
+  stream: TurnStream;
   settle(result: { stopReason: StopReason }): void;
 }
 
@@ -87,12 +91,28 @@ function resultResponse(id: JsonRpcId, result: unknown): unknown {
   return { jsonrpc: '2.0', id, result };
 }
 
-function errorResponse(id: JsonRpcId, code: number, message: string): unknown {
-  return { jsonrpc: '2.0', id, error: { code, message } };
+/**
+ * Invariant 3 at the emit site: every error frame carries the numeric code the
+ * spec requires AND the stable string code from ACP_ERROR_CODES (in
+ * `error.data.code`), so a client never parses a message to branch on a
+ * failure. The two are built from the same error object (`errorCodeOf` below).
+ */
+function errorResponse(
+  id: JsonRpcId,
+  code: number,
+  message: string,
+  errorCode: AcpErrorCode,
+): unknown {
+  return { jsonrpc: '2.0', id, error: { code, message, data: { code: errorCode } } };
 }
 
 function errorCodeOf(err: unknown): number {
   return err instanceof AcpError ? err.code : JSON_RPC_ERRORS.INTERNAL_ERROR;
+}
+
+/** Stable string code for the same error (invariant 3; never a message). */
+function stringErrorCodeOf(err: unknown): AcpErrorCode {
+  return err instanceof AcpError ? err.errorCode : ACP_ERROR_CODES.INTERNAL_ERROR;
 }
 
 function errorMessageOf(err: unknown): string {
@@ -149,7 +169,14 @@ export function startAcpServer(deps: AcpServerDeps): AcpServerHandle {
   async function handleMessage(raw: unknown): Promise<void> {
     const parsed = parseJsonRpcMessage(raw);
     if (parsed.kind === 'invalid') {
-      writer.write(errorResponse(parsed.id, JSON_RPC_ERRORS.INVALID_REQUEST, parsed.reason));
+      writer.write(
+        errorResponse(
+          parsed.id,
+          JSON_RPC_ERRORS.INVALID_REQUEST,
+          parsed.reason,
+          ACP_ERROR_CODES.INVALID_REQUEST,
+        ),
+      );
       return;
     }
     if (parsed.kind === 'notification') {
@@ -161,7 +188,7 @@ export function startAcpServer(deps: AcpServerDeps): AcpServerHandle {
     try {
       outcome = handleRequest(method, params);
     } catch (err) {
-      writer.write(errorResponse(id, errorCodeOf(err), errorMessageOf(err)));
+      writer.write(errorResponse(id, errorCodeOf(err), errorMessageOf(err), stringErrorCodeOf(err)));
       return;
     }
     if (outcome.kind === 'result') {
@@ -172,7 +199,10 @@ export function startAcpServer(deps: AcpServerDeps): AcpServerHandle {
     // response is written when the dispatcher settles.
     outcome.promise.then(
       (value) => writer.write(resultResponse(id, value)),
-      (err) => writer.write(errorResponse(id, errorCodeOf(err), errorMessageOf(err))),
+      (err) =>
+        writer.write(
+          errorResponse(id, errorCodeOf(err), errorMessageOf(err), stringErrorCodeOf(err)),
+        ),
     );
   }
 
@@ -245,16 +275,24 @@ export function startAcpServer(deps: AcpServerDeps): AcpServerHandle {
   }
 
   function startPrompt(session: SessionState, text: string): Promise<{ stopReason: StopReason }> {
+    // One stream per turn (invariants.ts): every frame and the single terminal
+    // frame go through it, so a late or over-cap frame is dropped loudly.
+    const stream = createTurnStream(session.id, log);
     const record: InflightRecord = {
       cancelled: false,
       settled: false,
       abort: new AbortController(),
+      stream,
       settle: () => {},
     };
     const promise = new Promise<{ stopReason: StopReason }>((resolve) => {
       record.settle = (result) => {
         if (record.settled) return;
         record.settled = true;
+        // INVARIANT 1: the `session/prompt` response IS this turn's terminal
+        // frame — recorded here, once, on every path that ends the turn
+        // (dispatcher result, dispatcher rejection, cancel, EOF shutdown).
+        stream.terminate(result.stopReason);
         resolve(result);
       };
     });
@@ -263,26 +301,42 @@ export function startAcpServer(deps: AcpServerDeps): AcpServerHandle {
     const onUpdate = (update: SessionUpdate): void => {
       // A cancelled turn stops streaming: the client was already told so.
       if (record.cancelled) return;
+      // INVARIANTS 1+2: nothing is emitted after the terminal frame, and a
+      // payload that was clamped without saying so never reaches the wire.
+      if (!stream.push(update)) return;
       writer.write(sessionUpdateNotification(session.id, update));
     };
 
-    void deps
-      .dispatcher({
+    // A dispatcher that throws SYNCHRONOUSLY must still terminate this turn:
+    // otherwise `session.inflight` would stay set forever (the session could
+    // never be prompted again) with no terminal frame on the wire.
+    let running: Promise<AcpTurnResult>;
+    try {
+      running = deps.dispatcher({
         sessionId: session.id,
         cwd: session.cwd,
         prompt: text,
         onUpdate,
         signal: record.abort.signal,
-      })
+      });
+    } catch (err) {
+      running = Promise.reject(err);
+    }
+
+    void running
       .then(
         (result) => record.settle({ stopReason: record.cancelled ? 'cancelled' : result.stopReason }),
         (err) => {
-          log(`[zelari-code acp] turn failed: ${errorMessageOf(err)}`);
+          log(`[zelari-code acp] ${ACP_ERROR_CODES.TURN_FAILED}: ${errorMessageOf(err)}`);
           record.settle({ stopReason: record.cancelled ? 'cancelled' : 'refusal' });
         },
       )
       .finally(() => {
         if (session.inflight === record) session.inflight = undefined;
+        // The turn is over: exactly one terminal frame must have been
+        // recorded (unreachable today — `settle` above always terminates —
+        // this is the guard that keeps it unreachable).
+        stream.close();
       });
 
     return promise;

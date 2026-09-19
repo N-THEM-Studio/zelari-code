@@ -50,6 +50,7 @@
  *     (dispatchHeadlessTurn exposes no abort seam). Bounded by the CLI's own
  *     turn/tool budgets.
  */
+import { ACP_ERROR_CODES, clampMessageText, type AcpErrorCode } from './invariants.js';
 
 /** ACP protocol version this agent implements (echoed back on initialize). */
 export const ACP_PROTOCOL_VERSION = 1;
@@ -63,11 +64,35 @@ export const JSON_RPC_ERRORS = {
   INTERNAL_ERROR: -32603,
 } as const;
 
-/** Typed JSON-RPC error, mapped 1:1 onto the wire by the server loop. */
+/**
+ * STABLE STRING error codes — re-exported from invariants.ts, which owns the
+ * single definition (invariant 3). `JSON_RPC_ERRORS` stays the numeric
+ * envelope the spec requires; the string code travels next to it in
+ * `error.data.code`, so a client never parses a message and never sees a
+ * number where a code belongs.
+ */
+export { ACP_ERROR_CODES, type AcpErrorCode } from './invariants.js';
+
+const JSON_RPC_TO_ERROR_CODE: Record<number, AcpErrorCode> = {
+  [JSON_RPC_ERRORS.PARSE_ERROR]: ACP_ERROR_CODES.PARSE_ERROR,
+  [JSON_RPC_ERRORS.INVALID_REQUEST]: ACP_ERROR_CODES.INVALID_REQUEST,
+  [JSON_RPC_ERRORS.METHOD_NOT_FOUND]: ACP_ERROR_CODES.METHOD_NOT_FOUND,
+  [JSON_RPC_ERRORS.INVALID_PARAMS]: ACP_ERROR_CODES.INVALID_PARAMS,
+  [JSON_RPC_ERRORS.INTERNAL_ERROR]: ACP_ERROR_CODES.INTERNAL_ERROR,
+};
+
+/** Numeric JSON-RPC code -> its stable string code (default: internal). */
+export function errorCodeForJsonRpc(code: number): AcpErrorCode {
+  return JSON_RPC_TO_ERROR_CODE[code] ?? ACP_ERROR_CODES.INTERNAL_ERROR;
+}
+
+/** Typed JSON-RPC error, mapped 1:1 onto the wire by the server loop. Both
+ *  codes travel: the numeric one for the spec, `errorCode` for machines. */
 export class AcpError extends Error {
   constructor(
     readonly code: number,
     message: string,
+    readonly errorCode: AcpErrorCode = errorCodeForJsonRpc(code),
   ) {
     super(message);
     this.name = 'AcpError';
@@ -211,6 +236,12 @@ export type ToolCallStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 export interface AgentMessageChunkUpdate {
   sessionUpdate: 'agent_message_chunk';
   content: { type: 'text'; text: string };
+  /**
+   * Invariant 2 (invariants.ts): present — and true — iff `text` was clamped
+   * to the payload cap. A client must never have to guess: an over-cap body
+   * without this flag is a protocol violation, not a truncation.
+   */
+  truncated?: true;
 }
 
 export interface ToolCallStartUpdate {
@@ -232,8 +263,18 @@ export type SessionUpdate =
   | ToolCallStartUpdate
   | ToolCallStatusUpdate;
 
+/**
+ * One assistant text chunk. The ONLY cap on the outbound payload path lives
+ * here (invariants.ts `clampMessageText`), so no emit site can truncate
+ * silently: when the text does not fit, the frame says so (`truncated: true`).
+ */
 export function agentMessageChunk(text: string): AgentMessageChunkUpdate {
-  return { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } };
+  const { text: body, truncated } = clampMessageText(text);
+  return {
+    sessionUpdate: 'agent_message_chunk',
+    content: { type: 'text', text: body },
+    ...(truncated ? { truncated: true as const } : {}),
+  };
 }
 
 export function toolCallStart(input: {

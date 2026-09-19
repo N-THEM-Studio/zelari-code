@@ -34,6 +34,7 @@ import {
   type LineBuffer,
 } from './eventMap.js';
 import { agentMessageChunk, type SessionUpdate, type StopReason } from './protocol.js';
+import { ACP_ERROR_CODES } from './invariants.js';
 
 export interface AcpTurnRequest {
   sessionId: string;
@@ -190,7 +191,9 @@ export function createHeadlessTurnDispatcher(deps: HeadlessTurnDeps = {}): AcpTu
         exitCode = await runTurn(opts, provider, model, stream);
       } catch (err) {
         request.onUpdate(
-          agentMessageChunk(`\n[zelari-code acp] turn failed: ${err instanceof Error ? err.message : String(err)}\n`),
+          agentMessageChunk(
+            `\n[zelari-code acp] ${ACP_ERROR_CODES.TURN_FAILED}: ${err instanceof Error ? err.message : String(err)}\n`,
+          ),
         );
         exitCode = 2;
       } finally {
