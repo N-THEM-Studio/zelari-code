@@ -528,6 +528,13 @@ All commands start with `/` and are typed in the TUI input bar.
 | `/help` | List available commands and skills |
 | `/exit` | Exit the CLI |
 
+#### Session, report and status line
+
+| Command | Description |
+|---|---|
+| `/report [--json] [--session <id>]` | End-of-session report from the spine: files touched, tool calls, verify outcomes, tokens/cost. `--json` for scripting, `--session` to replay another session. |
+| `/statusline` | Toggle/reorder built-in status line items; a custom item can run an external script (JSON on stdin, one sanitized line out, 1.5s timeout, fail-soft). |
+
 #### Dispatch mode and phase
 
 | Command | Description |
