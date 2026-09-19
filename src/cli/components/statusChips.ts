@@ -16,9 +16,14 @@
  * permission / policy-load env vars, the CI flag and the registered
  * policy-load surface. A runtime change of any of them re-resolves the chip.
  */
+import { existsSync, statSync } from 'node:fs';
+import path from 'node:path';
+import { resolveSessionsDir } from '@zelari/core/session';
 import { activeJailMode, probeJailBackend, OS_JAIL_ENV } from '../safety/osJail.js';
 import { activePolicyLoadSurface, POLICY_LOAD_MODE_ENV } from '../safety/policyLoadMode.js';
 import { loadStatusLineConfig } from '../statusline/statuslineConfig.js';
+import { readVerdictFeed, verdictFeedText, type VerdictFeed } from '../statusline/verdictFeed.js';
+import { getCurrentSessionId } from '../sessionManager.js';
 
 /** A one-line chip: what to show, and how honest it is (green = on, yellow = advisory). */
 export interface StatusChip {
@@ -99,4 +104,63 @@ export function cachedJailStatusChip(
  */
 export function resetJailChipCacheForTests(): void {
   chipCache = null;
+}
+
+/**
+ * t124 (openharness-steal): the `verdict` status-line item — verification
+ * progress derived from the CURRENT run's spine (derive-only, ADR-0016/0024).
+ * Text and verdict word come from verdictFeed; this module only adds the
+ * paint-side caching discipline: the spine is (re)read only when the session
+ * id or the log's mtime changes, so a ~30x/s repaint never re-parses it.
+ */
+export interface VerdictChip {
+  label: string;
+  tone: 'green' | 'yellow' | 'red';
+}
+
+/** Pure: feed -> chip. Exported for tests; never touches disk. */
+export function verdictChipFromFeed(
+  feed: VerdictFeed | null,
+  env: NodeJS.ProcessEnv = process.env,
+): VerdictChip | null {
+  const label = verdictFeedText(feed, env);
+  if (label === null) return null;
+  const tone =
+    feed?.ready === true ? 'green' : feed?.verdict === 'BLOCKED' ? 'red' : 'yellow';
+  return { label, tone };
+}
+
+/** Every input the verdict chip depends on, flattened into a comparable key. */
+function verdictChipKey(env: NodeJS.ProcessEnv): string {
+  const sessionId = getCurrentSessionId();
+  let mtime = 'none';
+  if (sessionId) {
+    try {
+      const file = path.join(resolveSessionsDir({ env }), sessionId, 'events.jsonl');
+      mtime = existsSync(file) ? String(statSync(file).mtimeMs) : 'none';
+    } catch {
+      mtime = 'none';
+    }
+  }
+  return `${sessionId ?? 'no-session'}|${env.ZELARI_VERDICT_FEED ?? ''}|${mtime}`;
+}
+
+let verdictChipCache: { key: string; chip: VerdictChip | null } | null = null;
+
+/**
+ * Cached verdict chip — safe to call from a render body. Opt-in item: it only
+ * paints when `/statusline on verdict` added it to the configured order.
+ */
+export function cachedVerdictStatusChip(env: NodeJS.ProcessEnv = process.env): VerdictChip | null {
+  if (!statusLineItemEnabled('verdict')) return null;
+  const key = verdictChipKey(env);
+  if (verdictChipCache && verdictChipCache.key === key) return verdictChipCache.chip;
+  const chip = verdictChipFromFeed(readVerdictFeed({ env }), env);
+  verdictChipCache = { key, chip };
+  return chip;
+}
+
+/** TEST-ONLY: drop the memoized verdict chip (same discipline as the jail chip). */
+export function resetVerdictChipCacheForTests(): void {
+  verdictChipCache = null;
 }

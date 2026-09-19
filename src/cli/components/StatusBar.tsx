@@ -65,6 +65,13 @@ export interface StatusBarProps {
    * @since v2.32.0 (S4)
    */
   jail?: { label: string; tone: 'green' | 'yellow' } | null;
+  /**
+   * Verdict chip — verification progress of the current run, derived from the
+   * spine (`verdictFeed`, derive-only, ADR-0016/0024). Opt-in via
+   * `/statusline on verdict`. `red` = BLOCKED, `green` = PASS.
+   * @since v2.53.0 (openharness-steal t124)
+   */
+  verdict?: { label: string; tone: 'green' | 'yellow' | 'red' } | null;
 }
 
 /**
@@ -103,6 +110,7 @@ function StatusBarImpl({
   verify = null,
   permissions = null,
   jail = null,
+  verdict = null,
 }: StatusBarProps): React.ReactElement {
   const ctxLabel =
     contextLimit > 0
@@ -155,6 +163,14 @@ function StatusBarImpl({
             <Text dimColor> · </Text>
             <Text bold color={jail.tone}>
               {jail.label}
+            </Text>
+          </>
+        ) : null}
+        {verdict ? (
+          <>
+            <Text dimColor> · </Text>
+            <Text bold color={verdict.tone}>
+              {verdict.label}
             </Text>
           </>
         ) : null}
@@ -276,7 +292,8 @@ export function statusBarPropsEqual(prev: StatusBarProps, next: StatusBarProps):
     prev.krakenGraph === next.krakenGraph &&
     statusChipPropsEqual(prev.verify, next.verify) &&
     statusChipPropsEqual(prev.permissions, next.permissions) &&
-    statusChipPropsEqual(prev.jail, next.jail)
+    statusChipPropsEqual(prev.jail, next.jail) &&
+    statusChipPropsEqual(prev.verdict, next.verdict)
   );
 }
 
