@@ -43,8 +43,23 @@ export const DEFAULT_STATUSLINE_ITEMS: readonly string[] = [
 /** The one item whose text comes from a user script instead of the session. */
 export const STATUSLINE_CUSTOM_ID = 'custom';
 
-/** Any id a configuration may reference (built-ins + `custom`). */
-export const STATUSLINE_ITEM_IDS: readonly string[] = [...DEFAULT_STATUSLINE_ITEMS, STATUSLINE_CUSTOM_ID];
+/**
+ * `verdict` — the derive-only verification feed (verdictFeed.ts: counts and
+ * phases read back from the session spine's `verification.*` events).
+ *
+ * OPT-IN, like `custom`: it is a KNOWN, toggleable id that is deliberately NOT
+ * in DEFAULT_STATUSLINE_ITEMS, because this default list is pinned to the chips
+ * `<StatusBar>` actually paints (see statuslineItems.test.ts) and a projection
+ * that no renderer paints yet must not be reported as enabled.
+ */
+export const STATUSLINE_VERDICT_ID = 'verdict';
+
+/** Any id a configuration may reference (built-ins + the opt-in items). */
+export const STATUSLINE_ITEM_IDS: readonly string[] = [
+  ...DEFAULT_STATUSLINE_ITEMS,
+  STATUSLINE_CUSTOM_ID,
+  STATUSLINE_VERDICT_ID,
+];
 
 export interface StatusLineItemInfo {
   id: string;
@@ -72,9 +87,14 @@ export const STATUSLINE_ITEMS: readonly StatusLineItemInfo[] = [
   { id: 'cost', label: 'cost', description: 'session cost / cache metrics' },
   { id: 'session', label: 'session', description: 'session id' },
   { id: STATUSLINE_CUSTOM_ID, label: 'custom', description: 'first line of an external script (JSON on stdin)' },
+  {
+    id: STATUSLINE_VERDICT_ID,
+    label: 'verdict',
+    description: 'verification progress from spine events (derive-only; opt-in)',
+  },
 ];
 
-/** True when `id` is a known item (built-in or `custom`). */
+/** True when `id` is a known item (built-in, `custom` or `verdict`). */
 export function isStatusLineItemId(id: string): boolean {
   return STATUSLINE_ITEM_IDS.includes(id);
 }

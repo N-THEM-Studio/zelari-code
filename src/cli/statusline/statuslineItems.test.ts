@@ -16,6 +16,7 @@ import {
   STATUSLINE_CUSTOM_ID,
   STATUSLINE_ITEM_IDS,
   STATUSLINE_ITEMS,
+  STATUSLINE_VERDICT_ID,
   formatStatusLineItems,
   isStatusLineItemId,
   resolveStatusLineItems,
@@ -49,16 +50,27 @@ describe('DEFAULT_STATUSLINE_ITEMS — the chips of today, in the current order 
 
   it('has no duplicate id and the catalog lists every id, in the same order', () => {
     expect(new Set(DEFAULT_STATUSLINE_ITEMS).size).toBe(DEFAULT_STATUSLINE_ITEMS.length);
-    expect(STATUSLINE_ITEMS.map((i) => i.id)).toEqual([...STATUS_BAR_PAINT_ORDER, STATUSLINE_CUSTOM_ID]);
-    expect([...STATUSLINE_ITEM_IDS]).toEqual([...STATUS_BAR_PAINT_ORDER, STATUSLINE_CUSTOM_ID]);
+    // The catalog opens with the painted chips in paint order; the OPT-IN items
+    // (`custom`, `verdict`) are appended after them.
+    expect(STATUSLINE_ITEMS.map((i) => i.id)).toEqual([
+      ...STATUS_BAR_PAINT_ORDER,
+      STATUSLINE_CUSTOM_ID,
+      STATUSLINE_VERDICT_ID,
+    ]);
+    expect([...STATUSLINE_ITEM_IDS]).toEqual([...STATUS_BAR_PAINT_ORDER, STATUSLINE_CUSTOM_ID, STATUSLINE_VERDICT_ID]);
   });
 
-  it('recognizes every built-in plus custom, and rejects anything else', () => {
+  it('recognizes every built-in plus custom/verdict, and rejects anything else', () => {
     for (const id of DEFAULT_STATUSLINE_ITEMS) expect(isStatusLineItemId(id)).toBe(true);
     expect(isStatusLineItemId(STATUSLINE_CUSTOM_ID)).toBe(true);
+    expect(isStatusLineItemId(STATUSLINE_VERDICT_ID)).toBe(true);
     expect(isStatusLineItemId('MODEL')).toBe(false); // ids are case-sensitive
     expect(isStatusLineItemId('')).toBe(false);
     expect(isStatusLineItemId('totally-unknown')).toBe(false);
+  });
+
+  it('keeps the derive-only verdict item OUT of the default order (opt-in, like custom)', () => {
+    expect(DEFAULT_STATUSLINE_ITEMS).not.toContain(STATUSLINE_VERDICT_ID);
   });
 
   it('labels every catalog entry and falls back to the raw id', () => {
@@ -114,9 +126,10 @@ describe('formatStatusLineItems — the /statusline on-off listing (t114)', () =
     expect(formatStatusLineItems(['jail'])).not.toContain('[x] phase');
   });
 
-  it('marks everything enabled for the default configuration (custom stays off)', () => {
+  it('marks everything enabled for the default configuration (the opt-in items stay off)', () => {
     const text = formatStatusLineItems(DEFAULT_STATUSLINE_ITEMS);
     expect(text).toContain('[x] phase');
     expect(text).toContain('[ ] custom');
+    expect(text).toContain('[ ] verdict');
   });
 });
