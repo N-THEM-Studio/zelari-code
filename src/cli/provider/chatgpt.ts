@@ -222,7 +222,9 @@ export function chatgptResponsesProvider(config: OpenAICompatibleConfig): Provid
                   totalTokens:
                     usage.total_tokens ??
                     (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
-                  cachedPromptTokens: parseCachedPromptTokens(usage),
+                  ...(parseCachedPromptTokens(usage) > 0
+                    ? { cachedPromptTokens: parseCachedPromptTokens(usage) }
+                    : {}),
                 },
               };
             }
