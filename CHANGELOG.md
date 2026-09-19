@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed — ACP
+
+- **NDJSON stdio transport (Zed and every spec-conformant client)** — the ACP front door accepted only LSP-style `Content-Length` frames, but the ACP stdio spec (and Zed) send newline-delimited JSON: real clients hung forever on `initialize` while `smoke:acp` stayed green (it only spoke LSP). `framing.ts` is now a dual-wire codec — NDJSON in/out (spec), LSP frames still accepted with the writer mirroring the reader's detected format — byte-accurate on multibyte UTF-8 splits, with an EOF flush for a trailing line without `\n`. `smoke:acp` now roundtrips BOTH wires from the built bundle so a framing regression cannot ship green again.
+
 ## [2.53.0] - 2026-09-19
 
 Feature slice **openharness-steal** (plan tasks t120–t126): a gap analysis against [OpenHarness](https://github.com/autonomous-ai/openharness) (an agent orchestrator, not an agent) ported the patterns that fit our spine-first architecture and explicitly skipped the ones that don't (relay/E2EE multi-machine, tmux persistence, Flutter viewer — opposite architectural choices). Both new feeds are **derive-only** projections of the session spine: nothing new is persisted (ADR-0016/0024). Gate t126: typecheck exit 0, 208 tests on the new areas, full `src/` suite green, build + bundle smoke, `smoke:acp` PASS, `skills:check` from the built bundle PASS, `verify:principles` PASS.

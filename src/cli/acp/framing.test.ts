@@ -7,9 +7,11 @@ import { PassThrough } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import {
   attachFrameReader,
+  createDualWireDecoder,
   createFrameWriter,
   encodeMessage,
   malformedFrameWarnings,
+  type WireFormat,
 } from './framing.js';
 
 function frame(body: string): string {
@@ -123,9 +125,10 @@ describe('acp/framing — reader', () => {
       onEof: () => {},
       onMalformedFrame: (d) => warnings.push(d),
     });
-    stream.write('Garbage: 1\r\n\r\nnonsense' + frame('{"jsonrpc":"2.0","id":7}'));
+    stream.write('Garbage: 1\r\n\r\nnonsense\n' + '{"jsonrpc":"2.0","id":7}\n');
     await flush();
-    // The bad body is dropped, the following well-formed frame is delivered.
+    // The bad lines are dropped; the following well-formed line is delivered
+    // (a JSON line is only delivered on its terminating newline).
     expect(seen).toEqual([{ jsonrpc: '2.0', id: 7 }]);
     expect(warnings.some((w) => w.includes('Content-Length'))).toBe(true);
   });
@@ -162,5 +165,76 @@ describe('acp/framing — reader', () => {
         resolve();
       });
     });
+  });
+});
+
+describe('acp/framing — dual wire: ndjson (the ACP spec / Zed wire format)', () => {
+  it('decodes bare newline-delimited JSON and mirrors the writer to ndjson', () => {
+    const format: WireFormat = { mode: 'ndjson' };
+    const decoder = createDualWireDecoder(format);
+    const { messages, warnings } = decoder.push(
+      '{"jsonrpc":"2.0","id":"z1","method":"initialize","params":{"protocolVersion":1}}\n' +
+        '\n' +
+        '{"jsonrpc":"2.0","method":"initialized"}\r\n',
+    );
+    expect(warnings).toEqual([]);
+    expect(messages).toEqual([
+      { jsonrpc: '2.0', id: 'z1', method: 'initialize', params: { protocolVersion: 1 } },
+      { jsonrpc: '2.0', method: 'initialized' },
+    ]);
+    expect(format.mode).toBe('ndjson');
+
+    const chunks: string[] = [];
+    const writer = createFrameWriter({ write: (c) => chunks.push(c) }, undefined, format);
+    writer.write({ jsonrpc: '2.0', id: 'z1', result: { protocolVersion: 1 } });
+    expect(chunks).toEqual(['{"jsonrpc":"2.0","id":"z1","result":{"protocolVersion":1}}\n']);
+  });
+
+  it('keeps decoding LSP input and mirrors the writer to lsp-frame', () => {
+    const format: WireFormat = { mode: 'ndjson' };
+    const decoder = createDualWireDecoder(format);
+    const { messages } = decoder.push(frame('{"jsonrpc":"2.0","id":1}'));
+    expect(messages).toEqual([{ jsonrpc: '2.0', id: 1 }]);
+    expect(format.mode).toBe('lsp-frame');
+
+    const chunks: string[] = [];
+    const writer = createFrameWriter({ write: (c) => chunks.push(c) }, undefined, format);
+    writer.write({ jsonrpc: '2.0', id: 1, result: null });
+    expect(chunks[0]).toContain('Content-Length: ');
+  });
+
+  it('survives a UTF-8 multibyte char split across byte-level chunks', () => {
+    const decoder = createDualWireDecoder();
+    const bytes = Buffer.from('{"text":"città"}\n', 'utf8');
+    const cut = bytes.indexOf(Buffer.from('à', 'utf8')) + 1; // split inside 'à'
+    expect(decoder.push(bytes.subarray(0, cut)).messages).toEqual([]);
+    expect(decoder.push(bytes.subarray(cut)).messages).toEqual([{ text: 'città' }]);
+  });
+
+  it('flush() salvages a trailing line missing its final newline', () => {
+    const decoder = createDualWireDecoder();
+    expect(decoder.push('{"jsonrpc":"2.0","id":9}').messages).toEqual([]);
+    expect(decoder.flush().messages).toEqual([{ jsonrpc: '2.0', id: 9 }]);
+  });
+
+  it('drops a non-JSON line with a warning; later lines still decode', () => {
+    const decoder = createDualWireDecoder();
+    const { messages, warnings } = decoder.push('not json at all\n{"jsonrpc":"2.0","id":3}\n');
+    expect(messages).toEqual([{ jsonrpc: '2.0', id: 3 }]);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('dropped');
+  });
+
+  it('reader delivers ndjson lines from a stream and EOF-flushes the last one', async () => {
+    const stream = new PassThrough();
+    const seen: unknown[] = [];
+    attachFrameReader(stream, { onMessage: (m) => seen.push(m), onEof: () => {} });
+    stream.write('{"jsonrpc":"2.0","id":1}\n');
+    await flush();
+    expect(seen).toEqual([{ jsonrpc: '2.0', id: 1 }]);
+    stream.write('{"jsonrpc":"2.0","id":2}'); // no trailing newline
+    stream.end();
+    await flush();
+    expect(seen).toEqual([{ jsonrpc: '2.0', id: 1 }, { jsonrpc: '2.0', id: 2 }]);
   });
 });

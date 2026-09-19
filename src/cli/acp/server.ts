@@ -19,7 +19,12 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Readable } from 'node:stream';
-import { attachFrameReader, createFrameWriter, type FrameSink } from './framing.js';
+import {
+  attachFrameReader,
+  createFrameWriter,
+  type FrameSink,
+  type WireFormat,
+} from './framing.js';
 import {
   ACP_ERROR_CODES,
   AcpError,
@@ -126,14 +131,21 @@ export function startAcpServer(deps: AcpServerDeps): AcpServerHandle {
   const sessions = new Map<string, SessionState>();
   let closed = false;
 
+  // Shared wire format: NDJSON per the ACP stdio spec (what Zed speaks);
+  // LSP-style frames are auto-detected on input and mirrored on output.
+  const format: WireFormat = { mode: 'ndjson' };
+
   // The frame writer binds sink.write NOW (framing.ts): a turn's stdout
   // capture (turnAdapter.ts) can never swallow a JSON-RPC frame.
-  const writer = createFrameWriter(deps.output ?? process.stdout, (message) =>
-    log(`[zelari-code acp] stdout write failed: ${message}`),
+  const writer = createFrameWriter(
+    deps.output ?? process.stdout,
+    (message) => log(`[zelari-code acp] stdout write failed: ${message}`),
+    format,
   );
 
   const shutdownWaiters: Array<() => void> = [];
   const reader = attachFrameReader(input, {
+    format,
     onMessage: (raw) => {
       void handleMessage(raw);
     },

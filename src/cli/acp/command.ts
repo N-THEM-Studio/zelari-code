@@ -59,9 +59,11 @@ export function acpHelpText(): string {
   return (
     'zelari-code acp — Agent Client Protocol server on stdio (for editors)\n' +
     '\n' +
-    'Speaks JSON-RPC 2.0 over stdin/stdout with LSP-style framing\n' +
-    '(`Content-Length: <bytes>\\r\\n\\r\\n<json>`). Point an ACP-capable editor\n' +
-    '(e.g. Zed) at this command as a custom agent server.\n' +
+    'Speaks JSON-RPC 2.0 over stdin/stdout as newline-delimited JSON\n' +
+    '(the ACP stdio transport, as spoken by Zed). LSP-style frames\n' +
+    '(`Content-Length: <bytes>\\r\\n\\r\\n<json>`) are also accepted and\n' +
+    'mirrored on output. Point an ACP-capable editor at this command as\n' +
+    'a custom agent server.\n' +
     '\n' +
     'Methods (implemented subset):\n' +
     '  initialize                 protocolVersion + agent capabilities\n' +

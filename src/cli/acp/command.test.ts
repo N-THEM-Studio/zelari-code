@@ -100,4 +100,37 @@ describe('acp/command — runAcpCommand', () => {
     expect(err.mock.calls.map((c) => String(c[0])).join('')).toContain('EPIPE');
     err.mockRestore();
   });
+
+  it('speaks ndjson end-to-end (the Zed wire format): bare lines in, bare lines out', async () => {
+    const input = new PassThrough();
+    const written: string[] = [];
+    const output = {
+      write: (chunk: string) => {
+        written.push(chunk);
+        return true;
+      },
+    };
+    const running = runAcpCommand({ input, output });
+
+    input.write(
+      '{"jsonrpc":"2.0","id":"z1","method":"initialize","params":{"protocolVersion":1}}\n',
+    );
+    input.write('\n'); // Zed sends a trailing blank line after each message
+    input.write('{"jsonrpc":"2.0","method":"initialized"}\n');
+    await flush();
+    input.write('{"jsonrpc":"2.0","id":"z2","method":"session/new","params":{"cwd":"/tmp"}}\n');
+    await flush();
+
+    const lines = written
+      .join('')
+      .split('\n')
+      .filter((l) => l.trim().length > 0)
+      .map((l) => JSON.parse(l) as Record<string, any>);
+    expect(written.join('')).not.toContain('Content-Length');
+    expect(lines[0]).toMatchObject({ id: 'z1', result: { protocolVersion: 1 } });
+    expect(lines[1]).toMatchObject({ id: 'z2', result: { sessionId: expect.any(String) } });
+
+    input.end();
+    await expect(running).resolves.toBe(0);
+  });
 });

@@ -2,8 +2,10 @@
  * acp/protocol — the ACP subset served by `zelari-code acp`.
  *
  * Agent Client Protocol front door for editors (Zed and any client that
- * speaks ACP): JSON-RPC 2.0 over stdio, framed LSP-style (see framing.ts).
- * Implemented by hand — ZERO new dependencies (P5).
+ * speaks ACP): JSON-RPC 2.0 over stdio as newline-delimited JSON (the ACP
+ * stdio spec — as spoken by Zed); LSP-style frames are also accepted and
+ * mirrored on output (see framing.ts). Implemented by hand — ZERO new
+ * dependencies (P5).
  *
  * ---------------------------------------------------------------------------
  * INBOUND (client -> agent)
