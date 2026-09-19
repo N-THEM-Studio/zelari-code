@@ -386,4 +386,16 @@ machine-readable report with a stable `schemaVersion` for Desktop/scripts.
 - Invocation: `/skill <id>`; master switch via config `enabledSkills` /
   `enabledTools`
 
+### `skills:check` (v2.53.0) — static validator
+
+`zelari-code skills:check` validates user `SKILL.md` files **without ever
+executing anything** (pure static analysis, mirrors the real loader rules):
+
+- Output: `{ok, lines:[{level, what}]}` — one line per finding (`error` /
+  `warning` / `info`)
+- Exit code `0` when `ok`, `1` otherwise — CI-friendly (`npm run skills:check
+  -- --path .zelari/skills` or plain `zelari-code skills:check`)
+- What it checks: frontmatter presence/shape, heading structure, guard test
+  compatibility (the no-exec rule is itself lock-tested)
+
 See also [GUIDA.md](./GUIDA.md) and [README](../README.md).

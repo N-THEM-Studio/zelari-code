@@ -533,7 +533,7 @@ All commands start with `/` and are typed in the TUI input bar.
 | Command | Description |
 |---|---|
 | `/report [--json] [--session <id>]` | End-of-session report from the spine: files touched, tool calls, verify outcomes, tokens/cost. `--json` for scripting, `--session` to replay another session. |
-| `/statusline` | Toggle/reorder built-in status line items; a custom item can run an external script (JSON on stdin, one sanitized line out, 1.5s timeout, fail-soft). |
+| `/statusline` | Toggle/reorder built-in status line items; a custom item can run an external script (JSON on stdin, one sanitized line out, 1.5s timeout, fail-soft). Built-in items include `verdict` (v2.53.0, opt-in): live verification progress like `3/12 · checks` while verify runs — green on PASS, red on BLOCKED, derive-only from the spine (kill-switch `ZELARI_VERDICT_FEED=0`). |
 
 #### Dispatch mode and phase
 
@@ -611,8 +611,9 @@ All commands start with `/` and are typed in the TUI input bar.
 
 | Command | Description |
 |---|---|
-| `/sessions` | List past sessions |
+| `/sessions` | Open the fuzzy session picker (filter by name/engine/cwd, multi-term AND match; `Enter` selects, resume via `/resume <id>`). `--list` keeps the plain textual list |
 | `/resume <id>` | Resume a session (takes effect at next start) |
+| `/inbox` | Pending `ask_user` questions derived from local session spines (cross-session, derive-only — nothing is persisted). Interrupted runs get a resume hint. Kill-switch: `ZELARI_INBOX=0` |
 | `/new` | New session |
 | `/clear` | Clear the visible transcript (session preserved) |
 | `/compact [--threshold N] [--keep N]` | Compact the JSONL transcript |
@@ -1108,7 +1109,8 @@ Kill switch: `ZELARI_SSH=0`.
 Every conversation is persisted as JSONL in `~/.zelari-code/sessions/<id>.jsonl`.
 
 ```
-/sessions          # list
+/sessions          # fuzzy picker (filter as you type)
+/sessions --list   # plain textual list
 /resume abc123     # set the session to resume
 /new               # new session
 /compact           # compact a long transcript
