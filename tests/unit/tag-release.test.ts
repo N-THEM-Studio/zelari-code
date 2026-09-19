@@ -51,6 +51,12 @@ function scaffold(): string {
   // Windows) every LF file would report as modified forever and the clean-tree
   // gate would refuse even a fresh scaffold.
   git(dir, ['config', 'core.autocrlf', 'false']);
+  // Persistent identity: the release script's own `git tag -a` does NOT
+  // inherit the fixture's inline `-c` flags, and CI runners have no global
+  // git identity — without this the annotated-tag gate dies on GitHub
+  // Actions (v2.50.0 lesson: green on Windows, red on ubuntu).
+  git(dir, ['config', 'user.name', 't']);
+  git(dir, ['config', 'user.email', 't@t']);
   git(dir, [...identity, 'add', '-A']);
   git(dir, [...identity, 'commit', '-m', 'scaffold']);
   return dir;
