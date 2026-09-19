@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.52.0] - 2026-09-19
+
+Post-release slice: two backlog steals from the mcode gap analysis shipped on `main` right after v2.51.0.
+
+### Added
+
+- **ctrl+O verbose tool output (TUI)** — global toggle revealing the full stored tool output (default view keeps the 8-line cap, `ZELARI_TOOL_OUTPUT_LINES` still applies when not verbose). Storage now keeps the body line-wise intact (the 8000-char bound is unchanged); truncation is display-only, so the toggle has real content to reveal. Applies to tool results finalized after the flip — the Ink `<Static>` scrollback is immutable by design, and an explicit system ack marks the switch. `formatToolResult` gains a `verbose` option; `ToolOutput`/`ChatStream` plumb it through. Covered by `tests/unit/cli-toolVerbose.test.ts`.
+- **`smoke:acp` in CI** — the ACP `initialize` roundtrip (LSP framing → `protocolVersion 1`) now runs from the built bundle on every push/PR in the 6-leg smoke matrix (ubuntu/macos/windows × Node 20/24), including the Node 20 floor. New `scripts/smoke-acp.mjs` + `npm run smoke:acp`.
+
 ## [2.51.0] - 2026-09-19
 
 Feature slice **mcode-steal** (plan tasks t112–t119): a gap analysis against [MiniMax mcode](https://github.com/MiniMax-AI/minimax-code) picked the four real gaps (ACP, runaway-guard, system-reminder, configurable status line) plus sandbox behaviors worth porting; everything already at parity or ahead (win32 jail, SQLite memory, skills, MCP) stayed untouched. Gate t119 before release: typecheck exit 0, 3413 tests green, build + bundle smoke, `verify:principles` PASS, ACP `initialize` roundtrip on the built bundle.
