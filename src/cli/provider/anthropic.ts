@@ -2,6 +2,10 @@
  * Anthropic Messages API stream (subscription OAuth or API key).
  */
 import type { ProviderDelta, ProviderStreamFn, AgentMessage } from '@zelari/core/harness';
+// M2.1/M2.2: the ephemeral trailing-context message (`<context-update>`) is what
+// tells this adapter where history ends and the new turn begins, so the second
+// cache breakpoint can pin the transcript instead of the churning tail.
+import { isTrailingContextContent } from '@zelari/core/skills';
 import {
   type OpenAICompatibleConfig,
   PROVIDER_CONNECT_TIMEOUT_MS,
@@ -97,27 +101,60 @@ function withRollingCacheBreakpoint(
   return msg;
 }
 
+/**
+ * Index of the ephemeral trailing-context message (M2.1) in the wire messages,
+ * or -1 when the request does not carry one (legacy layout / degraded paths).
+ * `splitMessages` keeps a plain string content for user messages, so the tag
+ * check is enough.
+ */
+function trailingContextIndex(messages: Array<Record<string, unknown>>): number {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const content = messages[i].content;
+    if (typeof content === 'string' && isTrailingContextContent(content)) return i;
+  }
+  return -1;
+}
+
 export function anthropicMessagesProvider(config: OpenAICompatibleConfig): ProviderStreamFn {
   return async function* (params): AsyncIterable<ProviderDelta> {
     const { systemParts, rest } = splitMessages(params.messages);
 
     // Explicit prompt-cache breakpoints (Anthropic-only mechanism; the
     // OpenAI-compatible path relies on automatic server-side caching).
-    // Two breakpoints of the four allowed:
-    //   1. last STABLE system block — caches tools + stable prompt prefix.
-    //      systemMessagesFromSplit emits [stable, volatile?] in that order,
-    //      so with 2+ system messages the stable boundary is the penultimate.
-    //   2. last conversation message — rolling prefix over the transcript.
+    //   1. stable system block — caches tools + stable prompt prefix. In the
+    //      M2.1 layout the system is a single block (stable only), so this
+    //      degenerates to `system[0]`; in the legacy layout the volatile
+    //      block sits after it, so the stable boundary is the penultimate one.
+    //   2. end of history + trailing context — the last STABLE block before the
+    //      new turn. With the M2.1 trailing layout that boundary is the
+    //      ephemeral `<context-update>` message, so the whole transcript stays
+    //      cached while workspace/RAG churn busts only the tail. When no
+    //      trailing message is present this is the last message, i.e. exactly
+    //      the pre-M2 rolling breakpoint (legacy layout: no regression).
+    //   3. rolling tail — the last message, so a multi-step tool loop keeps
+    //      extending the cached prefix instead of re-billing the tool results
+    //      it just appended. Skipped when it coincides with (2).
+    // Budget: at most 3 of the 4 breakpoints Anthropic allows. A breakpoint is
+    // only honoured above the model's minimum cacheable prefix (1k–2k tokens),
+    // which tools + system already exceed here.
     const ttlPref = resolvePromptCacheTtl();
     const cacheControl: Record<string, unknown> =
       ttlPref === '1h' ? { type: 'ephemeral', ttl: '1h' } : { type: 'ephemeral' };
 
+    const trailingIdx = trailingContextIndex(rest);
+    const rollingIndices = new Set<number>();
+    if (rest.length > 0) {
+      if (trailingIdx >= 0) rollingIndices.add(trailingIdx);
+      rollingIndices.add(rest.length - 1);
+    }
     const body: Record<string, unknown> = {
       model: params.model,
       max_tokens: 16_384,
       messages:
         rest.length > 0
-          ? rest.map((m, i) => (i === rest.length - 1 ? withRollingCacheBreakpoint(m, cacheControl) : m))
+          ? rest.map((m, i) =>
+              rollingIndices.has(i) ? withRollingCacheBreakpoint(m, cacheControl) : m,
+            )
           : rest,
       stream: true,
     };
