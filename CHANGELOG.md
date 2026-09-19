@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.53.0] - 2026-09-19
+
+Feature slice **openharness-steal** (plan tasks t120–t126): a gap analysis against [OpenHarness](https://github.com/autonomous-ai/openharness) (an agent orchestrator, not an agent) ported the patterns that fit our spine-first architecture and explicitly skipped the ones that don't (relay/E2EE multi-machine, tmux persistence, Flutter viewer — opposite architectural choices). Both new feeds are **derive-only** projections of the session spine: nothing new is persisted (ADR-0016/0024). Gate t126: typecheck exit 0, 208 tests on the new areas, full `src/` suite green, build + bundle smoke, `smoke:acp` PASS, `skills:check` from the built bundle PASS, `verify:principles` PASS.
+
+### Added — session UX (phase A)
+
+- **Fuzzy session picker (t120)** — `/sessions` is now a filterable `SelectList` picker (up/down + enter to resume via `/resume <id>`); multi-term AND-match over name+engine+cwd with deterministic ranking, pure `fuzzyMatch.ts`. The plain-text listing (and `--list`) output is preserved byte-for-byte, locked by tests.
+- **Waiting-on-you `/inbox` (t125)** — pending `ask_user` questions derived from local spine sessions (`tool.call` without a closing `tool.result`); `tool.interrupted` becomes a resume hint. Tolerant to corrupt session files; kill-switch `ZELARI_INBOX=0`.
+
+### Added — verification & skills tooling (phase B/C)
+
+- **Verdict-as-feed statusline chip (t124)** — derive-only projection from `verification.run` / `verification.evidence` spine events renders a live `3/12 · checks`-style chip in the StatusBar (PASS green / BLOCKED red). mtime-keyed cache so the spine is never re-parsed per repaint; opt-in via `/statusline on verdict`; kill-switch `ZELARI_VERDICT_FEED=0`.
+- **`skills:check` (t123)** — pure-static SKILL.md validator that mirrors the real loader without ever executing anything: `{ok, lines:[{level,what}]}`, exit 0/1, CI-friendly. A guard test proves the no-exec property.
+
+### Fixed — protocol hardening (phase A/B)
+
+- **Fail-loudly frame allowlist (t121)** — every frame type emitted by the code must be present in the companion/serve allowlist; a mismatch is a fatal error at harness-server startup (pre-connect), never a silent plaintext send. New `framePolicy.ts` with `EMITTED_FRAME_TYPES`.
+- **Terminal-frame invariants (t122)** — serve/ACP/headless streams end with exactly one terminal frame (`input_required` is terminal, not a held-open socket); payloads clamped at 64 KiB must carry `truncated: true` (never silent); error codes are stable strings (`ACP_ERROR_CODES` / `HEADLESS_ERROR_CODES`). Real bug fixed: a synchronous throw in the dispatcher left the ACP session wedged retrying `-32602` forever.
+
 ## [2.52.0] - 2026-09-19
 
 Post-release slice: two backlog steals from the mcode gap analysis shipped on `main` right after v2.51.0.
