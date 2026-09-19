@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.50.0] - 2026-09-19
+
+Custody release for the 2.37-NEXT plan: the "done" contract gets its end-to-end proof, release tags get a scope gate, and the M2 budget question gets an instrument. No product surface changes.
+
+### Added — plan 2.37 custodianship
+
+- **Mission e2e smoke (S2)** — `src/cli/headless/missionE2e.smoke.test.ts` (3 tests, in `npm run smoke:mission` and the default suite): a fixture `.zelari/plan.json` drives the real `dispatchHeadlessTurn` chain (mode `zelari`) into `runZelariMission` starting from `slice-mvp`, through a real `write_file`, to the strict mission-close gate. Deterministic, in-process, no LLM/network (injected `ProviderStreamFn`). RED path: failing verify command → `REPAIR_REQUIRED` → exit 4 (`STRICT_DONE_EXIT_CODE`); GREEN path: same fixture with the verify outcome flipped → PASS with spine-anchored evidence → exit 0; CONTROL: pack off + `--allow-unverified` → 0. Slice-from-plan asserted from the produced `.zelari/mission-state.json` artifact.
+- **Release scope gate (custody)** — `scripts/tag-release.mjs` gate 8: every release tag must declare `--scope=plan:<phase>` (`S0..S5|M1|M2`, ZELARI-2.37-NEXT.md §4) or `exception:<reason>` (§5); unknown flags and extra args fail with usage; the declaration travels in the annotated tag message (`release vX.Y.Z (scope: …)`) and is audited against the §10 scorecard. 4 new tests (7 total) on an aligned-repo fixture.
+- **Mission budget metrics (M2)** — `scripts/mission-metrics.mjs` (`npm run mission:metrics`): reads `.zelari/mission-state.json`, reports `cumulativeTokens`/`cumulativeCostUsd` and the `repairHistory` window (distinct gaps, unchanged repeats), and enforces the canonical mission caps (`ZELARI_MISSION_MAX_TOKENS`, `ZELARI_MISSION_MAX_COST`, `--max-repairs`): exit 0 within caps, exit 2 on breach or "not certifiable" (a defined cap with a missing number — M2.4, unknown ≠ pass), exit 1 on broken input. 6 deterministic tests. First real measurement (dogfood mission `m_134ee2d0`, 2026-08-17): 6/6 iterations, 15,405,715 tokens, $15.68, outcome `stopped` — recorded in the plan §10.
+
+### Changed
+
+- **Plan scorecard audited against the tree (§10)** — `ZELARI-2.37-NEXT.md` gains the observed-state scorecard: S0/S5 red (surface shipped anyway, now gated), M1 green, S2 green (this smoke), M2 green-instrumented, S1 closed by evidence (`--resume-mission` is store-authoritative by contract, no incident; reopen criteria and a known fire-and-forget spine-append debt documented). Audit corrections recorded: S3 was already green (GUIDA.md documents ADR-0024 amendment v1.2 two-channel contract) and the S0 label policy already lived in CONTRIBUTING § "Freeze delle superfici". `docs/RC_CHECKLIST.md` wires the plan into the release process (scope ack + mission metrics items).
+- **CONTRIBUTING** — Releases section documents the `--scope` ack, including the npm `--scope` separator caveat (`npm run tag-release -- vX.Y.Z --scope=…`).
+
+### Fixed
+
+- **Flaky git-heavy tests under parallel load** — `tests/unit/tag-release.test.ts` and `src/cli/kraken/krakenWorktree.rollback.test.ts` set an explicit `testTimeout: 60_000` (scaffolds run 1.6–2.8s each and exceeded the 5s default under ~20 parallel workers; both files pass in isolation). The tag-release fixture also commits its `verify-versions` stub and sets `core.autocrlf=false` in temp repos — on Windows the global autocrlf flag made every file look modified and tripped the clean-tree gate before the scope gate.
+- **Repair-window telemetry anomaly closed with evidence** — the dogfood mission that reported a zero repair window predates the feature: its `mission-state.json` has no `repairHistory` key at all, and `git log -S` dates the field to 2026-08-23 (F8), six days after that state was written. Verdict recorded in §10.
+
 ## [2.49.0] - 2026-09-19
 
 UI color pass across the terminal and Desktop: centralized color tokens, a restrained brand palette (cyan primary, magenta secondary), and a user-selectable accent color in Desktop settings. Chrome stays neutral; color lands only on identity and interaction surfaces.
