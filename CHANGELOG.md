@@ -5,7 +5,7 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.54.0] - 2026-09-19
 
 ### Added — prompt cache (cache hit-rate)
 
@@ -13,6 +13,7 @@ Feature slice **cache-hit-rate** (plan tasks t127–t132): the request prefix is
 
 - **Per-message usage telemetry (M1.1, t127)** — one `kind: 'message'` row per LLM call in `metrics.jsonl`, carrying the provider-verified `promptTokens` / `completionTokens` / `cachedPromptTokens` and the cache-aware `costUsd`; the headless path now persists usage at all (it logged compaction counters only) and drains the write queue before returning. New `budget/messageUsage.ts`, and the fields are typed on `MetricsRecord` instead of riding along as unknown keys. Best-effort by contract: telemetry never fails a turn.
 - **"prompt cache" section in `--doctor` (M1.2, t128)** — offline hit rate computed from those rows (overall + per provider/model), so the slice is measurable without a live session; no rows yet ⇒ WARN "no data", never a fake 0%. New `budget/cacheHitReport.ts`.
+- **Responses API cache telemetry (M1.3)** — `cachedPromptTokens` is now parsed from the Responses API usage shape (`input_tokens_details.cached_tokens`) by the shared normalizer, so `/cache stats` and `--doctor` report real hits on the chatgpt/muse profiles instead of a permanent 0%; the field is emitted only when non-zero, keeping usage event deltas stable for strict `toEqual` consumers.
 - **Cache-first prompt layout (M2.1, t129)** — `assembleRequestMessages()` seeds `[stable system][history][<context-update>…volatile…][new turn]`; the trailing message is EPHEMERAL (never entered in rolling history — otherwise the volatile segment would duplicate every turn — and dropped on the repair pass). Rollback: `ZELARI_PROMPT_LAYOUT=legacy` restores the pre-M2 shape, resolved once per process so a mid-session flip cannot re-shuffle the prefix.
 - **Anthropic cache breakpoints relocated (M2.2, t130)** — `cache_control` now marks the stable system block, the end of the stable transcript (the trailing context) and the rolling tail — 3 of the 4 breakpoints Anthropic allows — so an appended tool result extends the cached prefix instead of invalidating it.
 - **DeepSeek wire params frozen per session (M3.1, t132)** — `thinking` / `reasoning_effort` / the happy-path `tool_choice` are resolved once per provider instance instead of per call: the body can no longer flip mid-session and turn every later call into a full miss. The build-recovery `tool_choice: 'required'` override stays unfrozen on purpose (correctness > cache).
