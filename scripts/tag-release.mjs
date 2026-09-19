@@ -15,7 +15,8 @@
  * push `main` + the tag. This is the local mirror of the CI release gate
  * (release-gate.yml) that publish.yml / release-desktop.yml now call.
  *
- * Usage: node scripts/tag-release.mjs <version>   # X.Y.Z or vX.Y.Z
+ * Usage: node scripts/tag-release.mjs <version> --scope=plan:<phase>|exception:<reason>
+ *   <version>: X.Y.Z or vX.Y.Z.  <phase>: S0|S1|S2|S3|S4|S5|M1|M2 (ZELARI-2.37-NEXT.md §4/§5).
  */
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -39,10 +40,30 @@ function git(args, opts = {}) {
   });
 }
 
-// 1. Version argument (accept X.Y.Z or vX.Y.Z).
-const raw = process.argv[2];
+// 1. Arguments: version (X.Y.Z or vX.Y.Z) + --scope ack (validated at gate 8).
+const usage =
+  'usage: node scripts/tag-release.mjs <version> --scope=plan:<phase>|exception:<reason>\n' +
+  '  <version>   e.g. v2.45.1\n' +
+  '  --scope     what authorizes this tag, against ZELARI-2.37-NEXT.md §4/§5:\n' +
+  '              plan:S0|S1|S2|S3|S4|S5|M1|M2  — the content belongs to that plan phase\n' +
+  '              exception:<reason>             — written surface exception, recorded in the tag message';
+let raw;
+let scope;
+for (const a of process.argv.slice(2)) {
+  if (a.startsWith('--scope=')) scope = a.slice('--scope='.length);
+  else if (a.startsWith('--')) {
+    console.error(`[tag-release] unknown flag "${a}".`);
+    console.error(`[tag-release] ${usage}`);
+    process.exit(1);
+  } else if (raw === undefined) raw = a;
+  else {
+    console.error(`[tag-release] unexpected extra argument "${a}".`);
+    console.error(`[tag-release] ${usage}`);
+    process.exit(1);
+  }
+}
 if (!raw) {
-  console.error('[tag-release] usage: node scripts/tag-release.mjs <version>  (e.g. v2.45.1)');
+  console.error(`[tag-release] ${usage}`);
   process.exit(1);
 }
 const version = raw.replace(/^v/i, '');
@@ -115,14 +136,36 @@ log('running verify-versions on the exact commit…');
   if (res.status !== 0) process.exit(res.status ?? 1);
 }
 
-// 8. Create the annotated tag.
+// 8. Scope ack: every tag must declare what authorizes it — a plan phase (§4)
+//    or a written surface exception (§5). Declarations travel in the tag
+//    message and are audited against the scorecard (§10).
+const planMatch = scope ? /^plan:(S0|S1|S2|S3|S4|S5|M1|M2)$/.exec(scope) : null;
+const exceptionMatch = scope ? /^exception:(.+)$/.exec(scope) : null;
+const exceptionReason = exceptionMatch ? exceptionMatch[1].trim() : '';
+if (!planMatch && !exceptionReason) {
+  fail(
+    'missing or invalid --scope — every release tag must declare what authorizes it:\n' +
+      '[tag-release]   --scope=plan:S0|S1|S2|S3|S4|S5|M1|M2   content belongs to that phase (ZELARI-2.37-NEXT.md §4)\n' +
+      '[tag-release]   --scope=exception:<reason>            written surface exception (§5), recorded in the tag message\n' +
+      '[tag-release] declarations are audited against the scorecard in ZELARI-2.37-NEXT.md §10.',
+  );
+}
+if (planMatch) {
+  log(`scope: plan:${planMatch[1]} (authorized by ZELARI-2.37-NEXT.md §4).`);
+} else {
+  console.warn(
+    `[tag-release] scope EXCEPTION declared: ${exceptionReason} (recorded in the tag message; §10 audit).`,
+  );
+}
+
+// 9. Create the annotated tag (the scope declaration travels in the message).
 log(`tagging ${tag}…`);
 {
-  const t = git(['tag', '-a', tag, '-m', `release ${tag}`], { stdio: 'inherit' });
+  const t = git(['tag', '-a', tag, '-m', `release ${tag} (scope: ${scope})`], { stdio: 'inherit' });
   if (t.status !== 0) fail('git tag failed.');
 }
 
-// 9. Push main, then the tag.
+// 10. Push main, then the tag.
 log('pushing main…');
 {
   const p = git(['push', 'origin', 'main'], { stdio: 'inherit' });

@@ -284,3 +284,47 @@ S5  niente
 
 Fedeli = P1 sul **verdetto**, non solo sul log.  
 Seri = un test rosso che resta rosso, prima del prossimo ADR sullo store.
+
+---
+
+## 10. Stato osservato — audit @ `2.49.0`
+
+> Appendice post-facto (dopo 2.46.2). Non riscrive il foglio del 9 set: lo interroga.
+> Regola di lettura S0 adottata: conta come violazione solo il **chrome**; i fix di
+> **correttezza** (isolation sessioni 2.44, desync modelli 2.46.1) non sono "surface"
+> anche se vivono su Desktop.
+
+| Fase | Verdetto | Evidenza | Prossimo passo |
+|------|----------|----------|----------------|
+| S0 freeze | **ROSSA** (storica) | 2.42 workbench, 2.43 theme/yolo, 2.45 companion, 2.46.2 perf Desktop (CHANGELOG) sono passate senza eccezioni registrate. **Correzione audit:** la policy label esisteva già (CONTRIBUTING § Freeze superfici: `done-gate`/`spine`/`mission`/`surface` + exception scritta nel body) — S0.1 era già fatto; il delta mancante era il gate automatico, chiuso da `tag-release --scope` | ogni tag dichiara `--scope`; i tag 2.42–2.46 restano non autorizzati (storico, non riscrivibile) |
+| M1 morsa | **VERDE** | strict + pack ON default (ADR-0030; `verificationBridge.ts:75-79`, `nativeVerification.ts:63-67`); verifier cieco + memory solo PASS parseable (2.46.0 F3); hint K4 rimosso; `kind:'none'` → UNVERIFIED da 2.37.1 | — |
+| M2 pin | **VERDE sullo slice; tetto strumentato — PRIMA MISURA REALE registrata** | slice-from-plan pinnato dallo smoke (`.zelari/mission-state.json` `slice-mvp`); da 2.49.x `npm run mission:metrics` (`scripts/mission-metrics.mjs`, test `tests/unit/mission-metrics.test.ts` 6/6) legge `cumulativeTokens`/`cumulativeCostUsd`/finestra `repairHistory` e applica i cap canonici del loop (`ZELARI_MISSION_MAX_TOKENS`/`_MAX_COST`/`--max-repairs`; M2.4: cap definito + numero mancante → exit 2 "not certifiable") | **misurata @ 2.49.0** (dogfood `m_134ee2d0`, questo repo, via `mission:metrics`): `stopped` a 6/6 iter · **15.405.715 token / $15,68** con nessun tetto impostato — la missione ha bruciato l'intero budget senza done (lo scenario M2.3). Anomalia finestra repair = 0 — **CHIARITA con prova @ 2.49.x**: lo stato è del 2026-08-17, `repairHistory` è atterrato il 2026-08-23 (`git log -S`, commit `0033498` "budget-aware continuation", F8) → quella missione girava su una build senza la feature; non è un difetto del fingerprinting. Prossimo RC: missione con `ZELARI_MISSION_MAX_TOKENS` esplicito |
+| S1 single-write | **CHIUSA: non morso** | resume è store-authoritative *by contract* (`headless.ts:258` "not the spine"; `zelariMission.ts:295-311` legge solo `mission-state.json`); nessun incidente noto; la proiezione spine non ricostruisce `brief`/`userPrompt` senza eventi nuovi (`headlessSpine.ts:279-291` è inspect-only) | riaprire solo se: incidente reale di resume divergente, mission spine-only (es. Desktop senza store), o nuovo evento `mission.snapshot` |
+| S2 mission e2e | **VERDE (chiusa con questo audit)** | `npm run smoke:mission` → `src/cli/headless/missionE2e.smoke.test.ts` 3/3: RED→exit 4 / GREEN→exit 0 / controllo pack-off→0; RC_CHECKLIST spuntato | tenerla rossa in CI (entra in `npm test`) |
+| S3 graph docs | **VERDE (correzione audit @ 2.49.x)** | la sezione esisteva già ed è aggiornata al contratto vigente: `docs/GUIDA.md` § "Kraken Graph: two channels (spine + radio)" (envelope host-only, radio per-node con `detail`, replay combinato per `sessionId`) + § "Kraken Graph — DAG" (env, resume `last-graph.json`); ADR-0024 emendamento v1.2 (2026-09-09) conferma l'opzione A come contratto stabile | nessuno obbligatorio: il deepening per-node è dichiarato differito dall'ADR stesso |
+| S4 eval onesti | **VERDE presunta** | `eval:gate` in package.json; snapshot `eval/results` fuori dalla suite (2.46.1) | non regressare |
+| S5 niente altro | **ROSSA** | companion, gardener, theme, workbench, Desktop perf sono comunque arrivati | conseguenza di S0, non colpa separata |
+
+**Debito nuovo registrato:** gli eventi spine `mission.phase`/`mission.progress` sono
+fire-and-forget (`sessionSpine.ts:583-612`, `void append`) mentre lo store JSON è awaited:
+su crash l'audit spine può perdere eventi che il JSON ha già committato. Non è "il resume
+mente" (S1), è "l'audit può bucarsi". Fix quando si riapre S1 o al primo replay che manca
+una fase.
+
+**Custodia:** questo foglio torna referenziato (`docs/RC_CHECKLIST.md` § Piano & scope).
+Il gate ora esiste: `tag-release` richiede `--scope=plan:<fase §4>|exception:<motivo §5>`
+(gate 8: exit 1 senza dichiarazione, whitelist delle fasi, dichiarazione registrata
+nel messaggio del tag annotato, audit vs §10). Test: `tests/unit/tag-release.test.ts`
+**7/7 verdi, eseguiti** (rifiuto senza scope, whitelist `plan:<fase>`, tag con
+dichiarazione nel messaggio + push su origin, warning exception). Fix del fixture
+scoperto eseguendo: lo stub `verify-versions` va committato nel repo temp e
+`core.autocrlf=false` locale, altrimenti su Windows il gate clean-tree scatta prima.
+→ FATTO @ 2.49.x: ack di scope vs §4/§5 cablato in `tag-release` e verificato.
+
+**Igiene suite (post-audit):** `krakenWorktree.rollback.test.ts` (file non toccato
+dall'audit, flaky sotto carico pieno: 1,7–2,5s/test contro i 5s di default) riceve lo
+stesso rimedio già applicato a `tag-release.test.ts` — `vi.setConfig({ testTimeout:
+60_000, hookTimeout: 60_000 })`. Verificato: 4 file rilevanti in un run
+(rollback 3/3 + tag-release 7/7 + mission-metrics 6/6 + missionE2e 3/3) = **19/19**.
+Nota churn: `zelariMission.ts` è stato spostato (`src/cli/headless/` → `src/cli/`)
+dopo la suite verde dell'audit; lo smoke e2e non lo importa direttamente e sopravvive.

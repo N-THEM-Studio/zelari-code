@@ -33,7 +33,8 @@
 - [x] progress integration - continuation policy advisory, spine event `mission.progress` with recommendation/trend (F4, `packages/core/src/mission/continuationPolicy.ts`)
 - [x] interrupt/resume - mission run = real headless loop, resume via `resumeSessionId` (F11 covers kraken/council; full mission loop excluded from the smoke and documented)
 - [x] evidence-based completion - mission strict gate ON by default (ADR-0025); blocked -> `mission-strict-blocked` + exit 4 (F5)
-- [ ] **full mission e2e** (goal + completion gate + budget) - explicit backlog: it is not the resume/export surface of F14, to be added as a product smoke in beta
+- [x] **full mission e2e** (goal + completion gate; the iteration-budget stop-rule stays on the mission unit suite) - `npm run smoke:mission` (`src/cli/headless/missionE2e.smoke.test.ts`): hermetic, no network/LLM (injected provider stream on the REAL mission loop + strict gate). A fixture `.zelari/plan.json` (2 pending tasks) derives `slice-mvp` bound to those task ids, the slice earns its real write, the mission claims done -> RED (native pack command fails) **exit 4** / GREEN (same fixture and run, only the command outcome flipped) **exit 0**
+- [ ] **M2 ceiling measurement** (piano §Fase M2, M2.3/M2.4) - after a REAL mission run: `npm run mission:metrics` reports tokens/cost/repair-window from `.zelari/mission-state.json` vs the canonical ceilings (`ZELARI_MISSION_MAX_TOKENS` / `ZELARI_MISSION_MAX_COST` / `--max-repairs`; **exit 2** = over ceiling, or ceiling defined but state has no number — M2.4 unknown ≠ pass). Unit-pinned in `tests/unit/mission-metrics.test.ts`; first real measurement already recorded (piano §10 M2: dogfood `m_134ee2d0` → stopped 6/6, 15.4M tokens / $15.68, no ceiling set) — next RC runs it with `ZELARI_MISSION_MAX_TOKENS` explicit
 
 ## Desktop
 
@@ -59,6 +60,10 @@
 - [ ] **Dependabot graph-wide** - local root and Desktop audits at zero; the GitHub list to be confirmed with a token authorized for security alerts (current API: 403)
 - [x] macOS runner - the later Desktop workflow `v2.1.0` and the current CI completed correctly; infrastructure failure #46 overcome
 
+## Piano & scope (post-2.0)
+
+- [x] **scope check vs piano** - `tag-release` ora richiede `--scope=plan:<fase §4>|exception:<motivo §5>` (gate 8): rifiuta senza dichiarazione (exit 1, niente tag), accetta solo fasi whitelistate e registra la dichiarazione nel messaggio del tag annotato — audit contro la scorecard §10. Non è più solo un check manuale. Test: `tests/unit/tag-release.test.ts` **7/7 verdi, eseguiti** (fixture: stub committato + `core.autocrlf=false` nel repo temp)
+
 ---
 
 ## Verdict
@@ -66,4 +71,6 @@
 Exit-2 (native Verification 2.0) and Exit-3 (surface/docs/CI) are **closed
 and committed**.
 **2.0.0 ships the RC defaults.** Non-blocking leftovers: graph-wide dependabot
-(apps/desktop, mcps) and the full mission e2e (2.1 backlog).
+(apps/desktop, mcps). The full mission e2e has since landed as
+`npm run smoke:mission` (slice-from-plan + red -> exit 4 / green -> exit 0), so
+it is no longer a 2.1 backlog item.

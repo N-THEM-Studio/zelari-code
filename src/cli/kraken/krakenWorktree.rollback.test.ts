@@ -6,7 +6,7 @@
  * which a stubbed `git` could not observe. Every test starts from a fresh
  * module cache.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,6 +18,12 @@ import {
   type WorktreeHandle,
 } from '../tools/krakenWorktree.js';
 import { readKrakenRadio } from '../tools/krakenRadio.js';
+
+// Real-git fixtures (init + worktree + squash-merge per test): 1.5–2.5s solo,
+// but the default 5s testTimeout does not survive a full-suite run with ~20
+// parallel workers (observed flake, full suite 2026-09-19). Same remedy as
+// tests/unit/tag-release.test.ts — explicit budget for git-heavy tests.
+vi.setConfig({ testTimeout: 60_000, hookTimeout: 60_000 });
 
 function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-C', cwd, ...args], {
