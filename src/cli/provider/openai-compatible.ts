@@ -404,9 +404,10 @@ export function resolveActiveProvider(): ProviderName {
 
 /**
  * Extract the number of prompt tokens served from the provider's prompt
- * cache, normalizing across the two OpenAI-compatible reporting shapes:
+ * cache, normalizing across the three OpenAI-family reporting shapes:
  *   - OpenAI / xAI / GLM: `usage.prompt_tokens_details.cached_tokens`
  *   - DeepSeek:           `usage.prompt_cache_hit_tokens`
+ *   - Responses API:      `usage.input_tokens_details.cached_tokens`
  *
  * Prompt caching is automatic server-side for these providers — there is no
  * request-side `cache_control` to send (that is an Anthropic-only mechanism).
@@ -421,11 +422,13 @@ export function resolveActiveProvider(): ProviderName {
  */
 export function parseCachedPromptTokens(usage: {
   prompt_tokens_details?: { cached_tokens?: number };
+  input_tokens_details?: { cached_tokens?: number };
   prompt_cache_hit_tokens?: number;
 } | null | undefined): number {
   if (!usage || typeof usage !== 'object') return 0;
   const candidates = [
     usage.prompt_tokens_details?.cached_tokens,
+    usage.input_tokens_details?.cached_tokens,
     usage.prompt_cache_hit_tokens,
   ];
   for (const c of candidates) {

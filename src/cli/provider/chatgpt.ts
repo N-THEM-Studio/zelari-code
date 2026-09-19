@@ -10,6 +10,7 @@ import {
   readChunkWithTimeout,
 } from './openai-compatible.js';
 import { translateResponsesThinking } from '../thinking.js';
+import { parseCachedPromptTokens } from './openai-compatible.js';
 
 function headers(config: OpenAICompatibleConfig): Record<string, string> {
   const h: Record<string, string> = {
@@ -205,7 +206,13 @@ export function chatgptResponsesProvider(config: OpenAICompatibleConfig): Provid
               if (id) yield* flush(id);
             }
           } else if (type === 'response.completed') {
-            const usage = (ev.response as { usage?: Record<string, number> } | undefined)?.usage;
+            const usage = (
+              ev.response as {
+                usage?: Record<string, number> & {
+                  input_tokens_details?: { cached_tokens?: number };
+                };
+              } | undefined
+            )?.usage;
             if (usage) {
               yield {
                 kind: 'usage',
@@ -215,6 +222,7 @@ export function chatgptResponsesProvider(config: OpenAICompatibleConfig): Provid
                   totalTokens:
                     usage.total_tokens ??
                     (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
+                  cachedPromptTokens: parseCachedPromptTokens(usage),
                 },
               };
             }

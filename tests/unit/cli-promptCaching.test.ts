@@ -16,6 +16,19 @@ describe('parseCachedPromptTokens', () => {
     expect(parseCachedPromptTokens({ prompt_cache_hit_tokens: 987 })).toBe(987);
   });
 
+  it('reads the Responses API shape (input_tokens_details.cached_tokens)', () => {
+    expect(parseCachedPromptTokens({ input_tokens_details: { cached_tokens: 4567 } })).toBe(4567);
+  });
+
+  it('prefers prompt_tokens_details over the Responses/DeepSeek shapes', () => {
+    const usage = {
+      prompt_tokens_details: { cached_tokens: 100 },
+      input_tokens_details: { cached_tokens: 200 },
+      prompt_cache_hit_tokens: 300,
+    };
+    expect(parseCachedPromptTokens(usage)).toBe(100);
+  });
+
   it('returns 0 when no cache field is present', () => {
     expect(parseCachedPromptTokens({})).toBe(0);
     expect(parseCachedPromptTokens(undefined)).toBe(0);

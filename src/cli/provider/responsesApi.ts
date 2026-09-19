@@ -32,6 +32,7 @@ import {
 import { toInput } from './chatgpt.js';
 import { translateResponsesThinking } from '../thinking.js';
 import { capabilitiesFor } from './capabilities.js';
+import { parseCachedPromptTokens } from './openai-compatible.js';
 
 const RETRYABLE_STATUSES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504]);
 const MAX_RETRIES: number = (() => {
@@ -256,7 +257,13 @@ export function responsesApiProvider(config: OpenAICompatibleConfig): ProviderSt
               if (id) yield* flush(id);
             }
           } else if (type === 'response.completed') {
-            const usage = (ev.response as { usage?: Record<string, number> } | undefined)?.usage;
+            const usage = (
+              ev.response as {
+                usage?: Record<string, number> & {
+                  input_tokens_details?: { cached_tokens?: number };
+                };
+              } | undefined
+            )?.usage;
             if (usage) {
               yield {
                 kind: 'usage',
@@ -266,6 +273,7 @@ export function responsesApiProvider(config: OpenAICompatibleConfig): ProviderSt
                   totalTokens:
                     usage.total_tokens ??
                     (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0),
+                  cachedPromptTokens: parseCachedPromptTokens(usage),
                 },
               };
             }
