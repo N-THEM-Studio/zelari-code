@@ -464,6 +464,7 @@ See [`docs/plans/2026-07-01-council-workspace-cli-stubs.md`](./docs/plans/2026-0
 | [PRINCIPLES.md](./PRINCIPLES.md) | First principles (P1–P6) + enforcement map |
 | [docs/GUIDA.md](./docs/GUIDA.md) | **Full user guide** |
 | [docs/TOOLS.md](./docs/TOOLS.md) | Tool map (builtin, workspace, MCP, SSH, plan phase) |
+| [docs/CAPABILITIES.md](./docs/CAPABILITIES.md) | Capability matrix: shipped / experimental / planned, with in-tree evidence |
 | [docs/media/](./docs/media/) | English marketing stills + trailer |
 | [CONTRIBUTING.md](./CONTRIBUTING.md) | Dev setup, PR expectations |
 | [SECURITY.md](./SECURITY.md) | Vulnerability reporting |
