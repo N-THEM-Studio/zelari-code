@@ -18,11 +18,26 @@
  */
 import { activeJailMode, probeJailBackend, OS_JAIL_ENV } from '../safety/osJail.js';
 import { activePolicyLoadSurface, POLICY_LOAD_MODE_ENV } from '../safety/policyLoadMode.js';
+import { loadStatusLineConfig } from '../statusline/statuslineConfig.js';
 
 /** A one-line chip: what to show, and how honest it is (green = on, yellow = advisory). */
 export interface StatusChip {
   label: string;
   tone: 'green' | 'yellow';
+}
+
+/**
+ * t114: is this item part of the user's (or default) status-line order?
+ * Answers from the persisted config, so `/statusline off jail` hides the chip
+ * on the next repaint. Fail-soft: an unreadable config resolves the DEFAULT
+ * order — the bar never loses a chip because a pref file went missing.
+ */
+export function statusLineItemEnabled(id: string): boolean {
+  try {
+    return loadStatusLineConfig().items.includes(id);
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -71,7 +86,9 @@ export function cachedJailStatusChip(
 ): StatusChip | null {
   const key = jailChipKey(env, platform);
   if (chipCache && chipCache.key === key) return chipCache.chip;
-  const chip = jailStatusChip(env, platform);
+  // t114: the jail chip obeys the status-line configuration — a disabled item
+  // resolves to null (hidden) and is cached like any other resolution.
+  const chip = statusLineItemEnabled('jail') ? jailStatusChip(env, platform) : null;
   chipCache = { key, chip };
   return chip;
 }
