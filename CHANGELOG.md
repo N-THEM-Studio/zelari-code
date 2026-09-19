@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.50.1] - 2026-09-19
+
+Patch release: `v2.50.0` was tagged and pushed, but its CI run failed on ubuntu — the new tag-release guard tests passed on Windows (where a global git identity exists) and failed on the CI runner, where none does: the release script's `git tag -a` could not inherit the fixture's inline `-c user.*` flags, so the annotated-tag step died. The release gate held — npm was never touched — and `v2.50.0` remains an unpublished red tag (do not move it; see the v2.43.0 lesson).
+
+### Fixed
+
+- **tag-release test fixture** — `scaffold()` now persists `user.name`/`user.email` in the temp repo config, so both the fixture commits and the script's own annotated tag are deterministic on every runner. 7/7 green locally; this tag is the proof on CI.
+
 ## [2.50.0] - 2026-09-19
 
 Custody release for the 2.37-NEXT plan: the "done" contract gets its end-to-end proof, release tags get a scope gate, and the M2 budget question gets an instrument. No product surface changes.
