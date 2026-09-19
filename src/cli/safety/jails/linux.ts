@@ -14,8 +14,8 @@
  * whole namespace) — the degradation is documented here and in the args
  * builder comment, never hidden; the claims verdict still gates the tool.
  */
-import { existsSync } from 'node:fs';
 import type { JailBackend, JailProbeResult, JailSpec } from '../osJail.js';
+import { resolveExecutable } from './execPath.js';
 
 /** The launcher binary this backend requires. */
 export const BWRAP_BIN = 'bwrap';
@@ -34,17 +34,31 @@ export function findBinaryOnPath(bin: string, pathValue: string, exists: (p: str
   return null;
 }
 
-/** Pure probe decision (injectable platform/PATH/exists so tests run anywhere). */
+/**
+ * t116: runtime PATH lookup WITHOUT spawning `which`/`where` — the scan runs
+ * in-process through fs.access (jails/execPath), so probing the backend can
+ * never create a child of its own before the jail decision is made.
+ */
+export function scanPathForBwrap(pathValue: string): string | null {
+  return resolveExecutable(BWRAP_BIN, { env: { PATH: pathValue }, platform: process.platform });
+}
+
+/**
+ * Pure probe decision (injectable platform/PATH/exists so tests run anywhere).
+ * `scan` is the lookup strategy — the pure `exists`-based one by default, the
+ * fs.access scan (`scanPathForBwrap`) on the runtime path.
+ */
 export function linuxProbe(
   platform: string,
   pathValue: string,
   exists: (p: string) => boolean,
+  scan: (bin: string, pathValue: string) => string | null = (bin, pv) => findBinaryOnPath(bin, pv, exists),
 ): JailProbeResult {
   if (platform !== 'linux') {
     return { backend: 'bwrap', available: false, reason: `platform ${platform} is not linux` };
   }
   // Landlock note: intentionally NOT probed/claimed — see module docs.
-  const found = findBinaryOnPath(BWRAP_BIN, pathValue, exists);
+  const found = scan(BWRAP_BIN, pathValue);
   if (!found) {
     return {
       backend: 'bwrap',
@@ -79,7 +93,10 @@ export function buildBwrapArgs(spec: JailSpec, program: string, argv: readonly s
 
 export const linuxBackend: JailBackend = {
   id: 'bwrap',
-  probe: () => linuxProbe(process.platform, process.env.PATH ?? '', (p) => existsSync(p)),
+  // t116: the runtime probe scans PATH with fs.access (jails/execPath) — no
+  // `which`/`where` child is created just to resolve a binary.
+  probe: () =>
+    linuxProbe(process.platform, process.env.PATH ?? '', () => false, scanPathForBwrap),
   wrap: (spec, program, argv) => ({
     program: BWRAP_BIN,
     argv: buildBwrapArgs(spec, program, argv),

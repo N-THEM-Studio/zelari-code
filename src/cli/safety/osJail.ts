@@ -44,6 +44,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 import { activePolicyLoadMode } from './policyLoadMode.js';
+// t116: DENY-FIRST base env for the jailed child (see jails/baseEnv.ts).
+import { baseJailEnv, JAIL_FULL_ENV_ENV, jailFullEnvRequested } from './jails/baseEnv.js';
 import { darwinBackend } from './jails/darwin.js';
 import { linuxBackend } from './jails/linux.js';
 import { win32Backend } from './jails/win32.js';
@@ -181,6 +183,13 @@ export function setJailBackendForTests(backend: JailBackend | null): void {
 
 // ── JailSpec construction (same decision inputs — no second policy engine) ──
 
+/**
+ * t116 — deny-first environment for a jailed child, re-exported at the
+ * choke-point so callers/tests see ONE jail surface. See jails/baseEnv.ts for
+ * the allowlist rationale and the `ZELARI_JAIL_FULL_ENV=1` escape hatch.
+ */
+export { baseJailEnv, baseJailEnvKeys, JAIL_FULL_ENV_ENV, jailFullEnvRequested } from './jails/baseEnv.js';
+
 /** Spec-mandated default allowlist: today's exec tools inherited ALL of process.env. */
 export const BASE_ENV_ALLOWLIST: readonly string[] = [
   'PATH', 'HOME', 'USER', 'LANG', 'CI', 'TERM', 'NO_COLOR',
@@ -203,11 +212,19 @@ export function defaultEnvAllowlist(platform: string = process.platform): readon
   return platform === 'win32' ? [...BASE_ENV_ALLOWLIST, ...WIN32_ENV_ALLOWLIST] : BASE_ENV_ALLOWLIST;
 }
 
-/** Writable = root + tmpdir + ~/.zelari-code (deduped, case-folded on win32). */
+/**
+ * Writable = root + caller-supplied temp dir + ~/.zelari-code (deduped,
+ * case-folded on win32).
+ *
+ * t116: the temp dir is a REQUIRED parameter — the jail no longer derives a
+ * temp dir internally (an internally-derived `tmpdir()` silently widened the
+ * writable set behind the caller's back). Every call site passes the value it
+ * already resolved; `buildJailSpec` threads it from its own caller.
+ */
 export function defaultWritable(
   root: string,
-  home: string = homedir(),
-  tmp: string = tmpdir(),
+  home: string,
+  tmp: string,
   platform: string = process.platform,
 ): string[] {
   // All three entries go through the same resolution so that dedup is
@@ -225,18 +242,23 @@ export function defaultWritable(
 /**
  * Build a JailSpec. `network` defaults to the conservative deny; pass the
  * result of {@link networkSpecFromClaimHosts} to honor the claims decision.
+ * `tmp` is the caller's temp dir (t116): pass the one you resolved. The
+ * `tmpdir()` fallback exists only for pre-t116 call sites that never
+ * resolved one — it is NOT the intent, and a caller that passes `tmp`
+ * always wins.
  */
 export function buildJailSpec(opts: {
   root: string;
   network?: JailNetwork;
   envAllowlist?: readonly string[];
   writable?: readonly string[];
+  tmp?: string;
 }): JailSpec {
   return {
     root: path.resolve(opts.root),
     network: opts.network ?? { mode: 'deny' },
     envAllowlist: opts.envAllowlist ?? defaultEnvAllowlist(),
-    writable: opts.writable ?? defaultWritable(opts.root),
+    writable: opts.writable ?? defaultWritable(opts.root, homedir(), opts.tmp ?? tmpdir()),
   };
 }
 
@@ -318,10 +340,14 @@ export function decideJailSpawn(spec: JailSpec, input: DecideJailSpawnInput): Ja
   const mode = input.mode ?? activeJailMode();
   const merged: NodeJS.ProcessEnv = { ...(input.env ?? process.env), ...(input.envExtras ?? {}) };
   if (mode === 'off') return { action: 'spawn-plain', env: merged };
+  // t116: deny-first base env. The jail is active (even on the advisory
+  // fail-open path), so the child gets ONLY the boot-critical variables —
+  // `ZELARI_JAIL_FULL_ENV=1` restores the full inherited env explicitly.
+  const narrowed = baseJailEnv(merged);
   const probe = probeJailBackend();
   if (!probe.available) {
     if (mode === 'required') return { action: 'deny', reason: jailDenyReason(probe, mode) };
-    return { action: 'spawn-plain', env: sanitizeEnv(merged, spec.envAllowlist), notice: jailAdvisoryNotice(probe) };
+    return { action: 'spawn-plain', env: sanitizeEnv(narrowed, spec.envAllowlist), notice: jailAdvisoryNotice(probe) };
   }
   const wrapped = currentBackend().wrap(spec, input.program, input.argv);
   return {
@@ -329,7 +355,7 @@ export function decideJailSpawn(spec: JailSpec, input: DecideJailSpawnInput): Ja
     probe,
     program: wrapped.program,
     argv: wrapped.argv,
-    env: sanitizeEnv(merged, spec.envAllowlist),
+    env: sanitizeEnv(narrowed, spec.envAllowlist),
   };
 }
 
