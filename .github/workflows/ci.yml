@@ -143,6 +143,9 @@ jobs:
           npx tsc -p tsconfig.json
           node scripts/bundle-cli.mjs
           node bin/zelari-code.js --version
+          # ACP front door roundtrip (initialize -> protocolVersion 1) from
+          # the real bundle — protocol/framing regressions on every OS.
+          npm run smoke:acp
 
   # Alignment plan, phase 5: surface the app shells in PR CI instead of
   # discovering breakage after the release tag. Desktop regressions used
