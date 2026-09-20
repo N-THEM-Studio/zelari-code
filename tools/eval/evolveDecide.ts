@@ -31,6 +31,15 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { effectiveStatusById, type StoredProposal } from './evolvePropose.ts';
 import { behavioralVerdict, type BehavioralMetrics } from './behavioral.ts';
+import { type PromotionReceipt, receiptFromDecision } from './promotionReceipt.ts';
+
+/**
+ * WS7 slice 1 — promotion receipt (ADDITIVE: `status` keeps its own vocabulary).
+ * The SAME receipt the CI gate derives from summary.json, derived here from a
+ * decision record: `applied` → promote|canary (fail-closed: no ref/proof ⇒ hold),
+ * `rejected` → reject, `withdrawn` → hold. See tools/eval/promotionReceipt.ts.
+ */
+export { receiptFromDecision, type PromotionReceipt };
 
 export type DecisionStatus = 'applied' | 'rejected' | 'withdrawn';
 
@@ -50,6 +59,11 @@ export interface DecisionInput {
    * rejected by code (docs/EVALS.md #2) — see behavioral.ts.
    */
   behavior?: { baseline: BehavioralMetrics; variant: BehavioralMetrics; minRuns?: number };
+  /**
+   * WS7 slice 1: unified promotion receipt stamped on the record (optional —
+   * absent on every row written before this slice, which still parses).
+   */
+  promotion?: PromotionReceipt;
 }
 
 /** A decision record repeats the decided proposal's fields + the decision fields. */
@@ -59,6 +73,8 @@ export interface DecisionRecord extends StoredProposal {
   ref?: string;
   evidence?: string[];
   note?: string;
+  /** WS7 slice 1: unified promotion receipt for THIS decision (optional, additive). */
+  promotion?: PromotionReceipt;
   /** Marker distinguishing decision records from proposal records. */
   decision: true;
 }
@@ -66,7 +82,10 @@ export interface DecisionRecord extends StoredProposal {
 /**
  * Copy the LATEST record for the id (operator/surface/fingerprint/evidence/
  * rationale/patchHint/requiredValidation/createdAt) and override status +
- * decision fields. Pure: `decidedAt` arrives from the caller.
+ * decision fields. Pure: `decidedAt` arrives from the caller. WS7 slice 1: a
+ * receipt supplied by the caller is stamped; one inherited from the previous
+ * record is DROPPED — a new decision invalidates the old receipt (provenance is
+ * never laundered).
  */
 export function buildDecisionRecord(latest: StoredProposal, input: DecisionInput, decidedAt: string): DecisionRecord {
   const record: DecisionRecord = {
@@ -78,6 +97,8 @@ export function buildDecisionRecord(latest: StoredProposal, input: DecisionInput
   if (input.ref !== undefined) record.ref = input.ref;
   if (input.note !== undefined) record.note = input.note;
   record.evidence = [...(Array.isArray(input.evidence) ? input.evidence : [])];
+  if (input.promotion !== undefined) record.promotion = input.promotion;
+  else delete record.promotion;
   return record;
 }
 

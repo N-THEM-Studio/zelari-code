@@ -10,6 +10,7 @@ import { appendFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync, ex
 import path from 'node:path';
 import type { AnchorRunRecord } from './types.ts';
 import type { HarnessEvalResult } from './regressionGate.ts';
+import type { PromotionReceipt } from './promotionReceipt.ts';
 
 export interface EvalSummaryRecord {
   manifestHash: string;
@@ -17,6 +18,13 @@ export interface EvalSummaryRecord {
   gateDecision?: 'COMMIT' | 'REJECT';
   gateReasons?: string[];
   result: HarnessEvalResult;
+  /**
+   * WS7 slice 1: the unified promotion receipt derived from this row (ADDITIVE
+   * and optional — a summary.json written before this slice still parses).
+   * `receiptFromSummary` returns it verbatim when present. See
+   * tools/eval/promotionReceipt.ts.
+   */
+  promotion?: PromotionReceipt;
 }
 
 export class EvalResultStore {

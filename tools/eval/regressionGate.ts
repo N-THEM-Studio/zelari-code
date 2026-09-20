@@ -199,3 +199,18 @@ export function evaluateRegressionGate(input: {
   }
   return { result, decision: ok ? 'COMMIT' : 'REJECT', reasons, policy };
 }
+
+/**
+ * WS7 slice 1 — promotion receipt (ADDITIVE: the gate decision above is untouched).
+ * `receiptFromSummary` projects a summary row into the ONE receipt the evolution
+ * controller also reads; `promote` is fail-closed there (non-empty ref + one
+ * evidence entry per required validation), otherwise the receipt degrades to
+ * `hold` with an explicit reason. See tools/eval/promotionReceipt.ts.
+ */
+export {
+  MIN_PROMOTION_EVIDENCE,
+  receiptFromSummary,
+  type PromotionReceipt,
+  type ReceiptInput,
+  type SummaryReceiptSource,
+} from './promotionReceipt.ts';
