@@ -211,7 +211,7 @@ async function shutdown(): Promise<void> {
  * these print to stdout and exit, leaving the TTY untouched.
  */
 function pickRootComponent(): {
-  kind: "wizard" | "app" | "headless" | "done" | "serve" | "harness-server" | "acp" | "plugin";
+  kind: "wizard" | "app" | "headless" | "done" | "serve" | "harness-server" | "acp" | "plugin" | "replay" | "session";
   element?: React.ReactElement;
   headlessOpts?: Parameters<typeof runHeadless>[0];
   serveOpts?: import("./companion/serve.js").ServeOptions;
@@ -326,6 +326,20 @@ function pickRootComponent(): {
   // import in main(), same shape as acp / skills:check).
   if (argv[0] === "plugin") {
     return { kind: "plugin" };
+  }
+  // WS7 slice 2 (t140): the session-spine commands. `replay` re-reads one log
+  // through the pure projections (tool calls, verify debt, decision events);
+  // `session validate` reports the tolerant reader's ReplayIssues and OWNS the
+  // verdict (exit 1 on a dirty spine). First-positional matches for the same
+  // reason as acp/plugin — a task prompt containing the word "replay" must not
+  // hijack the TUI — and both parse their own flags once main() imports them.
+  // Neither mounts Ink, runs preflight or touches the network: they are
+  // read-only diagnostics over the spine they were asked about.
+  if (argv[0] === "replay") {
+    return { kind: "replay" };
+  }
+  if (argv[0] === "session") {
+    return { kind: "session" };
   }
   // t29 (Pilastro B): long-lived harness kernel over stdio NDJSON. Same
   // host discipline as --serve: no TUI, no preflight, transport owns
@@ -639,6 +653,13 @@ function pickRootComponent(): {
         "  acp                 Agent Client Protocol server on stdio (editors, e.g.\n" +
         "                      Zed): LSP-style framed JSON-RPC. Subcommand flags:\n" +
         "                      --cwd <path> | --provider <id> | --model <id> | --help\n" +
+        "  replay [<sessionId>]  Replay a session spine READ-ONLY: tool calls,\n" +
+        "                      verify debt, decision events (permission asks and\n" +
+        "                      denials, auto-approvals, jail blocks, ask_user,\n" +
+        "                      verify requests). --json prints the full projection\n" +
+        "  session validate [<id>]  Report the tolerant reader's ReplayIssues\n" +
+        "                      (corrupt lines, seq gaps, unknown kinds) with line\n" +
+        "                      and seq; exit 1 when the spine is not clean\n" +
         "  --print-config      Print provider/model config as JSON (no secrets)\n" +
         "  --print-settings    Print zelari.config.json values + the origin of\n" +
         "                      each (default < user < project < env)\n" +
@@ -1416,6 +1437,28 @@ function main() {
         // eslint-disable-next-line no-console
         console.error(
           `[zelari-code plugin] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      });
+    return;
+  }
+
+  // `zelari-code replay [<sessionId>] [--json]` and `zelari-code session …`:
+  // read-only spine diagnostics (WS7 slice 2). Same host discipline as plugin —
+  // no TUI, no preflight, stdout carries the report and stderr the diagnostics;
+  // the command RETURNS its exit code so tests can assert it.
+  if (picked.kind === "replay" || picked.kind === "session") {
+    const load =
+      picked.kind === "replay"
+        ? import("./commands/replay.js").then(({ runReplayCommand }) => runReplayCommand)
+        : import("./commands/session.js").then(({ runSessionCommand }) => runSessionCommand);
+    void load
+      .then((run) => run(process.argv.slice(2)))
+      .then((code) => process.exit(code))
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[zelari-code ${picked.kind}] ${err instanceof Error ? err.message : String(err)}`,
         );
         process.exit(1);
       });

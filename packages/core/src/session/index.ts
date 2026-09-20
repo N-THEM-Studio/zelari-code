@@ -12,6 +12,8 @@ export * from './agentAdapter.js';
 export * from './writer.js';
 export * from './replay.js';
 export * from './replayCache.js';
+export * from './decisionEvents.js';
+export * from './verifyDebt.js';
 export * from './store.js';
 export * from './lineage.js';
 export * from './exportSession.js';

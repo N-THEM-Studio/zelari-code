@@ -11,8 +11,10 @@ import {
   SessionEventEnvelopeSchema,
   type SessionEventEnvelope,
 } from './types.js';
-import { deriveMessages, type DerivedMessage } from './modelSurface.js';
+import { deriveMessages, pairToolCalls, type DerivedMessage } from './modelSurface.js';
 import { classifyInterruptedTools, type ToolInterrupted } from './recovery.js';
+import { parseDecisionEvent, type DecisionEventSummary } from './decisionEvents.js';
+import { projectVerifyDebts, type VerifyDebtSummary } from './verifyDebt.js';
 
 export type ReplayIssueType =
   | 'corrupt-line'
@@ -140,6 +142,48 @@ export interface SessionProjection {
   interruptedTools: ToolInterrupted[];
   /** WS1 (t133): pre-dispatch permission denials, in log order. */
   permissionDenials: PermissionDenialSummary[];
+  /**
+   * WS7 slice 2 (t140): every decision point on this spine, in log order —
+   * the five new decision kinds plus `permission.denied` (see
+   * decisionEvents.ts for why the two lists are one aggregate).
+   */
+  decisionEvents: DecisionEventSummary[];
+  /** K1.5/F5 (t78): verify-debt slots, open + cleared, in first-open order. */
+  verifyDebts: VerifyDebtSummary[];
+  /** Per-tool tally over `tool.call` / `tool.result` (row order = first call). */
+  toolCallBreakdown: ToolCallTally[];
+}
+
+/** One tool's call/result counters, as replay shows them. */
+export interface ToolCallTally {
+  tool: string;
+  calls: number;
+  results: number;
+}
+
+/**
+ * Per-tool tally. A `tool.result` on a REAL spine carries only
+ * `{callId, output, ok, durationMs}` — NOT the tool name (verified on a live
+ * 938-event session log) — so results are attributed through `pairToolCalls`
+ * (the same callId rule the model surface and recovery use). A result whose
+ * call is not on this spine (a resumed log can start mid-turn) cannot be
+ * attributed and is not counted here; the aggregate `toolCalls`/`toolResults`
+ * counters still count it. Rows are ordered by calls desc, then name.
+ */
+function tallyToolCalls(events: readonly SessionEventEnvelope[]): ToolCallTally[] {
+  const byTool = new Map<string, ToolCallTally>();
+  const slot = (tool: string): ToolCallTally => {
+    const found = byTool.get(tool) ?? { tool, calls: 0, results: 0 };
+    byTool.set(tool, found);
+    return found;
+  };
+  for (const pair of pairToolCalls(events)) {
+    const tool = typeof pair.call.data.tool === 'string' ? pair.call.data.tool : '';
+    if (tool.length === 0) continue;
+    slot(tool).calls += 1;
+    if (pair.result !== undefined) slot(tool).results += 1;
+  }
+  return [...byTool.values()].sort((a, b) => b.calls - a.calls || a.tool.localeCompare(b.tool));
 }
 
 /**
@@ -202,6 +246,9 @@ export function buildProjection(events: readonly SessionEventEnvelope[], issues:
     issues,
     interruptedTools: classifyInterruptedTools(events),
     permissionDenials: [],
+    decisionEvents: [],
+    verifyDebts: projectVerifyDebts(events),
+    toolCallBreakdown: tallyToolCalls(events),
   };
   for (const e of events) {
     switch (e.kind) {
@@ -244,6 +291,19 @@ export function buildProjection(events: readonly SessionEventEnvelope[], issues:
         break;
       case 'permission.denied':
         projection.permissionDenials.push(parsePermissionDenial(e));
+        // …and it IS a decision point: the WS1 denial joins the aggregate too
+        // (its dedicated field stays for back-compat consumers — see
+        // DECISION_PROJECTION_KINDS).
+        projection.decisionEvents.push(parseDecisionEvent(e));
+        break;
+      // WS7 slice 2 (t140): decision points. Listed explicitly (not a `default`
+      // guard) so "who replays ask_user.fired?" answers itself by grep.
+      case 'permission.asked':
+      case 'auto_approve.granted':
+      case 'jail.blocked':
+      case 'ask_user.fired':
+      case 'verify.requested':
+        projection.decisionEvents.push(parseDecisionEvent(e));
         break;
     }
   }

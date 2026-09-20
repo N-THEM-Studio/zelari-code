@@ -107,6 +107,21 @@ export const SESSION_EVENT_KINDS = [
   // Additive kind — no SCHEMA_VERSION bump (ADR-0021): older readers report
   // schema-mismatch and skip via tolerant replay; deriveMessages ignores it.
   'permission.denied',
+  // WS7 slice 2 (t140): DECISION-POINT telemetry — the five questions a shadow
+  // replay must be able to ask of a past session ("was the operator asked? was
+  // the call auto-approved instead? did the OS jail block the spawn? did the
+  // model STOP to ask the user? was a verify requested?"). State-only (never
+  // model-surface): they RECORD a decision the harness already took, they never
+  // feed it back into the loop. Payload contracts live in decisionEvents.ts
+  // (zod, per kind); projections land on SessionProjection.decisionEvents.
+  // Additive kinds — no SCHEMA_VERSION bump (ADR-0021), same tolerant-replay
+  // path as every kind above: an older reader reports schema-mismatch, skips
+  // the line, and still replays the rest of the spine.
+  'permission.asked',
+  'auto_approve.granted',
+  'jail.blocked',
+  'ask_user.fired',
+  'verify.requested',
   'note',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];
