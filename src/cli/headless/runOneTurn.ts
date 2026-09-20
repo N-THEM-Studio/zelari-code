@@ -47,6 +47,10 @@ import { honestUnevaluatedPayload } from '../kraken/verifyHonestVerdict.js';
 // t78 (ADR-0033 slice): runtime general⇒verify obligation on the task tool path.
 import { hydrateTaskVerifyDebtFromSpine, outcomeMemoryAllowed, taskVerifyObligation } from '../tools/taskTool.js';
 import { bindVerifyDebtSpineEmit, flushVerifyDebtSpine, formatHeadlessVerifyDebtNotice } from '../tools/verifyDebtSpine.js';
+// WS7 slice 4b (t139): the tool-side session sink (ToolContext.emitSessionEvent)
+// bound to THIS run's spine, so file.* telemetry and the permission/decision
+// events stop being dormant on the headless host path.
+import { lateSessionSink, spineSessionSink, type LateSessionSinkHolder } from '../safety/sessionSink.js';
 import { writeCompletionProofDetailed } from '../kraken/completionProof.js';
 import { enforceRequiredProofPersistence } from '../kraken/completionProofPersist.js';
 import { promoteOpsKnowledgeSafe, skippedOpsKnowledgeResult, type OpsKnowledgeResult } from '../memory/opsKnowledge.js';
@@ -305,8 +309,18 @@ export async function runOneTurn(
   // --permissions yolo (full allow), ZELARI_AUTO=1 (auto-allow ask rules),
   // ZELARI_PERMISSION_EXECUTE=deny (hard lockdown).
   const { defaultPermissionPolicy } = await import('../safety/toolPermissions.js');
+  // WS7 slice 4b (t139): this turn's tool-side session sink. The spine writer is
+  // opened a few lines BELOW (`openHeadlessSpine`) while the registry — and the
+  // tools the harness will dispatch through it — are built HERE, so the sink is
+  // late-bound through a holder (same pattern as `spineHolder` for memory
+  // telemetry). Before the binding runs, tools see no sink and emit nothing;
+  // after it, file.* telemetry and the decision events (permission.denied /
+  // permission.asked / auto_approve.granted / jail.blocked) land on THIS run's
+  // spine, where replay and `buildProjection` can see them.
+  const toolSpineSink: LateSessionSinkHolder = {};
   const { registry: toolRegistry } = createBuiltinToolRegistry({
     root: cwd,
+    sessionEventSink: lateSessionSink(toolSpineSink),
     onTentacleEvent: (ev) => emitEvent(ev as Parameters<typeof emitEvent>[0]),
     planMode: planModeFromOpts(opts),
     gauntletParent: Boolean(opts.gauntlet) && !planModeFromOpts(opts),
@@ -359,6 +373,10 @@ export async function runOneTurn(
   // K1.5 / F5: bind debt emit to this turn's spine, then merge un-cleared
   // opens from the log (do not wipe — callers/tests may have seeded debt).
   bindVerifyDebtSpineEmit(async (input) => ({ seq: await spine.appendEvent(input) }));
+  // WS7 slice 4b (t139): now that the spine exists, make the tool-side sink live
+  // for the rest of the turn. Same writer as the debt emit above — one spine, one
+  // seq sequence, no second log.
+  toolSpineSink.current = spineSessionSink(spine);
   // Fresh sessions have no prior debt; only `--resume` must replay the log
   // (and must not race the just-opened writer on win32).
   if (opts.resumeSessionId) {

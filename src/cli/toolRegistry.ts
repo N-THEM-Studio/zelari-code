@@ -141,6 +141,9 @@ import { wrapWithBashWriteDetection } from './tools/bashWriteWatch.js';
 import { appendKrakenRadio } from './tools/krakenRadio.js';
 import { withResultCache } from './toolResultCache.js';
 import { inspectCommand } from './safety/selfKillGuard.js';
+// WS7 slice 4b (t139): the ONE binding that makes ToolContext.emitSessionEvent
+// live on a real host path (see safety/sessionSink.ts for the full WHY).
+import { withSessionEventSink, type SessionToolSink } from './safety/sessionSink.js';
 import type { ExtensionRegistry, LifecycleHookRunner } from '@zelari/core/harness';
 import type {
   ToolDefinition,
@@ -304,6 +307,15 @@ export interface CreateRegistryOptions {
    * registry builder.
    */
   extensions?: ExtensionRegistry | null;
+  /**
+   * WS7 slice 4b (t139): the turn's session-spine sink. When present it is
+   * injected as `ToolContext.emitSessionEvent` on EVERY registered tool (see
+   * safety/sessionSink.ts), making file.* telemetry and the decision events
+   * (permission.denied / permission.asked / auto_approve.granted / jail.blocked
+   * / ask_user.fired) land on the spine of a REAL turn. Omitted ⇒ the registry
+   * behaves exactly as before (tools see no sink and skip telemetry).
+   */
+  sessionEventSink?: SessionToolSink;
   /** Native project memory shared by task-tool tentacles. */
   memoryService?: MemoryService;
   memoryAutoWrite?: boolean;
@@ -805,6 +817,11 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
           ...(options.onPermissionAsk ? { onPermissionAsk: options.onPermissionAsk } : {}),
           ...(options.subAgentProvider ? { provider: options.subAgentProvider } : {}),
           ...(options.subAgentModel ? { model: options.subAgentModel } : {}),
+          // WS7 slice 4b (t139): a tentacle's own registry is built here, so it
+          // needs the parent turn's sink too — otherwise a tentacle's file.applied
+          // / file.rejected (and its permission refusals) would stay invisible on
+          // the very spine that recorded its `task` spawn.
+          ...(options.sessionEventSink ? { sessionEventSink: options.sessionEventSink } : {}),
         }),
         ...(options.memoryService ? { memoryService: options.memoryService } : {}),
         ...(options.memoryAutoWrite !== undefined
@@ -906,6 +923,25 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
         const def = registry.get(name);
         if (def) registry.register(wrapExtPre(def));
       }
+    }
+  }
+
+  // WS7 slice 4b (t139): populate `ToolContext.emitSessionEvent` for EVERY
+  // registered tool, applied LAST (outermost) so the sink reaches the
+  // permission gate, the sandbox, the jail preflight and the tool body alike.
+  // WHY the host-side injection exists at all: both hosts hand this registry to
+  // `AgentHarness`, whose dispatch calls
+  // `registry.invoke(name, args, { cwd, sessionId, signal })` — the harness
+  // forwards NO host sink into the invoke options (AgentHarness.ts:839/1848).
+  // That one missing hop is why the whole tool-side telemetry surface (ADR-0033
+  // file.*, WS1 permission.denied, the WS7 slice-4 decision events) was dormant
+  // in production while its tests passed (they hand-build a ToolContext).
+  // No sink ⇒ no wrap: a registry built without one is byte-identical to before.
+  if (options.sessionEventSink) {
+    const sessionSink = options.sessionEventSink;
+    for (const name of registry.list()) {
+      const def = registry.get(name);
+      if (def) registry.register(withSessionEventSink(def, sessionSink));
     }
   }
 
@@ -1096,8 +1132,19 @@ export function createKrakenSubAgentContextFactory(opts: {
    * user had already approved the parent `task` spawn.
    */
   onPermissionAsk?: PermissionAskHandler;
+  /**
+   * WS7 slice 4b (t139): the parent turn's session sink, forwarded to the
+   * tentacle's registry so its tools emit on the SAME spine (see
+   * safety/sessionSink.ts). Optional by contract: callers that spawn tentacles
+   * outside a turn that owns a sink — the `/kraken graph` slash handler, the
+   * `--kraken-graph` executor path in runHeadless, the CSV fanout slash handler
+   * and the gauntlet loop — simply omit it and their tentacles' tool-side
+   * telemetry stays dormant, exactly as it is today (documented debt, not a
+   * silent half-wiring).
+   */
+  sessionEventSink?: SessionToolSink;
 }): TaskToolDeps['createSubAgentContext'] {
-  const { root, audit, sessionId, provider: providerOverride, model: modelOverride, parentPolicy, onPermissionAsk } = opts;
+  const { root, audit, sessionId, provider: providerOverride, model: modelOverride, parentPolicy, onPermissionAsk, sessionEventSink } = opts;
   return async ({ agent, cwd: subCwd, thinkingEffort }) => {
     const cfg = providerOverride
       ? await providerConfigFor(providerOverride as ProviderName)
@@ -1171,6 +1218,9 @@ export function createKrakenSubAgentContextFactory(opts: {
       ...(onPermissionAsk ? { onPermissionAsk } : {}),
       // P0.5: the tentacle's agent identity drives per-agent policy rules.
       policyAgent: agent,
+      // WS7 slice 4b (t139): inherit the parent turn's spine sink (absent ⇒
+      // the tentacle's tools emit nothing, i.e. today's behavior).
+      ...(sessionEventSink ? { sessionEventSink } : {}),
     });
     const wrapTentacleStream = (
       primary: ReturnType<typeof buildProviderStream>,

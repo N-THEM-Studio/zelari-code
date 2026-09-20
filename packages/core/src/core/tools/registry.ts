@@ -2,6 +2,7 @@ import { zodToJsonSchema } from './zodBridge.js';
 import type { LifecycleHookRunner } from '../hooks/index.js';
 import { spillToolOutput } from './toolOutputSpill.js';
 import { typedErr, type ToolDefinition, type ToolContext, type TypedResult } from './toolTypes.js';
+import type { SessionEventInput } from '../../session/types.js';
 import type { ToolFingerprint } from '../../runtime/fingerprints.js';
 
 export { spillToolOutput, resolveToolOutputDir, isToolSpillEnabled } from './toolOutputSpill.js';
@@ -13,6 +14,22 @@ export interface InvokeOptions {
   sessionId?: string;
   /** Optional tool name for spill file naming (defaults to invoked name). */
   toolName?: string;
+  /**
+   * WS7 slice 4b (t139): optional session-spine sink, forwarded verbatim to
+   * `ToolContext.emitSessionEvent` for the duration of this ONE call. Additive
+   * and optional by contract — omitting it leaves the ctx byte-identical to
+   * before, and every consumer of those emitters already treats a missing sink
+   * as "record nothing" (file.* telemetry, permission/decision events).
+   *
+   * WHY an invoke option and not a registry field: the sink is per-turn (one
+   * session writer per turn) and travels with the CALL. Hosts that own the
+   * dispatch — tests, the Electron/legacy callers, any future non-harness
+   * plumbing — hand it in here. The CLI cannot: `AgentHarness` sits between its
+   * hosts and `invoke` and forwards no host sink, so the CLI populates this SAME
+   * ctx field in its own outermost tool wrapper instead (see
+   * `src/cli/safety/sessionSink.ts`).
+   */
+  emitSessionEvent?: (input: SessionEventInput) => Promise<unknown>;
 }
 
 export interface TruncateToolResultOptions {
@@ -277,6 +294,11 @@ export class ToolRegistry {
       cwd: options.cwd ?? process.cwd(),
       audit: () => { /* audit log injected externally */ },
       sessionId: options.sessionId ?? 'default',
+      // WS7 slice 4b (t139): additive-optional. Present ONLY when the caller
+      // passed a sink, so an invoke without it produces the exact ctx it always
+      // did (field absent, not undefined-valued). Tools and wrappers read it as
+      // `ctx.emitSessionEvent` and skip telemetry when it is missing.
+      ...(options.emitSessionEvent ? { emitSessionEvent: options.emitSessionEvent } : {}),
     };
 
     // v0.10.0: PreToolUse lifecycle hooks — deny blocks the tool.

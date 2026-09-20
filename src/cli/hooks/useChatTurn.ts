@@ -24,6 +24,10 @@ import { createBuiltinToolRegistry } from "../toolRegistry.js";
 import { KrakenTurnRuntime } from "../kraken/turnRuntime.js";
 import { outcomeMemoryAllowed, hydrateTaskVerifyDebtFromSpine, resetTaskSpawnCount, resetTaskVerifyObligation, taskVerifyObligation } from "../tools/taskTool.js";
 import { bindVerifyDebtSpineEmit, flushVerifyDebtSpine, formatTuiVerifyDebtNotice } from "../tools/verifyDebtSpine.js";
+// WS7 slice 4b (t139): bind the turn's spine to the tool-side sink
+// (ToolContext.emitSessionEvent) so file.* telemetry and the permission/decision
+// events stop being dormant on the TUI host path.
+import { spineSessionSink, type SessionToolSink } from "../safety/sessionSink.js";
 import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from "../kraken/candidateRegistry.js";
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from "../kraken/metrics.js";
 import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
@@ -230,9 +234,18 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       // strict-done gate still sees turn-N debt at turn N+1.
       await flushVerifyDebtSpine();
       resetTaskVerifyObligation(sessionId);
+      // WS7 slice 4b (t139): the tool-side session sink for THIS turn. Captured
+      // here — where the spine is already bound for verify-debt — and handed to
+      // `createBuiltinToolRegistry` below, which injects it into every tool's
+      // ToolContext (safety/sessionSink.ts explains why the host must do this:
+      // AgentHarness never forwards a host sink into the invoke options). Same
+      // writer as the debt emit right below — one spine, one seq sequence.
+      // No spine ⇒ no sink ⇒ tools skip telemetry, exactly as before.
+      let toolSpineSink: SessionToolSink | undefined;
       {
         const spine = writerRef.current?.spine;
         if (spine) {
+          toolSpineSink = spineSessionSink(spine);
           bindVerifyDebtSpineEmit(async (input) => {
             const seq = await spine.appendEvent(input);
             return { seq };
@@ -460,6 +473,10 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           permissionPolicy: defaultPermissionPolicy(),
           ...(memoryService ? { memoryService } : {}),
           memoryAutoWrite,
+          // WS7 slice 4b (t139): the turn's spine, injected as
+          // ToolContext.emitSessionEvent on every registered tool (and inherited
+          // by the tentacle registries this one builds).
+          ...(toolSpineSink ? { sessionEventSink: toolSpineSink } : {}),
         });
         // Fase 2 (ADR-0020): per-turn progress projection (sparse phase events).
         // The dedicated UI chip ships with the selection phases; for now the
