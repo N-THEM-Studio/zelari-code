@@ -1,0 +1,29 @@
+{
+  "$comment": "WS6 example plugin bundle (format v1). Every declared path is relative to this directory and validated by `zelari-code plugin validate examples/extensions/zelari-plugin-example`. Nothing here is installed, executed or fetched by validation.",
+  "formatVersion": 1,
+  "name": "zelari-plugin-example",
+  "version": "1.0.0",
+  "description": "Reference bundle: one SKILL.md, one observer hook and one stdio MCP server.",
+  "skills": [
+    {
+      "id": "repo-hygiene",
+      "path": "skills/repo-hygiene/SKILL.md"
+    }
+  ],
+  "hooks": [
+    {
+      "event": "PermissionRequest",
+      "path": "hooks/permission-observer.json",
+      "config": {
+        "timeoutMs": 2000
+      }
+    }
+  ],
+  "mcp": [
+    {
+      "name": "echo-example",
+      "command": "node",
+      "args": ["mcp/echo-mcp.mjs"]
+    }
+  ]
+}

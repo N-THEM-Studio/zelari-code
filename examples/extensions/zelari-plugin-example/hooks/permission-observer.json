@@ -1,0 +1,10 @@
+{
+  "$comment": "A hook DEFINITION file, exactly the format `<project>/.zelari/hooks/*.json` uses (HookDefinition in @zelari/core/harness). Loaded by the bundle via hooks[].path; the bundle manifest may only OVERRIDE `timeoutMs`/`cwd`, never the command.",
+  "name": "zelari-plugin-example-permission-observer",
+  "match": {
+    "tools": ["*"],
+    "events": ["PermissionRequest"]
+  },
+  "command": "node hooks/permission-observer.mjs",
+  "timeoutMs": 5000
+}

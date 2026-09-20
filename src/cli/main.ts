@@ -211,7 +211,7 @@ async function shutdown(): Promise<void> {
  * these print to stdout and exit, leaving the TTY untouched.
  */
 function pickRootComponent(): {
-  kind: "wizard" | "app" | "headless" | "done" | "serve" | "harness-server" | "acp";
+  kind: "wizard" | "app" | "headless" | "done" | "serve" | "harness-server" | "acp" | "plugin";
   element?: React.ReactElement;
   headlessOpts?: Parameters<typeof runHeadless>[0];
   serveOpts?: import("./companion/serve.js").ServeOptions;
@@ -318,6 +318,14 @@ function pickRootComponent(): {
   // (dynamic import in main(), same shape as --serve-harness).
   if (argv[0] === "acp") {
     return { kind: "acp", acpOpts: {} };
+  }
+  // WS6 plugin bundles (`zelari-code plugin validate|list|enable|disable`).
+  // Matched on the FIRST positional for the same reason as `acp`: a task
+  // prompt that merely contains the word "plugin" must not hijack the TUI.
+  // The subcommand parses its own flags and OWNS its exit code (dynamic
+  // import in main(), same shape as acp / skills:check).
+  if (argv[0] === "plugin") {
+    return { kind: "plugin" };
   }
   // t29 (Pilastro B): long-lived harness kernel over stdio NDJSON. Same
   // host discipline as --serve: no TUI, no preflight, transport owns
@@ -1391,6 +1399,24 @@ function main() {
       .catch((err) => {
         // eslint-disable-next-line no-console
         console.error(`[zelari-code acp] ${err instanceof Error ? err.message : String(err)}`);
+        process.exit(1);
+      });
+    return;
+  }
+
+  // `zelari-code plugin`: WS6 plugin bundles. Static validation / state only —
+  // no TUI, no preflight (like acp / skills:check). The subcommand parses its
+  // own flags (`--cwd`, `--help`), writes the human report to stdout and
+  // RETURNS the exit code (0 valid / 1 problem).
+  if (picked.kind === "plugin") {
+    void import("./plugins/bundleCommand.js")
+      .then(({ runPluginCommand }) => runPluginCommand(process.argv.slice(2)))
+      .then((code) => process.exit(code))
+      .catch((err) => {
+        // eslint-disable-next-line no-console
+        console.error(
+          `[zelari-code plugin] ${err instanceof Error ? err.message : String(err)}`,
+        );
         process.exit(1);
       });
     return;

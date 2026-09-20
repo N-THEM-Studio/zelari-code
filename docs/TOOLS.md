@@ -435,4 +435,44 @@ executing anything** (pure static analysis, mirrors the real loader rules):
 - What it checks: frontmatter presence/shape, heading structure, guard test
   compatibility (the no-exec rule is itself lock-tested)
 
+## Plugin bundles (v2.58.0, WS6) - `zelari-code plugin`
+
+A **bundle** is a directory carrying one `zelari-plugin.json` manifest plus the
+files it declares. Validation is static: nothing is installed, executed or
+fetched.
+
+```bash
+zelari-code plugin validate <dir>      # exit 0/1, one line per problem
+zelari-code plugin list [dir...]       # discovered bundles + enabled/disabled
+zelari-code plugin enable <dir|name>   # persist enabled=true (validates first)
+zelari-code plugin disable <dir|name>  # persist enabled=false
+```
+
+- Manifest (format v1): `{ name, version, description?, skills[], hooks[],
+  mcp[], agents? }` - `$comment` accepted and stripped (as in the permission
+  policy), every other unknown key fatal, and every error names the FILE and
+  the FIELD. Declared paths must stay inside the bundle directory.
+- `skills[]`: `{ id, path }` - `id` must equal the SKILL.md frontmatter `name`;
+  the file is parsed by the real `SKILL.md` loader.
+- `hooks[]`: `{ event, path, config? }` - `event` must be one of the events the
+  hook FILE subscribes to (a mismatch would load and never fire). `config` may
+  override only `timeoutMs`/`cwd`: `command`/`url`/`match` stay owned by the
+  file. The four v2.57 OBSERVER events are accepted (decision discarded).
+- `mcp[]`: `{ name, preset | command, args? }` - exactly one of `preset` (a repo
+  preset id, resolved by the real registry) or `command` (stdio server). No
+  `env`: secrets never travel inside a bundle; a preset factory reads its key
+  from the environment at APPLY time.
+- `agents[]`: `{ id, path, description? }` - validated and surfaced, **not
+  executed** (no agent loader yet, reported as a warning).
+- Enablement lives in the project file `.zelari/plugins.json`
+  (`{ enabled: { "<bundle>": true }, paths: [...] }`). **A bundle that is
+  present but not listed is DISABLED** (fail-closed), a malformed state file
+  enables NOTHING, and `enable` refuses to overwrite it. `enable` validates the
+  bundle first; `disable` needs only the manifest name.
+- The loader returns a **contribution list** and executes nothing. Applying
+  contributions, and any plugin EVAL, is blocked until the eval baseline is
+  seeded - no numbers are reported here on purpose.
+- Example: `examples/extensions/zelari-plugin-example` (1 skill, 1 observer
+  hook, 1 real stdio MCP server).
+
 See also [GUIDA.md](./GUIDA.md) and [README](../README.md).
