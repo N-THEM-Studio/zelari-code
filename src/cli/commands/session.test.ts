@@ -11,10 +11,12 @@
  * must be assembled by hand — exactly the input the tolerant reader exists for.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, existsSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { parseSessionFlags, runSessionCommand } from './session.js';
+import { parseSessionLogText } from '@zelari/core/session';
+import { replayOpenVerifyDebts } from '../tools/verifyDebtSpine.js';
 
 const SID = 's-validate';
 const BASE_TS = 1_755_000_000_000;
@@ -155,8 +157,9 @@ describe('zelari-code session validate (WS7 slice 2)', () => {
   it('usage surface: --help exits 0, a missing/unknown subcommand exits 1', async () => {
     const help = await capture(() => runSessionCommand(['session', '--help']));
     expect(help.code).toBe(0);
-    expect(help.stdout).toContain('zelari-code session — inspect one session spine (read-only)');
+    expect(help.stdout).toContain('zelari-code session — inspect and curate one session spine');
     expect(help.stdout).toContain('session validate [<sessionId>] [--json]');
+    expect(help.stdout).toContain('session waive-debt <sessionId> <taskId> [--note <text>]');
 
     const bare = await capture(() => runSessionCommand(['session']));
     expect(bare.code).toBe(1);
@@ -181,5 +184,93 @@ describe('zelari-code session validate (WS7 slice 2)', () => {
       cwd: '/tmp/x',
       sessionId: SID,
     });
+  });
+});
+
+describe('zelari-code session waive-debt (K1.5 waive path)', () => {
+  it('closes an open debt with a waiver event through the locked writer', async () => {
+    writeSpine([
+      envelope(1, 'session.started'),
+      envelope(2, 'verify.debt_open', { taskId: 't26', description: 'WS1: policy engine', timestamp: BASE_TS }),
+      envelope(3, 'note'),
+    ]);
+    const { code, stdout, stderr } = await capture(() =>
+      runSessionCommand(['session', 'waive-debt', SID, 't26', '--note', 'superseded by t30; landed e75de36']),
+    );
+    expect(stderr).toBe('');
+    expect(code).toBe(0);
+    expect(stdout).toContain(`session waive-debt — ${SID}`);
+    expect(stdout).toContain('cleared: t26 — WS1: policy engine');
+    expect(stdout).toContain('verify.debt_cleared seq=4 (source=waiver)');
+    expect(stdout).toContain('superseded by t30; landed e75de36');
+    expect(stdout).toContain('OPERATOR assertion');
+    // The spine really carries the cleared event, with the waiver markers —
+    const lines = readFileSync(spinePath, 'utf-8').trimEnd().split('\n');
+    const cleared = JSON.parse(lines[lines.length - 1]) as {
+      seq: number;
+      kind: string;
+      actor: { type: string; role?: string };
+      data: Record<string, unknown>;
+    };
+    expect(cleared).toMatchObject({
+      seq: 4,
+      kind: 'verify.debt_cleared',
+      actor: { type: 'user', role: 'operator' },
+      data: { taskId: 't26', source: 'waiver', note: 'superseded by t30; landed e75de36' },
+    });
+    // — the debt no longer replays open, and the lock was released.
+    const report = parseSessionLogText(spinePath, readFileSync(spinePath, 'utf-8'));
+    expect(replayOpenVerifyDebts(report.events).has('t26')).toBe(false);
+    expect(existsSync(path.join(sessionsDir, SID, 'writer.lock'))).toBe(false);
+  });
+
+  it('exit 1 with the honest open list when the taskId is not an open debt', async () => {
+    writeSpine([
+      envelope(1, 'session.started'),
+      envelope(2, 'verify.debt_open', { taskId: 't9', description: 'other work', timestamp: BASE_TS }),
+    ]);
+    const { code, stdout, stderr } = await capture(() =>
+      runSessionCommand(['session', 'waive-debt', SID, 't26']),
+    );
+    expect(code).toBe(1);
+    expect(stderr).toContain("'t26' is not an open verify debt");
+    expect(stdout).toContain('open verify debts:');
+    expect(stdout).toContain('t9');
+    expect(stdout).toContain('other work');
+  });
+
+  it('exit 1 plain when the spine has no open debts at all', async () => {
+    writeSpine([envelope(1, 'session.started')]);
+    const { code, stdout } = await capture(() =>
+      runSessionCommand(['session', 'waive-debt', SID, 't1']),
+    );
+    expect(code).toBe(1);
+    expect(stdout).toContain('no open verify debts');
+  });
+
+  it('exit 2 and ZERO writes when a live writer owns the lock', async () => {
+    writeSpine([
+      envelope(1, 'session.started'),
+      envelope(2, 'verify.debt_open', { taskId: 't2', description: 'x', timestamp: BASE_TS }),
+    ]);
+    writeFileSync(
+      path.join(sessionsDir, SID, 'writer.lock'),
+      JSON.stringify({ ownership: 'test-owner', pid: process.pid, ts: Date.now() }),
+      'utf-8',
+    );
+    const before = readFileSync(spinePath, 'utf-8');
+    const { code, stderr } = await capture(() =>
+      runSessionCommand(['session', 'waive-debt', SID, 't2']),
+    );
+    expect(code).toBe(2);
+    expect(stderr).toContain('locked');
+    expect(stderr).toContain('nothing was written');
+    expect(readFileSync(spinePath, 'utf-8')).toBe(before);
+  });
+
+  it('exit 1 with usage when the taskId is missing', async () => {
+    const { code, stderr } = await capture(() => runSessionCommand(['session', 'waive-debt', SID]));
+    expect(code).toBe(1);
+    expect(stderr).toContain('usage: zelari-code session waive-debt');
   });
 });
