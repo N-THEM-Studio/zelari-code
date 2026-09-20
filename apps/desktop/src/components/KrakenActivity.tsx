@@ -53,16 +53,20 @@ function ThinkingChip({ thinking }: { thinking?: string }) {
 function AgentRow({
   agent,
   expanded,
+  isLead = false,
   onToggle,
 }: {
   agent: ReturnType<typeof useRunActivity>["agents"][string];
   expanded: boolean;
+  /** Rows carry a status stripe (§20): same geometry for lead and tentacles,
+   *  same click-to-expand — the lead stays accent via .is-lead. */
+  isLead?: boolean;
   onToggle: () => void;
 }) {
   const tools = selectRecentTools(agent, 8);
   return (
     <div
-      className={`kraken-act-row${expanded ? " is-open" : ""}${agent.status === "running" ? " is-running" : ""}`}
+      className={`kraken-act-row${expanded ? " is-open" : ""} is-${agent.status ?? "idle"}${isLead ? " is-lead" : ""}`}
       onClick={onToggle}
     >
       <div className="kraken-act-line">
@@ -176,25 +180,20 @@ export function KrakenActivity({ conversationId }: { conversationId?: string }) 
       </button>
       {collapsed ? null : (
         <div className="kraken-act-body">
-          {lead ? (
-            <div className="kraken-act-lead">
-              <span className="kraken-act-glyph" aria-hidden>
-                {roleGlyph(lead.role)}
-              </span>
-              <strong className="kraken-act-agent">{lead.title || "Lead"}</strong>
-              <span className={`kraken-act-status is-${lead.status}`} aria-hidden>
-                {statusGlyph(lead.status)}
-              </span>
-              <span className="kraken-act-dur">
-                {formatActivityDuration(lead.durationMs ?? (lead.startedAt ? Date.now() - lead.startedAt : undefined))}
-              </span>
-              {lead.model ? <span className="kraken-act-model">{lead.model}</span> : null}
-              <ThinkingChip thinking={lead.thinking} />
-            </div>
-          ) : null}
-
-          {tentacles.length ? (
+          {/* The lead renders through the SAME AgentRow as the tentacles
+              (§19): one container, one geometry, same click-to-expand. The
+              accent stripe (.is-lead) marks it without shifting content. */}
+          {lead || tentacles.length ? (
             <div className="kraken-act-rows">
+              {lead ? (
+                <AgentRow
+                  key={lead.id}
+                  agent={lead}
+                  isLead
+                  expanded={expandedId === lead.id}
+                  onToggle={() => setExpandedId(expandedId === lead.id ? null : lead.id)}
+                />
+              ) : null}
               {tentacles.map((a) => (
                 <AgentRow
                   key={a.id}

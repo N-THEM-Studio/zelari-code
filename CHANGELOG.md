@@ -5,6 +5,29 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.55.0] - 2026-09-20
+
+### Added — Desktop UI round (IDE layout)
+
+- **Chat tabs (IDE-style)** — conversations open as tabs above the chat (click to activate, × to close, + for new), each with an activity-status dot; open tabs and the active one persist across restarts. Runs trigger, folder picker and session-task chip live on the **same tab row** — the old topbar row is gone (~35px reclaimed).
+- **Collapsible sidebar with icon rail** — « collapses the sidebar into a 46px icon rail (new chat, expand, settings); state persists in localStorage. Sessions are grouped under a **prominent project header** (count pill + full-path tooltip): the folder is no longer repeated in every record, and rows went from 4 stacked lines to 2 (title + status badge, then mode · time).
+- **Context bar compaction awareness** — a ⟲ chip on the compact row flashes green when a compaction happens, then settles into a quiet `⟲ ×N` counter. After a compaction the stale pre-compaction proxy is suppressed (`ctx ⟲ · awaiting budget`) until the next budget event arrives, ending the "stuck at 100% forever" readout. The bar is now a plain div colored by context level (accent → amber → red) with a **notch at the 85% compaction threshold**.
+- **Status stripes in the Kraken activity panel** — every agent row (lead included) carries a colored left stripe by status (running/completed/failed/waiting), with the lead always accent.
+
+### Changed — Desktop
+
+- **Wider chat, less chrome** — conversation column 840→1080px, top padding reduced; the per-reply scrollbox cap (`max-height: 60vh` + inner scrollbar) is removed so replies flow in the page scroll; the reply title is no longer duplicated under the tab strip.
+- **Compact live activity strip** — the "Reasoning · 2m 14s" container is now a single inline status row (orb + kicker + phrase + elapsed + command ticks on one baseline) instead of a 3-line card; all data preserved. The Kraken panel keeps its base type scale (font shrink reverted) with denser padding.
+- **Follow-stream button redesigned** — icon-only ↓ circle docked bottom-right next to the scrollbar, with a numeric badge for missed updates; appears only while detached.
+- **Sidebar row actions on hover only** — ✎ ⬇ × reveal on hover/focus (also `visibility: hidden` when hidden: no ghost clicks), including on the active conversation.
+- **Git branch chip** — the branch name moves to its own full-width row under the panel tabs (with a git icon); the ellipsis only ever truncates the name, never the icon.
+
+### Fixed — Desktop
+
+- **Auto-scroll fight** — reading history during generation no longer gets dragged back down: the follow-state ref can no longer be resurrected to `true` by a render racing the scroll handler (atomic ref+state setter), and while detached the scroller gets browser scroll anchoring so re-renders don't shift the text under your eyes.
+- **Missing spaces around inline tokens** — `**bold**`, `` `code` `` and `_em_` no longer glue to adjacent words (the orphan-marker scrubber trimmed the gap between tokens; the gap/tail paths now keep their edge spaces). Applies to all existing conversations — the fix is in rendering, not data.
+- **Kraken activity lead row** — the lead renders through the same `AgentRow` as tentacles: aligned, clickable, expandable (worktree/scope/tokens/tool feed), instead of bespoke non-interactive markup.
+
 ## [2.54.0] - 2026-09-19
 
 ### Added — prompt cache (cache hit-rate)

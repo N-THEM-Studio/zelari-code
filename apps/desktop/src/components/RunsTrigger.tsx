@@ -1,10 +1,10 @@
 /**
  * RunsTrigger (F4 polish): the trigger of the global runs dashboard.
  *
- * Moved out of the sidebar rail into the App topbar's right side — next to the
- * folder picker — so the button and the right-hand drawer it opens sit in the
- * same corner of the window. Same 4-square grid glyph and same running-count
- * badge the sidebar button had; nothing else changed.
+ * Moved out of the sidebar rail into the right side of the chat tab bar —
+ * next to the folder picker — so the button and the right-hand drawer it opens
+ * sit in the same corner of the window. Same 4-square grid glyph and same
+ * running-count badge the sidebar button had; nothing else changed.
  *
  * Presentational on purpose: App owns both the drawer flag and the run registry
  * (`useRunCoordinator` is hook-local there), so the count arrives as a prop —

@@ -210,7 +210,10 @@ describe("KrakenActivity — conversation isolation (M2)", () => {
 
     rerender(<KrakenActivity conversationId="conv-A" />);
     expect(screen.getByText("Project A lead")).toBeTruthy();
-    expect(screen.getByText(/boom in chat A/)).toBeTruthy(); // accumulated, not lost
+    // §19: the lead renders as a full AgentRow, so the failure reason now
+    // surfaces BOTH in the lead row and in the panel warnings list. The
+    // contract is "accumulated, not lost" — not "rendered exactly once".
+    expect(screen.getAllByText(/boom in chat A/).length).toBeGreaterThan(0); // accumulated, not lost
   });
 
   it("a new mission in the same conversation starts from an empty tree", () => {

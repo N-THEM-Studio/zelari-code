@@ -27,16 +27,26 @@ type Block =
 const INLINE_RE =
   /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(__[^_\n]+__)|(\*(?!\s)[^*\n]+?(?<!\s)\*)|(~~[^~\n]+~~)|(\[[^\]\n]+\]\(https?:\/\/[^)\s]+\))/g;
 
-/** Remove orphan emphasis/code markers left behind by partial streaming. */
-function stripOrphanMarkers(s: string): string {
+/**
+ * Remove orphan emphasis/code markers left behind by partial streaming,
+ * WITHOUT touching the leading/trailing whitespace. The fragments this runs
+ * on (inline gaps and tails) sit BETWEEN rendered tokens: trimming them
+ * glues bold/code/em to the adjacent words ("word**bold**word" — the
+ * glued-spacing bug). Only the whole-text variant below may trim.
+ */
+function stripOrphanMarkersCore(s: string): string {
   return s
     .replace(/\*\*/g, "")
     .replace(/(?<![\w])\*(?![\w])/g, "")
     .replace(/__/g, "")
     .replace(/~~/g, "")
     .replace(/`+/g, "")
-    .replace(/[ \t]{2,}/g, " ")
-    .trim();
+    .replace(/[ \t]{2,}/g, " ");
+}
+
+/** Whole-text variant: trimming is safe only on complete strings. */
+function stripOrphanMarkers(s: string): string {
+  return stripOrphanMarkersCore(s).trim();
 }
 
 /**
@@ -51,7 +61,7 @@ function renderInline(text: string): ReactNode {
   INLINE_RE.lastIndex = 0;
   while ((m = INLINE_RE.exec(text)) !== null) {
     if (m.index > last) {
-      const gap = stripOrphanMarkers(text.slice(last, m.index));
+      const gap = stripOrphanMarkersCore(text.slice(last, m.index));
       if (gap) out.push(gap);
     }
     const tok = m[0];
@@ -100,7 +110,7 @@ function renderInline(text: string): ReactNode {
     last = m.index + tok.length;
   }
   if (last < text.length) {
-    const tail = stripOrphanMarkers(text.slice(last));
+    const tail = stripOrphanMarkersCore(text.slice(last));
     if (tail) out.push(tail);
   }
   if (out.length === 0) return stripOrphanMarkers(text);

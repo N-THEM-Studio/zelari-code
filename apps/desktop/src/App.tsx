@@ -182,6 +182,40 @@ const SIDEBAR_MIN_W = 180;
 const SIDEBAR_MAX_W = 480;
 const LS_SIDEBAR_W = "zelari-desktop-sidebar-w";
 
+/** IDE round: collapsed sidebar = minimal icon rail. Persisted as "1"/"0". */
+const SIDEBAR_COLLAPSED_W = 46;
+const LS_SIDEBAR_COLLAPSED = "zelari-desktop-sidebar-collapsed";
+
+/** IDE round: which conversations are "open" like editor tabs, plus the one
+ * that was active — restored on the next launch. */
+const LS_OPEN_TABS = "zelari-desktop-open-tabs";
+
+type OpenTabsState = { tabs: string[]; active?: string };
+
+/** Tolerant reader for the open-tab strip: only tabs whose conversation still
+ * exists (and is not archived) survive; the active tab falls back to the
+ * first survivor. Returns null when nothing usable is stored. */
+function loadOpenTabsState(convs: Conversation[]): OpenTabsState | null {
+  try {
+    const raw = localStorage.getItem(LS_OPEN_TABS);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<OpenTabsState> | null;
+    if (!parsed || !Array.isArray(parsed.tabs)) return null;
+    const live = new Set(convs.filter((c) => !c.archived).map((c) => c.id));
+    const tabs = parsed.tabs.filter(
+      (t): t is string => typeof t === "string" && live.has(t),
+    );
+    if (tabs.length === 0) return null;
+    const active =
+      typeof parsed.active === "string" && tabs.includes(parsed.active)
+        ? parsed.active
+        : tabs[0] ?? "";
+    return { tabs, active };
+  } catch {
+    return null;
+  }
+}
+
 /** Prompt sent when the operator resumes a mission from the Live Tasks pill.
  * It must be non-empty (the sidecar rejects an empty `task`) but the CLI
  * ignores it while resuming: brief, slice and iteration come from
@@ -701,7 +735,19 @@ export default function App() {
         : [newConversation(defaults.mode, defaults.phase)];
     hydratedRef.current = true;
     setConversations(next);
-    setActiveId(next.find((c) => !c.archived)?.id ?? next[0].id);
+    // IDE round: restore the open-tab strip (and the tab that was active)
+    // when every stored conversation still exists; otherwise default to the
+    // first active chat. The auto-open effect below would re-add the active
+    // tab anyway, but restoring keeps the whole previous strip.
+    const restored = loadOpenTabsState(next);
+    if (restored) {
+      setOpenTabs(restored.tabs);
+      setActiveId(restored.active ?? restored.tabs[0] ?? "");
+    } else {
+      const first = next.find((c) => !c.archived)?.id ?? next[0].id;
+      setOpenTabs([first]);
+      setActiveId(first);
+    }
   }, [defaults.mode, defaults.phase]);
 
   /** Imperative handle to the Composer, which owns the input text (W3.2). */
@@ -725,6 +771,51 @@ export default function App() {
   const sidebarWRef = useRef(sidebarW);
   sidebarWRef.current = sidebarW;
   const sidebarDragRef = useRef<{ startX: number; startW: number } | null>(null);
+
+  /** IDE round: collapsed sidebar (icon rail), persisted. */
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(LS_SIDEBAR_COLLAPSED) === "1";
+    } catch {
+      return false;
+    }
+  });
+  useEffect(() => {
+    try {
+      localStorage.setItem(LS_SIDEBAR_COLLAPSED, sidebarCollapsed ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }, [sidebarCollapsed]);
+
+  /** IDE round: open-chat tabs, like editor file tabs. */
+  const [openTabs, setOpenTabs] = useState<string[]>([]);
+  // Auto-open: whatever becomes active lands in the strip (idempotent).
+  useEffect(() => {
+    if (!activeId || openTabs.includes(activeId)) return;
+    setOpenTabs((prev) => (prev.includes(activeId) ? prev : [...prev, activeId]));
+  }, [activeId, openTabs]);
+  // Persist the strip + the active tab for the next launch.
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        LS_OPEN_TABS,
+        JSON.stringify({ tabs: openTabs, active: activeId }),
+      );
+    } catch {
+      /* ignore */
+    }
+  }, [openTabs, activeId]);
+  // Drop tabs whose conversation was deleted or archived (an archived chat
+  // leaves the active list, so its tab must close too).
+  useEffect(() => {
+    setOpenTabs((prev) => {
+      const next = prev.filter((id) =>
+        conversations.some((c) => c.id === id && !c.archived),
+      );
+      return next.length === prev.length ? prev : next;
+    });
+  }, [conversations]);
 
   const onSidebarResizeStart = (e: ReactPointerEvent<HTMLDivElement>): void => {
     sidebarDragRef.current = { startX: e.clientX, startW: sidebarWRef.current };
@@ -904,10 +995,23 @@ export default function App() {
    */
   const [textLoopRecovery, setTextLoopRecovery] = useState(false);
 
-  /** When true, chat auto-scrolls with the stream; user scroll-up detaches. */
-  const [followStream, setFollowStream] = useState(true);
+  /**
+   * When true, chat auto-scrolls with the stream; user scroll-up detaches.
+   * The REF is the single source of truth for scroll gating; the STATE only
+   * drives rendering (the follow button). Never sync the ref from the render
+   * body: while streaming, re-renders fired by stream deltas land in separate
+   * macrotasks and can run BEFORE the scroll handler's state update commits —
+   * the stale `true` written back into the ref reopened the stick-to-bottom
+   * gate and yanked the reader back down ("occasionally it pulls me down
+   * while I read history"). Every flip MUST go through setFollowStream,
+   * which writes ref+state together.
+   */
+  const [followStream, _setFollowStream] = useState(true);
   const followStreamRef = useRef(true);
-  followStreamRef.current = followStream;
+  const setFollowStream = useCallback((v: boolean) => {
+    followStreamRef.current = v;
+    _setFollowStream(v);
+  }, []);
   /** Ignore scroll events caused by programmatic stick-to-bottom. */
   const programmaticScrollRef = useRef(false);
   /** Stream ticks that landed below the viewport while detached; shown as
@@ -2698,6 +2802,31 @@ export default function App() {
     flushSave();
   };
 
+  /** IDE round: close one open tab. Closing the ACTIVE tab activates the
+   *  neighbour (previous first, like an editor); with no candidates left the
+   *  first active chat becomes the new tab. The run registry keeps tracking a
+   *  closed chat's run in the background: it can be re-opened anytime. */
+  const closeTab = (id: string) => {
+    const idx = openTabs.indexOf(id);
+    const remaining = openTabs.filter((t) => t !== id);
+    setOpenTabs(remaining);
+    if (id !== activeId) return;
+    const neighbourId = idx > 0 ? remaining[idx - 1] : undefined;
+    const pick =
+      (neighbourId
+        ? conversations.find((c) => c.id === neighbourId && !c.archived)
+        : undefined) ??
+      remaining
+        .map((t) => conversations.find((c) => c.id === t && !c.archived))
+        .find((c): c is Conversation => Boolean(c)) ??
+      conversations.find((c) => c.id !== id && !c.archived);
+    if (pick) {
+      onSelectSession(pick);
+    } else {
+      startNewChat();
+    }
+  };
+
   /** User-facing recovery prompt after assistant_text_loop (keep in sync with core TEXT_LOOP_RECOVERY_USER_PROMPT). */
   const TEXT_LOOP_CONTINUE =
     "Continue from the text-loop stop. Inspect disk, apply at most one missing piece with tools if needed, " +
@@ -3696,9 +3825,16 @@ export default function App() {
           onContinueAnyway={() => setDoctorDismissed(true)}
         />
       )}
-      <div className="app-body" style={{ "--sidebar-w": `${sidebarW}px` } as CSSProperties}>
+      <div
+        className="app-body"
+        style={{
+          "--sidebar-w": `${sidebarCollapsed ? SIDEBAR_COLLAPSED_W : sidebarW}px`,
+        } as CSSProperties}
+      >
       <Sidebar
         sessions={visibleSessions}
+        collapsed={sidebarCollapsed}
+        onToggleCollapsed={() => setSidebarCollapsed((v) => !v)}
         filter={sessionFilter}
         activeId={activeId}
         isRunning={runCoordinator.isRunning}
@@ -3748,19 +3884,70 @@ export default function App() {
 
       <div className="workspace">
       <main className={`main${empty && !running ? " is-empty" : ""}`}>
-        <header className="topbar glass-capsule">
-          <div className="topbar-left">
-            <div className="topbar-title" title={active?.title ?? "Zelari"}>
-              {active?.title ?? "Zelari"}
+        {/* IDE round: ONE bar above the chat — open-chat tabs on the left,
+            the global cluster (todos + runs + folder picker) on the right.
+            The old topbar row is gone: this single strip reclaims its vertical
+            space. Always rendered so the folder picker stays reachable even in
+            the empty state; the tablist itself only exists when tabs are open. */}
+        <div className="chat-tabbar">
+          {openTabs.length > 0 && (
+            <div className="chat-tabs" role="tablist" aria-label="Chat aperte">
+              {openTabs.map((id) => {
+                const c = conversations.find((x) => x.id === id);
+                if (!c) return null;
+                const tabRunning = runCoordinator.isRunning(id);
+                const dotClass = tabRunning
+                  ? " is-running"
+                  : unseenByConv[id]
+                    ? " is-done"
+                    : "";
+                return (
+                  <div
+                    key={id}
+                    className={`chat-tab${id === activeId ? " active" : ""}`}
+                    role="tab"
+                    aria-selected={id === activeId}
+                    title={c.cwd ? `${c.title} — ${c.cwd}` : c.title}
+                    onClick={() => onSelectSession(c)}
+                  >
+                    <span className={`chat-tab-dot${dotClass}`} aria-hidden />
+                    <span className="chat-tab-title">{c.title}</span>
+                    <button
+                      type="button"
+                      className="chat-tab-close"
+                      title="Chiudi tab"
+                      aria-label={`Chiudi ${c.title}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        closeTab(id);
+                      }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                className="chat-tab-add"
+                title="Nuova chat"
+                aria-label="Nuova chat"
+                onClick={startNewChat}
+                disabled={running}
+              >
+                +
+              </button>
             </div>
+          )}
+          <div className="chat-tabs-right">
+            {/* Run-scoped chip: the only summary of session tasks left in the
+                chrome (the panel below keeps the full list). */}
             {sessionTasks.length > 0 ? (
               <span className="todo-chip" title="Session tasks from agent">
                 {sessionTasks.filter((t) => t.status === "completed").length}/
                 {sessionTasks.length} todos
               </span>
             ) : null}
-          </div>
-          <div className="topbar-right">
             {/* F4: the drawer trigger sits here so button and drawer share the
                 same (right) corner of the window. App owns `dashboardOpen`. */}
             <RunsTrigger
@@ -3780,7 +3967,7 @@ export default function App() {
               📁 {activeCwd ? activeCwd.replace(/.*[\\/]/, "") : "Folder"}
             </button>
           </div>
-        </header>
+        </div>
 
         <div className="chat-scroll-shell">
           {sessionTasks.length > 0 || projectTasks.length > 0 || mission ? (
@@ -3797,7 +3984,10 @@ export default function App() {
             />
           ) : null}
           <SidecarLogPanel />
-          <div className="chat-scroll" ref={scrollRef}>
+          <div
+            className={`chat-scroll${followStream ? "" : " is-detached"}`}
+            ref={scrollRef}
+          >
             {sidecarNotice ? (
               <div className="chat-inner" style={{ paddingBottom: 0 }}>
                 <div
@@ -3904,7 +4094,12 @@ export default function App() {
               type="button"
               className={`btn-follow-stream${running ? " is-live" : ""}`}
               onClick={reattachStream}
-              title="Jump back to the live stream and keep scrolling"
+              title="Vai alla fine"
+              aria-label={
+                running && missedBelow > 0
+                  ? `Vai alla fine (${missedBelow} aggiornamenti persi)`
+                  : "Vai alla fine"
+              }
             >
               <span className="btn-follow-stream-icon" aria-hidden>
                 <svg
@@ -3915,25 +4110,18 @@ export default function App() {
                   strokeLinecap="round"
                   strokeLinejoin="round"
                 >
-                  {/* Pin / re-attach to live stream */}
-                  <path d="M12 5v10" />
-                  <path d="m7 11 5 5 5-5" />
-                  <path d="M5 19h14" />
+                  {/* Down arrow: jump to the bottom */}
+                  <path d="M12 5v14" />
+                  <path d="m6 13 6 6 6-6" />
                 </svg>
               </span>
-              <span className="btn-follow-stream-label">
-                <span className="btn-follow-stream-kicker">
-                  {running ? "Live" : "Chat"}
+              {/* Icon-only affordance (IDE-style): the missed count survives as a
+                  tiny corner badge, the old kicker/label block is gone. */}
+              {missedBelow > 0 ? (
+                <span className="btn-follow-stream-pill" aria-hidden>
+                  {missedBelow > 99 ? "99+" : missedBelow}
                 </span>
-                <span className="btn-follow-stream-text">
-                  {running ? "Follow stream" : "Jump to latest"}
-                </span>
-                {missedBelow > 0 ? (
-                  <span className="btn-follow-stream-pill">
-                    {missedBelow} new
-                  </span>
-                ) : null}
-              </span>
+              ) : null}
             </button>
           )}
         </div>

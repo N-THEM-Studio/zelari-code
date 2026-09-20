@@ -3,11 +3,15 @@
  *
  * Extracted from the inline block in App.tsx with the behaviour unchanged:
  * selection, archive/unarchive/delete, folder collapse, run/unseen badges,
- * footer status, drag-to-resize handle. One thing is new here:
+ * footer status, drag-to-resize handle. IDE-round redesign:
  *
- *   - two sections: "Missioni" = conversations owning a 2.0 spine session
- *     (`Conversation.sessionId`), "Chat" = the rest. Same localStorage store,
- *     no migration, nothing deleted.
+ *   - ONE hierarchy: the project folder (cwd) is the header of each group and
+ *     gets the visual weight; conversation rows are compact (title + meta on
+ *     two lines) and NEVER repeat the folder. The old Missioni/Chat split
+ *     (by `Conversation.sessionId`) is folded into the same list — missions
+ *     keep their verdict badge and the mode stays in the row meta.
+ *   - collapsible: `collapsed` renders a minimal icon rail (expand, new chat,
+ *     settings) so the chat area can take the whole width.
  *
  * grok-round adds the inline rename: the row turns into a prefilled input, the
  * commit is trimmed and non-empty by construction, and the store/persistence
@@ -25,7 +29,7 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { folderLabelFromCwd, groupSessionsByFolder } from "../sessionGroups";
+import { groupSessionsByFolder } from "../sessionGroups";
 import type { Conversation, SessionFilter } from "../types";
 import { VerdictBadge } from "./VerdictBadge";
 import type { TentacleVerdictView } from "./tentacleVerdict";
@@ -64,6 +68,10 @@ export interface SidebarProps {
   onRename: (id: string, title: string) => void;
   onFilterChange: (f: SessionFilter) => void;
   onOpenSettings: () => void;
+  /** IDE round: render the minimal icon rail instead of the full sidebar. */
+  collapsed: boolean;
+  /** IDE round: toggle between the full sidebar and the icon rail. */
+  onToggleCollapsed: () => void;
   cliOk: boolean;
   statusLine: string;
   resizer: SidebarResizer;
@@ -172,14 +180,16 @@ function SessionRow({ c, props }: { c: Conversation; props: SidebarProps }) {
         />
       ) : (
         <button type="button" className="session-item" onClick={() => onSelect(c)}>
-          <span className="session-title">{c.title}</span>
-          <RunBadge running={isRunning(c.id)} unseen={Boolean(unseenByConv[c.id])} />
-          {missionVerdict ? <VerdictBadge scope="mission" {...missionVerdict} /> : null}
-          <span className="session-folder" title={c.cwd ? c.cwd : undefined}>
-            📁 {c.cwd ? folderLabelFromCwd(c.cwd) : "No folder"}
+          {/* IDE round: two compact lines — title + status badges on the first,
+              mode + time on the second. The folder lives ONCE in the group
+              header above, never repeated here. */}
+          <span className="session-title-row">
+            <span className="session-title">{c.title}</span>
+            <RunBadge running={isRunning(c.id)} unseen={Boolean(unseenByConv[c.id])} />
+            {missionVerdict ? <VerdictBadge scope="mission" {...missionVerdict} /> : null}
           </span>
           <span className="session-meta">
-            {c.mode} · {c.phase} · {formatTime(c.updatedAt)}
+            {c.mode} · {formatTime(c.updatedAt)}
           </span>
         </button>
       )}
@@ -208,16 +218,83 @@ function SessionRow({ c, props }: { c: Conversation; props: SidebarProps }) {
 }
 
 export function Sidebar(props: SidebarProps) {
-  const { sessions, filter, resizer } = props;
-  const missions = useMemo(() => sessions.filter((c) => Boolean(c.sessionId)), [sessions]);
-  const chats = useMemo(() => sessions.filter((c) => !c.sessionId), [sessions]);
+  const { sessions, filter, resizer, collapsed } = props;
 
-  /** One section = label + the folder grouping the sidebar always had. */
-  const section = (label: string, list: Conversation[]) =>
-    list.length ? (
-      <div key={label}>
-        <div className="session-label">{label}</div>
-        {groupSessionsByFolder(list).map((g) => {
+  /** IDE round: collapsed = minimal icon rail, nothing else is rendered. */
+  if (collapsed) {
+    return (
+      <aside className="sidebar is-collapsed" aria-label="Barra laterale ridotta">
+        <div className="sidebar-rail">
+          <button
+            type="button"
+            className="rail-btn"
+            title="Espandi la barra laterale"
+            aria-label="Espandi la barra laterale"
+            onClick={props.onToggleCollapsed}
+          >
+            »
+          </button>
+          <button
+            type="button"
+            className="rail-btn"
+            title="Nuova chat"
+            aria-label="Nuova chat"
+            onClick={props.onNewChat}
+            disabled={props.newChatDisabled}
+          >
+            ＋
+          </button>
+          <button
+            type="button"
+            className="rail-btn"
+            title="Impostazioni"
+            aria-label="Impostazioni"
+            onClick={props.onOpenSettings}
+          >
+            ⚙
+          </button>
+        </div>
+      </aside>
+    );
+  }
+
+  /** One group per project folder — the header carries the project name. */
+  const groups = useMemo(() => groupSessionsByFolder(sessions), [sessions]);
+
+  return (
+    <aside className="sidebar">
+      <div className="sidebar-top">
+        <div className="sidebar-top-row">
+          <button type="button" className="btn-new" onClick={props.onNewChat} disabled={props.newChatDisabled}>
+            <span aria-hidden>+</span> New chat
+          </button>
+          <button
+            type="button"
+            className="btn-collapse"
+            title="Riduci la barra laterale"
+            aria-label="Riduci la barra laterale"
+            onClick={props.onToggleCollapsed}
+          >
+            «
+          </button>
+        </div>
+        <div className="session-filter">
+          <button type="button" className={filter === "active" ? "active" : ""} onClick={() => props.onFilterChange("active")}>
+            Active
+          </button>
+          <button type="button" className={filter === "archived" ? "active" : ""} onClick={() => props.onFilterChange("archived")}>
+            Archived
+          </button>
+        </div>
+      </div>
+
+      <div className="session-list">
+        {sessions.length === 0 && (
+          <div className="session-empty">
+            {filter === "archived" ? "No archived chats" : "No active chats"}
+          </div>
+        )}
+        {groups.map((g) => {
           const groupCollapsed = props.collapsedFolders.has(g.key);
           return (
             <div key={g.key} className="session-group">
@@ -239,33 +316,6 @@ export function Sidebar(props: SidebarProps) {
             </div>
           );
         })}
-      </div>
-    ) : null;
-
-  return (
-    <aside className="sidebar">
-      <div className="sidebar-top">
-        <button type="button" className="btn-new" onClick={props.onNewChat} disabled={props.newChatDisabled}>
-          <span aria-hidden>+</span> New chat
-        </button>
-        <div className="session-filter">
-          <button type="button" className={filter === "active" ? "active" : ""} onClick={() => props.onFilterChange("active")}>
-            Active
-          </button>
-          <button type="button" className={filter === "archived" ? "active" : ""} onClick={() => props.onFilterChange("archived")}>
-            Archived
-          </button>
-        </div>
-      </div>
-
-      <div className="session-list">
-        {sessions.length === 0 && (
-          <div className="session-empty">
-            {filter === "archived" ? "No archived chats" : "No active chats"}
-          </div>
-        )}
-        {section("Missioni", missions)}
-        {section("Chat", chats)}
       </div>
 
       <div className="sidebar-foot">

@@ -76,6 +76,8 @@
     Consolas, monospace;
   --sidebar-w: 234px;
   --chrome-gap: 12px;
+  /* IDE round: width of the centered chat column (chat-inner + composer). */
+  --chat-max-w: 1080px;
 }
 
                                                                          
@@ -778,8 +780,8 @@ button {
   min-width: 0;
   min-height: 0;
   background: transparent;
-  gap: 12px;
-  padding: 6px 8px 0;
+  gap: 8px;
+  padding: 2px 8px 0;
 }
 
                                                             
@@ -838,17 +840,6 @@ button {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-}
-
-.topbar-title {
-  font-weight: 550;
-  font-size: 12.5px;
-  letter-spacing: -0.015em;
-  color: var(--text-secondary);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 180px;
 }
 
 .model-chip {
@@ -960,6 +951,16 @@ button {
   /* We own the scroll position (stick-to-bottom vs user detach): disable
    * browser scroll anchoring so it never fights our scrollTop writes. */
   overflow-anchor: none;
+}
+
+/* While the user reads history (detached), let the browser ANCHOR their
+ * position: streaming re-renders and content-visibility size re-estimates
+ * change heights ABOVE the viewport, and without anchoring the content
+ * under the reader's eyes visibly shifts (felt as "it pulls me back
+ * down"). While following, stick-to-bottom owns the position and
+ * anchoring stays off (it would fight the pin). */
+.chat-scroll.is-detached {
+  overflow-anchor: auto;
 }
 
                                                    
@@ -1138,11 +1139,11 @@ button {
 }
 
 .chat-inner {
-  max-width: 840px;
+  max-width: var(--chat-max-w, 1080px);
   margin: 0 auto;
   /* Tight chrome (2.35): side padding and inter-message gap were trimmed
    * to hand the recovered width/height to the conversation itself. */
-  padding: 10px 16px 12px;
+  padding: 6px 16px 10px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1444,7 +1445,6 @@ button {
   padding-right: 2px;
 }
 
-.kraken-act-lead,
 .kraken-act-line {
   display: flex;
   align-items: baseline;
@@ -1452,11 +1452,6 @@ button {
   min-width: 0;
 }
 
-.kraken-act-lead {
-  margin: 2px 0 4px;
-  padding-left: 8px;
-  border-left: 2px solid var(--accent, #4b9cd3);
-}
 
 .kraken-act-rows {
   display: flex;
@@ -7511,7 +7506,7 @@ kbd {
 /* 6. one centered column: composer shares the .chat-inner width ---------- */
 .composer-wrap {
   width: 100%;
-  max-width: 840px;
+  max-width: var(--chat-max-w, 1080px);
   margin: 0 auto;
   padding: 0 16px 12px;
 }
@@ -8419,4 +8414,815 @@ kbd {
   color: var(--text);
 }
 
+/* == IDE round: open-chat tabs + collapsible sidebar + project-first list ==
+ * Appended last on purpose (same policy as the grok-flat block): every rule
+ * here overrides an earlier one, so deleting the block reverts the redesign
+ * without touching anything above.
+ * ========================================================================= */
 
+/* 1. Tab strip: editor-like tabs above the chat area ---------------------- */
+.chat-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
+  min-height: 26px;
+  scrollbar-width: thin;
+}
+
+.chat-tabs::-webkit-scrollbar {
+  height: 3px;
+}
+
+/* 1b. Tab bar row: tabs left, runs/folder cluster right. The old topbar row
+ * is retired — this single strip is all the chrome above the chat. Always
+ * rendered (even with zero tabs) so the folder picker survives the empty
+ * state; the tablist inside scrolls horizontally when crowded. */
+.chat-tabbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 2px 0 6px;
+  min-height: 28px;
+  flex-shrink: 0;
+}
+
+.chat-tabbar .chat-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+}
+
+.chat-tabs-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.chat-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: 220px;
+  padding: 3px 6px 3px 10px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.chat-tab:hover {
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+}
+
+.chat-tab.active {
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: var(--text);
+}
+
+.chat-tab-title {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.chat-tab-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  opacity: 0.3;
+}
+
+.chat-tab-dot.is-running {
+  background: var(--accent);
+  opacity: 1;
+  animation: chat-tab-pulse 1.6s ease-in-out infinite;
+}
+
+.chat-tab-dot.is-done {
+  background: var(--success);
+  opacity: 1;
+}
+
+@keyframes chat-tab-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+  50% {
+    box-shadow: 0 0 6px 1px color-mix(in srgb, var(--accent) 55%, transparent);
+  }
+}
+
+.chat-tab-close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-muted);
+  opacity: 0;
+  transition: opacity 0.1s, background 0.1s;
+}
+
+.chat-tab:hover .chat-tab-close,
+.chat-tab.active .chat-tab-close {
+  opacity: 0.8;
+}
+
+.chat-tab-close:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  opacity: 1;
+}
+
+.chat-tab-add {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.chat-tab-add:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.chat-tab-add:disabled {
+  opacity: 0.4;
+}
+
+/* 2. Collapsed sidebar: minimal icon rail --------------------------------- */
+.sidebar.is-collapsed {
+  padding: 0;
+}
+
+.sidebar-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 0;
+  width: 100%;
+}
+
+.rail-btn {
+  width: 32px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.rail-btn:hover:not(:disabled) {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.rail-btn:disabled {
+  opacity: 0.45;
+}
+
+/* Sidebar header: New chat + collapse toggle on one row ------------------- */
+.sidebar-top-row {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.sidebar-top-row .btn-new {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.btn-collapse {
+  flex: none;
+  width: 30px;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.btn-collapse:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+/* 3. Project-first session list ------------------------------------------- */
+/* The project header IS the label: bigger, readable, not a shouty uppercase. */
+.session-group {
+  gap: 1px;
+  margin-bottom: 2px;
+}
+
+.session-group-head {
+  padding: 8px 6px 4px 4px;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  text-transform: none;
+}
+
+.session-group-count {
+  background: var(--surface-hover);
+}
+
+/* Compact two-line rows: title + badges, then mode · time. The folder is
+   shown ONCE in the group header, never inside a row. */
+.session-item {
+  padding: 5px 6px 5px 10px;
+  gap: 1px;
+  border-radius: 10px;
+}
+
+.session-item-wrap {
+  position: relative;
+  margin-bottom: 1px;
+}
+
+.session-title-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-title-row .session-title {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.session-meta {
+  font-size: 10.5px;
+}
+
+/* Row actions become a compact horizontal overlay (was a tall column). */
+.session-actions {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  transform: translateY(-50%);
+  flex-direction: row;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+}
+
+.session-actions button {
+  min-width: 20px;
+  height: 20px;
+  padding: 0 3px;
+  font-size: 10.5px;
+}
+
+/* The old Missioni/Chat section labels are gone with the single hierarchy. */
+.session-label {
+  display: none;
+}
+
+/* 15. Reply flows in the page: no nested scroll box ------------------------ */
+/* The assistant answer grows with its content and participates in the main
+   chat scroll. The former inner scroller capped every reply at 60vh and gave
+   it its own scrollbar — the "box" is gone; content-visibility (§ main CSS)
+   keeps long histories cheap, so the inner scroll is not needed for perf. */
+.reply-accordion-scroll {
+  max-height: none;
+  overflow: visible;
+}
+
+/* Nothing left to clip (radius 0, no shadow): plain block in the page flow. */
+.reply-accordion {
+  overflow: visible;
+}
+
+/* == 16. compact activity surfaces ===========================================
+ * The live stage (`.run-activity`: thinking phrase + tool/command feed) and
+ * the Kraken panel (`.kraken-act`: lead + tentacle rows) were sized as chat
+ * cards — 14–18px padding, 64px min-height, 220px body cap — and ate a large
+ * slice of the conversation column during generation. This section shrinks
+ * the CONTAINERS (padding, gaps, caps, glyph sizes; the type scale was later restored)
+ * while keeping every datum they render: same rows, same chips, same tool
+ * feed, same warnings — just denser. Overrides append last, so the grok-flat
+ * surface (§13) stays and only geometry changes.
+ * ========================================================================== */
+
+/* 16a. live stage: card → slim strip. */
+.run-activity {
+  padding: 7px 11px;
+  gap: 9px;
+  min-height: 0;
+  border-radius: 10px;
+}
+
+.run-activity-orb {
+  width: 8px;
+  height: 8px;
+}
+
+.run-activity-main {
+  gap: 1px;
+}
+
+.run-activity-kicker {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+}
+
+.run-activity-title {
+  font-size: 13px;
+  line-height: 1.3;
+}
+
+.run-activity-sub {
+  font-size: 11px;
+  margin-top: 0;
+}
+
+.run-activity-steps {
+  margin: 4px 0 0;
+  gap: 1px;
+  max-height: 92px;
+}
+
+.run-activity-step {
+  font-size: 11px;
+  line-height: 1.25;
+}
+
+.run-activity-step-name {
+  font-size: 10px;
+}
+
+/* "+N more tool calls this turn" link rides along (chatEnhance.css base). */
+.run-activity-steps-toggle {
+  font-size: 10.5px;
+  padding: 1px 0 0;
+}
+
+/* 16b. Kraken panel: denser rows, lower cap — same data per row. */
+.kraken-act {
+  margin-top: 4px;
+  padding-top: 4px;
+  font-size: 0.9em;
+}
+
+.kraken-act-body {
+  max-height: 150px;
+  margin-top: 3px;
+}
+
+
+.kraken-act-rows {
+  gap: 1px;
+}
+
+.kraken-act-row {
+  margin: 1px 0 1px 6px;
+  padding: 1px 6px;
+}
+
+.kraken-thinking-chip {
+  padding: 0 4px;
+  font-size: 0.85em;
+}
+
+.kraken-act-details,
+.kraken-act-tools {
+  margin-top: 2px;
+}
+
+
+
+/* ==========================================================================
+   17. Context strip clarity round — compaction you can SEE
+   The compact meter line gains: a level-colored bar with the 85% compaction
+   threshold as a hairline tick, a visible compaction chip (quiet count at
+   rest, green flash when it JUST happened), and the post-compaction
+   "awaiting budget" state that stops parroting the pre-compaction 100%.
+   Base rules live at the .kraken-ctx-* block (~line 1614); these win by
+   cascade order. Removable as a block, same policy as the sections above.
+   ========================================================================== */
+.kraken-ctx-bar {
+  position: relative;
+  width: 108px;
+  height: 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 16%, transparent);
+  overflow: visible;
+}
+
+.kraken-ctx-bar-fill {
+  position: absolute;
+  inset-block: 0;
+  left: 0;
+  border-radius: 999px;
+  background: var(--accent, #4b9cd3);
+  transition: width 0.35s ease, background 0.35s ease;
+}
+
+.kraken-ctx-bar.is-growing .kraken-ctx-bar-fill {
+  background: #d4a85a;
+}
+
+.kraken-ctx-bar.is-compact .kraken-ctx-bar-fill,
+.kraken-ctx-bar.is-hard .kraken-ctx-bar-fill {
+  background: var(--danger, #e05a5a);
+}
+
+/* The 85% compaction threshold — a hairline the fill crosses on its way to red. */
+.kraken-ctx-bar-tick {
+  position: absolute;
+  left: 85%;
+  top: -2px;
+  bottom: -2px;
+  width: 1px;
+  background: color-mix(in srgb, currentColor 45%, transparent);
+}
+
+/* Compaction chip: settled = quiet count, fresh = it JUST happened. */
+.kraken-ctx-compact-chip {
+  flex: none;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  line-height: 16px;
+  white-space: nowrap;
+  color: color-mix(in srgb, var(--text, #ddd) 72%, transparent);
+  background: color-mix(in srgb, var(--text, #ddd) 10%, transparent);
+}
+
+.kraken-ctx-compact-chip.is-fresh {
+  color: var(--ok, #34c77b);
+  background: color-mix(in srgb, var(--ok, #34c77b) 14%, transparent);
+  animation: kraken-ctx-compact-pulse 1.2s ease-in-out 3;
+}
+
+@keyframes kraken-ctx-compact-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+
+/* ==========================================================================
+   18. Reasoning strip — one line, no card
+   The live stage (".run-activity": the "Reasoning · 2m 14s" heartbeat, tool
+   label, council speaker) still renders as a CARD (§16a only shrank it):
+   orb + kicker row + title row + sub row + stacked step rows inside a
+   blurred, bordered, padded box — 3+ lines of chrome for one rotating
+   sentence. This section flattens it to a single inline status line, IDE
+   style: "◍ Kraken · Reasoning · 2m 14s  ✓ grep · src  ✓ edit · App.tsx".
+   Every datum survives (kicker, title, sub, tool feed, +N toggle) — only
+   the container geometry and card chrome go. Wins by cascade order over
+   §16a. Removable as a block, same policy as the sections above.
+   ========================================================================== */
+.run-activity {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  max-width: 100%;
+  padding: 1px 0 2px;
+  border: none;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+/* Light theme repaints the card gradient — strip that too. */
+.app[data-theme="light"] .run-activity {
+  background: none;
+  border: none;
+  box-shadow: none;
+}
+
+.run-activity-orb {
+  width: 6px;
+  height: 6px;
+}
+
+/* Column of stacked rows → one baseline row (steps wrap below when long). */
+.run-activity-main {
+  flex-direction: row;
+  align-items: baseline;
+  flex-wrap: wrap;
+  column-gap: 8px;
+  row-gap: 2px;
+}
+
+.run-activity-kicker {
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+/* Kicker separator: "Kraken · Reasoning · 2m 14s" on one flowing line. */
+.run-activity-kicker::after {
+  content: "·";
+  margin-left: 7px;
+  color: var(--text-muted);
+}
+
+.run-activity-stage {
+  min-height: 0;
+}
+
+.run-activity-title {
+  display: inline;
+  font-size: 12px;
+}
+
+.run-activity-sub {
+  display: inline;
+  font-size: 11px;
+  margin-left: 5px;
+}
+
+/* Tool feed: stacked rows → inline chips on the same line. */
+.run-activity-steps {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 2px 10px;
+  margin: 0;
+  max-height: none;
+  overflow: visible;
+}
+
+.run-activity-step {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  font-size: 11px;
+}
+
+.run-activity-step-name {
+  font-size: 10px;
+}
+
+.run-activity-step-sum {
+  font-size: 10px;
+  opacity: 0.8;
+}
+
+.run-activity-steps-toggle {
+  font-size: 10px;
+  padding: 0;
+}
+
+
+/* 19. aligned lead row — the lead is an AgentRow now: same container, same
+   geometry, same click-to-expand as the tentacles. The accent stripe marks
+   it WITHOUT shifting content (every row carries the border, the lead
+   only colors it). */
+.kraken-act-rows .kraken-act-row {
+  border-left: 2px solid transparent;
+}
+
+.kraken-act-rows .kraken-act-row.is-lead {
+  border-left-color: var(--accent, #4b9cd3);
+}
+
+/* ==========================================================================
+   20. status stripes — a colored bar on EVERY activity row
+   §19 gave every row a transparent left border (so coloring never shifts
+   content) but only the lead colored it. Here every row carries its state:
+   running = accent, completed = green, failed = red, waiting/queued =
+   muted. The lead rule comes LAST (same specificity, later wins): the
+   orchestrator keeps the accent bar no matter its own state.
+   ========================================================================== */
+.kraken-act-rows .kraken-act-row.is-running {
+  border-left-color: var(--accent, #4b9cd3);
+}
+
+.kraken-act-rows .kraken-act-row.is-completed {
+  border-left-color: var(--ok, #46a76a);
+}
+
+.kraken-act-rows .kraken-act-row.is-failed {
+  border-left-color: var(--danger, #e05a5a);
+}
+
+.kraken-act-rows .kraken-act-row.is-waiting,
+.kraken-act-rows .kraken-act-row.is-queued {
+  border-left-color: color-mix(in srgb, var(--text, #ddd) 28%, transparent);
+}
+
+/* Lead last: accent always, even when completed/failed. */
+.kraken-act-rows .kraken-act-row.is-lead {
+  border-left-color: var(--accent, #4b9cd3);
+}
+
+/* =========================================================================
+ * 21. Follow button → IDE jump-to-bottom affordance (icon-only, right rail)
+ * =========================================================================
+ * The old centered pill (kicker + "Follow stream" text + badge) becomes a
+ * small circular ↓-arrow icon docked on the RIGHT edge, next to the
+ * scrollbar — the classic IDE corner affordance. Visibility semantics are
+ * unchanged: rendered ONLY while detached (followStream === false), i.e.
+ * exactly when there is room to scroll further DOWN; it disappears the
+ * moment the user is back at the bottom. The missed-content count survives
+ * as a tiny corner badge (data, not chrome); everything else is icon.
+ * Must stay AFTER the base block (§ near .chat-scroll) and every theme
+ * variant so this reset wins the cascade (old rules translateX(-50%)-center
+ * the button and would drag it back to mid-screen). */
+
+.btn-follow-stream,
+.app[data-theme="light"] .btn-follow-stream {
+  left: auto;
+  right: 20px;
+  bottom: 22px;
+  transform: none;
+  padding: 0;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  gap: 0;
+  border-radius: 999px;
+  animation: follow-btn-rail-in 0.22s ease both;
+}
+
+.btn-follow-stream:hover,
+.app[data-theme="light"] .btn-follow-stream:hover {
+  transform: translateY(-2px);
+}
+
+.btn-follow-stream:active,
+.app[data-theme="light"] .btn-follow-stream:active {
+  transform: scale(0.95);
+}
+
+.btn-follow-stream.is-live,
+.app[data-theme="light"] .btn-follow-stream.is-live {
+  animation: follow-btn-rail-in 0.22s ease both,
+    follow-btn-pulse 2.4s ease-in-out infinite 0.35s;
+}
+
+/* Inner icon chip: no own chrome — the circle IS the button */
+.btn-follow-stream .btn-follow-stream-icon {
+  width: 30px;
+  height: 30px;
+  margin: 0;
+  background: transparent;
+  border: none;
+}
+
+.btn-follow-stream .btn-follow-stream-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* The label block is gone from the DOM; keep it gone by contract */
+.btn-follow-stream .btn-follow-stream-label,
+.btn-follow-stream .btn-follow-stream-kicker,
+.btn-follow-stream .btn-follow-stream-text {
+  display: none;
+}
+
+/* Missed-count corner badge (the only text that survives) */
+.btn-follow-stream .btn-follow-stream-pill {
+  position: absolute;
+  top: -5px;
+  right: -6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  margin: 0;
+  border-radius: 999px;
+  font-size: 9.5px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* Rail entry: slides up from below — no horizontal centering assumptions */
+@keyframes follow-btn-rail-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* ============================================================
+   22. SIDEBAR ROW ACTIONS — reveal on hover/focus ONLY
+   The base sheet reveals .session-actions on hover OR when the
+   row is .active, so the open conversation always carried a
+   ✎ ⬇ × cluster floating over its own title. This section pins
+   the reveal to interaction: the active row shows its buttons
+   exactly like every other row — on hover. `visibility` (not
+   just opacity) keeps hidden buttons out of hit-testing, so a
+   stray click near the row's right edge can never archive or
+   delete a conversation by accident.
+   ============================================================ */
+.session-actions {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.12s, visibility 0.12s;
+}
+
+/* Being the open conversation is NOT a reason to show them. */
+.session-item-wrap.active .session-actions {
+  opacity: 0;
+  visibility: hidden;
+}
+
+/* Pointer hover OR keyboard focus (Tab into the row) reveals. */
+.session-item-wrap:hover .session-actions,
+.session-item-wrap:focus-within .session-actions {
+  opacity: 1;
+  visibility: visible;
+}
+
+/* ============================================================
+   23. PROJECT PANEL HEAD — branch chip gets its own full row
+   (IDE round). The old single nowrap row squeezed .git-branch
+   between non-shrinkable tabs and three action buttons in the
+   narrow right sidebar: long branch names collapsed to an
+   unreadable ellipsis sliver. Row A = tabs + actions, row B =
+   the branch chip spanning the whole head width.
+   ============================================================ */
+.project-panel-head {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
+}
+
+.project-head-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.project-head-actions {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.git-branch-row {
+  display: flex;
+  min-width: 0;
+}
+
+/* The chip now owns the full row: it can breathe, and the
+   ellipsis only kicks in on genuinely extreme branch names. */
+.git-branch {
+  flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.git-branch-icon {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.4;
+  stroke-linecap: round;
+  opacity: 0.8;
+}
+
+.git-branch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}

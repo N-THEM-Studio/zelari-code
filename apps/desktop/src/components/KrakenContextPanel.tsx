@@ -19,7 +19,7 @@
  * signal or a kraken phase; a missing/malformed harness event never
  * surfaces as an error.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useHarnessState } from "../harnessState";
 import type { HarnessVerdict } from "../harnessState";
 import {
@@ -90,11 +90,45 @@ export function KrakenContextPanel({
   // chat — it must never push the conversation up again).
   const [open, setOpen] = useState(false);
 
+  // Compaction visibility: the spine increments `support.compactions`, but
+  // that counter used to live only in the expanded record — from the compact
+  // line a compaction was INVISIBLE while the bar sat pegged at ~100%.
+  // Observe the N → N+1 transition and remember WHEN (first observation after
+  // a remount does not flash: we did not see it happen live).
+  const prevCompactionsRef = useRef<number | null>(null);
+  const [compactedAtMs, setCompactedAtMs] = useState<number | null>(null);
+  /** receivedAt of the event that carried the observed increment. */
+  const [compactCarrierAt, setCompactCarrierAt] = useState<number | null>(null);
+  /** The flash window: the chip says "compacted" for 2 minutes after it happens. */
+  const compactionFresh =
+    compactedAtMs != null && now - compactedAtMs <= 120_000;
+  /**
+   * Honesty after compaction: until a NEW spine event arrives (receivedAt
+   * past the carrier), the proxy numerator is pre-compaction garbage by
+   * definition — it is the last prompt size BEFORE the window was freed, and
+   * it is exactly how the strip used to parrot ~100% "est." forever.
+   */
+  const proxySuppressed =
+    compactedAtMs != null &&
+    (receivedAt ?? 0) <= (compactCarrierAt ?? Infinity);
+
   const hasLive =
     live.ctxTokens > 0 || live.turnTokens > 0 || live.toolCount > 0;
   if (!hasLive && !progress) return null;
 
   const support = state?.support;
+  // Compaction transition detection (refs/states declared above, before the
+  // advisory early-return, so hooks stay unconditional). First observation
+  // after a remount does not flash — we did not see it happen live.
+  const compactions = support?.compactions ?? 0;
+  if (compactions !== prevCompactionsRef.current) {
+    const prev = prevCompactionsRef.current;
+    prevCompactionsRef.current = compactions;
+    if (prev !== null && compactions > prev) {
+      setCompactedAtMs(Date.now());
+      setCompactCarrierAt(receivedAt ?? 0);
+    }
+  }
   // Honest meter (contextMeter.ts): the spine budget event — occupancy +
   // real window, same source as the "budget N%" line below — wins while
   // fresh; anything else renders as the labeled proxy estimate (est.).
@@ -107,12 +141,18 @@ export function KrakenContextPanel({
             receivedAt: receivedAt ?? 0,
           }
         : null,
-    proxyTokens: live.ctxTokens,
+    proxyTokens: proxySuppressed ? 0 : live.ctxTokens,
     fallbackLimit: DEFAULT_CONTEXT_LIMIT,
     now,
   });
   /** Occupancy in tokens, derived from the very meter that paints the %. */
   const usedTokens = Math.round((meter.pct / 100) * meter.limit);
+  /**
+   * Pending post-compaction: the proxy is suppressed and no fresh budget
+   * event has arrived yet — claim NOTHING (unknown ≠ 0), the chip carries
+   * the story instead.
+   */
+  const pendingPostCompact = proxySuppressed && meter.source === "proxy";
 
   const phaseLabel = progress ? krakenPhaseLabel(progress.phase) : null;
   const phaseLive = !!progress && progress.phase !== KRAKEN_TERMINAL_PHASE;
@@ -166,18 +206,46 @@ export function KrakenContextPanel({
         {live.streaming ? <span className="kraken-ctx-dot" aria-hidden /> : null}
         <span
           className={`kraken-ctx-meter is-${meter.level}`}
-          title={meter.tooltip}
+          title={
+            pendingPostCompact
+              ? "Context compacted (CLI spine) — the meter refreshes with the next budget event"
+              : meter.tooltip
+          }
         >
-          ctx {formatTokens(usedTokens)}/{compactWindow(meter.limit)} ·{" "}
-          {meter.pct.toFixed(meter.pct < 10 ? 1 : 0)}%
-          {meter.estimated ? " est." : ""}
+          {pendingPostCompact ? (
+            <>ctx ⟲ · awaiting budget</>
+          ) : (
+            <>
+              ctx {formatTokens(usedTokens)}/{compactWindow(meter.limit)} ·{" "}
+              {meter.pct.toFixed(meter.pct < 10 ? 1 : 0)}%
+              {meter.estimated ? " est." : ""}
+            </>
+          )}
         </span>
-        <progress
-          className="kraken-ctx-bar"
-          value={meter.pct}
-          max={100}
-          aria-label={`Context ${meter.pct.toFixed(meter.pct < 10 ? 1 : 0)}%`}
-        />
+        <div
+          className={`kraken-ctx-bar is-${meter.level}`}
+          role="progressbar"
+          aria-valuemin={0}
+          aria-valuemax={100}
+          aria-valuenow={Math.round(pendingPostCompact ? 0 : meter.pct)}
+          aria-label={`Context ${Math.round(pendingPostCompact ? 0 : meter.pct)}%`}
+          title="85% is the compaction threshold"
+        >
+          <span
+            className="kraken-ctx-bar-fill"
+            style={{ width: `${Math.min(100, pendingPostCompact ? 0 : meter.pct)}%` }}
+          />
+          <span className="kraken-ctx-bar-tick" aria-hidden />
+        </div>
+        {compactions > 0 ? (
+          <span
+            className={`kraken-ctx-compact-chip${compactionFresh ? " is-fresh" : ""}`}
+            title={`Context compacted ${compactions}× this session (CLI spine budget pipeline)`}
+          >
+            ⟲{compactions > 1 ? ` ×${compactions}` : ""}
+            {compactionFresh ? " compacted" : ""}
+          </span>
+        ) : null}
         {phaseLabel ? (
           <>
             <span

@@ -214,67 +214,79 @@ export function ProjectPanel({
   return (
     <aside className="git-panel project-panel">
       <div className="git-panel-head project-panel-head">
-        <div className="project-tabs" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "files"}
-            className={`project-tab${tab === "files" ? " active" : ""}`}
-            onClick={() => setActiveTab("files")}
-          >
-            Files
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "git"}
-            className={`project-tab${tab === "git" ? " active" : ""}`}
-            onClick={() => setActiveTab("git")}
-          >
-            Git
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={tab === "memory"}
-            className={`project-tab${tab === "memory" ? " active" : ""}`}
-            onClick={() => setActiveTab("memory")}
-          >
-            Memory
-          </button>
+        <div className="project-head-row">
+          <div className="project-tabs" role="tablist">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "files"}
+              className={`project-tab${tab === "files" ? " active" : ""}`}
+              onClick={() => setActiveTab("files")}
+            >
+              Files
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "git"}
+              className={`project-tab${tab === "git" ? " active" : ""}`}
+              onClick={() => setActiveTab("git")}
+            >
+              Git
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === "memory"}
+              className={`project-tab${tab === "memory" ? " active" : ""}`}
+              onClick={() => setActiveTab("memory")}
+            >
+              Memory
+            </button>
+          </div>
+          <div className="project-head-actions">
+            {cwd ? (
+              <button
+                type="button"
+                className="btn-ghost git-reveal-root"
+                title="Show folder in Explorer"
+                onClick={() => void onReveal(cwd)}
+              >
+                <IconReveal />
+              </button>
+            ) : null}
+            <button
+              type="button"
+              className="btn-ghost git-refresh"
+              title="Refresh"
+              onClick={onRefresh}
+            >
+              ↻
+            </button>
+            {onToggle ? (
+              <button
+                type="button"
+                className="btn-ghost git-collapse"
+                title="Hide panel"
+                onClick={onToggle}
+              >
+                ›
+              </button>
+            ) : null}
+          </div>
         </div>
         {tab === "git" && snap?.isRepo && snap.branch ? (
-          <span className="git-branch" title={snap.branch}>
-            {snap.branch}
-          </span>
-        ) : null}
-        {cwd ? (
-          <button
-            type="button"
-            className="btn-ghost git-reveal-root"
-            title="Show folder in Explorer"
-            onClick={() => void onReveal(cwd)}
-          >
-            <IconReveal />
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="btn-ghost git-refresh"
-          title="Refresh"
-          onClick={onRefresh}
-        >
-          ↻
-        </button>
-        {onToggle ? (
-          <button
-            type="button"
-            className="btn-ghost git-collapse"
-            title="Hide panel"
-            onClick={onToggle}
-          >
-            ›
-          </button>
+          <div className="git-branch-row">
+            <span className="git-branch" title={snap.branch}>
+              <svg className="git-branch-icon" viewBox="0 0 16 16" aria-hidden>
+                <circle cx="4.5" cy="3.5" r="1.8" />
+                <circle cx="4.5" cy="12.5" r="1.8" />
+                <circle cx="11.5" cy="5.5" r="1.8" />
+                <path d="M4.5 5.3v5.4M11.5 7.3c0 2.5-2.2 3.1-4.2 3.5" />
+              </svg>
+              <span className="git-branch-name">{snap.branch}</span>
+            </span>
+          </div>
         ) : null}
       </div>
 

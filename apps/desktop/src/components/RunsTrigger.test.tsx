@@ -6,9 +6,10 @@
  *     (the flag stays App's, this component holds no state);
  *   - the badge paints the live count of runs in flight, exactly like the old
  *     sidebar badge, and disappears at 0;
- *   - App mounts it on the RIGHT side of the topbar, so the trigger and the
- *     right-hand drawer share one corner (source-level pin: App cannot be
- *     rendered here — same idiom as grokRoundWiring.contract.test.ts).
+ *   - App mounts it on the RIGHT side of the chat tab bar (same row as the
+ *     open-chat tabs), so the trigger and the right-hand drawer share one
+ *     corner (source-level pin: App cannot be rendered here — same idiom as
+ *     grokRoundWiring.contract.test.ts).
  *
  * vi.mock('react'): same duplicate-React pin as Sidebar.test.tsx.
  */
@@ -63,15 +64,19 @@ describe("RunsTrigger", () => {
     expect(idle.container.querySelector(".topbar-runs-badge")).toBeNull();
   });
 
-  it("is mounted by App on the topbar RIGHT side, next to the folder picker", () => {
+  it("is mounted by App on the chat tab bar RIGHT side, next to the folder picker", () => {
     const app = read("../App.tsx");
-    const start = app.indexOf('className="topbar-right"');
+    const start = app.indexOf('className="chat-tabs-right"');
     expect(start).toBeGreaterThan(-1);
-    const topbarRight = app.slice(start, app.indexOf("</header>", start));
-    expect(topbarRight).toContain("<RunsTrigger");
-    expect(topbarRight).toContain("activeCount={runsActive}"); // live badge source
-    expect(topbarRight).toContain("onOpen={() => setDashboardOpen(true)}");
-    expect(topbarRight).toContain("topbar-folder"); // still the right-hand cluster
+    // First </div> after the cluster opens is its own closer (no nested divs).
+    const cluster = app.slice(start, app.indexOf("</div>", start));
+    expect(cluster).toContain("<RunsTrigger");
+    expect(cluster).toContain("activeCount={runsActive}"); // live badge source
+    expect(cluster).toContain("onOpen={() => setDashboardOpen(true)}");
+    expect(cluster).toContain("topbar-folder"); // still the right-hand cluster
+    // Regression: the standalone topbar row is gone — one strip only.
+    expect(app).not.toContain('className="topbar-right"');
+    expect(app).not.toContain("<header");
     // The sidebar must not render a second trigger.
     expect(read("./Sidebar.tsx")).not.toContain("sidebar-dash-btn");
   });

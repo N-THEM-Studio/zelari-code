@@ -12,7 +12,7 @@
  *     warning lines stay visible in the DEFAULT render (no expanding);
  *   - zero inline `style` attributes are left in the panel.
  */
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("react", async () => {
@@ -163,9 +163,11 @@ describe("KrakenActivity — presentation", () => {
     });
 
     expect(document.querySelectorAll(".kraken-act [style]").length).toBe(0);
-    // Rows keep their class hooks (lead distinguished from tentacles).
-    expect(document.querySelectorAll(".kraken-act-row").length).toBe(1);
-    expect(document.querySelectorAll(".kraken-act-lead").length).toBe(1);
+    // Lead and tentacles share the SAME row component (§19): aligned,
+    // clickable, expandable — the lead just carries the is-lead modifier.
+    expect(document.querySelectorAll(".kraken-act-row").length).toBe(2);
+    expect(document.querySelectorAll(".kraken-act-row.is-lead").length).toBe(1);
+    expect(document.querySelectorAll(".kraken-act-lead").length).toBe(0);
     expect(document.querySelector(".kraken-act-body")).toBeTruthy();
   });
 
@@ -175,5 +177,20 @@ describe("KrakenActivity — presentation", () => {
     expect(document.querySelector(".kraken-act")).toBeNull();
     emit({ ...LEAD, conversationId: "conv-other" });
     expect(document.querySelector(".kraken-act")).toBeNull();
+  });
+
+  it("expands the lead row on click like any tentacle (§19)", () => {
+    armMock();
+    render(<KrakenActivity conversationId="conv-K" />);
+    emit(LEAD);
+    emit(TENTACLE);
+
+    const leadRow = screen.getByText("Ship the readability pass").closest(".kraken-act-row");
+    expect(leadRow).toBeTruthy();
+    expect(leadRow!.classList.contains("is-lead")).toBe(true);
+    expect(leadRow!.querySelector(".kraken-act-details")).toBeNull();
+
+    fireEvent.click(leadRow!);
+    expect(leadRow!.querySelector(".kraken-act-details")).toBeTruthy();
   });
 });

@@ -66,17 +66,20 @@ describe("readability: KrakenActivity is class-driven", () => {
   });
 
   it("folds the old inline styles into kraken-act-* classes", () => {
+    // Lead unification (§19): the lead renders as a plain AgentRow with the
+    // `is-lead` modifier — the bespoke kraken-act-lead markup is gone.
     for (const cls of [
       "kraken-act-head",
       "kraken-act-title",
       "kraken-act-bar",
       "kraken-act-body",
       "kraken-act-row",
-      "kraken-act-lead",
+      "is-lead",
       "kraken-act-reason",
     ]) {
       expect(activity).toContain(cls);
     }
+    expect(activity).not.toContain("kraken-act-lead");
   });
 
   it("keeps the behavioural handles the other tests rely on", () => {
@@ -136,5 +139,82 @@ describe("readability: App.css owns the new skin", () => {
     expect(body).toContain("overflow: auto");
     // The old always-open preview cap (160px) is gone: 140px scroll box now.
     expect(css).not.toContain("max-height: 160px");
+  });
+});
+
+describe("scroll: detach must survive stream-driven re-renders", () => {
+  it("never syncs followStreamRef from the render body (the yank bug)", () => {
+    // Render-time sync resurrected `true` when a delta-driven render beat
+    // the scroll handler's state commit, reopening the stick-to-bottom gate
+    // and pulling the reader back down mid-history.
+    expect(app).not.toContain("followStreamRef.current = followStream");
+  });
+
+  it("flips ref+state only through the paired setter", () => {
+    expect(app).toContain(
+      "const setFollowStream = useCallback((v: boolean) => {",
+    );
+    expect(app).toContain("followStreamRef.current = v;");
+    // Nobody bypasses the setter to flip the state alone.
+    expect(app).not.toMatch(/_setFollowStream\((?:true|false)\)/);
+  });
+
+  it("anchors the reading position while detached, pins while following", () => {
+    expect(app).toContain('`chat-scroll${followStream ? "" : " is-detached"}`');
+    const rule = css.slice(
+      css.indexOf(".chat-scroll.is-detached"),
+      css.indexOf(".chat-scroll.is-detached") + 160,
+    );
+    expect(rule).toContain("overflow-anchor: auto");
+    // Base rule keeps anchoring OFF while following: stick-to-bottom owns it.
+    expect(css).toContain("overflow-anchor: none");
+  });
+});
+
+describe("reply: the answer flows in the page, no nested scroll box", () => {
+  it("uncaps the reply scroller (was a 60vh inner scrollbar)", () => {
+    // The override sits at the END of the cascade and must neutralize the
+    // base rule that capped every reply at min(60vh, 720px).
+    const scroll = css.lastIndexOf(".reply-accordion-scroll");
+    expect(scroll).toBeGreaterThan(css.indexOf(".reply-accordion-scroll"));
+    const rule = css.slice(scroll, scroll + 120);
+    expect(rule).toContain("max-height: none");
+    expect(rule).toContain("overflow: visible");
+  });
+
+  it("does not clip the accordion either (plain block in the page flow)", () => {
+    const acc = css.lastIndexOf(".reply-accordion {");
+    const rule = css.slice(acc, acc + 120);
+    expect(rule).toContain("overflow: visible");
+  });
+});
+
+describe("follow button: icon-only rail affordance (IDE style)", () => {
+  it("renders the button only while detached (room left to scroll down)", () => {
+    // Same gate as ever: no button at the bottom, button the moment the
+    // reader is above the end (with content worth jumping back to).
+    expect(app).toContain("{!followStream && (!empty || running) && (");
+  });
+
+  it("drops the label block - icon plus missed-count badge only", () => {
+    expect(app).not.toContain("btn-follow-stream-label");
+    expect(app).not.toContain("btn-follow-stream-kicker");
+    expect(app).not.toContain("btn-follow-stream-text");
+    // The missed-content count survives as the tiny corner badge.
+    expect(app).toContain("btn-follow-stream-pill");
+    expect(app).toContain("Vai alla fine");
+  });
+
+  it("docks the button on the right rail, next to the scrollbar", () => {
+    const idx = css.indexOf("21. Follow button");
+    expect(idx).toBeGreaterThan(-1);
+    const after = css.slice(idx);
+    const start = after.indexOf(".btn-follow-stream,");
+    const rule = after.slice(start, start + 200);
+    expect(rule).toContain("left: auto");
+    expect(rule).toContain("right: 20px");
+    expect(after).toContain("@keyframes follow-btn-rail-in");
+    // The old centering transform must not sneak back into this section.
+    expect(rule).not.toContain("translateX(-50%)");
   });
 });

@@ -15,9 +15,18 @@ vi.mock("react", async () => {
   return await import("../../../../node_modules/react/index.js");
 });
 
-// The real hook subscribes to the harness-event stream (Tauri IPC).
+// The real hook subscribes to the harness-event stream (Tauri IPC). The box
+// is vi.hoisted so the mocked factory can read it; each compaction test
+// drives view/receivedAt across rerenders of the SAME mounted strip.
+const harnessBox = vi.hoisted(() => ({
+  view: null as unknown,
+  receivedAt: null as number | null,
+}));
 vi.mock("../harnessState", () => ({
-  useHarnessState: () => ({ view: null, receivedAt: null }),
+  useHarnessState: () => ({
+    view: harnessBox.view,
+    receivedAt: harnessBox.receivedAt,
+  }),
 }));
 
 import { KrakenContextPanel, type LiveCtxStats } from "./KrakenContextPanel";
@@ -109,5 +118,86 @@ describe("KrakenContextPanel — composer strip", () => {
     const nums = document.querySelector(".kraken-ctx-nums");
     expect(nums!.textContent).toContain("Σ");
     expect(nums!.textContent!.replace(/[^\d]/g, "")).toContain("4200");
+  });
+});
+
+/** Minimal HarnessView with a compaction counter (support block only). */
+function viewWith(
+  compactions: number,
+  support: Record<string, unknown> = {},
+): unknown {
+  return {
+    turns: [],
+    turnsTotal: 0,
+    support: {
+      compactions,
+      contextProjections: 0,
+      contextChars: 0,
+      memoryEvents: 0,
+      ...support,
+    },
+  };
+}
+
+describe("KrakenContextPanel — compaction you can see", () => {
+  it("flashes the ⟲ chip the moment the spine compacts, and claims no % until the next budget event", () => {
+    harnessBox.view = viewWith(0);
+    harnessBox.receivedAt = 1_000;
+    const props = { live: live(), progress: PROGRESS };
+    const { rerender } = render(<KrakenContextPanel {...props} />);
+    expect(document.querySelector(".kraken-ctx-compact-chip")).toBeNull();
+    expect(meterText()).toBe("ctx 12.0k/200k · 6.0% est.");
+
+    // The spine compacts: the next event carries compactions=1.
+    harnessBox.view = viewWith(1);
+    harnessBox.receivedAt = 1_500;
+    rerender(<KrakenContextPanel {...props} />);
+
+    const chip = document.querySelector(".kraken-ctx-compact-chip");
+    expect(chip?.textContent).toContain("compacted");
+    // Unknown ≠ 0: the meter stops claiming a percentage off the stale
+    // pre-compaction proxy — this is the "stuck at 100% est." regression.
+    expect(meterText()).toBe("ctx ⟲ · awaiting budget");
+    const bar = document.querySelector(".kraken-ctx-bar");
+    expect(bar?.getAttribute("aria-valuenow")).toBe("0");
+    expect(bar?.getAttribute("role")).toBe("progressbar");
+  });
+
+  it("restores the readout when a fresh post-compaction budget event arrives", () => {
+    harnessBox.view = viewWith(0);
+    harnessBox.receivedAt = 1_000;
+    const props = { live: live(), progress: PROGRESS };
+    const { rerender } = render(<KrakenContextPanel {...props} />);
+
+    harnessBox.view = viewWith(1);
+    harnessBox.receivedAt = 1_500;
+    rerender(<KrakenContextPanel {...props} />);
+    expect(meterText()).toBe("ctx ⟲ · awaiting budget");
+
+    // Next spine event: fresh (just arrived) and carrying the post-compaction
+    // occupancy — the meter breathes again with real numbers.
+    harnessBox.view = viewWith(1, {
+      lastOccupancy: 0.22,
+      contextLimit: 200_000,
+      lastPolicy: "steady",
+    });
+    harnessBox.receivedAt = Date.now() - 1_000;
+    rerender(<KrakenContextPanel {...props} />);
+
+    expect(meterText()).toBe("ctx 44.0k/200k · 22%");
+    expect(
+      document.querySelector(".kraken-ctx-compact-chip")?.textContent,
+    ).toContain("⟲");
+  });
+
+  it("does not flash a compaction that happened before the mount", () => {
+    harnessBox.view = viewWith(3);
+    harnessBox.receivedAt = Date.now() - 1_000;
+    render(<KrakenContextPanel live={live()} progress={PROGRESS} />);
+
+    const chip = document.querySelector(".kraken-ctx-compact-chip");
+    expect(chip?.textContent).toContain("×3");
+    expect(chip?.textContent).not.toContain("compacted");
+    expect(chip?.classList.contains("is-fresh")).toBe(false);
   });
 });

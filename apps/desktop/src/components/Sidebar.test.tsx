@@ -98,6 +98,8 @@ function props(over: Partial<SidebarProps> = {}): SidebarProps {
     onRename: () => {},
     onFilterChange: () => {},
     onOpenSettings: () => {},
+    collapsed: false,
+    onToggleCollapsed: () => {},
     cliOk: true,
     statusLine: "ready",
     resizer: {
@@ -113,15 +115,41 @@ function props(over: Partial<SidebarProps> = {}): SidebarProps {
 const mission = conv({ id: "m1", title: "mission-one", sessionId: "s-1", cwd: "Z:\\w\\my-app" });
 const chat = conv({ id: "c1", title: "plain-one" });
 
-describe("Sidebar - Missioni / Chat sections", () => {
-  it("splits by sessionId and keeps the folder grouping", () => {
-    render(<Sidebar {...props({ sessions: [mission, chat] })} />);
-    expect(screen.getByText("Missioni")).toBeTruthy();
-    expect(screen.getByText("Chat")).toBeTruthy();
+describe("Sidebar - project grouping (IDE round)", () => {
+  it("groups by project folder once — no Missioni/Chat split, no per-row folder", () => {
+    const { container } = render(
+      <Sidebar {...props({ sessions: [mission, chat] })} />,
+    );
+    // Both conversations are listed under their project header.
     expect(screen.getByText("mission-one")).toBeTruthy();
     expect(screen.getByText("plain-one")).toBeTruthy();
-    expect(screen.getByText("📁 my-app")).toBeTruthy();
-    expect(screen.getByText("📁 No folder")).toBeTruthy();
+    // The project folder is the group header, shown ONCE per project.
+    expect(screen.getByText("my-app")).toBeTruthy();
+    expect(screen.getByText("No folder")).toBeTruthy();
+    // The old Missioni/Chat sections are gone, and no row repeats its folder.
+    expect(screen.queryByText("Missioni")).toBeNull();
+    expect(screen.queryByText("Chat")).toBeNull();
+    expect(container.querySelector(".session-folder")).toBeNull();
+    expect(container.querySelector(".session-label")).toBeNull();
+  });
+
+  it("renders the minimal icon rail when collapsed", () => {
+    let toggled = false;
+    const { container } = render(
+      <Sidebar
+        {...props({
+          sessions: [mission],
+          collapsed: true,
+          onToggleCollapsed: () => {
+            toggled = true;
+          },
+        })}
+      />,
+    );
+    expect(container.querySelector(".sidebar-rail")).toBeTruthy();
+    expect(container.querySelector(".session-list")).toBeNull();
+    fireEvent.click(screen.getByLabelText("Espandi la barra laterale"));
+    expect(toggled).toBe(true);
   });
 
   it("no longer hosts the runs-dashboard trigger (F4 moved it to the topbar)", () => {

@@ -68,6 +68,30 @@ describe("MessageContent inline readability", () => {
     );
   });
 
+  // Regression (glued-spacing bug): the inline gap/tail between rendered
+  // tokens used to run through stripOrphanMarkers' .trim(), eating the
+  // spaces around **bold** / `code` — words glued together, even after
+  // periods, exactly as reported in the wild.
+  it("keeps the spaces around bold and inline-code tokens", () => {
+    const { container } = render(
+      <MessageContent
+        content={"Prima parola. **Grassetto** dopo il punto, `codice` finale."}
+      />,
+    );
+    expect(container.querySelector(".md-p")?.textContent).toBe(
+      "Prima parola. Grassetto dopo il punto, codice finale.",
+    );
+  });
+
+  it("does not glue words when bold opens or closes the paragraph", () => {
+    const { container } = render(
+      <MessageContent content={"**Start** mid **end**"} />,
+    );
+    expect(container.querySelector(".md-p")?.textContent).toBe(
+      "Start mid end",
+    );
+  });
+
   it("renders tables with inline formatting in cells", () => {
     const md = ["| a | b |", "| --- | --- |", "| **x** | `y` |"].join("\n");
     const { container } = render(<MessageContent content={md} />);
