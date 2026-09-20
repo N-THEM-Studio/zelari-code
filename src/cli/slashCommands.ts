@@ -2,6 +2,7 @@ import type { CodingSkillDefinition } from '@zelari/core/skills';
 import { parseMode } from './mode.js';
 import { evolutionMode, ledgerStats, readLedger } from './evolution/ledger.js';
 import { proposalSummary, readProposalStore } from './evolution/proposals.js';
+import { formatLedgerSignalLines } from './slashHandlers/evolve.js';
 import { handleStatusLine } from './slashHandlers/statusline.js';
 import { buildSessionReport } from './commands/report.js';
 import { renderInbox } from './inbox.js';
@@ -269,6 +270,10 @@ export function handleSlashCommand(
                   ? [`  tier-weighted pass rate: ${stats.weightedPassRate.toFixed(2)}`]
                   : []),
                 ...(fitness ? [fitness] : []),
+                // WS7 slice 0: honesty is always stated (absence = "not
+                // measured", never clean); the cache line is omitted when no
+                // provider usage report backed it (see slashHandlers/evolve.ts).
+                ...formatLedgerSignalLines(entries, stats),
               ]
             : []),
           ...(stats.runs > 0 && stats.lastAt ? [`  last run: ${stats.lastAt}`] : []),
