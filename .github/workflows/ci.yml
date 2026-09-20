@@ -48,6 +48,15 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # WS4/t136: the VS Code extension PoC is compile-only in CI — no
+      # bundled runtime deps, no Marketplace tooling, no `@vscode/vsce`.
+      # It has no node_modules of its own by design and reuses the root tsc
+      # (`apps/vscode/tsconfig.json` -> apps/vscode/out). The extension's
+      # protocol client is pure Node (no VS Code host, no network) and is
+      # covered by the root vitest run below.
+      - name: Build VS Code extension (compile-only)
+        run: npm run vscode:build
+
       - name: Tests (unit + session replay invariants E1.6/E1.7)
         run: npm test
 

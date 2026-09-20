@@ -1,0 +1,13 @@
+# Packaging filter for the extension (only relevant if someone packages a
+# VSIX by hand; this PoC is NOT published — see README).
+#
+# Ship the compiled adapter + the manifest, nothing else.
+src/**
+out/**/*.map
+**/*.test.ts
+**/*.tsbuildinfo
+tsconfig.json
+tsconfig.test.json
+.vscode/**
+.vscodeignore
+README.md

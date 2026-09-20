@@ -47,6 +47,7 @@
     "desktop:install": "npm install --prefix apps/desktop",
     "desktop:dev": "npm run build:cli && npm run tauri:dev --prefix apps/desktop",
     "companion:android": "cd apps/companion-android && .\\gradlew.bat assembleDebug",
+    "vscode:build": "npm run build --prefix apps/vscode",
     "desktop:build": "npm run tauri:build --prefix apps/desktop",
     "postinstall": "node scripts/postinstall.mjs",
     "prepublishOnly": "node scripts/prepublish.mjs",

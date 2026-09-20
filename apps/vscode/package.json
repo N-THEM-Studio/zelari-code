@@ -1,0 +1,81 @@
+{
+  "name": "zelari-code-vscode",
+  "displayName": "Zelari Code (ACP PoC)",
+  "description": "Proof-of-concept VS Code extension that drives the existing zelari-code ACP headless front door: start a session, watch the tool-call stream, shut down clean.",
+  "publisher": "zelari",
+  "version": "0.1.0-poc",
+  "license": "Apache-2.0",
+  "private": true,
+  "engines": {
+    "vscode": "^1.84.0",
+    "node": ">=20.17.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {
+    "commands": [
+      {
+        "command": "zelari.startSession",
+        "title": "Zelari: Start ACP Session",
+        "category": "Zelari"
+      },
+      {
+        "command": "zelari.sendPrompt",
+        "title": "Zelari: Send Prompt to ACP Session",
+        "category": "Zelari"
+      },
+      {
+        "command": "zelari.stopSession",
+        "title": "Zelari: Stop ACP Session",
+        "category": "Zelari"
+      }
+    ],
+    "configuration": {
+      "title": "Zelari Code (ACP)",
+      "properties": {
+        "zelari.command": {
+          "type": "string",
+          "default": "zelari-code",
+          "markdownDescription": "Command on `PATH` used to start the agent (default `zelari-code`, i.e. `zelari-code acp`). Ignored when `#zelari.cliPath#` is set. On Windows a bare command needs a shell (the `.cmd` shim), so shell metacharacters are rejected up front instead of being handed to cmd.exe."
+        },
+        "zelari.args": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "acp"
+          ],
+          "markdownDescription": "Arguments passed after `#zelari.command#` / `#zelari.cliPath#`. The default starts the ACP front door."
+        },
+        "zelari.cliPath": {
+          "type": "string",
+          "default": "",
+          "markdownDescription": "Absolute path to `<checkout>/bin/zelari-code.js`. When set, the agent is started as `#zelari.nodePath# <cliPath> <args>` with **no shell** — the portable, Windows-safe form (recommended)."
+        },
+        "zelari.nodePath": {
+          "type": "string",
+          "default": "node",
+          "markdownDescription": "Node runtime used when `#zelari.cliPath#` is set (Node >= 20.17.0)."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck:tests": "tsc -p tsconfig.test.json"
+  },
+  "keywords": [
+    "zelari",
+    "acp",
+    "agent-client-protocol",
+    "poc"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/N-THEM-Studio/zelari-code.git"
+  }
+}

@@ -20,6 +20,10 @@ apps/companion-android/.idea/
 apps/companion-android/*.iml
 apps/companion-android/captures/
 
+# VS Code extension (ACP PoC, apps/vscode) — source is committed, the
+# compiled adapter (`npm run vscode:build` -> apps/vscode/out) is not.
+apps/vscode/out/
+
 # Hermes local agent state (plans, audit reports, session logs)
 .hermes/
 
