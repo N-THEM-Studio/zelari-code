@@ -46,6 +46,14 @@ import {
   setLastVerifyToolTrace,
 } from '../kraken/candidateRegistry.js';
 import { parseVerifyVerdict } from '@zelari/core';
+import {
+  SESSION_SCHEMA_VERSION,
+  buildProjection,
+  decisionPayloadError,
+  type SessionEventEnvelope,
+  type SessionEventInput,
+} from '@zelari/core/session';
+import { bindVerifyDebtSpineEmit, flushVerifyDebtSpine } from './verifyDebtSpine.js';
 
 beforeEach(() => {
   resetTaskVerifyObligation();
@@ -376,5 +384,86 @@ describe('K1.3 (e2e) — runAutoVerifyAfterGeneral publishes the inner verify to
     const trace = getLastVerifyToolTrace();
     expect(trace).not.toBeNull();
     expect(trace?.[0]?.tool).toBe('bash');
+  });
+});
+
+/**
+ * WS7 slice 4 (t139) — `verify.requested` at the ASK SITE.
+ *
+ * Three questions, three kinds, one chain: the obligation (`verify.debt_open`),
+ * the request (`verify.requested`) and the run (`verification.run`). This suite
+ * pins the middle one against the real `runAutoVerifyAfterGeneral` chain and
+ * through the same bound spine emitter the debt events use.
+ */
+describe('WS7 slice 4 — verify.requested at the auto-verify ask site', () => {
+  function envelopes(inputs: readonly SessionEventInput[]): SessionEventEnvelope[] {
+    return inputs.map((input, i) => ({
+      schemaVersion: SESSION_SCHEMA_VERSION,
+      sessionId: 'ws7-request',
+      seq: i + 1,
+      ts: 1_700_000_000_000 + i,
+      kind: input.kind,
+      actor: input.actor,
+      data: input.data ?? {},
+    }));
+  }
+
+  it('the chain requests the verify on the spine, after opening the obligation', async () => {
+    const events: SessionEventInput[] = [];
+    bindVerifyDebtSpineEmit(async (input) => {
+      events.push(input);
+      return { seq: events.length };
+    });
+
+    const deps = scriptedVerifyDeps({ body: 'Ran the suite.', tools: 1, trailer: 'PASS' });
+    const cwd = k13TmpRoot();
+    const out = await runAutoVerifyAfterGeneral({
+      deps,
+      original: {
+        description: 'WS7 request',
+        prompt: 'do the thing',
+        acceptance: ['suite green'],
+      },
+      general: fakeGeneral('g-request', cwd),
+      parentCwd: cwd,
+      sessionId: 'ws7-request',
+    });
+    await flushVerifyDebtSpine();
+    expect(out).toContain('verify PASS');
+
+    const requested = events.filter((e) => e.kind === 'verify.requested');
+    expect(requested).toHaveLength(1);
+    expect(requested[0]!.data).toMatchObject({
+      taskId: 'g-request',
+      source: 'auto-verify',
+      reason: 'WS7 request',
+    });
+    expect(requested[0]!.data.criterionIds).toEqual(['suite green']);
+    expect(decisionPayloadError('verify.requested', requested[0]!.data)).toBeNull();
+
+    // The obligation is opened BEFORE the request (owed ⇒ then asked for).
+    const kinds = events.map((e) => e.kind);
+    expect(kinds.indexOf('verify.debt_open')).toBeGreaterThanOrEqual(0);
+    expect(kinds.indexOf('verify.debt_open')).toBeLessThan(kinds.indexOf('verify.requested'));
+
+    const projection = buildProjection(envelopes(events));
+    expect(projection.decisionEvents.map((d) => d.kind)).toEqual(['verify.requested']);
+    expect(projection.decisionEvents[0]!.detail).toBe('WS7 request');
+    expect(projection.decisionEvents[0]!.tool).toBe('');
+  });
+
+  it('BEST-EFFORT: a THROWING bound sink cannot break the verify chain', async () => {
+    bindVerifyDebtSpineEmit(() => Promise.reject(new Error('SESSION_LOG_LOCKED')));
+    const deps = scriptedVerifyDeps({ body: 'Ran the suite.', tools: 1, trailer: 'PASS' });
+    const cwd = k13TmpRoot();
+    const out = await runAutoVerifyAfterGeneral({
+      deps,
+      original: { description: 'WS7 request locked', prompt: 'do the thing' },
+      general: fakeGeneral('g-request-locked', cwd),
+      parentCwd: cwd,
+      sessionId: 'ws7-request-locked',
+    });
+    await flushVerifyDebtSpine();
+    expect(out).toContain('verify PASS');
   });
 });

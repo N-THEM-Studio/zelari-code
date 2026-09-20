@@ -33,6 +33,7 @@ import {
   type PermissionRequestPayload,
 } from '@zelari/core/harness';
 import { claimMatchValues, resourceClaimsFor } from './resourceClaims.js';
+import { emitDecisionEvent, type DecisionEventSink } from './decisionEmit.js';
 import { activePermissionRules } from './permissionRules.js';
 import {
   evaluatePermissionPolicy,
@@ -43,11 +44,20 @@ import {
 } from './permissionPolicy.js';
 import type { PermissionAction } from './toolPermissions.js';
 
-/** Session-spine sink shape (ToolContext.emitSessionEvent). */
-export type PermissionEventSink = (input: SessionEventInput) => Promise<unknown>;
+/**
+ * Session-spine sink shape (ToolContext.emitSessionEvent). One definition for
+ * the whole CLI decision surface — see `decisionEmit.ts` (WS7 slice 4).
+ */
+export type PermissionEventSink = DecisionEventSink;
 
 /** Spine event kind emitted on a rule denial (WS1 vocabulary addition). */
 export const PERMISSION_DENIED_KIND = 'permission.denied' as const;
+
+/** Spine event kind emitted when a dispatch resolves to a PROMPT (WS7 slice 4). */
+export const PERMISSION_ASKED_KIND = 'permission.asked' as const;
+
+/** Spine event kind emitted when a dispatch is allowed with NO prompt (WS7 slice 4). */
+export const AUTO_APPROVE_GRANTED_KIND = 'auto_approve.granted' as const;
 
 export interface DispatchPermissionInput {
   toolName: string;
@@ -273,4 +283,109 @@ export async function emitPermissionDenied(
   } catch {
     return { recorded: false };
   }
+}
+
+// ── WS7 slice 4 (t139): the ALLOW / PROMPT side of the same decision block ──
+
+/** Where an ALLOW came from, when it is worth recording (see `autoApproveOrigin`). */
+export interface AutoApproveOrigin {
+  /** `default` / `project` / `session` / `preset` — mirrors decisionEvents.ts. */
+  source: string;
+  matchedRuleId?: string;
+  reason?: string;
+}
+
+export interface AutoApproveOriginInput {
+  /** The FINAL effect: every layer merged, provenance + yolo applied. */
+  effect: PermissionAction;
+  /** Declared permission categories of the call (`read`, `write`, `execute`, …). */
+  categories: readonly string[];
+  /** The WS1 rule verdict, when a rule drove the decision. */
+  verdict?: PermissionVerdict | null;
+  /** True when `--permissions yolo` promoted this dispatch's ask to allow. */
+  yoloPromoted?: boolean;
+}
+
+/**
+ * SELECTION RULE for `auto_approve.granted` — which allows the spine records.
+ * The deny side (WS1) records only RULE denials; an allow is recorded only when
+ * the harness actually DECIDED something:
+ *
+ *   (a) an ALLOW RULE matched (project/session rule) — the rule made the call;
+ *   (b) `--permissions yolo` promoted an ask to allow — an explicit opt-in;
+ *   (c) an `execute` / `network` CATEGORY default — privileged side effects.
+ *
+ * Every other category default (`read`, `write`, `ui`) is deliberately NOT
+ * recorded: those are the bulk of all dispatches and recording them would
+ * flood the spine with events that carry no decision. Returns null ⇒ nothing
+ * to say (same contract as `evaluateToolDispatch`).
+ */
+export function autoApproveOrigin(input: AutoApproveOriginInput): AutoApproveOrigin | null {
+  if (input.effect !== 'allow') return null;
+  if (input.yoloPromoted === true) {
+    return { source: 'preset', reason: 'yolo (--permissions yolo) promoted an ask to allow' };
+  }
+  const verdict = input.verdict ?? null;
+  if (verdict?.decision === 'allow') {
+    return {
+      source: verdict.source,
+      ...(verdict.matchedRuleId ? { matchedRuleId: verdict.matchedRuleId } : {}),
+      ...(verdict.reason ? { reason: verdict.reason } : {}),
+    };
+  }
+  const privileged = input.categories.filter((c) => c === 'execute' || c === 'network');
+  if (privileged.length > 0) {
+    return { source: 'default', reason: `${privileged.join('+')} category default` };
+  }
+  return null;
+}
+
+export interface PermissionAskedEmitInput extends Omit<PermissionHookInput, 'effect'> {
+  /** Reason shown to the operator — the rule's when a rule forced the ask. */
+  reason?: string;
+}
+
+/**
+ * `permission.asked` — the gate resolved this dispatch to a PROMPT. Emitted for
+ * EVERY ask, including the fail-closed one (no interactive approver attached):
+ * the DECISION was "ask", whichever way it then resolved. Payload reuses the
+ * WS5 hook formatter (`buildPermissionRequestHookPayload`: tool, categories,
+ * effect `ask`, rule origin, bounded argsSummary) — the same fields the
+ * `permission.asked` contract in decisionEvents.ts mirrors.
+ */
+export async function emitPermissionAsked(
+  sink: PermissionEventSink | undefined,
+  input: PermissionAskedEmitInput,
+): Promise<{ recorded: boolean; seq?: number }> {
+  const base = buildPermissionRequestHookPayload({ ...input, effect: 'ask' });
+  const reason = input.reason?.trim();
+  return emitDecisionEvent(
+    sink,
+    PERMISSION_ASKED_KIND,
+    { ...base, ...(reason ? { reason } : {}) },
+    { type: 'system', role: 'permissions' },
+  );
+}
+
+/**
+ * `auto_approve.granted` — the same decision block resolved to ALLOW without a
+ * prompt. The caller passes the origin `autoApproveOrigin()` selected.
+ */
+export async function emitAutoApproveGranted(
+  sink: PermissionEventSink | undefined,
+  payload: { tool: string; categories: readonly string[]; origin: AutoApproveOrigin },
+): Promise<{ recorded: boolean; seq?: number }> {
+  const { origin } = payload;
+  return emitDecisionEvent(
+    sink,
+    AUTO_APPROVE_GRANTED_KIND,
+    {
+      tool: payload.tool,
+      categories: [...payload.categories],
+      source: origin.source,
+      ...(origin.matchedRuleId ? { matchedRuleId: origin.matchedRuleId } : {}),
+      ...(origin.reason ? { reason: origin.reason } : {}),
+    },
+    { type: 'system', role: 'permissions' },
+  );
 }

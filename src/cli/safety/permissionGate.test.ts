@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { promises as fs, mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { SessionLogWriter, buildProjection, readSessionLog } from '@zelari/core/session';
+import { SessionLogWriter, buildProjection, decisionPayloadError, readSessionLog } from '@zelari/core/session';
 import type { SessionEventInput } from '@zelari/core/session';
 import type { ToolContext } from '@zelari/core/harness/tools/toolTypes';
 import { AuditLogger } from './auditLogger.js';
@@ -28,7 +28,10 @@ import {
   resetProjectPermissionRuleCache,
 } from './permissionRules.js';
 import {
+  AUTO_APPROVE_GRANTED_KIND,
+  PERMISSION_ASKED_KIND,
   PERMISSION_DENIED_KIND,
+  autoApproveOrigin,
   clearPermissionDenials,
   evaluateToolDispatch,
   listRecentPermissionDenials,
@@ -303,6 +306,166 @@ describe('WS1 gate — the shipped `$comment` template is not a malformed config
     expect(res.error).toContain("at 'rules.0.effect'");
     expect(res.error).toContain('failing closed');
     expect(res.error).toContain(path.join(root, '.zelari', 'permissions.json'));
+    expect(res.error).toContain('No interactive approval available');
+  });
+});
+
+/**
+ * WS7 slice 4 (t139) — the ALLOW/PROMPT halves of the SAME decision block the
+ * suite above pins for `permission.denied`: a prompt that reaches the operator
+ * (`permission.asked`) and an allow that reaches nobody (`auto_approve.granted`).
+ * Both ride the identical `ToolContext.emitSessionEvent` sink and must survive
+ * the real registry + real session log + real projection.
+ */
+describe('WS7 slice 4 — permission.asked / auto_approve.granted (decision block)', () => {
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'zelari-ws7-ask-'));
+    await fs.mkdir(path.join(root, 'docs'), { recursive: true });
+    await fs.writeFile(path.join(root, 'docs', 'a.md'), 'old', 'utf-8');
+    writer = await SessionLogWriter.open(path.join(root, 'session'), 'ws7-decisions', 1);
+    resetProjectPermissionRuleCache();
+    clearSessionPermissionRules();
+    clearSessionPermissionGrants();
+    clearPermissionDenials();
+  });
+
+  afterEach(async () => {
+    await writer.close();
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+
+  async function writeWithCtx(
+    policy: PermissionPolicy,
+    pathArg: string,
+    ctx: ToolContext,
+  ): Promise<{ ok: boolean; error?: string }> {
+    const tool = makeRegistry(policy).get('write_file');
+    if (!tool) throw new Error('write_file not registered');
+    return (await tool.execute({ path: pathArg, content: 'x' } as never, ctx)) as {
+      ok: boolean;
+      error?: string;
+    };
+  }
+
+  it('a category ASK is recorded as `permission.asked` (fail-closed branch included)', async () => {
+    const res = await writeFileWith({ ...allowAll(), write: 'ask', auto: false }, 'docs/b.md');
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('No interactive approval available');
+
+    const report = await readSessionLog(writer.path);
+    const asked = report.events.filter((e) => e.kind === PERMISSION_ASKED_KIND);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.data).toMatchObject({ tool: 'write_file', effect: 'ask' });
+    expect(asked[0]?.data.categories).toContain('write');
+    expect(decisionPayloadError('permission.asked', asked[0]?.data)).toBeNull();
+
+    const projection = buildProjection(report.events, report.issues);
+    expect(projection.decisionEvents.map((d) => d.kind)).toEqual(['permission.asked']);
+    expect(projection.decisionEvents[0]?.tool).toBe('write_file');
+  });
+
+  it('a rule-forced ASK is recorded with the rule origin the operator saw', async () => {
+    writePermissionsFile({
+      version: 1,
+      rules: [{ id: 'ask-docs', effect: 'ask', tool: 'write_file', pathPrefix: 'docs' }],
+    });
+    const res = await writeFile('docs/b.md');
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("rule 'ask-docs'");
+
+    const asked = (await readSessionLog(writer.path)).events.filter(
+      (e) => e.kind === PERMISSION_ASKED_KIND,
+    );
+    expect(asked).toHaveLength(1);
+    expect(asked[0]?.data).toMatchObject({ matchedRuleId: 'ask-docs', source: 'project' });
+    expect(decisionPayloadError('permission.asked', asked[0]?.data)).toBeNull();
+  });
+
+  it('an ALLOW RULE that skips the prompt is recorded as `auto_approve.granted`', async () => {
+    writePermissionsFile({
+      version: 1,
+      rules: [{ id: 'ok-docs', effect: 'allow', tool: 'write_file', pathPrefix: 'docs' }],
+    });
+    const res = await writeFileWith({ ...allowAll(), write: 'ask', auto: false }, 'docs/b.md');
+    expect(res.ok, res.error).toBe(true);
+
+    const report = await readSessionLog(writer.path);
+    const grants = report.events.filter((e) => e.kind === AUTO_APPROVE_GRANTED_KIND);
+    expect(grants).toHaveLength(1);
+    expect(grants[0]?.data).toMatchObject({
+      tool: 'write_file',
+      matchedRuleId: 'ok-docs',
+      source: 'project',
+    });
+    expect(decisionPayloadError('auto_approve.granted', grants[0]?.data)).toBeNull();
+
+    const projection = buildProjection(report.events, report.issues);
+    expect(projection.decisionEvents.map((d) => d.kind)).toEqual(['auto_approve.granted']);
+    expect(projection.decisionEvents[0]?.detail).toContain('auto-approved');
+  });
+
+  it('a plain write CATEGORY allow is NOT recorded: the spine never floods', async () => {
+    const res = await writeFile('docs/b.md');
+    expect(res.ok, res.error).toBe(true);
+    const report = await readSessionLog(writer.path);
+    expect(report.events.filter((e) => e.kind === AUTO_APPROVE_GRANTED_KIND)).toEqual([]);
+    expect(buildProjection(report.events, report.issues).decisionEvents).toEqual([]);
+  });
+
+  it('autoApproveOrigin records rule matches, yolo promotions and execute/network only', () => {
+    const ruleAllow = {
+      decision: 'allow' as const,
+      source: 'project' as const,
+      matchedRuleId: 'ok-docs',
+      reason: 'rule ok-docs allows it',
+    };
+    // Nothing decided: a prompt, or the read/write/ui category defaults.
+    expect(autoApproveOrigin({ effect: 'ask', categories: ['write'], verdict: null })).toBeNull();
+    expect(
+      autoApproveOrigin({ effect: 'allow', categories: ['read', 'write', 'ui'], verdict: null }),
+    ).toBeNull();
+    // Privileged category defaults.
+    expect(autoApproveOrigin({ effect: 'allow', categories: ['execute'], verdict: null })).toEqual({
+      source: 'default',
+      reason: 'execute category default',
+    });
+    expect(
+      autoApproveOrigin({ effect: 'allow', categories: ['network', 'read'], verdict: null }),
+    ).toMatchObject({ source: 'default' });
+    // A rule match, and yolo winning over it (yolo answered LAST).
+    expect(
+      autoApproveOrigin({ effect: 'allow', categories: ['write'], verdict: ruleAllow }),
+    ).toEqual({ source: 'project', matchedRuleId: 'ok-docs', reason: 'rule ok-docs allows it' });
+    expect(
+      autoApproveOrigin({
+        effect: 'allow',
+        categories: ['write'],
+        verdict: ruleAllow,
+        yoloPromoted: true,
+      }),
+    ).toMatchObject({ source: 'preset' });
+  });
+
+  it('BEST-EFFORT: a THROWING sink never blocks an auto-approved dispatch', async () => {
+    writePermissionsFile({
+      version: 1,
+      rules: [{ id: 'ok-docs', effect: 'allow', tool: 'write_file', pathPrefix: 'docs' }],
+    });
+    const throwing: ToolContext = {
+      ...makeCtx(),
+      emitSessionEvent: () => Promise.reject(new Error('SESSION_LOG_LOCKED')),
+    };
+    const res = await writeWithCtx({ ...allowAll(), write: 'ask', auto: false } as PermissionPolicy, 'docs/b.md', throwing);
+    expect(res.ok, res.error).toBe(true);
+  });
+
+  it('BEST-EFFORT: a THROWING sink leaves the fail-closed ask error untouched', async () => {
+    const throwing: ToolContext = {
+      ...makeCtx(),
+      emitSessionEvent: () => Promise.reject(new Error('SESSION_LOG_LOCKED')),
+    };
+    const res = await writeWithCtx({ ...allowAll(), write: 'ask', auto: false } as PermissionPolicy, 'docs/b.md', throwing);
+    expect(res.ok).toBe(false);
     expect(res.error).toContain('No interactive approval available');
   });
 });

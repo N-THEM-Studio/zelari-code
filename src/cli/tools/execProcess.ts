@@ -36,7 +36,9 @@ import { typedErr, typedOk, type ToolDefinition, type ToolResultMeta } from '@ze
 import { findBlockedReason } from '../safety/shellBlocklist.js';
 import { inspectCommand } from '../safety/selfKillGuard.js';
 import { resolveSandboxedPath, SandboxViolationError } from '../safety/sandboxPath.js';
-import { buildJailSpec, networkSpecFromClaimHosts, spawnJailed, type JailNetwork } from '../safety/osJail.js';
+import { buildJailSpec, jailAvailability, networkSpecFromClaimHosts, spawnJailed, type JailNetwork } from '../safety/osJail.js';
+// WS7 slice 4 (t139): `jail.blocked` on the spine when the OS jail refuses.
+import { emitJailBlocked } from '../safety/decisionEmit.js';
 
 export const execProcessInputSchema = z.object({
   /** Program to execute: bare name resolved via PATH, or an absolute path. */
@@ -129,6 +131,18 @@ export function createExecProcessTool(
           envExtras: { CI: process.env.CI ?? '1' },
         });
         if (res.outcome === 'denied') {
+          // WS7 slice 4 (t139): the OS jail refused the spawn — `jail.blocked`
+          // on the spine, carrying the backend + mode that made it refuse (the
+          // mode/probe are the SAME pure values decideJailSpawn used). Emission
+          // is fire-and-forget: a missing or throwing sink can never delay,
+          // soften or alter the typed `[jail]` deny the caller is about to get.
+          const { mode, probe } = jailAvailability();
+          void emitJailBlocked(ctx?.emitSessionEvent, {
+            backend: probe.backend,
+            mode,
+            reason: res.reason,
+            tool: 'exec_process',
+          });
           resolve(typedErr(res.reason));
           return;
         }

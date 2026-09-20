@@ -90,11 +90,16 @@ import { destructiveCommandHit } from './safety/destructiveCommands.js';
 // BEFORE dispatch, with the structured `permission.denied` spine event.
 import {
   applyAllowRule,
+  emitAutoApproveGranted,
+  emitPermissionAsked,
   emitPermissionDenied,
   emitPermissionObserverHooks,
   evaluateToolDispatch,
   permissionDenialMessage,
+  autoApproveOrigin,
 } from './safety/permissionGate.js';
+// WS7 slice 4 (t139): best-effort writer for the remaining decision kinds.
+import { emitJailBlocked } from './safety/decisionEmit.js';
 import {
   provenanceAppliesTo,
   provenanceMatchIn,
@@ -1364,12 +1369,16 @@ function wrapWithPermissions<I, O>(
           : claimHit
             ? `[policy] claim '${claimHit.match}'${claimHit.reason ? ` — ${claimHit.reason}` : ''}`
             : '';
+      // WS7 slice 4 (t139): did THIS dispatch's ask get auto-answered by yolo?
+      // `autoApproveOrigin` needs the fact, not a re-derivation.
+      let yoloPromoted = false;
       // t65: yolo = full access — every residual ask (policy rules, claims,
       // contract, provenance) auto-approves instead of hitting the phone with
       // a permission.request. Explicit deny still denies ("deny is never
       // promoted", toolPermissions.ts contract).
       if (action === 'ask' && activePermissionPreset() === 'yolo') {
         action = 'allow';
+        yoloPromoted = true;
       }
       // WS5 (t137): `action` is FINAL here — every layer merged, provenance
       // applied, yolo promoted — which is exactly the moment a permission is
@@ -1388,6 +1397,39 @@ function wrapWithPermissions<I, O>(
           },
           { sessionId: ctx.sessionId, cwd: ctx.cwd },
         );
+      }
+      // WS7 slice 4 (t139): the DECISION, on the spine — `permission.asked` when
+      // the gate resolved this dispatch to a PROMPT (the fail-closed branch
+      // below included: the decision WAS "ask", there was simply nobody to ask),
+      // `auto_approve.granted` when it resolved to ALLOW with no prompt. Both go
+      // through the SAME sink `permission.denied` and the file.* telemetry use;
+      // both are best-effort (an absent or throwing sink changes nothing about
+      // the dispatch) and both are validated against their slice-2 contract
+      // before a single byte is written. The allow side is deliberately
+      // selective — see `autoApproveOrigin`: rule match, yolo promotion, and
+      // execute/network category grants only, never the read/write flood.
+      if (action === 'ask') {
+        await emitPermissionAsked(ctx.emitSessionEvent, {
+          tool: original.name,
+          categories: requiredNow,
+          verdict: policyVerdict,
+          args: input,
+          reason: policyVerdict?.decision === 'ask' ? policyVerdict.reason : decision.reason,
+        });
+      } else if (action === 'allow') {
+        const origin = autoApproveOrigin({
+          effect: action,
+          categories: requiredNow,
+          verdict: policyVerdict,
+          yoloPromoted,
+        });
+        if (origin) {
+          await emitAutoApproveGranted(ctx.emitSessionEvent, {
+            tool: original.name,
+            categories: requiredNow,
+            origin,
+          });
+        }
       }
       if (action === 'deny') {
         // WS1 (t133): a RULE deny is structured — the message names the
@@ -1906,6 +1948,11 @@ function wrapWithShellSafety<I extends Record<string, unknown>, O>(
         if (mode !== 'off' && !probe.available) {
           if (mode === 'required') {
             const reason = jailDenyReason(probe, mode);
+            // WS7 slice 4 (t139): the deny this seam SURFACES is the typed
+            // `[jail]` one, and the sibling spawn seam records exactly that
+            // (spawnJailed already prefixed it) — so the spine carries the same
+            // text the caller (and the model) got, never a twin spelling.
+            const jailError = `[jail] ${reason}`;
             await audit.append({
               ts: new Date().toISOString(),
               sessionId,
@@ -1916,7 +1963,18 @@ function wrapWithShellSafety<I extends Record<string, unknown>, O>(
               durationMs: 0,
               error: 'jail_denied',
             });
-            return { ok: false, error: `[jail] ${reason}` } as TypedResult<O>;
+            // WS7 slice 4 (t139): `jail.blocked` — the jail REFUSED this spawn
+            // (t28 golden rule: required + no honest backend ⇒ deny, never a
+            // silent unjailed run). The backend + mode that failed it ride the
+            // payload, so a replay can tell WHICH containment was missing.
+            // Best-effort: same sink as every other decision event.
+            await emitJailBlocked(ctx.emitSessionEvent, {
+              backend: probe.backend,
+              mode,
+              reason: jailError,
+              tool: original.name,
+            });
+            return { ok: false, error: jailError } as TypedResult<O>;
           }
           await audit.append({
             ts: new Date().toISOString(),

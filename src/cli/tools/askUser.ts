@@ -11,6 +11,8 @@
 
 import { z } from "zod";
 import { typedOk, type ToolDefinition } from "@zelari/core/harness/tools/toolTypes";
+// WS7 slice 4 (t139): `ask_user.fired` rides the same decision sink.
+import { emitDecisionEvent } from "../safety/decisionEmit.js";
 
 export interface AskUserRequest {
   question: string;
@@ -51,7 +53,7 @@ export function createAskUserTool(
       "materially changes implementation; otherwise assume and document the assumption.",
     permissions: ["ui"],
     inputSchema,
-    execute: async (input) => {
+    execute: async (input, ctx) => {
       const question = input.question.trim();
       const choices = input.choices.map((c) => c.trim()).filter(Boolean);
       if (choices.length < 2) {
@@ -67,11 +69,24 @@ export function createAskUserTool(
             ". State the assumption explicitly.",
         );
       }
+      // WS7 slice 4 (t139): the model STOPPED the loop to ask the operator —
+      // `ask_user.fired` records the question itself on the session spine
+      // (state-only: replay reads it, the model loop never does). Fired only
+      // when the question really leaves the harness: a headless call with no
+      // handler answers "proceed with your assumption" without asking anyone,
+      // so nothing is recorded there. Best-effort: a missing or throwing sink
+      // never changes what the operator sees or what the tool returns.
+      const context = input.context?.trim() || undefined;
+      await emitDecisionEvent(ctx?.emitSessionEvent, "ask_user.fired", {
+        question,
+        choices,
+        ...(context ? { context } : {}),
+      });
       try {
         const answer = await handler({
           question,
           choices,
-          context: input.context?.trim() || undefined,
+          context,
         });
         if (answer == null || !String(answer).trim()) {
           return typedOk(

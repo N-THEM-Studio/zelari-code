@@ -84,6 +84,7 @@ import { startTentacleHeartbeat } from './tentacleHeartbeat.js';
 import {
   emitVerifyDebtCleared,
   emitVerifyDebtOpen,
+  emitVerifyRequested,
   enqueueVerifyDebtPersist,
   loadSessionEventsForVerifyDebt,
   replayOpenVerifyDebts,
@@ -801,8 +802,28 @@ export async function runAutoVerifyAfterGeneral(opts: {
       ? opts.general.worktreePath
       : undefined;
 
-  const runVerify = (label: string): Promise<TentacleResult> =>
-    runTentacle({
+  const runVerify = (label: string): Promise<TentacleResult> => {
+    // WS7 slice 4 (t139): THE ask site of the general⇒verify chain — this is
+    // the moment a verify is REQUESTED. Three different questions, three
+    // different kinds, all on one spine:
+    //   verify.debt_open   (above)  — a verify is OWED for this task;
+    //   verify.requested   (here)   — the harness ASKED for it now;
+    //   verification.run   (later)  — a verify actually RAN.
+    // One event per request: a rework round re-runs the verifier, so it
+    // records a second request (honest: it WAS asked again). Queued on the
+    // SAME persist chain as the debt events — ordered on the spine, and a
+    // missing/throwing sink can never delay or block the spawn below.
+    enqueueVerifyDebtPersist(() =>
+      emitVerifyRequested(undefined, {
+        taskId: debtKey,
+        ...(opts.original.acceptance && opts.original.acceptance.length > 0
+          ? { criterionIds: opts.original.acceptance }
+          : {}),
+        source: 'auto-verify',
+        reason: opts.original.description,
+      }),
+    );
+    return runTentacle({
       deps: opts.deps,
       args: {
         description: label,
@@ -817,6 +838,7 @@ export async function runAutoVerifyAfterGeneral(opts: {
       sessionId: opts.sessionId,
       ...(opts.signal ? { signal: opts.signal } : {}),
     });
+  };
 
   // K1.3 (rev): every inner-verify return MUST publish its tool trace to
   // the per-turn channel `__zelariVerifyToolTrace` BEFORE we read it back

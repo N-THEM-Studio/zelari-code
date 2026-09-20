@@ -4,12 +4,20 @@
  * permission choke-point as every other registered tool, and the evidence
  * trail (audit entry carrying program + argv + exitCode).
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 import type { ToolContext } from '@zelari/core/harness/tools/toolTypes';
+import {
+  SESSION_SCHEMA_VERSION,
+  buildProjection,
+  decisionPayloadError,
+  type SessionEventEnvelope,
+  type SessionEventInput,
+} from '@zelari/core/session';
 import { AuditLogger } from '../safety/auditLogger.js';
+import { setJailBackendForTests } from '../safety/osJail.js';
 import { clearSessionPermissionGrants, type PermissionPolicy } from '../safety/toolPermissions.js';
 import { resourceClaimsFor } from '../safety/resourceClaims.js';
 import { createExecProcessTool } from './execProcess.js';
@@ -244,5 +252,117 @@ describe('exec_process through the registry', () => {
     const summary = String(line?.['resultSummary']);
     expect(summary).toContain(path.basename(process.execPath));
     expect(summary).toContain('exitCode=0');
+  }, 20_000);
+});
+
+/**
+ * WS7 slice 4 (t139) — `jail.blocked`: the OS-jail deny of a spawn is a
+ * DECISION (required + no honest backend ⇒ deny, never a silent unjailed run),
+ * so it lands on the session spine at the exec tool that owned the spawn.
+ */
+describe('WS7 slice 4 — jail.blocked on the exec_process spawn deny', () => {
+  /** Honest-unavailable backend double (the win32 reality, injected). */
+  const unavailable = {
+    id: 'stub-jail',
+    probe: () => ({ backend: 'stub-jail', available: false, reason: 'no backend in this test' }),
+    wrap: () => {
+      throw new Error('an unavailable backend must never wrap');
+    },
+  };
+  const savedMode = process.env.ZELARI_OS_JAIL;
+
+  afterEach(() => {
+    setJailBackendForTests(null);
+    if (savedMode === undefined) delete process.env.ZELARI_OS_JAIL;
+    else process.env.ZELARI_OS_JAIL = savedMode;
+  });
+
+  function collectingCtx(
+    dir: string,
+    events: SessionEventInput[],
+    emit?: (input: SessionEventInput) => Promise<unknown>,
+  ): ToolContext {
+    return {
+      ...makeCtx(dir),
+      emitSessionEvent:
+        emit ?? (async (input) => { events.push(input); return { seq: events.length }; }),
+    };
+  }
+
+  /** The emission is fire-and-forget: poll briefly, like the audit test above. */
+  async function settle(events: SessionEventInput[]): Promise<void> {
+    for (let i = 0; i < 20 && events.length === 0; i++) await new Promise((r) => setTimeout(r, 5));
+  }
+
+  function envelopes(inputs: readonly SessionEventInput[]): SessionEventEnvelope[] {
+    return inputs.map((input, i) => ({
+      schemaVersion: SESSION_SCHEMA_VERSION,
+      sessionId: 'exec-process-test',
+      seq: i + 1,
+      ts: 1_700_000_000_000 + i,
+      kind: input.kind,
+      actor: input.actor,
+      data: input.data ?? {},
+    }));
+  }
+
+  it('required + no backend ⇒ typed [jail] deny AND a jail.blocked decision event', async () => {
+    process.env.ZELARI_OS_JAIL = 'required';
+    setJailBackendForTests(unavailable);
+    const dir = tmpRoot();
+    const events: SessionEventInput[] = [];
+    const tool = createExecProcessTool(dir);
+    const res = await tool.execute(
+      { program: process.execPath, args: ['-e', ''] } as never,
+      collectingCtx(dir, events),
+    );
+
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain('[jail]');
+
+    await settle(events);
+    expect(events).toHaveLength(1);
+    expect(events[0]!.kind).toBe('jail.blocked');
+    expect(events[0]!.data).toMatchObject({
+      tool: 'exec_process',
+      backend: 'stub-jail',
+      mode: 'required',
+    });
+    expect(String(events[0]!.data.reason)).toContain('[jail]');
+    expect(decisionPayloadError('jail.blocked', events[0]!.data)).toBeNull();
+
+    const projection = buildProjection(envelopes(events));
+    expect(projection.decisionEvents.map((d) => d.kind)).toEqual(['jail.blocked']);
+    expect(projection.decisionEvents[0]!.detail).toContain('stub-jail required');
+  });
+
+  it('BEST-EFFORT: a THROWING sink cannot soften the deny', async () => {
+    process.env.ZELARI_OS_JAIL = 'required';
+    setJailBackendForTests(unavailable);
+    const dir = tmpRoot();
+    const events: SessionEventInput[] = [];
+    const tool = createExecProcessTool(dir);
+    const res = await tool.execute(
+      { program: process.execPath, args: ['-e', ''] } as never,
+      collectingCtx(dir, events, () => Promise.reject(new Error('SESSION_LOG_LOCKED'))),
+    );
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error).toContain('[jail]');
+  });
+
+  it('advisory + no backend fails OPEN: the command runs, no jail.blocked is recorded', async () => {
+    process.env.ZELARI_OS_JAIL = 'advisory';
+    setJailBackendForTests(unavailable);
+    const dir = tmpRoot();
+    const events: SessionEventInput[] = [];
+    const tool = createExecProcessTool(dir);
+    const res = await tool.execute(
+      { program: process.execPath, args: ['-e', 'process.stdout.write("ran")'] } as never,
+      collectingCtx(dir, events),
+    );
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.stdout).toBe('ran');
+    await new Promise((r) => setTimeout(r, 20));
+    expect(events).toEqual([]);
   }, 20_000);
 });

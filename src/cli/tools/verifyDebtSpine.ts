@@ -18,9 +18,18 @@ import {
   type SessionEventInput,
   type SessionEventKind,
 } from '@zelari/core/session';
+// WS7 slice 4 (t139): validation + best-effort append for `verify.requested`.
+import { emitDecisionEvent } from '../safety/decisionEmit.js';
 
 export const VERIFY_DEBT_OPEN = 'verify.debt_open' as const;
 export const VERIFY_DEBT_CLEARED = 'verify.debt_cleared' as const;
+/**
+ * WS7 slice 4 (t139): a verify was ASKED for. NOT a third debt kind — the debt
+ * pair above is the OBLIGATION ("someone must verify"), this one is the REQUEST
+ * ("the harness asked for it now"), so a replay can tell an obligation that a
+ * human waived from one where the auto-verify chain actually ran the verifier.
+ */
+export const VERIFY_REQUESTED = 'verify.requested' as const;
 
 export type SpineEmit = (input: SessionEventInput) => Promise<unknown>;
 
@@ -124,6 +133,49 @@ export async function emitVerifyDebtCleared(
   const rec = await emitKind(emit, VERIFY_DEBT_CLEARED, { taskId: payload.taskId });
   if (rec.recorded) clearedOnce.add(payload.taskId);
   return rec;
+}
+
+/** Payload of the ASK side (K1.5/F5): what was requested, not what was owed. */
+export interface VerifyRequestedPayload {
+  /** K1.5/F5 debt slot the request belongs to, when one exists. */
+  taskId?: string;
+  /** Criteria the requested verify must check (the task's acceptance list). */
+  criterionIds?: readonly string[];
+  /** Which chain asked (`auto-verify`, …). */
+  source?: string;
+  /** Human reason, usually the task description. */
+  reason?: string;
+}
+
+/**
+ * WS7 slice 4 (t139): `verify.requested` — emitted at the ASK site, the moment
+ * the harness asks for a verify to be run (`verification.run` records that one
+ * actually RAN; `verify.debt_open` records that one is OWED). One event per
+ * request: a rework round RE-requests the verify, so N rounds ⇒ N events.
+ *
+ * Rides the SAME sink as the debt events (`emit` argument, else the bound
+ * spine emitter) and is best-effort through `emitDecisionEvent`: a missing or
+ * throwing sink never blocks the spawn it was recording.
+ */
+export async function emitVerifyRequested(
+  emit: SpineEmit | undefined,
+  payload: VerifyRequestedPayload,
+): Promise<VerifyDebtSpineRecord> {
+  const sink = emit ?? boundEmit;
+  if (!sink) return { recorded: false };
+  const data: Record<string, unknown> = {};
+  if (payload.taskId !== undefined && payload.taskId.length > 0) data.taskId = payload.taskId;
+  if (payload.criterionIds !== undefined && payload.criterionIds.length > 0) {
+    data.criterionIds = [...payload.criterionIds];
+  }
+  if (payload.source !== undefined && payload.source.length > 0) data.source = payload.source;
+  if (payload.reason !== undefined && payload.reason.length > 0) data.reason = payload.reason;
+  const result = await emitDecisionEvent(sink, VERIFY_REQUESTED, data, {
+    type: 'system',
+    role: 'verification',
+  });
+  if (!result.recorded) return { recorded: false };
+  return result.seq !== undefined ? { recorded: true, seq: result.seq } : { recorded: true };
 }
 
 export function replayOpenVerifyDebts(
