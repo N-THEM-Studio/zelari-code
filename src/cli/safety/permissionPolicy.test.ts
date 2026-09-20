@@ -13,6 +13,8 @@ import {
   matchPermissionRule,
   matchPermissionRules,
   parsePermissionRuleFile,
+  PermissionRuleFileSchema,
+  PermissionRuleSchema,
   type ActivePermissionRule,
   type PermissionRule,
 } from './permissionPolicy.js';
@@ -215,5 +217,113 @@ describe('WS1 — .zelari/permissions.json parsing is fail-closed', () => {
     expect(v.source).toBe('default');
     // …and the error text is what the gate surfaces as a fail-closed ask
     expect(res.error).toBeTruthy();
+  });
+});
+
+/**
+ * The `$comment` documentation slot — the WS1 self-footgun this suite pins.
+ *
+ * The template WS1 ships as `.zelari/permissions.json` IS
+ * `{ "$comment": …, "version": 1, "rules": [] }`. The `.strict()` schemas used
+ * to reject it as malformed, and a malformed config fails closed (every call
+ * 'ask') — so the shipped 0-rule file had the exact OPPOSITE effect of a
+ * rule-less file: nothing at all was allowed without an interactive approver.
+ * `$comment` is therefore accepted AND stripped (content never validated,
+ * never reaching the engine); every other unknown key stays fatal.
+ */
+describe('WS1 — `$comment` is documentation: accepted, stripped, never policy', () => {
+  const FILE = '/repo/.zelari/permissions.json';
+
+  it('top-level `$comment` + a rule with its own `$comment` load, comments stripped, rule active', () => {
+    const res = parsePermissionRuleFile(
+      JSON.stringify({
+        $comment: 'WS1 (t133) local permission policy — ships with NO rules.',
+        version: 1,
+        rules: [
+          {
+            $comment: 'credentials never leave the repo',
+            id: 'no-secrets',
+            effect: 'deny',
+            pathPrefix: 'secrets',
+          },
+        ],
+      }),
+      FILE,
+    );
+    expect(res.error).toBeUndefined();
+    expect(res.rules).toHaveLength(1);
+    const entry = res.rules[0];
+    expect(entry?.source).toBe('project');
+    expect(entry?.rule).toEqual({ id: 'no-secrets', effect: 'deny', pathPrefix: 'secrets' });
+    expect(Object.keys(entry?.rule ?? {})).not.toContain('$comment');
+    // …and the rule still DECIDES (a comment must never change the verdict)
+    expect(evaluatePermissionPolicy(res.rules, { toolName: 'write_file', paths: ['secrets/key.pem'] })).toMatchObject(
+      { decision: 'deny', matchedRuleId: 'no-secrets' },
+    );
+  });
+
+  it('the shipped 0-rule template is a VALID config and stays a no-op', () => {
+    const res = parsePermissionRuleFile(
+      JSON.stringify({ $comment: 'documentation only', version: 1, rules: [] }),
+      FILE,
+    );
+    expect(res.error).toBeUndefined();
+    expect(res.rules).toEqual([]);
+    // zero rules ⇒ no opinion ⇒ the category decision stands (pre-WS1 behavior)
+    expect(
+      evaluatePermissionPolicy(res.rules, { toolName: 'bash' }, { fallback: 'allow' }),
+    ).toMatchObject({ decision: 'allow', source: 'default' });
+  });
+
+  it('both schemas strip the key themselves (no `$comment` survives parsing)', () => {
+    expect(PermissionRuleSchema.parse({ $comment: 'doc', id: 'x', effect: 'deny' })).toEqual({
+      id: 'x',
+      effect: 'deny',
+    });
+    const file = PermissionRuleFileSchema.parse({
+      $comment: 'doc',
+      version: 1,
+      rules: [{ $comment: 'doc', id: 'x', effect: 'deny' }],
+    });
+    expect(file).toEqual({ version: 1, rules: [{ id: 'x', effect: 'deny' }] });
+    expect(Object.keys(file)).not.toContain('$comment');
+  });
+
+  it('`$comment` is the ONLY tolerated extra key: a typo (or a case slip) still fails closed', () => {
+    const malformed = [
+      // rule-level typo
+      JSON.stringify({ rules: [{ $comment: 'doc', id: 'x', effect: 'deny', coment: 'typo' }] }),
+      // top level, wrong case
+      JSON.stringify({ $Comment: 'wrong case', rules: [] }),
+    ];
+    for (const raw of malformed) {
+      const res = parsePermissionRuleFile(raw, FILE);
+      expect(res.rules).toEqual([]);
+      expect(res.error).toContain(FILE);
+      expect(res.error).toContain('invalid permissions config');
+      expect(res.error).toContain('failing closed');
+    }
+  });
+
+  it('a comment does NOT swallow the real error: bad effect fails closed naming the path', () => {
+    const res = parsePermissionRuleFile(
+      JSON.stringify({
+        $comment: 'doc',
+        version: 1,
+        rules: [{ $comment: 'doc', id: 'x', effect: 'maybe' }],
+      }),
+      FILE,
+    );
+    expect(res.rules).toEqual([]);
+    expect(res.error).toContain(FILE);
+    expect(res.error).toContain("at 'rules.0.effect'");
+    expect(res.error).toContain('failing closed');
+  });
+
+  it('a non-string `$comment` is still a wrong type (the slot is a string, not a free-for-all)', () => {
+    const res = parsePermissionRuleFile(JSON.stringify({ $comment: 42, rules: [] }), FILE);
+    expect(res.rules).toEqual([]);
+    expect(res.error).toContain(FILE);
+    expect(res.error).toContain('failing closed');
   });
 });

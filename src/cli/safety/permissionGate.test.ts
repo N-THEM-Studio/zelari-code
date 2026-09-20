@@ -230,4 +230,79 @@ describe('WS1 pre-dispatch gate (registry integration)', () => {
       evaluateToolDispatch({ toolName: 'write_file', required: ['write'], args: { path: 'docs/a.md' }, root }),
     ).toBeNull();
   });
+
+  it('a SESSION rule may carry its own `$comment` (accepted, stripped before the engine)', () => {
+    const added = addSessionPermissionRule({
+      $comment: 'added by hand for one session',
+      id: 'no-docs',
+      effect: 'deny',
+      pathPrefix: 'docs',
+    });
+    expect(added.ok, added.ok ? '' : added.error).toBe(true);
+    if (added.ok) expect(Object.keys(added.rule)).not.toContain('$comment');
+  });
+});
+
+/**
+ * The WS1 self-footgun, at the seam where it was live: the file WS1 ships
+ * (top-level `$comment`, `version: 1`, NO rules) sits in the workspace root and
+ * the REAL registry dispatches against it. A strict schema rejection there is
+ * not a harmless warning — it fails closed, so every tool call of a fresh
+ * checkout is denied whenever no interactive approver exists (tests, headless).
+ */
+describe('WS1 gate — the shipped `$comment` template is not a malformed config', () => {
+  beforeEach(async () => {
+    root = await fs.mkdtemp(path.join(os.tmpdir(), 'zelari-policy-comment-'));
+    await fs.mkdir(path.join(root, 'secrets'), { recursive: true });
+    await fs.mkdir(path.join(root, 'docs'), { recursive: true });
+    await fs.writeFile(path.join(root, 'secrets', 'key.pem'), 'old', 'utf-8');
+    writer = await SessionLogWriter.open(path.join(root, 'session'), 'ws1-comment', 1);
+    resetProjectPermissionRuleCache();
+    clearSessionPermissionRules();
+    clearPermissionDenials();
+  });
+
+  afterEach(async () => {
+    await writer.close();
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
+  });
+
+  it('top-level `$comment` + 0 rules behaves like a rule-less tree: allowed, nothing to say', async () => {
+    writePermissionsFile({
+      $comment: 'WS1 (t133) local permission policy. Ships with NO rules; a malformed file fails closed.',
+      version: 1,
+      rules: [],
+    });
+    expect(
+      evaluateToolDispatch({ toolName: 'write_file', required: ['write'], args: { path: 'docs/b.md' }, root }),
+    ).toBeNull();
+    const res = await writeFile('docs/b.md');
+    expect(res.ok, res.error).toBe(true);
+  });
+
+  it('a rule carrying a `$comment` is accepted, stripped and still enforced', async () => {
+    writePermissionsFile({
+      $comment: 'doc',
+      rules: [{ $comment: 'doc', id: 'no-secrets', effect: 'deny', pathPrefix: 'secrets' }],
+    });
+    const res = await writeFile('secrets/key.pem');
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("[permissions:project] rule 'no-secrets'");
+    expect(await fs.readFile(path.join(root, 'secrets', 'key.pem'), 'utf-8')).toBe('old');
+  });
+
+  it('comments never mask a genuinely malformed config: still fails closed, path and field named', async () => {
+    writePermissionsFile({
+      $comment: 'doc',
+      version: 1,
+      rules: [{ $comment: 'doc', id: 'x', effect: 'maybe' }],
+    });
+    const res = await writeFile('docs/b.md');
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain('invalid permissions config');
+    expect(res.error).toContain("at 'rules.0.effect'");
+    expect(res.error).toContain('failing closed');
+    expect(res.error).toContain(path.join(root, '.zelari', 'permissions.json'));
+    expect(res.error).toContain('No interactive approval available');
+  });
 });

@@ -42,9 +42,30 @@ export const PERMISSION_EFFECTS = ['allow', 'ask', 'deny'] as const;
 export const PERMISSION_RULE_CATEGORIES = ['read', 'write', 'execute', 'network', 'ui'] as const;
 
 /**
+ * `$comment` — the ONE non-policy key both schemas tolerate: a documentation
+ * slot the WS1 template writes at the top level of `.zelari/permissions.json`
+ * (a rule may carry its own for the same purpose).
+ *
+ * It is ACCEPTED AND STRIPPED: the content is never validated and never reaches
+ * the engine, so documentation can never change a decision. Without this the
+ * `.strict()` schemas rejected the shipped 0-rule template as malformed, and
+ * since a malformed config fails closed (every call 'ask') the effect was the
+ * exact OPPOSITE of a rule-less file: nothing at all was allowed in a
+ * non-interactive context. Every OTHER unknown key is still a MALFORMED config
+ * (a typo'd `efect:` keeps failing closed, naming its path).
+ */
+const commentSchema = z.string().optional();
+
+/** Shallow copy of a validated object without its documentation slot. */
+function stripComment<T extends object>(value: T & { $comment?: string }): Omit<T, '$comment'> {
+  const { $comment: _comment, ...rest } = value;
+  return rest;
+}
+
+/**
  * One rule of `.zelari/permissions.json` (zod-validated, `.strict()`: an
- * unknown key is a MALFORMED config and fails closed instead of being
- * silently ignored).
+ * unknown key — `$comment` aside — is a MALFORMED config and fails closed
+ * instead of being silently ignored).
  *
  * A rule with no matcher is a catch-all (specificity 0) — the only way to say
  * "deny everything" — and loses every same-effect tie against a rule that
@@ -52,6 +73,7 @@ export const PERMISSION_RULE_CATEGORIES = ['read', 'write', 'execute', 'network'
  */
 export const PermissionRuleSchema = z
   .object({
+    $comment: commentSchema,
     id: z.string().min(1),
     effect: z.enum(PERMISSION_EFFECTS),
     /** Tool name or '*' glob pattern (e.g. `bash`, `mcp__*`). */
@@ -63,7 +85,8 @@ export const PermissionRuleSchema = z
     host: z.string().min(1).optional(),
     note: z.string().min(1).optional(),
   })
-  .strict();
+  .strict()
+  .transform(stripComment);
 export type PermissionRule = z.infer<typeof PermissionRuleSchema>;
 export type PermissionEffect = PermissionRule['effect'];
 
@@ -72,12 +95,18 @@ export const PERMISSION_RULE_FILE = '.zelari/permissions.json';
 /** Envelope schema version of that file (additive changes keep it). */
 export const PERMISSION_RULE_FILE_VERSION = 1;
 
+/**
+ * Envelope of `.zelari/permissions.json`: the version and the rules, plus the
+ * `$comment` documentation slot (stripped, see above) — nothing else.
+ */
 export const PermissionRuleFileSchema = z
   .object({
+    $comment: commentSchema,
     version: z.literal(PERMISSION_RULE_FILE_VERSION).optional(),
     rules: z.array(PermissionRuleSchema),
   })
-  .strict();
+  .strict()
+  .transform(stripComment);
 
 /** Where a rule came from. `default` = category semantics; `fail-closed` = malformed source. */
 export type PermissionRuleSource = 'default' | 'project' | 'session' | 'fail-closed';
@@ -285,7 +314,8 @@ export interface PermissionRuleFileResult {
 
 /**
  * Parse `.zelari/permissions.json` (already read as text). Any problem —
- * invalid JSON, schema violation, unknown key, duplicate rule id — returns an
+ * invalid JSON, schema violation, unknown key (`$comment` aside, which is
+ * stripped as documentation), duplicate rule id — returns an
  * `error` that NAMES the file and the offending field, and NO rules: the
  * engine then answers 'ask' (fail-closed), never a silent allow.
  */
