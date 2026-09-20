@@ -56,6 +56,12 @@ import {
   type WorktreeMergeResult,
 } from './krakenWorktree.js';
 import { krakenTentacleStart, krakenTentacleEnd } from './krakenLive.js';
+// WS5 (t137): observation-only lifecycle hooks — SubagentStart/End subscribers.
+import type {
+  HookContext,
+  LifecycleHookRunner,
+  SubagentPayload,
+} from '@zelari/core/harness';
 import type { WorktreeScheduleMode } from '../kraken/worktreeScheduling.js';
 import { randomUUID } from 'node:crypto';
 import type { UsageBreakdown } from '@zelari/core/events';
@@ -207,6 +213,14 @@ export interface TaskToolDeps {
   memoryService?: MemoryService;
   /** Persist concise tentacle outcomes. Defaults true when memoryService exists. */
   memoryAutoWrite?: boolean;
+  /**
+   * WS5 (t137): lifecycle-hook runner used ONLY for the observation-only
+   * `SubagentStart` / `SubagentEnd` / `Notification` events. Optional: absent ⇒
+   * no hook fires, behavior byte-identical to before. Fire-and-forget by
+   * construction — the observer methods return void — so a slow or broken
+   * subscriber can never stall a tentacle.
+   */
+  lifecycleHooks?: LifecycleHookRunner | null;
 }
 
 /**
@@ -1335,6 +1349,103 @@ function shortWorktreeCaption(p: string): string {
 }
 
 /**
+ * WS5 (t137): inputs of an observation-only `SubagentStart` / `SubagentEnd`
+ * hook payload. Structural on purpose (`agent` is a plain string) so the
+ * builder stays pure and unit-testable without a provider, a harness or a repo.
+ */
+export interface SubagentHookInput {
+  /** Sub-agent kind (`general` / `explore` / `verify` / persona kinds). */
+  agent: string;
+  /** The tentacle's one-line description. */
+  description: string;
+  thoroughness?: string;
+  /** Resolved `ZELARI_KRAKEN_WORKTREE` mode (`on` / `off` / `auto`). */
+  worktreeMode?: string;
+  /** Worktree path when isolation is active (`null`/absent ⇒ shared tree). */
+  worktreePath?: string | null;
+  nodeId?: string;
+  graphId?: string;
+  cwd?: string;
+  /** `SubagentEnd` only: absent is NEVER a success claim. */
+  ok?: boolean;
+  durationMs?: number;
+  error?: string;
+}
+
+/**
+ * Pure: one tentacle run → the structured hook payload. `worktree` is derived
+ * from the REAL path (WS3 isolation actually in effect), never from the mode
+ * alone — `auto`/`on` with a failed creation runs in the shared tree.
+ */
+export function buildSubagentHookPayload(input: SubagentHookInput): SubagentPayload {
+  const worktreePath = input.worktreePath ?? '';
+  return {
+    agent: input.agent,
+    description: input.description,
+    worktree: worktreePath.length > 0,
+    ...(input.thoroughness ? { thoroughness: input.thoroughness } : {}),
+    ...(input.worktreeMode ? { worktreeMode: input.worktreeMode } : {}),
+    ...(worktreePath ? { worktreePath } : {}),
+    ...(input.nodeId ? { nodeId: input.nodeId } : {}),
+    ...(input.graphId ? { graphId: input.graphId } : {}),
+    ...(input.cwd ? { cwd: input.cwd } : {}),
+    ...(typeof input.ok === 'boolean' ? { ok: input.ok } : {}),
+    ...(typeof input.durationMs === 'number' ? { durationMs: input.durationMs } : {}),
+    ...(input.error ? { error: input.error } : {}),
+  };
+}
+
+/**
+ * Fire one observer subagent hook. Fire-and-forget: the returned promise is
+ * NOT awaited (the runner's observer methods never reject, and a `.catch` keeps
+ * even a misbehaving runner from producing an unhandled rejection), so no
+ * subscriber can delay a tentacle or its teardown.
+ */
+export function fireSubagentHook(
+  hooks: LifecycleHookRunner | null | undefined,
+  event: 'SubagentStart' | 'SubagentEnd',
+  payload: SubagentPayload,
+  ctx: HookContext = {},
+): void {
+  if (!hooks) return;
+  const run =
+    event === 'SubagentStart' ? hooks.runSubagentStart(payload, ctx) : hooks.runSubagentEnd(payload, ctx);
+  void run.catch(() => {
+    /* an observer never propagates into the tentacle */
+  });
+}
+
+/**
+ * WS5 (t137): the tentacle END seam — `SubagentEnd` plus the matching
+ * `Notification` (a finished/failed tentacle is a WS2 `tentacle-finished`
+ * inbox item; `kind` names the real producer, `task.tentacle_ended`, and never
+ * claims a graph envelope it did not write). Best-effort and fire-and-forget.
+ */
+export function fireTentacleEndHooks(
+  hooks: LifecycleHookRunner | null | undefined,
+  input: SubagentHookInput,
+  ctx: HookContext = {},
+): void {
+  if (!hooks) return;
+  const payload = buildSubagentHookPayload(input);
+  fireSubagentHook(hooks, 'SubagentEnd', payload, ctx);
+  const what = input.ok === false ? 'tentacle FAILED' : 'tentacle finished';
+  void hooks
+    .runNotification(
+      {
+        source: 'tentacle-finished',
+        kind: 'task.tentacle_ended',
+        summary: `${what}: ${input.agent} — ${input.description}`,
+        ...(input.nodeId ? { taskId: input.nodeId } : {}),
+      },
+      ctx,
+    )
+    .catch(() => {
+      /* an observer never propagates into the tentacle */
+    });
+}
+
+/**
  * Run one Kraken tentacle end-to-end: optional worktree isolation, radio +
  * live tracking, sub-agent harness run, worktree squash-merge, and footer
  * assembly. Returns a discriminated result instead of a TypedResult so callers
@@ -1424,6 +1535,20 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     }
   }
 
+  // WS5 (t137): the observation-only hook correlation for THIS tentacle, built
+  // once AFTER worktree resolution (so `worktree` reflects the isolation really
+  // in effect, not the requested mode) and shared by SubagentStart/SubagentEnd.
+  const hookCtx: HookContext = { sessionId, cwd: effectiveCwd };
+  const subagentHookBase: SubagentHookInput = {
+    agent,
+    description: args.description,
+    thoroughness,
+    worktreeMode,
+    worktreePath: worktree?.path ?? null,
+    ...(opts.nodeId ? { nodeId: opts.nodeId } : {}),
+    ...(opts.graphId ? { graphId: opts.graphId } : {}),
+    cwd: effectiveCwd,
+  };
   appendKrakenRadio(parentCwd, sessionId, {
     kind: 'spawn',
     agent,
@@ -1446,6 +1571,19 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   };
   const endTentacle = (id: string, info: Parameters<typeof krakenTentacleEnd>[1]) => {
     krakenTentacleEnd(id, info);
+    // WS5 (t137): every terminal path of a tentacle funnels through here, so
+    // this is the single `SubagentEnd` (+ `tentacle-finished` Notification)
+    // seam. Fire-and-forget: an observer can never delay the teardown.
+    fireTentacleEndHooks(
+      deps.lifecycleHooks,
+      {
+        ...subagentHookBase,
+        ok: info.ok,
+        durationMs: info.durationMs ?? Date.now() - started,
+        ...(info.ok === false ? { error: info.detail ?? 'failed' } : {}),
+      },
+      hookCtx,
+    );
     emitActivity({
       type: 'agent_ended',
       agentId: id,
@@ -1544,6 +1682,9 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // gives worktree-less tentacles (explore/verify) a first progress event.
   emitPhase(`phase: ${agent}`);
   if (worktree) emitPhase(`worktree: ${shortWorktreeCaption(worktree.path)}`);
+  // WS5 (t137): `SubagentStart` — the tentacle is really running now (live
+  // tracker registered, isolation resolved, first phase emitted).
+  fireSubagentHook(deps.lifecycleHooks, 'SubagentStart', buildSubagentHookPayload(subagentHookBase), hookCtx);
   const taskUserContent = buildTaskUserPrompt({
     prompt: args.prompt,
     scope: args.scope,

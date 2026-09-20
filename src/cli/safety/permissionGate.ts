@@ -24,6 +24,14 @@
  */
 import type { SessionEventInput } from '@zelari/core/session';
 import type { ToolPermission } from '@zelari/core/harness/tools/toolTypes';
+// WS5 (t137): the OBSERVER hook surface (PermissionRequest / Notification
+// subscribers). Type + one pure formatter only — the gate never gates on it.
+import {
+  summarizeHookArgs,
+  type HookContext,
+  type LifecycleHookRunner,
+  type PermissionRequestPayload,
+} from '@zelari/core/harness';
 import { claimMatchValues, resourceClaimsFor } from './resourceClaims.js';
 import { activePermissionRules } from './permissionRules.js';
 import {
@@ -164,12 +172,76 @@ function seqFrom(result: unknown): number | undefined {
 }
 
 /**
- * Emit `permission.denied` + ledger the denial. Best-effort by contract: a
- * missing or throwing sink must never turn a deny into an allow, and must
- * never fail the (already blocked) dispatch.
+ * WS5 (t137): the OBSERVER-hook side of the gate — the two things a hook
+ * subscribed to the spine learns from one dispatch decision:
  *
- * Payload is the minimal WS1 tuple: {tool, matchedRuleId, source, reason}.
+ *   - `PermissionRequest` — fired for EVERY resolution to `ask` or `deny`
+ *     (payload: tool, categories, effect, matched WS1 rule with source+reason,
+ *     bounded argsSummary). It is NOT a second gate: the runner's observer
+ *     methods return void and discard whatever the hook replies, so a slow /
+ *     crashing / non-2xx subscriber can neither block the dispatch nor change
+ *     the WS1 verdict (fail-open and fail-closed are untouched).
+ *   - `Notification` — fired only on `deny`, because that is exactly when the
+ *     WS2 inbox (`src/cli/inboxSources.ts`) GAINS a `needs-input` item.
+ *
+ * Best-effort by contract: never throws, and a missing runner is a no-op.
  */
+export interface PermissionHookInput {
+  tool: string;
+  /** Declared permission categories of the call. */
+  categories: readonly string[];
+  /** The resolved effect: a prompt (`ask`) or a block (`deny`). */
+  effect: 'ask' | 'deny';
+  /** The WS1 verdict, when a rule drove the decision. */
+  verdict?: PermissionVerdict | null;
+  /** Raw tool args — summarized (never echoed whole) into the payload. */
+  args?: unknown;
+}
+
+/** Pure: one dispatch decision → the `PermissionRequest` hook payload. */
+export function buildPermissionRequestHookPayload(input: PermissionHookInput): PermissionRequestPayload {
+  const verdict = input.verdict ?? null;
+  const argsSummary = summarizeHookArgs(input.args);
+  const reason = verdict?.reason?.trim();
+  return {
+    tool: input.tool,
+    categories: [...input.categories],
+    effect: input.effect,
+    ...(verdict?.matchedRuleId ? { matchedRuleId: verdict.matchedRuleId } : {}),
+    ...(verdict?.source ? { source: verdict.source } : {}),
+    ...(reason ? { reason } : {}),
+    ...(argsSummary ? { argsSummary } : {}),
+  };
+}
+
+/** Fire `PermissionRequest` (+ `Notification` on deny). Never throws. */
+export async function emitPermissionObserverHooks(
+  hooks: LifecycleHookRunner | null | undefined,
+  input: PermissionHookInput,
+  ctx: HookContext = {},
+): Promise<void> {
+  if (!hooks) return;
+  const payload = buildPermissionRequestHookPayload(input);
+  try {
+    await hooks.runPermissionRequest(payload, ctx);
+  } catch {
+    /* an observer never propagates into the gate */
+  }
+  if (payload.effect !== 'deny') return;
+  try {
+    await hooks.runNotification(
+      {
+        source: 'needs-input',
+        kind: PERMISSION_DENIED_KIND,
+        summary: `tool "${payload.tool}" was denied by ${payload.matchedRuleId || 'a permission rule'}`,
+        tool: payload.tool,
+      },
+      ctx,
+    );
+  } catch {
+    /* an observer never propagates into the gate */
+  }
+}
 export async function emitPermissionDenied(
   sink: PermissionEventSink | undefined,
   payload: { tool: string; verdict: PermissionVerdict; sessionId?: string; ts?: number },

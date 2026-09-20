@@ -91,6 +91,7 @@ import { destructiveCommandHit } from './safety/destructiveCommands.js';
 import {
   applyAllowRule,
   emitPermissionDenied,
+  emitPermissionObserverHooks,
   evaluateToolDispatch,
   permissionDenialMessage,
 } from './safety/permissionGate.js';
@@ -536,6 +537,9 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
       agentPolicyLayers,
       agentPolicySet.precedence,
       root,
+      // WS5 (t137): the SAME runner the registry gates Pre/PostToolUse with —
+      // one runner per registry, no second hook universe.
+      hooks,
     );
 
   // Observe tools — always registered.
@@ -802,6 +806,10 @@ const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
           ? { memoryAutoWrite: options.memoryAutoWrite }
           : {}),
         ...(options.onTentacleEvent ? { onTentacleEvent: options.onTentacleEvent } : {}),
+        // WS5 (t137): the registry's own hook runner — SubagentStart/End (and
+        // the finished-tentacle Notification) ride the SAME runner that gates
+        // Pre/PostToolUse, so one config location covers every hook.
+        lifecycleHooks: hooks,
       },
       options.planMode === true ? { allowedAgents: ['explore'] } : undefined,
     );
@@ -1212,6 +1220,11 @@ export function createKrakenSubAgentContextFactory(opts: {
 
 /**
  * Gate tool execution with allow/ask/deny policy (OpenCode-style permissions).
+ *
+ * WS5 (t137): `hooks` is the lifecycle-hook runner used ONLY for the
+ * observation-only `PermissionRequest` (+ denied-`Notification`) events. It is
+ * called fire-and-forget and its verdict is discarded by construction, so
+ * passing it can never change the verdict computed below.
  */
 function wrapWithPermissions<I, O>(
   original: ToolDefinition<I, O>,
@@ -1220,6 +1233,7 @@ function wrapWithPermissions<I, O>(
   agentLayers?: LayeredPolicyRuleSet,
   precedence: PolicyPrecedence = 'restrict-only',
   root?: string,
+  hooks?: LifecycleHookRunner | null,
 ): ToolDefinition<I, O> {
   const required = (original.permissions ?? []) as ToolPermission[];
   // Pure read tools under allow policy — no wrap overhead.
@@ -1356,6 +1370,24 @@ function wrapWithPermissions<I, O>(
       // promoted", toolPermissions.ts contract).
       if (action === 'ask' && activePermissionPreset() === 'yolo') {
         action = 'allow';
+      }
+      // WS5 (t137): `action` is FINAL here — every layer merged, provenance
+      // applied, yolo promoted — which is exactly the moment a permission is
+      // requested or refused. Observation-only hooks fire from here:
+      // fire-and-forget, and `emitPermissionObserverHooks` swallows internal
+      // failures, so a hook can never block, slow or alter this dispatch.
+      if (action === 'ask' || action === 'deny') {
+        void emitPermissionObserverHooks(
+          hooks,
+          {
+            tool: original.name,
+            categories: requiredNow,
+            effect: action,
+            verdict: policyVerdict,
+            args: input,
+          },
+          { sessionId: ctx.sessionId, cwd: ctx.cwd },
+        );
       }
       if (action === 'deny') {
         // WS1 (t133): a RULE deny is structured — the message names the

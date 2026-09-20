@@ -335,7 +335,7 @@ When a folder is not trusted, `.zelari/mcp.json` and `.zelari/hooks/` are
 **ignored** with a warning (`[mcp] project . ignored - folder not
 trusted`).
 
-## Lifecycle hooks (v1.32.0)
+## Lifecycle hooks (v1.32.0, observer events v2.57)
 
 External hooks (process or HTTP) on tool/session events. **Fail-open**: a
 hook that crashes, times out or returns invalid JSON **never blocks** a tool -
@@ -359,6 +359,43 @@ the only way to block is an explicit JSON decision.
 - Events: `PreToolUse`, `PostToolUse`, `SessionStart`, `SessionEnd`.
 - Directories: `~/.zelari-code/hooks/` (global, always active) +
   `<project>/.zelari/hooks/` (only if the folder is trusted).
+
+### Observer events (v2.57) - hook = subscriber of the spine
+
+A hook can also subscribe to four lifecycle events. These are observations, not
+gates: the `decision` a hook replies with is **discarded**, so a crashing, slow
+or non-2xx subscriber can neither block the caller nor corrupt the spine. The
+timeout is still honored (a slow hook is abandoned at `timeoutMs`) and the
+failure is logged (`[hooks] hook "x" failed (fail-open): ...`).
+
+| Event | Fires when | Payload block |
+|-------|------------|---------------|
+| `PermissionRequest` | the gate resolved a dispatch to `ask` or `deny` - i.e. you are being prompted or the call was blocked (WS1 `.zelari/permissions.json`) | `permission: { tool, categories[], effect: "ask"\|"deny", matchedRuleId?, source?, reason?, argsSummary? }` |
+| `SubagentStart` | a Kraken tentacle run begins (after worktree resolution, before the sub-agent harness) | `subagent: { agent, description, thoroughness?, worktree (bool), worktreeMode?, worktreePath?, nodeId?, graphId?, cwd? }` |
+| `SubagentEnd` | every terminal path of a tentacle run | same, plus `ok?`, `durationMs?`, `error?` (an absent `ok` is never a success claim) |
+| `Notification` | the WS2 inbox gains an item ("waiting on YOU") | `notification: { source: "question"\|"tentacle-finished"\|"needs-input", kind?, summary, seq?, taskId?, tool? }` |
+
+Matching: `PermissionRequest` is **tool-scoped** (`match.tools`, like
+PreToolUse). The subagent events accept an optional
+`match.agents: ["general", "explore", ...]` filter (`*` = any kind, absent =
+every kind); `match.tools` is not consulted for them. `Notification` carries no
+subject - the event decides, exactly like the session events.
+
+```json
+// ~/.zelari-code/hooks/audit-permissions.json  (observe, never block)
+{
+  "name": "audit-permissions",
+  "match": { "tools": ["*"], "events": ["PermissionRequest", "Notification"] },
+  "url": "http://127.0.0.1:8710/zelari-hooks",
+  "timeoutMs": 1000
+}
+```
+
+`ZELARI_HOOKS_FAILURE=fail-open|fail-closed` (see folder trust / policy load
+mode) changes what an unreliable hook means for the **gate** events only:
+fail-closed turns a crash/timeout/garbage reply of `PreToolUse` / `SessionStart`
+/ `SessionEnd` into a deny with reason `hook-failed`. Observer events have no
+deny channel at all in either mode.
 
 ## inspect (v1.32.0)
 

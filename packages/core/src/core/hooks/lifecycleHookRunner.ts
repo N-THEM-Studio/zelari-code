@@ -33,13 +33,25 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   hookMatches,
+  type AnyHookPayload,
   type HookDecision,
   type HookDefinition,
   type HookEvent,
   type HookPayload,
+  type NotificationPayload,
+  type ObserverHookEvent,
+  type ObserverHookPayload,
+  type PermissionRequestPayload,
   type PreToolUseResult,
   type SessionHookResult,
+  type SubagentPayload,
 } from './types.js';
+
+/** Correlation fields every hook invocation carries. */
+export interface HookContext {
+  sessionId?: string;
+  cwd?: string;
+}
 
 export interface LifecycleHookRunnerOptions {
   /** Directories to scan for `*.json` hook files. */
@@ -129,6 +141,14 @@ export function splitHookCommandLine(line: string): string[] {
  * (crash / timeout / invalid JSON / deny without reason) becomes an explicit
  * allow (fail-open, default) or an explicit deny 'hook-failed' (fail-closed,
  * t22), with a logged warning either way.
+ *
+ * v2.57 (WS5): the `run*` methods split in two families —
+ *   - GATE events (`runPreToolUse`, `runSessionStart`, `runSessionEnd`) return
+ *     a verdict; only an explicit hook `deny` blocks (failureMode decides the
+ *     unreliable case);
+ *   - OBSERVER events (`runPermissionRequest`, `runSubagentStart`,
+ *     `runSubagentEnd`, `runNotification`) return `void`; the verdict is
+ *     discarded, so nothing an observer does can block the spine.
  */
 export class LifecycleHookRunner {
   private hooks: HookDefinition[] = [];
@@ -271,10 +291,60 @@ export class LifecycleHookRunner {
     return { ok: true };
   }
 
+  // ── v2.57 (WS5) OBSERVER events ───────────────────────────────────────────
+  // A hook is also a SUBSCRIBER of the spine. Each method below fires one
+  // observer event at its real seam and returns `void`: the decision a hook
+  // replies with is DISCARDED, so no observer — crashing, hanging, returning
+  // garbage or answering non-2xx — can block the caller or corrupt the spine.
+  // There is no deny channel here by construction, in EITHER failure mode
+  // (fail-closed still only LOGS for observers). Callers fire-and-forget.
+
+  /** Fire `PermissionRequest` — the gate resolved this dispatch to ask/deny. */
+  async runPermissionRequest(request: PermissionRequestPayload, ctx: HookContext = {}): Promise<void> {
+    await this.runObserverHooks('PermissionRequest', {
+      event: 'PermissionRequest',
+      permission: request,
+      ...ctx,
+    });
+  }
+
+  /** Fire `SubagentStart` — a Kraken tentacle run began. */
+  async runSubagentStart(subagent: SubagentPayload, ctx: HookContext = {}): Promise<void> {
+    await this.runObserverHooks('SubagentStart', { event: 'SubagentStart', subagent, ...ctx });
+  }
+
+  /** Fire `SubagentEnd` — a tentacle run reached its terminal state. */
+  async runSubagentEnd(subagent: SubagentPayload, ctx: HookContext = {}): Promise<void> {
+    await this.runObserverHooks('SubagentEnd', { event: 'SubagentEnd', subagent, ...ctx });
+  }
+
+  /** Fire `Notification` — the WS2 inbox gained an item. */
+  async runNotification(notification: NotificationPayload, ctx: HookContext = {}): Promise<void> {
+    await this.runObserverHooks('Notification', { event: 'Notification', notification, ...ctx });
+  }
+
+  /**
+   * Run every matching observer hook in registration order, swallowing
+   * everything: a failing hook is logged by runHookSafely, and the returned
+   * verdict is thrown away. `toolName`/`agentKind` feed the matcher so
+   * `PermissionRequest` stays tool-scoped and the subagent events honor
+   * `match.agents`.
+   */
+  private async runObserverHooks(event: ObserverHookEvent, payload: ObserverHookPayload): Promise<void> {
+    for (const hook of this.hooks) {
+      if (!hookMatches(hook, event, payload.permission?.tool, payload.subagent?.agent)) continue;
+      try {
+        await this.runHookSafely(hook, payload);
+      } catch {
+        /* an observer never propagates: the subscription is best-effort */
+      }
+    }
+  }
+
   /** Execute a single hook; the failure mode decides allow vs deny 'hook-failed'. */
   private async runHookSafely(
     hook: HookDefinition,
-    payload: HookPayload,
+    payload: AnyHookPayload,
   ): Promise<HookDecision> {
     try {
       const timeoutMs = hook.timeoutMs ?? this.defaultTimeoutMs;
@@ -313,7 +383,7 @@ export class LifecycleHookRunner {
   /** Spawn `command`, write JSON payload to stdin, read stdout until close. */
   private execCommand(
     command: string,
-    payload: HookPayload,
+    payload: AnyHookPayload,
     timeoutMs: number,
     cwd?: string,
   ): Promise<string> {
@@ -371,7 +441,7 @@ export class LifecycleHookRunner {
   /** POST JSON payload; resolve with the response body text. */
   private async postHttp(
     url: string,
-    payload: HookPayload,
+    payload: AnyHookPayload,
     timeoutMs: number,
   ): Promise<string> {
     const ctrl = new AbortController();
