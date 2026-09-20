@@ -40,6 +40,15 @@ export interface DesktopPrefs {
   /** Host-driven Gauntlet loop (`--gauntlet` on the CLI). */
   gauntletLoop: boolean;
 
+  /**
+   * WS2 (inbox as notification bus): fire a native Desktop notification when
+   * the run needs you — a pending permission/tool ask, an `ask_user` question,
+   * or a finished/failed tentacle. Missing → ON (the CLI `/inbox` is default-ON
+   * too); only an explicit persisted `false` opts out. Requires the webview's
+   * notification permission, which the Settings toggle asks for.
+   */
+  inboxNotifications: boolean;
+
   /** Tool-permission preset for every run from this window (standard = fail-closed asks). */
   permissionPreset: PermissionPreset;
 
@@ -87,6 +96,7 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   verifierReview: null,
   bonAlpha: false,
   gauntletLoop: false,
+  inboxNotifications: true,
   permissionPreset: "standard",
   krakenExploreModel: "",
   krakenGeneralModel: "",
@@ -227,6 +237,9 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
       typeof r.verifierReview === "boolean" ? r.verifierReview : null,
     bonAlpha: r.bonAlpha === true,
     gauntletLoop: r.gauntletLoop === true,
+    // WS2: missing → ON (CLI-aligned, like strictDone); only an explicit
+    // persisted `false` opts out of Desktop notifications.
+    inboxNotifications: r.inboxNotifications !== false,
     permissionPreset: normalizePermissionPreset(r.permissionPreset),
     krakenExploreModel: normalizeModelOverride(r.krakenExploreModel),
     krakenGeneralModel: normalizeModelOverride(r.krakenGeneralModel),

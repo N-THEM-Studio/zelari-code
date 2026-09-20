@@ -54,11 +54,22 @@ export const STATUSLINE_CUSTOM_ID = 'custom';
  */
 export const STATUSLINE_VERDICT_ID = 'verdict';
 
+/**
+ * `inbox` — what is waiting on YOU, derived from the current session spine
+ * (inboxFeed.ts: the same projections `/inbox` prints — unanswered ask_user,
+ * open needs, tentacle completions). OPT-IN for the same reason as `verdict`:
+ * the default list mirrors the chips StatusBar paints with no configuration.
+ *
+ * WS2 (notification bus): shares the t125 kill switch `ZELARI_INBOX=0`.
+ */
+export const STATUSLINE_INBOX_ID = 'inbox';
+
 /** Any id a configuration may reference (built-ins + the opt-in items). */
 export const STATUSLINE_ITEM_IDS: readonly string[] = [
   ...DEFAULT_STATUSLINE_ITEMS,
   STATUSLINE_CUSTOM_ID,
   STATUSLINE_VERDICT_ID,
+  STATUSLINE_INBOX_ID,
 ];
 
 export interface StatusLineItemInfo {
@@ -91,6 +102,11 @@ export const STATUSLINE_ITEMS: readonly StatusLineItemInfo[] = [
     id: STATUSLINE_VERDICT_ID,
     label: 'verdict',
     description: 'verification progress from spine events (derive-only; opt-in)',
+  },
+  {
+    id: STATUSLINE_INBOX_ID,
+    label: 'inbox',
+    description: 'what is waiting on you: ask_user, needs input, tentacle finished (derive-only; opt-in)',
   },
 ];
 

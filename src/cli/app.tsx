@@ -22,7 +22,7 @@ import { formatKrakenLiveSummary } from './tools/krakenLive.js';
 import { getVerifyChip, permissionsChip } from './kraken/verifyStatus.js';
 // v2.33 (slice 5): the jail honesty chip is resolved ONCE per env/platform
 // (components/statusChips) — the TUI no longer probes the backend on a paint.
-import { cachedJailStatusChip, cachedVerdictStatusChip } from './components/statusChips.js';
+import { cachedInboxStatusChip, cachedJailStatusChip, cachedVerdictStatusChip } from './components/statusChips.js';
 import { createInputDraftStore } from './components/inputDraft.js';
 import { formatKrakenGraphSummary } from './kraken/graphStatus.js';
 import '@zelari/core/skills/builtin/debugging';
@@ -393,6 +393,7 @@ export function App(): React.ReactElement {
             permissions={permissionsChip(phase)}
             jail={cachedJailStatusChip()}
             verdict={cachedVerdictStatusChip() ?? undefined}
+            inbox={cachedInboxStatusChip() ?? undefined}
           />
         </Box>
         {sidebarOpen && (

@@ -30,6 +30,9 @@ import {
   askUserAskFromEvent,
   permissionAskFromEvent,
 } from "./inChatAsk";
+// WS2 (inbox as notification bus): frames → at most one native notification per
+// signal. Pref + permission + focus gated, no Rust dependency (WebView2 API).
+import { createInboxNotifier, currentNotifyPermission } from "./inboxNotify";
 import { loadConversations, saveConversations } from "./chatStorage";
 import { useDebouncedSave } from "./hooks/useDebouncedSave";
 import { stripGauntletLoop } from "./gauntletLoop";
@@ -883,6 +886,11 @@ export default function App() {
     Record<string, boolean>
   >({});
   const [prefs, setPrefs] = useState<DesktopPrefs>(() => loadPrefs());
+  // WS2: the notification bus reads the CURRENT pref on every event — the
+  // agent-event subscription below is created once and must not close over a
+  // stale `prefs`.
+  const prefsRef = useRef(prefs);
+  prefsRef.current = prefs;
 
   // Baffetti theme: master color + two intensity variants, scoped to the brand mark.
   useEffect(() => {
@@ -1853,8 +1861,22 @@ export default function App() {
     let cancelled = false;
 
     (async () => {
+      // WS2 (inbox as notification bus): the notifier is created with the
+      // subscription, so ONE dedupe memory covers the whole stream. Its gate is
+      // read per event (pref flip / permission change apply immediately).
+      const inboxNotifier = createInboxNotifier({
+        gate: () => ({
+          enabled: prefsRef.current.inboxNotifications,
+          permission: currentNotifyPermission(),
+          focused: typeof document !== "undefined" && document.hasFocus(),
+        }),
+      });
       const u1 = await onAgentEvent((ev) => {
         if (cancelled) return;
+        // Chat-agnostic on purpose: "waiting on you" does not depend on which
+        // conversation is open, so the bus sees every frame (including the
+        // ones the routing gate below drops).
+        inboxNotifier.onEvent(ev as unknown as Record<string, unknown>);
         // M2 invariant (hardened): every BrainEvent carries its OWN
         // conversation identity in the run envelope — Rust stamps it per
         // RECEIVING run, broadcast residue included. There is NO fallback to

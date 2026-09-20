@@ -21,12 +21,19 @@
  * counted, never thrown; a call without a `callId` is skipped too — it could
  * never be proven settled, so claiming it as pending would be a guess.
  *
+ * WS2 (notification bus): `/inbox` is the ONE channel for "waiting on you",
+ * "tentacle finished" and "needs input". The two extra sources are projected by
+ * `inboxSources.ts` from events already on the spine (`graph.node_ended`, the
+ * `verify.debt_open`/`verify.debt_cleared` pair, `permission.denied`) — the same
+ * derive-only discipline, no new persistence and no new event vocabulary.
+ *
  * Kill switch: `ZELARI_INBOX=0` ⇒ `renderInbox()` answers "disabled" (an
  * env-gated command reports its state, it does not vanish silently).
  */
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { parseSessionLogText, resolveSessionsDir } from '@zelari/core/session';
+import { deriveInboxSourceRows, formatTentacleRow, type InboxSourceRow } from './inboxSources.js';
 
 /** Structural event view (a SessionEventEnvelope is assignable to it). */
 export interface InboxEventLike {
@@ -180,9 +187,22 @@ export interface InboxScan {
   skipped: number;
   /** Most recent first, capped at `limit`. */
   entries: InboxQuestion[];
+  /**
+   * WS2 sources — finished tentacles + open needs (inboxSources.ts), most
+   * recent first, capped at the same `limit`. Empty when there is nothing of
+   * that kind waiting. Derive-only, like `entries`.
+   */
+  sourceRows: SessionInboxSourceRow[];
   /** true when the cap hid older questions. */
   truncated: boolean;
 }
+
+/** A WS2 row attributed to the session spine it was read from. */
+export type SessionInboxSourceRow = InboxSourceRow & {
+  sessionId: string;
+  /** Human handle of the destination session: first user prompt, else `''`. */
+  destination: string;
+};
 
 /**
  * Scan every local session spine for unanswered `ask_user` questions. Most
@@ -194,6 +214,7 @@ export function scanInbox(opts: InboxScanOptions = {}): InboxScan {
   const sessionsDir = opts.sessionsDir ?? resolveSessionsDir({ workspaceRoot: opts.cwd, env });
   const limit = opts.limit ?? INBOX_LIMIT;
   const found: InboxQuestion[] = [];
+  const foundSources: SessionInboxSourceRow[] = [];
   let sessions = 0;
   let skipped = 0;
   let names: string[];
@@ -202,7 +223,7 @@ export function scanInbox(opts: InboxScanOptions = {}): InboxScan {
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
   } catch {
-    return { sessionsDir, sessions: 0, skipped: 0, entries: [], truncated: false };
+    return { sessionsDir, sessions: 0, skipped: 0, entries: [], sourceRows: [], truncated: false };
   }
   for (const name of names) {
     const file = path.join(sessionsDir, name, 'events.jsonl');
@@ -214,16 +235,27 @@ export function scanInbox(opts: InboxScanOptions = {}): InboxScan {
         continue;
       }
       sessions += 1;
-      found.push(
-        ...deriveInboxQuestions(report.events, { sessionId: name, destination: destinationOf(report.events) }),
+      const destination = destinationOf(report.events);
+      found.push(...deriveInboxQuestions(report.events, { sessionId: name, destination }));
+      foundSources.push(
+        ...deriveInboxSourceRows(report.events).map((row) => ({ ...row, sessionId: name, destination })),
       );
     } catch {
       skipped += 1;
     }
   }
   found.sort((a, b) => b.ts - a.ts || b.seq - a.seq);
+  foundSources.sort((a, b) => b.ts - a.ts || b.seq - a.seq);
   const entries = found.slice(0, Math.max(0, limit));
-  return { sessionsDir, sessions, skipped, entries, truncated: found.length > entries.length };
+  const sourceRows = foundSources.slice(0, Math.max(0, limit));
+  return {
+    sessionsDir,
+    sessions,
+    skipped,
+    entries,
+    sourceRows,
+    truncated: found.length > entries.length || foundSources.length > sourceRows.length,
+  };
 }
 
 /** `2026-10-02 14:03` — minute precision is enough to judge staleness. */
@@ -249,23 +281,63 @@ function formatEntry(entry: InboxQuestion, index: number): string[] {
   return lines;
 }
 
+/**
+ * One WS2 row: the session handle, what happened, and how to get back to it.
+ * (A `question` row uses the t125 renderer below; the header/handle shape is
+ * deliberately identical so the list reads as one column.)
+ */
+function formatSourceEntry(row: SessionInboxSourceRow, index: number): string[] {
+  const handle = row.destination
+    ? `${row.sessionId.slice(0, 8)}… · "${oneLine(row.destination, 60)}"`
+    : `${row.sessionId.slice(0, 8)}…`;
+  const label = row.source === 'tentacle-finished' ? formatTentacleRow(row) : row.text;
+  const lines = [`  ${index}. ${handle}`, `     ${oneLine(label)}`];
+  const when = askedAt(row.ts);
+  const resume = `     → /resume ${row.sessionId}`;
+  lines.push(when ? `${resume}   (at ${when})` : resume);
+  return lines;
+}
+
+/** `1 question(s), 2 needs input, 1 tentacle(s) finished` — non-zero parts only. */
+function sourceBreakdown(questions: number, rows: readonly SessionInboxSourceRow[]): string {
+  const needs = rows.filter((r) => r.source === 'needs-input').length;
+  const finished = rows.length - needs;
+  const parts: string[] = [];
+  if (questions > 0) parts.push(`${questions} question(s)`);
+  if (needs > 0) parts.push(`${needs} needs input`);
+  if (finished > 0) parts.push(`${finished} tentacle(s) finished`);
+  return parts.join(', ');
+}
+
 /** Pure text rendering of a scan (no I/O). `total` 0 ⇒ the friendly empty state. */
 export function formatInbox(scan: InboxScan): string {
+  const sourceRows = scan.sourceRows ?? [];
   if (scan.sessions === 0) {
     return `[inbox] no local sessions under ${scan.sessionsDir} — nothing waiting on you.`;
   }
   const notes: string[] = [];
   if (scan.skipped > 0) notes.push(`note: ${scan.skipped} unreadable/empty session spine(s) skipped`);
-  if (scan.truncated) notes.push(`note: showing the ${scan.entries.length} most recent`);
-  if (scan.entries.length === 0) {
+  const total = scan.entries.length + sourceRows.length;
+  if (scan.truncated) notes.push(`note: showing the ${total} most recent`);
+  if (total === 0) {
     const head = `[inbox] nothing waiting on you — no unanswered ask_user question in ${scan.sessions} session(s).`;
     return [head, ...notes.map((n) => `  ${n}`)].join('\n');
   }
-  const lines: string[] = [
-    `[inbox] ${scan.entries.length} question(s) waiting on you (${scan.sessions} session(s) scanned)`,
-    '',
-  ];
-  scan.entries.forEach((entry, i) => lines.push(...formatEntry(entry, i + 1)));
+  // One recency-ordered list: the t125 question rows and the WS2 source rows
+  // share the numbering, so "what is waiting on you" reads top-down.
+  const rows: Array<InboxQuestion | SessionInboxSourceRow> = [...scan.entries, ...sourceRows].sort(
+    (a, b) => b.ts - a.ts || b.seq - a.seq,
+  );
+  const head =
+    sourceRows.length === 0
+      ? `[inbox] ${scan.entries.length} question(s) waiting on you (${scan.sessions} session(s) scanned)`
+      : `[inbox] ${total} waiting on you (${scan.sessions} session(s) scanned): ${sourceBreakdown(scan.entries.length, sourceRows)}`;
+  const lines: string[] = [head, ''];
+  rows.forEach((row, i) =>
+    lines.push(
+      ...('source' in row ? formatSourceEntry(row, i + 1) : formatEntry(row, i + 1)),
+    ),
+  );
   if (notes.length > 0) lines.push('', ...notes.map((n) => `  ${n}`));
   return lines.join('\n');
 }

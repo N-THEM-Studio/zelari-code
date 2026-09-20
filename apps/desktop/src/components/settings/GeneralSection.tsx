@@ -8,9 +8,10 @@ import {
   EXECUTION_PROFILES,
   type ExecutionProfile,
 } from "../../desktopPrefs";
+import { requestNotifyPermission } from "../../inboxNotify";
 import { ACCENT_PRESETS, DEFAULT_ACCENT_COLOR } from "../../theme/accent";
 import { BAFFETTI_PRESETS } from "../../theme/baffetti";
-import { SelectInput, SettingsCard, SettingsRow } from "./primitives";
+import { SelectInput, SettingsCard, SettingsRow, Toggle } from "./primitives";
 
 export interface GeneralSectionProps {
   theme: "dark" | "light";
@@ -27,6 +28,14 @@ export interface GeneralSectionProps {
   accentColor?: string;
   /** Empty string clears back to Auto. */
   onAccentColorChange: (color: string) => void;
+  /**
+   * WS2 (inbox as notification bus): fire a native Desktop notification when
+   * a run is waiting on you. Turning it ON also asks the webview for the
+   * notification permission — the click is the user gesture the Web API
+   * requires (see inboxNotify.ts).
+   */
+  inboxNotifications: boolean;
+  onInboxNotificationsChange: (next: boolean) => void;
 }
 
 const MODE_OPTIONS: { value: DispatchMode; label: string }[] = [
@@ -54,6 +63,8 @@ export function GeneralSection({
   onMustacheColorChange,
   accentColor,
   onAccentColorChange,
+  inboxNotifications,
+  onInboxNotificationsChange,
 }: GeneralSectionProps) {
   const [mode, setMode] = useState<DispatchMode>(defaultMode);
   const [phase, setPhase] = useState<WorkPhase>(defaultPhase);
@@ -210,6 +221,27 @@ export function GeneralSection({
               </option>
             ))}
           </SelectInput>
+        </SettingsRow>
+      </SettingsCard>
+
+      <SettingsCard
+        title="Notifications"
+        description="The /inbox signals, delivered by the OS — so a run that needs you can reach you while the window is in the background."
+      >
+        <SettingsRow
+          label="Inbox notifications"
+          hint="One native notification when a run waits on you: a permission/tool ask, an ask_user question, or a tentacle that finished or failed. Turning it on asks for the OS permission."
+        >
+          <Toggle
+            checked={inboxNotifications}
+            label="Inbox notifications"
+            onChange={(next) => {
+              onInboxNotificationsChange(next);
+              // The click IS the user gesture the Web Notification API requires;
+              // when it is already granted this resolves without a prompt.
+              if (next) void requestNotifyPermission();
+            }}
+          />
         </SettingsRow>
       </SettingsCard>
     </>

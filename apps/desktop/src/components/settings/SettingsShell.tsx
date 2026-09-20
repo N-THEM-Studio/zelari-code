@@ -45,7 +45,7 @@ const TAB_MIGRATION: Record<string, SettingsSectionId> = {
 };
 
 const SECTIONS: { id: SettingsSectionId; label: string; hint: string }[] = [
-  { id: "general", label: "General", hint: "Theme, new-chat defaults" },
+  { id: "general", label: "General", hint: "Theme, new-chat defaults, notifications" },
   { id: "models", label: "Models & Providers", hint: "Provider, model, auth" },
   { id: "agents", label: "Agents", hint: "Delegation, routing, verification" },
   { id: "automations", label: "Automations", hint: "Scheduled gardener runs" },
@@ -225,6 +225,8 @@ export function SettingsShell(props: SettingsShellProps) {
         onMustacheColorChange={(color) => onPrefsChange({ mustacheColor: color })}
         accentColor={prefs.accentColor}
         onAccentColorChange={(color) => onPrefsChange({ accentColor: color })}
+        inboxNotifications={prefs.inboxNotifications}
+        onInboxNotificationsChange={(v) => onPrefsChange({ inboxNotifications: v })}
       />
     );
   } else if (section === "models") {

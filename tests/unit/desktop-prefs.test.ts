@@ -97,6 +97,7 @@ describe("normalizeDesktopPrefs", () => {
       verifierReview: false,
       bonAlpha: false,
       gauntletLoop: true,
+      inboxNotifications: true,
       permissionPreset: "standard",
       krakenDelegation: "automatic",
       mustacheColor: "#d8d8dc",
@@ -128,6 +129,7 @@ describe("normalizeDesktopPrefs", () => {
       verifierReview: null,
       bonAlpha: true,
       gauntletLoop: false,
+      inboxNotifications: true,
       permissionPreset: "standard",
       krakenDelegation: "automatic",
       mustacheColor: "#d8d8dc",
@@ -225,6 +227,7 @@ describe("load/saveDesktopPrefs", () => {
       verifierReview: true,
       bonAlpha: true,
       gauntletLoop: true,
+      inboxNotifications: true,
       permissionPreset: "standard",
       krakenDelegation: "prefer",
       mustacheColor: "#d8d8dc",
@@ -326,5 +329,34 @@ describe("strict-done default (W6/t46 flip, post QA t21)", () => {
       "utf8",
     );
     expect(rs).not.toContain('cmd.env("ZELARI_STRICT_DONE"');
+  });
+});
+
+describe("inbox notifications default (WS2 notification bus)", () => {
+  it("defaults ON and only an explicit persisted false opts out", () => {
+    expect(DEFAULT_DESKTOP_PREFS.inboxNotifications).toBe(true);
+    // A pre-WS2 blob has no key at all: that is ON, aligned with the CLI
+    // `/inbox` default - see the `inboxNotifications` field comment in
+    // desktopPrefs.ts.
+    expect(normalizeDesktopPrefs({}).inboxNotifications).toBe(true);
+    expect(normalizeDesktopPrefs({ inboxNotifications: false }).inboxNotifications).toBe(false);
+    // Junk is not an opt-out: only the boolean false is.
+    expect(normalizeDesktopPrefs({ inboxNotifications: "no" }).inboxNotifications).toBe(true);
+    expect(normalizeDesktopPrefs({ inboxNotifications: 0 }).inboxNotifications).toBe(true);
+    expect(normalizeDesktopPrefs({ inboxNotifications: null }).inboxNotifications).toBe(true);
+  });
+
+  it("round-trips an explicit false through save → load", () => {
+    const bag: Record<string, string> = {};
+    const storage = {
+      getItem: (k: string) => bag[k] ?? null,
+      setItem: (k: string, v: string) => {
+        bag[k] = v;
+      },
+    };
+    saveDesktopPrefs({ ...DEFAULT_DESKTOP_PREFS, inboxNotifications: false }, storage);
+
+    expect(JSON.parse(bag[DESKTOP_PREFS_KEY]).inboxNotifications).toBe(false);
+    expect(loadDesktopPrefs(storage).inboxNotifications).toBe(false);
   });
 });

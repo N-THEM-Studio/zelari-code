@@ -14,6 +14,7 @@ import { describe, it, expect } from 'vitest';
 import {
   DEFAULT_STATUSLINE_ITEMS,
   STATUSLINE_CUSTOM_ID,
+  STATUSLINE_INBOX_ID,
   STATUSLINE_ITEM_IDS,
   STATUSLINE_ITEMS,
   STATUSLINE_VERDICT_ID,
@@ -51,26 +52,34 @@ describe('DEFAULT_STATUSLINE_ITEMS — the chips of today, in the current order 
   it('has no duplicate id and the catalog lists every id, in the same order', () => {
     expect(new Set(DEFAULT_STATUSLINE_ITEMS).size).toBe(DEFAULT_STATUSLINE_ITEMS.length);
     // The catalog opens with the painted chips in paint order; the OPT-IN items
-    // (`custom`, `verdict`) are appended after them.
+    // (`custom`, `verdict`, `inbox`) are appended after them.
     expect(STATUSLINE_ITEMS.map((i) => i.id)).toEqual([
       ...STATUS_BAR_PAINT_ORDER,
       STATUSLINE_CUSTOM_ID,
       STATUSLINE_VERDICT_ID,
+      STATUSLINE_INBOX_ID,
     ]);
-    expect([...STATUSLINE_ITEM_IDS]).toEqual([...STATUS_BAR_PAINT_ORDER, STATUSLINE_CUSTOM_ID, STATUSLINE_VERDICT_ID]);
+    expect([...STATUSLINE_ITEM_IDS]).toEqual([
+      ...STATUS_BAR_PAINT_ORDER,
+      STATUSLINE_CUSTOM_ID,
+      STATUSLINE_VERDICT_ID,
+      STATUSLINE_INBOX_ID,
+    ]);
   });
 
-  it('recognizes every built-in plus custom/verdict, and rejects anything else', () => {
+  it('recognizes every built-in plus custom/verdict/inbox, and rejects anything else', () => {
     for (const id of DEFAULT_STATUSLINE_ITEMS) expect(isStatusLineItemId(id)).toBe(true);
     expect(isStatusLineItemId(STATUSLINE_CUSTOM_ID)).toBe(true);
     expect(isStatusLineItemId(STATUSLINE_VERDICT_ID)).toBe(true);
+    expect(isStatusLineItemId(STATUSLINE_INBOX_ID)).toBe(true);
     expect(isStatusLineItemId('MODEL')).toBe(false); // ids are case-sensitive
     expect(isStatusLineItemId('')).toBe(false);
     expect(isStatusLineItemId('totally-unknown')).toBe(false);
   });
 
-  it('keeps the derive-only verdict item OUT of the default order (opt-in, like custom)', () => {
+  it('keeps the derive-only items OUT of the default order (opt-in, like custom)', () => {
     expect(DEFAULT_STATUSLINE_ITEMS).not.toContain(STATUSLINE_VERDICT_ID);
+    expect(DEFAULT_STATUSLINE_ITEMS).not.toContain(STATUSLINE_INBOX_ID);
   });
 
   it('labels every catalog entry and falls back to the raw id', () => {
@@ -131,5 +140,6 @@ describe('formatStatusLineItems — the /statusline on-off listing (t114)', () =
     expect(text).toContain('[x] phase');
     expect(text).toContain('[ ] custom');
     expect(text).toContain('[ ] verdict');
+    expect(text).toContain('[ ] inbox');
   });
 });

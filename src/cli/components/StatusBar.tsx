@@ -72,6 +72,14 @@ export interface StatusBarProps {
    * @since v2.53.0 (openharness-steal t124)
    */
   verdict?: { label: string; tone: 'green' | 'yellow' | 'red' } | null;
+  /**
+   * Inbox chip — what is waiting on YOU (unanswered ask_user, open needs,
+   * tentacle completions), derived from the current session spine
+   * (`inboxFeed`, derive-only, ADR-0016/0024). Opt-in via `/statusline on
+   * inbox`; `red` = a need is waiting for a decision.
+   * @since 2.55.0 (WS2 — inbox as notification bus)
+   */
+  inbox?: { label: string; tone: 'yellow' | 'red' } | null;
 }
 
 /**
@@ -111,6 +119,7 @@ function StatusBarImpl({
   permissions = null,
   jail = null,
   verdict = null,
+  inbox = null,
 }: StatusBarProps): React.ReactElement {
   const ctxLabel =
     contextLimit > 0
@@ -171,6 +180,14 @@ function StatusBarImpl({
             <Text dimColor> · </Text>
             <Text bold color={verdict.tone}>
               {verdict.label}
+            </Text>
+          </>
+        ) : null}
+        {inbox ? (
+          <>
+            <Text dimColor> · </Text>
+            <Text bold color={inbox.tone}>
+              {inbox.label}
             </Text>
           </>
         ) : null}
@@ -293,7 +310,8 @@ export function statusBarPropsEqual(prev: StatusBarProps, next: StatusBarProps):
     statusChipPropsEqual(prev.verify, next.verify) &&
     statusChipPropsEqual(prev.permissions, next.permissions) &&
     statusChipPropsEqual(prev.jail, next.jail) &&
-    statusChipPropsEqual(prev.verdict, next.verdict)
+    statusChipPropsEqual(prev.verdict, next.verdict) &&
+    statusChipPropsEqual(prev.inbox, next.inbox)
   );
 }
 

@@ -23,6 +23,7 @@ import { activeJailMode, probeJailBackend, OS_JAIL_ENV } from '../safety/osJail.
 import { activePolicyLoadSurface, POLICY_LOAD_MODE_ENV } from '../safety/policyLoadMode.js';
 import { loadStatusLineConfig } from '../statusline/statuslineConfig.js';
 import { readVerdictFeed, verdictFeedText, type VerdictFeed } from '../statusline/verdictFeed.js';
+import { inboxFeedText, readInboxFeed, type InboxFeed } from '../statusline/inboxFeed.js';
 import { getCurrentSessionId } from '../sessionManager.js';
 
 /** A one-line chip: what to show, and how honest it is (green = on, yellow = advisory). */
@@ -163,4 +164,59 @@ export function cachedVerdictStatusChip(env: NodeJS.ProcessEnv = process.env): V
 /** TEST-ONLY: drop the memoized verdict chip (same discipline as the jail chip). */
 export function resetVerdictChipCacheForTests(): void {
   verdictChipCache = null;
+}
+
+/**
+ * WS2 (notification bus): the `inbox` status-line item — what is waiting on YOU,
+ * derived from the CURRENT session spine (`inboxFeed`, derive-only). The
+ * paint-side discipline is the verdict chip's: the spine is (re)read only when
+ * the session id or the log's mtime changes. Opt-in item (`/statusline on
+ * inbox`), and the t125 kill switch `ZELARI_INBOX=0` hides it too.
+ */
+export interface InboxChip {
+  label: string;
+  tone: 'yellow' | 'red';
+}
+
+/** Pure: feed -> chip. Exported for tests; never touches disk. */
+export function inboxChipFromFeed(feed: InboxFeed | null, env: NodeJS.ProcessEnv = process.env): InboxChip | null {
+  const label = inboxFeedText(feed, env);
+  if (label === null) return null;
+  // Red = something needs your decision (a need), yellow = news to read.
+  return { label, tone: feed && feed.needs > 0 ? 'red' : 'yellow' };
+}
+
+/** Every input the inbox chip depends on, flattened into a comparable key. */
+function inboxChipKey(env: NodeJS.ProcessEnv): string {
+  const sessionId = getCurrentSessionId();
+  let mtime = 'none';
+  if (sessionId) {
+    try {
+      const file = path.join(resolveSessionsDir({ env }), sessionId, 'events.jsonl');
+      mtime = existsSync(file) ? String(statSync(file).mtimeMs) : 'none';
+    } catch {
+      mtime = 'none';
+    }
+  }
+  return `${sessionId ?? 'no-session'}|${env.ZELARI_INBOX ?? ''}|${mtime}`;
+}
+
+let inboxChipCache: { key: string; chip: InboxChip | null } | null = null;
+
+/**
+ * Cached inbox chip — safe to call from a render body. Opt-in item: it only
+ * paints when `/statusline on inbox` added it to the configured order.
+ */
+export function cachedInboxStatusChip(env: NodeJS.ProcessEnv = process.env): InboxChip | null {
+  if (!statusLineItemEnabled('inbox')) return null;
+  const key = inboxChipKey(env);
+  if (inboxChipCache && inboxChipCache.key === key) return inboxChipCache.chip;
+  const chip = inboxChipFromFeed(readInboxFeed({ env }), env);
+  inboxChipCache = { key, chip };
+  return chip;
+}
+
+/** TEST-ONLY: drop the memoized inbox chip (same discipline as the verdict chip). */
+export function resetInboxChipCacheForTests(): void {
+  inboxChipCache = null;
 }
