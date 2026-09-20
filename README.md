@@ -391,7 +391,7 @@ zelari-code (CLI, Apache-2.0)
 | `ZELARI_MAX_TOOL_LOOP_HARD` | Hard ceiling on tool-loop iterations |
 | `ZELARI_PROVIDER_TIMEOUT_MS` | Hard timeout on provider HTTP (default 5 min) |
 | `ZELARI_MISSION_MAX_STALL` | Zelari-mode: consecutive zero-write impl slices before stall |
-| `ZELARI_KRAKEN_WORKTREE=1` | Isolate `task` general tentacles in git worktrees |
+| `ZELARI_KRAKEN_WORKTREE=0` | Opt-out: run `task` general tentacles in the parent tree (isolation is ON by default; worktrees under `.zelari/worktrees/`) |
 | `ZELARI_KRAKEN_GRAPH=0` | Disable Kraken Graph engine |
 | `ZELARI_FOLDER_TRUST` | `1` trust all / `0` lockdown / `<path>` trust one folder |
 | `ZELARI_VISION=0` | Disable native image inlining |

@@ -16,18 +16,34 @@ import type { BrainEvent } from '@zelari/core/shared/events';
 
 // Worktree creation is the ONE thing this suite makes fail; every other
 // krakenWorktree touchpoint stays faked so the run reaches its end without git.
+// The isolation resolver stays REAL (spread from the actual module): WS3 made
+// its default ON, and this suite pins the `auto` env branch's reporting.
 const CREATE_FAILURE = 'fatal: could not create work tree dir (test)';
-vi.mock('./krakenWorktree.js', () => ({
-  createKrakenWorktree: async () => {
-    throw new Error(CREATE_FAILURE);
-  },
-  cleanupKrakenWorktree: async () => {},
-  formatWorktreeFooter: () => '',
-  isKrakenWorktreeEnabled: () => false, // the `auto` env branch is what enables it
-  shouldKeepWorktree: () => false,
-  mergeKrakenWorktree: async () => ({ ok: true, merged: true, committed: true, message: 'merged (test)' }),
-  isKrakenWorktreeAutoMergeEnabled: () => false,
-}));
+vi.mock('./krakenWorktree.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./krakenWorktree.js')>();
+  return {
+    ...actual,
+    createKrakenWorktree: async () => {
+      throw new Error(CREATE_FAILURE);
+    },
+    createKrakenWorktreeDetailed: async () => {
+      throw new Error(CREATE_FAILURE);
+    },
+    cleanupKrakenWorktree: async () => ({
+      removed: true,
+      swept: false,
+      attempts: 1,
+      branch: null,
+      branchAction: 'none' as const,
+      degraded: null,
+    }),
+    formatWorktreeFooter: () => '',
+    isKrakenWorktreeEnabled: () => false, // the `auto` env branch is what enables it
+    shouldKeepWorktree: () => false,
+    mergeKrakenWorktree: async () => ({ ok: true, merged: true, committed: true, message: 'merged (test)' }),
+    isKrakenWorktreeAutoMergeEnabled: () => false,
+  };
+});
 
 import {
   runTentacle,
@@ -126,7 +142,12 @@ describe('worktree fallback is loud + reported (F12 / K2.4)', () => {
 
     // The deps callback carries the same info to the graph executor.
     expect(fallbacks).toHaveLength(1);
-    expect(fallbacks[0]).toEqual({ reason: CREATE_FAILURE, mode: 'auto', nodeId: 'g1' });
+    expect(fallbacks[0]).toEqual({
+      code: 'worktree-create-threw',
+      reason: CREATE_FAILURE,
+      mode: 'auto',
+      nodeId: 'g1',
+    });
   });
 
   it('does NOT emit the fallback event when no worktree was wanted (read-only/explore)', async () => {

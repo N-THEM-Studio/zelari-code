@@ -48,6 +48,10 @@ export default defineConfig({
       '**/.{idea,git,cache,output,temp}/**',
       '**/{karma,rollup,webpack,vite,vitest,jest,ava,babel,nyc,cypress,tsup,build,eslint,prettier}.config.*',
       'eval/results/**',
+      // Kraken worktree checkouts (.zelari/worktrees/*) are full repo copies:
+      // without this exclude, vitest collects their test files as stale
+      // duplicates of product tests (observed: taskTool.progress ran 3x).
+      '**/.zelari/**',
     ],
   },
 });

@@ -44,18 +44,19 @@ import {
 import { appendKrakenRadio } from './krakenRadio.js';
 import { existsSync } from 'node:fs';
 import {
-  createKrakenWorktree,
+  createKrakenWorktreeDetailed,
   cleanupKrakenWorktree,
   formatWorktreeFooter,
-  isKrakenWorktreeEnabled,
+  resolveKrakenWorktreeMode,
   shouldKeepWorktree,
   mergeKrakenWorktree,
   isKrakenWorktreeAutoMergeEnabled,
+  type KrakenWorktreeFailureCode,
   type WorktreeHandle,
   type WorktreeMergeResult,
 } from './krakenWorktree.js';
 import { krakenTentacleStart, krakenTentacleEnd } from './krakenLive.js';
-import { resolveWorktreeMode, type WorktreeScheduleMode } from '../kraken/worktreeScheduling.js';
+import type { WorktreeScheduleMode } from '../kraken/worktreeScheduling.js';
 import { randomUUID } from 'node:crypto';
 import type { UsageBreakdown } from '@zelari/core/events';
 import type { MemoryService } from '@zelari/core/memory';
@@ -155,8 +156,15 @@ export function permissionsForTaskAgent(
 export interface WorktreeFallbackInfo {
   /** Error excerpt that forced the fallback (never empty). */
   reason: string;
-  /** Resolved ZELARI_KRAKEN_WORKTREE scheduling mode at fallback time. */
+  /** Resolved ZELARI_KRAKEN_WORKTREE mode at fallback time (WS3: 'on'|'off'|'auto'). */
   mode: WorktreeScheduleMode;
+  /**
+   * WS3: machine-readable cause — 'not-a-git-repo', 'git-unavailable',
+   * 'worktree-add-failed', 'worktree-root-unwritable' (a *declined* worktree),
+   * or 'worktree-create-threw' (the pre-WS3 signal). Omitted by callers that
+   * only reproduce the old shape.
+   */
+  code?: KrakenWorktreeFailureCode;
   /** Graph node id, when the caller (graph executor) supplied one. */
   nodeId?: string;
 }
@@ -189,10 +197,10 @@ export interface TaskToolDeps {
   /** Construct the harness. Overridable in tests; defaults to AgentHarness. */
   harnessFactory?: (config: AgentHarnessConfig) => SubAgentHarness;
   /**
-   * When true (default), general tentacles may use a git worktree if
-   * ZELARI_KRAKEN_WORKTREE=1. Tests can force-disable. The env may also be
-   * `auto` (P2.C): worktrees permitted, the graph scheduler decides which
-   * nodes need isolation.
+   * When true (default), general tentacles use a git worktree unless
+   * ZELARI_KRAKEN_WORKTREE=0 opts out (WS3: isolation is default ON). Tests can
+   * force-disable. The env may also be `auto` (P2.C): worktrees stay on, and
+   * the graph scheduler decides which nodes it rescues in parallel.
    */
   allowWorktree?: boolean;
   /** Shared native project memory used by every tentacle in this run. */
@@ -1340,30 +1348,61 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   const started = Date.now();
   const g = globalThis as unknown as SpawnGlobal;
 
-  // Optional worktree isolation for general writers (K7). ZELARI_KRAKEN_WORKTREE=1
-  // (or true) always isolates; `auto` (P2.C) lets the graph scheduler decide per
-  // node — every general writer is worktree-capable so admitted parallel writers
-  // never share the parent tree, and merges stay sequential.
+  // Worktree isolation for general writers (K7). WS3 (2.39) flipped the
+  // DEFAULT: unless the user opts out with ZELARI_KRAKEN_WORKTREE=0
+  // (false/no/off), a writer runs in its own worktree. `auto` (P2.C) keeps its
+  // extra meaning — the graph scheduler may pull overlapping writers forward —
+  // so the flip isolates writers WITHOUT widening parallelism: a non-`auto`
+  // mode still defers overlapping writers exactly as before.
   let worktree: WorktreeHandle | null = null;
   let effectiveCwd = opts.cwdOverride || parentCwd;
-  const worktreeMode = resolveWorktreeMode(process.env.ZELARI_KRAKEN_WORKTREE);
-  const wantWt =
-    agent === 'general' &&
-    deps.allowWorktree !== false &&
-    (isKrakenWorktreeEnabled() || worktreeMode === 'auto');
+  const worktreeMode = resolveKrakenWorktreeMode(process.env);
+  const wantWt = agent === 'general' && deps.allowWorktree !== false && worktreeMode !== 'off';
+  /**
+   * WS3: teardown reports what it actually did. A still-locked directory or a
+   * refused sweep is announced on the radio instead of vanishing into a catch.
+   */
+  const teardownWorktree = async (handle: WorktreeHandle): Promise<void> => {
+    const outcome = await cleanupKrakenWorktree(handle);
+    if (outcome.degraded) {
+      appendKrakenRadio(parentCwd, sessionId, {
+        kind: 'progress',
+        agent,
+        thoroughness,
+        description: args.description,
+        detail: `worktree cleanup degraded: ${outcome.degraded}`,
+      });
+    }
+  };
   if (wantWt) {
+    let failure: { code: KrakenWorktreeFailureCode; reason: string } | null = null;
     try {
-      worktree = await createKrakenWorktree(parentCwd, args.description);
-      if (worktree) effectiveCwd = worktree.path;
+      const created = await createKrakenWorktreeDetailed(parentCwd, args.description);
+      if (created.ok) {
+        worktree = created.handle;
+        effectiveCwd = created.handle.path;
+      } else {
+        failure = { code: created.code, reason: created.reason };
+      }
     } catch (err) {
-      // F12 (K2.4): creation failed → fail OPEN (the tentacle still runs) but
-      // make the degradation LOUD. Under ZELARI_KRAKEN_WORKTREE=auto the graph
-      // scheduler admits overlapping writers in parallel ONLY because it
-      // assumes worktree isolation; falling back silently would run them
-      // unisolated in the shared parent tree with no trace. The radio event
-      // plus the deps callback let the executor stop rescuing overlapping
-      // writers (serial admission) for the rest of the run.
-      const reason = err instanceof Error ? err.message : String(err);
+      failure = {
+        code: 'worktree-create-threw',
+        reason: err instanceof Error ? err.message : String(err),
+      };
+    }
+    if (failure) {
+      // F12 (K2.4) + WS3: no worktree → fail OPEN (the tentacle still runs in
+      // the SHARED parent tree) but make the degradation LOUD. Under
+      // ZELARI_KRAKEN_WORKTREE=auto the graph scheduler admits overlapping
+      // writers in parallel ONLY because it assumes worktree isolation, and
+      // since WS3 every writer is expected to be isolated by default — so a
+      // silent decline would run unisolated concurrent writes with no trace.
+      // The radio event plus the deps callback let the executor stop rescuing
+      // overlapping writers (serial admission) for the rest of the run.
+      const reason =
+        failure.code === 'worktree-create-threw'
+          ? failure.reason
+          : `${failure.code}: ${failure.reason}`;
       worktree = null;
       appendKrakenRadio(parentCwd, sessionId, {
         kind: 'worktree.fallback_shared_tree',
@@ -1377,6 +1416,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
         ok: false,
       });
       deps.onWorktreeFallback?.({
+        code: failure.code,
         reason,
         mode: worktreeMode,
         ...(opts.nodeId !== undefined ? { nodeId: opts.nodeId } : {}),
@@ -1430,7 +1470,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       ...(args.thinkingEffort ? { thinkingEffort: args.thinkingEffort } : {}),
     });
   } catch (err) {
-    if (worktree) await cleanupKrakenWorktree(worktree);
+    if (worktree) await teardownWorktree(worktree);
     appendKrakenRadio(parentCwd, sessionId, {
       kind: 'error',
       agent,
@@ -1447,7 +1487,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     };
   }
   if (!sub) {
-    if (worktree) await cleanupKrakenWorktree(worktree);
+    if (worktree) await teardownWorktree(worktree);
     appendKrakenRadio(parentCwd, sessionId, {
       kind: 'error',
       agent,
@@ -1550,7 +1590,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       harness = new AgentHarness(config);
     }
   } catch (err) {
-    if (worktree) await cleanupKrakenWorktree(worktree);
+    if (worktree) await teardownWorktree(worktree);
     endTentacle(liveId, { ok: false, durationMs: Date.now() - started });
     return {
       ok: false,
@@ -1638,7 +1678,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     // (session.cancel reason=turn_timeout), or the task-tool wall clock.
     // Do not label this "node timeout" — that hid watchdog cancels as a
     // CLI hang.
-    if (worktree && !shouldKeepWorktree()) await cleanupKrakenWorktree(worktree);
+    if (worktree && !shouldKeepWorktree()) await teardownWorktree(worktree);
     appendKrakenRadio(parentCwd, sessionId, {
       kind: 'error',
       agent,
@@ -1660,7 +1700,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   }
 
   if (!result) {
-    if (worktree) await cleanupKrakenWorktree(worktree);
+    if (worktree) await teardownWorktree(worktree);
     appendKrakenRadio(parentCwd, sessionId, {
       kind: 'error',
       agent,
@@ -1710,7 +1750,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       emitPhase(merge.ok ? 'merge ok' : 'merge failed');
     } else if (!kept) {
       // auto-merge disabled — fall back to bare cleanup (old behavior)
-      await cleanupKrakenWorktree(worktree);
+      await teardownWorktree(worktree);
     }
     footer += `\n${formatWorktreeFooter(worktree, { kept, merge })}`;
   }

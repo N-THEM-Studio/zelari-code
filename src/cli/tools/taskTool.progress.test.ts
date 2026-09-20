@@ -4,9 +4,19 @@ import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { BrainEvent } from '@zelari/core/shared/events';
 
-// Worktree isolation without git: every krakenWorktree touchpoint is faked so
-// the general-tentacle path (worktree → merge → auto-verify) runs end-to-end.
-vi.mock('./krakenWorktree.js', () => {
+// Worktree isolation without git: every git-touching krakenWorktree touchpoint
+// is faked so the general-tentacle path (worktree → merge → auto-verify) runs
+// end-to-end, while the PURE isolation resolver stays REAL (`...actual`).
+//
+// WS3 (2.39) made isolation DEFAULT ON, so the `delete
+// process.env.ZELARI_KRAKEN_WORKTREE` in beforeEach is exactly what admits the
+// worktree here — the trail asserted below (phase → worktree: … → merging… →
+// merge ok → verifying… → verify PASS) is therefore the production trail of an
+// unconfigured install, not a mocked decision. Keep `...actual`: a new export
+// (like `resolveKrakenWorktreeMode`) must never have to be added by hand, and
+// the overrides below are what keep git/fs out of this suite.
+vi.mock('./krakenWorktree.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./krakenWorktree.js')>();
   const handle = {
     id: 'wt-test',
     branch: 'kraken/wt-test',
@@ -14,9 +24,25 @@ vi.mock('./krakenWorktree.js', () => {
     repoRoot: '/repo',
   };
   return {
+    ...actual,
+    // Both spellings: pre-WS3 callers use the handle-returning one, taskTool
+    // asks for the detailed result (handle + failure code).
     createKrakenWorktree: async () => handle,
-    cleanupKrakenWorktree: async () => {},
+    createKrakenWorktreeDetailed: async () => ({ ok: true as const, handle }),
+    // WS3 contract: teardown reports what it did (`outcome.degraded` drives an
+    // extra radio line). Returning void here would throw in runTentacle.
+    cleanupKrakenWorktree: async () => ({
+      removed: true,
+      swept: false,
+      attempts: 1,
+      branch: handle.branch,
+      branchAction: 'deleted' as const,
+      degraded: null,
+    }),
     formatWorktreeFooter: () => '',
+    // Legacy predicate, no longer consulted by taskTool (WS3 uses the real
+    // `resolveKrakenWorktreeMode`): kept only so nothing in this graph falls
+    // back to the real module and touches git.
     isKrakenWorktreeEnabled: () => true,
     shouldKeepWorktree: () => false,
     mergeKrakenWorktree: async () => ({ ok: true, merged: true, committed: true, message: 'merged (test)' }),
