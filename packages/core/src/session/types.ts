@@ -102,6 +102,11 @@ export const SESSION_EVENT_KINDS = [
   // model-surface). Additive kinds — no SCHEMA_VERSION bump (ADR-0021).
   'verify.debt_open',
   'verify.debt_cleared',
+  // WS1 (t133): a pre-dispatch permission RULE denied a tool call. State-only
+  // (never model-surface): data = {tool, matchedRuleId, source, reason}.
+  // Additive kind — no SCHEMA_VERSION bump (ADR-0021): older readers report
+  // schema-mismatch and skip via tolerant replay; deriveMessages ignores it.
+  'permission.denied',
   'note',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];

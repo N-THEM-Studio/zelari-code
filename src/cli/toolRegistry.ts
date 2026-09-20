@@ -86,6 +86,14 @@ import {
 } from './safety/toolPermissions.js';
 // v2.32 (S5): destructive-shape escalation at the same choke-point.
 import { destructiveCommandHit } from './safety/destructiveCommands.js';
+// WS1 (t133): local permission policy (allow/ask/deny rules) — evaluated
+// BEFORE dispatch, with the structured `permission.denied` spine event.
+import {
+  applyAllowRule,
+  emitPermissionDenied,
+  evaluateToolDispatch,
+  permissionDenialMessage,
+} from './safety/permissionGate.js';
 import {
   provenanceAppliesTo,
   provenanceMatchIn,
@@ -1268,14 +1276,37 @@ function wrapWithPermissions<I, O>(
         (input ?? {}) as Record<string, unknown>,
         root ?? process.cwd(),
       );
-      let action = intersectEffects(mergeRuleEffect(decision.action, rule), claims?.effect, contractRule?.effect);
+      // WS1 (t133): the local permission policy (`.zelari/permissions.json` +
+      // runtime session rules) is evaluated BEFORE the call is dispatched.
+      // null = no rule configured, or no rule matched → today's category
+      // decision stands, byte-identical. An 'allow' rule promotes only a
+      // CATEGORY ask (skip the prompt) — a category deny and every other
+      // layer's ask/deny stay restrict-only. An 'ask'/'deny' rule intersects
+      // like any other restriction.
+      const policyVerdict = evaluateToolDispatch({
+        toolName: original.name,
+        required: requiredNow,
+        args: input,
+        root: root ?? process.cwd(),
+      });
+      const categoryAction =
+        policyVerdict?.decision === 'allow'
+          ? applyAllowRule(decision.action)
+          : policyVerdict?.decision === 'ask' || policyVerdict?.decision === 'deny'
+            ? mergeRuleEffect(decision.action, {
+                match: policyVerdict.matchedRuleId ?? 'permissions',
+                effect: policyVerdict.decision,
+                reason: policyVerdict.reason,
+              })
+            : decision.action;
+      let action = intersectEffects(mergeRuleEffect(categoryAction, rule), claims?.effect, contractRule?.effect);
       // W3.1 (t46): provenance escalation at the choke-point. Write/execute
       // args that EMBED fingerprinted non-user content (web fetch, MCP output,
       // file reads — safety/provenance.ts) escalate an "allow" to "ask":
       // injected instructions can no longer sail through on category
       // defaults. Deterministic substring match, zero LLM (P2); ask/deny
       // already gated pass through; ZELARI_PROVENANCE=0 opts out entirely.
-      let actionReason = decision.reason;
+      let actionReason = policyVerdict?.decision === 'ask' ? policyVerdict.reason : decision.reason;
       if (action !== 'deny' && (requiredNow.includes('write') || requiredNow.includes('execute'))) {
         const provHit = provenanceMatchIn(JSON.stringify(input ?? {}));
         if (provHit && provenanceAppliesTo(provHit.source, requiredNow)) {
@@ -1327,12 +1358,30 @@ function wrapWithPermissions<I, O>(
         action = 'allow';
       }
       if (action === 'deny') {
+        // WS1 (t133): a RULE deny is structured — the message names the
+        // matched rule id and the denial lands on the spine
+        // (`permission.denied`) through the same sink the file.* telemetry
+        // uses, so a replayed session exposes it. yolo never promotes a deny.
+        if (policyVerdict?.decision === 'deny') {
+          await emitPermissionDenied(ctx.emitSessionEvent, {
+            tool: original.name,
+            verdict: policyVerdict,
+            sessionId: ctx.sessionId,
+          });
+          return typedErr(`[permission] ${permissionDenialMessage(original.name, policyVerdict)}`);
+        }
         return typedErr(`[permission] ${rulePrefix || decision.reason}`);
       }
       if (action === 'ask') {
         if (!onAsk) {
+          // WS1 (t133): when the RULE layer forced (or failed closed on) this
+          // ask, its reason is the one that names the matched rule id and the
+          // offending `.zelari/permissions.json` — surface THAT, not the bare
+          // category reason, or a malformed config reads as a category ask.
+          const askReason =
+            policyVerdict?.decision === 'ask' ? policyVerdict.reason : decision.reason;
           return typedErr(
-            `[permission] ${rulePrefix ? `${rulePrefix} ` : ''}${decision.reason} No interactive approval available ` +
+            `[permission] ${rulePrefix ? `${rulePrefix} ` : ''}${askReason} No interactive approval available ` +
               `(set ZELARI_AUTO=1 to auto-allow, or configure onPermissionAsk).`,
           );
         }

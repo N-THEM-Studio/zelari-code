@@ -7,13 +7,13 @@ import { buildSessionReport } from './commands/report.js';
 import { renderInbox } from './inbox.js';
 
 export type SlashCommand =
-  | 'login' | 'model' | 'model_refresh' | 'models' | 'discover' | 'skill' | 'skills' | 'skill_stats' | 'skill-stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'zelari' | 'resume-mission' | 'mode' | 'kraken' | 'plan' | 'build' | 'view-plan' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'checkpoint' | 'rollback' | 'index' | 'promote-member' | 'update' | 'plugins' | 'integrations' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state' | 'memory' | 'cache' | 'kraken_fanout' | 'trust' | 'effort' | 'evolve' | 'verify' | 'statusline' | 'report' | 'inbox';
+  | 'login' | 'model' | 'model_refresh' | 'models' | 'discover' | 'skill' | 'skills' | 'skill_stats' | 'skill-stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'sessions' | 'resume' | 'new' | 'council' | 'council-feedback' | 'zelari' | 'resume-mission' | 'mode' | 'kraken' | 'plan' | 'build' | 'view-plan' | 'provider' | 'branch' | 'branches' | 'checkout' | 'steer' | 'steer_interrupt' | 'diff' | 'undo' | 'checkpoint' | 'rollback' | 'index' | 'promote-member' | 'update' | 'plugins' | 'integrations' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state' | 'memory' | 'cache' | 'kraken_fanout' | 'trust' | 'effort' | 'evolve' | 'verify' | 'statusline' | 'report' | 'inbox' | 'permissions';
 
 export interface SlashCommandResult {
   /** Whether the command was recognized. */
   handled: boolean;
   /** Discriminated kind for what the caller should do. */
-  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'model_picker' | 'models_list' | 'models_refresh' | 'skill' | 'skill_picker' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'zelari' | 'resume_mission' | 'resume_mission_status' | 'provider' | 'provider_set' | 'provider_list' | 'provider_picker' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'checkpoint_create' | 'rollback' | 'rollback_list' | 'index_build' | 'index_status' | 'mode_set' | 'kraken_status' | 'kraken_graph' | 'kraken_fanout' | 'kraken_workbench' | 'phase_set' | 'view_plan' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage' | 'plugins_list' | 'plugins_install' | 'plugins_usage' | 'integrations_list' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state_status' | 'state_commit' | 'state_show' | 'state_restore' | 'state_usage' | 'memory' | 'cache_stats' | 'trust_status' | 'trust_add' | 'trust_remove' | 'effort' | 'effort_show' | 'effort_set' | 'evolve' | 'verify' | 'statusline' | 'report' | 'inbox';
+  kind: 'unknown' | 'login' | 'login_oauth' | 'model' | 'model_show' | 'model_set' | 'model_refresh' | 'model_picker' | 'models_list' | 'models_refresh' | 'skill' | 'skill_picker' | 'skill_stats' | 'skill-compare' | 'compact' | 'clear' | 'help' | 'exit' | 'session' | 'resume' | 'new' | 'council' | 'council_feedback' | 'zelari' | 'resume_mission' | 'resume_mission_status' | 'provider' | 'provider_set' | 'provider_list' | 'provider_picker' | 'provider_custom' | 'provider_refresh' | 'provider_status' | 'branch_create' | 'branch_list' | 'branch_checkout' | 'steer' | 'steer_interrupt' | 'steer_no_active_run' | 'diff' | 'undo' | 'undo_confirm' | 'checkpoint_create' | 'rollback' | 'rollback_list' | 'index_build' | 'index_status' | 'mode_set' | 'kraken_status' | 'kraken_graph' | 'kraken_fanout' | 'kraken_workbench' | 'phase_set' | 'view_plan' | 'promote_member' | 'promote_member_error' | 'update_check' | 'update_perform' | 'update_usage' | 'plugins_list' | 'plugins_install' | 'plugins_usage' | 'integrations_list' | 'workspace' | 'workspace_show' | 'workspace_sync' | 'workspace_reset' | 'state_status' | 'state_commit' | 'state_show' | 'state_restore' | 'state_usage' | 'memory' | 'cache_stats' | 'trust_status' | 'trust_add' | 'trust_remove' | 'effort' | 'effort_show' | 'effort_set' | 'evolve' | 'verify' | 'statusline' | 'report' | 'inbox' | 'permissions';
   /** Optional human-readable message (e.g. for `clear` or `help`). */
   message?: string;
   /** For `model`: the new model name. */
@@ -103,6 +103,9 @@ export interface SlashCommandResult {
   trustPath?: string;
   /** For `trust_remove`: true when removing trust. */
   trustRemove?: boolean;
+  /** WS1 (t133) `permissions`: subcommand ('' = list) + its positional args. */
+  permissionsSubcommand?: string;
+  permissionsArgs?: string[];
 }
 
 export interface ExpandedSkill {
@@ -205,7 +208,7 @@ export function handleSlashCommand(
   /update [--yes|-y] — check for zelari-code updates; --yes performs the update (v3-N)\n  /plugins — list optional tool plugins (Playwright, eslint, ruff, LSP servers)\n  /plugins install <id> — install a plugin now (e.g. /plugins install eslint)\n  /integrations — list MCP integration presets (cua, composio, qwen-mm-plugins) + status\n  /steer <text> — enqueue a follow-up prompt on the active run (Task 18.2)\n  /steer --interrupt <text> — cancel current run + enqueue <text> for next dispatch (Task C.3.2)\n  /compact — compact the session transcript\n  /clear — clear the visible transcript (session is preserved)\n  /sessions — list past sessions\n  /resume <id> — load a past session\n  /branch <name> — snapshot the current session into a new branch\n  /branches — list branches\n  /checkout <name> — switch the active branch\n  /new — start a fresh session\n  /diff [--staged] — show uncommitted changes (or staged with --staged)\n  /undo [--yes] — revert working-tree changes (destructive! requires --yes)\n  /checkpoint [label] — snapshot the working tree as a restore point\n  /rollback [id|latest] — restore the working tree to a checkpoint (no arg: list)\n  /state status — durable state HEAD + recent commits\n  /state commit [label] — force a durable state commit (soft)\n  /state show [id] — show discoveries for HEAD or commit id\n  /state restore [id] [--no-tree] — set HEAD + optional git checkpoint restore\n  /cache stats — prompt-cache hit rate, premium vs cached, stable busts\n  /index [status] — build the semantic code index for semantic_search\n  /verify — re-evaluate the strict completion gate (deterministic, no LLM; criteria + next command)
   /report [sessionId] — aggregate the active session spine (files, tool calls, verify, tokens)
   /inbox — questions waiting on you across local sessions (unanswered ask_user; ZELARI_INBOX=0 disables)
-  /statusline [on|off|up|down <item>|custom <cmd>|timeout <ms>|reset] — configure the status line (t114)\n  /mode [kraken|council|zelari] — switch dispatch mode (same as shift+tab; agent=alias kraken)\n  /kraken [sessionId] — show Kraken tentacle radio (last spawns)\n  /trust [path] — trust a folder so project MCP + project hooks load\n  /trust remove [path] — revoke folder trust\n  /evolve [status|proposals] — evolution ledger status + deterministic fitness; proposals lists the store (read-only, ADR-0036)
+  /statusline [on|off|up|down <item>|custom <cmd>|timeout <ms>|reset] — configure the status line (t114)\n  /mode [kraken|council|zelari] — switch dispatch mode (same as shift+tab; agent=alias kraken)\n  /kraken [sessionId] — show Kraken tentacle radio (last spawns)\n  /trust [path] — trust a folder so project MCP + project hooks load\n  /trust remove [path] — revoke folder trust\n  /permissions [list|add|remove|clear|denials] — local allow/ask/deny policy: active rules by source + session rules (WS1)\n  /evolve [status|proposals] — evolution ledger status + deterministic fitness; proposals lists the store (read-only, ADR-0036)
   /help — show this help\n  /exit — exit the CLI\n\n${formatSkillList(availableSkills)}`,
       };
 
@@ -963,6 +966,28 @@ export function handleSlashCommand(
         kind: first ? 'trust_add' : 'trust_status',
         trustPath: first && first !== '.' ? first : process.cwd(),
         message: first ? 'Usage: /trust [path]' : 'Usage: /trust [path] | /trust remove [path]',
+      };
+    }
+
+    // WS1 (t133): local permission policy — list active rules by source and
+    // add/remove SESSION rules at runtime (no persistent state: the project
+    // file .zelari/permissions.json stays user-authored).
+    case 'permissions': {
+      const sub = (args[0] ?? '').toLowerCase();
+      const known = ['', 'list', 'show', 'add', 'remove', 'rm', 'delete', 'clear', 'denials', 'denied', 'help'];
+      if (!known.includes(sub)) {
+        return {
+          handled: true,
+          kind: 'permissions',
+          message: `Unknown /permissions subcommand '${sub}'.`,
+        };
+      }
+      return {
+        handled: true,
+        kind: 'permissions',
+        permissionsSubcommand: sub === 'help' ? '' : sub,
+        permissionsArgs: args.slice(1),
+        message: sub === 'help' ? 'Usage: /permissions [list|add|remove|clear|denials]' : undefined,
       };
     }
 

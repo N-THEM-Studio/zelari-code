@@ -138,6 +138,33 @@ export interface SessionProjection {
   issues: ReplayIssue[];
   /** Dangling tool.call events classified for crash recovery (2.x B). */
   interruptedTools: ToolInterrupted[];
+  /** WS1 (t133): pre-dispatch permission denials, in log order. */
+  permissionDenials: PermissionDenialSummary[];
+}
+
+/**
+ * WS1 (t133): a `permission.denied` event, replayed. Defensive reads: an
+ * older writer (or a hand-edited log) with a missing field yields '' rather
+ * than throwing — replay must never die on telemetry.
+ */
+export interface PermissionDenialSummary {
+  seq: number;
+  at: number;
+  tool: string;
+  matchedRuleId: string;
+  source: string;
+  reason: string;
+}
+
+function parsePermissionDenial(e: SessionEventEnvelope): PermissionDenialSummary {
+  return {
+    seq: e.seq,
+    at: e.ts,
+    tool: String(e.data.tool ?? ''),
+    matchedRuleId: String(e.data.matchedRuleId ?? ''),
+    source: String(e.data.source ?? ''),
+    reason: String(e.data.reason ?? ''),
+  };
 }
 
 function parseVerification(e: SessionEventEnvelope): VerificationRunSummary {
@@ -174,6 +201,7 @@ export function buildProjection(events: readonly SessionEventEnvelope[], issues:
     replans: 0,
     issues,
     interruptedTools: classifyInterruptedTools(events),
+    permissionDenials: [],
   };
   for (const e of events) {
     switch (e.kind) {
@@ -214,6 +242,8 @@ export function buildProjection(events: readonly SessionEventEnvelope[], issues:
           rationale: String(e.data.rationale ?? ''),
         });
         break;
+      case 'permission.denied':
+        projection.permissionDenials.push(parsePermissionDenial(e));
         break;
     }
   }

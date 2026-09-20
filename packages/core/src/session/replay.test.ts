@@ -155,3 +155,42 @@ describe('buildProjection', () => {
     ]);
   });
 });
+
+// WS1 (t133): a pre-dispatch permission denial must survive replay.
+describe('buildProjection — permission.denied (WS1)', () => {
+  it('exposes denial events (tool, matchedRuleId, source, reason) and keeps them off the model surface', async () => {
+    const file = await tmpFile(
+      [
+        env(1, 'session.started'),
+        JSON.stringify({
+          schemaVersion: 1,
+          sessionId: 's',
+          seq: 2,
+          ts: 1755000000002,
+          kind: 'permission.denied',
+          actor: { type: 'system', role: 'permissions' },
+          data: {
+            tool: 'write_file',
+            matchedRuleId: 'no-secrets',
+            source: 'project',
+            reason: 'denied by rule no-secrets',
+          },
+        }),
+      ].join(String.fromCharCode(10)) + String.fromCharCode(10),
+    );
+    const report = await readSessionLog(file);
+    expect(report.issues).toEqual([]);
+    const projection = buildProjection(report.events, report.issues);
+    expect(projection.permissionDenials).toEqual([
+      expect.objectContaining({
+        seq: 2,
+        tool: 'write_file',
+        matchedRuleId: 'no-secrets',
+        source: 'project',
+        reason: 'denied by rule no-secrets',
+      }),
+    ]);
+    // State-only kind: the denial never reaches the model surface.
+    expect(projection.messages.filter((m) => JSON.stringify(m).includes('no-secrets'))).toEqual([]);
+  });
+});

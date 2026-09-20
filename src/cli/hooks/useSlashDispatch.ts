@@ -31,6 +31,8 @@ import {
   handleTrustStatus,
   handleUntrust,
 } from '../slashHandlers/trust.js';
+// WS1 (t133): local permission policy surface.
+import { handlePermissions } from '../slashHandlers/permissions.js';
 import { handleIndexBuild, handleIndexStatus } from '../slashHandlers/semantic.js';
 import { nextMode, describeMode } from '../mode.js';
 import { formatKrakenRadioStatus } from '../tools/krakenRadio.js';
@@ -584,6 +586,18 @@ export function useSlashDispatch(params: SlashDispatchParams): (value: string) =
     }
     if (result.kind === 'trust_remove') {
       handleUntrust({ setMessages }, result.trustPath ?? process.cwd());
+      setInput('');
+      return;
+    }
+
+    // ── Permission policy (WS1 / t133) ──
+    if (result.kind === 'permissions') {
+      handlePermissions(
+        { setMessages },
+        result.permissionsSubcommand,
+        result.permissionsArgs ?? [],
+        process.cwd(),
+      );
       setInput('');
       return;
     }
