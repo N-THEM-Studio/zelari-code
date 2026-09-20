@@ -1,6 +1,6 @@
 # ADR-0024 - Closing the dual-write: the spine as the only source of model context
 
-**Status:** Accepted (amended 2026-08-30; v1.1 2026-08-30; v1.2 2026-09-09)
+**Status:** Accepted (amended 2026-08-30; v1.1 2026-08-30; v1.2 2026-09-09; v1.3 2026-09-20)
 **Date:** 2026-08-19
 
 ## Context
@@ -67,3 +67,17 @@ With 2.17 the list of **hot paths** in Decision point 1 extends to the **graph h
 Option **A** — the two-channel model, host envelope on the spine + per-node detail on the kraken radio — is **confirmed** as the stable contract for graph runs, until a future ADR declares otherwise. Replaying a graph run means: the Session (spine) for the host envelope and phases, plus the radio file (`.zelari/radio/<session>.jsonl`, correlated by the same `sessionId`) for the nodes' content.
 
 Explicitly out of horizon: `radioRef` on the spine (option B) and the tentacles' inner turn on the spine (option C, forbidden — the single-writer rule of ADR-0024 is unchanged).
+
+## Amendment v1.3 (2026-09-20) — the BOUNDED tool sink on graph and council runs
+
+**Narrows v1.2, does not lift it.** The host may now hand its OWN spine to the tool dispatch inside a node/council member (`ToolContext.emitSessionEvent`, WS7 slice 4b). The single-writer rule is untouched: one writer handle (`HeadlessSpineHandle`), one seq sequence, no second log, no second vocabulary — the sink IS the host's own appender, so a tool body never opens, owns or closes a log. What changes is the ORIGIN of the events, not the writer.
+
+**Seams**: `runHeadlessKrakenGraph` passes the sink into the tentacle registry factory (`createKrakenSubAgentContextFactory({ sessionEventSink })`, `src/cli/runHeadless.ts`); the headless council and mission hosts pass it to the members (`dispatchCouncil({ sessionEventSink })`, which binds it to the registry `runCouncilPure` dispatches through). Option C therefore stays forbidden for CONTENT: a node's prompt, assistant text, tool args/results and reads remain radio-only.
+
+**Bounded event set** (deliberate noise control — one host envelope becomes dozens of node turns): `permission.asked`, `auto_approve.granted`, `jail.blocked`, `ask_user.fired`, `verify.requested`, `permission.denied` (the decision family `DECISION_PROJECTION_KINDS`), `verify.debt_open`, `verify.debt_cleared`, `file.applied`, `file.rejected` (write path only). Everything else is DROPPED by `boundedSessionSink` — including `file.read`: a node reads far more than it writes.
+
+**Kill switch**: `ZELARI_GRAPH_SPINE_SINK=0` disables the binding entirely (default ON, absence fails open, only the literal `0` turns it off — same grammar as the other `ZELARI_KRAKEN_*` opt-outs). It stops events only; a node's work is unchanged, and the host's own `graph.node_started`/`graph.node_ended` envelope pair keeps landing.
+
+**Contract pinned** by `src/cli/sessionSinkHosts.test.ts`: with real hosts (only the planner/executor/tentacle LLM seams stubbed) a real node turn and a real `dispatchCouncil` member turn each land `permission.asked` + `file.applied` on a real `SessionLogWriter`, visible through `buildProjection()`; `file.read` and every `tool.call`/`tool.result` are absent; with the kill switch zero tool events are bound and the envelope is unchanged.
+
+**Still dormant** (documented in `src/cli/safety/sessionSink.ts`, not silently half-wired): the TUI council / zelari-build callers (`useChatTurn` calls `dispatchCouncil` without a sink — the seam is ready, the caller is not converted) and `/kraken graph`, the CSV fanout handler and the gauntlet loop.

@@ -26,6 +26,9 @@ import type { ProviderStreamFn } from "@zelari/core/harness";
 import type { ToolRegistry } from "@zelari/core/harness/tools/registry";
 import type { FeedbackStore } from "./councilFeedback.js";
 import { resolveCouncilTier } from "./councilConfig.js";
+// WS7 slice 4c (t139): the ONE binding that makes council members' tool
+// invocations emit on the parent session spine (see safety/sessionSink.ts).
+import { bindSessionSinkToRegistry, type SessionToolSink } from "./safety/sessionSink.js";
 import { hasWorkspacePlan } from "./workspace/planDetect.js";
 import { createWorkspaceContext } from "./workspace/stubs.js";
 import { createWorkspaceToolRegistry } from "./workspace/toolRegistry.js";
@@ -54,6 +57,16 @@ export interface CouncilDispatchOptions {
   /** Optional workspace context (default empty). */
   workspaceContext?: string;
   tools?: ToolRegistry;
+  /**
+   * WS7 slice 4c (t139): the PARENT session's tool sink. `hostSessionSink(
+   * spine)` yields the bounded, kill-switchable variant; when given, EVERY
+   * council member's tool invocation (council + mission slices) emits its
+   * decision/verify/file-write telemetry on that spine. Absent ⇒ members stay
+   * dormant exactly as before — optional by contract, no second writer and no
+   * vocabulary change is introduced here (safety/sessionSink.ts explains the
+   * host-side binding and why it preserves tool-schema order).
+   */
+  sessionEventSink?: SessionToolSink;
   maxToolCallsPerTurn?: number;
   /** Chairman-only (Lucifero) tool budget — raised in zelari-mode. */
   maxToolCallsChairman?: number;
@@ -159,6 +172,15 @@ export async function* dispatchCouncil(
   if (config.tools) {
     const { registerCliToolsIntoCouncilCatalog } = await import("./toolRegistry.js");
     registerCliToolsIntoCouncilCatalog(config.tools);
+    // WS7 slice 4c (t139): bind the parent spine sink to the registry the
+    // members dispatch against. Done AFTER the catalog bridge so a tool added
+    // by it is covered too. Re-registering keeps each name's slot in the
+    // registry Map, so the member-visible tool order — and the prompt-cache
+    // prefix built from it — stays byte-identical whether or not a sink is
+    // given. No sink ⇒ nothing happens (today's dormant behavior).
+    if (options.sessionEventSink) {
+      bindSessionSinkToRegistry(config.tools, options.sessionEventSink);
+    }
   }
 
   const callbacks: PureCouncilCallbacks = {};

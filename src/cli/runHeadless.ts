@@ -96,6 +96,9 @@ import {
   setActivePolicyLoadSurface,
 } from './safety/policyLoadMode.js';
 import { HOOKS_FAILURE_ENV, resolveHookFailureMode } from './safety/lifecycleHooks.js';
+// WS7 slice 4c (t139): the graph/council hosts bind their OWN spine to the
+// node/member tool registries — bounded event set, one kill switch (sessionSink.ts).
+import { hostSessionSink } from './safety/sessionSink.js';
 import { planModeFromOpts, registerHeadlessMcp, runOneTurn, surfaceOpsKnowledgeNotices, writeProofSafe, type TurnExtras } from './headless/runOneTurn.js';
 
 export async function runHeadless(opts: HeadlessOptions): Promise<number> {
@@ -514,6 +517,11 @@ async function runHeadlessKrakenGraph(
   // byte-for-byte identical to the pre-spine behavior.
   if (opts.output === 'json') emitEvent(sessionStartedEvent(spine));
   spine.userMessage(prompt);
+  // WS7 slice 4c (t139): every node turn's tool dispatch emits its BOUNDED
+  // decision/verify/file-write telemetry on THIS spine — the host's own writer,
+  // handed to the tentacle registry (single-writer is unchanged: no node opens
+  // or writes a log of its own). `undefined` when ZELARI_GRAPH_SPINE_SINK=0.
+  const nodeToolSink = hostSessionSink(spine);
   const { getMemoryService, isMemoryAutoWriteEnabled, isMemoryV2Enabled } =
     await import('./memory/serviceFactory.js');
   const graphMemory = isMemoryV2Enabled()
@@ -690,6 +698,10 @@ async function runHeadlessKrakenGraph(
             // this the provider picker silently did nothing for Kraken Graph.
             provider,
             model,
+            // WS7 slice 4c (t139): the node's tool invocations emit on the
+            // host-owned spine (bounded set + kill switch, sessionSink.ts).
+            // Absent ⇒ the tentacle registry stays exactly as dormant as before.
+            ...(nodeToolSink ? { sessionEventSink: nodeToolSink } : {}),
           }),
           ...(graphMemory ? { memoryService: graphMemory } : {}),
           memoryAutoWrite: isMemoryAutoWriteEnabled(),
@@ -938,6 +950,10 @@ async function runHeadlessCouncilBody(
   spineHolder.current = spine;
   // T4-S3: drain pre-bind buffered memory events (cap 32) onto the spine.
   flushMemorySpineNotes(spineHolder);
+  // WS7 slice 4c (t139): council MEMBERS dispatch their tools against the
+  // registry built below; this host's spine sink makes those invocations emit
+  // (bounded set) on the SAME spine — `undefined` when the kill switch is off.
+  const councilToolSink = hostSessionSink(spine);
   // Exit-1/E1.2: the session spine is the model-context source of truth.
   // Legacy `--history` is imported one-shot into a fresh log; prior turns
   // are then derived from events. The 1.x rolling history no longer feeds
@@ -1064,6 +1080,8 @@ async function runHeadlessCouncilBody(
       sessionId,
       workspaceRoot: cwd,
       tools: toolRegistry,
+      // WS7 slice 4c (t139): members emit on the parent spine (bounded set).
+      ...(councilToolSink ? { sessionEventSink: councilToolSink } : {}),
       feedbackStore,
       runMode: councilRunMode,
       signal,
@@ -1267,6 +1285,10 @@ async function runHeadlessZelariBody(
   emitEvent(sessionStartedEvent(spine));
 
   spine.missionPhase('design', 'mission-start');
+  // WS7 slice 4c (t139): the mission's council members/slices dispatch against
+  // `toolRegistry`; this spine sink makes those invocations emit on the mission
+  // spine (bounded set). `undefined` when ZELARI_GRAPH_SPINE_SINK=0.
+  const missionToolSink = hostSessionSink(spine);
   const { buildMissionBrief } = await import('@zelari/core/council');
   const { hasWorkspacePlan } = await import('./workspace/planDetect.js');
   const { listOpenPlanTaskIds } = await import('./workspace/planStore.js');
@@ -1444,6 +1466,8 @@ async function runHeadlessZelariBody(
             runMode: effectiveRunMode,
             signal,
             maxToolCallsChairman: chairmanBudget,
+            // WS7 slice 4c (t139): mission slices emit on the parent spine.
+            ...(missionToolSink ? { sessionEventSink: missionToolSink } : {}),
             ...(implementerRetry ? { skipSpecialists: true } : {}),
             workspaceContext: composed.workspaceContext,
             ...(composed.ragContext ? { ragContext: composed.ragContext } : {}),
