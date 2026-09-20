@@ -26,8 +26,9 @@ import { outcomeMemoryAllowed, hydrateTaskVerifyDebtFromSpine, resetTaskSpawnCou
 import { bindVerifyDebtSpineEmit, flushVerifyDebtSpine, formatTuiVerifyDebtNotice } from "../tools/verifyDebtSpine.js";
 // WS7 slice 4b (t139): bind the turn's spine to the tool-side sink
 // (ToolContext.emitSessionEvent) so file.* telemetry and the permission/decision
-// events stop being dormant on the TUI host path.
-import { spineSessionSink, type SessionToolSink } from "../safety/sessionSink.js";
+// events stop being dormant on the TUI host path. Slice 4c residual: the COUNCIL
+// member registry takes the same binding, bounded, via `hostSessionSink`.
+import { hostSessionSink, spineSessionSink, type SessionToolSink } from "../safety/sessionSink.js";
 import { isKrakenSelectionEnabled, krakenChecksPassed, krakenRequiredChecks, resetKrakenCandidates } from "../kraken/candidateRegistry.js";
 import { collectKrakenTurnMetrics, markRepairSucceeded, markRepairTriggered, resetKrakenTurnMetrics } from "../kraken/metrics.js";
 import { krakenSelectionPlaybook } from "../kraken/selectionPlaybook.js";
@@ -2061,6 +2062,13 @@ async function dispatchCouncilPromptImpl(
       };
     }
   }
+  // WS7 slice 4c residual (t139, ADR-0024 v1.3): this host's OWN spine → the
+  // bounded, kill-switchable member sink — the same binding the headless council
+  // host makes (runHeadless `councilToolSink`). No spine, or the
+  // ZELARI_GRAPH_SPINE_SINK=0 kill switch ⇒ no option ⇒ members stay dormant,
+  // and the member registry's tool order (prompt-cache prefix) is untouched.
+  const councilSpine = writerRef.current?.spine;
+  const councilMemberSink = councilSpine ? hostSessionSink(councilSpine) : undefined;
   try {
     for await (const event of dispatchCouncil(effectiveText, {
       apiKey: envConfig.apiKey,
@@ -2069,6 +2077,8 @@ async function dispatchCouncilPromptImpl(
       providerStream: buildProviderStream(envConfig),
       sessionId,
       tools: councilToolRegistry,
+      // WS7 slice 4c: members emit on the parent session spine (bounded set).
+      ...(councilMemberSink ? { sessionEventSink: councilMemberSink } : {}),
       feedbackStore: councilFeedbackStore,
       workspaceContext: councilCompose.workspaceContext,
       ...(councilCompose.ragContext

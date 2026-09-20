@@ -12,6 +12,7 @@
  *     formatter is wired, not merely exported.
  */
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { readFileSync } from 'node:fs';
 import type { LedgerEntry } from '../evolution/ledger.js';
 import { ledgerStats } from '../evolution/ledger.js';
 import {
@@ -140,5 +141,34 @@ describe('/evolve — the status message carries the signals', () => {
     const res = handleSlashCommand('/evolve', []);
     expect(res.message).toContain('honesty: not measured (unknown ≠ clean, ADR-0023)');
     expect(res.message).not.toContain('cache:');
+  });
+});
+
+describe('--evolve-status — the flag prints the same signals as /evolve', () => {
+  // The flag ends the process, so the block is asserted on its SOURCE: what
+  // matters is that it reuses the one renderer (slashHandlers/evolve.ts) and
+  // splices its lines into the very console.log it already prints. A second
+  // copy of the ADR-0023 wording inside main.ts is what this forbids.
+  const mainSrc = readFileSync(new URL('../main.ts', import.meta.url), 'utf8');
+  const start = mainSrc.indexOf('if (argv.includes("--evolve-status"))');
+  const stop = mainSrc.indexOf('process.exit(0);', start) + 'process.exit(0);'.length;
+  const block = mainSrc.slice(start, stop);
+
+  it('splices formatLedgerSignalLines(entries, stats) into the status console.log', () => {
+    expect(start).toBeGreaterThan(-1);
+    expect(block).toContain('const signalLines = formatLedgerSignalLines(entries, stats);');
+    // Rendered as its own line under the stats, exactly as /evolve does it.
+    expect(block).toContain('signalLines.map((line) => `\\n${line}`).join("")');
+    // Newline-joined (never an array dump) and still ending the process itself.
+    expect(block).not.toContain('signalLines.join(');
+    expect(block).toContain('process.exit(0);');
+  });
+
+  it('never re-derives the wording: the renderer output IS what the flag prints', () => {
+    const honesty = formatHonestyStatLine([entry()]);
+    expect(honesty).toBe('  honesty: not measured (unknown ≠ clean, ADR-0023)');
+    // Absence keeps its one sentence — no inline copy in the flag path.
+    expect(block).not.toContain(honesty.trim());
+    expect(block).not.toContain('honesty:');
   });
 });

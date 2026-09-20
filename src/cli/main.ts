@@ -483,6 +483,13 @@ function pickRootComponent(): {
       require("./evolution/ledger.js") as typeof import("./evolution/ledger.js");
     const entries = readLedger(process.cwd());
     const stats = ledgerStats(entries);
+    // WS7 slice 0 residual: the SAME signal lines `/evolve` prints — honesty
+    // first, cache only when a provider usage report backed it. One renderer
+    // (slashHandlers/evolve.ts), never a second copy of the ADR-0023 wording.
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { formatLedgerSignalLines } =
+      require("./slashHandlers/evolve.js") as typeof import("./slashHandlers/evolve.js");
+    const signalLines = formatLedgerSignalLines(entries, stats);
     // eslint-disable-next-line no-console
     console.log(
       `evolution mode: ${evolutionMode()} (ZELARI_EVOLUTION)\n` +
@@ -504,6 +511,10 @@ function pickRootComponent(): {
               )
               .join("")
           : "") +
+        // WS7 slice 0 residual: `/evolve`'s own signal lines, same renderer —
+        // honesty always stated, cache only when a provider report backed it.
+        // A zero-run ledger states nothing, exactly like the `/evolve` screen.
+        (stats.runs > 0 ? signalLines.map((line) => `\n${line}`).join("") : "") +
         `\nproposals: npm run evolve:propose — decisions in npm run evolve:decide (P1: nothing self-promotes)`,
     );
     process.exit(0);

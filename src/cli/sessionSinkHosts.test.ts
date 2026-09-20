@@ -530,3 +530,77 @@ describe('WS7 slice 4c — the binding itself: bounded, order-preserving, kill-s
     expect(hostSessionSink(spine, { ZELARI_GRAPH_SPINE_SINK: '0' })).toBeUndefined();
   });
 });
+
+describe('WS7 slice 4c residual — the TUI COUNCIL host binds its spine', () => {
+  // The hook itself (React state + a provider stream) is not driven here: the
+  // DECISION is `hostSessionSink` (executed below through the DEFAULT env the
+  // TUI reads) and the CALL SITE is asserted on the source, so reverting either
+  // half reopens this suite without a fake React renderer.
+  const source = fs.readFileSync(new URL('./hooks/useChatTurn.ts', import.meta.url), 'utf8');
+  const sinkLine = '...(councilMemberSink ? { sessionEventSink: councilMemberSink } : {}),';
+
+  it('passes the sink ADDITIVELY at the dispatchCouncil call site, after the tool registry', () => {
+    const call = source.indexOf('for await (const event of dispatchCouncil(');
+    expect(call).toBeGreaterThan(-1);
+    // The TUI decision is the ONE host helper: this host's spine → bounded sink.
+    expect(source).toContain('const councilSpine = writerRef.current?.spine;');
+    expect(source).toContain(
+      'const councilMemberSink = councilSpine ? hostSessionSink(councilSpine) : undefined;',
+    );
+    // ADDITIVE by contract: the option exists ONLY inside the conditional spread,
+    // so the dormant build (no spine / ZELARI_GRAPH_SPINE_SINK=0) hands
+    // `dispatchCouncil` a byte-identical option set — no re-registered tools, no
+    // reordered tool-schema array (the prompt-cache prefix).
+    const mentions = source.split(/\r?\n/).filter((l) => l.includes('sessionEventSink'));
+    // ADDITIVE by contract: EVERY `sessionEventSink` in this hook rides a
+    // conditional spread — the single-agent `toolSpineSink` (slice 4b) and this
+    // council one — so the dormant build hands `dispatchCouncil` a byte-identical
+    // option set: no re-registered tools, no reordered tool-schema array.
+    expect(mentions.map((l) => l.trim())).toContain(sinkLine);
+    for (const mention of mentions) {
+      const line = mention.trim();
+      expect(line.startsWith('...(')).toBe(true);
+      expect(line.includes('? { sessionEventSink:')).toBe(true);
+      expect(line.endsWith('} : {}),')).toBe(true);
+    }
+    // …and it rides the SAME options object as the registry it decorates.
+    const opts = source.slice(call, call + 1500);
+    expect(opts).toContain('tools: councilToolRegistry,');
+    expect(opts).toContain(sinkLine);
+    expect(opts.indexOf('tools: councilToolRegistry,')).toBeLessThan(opts.indexOf(sinkLine));
+  });
+
+  it('that sink is BOUNDED and kill-switchable: reads and turn internals stay off the spine', async () => {
+    const seen: string[] = [];
+    const spine = {
+      appendEvent: async (input: SessionEventInput) => {
+        seen.push(input.kind);
+        return { seq: seen.length };
+      },
+    };
+    // The TUI hop, minus React: `writerRef.current?.spine` resolved at dispatch.
+    const writerRef: { current?: { spine: typeof spine } } = {};
+    const bind = (): SessionToolSink | undefined => {
+      const s = writerRef.current?.spine;
+      return s ? hostSessionSink(s) : undefined;
+    };
+    // No spine yet ⇒ nothing to bind ⇒ members stay exactly as dormant as before.
+    expect(bind()).toBeUndefined();
+
+    writerRef.current = { spine };
+    const sink = bind();
+    expect(sink).toBeDefined();
+    for (const kind of ['file.read', 'tool.call', 'tool.result', 'assistant.message']) {
+      await sink!({ kind, actor: { type: 'system' }, data: {} });
+    }
+    for (const kind of ['permission.asked', 'file.applied']) {
+      await sink!({ kind, actor: { type: 'system' }, data: {} });
+    }
+    expect(seen).toEqual(['permission.asked', 'file.applied']);
+
+    // Kill switch through the DEFAULT env the hook's call actually reads.
+    // Restored by this file's afterEach (ENV_KEYS).
+    process.env.ZELARI_GRAPH_SPINE_SINK = '0';
+    expect(bind()).toBeUndefined();
+  });
+});

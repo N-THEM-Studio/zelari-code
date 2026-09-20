@@ -49,10 +49,13 @@
  * only — a node's turn internals (tool.call/tool.result, assistant text, file
  * reads) never reach the spine. ADR-0024 (amendment v1.3) records the bound.
  *
+ * WIRED (n2 follow-up): the TUI council caller (`useChatTurn`) passes the same
+ * `sessionEventSink` option to `dispatchCouncil`, so the council / zelari-build
+ * member registries emit on the parent spine too — spread-conditional, absent
+ * entirely when there is no spine or the kill switch is set (option set
+ * byte-identical to the dormant build; prompt-cache prefix untouched).
+ *
  * STILL DELIBERATELY DORMANT (documented, not silently half-wired):
- *   - the TUI council / zelari-build registries built in `useChatTurn` (they
- *     call `dispatchCouncil` without a sink — the hook is outside this
- *     change's allowlist; the seam is ready, the caller is not converted);
  *   - `/kraken graph`, the CSV fanout slash handler and the gauntlet loop,
  *     which build tentacle registries through
  *     `createKrakenSubAgentContextFactory` without a sink (see its opts doc).
