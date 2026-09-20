@@ -26,6 +26,30 @@ export const LEDGER_REL = path.join('.zelari', 'evolution', 'ledger.jsonl');
 
 export type LedgerVerdict = 'PASS' | 'FAIL' | 'HOLD' | 'UNKNOWN';
 
+/**
+ * Check-id prefix of the honesty FAMILY in the verification report vocabulary
+ * (packages/core .../council/verification/types.ts): `synthesis.honesty`,
+ * `synthesis.tier-inflation`, `synthesis.cite-invalid`,
+ * `synthesis.degraded-banner`. They all grade the chairman's CLAIMS against
+ * traceable evidence — exactly what "honesty" means in this codebase.
+ */
+export const HONESTY_CHECK_PREFIX = 'synthesis.';
+
+/**
+ * Synthesis-honesty signal for one run.
+ *
+ * Derivation is arithmetic over a report that already exists — `linted: false`
+ * is reserved for "there was a report but the lint family emitted nothing".
+ * There is NO way to express "we did not look": that case omits `honesty`
+ * entirely (unknown ≠ clean, P1).
+ */
+export interface LedgerHonesty {
+  /** A verification report existed for this run (the lint family could run). */
+  linted: boolean;
+  /** Honesty-family checks that FAILED (0 when linted and clean). */
+  flagged: number;
+}
+
 export interface LedgerEntry {
   /** Stable run id (session/mission id from the caller). */
   runId: string;
@@ -37,6 +61,12 @@ export interface LedgerEntry {
   verdict: LedgerVerdict;
   /** Best evidence tier backing the verdict (ADR-0023 vocabulary). */
   evidenceTier?: string;
+  /**
+   * Synthesis-honesty lint outcome (ADR-0023 / P1). Written ONLY at call-sites
+   * where a verification report is in scope — an absent field means "not
+   * measured here", never "clean" (unknown ≠ pass).
+   */
+  honesty?: LedgerHonesty;
   toolCalls?: number;
   /** /steer --interrupt count — behavioural signal (anti-Goodhart). */
   steerCount?: number;
@@ -57,6 +87,14 @@ export interface LedgerEntry {
   inputTokens?: number;
   /** Provider-reported completion tokens summed over the run (never estimated). */
   outputTokens?: number;
+  /**
+   * Provider-reported prompt tokens served from the provider prefix cache — a
+   * SUBSET of `inputTokens` (name matches `RunTelemetryAccumulator.usage()`
+   * `cacheHitTokens`, the runtime source of truth; the arm metrics call the
+   * same number `ArmRunMetrics.cachedTokens`). Present only when ≥1 provider
+   * usage report backed it: no provider report ⇒ the field is omitted.
+   */
+  cacheHitTokens?: number;
 }
 
 /** Resolve the active evolution mode (default off, ADR-0036). */
@@ -66,6 +104,23 @@ export function evolutionMode(env: Record<string, string | undefined> = process.
 
 export function ledgerPath(cwd: string): string {
   return path.join(cwd, LEDGER_REL);
+}
+
+/**
+ * Derive the ledger honesty signal from a verification report's `results`.
+ * Pure and total: `undefined` when the run produced NO report (unknown — the
+ * caller then omits the field), and `flagged` counts only FAILED checks of the
+ * honesty family. A missing check is never read as a violation, and a passing
+ * one never as evidence that the lint ran.
+ */
+export function honestyFromVerificationResults(
+  results: readonly { id: string; ok: boolean }[] | undefined | null,
+): LedgerHonesty | undefined {
+  if (!results) return undefined;
+  return {
+    linted: true,
+    flagged: results.filter((r) => !r.ok && r.id.startsWith(HONESTY_CHECK_PREFIX)).length,
+  };
 }
 
 export interface AppendResult {
@@ -173,6 +228,14 @@ export interface ClassFitness {
   avgSteerCount?: number;
   /** Share of entries with rollbackUsed=true. */
   rollbackRate: number;
+  /** Mean honesty flags over entries that carried `honesty` (WS7 slice 0). */
+  avgHonestyFlags?: number;
+  /**
+   * Token-weighted provider cache hit rate (0..1) over entries carrying BOTH
+   * `cacheHitTokens` and a positive `inputTokens`. Undefined when no entry had
+   * a provider-backed cache report — absence is not a 0% hit rate.
+   */
+  cacheHitRate?: number;
 }
 
 export interface LedgerStats {
@@ -187,6 +250,10 @@ export interface LedgerStats {
   rollbackRate?: number;
   avgCostUsd?: number;
   avgLatencyMs?: number;
+  /** Mean honesty flags over entries that carried `honesty` (WS7 slice 0). */
+  avgHonestyFlags?: number;
+  /** Token-weighted provider cache hit rate over cache-reporting entries. */
+  cacheHitRate?: number;
   /** Per-taskClass deterministic fitness (the routing/fitness key). */
   byClassFitness: Record<string, ClassFitness>;
 }
@@ -194,6 +261,24 @@ export interface LedgerStats {
 function mean(nums: readonly number[]): number | undefined {
   if (nums.length === 0) return undefined;
   return nums.reduce((a, b) => a + b, 0) / nums.length;
+}
+
+/**
+ * Token-weighted provider cache hit rate over the entries that actually carry
+ * both numbers. Entries without a provider cache report contribute nothing —
+ * the result is `undefined` rather than a flattering 0.
+ */
+function cacheHitRate(entries: readonly LedgerEntry[]): number | undefined {
+  const withCache = entries.filter(
+    (e) =>
+      typeof e.cacheHitTokens === 'number' &&
+      typeof e.inputTokens === 'number' &&
+      e.inputTokens > 0,
+  );
+  if (withCache.length === 0) return undefined;
+  const hit = withCache.reduce((acc, e) => acc + (e.cacheHitTokens ?? 0), 0);
+  const prompt = withCache.reduce((acc, e) => acc + (e.inputTokens ?? 0), 0);
+  return prompt > 0 ? hit / prompt : undefined;
 }
 
 function classFitness(entries: readonly LedgerEntry[]): ClassFitness {
@@ -217,6 +302,10 @@ function classFitness(entries: readonly LedgerEntry[]): ClassFitness {
     ),
     rollbackRate:
       entries.length === 0 ? 0 : entries.filter((e) => e.rollbackUsed === true).length / entries.length,
+    avgHonestyFlags: mean(
+      entries.map((e) => e.honesty?.flagged).filter((c): c is number => typeof c === 'number'),
+    ),
+    cacheHitRate: cacheHitRate(entries),
   };
 }
 
@@ -252,6 +341,8 @@ export function ledgerStats(entries: readonly LedgerEntry[]): LedgerStats {
     ...(entries.length > 0 ? { rollbackRate: global.rollbackRate } : {}),
     ...(global.avgCostUsd !== undefined ? { avgCostUsd: global.avgCostUsd } : {}),
     ...(global.avgLatencyMs !== undefined ? { avgLatencyMs: global.avgLatencyMs } : {}),
+    ...(global.avgHonestyFlags !== undefined ? { avgHonestyFlags: global.avgHonestyFlags } : {}),
+    ...(global.cacheHitRate !== undefined ? { cacheHitRate: global.cacheHitRate } : {}),
     byClassFitness,
   };
 }

@@ -29,6 +29,7 @@ export function zeroMetrics(): ArmRunMetrics {
     compactions: 0,
     spillCount: 0,
     recoveryReads: 0,
+    unverifiedVerifications: 0,
   };
 }
 
@@ -113,6 +114,11 @@ export function metricsFromNdjson(lines: readonly string[], passed: boolean): Ar
         break;
       case 'verification_failed':
         m.verificationFailures++;
+        break;
+      // M1.2 honesty marker: a verification_run that could not evaluate
+      // anything while strict done is ON. Real signal, never a guess.
+      case 'verification_run':
+        if (ev.unverified === true) m.unverifiedVerifications++;
         break;
       default:
         break;

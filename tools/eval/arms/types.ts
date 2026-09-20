@@ -67,6 +67,13 @@ export interface ArmRunMetrics {
   spillCount: number;
   /** read_file tool calls whose target is a run spill file (heuristic). */
   recoveryReads: number;
+  /**
+   * `verification_run` events carrying the M1.2 `unverified: true` marker —
+   * strict done ON with nothing evaluable ("narration-only done" honesty
+   * marker; P1: unknown ≠ pass). Counted, never inferred: 0 until the CLI
+   * emits the marker on the arm's stream.
+   */
+  unverifiedVerifications: number;
 }
 
 /** One case × arm execution result. */

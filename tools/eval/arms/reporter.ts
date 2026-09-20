@@ -15,6 +15,11 @@ export interface ArmAggregate {
   meanToolCalls: number;
   meanRetries: number;
   verificationFailRate: number;
+  /**
+   * Share of runs whose stream carried the M1.2 `unverified: true` marker —
+   * "strict done on, nothing evaluable". Counted from real events only.
+   */
+  unverifiedRate: number;
 }
 
 function mean(values: number[]): number {
@@ -40,6 +45,8 @@ export function aggregateByArm(runs: readonly ArmRunRecord[]): ArmAggregate[] {
     meanRetries: mean(list.map((r) => r.metrics.retries)),
     verificationFailRate:
       list.filter((r) => r.metrics.verificationFailures > 0).length / list.length,
+    unverifiedRate:
+      list.filter((r) => r.metrics.unverifiedVerifications > 0).length / list.length,
   }));
 }
 
@@ -67,6 +74,7 @@ export function renderComparisonTable(aggs: readonly ArmAggregate[]): string {
     row('Tool calls', aggs.map((a) => s(a.meanToolCalls))),
     row('Retry count', aggs.map((a) => a.meanRetries.toFixed(1))),
     row('Verification fail', aggs.map((a) => pct(a.verificationFailRate))),
+    row('Unverified', aggs.map((a) => pct(a.unverifiedRate))),
   ];
   return lines.join('\n');
 }

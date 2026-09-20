@@ -101,8 +101,8 @@ describe('aggregation + comparison table (§85)', () => {
 
   it('renders the §85-style table with arm headers and percentages', () => {
     const table = renderComparisonTable([
-      { armId: 'all-lead', runs: 2, passRate: 0.82, meanDurationMs: 94000, meanInputTokens: 81000, meanOutputTokens: 18000, meanToolCalls: 31, meanRetries: 1.8, verificationFailRate: 0.07 },
-      { armId: 'routed', runs: 2, passRate: 0.83, meanDurationMs: 66000, meanInputTokens: 53000, meanOutputTokens: 17000, meanToolCalls: 29, meanRetries: 1.5, verificationFailRate: 0.06 },
+      { armId: 'all-lead', runs: 2, passRate: 0.82, meanDurationMs: 94000, meanInputTokens: 81000, meanOutputTokens: 18000, meanToolCalls: 31, meanRetries: 1.8, verificationFailRate: 0.07, unverifiedRate: 0 },
+      { armId: 'routed', runs: 2, passRate: 0.83, meanDurationMs: 66000, meanInputTokens: 53000, meanOutputTokens: 17000, meanToolCalls: 29, meanRetries: 1.5, verificationFailRate: 0.06, unverifiedRate: 0.5 },
     ]);
     expect(table).toContain('Metric');
     expect(table).toContain('all-lead');
@@ -110,7 +110,10 @@ describe('aggregation + comparison table (§85)', () => {
     expect(table).toContain('82%');
     expect(table).toContain('94s');
     expect(table).toContain('31');
-    expect(table.split('\n')).toHaveLength(8);
+    // WS7 slice 0: the honesty row joined the table (8 → 9 lines).
+    expect(table).toContain('Unverified');
+    expect(table).toContain('50%');
+    expect(table.split('\n')).toHaveLength(9);
   });
 });
 

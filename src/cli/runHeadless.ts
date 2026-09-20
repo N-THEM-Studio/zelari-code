@@ -760,6 +760,12 @@ async function runHeadlessKrakenGraph(
       await spine.close(closeReason);
     } catch { /* spine never fails the run */ }
     // Evolution ledger v0 (ADR-0036): shadow-mode outcome telemetry only.
+    // WS7 slice 0: `honesty` and `cacheHitTokens` are deliberately ABSENT here.
+    // The kraken-graph path holds no verification report — runPostCouncilHook
+    // is only reached from the mission body (runHeadlessZelariBody) — and no
+    // provider usage accumulator: `summary`/`graph` are `const`s inside the
+    // try above, so at this point in the `finally` closure there is nothing to
+    // measure. Omitted means "not measured here", never "clean" (unknown ≠ pass).
     try {
       const { appendLedgerEntry, evolutionMode } = await import('./evolution/ledger.js');
       const { classifyTask } = await import('./evolution/classifyTask.js');
@@ -1154,6 +1160,16 @@ async function runHeadlessCouncilBody(
         model,
         provider,
         ...telemetry.ledgerFields(),
+        // WS7 slice 0: provider cache-hit tokens, gated by the SAME honesty
+        // rule the accumulator's token projection uses — present only when ≥1
+        // provider usage report backed the run (`usage()` is the public
+        // accessor; `ledgerFields()` itself does not project cache yet).
+        // NOT written here: `honesty` — this function never runs the
+        // post-council hook (no verification report in scope, see
+        // runHeadlessZelariBody for that path), so the key is omitted.
+        ...(telemetry.usage().usageReports > 0
+          ? { cacheHitTokens: telemetry.usage().cacheHitTokens }
+          : {}),
         verdict: signal.aborted
           ? 'UNKNOWN'
           : exitCode === 0

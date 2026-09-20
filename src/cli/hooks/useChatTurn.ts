@@ -2452,8 +2452,22 @@ async function dispatchCouncilPromptImpl(
         // t41 (ADR-0036): shadow ledger append at end of council turn.
         // Fail-open telemetry only — must never influence the turn outcome.
         try {
-          const { appendLedgerEntry } = await import("../evolution/ledger.js");
+          const { appendLedgerEntry, honestyFromVerificationResults } = await import(
+            "../evolution/ledger.js"
+          );
           const { classifyTask } = await import("../evolution/classifyTask.js");
+          // WS7 slice 0: honesty + cache-hit are written HERE only because the
+          // data is in scope.
+          //  - honesty: this TUI council turn HAS the verification report
+          //    (hook.verification.report.results carries the `synthesis.*` lint
+          //    family), so it is measured, not estimated.
+          //  - cacheHitTokens: NOT available at this call-site — `councilUsage`
+          //    sums `member_cost.cost`, which carries prompt/completion only
+          //    (no cache field exists on that event), so the key is omitted
+          //    instead of guessed.
+          const honesty = honestyFromVerificationResults(
+            hook.verification?.report?.results,
+          );
           appendLedgerEntry(process.cwd(), {
             runId: `${sessionId}-turn-${Date.now()}`,
             at: new Date().toISOString(),
@@ -2464,6 +2478,7 @@ async function dispatchCouncilPromptImpl(
                 ? "PASS"
                 : "FAIL"
               : "UNKNOWN",
+            ...(honesty ? { honesty } : {}),
             ...(hook.smoke?.ran ? { evidenceTier: "command-output" } : {}),
           });
         } catch {
