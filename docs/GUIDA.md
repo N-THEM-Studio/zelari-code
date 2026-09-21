@@ -244,6 +244,8 @@ Two independent axes:
 
 Super-agent (legacy alias `agent` / `single`): a lead that uses the built-in tools and can spawn **tentacles** via `task` (`explore` read-only, `general` with writes, `verify` for tests). Ideal for implementation. See [Kraken](#kraken-super-agent--tentacles-and-env) at the end of the guide.
 
+**Il CLI parte già in Kraken** (`src/cli/app.tsx`, stato iniziale `kraken`): non c'è nulla da attivare. Due protezioni sono accese **di default** e si tolgono solo con un opt-out esplicito: il **strict-done** (un turno BUILD non chiude come riuscito senza evidenza verificata — opt-out `ZELARI_STRICT_DONE=0`) e l'**isolamento in git worktree dei tentacoli `general`** (ogni writer lavora in un checkout privato sotto `.zelari/worktrees/` — opt-out `ZELARI_KRAKEN_WORKTREE=0`, che li riporta nell'albero condiviso). Su **Windows non esiste un jail OS**: il CLI lo dichiara con un avviso visibile e i comandi girano fuori dal jail — dettagli in [`docs/CAPABILITIES.md`](./CAPABILITIES.md).
+
 ### Council
 
 Sequential **6-member** pipeline collaborating on planning, ideation, knowledge mapping, review and synthesis. Ideal for design, architecture, complex plans.
@@ -1477,6 +1479,33 @@ Everything under `~/.zelari-code/` (unless overridden by env — one root, migra
 ---
 
 ## Environment variables
+
+### Kill-switch che un utente incontra
+
+Solo le variabili che si incontrano davvero nel percorso normale (primo avvio, un blocco, un tentacolo): quelle usate soltanto dai test non sono elencate qui. Convenzione: salvo dove indicato, il valore `0` **disattiva**.
+
+**Sicurezza**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ZELARI_STRICT_DONE` | `1` | `0`/`false` spegne il gate strict-done di Kraken: un turno BUILD può chiudere "fatto" senza evidenza verificata (l'exit 4 diventa 0) |
+| `ZELARI_MISSION_STRICT` | `1` | `0`/`false` spegne il gate strict delle missioni `zelari`; è indipendente da `ZELARI_STRICT_DONE` |
+| `ZELARI_OS_JAIL` | per superficie | `off` / `advisory` / `required`. `required` **nega** l'esecuzione quando manca un backend reale (su Windows oggi non esiste un jail OS) invece di lasciarla girare con l'avviso visibile — vedi [`docs/CAPABILITIES.md`](./CAPABILITIES.md) |
+
+**Orchestrazione**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ZELARI_KRAKEN_WORKTREE` | `1` | Isolamento dei tentacoli `general` (`resolveKrakenWorktreeMode`, `src/cli/tools/krakenWorktree.ts`): `0`/`false`/`no`/`off` è l'opt-out e li riporta nell'albero condiviso. Un valore non riconosciuto resta **acceso** |
+| `ZELARI_KRAKEN_WORKTREE` | `off` | **Seconda leva, funzione diversa** (`resolveWorktreeMode`, `src/cli/kraken/worktreeScheduling.ts`): la stessa variabile parte da `off`, si accende con `1`/`true` e con `auto` delega allo scheduler. I due default non vanno allineati: sono due decisioni diverse |
+| `ZELARI_KRAKEN_GRAPH` | `1` | `0` disabilita il motore Kraken Graph (DAG di tentacoli paralleli) |
+
+**Memoria**
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ZELARI_MEMORY` | `1` | `0` disattiva la memoria (corto circuito in `src/cli/memory/serviceFactory.ts`, v2 compresa) |
+| `ZELARI_MEMORY_V2` | `off` | `1` accende il backend SQLite v2: è un **opt-in**, non un opt-out — senza di esso resta il backend file/JSONL |
 
 ### Zelari / wizard / UI
 

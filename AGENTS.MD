@@ -52,7 +52,7 @@ See `docs/decisions/` for full ADRs (context/decision/consequences).
 - **0030-harness10-verification-defaults-rationalization** _(accepted)_ — HARNESS-10 defaults rationalized: strict-done + verify-pack ON, headless trust UNTRUSTED.
 - **0031-recall-asymmetry-single-agent** _(accepted 2026-08-30)_ — recall asymmetry on single-agent paths is deliberate: default-off, opt-in only through the measurable `context.projection` gate (promoted from `.zelari/decisions/014`).
 - **0032-budget-pipeline-canonical-projection** _(accepted 2026-08-30)_ — the CLI budget pipeline is the canonical projection compiler; `ContextProjector` stays tentacle parent-context only and HarnessState is a read-model (promoted from `.zelari/decisions/015`).
-- **0033-edit-protocol-ancorato** _(accepted, implementation in progress)_ — anchored edit protocol: file-level snapshot, exact apply, structured error.
+- **0033-edit-protocol-ancorato** _(accepted)_ — anchored edit protocol: file-level snapshot, exact apply, structured error.
 - **0034-desktop-cli-distribution** _(accepted)_ — Desktop ships the same contract (guided CLI install first, bundling deferred).
 - **0035-council-fanout-trace-view** _(accepted; Phase A implemented, Phase B deferred)_ — council fan-out parallel + trace view (renumbered from the legacy `0015` collision, triage S6/t37).
 - **0036-evolution-engine-proposer-judge-separation** _(accepted 2026-09-04)_ — genome vs judge separation: the proposer never measures or promotes itself; `JUDGE_PATHS` gate in `verify-principles`, `touches-judge` CI label, evolution ledger default-off (`ZELARI_EVOLUTION=0`, shadow opt-in).
