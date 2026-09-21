@@ -102,7 +102,7 @@ import { getPhase } from "../phaseState.js";
 import { describePhase } from "../phase.js";
 import {
   buildModelContext,
-  resourceStatusTail,
+  assembleRequestTail,
 } from "../budget/modelContextBuilder.js";
 import {
   recordRequestSnapshot,
@@ -938,12 +938,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             ),
             maxRecoveries: 2,
           },
-          requestTail: () => [
-            ...resourceStatusTail(
+          requestTail: () =>
+            assembleRequestTail(
               writerRef.current?.spine?.latestResourceSnapshot() ?? null,
+              onePager,
             ),
-            ...onePager,
-          ],
           // 2.6 Phase 3: host-owned pre-dispatch resource gate via the spine
           // mirror (doc section 11.3). Degrade-and-stop (null gate = allow).
           // 2.6.1 (plan §13): argument-aware — bash is essential only when
@@ -1774,6 +1773,9 @@ async function dispatchCouncilPromptImpl(
     memory: null,
     skipCompactRecap: true,
   });
+  // The volatile tail (RESOURCE STATUS + one-pager) is intentionally NOT part of
+  // the council prompt: only `.history` / `.budget` are consumed here. Do not
+  // copy `requestTail` into `setHistory` — that would freeze it into history.
   const councilContext = await buildModelContext({
     fallbackHistory: getHistory(),
     session: writerRef.current?.spine ?? null,

@@ -75,7 +75,7 @@ import {
 } from './kraken/completionProofPersist.js';
 import { nativePackEnabled } from './kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from './kraken/verifierLifecycle.js';
-import { buildModelContext, resourceStatusTail } from './budget/modelContextBuilder.js';
+import { buildModelContext } from './budget/modelContextBuilder.js';
 import { buildOnePager } from './memory/onePager.js';
 import { recordCompactionMetrics } from './metrics.js';
 import {
@@ -1032,6 +1032,9 @@ async function runHeadlessCouncilBody(
     memory: nativeMemory ?? null,
     skipCompactRecap: true,
   });
+  // The volatile tail (RESOURCE STATUS + one-pager) is intentionally NOT sent to
+  // `dispatchCouncil`: only `.history` / `.budget` are consumed below. Do not
+  // copy `requestTail` into the council seed — it would become history.
   const councilContext = await buildModelContext({
     fallbackHistory: seededHistory.history,
     session: spine.spine,
@@ -1392,6 +1395,10 @@ async function runHeadlessZelariBody(
     memory: nativeMissionMemory ?? null,
     skipCompactRecap: true,
   });
+  // Mission path: the volatile tail (RESOURCE STATUS + one-pager) is
+  // intentionally NOT injected here — only `.history` / `.budget` are consumed
+  // below. Do not copy `requestTail` into the mission seed: it would become
+  // history.
   const missionContext = await buildModelContext({
     fallbackHistory: seededHistory.history,
     session: spine.spine,

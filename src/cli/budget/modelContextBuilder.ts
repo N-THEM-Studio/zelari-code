@@ -50,6 +50,20 @@ export function resourceStatusTail(payload: object | null | undefined): AgentMes
     : [];
 }
 
+/**
+ * Single assembly point for the volatile request tail: RESOURCE STATUS from the
+ * given snapshot, then the working-set one-pager. `buildModelContext` calls it
+ * for occupancy; the host `requestTail` arrows call it at send time with a
+ * FRESH snapshot, so the model sees the latest status and pager. Never
+ * persisted and never part of rolling history.
+ */
+export function assembleRequestTail(
+  snapshot: object | null | undefined,
+  onePager?: readonly AgentMessage[],
+): AgentMessage[] {
+  return [...resourceStatusTail(snapshot), ...(onePager ?? [])];
+}
+
 function isLegacyResourceStatus(message: AgentMessage): boolean {
   return message.role === 'system' && message.content.startsWith('RESOURCE STATUS');
 }
@@ -133,10 +147,10 @@ export async function buildModelContext(
   const sourceHistory = (derived ?? [...input.fallbackHistory]).filter(
     (message) => !isLegacyResourceStatus(message),
   );
-  const requestTail = [
-    ...resourceStatusTail(input.resourceSnapshot),
-    ...(input.volatileOnePager ?? []),
-  ];
+  const requestTail = assembleRequestTail(
+    input.resourceSnapshot,
+    input.volatileOnePager,
+  );
   const inputTokens = estimateHistoryTokens(sourceHistory);
   const requestSurface =
     input.systemMessages || input.tools

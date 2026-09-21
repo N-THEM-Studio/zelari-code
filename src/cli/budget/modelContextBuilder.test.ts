@@ -1,6 +1,7 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AgentMessage } from '@zelari/core/harness';
-import { buildModelContext } from './modelContextBuilder.js';
+import { buildModelContext, assembleRequestTail } from './modelContextBuilder.js';
 
 const snapshot = {
   toolCallsLimit: 40,
@@ -141,5 +142,67 @@ describe('modelContextBuilder volatile one-pager tail (S4)', () => {
     });
     expect(empty.budget.occupancy).toBe(omitted.budget.occupancy);
     expect(empty.requestTail.length).toBe(omitted.requestTail.length);
+  });
+});
+
+describe('modelContextBuilder request-tail assembler (t150)', () => {
+  // The marker can only reach the tail through assembleRequestTail: the snapshot
+  // is rendered as the RESOURCE STATUS `Stage:` line and never enters history.
+  const MARKER = 'T150_ASSEMBLER_MARKER';
+  const markerSnapshot = { ...snapshot, stage: MARKER };
+  const markerPager: AgentMessage[] = [
+    { role: 'system', content: 'WORKING SET\n## Open loops\n- [ ] keep the tail volatile' },
+  ];
+  const hasMarker = (
+    messages: readonly AgentMessage[],
+    needle: string = MARKER,
+  ): boolean =>
+    messages.some(
+      (m) => typeof m.content === 'string' && m.content.includes(needle),
+    );
+
+  it('resolves the one literal: RESOURCE STATUS first, one-pager after', () => {
+    const tail = assembleRequestTail(markerSnapshot, markerPager);
+    expect(tail[0]!.content.startsWith('RESOURCE STATUS')).toBe(true);
+    expect(tail.at(-1)!.content.startsWith('WORKING SET')).toBe(true);
+    expect(hasMarker(tail)).toBe(true);
+  });
+
+  it('is the builder tail verbatim: marker in requestTail, never in history', async () => {
+    const result = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'fix the bug' }],
+      phase: 'build',
+      resourceSnapshot: markerSnapshot,
+      volatileOnePager: markerPager,
+    });
+    expect(result.requestTail).toEqual(
+      assembleRequestTail(markerSnapshot, markerPager),
+    );
+    expect(hasMarker(result.requestTail)).toBe(true);
+    expect(hasMarker(result.history)).toBe(false);
+  });
+
+  it('host-style arrow call reads the FRESH snapshot (nothing frozen)', () => {
+    // Same shape as useChatTurn ~941 and runOneTurn ~652: assembler + send-time
+    // snapshot, so a status change after the build is still visible.
+    const arrowTail = () =>
+      assembleRequestTail({ ...snapshot, stage: 'T150_FRESH_STAGE' }, markerPager);
+    expect(hasMarker(arrowTail(), 'T150_FRESH_STAGE')).toBe(true);
+    expect(hasMarker(arrowTail())).toBe(false);
+  });
+
+  it('both host arrows call the assembler instead of spreading the two literals', () => {
+    const hosts = [
+      new URL('../hooks/useChatTurn.ts', import.meta.url),
+      new URL('../headless/runOneTurn.ts', import.meta.url),
+    ];
+    for (const host of hosts) {
+      const source = readFileSync(host, 'utf8');
+      const at = source.indexOf('requestTail: () =>');
+      expect(at).toBeGreaterThan(-1);
+      const body = source.slice(at, at + 220);
+      expect(body).toContain('assembleRequestTail(');
+      expect(body).not.toContain('resourceStatusTail(');
+    }
   });
 });
