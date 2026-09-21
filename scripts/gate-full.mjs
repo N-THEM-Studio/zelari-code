@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // gate-full.mjs — serial full gate for run_backtest (executor-agnostic).
-// Legs: typecheck (rebuilds packages/core/dist) -> smoke -> test:safety.
+// Legs: typecheck (rebuilds packages/core/dist) -> smoke -> test:safety ->
+// verify:plan-sync (cheap git+ledger check, no dist dependency — appended last
+// so the existing leg order and fail-fast semantics are untouched).
 // Fail-fast like `&&`, but every leg's exit code and full output are tee'd
 // to .zelari/world/last-gate.log so a red inside the backtest executor
 // (opaque env, truncated preview) always leaves readable evidence on disk.
@@ -10,7 +12,7 @@ import { dirname, resolve } from 'node:path';
 
 const ROOT = resolve(dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
 const LOG = resolve(ROOT, '.zelari/world/last-gate.log');
-const LEGS = ['typecheck', 'smoke', 'test:safety'];
+const LEGS = ['typecheck', 'smoke', 'test:safety', 'verify:plan-sync'];
 
 mkdirSync(dirname(LOG), { recursive: true });
 const chunks = [];
