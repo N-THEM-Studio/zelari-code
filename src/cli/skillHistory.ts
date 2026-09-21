@@ -30,6 +30,7 @@
 import { promises as fs, existsSync, statSync, renameSync, appendFileSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import { calculateCost } from './modelPricing.js';
 import { skillHistoryPath } from './paths.js';
 
 export const SKILL_HISTORY_ROTATE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -54,6 +55,12 @@ export interface SkillStats {
   successRate: number; // 0..1; 0 when count is 0
   avgDurationMs: number;
   totalTokens: number;
+  /**
+   * t143 - estimated USD cost of totalTokens at the model INPUT rate
+   * (modelPricing.calculateCost; the history keeps one blended token
+   * count, so the estimate is rough and labeled "est." in the UI).
+   */
+  estimatedCostUsd: number;
 }
 
 /**
@@ -187,11 +194,14 @@ export async function readSkillHistory(file: string): Promise<SkillHistoryRecord
  * @param records — full record list (already loaded from disk)
  * @param skillId — optional filter: only stats for this skill
  * @param sinceTs — optional filter: only records with ts >= sinceTs
+ * @param model — optional model id for the cost estimate (modelPricing;
+ *   omitted => the mid-tier DEFAULT_RATE applies)
  */
 export function getSkillStats(
   records: SkillHistoryRecord[],
   skillId?: string,
   sinceTs?: number,
+  model?: string,
 ): SkillStats {
   const filtered = records.filter((r) => {
     if (skillId !== undefined && r.skillId !== skillId) return false;
@@ -199,7 +209,7 @@ export function getSkillStats(
     return true;
   });
   if (filtered.length === 0) {
-    return { count: 0, successRate: 0, avgDurationMs: 0, totalTokens: 0 };
+    return { count: 0, successRate: 0, avgDurationMs: 0, totalTokens: 0, estimatedCostUsd: 0 };
   }
   const successCount = filtered.filter((r) => r.ok).length;
   const durations = filtered
@@ -214,5 +224,6 @@ export function getSkillStats(
     successRate: successCount / filtered.length,
     avgDurationMs,
     totalTokens,
+    estimatedCostUsd: calculateCost(model ?? '', totalTokens, 0, 0),
   };
 }

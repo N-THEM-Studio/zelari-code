@@ -69,11 +69,12 @@ export async function handleSkillStats(
   const historyFile = skillHistoryPath();
   try {
     const records = await readSkillHistory(historyFile);
-    const stats = getSkillStats(records, skillId);
+    const model = process.env.ANATHEMA_MODEL ?? '';
+    const stats = getSkillStats(records, skillId, undefined, model);
     const label = skillId ?? 'all skills';
     const formatted = stats.count === 0
       ? `[skill-stats] ${label}: no invocations recorded yet`
-      : `[skill-stats] ${label}: ${stats.count} invocations, ${(stats.successRate * 100).toFixed(1)}% success, avg ${stats.avgDurationMs.toFixed(0)}ms, ${stats.totalTokens} tokens total`;
+      : `[skill-stats] ${label}: ${stats.count} invocations, ${(stats.successRate * 100).toFixed(1)}% success, avg ${stats.avgDurationMs.toFixed(0)}ms, ${stats.totalTokens} tokens total, est. cost $${stats.estimatedCostUsd.toFixed(4)}${model ? ` (${model})` : ''}`;
     appendSystem(ctx.setMessages, formatted);
   } catch (err) {
     appendSystem(ctx.setMessages, `[skill-stats error] ${err instanceof Error ? err.message : String(err)}`);

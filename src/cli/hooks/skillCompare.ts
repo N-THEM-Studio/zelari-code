@@ -43,13 +43,15 @@ export function formatSkillCompareLine(id: string, stats: SkillStats): string {
   if (stats.count === 0) {
     return `  ${id} — no invocations recorded yet`;
   }
-  return `  ${id} — ${stats.count} invocations, ${(stats.successRate * 100).toFixed(1)}% success, avg ${stats.avgDurationMs.toFixed(0)}ms, ${stats.totalTokens} tokens total`;
+  return `  ${id} — ${stats.count} invocations, ${(stats.successRate * 100).toFixed(1)}% success, avg ${stats.avgDurationMs.toFixed(0)}ms, ${stats.totalTokens} tokens total, est. cost $${stats.estimatedCostUsd.toFixed(4)}`;
 }
 
 /**
  * Pick the winner between two SkillStats. Returns 'a' / 'b' / null on tie.
- * Order: successRate first (higher wins), then avgDurationMs (lower wins).
- * On perfect tie (same successRate AND same avgDurationMs), returns null.
+ * Order: successRate first (higher wins), then avgDurationMs (lower wins),
+ * then estimatedCostUsd (lower wins — t143).
+ * On perfect tie (same successRate AND same avgDurationMs AND same cost),
+ * returns null.
  */
 export function pickCompareWinner(
   a: SkillStats,
@@ -59,6 +61,8 @@ export function pickCompareWinner(
   if (b.successRate > a.successRate) return 'b';
   if (a.avgDurationMs < b.avgDurationMs) return 'a';
   if (b.avgDurationMs < a.avgDurationMs) return 'b';
+  if (a.estimatedCostUsd < b.estimatedCostUsd) return 'a';
+  if (b.estimatedCostUsd < a.estimatedCostUsd) return 'b';
   return null;
 }
 
