@@ -58,6 +58,7 @@ import { formatCheckProposalNotice } from '../memory/repeatCheck.js';
 import { nativePackEnabled } from '../kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from '../kraken/verifierLifecycle.js';
 import { buildModelContext, resourceStatusTail } from '../budget/modelContextBuilder.js';
+import { buildOnePager } from '../memory/onePager.js';
 import { recordCompactionMetrics } from '../metrics.js';
 import { flushMessageUsage, recordMessageUsage } from '../budget/messageUsage.js';
 import { openHeadlessSpine, seedHeadlessModelHistory, sessionStartedEvent } from '../headlessSpine.js';
@@ -569,10 +570,18 @@ export async function runOneTurn(
   // multi-turn binding. The legacy --history JSON is only the one-shot
   // import source (or the declared fallback when the spine is degraded).
   await spine.beginResourceTurn();
+  // S4: volatile working set — one build per turn (no compact recap live; the
+  // budget already lands compactSummary in history when a compaction happens).
+  const onePager = await buildOnePager({
+    cwd,
+    memory: nativeMemory ?? null,
+    skipCompactRecap: true,
+  });
   const modelContext = await buildModelContext({
     fallbackHistory: seededHistory.history,
     session: spine.spine,
     resourceSnapshot: spine.spine.latestResourceSnapshot(),
+    volatileOnePager: onePager,
     phase: opts.phase ?? 'build',
     model,
     provider,
@@ -640,7 +649,10 @@ export async function runOneTurn(
       cwd,
       providerStream,
       buildLiveness: { mutationRequired: wantWrites, maxRecoveries: 2 },
-      requestTail: () => resourceStatusTail(spine.spine.latestResourceSnapshot()),
+      requestTail: () => [
+        ...resourceStatusTail(spine.spine.latestResourceSnapshot()),
+        ...onePager,
+      ],
       // 2.6 Phase 3: host-owned pre-dispatch resource gate (doc section 11.3).
       // Advisory by default; ZELARI_RESOURCE_ENFORCEMENT=protected enables the
       // protected verification reserve. Degrade-and-stop (null gate = allow).

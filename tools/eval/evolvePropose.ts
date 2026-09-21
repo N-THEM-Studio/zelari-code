@@ -20,6 +20,10 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { type EvidenceFinding } from './spineEvidence.ts';
+// S1: the runner side is allowed to READ src/cli/evolution (proposer/judge split
+// bans only the reverse). categorizeCluster decides harness-repair vs
+// model-accommodation — a skill/prompt tweak is NOT a harness repair.
+import { categorizeCluster } from '../../src/cli/evolution/patternLedger.ts';
 
 export type EvolutionOperator =
   | 'revise_tool_description'
@@ -159,6 +163,10 @@ interface ProposalGroup {
   kinds: Set<string>;
   sessions: Set<string>;
   count: number;
+  /** S1 — distinct instance-origin keys (taskKey ?? sessions[0]) in this group. */
+  taskKeys: Set<string>;
+  /** True when at least one finding carried a real taskKey (enables the gate). */
+  hasTaskKey: boolean;
 }
 
 function compareGroups(a: ProposalGroup, b: ProposalGroup): number {
@@ -195,11 +203,20 @@ export function effectiveStatusById(records: StoredProposal[]): Map<string, { st
  * EFFECTIVE status !== 'withdrawn' — last record per id wins, event-sourced;
  * unknown effective statuses block — fail-closed).
  * Proposals leave with empty id/createdAt — assigned by the append layer.
+ *
+ * S1 manifest-repetition gate: a proposal is emitted ONLY when the mechanism
+ * repeats across ≥ `minDistinctTasks` DISTINCT instance keys. When NO finding
+ * in a group carries a taskKey (the offline spine pipeline has no task context
+ * yet) the group is grandfathered — the gate applies as soon as taskKeys exist.
+ * model-accommodation groups are forced to `needs_human_review` with no
+ * validation ask: we never auto-`revise_*` a prompt/skill (S1).
  */
 export function buildProposals(
   findings: EvidenceFinding[],
   existing: StoredProposal[],
+  opts: { minDistinctTasks?: number } = {},
 ): { proposals: EvolutionProposal[]; deduped: number; unmapped: number } {
+  const minDistinctTasks = Math.max(1, Math.floor(opts.minDistinctTasks ?? 2));
   const groups = new Map<string, ProposalGroup>();
   let unmapped = 0;
   for (const f of findings) {
@@ -211,12 +228,16 @@ export function buildProposals(
     const key = `${mapped.operator}\u0000${mapped.surface}\u0000${mapped.primarySignal}`;
     let group = groups.get(key);
     if (!group) {
-      group = { operator: mapped.operator, surface: mapped.surface, primarySignal: mapped.primarySignal, kinds: new Set(), sessions: new Set(), count: 0 };
+      group = { operator: mapped.operator, surface: mapped.surface, primarySignal: mapped.primarySignal, kinds: new Set(), sessions: new Set(), count: 0, taskKeys: new Set(), hasTaskKey: false };
       groups.set(key, group);
     }
     group.kinds.add(f.kind);
     for (const s of f.sessions) group.sessions.add(s);
     group.count += f.count;
+    const explicitTaskKey = typeof f.taskKey === 'string' && f.taskKey.trim() !== '' ? f.taskKey : undefined;
+    if (explicitTaskKey) group.hasTaskKey = true;
+    const instanceKey = explicitTaskKey ?? f.sessions[0];
+    if (instanceKey) group.taskKeys.add(instanceKey);
   }
 
   // Effective-status dedupe (event-sourced): a fingerprint blocks iff the
@@ -239,24 +260,31 @@ export function buildProposals(
   const proposals: EvolutionProposal[] = [];
   let deduped = 0;
   for (const g of [...groups.values()].sort(compareGroups)) {
-    const fingerprint = `${g.operator}|${g.surface}|${g.primarySignal}`;
+    const kinds = [...g.kinds].sort();
+    const category = categorizeCluster({ kind: kinds.join('+'), operator: g.operator, patchHint: g.surface });
+    // S1: model-accommodation never emits revise_* — a prompt/skill tweak is a
+    // human decision, not a harness repair.
+    const operator: EvolutionOperator = category === 'model-accommodation' ? 'needs_human_review' : g.operator;
+    const fingerprint = `${operator}|${g.surface}|${g.primarySignal}`;
     if (blocked.has(fingerprint)) {
       deduped += 1;
       continue;
     }
-    const kinds = [...g.kinds].sort();
+    // S1: propose only when the mechanism repeats across ≥minDistinctTasks
+    // DISTINCT tasks; groups with no taskKey at all are grandfathered.
+    if (g.hasTaskKey && g.taskKeys.size < minDistinctTasks) continue;
     const sessions = [...g.sessions].sort();
     proposals.push({
       id: '',
       createdAt: '',
       status: 'proposed',
-      operator: g.operator,
+      operator,
       surface: g.surface,
       fingerprint,
       evidence: { kinds, count: g.count, sessions },
-      rationale: `${g.operator} on ${g.surface}: evidence ${kinds.join('+')} count ${g.count} across ${sessions.length} session(s)`,
-      patchHint: patchHintFor(g.operator, kinds.join('+'), g.count, sessions.length),
-      requiredValidation: requiredValidationFor(g.surface),
+      rationale: `${operator} on ${g.surface}: evidence ${kinds.join('+')} count ${g.count} across ${sessions.length} session(s)`,
+      patchHint: patchHintFor(operator, kinds.join('+'), g.count, sessions.length),
+      requiredValidation: category === 'model-accommodation' ? [] : requiredValidationFor(g.surface),
     });
   }
   return { proposals, deduped, unmapped };

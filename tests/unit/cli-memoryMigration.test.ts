@@ -84,9 +84,16 @@ describe.skipIf(!nodeSqlite)('SQLite memory migrations', () => {
     await backend.close();
 
     const migrated = new nodeSqlite!.DatabaseSync(dbPath);
-    expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 2 });
+    expect(migrated.prepare('PRAGMA user_version').get()).toEqual({ user_version: 3 });
     expect(migrated.prepare("SELECT name FROM sqlite_master WHERE name='memory_embeddings'").get())
       .toBeTruthy();
+    // v3 additive column: legacy rows default to '[]' and FTS stays intact.
+    expect(migrated.prepare(
+      "SELECT relevant_when_json FROM memory_nodes WHERE id='legacy-node'",
+    ).get()).toEqual({ relevant_when_json: '[]' });
+    expect(migrated.prepare(
+      "SELECT count(*) n FROM memory_fts WHERE node_id='legacy-node'",
+    ).get()).toEqual({ n: 1 });
     migrated.close();
     const backupPath = `${dbPath}.v1.bak`;
     const backup = new nodeSqlite!.DatabaseSync(backupPath, { readOnly: true });
@@ -130,7 +137,7 @@ describe.skipIf(!nodeSqlite)('SQLite memory migrations', () => {
         onWarning: (warning) => warnings.push(warning),
       },
     );
-    expect(events).toContainEqual(expect.objectContaining({ type: 'memory_migration', reason: 'v1->v2' }));
+    expect(events).toContainEqual(expect.objectContaining({ type: 'memory_migration', reason: 'v1->v3' }));
     expect(JSON.stringify(events)).not.toContain('Legacy schema memory');
     expect(warnings.join('\n')).toMatch(/backup/i);
     await memory.close();

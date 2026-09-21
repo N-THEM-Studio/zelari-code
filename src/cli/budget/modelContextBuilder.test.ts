@@ -86,3 +86,60 @@ describe('modelContextBuilder budget projection seam (T4, ADR-0032)', () => {
     expect(result.budget.contextLimit).toBeGreaterThan(0);
   });
 });
+
+describe('modelContextBuilder volatile one-pager tail (S4)', () => {
+  const pager: AgentMessage[] = [
+    { role: 'system', content: 'WORKING SET\n## Open loops\n- [ ] t1: do it (pending)' },
+  ];
+
+  it('places the one-pager in requestTail, never in rolling history', async () => {
+    const result = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'fix the bug' }],
+      phase: 'build',
+      volatileOnePager: pager,
+    });
+    expect(result.requestTail.some((m) => m.content.startsWith('WORKING SET'))).toBe(true);
+    expect(result.history.some((m) => m.content.startsWith('WORKING SET'))).toBe(false);
+  });
+
+  it('concatenates the one-pager AFTER RESOURCE STATUS', async () => {
+    const result = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'fix the bug' }],
+      phase: 'build',
+      resourceSnapshot: snapshot,
+      volatileOnePager: pager,
+    });
+    expect(result.requestTail[0]!.content.startsWith('RESOURCE STATUS')).toBe(true);
+    expect(result.requestTail.at(-1)!.content.startsWith('WORKING SET')).toBe(true);
+  });
+
+  it('the one-pager raises the measured token estimate vs identical input without it', async () => {
+    const base = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'fix the bug' }],
+      phase: 'build',
+    });
+    const withPager = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'fix the bug' }],
+      phase: 'build',
+      volatileOnePager: pager,
+    });
+    expect(withPager.budget.estimatedHistoryTokens).toBeGreaterThan(
+      base.budget.estimatedHistoryTokens,
+    );
+    expect(withPager.budget.occupancy).toBeGreaterThanOrEqual(base.budget.occupancy);
+  });
+
+  it('an empty volatileOnePager is identical to omitting it', async () => {
+    const omitted = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'hello' }],
+      phase: 'build',
+    });
+    const empty = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'hello' }],
+      phase: 'build',
+      volatileOnePager: [],
+    });
+    expect(empty.budget.occupancy).toBe(omitted.budget.occupancy);
+    expect(empty.requestTail.length).toBe(omitted.requestTail.length);
+  });
+});

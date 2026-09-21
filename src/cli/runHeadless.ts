@@ -76,6 +76,7 @@ import {
 import { nativePackEnabled } from './kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from './kraken/verifierLifecycle.js';
 import { buildModelContext, resourceStatusTail } from './budget/modelContextBuilder.js';
+import { buildOnePager } from './memory/onePager.js';
 import { recordCompactionMetrics } from './metrics.js';
 import {
   openHeadlessSpine,
@@ -779,16 +780,35 @@ async function runHeadlessKrakenGraph(
     // try above, so at this point in the `finally` closure there is nothing to
     // measure. Omitted means "not measured here", never "clean" (unknown ≠ pass).
     try {
-      const { appendLedgerEntry, evolutionMode } = await import('./evolution/ledger.js');
+      const { appendLedgerEntry, appendFindings, evolutionMode } = await import('./evolution/ledger.js');
       const { classifyTask } = await import('./evolution/classifyTask.js');
+      const { makeTaskKey } = await import('./evolution/patternLedger.js');
       if (evolutionMode() === 'shadow') {
+        const taskText = opts.task ?? '';
+        const at = new Date().toISOString();
+        const taskClass = classifyTask({ prompt: taskText }).taskClass;
         appendLedgerEntry(cwd, {
           runId: spine.sessionId,
-          at: new Date().toISOString(),
+          at,
           mode: 'shadow',
-          taskClass: classifyTask({ prompt: opts.task ?? '' }).taskClass,
+          taskClass,
           verdict: exitCode === 0 ? 'PASS' : exitCode === 3 ? 'FAIL' : 'UNKNOWN',
         });
+        // S1: also record an instance finding carrying the taskKey, so the
+        // pattern ledger can require a mechanism to repeat across DISTINCT
+        // tasks (never one task retried N times).
+        appendFindings(cwd, [{
+          kind: 'run-termination',
+          operator: 'needs_human_review',
+          surface: 'run:outcome',
+          signal: exitCode === 0 ? 'completed' : 'failed',
+          count: 1,
+          sessions: [spine.sessionId],
+          taskKey: makeTaskKey({ taskText, sessionId: spine.sessionId }),
+          taskClass,
+          firstAt: at,
+          evidence: { termination: exitCode === 0 ? 'completed' : exitCode === 3 ? 'not-converged' : 'error' },
+        }]);
       }
     } catch { /* ledger never fails the run (ADR-0036) */ }
     // HarnessState inc.3: final read-model event for JSON hosts (best-effort).
@@ -1006,9 +1026,16 @@ async function runHeadlessCouncilBody(
     parameters: tool.function.parameters as Record<string, unknown>,
   }));
   await spine.beginResourceTurn();
+  // S4: volatile working set — one build per turn (no compact recap live).
+  const onePager = await buildOnePager({
+    cwd,
+    memory: nativeMemory ?? null,
+    skipCompactRecap: true,
+  });
   const councilContext = await buildModelContext({
     fallbackHistory: seededHistory.history,
     session: spine.spine,
+    volatileOnePager: onePager,
     phase: councilRunMode === 'design-phase' ? 'plan' : 'build',
     model,
     provider,
@@ -1164,14 +1191,23 @@ async function runHeadlessCouncilBody(
   // Evolution ledger v0 (ADR-0036): shadow-mode outcome telemetry only.
   // Best-effort and fail-open — the ledger must never change the outcome.
   try {
-    const { appendLedgerEntry, evolutionMode } = await import('./evolution/ledger.js');
+    const { appendLedgerEntry, appendFindings, evolutionMode } = await import('./evolution/ledger.js');
     const { classifyTask } = await import('./evolution/classifyTask.js');
+    const { makeTaskKey } = await import('./evolution/patternLedger.js');
     if (evolutionMode() === 'shadow') {
+      const taskClass = classifyTask({ prompt: effectiveTask }).taskClass;
+      const verdict = signal.aborted
+        ? 'UNKNOWN'
+        : exitCode === 0
+          ? 'PASS'
+          : exitCode === 3
+            ? 'FAIL'
+            : 'UNKNOWN';
       appendLedgerEntry(cwd, {
         runId: spine.sessionId,
         at: new Date().toISOString(),
         mode: 'shadow',
-        taskClass: classifyTask({ prompt: effectiveTask }).taskClass,
+        taskClass,
         // Steal #1/#2 wiring: real efficiency + attribution fields — the
         // ledger schema carried them since ADR-0036, this site never wrote them.
         latencyMs: Date.now() - councilStartedAt,
@@ -1188,14 +1224,21 @@ async function runHeadlessCouncilBody(
         ...(telemetry.usage().usageReports > 0
           ? { cacheHitTokens: telemetry.usage().cacheHitTokens }
           : {}),
-        verdict: signal.aborted
-          ? 'UNKNOWN'
-          : exitCode === 0
-            ? 'PASS'
-            : exitCode === 3
-              ? 'FAIL'
-              : 'UNKNOWN',
+        verdict,
       });
+      // S1: instance finding with the taskKey (see the graph path above).
+      appendFindings(cwd, [{
+        kind: 'run-termination',
+        operator: 'needs_human_review',
+        surface: 'run:outcome',
+        signal: verdict === 'PASS' ? 'completed' : 'failed',
+        count: 1,
+        sessions: [spine.sessionId],
+        taskKey: makeTaskKey({ taskText: effectiveTask, sessionId: spine.sessionId }),
+        taskClass,
+        firstAt: new Date().toISOString(),
+        evidence: { termination: verdict === 'PASS' ? 'completed' : verdict === 'FAIL' ? 'not-converged' : 'error' },
+      }]);
     }
   } catch { /* ledger never fails the run (ADR-0036) */ }
   // HarnessState inc.3: final read-model event for JSON hosts (best-effort).
@@ -1343,9 +1386,16 @@ async function runHeadlessZelariBody(
     parameters: tool.function.parameters as Record<string, unknown>,
   }));
   await spine.beginResourceTurn();
+  // S4: volatile working set — one build per turn (no compact recap live).
+  const onePager = await buildOnePager({
+    cwd: projectRoot,
+    memory: nativeMissionMemory ?? null,
+    skipCompactRecap: true,
+  });
   const missionContext = await buildModelContext({
     fallbackHistory: seededHistory.history,
     session: spine.spine,
+    volatileOnePager: onePager,
     phase: opts.phase ?? 'build',
     model,
     provider,

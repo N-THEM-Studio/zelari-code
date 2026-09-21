@@ -58,6 +58,7 @@
     "evidence:report": "node --experimental-strip-types tools/eval/runEvidenceReport.ts",
     "explore:gate": "node --experimental-strip-types tools/eval/runExploreFlipGate.ts",
     "evolve:propose": "node --experimental-strip-types tools/eval/runEvolvePropose.ts",
+    "pattern:ledger": "node --experimental-strip-types tools/eval/runPatternLedger.ts",
     "evolve:decide": "node --experimental-strip-types tools/eval/runEvolveDecide.ts",
     "evolve:validate": "node --experimental-strip-types tools/eval/runEvolveValidate.ts",
     "evolve:seal": "node --experimental-strip-types tools/eval/runEvolveSeal.ts",

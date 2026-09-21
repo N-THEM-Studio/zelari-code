@@ -20,7 +20,7 @@
 import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
-import { truncateToolResult } from '@zelari/core/harness/tools/registry';
+import { compactToolResult } from '@zelari/core/harness/tools/registry';
 import type {
   ToolContext,
   ToolDefinition,
@@ -81,26 +81,9 @@ function cloneResult<T>(result: TypedResult<T>): TypedResult<T> | null {
 }
 
 function applyTruncation<O>(result: TypedResult<O>, toolName: string): TypedResult<O> {
-  if (!result.ok) return result;
-  if (typeof result.value === 'string') {
-    return {
-      ok: true,
-      value: truncateToolResult(result.value, { toolName, spill: false }) as O,
-    };
-  }
-  if (result.value && typeof result.value === 'object') {
-    const v = result.value as Record<string, unknown>;
-    if (typeof v.content === 'string') {
-      return {
-        ok: true,
-        value: {
-          ...v,
-          content: truncateToolResult(v.content, { toolName, spill: false }),
-        } as O,
-      };
-    }
-  }
-  return result;
+  // In-place compaction (returns the same reference). spill:false — the cache
+  // path must never write to disk. Errors and non-string shapes pass through.
+  return compactToolResult(result, { toolName, spill: false });
 }
 
 function evictOldest(): void {

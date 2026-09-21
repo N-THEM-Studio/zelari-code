@@ -47,6 +47,7 @@ const AddSchema = z.object({
   confidence: z.number().finite().min(0).max(1).optional(),
   visibility: MemoryVisibilitySchema.default('private'),
   tags: z.array(z.string().min(1).max(120)).max(64).optional(),
+  relevant_when: z.array(z.string().min(1).max(120)).max(8).optional(),
   source,
   metadata: z.record(z.string(), z.unknown()).optional(),
 }).strict();
@@ -80,7 +81,7 @@ export const MEMORY_MCP_TOOLS: readonly MemoryMcpTool[] = [
   {
     name: 'zelari_memory_add',
     description: 'Add a scoped memory. Secrets are scanned and source.client is enforced by the server.',
-    inputSchema: { type: 'object', properties: { project_id: { type: 'string' }, kind: { type: 'string' }, content: { type: 'string', maxLength: 64000 }, importance: { type: 'number', minimum: 0, maximum: 1 }, confidence: { type: 'number', minimum: 0, maximum: 1 }, visibility: { type: 'string', enum: ['project', 'private'], default: 'private' }, tags: { type: 'array', items: { type: 'string' } }, source: { type: 'object' }, metadata: { type: 'object' } }, required: ['project_id', 'kind', 'content'] },
+    inputSchema: { type: 'object', properties: { project_id: { type: 'string' }, kind: { type: 'string' }, content: { type: 'string', maxLength: 64000 }, importance: { type: 'number', minimum: 0, maximum: 1 }, confidence: { type: 'number', minimum: 0, maximum: 1 }, visibility: { type: 'string', enum: ['project', 'private'], default: 'private' }, tags: { type: 'array', items: { type: 'string' } }, relevant_when: { type: 'array', items: { type: 'string', maxLength: 120 }, maxItems: 8 }, source: { type: 'object' }, metadata: { type: 'object' } }, required: ['project_id', 'kind', 'content'] },
   },
   {
     name: 'zelari_memory_link',
@@ -205,6 +206,7 @@ export class MemoryMcpAdapter {
       confidence: args.confidence,
       visibility: args.visibility,
       tags: args.tags,
+      relevantWhen: args.relevant_when,
       source: {
         ...(args.source ?? {}),
         ...(externalFile ? { file: externalFile.replace(/\\/g, '/') } : {}),

@@ -13,6 +13,7 @@ export interface MemoryScoringWeights {
   recency: number;
   graphProximity: number;
   verificationBonus: number;
+  triggerMatch: number;
 }
 
 export const DEFAULT_MEMORY_SCORING_WEIGHTS: Readonly<MemoryScoringWeights> = {
@@ -23,6 +24,9 @@ export const DEFAULT_MEMORY_SCORING_WEIGHTS: Readonly<MemoryScoringWeights> = {
   recency: 0.10,
   graphProximity: 0.10,
   verificationBonus: 0.05,
+  // A trigger hit is a strong "this memory is useful now" signal; weight it
+  // above lexical overlap so an associative match beats a loose keyword match.
+  triggerMatch: 0.40,
 };
 
 export function memoryTokens(text: string): string[] {
@@ -81,11 +85,19 @@ export function scoreMemoryCandidate(
     recency: recencyScore(node.updatedAt, options.now, options.recencyHalfLifeDays),
     graphProximity: Math.max(0, Math.min(1, candidate.graphProximity ?? 0)),
     verificationBonus: verified(node),
+    triggerMatch: Math.max(0, Math.min(1, candidate.triggerMatch ?? 0)),
   };
   const weights = { ...DEFAULT_MEMORY_SCORING_WEIGHTS, ...options.weights };
+  // Redistribute the weight of any signal that is unavailable for this
+  // candidate. Like semantic relevance, `triggerMatch` only participates when
+  // the retrieval layer actually evaluated triggers, so non-trigger recalls
+  // score exactly as before.
   const semanticAvailable = candidate.semanticRelevance !== undefined;
+  const triggerAvailable = candidate.triggerMatch !== undefined;
   const activeEntries = Object.entries(weights).filter(
-    ([key]) => semanticAvailable || key !== 'semanticRelevance',
+    ([key]) =>
+      (semanticAvailable || key !== 'semanticRelevance') &&
+      (triggerAvailable || key !== 'triggerMatch'),
   ) as Array<[keyof MemoryScoringWeights, number]>;
   const totalWeight = activeEntries.reduce((sum, [, weight]) => sum + Math.max(0, weight), 0);
   const weighted = activeEntries.reduce(

@@ -23,6 +23,7 @@ const USAGE = [
   '/memory retract <id> [reason]',
   '/memory forget <id> --yes',
   '/memory consolidate [query]',
+  '/memory dream [--min-candidates N] — consolidate pending candidates into durable nodes',
   '/memory index [--force]',
   '/memory promote <id> — append durable knowledge to managed AGENTS.md section',
   '/memory promote con-<fp> --as-check --command "<cmd>" [--expect-exit N] — append a WorldCheck',
@@ -39,6 +40,17 @@ function compact(value: unknown, max = 500): string {
 function sourceLine(source: object): string {
   const entries = Object.entries(source).filter(([, value]) => value !== undefined && value !== '');
   return entries.length ? entries.map(([key, value]) => `${key}=${value}`).join(' · ') : 'unknown';
+}
+
+/** Parse `--min-candidates N` (or a bare numeric arg) for `/memory dream`. */
+function parseMinCandidates(args: readonly string[]): number | undefined {
+  const flagIndex = args.findIndex(
+    (arg) => arg === '--min-candidates' || arg === '--min-occurrences',
+  );
+  const raw = flagIndex >= 0 ? args[flagIndex + 1] : args.find((arg) => /^\d+$/.test(arg));
+  if (raw === undefined) return undefined;
+  const value = Number.parseInt(raw, 10);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
 function isInside(root: string, target: string): boolean {
@@ -184,6 +196,17 @@ export async function handleMemoryCommand(
           source: { agent: 'user-cli' },
         });
         emit(`[memory] consolidation scanned ${result.scanned} candidate(s), created ${result.created.length} durable node(s), archived ${result.archivedSourceIds.length} source duplicate(s).`);
+        return;
+      }
+      case 'dream': {
+        // S4: an explicit consolidation pass ("dream") — candidate → durable.
+        // Consolidate ONLY: no genome, no AGENTS.md/prompt writes, no auto-dream.
+        const minOccurrences = parseMinCandidates(args);
+        const result = await memory.consolidate({
+          source: { agent: 'user-cli-dream' },
+          ...(minOccurrences === undefined ? {} : { minOccurrences }),
+        });
+        emit(`[memory dream] consolidated ${result.scanned} candidate(s), created ${result.created.length} durable node(s), archived ${result.archivedSourceIds.length} source duplicate(s).`);
         return;
       }
       case 'index': {

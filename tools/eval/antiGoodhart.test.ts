@@ -28,6 +28,7 @@ import {
   verifySeal,
   writeSealManifest,
 } from './sealedAnchors.ts';
+import { clusterFailures, makeTaskKey } from '../../src/cli/evolution/patternLedger.ts';
 
 const e = (over: Partial<LedgerLikeEntry>): LedgerLikeEntry => ({ at: '2026-01-01T00:00:00Z', verdict: 'PASS', evidenceTier: 'build', ...over });
 
@@ -219,5 +220,21 @@ describe('decide() behavioural gate (applied only)', () => {
       evidence: ['npm test … exit 0'],
     }, '2026-09-04T00:00:00Z');
     expect(r.outcome).toBe('appended');
+  });
+});
+
+describe('S1 pattern clusters are anonymous (anti-Goodhart)', () => {
+  it('cluster JSON carries only taskKey hashes/ids, never the raw task text', () => {
+    const rawTask = 'Refactor the auth middleware to use the new token store';
+    const { clusters } = clusterFailures([
+      { kind: 'tool-misuse', taskKey: makeTaskKey({ taskText: rawTask, sessionId: 's1' }), sessions: ['s1'], evidence: { toolName: 'edit_file', errorClass: 'stale', termination: 'failed' } },
+      { kind: 'tool-misuse', taskKey: makeTaskKey({ taskText: 'a different task entirely', sessionId: 's2' }), sessions: ['s2'], evidence: { toolName: 'edit_file', errorClass: 'stale', termination: 'failed' } },
+    ]);
+    const json = JSON.stringify(clusters);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].taskKeys).toHaveLength(2);
+    expect(json).not.toContain(rawTask);
+    expect(json).not.toContain('Refactor the auth');
+    expect(json).not.toContain('middleware');
   });
 });

@@ -1,6 +1,7 @@
 export * from './types.js';
 export * from './schemas.js';
 export * from './scoring.js';
+export * from './relevantWhen.js';
 export * from './policies.js';
 export * from './context.js';
 export * from './service.js';

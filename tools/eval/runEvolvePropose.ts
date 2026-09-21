@@ -50,7 +50,7 @@ function flagWithoutValue(name: string): boolean {
 }
 
 function usage(): string {
-  return 'usage: runEvolvePropose.ts [--sessions-dir <dir>] [--skill-history <file>] [--min-count N] [--out <file>] [--json] [--dry-run]';
+  return 'usage: runEvolvePropose.ts [--sessions-dir <dir>] [--skill-history <file>] [--min-count N] [--min-distinct-tasks N] [--out <file>] [--json] [--dry-run]';
 }
 
 // The small scan helpers below are copied LOCALLY from runEvidenceReport.ts
@@ -139,7 +139,7 @@ function formatProposalLine(p: EvolutionProposal): string {
 }
 
 function main(): number {
-  for (const valueFlag of ['sessions-dir', 'skill-history', 'min-count', 'out']) {
+  for (const valueFlag of ['sessions-dir', 'skill-history', 'min-count', 'min-distinct-tasks', 'out']) {
     if (flagWithoutValue(valueFlag)) {
       console.error(`runEvolvePropose: --${valueFlag} requires a value`);
       console.error(usage());
@@ -155,6 +155,18 @@ function main(): number {
   const minCount = Number.parseInt(minCountRaw ?? '3', 10);
   if (minCount < 1) {
     console.error('runEvolvePropose: --min-count must be a positive integer');
+    console.error(usage());
+    return 2;
+  }
+  const minDistinctRaw = arg('min-distinct-tasks');
+  if (minDistinctRaw !== undefined && !/^\d+$/.test(minDistinctRaw)) {
+    console.error('runEvolvePropose: --min-distinct-tasks must be a positive integer');
+    console.error(usage());
+    return 2;
+  }
+  const minDistinctTasks = Number.parseInt(minDistinctRaw ?? '2', 10);
+  if (minDistinctTasks < 1) {
+    console.error('runEvolvePropose: --min-distinct-tasks must be a positive integer');
     console.error(usage());
     return 2;
   }
@@ -177,7 +189,7 @@ function main(): number {
   const allFindings: EvidenceFinding[] = [...spine.findings, ...skill.findings];
 
   const store = readStore(outPath);
-  const { proposals, deduped, unmapped } = buildProposals(allFindings, store.records);
+  const { proposals, deduped, unmapped } = buildProposals(allFindings, store.records, { minDistinctTasks });
   const { written } = appendProposals(outPath, proposals, { dryRun });
 
   if (json) {

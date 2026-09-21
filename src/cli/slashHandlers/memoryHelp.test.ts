@@ -52,5 +52,21 @@ describe('/memory audit discoverability (t54 follow-up)', () => {
     await handleMemoryCommand({ cwd, setMessages }, 'stats', []);
 
     expect(messages.at(-1)?.content).toContain('/memory audit');
+    expect(messages.at(-1)?.content).toContain('/memory dream');
+  });
+
+  it('documents /memory dream in the /help memory row', () => {
+    const help = handleSlashCommand('/help', []);
+    const row = (help.message ?? '')
+      .split('\n')
+      .find((line) => line.includes('/memory [')) ?? '';
+    expect(row).toMatch(/\bdream\b/);
+  });
+
+  it('parses /memory dream --min-candidates 3 into the dream subcommand', () => {
+    const parsed = handleSlashCommand('/memory dream --min-candidates 3', []);
+    expect(parsed.kind).toBe('memory');
+    expect(parsed.memorySubcommand).toBe('dream');
+    expect(parsed.memoryArgs).toEqual(['--min-candidates', '3']);
   });
 });

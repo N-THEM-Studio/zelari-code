@@ -61,6 +61,13 @@ export interface EvidenceFinding {
   count: number;
   /** Sorted, unique session ids the evidence came from. */
   sessions: string[];
+  /**
+   * S1 — optional instance-origin key (which task produced this evidence). Used
+   * by buildProposals to require the mechanism to repeat across DISTINCT tasks.
+   * Absent on the offline spine-evidence pipeline (no task context); present
+   * when the live shadow layer attaches it.
+   */
+  taskKey?: string;
   detail: string;
   hint: string;
 }

@@ -131,6 +131,12 @@ export interface MemoryNode {
   /** `private` nodes are only exposed back to their originating external client. */
   visibility?: MemoryVisibility;
   tags: string[];
+  /**
+   * Associative triggers describing *when* this memory is likely useful
+   * (T-Mem lite). Derived server-side, or supplied by the host. Optional and
+   * additive: absent on legacy/V1 rows.
+   */
+  relevantWhen?: string[];
   source: MemorySource;
   createdAt: string;
   updatedAt: string;
@@ -154,6 +160,8 @@ export interface MemoryNodeInput {
   status?: MemoryStatus;
   visibility?: MemoryVisibility;
   tags?: string[];
+  /** Optional host-supplied triggers; derived server-side when omitted. */
+  relevantWhen?: string[];
   source?: MemorySource;
   /** Optional historical timestamps, used by trusted migration/import paths. */
   createdAt?: string;
@@ -176,6 +184,7 @@ export interface MemoryPatch {
   status?: MemoryStatus;
   visibility?: MemoryVisibility;
   tags?: string[];
+  relevantWhen?: string[];
   source?: MemorySource;
   validFrom?: string | null;
   validUntil?: string | null;
@@ -257,6 +266,8 @@ export interface MemoryCandidate {
   lexicalRelevance?: number;
   semanticRelevance?: number;
   graphProximity?: number;
+  /** Associative `relevantWhen` trigger match (1 = matched). */
+  triggerMatch?: number;
 }
 
 export interface RecallSignals {
@@ -267,6 +278,7 @@ export interface RecallSignals {
   recency: number;
   graphProximity: number;
   verificationBonus: number;
+  triggerMatch: number;
 }
 
 export interface RecallResult {
@@ -294,6 +306,7 @@ export interface RecallQuery extends MemoryQuery {
     recency: number;
     graphProximity: number;
     verificationBonus: number;
+    triggerMatch: number;
   }>;
 }
 
@@ -421,6 +434,13 @@ export interface CognitiveMemoryBackend {
   get(id: string): Promise<MemoryNode | null>;
   update(id: string, patch: MemoryPatch): Promise<MemoryNode>;
   search(query: MemoryQuery): Promise<MemoryCandidate[]>;
+  /**
+   * Associative retrieval over `relevantWhen` triggers (T-Mem lite). Optional:
+   * backends that omit it simply never surface trigger-only candidates. When
+   * present it must return trigger hits *without* applying the similarity
+   * prefilter, so trigger matches are never dropped.
+   */
+  searchRelevantWhen?(query: MemoryQuery): Promise<MemoryCandidate[]>;
   listSemanticSources?(
     projectId: string,
     model: string,
