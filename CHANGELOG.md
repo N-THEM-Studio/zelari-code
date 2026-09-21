@@ -7,9 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.59.0] - 2026-09-21
+
+Slices t150–t152 (piano `.zelari/docs/piano-slice-1-4-5-tail-reminder.md`): one request-tail assembler consumed by every hot path that talks to the model, the `[system-reminder]` wired on that tail (never in rolling history), honest happy-path docs. No safety default flipped.
+
 ### Added
 
-- **System reminder wiring (slice 4)** — the `[system-reminder]` text is appended by `assembleRequestTail` in `src/cli/budget/modelContextBuilder.ts`, called by the TUI lazy `requestTail` arrow (`src/cli/hooks/useChatTurn.ts`) with fresh open session todos, a per-USER-turn counter held in the hook (zeroed right after a tail that carried the marker, so a later provider call in the same tool loop stays silent) and the remaining budget already computed by the builder. `buildModelContext` still measures a reminder-free tail and nothing enters rolling history. The one-shot headless pass (`src/cli/headless/runOneTurn.ts`) passes counter 0, so it can never fire. The pure builder is now reachable from the public `@zelari/core/harness` subpath; `AgentHarness.messagesForProvider()` remains out of the picture.
+- **System reminder wiring (slice 4 / t151)** — the `[system-reminder]` text is appended by `assembleRequestTail` in `src/cli/budget/modelContextBuilder.ts`, called by the TUI lazy `requestTail` arrow (`src/cli/hooks/useChatTurn.ts`) with fresh open session todos, a per-USER-turn counter held in the hook (zeroed right after a tail that carried the marker, so a later provider call in the same tool loop stays silent) and the remaining budget already computed by the builder. `buildModelContext` still measures a reminder-free tail and nothing enters rolling history. The one-shot headless pass (`src/cli/headless/runOneTurn.ts`) passes counter 0, so it can never fire. The pure builder is now reachable from the public `@zelari/core/harness` subpath; `AgentHarness.messagesForProvider()` remains out of the picture.
+
+### Changed
+
+- **Single request-tail assembler (slice 1 / t150)** — `assembleRequestTail` in `src/cli/budget/modelContextBuilder.ts` is the only place that assembles the volatile tail (RESOURCE STATUS → working set → one-pager → reminder). The TUI (`src/cli/hooks/useChatTurn.ts`) and the headless one-shot (`src/cli/headless/runOneTurn.ts`) keep their lazy tails but now call the same assembler with a fresh snapshot at send time; `buildModelContext` still measures a reminder-free tail and nothing enters rolling history. Council and mission hosts remain documented named exceptions in `src/cli/runHeadless.ts` (no third assembly — they either adopt the field or carry a commented reason).
+
+### Documentation
+
+- **Happy path, honest defaults (slice 5 / t152)** — `docs/GUIDA.md` states the real defaults up front (Kraken is the default mode; strict-done and `general`-tentacle worktree isolation are ON with opt-out env vars; no OS jail on Windows) and groups the user-facing kill-switches in an appendix. `AGENTS.MD` no longer marks the anchored edit protocol (ADR-0033) as "in progress" — snapshot + exact apply + structured error is the shipped default. The 2.51.0 changelog line that pre-declared the reminder wiring was corrected in the slice-4 commit; the wiring ships here.
 
 ## [2.58.0] - 2026-09-21
 
