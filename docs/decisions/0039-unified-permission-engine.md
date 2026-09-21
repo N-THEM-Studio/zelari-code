@@ -7,7 +7,7 @@
 > Precedent: ADR-0035 was renumbered from a duplicate `0015` (triage 2026-09-04).
 > Content follows the promoted PREP-ADR; the decision is unchanged.
 
-- **Status:** Accepted (phased implementation - adapter-first; engine code NOT yet unified; **Phase 1 landed in t147** - one emission point + parity matrix)
+- **Status:** Accepted (phased implementation - adapter-first; engine code NOT yet unified; **Phase 1 landed in t147** - one emission point + parity matrix; **Phase 2 landed** - `.zelari/permissions.json` honored through engine B via the compat layer + load-time deprecation warning, two-minor window)
 - **Proposed:** 2026-09-21
 - **Author:** Zelari Code (BUILD phase, on promotion of the design-vault PREP-ADR, t146)
 - **Depends on:** [ADR-0016](./0016-event-sourced-session-log.md) (event-sourced session log), [ADR-0021](./0021-session-spine-contract.md) (spine contract), [ADR-0023](./0023-deterministic-verification-completion.md) (deterministic verification); `src/cli/safety/permissionGate.ts`, `src/cli/safety/policyEngine.ts`, `src/cli/toolRegistry.ts` (restrict-only composition)
@@ -111,11 +111,20 @@ degrades to a backwards-compatibility adapter.**
 - [x] Parity test matrix: command -> verdict identical between translated A syntax
       and native B syntax (`src/cli/safety/permissionParity.test.ts`; the
       translation seed is `permissionAdapter.translatePermissionRule`).
-- [ ] `.zelari/permissions.json` deprecated but still honored via the adapter
-      (translation tests). NOT yet: Phase 1 ships the pure translation + its
-      tests, the load path that honors the file through B is Phase 2.
-- [x] `npm run typecheck` exit 0 and the `src/cli/safety` suite green.
-- [ ] `MIGRATION.md` updated at the end of the work.
+- [x] `.zelari/permissions.json` deprecated but still honored via the adapter
+      (translation tests). Phase 1 shipped the pure translation + its tests; Phase 2
+      added the LOAD path that honors the file through B
+      (`permissionCompat.loadCompatPolicyLayer` → `PolicySet.compat` →
+      `agentLayersFor` → `policyLayers.matchAgentPolicyRuleLayered`), the load-time
+      deprecation warning and `permissionCompat.test.ts` (deny/allow rules decided
+      by the B layer, warning exactly once, absent file silent, malformed file
+      fail-closed and never strict).
+- [x] `npm run typecheck` exit 0 and the `src/cli/safety` suite green (Phase 2:
+      green again after the compat wiring — 235 passed / 2 skipped, parity matrix
+      included).
+- [x] `MIGRATION.md` updated at the end of the work (Phase 2 section: the
+      `pathPrefix` → glob translation table, the two-minor window, the rewrite
+      recipe and the known transitional differences).
 
 ## TODO
 
@@ -128,6 +137,15 @@ degrades to a backwards-compatibility adapter.**
       verdict, engine B rule/claim, TaskContract, category default) is recorded
       exactly once, at the final decision point; the payload names the deciding
       layer and is contract-checked before the sink is touched.
-- [ ] Phase 2: compat adapter + deprecation warning (two-minor window).
+- [x] Phase 2: compat adapter + deprecation warning (two-minor window).
+      `.zelari/permissions.json` is read by engine A's own loader, translated to
+      native globs by `permissionAdapter` and injected as the `compat` slot of the
+      B stack — never merged into `project`, so a decision it takes stays
+      attributable. ONE notice per load (file + translation + window) travels in
+      `PolicySet.warnings` and the host prints it at registry build, never per
+      dispatch. Absent/rule-less file: no warning, no layer. Malformed file:
+      warning + no layer, engine A keeps failing closed and the strict mode is NOT
+      extended to it (ADR-0039 §3). Emission stays at the single Phase-1 point, and
+      the layer can only add restriction (`permissionCompat.test.ts`).
 - [ ] Phase 3: remove engine A; update `docs/GUIDA.md`, `docs/TOOLS.md`,
       `MIGRATION.md`.

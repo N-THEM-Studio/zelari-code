@@ -346,3 +346,114 @@ New relational invariants live in `validateResourceAndContractEvents()`
 (session/invariants.ts): `RESOURCE_USED_MONOTONIC`, `RESOURCE_REMAINING_COHERENT`,
 `RESERVE_NEGATIVE`, `TASK_CONTRACT_VERSION_MONOTONIC`, `TASK_CONTRACT_SOURCE_INVALID`,
 `MANIFEST_PAYLOAD_INVALID`.
+
+## 2.58 — `.zelari/permissions.json` → `.zelari/policy.json` (ADR-0039 Phase 2)
+
+`.zelari/permissions.json` (the WS1 rule file, `pathPrefix` syntax) is
+**deprecated**. It is still read and still honored — but it is now honored
+*through the unified policy engine*: its rules are translated into native
+engine-B rules and injected as a `compat` layer next to `.zelari/policy.json`
+(`src/cli/safety/permissionCompat.ts` → `policyLayers.matchAgentPolicyRuleLayered`).
+Running the CLI in a tree that has the file prints one load-time notice:
+
+```text
+[policy] [ADR-0039 compat] <root>/.zelari/permissions.json: DEPRECATED - still honored
+through engine B via the ADR-0039 compat layer: N rule(s) translated to M engine-B glob
+rule(s) ... Removed after 2 minor releases (no earlier than v2.59 - ADR-0039 Phase 3):
+migrate to .zelari/policy.json, see MIGRATION.md.
+```
+
+**Window: two minor releases.** Nothing has to change today — the file keeps
+working for a tree that only has it, and a rule-less file says nothing at all.
+The removal is ADR-0039 Phase 3, **no earlier than v2.59**
+(`docs/decisions/0039-unified-permission-engine.md`).
+
+### The translation
+
+`pathPrefix` becomes a glob `match`. Engine A's prefix is a whole-**segment** run
+(`secrets` also covers `secrets/a/b`, never `secrets-old/`), and engine B's glob
+cannot say "this node and everything under it" in one pattern — so **two** rules
+are emitted:
+
+| `.zelari/permissions.json` (engine A) | `.zelari/policy.json` (engine B) |
+|---|---|
+| `{ id, effect, pathPrefix: 'secrets', note }` | `edit`: `{ match: 'secrets', effect, reason: note }` **and** `{ match: 'secrets/**', effect, reason: note }` |
+| `{ id, effect, category: 'execute', note }` | `shell`: `{ match: '*', effect, reason: note }` |
+| `{ id, effect, category: 'write', note }` | `edit`: `{ match: '*', effect, reason: note }` |
+| `{ id, effect, tool: 'bash' }` (tool-only) | **no equivalent** — A-only until Phase 3 |
+| `{ id, effect, category: 'read' \| 'network' \| 'ui' }`, `{ host: … }` | **no equivalent** — A-only until Phase 3 |
+| `{ id, effect, category: 'execute', pathPrefix: … }` | **no equivalent** (an execute tool has no path argument) — A-only until Phase 3 |
+
+Rules with no equivalent are **not** dropped silently: the load-time notice reports
+how many (`K rule(s) have no engine-B equivalent …`), and engine A keeps enforcing
+them until Phase 3 deletes it.
+
+What the translation preserves:
+
+- **Declaration order** — first match wins inside an engine-B rule list, so order
+  is meaning and is kept verbatim.
+- **`note` → `reason`** — the same human explanation reaches the deny/ask message.
+- **Restrict-only composition** — the compat layer is intersected with
+  `.zelari/policy.json` (project + global) and the category decision under
+  `deny > ask > allow`: a translated rule can only ADD restriction. A translated
+  `allow` never relaxes a deny or an ask decided elsewhere.
+- **`$comment`** — accepted and stripped in both files (documentation, never policy).
+- **Malformed file** — unchanged: the dispatch keeps failing closed (`ask`) with the
+  file named in the message. That stays deliberate (ADR-0039 §3): exit 2 is reserved
+  for an explicit strict `policy.json` load, so a typo in a personal file can never
+  kill a headless/CI run.
+
+Known differences during the transitional period (recorded, not hidden):
+
+- **Case.** A lowercases both sides (`pathPrefix` matching is case-insensitive);
+  B's glob is case-sensitive. A prefix written with uppercase letters keeps
+  matching in A but may stop matching in B — write lowercase paths.
+- **`tool` scoping.** A path rule that also carries a `tool` key is translated
+  without that dimension (B's `edit` list is keyed by path, not by tool name): the
+  path restriction then also applies to write tools A did not scope it to. Stricter,
+  fail-safe, and temporary.
+- **Multi-argument tools.** A translated rule is matched against the tool's PRIMARY
+  argument; the other paths a call can touch (`apply_diff` headers,
+  `observe_batch` operations) are still covered by engine A's own path expansion,
+  which stays in place until Phase 3.
+
+### How to migrate
+
+Before — `.zelari/permissions.json`:
+
+```json
+{
+  "version": 1,
+  "rules": [
+    { "id": "no-secrets", "effect": "deny", "pathPrefix": "secrets", "note": "never touch secrets" },
+    { "id": "no-push", "effect": "deny", "category": "execute", "note": "never push" }
+  ]
+}
+```
+
+After — `.zelari/policy.json`, same intent in native syntax:
+
+```json
+{
+  "version": 1,
+  "agents": {
+    "lead": {
+      "edit": [
+        { "match": "secrets", "effect": "deny", "reason": "never touch secrets" },
+        { "match": "secrets/**", "effect": "deny", "reason": "never touch secrets" }
+      ],
+      "shell": [{ "match": "*", "effect": "deny", "reason": "never push" }]
+    }
+  }
+}
+```
+
+Notes for the rewrite:
+
+- `agents` has four keys — `lead`, `explore`, `general`, `verify` — and rules are
+  per agent, unlike the old file, which had no agent dimension. Write the key for
+  every agent the rule must cover.
+- `shell` matches the command string, `edit` matches the path argument; the v2
+  `claims` section is finer-grained (path/process/network/mcp/ssh, per operation).
+- Delete `.zelari/permissions.json` once its rules live in `policy.json`: the
+  load-time notice disappears with it.
