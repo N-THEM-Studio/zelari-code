@@ -5,6 +5,47 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.56.0] - 2026-09-20
+
+Feature slice **piano-ROI** (plan tasks t133–t141): a gap analysis against Claude Code (and, for the evolution engine, SoL-Pi / SKILL.state) ranked seven workstreams by real ROI — permission policy, inbox-as-bus, worktree-by-default, VS Code via ACP, hooks as spine subscribers, plugin bundles, proofed harness evolution. Everything is additive to the session spine and derive-only unless stated; no model-facing surface changed (tool-schema arrays and prompt prefixes are byte-identical with or without the new sinks — proven by the M2.1/M3.1 cache guard suites).
+
+### Added — permissions (WS1, t133)
+
+- **Policy engine + `/permissions`** — rule-based allow/ask/deny evaluated **before dispatch**: zod-validated rules `{effect, tool, category, pathPrefix, host}` with deterministic precedence (deny > ask > allow > category default) and three sources — built-in category defaults, project `.zelari/permissions.json`, session hot-add via `/permissions add|remove|clear|denials`. Denials name the rule that fired and land on the spine as `permission.denied` (visible on replay). Malformed config fails closed naming file and field; `$comment` keys (top-level and per-rule) are tolerated and stripped. Zero rules = behavior identical to 2.55.0.
+
+### Added — inbox & notifications (WS2, t134)
+
+- **Inbox as a notification bus** — `/inbox` gains derive-only sources beyond waiting questions: tentacle finished, verify debt open/cleared, permission denials — each with a Desktop notification bridge (opt-in) and a statusline chip. Kill-switch `ZELARI_INBOX=0`.
+
+### Changed — isolation (WS3, t135)
+
+- **Worktree isolation ON by default for write tentacles** — `general` tentacles with write scope run in a git worktree under `.zelari/worktrees/` (opt-out `ZELARI_KRAKEN_WORKTREE=0`, `KEEP=1` retains the branch). Auto-merge back preserves a dirty parent tree; cleanup is eager with path guards; non-git folders degrade honestly (declared, never silent).
+
+### Added — VS Code extension via ACP (WS4, t136)
+
+- **`apps/vscode`** — first VS Code extension speaking the same ACP surface the CLI already serves: pure `acpClient.ts` (zero vscode imports — NDJSON, request/response correlation, notification fan-out, one-terminal-event lifecycle) plus a thin adapter (status bar, `zelari.startSession/stopSession/sendPrompt`, `deactivate()` kills the child). No new dependencies; compile-only CI leg; e2e test handshakes the built bundle (initialize → `protocolVersion 1` → exit 0).
+
+### Added — hooks (WS5, t137)
+
+- **Hooks as spine subscribers** — four observer events (`PermissionRequest`, `SubagentStart`, `SubagentEnd`, `Notification`) with structured payloads and tool/agent-scoped matching, fired at the real seams (permission gate, single `endTentacle` funnel, post-worktree start). Observers have **no deny channel**: void return, exceptions and timeouts swallowed — a hook can never block the spine. The 4 pre-existing blocking events and their fail-open/fail-closed contracts are unchanged; `SCHEMA_VERSION` untouched.
+
+### Added — plugins (WS6, t138)
+
+- **Plugin bundle v1** — `.zelari-plugin` manifest (zod strict, `$comment` stripped) projecting skills, hook observers, MCP server refs (resolved from the existing `mcpPresets` registry) and declared agents; path containment; nothing executes at load. CLI `zelari-code plugin validate|list|enable|disable` with fail-closed state in `.zelari/plugins.json`; example bundle in `examples/extensions/zelari-plugin-example/`. Bundle-vs-baseline eval reports BLOCKED (honestly) until a baseline is seeded; deliberately no marketplace.
+
+### Added — proofed harness evolution (WS7, t139)
+
+- **Promotion Receipt (unified)** — one zod schema now backs both the anchors `summary.json` gate rows and the evolution `proposals.jsonl` decisions: total `status↔decision` / `gate↔decision` mappings, fail-closed `resolvePromotionDecision` (a promote without ref+evidence degrades to hold; an evidence-less promote is unparsable), canary opt-in only, anti-laundering on persisted receipts. The receipt IS the existing store row — no parallel JSON.
+- **Decision events + `zelari-code replay`** — additive spine vocabulary (`permission.asked`, `auto_approve.granted`, `jail.blocked`, `ask_user.fired`, `verify.requested`; no schema bump) with zod payloads, verify-debt projection, tool-call pairing; read-only `replay [--json]` and `session validate` (exit 1 on a dirty spine), immutability asserted by tests. Emitters wired at the real seams, and the spine sink is now **live on every host** (single-agent, graph executor, council members, TUI council) behind `ZELARI_GRAPH_SPINE_SINK=0` — ADR-0024 v1.3: bounded decision/write-path metadata only, node content never on-spine. Dormant since t75, the `file.*` telemetry now actually flows.
+- **`fuse_edit_verify` operator** — pure analyzer over historical spines detecting edit→verify pairs worth fusing and stale-snapshot reopens; sweep over 1002 real spines: 139 fuse + 20 reopen candidates, 0 unresolvable refs. Proposals bridge to receipts hold-only (ADR-0036: the proposer never judges).
+- **`evolve shadow` v0 (t141)** — report-only evolution controller: replays a spine, detects fuse candidates (by-name v0 detector, limits printed with the report) and emits shadow/hold verdicts — never canary/promote, which require a signed receipt and a seeded baseline. Behind `ZELARI_EVOLUTION=shadow`, default off.
+
+### Added — session hygiene
+
+- **`zelari-code session waive-debt <sessionId> <taskId> [--note]`** — the operator waiver the debt design always implied: appends `verify.debt_cleared {source: 'waiver'}` through the locked spine writer (refuses a live session, exit 2, never forces), so a debt repaired under a different task id can be closed honestly instead of re-printing forever. Plus `--evolve-status` on the CLI (same renderer as `/evolve`; absence renders "not measured", never "clean").
+
+Gate: per-slice vitest suites green at each landing (independently spot-checked), `verify:principles` PASS with JUDGE_PATHS untouched, typecheck exit 0 including the t141 controller, and the `tag-release` gate (clean tree, `verify:versions`, main aligned) at cut time.
+
 ## [2.55.0] - 2026-09-20
 
 ### Added — Desktop UI round (IDE layout)
