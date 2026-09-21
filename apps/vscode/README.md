@@ -15,6 +15,7 @@ no custom LSP. Packaging/publishing are explicitly out of scope.
 |---|---|
 | `Zelari: Start ACP Session` | Spawns the agent, runs `initialize` + `session/new` (cwd = first workspace folder), streams everything into the **Zelari ACP** Output Channel and shows the state in the status bar. |
 | `Zelari: Send Prompt to ACP Session` | `showInputBox` → `session/prompt`, one turn at a time; tool calls and assistant text stream in live while the turn runs. |
+| `Zelari: Cancel Current Turn` | `session/cancel` on the in-flight turn; the running prompt then settles with `stopReason: cancelled`. |
 | `Zelari: Stop ACP Session` | Graceful stop: closes the agent's stdin (EOF — the CLI's documented clean exit), then kills the process only if it is still alive after 2 s. |
 
 The status bar item (`$(pulse) Zelari ACP: running — 3f2a1b7c…`) is clickable
@@ -134,8 +135,9 @@ the launch resolution rules (including the Windows metacharacter refusal).
 ## Known limits (PoC)
 
 - One session at a time, and `session/prompt` resolves only when the turn
-  ends: there is no Cancel button yet (the server does support
-  `session/cancel`, the command is simply not exposed in this PoC).
+  ends; **Zelari: Cancel Current Turn** sends `session/cancel` and the turn
+  settles with `stopReason: cancelled` (no mid-turn stream editing and no
+  partial-diff UI — those stay out of this PoC's scope).
 - No permission UI: the CLI runs its own permission/policy stack for its own
   tools, and the ACP subset has no reverse requests.
 - `zelari.stopSession` force-kills the direct child only. When the agent was

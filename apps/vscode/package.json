@@ -28,6 +28,11 @@
         "category": "Zelari"
       },
       {
+        "command": "zelari.cancelTurn",
+        "title": "Zelari: Cancel Current Turn",
+        "category": "Zelari"
+      },
+      {
         "command": "zelari.stopSession",
         "title": "Zelari: Stop ACP Session",
         "category": "Zelari"

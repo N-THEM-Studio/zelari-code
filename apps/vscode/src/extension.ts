@@ -7,6 +7,7 @@
  * Commands:
  *   zelari.startSession  spawn `zelari-code acp`, initialize, session/new
  *   zelari.sendPrompt    showInputBox -> session/prompt (one turn at a time)
+ *   zelari.cancelTurn    session/cancel on the in-flight turn (settles cancelled)
  *   zelari.stopSession   graceful shutdown: stdin EOF, then kill as fallback
  *
  * Shutdown is deliberately EOF-first: stdin EOF is what makes the CLI exit 0
@@ -18,7 +19,7 @@ import * as vscode from 'vscode';
 import { AcpClient } from './acpClient.js';
 import { AcpClientClosedError } from './acpTransport.js';
 import { spawnAcpTransport } from './childTransport.js';
-import { ACP_PROTOCOL_VERSION } from './protocol.js';
+import { ACP_PROTOCOL_VERSION, type StopReason } from './protocol.js';
 import { createSessionView, type SessionView } from './sessionView.js';
 import type { ZelariLaunchConfig } from './launch.js';
 
@@ -34,6 +35,12 @@ interface ActiveSession {
 
 let active: ActiveSession | undefined;
 let output: vscode.OutputChannel | undefined;
+/**
+ * The in-flight `session/prompt` promise, if any (the protocol allows one
+ * turn at a time). `cancelTurn` only fires when this is set; it self-clears
+ * in `sendPrompt`'s `finally` when the turn settles.
+ */
+let turnInFlight: Promise<StopReason> | undefined;
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -163,11 +170,43 @@ async function sendPrompt(): Promise<void> {
 
   session.view.log(`user> ${trimmed}`);
   channel().show(true);
+  const turn = session.client.prompt(session.sessionId, trimmed);
+  turnInFlight = turn;
   try {
-    const stopReason = await session.client.prompt(session.sessionId, trimmed);
+    const stopReason = await turn;
     session.view.log(`turn> ${stopReason}`);
   } catch (err) {
     session.view.log(`turn failed: ${messageOf(err)}`);
+    void vscode.window.showErrorMessage(`Zelari: ${messageOf(err)}`);
+  } finally {
+    if (turnInFlight === turn) turnInFlight = undefined;
+  }
+}
+
+/**
+ * Cancel the in-flight turn: `session/cancel` asks the agent to drop it and
+ * the turn's own promise then settles (`stopReason: 'cancelled'`), which
+ * `sendPrompt` logs as usual. Without a session or a running turn this is a
+ * harmless toast — never an error path.
+ */
+async function cancelTurn(): Promise<void> {
+  const session = active;
+  if (session === undefined || session.sessionId.length === 0) {
+    void vscode.window.showWarningMessage(
+      'Zelari: no session is running — run "Zelari: Start ACP Session" first.',
+    );
+    return;
+  }
+  if (turnInFlight === undefined) {
+    void vscode.window.showInformationMessage('Zelari: no turn is in flight.');
+    return;
+  }
+  session.view.log('cancel> session/cancel: dropping the in-flight turn');
+  channel().show(true);
+  try {
+    await session.client.cancel(session.sessionId);
+  } catch (err) {
+    session.view.log(`cancel failed: ${messageOf(err)}`);
     void vscode.window.showErrorMessage(`Zelari: ${messageOf(err)}`);
   }
 }
@@ -207,6 +246,7 @@ export function activate(context: vscode.ExtensionContext): void {
     output,
     vscode.commands.registerCommand('zelari.startSession', () => startSession()),
     vscode.commands.registerCommand('zelari.sendPrompt', () => sendPrompt()),
+    vscode.commands.registerCommand('zelari.cancelTurn', () => cancelTurn()),
     vscode.commands.registerCommand('zelari.stopSession', () => stopSession('command')),
   );
 }
