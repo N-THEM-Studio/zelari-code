@@ -22,6 +22,87 @@ import { buildLessonsSummary } from "./buildLessonsSummary.js";
 /** Dispatch mode for context composition. `agent` kept as legacy alias of `kraken`. */
 export type ComposeMode = "kraken" | "council" | "zelari" | "agent";
 
+/**
+ * Directory-level prefix of FROZEN eval baselines (t162) — baseline worktree
+ * snapshots copied under `eval/results/`. They are evidence of past runs, not
+ * product state: whatever quotes them (a context-update draft, a plan task, a
+ * pasted dump) must never turn into current scope.
+ *
+ * Same path-prefix vocabulary the workspace layer already uses for
+ * non-product subtrees (see `EXCLUDED_DIR_PREFIXES` in taskOverlap.ts and
+ * `GENERATED_DIR` in @zelari/core verification). Directory level on purpose:
+ * every nested baseline is covered, not just the one that was observed.
+ */
+export const FROZEN_EVAL_DIR_PREFIX = "eval/results";
+
+/** Path-token split: whitespace plus the punctuation that wraps paths. */
+const PATH_TOKEN_RE = /[^\s"'`()\[\]{}<>,;]+/g;
+
+/** True when a single token points inside `eval/results/**` (any depth). */
+function isFrozenEvalToken(token: string): boolean {
+  // Trailing prose punctuation only — never a path character.
+  const n = token
+    .replace(/\\/g, "/")
+    .toLowerCase()
+    .replace(/[.:!?]+$/, "")
+    .replace(/^\.\//, "");
+  const p = FROZEN_EVAL_DIR_PREFIX;
+  if (n === p || n.startsWith(`${p}/`)) return true;
+  // Absolute or nested references ("Z:/repo/eval/results/…").
+  return n.includes(`/${p}/`) || n.endsWith(`/${p}`);
+}
+
+/** True when a token cites a file path (the block boundary marker). */
+function isPathToken(token: string): boolean {
+  return token.includes("/") || token.includes("\\") || /\.\w{1,5}$/.test(token);
+}
+
+type ScopeLineKind = "frozen" | "path" | "prose";
+
+/** Classify one scope-input line: cites a baseline, cites a path, or plain text. */
+function classifyScopeLine(line: string): ScopeLineKind {
+  const tokens = line.match(PATH_TOKEN_RE);
+  if (!tokens) return "prose";
+  if (tokens.some(isFrozenEvalToken)) return "frozen";
+  if (tokens.some(isPathToken)) return "path";
+  return "prose";
+}
+
+/**
+ * Drop frozen eval baselines from the scope input (t162).
+ *
+ * The scope matcher derives Targets from the file paths in the scope input and
+ * its wording from the same text, so a quoted baseline leaks BOTH: the citing
+ * line AND the quoted dump that follows it (its keyword line, its reason line)
+ * are fossil-derived, and are therefore removed rather than redacted. The block
+ * ends at a blank line or at a line citing a real product path, so control text
+ * around the quote survives. Lines unrelated to `eval/results/**` are left
+ * byte-identical — when nothing matches, the input string is returned as-is.
+ */
+export function stripFrozenEvalScopeLines(text: string): string {
+  if (!text || !/eval[\\/]results/i.test(text)) return text;
+  const out: string[] = [];
+  let inFrozenBlock = false;
+  for (const line of text.split(/\r?\n/)) {
+    if (!line.trim()) {
+      // Blank line closes the quoted block.
+      inFrozenBlock = false;
+      out.push(line);
+      continue;
+    }
+    const kind = classifyScopeLine(line);
+    if (kind === "frozen") {
+      inFrozenBlock = true;
+      continue;
+    }
+    if (inFrozenBlock && kind === "prose") continue;
+    inFrozenBlock = false;
+    out.push(line);
+  }
+  const joined = out.join("\n");
+  return joined === text ? text : joined;
+}
+
 export interface ComposeProjectContextInput {
   mode: ComposeMode;
   cwd?: string;
@@ -147,8 +228,12 @@ export function composeProjectContext(
   });
 
   const wsRaw = buildWorkspaceSummary(cwd, { maxEntries: 24, maxChars: workspaceMax });
+  // t162: the scope matcher reads Targets/Keywords out of this text, so frozen
+  // eval baselines quoted into it are stripped first — `eval/results/**` is
+  // evidence of past runs, never current scope. Everything else is untouched.
+  const scopeUserMessage = stripFrozenEvalScopeLines(input.userMessage ?? "");
   const planRaw = buildPlanSummary(cwd, {
-    userMessage: input.userMessage,
+    userMessage: scopeUserMessage,
     maxChars: planMax,
   });
   const hint = buildZelariReadHint(cwd);
