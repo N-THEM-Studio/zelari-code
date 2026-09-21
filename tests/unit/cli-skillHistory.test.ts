@@ -148,7 +148,7 @@ describe('getSkillStats', () => {
   };
 
   it('returns all zeros when records is empty', () => {
-    expect(getSkillStats([])).toEqual({ count: 0, successRate: 0, avgDurationMs: 0, totalTokens: 0 });
+    expect(getSkillStats([])).toEqual({ count: 0, successRate: 0, avgDurationMs: 0, totalTokens: 0, estimatedCostUsd: 0 });
   });
 
   it('counts and computes success rate correctly', () => {
