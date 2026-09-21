@@ -16,7 +16,6 @@ import {
   listSessionPermissionRules,
   resetProjectPermissionRuleCache,
 } from '../safety/permissionRules.js';
-import { clearPermissionDenials } from '../safety/permissionGate.js';
 
 let root: string;
 let messages: ChatMessage[];
@@ -41,7 +40,6 @@ describe('WS1 — /permissions', () => {
     messages = [];
     resetProjectPermissionRuleCache();
     clearSessionPermissionRules();
-    clearPermissionDenials();
   });
 
   afterEach(async () => {

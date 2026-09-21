@@ -32,11 +32,15 @@ import {
   removeSessionPermissionRule,
   clearSessionPermissionRules,
 } from '../safety/permissionRules.js';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import {
-  clearPermissionDenials,
-  listRecentPermissionDenials,
-  type PermissionDenialRecord,
-} from '../safety/permissionGate.js';
+  buildProjection,
+  parseSessionLogText,
+  resolveSessionsDir,
+  type PermissionDenialSummary,
+} from '@zelari/core/session';
+import { getCurrentSessionId } from '../sessionManager.js';
 
 export interface PermissionsHandlerCtx {
   setMessages: React.Dispatch<React.SetStateAction<ChatMessage[]>>;
@@ -47,7 +51,7 @@ export const PERMISSIONS_USAGE = [
   '/permissions add <id> <allow|ask|deny> [tool=<name|glob>] [category=read|write|execute|network|ui] [pathPrefix=<p>] [host=<h>] [note=<text>]',
   '/permissions remove <id> — drop a session rule',
   '/permissions clear — drop every session rule',
-  '/permissions denials [--clear] — recent denials',
+  '/permissions denials — recent denials (derived from the session spine)',
 ].join('\n');
 
 const MATCHER_KEYS = ['tool', 'category', 'pathPrefix', 'host', 'note'] as const;
@@ -93,9 +97,35 @@ function matchersOf(rule: {
     .join(' ');
 }
 
-export function formatPermissionDenialLine(d: PermissionDenialRecord): string {
-  const when = new Date(d.ts).toISOString();
+export function formatPermissionDenialLine(d: PermissionDenialSummary): string {
+  const when = new Date(d.at).toISOString();
   return `  ${when} ${d.tool} blocked by [${d.source}] '${d.matchedRuleId}'`;
+}
+
+/**
+ * t142 — the denial ledger is DERIVE-ONLY: `/permissions` reads the
+ * `permission.denied` events this session already wrote to the spine
+ * (ADR-0016/0024 — same discipline as the inbox; the old 20-entry RAM
+ * buffer is gone). `limit` caps the DISPLAY only, never the storage.
+ * Fail-soft like /report: no marker or unreadable spine ⇒ [] (diagnostics,
+ * never a gate).
+ */
+export function listSessionPermissionDenials(
+  cwd: string,
+  limit = 20,
+  sessionId?: string,
+): PermissionDenialSummary[] {
+  try {
+    const sessionsDir = resolveSessionsDir({ workspaceRoot: cwd, env: process.env });
+    const marker = sessionId ?? getCurrentSessionId();
+    const eventsPath = marker !== null ? path.join(sessionsDir, marker, 'events.jsonl') : null;
+    if (eventsPath === null || !existsSync(eventsPath)) return [];
+    const parsed = parseSessionLogText(eventsPath, readFileSync(eventsPath, 'utf-8'));
+    const all = buildProjection(parsed.events, parsed.issues).permissionDenials;
+    return all.slice(-Math.max(0, limit)).reverse(); // newest first
+  } catch {
+    return [];
+  }
 }
 
 /** The full `/permissions` report (pure — same input, same text). */
@@ -103,7 +133,7 @@ export function formatPermissionsReport(cwd: string): string {
   const policy = defaultPermissionPolicy();
   const project = loadProjectPermissionRules(cwd);
   const session = listSessionPermissionRules();
-  const denials = listRecentPermissionDenials(10);
+  const denials = listSessionPermissionDenials(cwd, 10);
   const lines: string[] = [
     '[permissions] local policy engine (WS1) — evaluated before every tool dispatch',
     '  precedence: deny > ask > allow, then most specific rule, then session before project',
@@ -198,15 +228,16 @@ export function handlePermissions(
     case 'denials':
     case 'denied': {
       if (args[0] === '--clear') {
-        clearPermissionDenials();
-        appendSystem(ctx.setMessages, '[permissions] denial ledger cleared.');
-        return 'cleared';
+        // t142: derive-only - the spine is append-only, nothing to clear.
+        const cleared = '[permissions] denial ledger is derived from the session spine (append-only) - nothing to clear.';
+        appendSystem(ctx.setMessages, cleared);
+        return cleared;
       }
-      const denials = listRecentPermissionDenials(20);
+      const denials = listSessionPermissionDenials(cwd, 20);
       const text =
         denials.length === 0
           ? '[permissions] no denials recorded this session.'
-          : ['[permissions] recent denials:', ...denials.map(formatPermissionDenialLine)].join('\n');
+          : ['[permissions] recent denials (session spine):', ...denials.map(formatPermissionDenialLine)].join('\n');
       appendSystem(ctx.setMessages, text);
       return text;
     }

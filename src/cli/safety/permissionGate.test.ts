@@ -32,9 +32,7 @@ import {
   PERMISSION_ASKED_KIND,
   PERMISSION_DENIED_KIND,
   autoApproveOrigin,
-  clearPermissionDenials,
   evaluateToolDispatch,
-  listRecentPermissionDenials,
 } from './permissionGate.js';
 
 let root: string;
@@ -113,7 +111,6 @@ describe('WS1 pre-dispatch gate (registry integration)', () => {
     resetProjectPermissionRuleCache();
     clearSessionPermissionRules();
     clearSessionPermissionGrants();
-    clearPermissionDenials();
   });
 
   afterEach(async () => {
@@ -170,10 +167,8 @@ describe('WS1 pre-dispatch gate (registry integration)', () => {
     expect(projection.permissionDenials).toEqual([
       expect.objectContaining({ tool: 'write_file', matchedRuleId: 'no-secrets', source: 'project' }),
     ]);
-    // the ledger `/permissions` reads
-    expect(listRecentPermissionDenials()).toEqual([
-      expect.objectContaining({ tool: 'write_file', matchedRuleId: 'no-secrets', source: 'project' }),
-    ]);
+    // t142: the RAM ledger is GONE — the projection above IS the ledger that
+    // `/permissions` now derives from the spine (append-only, derive-only).
   });
 
   it('a rule that matches nothing changes nothing (deny stays scoped to its prefix)', async () => {
@@ -262,7 +257,6 @@ describe('WS1 gate — the shipped `$comment` template is not a malformed config
     writer = await SessionLogWriter.open(path.join(root, 'session'), 'ws1-comment', 1);
     resetProjectPermissionRuleCache();
     clearSessionPermissionRules();
-    clearPermissionDenials();
   });
 
   afterEach(async () => {
@@ -326,7 +320,6 @@ describe('WS7 slice 4 — permission.asked / auto_approve.granted (decision bloc
     resetProjectPermissionRuleCache();
     clearSessionPermissionRules();
     clearSessionPermissionGrants();
-    clearPermissionDenials();
   });
 
   afterEach(async () => {

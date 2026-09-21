@@ -23,7 +23,7 @@ import { AuditLogger } from './auditLogger.js';
 import { createBuiltinToolRegistry } from '../toolRegistry.js';
 import { clearSessionPermissionGrants, type PermissionPolicy } from './toolPermissions.js';
 import { clearSessionPermissionRules, resetProjectPermissionRuleCache } from './permissionRules.js';
-import { clearPermissionDenials, buildPermissionRequestHookPayload } from './permissionGate.js';
+import { buildPermissionRequestHookPayload } from './permissionGate.js';
 
 let root: string;
 
@@ -129,7 +129,6 @@ beforeEach(async () => {
   resetProjectPermissionRuleCache();
   clearSessionPermissionRules();
   clearSessionPermissionGrants();
-  clearPermissionDenials();
 });
 
 afterEach(async () => {

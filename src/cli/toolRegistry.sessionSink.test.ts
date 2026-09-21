@@ -39,7 +39,6 @@ import {
   clearSessionPermissionRules,
   resetProjectPermissionRuleCache,
 } from './safety/permissionRules.js';
-import { clearPermissionDenials } from './safety/permissionGate.js';
 import { lateSessionSink, spineSessionSink, withSessionEventSink } from './safety/sessionSink.js';
 import { createBuiltinToolRegistry } from './toolRegistry.js';
 
@@ -125,7 +124,6 @@ beforeEach(async () => {
   resetProjectPermissionRuleCache();
   clearSessionPermissionRules();
   clearSessionPermissionGrants();
-  clearPermissionDenials();
 });
 
 afterEach(async () => {

@@ -8,8 +8,11 @@
  *
  *   1. a best-effort spine event `permission.denied` through the SAME
  *      SessionEventInput sink the file.* telemetry uses
- *      (ToolContext.emitSessionEvent), so a replayed session exposes it; and
- *   2. one entry in the in-memory denial ledger `/permissions` shows.
+ *      (ToolContext.emitSessionEvent), so a replayed session exposes it.
+ *
+ *   (t142) That event is now the ONLY denial record: `/permissions` derives
+ *   its ledger from the spine projection (see slashHandlers/permissions.ts) —
+ *   the old in-process RAM buffer is gone (ADR-0016/0024 derive-only).
  *
  * Contract:
  *   - ZERO rules configured  → `evaluateToolDispatch` returns null and the
@@ -39,7 +42,6 @@ import {
   evaluatePermissionPolicy,
   formatPermissionDenial,
   type PermissionRequest,
-  type PermissionRuleSource,
   type PermissionVerdict,
 } from './permissionPolicy.js';
 import type { PermissionAction } from './toolPermissions.js';
@@ -135,32 +137,9 @@ export function applyAllowRule(categoryAction: PermissionAction): PermissionActi
   return categoryAction === 'ask' ? 'allow' : categoryAction;
 }
 
-/** One denial, as the ledger (and `/permissions`) sees it. */
-export interface PermissionDenialRecord {
-  ts: number;
-  tool: string;
-  matchedRuleId: string;
-  source: PermissionRuleSource;
-  reason: string;
-  sessionId?: string;
-}
-
-const MAX_RECENT_DENIALS = 20;
-let denialLedger: PermissionDenialRecord[] = [];
-
-/** Record a denial for `/permissions`. Never throws, never blocks a dispatch. */
-export function recordPermissionDenial(record: PermissionDenialRecord): void {
-  denialLedger = [record, ...denialLedger].slice(0, MAX_RECENT_DENIALS);
-}
-
-/** Most recent denials, newest first. */
-export function listRecentPermissionDenials(limit = 10): PermissionDenialRecord[] {
-  return denialLedger.slice(0, Math.max(0, limit));
-}
-
-export function clearPermissionDenials(): void {
-  denialLedger = [];
-}
+// t142: the denial ledger is DERIVE-ONLY — `/permissions` reads the
+// `permission.denied` events already on the session spine (see
+// slashHandlers/permissions.ts). No in-process buffer remains here.
 
 /** The denial line the user sees ("denied "write_file" — [permissions:project] rule '…'"). */
 export function permissionDenialMessage(toolName: string, verdict: PermissionVerdict): string {
@@ -257,15 +236,7 @@ export async function emitPermissionDenied(
   payload: { tool: string; verdict: PermissionVerdict; sessionId?: string; ts?: number },
 ): Promise<PermissionDeniedEmitResult> {
   const { tool, verdict } = payload;
-  const ts = payload.ts ?? Date.now();
-  recordPermissionDenial({
-    ts,
-    tool,
-    matchedRuleId: verdict.matchedRuleId ?? '',
-    source: verdict.source,
-    reason: verdict.reason,
-    ...(payload.sessionId !== undefined ? { sessionId: payload.sessionId } : {}),
-  });
+  // t142: the spine event below is the ONLY denial record — no in-process ledger.
   if (!sink) return { recorded: false };
   try {
     const result = await sink({
