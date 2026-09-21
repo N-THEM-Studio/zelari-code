@@ -87,6 +87,20 @@ export {
   type TextLoopHit,
 } from './textLoopDetect.js';
 
+// v2.58 (system-reminder slice 4): the pure reminder builder + its stable
+// marker ride this PUBLIC entrypoint (`@zelari/core/harness`, via the
+// `export *` in src/harness/index.ts) — no barrel exposed core/modules before,
+// so the CLI request-tail assembler had no supported path to the builder. The
+// harness itself NEVER calls it: the reminder is appended to the volatile
+// request tail by `assembleRequestTail`
+// (src/cli/budget/modelContextBuilder.ts). See the TODO(seam) note on
+// messagesForProvider().
+export {
+  buildSystemReminder,
+  SYSTEM_REMINDER_MARKER,
+  type SystemReminderInput,
+} from './modules/system-reminder/index.js';
+
 // --- Truncated tool-call recovery -------------------------------------------
 // Stable marker + guidance pushed after a `tool_call_truncated` error. The
 // error event alone is UI-only; this user message is what the NEXT provider
@@ -1419,16 +1433,16 @@ export class AgentHarness {
 
   /** Build a provider-only view with memory after the stable system prefix. */
   private messagesForProvider(): AgentMessage[] {
-    // TODO(seam): system-reminder (core/modules/system-reminder) is complete +
-    // exported but NOT wired here. Its text belongs to the canonical model
-    // context compiler — the CLI budget pipeline (ADR-0032,
-    // src/cli/budget/modelContextBuilder.ts, volatile `requestTail`), which
-    // lives outside @zelari/core. This projector is the nearest seam inside
-    // the package: wiring the reminder here would need a new host-supplied
-    // todo/budget source plus a turn counter (a new seam, not a hook), and
-    // would duplicate the budget pipeline. Callers that want it today should
-    // run `buildSystemReminder(...)` in their own projection step and append
-    // the result to the request tail.
+    // TODO(seam): system-reminder (core/modules/system-reminder) is NOT wired
+    // here, and must not be. The reminder enters the model context through the
+    // CLI seam: `assembleRequestTail`
+    // (src/cli/budget/modelContextBuilder.ts), called by the host
+    // `requestTail` arrows at send time — this projector only concatenates the
+    // tail it returns (ADR-0032). Wiring it HERE would need a host-supplied
+    // todo source plus a per-turn counter (a new seam, not a hook) and would
+    // duplicate the budget pipeline. The builder is reachable from the public
+    // `@zelari/core/harness` subpath (re-exported by this module); the host
+    // call site owns the todos, the counter and the reset.
     let messages: AgentMessage[] = this.config.messages;
     let prefixEnd = 0;
     if (this.activeMemoryContext) {

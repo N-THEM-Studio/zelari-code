@@ -5,6 +5,12 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **System reminder wiring (slice 4)** — the `[system-reminder]` text is appended by `assembleRequestTail` in `src/cli/budget/modelContextBuilder.ts`, called by the TUI lazy `requestTail` arrow (`src/cli/hooks/useChatTurn.ts`) with fresh open session todos, a per-USER-turn counter held in the hook (zeroed right after a tail that carried the marker, so a later provider call in the same tool loop stays silent) and the remaining budget already computed by the builder. `buildModelContext` still measures a reminder-free tail and nothing enters rolling history. The one-shot headless pass (`src/cli/headless/runOneTurn.ts`) passes counter 0, so it can never fire. The pure builder is now reachable from the public `@zelari/core/harness` subpath; `AgentHarness.messagesForProvider()` remains out of the picture.
+
 ## [2.58.0] - 2026-09-21
 
 Audit-driven hardening wave (plan tasks t142–t147 + ADR-0039 Phases 1–2): an external audit produced seven findings; seven got verifiable fixes on disk. Constitution unchanged — canary evolution stays default-off and fail-closed (ADR-0036), untouched.
@@ -155,7 +161,7 @@ Feature slice **mcode-steal** (plan tasks t112–t119): a gap analysis against [
 ### Added — harness modules (phase A)
 
 - **runaway-guard (t112)** — anti-loop detection on `AgentHarness`: N≥3 identical tool calls → warning; no-progress stall → hard stop with a spine event. New `packages/core/src/core/modules/runaway-guard/` (unit + harness tests). Kill-switch `ZELARI_RUNAWAY_GUARD=0`.
-- **system-reminder (t113)** — cadenced context reminders (pending todos, budget percentage) injected through the projection seam only (spine-only model-context path, ADR-0024/0031). New `packages/core/src/core/modules/system-reminder/`. Kill-switch `ZELARI_SYSTEM_REMINDER=0`.
+- **system-reminder (t113)** — cadenced context reminders (pending todos, budget percentage) shipped as a pure module only - no runtime wiring at release; the original version of this note claimed the reminders were "injected through the projection seam" and that was false (the real wiring is `assembleRequestTail`, see Unreleased). New `packages/core/src/core/modules/system-reminder/`. Kill-switch `ZELARI_SYSTEM_REMINDER=0`.
 
 ### Added — CLI UX (phase B)
 

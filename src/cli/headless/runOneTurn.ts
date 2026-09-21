@@ -58,6 +58,9 @@ import { formatCheckProposalNotice } from '../memory/repeatCheck.js';
 import { nativePackEnabled } from '../kraken/nativeVerification.js';
 import { runAdvisoryVerifierReview } from '../kraken/verifierLifecycle.js';
 import { buildModelContext, assembleRequestTail } from '../budget/modelContextBuilder.js';
+// system-reminder slice 4: the reminder payload is the OPEN session todos
+// (with a one-shot counter of 0 they can never surface — see the arrow).
+import { listSessionTodos } from '../sessionTodos.js';
 import { buildOnePager } from '../memory/onePager.js';
 import { recordCompactionMetrics } from '../metrics.js';
 import { flushMessageUsage, recordMessageUsage } from '../budget/messageUsage.js';
@@ -650,7 +653,16 @@ export async function runOneTurn(
       providerStream,
       buildLiveness: { mutationRequired: wantWrites, maxRecoveries: 2 },
       requestTail: () =>
-        assembleRequestTail(spine.spine.latestResourceSnapshot(), onePager),
+        assembleRequestTail(spine.spine.latestResourceSnapshot(), onePager, {
+          // One-shot: this pass runs ONE turn, so the counter is 0 and the
+          // builder returns null (cadence 5) — the reminder must not fire on
+          // every headless run. No module-global counter: if a future in-process
+          // loop needs a cadence, the counter belongs to that loop.
+          pendingTodos: listSessionTodos()
+            .filter((todo) => todo.status === 'pending' || todo.status === 'in_progress')
+            .map((todo) => todo.content),
+          turnsSinceLastReminder: 0,
+        }),
       // 2.6 Phase 3: host-owned pre-dispatch resource gate (doc section 11.3).
       // Advisory by default; ZELARI_RESOURCE_ENFORCEMENT=protected enables the
       // protected verification reserve. Degrade-and-stop (null gate = allow).

@@ -2,7 +2,7 @@
 // from app.tsx. Runtime is correct; tighten signatures in a follow-up.
 import { useState, useRef, useCallback } from "react";
 import type { ChatMessage } from "../components/ChatStream.js";
-import { AgentHarness } from "@zelari/core/harness";
+import { AgentHarness, SYSTEM_REMINDER_MARKER } from "@zelari/core/harness";
 import type { AgentMessage } from "@zelari/core/harness";
 import { ingestLiveEvent } from "./observationStore.js";
 import { MetricsLogger, getMetricsLogger, recordCompactionMetrics } from "../metrics.js";
@@ -47,6 +47,8 @@ import { writeCompletionProof } from "../kraken/completionProof.js";
 import { promoteOpsKnowledgeSafe, skippedOpsKnowledgeResult } from "../memory/opsKnowledge.js";
 import { formatCheckProposalNotice } from "../memory/repeatCheck.js";
 import { buildOnePager } from "../memory/onePager.js";
+// system-reminder slice 4: the reminder payload is the OPEN session todos.
+import { listSessionTodos } from "../sessionTodos.js";
 import { formatStrictBlockExplanation, recordStrictGateEvaluation } from "../kraken/verifyStatus.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
@@ -197,6 +199,12 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
     setPicker,
   } = params;
   const harnessRef = useRef<AgentHarness | null>(null);
+  // system-reminder slice 4: turns elapsed since the last reminder, host-owned
+  // and session-scoped (this hook instance = this TUI session). Never a module
+  // global, never on the spine. Bumped once per USER turn in dispatchPrompt;
+  // the request-tail arrow below zeroes it when the tail it just built carried
+  // the marker, so a later provider call in the SAME tool loop stays silent.
+  const reminderTurnsRef = useRef(0);
   const [queueCount, setQueueCount] = useState<number>(0);
   // v1.8.0: rolling history lives in conversationContext (shared by agent,
   // council, zelari) so /clear|/new can reset it and short answers bind
@@ -230,6 +238,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
       // THIS session (K3.3 / F16) — a concurrent session in the same process
       // keeps its own budget and its own debt.
       resetTaskSpawnCount(sessionId);
+      // system-reminder slice 4: one bump per USER turn, before the harness is
+      // constructed (the arrow reads it at send time, so every tool iteration
+      // of this turn sees the same value — the cadence of 5 lives in the pure
+      // module, not here).
+      reminderTurnsRef.current += 1;
       // K1.5 / F5: the in-memory cache is per-turn, but open debt is durable
       // on the spine. Flush pending emits from the previous turn, wipe the
       // cache, rebind emit, then replay un-cleared `verify.debt_open` so the
@@ -938,11 +951,44 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             ),
             maxRecoveries: 2,
           },
-          requestTail: () =>
-            assembleRequestTail(
+          // system-reminder slice 4: assembled at SEND time from a FRESH
+          // snapshot, the same one-pager AND the open todos read now — plus the
+          // host-owned counter and the budget already computed above (never a
+          // second budget). Nothing here enters history: this arrow is the only
+          // path from these inputs to the model.
+          requestTail: () => {
+            const tail = assembleRequestTail(
               writerRef.current?.spine?.latestResourceSnapshot() ?? null,
               onePager,
-            ),
+              {
+                pendingTodos: listSessionTodos()
+                  .filter(
+                    (todo) =>
+                      todo.status === "pending" || todo.status === "in_progress",
+                  )
+                  .map((todo) => todo.content),
+                turnsSinceLastReminder: reminderTurnsRef.current,
+                // Omit a non-finite occupancy: the builder must not render a
+                // bogus percentage.
+                ...(Number.isFinite(budget.occupancy)
+                  ? { budgetRemainingPct: (1 - budget.occupancy) * 100 }
+                  : {}),
+              },
+            );
+            // The reminder just reached the model: restart the cadence from
+            // zero AFTER building the tail (resetting first would drop this
+            // one). The next provider call of this tool loop then sees 0.
+            if (
+              tail.some(
+                (message) =>
+                  typeof message.content === "string" &&
+                  message.content.includes(SYSTEM_REMINDER_MARKER),
+              )
+            ) {
+              reminderTurnsRef.current = 0;
+            }
+            return tail;
+          },
           // 2.6 Phase 3: host-owned pre-dispatch resource gate via the spine
           // mirror (doc section 11.3). Degrade-and-stop (null gate = allow).
           // 2.6.1 (plan §13): argument-aware — bash is essential only when

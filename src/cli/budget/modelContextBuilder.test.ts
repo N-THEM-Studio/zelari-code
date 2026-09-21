@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import type { AgentMessage } from '@zelari/core/harness';
+// The marker + the builder reach the CLI through the public harness subpath
+// (re-exported by core/AgentHarness.ts) — same path the host arrows use.
+import { SYSTEM_REMINDER_MARKER } from '@zelari/core/harness';
 import { buildModelContext, assembleRequestTail } from './modelContextBuilder.js';
 
 const snapshot = {
@@ -204,5 +207,106 @@ describe('modelContextBuilder request-tail assembler (t150)', () => {
       expect(body).toContain('assembleRequestTail(');
       expect(body).not.toContain('resourceStatusTail(');
     }
+  });
+});
+
+describe('modelContextBuilder request-tail system reminder (slice 4)', () => {
+  const pager: AgentMessage[] = [
+    { role: 'system', content: 'WORKING SET\n## Open loops\n- [ ] keep the tail volatile' },
+  ];
+  const NO_ENV: Record<string, string | undefined> = {};
+  const OFF_ENV: Record<string, string | undefined> = { ZELARI_SYSTEM_REMINDER: '0' };
+  const due = (
+    over: Partial<{
+      pendingTodos: readonly string[];
+      turnsSinceLastReminder: number;
+      budgetRemainingPct: number;
+      env: Record<string, string | undefined>;
+    }> = {},
+  ) => ({
+    pendingTodos: ['fix the bug'],
+    turnsSinceLastReminder: 5,
+    env: NO_ENV,
+    ...over,
+  });
+  const reminderTexts = (messages: readonly AgentMessage[]): string[] =>
+    messages
+      .map((m) => (typeof m.content === 'string' ? m.content : ''))
+      .filter((text) => text.includes(SYSTEM_REMINDER_MARKER));
+
+  it('no reminder inputs → today’s tail, one-pager still last', () => {
+    const tail = assembleRequestTail(snapshot, pager);
+    expect(tail.at(-1)!.content.startsWith('WORKING SET')).toBe(true);
+    expect(reminderTexts(tail)).toHaveLength(0);
+  });
+
+  it('cadence 5 + one open todo → reminder is LAST, and history never sees it', async () => {
+    const tail = assembleRequestTail(snapshot, pager, due());
+    expect(reminderTexts(tail)).toHaveLength(1);
+    expect(tail.at(-1)!.content.startsWith(SYSTEM_REMINDER_MARKER)).toBe(true);
+    expect(tail.at(-1)!.content).toContain('fix the bug');
+    expect(tail).toHaveLength(assembleRequestTail(snapshot, pager).length + 1);
+
+    // `buildModelContext` never passes reminder inputs: its frozen tail — and
+    // therefore the occupancy it measured — stays reminder-free, and the
+    // reminder can never reach rolling history.
+    const result = await buildModelContext({
+      fallbackHistory: [{ role: 'user', content: 'fix the bug' }],
+      phase: 'build',
+      resourceSnapshot: snapshot,
+      volatileOnePager: pager,
+    });
+    expect(reminderTexts(result.requestTail)).toHaveLength(0);
+    expect(reminderTexts(result.history)).toHaveLength(0);
+  });
+
+  it('cadence not reached (4 turns) → no marker', () => {
+    const tail = assembleRequestTail(snapshot, pager, due({ turnsSinceLastReminder: 4 }));
+    expect(reminderTexts(tail)).toHaveLength(0);
+    expect(tail.at(-1)!.content.startsWith('WORKING SET')).toBe(true);
+  });
+
+  it('zero open todos → no marker (there is nothing to remind)', () => {
+    const tail = assembleRequestTail(snapshot, pager, due({ pendingTodos: [] }));
+    expect(reminderTexts(tail)).toHaveLength(0);
+  });
+
+  it('kill-switch ZELARI_SYSTEM_REMINDER=0 → null even at cadence with todos', () => {
+    const tail = assembleRequestTail(snapshot, pager, due({ env: OFF_ENV }));
+    expect(reminderTexts(tail)).toHaveLength(0);
+    expect(tail.at(-1)!.content.startsWith('WORKING SET')).toBe(true);
+  });
+
+  it('the budget line appears only below 50% remaining', () => {
+    const high = assembleRequestTail(snapshot, pager, due({ budgetRemainingPct: 60 }));
+    expect(reminderTexts(high)).toHaveLength(1);
+    expect(high.at(-1)!.content).not.toContain('Budget remaining');
+
+    const low = assembleRequestTail(snapshot, pager, due({ budgetRemainingPct: 12 }));
+    expect(reminderTexts(low)).toHaveLength(1);
+    expect(low.at(-1)!.content).toContain('Budget remaining: 12%');
+  });
+
+  it('host arrows: TUI owns the per-turn ref + fresh todos, one-shot stays at 0', () => {
+    const read = (spec: string): string => readFileSync(new URL(spec, import.meta.url), 'utf8');
+    const tui = read('../hooks/useChatTurn.ts');
+    const tuiAt = tui.indexOf('requestTail: () =>');
+    expect(tuiAt).toBeGreaterThan(-1);
+    const tuiArrow = tui.slice(tuiAt, tuiAt + 1_600);
+    expect(tuiArrow).toContain('assembleRequestTail(');
+    // todos are read INSIDE the arrow (send time), never frozen at build time
+    expect(tuiArrow).toContain('listSessionTodos()');
+    expect(tuiArrow).toContain('turnsSinceLastReminder: reminderTurnsRef.current');
+    // built first, reset after: a reset before the build would drop the text
+    expect(tuiArrow.indexOf('reminderTurnsRef.current = 0')).toBeGreaterThan(
+      tuiArrow.indexOf('assembleRequestTail('),
+    );
+
+    const oneShot = read('../headless/runOneTurn.ts');
+    const shotAt = oneShot.indexOf('requestTail: () =>');
+    expect(shotAt).toBeGreaterThan(-1);
+    const shotArrow = oneShot.slice(shotAt, shotAt + 900);
+    expect(shotArrow).toContain('assembleRequestTail(');
+    expect(shotArrow).toContain('turnsSinceLastReminder: 0');
   });
 });

@@ -18,12 +18,14 @@
  *
  * WIRING (deliberately not connected here): the canonical model-context
  * compiler is the CLI budget pipeline (ADR-0032 —
- * `src/cli/budget/modelContextBuilder.ts`, whose `requestTail` is the volatile
- * request-only surface). That seam lives OUTSIDE this package, so the module
- * ships complete + exported and the harness carries a `// TODO(seam)` note at
- * its nearest provider-view seam (`messagesForProvider`). A host that wants
- * the reminder today calls `buildSystemReminder(...)` from its own projection
- * step and appends the returned line to the request tail.
+ * `src/cli/budget/modelContextBuilder.ts`), whose `assembleRequestTail` appends
+ * this text after RESOURCE STATUS + the working-set one-pager on the volatile
+ * `requestTail` (request-only, never persisted). That seam lives OUTSIDE this
+ * package, so the module ships complete + pure and the harness carries a
+ * `// TODO(seam)` note at its nearest provider-view seam
+ * (`messagesForProvider`), which must NOT wire it. The host owns every input:
+ * the open session todos, a per-USER-turn counter, the remaining budget, and
+ * the reset once the tail it just built carried the marker.
  *
  * @since v2.51.0
  */

@@ -9,6 +9,9 @@ import type {
   AgentToolSpec,
   ProviderStreamFn,
 } from '@zelari/core/harness';
+// Public harness subpath: the pure reminder builder rides
+// `@zelari/core/harness` (re-exported by core/AgentHarness.ts).
+import { buildSystemReminder } from '@zelari/core/harness';
 import type {
   CompactionStateSnapshot,
   DerivedMessage,
@@ -51,17 +54,48 @@ export function resourceStatusTail(payload: object | null | undefined): AgentMes
 }
 
 /**
+ * Host-owned reminder inputs (system-reminder slice 4). Every input stays the
+ * host's business — the assembler reads them at send time and holds no state.
+ */
+export interface RequestTailReminderInput {
+  /** `pending` | `in_progress` session todos, `content` only. Empty → no line. */
+  pendingTodos: readonly string[];
+  /** Turns elapsed since the last reminder (host counter, one per user turn). */
+  turnsSinceLastReminder: number;
+  /** Remaining context budget in percent; rendered only below 50. */
+  budgetRemainingPct?: number;
+  /** Explicit env for the kill-switch — tests never mutate `process.env`. */
+  env?: Record<string, string | undefined>;
+}
+
+/**
  * Single assembly point for the volatile request tail: RESOURCE STATUS from the
- * given snapshot, then the working-set one-pager. `buildModelContext` calls it
- * for occupancy; the host `requestTail` arrows call it at send time with a
- * FRESH snapshot, so the model sees the latest status and pager. Never
- * persisted and never part of rolling history.
+ * given snapshot, then the working-set one-pager, then — only when the host
+ * passes the reminder inputs and the PURE builder says it is due — the
+ * `[system-reminder]` line. `buildModelContext` calls it for occupancy without
+ * reminder inputs (the frozen tail must not depend on host counters); the host
+ * `requestTail` arrows call it at send time with a FRESH snapshot, so the model
+ * sees the latest status and pager. Never persisted and never part of rolling
+ * history: the host counts and resets its own ref by reading the tail.
  */
 export function assembleRequestTail(
   snapshot: object | null | undefined,
   onePager?: readonly AgentMessage[],
+  reminder?: RequestTailReminderInput,
 ): AgentMessage[] {
-  return [...resourceStatusTail(snapshot), ...(onePager ?? [])];
+  const tail = [...resourceStatusTail(snapshot), ...(onePager ?? [])];
+  if (!reminder) return tail;
+  const text = buildSystemReminder(
+    {
+      pendingTodos: reminder.pendingTodos,
+      turnsSinceLastReminder: reminder.turnsSinceLastReminder,
+      ...(typeof reminder.budgetRemainingPct === 'number'
+        ? { budgetRemainingPct: reminder.budgetRemainingPct }
+        : {}),
+    },
+    reminder.env,
+  );
+  return text === null ? tail : [...tail, { role: 'system', content: text }];
 }
 
 function isLegacyResourceStatus(message: AgentMessage): boolean {
