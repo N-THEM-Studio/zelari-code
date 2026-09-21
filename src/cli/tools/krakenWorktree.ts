@@ -287,7 +287,11 @@ const LONG_PATH_THRESHOLD = 240;
 /** `\\?\`-prefixed (or `\\?\UNC\…`) absolute path. No-op off win32. */
 export function toLongPath(target: string, platform: NodeJS.Platform = process.platform): string {
   if (platform !== 'win32') return target;
-  const abs = path.resolve(target);
+  // win32 semantics regardless of the HOST: the caller declared a win32 path, and the
+  // `\\?\` form only makes sense there. Host path.resolve would mangle win32 paths on
+  // posix hosts (e.g. 'C:\a\b' resolved as a relative posix path) — krakenWorktreeDefault
+  // asserts this cross-platform (CI runs linux).
+  const abs = path.win32.resolve(target);
   if (abs.startsWith('\\\\?\\')) return abs;
   if (abs.startsWith('\\\\')) return `\\\\?\\UNC\\${abs.slice(2)}`;
   return `\\\\?\\${abs}`;
