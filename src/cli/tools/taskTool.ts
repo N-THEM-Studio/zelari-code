@@ -163,6 +163,22 @@ export const TASK_TOOL_TIMEOUT_MS = 2_700_000;
  * The tool schema still advertises the union (read/network/write/execute)
  * so the model can pick any kind — but spawning an explore tentacle is
  * read-only research and must not pop execute+network approval cards.
+ *
+ * t160 (P3) — why `verify` keeps `network`. The auto-spawned verify runs with
+ * `cwdOverride` = the general's worktree whenever that tree is still on disk
+ * (`inheritedCwd` below), and that tree comes from `git worktree add`: tracked
+ * files only — a fresh checkout carries no `node_modules` and no build output
+ * until something installs them INSIDE that tree. Its acceptance
+ * commands (`npm test`, `npx vitest`, `tsc`) can therefore need to resolve
+ * dependencies from the registry, and a cited doc has to be fetched. Removing
+ * `network` would NOT make the verify safer or less blind — blindness here is
+ * about EVIDENCE (never trusting the writer's summary; a pass needs output the
+ * verify produced itself), not about being offline: an offline verify just
+ * fails its acceptance command with an environment error that reads like a
+ * product failure, i.e. a false FAIL or an `unknown` that burns a rework
+ * round. The grant stays bounded — `verify` has no `write`, so it can still
+ * not mutate the tree. Research + rationale:
+ * .zelari/docs/2026-09-21-ricerca-tentacoli-ottimizzazione.md (P3).
  */
 export function permissionsForTaskAgent(
   agent: TaskAgentKind | undefined,

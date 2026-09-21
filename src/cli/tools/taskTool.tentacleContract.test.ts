@@ -14,6 +14,11 @@
  *     after turn is stopped by the loop guard, and the PARENT sees that stop
  *     (`task` tool result) instead of a silent budget exhaustion; repeated
  *     tool calls with distinct prose stay legitimate.
+ *   - t160 (P3): every kind prompt opens with an ENVIRONMENT line advertising
+ *     the sandbox it really gets (explore read-only, general worktree +
+ *     parent squash-merge, verify network only as tooling). These assertions
+ *     pin the advertise to the REAL permission map so text and runtime cannot
+ *     drift apart.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
@@ -24,6 +29,7 @@ import { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import { parseVerifyVerdict } from '@zelari/core';
 import {
   buildTaskAutoVerifyPrompt,
+  permissionsForTaskAgent,
   resetTaskVerifyObligation,
   runAutoVerifyAfterGeneral,
   runTentacle,
@@ -79,6 +85,65 @@ describe('t153 — taskPrompts module (P1a)', () => {
     expect(EXPLORE_PROMPT).toContain('OBSERVATION INTEGRITY');
     expect(VERIFY_PROMPT).toContain('<verify-report>');
     expect(VERIFY_PROMPT).toContain('status: pass | fail | unknown');
+  });
+});
+
+describe('t160 — per-kind ENVIRONMENT advertise (P3)', () => {
+  it('every kind declares the sandbox it actually gets', () => {
+    for (const p of [EXPLORE_PROMPT, GENERAL_PROMPT, VERIFY_PROMPT]) {
+      expect(p).toContain('ENVIRONMENT');
+    }
+    // One line per kind, mirroring the toolRegistry profile split:
+    // explore = observe only, verify = observe + bash, general = + mutators.
+    expect(EXPLORE_PROMPT).toContain('ENVIRONMENT (read-only)');
+    expect(VERIFY_PROMPT).toContain('ENVIRONMENT: read + shell + network');
+    expect(GENERAL_PROMPT).toContain('ENVIRONMENT: write + shell + network');
+  });
+
+  it('explore advertises no write/shell and no illusion of running the checks', () => {
+    expect(EXPLORE_PROMPT).toContain('you have no write and no shell');
+    expect(EXPLORE_PROMPT).toContain('install packages or run tests');
+    // Negative advertise: explore can neither commit nor verify by executing —
+    // it has no write and no bash tool (toolRegistry profile 'explore').
+    expect(EXPLORE_PROMPT).not.toContain('commit');
+    expect(EXPLORE_PROMPT).not.toContain('squash-merge');
+  });
+
+  it('general advertises the worktree branch + parent squash-merge contract', () => {
+    expect(GENERAL_PROMPT).toContain('isolated git worktree');
+    expect(GENERAL_PROMPT).toContain('own branch');
+    expect(GENERAL_PROMPT).toContain('squash-merges');
+    // The old bare worktree fence survives inside the advertise.
+    expect(GENERAL_PROMPT).toContain('edit only inside that tree');
+  });
+
+  it('verify advertises network as a MEANS for tooling, never as a source', () => {
+    expect(VERIFY_PROMPT).toContain('The network is a MEANS');
+    expect(VERIFY_PROMPT).toContain('npm install/test');
+    expect(VERIFY_PROMPT).toContain('never as evidence');
+    // The ask did NOT weaken the blind, evidence-first contract.
+    expect(VERIFY_PROMPT).toContain('You are BLIND');
+    expect(VERIFY_PROMPT).toContain('a pass needs evidence YOU produced this run.');
+  });
+
+  it('the advertise agrees with the REAL permission map (drift guard)', () => {
+    // t160 rationale (taskTool.permissionsForTaskAgent): the verify KEEPS
+    // `network` because the auto-spawned verify may run inside the general's
+    // `git worktree add` checkout (no node_modules) and must be able to run
+    // its own acceptance commands. Blindness is about evidence, not offline.
+    expect(permissionsForTaskAgent('verify')).toContain('network');
+    expect(permissionsForTaskAgent('verify')).not.toContain('write');
+    expect(VERIFY_PROMPT).toContain('never write');
+    // general: full union, and the prompt advertises all three capabilities.
+    expect(permissionsForTaskAgent('general')).toEqual([
+      'read',
+      'write',
+      'execute',
+      'network',
+    ]);
+    // explore: read only — the spawn pops no execute/network approval card.
+    expect(permissionsForTaskAgent('explore')).toEqual(['read']);
+    expect(EXPLORE_PROMPT).toContain('read-only');
   });
 });
 
