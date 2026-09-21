@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   buildSeedManifest,
   checkSeedPrereqs,
@@ -114,7 +115,10 @@ describe('parseSeedArgs', () => {
 });
 
 describe('checkSeedPrereqs', () => {
-  const cwd = path.resolve('.');
+  // Repo root from THIS file: on CI the suite runs with cwd = packages/core
+  // (`npm test --workspace=@zelari/core`), and the default CLI entry
+  // (bin/zelari-code.js) only resolves from the repo root.
+  const cwd = fileURLToPath(new URL('../../', import.meta.url));
 
   it('fails with an explicit reason when no provider credential is present', () => {
     const p = checkSeedPrereqs({ env: {}, cwd, gitSha: 'a'.repeat(40) });

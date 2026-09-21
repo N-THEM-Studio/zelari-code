@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { OBSERVER_HOOK_EVENTS } from '@zelari/core/harness';
 import {
   BUNDLE_FORMAT_VERSION,
@@ -28,7 +29,13 @@ import {
   setBundleEnabled,
 } from '../../src/cli/plugins/bundleState.js';
 
-const EXAMPLE = path.join(process.cwd(), 'examples', 'extensions', 'zelari-plugin-example');
+// Repo root from THIS file (see cli-plugin-command.test.ts): cwd-independent.
+const EXAMPLE = path.join(
+  fileURLToPath(new URL('../../', import.meta.url)),
+  'examples',
+  'extensions',
+  'zelari-plugin-example',
+);
 
 let root = '';
 

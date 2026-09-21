@@ -12,6 +12,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   defaultBundleRoots,
   discoverBundles,
@@ -22,7 +23,15 @@ import {
 import { readBundleState } from '../../src/cli/plugins/bundleState.js';
 import { BUNDLE_MANIFEST_FILE } from '../../src/cli/plugins/bundleManifest.js';
 
-const EXAMPLE = path.join(process.cwd(), 'examples', 'extensions', 'zelari-plugin-example');
+// Repo root resolved from THIS file, never from process.cwd(): on CI the suite
+// runs via `npm test --workspace=@zelari/core` (cwd = packages/core), and the
+// shipped example bundle lives at the repo root.
+const EXAMPLE = path.join(
+  fileURLToPath(new URL('../../', import.meta.url)),
+  'examples',
+  'extensions',
+  'zelari-plugin-example',
+);
 const EXAMPLE_NAME = 'zelari-plugin-example';
 
 let project = '';
