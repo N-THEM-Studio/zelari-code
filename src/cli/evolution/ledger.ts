@@ -24,6 +24,128 @@ export type EvolutionMode = '0' | 'shadow';
 /** Ledger location, relative to the project root (project-scoped by design). */
 export const LEDGER_REL = path.join('.zelari', 'evolution', 'ledger.jsonl');
 
+/** Findings ledger location (S1) — instance-level failure findings, append-only. */
+export const FINDINGS_REL = path.join('.zelari', 'evolution', 'findings.jsonl');
+
+/**
+ * S1 — every project-scoped evolution artifact, relative to the root. Kept in
+ * one place so runners (tools/eval) and the CLI agree on disk layout. Adding a
+ * path here is additive; existing paths never move (append-only culture).
+ */
+export const EVOLUTION_PATHS = {
+  /** Outcome ledger (ADR-0036) — one JSON object per run. */
+  ledger: LEDGER_REL,
+  /** Instance-level findings ledger — the input to the pattern ledger (S1). */
+  findings: FINDINGS_REL,
+  /** Proposals store — owned by tools/eval evolvePropose (read-only here). */
+  proposals: path.join('.zelari', 'evolution', 'proposals.jsonl'),
+  /** Failure-pattern clusters — derived, append-only (S1). */
+  patternLedger: path.join('.zelari', 'evolution', 'pattern-ledger.jsonl'),
+} as const;
+
+/**
+ * S1 — one instance-level failure finding.
+ *
+ * A Finding is a *record of one mechanism fired in one task* (telemetry), NOT a
+ * proposal (the proposer lives in tools/eval, P1). `taskKey` is the
+ * instance-origin key (mission task id / hash(task text) / session id) used by
+ * the pattern ledger to distinguish "same mechanism across DISTINCT tasks" from
+ * "one task retried N times". It is instance data, NOT identity: it is
+ * deliberately EXCLUDED from the fingerprint so the same mechanism still
+ * merges.
+ */
+export interface Finding {
+  /** Finding kind (e.g. a spine-evidence kind, or a harness lifecycle kind). */
+  kind: string;
+  /** Harness operator the finding would revise, when known. */
+  operator?: string;
+  /** Surface the finding applies to, e.g. 'tool:read_file'. */
+  surface?: string;
+  /** Primary signal key. */
+  signal?: string;
+  /** Occurrence count (default 1). */
+  count?: number;
+  /** Session ids the evidence came from. */
+  sessions?: string[];
+  /** Instance-origin key — mission task id / hash(task text) / session id. */
+  taskKey?: string;
+  /** Task class (classifyTask) — a DIMENSION, never the cluster key. */
+  taskClass?: string;
+  /** ISO timestamp of the first observation. */
+  firstAt?: string;
+  /** ISO timestamp of the last observation. */
+  lastAt?: string;
+  /** Structured evidence (toolName / errorClass / termination / …). */
+  evidence?: Record<string, unknown>;
+}
+
+/**
+ * Stable fingerprint of a finding's KIND — identity, not instance. taskKey,
+ * count and timestamps are excluded so the same mechanism merges as evidence
+ * accumulates (mirrors the proposal fingerprint contract).
+ */
+export function findingFingerprint(f: Finding): string {
+  return [f.kind || 'unknown', f.operator || '-', f.surface || '-', f.signal || '-'].join('|');
+}
+
+export function findingsPath(cwd: string): string {
+  return path.join(cwd, FINDINGS_REL);
+}
+
+/**
+ * Append instance findings. No-op (not an error) when evolution is off — same
+ * gate as the outcome ledger (default-off, ADR-0036). Never throws: fs failures
+ * come back as `{ written: false, reason }` (fail-open telemetry).
+ */
+export function appendFindings(cwd: string, findings: readonly Finding[]): AppendResult {
+  if (evolutionMode() === '0') {
+    return { written: false, reason: `${EVOLUTION_ENV} != shadow — findings write skipped` };
+  }
+  if (findings.length === 0) {
+    return { written: false, reason: 'no findings' };
+  }
+  try {
+    const file = findingsPath(cwd);
+    mkdirSync(path.dirname(file), { recursive: true });
+    appendFileSync(file, `${findings.map((f) => JSON.stringify(f)).join('\n')}\n`, 'utf8');
+    return { written: true, path: file };
+  } catch (err) {
+    return {
+      written: false,
+      reason: `findings append failed (fail-open): ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/**
+ * Tolerant replay for the findings ledger: parse every line, skip corrupt ones
+ * silently, require a string `kind` (the one mandatory field). Never throws.
+ */
+export function readFindings(cwd: string): Finding[] {
+  const file = findingsPath(cwd);
+  if (!existsSync(file)) return [];
+  let raw: string;
+  try {
+    raw = readFileSync(file, 'utf8');
+  } catch {
+    return [];
+  }
+  const out: Finding[] = [];
+  for (const line of raw.split('\n')) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    try {
+      const parsed = JSON.parse(trimmed) as Finding;
+      if (parsed && typeof parsed === 'object' && typeof parsed.kind === 'string') {
+        out.push(parsed);
+      }
+    } catch {
+      // corrupt line — skip (tolerant replay)
+    }
+  }
+  return out;
+}
+
 export type LedgerVerdict = 'PASS' | 'FAIL' | 'HOLD' | 'UNKNOWN';
 
 export interface LedgerEntry {

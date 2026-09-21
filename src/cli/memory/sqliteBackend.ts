@@ -44,11 +44,11 @@ import {
 
 const NODE_COLUMNS = `
   id, schema_version, project_id, kind, content, importance, confidence,
-  status, visibility, tags_json, source_json, created_at, updated_at, valid_from,
+  status, visibility, tags_json, relevant_when_json, source_json, created_at, updated_at, valid_from,
   valid_until, recorded_at, retracted_at, embedding_ref, metadata_json`;
 
 const INSERT_NODE_SQL = `INSERT INTO memory_nodes (${NODE_COLUMNS})
-VALUES (${Array.from({ length: 19 }, () => '?').join(',')})`;
+VALUES (${Array.from({ length: 20 }, () => '?').join(',')})`;
 
 /** Legacy-import ids per `IN` query: 500 placeholders per RPC, well under SQLite limits. */
 const IMPORT_ID_CHUNK = 500;
@@ -175,6 +175,7 @@ export class SQLiteMemoryBackend implements CognitiveMemoryBackend {
       status: input.status ?? 'active',
       visibility: input.visibility ?? 'project',
       tags: input.tags ?? [],
+      relevantWhen: input.relevantWhen ?? [],
       source: input.source ?? {},
       createdAt,
       updatedAt: now,
@@ -220,6 +221,7 @@ export class SQLiteMemoryBackend implements CognitiveMemoryBackend {
       ...(patch.status ? { status: patch.status } : {}),
       ...(patch.visibility ? { visibility: patch.visibility } : {}),
       ...(patch.tags ? { tags: patch.tags } : {}),
+      ...(patch.relevantWhen ? { relevantWhen: patch.relevantWhen } : {}),
       ...(patch.source ? { source: patch.source } : {}),
       ...(patch.metadata ? { metadata: patch.metadata } : {}),
       updatedAt: now,
@@ -239,7 +241,7 @@ export class SQLiteMemoryBackend implements CognitiveMemoryBackend {
       {
         sql: `UPDATE memory_nodes SET
           schema_version=?, project_id=?, kind=?, content=?, importance=?, confidence=?,
-          status=?, visibility=?, tags_json=?, source_json=?, created_at=?, updated_at=?, valid_from=?,
+          status=?, visibility=?, tags_json=?, relevant_when_json=?, source_json=?, created_at=?, updated_at=?, valid_from=?,
           valid_until=?, recorded_at=?, retracted_at=?, embedding_ref=?, metadata_json=?
           WHERE id=?`,
         params: [...nodeSqlValues(updated).slice(1), updated.id],
@@ -272,6 +274,42 @@ export class SQLiteMemoryBackend implements CognitiveMemoryBackend {
       this.fts = false;
       return this.searchCurrent(query, text, expression, false);
     }
+  }
+
+  /**
+   * T-Mem lite: retrieve nodes whose `relevantWhen` triggers overlap the query
+   * tokens. Runs as a separate query so the lexical similarity prefilter in
+   * `search` can never drop an associative hit. `json_each('[]')` yields zero
+   * rows, so empty/legacy triggers are harmless.
+   */
+  async searchRelevantWhen(query: MemoryQuery): Promise<MemoryCandidate[]> {
+    this.assertReady();
+    const text = query.text?.trim() ?? '';
+    if (!text) return [];
+    const tokens = [
+      ...new Set(text.toLocaleLowerCase().match(/[\p{L}\p{N}_-]{3,}/gu) ?? []),
+    ].slice(0, 24);
+    if (tokens.length === 0) return [];
+    const params: SqlValue[] = [];
+    const where: string[] = [];
+    const clauses = tokens.map(() =>
+      `EXISTS (SELECT 1 FROM json_each(n.relevant_when_json) je ` +
+      `WHERE instr(' ' || lower(je.value) || ' ', ' ' || ? || ' ') > 0)`,
+    );
+    where.push(`(${clauses.join(' OR ')})`);
+    params.push(...tokens);
+    this.addFilters(query, where, params, 'n');
+    params.push(boundedLimit(query.limit));
+    const rows = await this.rpc.statement<SqlRow[]>({
+      sql: `SELECT n.* FROM memory_nodes n WHERE ${where.join(' AND ')} ` +
+        `ORDER BY n.importance DESC, n.updated_at DESC LIMIT ?`,
+      params,
+      mode: 'all',
+    });
+    return rows
+      .map(decodeNode)
+      .filter((node): node is MemoryNode => Boolean(node))
+      .map((node) => ({ node, lexicalRelevance: 1, triggerMatch: 1 }));
   }
 
   private async searchCurrent(

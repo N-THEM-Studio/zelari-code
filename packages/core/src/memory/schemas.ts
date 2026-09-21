@@ -16,6 +16,8 @@ const metadata = z.record(z.string(), z.unknown()).refine((value) => {
     return false;
   }
 }, 'Memory metadata must be JSON-serializable and no larger than 128 KB.');
+/** Bounded associative triggers: max 8 short phrases, each ≤ 120 chars. */
+const relevantWhen = z.array(z.string().min(1).max(120)).max(8).optional();
 
 export const MemoryKindSchema = z.enum(MEMORY_KINDS);
 export const MemoryStatusSchema = z.enum(MEMORY_STATUSES);
@@ -53,6 +55,7 @@ export const MemoryNodeInputSchema = z
     status: MemoryStatusSchema.optional(),
     visibility: MemoryVisibilitySchema.optional(),
     tags: z.array(z.string().min(1).max(120)).max(64).optional(),
+    relevantWhen,
     source: MemorySourceSchema.optional(),
     createdAt: isoDate.optional(),
     recordedAt: isoDate.optional(),

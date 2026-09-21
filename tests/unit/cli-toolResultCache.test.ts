@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 import { typedOk, type ToolContext, type ToolDefinition } from '@zelari/core/harness/tools/toolTypes';
+import { compactToolResult } from '@zelari/core/harness/tools/registry';
 import {
   withResultCache,
   resetToolResultCache,
@@ -163,5 +164,32 @@ describe('withResultCache', () => {
     now = 1_060;
     await wrapped.execute({ path: 'd' }, ctx(tmp));
     expect(calls.n).toBe(2);
+  });
+
+  it('caches the compacted form (spill:false) — a hit is byte-identical to compactToolResult', async () => {
+    const big = Array.from({ length: 500 }, (_, i) => `line ${i}`).join('\n');
+    const calls = { n: 0 };
+    const tool: ToolDefinition<{ path: string }, { content: string }> = {
+      name: 'read_file',
+      description: 'bigread',
+      permissions: ['read'],
+      inputSchema: z.object({ path: z.string() }),
+      execute: async () => {
+        calls.n += 1;
+        return typedOk({ content: big });
+      },
+    };
+    const wrapped = withResultCache(tool, { kind: 'ttl' });
+    const expected = compactToolResult(
+      { ok: true as const, value: { content: big } },
+      { toolName: 'read_file', spill: false },
+    );
+    const first = await wrapped.execute({ path: 'p' }, ctx(tmp));
+    expect(first).toEqual(expected);
+    if (first.ok) expect((first.value as { content: string }).content).toMatch(/lines omitted/);
+    // Second call is a cache hit — identical, no second execute.
+    const second = await wrapped.execute({ path: 'p' }, ctx(tmp));
+    expect(second).toEqual(first);
+    expect(calls.n).toBe(1);
   });
 });

@@ -100,16 +100,15 @@ describe('buildProposals — closed mapping', () => {
     expect(proposals[0].requiredValidation).toEqual(['npm run typecheck', 'npm run test:eval', 'npm run test']);
   });
 
-  it('skill-low-success → revise_skill on skill:<skillId>', () => {
+  it('skill-low-success → model-accommodation: needs_human_review (S1), never revise_skill', () => {
     const { proposals } = buildProposals([finding({ id: 'skill-low-success:write-readme', kind: 'skill-low-success', count: 5 })], []);
     expect(proposals).toHaveLength(1);
-    expect(proposals[0].operator).toBe('revise_skill');
+    // S1: a prompt/skill tweak is model-accommodation, not a harness repair.
+    expect(proposals[0].operator).toBe('needs_human_review');
     expect(proposals[0].surface).toBe('skill:write-readme');
-    expect(proposals[0].fingerprint).toBe('revise_skill|skill:write-readme|write-readme');
-    expect(proposals[0].patchHint).toBe(
-      "Inspect this skill's instructions/template; 5 recorded failure(s). Revise the prompt/template, then re-measure through usage.",
-    );
-    expect(proposals[0].requiredValidation).toEqual(['npm run test:eval']);
+    expect(proposals[0].fingerprint).toBe('needs_human_review|skill:write-readme|write-readme');
+    expect(proposals[0].operator.startsWith('revise_')).toBe(false);
+    expect(proposals[0].requiredValidation).toEqual([]);
   });
 
   it('verification-unknown → needs_human_review, requiredValidation []', () => {
@@ -237,9 +236,9 @@ describe('determinism and ordering', () => {
   it('order rule: skill before tool before policy before review; then count desc, surface asc, primarySignal asc', () => {
     const { proposals } = buildProposals(fixedFindings(), []);
     expect(proposals.map((p) => p.fingerprint)).toEqual([
-      // revise_skill (priority 0): count tie → surface asc
-      'revise_skill|skill:aaa|aaa',
-      'revise_skill|skill:bbb|bbb',
+      // revise_skill group (priority 0) is FORCED to needs_human_review (S1 accommodation)
+      'needs_human_review|skill:aaa|aaa',
+      'needs_human_review|skill:bbb|bbb',
       // revise_tool_description (priority 1): count 9 tie → surface asc
       'revise_tool_description|tool:ashop|ashop',
       'revise_tool_description|tool:zshop|zshop',
@@ -310,7 +309,7 @@ describe('appendProposals', () => {
     expect(records.map((r) => r.id)).toEqual(['p-0001', 'p-0002']);
     expect(records.map((r) => r.createdAt)).toEqual([FIXED_NOW(), FIXED_NOW()]);
     expect(records.every((r) => r.status === 'proposed')).toBe(true);
-    expect(records[0].fingerprint).toBe('revise_skill|skill:write-readme|write-readme');
+    expect(records[0].fingerprint).toBe('needs_human_review|skill:write-readme|write-readme');
   });
 
   it('second append continues the existing store sequence (p-0003)', () => {
@@ -330,5 +329,58 @@ describe('appendProposals', () => {
     const result = appendProposals(store, [], { now: FIXED_NOW });
     expect(result).toEqual({ written: 0, path: store });
     expect(existsSync(store)).toBe(false);
+  });
+});
+
+describe('buildProposals — S1 manifest-repetition gate', () => {
+  it('does NOT emit when distinctTasks < minDistinctTasks even if minCount is met', () => {
+    const { proposals } = buildProposals(
+      [
+        finding({ id: 'tool-misuse:read_file', kind: 'tool-misuse', count: 9, sessions: ['s1'], taskKey: 't1' }),
+        finding({ id: 'tool-misuse:read_file', kind: 'tool-misuse', count: 9, sessions: ['s2'], taskKey: 't1' }),
+      ],
+      [],
+    );
+    expect(proposals).toHaveLength(0); // 18 events, but one task == no proposal
+  });
+
+  it('emits when the same mechanism spans ≥2 distinct taskKeys', () => {
+    const { proposals } = buildProposals(
+      [
+        finding({ id: 'tool-misuse:read_file', kind: 'tool-misuse', count: 9, sessions: ['s1'], taskKey: 't1' }),
+        finding({ id: 'tool-misuse:read_file', kind: 'tool-misuse', count: 9, sessions: ['s2'], taskKey: 't2' }),
+      ],
+      [],
+    );
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].operator).toBe('revise_tool_description');
+  });
+
+  it('legacy findings WITHOUT any taskKey are grandfathered (offline spine pipeline)', () => {
+    const { proposals } = buildProposals(
+      [finding({ id: 'tool-misuse:bash', kind: 'tool-misuse', count: 4, sessions: ['s1'] })],
+      [],
+    );
+    expect(proposals).toHaveLength(1);
+  });
+
+  it('honors an explicit minDistinctTasks option', () => {
+    const findings = [
+      finding({ id: 'tool-misuse:read_file', kind: 'tool-misuse', count: 9, sessions: ['s1'], taskKey: 't1' }),
+      finding({ id: 'tool-misuse:read_file', kind: 'tool-misuse', count: 9, sessions: ['s2'], taskKey: 't2' }),
+    ];
+    expect(buildProposals(findings, [], { minDistinctTasks: 1 }).proposals).toHaveLength(1);
+    expect(buildProposals(findings, [], { minDistinctTasks: 3 }).proposals).toHaveLength(0);
+  });
+
+  it('accommodation group is needs_human_review with no validation, never revise_*', () => {
+    const { proposals } = buildProposals(
+      [finding({ id: 'skill-low-success:write-readme', kind: 'skill-low-success', count: 5, sessions: ['s1'] })],
+      [],
+    );
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0].operator).toBe('needs_human_review');
+    expect(proposals[0].operator.startsWith('revise_')).toBe(false);
+    expect(proposals[0].requiredValidation).toEqual([]);
   });
 });

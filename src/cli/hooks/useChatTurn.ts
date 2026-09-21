@@ -40,6 +40,7 @@ import {
 import { writeCompletionProof } from "../kraken/completionProof.js";
 import { promoteOpsKnowledgeSafe, skippedOpsKnowledgeResult } from "../memory/opsKnowledge.js";
 import { formatCheckProposalNotice } from "../memory/repeatCheck.js";
+import { buildOnePager } from "../memory/onePager.js";
 import { formatStrictBlockExplanation, recordStrictGateEvaluation } from "../kraken/verifyStatus.js";
 import { nativePackEnabled } from "../kraken/nativeVerification.js";
 import type { SpineMirroringWriter } from "../sessionSpine.js";
@@ -508,10 +509,18 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // exactly what the model is about to see.
         const requestSnapshot = getRequestSnapshotWithUsage(sessionId);
         await writerRef.current?.spine?.beginResourceTurn();
+        // S4: volatile working set — one build per turn (no compact recap live;
+        // the budget already lands compactSummary in history on compaction).
+        const onePager = await buildOnePager({
+          cwd,
+          memory: memoryService ?? null,
+          skipCompactRecap: true,
+        });
         const modelContext = await buildModelContext({
           fallbackHistory: historyForModel,
           session: writerRef.current?.spine ?? null,
           resourceSnapshot: writerRef.current?.spine?.latestResourceSnapshot() ?? null,
+          volatileOnePager: onePager,
           phase: workPhase,
           model: getActiveModel(),
           provider: envConfig?.providerId ?? (localCli || 'local'),
@@ -867,10 +876,12 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
             ),
             maxRecoveries: 2,
           },
-          requestTail: () =>
-            resourceStatusTail(
+          requestTail: () => [
+            ...resourceStatusTail(
               writerRef.current?.spine?.latestResourceSnapshot() ?? null,
             ),
+            ...onePager,
+          ],
           // 2.6 Phase 3: host-owned pre-dispatch resource gate via the spine
           // mirror (doc section 11.3). Degrade-and-stop (null gate = allow).
           // 2.6.1 (plan §13): argument-aware — bash is essential only when
@@ -1675,9 +1686,17 @@ async function dispatchCouncilPromptImpl(
   const anchored = maybeAnchorShortAnswer(text);
   const effectiveText = anchored ?? text;
   await writerRef.current?.spine?.beginResourceTurn();
+  // S4: volatile working set (todos + how-we-test index). Memory is not yet
+  // resolved on this branch, so the procedure section is omitted.
+  const onePager = await buildOnePager({
+    cwd: process.cwd(),
+    memory: null,
+    skipCompactRecap: true,
+  });
   const councilContext = await buildModelContext({
     fallbackHistory: getHistory(),
     session: writerRef.current?.spine ?? null,
+    volatileOnePager: onePager,
     phase: getPhase(),
     model: envConfig.model,
     provider: envConfig.providerId,

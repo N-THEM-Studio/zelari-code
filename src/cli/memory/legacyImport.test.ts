@@ -147,6 +147,16 @@ describe('legacy JSONL import', () => {
     await service.close();
   });
 
+  it('still recalls imported legacy rows by content', async () => {
+    const root = await project();
+    await writeLog(root, [legacyLine('recall-1', 'Legacy decision remembered by content.')]);
+    const { backend, service } = await openMemory(root);
+    await importLegacyMemoryLog(backend, service);
+    const hits = await service.recall({ text: 'legacy decision content', limit: 5 });
+    expect(hits.some((hit) => hit.node.content.includes('remembered by content'))).toBe(true);
+    await service.close();
+  });
+
   it('leaves no marker when the legacy log is absent', async () => {
     const root = await project();
     const { backend, service } = await openMemory(root);

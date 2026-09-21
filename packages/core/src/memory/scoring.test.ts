@@ -52,6 +52,22 @@ describe('memory scoring and context', () => {
     expect(result.score).toBe(0.25);
   });
 
+  it('lets an associative trigger match outrank a weak lexical match', () => {
+    const now = Date.parse('2026-08-23T12:00:00.000Z');
+    const weak = scoreMemoryCandidate(
+      { node: node({ id: 'weak', content: 'Unrelated note.' }), lexicalRelevance: 0.1 },
+      'sqlite lock timeout',
+      { now },
+    );
+    const triggered = scoreMemoryCandidate(
+      { node: node({ id: 'triggered', content: 'Unrelated note.' }), triggerMatch: 1 },
+      'sqlite lock timeout',
+      { now },
+    );
+    expect(triggered.signals.triggerMatch).toBe(1);
+    expect(triggered.score).toBeGreaterThan(weak.score);
+  });
+
   it('rejects arbitrary relation names', () => {
     expect(MemoryEdgeInputSchema.safeParse({
       from: 'mem_a', to: 'mem_b', relation: 'discovered_in',
@@ -65,6 +81,7 @@ describe('memory scoring and context', () => {
       signals: {
         semanticRelevance: 0, lexicalRelevance: 1, importance: 0.9,
         confidence: 0.8, recency: 1, graphProximity: 0, verificationBonus: 1,
+        triggerMatch: 0,
       },
     }));
     const context = formatMemoryContext(ranked, { maxChars: 420, maxMemories: 8 });

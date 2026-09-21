@@ -14,6 +14,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import {
   appendLedgerEntry,
+  EVOLUTION_PATHS,
   evolutionMode,
   type LedgerEntry,
   LEDGER_REL,
@@ -31,6 +32,16 @@ import {
   proposalSummary,
   readProposalStore,
 } from './proposals.js';
+import {
+  categorizeCluster,
+  clusterFailures,
+  clusterKeyFor,
+  makeTaskKey,
+  PATTERN_LEDGER_REL,
+  appendClusters,
+  readClusters,
+  type ClusterFinding,
+} from './patternLedger.js';
 
 const savedEvo = process.env.ZELARI_EVOLUTION;
 
@@ -247,5 +258,94 @@ describe('spine evidence (t44 — tool.call/tool.result → tool-output)', () =>
     expect(refs).toHaveLength(MAX_EVIDENCE_REFS);
     // flat payload: tool sits on the record itself
     expect(refs[0]).toMatchObject({ tier: 'tool-output', ref: 'read_file' });
+  });
+});
+
+describe('patternLedger (S1 — failure-pattern clustering)', () => {
+  const clusterFinding = (over: Partial<ClusterFinding>): ClusterFinding => ({
+    kind: 'tool-misuse',
+    evidence: { toolName: 'read_file', errorClass: 'enoent', termination: 'failed' },
+    sessions: ['s1'],
+    count: 1,
+    ...over,
+  });
+
+  it('two distinct taskKeys, same mechanism → one cluster (distinctTasks 2, count summed)', () => {
+    const { clusters, unmapped } = clusterFailures([
+      clusterFinding({ taskKey: 't1' }),
+      clusterFinding({ taskKey: 't2' }),
+    ]);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].id).toBe('c-0001');
+    expect(clusters[0].distinctTasks).toBe(2);
+    expect(clusters[0].count).toBe(2);
+    expect(clusters[0].taskKeys).toEqual(['t1', 't2']);
+    expect(clusters[0].category).toBe('harness-repair');
+    expect(unmapped).toBe(0);
+  });
+
+  it('10 sessions, 1 taskKey → 0 clusters; findings counted as unmapped (no throw)', () => {
+    const findings = Array.from({ length: 10 }, (_, i) => clusterFinding({ taskKey: 't1', sessions: [`s${i}`] }));
+    const { clusters, unmapped } = clusterFailures(findings);
+    expect(clusters).toHaveLength(0);
+    expect(unmapped).toBe(10);
+  });
+
+  it('same taskClass but different taskKeys → one cluster (taskClass is NOT the key)', () => {
+    const { clusters } = clusterFailures([
+      clusterFinding({ taskKey: 't1', taskClass: 'bugfix' }),
+      clusterFinding({ taskKey: 't2', taskClass: 'bugfix' }),
+    ]);
+    expect(clusters).toHaveLength(1);
+    expect(clusters[0].taskClasses).toEqual(['bugfix']);
+  });
+
+  it('empty findings → { clusters: [], unmapped: 0 }, no throw', () => {
+    expect(clusterFailures([])).toEqual({ clusters: [], unmapped: 0 });
+  });
+
+  it('makeTaskKey: missionTaskId wins; else hash of normalized text; else sessionId', () => {
+    expect(makeTaskKey({ missionTaskId: 'T-9', taskText: 'x', sessionId: 's1' })).toBe('T-9');
+    const a = makeTaskKey({ taskText: '  Fix  THE   parser ', sessionId: 's1' });
+    const b = makeTaskKey({ taskText: 'fix the parser', sessionId: 's2' });
+    expect(a).toBe(b);
+    expect(a).toHaveLength(12);
+    expect(makeTaskKey({ taskText: '   ', sessionId: 'sess-7' })).toBe('sess-7');
+  });
+
+  it('categorizeCluster: compaction-pressure is harness-repair; skill is accommodation', () => {
+    expect(categorizeCluster({ kind: 'compaction-pressure', operator: 'revise_context_policy' })).toBe('harness-repair');
+    expect(categorizeCluster({ kind: 'skill-low-success', operator: 'revise_skill', patchHint: 'skill:write-readme' })).toBe('model-accommodation');
+  });
+
+  it('clusterKeyFor is stable for the 8 closed spine-evidence kinds', () => {
+    const kinds = [
+      'tool-misuse', 'repeated-tool-error', 'resource-pressure', 'compaction-pressure',
+      'verification-failures', 'verification-unknown', 'graph-node-failures', 'tool-interrupted',
+    ];
+    for (const kind of kinds) {
+      expect(clusterKeyFor({ kind })).toBe(`unknown|unknown|${kind}`);
+    }
+  });
+
+  it('EVOLUTION_PATHS.patternLedger stays in sync with PATTERN_LEDGER_REL', () => {
+    expect(EVOLUTION_PATHS.patternLedger).toBe(PATTERN_LEDGER_REL);
+  });
+
+  it('appendClusters → readClusters roundtrip; corrupt lines skipped', async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), 'zelari-pattern-'));
+    try {
+      const { clusters } = clusterFailures([
+        clusterFinding({ taskKey: 't1' }),
+        clusterFinding({ taskKey: 't2' }),
+      ]);
+      await appendClusters(clusters, dir);
+      expect(await readClusters(dir)).toEqual(clusters);
+      const file = path.join(dir, PATTERN_LEDGER_REL);
+      writeFileSync(file, `${readFileSync(file, 'utf8')}CORRUPT{{{\n`, 'utf8');
+      expect(await readClusters(dir)).toEqual(clusters);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

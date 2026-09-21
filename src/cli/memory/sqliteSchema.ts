@@ -1,4 +1,4 @@
-export const SQLITE_MEMORY_SCHEMA_VERSION = 2;
+export const SQLITE_MEMORY_SCHEMA_VERSION = 3;
 
 export interface SqliteMemoryMigration {
   version: number;
@@ -22,6 +22,7 @@ CREATE TABLE IF NOT EXISTS memory_nodes (
   status TEXT NOT NULL CHECK (status IN ('active','superseded','retracted','archived')),
   visibility TEXT NOT NULL DEFAULT 'project' CHECK (visibility IN ('project','private')),
   tags_json TEXT NOT NULL DEFAULT '[]',
+  relevant_when_json TEXT NOT NULL DEFAULT '[]',
   source_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -153,6 +154,15 @@ export const SQLITE_MEMORY_MIGRATIONS: readonly SqliteMemoryMigration[] = [
       END;
       INSERT INTO memory_access(memory_id, visibility, owner_client, updated_at)
       SELECT id, visibility, json_extract(source_json, '$.client'), updated_at FROM memory_nodes;
+    `,
+  },
+  {
+    // S3 (T-Mem lite): additive associative-trigger column. Legacy rows default
+    // to '[]'; the FTS triggers are untouched (triggers are matched via
+    // json_each, and json_each('[]') yields zero rows, so '[]' never explodes).
+    version: 3,
+    sql: `
+      ALTER TABLE memory_nodes ADD COLUMN relevant_when_json TEXT NOT NULL DEFAULT '[]';
     `,
   },
 ];

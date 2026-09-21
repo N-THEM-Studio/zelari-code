@@ -12,6 +12,7 @@ import {
   sanitizeMemoryMetadata,
 } from './policies.js';
 import { rankMemoryCandidates } from './scoring.js';
+import { deriveRelevantWhen, RELEVANT_WHEN_CAP } from './relevantWhen.js';
 import { SemanticMemoryController } from './semantic.js';
 import type {
   CognitiveMemoryBackend,
@@ -57,6 +58,13 @@ export interface DefaultMemoryServiceOptions {
   embeddingProvider?: MemoryEmbeddingProvider;
   lazySemanticIndexLimit?: number;
   minSemanticRelevance?: number;
+  /**
+   * T-Mem lite associative triggers. When true (default), `remember` derives or
+   * accepts `relevantWhen` and `recall` matches against it, bypassing the
+   * lexical similarity prefilter. Hosts disable it via
+   * `ZELARI_MEMORY_TRIGGERS=0`; V2-off callers use `NoopMemoryService` anyway.
+   */
+  relevantWhen?: boolean;
 }
 
 function id(prefix: string): string {
@@ -94,6 +102,7 @@ export class DefaultMemoryService implements MemoryService {
   private readonly onEvent?: MemoryEventSink;
   private readonly now: () => Date;
   private readonly defaultContextChars: number;
+  private readonly relevantWhenEnabled: boolean;
   private readonly semantic?: SemanticMemoryController;
 
   constructor(
@@ -107,6 +116,7 @@ export class DefaultMemoryService implements MemoryService {
     this.onEvent = options.onEvent;
     this.now = options.now ?? (() => new Date());
     this.defaultContextChars = options.defaultContextChars ?? 2_000;
+    this.relevantWhenEnabled = options.relevantWhen ?? true;
     if (options.embeddingProvider) {
       this.semantic = new SemanticMemoryController(projectId, backend, options.embeddingProvider, {
         now: this.now,
@@ -115,6 +125,33 @@ export class DefaultMemoryService implements MemoryService {
         onFailure: (reason) => this.emit({ type: 'memory_error', reason: `semantic: ${reason}` }),
       });
     }
+  }
+
+  /** Sanitize, dedupe, and cap associative triggers before persistence. */
+  private cleanRelevantWhen(proposed: readonly string[]): string[] {
+    const out: string[] = [];
+    for (const phrase of proposed) {
+      if (typeof phrase !== 'string') continue;
+      const cleaned = this.sanitizer.sanitize(phrase);
+      if (cleaned.rejected) continue;
+      const value = cleaned.content.trim().slice(0, 120).trim();
+      if (!value || out.includes(value)) continue;
+      out.push(value);
+      if (out.length >= RELEVANT_WHEN_CAP) break;
+    }
+    return out;
+  }
+
+  /** Use host-supplied triggers, else derive them purely from the content. */
+  private buildRelevantWhen(
+    input: readonly string[] | undefined,
+    content: string,
+    kind: string,
+    tags: readonly string[],
+  ): string[] {
+    if (!this.relevantWhenEnabled) return [];
+    const proposed = input && input.length > 0 ? input : deriveRelevantWhen(content, kind, tags);
+    return this.cleanRelevantWhen(proposed);
   }
 
   private emit(event: Omit<MemoryEvent, 'at'>): void {
@@ -154,6 +191,12 @@ export class DefaultMemoryService implements MemoryService {
         : {}),
     };
     const tags = normalizeTags(parsed.tags);
+    const relevantWhen = this.buildRelevantWhen(
+      parsed.relevantWhen,
+      sanitized.content,
+      parsed.kind,
+      tags,
+    );
 
     // Idempotent exact-content dedupe within kind/project. Stronger evidence
     // upgrades the existing node and is itself preserved as a new version.
@@ -172,16 +215,22 @@ export class DefaultMemoryService implements MemoryService {
     )?.node;
     if (duplicate) {
       const mergedTags = normalizeTags([...duplicate.tags, ...tags]);
+      const mergedRelevantWhen = this.cleanRelevantWhen([
+        ...(duplicate.relevantWhen ?? []),
+        ...relevantWhen,
+      ]);
       const shouldUpdate =
         confidence > duplicate.confidence ||
         clampUnit(parsed.importance, 0.5) > duplicate.importance ||
         mergedTags.length !== duplicate.tags.length ||
+        mergedRelevantWhen.length !== (duplicate.relevantWhen?.length ?? 0) ||
         sanitized.redactions.length > 0;
       if (!shouldUpdate) return duplicate;
       const updated = await this.backend.update(duplicate.id, {
         confidence: Math.max(duplicate.confidence, confidence),
         importance: Math.max(duplicate.importance, clampUnit(parsed.importance, 0.5)),
         tags: mergedTags,
+        ...(mergedRelevantWhen.length ? { relevantWhen: mergedRelevantWhen } : {}),
         source,
         metadata: { ...duplicate.metadata, ...metadata },
         actor: source.agent,
@@ -201,6 +250,7 @@ export class DefaultMemoryService implements MemoryService {
       status: parsed.status ?? 'active',
       visibility,
       tags,
+      ...(relevantWhen.length ? { relevantWhen } : {}),
       source,
       ...(parsed.createdAt ? { createdAt: parsed.createdAt } : {}),
       ...(parsed.recordedAt ? { recordedAt: parsed.recordedAt } : {}),
@@ -241,6 +291,30 @@ export class DefaultMemoryService implements MemoryService {
           candidate.node.visibility === 'project' ||
           candidate.node.source.client === raw.externalClient)
       ) byId.set(candidate.node.id, candidate);
+    }
+    // T-Mem lite: associative `relevantWhen` hits are retrieved separately so
+    // the lexical similarity prefilter above can never drop them. They join
+    // `byId` before ranking and carry a strong `triggerMatch` signal.
+    if (this.relevantWhenEnabled && !raw.asOf && text && this.backend.searchRelevantWhen) {
+      const triggers = await this.backend.searchRelevantWhen({
+        ...recallQuery,
+        text,
+        projectId: this.projectId,
+        statuses: raw.statuses ?? (raw.includeHistorical ? undefined : ['active']),
+        limit: Math.max(limit, Math.min(200, limit * 5)),
+      });
+      for (const hit of triggers) {
+        if (
+          hit.node.projectId !== this.projectId ||
+          (raw.externalClient &&
+            hit.node.visibility === 'private' &&
+            hit.node.source.client !== raw.externalClient)
+        ) continue;
+        const prior = byId.get(hit.node.id);
+        byId.set(hit.node.id, prior
+          ? { ...prior, triggerMatch: 1 }
+          : { ...hit, lexicalRelevance: 1, triggerMatch: 1 });
+      }
     }
     if (this.semantic) {
       const semantic = await this.semantic.search({

@@ -35,6 +35,11 @@ export function isMemorySemanticEnabled(env: NodeJS.ProcessEnv = process.env): b
   return isMemoryV2Enabled(env) && env.ZELARI_MEMORY_SEMANTIC === '1';
 }
 
+/** T-Mem lite associative triggers: default ON when V2 is on; `=0` disables. */
+export function isMemoryTriggersEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  return isMemoryV2Enabled(env) && env.ZELARI_MEMORY_TRIGGERS !== '0';
+}
+
 function semanticMinScore(env: NodeJS.ProcessEnv): number | undefined {
   const value = Number(env.ZELARI_MEMORY_SEMANTIC_MIN_SCORE);
   return Number.isFinite(value) ? Math.max(0, Math.min(value, 1)) : undefined;
@@ -77,6 +82,7 @@ export async function getMemoryService(
       ...(options.onEvent ? { onEvent: options.onEvent } : {}),
       ...(embeddingProvider ? { embeddingProvider } : {}),
       ...(semanticMinScore(env) !== undefined ? { minSemanticRelevance: semanticMinScore(env) } : {}),
+      relevantWhen: isMemoryTriggersEnabled(env),
     });
     if (backend.lastMigration) {
       const migration = backend.lastMigration;

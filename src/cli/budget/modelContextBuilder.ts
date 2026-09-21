@@ -78,6 +78,8 @@ export interface ModelContextBuilderInput {
   providerStream?: ProviderStreamFn;
   /** Latest resource snapshot (2.6 Track B) — rendered as RESOURCE STATUS. */
   resourceSnapshot?: object | null;
+  /** Volatile working-set; concatenated after RESOURCE STATUS. Never persisted. */
+  volatileOnePager?: readonly AgentMessage[];
   /** Receives one record for each compaction attempt. */
   onCompactionMetric?: (metrics: CompactionMetrics) => void;
   /**
@@ -131,7 +133,10 @@ export async function buildModelContext(
   const sourceHistory = (derived ?? [...input.fallbackHistory]).filter(
     (message) => !isLegacyResourceStatus(message),
   );
-  const requestTail = resourceStatusTail(input.resourceSnapshot);
+  const requestTail = [
+    ...resourceStatusTail(input.resourceSnapshot),
+    ...(input.volatileOnePager ?? []),
+  ];
   const inputTokens = estimateHistoryTokens(sourceHistory);
   const requestSurface =
     input.systemMessages || input.tools
