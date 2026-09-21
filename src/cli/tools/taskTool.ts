@@ -97,6 +97,13 @@ import {
   replayOpenVerifyDebts,
   type SpineEventLike,
 } from './verifyDebtSpine.js';
+// t159 (P2a-2): the per-tentacle metrics event (additive spine kind, payload
+// contract + emission stop rule live in the core session module).
+import {
+  buildSubagentMetricsPayload,
+  emitSubagentMetrics,
+  type SubagentMetricsSink,
+} from '@zelari/core/session';
 
 /** Sub-agent kinds (OpenCode-inspired). */
 export type TaskAgentKind = 'explore' | 'general' | 'verify';
@@ -1431,6 +1438,15 @@ export interface RunTentacleOptions {
    */
   signal?: AbortSignal;
   /**
+   * t159 (P2a-2): spine sink for the terminal `subagent.metrics` event. The
+   * `task` tool forwards `ToolContext.emitSessionEvent` here — the SAME sink the
+   * turn's other telemetry rides (`sessionSink.ts`), so a session has one
+   * writer and one seq sequence. Absent ⇒ the tentacle records no metrics
+   * (host without a spine) and behaves exactly as before: emission is
+   * best-effort by contract and can never fail the run it measures.
+   */
+  sessionEventSink?: SubagentMetricsSink;
+  /**
    * Override the system prompt. Used by Pillar 2 persona kinds
    * (`spec`, `conformance`) to inject the persona's specific prompt
    * even when the host agent is `verify`. When unset, falls back to
@@ -1541,6 +1557,24 @@ export function fireTentacleEndHooks(
     .catch(() => {
       /* an observer never propagates into the tentacle */
     });
+}
+
+/**
+ * t159 (P2a-2): one ordered chain for the terminal metrics appends, mirroring
+ * the verify-debt persist queue (`verifyDebtSpine.ts`). Emission is
+ * fire-and-forget: a slow or throwing sink can neither delay a tentacle's
+ * teardown nor fail the run it is recording (the core emitter is fail-open on
+ * top of this). `flushSubagentMetrics()` is how a host or a test waits for the
+ * writes that are still in flight.
+ */
+let metricsQueue: Promise<unknown> = Promise.resolve();
+
+function queueMetricsPersist(work: () => Promise<unknown>): void {
+  metricsQueue = metricsQueue.then(work, work);
+}
+
+export function flushSubagentMetrics(): Promise<unknown> {
+  return metricsQueue;
 }
 
 /**
@@ -1667,6 +1701,20 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   const emitActivity = (ev: Omit<BrainEvent, 'id' | 'sessionId'> & { type: BrainEvent['type'] }) => {
     deps.onTentacleEvent?.({ ...ev, id: randomUUID(), sessionId } as BrainEvent);
   };
+  /**
+   * t159 (P2a-2): what a terminal tentacle reports on the spine. `endTentacle`
+   * is the ONE funnel every terminal path already goes through, so the event is
+   * emitted there; the loop counters are only known AFTER the harness ran, and
+   * this holder is how the funnel reads them (assigned below, right after the
+   * loop). A terminal path that never reached the loop reports `ok:false` with
+   * no counters — honest, never zeros standing in for a measurement.
+   */
+  let terminalMetrics: {
+    usage?: UsageBreakdown;
+    turns?: number;
+    toolCalls?: number;
+    degenerate?: DegenerateLoopStop;
+  } = {};
   const endTentacle = (id: string, info: Parameters<typeof krakenTentacleEnd>[1]) => {
     krakenTentacleEnd(id, info);
     // WS5 (t137): every terminal path of a tentacle funnels through here, so
@@ -1693,6 +1741,28 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       durationMs: info.durationMs ?? 0,
       ts: Date.now(),
     } as BrainAgentEndedEvent);
+    // t159 (P2a-2): the durable metrics event. Both terminal outcomes emit
+    // (`ok` in the payload) — a failed tentacle is exactly the run whose cost
+    // and stop reason a later replay wants. Queued on the metrics chain so
+    // ordering holds without the sink being able to delay the teardown, and
+    // FAIL-OPEN end to end: no sink (host without a spine) or a throwing sink
+    // records nothing and never touches this tentacle's own result.
+    const payload = buildSubagentMetricsPayload({
+      kind: agent,
+      ok: info.ok !== false,
+      thoroughness,
+      ...(info.model !== undefined ? { model: info.model } : {}),
+      agentId: id,
+      ...(info.durationMs !== undefined ? { durationMs: info.durationMs } : {}),
+      ...(worktree ? { worktree: worktree.path } : {}),
+      ...(terminalMetrics.usage ? { usage: terminalMetrics.usage } : {}),
+      ...(terminalMetrics.turns !== undefined ? { turns: terminalMetrics.turns } : {}),
+      ...(terminalMetrics.toolCalls !== undefined
+        ? { toolCalls: terminalMetrics.toolCalls }
+        : {}),
+      ...(terminalMetrics.degenerate ? { degenerate: true } : {}),
+    });
+    queueMetricsPersist(() => emitSubagentMetrics(opts.sessionEventSink, payload));
   };
 
   let sub: SubAgentContext | null;
@@ -1925,6 +1995,15 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   } finally {
     stopHeartbeat();
   }
+  // t159 (P2a-2): publish the loop's honest counters to the terminal funnel
+  // (every path below this line reports them; the early ones cannot, so they
+  // report nothing). Same values t156/t157 already threaded up.
+  terminalMetrics = {
+    ...(usage ? { usage } : {}),
+    ...(turns !== undefined ? { turns } : {}),
+    ...(toolCalls !== undefined ? { toolCalls } : {}),
+    ...(degenerate ? { degenerate } : {}),
+  };
   const durationMs = Date.now() - started;
 
   if (aborted) {
@@ -2252,6 +2331,12 @@ export function createTaskTool(
 
       const res = await runTentacle({
         deps,
+        // t159 (P2a-2): the caller's spine sink travels into the run, so the
+        // terminal `subagent.metrics` event lands on the SAME spine as the rest
+        // of this turn's telemetry (the host binds `ctx.emitSessionEvent` via
+        // `withSessionEventSink`). Absent on a host without a spine: the
+        // tentacle then records no metrics, exactly as before.
+        ...(ctx.emitSessionEvent ? { sessionEventSink: ctx.emitSessionEvent } : {}),
         args: {
           description: args.description,
           prompt: args.prompt,

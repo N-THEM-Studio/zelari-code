@@ -122,6 +122,14 @@ export const SESSION_EVENT_KINDS = [
   'jail.blocked',
   'ask_user.fired',
   'verify.requested',
+  // t159 (P2a-2): per-tentacle metrics — one event per TERMINAL tentacle
+  // (success AND failure; `ok` rides in the payload): provider-reported usage,
+  // turns/toolCalls, durationMs, loop-guard stop. State-only (never
+  // model-surface): it measures the run, it never feeds it. Additive kind —
+  // no SCHEMA_VERSION bump (ADR-0021), same tolerant-replay path as every kind
+  // above: an older reader reports schema-mismatch and skips the line. Payload
+  // contract + emission stop rule: subagentMetricsEvent.ts.
+  'subagent.metrics',
   'note',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];
