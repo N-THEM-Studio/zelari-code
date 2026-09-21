@@ -5,6 +5,20 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.57.0] - 2026-09-21
+
+Harness **signal quality** (Ecdysis × ModularRSI × T-Mem × Instinct): propose only repeated failure patterns, extract observation compaction from the judge choke-point, remember by situation not keyword, inject a volatile working-set one-pager. Constitution unchanged — the proposer never measures (ADR-0036), `JUDGE_PATHS` intact, train ≠ eval, evolution default-off.
+
+### Added
+
+- **Failure-pattern ledger (S1)** — cluster findings only when ≥2 distinct `taskKey`s (mission id / hash(task text) / session id). Ten retries of one task are not a pattern. `harness-repair` vs `model-accommodation` (the latter is `needs_human_review`, never auto-applied). `npm run pattern:ledger`; `evolve:propose --min-distinct-tasks N` (default 2).
+- **ObservationCompactor (S2)** — `truncateToolResult` / `compactToolResult` live in `packages/core/src/core/tools/observationCompactor.ts`. `ToolRegistry.invoke` stays the choke-point (execute → compact → Post → listener). In-place mutate so t57 listeners see the same reference. Cache uses compact with `spill: false`. Genome can evolve the compact policy without editing the judge body.
+- **`relevant_when` memory triggers (S3)** — sqlite schema v3 (`relevant_when_json`, default `[]`). On remember: accept or derive 1–3 situation strings (pure, no LLM). On recall: trigger hits enter `byId` before rank and bypass the similarity prefilter. Gated on `ZELARI_MEMORY_V2`; kill-switch `ZELARI_MEMORY_TRIGGERS=0`.
+- **Working-set one-pager + `/memory dream` (S4)** — volatile tail after RESOURCE STATUS (open loops, how-we-test index path+mtime, procedure aliases). Cap 1500 chars, fail-open, never persisted on the spine. `ZELARI_ONE_PAGER=0` restores the previous tail. `/memory dream` runs consolidate (`source.agent = user-cli-dream`); no auto-dream on `spine.close`.
+
+### Changed
+
+- Headless shadow findings now carry `taskKey` so live runs feed the pattern ledger without reading `eval/results`.
 ## [2.56.0] - 2026-09-20
 
 Feature slice **piano-ROI** (plan tasks t133–t141): a gap analysis against Claude Code (and, for the evolution engine, SoL-Pi / SKILL.state) ranked seven workstreams by real ROI — permission policy, inbox-as-bus, worktree-by-default, VS Code via ACP, hooks as spine subscribers, plugin bundles, proofed harness evolution. Everything is additive to the session spine and derive-only unless stated; no model-facing surface changed (tool-schema arrays and prompt prefixes are byte-identical with or without the new sinks — proven by the M2.1/M3.1 cache guard suites).
