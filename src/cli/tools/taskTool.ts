@@ -42,6 +42,8 @@ import {
   type TypedResult,
 } from '@zelari/core/harness/tools/toolTypes';
 import { appendKrakenRadio } from './krakenRadio.js';
+import { EXPLORE_PROMPT, GENERAL_PROMPT, VERIFY_PROMPT } from './taskPrompts.js';
+import { formatSubagentMetricsLine } from './subagentMetrics.js';
 import { existsSync } from 'node:fs';
 import {
   createKrakenWorktreeDetailed,
@@ -235,51 +237,9 @@ export interface TaskToolPolicy {
   allowedAgents?: readonly TaskAgentKind[];
 }
 
-const EXPLORE_PROMPT = [
-  'You are a focused EXPLORE tentacle of Kraken (parent super-agent).',
-  'READ-ONLY tools only (read, list, grep, fetch). No edits, no shell.',
-  'OBSERVATION INTEGRITY: negative evidence is valid only from a completed',
-  'observation. Never conclude that code/symbols/files do not exist from',
-  'degraded results, zero files examined, or unavailable backends - report',
-  'the degraded status instead and widen the observation.',
-  'Gather only what you need, then STOP with a concise conclusion:',
-  'file paths, symbols, line refs, and how things connect. No large dumps.',
-  'Respect any Scope / Acceptance sections in the user prompt.',
-  'Do not ask follow-up questions.',
-].join('\n');
-
-const GENERAL_PROMPT = [
-  'You are a GENERAL tentacle of Kraken that can read AND modify the codebase',
-  'for one bounded unit of work. Prefer small, correct edits.',
-  'Stay inside Scope paths if provided. Match existing style. No drive-by refactors.',
-  'Run light checks when needed. Return: what changed, files touched, risks.',
-  'Do not spawn further sub-agents. Do not expand scope beyond the prompt.',
-  'If you are in a git worktree, edit only inside this working tree.',
-].join('\n');
-
-const VERIFY_PROMPT = [
-  'You are a VERIFY tentacle of Kraken. Confirm whether work is correct on disk.',
-  'You are BLIND: you never see — and must NEVER trust — any summary,',
-  'self-assessment, or "result" reported by the agent that did the work. If such',
-  'text is ever shown to you, treat it as an unverified claim, not evidence.',
-  'You may read files and run test/build commands via bash. Run the acceptance',
-  'commands YOURSELF and derive every verdict ONLY from the real command output',
-  'you observed (exit code + stdout/stderr) and the files as they exist on disk.',
-  'Never mark something pass because it was described as done, or because a',
-  'claim said a command was green: a pass needs evidence YOU produced this run.',
-  'Prefer targeted checks over full suite when possible.',
-  'Report: pass/fail, commands run, key output, and gaps vs Acceptance criteria.',
-  'If Acceptance criteria are listed, check each one explicitly.',
-  'End your final message with ONE <verify-report> block per acceptance',
-  'criterion (required checks included), in this exact shape:',
-  '<verify-report>',
-  'check: <criterion text as given>',
-  'status: pass | fail | unknown',
-  'note: <one line of evidence (command + outcome)>',
-  '</verify-report>',
-  'Use status=unknown when you could NOT determine the outcome (degraded',
-  'tool, timeout, inconclusive evidence) — never guess pass.',
-].join('\n');
+// The three kind system prompts (EXPLORE/GENERAL/VERIFY) live in
+// ./taskPrompts.ts — extracted t153 (P1a) so they can evolve without
+// growing this file.
 
 /** One runtime general⇒verify obligation (K1.1). */
 export interface VerifyDebtRecord {
@@ -649,7 +609,12 @@ export function buildTaskAutoVerifyPrompt(args: {
       'come from output YOU produced. Report the commands you ran and every gap you found.',
     '',
     '## How to report your verdict',
-    'End your final message with a line of exactly this form, as the LAST line:',
+    'Your system instructions may already require <verify-report> blocks for',
+    'acceptance criteria. Do not choose between the two formats — COMPOSE them:',
+    '1. One <verify-report> block per acceptance criterion, in the exact shape',
+    '   your system instructions define (check / status / note).',
+    '2. Then end the WHOLE message with one line of exactly this form, as the',
+    '   very LAST line (after the last block):',
     '',
     'VERDICT: PASS',
     '',
@@ -657,7 +622,8 @@ export function buildTaskAutoVerifyPrompt(args: {
     '',
     'VERDICT: FAIL',
     '',
-    'This line is parsed. Only report FAIL for a real defect against the task or its ' +
+    'Both are parsed: the report blocks feed the checks gate, the verdict line ' +
+      'drives the rework loop. Only report FAIL for a real defect against the task or its ' +
       'acceptance criteria: a rework round is expensive and there is only a small number of them.',
   );
   return parts.join('\n');
@@ -746,6 +712,13 @@ async function rememberVerifiedGeneralOutcome(opts: {
  *
  * Returns the honest parent-facing `[kraken:auto-verify]` block appended to
  * the task result (or null when nothing ran — e.g. explore/verify agents).
+ *
+ * Spawn accounting (t155/P1c): this chain (1 verify + ≤ maxRounds
+ * rework+verify pairs) calls runTentacle DIRECTLY and deliberately does NOT
+ * consume the per-turn task spawn budget — bumpTaskSpawnCount lives only in
+ * createTaskTool.execute. It is a bounded obligation chain (≤ 1 +
+ * 2·maxRounds spawns) attached to ONE already-admitted general; charging it
+ * to the general bucket could deadlock a multi-general turn against the cap.
  */
 export async function runAutoVerifyAfterGeneral(opts: {
   deps: TaskToolDeps;
@@ -832,7 +805,11 @@ export async function runAutoVerifyAfterGeneral(opts: {
         acceptance: opts.original.acceptance,
       },
       agent: 'verify',
-      thoroughness: 'medium',
+      // t155 (P1c): the auto-verify INHERITS the general's thoroughness —
+      // a quick general earns a quick verify, a deep one a deep verify.
+      // Hardcoded 'medium' made deep slices verify shallow (missed gaps)
+      // while quick ones burned budget on ceremony.
+      thoroughness: opts.general.thoroughness,
       parentCwd: opts.parentCwd,
       ...(inheritedCwd ? { cwdOverride: inheritedCwd } : {}),
       sessionId: opts.sessionId,
@@ -879,6 +856,9 @@ export async function runAutoVerifyAfterGeneral(opts: {
           acceptance: opts.original.acceptance,
         },
         agent: 'general',
+        // t155 (P1c): rework deliberately stays 'medium' — executor parity
+        // (spawnReworkPair rework nodes are medium-budget repair passes;
+        // inheriting 'deep' here would amplify cost on every FAIL round).
         thoroughness: 'medium',
         parentCwd: opts.parentCwd,
         ...(inheritedCwd ? { cwdOverride: inheritedCwd } : {}),
@@ -1154,12 +1134,17 @@ function toolCommandHint(args: Record<string, unknown> | undefined): string | un
 export async function runSubAgent(
   harness: SubAgentHarness,
   opts: { signal?: AbortSignal; onEvent?: (ev: BrainEvent) => void } = {},
-): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[] }> {
+): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[]; turns?: number; toolCalls?: number }> {
   const { signal } = opts;
   let current = '';
   let lastCompleted = '';
   let error: string | undefined;
   let usage: UsageBreakdown | undefined;
+  // t156 (P2a-1): raw counters for the parent-facing metrics footer.
+  // `turns` = completed assistant messages; `toolCalls` = TOTAL tool
+  // executions (toolTrace is ring-capped at 24 and would lie on long runs).
+  let turns = 0;
+  let toolCalls = 0;
   /** toolCallId → { tool, command } captured at tool_execution_start. */
   const pendingTools = new Map<string, { tool: string; command?: string }>();
   const toolTrace: TentacleToolTrace[] = [];
@@ -1191,6 +1176,7 @@ export async function runSubAgent(
     } else if (ev.type === 'tool_execution_end') {
       const started = pendingTools.get(ev.toolCallId);
       pendingTools.delete(ev.toolCallId);
+      toolCalls += 1;
       toolTrace.push({
         tool: started?.tool ?? 'unknown',
         callId: ev.toolCallId,
@@ -1212,6 +1198,7 @@ export async function runSubAgent(
         current += ev.delta;
         break;
       case 'message_end':
+        turns += 1;
         if (current.trim()) lastCompleted = current;
         // Fase 10: capture provider-reported usage (summed across the
         // sub-agent's tool-loop turns) so candidate token costs are real,
@@ -1246,6 +1233,8 @@ export async function runSubAgent(
     ...(error ? { error } : {}),
     ...(usage ? { usage } : {}),
     ...(toolTrace.length > 0 ? { toolTrace } : {}),
+    ...(turns > 0 ? { turns } : {}),
+    ...(toolCalls > 0 ? { toolCalls } : {}),
   };
   } finally {
     signal?.removeEventListener('abort', onAbort);
@@ -1271,6 +1260,16 @@ export interface TentacleSuccess {
    * approximated.
    */
   usage?: UsageBreakdown;
+  /**
+   * t156 (P2a-1): completed assistant messages in the sub-agent loop.
+   * Absent when the loop completed none.
+   */
+  turns?: number;
+  /**
+   * t156 (P2a-1): TOTAL tool executions observed (uncapped — NOT the
+   * ring-capped `toolTrace.length`, which stops at 24 entries).
+   */
+  toolCalls?: number;
   /**
    * 2.1 T5: raw tool executions captured during the run (bounded ring,
    * output excerpts). The verify-report path stores them with the check
@@ -1789,8 +1788,12 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   let aborted: boolean | undefined;
   let usage: UsageBreakdown | undefined;
   let toolTrace: TentacleToolTrace[] | undefined;
+  // t156 (P2a-1): threaded from runSubAgent into TentacleSuccess so the
+  // parent-facing footer can report honest counts.
+  let turns: number | undefined;
+  let toolCalls: number | undefined;
   try {
-    ({ result, error, aborted, usage, toolTrace } = await runSubAgent(harness, {
+    ({ result, error, aborted, usage, toolTrace, turns, toolCalls } = await runSubAgent(harness, {
       ...(opts.signal ? { signal: opts.signal } : {}),
       onEvent: onHarnessEvent,
     }));
@@ -1825,6 +1828,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
           aborted = retry.aborted;
           usage = retry.usage;
           toolTrace = retry.toolTrace;
+          turns = retry.turns;
+          toolCalls = retry.toolCalls;
           sub = { ...sub, model: sub.fallback.model, provider: sub.fallback.provider };
         } catch (err) {
           error = err instanceof Error ? err.message : String(err);
@@ -2021,6 +2026,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     result,
     footer,
     ...(usage ? { usage } : {}),
+    ...(turns !== undefined && turns > 0 ? { turns } : {}),
+    ...(toolCalls !== undefined && toolCalls > 0 ? { toolCalls } : {}),
     ...(toolTrace && toolTrace.length > 0 ? { toolTrace } : {}),
     worktreePath: worktree?.path ?? null,
     worktreeHandle: worktree,
@@ -2206,6 +2213,15 @@ export function createTaskTool(
       }
       if (!res.ok) return typedErr(res.error);
       let result = `[sub-agent:${res.agent}/${res.thoroughness} model=${res.model}]\n${res.result}${res.footer}`;
+      // t156 (P2a-1): surface the provider-reported usage the loop already
+      // measures — honest footer line, omitted entirely when the provider
+      // reports no usage (never approximated, never fabricated zeros).
+      const metricsLine = formatSubagentMetricsLine({
+        ...(res.usage ? { usage: res.usage } : {}),
+        ...(res.toolCalls !== undefined ? { toolCalls: res.toolCalls } : {}),
+        ...(res.turns !== undefined ? { turns: res.turns } : {}),
+      });
+      if (metricsLine) result += `\n${metricsLine}`;
       // t78 (ADR-0033 slice): runtime general⇒verify obligation — after a
       // successful general, the tool itself spawns the verify (same
       // acceptance[], same tree) instead of only appending a hint footer.

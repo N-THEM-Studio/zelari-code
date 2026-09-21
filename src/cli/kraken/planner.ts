@@ -840,7 +840,12 @@ function buildAutoVerifyPrompt(general: TaskNode): string {
       'and every gap you found.',
     '',
     '## How to report your verdict',
-    'End your final message with a line of exactly this form, as the LAST line:',
+    'Your system instructions may already require <verify-report> blocks for',
+    'acceptance criteria. Do not choose between the two formats — COMPOSE them:',
+    '1. One <verify-report> block per acceptance criterion, in the exact shape',
+    '   your system instructions define (check / status / note).',
+    '2. Then end the WHOLE message with one line of exactly this form, as the',
+    '   very LAST line (after the last block):',
     '',
     'VERDICT: PASS',
     '',
@@ -848,7 +853,8 @@ function buildAutoVerifyPrompt(general: TaskNode): string {
     '',
     'VERDICT: FAIL',
     '',
-    'This line is parsed. FAIL sends the work back to the tentacle that wrote it, together with ' +
+    'Both are parsed: the report blocks feed the checks gate, the verdict line ' +
+      'drives the rework loop. FAIL sends the work back to the tentacle that wrote it, together with ' +
       'everything you write above the line — so state each gap concretely enough to be acted on ' +
       '(file, what is wrong, what it should be). Only report FAIL for a real defect against the ' +
       'task or its acceptance criteria: a rework round is expensive and there is only a small ' +
