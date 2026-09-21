@@ -60,6 +60,10 @@
       "types": "./dist/core/tools/builtin/_walk.d.ts",
       "default": "./dist/core/tools/builtin/_walk.js"
     },
+    "./safety/argvClassifier": {
+      "types": "./dist/core/safety/argvClassifier.d.ts",
+      "default": "./dist/core/safety/argvClassifier.js"
+    },
     "./council": {
       "types": "./dist/council/index.d.ts",
       "default": "./dist/council/index.js"

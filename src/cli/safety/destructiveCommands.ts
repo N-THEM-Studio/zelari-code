@@ -21,6 +21,8 @@
  *   — accepted cost of conservatism.
  */
 
+import { classifyArgv, classifyCommandString } from '@zelari/core/safety/argvClassifier';
+
 /** One conservative destructive-shape rule. */
 export interface DestructiveRule {
   readonly id: string;
@@ -69,6 +71,26 @@ export function commandTextFrom(input: Record<string, unknown>): string {
  * the command shape is not in the conservative list.
  */
 export function destructiveCommandHit(input: Record<string, unknown>): string | null {
+  // t145: deterministic flag-aware classifier FIRST — it catches shapes the
+  // regex list misses (e.g. `rm --recursive --force` long forms) and uses
+  // the structured argv when available (exec_process) instead of a
+  // re-joined string. The conservative regex list below stays as the
+  // compatibility fallback (labels kept in sync on purpose).
+  if (typeof input.program === 'string' && input.program) {
+    const args = Array.isArray(input.args)
+      ? input.args.filter((a): a is string => typeof a === 'string')
+      : [];
+    const v = classifyArgv(input.program, args);
+    if (v.tier === 'destructive' || v.tier === 'blocked') {
+      return v.reasons[0] ?? 'destructive command shape';
+    }
+  }
+  if (typeof input.command === 'string' && input.command) {
+    const v = classifyCommandString(input.command);
+    if (v.tier === 'destructive' || v.tier === 'blocked') {
+      return v.reasons[0] ?? 'destructive command shape';
+    }
+  }
   const text = commandTextFrom(input);
   if (!text) return null;
   for (const rule of DESTRUCTIVE_RULES) {

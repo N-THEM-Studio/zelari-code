@@ -22,6 +22,9 @@ import type {
 } from './policyEngine.js';
 import { pathCandidates, resolvePolicyRule } from './policyEngine.js';
 import { intersectEffects } from './policyLayers.js';
+// t145: shared tokenizer (identical semantics) — single source of truth in
+// core, consumed by the deterministic argv classifier too.
+import { tokenizeCommandString } from '@zelari/core/safety/argvClassifier';
 
 export type ResourceClaim =
   | { kind: 'path'; operation: 'read' | 'write'; path: string }
@@ -124,35 +127,9 @@ function stripWindowsExecutableExt(name: string): string {
   return name.replace(/\.(exe|cmd|bat|com)$/i, '');
 }
 
-/** Whitespace tokenizer honoring single/double quotes; quotes are dropped. */
-function tokenizeCommandString(command: string): string[] {
-  const out: string[] = [];
-  let cur = '';
-  let quote: '"' | "'" | null = null;
-  let started = false;
-  for (const ch of command.trim()) {
-    if (quote) {
-      if (ch === quote) quote = null;
-      else cur += ch;
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      started = true;
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      if (started || cur !== '') out.push(cur);
-      cur = '';
-      started = false;
-      continue;
-    }
-    cur += ch;
-    started = true;
-  }
-  if (started || cur !== '') out.push(cur);
-  return out;
-}
+// t145: tokenizeCommandString moved to @zelari/core/safety/argvClassifier
+// (shared with the deterministic argv classifier — identical semantics,
+// imported at the top of this file).
 
 function isEnvAssignment(token: string): boolean {
   const eq = token.indexOf('=');

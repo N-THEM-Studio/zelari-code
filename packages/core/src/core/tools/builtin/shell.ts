@@ -3,6 +3,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { dirname } from 'node:path';
 import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
 import { resolveShell } from './shellResolver.js';
+import { classifyCommandString, type ArgvTier } from '../../safety/argvClassifier.js';
 
 /**
  * Ensure the directory of the running node binary is on PATH so agent shell
@@ -55,6 +56,15 @@ interface BashResult {
    * the advisory fail-open is never silent.
    */
   jailNotice?: string;
+  /**
+   * t145: deterministic safety tier of the executed command line
+   * (argvClassifier — zero LLM, flag-aware). Annotation only: policy
+   * layers (CLI blocklist / permission gate) own allow/ask/deny; the
+   * core builtin reports, never decides.
+   */
+  safetyTier?: ArgvTier;
+  /** Non-empty when the tier is above 'safe' (why it was assigned). */
+  safetyReasons?: string[];
 }
 
 /** Output signatures of an interactive prompt dying on our closed stdin. */
@@ -108,6 +118,9 @@ export function createBashTool(spawnSeam?: BashSpawnSeam): ToolDefinition<BashAr
         const start = Date.now();
         const cwd = args.cwd ?? ctx.cwd;
         const resolved = resolveShell();
+        // t145: deterministic tier annotation (pure, zero LLM) — computed
+        // BEFORE the spawn so every result (success or error) can carry it.
+        const safety = classifyCommandString(args.command);
 
         // win32 + real bash: spawn the binary directly with `-c` and shell:false
         // so there is no cmd.exe indirection (npm, &&, $VAR, ls all work because
@@ -199,6 +212,8 @@ export function createBashTool(spawnSeam?: BashSpawnSeam): ToolDefinition<BashAr
               exitCode: code ?? -1,
               durationMs: Date.now() - start,
               shellVia: resolved.via,
+              safetyTier: safety.tier,
+              ...(safety.reasons.length > 0 ? { safetyReasons: safety.reasons } : {}),
               ...(jailNotice ? { jailNotice } : {}),
               ...(interactive ? { hint: INTERACTIVE_HINT } : {}),
             }),

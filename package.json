@@ -35,6 +35,7 @@
     "pretest": "npm run build --workspace=@zelari/core",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:safety": "vitest run src/cli/safety packages/core/src/core/safety",
     "test:session": "vitest run packages/core/src/session src/cli/sessionSpine.test.ts src/cli/headlessSpine.test.ts src/cli/headlessHistorySeed.test.ts src/cli/headlessSessionEvent.test.ts src/cli/sessionReplayInvariant.test.ts src/cli/legacyContextIsolation.test.ts src/cli/kraken/verificationBridge.session.test.ts",
     "smoke": "node bin/zelari-code.js --version",
     "skills:check": "node bin/zelari-code.js skills:check",
