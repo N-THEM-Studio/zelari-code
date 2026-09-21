@@ -1024,24 +1024,53 @@ export function systemPromptForAgent(agent: TaskAgentKind): string {
   return EXPLORE_PROMPT;
 }
 
+/**
+ * Nominal tool budget per tentacle kind, scaled by thoroughness (t158 - P2b of
+ * the 2026-09-21 tentacle plan). ONE table, read only through `resolveBudget`.
+ *
+ * Where the number goes (`runTentacle`): it becomes the harness's
+ * `maxToolCallsPerTurn` - extra calls inside the same turn are skipped with a
+ * visible `[skipped] maxToolCallsPerTurn reached` - and, +4, its SOFT loop cap
+ * `maxToolLoopIterations`, which the harness may auto-extend while the model
+ * still asks for tools. The budget is therefore a nominal target the runtime
+ * can stretch, which is exactly why the `thoroughness` field description marks
+ * it PARTIAL instead of promising exhaustion.
+ *
+ * Scaling convention (plan P2b): quick ~0.6x, medium 1.0x, deep ~1.6x of the
+ * kind's OWN medium baseline. Two cells deviate from the formula, both in the
+ * only direction t158 allows (never cut a pre-existing budget):
+ *   - `explore.deep` stays 12 (2.0x): 1.6x would LOWER today's 12 to 9.6, and
+ *     the read-only research kind is the one observed hitting the ceiling.
+ *   - `verify.deep` is 16 (1.6x) where it used to be 14 (1.4x): widened to
+ *     honour the convention - the only value this slice changes.
+ */
+export const TURN_BUDGETS: Readonly<
+  Record<TaskAgentKind, Readonly<Record<TaskThoroughness, number>>>
+> = {
+  explore: { quick: 4, medium: 6, deep: 12 },
+  general: { quick: 8, medium: 12, deep: 20 },
+  verify: { quick: 6, medium: 10, deep: 16 },
+};
+
+/**
+ * The ONE budget lookup: kind x thoroughness -> nominal tool budget.
+ * A thoroughness outside the enum (it can arrive through an unchecked cast)
+ * falls back to the kind's medium baseline, like the pre-t158 if-chain did.
+ */
+export function resolveBudget(agent: TaskAgentKind, thoroughness: TaskThoroughness): number {
+  return TURN_BUDGETS[agent][thoroughness] ?? TURN_BUDGETS[agent].medium;
+}
+
+/**
+ * @deprecated legacy argument order `(thoroughness, agent)` - call
+ * `resolveBudget(agent, thoroughness)`. Kept as a thin alias so existing
+ * importers keep working; both spellings read the same `TURN_BUDGETS` table.
+ */
 export function maxToolCallsForThoroughness(
   thoroughness: TaskThoroughness,
   agent: TaskAgentKind,
 ): number {
-  if (agent === 'general') {
-    if (thoroughness === 'quick') return 8;
-    if (thoroughness === 'deep') return 20;
-    return 12;
-  }
-  if (agent === 'verify') {
-    if (thoroughness === 'quick') return 6;
-    if (thoroughness === 'deep') return 14;
-    return 10;
-  }
-  // explore
-  if (thoroughness === 'quick') return 4;
-  if (thoroughness === 'deep') return 12;
-  return 6;
+  return resolveBudget(agent, thoroughness);
 }
 
 /** @deprecated use systemPromptForAgent('explore') — kept for tests */
@@ -1069,7 +1098,14 @@ const TaskArgsSchema = z.object({
   thoroughness: z
     .enum(['quick', 'medium', 'deep'])
     .optional()
-    .describe('How deep the sub-agent should go (tool budget). Default medium.'),
+    .describe(
+      'How deep the sub-agent should go: scales its nominal tool budget per kind ' +
+        '(explore 4/6/12, general 8/12/20, verify 6/10/16 for quick/medium/deep). ' +
+        'PARTIAL, best-effort: the runtime may extend the loop while the sub-agent ' +
+        'still wants tools, and calls past the per-turn ceiling are skipped with a ' +
+        'visible "[skipped]" marker. A tentacle that stops on budget returns partial, ' +
+        'non-exhaustive work by design. Default medium.',
+    ),
   scope: z
     .array(z.string().min(1))
     .max(32)
@@ -1756,7 +1792,11 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // the full lead transcript). Inert unless parentTranscript is passed.
   const parentBlock = parentContextForRole(agent, opts.parentTranscript ?? []);
   const userContent = parentBlock ? `${parentBlock.block}\n\n${taskUserContent}` : taskUserContent;
-  const maxToolCalls = maxToolCallsForThoroughness(thoroughness, agent);
+  // t158 (P2b): kind x thoroughness nominal budget, read through the ONE table.
+  // Nominal on purpose: `maxToolCallsPerTurn` caps calls inside a single turn
+  // and the loop cap below is SOFT (the harness auto-extends it), which is why
+  // the tool description advertises the budget as partial/best-effort.
+  const maxToolCalls = resolveBudget(agent, thoroughness);
   const runCwd = sub.cwd || effectiveCwd;
   const config: AgentHarnessConfig = {
     model: sub.model,
@@ -2153,7 +2193,10 @@ export function createTaskTool(
       '- agent=general: can edit files for one bounded unit of work\n' +
       '- agent=verify: read + bash to run tests/checks\n' +
       'Provide a fully self-contained `prompt` (sub-agent cannot see this conversation). ' +
-      'Optional scope[] + acceptance[] contracts. After general, follow up with verify.' +
+      'Optional scope[] + acceptance[] contracts. After general, follow up with verify. ' +
+      'Budgets (`thoroughness`) are PARTIAL: the nominal tool/turn budget may be extended ' +
+      'by the runtime while the tentacle still needs tools, so treat every result as ' +
+      'best-effort evidence - it can be partial and is never a guaranteed-exhaustive answer.' +
       (restricted
         ? `\nRESTRICTED in this mode: only agent=${allowedAgents.join('|')} is allowed.`
         : ''),
