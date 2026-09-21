@@ -39,6 +39,13 @@ export interface ResolveKrakenModelOpts {
    * session); the stderr half of the warn fires either way.
    */
   radio?: { cwd: string; sessionId: string };
+  /**
+   * Suppress the general-parent routing warn (t161): observability callers
+   * (/inspect) explain routing decisions they did not perform and must not
+   * emit the K3.6 stderr/radio diagnostics. Default (undefined) keeps the
+   * warn, so production behavior is unchanged.
+   */
+  silent?: boolean;
 }
 
 /** Heuristic: model ids that look cheaper / faster than flagship. */
@@ -241,13 +248,33 @@ function warnGeneralParentRouting(
   });
 }
 
-/** Resolve model id for a tentacle given the parent/active model. */
-export function resolveKrakenSubModel(
+/** Why a tentacle model was chosen (t161 — /inspect MODELS section). */
+export type KrakenModelSource =
+  | 'env:kind'
+  | 'env:sub'
+  | 'env:sub (general opt-in ZELARI_KRAKEN_GENERAL_USES_SUB=1)'
+  | 'cross-family'
+  | 'auto-pick'
+  | 'parent'
+  | 'parent (SUB_MODEL ignored for general — set ZELARI_KRAKEN_GENERAL_USES_SUB=1)';
+
+export interface KrakenModelExplanation {
+  model: string;
+  source: KrakenModelSource;
+}
+
+/**
+ * Resolve model id for a tentacle given the parent/active model, WITH the
+ * reason it was chosen. Single source of truth for the priority walk:
+ * `resolveKrakenSubModel` returns `.model` from here, so the explanation
+ * can never drift from the actual routing.
+ */
+export function explainKrakenSubModel(
   agent: TaskAgentKind,
   parentModel: string,
   env: NodeJS.ProcessEnv = process.env,
   opts: ResolveKrakenModelOpts = {},
-): string {
+): KrakenModelExplanation {
   const kindKey =
     agent === 'explore'
       ? 'ZELARI_KRAKEN_EXPLORE_MODEL'
@@ -256,18 +283,27 @@ export function resolveKrakenSubModel(
         : 'ZELARI_KRAKEN_GENERAL_MODEL';
 
   const specific = env[kindKey]?.trim();
-  if (specific) return specific;
+  if (specific) return { model: specific, source: 'env:kind' };
 
   const shared = env.ZELARI_KRAKEN_SUB_MODEL?.trim();
   if (shared) {
     if (agent === 'general' && !env.ZELARI_KRAKEN_GENERAL_MODEL) {
-      if (env.ZELARI_KRAKEN_GENERAL_USES_SUB === '1') return shared;
+      if (env.ZELARI_KRAKEN_GENERAL_USES_SUB === '1') {
+        return {
+          model: shared,
+          source: 'env:sub (general opt-in ZELARI_KRAKEN_GENERAL_USES_SUB=1)',
+        };
+      }
       // Routing stays as-is (general keeps the strong parent writer); only the
       // fact that SUB_MODEL was set and ignored is made loud (K3.6 / F20).
-      warnGeneralParentRouting(shared, parentModel, opts);
-      return parentModel;
+      if (!opts.silent) warnGeneralParentRouting(shared, parentModel, opts);
+      return {
+        model: parentModel,
+        source:
+          'parent (SUB_MODEL ignored for general — set ZELARI_KRAKEN_GENERAL_USES_SUB=1)',
+      };
     }
-    return shared;
+    return { model: shared, source: 'env:sub' };
   }
 
   // P0.6 cross-model verification: with family candidates supplied, prefer a
@@ -286,7 +322,7 @@ export function resolveKrakenSubModel(
       { provider: opts.provider ?? '', model: parentModel },
       opts.familyCandidates,
     );
-    if (picked) return `${picked.provider}/${picked.model}`;
+    if (picked) return { model: `${picked.provider}/${picked.model}`, source: 'cross-family' };
   }
 
   // Auto-pick cheap model for explore/verify (not general — keep strong writer).
@@ -297,10 +333,20 @@ export function resolveKrakenSubModel(
     opts.candidates.length > 0
   ) {
     const picked = pickCheapModel(parentModel, opts.candidates);
-    if (picked) return picked;
+    if (picked) return { model: picked, source: 'auto-pick' };
   }
 
-  return parentModel;
+  return { model: parentModel, source: 'parent' };
+}
+
+/** Resolve model id for a tentacle given the parent/active model. */
+export function resolveKrakenSubModel(
+  agent: TaskAgentKind,
+  parentModel: string,
+  env: NodeJS.ProcessEnv = process.env,
+  opts: ResolveKrakenModelOpts = {},
+): string {
+  return explainKrakenSubModel(agent, parentModel, env, opts).model;
 }
 
 /**
@@ -430,19 +476,7 @@ export async function resolveKrakenSubModelAsync(
   env: NodeJS.ProcessEnv = process.env,
   opts: { provider?: string; radio?: { cwd: string; sessionId: string } } = {},
 ): Promise<string> {
-  let candidates: string[] = [];
-  let familyCandidates: { provider: string; model: string }[] = [];
-  try {
-    const mod = await import('../modelDiscovery.js');
-    if (opts.provider) {
-      const ids = mod.getDiscoveredModelIds(opts.provider as never);
-      if (Array.isArray(ids)) candidates = ids;
-    }
-    familyCandidates = familyCandidatesFromRegistry(mod.loadModelsRegistry());
-  } catch {
-    candidates = [];
-    familyCandidates = [];
-  }
+  const { candidates, familyCandidates } = await loadDiscoveredModelOpts(opts.provider);
   return resolveKrakenSubModel(agent, parentModel, env, {
     provider: opts.provider,
     candidates,
@@ -450,5 +484,50 @@ export async function resolveKrakenSubModelAsync(
     // K3.6 (F20): keep the radio sink for the general-parent warn — the
     // production caller (toolRegistry factory) has root + sessionId.
     ...(opts.radio ? { radio: opts.radio } : {}),
+  });
+}
+
+/** Shared discovery loader for the async resolvers (fail-open by contract). */
+async function loadDiscoveredModelOpts(
+  provider?: string,
+): Promise<{
+  candidates: string[];
+  familyCandidates: { provider: string; model: string }[];
+}> {
+  try {
+    const mod = await import('../modelDiscovery.js');
+    let candidates: string[] = [];
+    if (provider) {
+      const ids = mod.getDiscoveredModelIds(provider as never);
+      if (Array.isArray(ids)) candidates = ids;
+    }
+    return {
+      candidates,
+      familyCandidates: familyCandidatesFromRegistry(mod.loadModelsRegistry()),
+    };
+  } catch {
+    return { candidates: [], familyCandidates: [] };
+  }
+}
+
+/**
+ * Async explain (discovery-aware) for observability callers (`/inspect`
+ * MODELS section, t161). Same registry and fail-open semantics as
+ * `resolveKrakenSubModelAsync`, but returns the full explanation. Pass
+ * `silent: true`: inspect is read-only and must not emit the K3.6
+ * general-parent warn about a spawn it never performed.
+ */
+export async function explainKrakenSubModelAsync(
+  agent: TaskAgentKind,
+  parentModel: string,
+  env: NodeJS.ProcessEnv = process.env,
+  opts: { provider?: string; silent?: boolean } = {},
+): Promise<KrakenModelExplanation> {
+  const { candidates, familyCandidates } = await loadDiscoveredModelOpts(opts.provider);
+  return explainKrakenSubModel(agent, parentModel, env, {
+    provider: opts.provider,
+    candidates,
+    familyCandidates,
+    silent: opts.silent,
   });
 }

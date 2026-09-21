@@ -10,6 +10,7 @@
  *   - plugins (optional tooling)
  *   - AGENTS.md rules present
  *   - folder trust status
+ *   - models (lead active, tentacle routing + reason, spine usage counts)
  *
  * Human-readable by default; `--json` emits a machine-readable report with a
  * stable `schemaVersion` field so Desktop / scripts can parse it.
@@ -36,6 +37,7 @@ import {
 } from '../skillConfigIo.js';
 import { PLUGINS } from '../plugins/registry.js';
 import { getCurrentVersion } from '../updater.js';
+import { buildModelsSection, type ModelsSection } from './inspectModels.js';
 
 export interface InspectReport {
   schemaVersion: 1;
@@ -70,6 +72,7 @@ export interface InspectReport {
   };
   plugins: Array<{ id: string; label: string; installed: boolean }>;
   agentsMd: string[];
+  models: ModelsSection;
 }
 
 /** Collect the full report (never throws — each section degrades to empty). */
@@ -149,6 +152,7 @@ export async function collectInspectReport(
     },
     plugins: pluginStates,
     agentsMd: findAgentsMd(cwd),
+    models: await buildModelsSection({ cwd }),
   };
 }
 
@@ -205,6 +209,20 @@ function formatHuman(r: InspectReport): string {
     ``,
     `AGENTS.md rules:`,
     ...(r.agentsMd.length ? r.agentsMd.map((a) => `  - ${a}`) : ['  (none)']),
+    ``,
+    `models:`,
+    `  lead:     ${r.models.lead.provider}/${r.models.lead.model} (${r.models.lead.source})`,
+    ...r.models.perKind.map(
+      (k) => `  ${`${k.kind}:`.padEnd(9)}${k.model} (${k.source})`,
+    ),
+    `  history:  ${
+      r.models.usage.counts.length
+        ? r.models.usage.counts
+            .slice(0, 5)
+            .map((c) => `${c.model} ×${c.lead + c.tentacle}`)
+            .join(', ')
+        : '(no model events yet)'
+      }  [${r.models.usage.scannedSessions}/${r.models.usage.totalSessions} sessions scanned]`,
   ];
   return lines.join('\n');
 }
