@@ -37,7 +37,7 @@
  *      Phase 2 (`claims`: path / process / network) or Phase 3 (removal) owns
  *      them; inventing `match: '*'` would silently widen the user's intent.
  *
- * @since v2.57.0 (ADR-0039 Phase 1 / t147)
+ * @since v2.58.0 (ADR-0039 Phase 1 / t147)
  */
 import type { PolicyRule } from './policyEngine.js';
 import type { PermissionRule } from './permissionPolicy.js';

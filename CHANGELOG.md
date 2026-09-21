@@ -5,6 +5,26 @@ All notable changes to Zelari Code are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.58.0] - 2026-09-21
+
+Audit-driven hardening wave (plan tasks t142–t147 + ADR-0039 Phases 1–2): an external audit produced seven findings; seven got verifiable fixes on disk. Constitution unchanged — canary evolution stays default-off and fail-closed (ADR-0036), untouched.
+
+### Added
+
+- **Deterministic argv classifier (t145)** — `classifyArgv` / `classifyCommandString` in `packages/core/src/core/safety/argvClassifier.ts`: pure, flag-aware tiering (`safe|review|destructive|blocked`) with `&&`/`;`/pipe segmentation outside quotes, raw-line textual rules (fork bomb, redirect to root), pipe-to-shell, `env`/`sudo` unwrap, `sh -c` recursion. Zero LLM, zero new dependencies. Wired into: `bash` results (`safetyTier` + `safetyReasons`, model-visible annotation — core never decides), CLI destructive-command detection (classifier-first, legacy regex fallback), and `resourceClaims` (shared tokenizer; the local duplicate is gone). 53 table-driven tests including double-run determinism.
+- **Unified permission engine, Phases 1–2 (ADR-0039)** — `permission.denied` is now emitted from the single final decision point for **every** deny (engine A verdict, engine B rule/claim/contract, category default) with `denyOrigin()` provenance — B-origin denies finally land on the spine. `permissions.json` is honored **through** the policy engine via `permissionCompat.ts` + the adapter (`pathPrefix` → honest globs, over-match avoided), with a one-per-load deprecation warning (window ≥ v2.59; recipe in MIGRATION.md). Restrict-only intersect preserved; `permissionParity.test.ts` (20 tests) pins A→B translations and registers the known allow→ask divergence so it cannot regress silently.
+- **Extension eval baseline (t147)** — `npm run eval:extensions`: five deterministic capability checks against the real loaders (extension load + tool invoke, `onPreToolUse` deny proof, lifecycle-hook subprocess, plugin bundle contract, fail-closed on malformed/lock mismatch), recorded through `EvalResultStore` and regression-gated by `eval:gate` against the committed baseline. Declared prerequisite for any VS Code marketplace publish.
+- **Per-skill estimated cost (t143)** — `SkillStats.estimatedCostUsd` via the existing `calculateCost` pricing (no new price tables); `/skill-stats` prints it, `/skill-compare` adds it to the compare rows and uses lower cost as a tie-break. Tests with known pricing.
+- **VS Code: Cancel Current Turn (t144)** — new `Zelari Cancel Current Turn` command wired to the existing ACP `session/cancel` (the pure-layer method was already covered by unit + e2e tests).
+
+### Changed
+
+- **Denial ledger is derive-only (t142)** — the in-RAM 20-entry buffer is gone; `/permissions [denials]` reads the spine projection (`permission.denied` events, uncapped on replay). `--clear` now answers that the ledger is append-only. Same discipline as the inbox: the spine is the only source of truth.
+
+### Fixed
+
+- **Certified-gate determinism** — `scripts/gate-full.mjs` serializes typecheck → smoke → safety-suite (kills the `packages/core/dist` rebuild race) and strips product env vars (`ZELARI_*`, `ANATHEMA_*`, `GROK_*`) from the child environment, logging a stripped-vars imprint. The recurring 9-failure "ask → fail-closed" red was executor env pollution, not a test bug.
+
 ## [2.57.0] - 2026-09-21
 
 Harness **signal quality** (Ecdysis × ModularRSI × T-Mem × Instinct): propose only repeated failure patterns, extract observation compaction from the judge choke-point, remember by situation not keyword, inject a volatile working-set one-pager. Constitution unchanged — the proposer never measures (ADR-0036), `JUDGE_PATHS` intact, train ≠ eval, evolution default-off.
