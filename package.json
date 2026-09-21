@@ -54,6 +54,7 @@
     "postinstall": "node scripts/postinstall.mjs",
     "prepublishOnly": "node scripts/prepublish.mjs",
     "eval:gate": "node --experimental-strip-types tools/eval/runGate.ts",
+    "eval:extensions": "node --experimental-transform-types --disable-warning=ExperimentalWarning tools/eval/runExtensionsBaseline.ts",
     "eval:seed-baseline": "node --experimental-strip-types tools/eval/runSeedBaseline.ts",
     "eval:measured": "node --experimental-strip-types tools/eval/runMeasured.ts",
     "evidence:report": "node --experimental-strip-types tools/eval/runEvidenceReport.ts",
