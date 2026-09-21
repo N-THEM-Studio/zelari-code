@@ -211,7 +211,7 @@ async function shutdown(): Promise<void> {
  * these print to stdout and exit, leaving the TTY untouched.
  */
 function pickRootComponent(): {
-  kind: "wizard" | "app" | "headless" | "done" | "serve" | "harness-server" | "acp" | "plugin" | "replay" | "session";
+  kind: "wizard" | "app" | "headless" | "done" | "serve" | "harness-server" | "acp" | "plugin" | "replay" | "session" | "evolve";
   element?: React.ReactElement;
   headlessOpts?: Parameters<typeof runHeadless>[0];
   serveOpts?: import("./companion/serve.js").ServeOptions;
@@ -340,6 +340,12 @@ function pickRootComponent(): {
   }
   if (argv[0] === "session") {
     return { kind: "session" };
+  }
+  // Evolution Controller v0 (read-only shadow report over one spine). Same
+  // first-positional rule as replay/session/plugin — a prompt containing the
+  // word "evolve" must not hijack the TUI.
+  if (argv[0] === "evolve") {
+    return { kind: "evolve" };
   }
   // t29 (Pilastro B): long-lived harness kernel over stdio NDJSON. Same
   // host discipline as --serve: no TUI, no preflight, transport owns
@@ -1458,11 +1464,13 @@ function main() {
   // read-only spine diagnostics (WS7 slice 2). Same host discipline as plugin —
   // no TUI, no preflight, stdout carries the report and stderr the diagnostics;
   // the command RETURNS its exit code so tests can assert it.
-  if (picked.kind === "replay" || picked.kind === "session") {
+  if (picked.kind === "replay" || picked.kind === "session" || picked.kind === "evolve") {
     const load =
       picked.kind === "replay"
         ? import("./commands/replay.js").then(({ runReplayCommand }) => runReplayCommand)
-        : import("./commands/session.js").then(({ runSessionCommand }) => runSessionCommand);
+        : picked.kind === "session"
+          ? import("./commands/session.js").then(({ runSessionCommand }) => runSessionCommand)
+          : import("./commands/evolve.js").then(({ runEvolveCommand }) => runEvolveCommand);
     void load
       .then((run) => run(process.argv.slice(2)))
       .then((code) => process.exit(code))
