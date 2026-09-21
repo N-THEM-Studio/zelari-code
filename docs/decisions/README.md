@@ -55,6 +55,7 @@ Generated from the real file tree (triage t37/S6, 2026-09-04).
 | 0036 | Evolution Engine: proposer/judge separation | Accepted | 2026-09-04 | ZELARI_EVOLUTION=0 default; JUDGE_PATHS gate in CI |
 | 0037 | Public API contract tests for the three documented interfaces | ✅ Accepted | 2026-09-11 | W5.3 (t53): pins `AgentHarness` / `ToolRegistry` / `ResourceLedger*`; there is no `Ledger` class |
 | 0038 | Node ≥ 20.17 runtime floor and npx-first install path | ✅ Accepted | 2026-09-14 | `preferGlobal` removed; npx documented first; `/update` + doctor install-aware; memory V2 opt-in on Node 20 |
+| 0039 | Unified permission engine: `policyEngine` as the single gate | ✅ Accepted | 2026-09-21 | promoted from the design-vault PREP-ADR (t146); phased, adapter-first — engine code not yet unified; renumbered from the proposed "0037" (0037/0038 already assigned) |
 
 Numbers never assigned: **0011, 0012** (free slots, do not fill).
 
