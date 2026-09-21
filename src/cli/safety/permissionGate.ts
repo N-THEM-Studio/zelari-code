@@ -44,6 +44,9 @@ import {
   type PermissionRequest,
   type PermissionVerdict,
 } from './permissionPolicy.js';
+// ADR-0039 Phase 1: a deny decided by engine B names the policy rule that did
+// it — the layer's own shape, imported as a TYPE only (no engine coupling).
+import type { PolicyRule } from './policyEngine.js';
 import type { PermissionAction } from './toolPermissions.js';
 
 /**
@@ -149,6 +152,8 @@ export function permissionDenialMessage(toolName: string, verdict: PermissionVer
 export interface PermissionDeniedEmitResult {
   recorded: boolean;
   seq?: number;
+  /** One-line contract violation, when the payload was rejected (not written). */
+  error?: string;
 }
 
 function seqFrom(result: unknown): number | undefined {
@@ -231,11 +236,135 @@ export async function emitPermissionObserverHooks(
     /* an observer never propagates into the gate */
   }
 }
+
+/**
+ * ADR-0039 Phase 1 — the deciding layer of a deny that engine A did NOT decide.
+ *
+ * `source` is a plain string on purpose: the spine payload is read as one
+ * (`parsePermissionDenial` in replay.ts, `deriveOpenNeeds` in inboxSources.ts)
+ * and this vocabulary is the MESSAGE convention `rulePrefix` already uses
+ * (`[contract] rule '…'` / `[policy] rule '…'` / `[policy] claim '…'`) plus the
+ * category decision. It is deliberately NOT narrowed to `PermissionRuleSource`
+ * ('default' | 'project' | 'session' | 'fail-closed'), which describes the
+ * origins of engine A's own rules.
+ */
+export interface PermissionDenialOrigin {
+  /** `contract` (TaskContract capability), `policy` (engine B rule OR claim), `default` (category). */
+  source: 'contract' | 'policy' | 'default';
+  /** The layer's own matcher (B rules have no `id`; their pattern is the identity). */
+  matchedRuleId?: string;
+  reason?: string;
+}
+
+export interface PermissionDeniedEmitInput {
+  tool: string;
+  /** Engine-A verdict — present when a `.zelari/permissions.json` rule denied. */
+  verdict?: PermissionVerdict | null;
+  /** Deciding layer of any OTHER deny (engine B, TaskContract, category default). */
+  origin?: PermissionDenialOrigin | null;
+  sessionId?: string;
+  ts?: number;
+}
+
+/**
+ * ADR-0039 Phase 1 — WHICH layer denied, for the layers that are not engine A.
+ *
+ * Only a layer whose effect IS `deny` is eligible: naming a layer that asked
+ * would make the event lie about the rule that blocked the call. Ties follow
+ * the operator-facing `rulePrefix` order — a TaskContract restriction is the
+ * most specific intent, then engine B's agent rule, then a resource claim — and
+ * the category decision is the floor, so this never returns null.
+ */
+export function denyOriginFor(input: {
+  rule?: PolicyRule | null;
+  claimRule?: PolicyRule | null;
+  contractRule?: PolicyRule | null;
+  categoryReason?: string;
+}): PermissionDenialOrigin {
+  const layers: Array<[PermissionDenialOrigin['source'], PolicyRule | null | undefined]> = [
+    ['contract', input.contractRule],
+    ['policy', input.rule],
+    ['policy', input.claimRule],
+  ];
+  for (const [source, layer] of layers) {
+    if (layer?.effect !== 'deny') continue;
+    const matched = layer.match.trim();
+    const reason = layer.reason?.trim();
+    return {
+      source,
+      ...(matched !== '' ? { matchedRuleId: matched } : {}),
+      ...(reason ? { reason } : {}),
+    };
+  }
+  const categoryReason = input.categoryReason?.trim();
+  return { source: 'default', ...(categoryReason ? { reason: categoryReason } : {}) };
+}
+
+/**
+ * The `permission.denied` payload contract, enforced BEFORE the sink is touched:
+ * a line nobody can read would poison every later replay and silently drop the
+ * denial from the inbox (`deriveOpenNeeds` skips an event with no `tool`). Same
+ * discipline as `emitDecisionEvent` in decisionEmit.ts.
+ *
+ * WHY NOT `decisionPayloadError` (which that sibling uses): its table
+ * (`DECISION_EVENT_PAYLOAD_SCHEMAS`) has NO `permission.denied` entry — slice 2
+ * declared the kind in the vocabulary and the projection but not a schema — so
+ * calling it is not even type-correct (`DecisionEventKind` excludes the kind),
+ * and adding the schema means editing packages/core, outside this slice's
+ * scope. Reported, not silently skipped: the guard mirrors what the readers in
+ * replay.ts / inboxSources.ts actually require (`tool` names the call, `source`
+ * names the decider; `reason` stays optional and free-form).
+ */
+function denialPayloadError(tool: unknown, source: unknown): string | null {
+  if (typeof tool !== 'string' || tool.trim() === '') return 'tool: must be a non-empty tool name';
+  if (typeof source !== 'string' || source.trim() === '') {
+    return 'source: must name the deciding layer';
+  }
+  return null;
+}
+
+/**
+ * `permission.denied` (WS1/t133) — and, since ADR-0039 Phase 1, the ONE writer
+ * for EVERY deny: engine A's verdict when a rule denied, else the `origin` the
+ * caller resolved (engine B rule or claim, TaskContract, category default).
+ *
+ * Contract:
+ *   - a deny must NAME its deciding layer; with neither `verdict` nor `origin`
+ *     the event is DROPPED, never written with an invented source;
+ *   - best-effort: a missing sink, a throwing sink or a rejected payload
+ *     returns `{recorded:false}` and NEVER propagates — recording a denial must
+ *     not be able to change the denial itself;
+ *   - exactly ONE event per dispatch: the caller emits from the FINAL deny
+ *     branch only (wrapWithPermissions in toolRegistry.ts), never twice.
+ *
+ * `sessionId`/`ts` stay accepted for the WS1 call shape; the envelope the sink
+ * writes is what carries them today, so the payload keeps the fields replay
+ * reads (`tool`, `matchedRuleId`, `source`, `reason`).
+ */
 export async function emitPermissionDenied(
   sink: PermissionEventSink | undefined,
-  payload: { tool: string; verdict: PermissionVerdict; sessionId?: string; ts?: number },
+  payload: PermissionDeniedEmitInput,
 ): Promise<PermissionDeniedEmitResult> {
-  const { tool, verdict } = payload;
+  const { tool } = payload;
+  const denial: { matchedRuleId: string; source: string; reason?: string } | null =
+    payload.verdict?.decision === 'deny'
+      ? {
+          matchedRuleId: payload.verdict.matchedRuleId ?? '',
+          source: payload.verdict.source,
+          reason: payload.verdict.reason,
+        }
+      : payload.origin
+        ? {
+            matchedRuleId: payload.origin.matchedRuleId ?? '',
+            source: payload.origin.source,
+            ...(payload.origin.reason !== undefined ? { reason: payload.origin.reason } : {}),
+          }
+        : null;
+  if (denial === null) {
+    return { recorded: false, error: 'no deciding layer — a deny must name one' };
+  }
+  const contractError = denialPayloadError(tool, denial.source);
+  if (contractError !== null) return { recorded: false, error: contractError };
   // t142: the spine event below is the ONLY denial record — no in-process ledger.
   if (!sink) return { recorded: false };
   try {
@@ -244,9 +373,9 @@ export async function emitPermissionDenied(
       actor: { type: 'system', role: 'permissions' },
       data: {
         tool,
-        matchedRuleId: verdict.matchedRuleId ?? '',
-        source: verdict.source,
-        reason: verdict.reason,
+        matchedRuleId: denial.matchedRuleId,
+        source: denial.source,
+        ...(denial.reason !== undefined ? { reason: denial.reason } : {}),
       },
     });
     const seq = seqFrom(result);

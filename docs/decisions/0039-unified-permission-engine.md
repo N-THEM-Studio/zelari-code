@@ -7,7 +7,7 @@
 > Precedent: ADR-0035 was renumbered from a duplicate `0015` (triage 2026-09-04).
 > Content follows the promoted PREP-ADR; the decision is unchanged.
 
-- **Status:** Accepted (phased implementation - adapter-first; engine code NOT yet unified)
+- **Status:** Accepted (phased implementation - adapter-first; engine code NOT yet unified; **Phase 1 landed in t147** - one emission point + parity matrix)
 - **Proposed:** 2026-09-21
 - **Author:** Zelari Code (BUILD phase, on promotion of the design-vault PREP-ADR, t146)
 - **Depends on:** [ADR-0016](./0016-event-sourced-session-log.md) (event-sourced session log), [ADR-0021](./0021-session-spine-contract.md) (spine contract), [ADR-0023](./0023-deterministic-verification-completion.md) (deterministic verification); `src/cli/safety/permissionGate.ts`, `src/cli/safety/policyEngine.ts`, `src/cli/toolRegistry.ts` (restrict-only composition)
@@ -105,19 +105,29 @@ degrades to a backwards-compatibility adapter.**
 
 ## Acceptance gate (implementation)
 
-- [ ] A unique grep target for the `permission.denied` emission point in the tree.
-- [ ] Parity test matrix: command -> verdict identical between translated A syntax
-      and native B syntax.
+- [x] A unique grep target for the `permission.denied` emission point in the tree
+      (t147: `emitPermissionDenied` is called from ONE place, the final deny
+      branch of `wrapWithPermissions` in `toolRegistry.ts`).
+- [x] Parity test matrix: command -> verdict identical between translated A syntax
+      and native B syntax (`src/cli/safety/permissionParity.test.ts`; the
+      translation seed is `permissionAdapter.translatePermissionRule`).
 - [ ] `.zelari/permissions.json` deprecated but still honored via the adapter
-      (translation tests).
-- [ ] `npm run typecheck` exit 0 and the `src/cli/safety` suite green.
+      (translation tests). NOT yet: Phase 1 ships the pure translation + its
+      tests, the load path that honors the file through B is Phase 2.
+- [x] `npm run typecheck` exit 0 and the `src/cli/safety` suite green.
 - [ ] `MIGRATION.md` updated at the end of the work.
 
 ## TODO
 
-- [ ] Phase 1 step 0: confirm the spine is the only denial ledger (no second
-      ledger in `permissionGate.ts`).
-- [ ] Phase 1: single emission point + parity matrix.
+- [x] Phase 1 step 0: confirm the spine is the only denial ledger (no second
+      ledger in `permissionGate.ts`). Re-verified: no in-process denial buffer
+      (`MAX_RECENT_DENIALS` / `listRecentPermissionDenials` /
+      `recordPermissionDenial` / `clearPermissionDenials` absent from product
+      code in `src/` and `packages/`).
+- [x] Phase 1: single emission point + parity matrix. Every deny (engine A
+      verdict, engine B rule/claim, TaskContract, category default) is recorded
+      exactly once, at the final decision point; the payload names the deciding
+      layer and is contract-checked before the sink is touched.
 - [ ] Phase 2: compat adapter + deprecation warning (two-minor window).
 - [ ] Phase 3: remove engine A; update `docs/GUIDA.md`, `docs/TOOLS.md`,
       `MIGRATION.md`.

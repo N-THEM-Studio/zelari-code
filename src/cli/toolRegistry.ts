@@ -90,6 +90,7 @@ import { destructiveCommandHit } from './safety/destructiveCommands.js';
 // BEFORE dispatch, with the structured `permission.denied` spine event.
 import {
   applyAllowRule,
+  denyOriginFor,
   emitAutoApproveGranted,
   emitPermissionAsked,
   emitPermissionDenied,
@@ -1482,16 +1483,32 @@ function wrapWithPermissions<I, O>(
         }
       }
       if (action === 'deny') {
-        // WS1 (t133): a RULE deny is structured — the message names the
-        // matched rule id and the denial lands on the spine
-        // (`permission.denied`) through the same sink the file.* telemetry
-        // uses, so a replayed session exposes it. yolo never promotes a deny.
+        // WS1 (t133): a RULE deny is structured — the message names the matched
+        // rule id; yolo never promotes a deny.
+        //
+        // ADR-0039 Phase 1: this branch is the SINGLE `permission.denied`
+        // emission point for EVERY deny, whichever layer decided it. Before
+        // this, only an engine-A verdict was recorded: a deny from engine B
+        // (policy.json rule or resource claim), from the TaskContract or from
+        // the category decision emitted NOTHING, so it was invisible to replay,
+        // to the inbox and to `/permissions` — whose ledger is derive-only from
+        // this event (t142). Emission stays best-effort (it cannot change
+        // `action`) and happens exactly once: both paths below return.
+        await emitPermissionDenied(ctx.emitSessionEvent, {
+          tool: original.name,
+          ...(policyVerdict?.decision === 'deny'
+            ? { verdict: policyVerdict }
+            : {
+                origin: denyOriginFor({
+                  rule,
+                  claimRule: claimHit,
+                  contractRule,
+                  categoryReason: actionReason || decision.reason,
+                }),
+              }),
+          sessionId: ctx.sessionId,
+        });
         if (policyVerdict?.decision === 'deny') {
-          await emitPermissionDenied(ctx.emitSessionEvent, {
-            tool: original.name,
-            verdict: policyVerdict,
-            sessionId: ctx.sessionId,
-          });
           return typedErr(`[permission] ${permissionDenialMessage(original.name, policyVerdict)}`);
         }
         return typedErr(`[permission] ${rulePrefix || decision.reason}`);
