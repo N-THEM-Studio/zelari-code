@@ -44,6 +44,11 @@ import {
 import { appendKrakenRadio } from './krakenRadio.js';
 import { EXPLORE_PROMPT, GENERAL_PROMPT, VERIFY_PROMPT } from './taskPrompts.js';
 import { formatSubagentMetricsLine } from './subagentMetrics.js';
+import {
+  createLoopGuard,
+  formatDegenerateLoopStop,
+  type DegenerateLoopStop,
+} from './subagentLoopGuard.js';
 import { existsSync } from 'node:fs';
 import {
   createKrakenWorktreeDetailed,
@@ -1116,10 +1121,17 @@ type TaskArgs = z.infer<typeof TaskArgsSchema>;
  * tell "the run stopped on request" from "the run finished on its own"; that
  * distinction matters to the graph executor, which must not re-spawn a node
  * onto a scope another tentacle may still be writing to.
+ *
+ * t157 (P2c): a cross-turn degenerate loop (the same assistant message
+ * re-emitted turn after turn — the 2026-09-21 research incident) is stopped
+ * by `subagentLoopGuard` and reported as `degenerate`, which is NOT the same
+ * thing as budget exhaustion: the caller must surface it, never swallow it.
  */
 /** Bounded tentacle tool trace (2.1 T5): ring size + output excerpt cap. */
 const TOOL_TRACE_RING = 24;
 const TOOL_TRACE_OUTPUT_MAX = 600;
+/** t157 (P2c): cap of the partial-output excerpt quoted in a loop-stop error. */
+const DEGENERATE_PARTIAL_MAX = 600;
 
 /** Best-effort command/path hint from tool args, for note→tool matching. */
 function toolCommandHint(args: Record<string, unknown> | undefined): string | undefined {
@@ -1134,12 +1146,19 @@ function toolCommandHint(args: Record<string, unknown> | undefined): string | un
 export async function runSubAgent(
   harness: SubAgentHarness,
   opts: { signal?: AbortSignal; onEvent?: (ev: BrainEvent) => void } = {},
-): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[]; turns?: number; toolCalls?: number }> {
+): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[]; turns?: number; toolCalls?: number; degenerate?: DegenerateLoopStop }> {
   const { signal } = opts;
   let current = '';
   let lastCompleted = '';
   let error: string | undefined;
   let usage: UsageBreakdown | undefined;
+  /**
+   * t157 (P2c): set when the cross-turn guard stopped the loop. Polled by
+   * `runTentacle`, which turns it into a loud, distinguishable failure.
+   */
+  let degenerate: DegenerateLoopStop | undefined;
+  /** One guard per run: streaks must not leak across tentacles. */
+  const loopGuard = createLoopGuard();
   // t156 (P2a-1): raw counters for the parent-facing metrics footer.
   // `turns` = completed assistant messages; `toolCalls` = TOTAL tool
   // executions (toolTrace is ring-capped at 24 and would lie on long runs).
@@ -1155,7 +1174,7 @@ export async function runSubAgent(
   }
   signal?.addEventListener('abort', onAbort, { once: true });
   try {
-  for await (const ev of harness.run()) {
+  subAgentLoop: for await (const ev of harness.run()) {
     if (signal?.aborted) {
       onAbort();
       return {
@@ -1218,7 +1237,21 @@ export async function runSubAgent(
               }
             : ev.usage;
         }
+        // t157 (P2c): feed the COMPLETED assistant message to the guard. Only
+        // assistant text is observed — repeating a tool call stays legitimate.
+        // On a hit the loop stops HERE (the turn's pending tool calls never
+        // run) and the partial output already sealed into `lastCompleted`
+        // survives; the stop is reported, never silent.
+        const loopVerdict = loopGuard.observe(current);
         current = '';
+        if (loopVerdict.degenerate) {
+          degenerate = {
+            turn: turns,
+            repetitions: loopVerdict.repetitions,
+            sample: loopVerdict.sample,
+          };
+          break subAgentLoop;
+        }
         break;
       case 'error':
         error = ev.message;
@@ -1235,6 +1268,7 @@ export async function runSubAgent(
     ...(toolTrace.length > 0 ? { toolTrace } : {}),
     ...(turns > 0 ? { turns } : {}),
     ...(toolCalls > 0 ? { toolCalls } : {}),
+    ...(degenerate ? { degenerate } : {}),
   };
   } finally {
     signal?.removeEventListener('abort', onAbort);
@@ -1300,6 +1334,13 @@ export interface TentacleFailure {
    * same scope is safe.
    */
   cancelled?: boolean;
+  /**
+   * t157 (P2c): set when the run stopped on the cross-turn degenerate-loop
+   * guard — the same stop `error` describes, in structured form. A loop stop
+   * is NOT budget exhaustion (which the harness ends on its own) and NOT a
+   * provider error: the parent must be able to tell them apart.
+   */
+  degenerate?: DegenerateLoopStop;
 }
 
 export type TentacleResult = TentacleSuccess | TentacleFailure;
@@ -1792,11 +1833,15 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // parent-facing footer can report honest counts.
   let turns: number | undefined;
   let toolCalls: number | undefined;
+  // t157 (P2c): the cross-turn loop guard's stop, threaded up so the failure
+  // it produces is distinguishable from budget exhaustion.
+  let degenerate: DegenerateLoopStop | undefined;
   try {
-    ({ result, error, aborted, usage, toolTrace, turns, toolCalls } = await runSubAgent(harness, {
-      ...(opts.signal ? { signal: opts.signal } : {}),
-      onEvent: onHarnessEvent,
-    }));
+    ({ result, error, aborted, usage, toolTrace, turns, toolCalls, degenerate } =
+      await runSubAgent(harness, {
+        ...(opts.signal ? { signal: opts.signal } : {}),
+        onEvent: onHarnessEvent,
+      }));
 
     // Routed cheap model 404 (e.g. Settings explore = glm-5.3-flash while the
     // lead model works): retry once on the parent identity.
@@ -1830,6 +1875,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
           toolTrace = retry.toolTrace;
           turns = retry.turns;
           toolCalls = retry.toolCalls;
+          degenerate = retry.degenerate;
           sub = { ...sub, model: sub.fallback.model, provider: sub.fallback.provider };
         } catch (err) {
           error = err instanceof Error ? err.message : String(err);
@@ -1865,6 +1911,42 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       durationMs,
     });
     return { ok: false, agent, error: 'task: sub-agent cancelled by parent', cancelled: true };
+  }
+
+  if (degenerate) {
+    // t157 (P2c): the guard stopped the loop — the tentacle kept re-emitting
+    // the same assistant text turn after turn (the 2026-09-21 research
+    // incident), which is NOT budget exhaustion and must not look like it.
+    // Fail loudly, with the partial output the loop produced before the
+    // repetition started, so the stop is never mute and the work is not lost
+    // from the parent's view.
+    if (worktree) await teardownWorktree(worktree);
+    const reason = formatDegenerateLoopStop(degenerate);
+    appendKrakenRadio(parentCwd, sessionId, {
+      kind: 'error',
+      agent,
+      thoroughness,
+      description: args.description,
+      detail: reason,
+      model: sub.model,
+      worktree: worktree?.path ?? null,
+      durationMs,
+      ok: false,
+    });
+    endTentacle(liveId, { ok: false, model: sub.model, detail: reason, durationMs });
+    const partial = (result ?? '').trim();
+    const excerpt =
+      partial.length > DEGENERATE_PARTIAL_MAX
+        ? `${partial.slice(0, DEGENERATE_PARTIAL_MAX)}…`
+        : partial;
+    return {
+      ok: false,
+      agent,
+      error:
+        `task: sub-agent (${agent}) ${reason}` +
+        (excerpt ? `\npartial output: ${excerpt}` : ''),
+      degenerate,
+    };
   }
 
   if (!result) {

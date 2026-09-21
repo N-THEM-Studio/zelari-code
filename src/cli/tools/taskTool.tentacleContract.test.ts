@@ -10,6 +10,10 @@
  *     simulated composed message must still satisfy the verdict parser.
  *   - t155 (P1c): the auto-spawned inner verify INHERITS the parent
  *     general's thoroughness instead of hardcoded 'medium'.
+ *   - t157 (P2c): a tentacle that re-emits the same assistant message turn
+ *     after turn is stopped by the loop guard, and the PARENT sees that stop
+ *     (`task` tool result) instead of a silent budget exhaustion; repeated
+ *     tool calls with distinct prose stay legitimate.
  */
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 import { tmpdir } from 'node:os';
@@ -22,6 +26,7 @@ import {
   buildTaskAutoVerifyPrompt,
   resetTaskVerifyObligation,
   runAutoVerifyAfterGeneral,
+  runTentacle,
   type SubAgentContext,
   type TaskToolDeps,
   type TentacleSuccess,
@@ -208,4 +213,110 @@ describe('t155 — inner verify inherits the general thoroughness (P1c)', () => 
       }
     });
   }
+});
+
+// ---------------------------------------------------------------------------
+// t157 driver — scripted harness emitting ONE assistant message per turn
+// (optional tool calls). The guard reads completed assistant messages, so a
+// per-turn `message_start/delta/end` cycle is exactly the incident shape: one
+// repetition per turn, each too small to trip core's intra-message detector.
+// ---------------------------------------------------------------------------
+
+/** Status-theater line from the 2026-09-21 incident (> guard min length). */
+const LOOP_LINE =
+  'Bene, dungeon.js fatto. Aggiorno todo e procedo con inventory adesso, come previsto.';
+
+function scriptedTurnsDeps(turns: string[], repeatToolCall: boolean): TaskToolDeps {
+  return {
+    createSubAgentContext: async ({ agent }) => {
+      const ctx: SubAgentContext = {
+        providerStream: (() => {
+          throw new Error('not invoked by the scripted harness');
+        }) as unknown as SubAgentContext['providerStream'],
+        model: 'test-model',
+        provider: 'test-provider',
+        registry: new ToolRegistry(),
+        tools: [],
+        agent,
+      };
+      return ctx;
+    },
+    harnessFactory: () => ({
+      run: async function* (): AsyncGenerator<BrainEvent> {
+        for (const [i, text] of turns.entries()) {
+          if (repeatToolCall) {
+            // Same command every turn: legitimate (a retry), so it must never
+            // be what trips the guard.
+            const callId = `t157-${i}`;
+            yield {
+              type: 'tool_execution_start',
+              toolCallId: callId,
+              toolName: 'bash',
+              args: { command: 'npx vitest run src/cli/tools' },
+            } as unknown as BrainEvent;
+            yield {
+              type: 'tool_execution_end',
+              toolCallId: callId,
+              isError: false,
+              durationMs: 3,
+              result: '1/1 passed',
+            } as unknown as BrainEvent;
+          }
+          yield { type: 'message_start' } as BrainEvent;
+          yield { type: 'message_delta', delta: text } as BrainEvent;
+          yield { type: 'message_end' } as BrainEvent;
+        }
+      },
+    }),
+    allowWorktree: false,
+  };
+}
+
+describe('t157 — degenerate loop stop reaches the parent (P2c)', () => {
+  it('3 identical assistant turns ⇒ failed task result carrying the loop signal + partial output', async () => {
+    const cwd = fs.mkdtempSync(path.join(tmpdir(), 'zelari-t157-'));
+    const res = await runTentacle({
+      deps: scriptedTurnsDeps([LOOP_LINE, LOOP_LINE, LOOP_LINE, LOOP_LINE, LOOP_LINE], true),
+      args: { description: 'degenerate loop', prompt: 'research the thing' },
+      agent: 'explore',
+      thoroughness: 'quick',
+      parentCwd: cwd,
+      sessionId: 't157-degenerate',
+    });
+    expect(res.ok).toBe(false);
+    if (res.ok) throw new Error('the guard must fail the tentacle, not return a result');
+    expect(res.error).toContain('degenerate loop detected');
+    expect(res.error).toContain('same assistant output repeated 3 times');
+    expect(res.error).toContain('turn 3');
+    // The partial output survives the stop (never a mute cut).
+    expect(res.error).toContain('partial output');
+    expect(res.error).toContain('aggiorno todo e procedo con inventory');
+    expect(res.degenerate).toMatchObject({ turn: 3, repetitions: 3 });
+    // Structured and textual signals agree.
+    expect(res.error).toContain(`turn ${res.degenerate!.turn}`);
+  });
+
+  it('distinct assistant turns + identical tool calls ⇒ no false positive', async () => {
+    const cwd = fs.mkdtempSync(path.join(tmpdir(), 'zelari-t157-'));
+    const distinct = [
+      'Letto il modulo guard: conto delle ripetizioni consecutive sul testo assistant.',
+      'Ora scrivo i test puri del guard nel file dedicato e li eseguo con vitest.',
+      'Suite verde sul guard; passo al typecheck del workspace prima del commit.',
+      'Commit atomico dei tre file dello scope e report finale al parent adesso.',
+      'Ultimo controllo del git status per chiudere la slice senza residui sporchi.',
+    ];
+    const res = await runTentacle({
+      deps: scriptedTurnsDeps(distinct, true),
+      args: { description: 'legit run', prompt: 'implement the slice' },
+      agent: 'explore',
+      thoroughness: 'quick',
+      parentCwd: cwd,
+      sessionId: 't157-legit',
+    });
+    expect(res.ok).toBe(true);
+    if (!res.ok) throw new Error(res.error);
+    // The whole script ran: the guard stopped nothing.
+    expect(res.turns).toBe(distinct.length);
+    expect(res.result).toContain('Ultimo controllo del git status');
+  });
 });
