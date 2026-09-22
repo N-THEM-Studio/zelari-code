@@ -7,7 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.60.0] - 2026-09-22
+
+Two waves on top of v2.59.0: tentacle hardening (piano `.zelari/docs/2026-09-21-piano-tentacoli-p1-p2-p3.md`, t153–t160) and memory-inconsistency prevention (piano `.zelari/docs/2026-09-21-piano-prevenzione-incongruenze-memoria.md`, t161–t164), plus the Xiaomi MiMo provider. No safety default flipped; everything additive.
+
 ### Added
+
+- **Tentacle contract overhaul (t153–t155)** — the `general` prompt is a real contract (EDIT INTEGRITY read-before-write per ADR-0033, mandatory return format: what changed / files / checks / risks) in the new `src/cli/tools/taskPrompts.ts`. The auto-verify prompt now **composes** the two formats (`<verify-report>` blocks first, `VERDICT:` trailer last) instead of two conflicting final instructions — the model no longer obeys one and leaves the other `unknown`; the internal verify inherits the general's thoroughness (executor rework stays `medium`, documented parity); same composition on the graph path (`src/cli/kraken/planner.ts`).
+- **Honest tentacle usage metrics (t156)** — parent-facing `metrics:` footer line: tokens only when the provider reports them, `cached` only when > 0, `toolCalls` counted beyond the ring cap.
+- **Degenerate-loop guard (t157)** — a tentacle repeating the same >40-char output three times consecutively is stopped and reported as `TentacleFailure { degenerate }` with partial output, instead of silently burning its whole turn budget (motivated by a real incident: an explore tentacle iterated ~30 identical turns).
+- **Scaled turn budgets + PARTIAL marking (t158)** — one exported `TURN_BUDGETS` table (quick/medium/deep per kind; guard test pins every numeric delta), and `PARTIAL, best-effort` marking whenever a budget cut applies.
+- **Spine event `subagent.metrics` (t159)** — additive-only event (kind/thoroughness/model/turns/toolCalls/usage/durationMs/degenerate) with a schema stop-rule: the measurable base for per-model cache-hit analysis (first real numbers collected on glm-5.3-flash: cold 36–43%, warm 74–90%).
+- **Per-kind ENVIRONMENT advertise (t160)** — prompt blocks state what each tentacle kind really gets (explore read-only; general worktree + squash-merge; verify: network is a MEANS, not a source), pinned by tests against the real permission map.
+- **`/inspect` models section (t164)** — lead model with source, per-kind resolved sub-model with the WHY (UI/env override → `SUB_MODEL` → cross-family → auto-pick → parent), and per-model usage counts from the spine — the Desktop model pickers finally have a mirror in the CLI.
+- **`verify:plan-sync` gate (t161)** — the release gate fails (exit 1) when a commit references a plan task still pending in `.zelari/plan.json`; honest skip (exit 0) where the vault is absent. The t153–t156 accounting drift that motivated it is now structurally impossible to ship.
 
 - **Xiaomi MiMo provider (`mimo`)** — the Xiaomi MiMo Open Platform **Token
   Plan** subscription is a first-class provider (OpenAI-compatible, base URL
@@ -25,6 +38,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `mission:progress-7`), and `materializeContext` / the `readDurableHeadSync`
   sync fallback render a `stale · superseded` (or `stale · age` past 48h) line
   so a dead session's layer is never presented as current.
+
+### Changed
+
+- **Context-update matcher hygiene (t162)** — frozen eval baselines (`eval/results/**`) no longer leak fossil task-scope lines into the workspace context (`stripFrozenEvalScopeLines` at the composer seam, regression test reproduces the leak red first); stale v0.10 plan phases and the "package 1.15.0" milestone were archived out of `.zelari/plan.json`; six fossil durable-state layers plus their HEAD pointer moved to `state/archive/` (reversible move; readers fail open).
 
 ## [2.59.0] - 2026-09-21
 
