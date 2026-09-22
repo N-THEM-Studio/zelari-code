@@ -66,6 +66,9 @@ export const PROVIDER_THINKING_CAPABILITY: Record<ProviderName, ThinkingCapabili
   muse: { effort: true },
   glm: { budget: true },
   deepseek: { effort: true },
+  // Xiaomi MiMo (Token Plan) — OpenAI-compatible adapter; thinking mode
+  // streams `reasoning_content` (same wire family as DeepSeek/MiniMax).
+  mimo: { effort: true },
   minimax: { effort: true },
   custom: { effort: true },
 };

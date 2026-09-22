@@ -31,6 +31,7 @@ export type ProviderName =
   | 'glm'
   | 'grok'
   | 'deepseek'
+  | 'mimo'
   | 'openai-compatible'
   | 'custom'
   | 'chatgpt'
@@ -54,6 +55,7 @@ export const PROVIDERS: readonly ProviderSpec[] = [
   { id: 'glm', displayName: 'GLM / Z.AI', envVar: 'GLM_API_KEY', baseUrl: 'https://api.z.ai/api/coding/paas/v4' },
   { id: 'grok', displayName: 'xAI Grok', envVar: 'GROK_API_KEY', baseUrl: 'https://api.x.ai/v1' },
   { id: 'deepseek', displayName: 'DeepSeek', envVar: 'DEEPSEEK_API_KEY', baseUrl: 'https://api.deepseek.com' },
+  { id: 'mimo', displayName: 'Xiaomi MiMo (Token Plan)', envVar: 'MIMO_API_KEY', baseUrl: 'https://token-plan-ams.xiaomimimo.com/v1' },
   { id: 'chatgpt', displayName: 'ChatGPT (OAuth)', envVar: 'CHATGPT_API_KEY', baseUrl: 'https://chatgpt.com/backend-api/codex' },
   { id: 'anthropic', displayName: 'Anthropic Claude (OAuth)', envVar: 'ANTHROPIC_API_KEY', baseUrl: 'https://api.anthropic.com' },
   { id: 'muse', displayName: 'Muse (OAuth)', envVar: 'MUSE_API_KEY', baseUrl: 'https://api.meta.ai/v1' },
@@ -73,7 +75,7 @@ export function isOAuthProvider(id: string): id is ProviderName {
 
 /** True when the string looks like a vendor API key (not an OAuth paste-code). */
 export function looksLikeApiKey(key: string): boolean {
-  return /^(sk-|xai-|glm-|mm-)/i.test(key.trim());
+  return /^(sk-|xai-|glm-|mm-|tp-|ttp-)/i.test(key.trim());
 }
 
 /** Comma-separated provider ids for help / error strings. */

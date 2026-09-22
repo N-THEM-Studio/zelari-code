@@ -31,6 +31,7 @@ export type ProviderId =
   | 'glm'
   | 'minimax'
   | 'deepseek'
+  | 'mimo'
   | 'openai-compatible'
   | 'chatgpt'
   | 'anthropic'
@@ -65,6 +66,7 @@ export interface ModelsRegistry {
   glm?: ProviderModelsEntry;
   minimax?: ProviderModelsEntry;
   deepseek?: ProviderModelsEntry;
+  mimo?: ProviderModelsEntry;
   'openai-compatible'?: ProviderModelsEntry;
   chatgpt?: ProviderModelsEntry;
   anthropic?: ProviderModelsEntry;
@@ -101,6 +103,8 @@ const PROVIDER_BASE_URLS: Record<ProviderId, string> = {
   'minimax': 'https://api.minimax.io/v1',
   // Must match PROVIDER_ENDPOINTS in provider/openai-compatible.ts (chat host).
   'deepseek': 'https://api.deepseek.com',
+  // Must match PROVIDER_ENDPOINTS in provider/openai-compatible.ts (chat host).
+  'mimo': 'https://token-plan-ams.xiaomimimo.com/v1',
   'openai-compatible': 'https://api.x.ai/v1',
   'chatgpt': 'https://chatgpt.com/backend-api/codex',
   'anthropic': 'https://api.anthropic.com/v1',
@@ -113,6 +117,11 @@ const PROVIDER_BASE_URLS: Record<ProviderId, string> = {
  * a guessed list). Desktop/CLI merge these in-memory only.
  */
 const STATIC_FALLBACKS: Partial<Record<ProviderId, DiscoveredModel[]>> = {
+  // Xiaomi MiMo (Token Plan) — seed only the documented flagship; the real
+  // list arrives via /models discovery after /login mimo.
+  mimo: [
+    { id: 'mimo-v2.6-pro', displayName: 'MiMo v2.6 Pro' },
+  ],
   chatgpt: [
     { id: 'gpt-5.6-codex', displayName: 'GPT-5.6 Codex' },
     { id: 'gpt-5.6', displayName: 'GPT-5.6' },

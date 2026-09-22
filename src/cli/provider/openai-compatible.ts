@@ -391,6 +391,11 @@ export const PROVIDER_ENDPOINTS: Record<ProviderName, string> = {
   // DeepSeek global platform (OpenAI-compatible). Chat → /chat/completions,
   // discovery → /models against this same host.
   'deepseek': 'https://api.deepseek.com',
+  // Xiaomi MiMo — defaults to the Token Plan subscription endpoint (flat
+  // rate, tp-/ttp- API keys from the console). Pay-as-you-go users point at
+  // https://api.xiaomimimo.com/v1 via /provider custom; CN-region Token
+  // Plan is https://token-plan-cn.xiaomimimo.com/v1.
+  'mimo': 'https://token-plan-ams.xiaomimimo.com/v1',
   'chatgpt': 'https://chatgpt.com/backend-api/codex',
   'anthropic': 'https://api.anthropic.com',
   'muse': 'https://api.meta.ai/v1',

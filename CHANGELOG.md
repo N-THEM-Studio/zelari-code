@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Xiaomi MiMo provider (`mimo`)** — the Xiaomi MiMo Open Platform **Token
+  Plan** subscription is a first-class provider (OpenAI-compatible, base URL
+  `https://token-plan-ams.xiaomimimo.com/v1`, env var `MIMO_API_KEY`,
+  `tp-`/`ttp-` API keys). Wired for `/v1/models` discovery: after
+  `/login mimo <key>` the model list is fetched in the background. Seeds
+  `mimo-v2.6-pro` before discovery runs. Thinking mode (`reasoning_content`)
+  is handled by the shared OpenAI-compatible adapter. Pay-as-you-go users:
+  `/provider custom https://api.xiaomimimo.com/v1`; CN-region Token Plan:
+  `/provider custom https://token-plan-cn.xiaomimimo.com/v1`.
+
 ## [2.59.0] - 2026-09-21
 
 Slices t150–t152 (piano `.zelari/docs/piano-slice-1-4-5-tail-reminder.md`): one request-tail assembler consumed by every hot path that talks to the model, the `[system-reminder]` wired on that tail (never in rolling history), honest happy-path docs. No safety default flipped.

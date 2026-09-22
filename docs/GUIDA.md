@@ -62,7 +62,7 @@ The shared runtime is published as the npm package [`@zelari/core`](https://www.
 | **Node.js** | **≥ 20.17 LTS** | CI tests the Node 20 floor and Node 24. |
 | **npm** | **≥ 10** | Needed to reproduce the workspace lockfile; use the version pinned by `packageManager`. |
 | **OS** | Linux, macOS, Windows 10/11 | Windows requires Git Bash (auto-detected). |
-| **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, Muse, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek | OAuth: `/login grok`, `/login chatgpt`, `/login anthropic`, `/login muse`. |
+| **Account + API key** | 1 of: xAI Grok, ChatGPT, Anthropic, Muse, OpenAI-compatible, GLM/Z.AI, MiniMax, DeepSeek, Xiaomi MiMo (Token Plan) | OAuth: `/login grok`, `/login chatgpt`, `/login anthropic`, `/login muse`. |
 
 ### Optional dependencies (advanced capabilities)
 
@@ -164,7 +164,7 @@ is optional depth you can open **after your first PASS**.
 On first launch (or when `provider.json` is missing), a 5-step **wizard** starts:
 
 1. **Welcome** — overview
-2. **Provider** — choose among `grok`, `minimax`, `glm`, `deepseek`, `openai-compatible` (ChatGPT / Anthropic via `/login` after the wizard)
+2. **Provider** — choose among `grok`, `minimax`, `glm`, `deepseek`, `mimo`, `openai-compatible` (ChatGPT / Anthropic via `/login` after the wizard)
 3. **Model** — model name (Enter for default)
 4. **API key** — `env` (environment variable), `keystore` (save locally) or `skip`
 5. **Confirm** — summary and commit

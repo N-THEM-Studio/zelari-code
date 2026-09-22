@@ -537,6 +537,7 @@ const DISCOVERABLE: DiscoveryProviderId[] = [
   'glm',
   'minimax',
   'deepseek',
+  'mimo',
   'openai-compatible',
   'chatgpt',
   'anthropic',

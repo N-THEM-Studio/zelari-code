@@ -66,6 +66,7 @@ const providerDefaults: Record<string, string> = {
   'minimax': 'MiniMax-chat-latest',
   'glm': 'glm-4.5',
   'deepseek': 'deepseek-v4-pro',
+  'mimo': 'mimo-v2.6-pro',
   'chatgpt': 'gpt-5.2-codex',
   'anthropic': 'claude-sonnet-4-5',
 };
@@ -174,7 +175,7 @@ export function App(): React.ReactElement {
   // tab-completion show current choices without an explicit /discover.
   useEffect(() => {
     const id = activeProviderSpec.id as DiscoveryProviderId;
-    if (!['grok', 'glm', 'minimax', 'deepseek', 'openai-compatible', 'chatgpt', 'anthropic'].includes(id)) return;
+    if (!['grok', 'glm', 'minimax', 'deepseek', 'mimo', 'openai-compatible', 'chatgpt', 'anthropic'].includes(id)) return;
     if (!isModelsCacheStale(id)) return;
     discoverModelsInBackground(id, {});
     // Run once at mount for the provider active at startup.
