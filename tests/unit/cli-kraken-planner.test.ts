@@ -243,7 +243,7 @@ describe('buildGraphFromPlan', () => {
     const prompt = graph.nodes.get('verify-g1')?.prompt ?? '';
     expect(prompt).toContain('VERDICT: PASS');
     expect(prompt).toContain('VERDICT: FAIL');
-    expect(prompt).toContain('as the LAST line');
+    expect(prompt).toContain('very LAST line');
     // The trailer is only useful if FAIL carries actionable detail back.
     expect(prompt).toContain('state each gap concretely');
 
