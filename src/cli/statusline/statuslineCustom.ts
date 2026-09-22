@@ -166,17 +166,25 @@ export interface StatusLineCustomPreview extends StatusLineCustomRunOptions {}
  */
 export function previewStatusLineCustomItem(opts: StatusLineCustomPreview): string | null {
   const invocation = opts.invocation ?? shellInvocation(opts.command);
+  const spawnOpts = {
+    cwd: opts.cwd ?? process.cwd(),
+    env: opts.env ?? process.env,
+    input: JSON.stringify(customItemPayload({ cwd: opts.cwd, ...opts.payload })),
+    timeout: boundedTimeout(opts.timeoutMs),
+    killSignal: 'SIGKILL',
+    encoding: 'utf-8',
+    windowsHide: true,
+    maxBuffer: MAX_CAPTURE_CHARS,
+  } as const;
   try {
-    const res = spawnSync(invocation.program, invocation.args, {
-      cwd: opts.cwd ?? process.cwd(),
-      env: opts.env ?? process.env,
-      input: JSON.stringify(customItemPayload({ cwd: opts.cwd, ...opts.payload })),
-      timeout: boundedTimeout(opts.timeoutMs),
-      killSignal: 'SIGKILL',
-      encoding: 'utf-8',
-      windowsHide: true,
-      maxBuffer: MAX_CAPTURE_CHARS,
-    });
+    let res = spawnSync(invocation.program, invocation.args, spawnOpts);
+    // Transient spawn failure (fork EAGAIN/ENOMEM under load — observed in the
+    // publish-cli CI job): the child NEVER started, so there is no signal.
+    // One bounded retry; timeouts (signal set), non-zero exits and missing
+    // binaries keep the single-shot fail-soft contract.
+    if (res.error && res.signal == null) {
+      res = spawnSync(invocation.program, invocation.args, spawnOpts);
+    }
     if (res.error || (typeof res.status === 'number' && res.status !== 0)) return null;
     return normalizeStatusLineText(res.stdout ?? '');
   } catch {
