@@ -22,6 +22,10 @@ import type {
   StateCommitInput,
   StateCommitMeta,
 } from '@zelari/core';
+import { DEFAULT_STALE_MS, formatStaleMarker, layerKind } from './staleRender.js';
+
+// Re-exported so callers/tests reach the stale primitives via the store module.
+export { DEFAULT_STALE_MS, formatStaleMarker, layerKind };
 
 const DEFAULT_MATERIALIZE_CHARS = 4_000;
 
@@ -125,10 +129,71 @@ export class FileDurableStateStore implements DurableStateStore {
     };
 
     await writeJsonAtomic(path.join(this.commitsDir, `${id}.json`), meta);
+    // Supersede prior layers of the same kind (t163). Fail-open: a scan error
+    // must never fail the commit itself.
+    try {
+      await this.supersedePriorSameKind(id, meta.layer, meta.createdAt);
+    } catch {
+      // best-effort only
+    }
     await writeJsonAtomic(this.headPath, { id, updatedAt: meta.createdAt });
     await fs.appendFile(this.indexPath, JSON.stringify({ id, createdAt: meta.createdAt, label: meta.label }) + '\n', 'utf8');
 
     return stripStored(meta);
+  }
+
+  /**
+   * Mark every earlier commit of the same layer kind as superseded (t163).
+   *
+   * First-supersede-wins: a commit that already carries supersededAt is left
+   * untouched, so the chain 6→7→8 leaves 6.supersededBy=7. Unlayered commits
+   * are never involved (kind is null). Fail-open: unreadable prior files and a
+   * missing index are skipped, never thrown.
+   */
+  private async supersedePriorSameKind(
+    newId: StateCommitId,
+    newLayer: string | undefined,
+    now: number,
+  ): Promise<void> {
+    const kind = layerKind(newLayer);
+    if (!kind) return;
+
+    let ids: string[] = [];
+    try {
+      const raw = await fs.readFile(this.indexPath, 'utf8');
+      for (const line of raw.split('\n')) {
+        const t = line.trim();
+        if (!t) continue;
+        try {
+          const row = JSON.parse(t) as { id?: string };
+          if (row.id) ids.push(row.id);
+        } catch {
+          // skip corrupt line
+        }
+      }
+    } catch {
+      // index missing — fall back to a commits-dir listing below
+    }
+    if (ids.length === 0) {
+      try {
+        const files = await fs.readdir(this.commitsDir);
+        ids = files.filter((f) => f.endsWith('.json')).map((f) => f.slice(0, -'.json'.length));
+      } catch {
+        return;
+      }
+    }
+
+    for (const priorId of ids) {
+      if (priorId === newId) continue;
+      const prior = await readJsonFile<StoredCommit>(path.join(this.commitsDir, `${priorId}.json`));
+      if (!prior || prior.supersededAt !== undefined) continue;
+      if (layerKind(prior.layer) !== kind) continue;
+      await writeJsonAtomic(path.join(this.commitsDir, `${priorId}.json`), {
+        ...prior,
+        supersededAt: now,
+        supersededBy: newId,
+      });
+    }
   }
 
   async head(): Promise<StateCommitMeta | null> {
@@ -194,9 +259,13 @@ export class FileDurableStateStore implements DurableStateStore {
     const reusable = discoveries.filter((d) => d.reusable);
     const lines: string[] = [
       `# Durable State (commit ${meta.id}${meta.layer ? `, layer ${meta.layer}` : ''})`,
+    ];
+    const stale = formatStaleMarker(meta);
+    if (stale) lines.push(stale);
+    lines.push(
       `label: ${meta.label}`,
       `verification: ran=${meta.verification.ran} ok=${meta.verification.ok}`,
-    ];
+    );
     if (meta.workspaceCheckpointId) {
       lines.push(`workspaceCheckpoint: ${meta.workspaceCheckpointId}`);
     }

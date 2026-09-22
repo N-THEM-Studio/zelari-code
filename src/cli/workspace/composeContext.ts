@@ -9,6 +9,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { envNumber } from "../utils/envNumber.js";
+import { formatStaleMarker } from "../state/staleRender.js";
 import { loadProjectInstructions } from "./projectInstructions.js";
 import { resolveWorkspaceRoot } from "./paths.js";
 import {
@@ -334,6 +335,9 @@ function readDurableHeadSync(projectRoot: string): string {
       id?: string;
       label?: string;
       layer?: string;
+      createdAt?: number;
+      supersededAt?: number;
+      supersededBy?: string;
       verification?: { ok?: boolean; ran?: boolean };
       artifactDir?: string;
     };
@@ -352,9 +356,13 @@ function readDurableHeadSync(projectRoot: string): string {
     const reusable = discoveries.filter((d) => d.reusable !== false);
     const lines = [
       `# Durable State (commit ${meta.id ?? head.id}${meta.layer ? `, layer ${meta.layer}` : ""})`,
+    ];
+    const stale = formatStaleMarker(meta);
+    if (stale) lines.push(stale);
+    lines.push(
       `label: ${meta.label ?? ""}`,
       `verification: ran=${meta.verification?.ran ?? "?"} ok=${meta.verification?.ok ?? "?"}`,
-    ];
+    );
     for (const d of reusable.slice(0, 24)) {
       const pathHint = d.paths?.length ? ` — ${d.paths.join(", ")}` : "";
       lines.push(`- [${d.kind ?? "note"}] ${d.summary ?? ""}${pathHint}`);

@@ -111,6 +111,35 @@ describe("composeProjectContext", () => {
     expect(c.ragContext).not.toMatch(/A{50}/); // plan phase dump still not in RAG
   });
 
+  it("marks a superseded durable HEAD as stale in the sync fallback (t163)", () => {
+    const stateDir = join(dir, ".zelari", "state");
+    mkdirSync(join(stateDir, "commits"), { recursive: true });
+    mkdirSync(join(stateDir, "artifacts", "dead0001"), { recursive: true });
+    writeFileSync(join(stateDir, "HEAD.json"), JSON.stringify({ id: "dead0001" }));
+    writeFileSync(
+      join(stateDir, "commits", "dead0001.json"),
+      JSON.stringify({
+        id: "dead0001",
+        createdAt: Date.now() - 1_000,
+        label: "progress 6",
+        layer: "mission:progress-6",
+        verification: { ok: true, ran: true },
+        supersededAt: Date.now(),
+        supersededBy: "newer777",
+        artifactDir: "artifacts/dead0001",
+      }),
+    );
+    writeFileSync(
+      join(stateDir, "artifacts", "dead0001", "discoveries.json"),
+      JSON.stringify([{ id: "d1", kind: "note", summary: "leftover", reusable: true }]),
+    );
+
+    const c = composeProjectContext({ mode: "council", cwd: dir, userMessage: "continue" });
+    // same marker text as the async FileDurableStateStore.materializeContext
+    expect(c.ragContext).toContain("stale · superseded");
+    expect(c.ragContext).toContain("by newer777");
+  });
+
   it("does not inject full design doc bodies", () => {
     const c = composeProjectContext({
       mode: "kraken",

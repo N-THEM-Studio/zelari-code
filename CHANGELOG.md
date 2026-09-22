@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/provider custom https://api.xiaomimimo.com/v1`; CN-region Token Plan:
   `/provider custom https://token-plan-cn.xiaomimimo.com/v1`.
 
+- **Superseded-layer stale marker (t163)** — durable state layers
+  (`.zelari/state/commits/*.json`) are marked superseded at write time when a
+  later commit of the same layer kind lands (`mission:progress-6` →
+  `mission:progress-7`), and `materializeContext` / the `readDurableHeadSync`
+  sync fallback render a `stale · superseded` (or `stale · age` past 48h) line
+  so a dead session's layer is never presented as current.
+
 ## [2.59.0] - 2026-09-21
 
 Slices t150–t152 (piano `.zelari/docs/piano-slice-1-4-5-tail-reminder.md`): one request-tail assembler consumed by every hot path that talks to the model, the `[system-reminder]` wired on that tail (never in rolling history), honest happy-path docs. No safety default flipped.

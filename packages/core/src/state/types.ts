@@ -68,6 +68,10 @@ export interface StateCommitMeta {
   /** Hash of the stable prompt pack at commit time (cache coordination). */
   stablePromptHash?: string;
   discoveryCount: number;
+  /** Epoch ms a later commit of the same layer kind superseded this layer (t163). */
+  supersededAt?: number;
+  /** Id of the commit that superseded this layer (same layer kind) (t163). */
+  supersededBy?: StateCommitId;
 }
 
 /** Input for DurableStateStore.commit (id/parent/createdAt assigned by store). */
