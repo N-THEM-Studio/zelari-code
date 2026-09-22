@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.60.1] - 2026-09-22
+
+### Fixed
+
+- **Release unblocked** — v2.60.0 CI was red on a single legacy test:
+  `tests/unit/cli-kraken-planner.test.ts` still asserted the pre-2.60.0
+  wording of the verify trailer (`as the LAST line` on one line), while the
+  composed prompt introduced in 2.60.0 (t154) wraps it (`as the very LAST
+  line`). The assertion is aligned with the composed contract; no behavior
+  changed (6508/6508 green on CI, 42/42 locally). Publish/Desktop for the
+  v2.60.0 tag never got past the release gate, so nothing broken shipped.
+
 ## [2.60.0] - 2026-09-22
 
 Two waves on top of v2.59.0: tentacle hardening (piano `.zelari/docs/2026-09-21-piano-tentacoli-p1-p2-p3.md`, t153–t160) and memory-inconsistency prevention (piano `.zelari/docs/2026-09-21-piano-prevenzione-incongruenze-memoria.md`, t161–t164), plus the Xiaomi MiMo provider. No safety default flipped; everything additive.
