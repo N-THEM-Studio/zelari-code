@@ -227,17 +227,20 @@ const TURN_TIMEOUT_GRACE: Duration = Duration::from_secs(60);
 /// Default idle is 15 min so it sits ABOVE provider first-token idle (10 min):
 /// a silent lead should get a provider idle error, not a sidecar cancel that
 /// closes the session as `completed` with no explanation.
-/// The wall cap is the structural backstop: TURN_TIMEOUT bounds
-/// even a chatty turn (default 3000s = max tentacle 45' via
-/// TASK_TOOL_TIMEOUT_MS + 5' buffer; mission/council turns are legitimately
-/// long). Past either limit the run fails with the typed error
-/// `turn_timeout`, which surfaces in chat like every other run_task Err.
+/// The wall cap is the structural backstop for a chatty runaway (a 15s
+/// heartbeat never trips idle). It is not "one tentacle": a parent turn
+/// hosts several sequential 45-min tentacles plus lead/verify overhead, and
+/// the old 50-min ceiling killed active Kraken turns while events were
+/// still arriving. Default 4h. Idle (15 min of silence) remains the
+/// stuck-turn detector. Past either limit the run fails with a distinct
+/// reason (`turn_idle_timeout` vs `turn_wall_timeout`) so chat does not
+/// blame the idle watchdog for a wall kill.
 /// Env overrides: ZELARI_SIDECAR_TURN_IDLE_TIMEOUT_SECS (clamped >= 30s)
 /// and ZELARI_SIDECAR_TURN_TIMEOUT_SECS (clamped >= 60s) — a typo cannot
 /// insta-kill legitimate turns.
 const TURN_IDLE_TIMEOUT_DEFAULT_SECS: u64 = 900;
 const TURN_IDLE_TIMEOUT_MIN_SECS: u64 = 30;
-const TURN_TIMEOUT_DEFAULT_SECS: u64 = 3000;
+const TURN_TIMEOUT_DEFAULT_SECS: u64 = 14400;
 const TURN_TIMEOUT_MIN_SECS: u64 = 60;
 
 fn turn_idle_timeout() -> Duration {
@@ -933,7 +936,7 @@ impl HarnessSidecar {
                 // window below (detaching here would DROP the settlement).
                 let cancel_outcome = self.roundtrip(
                     "session.cancel",
-                    json!({ "sessionId": session_id, "reason": "turn_timeout" }),
+                    json!({ "sessionId": session_id, "reason": if wall_fired { "turn_wall_timeout" } else { "turn_idle_timeout" } }),
                 );
                 if cancel_outcome.is_err() {
                     // No answer within ROUNDTRIP_TIMEOUT: the CLI event loop
@@ -965,12 +968,24 @@ impl HarnessSidecar {
                     thread::sleep(POLL);
                 }
                 in_flight.detach();
-                return Err(HarnessError::new(
-                    "turn_timeout",
+                let detail = if wall_fired {
+                    format!(
+                        "run.turn wall cap reached after {}s while the turn was still active (silence {idle_secs}s, limit {kind}) — not the idle watchdog; see sidecar diagnostics",
+                        started.elapsed().as_secs()
+                    )
+                } else {
                     format!(
                         "run.turn idle for {idle_secs}s (wall {}s, limit {kind}) — no events from the agent; see sidecar diagnostics",
                         started.elapsed().as_secs()
-                    ),
+                    )
+                };
+                return Err(HarnessError::new(
+                    if wall_fired {
+                        "turn_wall_timeout"
+                    } else {
+                        "turn_idle_timeout"
+                    },
+                    detail,
                 ));
             }
             if cancel.load(Ordering::SeqCst) {

@@ -954,9 +954,10 @@ export class AgentHarness {
    * caller (the run() generator finishes after the current turn ends).
    * For mid-stream interrupt + new-prompt injection, see Task C.3.2.
    *
-   * `reason` is optional host context: `turn_timeout` is the Desktop sidecar
-   * idle watchdog (not a user Stop). The error event message must not claim
-   * the user cancelled when they did not.
+   * `reason` is optional host context. `turn_idle_timeout` (and the legacy
+   * `turn_timeout`) is the Desktop sidecar idle watchdog. `turn_wall_timeout`
+   * is the absolute wall cap firing while events were still arriving. Neither
+   * is a user Stop — the error event must not claim the user cancelled.
    */
   cancel(reason?: string): void {
     if (this.cancelled) return; // idempotent — don't re-abort
@@ -967,13 +968,18 @@ export class AgentHarness {
 
   private buildCancelEvent(): BrainEvent {
     this.cancelEventEmitted = true;
-    const watchdog = this.cancelReason === 'turn_timeout';
+    const reason = this.cancelReason;
+    const idle = reason === 'turn_timeout' || reason === 'turn_idle_timeout';
+    const wall = reason === 'turn_wall_timeout';
+    const watchdog = idle || wall;
     return createBrainEvent('error', this.sessionId, {
       severity: 'cancelled',
-      message: watchdog
-        ? 'Turn cancelled: Desktop idle watchdog saw no events (silent model thinking or a tentacle with no tools). This was not a user Stop.'
-        : 'Run cancelled by user.',
-      code: watchdog ? 'turn_timeout' : 'cancelled',
+      message: wall
+        ? 'Turn cancelled: Desktop wall-clock cap reached while the turn was still active. This was not a user Stop and not the idle watchdog. Raise ZELARI_SIDECAR_TURN_TIMEOUT_SECS on the sidecar process to allow a longer turn.'
+        : idle
+          ? 'Turn cancelled: Desktop idle watchdog saw no events (silent model thinking or a tentacle with no tools). This was not a user Stop.'
+          : 'Run cancelled by user.',
+      code: watchdog ? (reason ?? 'turn_timeout') : 'cancelled',
     });
   }
 

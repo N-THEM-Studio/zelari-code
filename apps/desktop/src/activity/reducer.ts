@@ -22,6 +22,60 @@ export function emptyActivityState(): RunActivityState {
   return { agentOrder: [], agents: {}, warnings: [], controls: [] };
 }
 
+const HOST_CANCEL_CODES = new Set([
+  "turn_timeout",
+  "turn_idle_timeout",
+  "turn_wall_timeout",
+  "cancelled",
+]);
+
+function isHostCancel(ev: Record<string, unknown>): boolean {
+  if (ev.type === "error") {
+    const code = typeof ev.code === "string" ? ev.code : "";
+    return HOST_CANCEL_CODES.has(code) || ev.severity === "cancelled";
+  }
+  return ev.type === "agent_end" && ev.reason === "cancelled";
+}
+
+/** Parent turn died (watchdog or Stop) without agent_ended for in-flight tentacles. */
+function sealOpenAgents(
+  state: RunActivityState,
+  ev: Record<string, unknown>,
+): RunActivityState {
+  const ts = typeof ev.ts === "number" ? ev.ts : undefined;
+  const reason =
+    typeof ev.message === "string"
+      ? ev.message
+      : typeof ev.reason === "string"
+        ? ev.reason
+        : "cancelled";
+  let changed = false;
+  const agents = { ...state.agents };
+  for (const id of state.agentOrder) {
+    const agent = agents[id];
+    if (!agent) continue;
+    if (agent.status === "completed" || agent.status === "failed" || agent.status === "cancelled") {
+      continue;
+    }
+    changed = true;
+    const endedAt = ts ?? agent.endedAt;
+    const durationMs =
+      agent.durationMs ??
+      (typeof endedAt === "number" && typeof agent.startedAt === "number" && agent.startedAt > 0
+        ? Math.max(0, endedAt - agent.startedAt)
+        : undefined);
+    agents[id] = {
+      ...agent,
+      status: "cancelled",
+      endedAt,
+      durationMs,
+      reason: agent.reason ?? reason,
+      currentTool: undefined,
+    };
+  }
+  return changed ? { ...state, agents } : state;
+}
+
 export type ActivityAction =
   | { kind: "event"; ev: AgentEvent }
   | { kind: "reset" };
@@ -288,6 +342,10 @@ export function activityReducer(
           },
         ];
     return { ...state, controls };
+  }
+
+  if (isHostCancel(ev)) {
+    return sealOpenAgents(state, ev);
   }
 
   return state;

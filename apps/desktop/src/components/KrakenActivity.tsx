@@ -78,7 +78,13 @@ function AgentRow({
           {statusGlyph(agent.status)}
         </span>
         <span className="kraken-act-dur">
-          {formatActivityDuration(agent.durationMs ?? (agent.startedAt ? Date.now() - agent.startedAt : undefined))}
+          {formatActivityDuration(
+            agent.durationMs ??
+              ((agent.status === "running" || agent.status === "waiting" || agent.status === "queued") &&
+              agent.startedAt
+                ? Date.now() - agent.startedAt
+                : undefined),
+          )}
         </span>
         {agent.model ? <span className="kraken-act-model">{agent.model}</span> : null}
         <ThinkingChip thinking={agent.thinking} />

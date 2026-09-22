@@ -376,4 +376,24 @@ describe("per-tentacle thinking effort (ADR-0017)", () => {
     expect(displayThinkingEffort("xhigh")).toBe("xhigh");
     expect(displayThinkingEffort("budget:4096")).toBe("budget:4096");
   });
+
+  it("turn_wall_timeout seals running agents and freezes duration", () => {
+    const s = reduceall(
+      SPAWN_EXPLORE,
+      {
+        type: "error",
+        code: "turn_wall_timeout",
+        severity: "cancelled",
+        ts: 9_000_000_000,
+        message: "wall",
+      },
+    );
+    const agent = s.agents["exp-1"];
+    expect(agent.status).toBe("cancelled");
+    expect(agent.currentTool).toBeUndefined();
+    if (agent.startedAt && agent.startedAt > 0) {
+      expect(agent.durationMs).toBe(9_000_000_000 - agent.startedAt);
+    }
+  });
+
 });
