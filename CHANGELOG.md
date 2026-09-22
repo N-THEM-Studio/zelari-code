@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.60.2] - 2026-09-22
+
+### Fixed
+
+- **CLI publish unblocked (flake)** — `previewStatusLineCustomItem` (`/statusline custom`) retried zero times when the child process never started: a transient fork failure (`EAGAIN`/`ENOMEM`, observed twice in the publish-cli CI job under load, same SHA green in `ci.yml`) made the probe return `null` and flipped `statusline.test.ts` red. The preview now makes ONE bounded retry, and only when the child never started (no signal): timeouts, non-zero exits and missing binaries keep the single-shot fail-soft contract (32/32 statusline tests green). The v2.60.1 CLI publish never reached `npm publish` because of this; `@zelari/core@2.60.1` had already shipped.
+
 ## [2.60.1] - 2026-09-22
 
 ### Fixed
