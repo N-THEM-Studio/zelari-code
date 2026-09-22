@@ -90,7 +90,8 @@ describe('AgentHarness.cancel() (Task C.3.1)', () => {
     );
     expect(cancelEvent?.code).toBe('turn_wall_timeout');
     expect(cancelEvent?.message).toMatch(/wall-clock cap/i);
-    expect(cancelEvent?.message).not.toMatch(/idle watchdog/i);
+    expect(cancelEvent?.message).toMatch(/not the idle watchdog/i);
+    expect(cancelEvent?.message).not.toMatch(/saw no events/i);
     expect(cancelEvent?.message).not.toMatch(/cancelled by user/i);
   });
 
