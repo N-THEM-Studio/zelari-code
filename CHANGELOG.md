@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.61.0] - 2026-09-22
+
+### Fixed
+
+- **Desktop wall cap no longer kills an active Kraken turn at 50 minutes.** The sidecar absolute cap was 3000s (one 45-min tentacle plus buffer) and fired even while tentacle heartbeats were arriving; chat always blamed the idle watchdog. Default wall is now 4h (`ZELARI_SIDECAR_TURN_TIMEOUT_SECS`, min 60s). Silence is still the idle watchdog (15 min). Wall and idle cancels are distinct (`turn_wall_timeout` / `turn_idle_timeout`; legacy `turn_timeout` remains the idle wording). Activity cards freeze as cancelled instead of ticking after the turn dies.
+
 ## [2.60.2] - 2026-09-22
 
 ### Fixed
