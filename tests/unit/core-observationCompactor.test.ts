@@ -45,7 +45,7 @@ describe('compactToolResult', () => {
     expect(out.ok).toBe(true);
     if (out.ok) {
       expect(out.value).not.toBe(original);
-      expect(out.value).toMatch(/lines omitted/);
+      expect(out.value).toMatch(/bytes truncated/);
     }
   });
 
@@ -57,7 +57,7 @@ describe('compactToolResult', () => {
     if (out.ok) {
       expect(out.value).toBe(value); // same inner object (no spread/clone)
       expect(out.value.other).toBe('keep');
-      expect(out.value.content).toMatch(/lines omitted/);
+      expect(out.value.content).toMatch(/bytes truncated/);
     }
   });
 
@@ -85,7 +85,7 @@ describe('compactToolResult', () => {
     const text = bigText(500);
     const result: TypedResult<string> = { ok: true, value: text };
     const out = compactToolResult(result, { cap: 50, toolName: 'read_file' });
-    if (out.ok) expect(out.value).toMatch(/full output spilled to:/);
+    if (out.ok) expect(out.value).toMatch(/bytes truncated; complete output in /);
     expect(readdirSync(spillDir).length).toBe(1);
   });
 

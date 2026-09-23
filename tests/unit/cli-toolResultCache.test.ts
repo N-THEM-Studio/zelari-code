@@ -186,7 +186,7 @@ describe('withResultCache', () => {
     );
     const first = await wrapped.execute({ path: 'p' }, ctx(tmp));
     expect(first).toEqual(expected);
-    if (first.ok) expect((first.value as { content: string }).content).toMatch(/lines omitted/);
+    if (first.ok) expect((first.value as { content: string }).content).toMatch(/bytes truncated/);
     // Second call is a cache hit — identical, no second execute.
     const second = await wrapped.execute({ path: 'p' }, ctx(tmp));
     expect(second).toEqual(first);

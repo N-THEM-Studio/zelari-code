@@ -4,7 +4,9 @@
  * Verifies the head+tail truncation that keeps tool-result messages bounded
  * in the LLM transcript. A 5000-line read_file used to dump ~100k tokens
  * into config.messages; now results over the cap (default 200 lines) are
- * truncated with a marker naming the omission, and optionally spilled to disk.
+ * truncated to a head+tail window with ONE exact marker
+ * ("...N bytes truncated; complete output in <path>") and optionally spilled
+ * to disk (A2 truncation head+tail).
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
@@ -42,13 +44,19 @@ describe("truncateToolResult", () => {
     expect(truncateToolResult(text, 200)).toBe(text);
   });
 
-  it("truncates a 5000-line result to head + tail + marker", () => {
+  it("truncates a 5000-line result to head + tail + exact-bytes marker", () => {
     const lines = Array.from({ length: 5000 }, (_, i) => `line ${i}`);
     const text = lines.join("\n");
     const out = truncateToolResult(text, { cap: 200, spill: false });
-    // Marker present, names the omission count and the head/tail split.
-    // omitted = total - cap = 5000 - 200 = 4800.
-    expect(out).toMatch(/\[\+4800 lines omitted.*head:100.*tail:100.*of 5000 total\]/);
+    // Exact omitted byte count (UTF-8); head 100 + tail 100 lines retained.
+    const head = lines.slice(0, 100).join("\n");
+    const tail = lines.slice(4900).join("\n");
+    const n =
+      Buffer.byteLength(text, "utf8") -
+      Buffer.byteLength(head, "utf8") -
+      Buffer.byteLength(tail, "utf8");
+    expect(out).toContain(`...${n} bytes truncated`);
+    expect(out).not.toContain("complete output in ");
     // Head retained: first line preserved.
     expect(out).toContain("line 0");
     expect(out).toContain("line 99");
@@ -63,24 +71,31 @@ describe("truncateToolResult", () => {
     const lines = Array.from({ length: 500 }, (_, i) => `line ${i}`);
     const text = lines.join("\n");
     const out = truncateToolResult(text, { cap: 50, toolName: "read_file" });
-    expect(out).toMatch(/full output spilled to:/);
-    const m = out.match(/full output spilled to: ([^\s…]+)/);
+    expect(out).toMatch(/bytes truncated; complete output in /);
+    const m = out.match(/complete output in (.+)$/m);
     expect(m?.[1]).toBeTruthy();
-    const path = m![1];
+    const path = m![1].trim();
     expect(readFileSync(path, "utf8")).toBe(text);
   });
 
   it("does not spill when spill:false", () => {
     const lines = Array.from({ length: 500 }, (_, i) => `line ${i}`);
     const out = truncateToolResult(lines.join("\n"), { cap: 50, spill: false });
-    expect(out).not.toMatch(/spilled to/);
+    expect(out).not.toMatch(/complete output in /);
+    expect(out).toMatch(/bytes truncated/);
   });
 
   it("respects a custom cap (50 lines)", () => {
     const lines = Array.from({ length: 200 }, (_, i) => `line ${i}`);
-    const out = truncateToolResult(lines.join("\n"), { cap: 50, spill: false });
-    // omitted = 200 - 50 = 150; head/tail = 25 each.
-    expect(out).toMatch(/\[\+150 lines omitted.*head:25.*tail:25.*of 200 total\]/);
+    const text = lines.join("\n");
+    const out = truncateToolResult(text, { cap: 50, spill: false });
+    const head = lines.slice(0, 25).join("\n");
+    const tail = lines.slice(175).join("\n");
+    const n =
+      Buffer.byteLength(text, "utf8") -
+      Buffer.byteLength(head, "utf8") -
+      Buffer.byteLength(tail, "utf8");
+    expect(out).toContain(`...${n} bytes truncated`);
     expect(out).toContain("line 0");
     expect(out).toContain("line 199");
     expect(out).not.toContain("line 100");
@@ -100,7 +115,8 @@ describe("truncateToolResult", () => {
     const longLine = "x".repeat(30000);
     const out = truncateToolResult(longLine, { cap: 200, spill: false });
     expect(out).not.toBe(longLine);
-    expect(out).toMatch(/chars omitted/);
+    // head 8000 + tail 8000 retained → 14000 bytes truncated.
+    expect(out).toContain("...14000 bytes truncated");
     expect(out.length).toBeLessThan(longLine.length);
   });
 
@@ -109,6 +125,27 @@ describe("truncateToolResult", () => {
     // fast path does NOT fire. The line-budget check fires: 300 > 200.
     const lines = Array.from({ length: 300 }, () => "short");
     const out = truncateToolResult(lines.join("\n"), { cap: 200, spill: false });
-    expect(out).toMatch(/\[\+100 lines omitted/);
+    expect(out).toMatch(/\.\.\.\d+ bytes truncated/);
+  });
+
+  it("A2: exact truncated bytes and a space-safe spill path (Windows)", () => {
+    // Temp dir with a space: the marker keeps the path LAST on its line so
+    // extraction survives spaces in Windows paths.
+    spillDir = mkdtempSync(join(tmpdir(), "zelari spill-"));
+    process.env.ZELARI_TOOL_OUTPUT_DIR = spillDir;
+    const lines = Array.from({ length: 400 }, (_, i) => `line ${i}`);
+    const text = lines.join("\n");
+    const out = truncateToolResult(text, { cap: 100, toolName: "read_file" });
+    const head = lines.slice(0, 50).join("\n");
+    const tail = lines.slice(350).join("\n");
+    const n =
+      Buffer.byteLength(text, "utf8") -
+      Buffer.byteLength(head, "utf8") -
+      Buffer.byteLength(tail, "utf8");
+    expect(out).toContain(`...${n} bytes truncated; complete output in `);
+    const m = out.match(/complete output in (.+)$/m);
+    const path = m![1].trim();
+    expect(path).toContain(" ");
+    expect(readFileSync(path, "utf8")).toBe(text);
   });
 });

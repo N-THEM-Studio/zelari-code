@@ -44,11 +44,14 @@ export const TOOL_RESULT_LINE_CAP: number = (() => {
 })();
 
 /**
- * Truncate a string result to head + tail with a marker, bounded by line count
- * (and a soft char budget for huge single-line payloads).
+ * Truncate a string result to a ~50/50 head + tail window with ONE marker
+ * (`...N bytes truncated; complete output in <path>`), bounded by line count
+ * (and a soft char budget for huge single-line payloads). N is the exact
+ * omitted UTF-8 byte count and the spill path sits LAST on its marker line so
+ * Windows paths with spaces stay extractable up to end-of-line.
  *
  * When the result is truncated and spill is enabled, the **full** text is
- * written under the managed tool-output dir and the marker includes the path
+ * written under the managed tool-output dir and the marker names that path
  * so the model can re-open it with read_file if needed.
  *
  * Exported for tests. Returns the original string if under the cap.
@@ -80,44 +83,30 @@ export function truncateToolResult(
 
   if (!overLines && !overChars) return text;
 
-  let preview: string;
-  let marker: string;
-
+  let head: string;
+  let tail: string;
   if (overLines) {
     const half = Math.floor(cap / 2);
-    const head = lines.slice(0, half);
-    const tail = lines.slice(lines.length - half);
-    const omitted = lines.length - cap;
-    marker = `+${omitted} lines omitted — showing head:${half}, tail:${half} of ${lines.length} total`;
-    preview =
-      head.join('\n') +
-      `\n… [${marker}] …\n` +
-      tail.join('\n');
+    head = lines.slice(0, half).join('\n');
+    tail = lines.slice(lines.length - half).join('\n');
   } else {
     // Single (or few) huge lines — keep head + tail chars.
     const half = Math.floor(charBudget / 2);
-    const head = text.slice(0, half);
-    const tail = text.slice(text.length - half);
-    const omitted = text.length - charBudget;
-    marker = `+${omitted} chars omitted — showing head/tail of ${text.length} total (line-sparse payload)`;
-    preview = `${head}\n… [${marker}] …\n${tail}`;
+    head = text.slice(0, half);
+    tail = text.slice(text.length - half);
   }
 
-  if (doSpill) {
-    const path = spillToolOutput(text, { toolName: opts.toolName });
-    if (path) {
-      const spillNote =
-        `\n… [full output spilled to: ${path} — re-read with read_file if you need the complete text] …`;
-      // Insert spill note after the omission marker line for visibility.
-      if (preview.includes('] …\n')) {
-        preview = preview.replace('] …\n', `] …${spillNote}\n`);
-      } else {
-        preview = preview + spillNote;
-      }
-    }
-  }
-
-  return preview;
+  const truncatedBytes = Math.max(
+    0,
+    Buffer.byteLength(text, 'utf8') -
+      Buffer.byteLength(head, 'utf8') -
+      Buffer.byteLength(tail, 'utf8'),
+  );
+  const spillPath = doSpill ? spillToolOutput(text, { toolName: opts.toolName }) : null;
+  const marker = spillPath
+    ? `...${truncatedBytes} bytes truncated; complete output in ${spillPath}`
+    : `...${truncatedBytes} bytes truncated (spill disabled or failed — full output not on disk)`;
+  return `${head}\n${marker}\n${tail}`;
 }
 
 /**
