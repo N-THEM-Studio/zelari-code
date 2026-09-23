@@ -90,4 +90,77 @@ describe('SessionStore + lineage', () => {
     expect(exported.summary.lastSeq).toBe(3);
     await fs.rm(store.dir, { recursive: true, force: true });
   });
+
+  it('fork at turn boundary preserves tool.call + tool.result + assistant.message', async () => {
+    const store = await tmpStore();
+    const parent = await store.create();
+    // Simulate a full turn: user msg → tool call → tool result → assistant reply
+    await parent.writer.append({ kind: 'user.message', actor: ACTOR_USER, data: { text: 'fix bug' } }); // seq 1 (started) + 2
+    await parent.writer.append({ kind: 'tool.call', actor: { type: 'agent' }, data: { callId: 'c1', tool: 'bash', args: { command: 'ls' } } }); // seq 3
+    await parent.writer.append({ kind: 'tool.result', actor: { type: 'tool' }, data: { callId: 'c1', output: 'file.txt', ok: true, durationMs: 50 } }); // seq 4
+    await parent.writer.append({ kind: 'assistant.message', actor: { type: 'agent' }, data: { text: 'found file.txt' } }); // seq 5
+    // Fork at the turn boundary (after assistant reply)
+    const fork = await forkSession(store, parent.sessionId, { fromSeq: 5 });
+    const forkProjection = await store.projection(fork.sessionId);
+    // 5 parent events copied (fromSeq <= 5); forked session also has its own
+    // session.started + session.forked marker = 7 total events
+    expect(fork.copiedEvents).toBe(5);
+    expect(forkProjection.lastSeq).toBe(7); // 1 fork-started + 5 copied + 1 forked marker
+    // Tool calls/results are preserved in the fork
+    expect(forkProjection.toolCalls).toBe(1);
+    expect(forkProjection.toolResults).toBe(1);
+    // Messages are preserved
+    expect(forkProjection.messages).toHaveLength(3); // user + tool result + assistant
+    // Lineage is correct
+    const chain = await lineageOf(store, fork.sessionId);
+    expect(chain).toEqual([parent.sessionId, fork.sessionId]);
+    await parent.writer.close();
+    await fork.writer.close();
+    await fs.rm(store.dir, { recursive: true, force: true });
+  });
+
+  it('forked session replay is independent from parent', async () => {
+    const store = await tmpStore();
+    const parent = await store.create();
+    await parent.writer.append({ kind: 'user.message', actor: ACTOR_USER, data: { text: 'start' } });
+    await parent.writer.append({ kind: 'assistant.message', actor: { type: 'agent' }, data: { text: 'reply v1' } });
+    const fork = await forkSession(store, parent.sessionId, { fromSeq: 3 });
+    // Add different events to parent and fork
+    await parent.writer.append({ kind: 'user.message', actor: ACTOR_USER, data: { text: 'parent continues' } });
+    await fork.writer.append({ kind: 'user.message', actor: ACTOR_USER, data: { text: 'fork diverges' } });
+    const parentProj = await store.projection(parent.sessionId);
+    const forkProj = await store.projection(fork.sessionId);
+    // Parent sees its own continuation
+    expect(parentProj.messages.some((m) => m.content === 'parent continues')).toBe(true);
+    expect(parentProj.messages.some((m) => m.content === 'fork diverges')).toBe(false);
+    // Fork sees its own divergence
+    expect(forkProj.messages.some((m) => m.content === 'fork diverges')).toBe(true);
+    expect(forkProj.messages.some((m) => m.content === 'parent continues')).toBe(false);
+    // Both share the common prefix
+    expect(forkProj.messages.some((m) => m.content === 'start')).toBe(true);
+    expect(forkProj.messages.some((m) => m.content === 'reply v1')).toBe(true);
+    await parent.writer.close();
+    await fork.writer.close();
+    await fs.rm(store.dir, { recursive: true, force: true });
+  });
+
+  it('forked session export is independent', async () => {
+    const store = await tmpStore();
+    const parent = await store.create();
+    await parent.writer.append({ kind: 'user.message', actor: ACTOR_USER, data: { text: 'hello' } });
+    await store.end(parent.writer, 'done');
+    const fork = await forkSession(store, parent.sessionId, { fromSeq: 2 });
+    await store.end(fork.writer, 'fork-done');
+    const parentExport = await exportSession(store, parent.sessionId);
+    const forkExport = await exportSession(store, fork.sessionId);
+    // Different session IDs
+    expect(parentExport.sessionId).not.toBe(forkExport.sessionId);
+    // Fork has the forked marker
+    const forkEvents = forkExport.events as Array<{ kind: string }>;
+    expect(forkEvents.some((e) => e.kind === 'session.forked')).toBe(true);
+    // Parent does NOT have a forked marker
+    const parentEvents = parentExport.events as Array<{ kind: string }>;
+    expect(parentEvents.some((e) => e.kind === 'session.forked')).toBe(false);
+    await fs.rm(store.dir, { recursive: true, force: true });
+  });
 });

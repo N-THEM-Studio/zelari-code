@@ -7,9 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.62.0] - 2026-09-23
+
 ### Added
 
 - **A2 tool-result truncation (head+tail)** — an over-threshold result now shows a ~50/50 head+tail window and ONE exact marker, `...N bytes truncated; complete output in <path>`, with the true omitted UTF-8 byte count and the spill path LAST on its line (Windows paths with spaces stay extractable). Below the threshold the payload stays byte-identical and the full output always lands on disk when spill is enabled.
+- **A3 tool heartbeat (anti-stall)** — long-running tool calls emit periodic `agent_status` events so the UI can show what's happening instead of appearing hung. One-shot per call (fires at most once after 30s). Configurable via `ZELARI_TOOL_HEARTBEAT_MS` (0 disables). Events map to spine `note` entries for replay.
+- **A4 ATIF v0.1 trajectory export** — new `--session-export-atif <id>` CLI flag exports session trajectories in ATIF (Agent Trajectory Interchange Format) for cross-agent eval comparison. Versioned with `atifVersion: '0.1'`, treated as unstable surface.
+- **A5 input idempotency** — companion `POST /v1/runs` accepts optional `idempotencyKey`; duplicate requests return the original run instead of starting a new one. Persistent `InputDedupStore` at `~/.zelari-code/input-dedup.json` with 24h TTL.
+- **B6 RemoteJob anti-tamper plan** — `ssh_run` accepts an optional sealed `plan` argument with SHA-256 checksum. `verifyPlan()` + `checkPlanConstraints()` validate integrity and type allowlist before SSH execution. Plan data is frozen after sealing.
+- **B8 async tool call placeholders (ADR-0038)** — parallel tool batches inject `[still-running:<callId>]` placeholders into the message history, replaced with actual results at turn boundary. Prevents interleaved tool result ordering issues with strict providers.
 
 ### Fixed
 

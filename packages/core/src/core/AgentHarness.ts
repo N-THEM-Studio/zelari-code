@@ -29,9 +29,11 @@ import {
   type BrainMessageEndEvent,
   type BrainQueueUpdateEvent,
   type BrainToolExecutionEndEvent,
+  type BrainAgentStatusEvent,
     type BrainContextMetricsEvent,
   type UsageBreakdown,
 } from '../shared/events.js';
+import { createToolHeartbeat, toolHeartbeatCaption } from './toolHeartbeat.js';
 import { ToolRegistry } from './tools/registry.js';
 import { classifyToolConcurrency } from './tools/concurrency.js';
 import { metaFooter } from './tools/toolTypes.js';
@@ -759,6 +761,22 @@ export class AgentHarness {
       Promise<{ content: string; isError: boolean; durationMs: number }>
     >();
 
+    // A3: anti-stall heartbeat for long-running tool calls.
+    const harness = this;
+    const toolHb = createToolHeartbeat(
+      (callId, name, elapsed) => {
+        harness.emit({
+          type: 'agent_status',
+          id: crypto.randomUUID(),
+          ts: Date.now(),
+          sessionId: harness.sessionId,
+          agentId: harness.sessionId,
+          status: 'running',
+          message: toolHeartbeatCaption(name, elapsed),
+        } as BrainAgentStatusEvent);
+      },
+    );
+
     const invokeOne = async (
       p: (typeof pending)[number],
     ): Promise<{
@@ -849,6 +867,7 @@ export class AgentHarness {
         };
       }
       const startMs = Date.now();
+      const stopHb = toolHb.start(p.toolCallId, p.toolName);
       const prom = (async () => {
         const result = await this.config.toolRegistry!.invoke<unknown>(p.toolName, p.args, {
           cwd: this.config.cwd,
@@ -877,6 +896,7 @@ export class AgentHarness {
       })();
       inflight.set(callKey, prom);
       const r = await prom;
+      stopHb();
       if (!r.isError) this.toolCallCache.set(callKey, r.content);
       return { ...r, cacheKey: callKey };
     };
@@ -2021,13 +2041,42 @@ export class AgentHarness {
           // so the transcript order is assistant(tool_calls) → tool(results),
           // as the OpenAI schema requires. Strict providers (MiniMax/GLM) 400
           // otherwise; grok tolerated the reversed order.
+          //
+          // B8 (ADR-0038): placeholder injection. For parallel-safe tool
+          // batches, inject a "[still-running:<callId>]" placeholder for each
+          // call, then immediately replace with the actual result. This creates
+          // the infrastructure for future mid-turn incremental injection (when
+          // executePendingTools is refactored to yield per-call). The
+          // replacement is a simple string find-and-replace in the messages
+          // array — the provider never sees the placeholder.
+          const PLACEHOLDER_PREFIX = '[still-running:';
+          const placeholderMap = new Map<string, number>(); // callId → message index
+          if (turnToolResults.length > 1) {
+            for (const tr of turnToolResults) {
+              placeholderMap.set(tr.toolCallId, this.config.messages.length);
+              this.config.messages.push({
+                role: 'tool',
+                toolCallId: tr.toolCallId,
+                content: `${PLACEHOLDER_PREFIX}${tr.toolCallId}]`,
+              });
+            }
+          }
           for (const tr of turnToolResults) {
-            this.config.messages.push({
-              role: 'tool',
-              toolCallId: tr.toolCallId,
-              content: tr.content,
-              ...(tr.images ? { images: tr.images } : {}),
-            });
+            const idx = placeholderMap.get(tr.toolCallId);
+            if (idx !== undefined && this.config.messages[idx]) {
+              // Replace placeholder with actual result.
+              (this.config.messages[idx] as { content: string }).content = tr.content;
+              if (tr.images) {
+                (this.config.messages[idx] as { images?: AgentImage[] }).images = tr.images;
+              }
+            } else {
+              this.config.messages.push({
+                role: 'tool',
+                toolCallId: tr.toolCallId,
+                content: tr.content,
+                ...(tr.images ? { images: tr.images } : {}),
+              });
+            }
           }
           // Inject the recovery guidance into the model context: the
           // tool_call_truncated error event is advisory/UI-only, so without

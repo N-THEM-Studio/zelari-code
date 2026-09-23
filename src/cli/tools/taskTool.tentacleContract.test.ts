@@ -75,9 +75,9 @@ describe('t153 — taskPrompts module (P1a)', () => {
     expect(GENERAL_PROMPT).toContain('Do not spawn further sub-agents');
     expect(GENERAL_PROMPT).toContain('Scope paths');
     expect(GENERAL_PROMPT).toContain('git worktree');
-    // Plan bound: serious but bounded (~1800 chars max).
+    // Plan bound: serious but bounded (~2200 chars max with fan-out instruction).
     expect(GENERAL_PROMPT.length).toBeGreaterThan(800);
-    expect(GENERAL_PROMPT.length).toBeLessThan(1800);
+    expect(GENERAL_PROMPT.length).toBeLessThan(2200);
   });
 
   it('EXPLORE stays read-only with observation integrity; VERIFY keeps the report shape', () => {

@@ -15,6 +15,7 @@ import type { AgentMessage } from '@zelari/core/harness';
 import { cleanAgentContent } from '@zelari/core';
 import {
   exportSessionJson,
+  exportAtifJson,
   SessionStore,
   resolveSessionsDir,
   derivedToAgentMessages,
@@ -288,6 +289,27 @@ export async function exportSessionById(
       return { ok: false, error: `session not found: ${sessionId}` };
     }
     return { ok: true, json: await exportSessionJson(store, sessionId) };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+/** One-shot ATIF trajectory export for `--session-export-atif <id>`. */
+export async function exportAtifById(
+  sessionId: string,
+  opts?: { baseDir?: string; agentVersion?: string },
+): Promise<{ ok: true; json: string } | { ok: false; error: string }> {
+  try {
+    const store = SessionStore.withDefaults(opts?.baseDir ? { baseDir: opts.baseDir } : {});
+    if (!(await store.exists(sessionId))) {
+      return { ok: false, error: `session not found: ${sessionId}` };
+    }
+    return {
+      ok: true,
+      json: await exportAtifJson(store, sessionId, {
+        agentVersion: opts?.agentVersion ?? '0.0.0',
+      }),
+    };
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }

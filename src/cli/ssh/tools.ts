@@ -9,6 +9,7 @@ import {
   isSshCommandAllowed,
   runSsh,
 } from './targets.js';
+import { verifyPlan, checkPlanConstraints } from './remoteJobPlan.js';
 
 const STATUS_REMOTE =
   'set -e; echo "=== host ==="; hostname 2>/dev/null || true; uname -a 2>/dev/null || true; echo "=== uptime ==="; uptime 2>/dev/null || true; echo "=== disk / ==="; df -h / 2>/dev/null | tail -1 || true';
@@ -52,18 +53,30 @@ export function createSshTools(): ToolDefinition[] {
   const sshRun: ToolDefinition = {
     name: 'ssh_run',
     description:
-      'Run a remote command on a configured SSH target. Command must match the target allowlist (allowedCommands). Prefer ssh_status for health checks.',
+      'Run a remote command on a configured SSH target. Command must match the target allowlist (allowedCommands). ' +
+      'Optionally pass a sealed RemoteJobPlan for anti-tamper verification (B6).',
     permissions: ['network'],
     inputSchema: z.object({
       targetId: z.string().describe('Id of the SSH target'),
       command: z
         .string()
         .describe('Remote command (must be allowlisted on the target)'),
+      plan: z
+        .object({
+          type: z.string(),
+          version: z.number(),
+          data: z.record(z.string(), z.unknown()).optional(),
+          maxOutputBytes: z.number().optional(),
+          seal: z.string(),
+        })
+        .optional()
+        .describe('Optional sealed RemoteJobPlan for anti-tamper verification'),
     }),
     execute: async (input) => {
-      const { targetId, command } = input as {
+      const { targetId, command, plan: rawPlan } = input as {
         targetId: string;
         command: string;
+        plan?: unknown;
       };
       const t = getSshTarget(targetId);
       if (!t) {
@@ -71,6 +84,13 @@ export function createSshTools(): ToolDefinition[] {
       }
       if (t.enabled === false) {
         return typedErr(`SSH target "${targetId}" is disabled`);
+      }
+      // B6: verify plan integrity before execution (when provided).
+      if (rawPlan) {
+        const vr = verifyPlan(rawPlan);
+        if (!vr.ok) return typedErr(`[remote-job-plan] ${vr.error} (code=${vr.code})`);
+        const cr = checkPlanConstraints(vr.plan, {});
+        if (!cr.ok) return typedErr(`[remote-job-plan] ${cr.error} (code=${cr.code})`);
       }
       const allow = isSshCommandAllowed(t, command);
       if (!allow.ok) return typedErr(allow.error);

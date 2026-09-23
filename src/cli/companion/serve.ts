@@ -25,6 +25,7 @@ import {
   type CompanionProject,
 } from './config.js';
 import { RunManager } from './runManager.js';
+import { InputDedupStore } from './inputDedup.js';
 import {
   COMPANION_ALLOWED_ORIGINS_ENV,
   allowedOriginFor,
@@ -145,6 +146,8 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
   }
 
   const runs = new RunManager();
+  const dedup = new InputDedupStore();
+  await dedup.load();
 
   // t66: filesystem scope — 'full' by default (browse every drive; a run
   // whose cwd is outside the allowlist parks as awaiting_trust until the
@@ -347,6 +350,35 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
           : undefined;
         const strictDone = typeof body.strictDone === 'boolean' ? body.strictDone : undefined;
         const verifyPack = typeof body.verifyPack === 'boolean' ? body.verifyPack : undefined;
+        // A5: idempotency key for input dedup (mobile reconnects).
+        const idempotencyKey =
+          typeof body.idempotencyKey === 'string' && body.idempotencyKey.trim()
+            ? body.idempotencyKey.trim()
+            : undefined;
+        if (idempotencyKey) {
+          const existingRunId = dedup.get(idempotencyKey);
+          if (existingRunId) {
+            const existingRun = runs.getRun(existingRunId);
+            if (existingRun) {
+              sendJson(res, 200, {
+                ok: true,
+                idempotent: true,
+                run: {
+                  id: existingRun.id,
+                  status: existingRun.status,
+                  mode: existingRun.mode,
+                  phase: existingRun.phase,
+                  cwd: existingRun.cwd,
+                  createdAt: existingRun.createdAt,
+                },
+                eventsUrl: `/v1/runs/${existingRun.id}/events`,
+              });
+              return;
+            }
+            // Run expired from RunManager but still in dedup — fall through
+            // to start a new run (the dedup entry will be overwritten).
+          }
+        }
         // t66: full-fs run on a folder outside the allowlist → park the run
         // as awaiting_trust; the desktop modal decides via POST /v1/trust.
         const startArgs = {
@@ -360,6 +392,7 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
           permissionPreset,
           strictDone,
           verifyPack,
+          idempotencyKey,
         };
         const gate =
           fsFull && !resolved.trusted
@@ -369,6 +402,10 @@ export async function runCompanionServe(opts: ServeOptions = {}): Promise<void> 
         if (!result.ok) {
           sendJson(res, 409, { ok: false, error: result.error });
           return;
+        }
+        // A5: record idempotency key → runId for future dedup.
+        if (idempotencyKey) {
+          void dedup.set(idempotencyKey, result.run.id);
         }
         sendJson(res, 201, {
           ok: true,

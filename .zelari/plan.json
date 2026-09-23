@@ -1111,11 +1111,11 @@
       "id": "t167",
       "title": "A3: heartbeat main loop per tool call lunghi (estendi tentacleHeartbeat)",
       "name": "A3: heartbeat main loop per tool call lunghi (estendi tentacleHeartbeat)",
-      "status": "pending",
+      "status": "completed",
       "priority": "high",
       "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §A3. Se un tool call supera la soglia: evento heartbeat con i call in corso, max 1 per soglia per call. Soglia via env/pref, disabilitabile. Nessuna interferenza con l'heartbeat tentacoli (tentacleHeartbeat.ts).",
       "createdAt": "2026-09-22T20:55:25.479Z",
-      "updatedAt": "2026-09-22T20:55:25.479Z",
+      "updatedAt": "2026-09-23T09:34:02.831Z",
       "files": [
         "packages/core/src/core/**",
         "src/cli/**"
@@ -1125,11 +1125,11 @@
       "id": "t168",
       "title": "A4: export sessioni in formato ATIF (standard aperto traiettorie)",
       "name": "A4: export sessioni in formato ATIF (standard aperto traiettorie)",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium",
       "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §A4. Export ATIF versionato (atifVersion, best-effort) da exportSession.ts; consumatore: tools/eval/runCompetitiveBench.ts. Round-trip su sessione reale, zero dipendenze runtime nuove.",
       "createdAt": "2026-09-22T20:55:25.504Z",
-      "updatedAt": "2026-09-22T20:55:25.504Z",
+      "updatedAt": "2026-09-23T09:53:09.417Z",
       "files": [
         "packages/core/src/core/session/**",
         "tools/eval/**"
@@ -1139,11 +1139,11 @@
       "id": "t169",
       "title": "A5: input idempotenti (ID stabili + dedup persistente) su serve-harness/askUserBridge/companion",
       "name": "A5: input idempotenti (ID stabili + dedup persistente) su serve-harness/askUserBridge/companion",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium",
       "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §A5. ID stabile per input, re-submit dello stesso ID non genera due turni, ritorno idempotente, dedup che sopravvive al restart. Test doppio submit + reconnect. Da verificare quale store usano serve-harness e askUserBridge.",
       "createdAt": "2026-09-22T20:55:25.511Z",
-      "updatedAt": "2026-09-22T20:55:25.511Z",
+      "updatedAt": "2026-09-23T10:08:59.079Z",
       "files": [
         "src/cli/**",
         "apps/companion-android/**"
@@ -1153,11 +1153,11 @@
       "id": "t170",
       "title": "B6: RemoteJob anti-tamper plan per esecuzione remota SSH",
       "name": "B6: RemoteJob anti-tamper plan per esecuzione remota SSH",
-      "status": "pending",
+      "status": "completed",
       "priority": "high",
       "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §B6. RemoteJobPlan{Type, Version, Data} con vincolo su tipo|versione|max-output verificato prima dell'esecuzione; mutazione ⇒ rifiuto con errore strutturato + test del rifiuto. Target: esecuzione remota SSH prod-vps e sandbox tentacoli. NON estendere l'allowlist SSH.",
       "createdAt": "2026-09-22T20:57:23.474Z",
-      "updatedAt": "2026-09-22T20:57:23.474Z",
+      "updatedAt": "2026-09-23T11:05:38.516Z",
       "files": [
         "src/cli/**"
       ]
@@ -1166,11 +1166,11 @@
       "id": "t171",
       "title": "B7: fork sessioni da turn boundary (Store.Fork-style)",
       "name": "B7: fork sessioni da turn boundary (Store.Fork-style)",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium",
       "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §B7. Fork da un turn boundary: storia ereditata, stato transiente azzerato; sessione figlia con seq/lineage coerenti col contratto spine v1 (ADR-0021); replay indipendente dalla madre. Rispettare l'ownership lock single-writer della spine. Gemello: worktree Kraken.",
       "createdAt": "2026-09-22T20:57:23.481Z",
-      "updatedAt": "2026-09-22T20:57:23.481Z",
+      "updatedAt": "2026-09-23T11:09:37.123Z",
       "files": [
         "packages/core/src/core/session/**"
       ]
@@ -1179,11 +1179,11 @@
       "id": "t172",
       "title": "B8: tool call asincroni con placeholder still-running [ADR prima del codice]",
       "name": "B8: tool call asincroni con placeholder still-running [ADR prima del codice]",
-      "status": "pending",
+      "status": "completed",
       "priority": "high",
       "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §B8. Tool call indipendenti in parallelo nello stesso turno con placeholder \"still running\" sostituito dal risultato a boundary naturale, SENZA rompere il message-ordering dei provider. Verifica su provider primario + fallback. La più invasiva: ADR dedicata obbligatoria PRIMA del codice. Non iniziare prima di A1-A5.",
       "createdAt": "2026-09-22T20:57:23.491Z",
-      "updatedAt": "2026-09-22T20:57:23.491Z",
+      "updatedAt": "2026-09-23T11:21:26.386Z",
       "files": [
         "packages/core/src/core/**",
         "src/cli/**"
@@ -1193,11 +1193,11 @@
       "id": "t173",
       "title": "C: preamble prompt fan-out tool call asincroni (taskPrompts.ts)",
       "name": "C: preamble prompt fan-out tool call asincroni (taskPrompts.ts)",
-      "status": "pending",
+      "status": "completed",
       "priority": "medium",
       "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §C. Insegnare esplicitamente al modello il fan-out dei tool call indipendenti (runtime async). Solo testo prompt, adattato (non copiato) da unreal-agent. Diff limitato ai prompt; eval/golden verdi (eval:gate). Da eseguire in forma conservativa se B8 non è pronto: dichiarare solo ciò che il runtime supporta davvero.",
       "createdAt": "2026-09-22T20:57:23.499Z",
-      "updatedAt": "2026-09-22T20:57:23.499Z",
+      "updatedAt": "2026-09-23T11:26:55.533Z",
       "files": [
         "src/cli/tools/taskPrompts.ts"
       ]

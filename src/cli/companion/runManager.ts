@@ -85,6 +85,8 @@ export interface StartRunArgs {
   strictDone?: boolean;
   /** Forward-compat: run.turn does not consume it today (env-governed pack). */
   verifyPack?: boolean;
+  /** A5: client-generated stable ID for input dedup. */
+  idempotencyKey?: string;
 }
 
 export class RunManager {

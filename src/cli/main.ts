@@ -659,6 +659,7 @@ function pickRootComponent(): {
         "    --run-plan <id>    Execute a pre-built .zelari/radio/plan-<id>.json\n" +
         "    --gauntlet         Host-driven gauntlet loop (builder/critic tentacles)\n" +
         "  --session-export <id>  Print a portable 2.0 session export (no LLM)\n" +
+        "  --session-export-atif <id>  Print an ATIF v0.1 trajectory export (no LLM)\n" +
         "  serve               Companion host for Android/remote clients (Tailscale)\n" +
         "    --bind <ip>       Listen address (default: 127.0.0.1; use Tailscale IP)\n" +
         "    --port <n>        Port (default: 7421)\n" +
@@ -1309,6 +1310,33 @@ function pickRootComponent(): {
       .catch((err) => {
         console.error(
           `[zelari-code --session-export] ${err instanceof Error ? err.message : String(err)}`,
+        );
+        process.exit(1);
+      });
+    return { kind: "done" };
+  }
+
+  // ATIF v0.1 trajectory export (no LLM, no TUI).
+  if (argv.includes("--session-export-atif")) {
+    const i = argv.indexOf("--session-export-atif");
+    const sessionId = i >= 0 && argv[i + 1] && !argv[i + 1].startsWith("--") ? argv[i + 1] : undefined;
+    if (!sessionId) {
+      console.error("[zelari-code --session-export-atif] a session id is required");
+      process.exit(1);
+    }
+    void import("./headlessSpine.js")
+      .then(({ exportAtifById }) => exportAtifById(sessionId, { agentVersion: VERSION }))
+      .then((res) => {
+        if (!res.ok) {
+          console.error(`[zelari-code --session-export-atif] ${res.error}`);
+          process.exit(1);
+        }
+        process.stdout.write(res.json + "\n");
+        process.exit(0);
+      })
+      .catch((err) => {
+        console.error(
+          `[zelari-code --session-export-atif] ${err instanceof Error ? err.message : String(err)}`,
         );
         process.exit(1);
       });

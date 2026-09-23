@@ -165,6 +165,20 @@ export function mapBrainEventToSpine(ev: BrainEvent): SessionEventInput | null {
           ...(ev.memberName ? { member: ev.memberName } : {}),
         },
       };
+    case 'agent_status': {
+      // A3: tool-heartbeat events (main loop anti-stall) are recorded as spine
+      // notes for post-hoc diagnostics. Tentacle status events (different
+      // agentId, "reasoning ·" caption) are not spine-relevant.
+      const msg = ev.message ?? '';
+      if (ev.status === 'running' && msg.includes('running ·')) {
+        return {
+          kind: 'note',
+          actor: ACTOR_SYSTEM,
+          data: { note: 'tool_heartbeat', message: msg },
+        };
+      }
+      return null;
+    }
     case 'error':
       // A provider-truncated tool call must reach the model context on the
       // spine path too: the harness pushes the same guidance into its rolling

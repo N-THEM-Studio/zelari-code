@@ -36,6 +36,8 @@ export const EXPLORE_PROMPT = [
   'file paths, symbols, line refs, and how things connect. No large dumps.',
   'Respect any Scope / Acceptance sections in the user prompt.',
   'Do not ask follow-up questions.',
+  'When reading multiple independent files, emit all read calls in one response',
+  '— the runtime runs them in parallel.',
 ].join('\n');
 
 export const GENERAL_PROMPT = [
@@ -71,6 +73,11 @@ export const GENERAL_PROMPT = [
   'commit your work there — the parent squash-merges your branch into the shared',
   'tree when the slice lands (a conflict leaves the branch on disk for the',
   'parent to resolve, so committed work is never lost).',
+  '',
+  'PARALLEL TOOL CALLS: when you need to run multiple independent operations',
+  '(e.g. reading several files, running unrelated commands), emit them as',
+  'separate tool calls in the same response — the runtime executes them in',
+  'parallel. Do NOT chain independent reads sequentially; batch them.',
 ].join('\n');
 
 export const VERIFY_PROMPT = [

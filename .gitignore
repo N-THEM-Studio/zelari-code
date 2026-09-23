@@ -49,3 +49,4 @@ apps/vscode/out/
 
 # Eval result store (runtime output of tools/eval regression gate)
 eval/results/
+packages/core/.zelari/
