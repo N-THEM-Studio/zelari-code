@@ -1236,6 +1236,9 @@ export class KrakenGraphExecutor {
     // different-symbol is still a git merge risk); otherwise it is admitted
     // plainly, with telemetry saying exactly that.
     const semAdmitted: TaskNode[] = [];
+    // K3.7 (F19): nodes kept held by the plain-admission gate (scheduling not
+    // 'auto') — the deferral loop below names the reason for exactly these.
+    const plainGated = new Set<string>();
     if (held.length > 0) {
       // Everything the node would race: in flight, admitted this round, or
       // already rescued above (worktree-isolated but still concurrent).
@@ -1247,6 +1250,15 @@ export class KrakenGraphExecutor {
       for (const node of held) {
         const verdict = await this.semanticRescueDecision(node, racing, ctx);
         if (!verdict) continue;
+        // K3.7 (F19/I3): a PLAIN semantic rescue (same-file writers with no
+        // isolation behind them) is licensed only by the 'auto' scheduling
+        // mode — the only mode whose worktree machinery + sequential merges
+        // bound the residual same-file risk. Any other mode keeps the t25
+        // deferral (the loud `node_deferred` below says exactly why).
+        if (worktreeMode !== 'auto') {
+          plainGated.add(node.id);
+          continue;
+        }
         const isolatable =
           worktreeMode === 'auto' &&
           !this.worktreeFallbackSeen &&
@@ -1278,14 +1290,19 @@ export class KrakenGraphExecutor {
     for (const node of held) {
       if (rescued.includes(node) || semAdmitted.includes(node)) continue;
       const scopes = node.scope && node.scope.length > 0 ? node.scope.join(', ') : '**';
+      const gated = plainGated.has(node.id);
       this.radio('node_deferred', {
         description: node.label,
         agent: node.kind,
-        detail: `deferred: write scope (${scopes}) overlaps a running writer — stays READY`,
+        detail: gated
+          ? `deferred: semantic-disjoint plain admission requires scheduling 'auto' (K3.7) — write scope (${scopes}) stays READY`
+          : `deferred: write scope (${scopes}) overlaps a running writer — stays READY`,
         ok: true,
       });
       this.wb?.logEvent(
-        `deferred ${node.id} "${node.label}" — write scope (${scopes}) overlaps a running writer; stays ready for the next round`,
+        gated
+          ? `deferred ${node.id} "${node.label}" — plain semantic admission gated (K3.7: scheduling not 'auto'); stays ready for the next round`
+          : `deferred ${node.id} "${node.label}" — write scope (${scopes}) overlaps a running writer; stays ready for the next round`,
       );
     }
     // P2.F: spawn-ROI gate — every tentacle spawn must have positive expected
