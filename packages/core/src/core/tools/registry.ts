@@ -2,6 +2,7 @@ import { zodToJsonSchema } from './zodBridge.js';
 import type { LifecycleHookRunner } from '../hooks/index.js';
 import { compactToolResult } from './observationCompactor.js';
 import { typedErr, type ToolDefinition, type ToolContext, type TypedResult } from './toolTypes.js';
+import { SchemaRepairGuard, buildCappedError, buildSchemaHint } from './schemaRepairGuard.js';
 import type { SessionEventInput } from '../../session/types.js';
 import type { ToolFingerprint } from '../../runtime/fingerprints.js';
 
@@ -93,6 +94,11 @@ export class ToolRegistry {
   /** t57: in-process post-result listener (null = none). */
   private toolResultListener: ToolResultListener | null = null;
   /**
+   * K4.4 (F26): per-tool schema-violation counter — structured hint at 3,
+   * tool disabled at 6 (see schemaRepairGuard.ts).
+   */
+  private schemaRepair = new SchemaRepairGuard();
+  /**
    * Memoized toOpenAITools() result, invalidated on register(). The zod →
    * JSON-schema conversion is recursive and runs for ~20 tools twice per
    * user turn plus once per spawned sub-agent — callers treat the returned
@@ -133,6 +139,14 @@ export class ToolRegistry {
     this.toolResultListener = listener;
   }
 
+  /**
+   * K4.4 (F26): re-arm the schema-repair cap at a host-owned turn/run
+   * boundary (see schemaRepairGuard.ts).
+   */
+  resetSchemaRepair(): void {
+    this.schemaRepair.reset();
+  }
+
   list(): string[] {
     return Array.from(this.tools.keys());
   }
@@ -163,10 +177,28 @@ export class ToolRegistry {
       );
     }
 
+    // K4.4 (F26): schema-repair cap — a tool that kept receiving invalid
+    // input is disabled after the cap (guard code tool_schema_repair_capped +
+    // escalation directive) instead of iterating silently until
+    // maxToolCallsPerTurn. Short-circuits BEFORE validation: even valid input
+    // cannot revive a capped tool this run.
+    if (this.schemaRepair.isCapped(name)) {
+      return typedErr(buildCappedError(name, this.schemaRepair.violations(name)));
+    }
+
     // Zod validation
     const parsed = tool.inputSchema.safeParse(rawInput);
     if (!parsed.success) {
-      return typedErr(`Invalid input: ${parsed.error.message}`);
+      // K4.4 (F26): plain error → structured hint (schema + example) at the
+      // hint threshold → capped error at the cap. Never a silent plain loop.
+      const state = this.schemaRepair.record(name);
+      const addendum =
+        state.kind === 'hint'
+          ? `\n${buildSchemaHint(name, state.violations, tool.jsonSchema ?? zodToJsonSchema(tool.inputSchema), tool.description)}`
+          : state.kind === 'capped'
+            ? `\n${buildCappedError(name, state.violations)}`
+            : '';
+      return typedErr(`Invalid input: ${parsed.error.message}` + addendum);
     }
 
     // Timeout + cancellation. Use a *child* AbortController so a tool timeout
