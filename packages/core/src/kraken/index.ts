@@ -16,3 +16,4 @@ export * from './verdict.js';
 export * from './personas/index.js';
 export * from './runtime/index.js';
 export * from './weakness.js';
+export * from './qualityEscalation.js';

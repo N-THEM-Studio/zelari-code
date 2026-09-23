@@ -174,6 +174,21 @@ export interface PlanContext {
   planTimeoutMs: number;
 }
 
+/**
+ * K4.5 (F27) — quality-escalation hint carried by a re-run (see
+ * `../qualityEscalation.ts`).
+ */
+export interface QualityEscalationHint {
+  /** Where the re-run must execute. v1: the parent (lead) model. */
+  to: 'parent-model';
+  /** Why the original output was rejected. */
+  reason: 'weak-output';
+  /** Weakness score of the rejected output (`[0, 1]`, higher = weaker). */
+  weaknessScore: number;
+  /** Weakness threshold the score crossed. */
+  threshold: number;
+}
+
 /** Bridge between the host (executor) and the script runtime. */
 export interface PlanHostBridge {
   /**
@@ -188,6 +203,13 @@ export interface PlanHostBridge {
     node: TentacleOptions;
     parentCwd: string;
     sessionId: string;
+    /**
+     * K4.5 (F27): present when this call is the SINGLE quality re-run of a
+     * weak output — the host must run it on the parent model (bypass sub-model
+     * routing) and must not escalate it again (cap = 1). Additive: hosts that
+     * predate the hint keep their routing unchanged.
+     */
+    escalation?: QualityEscalationHint;
   }): Promise<HostTentacleResult>;
   /** Merge N worktrees into the parent HEAD, sequentially. */
   mergeWorktrees(args: {

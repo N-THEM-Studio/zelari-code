@@ -16,6 +16,7 @@
 
 import { MAX_FINDINGS_CHARS } from '../verdict.js';
 import { isReviewerKind, defaultPersonaParse } from '../personas/index.js';
+import { runTentacleWithQualityEscalation } from '../qualityEscalation.js';
 import {
   PlanError,
   type PlanCapabilities,
@@ -175,10 +176,15 @@ export class ScriptRunner {
     // (collision risk); we synthesize one from a monotonic counter.
     const id = `t${String(this.tentacleCount).padStart(4, '0')}`;
 
-    const res = await this.host.runTentacle({
+    // K4.5 (F27): quality escalation (opt-in ZELARI_KRAKEN_QUALITY_ESCALATION=1)
+    // — a weak-but-ok output is re-run ONCE with `escalation.to = 'parent-model'`.
+    // With the flag off this is one env read plus the plain run (today's behavior).
+    const { result: res } = await runTentacleWithQualityEscalation({
+      run: (callArgs) => this.host.runTentacle(callArgs),
       node: opts,
       parentCwd: this.parentCwd,
       sessionId: this.sessionId,
+      log: (line) => this.host.log(line),
     });
     const ref = buildRef(id, opts, res);
     this.tentaclesById.set(id, ref);
