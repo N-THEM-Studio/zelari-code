@@ -13,6 +13,7 @@ import {
   PROVIDER_STREAM_MAX_MS,
   readChunkWithTimeout,
 } from './openai-compatible.js';
+import { formatToolArgsParseError, parseToolArgsJson } from './toolArgs.js';
 import { resolvePromptCacheTtl } from '../hooks/chatStats.js';
 import { translateAnthropicThinking } from '../thinking.js';
 
@@ -241,18 +242,20 @@ export function anthropicMessagesProvider(config: OpenAICompatibleConfig): Provi
 
     const flushTool = function* (): Generator<ProviderDelta> {
       if (!currentTool?.name) return;
-      let args: Record<string, unknown> = {};
-      try {
-        args = JSON.parse(currentTool.argsJson || '{}') as Record<string, unknown>;
-      } catch {
-        args = {};
-      }
+      // K4.1: malformed args JSON is a loud typed error (tool_args_parse_failed)
+      // on the stream error channel — never a silent `args = {}` degradation.
+      const parsed = parseToolArgsJson(currentTool.argsJson, currentTool.id);
       emittedTool = true;
+      if (!parsed.ok) {
+        yield { kind: 'error', message: formatToolArgsParseError(parsed.error) };
+        currentTool = null;
+        return;
+      }
       yield {
         kind: 'tool_call',
         toolCallId: currentTool.id,
         toolName: currentTool.name,
-        args,
+        args: parsed.args,
       };
       currentTool = null;
     };

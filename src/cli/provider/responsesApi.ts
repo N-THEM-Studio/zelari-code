@@ -29,6 +29,7 @@ import {
   PROVIDER_STREAM_MAX_MS,
   readChunkWithTimeout,
 } from './openai-compatible.js';
+import { formatToolArgsParseError, parseToolArgsJson } from './toolArgs.js';
 import { toInput } from './chatgpt.js';
 import { translateResponsesThinking } from '../thinking.js';
 import { capabilitiesFor } from './capabilities.js';
@@ -192,15 +193,16 @@ export function responsesApiProvider(config: OpenAICompatibleConfig): ProviderSt
     const flush = function* (id: string): Generator<ProviderDelta> {
       const t = tools.get(id);
       if (!t?.name) return;
-      let args: Record<string, unknown> = {};
-      try {
-        args = JSON.parse(t.argsJson || '{}') as Record<string, unknown>;
-      } catch {
-        args = {};
-      }
+      // K4.1: malformed args JSON is a loud typed error (tool_args_parse_failed)
+      // on the stream error channel — never a silent `args = {}` degradation.
+      const parsed = parseToolArgsJson(t.argsJson, t.id);
       tools.delete(id);
       emittedTool = true;
-      yield { kind: 'tool_call', toolCallId: t.id, toolName: t.name, args };
+      if (!parsed.ok) {
+        yield { kind: 'error', message: formatToolArgsParseError(parsed.error) };
+        return;
+      }
+      yield { kind: 'tool_call', toolCallId: t.id, toolName: t.name, args: parsed.args };
     };
 
     const streamStartedAt = Date.now();

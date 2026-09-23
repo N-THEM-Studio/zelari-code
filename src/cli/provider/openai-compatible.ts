@@ -19,6 +19,7 @@ import { getOAuthToken, resolveApiKeyWithMeta } from '../keyStore.js';
 import { getProviderConfig, getModelForProvider, getCustomEndpoint, getThinkingForProvider } from '../providerConfig.js';
 import { translateOpenAiCompatibleThinking, type ThinkingSpec } from '../thinking.js';
 import { capabilitiesFor, type ProviderCapabilities } from './capabilities.js';
+import { formatToolArgsParseError, parseToolArgsJson } from './toolArgs.js';
 
 /**
  * v1.5.2: transient-HTTP retry. A single 429/5xx/network failure used to flip
@@ -901,26 +902,18 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
     /** MiniMax reasoning_split may stream cumulative `reasoning_details[].text`. */
     let reasoningDetailsBuf = '';
 
-    const tryParseArgs = (raw: string): Record<string, unknown> | null => {
-      const t = raw.trim();
-      if (t.length === 0) return {};
-      try {
-        const parsed = JSON.parse(t) as unknown;
-        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-          return parsed as Record<string, unknown>;
-        }
-        return null;
-      } catch {
-        return null;
-      }
-    };
-
     const flushToolAccumulator = function* (): Generator<ProviderDelta> {
       const entries = [...toolCallAccumulator.entries()].sort((a, b) => a[0] - b[0]);
       for (const [idx, existing] of entries) {
         if (!existing.name) continue;
-        const args = tryParseArgs(existing.argsJson);
-        if (args === null) continue; // incomplete JSON — leave dropped
+        // K4.1: incomplete/malformed args JSON is a loud synthetic error per
+        // tool-call id (tool_args_parse_failed) on the stream error channel —
+        // never a silent drop.
+        const parsed = parseToolArgsJson(existing.argsJson, existing.id || `tc-${idx}`);
+        if (!parsed.ok) {
+          yield { kind: 'error', message: formatToolArgsParseError(parsed.error) };
+          continue;
+        }
         toolCallAccumulator.delete(idx);
         emittedToolCall = true;
         markUseful();
@@ -928,7 +921,7 @@ export function openaiCompatibleProvider(config: OpenAICompatibleConfig): Provid
           kind: 'tool_call',
           toolCallId: existing.id || `tc-${idx}`,
           toolName: existing.name,
-          args,
+          args: parsed.args,
         };
       }
       toolCallAccumulator.clear();
