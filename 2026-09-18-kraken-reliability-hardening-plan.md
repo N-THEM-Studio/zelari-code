@@ -149,11 +149,11 @@ Ogni task: **Gap → Meccanismo → Accettazione**. Convenzioni repo: file ≤30
 
 ### W5 — Misura, osservabilità, igiene (medio)
 
-- **K5.1 `zelari-code runs list/show`** (F31). Reader dei run records esistenti (`.zelari/runs/<id>/`); default recording ON nelle missioni. Sinergia diretta con t52 (dogfooding).
-- **K5.2 Hook `VerificationFailed`** (F32). Nuovo HookEvent con payload criteri+reason (già in `completionPolicy`) — notifiche/snapshot esterni senza toccare il core loop.
+- **K5.1 `zelari-code runs list/show`** (F31) ✅ *atterrato* (`63d76ce`). Reader dei run records esistenti (`.zelari/runs/<id>/`); default recording ON nelle missioni. Sinergia diretta con t52 (dogfooding).
+- **K5.2 Hook `VerificationFailed`** (F32) ✅ *atterrato* (`17a2ad5` "Osservabilità verifiche F29-F33"; label codice K5.3/F32; verificato 39/39 test). Nuovo HookEvent con payload criteri+reason (già in `completionPolicy`) — notifiche/snapshot esterni senza toccare il core loop.
 - **K5.3 Flip data-gated dei default rinviati**: `ZELARI_KRAKEN_WORKTREE=auto` (dopo K2.4), `ZELARI_SPINE_REPLAY_CACHE=1` (dopo dogfood), `ZELARI_VERIFY_PARALLEL` (dopo evidenza per-repo — suite anti-interferenza esiste già).
-- **K5.4 Diagnostica muta** (F29+F30): log della causa sul catch del pack; evento spine esplicito per evidence non ancorabile.
-- **K5.5 Igiene doc/wiring** (F33): v1 plan → marker superseded (o move in `.zelari/docs/`), fix ref ADR-0015→0035 in `traceStore.ts`, nota t52, decisione su `scriptPlanner` (wire `ZELARI_KRAKEN_PLAN_FORMAT` o marcare experimental).
+- **K5.4 Diagnostica muta** (F29+F30) ✅ *atterrato* (`17a2ad5`; label codice K5.2(F29)/K5.3(F30) — `evidence.not_anchored` + `pack_error`, test dedicati). log della causa sul catch del pack; evento spine esplicito per evidence non ancorabile.
+- **K5.5 Igiene doc/wiring** (F33) ✅ *atterrato* (`d7d81ad`): v1 plan → marker SUPERSEDED ✓, ref ADR-0015→0035 in `traceStore.ts` (+4 ricorrenze in `zelariMission.ts`) ✓, `scriptPlanner` → marcato EXPERIMENTAL ✓; nota t52 saltata (vault `.zelari`, non product).
 
 ---
 
