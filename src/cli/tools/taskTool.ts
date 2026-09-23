@@ -49,6 +49,20 @@ import {
   formatDegenerateLoopStop,
   type DegenerateLoopStop,
 } from './subagentLoopGuard.js';
+// Post-mortem 2026-09-23: G1 mutation-storm circuit breaker + G2 report status.
+import {
+  createMutationGuard,
+  exitCodeFromToolResult,
+  formatMutationStop,
+  type MutationStormStop,
+} from './mutationGuard.js';
+import {
+  REPORT_TRUNCATED_GUARD_LINE,
+  formatReportTruncatedNote,
+  reportStatusOf,
+  type ReportStatus,
+  type ReportTruncatedReason,
+} from './subagentReportStatus.js';
 import { existsSync } from 'node:fs';
 import {
   createKrakenWorktreeDetailed,
@@ -1186,6 +1200,15 @@ type TaskArgs = z.infer<typeof TaskArgsSchema>;
  * re-emitted turn after turn — the 2026-09-21 research incident) is stopped
  * by `subagentLoopGuard` and reported as `degenerate`, which is NOT the same
  * thing as budget exhaustion: the caller must surface it, never swallow it.
+ *
+ * Post-mortem 2026-09-23 — two more contracts owned by this loop:
+ *   - G1: `mutationGuard` breaks the loop at the 4th consecutive FAILED
+ *     mutation (`mutationStorm`): the 45-minute EACCES/stale_snapshot retry
+ *     storm must never again consume a full wall-clock cap;
+ *   - G2: the report is COMPACTED here (stream → final assistant message), so
+ *     this is also the point where a runtime-cut report is declared:
+ *     `reportTruncated` carries the deterministic reason and the marker is
+ *     appended to the report text (see `subagentReportStatus`).
  */
 /** Bounded tentacle tool trace (2.1 T5): ring size + output excerpt cap. */
 const TOOL_TRACE_RING = 24;
@@ -1206,7 +1229,7 @@ function toolCommandHint(args: Record<string, unknown> | undefined): string | un
 export async function runSubAgent(
   harness: SubAgentHarness,
   opts: { signal?: AbortSignal; onEvent?: (ev: BrainEvent) => void } = {},
-): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[]; turns?: number; toolCalls?: number; degenerate?: DegenerateLoopStop }> {
+): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[]; turns?: number; toolCalls?: number; degenerate?: DegenerateLoopStop; mutationStorm?: MutationStormStop; reportTruncated?: ReportTruncatedReason }> {
   const { signal } = opts;
   let current = '';
   let lastCompleted = '';
@@ -1217,6 +1240,38 @@ export async function runSubAgent(
    * `runTentacle`, which turns it into a loud, distinguishable failure.
    */
   let degenerate: DegenerateLoopStop | undefined;
+  /**
+   * Post-mortem 2026-09-23 (G1): set when the mutation-failure circuit
+   * breaker stopped the loop. Polled by `runTentacle`, same contract as
+   * `degenerate`.
+   */
+  let mutationStorm: MutationStormStop | undefined;
+  /** One guard per run: failure streaks must not leak across tentacles. */
+  const mutationGuard = createMutationGuard();
+  /**
+   * Post-mortem 2026-09-23 (G2): deterministic truncation facts of the
+   * report-bearing message (see `subagentReportStatus`). Never text heuristics:
+   * only runtime event facts (unsealed message / output cap / fatal stream
+   * error) can set these.
+   */
+  let messageOpen = false;
+  let openMessageFatal = false;
+  let sealedCutReason: ReportTruncatedReason | null = null;
+  /**
+   * G2: finalize the compacted report — append the truncation marker AT the
+   * cut point when (and only when) a deterministic runtime fact cut it.
+   */
+  const sealReport = (text: string): { result: string; reportTruncated?: ReportTruncatedReason } => {
+    const reason: ReportTruncatedReason | undefined =
+      messageOpen && current.trim().length > 0
+        ? 'stream-cut-mid-message'
+        : (sealedCutReason ?? undefined);
+    if (!reason) return { result: text };
+    return {
+      result: text ? `${text}\n${formatReportTruncatedNote(reason)}` : text,
+      reportTruncated: reason,
+    };
+  };
   /** One guard per run: streaks must not leak across tentacles. */
   const loopGuard = createLoopGuard();
   // t156 (P2a-1): raw counters for the parent-facing metrics footer.
@@ -1238,7 +1293,7 @@ export async function runSubAgent(
     if (signal?.aborted) {
       onAbort();
       return {
-        result: (lastCompleted || current).trim(),
+        ...sealReport((lastCompleted || current).trim()),
         ...(error ? { error } : {}),
         aborted: true,
         ...(toolTrace.length > 0 ? { toolTrace } : {}),
@@ -1268,17 +1323,53 @@ export async function runSubAgent(
       if (toolTrace.length > TOOL_TRACE_RING) {
         toolTrace.splice(0, toolTrace.length - TOOL_TRACE_RING);
       }
+      // G1 (post-mortem 2026-09-23): feed the mutation guard. Read-only tools
+      // are invisible to it (no increment, no reset — see mutationGuard's
+      // counting rules); a write call counts pass or fail. The failure shapes
+      // are structural: `isError` (the harness stringifies WriteReject —
+      // stale_snapshot / file_exists / EACCES … — as a tool error) or a
+      // non-zero structured `exitCode`.
+      const mutationVerdict = mutationGuard.observe({
+        tool: started?.tool ?? 'unknown',
+        isError: ev.isError,
+        exitCode: exitCodeFromToolResult(String(ev.result ?? '')),
+        detail: String(ev.result ?? ''),
+      });
+      if (mutationVerdict.mutationStorm) {
+        mutationStorm = {
+          code: 'mutation_storm',
+          consecutiveFailures: mutationVerdict.consecutiveFailures,
+          ...(mutationVerdict.lastFailure ? { lastFailure: mutationVerdict.lastFailure } : {}),
+        };
+        break subAgentLoop;
+      }
     }
     switch (ev.type) {
       case 'message_start':
         current = '';
+        messageOpen = true;
+        openMessageFatal = false;
         break;
       case 'message_delta':
         current += ev.delta;
         break;
       case 'message_end':
         turns += 1;
+        // G2: `message_end` seals a complete assistant message. A non-clean
+        // seal of the message that becomes the report (output cap, or a fatal
+        // stream error that fired while it was open) is a deterministic
+        // truncation fact — recorded per message, so an older cut message is
+        // forgotten as soon as a clean one is sealed.
+        messageOpen = false;
         if (current.trim()) lastCompleted = current;
+        if (current.trim()) {
+          sealedCutReason =
+            ev.finishReason === 'length'
+              ? 'finish-reason-length'
+              : openMessageFatal
+                ? 'fatal-error-mid-message'
+                : null;
+        }
         // Fase 10: capture provider-reported usage (summed across the
         // sub-agent's tool-loop turns) so candidate token costs are real,
         // never approximated.
@@ -1315,20 +1406,24 @@ export async function runSubAgent(
         break;
       case 'error':
         error = ev.message;
+        // G2: a fatal error while the message is still open means the stream
+        // died mid-text — whatever text follows is a fragment.
+        if (ev.severity === 'fatal' && messageOpen) openMessageFatal = true;
         break;
       default:
         break;
     }
   }
-  const result = (lastCompleted || current).trim();
+  const sealed = sealReport((lastCompleted || current).trim());
   return {
-    result,
+    ...sealed,
     ...(error ? { error } : {}),
     ...(usage ? { usage } : {}),
     ...(toolTrace.length > 0 ? { toolTrace } : {}),
     ...(turns > 0 ? { turns } : {}),
     ...(toolCalls > 0 ? { toolCalls } : {}),
     ...(degenerate ? { degenerate } : {}),
+    ...(mutationStorm ? { mutationStorm } : {}),
   };
   } finally {
     signal?.removeEventListener('abort', onAbort);
@@ -1380,6 +1475,14 @@ export interface TentacleSuccess {
   worktreeHandle: WorktreeHandle | null;
   /** Cognitive-memory node created from this concise conclusion, if enabled. */
   memoryId?: string;
+  /**
+   * Post-mortem 2026-09-23 (G2): 'truncated' when a deterministic runtime
+   * fact cut the report (provider output cap, stream ended mid-message, fatal
+   * stream error) — the text then carries REPORT_TRUNCATED_MARKER and must
+   * not ground new spawns. Optional (absent ⇒ 'ok') because producers outside
+   * this tool construct this shape; `runTentacle` always sets it explicitly.
+   */
+  reportStatus?: ReportStatus;
 }
 
 /** Failed tentacle run. `error` is the exact message previously given to typedErr. */
@@ -1401,6 +1504,16 @@ export interface TentacleFailure {
    * provider error: the parent must be able to tell them apart.
    */
   degenerate?: DegenerateLoopStop;
+  /**
+   * Post-mortem 2026-09-23 (G1): set when the run stopped on the
+   * mutation-failure circuit breaker — the same stop `error` describes, in
+   * structured form. `code` is the stable stop code (`'mutation_storm'`): a
+   * mutation storm is NOT budget exhaustion and NOT a provider error — the
+   * parent must be able to tell them apart.
+   */
+  mutationStorm?: MutationStormStop;
+  /** G2, same contract as `TentacleSuccess.reportStatus` (absent ⇒ 'ok'). */
+  reportStatus?: ReportStatus;
 }
 
 export type TentacleResult = TentacleSuccess | TentacleFailure;
@@ -1963,8 +2076,11 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // t157 (P2c): the cross-turn loop guard's stop, threaded up so the failure
   // it produces is distinguishable from budget exhaustion.
   let degenerate: DegenerateLoopStop | undefined;
+  // Post-mortem 2026-09-23: G1 stop + G2 truncation reason, same threading.
+  let mutationStorm: MutationStormStop | undefined;
+  let reportTruncated: ReportTruncatedReason | undefined;
   try {
-    ({ result, error, aborted, usage, toolTrace, turns, toolCalls, degenerate } =
+    ({ result, error, aborted, usage, toolTrace, turns, toolCalls, degenerate, mutationStorm, reportTruncated } =
       await runSubAgent(harness, {
         ...(opts.signal ? { signal: opts.signal } : {}),
         onEvent: onHarnessEvent,
@@ -2003,6 +2119,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
           turns = retry.turns;
           toolCalls = retry.toolCalls;
           degenerate = retry.degenerate;
+          mutationStorm = retry.mutationStorm;
+          reportTruncated = retry.reportTruncated;
           sub = { ...sub, model: sub.fallback.model, provider: sub.fallback.provider };
         } catch (err) {
           error = err instanceof Error ? err.message : String(err);
@@ -2021,6 +2139,9 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ...(toolCalls !== undefined ? { toolCalls } : {}),
     ...(degenerate ? { degenerate } : {}),
   };
+  // G2 (post-mortem 2026-09-23): the structured report status derives from
+  // the deterministic truncation facts only — never from the report's text.
+  const reportStatus: ReportStatus = reportStatusOf(reportTruncated);
   const durationMs = Date.now() - started;
 
   if (aborted) {
@@ -2046,7 +2167,13 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       detail: 'cancelled',
       durationMs,
     });
-    return { ok: false, agent, error: 'task: sub-agent cancelled by parent', cancelled: true };
+    return {
+      ok: false,
+      agent,
+      error: 'task: sub-agent cancelled by parent',
+      cancelled: true,
+      reportStatus,
+    };
   }
 
   if (degenerate) {
@@ -2082,6 +2209,36 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
         `task: sub-agent (${agent}) ${reason}` +
         (excerpt ? `\npartial output: ${excerpt}` : ''),
       degenerate,
+      reportStatus,
+    };
+  }
+
+  if (mutationStorm) {
+    // Post-mortem 2026-09-23 (G1): the mutation-failure circuit breaker broke
+    // the loop — every write call failed (EACCES / stale_snapshot / …) and not
+    // a single mutation landed (the 45-minute retry-storm incident). This is
+    // NOT budget exhaustion and must not look like it: fail loudly, before the
+    // wall clock burns the rest of the budget on the same storm.
+    if (worktree) await teardownWorktree(worktree);
+    const reason = formatMutationStop(mutationStorm);
+    appendKrakenRadio(parentCwd, sessionId, {
+      kind: 'error',
+      agent,
+      thoroughness,
+      description: args.description,
+      detail: reason,
+      model: sub.model,
+      worktree: worktree?.path ?? null,
+      durationMs,
+      ok: false,
+    });
+    endTentacle(liveId, { ok: false, model: sub.model, detail: reason, durationMs });
+    return {
+      ok: false,
+      agent,
+      error: `task: sub-agent (${agent}) ${reason}`,
+      mutationStorm,
+      reportStatus,
     };
   }
 
@@ -2103,6 +2260,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       ok: false,
       agent,
       error: `task: sub-agent (${agent}) produced no output${error ? ` (${error})` : ''}.`,
+      reportStatus,
     };
   }
 
@@ -2250,6 +2408,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     worktreePath: worktree?.path ?? null,
     worktreeHandle: worktree,
     ...(memoryId ? { memoryId } : {}),
+    reportStatus,
   };
 }
 
@@ -2449,6 +2608,10 @@ export function createTaskTool(
         ...(res.turns !== undefined ? { turns: res.turns } : {}),
       });
       if (metricsLine) result += `\n${metricsLine}`;
+      // G2 (post-mortem 2026-09-23): a runtime-truncated report is never
+      // silent — the parent gets an explicit guard line so no new spawn is
+      // grounded on partial information without re-investigating first.
+      if (res.reportStatus === 'truncated') result += `\n${REPORT_TRUNCATED_GUARD_LINE}`;
       // t78 (ADR-0033 slice): runtime general⇒verify obligation — after a
       // successful general, the tool itself spawns the verify (same
       // acceptance[], same tree) instead of only appending a hint footer.
