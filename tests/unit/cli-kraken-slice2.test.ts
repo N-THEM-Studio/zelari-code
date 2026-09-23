@@ -222,6 +222,19 @@ describe('isUnknownModelError', () => {
   it('does not treat a generic provider 500 as a missing model', () => {
     expect(isUnknownModelError('HTTP 500: internal server error')).toBe(false);
   });
+  it('matches Zhipu 400 "Unsupported model" rejections of the routed id', () => {
+    expect(
+      isUnknownModelError(
+        'HTTP 400: {\n    "error": {\n        "code": "400",\n        "message": "Unsupported model glm-5.3-flash"\n    }\n}\n',
+      ),
+    ).toBe(true);
+  });
+  it('matches "model not supported" wording', () => {
+    expect(isUnknownModelError('HTTP 400: model not supported')).toBe(true);
+  });
+  it('does not treat a model-adjacent 400 as a missing model', () => {
+    expect(isUnknownModelError('HTTP 400: model context window exceeded')).toBe(false);
+  });
 });
 
 describe('resolveKrakenPlannerModel', () => {

@@ -351,8 +351,9 @@ export function resolveKrakenSubModel(
 
 /**
  * True when a tentacle provider error means the *routed* model id is
- * unknown/unauthorized (HTTP 404 not-found), not that the lead model is
- * broken. Used to retry once on the parent model.
+ * unknown/unauthorized (HTTP 404 not-found) or rejected as an id (HTTP 400
+ * model-id rejections like Zhipu's "Unsupported model …"), not that the lead
+ * model is broken. Used to retry once on the parent model.
  */
 export function isUnknownModelError(message: string | undefined): boolean {
   if (!message) return false;
@@ -364,7 +365,10 @@ export function isUnknownModelError(message: string | undefined): boolean {
     /not_found/.test(m) ||
     /does not exist/.test(m) ||
     /unknown model/.test(m) ||
-    /model_not_found/.test(m)
+    /model_not_found/.test(m) ||
+    // 400-class rejections of the routed id ("Unsupported model glm-5.3-flash")
+    /unsupported[_ ]model/.test(m) ||
+    /model[_ ]?not[_ ]?supported/.test(m)
   );
 }
 

@@ -124,8 +124,9 @@ export interface SubAgentContext {
    */
   cwd?: string;
   /**
-   * Lead identity to retry with when the routed cheap model 404s
-   * (`glm-5.3-flash does not exist` while the lead model works).
+   * Lead identity to retry with when the routed cheap model id is rejected
+   * (`glm-5.3-flash does not exist` / "Unsupported model glm-5.3-flash" while
+   * the lead model works).
    */
   fallback?: {
     model: string;
@@ -1969,8 +1970,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
         onEvent: onHarnessEvent,
       }));
 
-    // Routed cheap model 404 (e.g. Settings explore = glm-5.3-flash while the
-    // lead model works): retry once on the parent identity.
+    // Routed cheap model id rejected (e.g. Settings explore = glm-5.3-flash
+    // while the lead model works): retry once on the parent identity.
     if (
       !aborted &&
       !result &&
