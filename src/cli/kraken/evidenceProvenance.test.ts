@@ -71,7 +71,7 @@ describe('anchorSelectionEvidence (T5 provenance)', () => {
     let seq = 100;
     const emit = async (input: SessionEventInput) => {
       seq += 1;
-      events.push({ seq, ...input.data });
+      events.push({ seq, kind: input.kind, ...input.data });
       return { seq };
     };
     return { events, emit };
@@ -128,5 +128,32 @@ describe('anchorSelectionEvidence (T5 provenance)', () => {
     expect(counts.toolResultAnchored + counts.noteFallback).toBe(0);
     expect(events).toHaveLength(0);
     expect(r.evidence[0]!.seq).toBe(55);
+  });
+
+  it('K5.2 (F29): un-anchorable notes emit ONE aggregate evidence.not_anchored (count + reason)', async () => {
+    const r1 = resultWithNote('check-1-manual', 'agent says it reviewed the code by eye');
+    const r2 = resultWithNote('check-2-manual', 'agent says it sniffed the diff by nose');
+    const { events, emit } = makeEmitter();
+    const counts = await anchorSelectionEvidence([r1, r2], emit, VITEST_TRACE);
+    expect(counts.noteFallback).toBe(2);
+    const loud = events.filter((e) => e.kind === 'evidence.not_anchored');
+    expect(loud).toHaveLength(1);
+    expect(loud[0]).toMatchObject({ count: 2 });
+    expect(String(loud[0]!.reason)).toContain('without captured tool execution');
+  });
+
+  it('K5.2 (F29) negative: zero fallbacks → NO evidence.not_anchored', async () => {
+    const r = resultWithNote('check-1-vitest', 'npx vitest run src/session — all green');
+    const { events, emit } = makeEmitter();
+    await anchorSelectionEvidence([r], emit, VITEST_TRACE);
+    expect(events.some((e) => e.kind === 'evidence.not_anchored')).toBe(false);
+  });
+
+  it('K5.2 (F29) negative: already-anchored refs emit NO evidence.not_anchored', async () => {
+    const r = resultWithNote('check-1-vitest', 'npx vitest run src/session — all green');
+    r.evidence[0]!.seq = 55;
+    const { events, emit } = makeEmitter();
+    await anchorSelectionEvidence([r], emit, VITEST_TRACE);
+    expect(events.some((e) => e.kind === 'evidence.not_anchored')).toBe(false);
   });
 });

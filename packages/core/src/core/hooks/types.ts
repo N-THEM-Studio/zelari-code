@@ -21,8 +21,13 @@
  * @since v1.32.0
  */
 
-/** Hook event names. */
-export type HookEvent = 'PreToolUse' | 'PostToolUse' | 'SessionStart' | 'SessionEnd';
+/**
+ * Hook event names. `VerificationFailed` (K5.3 / F32) fires when the
+ * strict-done gate BLOCKS a turn: LOUD observability whose decision is
+ * discarded (observer semantics below) — the verdict is recorded and final,
+ * the hook reports it, never overrides it.
+ */
+export type HookEvent = 'PreToolUse' | 'PostToolUse' | 'SessionStart' | 'SessionEnd' | 'VerificationFailed';
 
 /**
  * v2.57 (WS5) observation-only event names. A hook registered on one of these
@@ -112,6 +117,8 @@ export interface HookPayload {
   cwd?: string;
   /** Error message when the tool call failed. */
   error?: string;
+  /** K5.3 (F32): `VerificationFailed` — the strict-done block record. */
+  verification?: VerificationFailedPayload;
 }
 
 /**
@@ -188,6 +195,18 @@ export interface NotificationPayload {
   taskId?: string;
   /** Denied tool name (`needs-input` / denied). */
   tool?: string;
+}
+
+/**
+ * K5.3 (F32): payload of a `VerificationFailed` hook — fired exactly once when
+ * the strict-done gate blocks a turn. Small and truncated by contract: the ids
+ * of the criteria that did not pass and the machine summary of the block.
+ */
+export interface VerificationFailedPayload {
+  /** Ids of the unsatisfied criteria (capped by the emitter; empty when nothing bound). */
+  criteria: string[];
+  /** Short machine-readable block summary (truncated by the emitter). */
+  reason: string;
 }
 
 /**
@@ -306,8 +325,9 @@ export function toolMatches(pattern: string, toolName: string): boolean {
  * - `SubagentStart` / `SubagentEnd` match the AGENT KIND against
  *   `match.agents` when that filter is present (absent ⇒ every kind) —
  *   `match.tools` is NOT consulted;
- * - `SessionStart` / `SessionEnd` / `Notification` carry no subject: the
- *   event decides, `match.tools` is ignored (unchanged v1.32 behavior).
+ * - `SessionStart` / `SessionEnd` / `Notification` / `VerificationFailed`
+ *   carry no subject: the event decides, `match.tools` is ignored (unchanged
+ *   v1.32 behavior).
  */
 export function hookMatches(
   hook: HookDefinition,

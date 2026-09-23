@@ -32,6 +32,10 @@
  *   ZELARI_VERIFY_TEST_CMD           override test command ('' disables)
  *   ZELARI_VERIFY_BUILD_CMD          override build command ('' disables)
  *   ZELARI_VERIFY_TIMEOUT_MS         per-command timeout (default 600000)
+ *   ZELARI_VERIFY_PARALLEL           1|true|yes|on → bounded parallel command
+ *                                    evaluation (default OFF: the sequential
+ *                                    path — see core commandConcurrency.ts)
+ *   ZELARI_VERIFY_CONCURRENCY        max commands in flight when parallel (3)
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -41,6 +45,8 @@ import {
   VerificationEngine,
   ZELARI_CODING_PACK_ID,
   codingCriteriaPack,
+  isVerifyParallelEnabled,
+  resolveCommandConcurrency,
   type Criterion,
   type VerificationResult,
 } from '@zelari/core/verification';
@@ -65,6 +71,14 @@ export function nativePackEnabled(env: Env = process.env): boolean {
   if (v === '0' || v === 'off' || v === 'false') return false;
   return true;
 }
+
+/**
+ * K5.4 (F33): parallel command fan-out gate — default OFF (the sequential
+ * `for...of` path), `ZELARI_VERIFY_PARALLEL=1|true|yes|on` opts in. Re-exported
+ * here so the pack entry point owns its env surface; `evaluateNativePack`
+ * threads it (via `resolveCommandConcurrency`) into the engine below.
+ */
+export { isVerifyParallelEnabled };
 
 /** Empty baseline plan: an adapter-less root still honors env overrides. */
 const EMPTY_PLAN: NativePackCommands = {
@@ -209,8 +223,33 @@ export async function evaluateNativePack(deps: NativePackDeps = {}): Promise<Nat
   // no cross-suite cache bleed) and production never injects one.
   const shell = deps.shell ?? wrapWithVerifyCache(new NodeShellProvider(new LocalWorkspace(cwd)), { root: cwd, env });
   const engine = deps.emit
-    ? new VerificationEngine({ shell }, { emit: deps.emit })
-    : new VerificationEngine({ shell });
-  const results = await engine.evaluate(criteria, { packId: ZELARI_CODING_PACK_ID });
-  return { packId: ZELARI_CODING_PACK_ID, criteria, results };
+    ? new VerificationEngine(
+        { shell },
+        // K5.4 (F33): the fan-out gate is read from the SAME per-invocation env
+        // as the pack switches (never bare process.env) and threaded into the
+        // engine — default 1 (sequential), bounded parallel only on opt-in.
+        { emit: deps.emit, commandConcurrency: resolveCommandConcurrency(env) },
+      )
+    : new VerificationEngine({ shell }, { commandConcurrency: resolveCommandConcurrency(env) });
+  try {
+    const results = await engine.evaluate(criteria, { packId: ZELARI_CODING_PACK_ID });
+    return { packId: ZELARI_CODING_PACK_ID, criteria, results };
+  } catch (err) {
+    // K5.3 (F30): a swallowed pack crash is LOUD — append a `pack_error`
+    // spine event (error name + truncated message), then RETHROW so the caller
+    // degrades to the legacy contract exactly as before; verdicts unchanged.
+    try {
+      await deps.emit?.({
+        kind: 'pack_error',
+        actor: { type: 'system', role: 'verification' },
+        data: {
+          name: err instanceof Error ? err.name : 'Error',
+          message: String(err instanceof Error ? err.message : err).slice(0, 200),
+        },
+      });
+    } catch {
+      /* observability must never mask the pack error */
+    }
+    throw err;
+  }
 }

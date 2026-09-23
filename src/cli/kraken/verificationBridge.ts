@@ -345,6 +345,24 @@ export async function anchorSelectionEvidence(
       }
     }
   }
+  // K5.2 (F29): the silent fallback is LOUD now — one aggregate
+  // `evidence.not_anchored` spine event when (and only when) notes could not
+  // be anchored to a captured execution. Observability only: the counts, the
+  // EvidenceRefs and every verdict path are untouched.
+  if (counts.noteFallback > 0) {
+    try {
+      await emit({
+        kind: 'evidence.not_anchored',
+        actor: { type: 'system', role: 'verification' },
+        data: {
+          count: counts.noteFallback,
+          reason: 'verify-report note without captured tool execution',
+        },
+      });
+    } catch {
+      // degrade-and-stop: observability must never break the gate
+    }
+  }
   return counts;
 }
 
@@ -470,6 +488,35 @@ export interface StrictGateOptions {
    * only — never rescues a green selection/pack.
    */
   unresolvedFindings?: readonly UnresolvedFinding[];
+  /**
+   * K5.3 (F32): lifecycle-hook seam, fired when the strict-done gate BLOCKS —
+   * the `VerificationFailed` hook ({ criteria, reason }). Fire-and-forget
+   * observer semantics: never awaited into the verdict, never changes it.
+   * Structural subset of the core LifecycleHookRunner, so a host passes its
+   * runner directly.
+   */
+  hooks?: {
+    runVerificationFailed(
+      payload: { criteria: string[]; reason: string },
+      ctx?: { sessionId?: string; cwd?: string },
+    ): Promise<void>;
+  };
+}
+
+/**
+ * K5.3 (F32): fire the `VerificationFailed` hook — LOUD, never blocking.
+ * Fire-and-forget (the observer contract): a hook that throws, hangs or
+ * answers garbage must never delay or change the gate it reports on.
+ */
+function fireVerificationFailed(
+  options: StrictGateOptions,
+  payload: { criteria: string[]; reason: string },
+): void {
+  try {
+    void options.hooks?.runVerificationFailed(payload, { cwd: options.cwd })?.catch(() => undefined);
+  } catch {
+    /* observability only — the verdict is already final */
+  }
 }
 
 /** K1.4: record `--allow-unverified` on the spine. `undefined` = not attempted. */
@@ -549,6 +596,12 @@ export async function evaluateStrictBuildGate(
     // done this gate exists to prevent; --allow-unverified is the explicit
     // opt-out for scratch/benign runs. K1.4: the hatch must be spine-recorded.
     const waiverRecorded = await recordAllowUnverifiedWaiver(options);
+    // K5.3 (F32): "nothing to evaluate" is the LOUDEST block — report it too.
+    fireVerificationFailed(options, {
+      criteria: [],
+      reason:
+        'unverified (strict on: no criteria — pack off/unbound, no selection contract, no task contract)',
+    });
     return {
       gate,
       strict: true,
@@ -607,6 +660,11 @@ export async function evaluateStrictBuildGate(
       // M1.2: pack enabled but the tree bound no deterministic command and
       // no selection/contract criteria exist — UNVERIFIED, never open.
       const waiverRecorded = await recordAllowUnverifiedWaiver(options);
+      // K5.3 (F32): same loud report for the "pack bound nothing" block.
+      fireVerificationFailed(options, {
+        criteria: [],
+        reason: 'unverified (strict on: native pack bound no command, no selection contract)',
+      });
       return {
         gate,
         strict: true,
@@ -639,6 +697,18 @@ export async function evaluateStrictBuildGate(
   // instrumental artifact — same as K1.3 in taskTool).
   applyInstrumentalFloor(allResults);
   const blocked = gate.blocked || evaluation.verdict !== 'PASS';
+  // K5.3 (F32): a strict-done BLOCK is LOUD — the `VerificationFailed` hook
+  // carries the blocking criteria + reason. Observability only: `blocked`, the
+  // verdicts and the summary below are computed exactly as before.
+  if (blocked) {
+    fireVerificationFailed(options, {
+      criteria: (evaluation?.unsatisfied ?? []).map((u) => u.id).slice(0, 20),
+      reason: `strict ${evaluation?.verdict ?? 'n/a'}: ${evaluation?.summary ?? 'verification incomplete'}`.slice(
+        0,
+        300,
+      ),
+    });
+  }
   const legacyPart = selectionAvailable ? `${gate.passed}/${gate.total} legacy-pass, ` : 'no selection contract, ';
   const unresolvedNote =
     unresolved.nodeIds.length > 0 ? `; ${formatUnresolvedNodeIds(unresolved.nodeIds)}` : '';

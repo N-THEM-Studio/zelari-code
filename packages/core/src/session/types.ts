@@ -131,6 +131,14 @@ export const SESSION_EVENT_KINDS = [
   // contract + emission stop rule: subagentMetricsEvent.ts.
   'subagent.metrics',
   'note',
+  // K5.2–K5.3 (F29/F30): loud verification diagnostics — evidence that could
+  // not be anchored to a captured execution and a swallowed native-pack error.
+  // State-only (never model-surface): they RECORD what the gate already
+  // decided, never feed it. Additive kinds — no SCHEMA_VERSION bump (ADR-0021):
+  // older readers report schema-mismatch and skip via tolerant replay;
+  // deriveMessages ignores them.
+  'evidence.not_anchored',
+  'pack_error',
 ] as const;
 export type SessionEventKind = (typeof SESSION_EVENT_KINDS)[number];
 

@@ -13,9 +13,11 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { ShellProvider, ShellResult } from '@zelari/core/runtime';
+import type { SessionEventInput } from '@zelari/core/session';
 import {
   buildNativeCriteria,
   evaluateNativePack,
+  isVerifyParallelEnabled,
   nativePackEnabled,
   packTimeoutMs,
   resolvePackCommands,
@@ -246,5 +248,104 @@ describe('evaluateStrictBuildGate × native pack (F2 lock)', () => {
     const gate = await evaluateStrictBuildGate('build', { env: packEnv(), emit: emitSeq(), shell: timeoutShell });
     expect(gate.evaluation!.verdict).toBe('BLOCKED'); // unknown ≠ pass
     expect(gate.blocked).toBe(true);
+  });
+});
+
+describe('pack_error observability (F30) — loud, verdict unchanged', () => {
+  const explodingShell: ShellProvider = {
+    async exec(): Promise<ShellResult> {
+      throw new Error(`native pack exploded: ${'x'.repeat(300)}`);
+    },
+  };
+
+  function captureEmit(): {
+    events: SessionEventInput[];
+    emit: (input: SessionEventInput) => Promise<{ seq: number }>;
+  } {
+    const events: SessionEventInput[] = [];
+    let seq = 0;
+    const emit = async (input: SessionEventInput) => {
+      events.push(input);
+      return { seq: ++seq };
+    };
+    return { events, emit };
+  }
+
+  it('a crashing pack evaluation emits pack_error (name + truncated message) and still rejects', async () => {
+    const { events, emit } = captureEmit();
+    await expect(evaluateNativePack({ env: packEnv(), shell: explodingShell, emit })).rejects.toThrow(
+      'native pack exploded',
+    );
+    const loud = events.filter((e) => e.kind === 'pack_error');
+    expect(loud).toHaveLength(1);
+    expect(loud[0]!.data).toMatchObject({ name: 'Error' });
+    expect(String(loud[0]!.data!.message)).toContain('native pack exploded');
+    expect(String(loud[0]!.data!.message).length).toBeLessThanOrEqual(200);
+  });
+
+  it('verdict unchanged: the strict gate still blocks and degrades to native=null', async () => {
+    selectWithChecks(CHECKS);
+    setKrakenCheckResults([{ check: CHECKS[0], status: 'pass', note: 'agent says it reviewed the code by eye' }]);
+    const { events, emit } = captureEmit();
+    const gate = await evaluateStrictBuildGate('build', { env: packEnv(), emit, shell: explodingShell });
+    expect(events.filter((e) => e.kind === 'pack_error')).toHaveLength(1);
+    expect(gate.native).toBeNull();
+    expect(gate.blocked).toBe(true);
+  });
+});
+
+describe('ZELARI_VERIFY_PARALLEL gate (F33) — default OFF, env-threaded', () => {
+  it('isVerifyParallelEnabled is default-OFF; only 1|true|yes|on enable', () => {
+    expect(isVerifyParallelEnabled({})).toBe(false);
+    expect(isVerifyParallelEnabled({ ZELARI_VERIFY_PARALLEL: '0' })).toBe(false);
+    expect(isVerifyParallelEnabled({ ZELARI_VERIFY_PARALLEL: 'false' })).toBe(false);
+    expect(isVerifyParallelEnabled({ ZELARI_VERIFY_PARALLEL: '' })).toBe(false);
+    expect(isVerifyParallelEnabled({ ZELARI_VERIFY_PARALLEL: '1' })).toBe(true);
+    expect(isVerifyParallelEnabled({ ZELARI_VERIFY_PARALLEL: 'true' })).toBe(true);
+    expect(isVerifyParallelEnabled({ ZELARI_VERIFY_PARALLEL: 'YES' })).toBe(true);
+    expect(isVerifyParallelEnabled({ ZELARI_VERIFY_PARALLEL: ' on ' })).toBe(true);
+  });
+
+  function trackingShell(): { shell: ShellProvider; maxInFlight: () => number } {
+    let inFlight = 0;
+    let max = 0;
+    return {
+      shell: {
+        async exec(): Promise<ShellResult> {
+          inFlight += 1;
+          max = Math.max(max, inFlight);
+          await new Promise((r) => setTimeout(r, 25));
+          inFlight -= 1;
+          return { exitCode: 0, stdout: '', stderr: '', durationMs: 25, timedOut: false };
+        },
+      },
+      maxInFlight: () => max,
+    };
+  }
+
+  it('evaluateNativePack threads the gate: sequential by default, bounded parallel on opt-in', async () => {
+    const seq = trackingShell();
+    await evaluateNativePack({ env: packEnv(), shell: seq.shell });
+    expect(seq.maxInFlight()).toBe(1);
+
+    const par = trackingShell();
+    await evaluateNativePack({
+      env: packEnv({ ZELARI_VERIFY_PARALLEL: '1', ZELARI_VERIFY_CONCURRENCY: '2' }),
+      shell: par.shell,
+    });
+    expect(par.maxInFlight()).toBe(2);
+  });
+
+  it('the per-invocation env snapshot wins over ambient process.env (H10-fix1)', async () => {
+    const prev = process.env.ZELARI_VERIFY_PARALLEL;
+    process.env.ZELARI_VERIFY_PARALLEL = '1';
+    try {
+      const ambient = trackingShell();
+      await evaluateNativePack({ env: packEnv({ ZELARI_VERIFY_PARALLEL: '0' }), shell: ambient.shell });
+      expect(ambient.maxInFlight()).toBe(1);
+    } finally {
+      if (prev === undefined) delete process.env.ZELARI_VERIFY_PARALLEL;
+      else process.env.ZELARI_VERIFY_PARALLEL = prev;
+    }
   });
 });

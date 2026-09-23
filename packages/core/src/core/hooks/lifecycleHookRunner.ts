@@ -45,6 +45,7 @@ import {
   type PreToolUseResult,
   type SessionHookResult,
   type SubagentPayload,
+  type VerificationFailedPayload,
 } from './types.js';
 
 /** Correlation fields every hook invocation carries. */
@@ -149,6 +150,8 @@ export function splitHookCommandLine(line: string): string[] {
  *   - OBSERVER events (`runPermissionRequest`, `runSubagentStart`,
  *     `runSubagentEnd`, `runNotification`) return `void`; the verdict is
  *     discarded, so nothing an observer does can block the spine.
+ *     `runVerificationFailed` (K5.3 / F32) follows the same rule: it REPORTS
+ *     a strict-done block whose verdict is already final.
  */
 export class LifecycleHookRunner {
   private hooks: HookDefinition[] = [];
@@ -321,6 +324,26 @@ export class LifecycleHookRunner {
   /** Fire `Notification` — the WS2 inbox gained an item. */
   async runNotification(notification: NotificationPayload, ctx: HookContext = {}): Promise<void> {
     await this.runObserverHooks('Notification', { event: 'Notification', notification, ...ctx });
+  }
+
+  /**
+   * Fire `VerificationFailed` — the strict-done gate BLOCKED (K5.3 / F32).
+   * Same observer contract: the verdict is already final and this hook's
+   * decision is DISCARDED — the event makes a failure LOUD (a watcher, CI or
+   * operator can react), never overridable. Callers fire-and-forget.
+   */
+  async runVerificationFailed(
+    verification: VerificationFailedPayload,
+    ctx: HookContext = {},
+  ): Promise<void> {
+    for (const hook of this.hooks) {
+      if (!hookMatches(hook, 'VerificationFailed', undefined)) continue;
+      try {
+        await this.runHookSafely(hook, { event: 'VerificationFailed', verification, ...ctx });
+      } catch {
+        /* an observer never propagates: the subscription is best-effort */
+      }
+    }
   }
 
   /**

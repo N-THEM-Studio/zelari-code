@@ -74,6 +74,24 @@ describe('readSessionLog', () => {
     expect(projection.eventCount).toBe(4);
     expect(projection.messages).toEqual([]);
   });
+
+  it('K5.2/K5.3: evidence.not_anchored + pack_error validate and stay off the model surface', async () => {
+    const file = await tmpFile(
+      [env(1, 'session.started'), env(2, 'evidence.not_anchored'), env(3, 'pack_error')].join('\n') + '\n',
+    );
+    const report = await readSessionLog(file);
+    // Additive kinds: the tolerant reader accepts them with ZERO issues —
+    // an older reader reports schema-mismatch and skips, this one replays.
+    expect(report.issues).toEqual([]);
+    expect(report.events.map((e) => e.kind)).toEqual([
+      'session.started',
+      'evidence.not_anchored',
+      'pack_error',
+    ]);
+    const projection = buildProjection(report.events);
+    expect(projection.eventCount).toBe(3);
+    expect(projection.messages).toEqual([]);
+  });
 });
 
 describe('buildProjection', () => {
