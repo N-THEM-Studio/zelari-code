@@ -1,5 +1,5 @@
 /**
- * traceStore — persist & load per-mission execution traces (ADR-0015-A).
+ * traceStore — persist & load per-mission execution traces (ADR-0035-A).
  *
  * Each mission's trace is saved as `.zelari/trace/<missionId>.json` containing
  * an array of {@link SliceTrace} entries — one per slice run. This enables

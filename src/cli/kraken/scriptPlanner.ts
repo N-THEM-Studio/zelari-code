@@ -5,9 +5,11 @@
  * model selection, same workspace summary — different system prompt and
  * different output (TypeScript source, not a parsed JSON object).
  *
- * The script planner is opt-in: the JSON path stays the default for small
- * goals. Select via `ZELARI_KRAKEN_PLAN_FORMAT=script`. The `auto` mode
- * (future) picks the script path when the goal suggests > 4 nodes.
+ * The script planner is EXPERIMENTAL (F33 / K5.5 decision): the library is
+ * reachable programmatically (tests, script runtime) but NO selector wires it
+ * into the planner choice yet — `ZELARI_KRAKEN_PLAN_FORMAT=script` is
+ * documented intent, not a live knob. The `auto` mode (future) picks the
+ * script path when the goal suggests > 4 nodes.
  *
  * On parse / compile failure, retry once with corrective feedback; on
  * second failure, surface the error so the caller can fall back to the

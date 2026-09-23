@@ -1,6 +1,6 @@
 # Piano di intervento prestazionale — Kraken, tentacoli e lead
 
-> **Data:** 2026-09-10 · **Stato:** proposta di implementazione (non ancora approvata)
+> **Data:** 2026-09-10 · **Stato:** ⚠️ **SUPERSEDED** — superato da [`2026-09-10-kraken-lead-performance-plan-v2.md`](./2026-09-10-kraken-lead-performance-plan-v2.md) (marker F33 / K5.5). Resta come documento storico: non implementare da qui.
 > **Ambito:** latenza end-to-end di `zelari-code` in modalità Kraken (grafo e lead+`task` tool) e nei turni del lead, **senza ridurre i gate di qualità**.
 > **Vincoli di repo:** commit atomici single-task, nessuna dipendenza pesante nuova, moduli nuovi ≤ 300 LOC, async-first, Zod per gli argomenti tool (cfr. `AGENTS.md`).
 > **Gate di build per ogni commit:** `npm run typecheck && npm run test && npm run verify:principles && npm run verify:versions`.

@@ -56,7 +56,7 @@ export interface MissionState {
   cumulativeCostUsd?: number;
   /** Cumulative token count at last persistence (ADR-0013 budget cap). */
   cumulativeTokens?: number;
-  /** Per-slice execution trace (ADR-0015-A). */
+  /** Per-slice execution trace (ADR-0035-A). */
   trace?: SliceTrace[];
   /**
    * Budget-aware continuation history (2.6 closure, plan §13): one entry per
@@ -89,7 +89,7 @@ export interface SliceRunResult {
 }
 
 /**
- * One entry in the execution trace of a mission (ADR-0015-A trace view).
+ * One entry in the execution trace of a mission (ADR-0035-A trace view).
  * Captured per-slice for post-mortem debugging: who ran, in what order,
  * how much it cost, and whether it diverged from the plan.
  */
@@ -281,7 +281,7 @@ async function writeMissionState(projectRoot: string, state: MissionState): Prom
     JSON.stringify(state, null, 2) + '\n',
     'utf8',
   );
-  // Also persist the per-mission trace file (ADR-0015-A).
+  // Also persist the per-mission trace file (ADR-0035-A).
   if (state.trace?.length) {
     try {
       await saveTrace(projectRoot, state.missionId, state.trace);
@@ -663,7 +663,7 @@ async function driveMission(
     state.cumulativeCostUsd = cumulativeCostUsd;
     state.cumulativeTokens = cumulativeTokens;
 
-    // Trace view accumulation (ADR-0015-A).
+    // Trace view accumulation (ADR-0035-A).
     if (!state.trace) state.trace = [];
     state.trace.push({
       sliceId: currentSlice().id,
