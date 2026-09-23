@@ -27,8 +27,13 @@ apps/vscode/out/
 # Hermes local agent state (plans, audit reports, session logs)
 .hermes/
 
-# Council workspace (v3-W): project-local, per-project, NOT committed
-.zelari/
+# Council workspace (v3-W): project-local. Plan state (ledger, task specs,
+# plan docs) is tracked so development can continue from another machine;
+# runtime state (sessions, memory, radio, worktrees, tmp) stays local.
+.zelari/*
+!.zelari/plan.json
+!.zelari/plan-tasks
+!.zelari/docs
 # Local MCP server clones/installs (v0.7.9): per-machine, NOT committed
 /mcps/
 # Local-only scratchpad for git commit message drafts (a session-cwd

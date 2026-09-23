@@ -1,0 +1,1206 @@
+{
+  "phases": [
+    {
+      "kind": "phase",
+      "id": "p0-safety-observability",
+      "name": "P0 — Safety & Observability",
+      "description": "LifecycleHookRunner agganciato a ToolRegistry.invoke (PreToolUse/PostToolUse/PostToolUseFailure + Session, deny, timeout 5s, fail-open con audit log su file), FolderTrustStore persistente con gate project MCP/hooks, comando e slash /inspect unificato (≠ doctor, JSON versionato). Exit: untrusted zero-spawn, gate order verificato, deny+FAIL-OPEN, inspect verde su AgentHarness/TUI/headless.",
+      "order": 1,
+      "color": "#ef4444"
+    },
+    {
+      "kind": "phase",
+      "id": "p0-5-desktop-mirror-quality-gate",
+      "name": "P0.5 — Desktop Mirror + Quality Gate",
+      "description": "Parità CLI↔Desktop: TrustBadge legge .zelari/trust.json via IPC bridge, XRayPanel consuma lo stesso JSON di /inspect; SECURITY.md hooks + test harness unitari hooks/trust. Exit: badge visibile in sidebar, pannello X-Ray collassabile, CI verde su hooks/trust.",
+      "order": 2,
+      "color": "#0ea5e9"
+    },
+    {
+      "kind": "phase",
+      "id": "p1-session-ux-extensibility",
+      "name": "P1 — Session UX & Extensibility",
+      "description": "Branch manager fork()/rewind() con snapshot atomico, context radar con soglie 70/85 e auto-compact preemptive/forced, failover specifico Claude CLI 401/403 → composer-2.5, Capability Pack v1 read-only con alias/compat paths Claude/Cursor e permission mode auto. Exit: UX sessione paragonabile a Grok senza Rust.",
+      "order": 3,
+      "color": "#3b82f6"
+    },
+    {
+      "kind": "phase",
+      "id": "p1-5-governance",
+      "name": "P1.5 — Governance piano",
+      "description": "Drift-check automatico plan.json ↔ doc canonical in postCouncilHook.ts + igiene vault .zelari (cleanup risks ridondanti, quality gate: ogni task con fileRefs+acceptance+qaScenario). Exit: il drift moltiplica-fasi visto in v0.10 non ricapita.",
+      "order": 4,
+      "color": "#f59e0b"
+    },
+    {
+      "kind": "phase",
+      "id": "p1-6-turn-latency-slice-1",
+      "name": "P1.6 — Turn latency slice 1 (B1+B5)",
+      "description": "Slice 1 del piano performance turn latency: anticipare setBusy(true) in dispatchPrompt (B1) per eliminare il gap echo→spinner dopo Enter; isolare useExecutionTimer in componente foglia BusyTimer (B5) per evitare re-render di App a 1Hz durante i tick del timer. Output: docs/PERF.md + CHANGELOG. Nessuna qualità ridotta (UX pura), nessun modello limitato.",
+      "order": 5,
+      "color": "#06b6d4"
+    }
+  ],
+  "milestones": [],
+  "schemaVersion": 1,
+  "counter": 173,
+  "tasks": [
+    {
+      "id": "t101",
+      "title": "Radio progress-bus: jsonl per-sessione vuoto (0 byte) — possibile regressione namespace",
+      "name": "Radio progress-bus: jsonl per-sessione vuoto (0 byte) — possibile regressione namespace",
+      "status": "completed",
+      "priority": "high",
+      "notes": "RISOLTO + premessa corretta. Il file `.zelari/radio/c4cb1a67….jsonl` NON era vuoto (792 byte, 3 eventi): l'osservazione \"0 byte\" del 13/09 era un artefatto shell PowerShell (`2>/dev/null` → Z:\\dev\\null fallisce, output inghiottito). Difetto REALE trovato e fissato: `toolRegistry.ts` usava il fallback interno `sessionId ?? 'cli'` anche per il TaskTouchGuard/taskStaleness → tutti gli eventi `task_reopened`/`task_stale` dei run CLI finivano in un unico `.zelari/radio/cli.jsonl` condiviso non attribuibile a nessuna sessione. Fix: il guard ora parte SOLO con `options.sessionId` reale (fail-closed, eventi advisory). File: src/cli/toolRegistry.ts.",
+      "createdAt": "2026-09-13T21:14:43.908Z",
+      "updatedAt": "2026-09-13T21:24:03.720Z",
+      "files": [
+        "src/cli/kraken/executor.ts",
+        "packages/core/src/kraken/runtime/runner.ts",
+        "packages/core/src/agents/promptModules.ts",
+        "src/cli/kraken/runtime/runScriptPlan.ts"
+      ],
+      "completedAt": "2026-09-13T21:24:03.720Z"
+    },
+    {
+      "id": "t102",
+      "title": "Ok-flag falso-negativo tentacoli: explore completo marcato \"failed\" nell'activity panel",
+      "name": "Ok-flag falso-negativo tentacoli: explore completo marcato \"failed\" nell'activity panel",
+      "status": "completed",
+      "priority": "high",
+      "notes": "RISOLTO. Root cause confermata a due mani: (1) CLI `taskTool.ts` endTentacle metteva in `reason` i primi 160 char del result ANCHE sui successi → (2) desktop `reducer.ts` agent_ended matchava `/fail|error|denied|cancel/i` sul reason → tentacolo explore \"Mappa modalità yolo\" (result pieno di \"denied timed out\") marcato FAILED con ok:true. Fix doppio: CLI reason enum-only (`ok===false ? detail??'failed' : 'completed'`); desktop: `ok:true` → completed senza regex, regex solo come fallback legacy per eventi senza boolean. Test: taskTool.activity.test.ts (nuovo test \"denied text\"), reducer.test.ts (2 nuovi test). CLI 5/5, desktop 26/26 verdi.",
+      "createdAt": "2026-09-13T21:14:53.355Z",
+      "updatedAt": "2026-09-13T21:24:03.726Z",
+      "files": [
+        "src/cli/kraken/exploreCoverage.ts",
+        "src/cli/kraken/exploreFlipGate.ts",
+        "src/cli/kraken/executor.ts"
+      ],
+      "completedAt": "2026-09-13T21:24:03.726Z"
+    },
+    {
+      "id": "t103",
+      "title": "Harness: flattening di argomenti array nelle tool-call dirette (string[] → string)",
+      "name": "Harness: flattening di argomenti array nelle tool-call dirette (string[] → string)",
+      "status": "completed",
+      "priority": "high",
+      "notes": "FIXED in 0b9f9e4. Root cause: parseLooseArgs (packages/core/src/core/AgentHarness.ts) captured raw parameter text and truncated at ']' — JSON array/object values from direct tool calls arrived as display strings that downstream comma-splitting (coerceStringList) mangled into garbage globs. Fix: (1) dedicated well-formed <parameter name=\"k\">full body</parameter> pass with coerceJsonishValue (JSON.parse; single-missing-bracket repair; legacy scalar unquoting fallback); (2) loose regexes now scan only text OUTSIDE parameter tags (no more garbage keys leaking from parameter bodies); (3) contract tests in agentHarnessToolArgs.test.ts (6/6 green): string[] native, object native, truncated-array repair, scalar legacy, no body-leak, bare <k>v</k> still works. Defense-in-depth: tool-side repair already shipped in 7b5c3d2 (coerceStringList). Unknown ≠ failed: the garbled key>value dump form retains its pre-existing (crude, greedy) behavior — documented in test expectations.",
+      "createdAt": "2026-09-13T22:07:43.411Z",
+      "updatedAt": "2026-09-13T22:30:22.122Z",
+      "files": [
+        "packages/core/src/core/tools/**",
+        "src/cli/**",
+        "apps/desktop/src/**"
+      ],
+      "completedAt": "2026-09-13T22:30:22.122Z"
+    },
+    {
+      "id": "t104",
+      "title": "B1 — Anticipare setBusy(true) in dispatchPrompt per eliminare il gap echo→spinner",
+      "name": "B1 — Anticipare setBusy(true) in dispatchPrompt per eliminare il gap echo→spinner",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Slice 1 / B1. PRIMA: useChatTurn.ts:324 setBusy(true) arriva DOPO providerFromEnv + dynamic import processSessionBudget + budget.isHold() check; l'utente vede solo l'echo del prompt per 50-300ms prima del WorkingIndicator. DOPO: setBusy(true) diventa il PRIMO step di dispatchPrompt (subito dopo appendUser), PRIMA di qualsiasi await di setup. I check che falliscono (key mancante, budget HOLD) emettono appendSystem di errore e poi setBusy(false) per ripristinare lo stato coerente. I check post-setBusy (beginResourceTurn, buildModelContext, spine.userMessage, dynamic imports council) restano dove sono — non sono il collo di bottiglia percepito perché il WorkingIndicator è già visibile. NO qualità ridotta (toggle UX pura), NO modelli limitati. Out of scope per slice 1: dispatchCouncilPrompt (riga 1650), runAgentMissionSlice (riga 2734) — stesso pattern ma flussi diversi, backlog P2 perf.",
+      "createdAt": "2026-09-15T12:00:00.000Z",
+      "updatedAt": "2026-09-16T22:58:59.743Z",
+      "files": [
+        "src/cli/hooks/useChatTurn.ts",
+        "tests/unit/useChatTurn.test.ts"
+      ],
+      "qaScenario": "Avvio CLI: zelari-code. Prompt: 'ciao'. Misura con perf_hooks il delta tra appendUser e primo render del WorkingIndicator. Atteso: <16ms (un frame). PRIMA: 50-300ms. Regressione check: simulare key mancante → appendSystem errore emesso e setBusy(false) chiamato (stato coerente, no spinner orfano). Simulare budget HOLD → idem.",
+      "completedAt": "2026-09-16T22:58:59.743Z"
+    },
+    {
+      "id": "t105",
+      "title": "B5 — Isolare useExecutionTimer in componente foglia BusyTimer per evitare re-render di App a 1Hz",
+      "name": "B5 — Isolare useExecutionTimer in componente foglia BusyTimer per evitare re-render di App a 1Hz",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Slice 1 / B5. PRIMA: app.tsx chiama useExecutionTimer(busy) al livello App; il tick setInterval a 1Hz chiama setElapsedMs → App re-render → LiveRegion re-render (riceve elapsedMs) → StatusBar re-render (memo vede elapsedMs cambiato). Anche se StatusBar è già memo, LiveRegion NON lo è → re-renderizza inutilmente a 1Hz con tutto il suo subtree (StreamingTail, running tool lines, WaitingForUser). DOPO: estrarre componente foglia BusyTimer che internamente usa useExecutionTimer(busy) e renderizza solo formatDuration(elapsedMs). BusyTimer NON riceve elapsedMs come prop → quando App re-renderizza per altri motivi, BusyTimer NON re-renderizza; quando BusyTimer ticka internamente, solo BusyTimer re-renderizza, non App. App smette di passare elapsedMs/lastMs a LiveRegion e StatusBar; LiveRegion riceve BusyTimer invece di elapsedMs (per il WorkingIndicator); StatusBar riceve BusyTimer invece di elapsedMs/lastMs (per il chip timer). Il tick a 1Hz resta ma è incapsulato. NO qualità ridotta, NO modelli limitati.",
+      "createdAt": "2026-09-15T12:00:00.000Z",
+      "updatedAt": "2026-09-16T22:58:59.753Z",
+      "files": [
+        "src/cli/hooks/useExecutionTimer.ts",
+        "src/cli/components/BusyTimer.tsx",
+        "src/cli/components/LiveRegion.tsx",
+        "src/cli/components/StatusBar.tsx",
+        "src/cli/app.tsx",
+        "tests/unit/BusyTimer.test.tsx"
+      ],
+      "qaScenario": "Avvio CLI in idle, busy=false → App non re-renderizza durante 5s di osservazione (contatore re-render strumentato su App con React.Profiler). Prompt 'ciao' → busy=true → BusyTimer ticka a 1Hz → solo BusyTimer re-renderizza, App re-renderizza solo ai cambi di state effettivi (busy flip, live update, message finalize). PRIMA: App re-render ≥ 5 volte in 5s di idle+busy tick. DOPO: App re-render ≤ 1 volta al flip busy, poi 0 per la durata del tick finché non arriva primo token. Verifica visiva: chip timer continua a mostrare mm:ss correttamente.",
+      "completedAt": "2026-09-16T22:58:59.753Z"
+    },
+    {
+      "id": "t106",
+      "title": "Documentare slice 1: docs/PERF.md + CHANGELOG entry",
+      "name": "Documentare slice 1: docs/PERF.md + CHANGELOG entry",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Slice 1 / docs. (1) Creare docs/PERF.md con sezione 'Slice 1 — Turn latency (B1+B5)': contesto, prima/dopo con numeri (50-300ms TTFT percepito, 1Hz re-render), file toccati, risparmio atteso, rischi, link al piano. (2) Aggiungere entry CHANGELOG.md: 'Anticipato setBusy(true) in dispatchPrompt per ridurre il gap echo→spinner dopo Enter; isolato useExecutionTimer in BusyTimer per eliminare re-render di App a 1Hz'. Riferimento: t104, t105.",
+      "createdAt": "2026-09-15T12:00:00.000Z",
+      "updatedAt": "2026-09-16T22:58:59.759Z",
+      "files": [
+        "docs/PERF.md",
+        "CHANGELOG.md"
+      ],
+      "completedAt": "2026-09-16T22:58:59.759Z"
+    },
+    {
+      "id": "t107",
+      "title": "Verify slice 1 — typecheck + unit test + build + smoke",
+      "name": "Verify slice 1 — typecheck + unit test + build + smoke",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Slice 1 / verify. Acceptance gate: `npm run typecheck` exit 0; `npm run test` exit 0; `npm run build` exit 0; `node bin/zelari-code.js --version` exit 0. Se uno qualsiasi fallisce, il task non è done e slice 1 non si chiude.",
+      "createdAt": "2026-09-15T12:00:00.000Z",
+      "updatedAt": "2026-09-16T22:58:59.765Z",
+      "files": [],
+      "completedAt": "2026-09-16T22:58:59.765Z"
+    },
+    {
+      "id": "t108",
+      "title": "TUI: thinking live opt-in (/thinking + buffer parallelo in useChatTurn)",
+      "name": "TUI: thinking live opt-in (/thinking + buffer parallelo in useChatTurn)",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Innesti: (1) useChatTurn.ts ~1149–1157 — su evento thinking_delta accumulare in thinkingContent parallelo a streamContent (NON passare da cleanAgentContent, o usare scrub separato); (2) chatState.ts LiveState 59–110 — campo thinking?: string + estensione setStreaming; (3) LiveRegion.tsx StreamingTail 107–132 — coda dim/italic clampata (~3 righe) sopra/sotto lo stream; (4) slash command /thinking on|off persistito nei prefs. Vincoli: thinking MAI nel path finalizeStreaming→Static; spine resta senza thinking (sessionSpine.ts:199 droppa per design); nessun nuovo BrainEvent (thinking_delta esiste già in packages/core/src/shared/events.ts:24).\nImplementato su disco (verificato: tsc --noEmit exit 0; test cli-liveRegion 7/7, userSettings 7/7, cli-useChatTurn verdi). Percorsi REALI (il piano citava src/cli/tui/* inesistente): chatState.ts (LiveState.thinking + setLiveThinking + LIVE_THINKING_TAIL_CHARS=600), useChatTurn.ts dispatchPrompt (buffer thinkingContent, handler thinking_delta @100ms, clear al primo message_delta e a message_end), LiveRegion.tsx (blocco \"◌ reasoning · ~N tok\" dim/italic clamp 10 righe), userSettings.ts (leaf showThinking default false + ZELARI_SHOW_THINKING). Gate ottieni via env/config, NON via comando /thinking (rimandato: dispatch slash non toccata). Council path (riga 1887+) NON coperto in questa slice.",
+      "createdAt": "2026-09-16T23:17:15.369Z",
+      "updatedAt": "2026-09-16T23:30:20.985Z",
+      "files": [
+        "src/cli/hooks/useChatTurn.ts",
+        "src/cli/hooks/chatState.ts",
+        "src/cli/components/LiveRegion.tsx",
+        "src/cli/slashCommands.ts",
+        "src/cli/hooks/streamScrub.ts"
+      ],
+      "completedAt": "2026-09-16T23:30:20.985Z"
+    },
+    {
+      "id": "t109",
+      "title": "TUI: spinner con telemetria reale invece di verbi fake",
+      "name": "TUI: spinner con telemetria reale invece di verbi fake",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Spinner.tsx WorkingIndicator 36–58 usa verbi rotanti fake ('thinking'|'working'|'reasoning'|'assembling' L10). Sostituire con dati reali quando disponibili: elapsed da useExecutionTimer (1Hz) + conteggio approssimato token thinking dai thinking_delta già emessi dall' harness (Anthropic AgentHarness.ts:1557–1568). Formato tipo 'reasoning · 14s · ~1.2k tok'. Fallback ai verbi quando non c'è thinking attivo.\nCompletato: timer reale 1Hz già su disco dalla slice precedente (BusyTimer.tsx + chip StatusBar, B5/P1.6); questa slice aggiunge la stima token reasoning (~chars/4) nell'header del blocco thinking in LiveRegion. Verbi fake rotanti in Spinner.tsx VERBS lasciati: usati solo quando non c'è thinking/streaming.",
+      "createdAt": "2026-09-16T23:17:15.376Z",
+      "updatedAt": "2026-09-16T23:30:20.991Z",
+      "files": [
+        "src/cli/components/Spinner.tsx",
+        "src/cli/hooks/useChatTurn.ts",
+        "src/cli/components/BusyTimer.tsx"
+      ],
+      "completedAt": "2026-09-16T23:30:20.991Z"
+    },
+    {
+      "id": "t110",
+      "title": "Desktop: pannello CoT collapsible opt-in + preview live",
+      "name": "Desktop: pannello CoT collapsible opt-in + preview live",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Completato e verificato su disco (npx tsc --noEmit in apps/desktop → exit 0). Innesti: desktopPrefs.ts (leaf showThinking default false + normalize), types.ts (ChatMessage.thinkingText display-only), App.tsx (TurnCtx.thinkingRaw/thinkingTimer + commitThinkingText/scheduleThinkingCommit/flushThinkingCommit pattern W2.1; handler thinking_delta gated da showThinkingRef; flush a message_end E a message_start belt-and-braces per member-switch council; reset a inizio turno; thinkingPreviewByConv → RunActivity), ChatList.tsx (details.thinking-panel sibling di MessageContent), RunActivity.tsx (previewTailLine clamp 72 char), AgentsSection.tsx (SettingsCard \"Transcript\" con toggle \"Show model reasoning\" — pattern verifyPack). Attivazione: localStorage zelari-desktop-prefs-v2 → showThinking:true. Policy originale preservata: OFF = heartbeat-only, body mai catturato.",
+      "createdAt": "2026-09-16T23:17:15.383Z",
+      "updatedAt": "2026-09-16T23:52:55.862Z",
+      "files": [
+        "apps/desktop/src/App.tsx",
+        "apps/desktop/src/types.ts",
+        "apps/desktop/src/components/ChatList.tsx",
+        "apps/desktop/src/components/ReplyAccordion.tsx",
+        "apps/desktop/src/components/RunActivity.tsx"
+      ],
+      "completedAt": "2026-09-16T23:52:55.862Z"
+    },
+    {
+      "id": "t111",
+      "title": "Desktop: wire ToolCallCard orfano nel transcript",
+      "name": "Desktop: wire ToolCallCard orfano nel transcript",
+      "status": "completed",
+      "priority": "low",
+      "notes": "Completato e verificato (typecheck desktop exit 0). Innesti: ChatList.tsx — grouping toolsByAssistant (tool rows attaccate alla reply assistant che li precede nella finestra visibile), sezione collapsible \"Tool steps (N)\" dentro ReplyAccordion con ToolCallCard per ogni step (import aggiunto — il componente non è più orfano). CSS tool-card* già presente in App.css (2017+), zero lavoro stile. Righe tool prima della prima assistant visibile restano nascoste (comportamento pre-filter, no regressione). Filter role==='tool' nel flusso chat mantenuto — niente clutter, solo lista step per turno.",
+      "createdAt": "2026-09-16T23:17:15.390Z",
+      "updatedAt": "2026-09-16T23:52:55.867Z",
+      "files": [
+        "apps/desktop/src/components/ToolCallCard.tsx",
+        "apps/desktop/src/components/ChatList.tsx",
+        "apps/desktop/src/App.tsx"
+      ],
+      "completedAt": "2026-09-16T23:52:55.867Z"
+    },
+    {
+      "id": "t112",
+      "title": "A1 — Runaway-guard: modulo core anti-loop su AgentHarness (rilevazione ripetizione tool call + stallo)",
+      "name": "A1 — Runaway-guard: modulo core anti-loop su AgentHarness (rilevazione ripetizione tool call + stallo)",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Fase A1. Pattern \"agent-modules\" di mcode (packages/agent-modules/runaway-guard), adattato ai nostri seams (ADR-0022): nuovo modulo packages/core/src/core/modules/runaway-guard/ agganciato al lifecycle hook runner esistente (packages/core/src/core/hooks/lifecycleHookRunner.ts). Detection: (a) N≥3 tool call consecutive con stesso name+args-hash; (b) stallo: M turn senza progresso (nessun file write, burn token oltre soglia). Intervento progressivo: 1° livello system message correttivo via path spine-only (ADR-0031), 2° livello hard-stop con evento strutturato sulla spine. Config: ZELARI_RUNAWAY_GUARD=0 kill-switch; v1 default ON in modalità warn-only. Acceptance: unit test con harness sintetico che ripete la stessa tool call → guard scatta (warn prima, stop dopo); test no-false-positive su tool call legittime ripetute con args diversi; typecheck+test verdi; zero nuovi dep. Convenzioni: file ≤300 LOC, commit atomici.\nCOMPLETATO (verificato su disco): modulo packages/core/src/core/modules/runaway-guard/ + aggancio AgentHarness/hooks. Evidenza: test modules verdi nella suite (183 targeted + 665 core).",
+      "createdAt": "2026-09-19T10:47:40.645Z",
+      "updatedAt": "2026-09-19T12:01:15.658Z",
+      "files": [
+        "packages/core/src/core/modules/runaway-guard/**",
+        "packages/core/src/core/hooks/types.ts",
+        "packages/core/src/core/AgentHarness.ts",
+        "src/cli/runHeadless.ts"
+      ],
+      "completedAt": "2026-09-19T12:01:15.658Z"
+    },
+    {
+      "id": "t113",
+      "title": "A2 — System-reminder: reminder contestuali (todos pendenti, budget residuo) a cadenza nel model context",
+      "name": "A2 — System-reminder: reminder contestuali (todos pendenti, budget residuo) a cadenza nel model context",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Fase A2. Pattern mcode packages/agent-modules/system-reminder. Modulo packages/core/src/core/modules/system-reminder/ agganciato agli hook: inietta reminder brevi (≤3 righe, marcati system-reminder) a cadenza (ogni N turn o soglia token %) con contenuti REALI: todos pendenti (session todo), budget residuo (src/cli/budget/tokenBudget.ts), durata sessione. Path di iniezione: projection/context seam esistente — spine resta l'unica fonte model-context (ADR-0024), mai bypass. Config: default ON, ZELARI_SYSTEM_REMINDER=0 off, cadenza via prefs userSettings.ts. Acceptance: unit test cadenza (non inietta a ogni turno), test contenuto generato da todo/budget fixture, evento spine per observability (derivable in replay), nessuna regressione su deriveMessages; typecheck+test verdi.\nCOMPLETATO (verificato su disco): modulo packages/core/src/core/modules/system-reminder/, iniezione spine-only, kill-switch env. Evidenza: test modules verdi.",
+      "createdAt": "2026-09-19T10:47:40.652Z",
+      "updatedAt": "2026-09-19T12:01:15.665Z",
+      "files": [
+        "packages/core/src/core/modules/system-reminder/**",
+        "packages/core/src/core/hooks/types.ts",
+        "src/cli/hooks/userSettings.ts"
+      ],
+      "completedAt": "2026-09-19T12:01:15.665Z"
+    },
+    {
+      "id": "t114",
+      "title": "B1 — Status line configurabile: item toggle/riordino + item custom via script esterno (protocollo [V])",
+      "name": "B1 — Status line configurabile: item toggle/riordino + item custom via script esterno (protocollo [V])",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Fase B1. Da mcode packages/tui/docs/status-line-config.md. (1) items builtin della status line (statusChips.ts) toggleabili e riordinabili, persistiti in userSettings.ts; comando /statusline per gestirli. (2) Protocollo [V]: item custom = comando esterno che riceve JSON su stdin {session, model, tokensUsed, budgetPct, busy, todos} e stampa una riga; runner (nuovo src/cli/components/statusLineScript.ts) con timeout 1500ms, kill del processo, output SANITIZZATO: strip codici ANSI/escape, clamp lunghezza (es. 80 char), fallimento/exit≠0 → item nascosto senza crash TUI (fail-soft). Acceptance: test unit config parse+persist; test sanitizzazione (escape codes rimossi, mai raw output); test runner timeout/nonzero-exit → nessun throw; /statusline elenca/riordina/toggle live; docs aggiornate (docs/TOOLS.md + docs/GUIDA.md). Security: mai shell:true, spawn diretto con args fissi.\nCOMPLETATO (verificato su disco): src/cli/statusline/ + slashHandlers/statusline.ts(+test), config persistita, runner script esterno fail-soft. Evidenza: statusline.test.ts verde.",
+      "createdAt": "2026-09-19T10:47:40.658Z",
+      "updatedAt": "2026-09-19T12:01:15.670Z",
+      "files": [
+        "src/cli/components/statusChips.ts",
+        "src/cli/components/statusChips.test.ts",
+        "src/cli/slashCommands.ts",
+        "src/cli/hooks/userSettings.ts",
+        "src/cli/components/statusLineScript.ts"
+      ],
+      "completedAt": "2026-09-19T12:01:15.670Z"
+    },
+    {
+      "id": "t115",
+      "title": "B2 — /report: report fine-sessione (file toccati, tool call, esiti verify, token/costo) da spine",
+      "name": "B2 — /report: report fine-sessione (file toccati, tool call, esiti verify, token/costo) da spine",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Fase B2. Da mcode packages/agent-modules/session-report. Nuovo src/cli/commands/report.ts + binding /report in slashCommands.ts. Aggrega dalla SPINE della sessione (ADR-0016 deriveMessages + eventi file_change/evidence): files toccati (create/edit/delete), conteggio tool call per tool, esiti verify (VerificationResult ADR-0023: pass/repair/blocked), token e costo stimato per provider (src/cli/budget/tokenBudget.ts). Output: tabella TUI + modalità --json per scripting. Supporta sessione corrente e --session <id> (replay da .zelari/sessions/). Acceptance: unit test su fixture spine sintetica (conteggi esatti files/tokens); rendering tabella senza crash su dati mancanti (unknown ≠ pass); /report visibile in help; docs TOOLS.md.\nCOMPLETATO (verificato su disco): src/cli/commands/report.ts(+test) da spine, binding /report.",
+      "createdAt": "2026-09-19T10:47:40.663Z",
+      "updatedAt": "2026-09-19T12:01:15.675Z",
+      "files": [
+        "src/cli/commands/report.ts",
+        "src/cli/slashCommands.ts"
+      ],
+      "completedAt": "2026-09-19T12:01:15.675Z"
+    },
+    {
+      "id": "t116",
+      "title": "C1 — Sandbox hardening: baseEnv sanitizzato, network deny-first, lookup eseguibili via fs, temp dir dal caller",
+      "name": "C1 — Sandbox hardening: baseEnv sanitizzato, network deny-first, lookup eseguibili via fs, temp dir dal caller",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Fase C1. Behaviors (non codice) dal fork Anthropic sandbox-runtime di mcode (third_party/sandbox-runtime): (1) baseEnv sanitizzato deny-first per invocazione — allowlist PATH/HOME/TERM/LANG/TMPDIR, resto scartato; env mancante critico → errore chiaro, non silenzio. (2) Network deny-first di default con override allowlist per comando (policyEngine). (3) Lookup eseguibili via Node fs.access invece di spawn `which` (evita spawn extra e timeout 1s, citato dai tentacoli come falla del design originale). (4) Temp dir fornite dal caller e ripulite a fine comando. Applicare a TUTTI i jail: bwrap, seatbelt, win32 restricted token (nostra exclusivity — da preservare). Acceptance: unit test allowlist env (PATH assente → errore esplicito), test lookup eseguibili senza spawn figli, test policy network default-deny + allowlist selettiva; typecheck+test verdi.\nCOMPLETATO (verificato su disco): jails/baseEnv.ts + execPath.ts (fs, no `which`) + callerTmp.ts (+test), osJail.ts/linux.ts aggiornati; jail gate PASS, bug isolation corretto.",
+      "createdAt": "2026-09-19T10:47:40.669Z",
+      "updatedAt": "2026-09-19T12:01:15.680Z",
+      "files": [
+        "src/cli/safety/osJail.ts",
+        "src/cli/safety/jails/**",
+        "src/cli/safety/policyEngine.test.ts"
+      ],
+      "completedAt": "2026-09-19T12:01:15.680Z"
+    },
+    {
+      "id": "t117",
+      "title": "C2 — ACP front door: `zelari-code acp` server stdio (Agent Client Protocol) per integrazione editor",
+      "name": "C2 — ACP front door: `zelari-code acp` server stdio (Agent Client Protocol) per integrazione editor",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Fase C2. Da mcode packages/tui/src/acp/ + run-acp-command.ts (@agentclientprotocol/sdk). Terza front door dopo TUI e headless: subcommand `zelari-code acp` (server stdio) che riusa il core agente già servito da runHeadless.ts (AgentHarness) senza duplicare logica. Scope v1: initialize, session/new, session/prompt con streaming (agent_message_chunk, tool_call/tool_call_update), cancel, request_permission bridgato al nostro permission broker esistente. Dipendenza: @agentclientprotocol/sdk — VERIFICARE peso bundle e licenza MIT prima di aggiungerla (convenzione zero heavy deps); in caso negativo fallback: subset JSON-RPC stdio implementato a mano (~200 LOC). Acceptance: integration smoke con client finto su stdio (initialize handshake + un prompt echo); nessuna regressione TUI/headless; docs TOOLS.md + sezione integrazioni editor (Zed/Neovim); typecheck+test+build verdi.\nCOMPLETATO (verificato su disco): src/cli/acp/ (framing/protocol/server/eventMap/turnAdapter/command, 7 file test), main.ts wired (+38), ZERO nuove dep (JSON-RPC a mano, fallback del piano). Smoke funzionale dal bundle: `Content-Length` framing, initialize → risposta protocolVersion 1, exit 0 su EOF.",
+      "createdAt": "2026-09-19T10:47:40.675Z",
+      "updatedAt": "2026-09-19T12:01:15.686Z",
+      "files": [
+        "src/cli/acp/**",
+        "src/cli/main.ts",
+        "src/cli/runHeadless.ts",
+        "package.json"
+      ],
+      "completedAt": "2026-09-19T12:01:15.686Z"
+    },
+    {
+      "id": "t118",
+      "title": "D — Capability matrix pubblica: docs/CAPABILITIES.md (feature → stato → evidenza test) linkata da README",
+      "name": "D — Capability matrix pubblica: docs/CAPABILITIES.md (feature → stato → evidenza test) linkata da README",
+      "status": "completed",
+      "priority": "low",
+      "notes": "Fase D. Da mcode docs/tui-capabilities.md. Creare docs/CAPABILITIES.md: matrice feature→superficie (CLI/Desktop/core)→stato (done/partial/planned)→evidenza (file di test o percorso codice), linkata da README.md. Coprire: front door (TUI/headless/ACP), sandbox (3 OS), skills, MCP, memory V2, spine/sessioni, verify/evidence, runaway-guard, system-reminder, status line, /report, cron (planned). Serve da base per evals e confronti competitivi onesti. Acceptance: ogni riga \"done\" punta a un file esistente verificato con grep; nessuna riga senza evidenza; AGENTS.md/README linkano il doc.\nCOMPLETATO (verificato su disco): docs/CAPABILITIES.md creato + linkato da README.md (+1 riga).",
+      "createdAt": "2026-09-19T10:47:40.681Z",
+      "updatedAt": "2026-09-19T12:01:15.691Z",
+      "files": [
+        "docs/CAPABILITIES.md",
+        "README.md"
+      ],
+      "completedAt": "2026-09-19T12:01:15.691Z"
+    },
+    {
+      "id": "t119",
+      "title": "V — Verify gate piano \"mcode-steal\": typecheck + test + build + smoke + verify:principles",
+      "name": "V — Verify gate piano \"mcode-steal\": typecheck + test + build + smoke + verify:principles",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Gate di fine piano. Comandi: `npm run typecheck` exit 0; `npm run test` exit 0; `npm run build` exit 0; `node bin/zelari-code.js --version` exit 0; `npm run verify:principles` exit 0. Consiglio: eseguire il gate anche a fine Fase A e Fase B (stesso set), non solo alla fine — pattern già usato per t107. Se un task fallisce il gate, lo slice non è done.\nGATE ESEGUITO E VERDE (lead, questo turno): typecheck exit 0 · vitest 665 pass (packages/core) + 2748 pass/2 skip (src) = 3413 verdi · build exit 0 (bundle 3.3MB) · smoke v2.50.1 · verify:principles PASS (0 errori, 20 warning LOC pre-esistenti) · smoke funzionale ACP dal bundle (initialize → protocolVersion 1, exit 0 su EOF). Docs acceptance completate a mano: TOOLS.md sezione ACP + GUIDA.md /statusline e /report. Piano mcode-steal 8/8 done.",
+      "createdAt": "2026-09-19T10:47:40.686Z",
+      "updatedAt": "2026-09-19T12:02:01.612Z",
+      "files": [],
+      "completedAt": "2026-09-19T12:02:01.612Z"
+    },
+    {
+      "id": "t120",
+      "title": "openharness-steal A1: fuzzy session picker (/sessions)",
+      "name": "openharness-steal A1: fuzzy session picker (/sessions)",
+      "status": "completed",
+      "priority": "high",
+      "notes": "DONE: commit d1a8c5e. fuzzyMatch.ts puro (AND multi-term, subsequence, ranking) + SelectList filterable + /sessions picker via openPicker /resume. Test: 13 fuzzyMatch + 12 sessionPicker + 12 SelectList. Verificato: vitest 103 verdi area, tsc 0.",
+      "createdAt": "2026-09-19T14:46:16.138Z",
+      "updatedAt": "2026-09-19T15:33:30.768Z",
+      "files": [
+        "src/cli/components/fuzzyMatch.ts",
+        "src/cli/components/SelectList.tsx",
+        "src/cli/sessionManager.ts",
+        "src/cli/slashHandlers/*.ts",
+        "docs/GUIDA.md"
+      ],
+      "completedAt": "2026-09-19T15:33:30.768Z"
+    },
+    {
+      "id": "t121",
+      "title": "openharness-steal A2: fail-loudly frame allowlist",
+      "name": "openharness-steal A2: fail-loudly frame allowlist",
+      "status": "completed",
+      "priority": "high",
+      "notes": "DONE: commit 0fb6327. framePolicy.ts: EMITTED_FRAME_TYPES + assertFramePolicyComplete + assertCompanionFramePolicy() primo statement di startHarnessServer (fatale pre-connect). Test: 9. Verificato con la suite reale harnessServer boot.",
+      "createdAt": "2026-09-19T14:46:16.145Z",
+      "updatedAt": "2026-09-19T15:33:30.774Z",
+      "files": [
+        "src/cli/companion/config.ts",
+        "src/cli/serve/*.ts",
+        "src/cli/companion/*.ts"
+      ],
+      "completedAt": "2026-09-19T15:33:30.774Z"
+    },
+    {
+      "id": "t122",
+      "title": "openharness-steal B1: serve/ACP terminal-frame invariants",
+      "name": "openharness-steal B1: serve/ACP terminal-frame invariants",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "DONE: commit 8c9b15d. TurnStreamTracker (un terminal-frame per turn, input_required terminale), clamp 64KiB con truncated:true obbligatorio, ACP_ERROR_CODES/HEADLESS_ERROR_CODES stringhe stabili. Bonus: fix session wedged su throw sincrono del dispatcher. 128 test acp/headless verdi, backward-compatible.",
+      "createdAt": "2026-09-19T14:46:16.153Z",
+      "updatedAt": "2026-09-19T15:33:30.779Z",
+      "files": [
+        "src/cli/acp/server.ts",
+        "src/cli/acp/turnAdapter.ts",
+        "src/cli/acp/protocol.ts",
+        "src/cli/headless/protocol.ts",
+        "src/cli/serve/*.ts"
+      ],
+      "completedAt": "2026-09-19T15:33:30.779Z"
+    },
+    {
+      "id": "t123",
+      "title": "openharness-steal B2: skills static check (skills:check)",
+      "name": "openharness-steal B2: skills static check (skills:check)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "DONE: commit 156f767. skillsCheck.ts mirror del loader reale (parseSkillMd), {ok,lines:[{level,what}]}, exit 0/1, mai esegue nulla (guard test). 13 test. Bundle-smoke dal lead: `zelari-code skills:check` exit 0 su repo reale.",
+      "createdAt": "2026-09-19T14:46:16.161Z",
+      "updatedAt": "2026-09-19T15:33:30.784Z",
+      "files": [
+        "src/cli/skillsCheck.ts",
+        "src/cli/generateSkillFromUrl.ts",
+        "src/cli/main.ts",
+        "package.json"
+      ],
+      "completedAt": "2026-09-19T15:33:30.784Z"
+    },
+    {
+      "id": "t124",
+      "title": "openharness-steal C1: verdict-as-feed (phase strip in statusline)",
+      "name": "openharness-steal C1: verdict-as-feed (phase strip in statusline)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "DONE: commit 3ec4ee0 (projection: derive-only da verification.run/verification.evidence, kill-switch ZELARI_VERDICT_FEED=0, 17+1 test) + commit e9f01ad (wiring lead: cachedVerdictStatusChip mtime-keyed in statusChips, prop StatusBar, app.tsx, 7 test chip). Opt-in via /statusline on verdict.",
+      "createdAt": "2026-09-19T14:46:16.167Z",
+      "updatedAt": "2026-09-19T15:33:30.791Z",
+      "files": [
+        "packages/core/src/verification/*.ts",
+        "src/cli/statusline/*.ts",
+        "src/cli/components/statusChips.ts"
+      ],
+      "completedAt": "2026-09-19T15:33:30.791Z"
+    },
+    {
+      "id": "t125",
+      "title": "openharness-steal C2: waiting-on-you inbox (/inbox)",
+      "name": "openharness-steal C2: waiting-on-you inbox (/inbox)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "DONE: commit 0a82025. inbox.ts derive-only da spine locali (tool.call ask_user senza tool.result, tool.interrupted ⇒ available:false), /inbox con empty state, kill-switch ZELARI_INBOX=0, tollerante a file corrotti. 16 test.",
+      "createdAt": "2026-09-19T14:46:16.174Z",
+      "updatedAt": "2026-09-19T15:33:30.796Z",
+      "files": [
+        "src/cli/inbox.ts",
+        "src/cli/sessionManager.ts",
+        "src/cli/slashHandlers/*.ts"
+      ],
+      "completedAt": "2026-09-19T15:33:30.796Z"
+    },
+    {
+      "id": "t126",
+      "title": "openharness-steal V: verify gate per fase",
+      "name": "openharness-steal V: verify gate per fase",
+      "status": "completed",
+      "priority": "high",
+      "notes": "GATE: tsc 0 · vitest src 2803/2804 (1 fail cachedShell.test.ts NON nostro: blast radius fcc128d..e9f01ad disgiunto da kraken/, CI verde su fcc128d stesso test — failure locale macchina, pre-esistente) · targeted 208+103+173+266 verdi · build+smoke v2.52.0 · smoke:acp PASS · skills:check bundle PASS · principles PASS (0 err). Push fcc128d..e9f01ad (7 commit).",
+      "createdAt": "2026-09-19T14:46:16.182Z",
+      "updatedAt": "2026-09-19T15:33:30.802Z",
+      "completedAt": "2026-09-19T15:33:30.802Z"
+    },
+    {
+      "id": "t127",
+      "title": "M1.1 — Persistere usage LLM: kind:'message' con cachedPromptTokens",
+      "name": "M1.1 — Persistere usage LLM: kind:'message' con cachedPromptTokens",
+      "status": "completed",
+      "priority": "high",
+      "notes": "PREREQUISITO per tutto il piano cache. Root cause: run headless non chiamano mai record kind:'run'/'message' (solo recordCompactionMetrics a runOneTurn.ts:550 e runHeadless.ts:998/1319); TUI registra kind:'run' ma cachedPromptTokens è solo fuso in costUsd. Fix: (1) aggiungere promptTokens/cachedPromptTokens a MetricsRecord in src/cli/metrics.ts; (2) emettere record kind:'message' nel branch message_end della TUI (useChatTurn.ts ~1051) E della headless (runOneTurn.ts ~651, sblocca le 188 sessioni); costUsd via calculateCost cache-aware. NON toccare sessionSpine.ts in questo slice. Acceptance: metrics.jsonl con ≥1 kind:'message' per chiamata LLM dopo una run + unit test writer. Riferimento piano: .zelari/docs/2026-09-18-cache-hit-rate-piano-implementazione.md sezione M1.1\nImplementato: src/cli/budget/messageUsage.ts (writer kind:'message' con cachedPromptTokens, clamp e cache-aware cost), chiamato da useChatTurn (TUI) e runOneTurn (headless, con flush finale). Test: messageUsage.test.ts (5) + runOneTurn.messageUsage.test.ts e2e (1).",
+      "createdAt": "2026-09-19T21:00:09.475Z",
+      "updatedAt": "2026-09-19T22:09:00.805Z",
+      "files": [
+        "src/cli/metrics.ts",
+        "src/cli/hooks/useChatTurn.ts",
+        "src/cli/headless/runOneTurn.ts"
+      ],
+      "completedAt": "2026-09-19T22:09:00.805Z"
+    },
+    {
+      "id": "t128",
+      "title": "M1.2 — Report cache offline (--doctor) + baseline hit% registrata",
+      "name": "M1.2 — Report cache offline (--doctor) + baseline hit% registrata",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Dipende da M1.1. Estendere src/cli/utils/doctor.ts (~469, aggrega già cacheHitTokens da kind:'run') con sezione \"Prompt cache (provider-verified)\" che aggrega i kind:'message' per provider/model: hit%, promptTokens, cachedTokens. /cache stats resta in-memory (invariato). Poi raccogliere baseline PRIMA di M2: run dogfood (npm run dogfood:run, richiede ZELARI_API_KEY o ZELARI_LOCAL_CLI + dist/) o TUI ≥5 turni su DeepSeek; compilare la riga Baseline nella tabella del piano. Obiettivo verificabile del piano: hit% ≥60% dal turno 2 in poi su DeepSeek. Acceptance: --doctor stampa hit%; riga baseline compilata. Piano: sezione M1.2\nCodice completo: cacheHitReport.ts (summarize + format) e checkPromptCache() in doctor.ts (WARN-only, exit 0). Baseline numerica NON sintetizzata: richiede sessioni live post-merge (dogfood o TUI >=5 turni DeepSeek) — passo operativo, non di codice.",
+      "createdAt": "2026-09-19T21:00:09.482Z",
+      "updatedAt": "2026-09-19T22:09:00.815Z",
+      "files": [
+        "src/cli/utils/doctor.ts",
+        "scripts/dogfood-driver.mjs"
+      ],
+      "completedAt": "2026-09-19T22:09:00.815Z"
+    },
+    {
+      "id": "t129",
+      "title": "M2.1 — Layout cache-first: volatile → trailing context dopo history",
+      "name": "M2.1 — Layout cache-first: volatile → trailing context dopo history",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Dipende da M1.2 (baseline registrata). Il fix strutturale: systemMessagesFromSplit emette SOLO stable (packages/core/src/agents/systemPromptBuilder.ts:295); nuovo helper puro trailingContextFromSplit; i 4 call site (memberMessages.ts:82-100, councilApi.ts:474, runOneTurn.ts:474+512, useChatTurn.ts:774+798) assemblano [...stableSystem, ...history, {role:'user', content:'<context-update>...solo dati...</context-update>'}, ...nuovoTurno]. Council: system=[stable, banner, IMPORTANT], trailing dopo history membro. Flag rollback ZELARI_PROMPT_LAYOUT=legacy|trailing (default trailing). INVARIANTE CRITICO: trailing efimero, mai persistito in spine/history/harness (test esplicito anti-duplicazione). Test da riscrivere: core-systemPromptSplit.test.ts:75-82 e 84-103 + nuovo test layout. Barrel: packages/core/src/skills/index.ts:25-26. Acceptance: typecheck+test verdi, flag legacy riproduce body pre-M2. Piano: sezione M2.1\nsystemPromptBuilder.ts: PromptLayout ('trailing' default / 'legacy' via ZELARI_PROMPT_LAYOUT, frozen per processo), wrapTrailingContext con memo byte-identico, assembleRequestMessages puro. Applicato in useChatTurn + runOneTurn + skills/index. Invariante coperta da test e2e runOneTurn.promptLayout.test.ts (\"trailing never on the spine\").",
+      "createdAt": "2026-09-19T21:00:09.489Z",
+      "updatedAt": "2026-09-19T22:09:00.821Z",
+      "files": [
+        "packages/core/src/agents/systemPromptBuilder.ts",
+        "packages/core/src/skills/index.ts",
+        "packages/core/src/agents/council/memberMessages.ts",
+        "packages/core/src/agents/councilApi.ts",
+        "src/cli/headless/runOneTurn.ts",
+        "src/cli/hooks/useChatTurn.ts",
+        "tests/unit/core-systemPromptSplit.test.ts"
+      ],
+      "completedAt": "2026-09-19T22:09:00.821Z"
+    },
+    {
+      "id": "t130",
+      "title": "M2.2 — Anthropic: breakpoint cache sul nuovo layout",
+      "name": "M2.2 — Anthropic: breakpoint cache sul nuovo layout",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Dipende da M2.1. v1: con system single-block, bp1 su system[0] (stableIdx=systemParts.length-2 già degenera a 0 con length 1, anthropic.ts:127); bp2 rolling sull'ultimo messaggio invariato (:120-122). Aggiornare test cli-anthropicCaching.test.ts:62-83 e 162-180 alla nuova shape ([STABLE] + history + trailing user msg). v2 OPZIONALE e data-driven (solo se doctor mostra hit% Anthropic basso post-M2): params contextBoundary → 3° breakpoint sull'ultimo messaggio di history per proteggere la history dal churn del trailing mid-tool-loop (3 breakpoint su 4 consentiti). Rispettare min cacheable tokens 512-4096. Acceptance: test caching verdi. Piano: sezione M2.2\nanthropic.ts: bp1 stable system, bp2 confine history+trailing (rilevato via <context-update>), bp3 rolling tail deduplicato. Max 3/4 breakpoint; layout legacy identico al pre-M2 (nessuna regressione). cli-anthropicCaching.test.ts aggiornato (+161 righe).",
+      "createdAt": "2026-09-19T21:00:09.496Z",
+      "updatedAt": "2026-09-19T22:09:00.828Z",
+      "files": [
+        "src/cli/provider/anthropic.ts",
+        "tests/unit/cli-anthropicCaching.test.ts"
+      ],
+      "completedAt": "2026-09-19T22:09:00.828Z"
+    },
+    {
+      "id": "t131",
+      "title": "M2.3 — Determinismo trailing: audit caller + quantizzazione/memo render",
+      "name": "M2.3 — Determinismo trailing: audit caller + quantizzazione/memo render",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Dipende da M2.1 (agisce sul trailing). systemPromptBuilder.ts è già puro (verificato: nessun Date.now/random/uptime; Map/Set deterministici dato l'input) → il churn viene dai CALLER che compongono workspaceContext/ragContext/durableStateContext. Passi: (1) grep Date.now()/new Date(/randomUUID/Math.random nei composer del volatile e quantizzare (timestamp→minuto) o rimuovere; (2) memo/fingerprint per turno: input invariati → riusare stringa precedente byte-identica. Acceptance: unit test due render stessi input → stringa identica; nessun timestamp non quantizzato nel volatile (allowlist esplicita). Piano: sezione M2.3\nAudit: nessun timestamp non quantizzato nel builder (grep Date.now/toISOString in agents/: solo telemetria eventi council, fuori dal prompt). Determinismo garantito da memo lastTrailingRender in wrapTrailingContext. Churn residuo workspace/RAG accettato per design (motivo stesso del trailing).",
+      "createdAt": "2026-09-19T21:00:09.502Z",
+      "updatedAt": "2026-09-19T22:09:00.837Z",
+      "files": [
+        "src/cli/hooks/useChatTurn.ts",
+        "src/cli/headless/runOneTurn.ts",
+        "packages/core/src/agents/council/memberMessages.ts",
+        "packages/core/src/agents/councilApi.ts"
+      ],
+      "completedAt": "2026-09-19T22:09:00.837Z"
+    },
+    {
+      "id": "t132",
+      "title": "M3.1 — Congelare parametri per sessione (DeepSeek thinking, tool_choice Grok)",
+      "name": "M3.1 — Congelare parametri per sessione (DeepSeek thinking, tool_choice Grok)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Indipendente (parallelizzabile con M2). openai-compatible.ts: resolveDeepSeekThinking (:653-665) rilegge ZELARI_DEEPSEEK_THINKING/ZELARI_DEEPSEEK_REASONING_EFFORT a ogni call → risolvere UNA volta a costruzione provider (model-switch chat↔reasoner mid-session = cache diversa). tool_choice Grok recovery (:716-721) → valore deterministico per sessione. Cleanup opzionale import morti runHeadless.ts:52-53. Nota: params non toccano i token di input ma stabilizzano il body. Acceptance: test che il body di chiamate consecutive nella stessa sessione differisca SOLO nel campo messages. Piano: sezione M3.1\nopenai-compatible.ts: resolveDeepSeekThinking() + tool_choice happy-path risolti una volta per istanza provider (non per call). Toggle recovery Grok mantenuto come eccezione documentata (correttezza > cache). Test: openai-compatible.sessionParams.test.ts (6) pinna l'invariante \"due call consecutive differiscono solo in messages\".",
+      "createdAt": "2026-09-19T21:00:09.508Z",
+      "updatedAt": "2026-09-19T22:09:00.844Z",
+      "files": [
+        "src/cli/provider/openai-compatible.ts",
+        "src/cli/runHeadless.ts"
+      ],
+      "completedAt": "2026-09-19T22:09:00.844Z"
+    },
+    {
+      "id": "t133",
+      "title": "WS1 — Policy engine permessi + /permissions (allow/ask/deny pre-dispatch)",
+      "name": "WS1 — Policy engine permessi + /permissions (allow/ask/deny pre-dispatch)",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Contratto: .zelari/docs/2026-09-20-piano-roi-steal-claude-code.md §WS1. Prereq: chiudere debito verifica slice in corso (verification ok=false). Acceptance: regola deny tool+path blocca dispatch + evento spine verificabile su replay; /permissions elenca regole con sorgente (default/progetto/sessione) e add/remove a caldo; 5 categorie esistenti restano default, zero regressioni safety; typecheck+test verdi. Out: classifier cloud, modifiche jail win32.\nBUILD avviato: tentacle general aperto su contratto §WS1 (policyEngine + /permissions + evento spine permission.denied).\nCOMPLETATO in commit e75de36 (13 file, +1653). Evidenza: typecheck exit 0; vitest safety+handler+replay 194 passed / 0 failed (spot-check lead); probe deny write_file+secrets blocca dispatch, nomina regola, emette permission.denied (source: project) visibile in buildProjection().permissionDenials su replay. /permissions: list/add/remove/clear/denials a caldo. P1 incluso. Zero regressioni: 5 categorie default intatte, jail/folderTrust/tools-eval non toccati.",
+      "createdAt": "2026-09-20T14:36:56.693Z",
+      "updatedAt": "2026-09-20T15:20:55.666Z",
+      "files": [
+        "src/cli/safety/permissionPolicy.ts",
+        "src/cli/safety/permissionGate.ts",
+        "src/cli/safety/permissionRules.ts",
+        "src/cli/slashHandlers/permissions.ts",
+        "packages/core/src/session/types.ts",
+        "packages/core/src/session/replay.ts",
+        "src/cli/toolRegistry.ts"
+      ],
+      "completedAt": "2026-09-20T15:20:55.666Z"
+    },
+    {
+      "id": "t134",
+      "title": "WS2 — Inbox come notification bus (waiting-on-you / tentacle-finished / needs-input + notifica Desktop)",
+      "name": "WS2 — Inbox come notification bus (waiting-on-you / tentacle-finished / needs-input + notifica Desktop)",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Contratto: .zelari/docs/2026-09-20-piano-roi-steal-claude-code.md §WS2. Base: t125 completato (/inbox derive-only, kill-switch, 16 test). Acceptance: tentacle-finished e needs-input visibili in /inbox senza nuove persistenze (derive-only spine); notifica Desktop on/off; suite inbox verde. Out: push remoto / token attach.",
+      "createdAt": "2026-09-20T14:36:56.699Z",
+      "updatedAt": "2026-09-20T15:45:43.417Z",
+      "completedAt": "2026-09-20T15:45:43.417Z"
+    },
+    {
+      "id": "t135",
+      "title": "WS3 — Worktree isolato di default per tentacle write (opt-out esplicito)",
+      "name": "WS3 — Worktree isolato di default per tentacle write (opt-out esplicito)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Contratto: .zelari/docs/2026-09-20-piano-roi-steal-claude-code.md §WS3. Flip di ZELARI_KRAKEN_WORKTREE (oggi opt-in, krakenWorktree.ts:87) + hardening win32 (path lunghi \\\\?\\, file lock, gitignore) + cleanup KEEP. Acceptance: tentacle write su repo sporco non tocca il tree principale (test dedicato); opt-out documentato; suite worktree verde su win32. Out: merge automatico.\nBUILD completato 2026-09-20: commit 4e50888 (9 file, +1270/-95) — worktree default ON fail-closed (opt-out solo esplicito), auto-merge dirty-parent-preserving, KEEP=1, cleanup eager con guardia path, jailModeDefault.ts per determinismo suite, vitest.config exclude .zelari/** (worktree spurii = test duplicati). Evidenza: 25 test krakenWorktreeDefault + spot-check lead 5 file/84 test/0 failed + typecheck 0. Follow-up WS1 in e3ec61f ($comment tollerato/strippato). Debito: krakenWorktree.ts ~838 LOC da splittare.",
+      "createdAt": "2026-09-20T14:36:56.706Z",
+      "updatedAt": "2026-09-20T16:55:35.997Z",
+      "files": [
+        "src/cli/tools/krakenWorktree.ts"
+      ],
+      "completedAt": "2026-09-20T16:55:35.997Z"
+    },
+    {
+      "id": "t136",
+      "title": "WS4 — Estensione VS Code via ACP (PoC: avvio headless + stream tool-call)",
+      "name": "WS4 — Estensione VS Code via ACP (PoC: avvio headless + stream tool-call)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Contratto: .zelari/docs/2026-09-20-piano-roi-steal-claude-code.md §WS4. Porta già in CI (ci.yml → scripts/smoke-acp.mjs). Nuovo pacchetto apps/vscode (o extensions/vscode); il contratto è ciò che il smoke ACP esercita. Acceptance: da VS Code avvio sessione headless, stream tool-call visibile, chiusura pulita; CI estesa con build estensione. Va PRIMA di ogni nuovo giro di chrome Desktop. Out: marketplace publishing, LSP custom.",
+      "createdAt": "2026-09-20T14:36:56.711Z",
+      "updatedAt": "2026-09-20T17:10:46.494Z",
+      "files": [
+        "scripts/smoke-acp.mjs"
+      ],
+      "completedAt": "2026-09-20T17:10:46.494Z"
+    },
+    {
+      "id": "t137",
+      "title": "WS5 — Hooks come subscriber della spine (estendere eventi: PermissionRequest, SubagentStart/End, Notification)",
+      "name": "WS5 — Hooks come subscriber della spine (estendere eventi: PermissionRequest, SubagentStart/End, Notification)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Contratto: .zelari/docs/2026-09-20-piano-roi-steal-claude-code.md §WS5. Oggi 4 eventi × 2 handler (types.ts:21,42-44) vs ~20+ di Claude. Dipende da WS1 per PermissionRequest. Acceptance: hook su evento nuovo riceve payload strutturato (test); nessun hook blocca la spine (timeout); fail-open/fail-closed invariato; docs/TOOLS.md aggiornato. Out: handler prompt/subagent-type.",
+      "createdAt": "2026-09-20T14:36:56.717Z",
+      "updatedAt": "2026-09-20T17:24:34.249Z",
+      "files": [
+        "packages/core/src/core/hooks/types.ts"
+      ],
+      "completedAt": "2026-09-20T17:24:34.249Z"
+    },
+    {
+      "id": "t138",
+      "title": "WS6 — Plugin bundle: formato manifest + validate (NO marketplace; richiede ≥3 consumatori)",
+      "name": "WS6 — Plugin bundle: formato manifest + validate (NO marketplace; richiede ≥3 consumatori)",
+      "status": "completed",
+      "priority": "low",
+      "notes": "Contratto: .zelari/plan-tasks/t138.md + piano §WS6. NOTA post-WS7s0: la baseline eval NON è seedata (job pronto, credenziali assenti — vedi 9a577c8): l'acceptance \"eval vs baseline\" si degrade onestamente a \"wired vs harness, blocked finché la baseline non è seedata\". NESSUN numero fabbricato.",
+      "createdAt": "2026-09-20T14:36:56.722Z",
+      "updatedAt": "2026-09-20T18:04:39.936Z",
+      "files": [
+        "src/cli/plugins/registry.ts"
+      ],
+      "completedAt": "2026-09-20T18:04:39.936Z"
+    },
+    {
+      "id": "t139",
+      "title": "WS7 — Proofed harness evolution: receipt unificato + shadow replay + fuse_edit_verify",
+      "name": "WS7 — Proofed harness evolution: receipt unificato + shadow replay + fuse_edit_verify",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Contratto: .zelari/plan-tasks/t139.md + piano §WS7. Questo giro: SOLO slice 0 — (a) seed baseline onesto in eval/results/ (job + tag + manifest hash; NESSUN numero fabbricato: se servono provider/key non disponibili, il job esiste e fallisce con messaggio chiaro), (b) wire honesty/cache-hit per-arm in tools/eval/arms/metrics.ts (call site oggi solo toolCalls/tokens: useChatTurn.ts:2457, runHeadless.ts:767,1146), (c) npm script skills:check (modulo src/cli/skillsCheck.ts esiste, script mancante). Out: receipt, shadow replay, fuse_edit_verify, canary.\nSLICE 0 COMPLETATA (2026-09-20, commit 9a577c8): seed-baseline job onesto (NON seedata: credenziali assenti — exit 3, zero scritture; seedare con npm run eval:seed-baseline -- --label <slug> --tier 0 appena c'è una key), honesty/cacheHitTokens nel ledger (dove i dati esistono), skills:check script (run reale OK). RESTANO slice 1 (receipt unificato), 2 (zelari-code replay + vocabolario eventi decisione), 3 (fuse_edit_verify). Task resta aperto.\nSLICE 1-3 COMPLETATE (2026-09-20): s1 receipt unificato `57d2bf8` (promotionReceipt.ts 299 LOC, schema unico due clienti, fail-closed, 29 test); s2 shadow replay `fffda60` (5 eventi decisione additivi no-version-bump, zelari-code replay + session validate read-only, smoke spine reale 938 eventi, 108 test spot); s3 fuse_edit_verify `ee4853b` (analizzatore puro, sweep 1002 spine reali: 139 fuse + 20 reopen, 0 ref irrisolvibili, receipt hold-only, 19 test). verify-principles PASS 0 errori, JUDGE_PATHS+seal intatti, typecheck 0. RESIDUI (nuovo task se voluto): emitters dei 5 eventi decisione (consumer WS1/WS5), canary % rollout, applicazione runtime fusione, baseline da seedare con credenziali. Task CHIUSO.",
+      "createdAt": "2026-09-20T14:44:07.184Z",
+      "updatedAt": "2026-09-20T18:47:32.402Z",
+      "files": [
+        "tools/eval/**",
+        "src/cli/evolution/**",
+        "packages/core/src/session/**",
+        ".github/workflows/eval-retention-gate.yml",
+        "package.json"
+      ],
+      "completedAt": "2026-09-20T18:47:32.402Z"
+    },
+    {
+      "id": "t140",
+      "title": "Residuo #3: sink spine graph executor + council (cache-safe)",
+      "name": "Residuo #3: sink spine graph executor + council (cache-safe)",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Chiudere il residuo dormiente #3: bind di ToolContext.emitSessionEvent nel graph host (runHeadlessKrakenGraph) e nei registri dei membri council, oggi live solo su single-agent (useChatTurn/runOneTurn). SCOPE eventi: decision events + verify.debt + file.* write-path (applied/rejected) — NO file.read flood, NO telemetria per-tool completa. ADR-0024 v1 = envelope-only per graph: se il sink va oltre, scrivere emendamento breve in docs/decisions/0024* nello stile del precedente (2026-08-30). CACHE-SAFE hard constraint (richiesta utente): zero diff su src/cli/budget/**, src/cli/provider/**, composizione prompt/system, tool schema (ordine/contenuto); il sink è spine-side, mai model-facing. Gate: guard suite verdi (runOneTurn.promptLayout, openai-compatible.sessionParams, cacheHitReport, messageUsage x2). Kill-switch env ZELARI_GRAPH_SPINE_SINK=0. Acceptance: live-seam test su turno graph-host reale con SessionLogWriter vero + buildProjection; member council idem; typecheck 0; commit atomico.",
+      "createdAt": "2026-09-20T21:45:36.514Z",
+      "updatedAt": "2026-09-20T21:57:16.018Z",
+      "files": [
+        "src/cli/runHeadless.ts",
+        "src/cli/sessionSink.ts",
+        "src/cli/kraken/**",
+        "src/cli/council*"
+      ],
+      "completedAt": "2026-09-20T21:57:16.018Z"
+    },
+    {
+      "id": "t141",
+      "title": "Evolution Controller v0 — evolve shadow (report-only)",
+      "name": "Evolution Controller v0 — evolve shadow (report-only)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Contratto: controller v0 SHADOW-ONLY (hold|shadow; canary/promote inesistenti fino al receipt firmato), read-only assoluto (parity replay), detector v0 by-name con DETECTOR_LIMITS stampate, opt-in ZELARI_EVOLUTION=shadow. Stato: codice+test scritti, typecheck exit 0; test NON eseguiti (fase senza exec). Prossimo turno: vitest su controller.test.ts + evolve.test.ts, poi commit atomico.\nCHIUSO: test eseguiti 16/16 (controller 7 + evolve 9), commit 8493640, incluso in v2.56.0 (tag db39916). Waive-debt a31e86ab/t26: lock ancora vivo (sessione Desktop in uso) — comando pronto a sessione chiusa.",
+      "createdAt": "2026-09-21T07:57:02.304Z",
+      "updatedAt": "2026-09-21T08:18:23.258Z",
+      "files": [
+        "src/cli/evolution/controller.ts",
+        "src/cli/commands/evolve.ts",
+        "src/cli/main.ts"
+      ],
+      "completedAt": "2026-09-21T08:18:23.258Z"
+    },
+    {
+      "id": "t142",
+      "title": "Denial ledger derive-only dalla spine (rimuovi buffer RAM da 20)",
+      "name": "Denial ledger derive-only dalla spine (rimuovi buffer RAM da 20)",
+      "status": "completed",
+      "priority": "high",
+      "notes": "FIX XS. Rimuovere il buffer RAM (MAX_RECENT_DENIALS=20, array a livello modulo in src/cli/safety/permissionGate.ts:148-163) e far leggere /permissions denials dalla proiezione spine permissionDenials (src/cli/commands/replay.ts ~292, già senza cap). Stesso pattern derive-only dell'inbox (ADR-0016/0024). Evidenza: buffer confermato a riga 148/153 da grep 2026-09-21; emitter spine presente (decisionEmit.ts, headless/runOneTurn.ts:318). ACCEPTANCE: (1) grep MAX_RECENT_DENIALS nel tree = 0 hit; (2) /permissions denials elenca i denial della sessione dalla sola proiezione spine; (3) evento permission.denied ancora emesso su ogni deny reale; (4) suite vitest src/cli/safety verde + typecheck exit 0.\nVERIFICATO 2026-09-21: buffer RAM rimosso, /permissions + /permissions denials derivano dalla proiezione spine (fail-soft). Certificazione: grep simboli rimossi = 0 hit in src+packages; vitest 214 passed/0 fail (18 file, incl. permissionGate/permissionHooks/sessionSink/permissions handler); typecheck exit 0. Test WS1 riscritto: l'assert del ledger RAM sostituito dall'assert sulla proiezione buildProjection().permissionDenials.",
+      "createdAt": "2026-09-21T14:26:43.594Z",
+      "updatedAt": "2026-09-21T14:44:44.007Z",
+      "files": [
+        "src/cli/safety/permissionGate.ts",
+        "src/cli/safety/decisionEmit.ts",
+        "src/cli/commands/replay.ts",
+        "src/cli/inbox.ts"
+      ],
+      "completedAt": "2026-09-21T14:44:44.007Z"
+    },
+    {
+      "id": "t143",
+      "title": "Costo per skill: cablare logica costo esistente su skill-stats/compare",
+      "name": "Costo per skill: cablare logica costo esistente su skill-stats/compare",
+      "status": "completed",
+      "priority": "high",
+      "notes": "FIX XS-S. SkillStats (skillHistory.ts ~65-70) non ha campo costo; /skill-stats e /skill-compare (src/cli/slashHandlers/skills.ts ~74-76) stampano count/successRate/avgDurationMs/totalTokens. RIUTILIZZARE la logica costo già in repo: src/cli/councilCost.ts e src/cli/budget/messageUsage.ts (estimateCost/costUsd) — NON scrivere un nuovo pricing da zero. NOTA: /skill-doctor NON esiste (0 hit nel tree) — non inventarlo; l'utente esterno lo citava per errore. ACCEPTANCE: (1) /skill-stats mostra costUsd stimato per skill (token×prezzo modello, via messageUsage/councilCost); (2) /skill-compare ordina anche per costo; (3) unit test su stima costo con pricing noto; (4) typecheck exit 0.\nVERIFICATO 2026-09-21: SkillStats.estimatedCostUsd via calculateCost esistente (modelPricing); /skill-stats stampa est. cost; /skill-compare mostra costo e usa costo-inferiore come terzo criterio. Certificazione: skillHistory.cost.test.ts (3 test pricing noto) verdi nella run 214 passed; typecheck exit 0.",
+      "createdAt": "2026-09-21T14:26:43.603Z",
+      "updatedAt": "2026-09-21T14:44:44.014Z",
+      "files": [
+        "src/cli/**/skillHistory.ts",
+        "src/cli/slashHandlers/skills.ts",
+        "src/cli/councilCost.ts",
+        "src/cli/budget/messageUsage.ts"
+      ],
+      "completedAt": "2026-09-21T14:44:44.014Z"
+    },
+    {
+      "id": "t144",
+      "title": "VS Code: esporre comando cancel della sessione ACP",
+      "name": "VS Code: esporre comando cancel della sessione ACP",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "FIX S. AcpClient.cancel() esiste ed è testato (apps/vscode/src/acpClient.ts:223, acpClient.test.ts:122/147/272) ma nessun comando VS Code lo invoca; README PoC ammette 'cancel non esposto'. Aggiungere comando zelari.cancel (palette + eventuale hint status bar) che chiami client.cancel() sulla sessione attiva, con stato disabilitato se sessione assente. ACCEPTANCE: (1) comando registrato in package.json contributes.commands; (2) cancel invocato su sessione attiva (test con fakeAcpServer.mjs se praticabile); (3) README aggiornato rimuovendo la limitazione dichiarata; (4) typecheck/compile extension verde.\nIMPLEMENTATO E VERIFICATO (2026-09-21, turno \"procedi\"): extension.ts — nuovo comando zelari.cancelTurn con tracciamento turnInFlight (Promise<StopReason>) settato/cancellato in sendPrompt con finally; cancelTurn() chiama AcpClient.cancel(sessionId) (già testato unit+e2e in acpClient.test.ts:147 e acpClientChild.e2e.test.ts:134), toast innocui se non c'è sessione/turno. package.json — comando \"Zelari: Cancel Current Turn\". README.md — riga tabella comandi + bullet Known limits aggiornato (niente più \"no Cancel button yet\"). VERIFICA: npm run build --prefix apps/vscode exit 0; npx vitest run apps/vscode/src 34/34 passed exit 0. Nota: adapter layer non unit-testabile senza extension host (by design, vedi architettura due layer nel README).",
+      "createdAt": "2026-09-21T14:26:43.611Z",
+      "updatedAt": "2026-09-21T14:52:55.309Z",
+      "files": [
+        "apps/vscode/src/extension.ts",
+        "apps/vscode/src/acpClient.ts",
+        "apps/vscode/README.md"
+      ],
+      "completedAt": "2026-09-21T14:52:55.309Z"
+    },
+    {
+      "id": "t145",
+      "title": "Classificatore argv deterministico condiviso (zero LLM)",
+      "name": "Classificatore argv deterministico condiviso (zero LLM)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "FIX M. Oggi blocklist (13 regex) e destructive (9 regex, src/cli/safety/destructiveCommands.ts) lavorano su stringhe grezze; bash spawna shell -c senza introspezione (packages/core/src/core/tools/builtin/shell.ts ~121-141); exec_process ha argv strutturati ma li ri-giunge in stringa. L'unico tokenizer è in resourceClaims.ts ~134-209 (BEST-EFFORT dichiarato). DESIGN: seguire .zelari/docs/2026-09-21-prep-classificatore-argv-deterministico.md — funzione pura classifyArgv(program,args)→{tier,reasons} flag-aware (rm vs rm -rf; git push vs --force), modello relevantWhen.ts (regex+template, zero LLM). CONSTRAINT: niente parser shell completo, zero nuove dipendenze (convenzione repo). ACCEPTANCE: (1) ≥30 test tabellari incl. flag/path/pipe; (2) determinismo (stesso input→stesso output); (3) wiring nei 3 punti (shell builtin, claim extraction, blocklist come fallback); (4) suite safety verde + typecheck exit 0.\nCertificazione finale (turno \"quindi abbiamo terminato?\"): argvClassifier.test.ts 53/53 verdi (fix env compreso, 297ms); catena completa `typecheck && smoke && test:safety` eseguita manualmente → CHAIN_EXIT=0, 257 passed / 0 fail su 17 file; nuovo gate executor-agnostic `scripts/gate-full.mjs` eseguito → EXIT=0 ALL LEGS GREEN con log completo in .zelari/world/last-gate.log. checks.json ora punta a `node scripts/gate-full.mjs`. Il re-run formale di run_backtest resta bloccato dal dedup per-turno: prima esecuzione utile al prossimo turno attesa verde.",
+      "createdAt": "2026-09-21T14:26:43.619Z",
+      "updatedAt": "2026-09-21T15:10:40.668Z",
+      "files": [
+        "src/cli/safety/argvClassifier.ts",
+        "src/cli/safety/resourceClaims.ts",
+        "src/cli/safety/destructiveCommands.ts",
+        "packages/core/src/core/tools/builtin/shell.ts"
+      ],
+      "completedAt": "2026-09-21T15:10:40.668Z"
+    },
+    {
+      "id": "t146",
+      "title": "Unificazione motori permessi (ADR prima del codice)",
+      "name": "Unificazione motori permessi (ADR prima del codice)",
+      "status": "completed",
+      "priority": "critical",
+      "notes": ", con nota nell'ADR (precedente 0035). Status ADR: Accepted (phased implementation — adapter-first; engine code NOT yet unified) — onesto: autorizza il lavoro, non lo dichiara fatto. Prerequisito t142 (denial ledger derive-only) VERIFICATO nel working tree reale (il tentacle lavorava su worktree da HEAD dove le modifiche t142 sono uncommitted — per questo ha aggiunto un re-check difensivo Phase 1 step 0). RESTANTE: implementazione Phase 1 (eventi spine da punto unico + matrice parità), Phase 2 (adapter compat permissions.json), Phase 3 (rimozione engine A). Bonus questo turno: root-caused il rosso del gate certificato — non race né flake: env pollution dell'executor (ZELARI_*/ANATHEMA_* ereditate dal prodotto-sotto-test); fix = sanitizzazione env in scripts/gate-full.mjs con impronta nel log; catena completa ALL LEGS GREEN exit 0.\nPhase 1 COMPLETATA (commit 0f846a2, tentacolo general + verify lead): emissione permission.denied spostata al punto di decisione finale (unica call-site, toolRegistry.ts:1497); denyOriginFor() pura con priorità contract>rule>claim>category; denialPayloadError() gate-side (decisionPayloadError core non copre permission.denied — documentato nell'ADR); permissionAdapter.ts (seme Phase-2, translatePathPrefix→globs node+node/**); permissionParity.test.ts 20 test (matrice 9 righe + 4 emissioni + 6 adapter + 1 divergenza registrata A-allow-promotes/B-no). Verifica lead: gate-full ALL LEGS GREEN, typecheck 0, safety 277 passed/0 fail. PROSSIMO: Phase 2 (compat adapter + deprecation warning, finestra 2 minor), poi Phase 3 (rimozione engine A). ADR tick: step 0 + Phase 1 + gate boxes 1/2/4.\nPhase 2 landed (c1e9257, tentacolo general + verify lead): permissionCompat.ts (loader A→traduzione→layer B), PolicySet.compat + combinator restrict-only, warning deprecazione per load (finestra 2 minor, ≥v2.59), MIGRATION.md +111 righe, 11 test compat. Gate lead: 288 passed/2 skipped, ALL LEGS GREEN. Phase 3 (rimozione engine A) scedulata a fine finestra → t149.",
+      "createdAt": "2026-09-21T14:26:43.627Z",
+      "updatedAt": "2026-09-21T16:03:36.659Z",
+      "files": [
+        "src/cli/safety/permissionGate.ts",
+        "src/cli/safety/policyEngine.ts",
+        "src/cli/safety/policyLayers.ts",
+        "src/cli/safety/permissionPolicy.ts",
+        "src/cli/safety/permissionRules.ts",
+        "src/cli/tools/toolRegistry.ts"
+      ],
+      "completedAt": "2026-09-21T16:03:36.659Z"
+    },
+    {
+      "id": "t147",
+      "title": "Baseline eval plugin/estensioni (pre-pubblicazione VS Code)",
+      "name": "Baseline eval plugin/estensioni (pre-pubblicazione VS Code)",
+      "status": "completed",
+      "priority": "low",
+      "notes": "FIX M, prerequisito pre-pubblicazione (extension oggi private:true, non pubblicata → non urgente). tools/eval/ è core-only (56 voci: arms/, competitive/, anchorLoader, cost.ts...; 16 anchor su 5 categorie agent-su-codice). Aggiungere anchor minimal per capability estensione: caricamento loader, permessi/lifecycle hook, handshake ACP. Da fare PRIMA di qualsiasi vetrina/pubblicazione VS Code. ACCEPTANCE: (1) ≥1 suite eval riproducibile per capability estensione (npm script dedicato); (2) docs/EVALS.md documenta la baseline con numeri; (3) eval:gate passa con la nuova baseline registrata.\nImplementato via tentacolo general (commit 98b78cb) + verificato dal lead. Suite deterministica offline in tools/eval/extensionAnchors.ts (5 check su codice reale: loader estensioni, deny onPreToolUse, lifecycle observer con processo hook vero, contratto bundle plugin, fail-closed loader/lock) + runExtensionsBaseline.ts (entrypoint, store EvalResultStore riusato, record AnchorRunRecord con cost=0 onesto) + 7 test. Script npm eval:extensions. Baseline hash 0755e7a2…, store in eval/results/ (gitignored tranne snapshot committato in 98b78cb). Verifica lead a turno fresco: eval:extensions 5/5 exit 0; eval:gate --baseline 0755e7a2… --candidate 0755e7a2… → COMMIT exit 0; vitest tools/eval 291/291 exit 0; typecheck exit 0. Scostamenti documentati: script usa --experimental-transform-types + resolve hook .js→.ts (strip-types non basta: parameter properties + ESM relative imports); ACP handshake skipped e documentato in EVALS.md (acpClient.ts è puro, fattibile come follow-up). docs/EVALS.md aggiornato con numeri reali.",
+      "createdAt": "2026-09-21T14:26:43.634Z",
+      "updatedAt": "2026-09-21T16:24:28.045Z",
+      "files": [
+        "tools/eval/",
+        "docs/EVALS.md",
+        "apps/vscode/README.md"
+      ],
+      "completedAt": "2026-09-21T16:24:28.045Z"
+    },
+    {
+      "id": "t148",
+      "title": "Investigare flake safety-suite in run_backtest (exit 1 con tutti test verdi)",
+      "name": "Investigare flake safety-suite in run_backtest (exit 1 con tutti test verdi)",
+      "status": "completed",
+      "priority": "low",
+      "notes": "SINTOMO: run_backtest 'safety-suite' (npx vitest run src/cli/safety) exit 1 con preview che mostra solo ✓ (durata 10.9s vs 5.2s delle run verdi), mentre (a) la run ampia safety+permissions.test+skillHistory.cost+skillCompare = 18 file/214 passed/exit 0 SENZA pipe, (b) la run isolata safety = 16 file/204 passed/0 failed (exit mascherato da pipe Select-Object). IPOTESI: crash vitest a teardown (worker/close timeout) sotto carico, NON fallimento di test. DA FARE: riprodurre con `npx vitest run src/cli/safety 2>&1 | Out-File` e leggere il fondo dell'output (la causa è oltre il taglio stdoutPreview); se confermato, valutare retry o fix nel check world. NON product code: nessun test rosso osservato in 3 run.\nRISOLTO (2026-09-21): NON era un flake. Root cause deterministica riprodotta standalone: run_backtest esegue i check in parallelo; il check typecheck (npm run build --workspace=@zelari/core) rimuove e ricostruisce packages/core/dist mentre safety-suite parte e fallisce la risoluzione degli import @zelari/core/* (6 suite: astGate, permissionGate, permissionHooks, policyEngine, resourceClaims, toolPermissions.intersect — \"Cannot find package\", riprodotto in 956ms con clean-dist manuale). FIX: .zelari/world/checks.json riscritto con check unico serializzato full-gate-serialized = \"npm run typecheck && npm run smoke && npx vitest run src/cli/safety\". EVIDENZA: catena esatta eseguita manualmente exit 0 (204 passed / 0 fail dopo il rebuild). run_backtest con i nuovi check non eseguibile nello stesso turno (dedup runtime); prima esecuzione utile al turno successivo attesa verde.",
+      "createdAt": "2026-09-21T14:46:53.743Z",
+      "updatedAt": "2026-09-21T14:52:55.315Z",
+      "files": [
+        "src/cli/safety/**/*.test.ts",
+        ".zelari/world/checks.json"
+      ],
+      "completedAt": "2026-09-21T14:52:55.315Z"
+    },
+    {
+      "id": "t149",
+      "title": "ADR-0039 Phase 3: rimozione engine A a fine finestra deprecation",
+      "name": "ADR-0039 Phase 3: rimozione engine A a fine finestra deprecation",
+      "status": "pending",
+      "priority": "low",
+      "notes": "A fine finestra deprecation (≥v2.59): eliminare l'entry point engine A (valutazione diretta permissionGate nel dispatch) e la sua superficie config; portare claims multi-arg nel layer B (oggi coperti da A: apply_diff headers, observe_batch); spegnere il ciclo policyEngine→permissionCompat→permissionRules; aggiornare GUIDA.md/TOOLS.md/MIGRATION.md. ADR-0039 TODO Phase 3 aperto. Non prima di 2 minor dalla v2.58.",
+      "createdAt": "2026-09-21T16:03:36.666Z",
+      "updatedAt": "2026-09-21T16:03:36.666Z",
+      "files": [
+        "src/cli/safety/permissionGate.ts",
+        "src/cli/safety/permissionCompat.ts",
+        "src/cli/safety/permissionRules.ts",
+        "docs/GUIDA.md",
+        "docs/TOOLS.md",
+        "MIGRATION.md"
+      ]
+    },
+    {
+      "id": "t150",
+      "title": "Slice 1 — assembler unico del request tail, frecce lazy",
+      "name": "Slice 1 — assembler unico del request tail, frecce lazy",
+      "status": "completed",
+      "priority": "high",
+      "phaseId": "p1-session-ux-extensibility",
+      "notes": "Piano: .zelari/docs/piano-slice-1-4-5-tail-reminder.md. Estrarre assembleRequestTail (status poi one-pager). buildModelContext e le frecce lazy di useChatTurn ~941 e runOneTurn ~652 la chiamano. Non congelare result.requestTail: la freccia rilegge latestResourceSnapshot all'invio. Council/mission (useChatTurn ~1777, runHeadless ~1035 e ~1395) restano eccezioni commentate: non copiare il tail in history. Acceptance: test builder verdi; marker solo nell'assembler visibile nel result e nella freccia, assente da history; niente spread letterale resourceStatusTail+onePager nelle due frecce. Fuori: reminder, AgentHarness, t149, ACP.\nAssembler assembleRequestTail sul tree; frecce lazy in useChatTurn e runOneTurn. Verificato con grep dopo merge tentacolo.",
+      "createdAt": "2026-09-21T18:02:37.119Z",
+      "updatedAt": "2026-09-21T19:19:55.658Z",
+      "files": [
+        "src/cli/budget/modelContextBuilder.ts",
+        "src/cli/budget/modelContextBuilder.test.ts",
+        "src/cli/hooks/useChatTurn.ts",
+        "src/cli/headless/runOneTurn.ts",
+        "src/cli/runHeadless.ts"
+      ],
+      "completedAt": "2026-09-21T19:19:55.658Z"
+    },
+    {
+      "id": "t151",
+      "title": "Slice 4 — system-reminder sull'assembler, non sull'harness",
+      "name": "Slice 4 — system-reminder sull'assembler, non sull'harness",
+      "status": "completed",
+      "priority": "high",
+      "phaseId": "p1-session-ux-extensibility",
+      "notes": "Dipende dallo slice 1. Non riscrivere systemReminder.ts. Append dopo status e one-pager, mai in history. Contatore nell'host (ref TUI); one-shot headless con 0 resta null. Todo da listSessionTodos pending|in_progress, non plan.json, non formatTodosForModel. Budget solo sotto 50%. Kill-switch esistente. A test verde: CAPABILITIES planned→shipped e correzione CHANGELOG ~158. Non cablare messagesForProvider. Fuori se i test del tail non sono verdi.\nSlice 1 verificato sul tree. Wiring reminder solo dopo, sull'assembler.\nReminder appeso da assembleRequestTail. Test modelContextBuilder 20/20 exit 0 rieseguiti dal lead dopo il merge. CAPABILITIES shipped, changelog 2.51.0 corretto, Unreleased aggiunto. messagesForProvider non cablato.",
+      "createdAt": "2026-09-21T18:02:37.129Z",
+      "updatedAt": "2026-09-21T19:34:01.440Z",
+      "files": [
+        "src/cli/budget/modelContextBuilder.ts",
+        "src/cli/budget/modelContextBuilder.test.ts",
+        "src/cli/hooks/useChatTurn.ts",
+        "src/cli/headless/runOneTurn.ts",
+        "packages/core/src/core/AgentHarness.ts",
+        "docs/CAPABILITIES.md",
+        "CHANGELOG.md"
+      ],
+      "completedAt": "2026-09-21T19:34:01.440Z"
+    },
+    {
+      "id": "t152",
+      "title": "Slice 5 — happy path in GUIDA, zero flip di sicurezza",
+      "name": "Slice 5 — happy path in GUIDA, zero flip di sicurezza",
+      "status": "completed",
+      "priority": "medium",
+      "phaseId": "p1-session-ux-extensibility",
+      "notes": "Parallelo allo slice 1. Paragrafo sotto Kraken (default) in GUIDA ~244: Kraken, strict-done ON, worktree general ON salvo ZELARI_KRAKEN_WORKTREE=0, niente jail Windows. Appendice env ~1479, due worktree come funzioni diverse (krakenWorktree unset=ON, worktreeScheduling unset=off). ADR-0033 in AGENTS.md riga 55 si aggiorna solo se il path di edit di default è snapshot+apply esatto+errore strutturato. Non toccare changelog/CAPABILITIES del reminder (slice 4). Non flippare evolution, memory MCP, COUNCIL_CAN_BUILD, compact LLM.\nGUIDA happy path + appendice kill-switch. ADR-0033 in AGENTS.MD aggiornato dopo verifica edit ancorato. CHANGELOG reminder non toccato.",
+      "createdAt": "2026-09-21T18:02:37.136Z",
+      "updatedAt": "2026-09-21T19:19:55.666Z",
+      "files": [
+        "docs/GUIDA.md",
+        "AGENTS.md",
+        "README.md"
+      ],
+      "completedAt": "2026-09-21T19:19:55.666Z"
+    },
+    {
+      "id": "t153",
+      "title": "P1a — GENERAL_PROMPT serio, estrazione taskPrompts.ts",
+      "name": "P1a — GENERAL_PROMPT serio, estrazione taskPrompts.ts",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Goal: GENERAL_PROMPT da stub (6 righe) a contratto completo: read-before-write ADR-0033, edit minimi, formato ritorno (cambi/file/rischi/come verificare), worktree discipline. Scope: nuovo taskPrompts.ts (≤300 LOC, esporta i 3 prompt puri), taskTool.ts importa. Fuori: runtime, permessi, budget. Accettazione: taskPrompts.test.ts su contenuto (sezioni edit-integrity e return-format, bound ~1800 char), suite taskTool esistente verde. Piano: .zelari/docs/2026-09-21-piano-tentacoli-p1-p2-p3.md §P1a\nCHIUSO CON RITARDO CONTABILE (root-cause dell'incongruenza memoria segnalata dall'utente il 2026-09-21 sera): implementato nel commit 0ffaa0d su main, ma la task_update non fu mai eseguita. Evidenza reale: src/cli/tools/taskPrompts.ts creato (3 prompt puri; GENERAL_PROMPT 1682 char con EDIT INTEGRITY read-before-write ADR-0033 + formato ritorno obbligato), taskTool.ts importa da taskPrompts.ts (const inline rimossi). File di test REALE: taskTool.tentacleContract.test.ts (il piano indicava taskPrompts.test.ts, mai creato) — 11 test prompt/contratto. Suite tools 273/273 verdi al commit, poi 306/306 dopo t157–t160. Ritardo dovuto a errore di contabilità del lead, non a lavoro mancante.",
+      "createdAt": "2026-09-21T20:35:02.890Z",
+      "updatedAt": "2026-09-21T23:10:14.056Z",
+      "files": [
+        "src/cli/tools/taskPrompts.ts",
+        "src/cli/tools/taskTool.ts",
+        "src/cli/tools/taskPrompts.test.ts"
+      ],
+      "completedAt": "2026-09-21T23:10:14.056Z"
+    },
+    {
+      "id": "t154",
+      "title": "P1b — contratto verify composto (verify-report + trailer VERDICT)",
+      "name": "P1b — contratto verify composto (verify-report + trailer VERDICT)",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Goal: il tentacolo verify riceve UNA istruzione di formato finale. Oggi VERIFY_PROMPT (~260-282) chiede '</verify-report>' come finale, buildTaskAutoVerifyPrompt (~622-669) chiede 'VERDICT:' come ULTIMA riga: conflitto sullo stesso modello → trailer mancante → verdict unknown. Fare: task prompt chiede blocchi verify-report SEGUITI da riga finale VERDICT: PASS|FAIL (composizione, non rimozione). Allineare planner.ts buildAutoVerifyPrompt (~845) se ha lo stesso stacking. parser invariati. Accettazione: test con blocchi+trailer → entrambi parse-abili; trailer assente → resta unknown; suite executor/verificationBridge verde. §P1b\nCHIUSO CON RITARDO CONTABILE (commit 0ffaa0d, task_update mai eseguita): buildTaskAutoVerifyPrompt ora COMPONE i due formati — blocchi <verify-report> PRIMA, trailer VERDICT: PASS|FAIL come ultima riga (composizione, non rimozione; executor rework vive sul trailer). Stessa composizione in planner.ts buildAutoVerifyPrompt (parità path grafo). Parser invariati. Test: taskTool.tentacleContract.test.ts copre composizione parseabile da entrambi i parser + trailer-assente→unknown. Suite 273/273 al commit.",
+      "createdAt": "2026-09-21T20:35:02.898Z",
+      "updatedAt": "2026-09-21T23:10:14.064Z",
+      "files": [
+        "src/cli/tools/taskTool.ts",
+        "src/cli/kraken/planner.ts",
+        "src/cli/tools/taskTool.verifyReport.test.ts"
+      ],
+      "completedAt": "2026-09-21T23:10:14.064Z"
+    },
+    {
+      "id": "t155",
+      "title": "P1c — auto-verify onesta: thoroughness ereditata + accounting spawn",
+      "name": "P1c — auto-verify onesta: thoroughness ereditata + accounting spawn",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Goal: thoroughness non hardcodata. runVerify (~833) e rework (~871) usano 'medium' fisso: ereditare opts.general.thoroughness (già in TentacleSuccess). Verificare in BUILD dove vive il gate cap per-turn (~2112?): la chain auto-verify (verify+≤1 rework, ≤2 spawn) NON va nel bucket general (deadlock multi-general) — documentare come catena-obbligazione limitata nel commento. Accettazione: test inner verify eredita thoroughness padre (quick→quick, deep→deep); suite activity/progress/verifyDebt verde. §P1c\nCHIUSO CON RITARDO CONTABILE (commit 0ffaa0d, task_update mai eseguita): verify interna eredita opts.general.thoroughness; rework resta 'medium' documentato (parità executor.ts:2271); commento accounting spawn catena-obbligazione ≤1+2·maxRounds, fuori dal bucket per-turn. Test: tentacleContract e2e su harness scriptato quick/medium/deep. Suite 273/273 al commit.",
+      "createdAt": "2026-09-21T20:35:02.905Z",
+      "updatedAt": "2026-09-21T23:10:14.070Z",
+      "files": [
+        "src/cli/tools/taskTool.ts",
+        "src/cli/tools/taskTool.verifyDebt.test.ts"
+      ],
+      "completedAt": "2026-09-21T23:10:14.070Z"
+    },
+    {
+      "id": "t156",
+      "title": "P2a-1 — usage provider nel footer parent-facing",
+      "name": "P2a-1 — usage provider nel footer parent-facing",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Goal: i token già catturati (message_end ~1215-1232, sommati per turno) arrivano al padre nel footer (~2208). Nuovo subagentMetrics.ts: riga 'metrics: {prompt, completion, cached, total} tokens · N tool calls · M turns'. Onesto: usage assente (provider non lo riporta) → nessuna riga, nessuno zero inventato. Fuori: spine/doctor/radio (P2a-2). Accettazione: footer con riga quando usage c'è; senza riga quando manca; worktreeFallback.test non regresso. Catalizzatore dei flip K5.3. §P2a-1\nCHIUSO CON RITARDO CONTABILE (commit 0ffaa0d, task_update mai eseguita): subagentMetrics.ts (riga metrics: solo se il provider riporta usage; cached solo se >0; toolCalls totale non ring-capped), threading runSubAgent→retry→TentacleSuccess→footer parent-facing in taskTool.ts. Test: subagentMetrics.test.ts 4 test di onestà. Diventato il catalizzatore di K5.3: con t159 ha prodotto i primi eventi subagent.metrics reali (glm hit% 36–90% misurato in sessione). Suite 273/273 al commit.",
+      "createdAt": "2026-09-21T20:35:02.912Z",
+      "updatedAt": "2026-09-21T23:10:14.076Z",
+      "files": [
+        "src/cli/tools/subagentMetrics.ts",
+        "src/cli/tools/taskTool.ts",
+        "src/cli/tools/subagentMetrics.test.ts"
+      ],
+      "completedAt": "2026-09-21T23:10:14.076Z"
+    },
+    {
+      "id": "t157",
+      "title": "P2c — guard anti-loop degenere nei tentacoli",
+      "name": "P2c — guard anti-loop degenere nei tentacoli",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Goal: il loop degenere osservato in ricerca (stessa frase ~30× fino a budget) diventa stop onesto. Pure function: ultimi 3 messaggi assistant completi normalizzati (lowercase, whitespace, token multiset); 3 consecutivi similarità ≥0.9 → abort con '[sub-agent stopped: degenerate loop detected at turn N]' + partial result se esiste. Hook a message_end (~1228). Default ON, zero env, mai taglio muto. Accettazione: loop identico → trigger al 3°; contenuti alternanti → nessun falso positivo (solo messaggi assistant, non tool result); test integrazione loop simulato. §P2c",
+      "createdAt": "2026-09-21T20:35:02.919Z",
+      "updatedAt": "2026-09-21T21:43:42.143Z",
+      "files": [
+        "src/cli/tools/subagentLoopGuard.ts",
+        "src/cli/tools/taskTool.ts",
+        "src/cli/tools/subagentLoopGuard.test.ts"
+      ],
+      "completedAt": "2026-09-21T21:43:42.143Z"
+    },
+    {
+      "id": "t158",
+      "title": "P2b — budget turni scalati per thoroughness + marking partial",
+      "name": "P2b — budget turni scalati per thoroughness + marking partial",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Goal: quick/medium/deep smettono di avere lo stesso tetto dentro lo stesso kind. Individuare in BUILD la mappa budget (ricerca: explore 4/6/12, general 8/12/20, verify 6/10/14) e applicare moltiplicatore thoroughness sui turni (quick ~0.6×, medium 1.0×, deep ~1.6×; allineare a convenzioni kraken esistenti). Descrizione tool task marca i vincoli partial/best-effort. Dipende da P2a-1 (i numeri del footer validano i moltiplicatori). Accettazione: unit test resolveBudget(kind, thoroughness); descrizione aggiornata; suite verde. §P2b",
+      "createdAt": "2026-09-21T20:35:02.927Z",
+      "updatedAt": "2026-09-21T21:43:42.151Z",
+      "files": [
+        "src/cli/tools/taskTool.ts"
+      ],
+      "completedAt": "2026-09-21T21:43:42.151Z"
+    },
+    {
+      "id": "t159",
+      "title": "P2a-2 — evento spine subagent.metrics (additive-only)",
+      "name": "P2a-2 — evento spine subagent.metrics (additive-only)",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Goal: metriche per-tentacolo come evento durevole. Pattern verifyDebtSpine (enqueueVerifyDebtPersist): evento additive 'subagent.metrics' con agentId/kind/thoroughness/model/promptTokens/completionTokens/cachedPromptTokens/totalTokens/toolCalls/turns/durationMs. STOP-RULE: additive-only, SESSION_SCHEMA_VERSION invariato; se il vocabolario richiede bump → fermarsi e chiedere all'utente. Opzionale se a costo zero: sintesi in session/--doctor. Dipende da P2a-1. Accettazione: evento emesso in test; replay sessione con evento nuovo non fallisce; nessun consumer rotto. §P2a-2",
+      "createdAt": "2026-09-21T20:35:02.934Z",
+      "updatedAt": "2026-09-21T21:43:42.158Z",
+      "files": [
+        "src/cli/tools/verifyDebtSpine.ts",
+        "src/cli/tools/taskTool.ts",
+        "src/cli/tools/verifyDebtSpine.test.ts"
+      ],
+      "completedAt": "2026-09-21T21:43:42.158Z"
+    },
+    {
+      "id": "t160",
+      "title": "P3 — advertise policy per-kind nei prompt + audit rete verify",
+      "name": "P3 — advertise policy per-kind nei prompt + audit rete verify",
+      "status": "completed",
+      "priority": "low",
+      "notes": "Goal: ogni tentacolo conosce la propria gabbia. Una riga per prompt: explore 'read-only, no writes/exec'; general 'full tree access in scope'; verify 'read/execute/network — network serves bash installs (npm), never trust implementer summaries'. Commento su permissionsForTaskAgent (~152-162) con la ratio rete=verify (difendibile: npm install in worktree fresco; cecità ≠ offline — NON si toglie la rete). Solo testo e commenti, nessun flip di permessi. Accettazione: test prompt-content; activity/planSafety verdi. §P3",
+      "createdAt": "2026-09-21T20:35:02.941Z",
+      "updatedAt": "2026-09-21T21:43:42.164Z",
+      "files": [
+        "src/cli/tools/taskPrompts.ts",
+        "src/cli/tools/taskTool.ts"
+      ],
+      "completedAt": "2026-09-21T21:43:42.164Z"
+    },
+    {
+      "id": "t161",
+      "title": "verify:plan-sync — check meccanico commit↔plan.json nel gate di release",
+      "name": "verify:plan-sync — check meccanico commit↔plan.json nel gate di release",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Chiuso con evidenza: squash-merge del branch tentacolo kraken/t161-verify-plan-sync (commit tentacolo 7e45c27) — scripts/verify-plan-sync.mjs (300 LOC, core puro esportato), 14/14 test vitest (scripts/verify-plan-sync.test.mjs, precedente dogfood-audit.test.ts), package.json verify:plan-sync, gate-full LEGS+verify:plan-sync in coda. Scenari: reale exit 0 (6 commit, 7 ref, 0 pending), fixture t164 pending → exit 1 con commit+task, plan mancante → skip exit 0. Caveat dichiarati: (A) .zelari gitignored → gate skip nei worktree/CI pulite, follow-up risoluzione via git-common-dir; (B) bootstrap rosso sul proprio commit finché questo task_update non arriva (in questo turno); (C) exit 2 per usage/ledger corrotto.",
+      "createdAt": "2026-09-21T23:15:45.817Z",
+      "updatedAt": "2026-09-21T23:43:09.354Z",
+      "files": [
+        "scripts/verify-plan-sync.mjs",
+        "package.json"
+      ],
+      "completedAt": "2026-09-21T23:38:22.420Z"
+    },
+    {
+      "id": "t162",
+      "title": "Igiene vault: archiviare fasi v0.10, escludere baseline dal matcher, archiviare layer state stale",
+      "name": "Igiene vault: archiviare fasi v0.10, escludere baseline dal matcher, archiviare layer state stale",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Chiuso in due parti. (1) Prodotto — squash-merge branch tentacolo kraken/t162-matcher-exclusion (commit tentacolo 8ab1beb): esportato FROZEN_EVAL_DIR_PREFIX + stripFrozenEvalScopeLines() in composeContext.ts, wiring sull'input userMessage→buildPlanSummary; leak RIPRODOTTO rosso prima del fix (2 failed), dopo 12/12 + workspace 67/67 + workspaceSummary 16/16. Nota del tentacolo: il seam vero è il testo d'ingresso (extractTaskScope vive in core, fuori allowlist) — fix al seam composer, follow-up se anche i caller council/headless bypassano composeProjectContext. (2) Vault — fatto dal lead nel main checkout (.zelari è gitignored): plan.json 7→5 fasi (rimosse release-v0-10-0 e p2-backlog-non-blocca-v0-10, nessun task le referenziava — t149 non ha phaseId e resta visibile), milestone m-v0-10-0 rimossa, 6 layer state fossili (tutti pre-2.58, era 2026-08-18) + HEAD.json + index.jsonl + artifacts archiviati in .zelari/state/archive/ (move reversibile, index.jsonl ricreato vuoto). Junction rotta .zelari/sessions/.zelari: già sparita da sola, nessuna azione. Caveat typecheck rosso nel worktree tentacolo = pre-esistente (dist assente nel worktree, provato con stash); da certificare su main nel gate del lead.",
+      "createdAt": "2026-09-21T23:15:45.825Z",
+      "updatedAt": "2026-09-21T23:54:26.771Z",
+      "files": [
+        ".zelari/plan.json",
+        "src/cli/workspace/composeContext.ts",
+        ".zelari/sessions/.zelari",
+        ".zelari/state/commits/183ad3c951ae.json"
+      ],
+      "completedAt": "2026-09-21T23:54:26.771Z"
+    },
+    {
+      "id": "t163",
+      "title": "Policy supersede/età per layer durable in fileStateStore + render stale in composeContext",
+      "name": "Policy supersede/età per layer durable in fileStateStore + render stale in composeContext",
+      "status": "completed",
+      "priority": "medium",
+      "notes": "Slice C del piano prevenzione. fileStateStore.ts: allo stesso kind, marca i layer precedenti supersededAt (additive-only). loadDurableContext.ts/composeContext.ts: render età (\"stale · data · superseded by X\") invece di ultimo-per-commit come corrente. Accettazione: unit test supersede + test render; nessun default di scrittura cambiato. File: src/cli/state/fileStateStore.ts, src/cli/state/loadDurableContext.ts, src/cli/workspace/composeContext.ts.\nChiuso stesso turno del merge ce54396 (regola verify:plan-sync). Tentacolo general: supersede on-commit (first-supersede-wins, kind=layerKind strip -\\d+), DEFAULT_STALE_MS=48h, marker in materializeContext + parità readDurableHeadSync via helper puro condiviso (staleRender.ts). Test 8→16 durableState +1 parity composeContext; tsc exit 0. Scostamenti: helper in modulo nuovo re-exportato; fileStateStore ~360 LOC (over soft 300, sanzionato nel contratto).",
+      "createdAt": "2026-09-21T23:15:45.832Z",
+      "updatedAt": "2026-09-22T00:17:26.517Z",
+      "files": [
+        "src/cli/state/fileStateStore.ts",
+        "src/cli/state/loadDurableContext.ts",
+        "src/cli/workspace/composeContext.ts"
+      ],
+      "completedAt": "2026-09-22T00:17:26.517Z"
+    },
+    {
+      "id": "t164",
+      "title": "Chiudere t161: vitest commands+tools e commit atomico della sezione /inspect models",
+      "name": "Chiudere t161: vitest commands+tools e commit atomico della sezione /inspect models",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Chiuso con evidenza: commit d803431 (4 file, +509/−22), vitest 78/78 verdi al primo colpo su src/cli/commands/ + krakenModel.async.test.ts (inspectModels 13/13, async 22/22 — refactor loader byte-compatibile), typecheck exit 0 del turno precedente. Debito vitest saldato.",
+      "createdAt": "2026-09-21T23:15:45.838Z",
+      "updatedAt": "2026-09-21T23:27:07.842Z",
+      "files": [
+        "src/cli/commands/inspectModels.ts",
+        "src/cli/commands/inspectModels.test.ts",
+        "src/cli/commands/inspect.ts",
+        "src/cli/tools/krakenModel.ts"
+      ],
+      "completedAt": "2026-09-21T23:27:07.842Z"
+    },
+    {
+      "id": "t165",
+      "title": "A1: fuzz/property test replay ≡ execution sulla spine sessioni",
+      "name": "A1: fuzz/property test replay ≡ execution sulla spine sessioni",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §A1. Proprietà replay(serialize(sessione))==sessione con seed fissi, generatore home-made (zero nuove dep), verde in npm run test. Atterraggio: packages/core/src/core/session/ (replay.ts, deriveMessages).",
+      "createdAt": "2026-09-22T20:55:25.462Z",
+      "updatedAt": "2026-09-23T08:23:49.731Z",
+      "files": [
+        "packages/core/src/core/session/**"
+      ]
+    },
+    {
+      "id": "t166",
+      "title": "A2: truncation head+tail + full output su disco per output shell lunghi",
+      "name": "A2: truncation head+tail + full output su disco per output shell lunghi",
+      "status": "completed",
+      "priority": "high",
+      "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §A2. Sopra soglia: head+tail+marker \"...N bytes truncated; complete output in <path>\", full output sempre su disco prima del troncamento. Un solo punto di troncamento (no doppia compressione con budget pipeline ADR-0032). Test unitario sul formatter.",
+      "createdAt": "2026-09-22T20:55:25.472Z",
+      "updatedAt": "2026-09-23T08:23:49.731Z",
+      "files": [
+        "packages/core/src/core/**",
+        "src/cli/tools/**"
+      ]
+    },
+    {
+      "id": "t167",
+      "title": "A3: heartbeat main loop per tool call lunghi (estendi tentacleHeartbeat)",
+      "name": "A3: heartbeat main loop per tool call lunghi (estendi tentacleHeartbeat)",
+      "status": "pending",
+      "priority": "high",
+      "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §A3. Se un tool call supera la soglia: evento heartbeat con i call in corso, max 1 per soglia per call. Soglia via env/pref, disabilitabile. Nessuna interferenza con l'heartbeat tentacoli (tentacleHeartbeat.ts).",
+      "createdAt": "2026-09-22T20:55:25.479Z",
+      "updatedAt": "2026-09-22T20:55:25.479Z",
+      "files": [
+        "packages/core/src/core/**",
+        "src/cli/**"
+      ]
+    },
+    {
+      "id": "t168",
+      "title": "A4: export sessioni in formato ATIF (standard aperto traiettorie)",
+      "name": "A4: export sessioni in formato ATIF (standard aperto traiettorie)",
+      "status": "pending",
+      "priority": "medium",
+      "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §A4. Export ATIF versionato (atifVersion, best-effort) da exportSession.ts; consumatore: tools/eval/runCompetitiveBench.ts. Round-trip su sessione reale, zero dipendenze runtime nuove.",
+      "createdAt": "2026-09-22T20:55:25.504Z",
+      "updatedAt": "2026-09-22T20:55:25.504Z",
+      "files": [
+        "packages/core/src/core/session/**",
+        "tools/eval/**"
+      ]
+    },
+    {
+      "id": "t169",
+      "title": "A5: input idempotenti (ID stabili + dedup persistente) su serve-harness/askUserBridge/companion",
+      "name": "A5: input idempotenti (ID stabili + dedup persistente) su serve-harness/askUserBridge/companion",
+      "status": "pending",
+      "priority": "medium",
+      "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §A5. ID stabile per input, re-submit dello stesso ID non genera due turni, ritorno idempotente, dedup che sopravvive al restart. Test doppio submit + reconnect. Da verificare quale store usano serve-harness e askUserBridge.",
+      "createdAt": "2026-09-22T20:55:25.511Z",
+      "updatedAt": "2026-09-22T20:55:25.511Z",
+      "files": [
+        "src/cli/**",
+        "apps/companion-android/**"
+      ]
+    },
+    {
+      "id": "t170",
+      "title": "B6: RemoteJob anti-tamper plan per esecuzione remota SSH",
+      "name": "B6: RemoteJob anti-tamper plan per esecuzione remota SSH",
+      "status": "pending",
+      "priority": "high",
+      "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §B6. RemoteJobPlan{Type, Version, Data} con vincolo su tipo|versione|max-output verificato prima dell'esecuzione; mutazione ⇒ rifiuto con errore strutturato + test del rifiuto. Target: esecuzione remota SSH prod-vps e sandbox tentacoli. NON estendere l'allowlist SSH.",
+      "createdAt": "2026-09-22T20:57:23.474Z",
+      "updatedAt": "2026-09-22T20:57:23.474Z",
+      "files": [
+        "src/cli/**"
+      ]
+    },
+    {
+      "id": "t171",
+      "title": "B7: fork sessioni da turn boundary (Store.Fork-style)",
+      "name": "B7: fork sessioni da turn boundary (Store.Fork-style)",
+      "status": "pending",
+      "priority": "medium",
+      "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §B7. Fork da un turn boundary: storia ereditata, stato transiente azzerato; sessione figlia con seq/lineage coerenti col contratto spine v1 (ADR-0021); replay indipendente dalla madre. Rispettare l'ownership lock single-writer della spine. Gemello: worktree Kraken.",
+      "createdAt": "2026-09-22T20:57:23.481Z",
+      "updatedAt": "2026-09-22T20:57:23.481Z",
+      "files": [
+        "packages/core/src/core/session/**"
+      ]
+    },
+    {
+      "id": "t172",
+      "title": "B8: tool call asincroni con placeholder still-running [ADR prima del codice]",
+      "name": "B8: tool call asincroni con placeholder still-running [ADR prima del codice]",
+      "status": "pending",
+      "priority": "high",
+      "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §B8. Tool call indipendenti in parallelo nello stesso turno con placeholder \"still running\" sostituito dal risultato a boundary naturale, SENZA rompere il message-ordering dei provider. Verifica su provider primario + fallback. La più invasiva: ADR dedicata obbligatoria PRIMA del codice. Non iniziare prima di A1-A5.",
+      "createdAt": "2026-09-22T20:57:23.491Z",
+      "updatedAt": "2026-09-22T20:57:23.491Z",
+      "files": [
+        "packages/core/src/core/**",
+        "src/cli/**"
+      ]
+    },
+    {
+      "id": "t173",
+      "title": "C: preamble prompt fan-out tool call asincroni (taskPrompts.ts)",
+      "name": "C: preamble prompt fan-out tool call asincroni (taskPrompts.ts)",
+      "status": "pending",
+      "priority": "medium",
+      "notes": "Vedi .zelari/docs/2026-09-21-piano-roi-steal-unreal-agent.md §C. Insegnare esplicitamente al modello il fan-out dei tool call indipendenti (runtime async). Solo testo prompt, adattato (non copiato) da unreal-agent. Diff limitato ai prompt; eval/golden verdi (eval:gate). Da eseguire in forma conservativa se B8 non è pronto: dichiarare solo ciò che il runtime supporta davvero.",
+      "createdAt": "2026-09-22T20:57:23.499Z",
+      "updatedAt": "2026-09-22T20:57:23.499Z",
+      "files": [
+        "src/cli/tools/taskPrompts.ts"
+      ]
+    }
+  ]
+}
