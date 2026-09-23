@@ -73,8 +73,12 @@ export interface HeadlessSpineHandle {
     iteration?: number;
   }): void;
   note(text: string, data?: Record<string, unknown>): void;
-  /** Clean end: append session.ended + release lock. */
-  close(reason?: string): Promise<void>;
+  /**
+   * Clean end: append session.ended + release lock. On non-completed closes
+   * without an explicit `detail`, the last observed fatal error is recorded
+   * as the end cause.
+   */
+  close(reason?: string, detail?: string): Promise<void>;
   /** Interrupt: release lock WITHOUT session.ended (resumable). */
   interrupt(note?: string): Promise<void>;
   /** Portable JSON export of the spine (empty string when no log). */
@@ -193,12 +197,21 @@ export async function openHeadlessSpine(opts: {
     spine.note('headless.profile', { profile: profileId, mode: opts.mode ?? 'kraken' });
   }
 
+  // Error-cause capture: fatal BrainEvents never reach the spine, so a
+  // `session.ended` with reason 'error' used to be cause-less. Remember the
+  // last error message for the close.
+  let lastErrorDetail: string | undefined;
+
   return {
     sessionId: opts.sessionId,
     profileId,
     spine,
     observe(ev: unknown): void {
       if (ev && typeof ev === 'object' && 'type' in ev) {
+        const e = ev as BrainEvent & { severity?: string; message?: string; code?: string };
+        if (e.type === 'error' && typeof e.message === 'string' && e.message.trim()) {
+          lastErrorDetail = e.code ? `${e.code}: ${e.message}` : e.message;
+        }
         spine.mirrorBrainEvent(ev as BrainEvent);
       }
     },
@@ -244,8 +257,9 @@ export async function openHeadlessSpine(opts: {
     note(text: string, data?: Record<string, unknown>): void {
       spine.note(text, data);
     },
-    async close(reason = 'host-exit'): Promise<void> {
-      await spine.close(reason);
+    async close(reason = 'host-exit', detail?: string): Promise<void> {
+      const cause = detail ?? (reason === 'completed' ? undefined : lastErrorDetail);
+      await spine.close(reason, cause);
     },
     async interrupt(note?: string): Promise<void> {
       if (note) spine.note('headless.interrupt', { note });

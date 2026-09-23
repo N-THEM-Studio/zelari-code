@@ -774,10 +774,18 @@ export class SessionSpineMirror {
     }
   }
 
-  /** Flush pending appends; append `session.ended` and release the lock. */
-  async close(reason = 'host-exit'): Promise<void> {
+  /**
+   * Flush pending appends; append `session.ended` and release the lock.
+   * `detail` carries WHY a non-completed run died (e.g. the fatal error
+   * message) so `reason: 'error'` is never cause-less on the spine.
+   */
+  async close(reason = 'host-exit', detail?: string): Promise<void> {
     if (this.status === 'active' && this.writer) {
-      await this.append({ kind: 'session.ended', actor: ACTOR_SYSTEM, data: { reason } });
+      await this.append({
+        kind: 'session.ended',
+        actor: ACTOR_SYSTEM,
+        data: { reason, ...(detail ? { detail } : {}) },
+      });
     }
     await this.chain;
     const writer = this.writer;

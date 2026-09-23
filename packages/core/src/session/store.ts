@@ -137,9 +137,16 @@ export class SessionStore {
     return summaries;
   }
 
-  /** End a session cleanly (appends `session.ended` and releases the writer). */
-  async end(writer: SessionLogWriter, reason = 'completed'): Promise<void> {
-    const event: SessionEventInput = { kind: 'session.ended', actor: ACTOR_SYSTEM, data: { reason } };
+  /**
+   * End a session cleanly (appends `session.ended` and releases the writer).
+   * `detail` carries the failure cause when `reason` is not 'completed'.
+   */
+  async end(writer: SessionLogWriter, reason = 'completed', detail?: string): Promise<void> {
+    const event: SessionEventInput = {
+      kind: 'session.ended',
+      actor: ACTOR_SYSTEM,
+      data: { reason, ...(detail ? { detail } : {}) },
+    };
     await writer.append(event);
     await writer.close();
   }

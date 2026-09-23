@@ -99,8 +99,12 @@ export async function createExecutionContext(
     ctx,
     writer,
     store,
-    close: async (reason = 'completed') => {
-      await writer.append({ kind: 'session.ended', actor: { type: 'system' }, data: { reason } });
+    close: async (reason = 'completed', detail?: string) => {
+      await writer.append({
+        kind: 'session.ended',
+        actor: { type: 'system' },
+        data: { reason, ...(detail ? { detail } : {}) },
+      });
       await writer.close();
     },
   };

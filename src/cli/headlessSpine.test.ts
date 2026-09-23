@@ -125,6 +125,46 @@ describe('openHeadlessSpine', () => {
     expect(report.events[0].data.profile).toBe('minimal/v1');
   });
 
+  it('records the fatal error cause on a non-completed close', async () => {
+    const handle = await openHeadlessSpine({
+      sessionId: 'h-err',
+      mode: 'kraken',
+      profile: 'minimal/v1',
+      baseDir: tmp,
+      quiet: true,
+    });
+    handle.observe({
+      type: 'error',
+      severity: 'fatal',
+      message: 'BUILD provider call failed before any successful on-disk mutation was observed.',
+      code: 'build_liveness_provider_error',
+      id: 'e1',
+      ts: 1,
+      sessionId: 'h-err',
+    });
+    await handle.close('error');
+    const report = await readSessionLog(path.join(tmp, 'h-err', 'events.jsonl'));
+    const ended = report.events.find((e) => e.kind === 'session.ended');
+    expect(ended?.data.reason).toBe('error');
+    expect(ended?.data.detail).toBe(
+      'build_liveness_provider_error: BUILD provider call failed before any successful on-disk mutation was observed.',
+    );
+  });
+
+  it('an explicit close detail wins; completed closes carry no cause', async () => {
+    const h1 = await openHeadlessSpine({ sessionId: 'h-d1', baseDir: tmp, quiet: true });
+    h1.observe({ type: 'error', severity: 'fatal', message: 'x', id: 'e1', ts: 1, sessionId: 'h-d1' });
+    await h1.close('error', 'explicit cause');
+    const r1 = await readSessionLog(path.join(tmp, 'h-d1', 'events.jsonl'));
+    expect(r1.events.find((e) => e.kind === 'session.ended')?.data.detail).toBe('explicit cause');
+
+    const h2 = await openHeadlessSpine({ sessionId: 'h-d2', baseDir: tmp, quiet: true });
+    h2.observe({ type: 'error', severity: 'fatal', message: 'y', id: 'e1', ts: 1, sessionId: 'h-d2' });
+    await h2.close('completed');
+    const r2 = await readSessionLog(path.join(tmp, 'h-d2', 'events.jsonl'));
+    expect(r2.events.find((e) => e.kind === 'session.ended')?.data.detail).toBeUndefined();
+  });
+
   it('interrupt releases the lock WITHOUT session.ended (resumable)', async () => {
     const handle = await openHeadlessSpine({
       sessionId: 'h-b',
