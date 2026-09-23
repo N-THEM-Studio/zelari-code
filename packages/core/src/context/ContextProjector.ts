@@ -108,6 +108,20 @@ function summarizeToolResult(content: string): string {
   return `[tool result — ${content.length} chars, first line] ${line}`;
 }
 
+/**
+ * K4.3 (F25): does this tool result carry a FAILURE the judge must see?
+ * Deliberately biased toward recall — a false positive only shows the
+ * verifier more payload (harmless), while a false negative blinds the very
+ * agent that must judge the outcome (the F25 "blind verifier" failure).
+ * Signals: non-zero exit, error-shaped words, typed guard codes, ❌ marks.
+ */
+function looksLikeToolError(content: string): boolean {
+  if (/exit(?: code)?[ =:]+[1-9]\d*/i.test(content)) return true;
+  if (/\b(error|errors|failed|failure|exception|traceback|fatal|panic|denied|rejected)\b/i.test(content)) return true;
+  if (/\b(tool_args_parse_failed|tool_call_truncated|text_tools_parse_failed|assistant_text_loop)\b/.test(content)) return true;
+  return /[❌✖]/.test(content);
+}
+
 function applyToolResultPolicy(
   messages: AgentMessage[],
   policy: AgentContextPolicy,
@@ -118,8 +132,15 @@ function applyToolResultPolicy(
   const out = messages.map((msg) => {
     if (msg.role !== 'tool') return msg;
     if (policy.toolResults === 'summary-only') {
-      truncated++;
-      return { ...msg, content: summarizeToolResult(msg.content) };
+      // K4.3 (F25): summary-only must NEVER blind the verifier — a failing
+      // result gets the full payload up to the cap (head+tail), never the
+      // first line only. Successful results keep the cheap one-line summary.
+      if (!looksLikeToolError(msg.content)) {
+        truncated++;
+        return { ...msg, content: summarizeToolResult(msg.content) };
+      }
+      if (msg.content.length > maxChars) truncated++;
+      return { ...msg, content: truncateProjected(msg.content, maxChars) };
     }
     if (msg.content.length > maxChars) truncated++;
     return { ...msg, content: truncateProjected(msg.content, maxChars) };
