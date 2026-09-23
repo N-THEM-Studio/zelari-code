@@ -57,6 +57,7 @@ import {
   type TaskAgentKind,
   type TaskThoroughness,
 } from './tentacle.js';
+import { runTentacleUnit, withParentModelDeps } from './qualityEscalationHost.js';
 import {
   beginKrakenWorktreeCleanupBatch,
   flushKrakenWorktreeCleanupBatch,
@@ -1625,8 +1626,31 @@ export class KrakenGraphExecutor {
       nodeId: node.id,
       signal: controller.signal,
     };
+    // K4.5 (F27): quality escalation (opt-in ZELARI_KRAKEN_QUALITY_ESCALATION=1)
+    // — same seam as core `callTentacle`: a weak-but-ok output is re-run ONCE
+    // with `escalation.to = 'parent-model'` (the re-run forces the lead model
+    // and never `node.model`). With the flag off this is one env read plus the
+    // plain run — today's behavior. The whole unit (first run + at most one
+    // re-run) stays inside the node's wall-clock budget below.
     const runOnce = (): Promise<TentacleResult> =>
-      this.withNodeTimeout(this.runTentacleFn(runOpts), agent, controller);
+      this.withNodeTimeout(
+        runTentacleUnit({
+          node: { kind: node.kind, label: node.label, prompt: node.prompt },
+          agent,
+          parentCwd: this.parentCwd,
+          sessionId: this.sessionId,
+          run: (escalation) =>
+            this.runTentacleFn({
+              ...runOpts,
+              ...(escalation?.to === 'parent-model'
+                ? { deps: withParentModelDeps(runOpts.deps) }
+                : {}),
+            }),
+          log: (line) => this.wb?.logEvent(line),
+        }),
+        agent,
+        controller,
+      );
 
     // P2.D: transactional writers (opt-in) — checkpoint the parent tree
     // before the run, roll it back if the node fails, keep the checkpoint as

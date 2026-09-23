@@ -34,9 +34,13 @@ import { mergeKrakenWorktree, type WorktreeHandle, type WorktreeMergeResult } fr
 import { resolvePersonaModel } from '../../tools/krakenModel.js';
 import { compileScriptPlan } from './compile.js';
 import { getPersona, type Persona } from '@zelari/core';
-// Import the personas namespace to trigger the side-effect registration
-// of `spec` and `conformance` (Pillar 2).
-import '@zelari/core/kraken/personas';
+import { withParentModelDeps } from '../qualityEscalationHost.js';
+// NOTE (K4.5b): the `spec`/`conformance` persona registration (Pillar 2) used
+// to ride a side-effect `import '@zelari/core/kraken/personas'`. That subpath
+// is absent from the package's `exports` map (it only resolves inside the
+// bundled CLI); the root `@zelari/core` import above already re-exports
+// `kraken/personas/index.js`, which registers both personas at load. Same
+// side effect, resolvable from raw Node / vitest too.
 
 export interface RunScriptPlanOptions {
   /** Path to the user's `.ts` plan file. */
@@ -83,14 +87,20 @@ export async function runScriptPlan(opts: RunScriptPlanOptions): Promise<RunScri
   const bundleCode = await fs.readFile(bundlePath, 'utf8');
 
   // 3. Build the host bridge.
-  // Side map: tentacle id (synthesized by the runner as `t0001` etc.) →
+  // Side map: tentacle id (as the runner assigns it: `t0001`, `t0002`, …) →
   // its worktree handle (or null). Populated by runTentacle calls;
   // consumed by mergeWorktrees. Lives in the closure, not in the script's
   // namespace, so the script can't see it.
   const worktreeByTentacleId = new Map<string, WorktreeHandle | null>();
-  // Counter the bridge uses to predict the next id the runner will assign
-  // (the runner assigns ids `t0001`, `t0002`, ... in call order). This
-  // lets us associate each worktree handle with the right tentacle id.
+  // K4.5b (F27): key the map on the WORK UNIT, not on the raw call count. A
+  // quality re-run (a call carrying `escalation`) is the SECOND call of the
+  // same unit and must reuse that unit's id — a plain incremental counter
+  // goes one ahead per re-run and every later worktree lands under the wrong
+  // tentacle id. The bridge seam does not carry the runner's id (it predates
+  // the hint), so we mirror its monotonic `t%04d` scheme and anchor each id
+  // to the unit's `node` identity: the escalation wrapper re-sends the SAME
+  // node object for both calls of one unit.
+  const idByNode = new WeakMap<TentacleOptions, string>();
   let nextTentacleId = 1;
 
   const host: PlanHostBridge = {
@@ -99,8 +109,17 @@ export async function runScriptPlan(opts: RunScriptPlanOptions): Promise<RunScri
       // Importing the persona module triggers the side-effect registration
       // of `spec` and `conformance`, so we always look up by kind.
       const persona = getPersonaForKind(args.node.kind);
+      // K4.5 (F27): a quality re-run (`escalation.to === 'parent-model'`) must
+      // NOT honor `node.model`/sub-model routing — it starts on the PARENT/lead
+      // model. The lead identity rides `SubAgentContext.fallback`, forced by
+      // `withParentModelDeps` for this call only. No hint ⇒ identical routing
+      // to before (same deps object, untouched).
+      const deps =
+        args.escalation?.to === 'parent-model'
+          ? withParentModelDeps(opts.taskToolDeps)
+          : opts.taskToolDeps;
       const res = await runTentacle({
-        deps: opts.taskToolDeps,
+        deps,
         args: {
           description: args.node.label,
           prompt: args.node.prompt,
@@ -117,14 +136,25 @@ export async function runScriptPlan(opts: RunScriptPlanOptions): Promise<RunScri
         deferMerge: true,
         ...(persona ? { systemPromptOverride: persona.systemPrompt } : {}),
       });
-      // Predict the id the runner will assign: it always increments a
-      // counter and pads it. If our counter falls out of sync with the
-      // runner's (e.g. someone refactors), the merge step surfaces a
-      // structured error instead of silently losing work.
-      const predictedId = `t${String(nextTentacleId).padStart(4, '0')}`;
-      nextTentacleId += 1;
+      // K4.5b: real-id keying. A non-escalation call opens a NEW work unit and
+      // takes the next id in the runner's sequence; an escalation re-run reuses
+      // the id of the unit it re-runs (same `node` object), so the map holds
+      // exactly one entry per tentacle id no matter how many re-runs fire.
+      const priorId = idByNode.get(args.node);
+      const isRerun = args.escalation !== undefined;
+      const tentacleId =
+        isRerun && priorId !== undefined
+          ? priorId
+          : `t${String(nextTentacleId).padStart(4, '0')}`;
+      if (!isRerun || priorId === undefined) nextTentacleId += 1;
+      idByNode.set(args.node, tentacleId);
       if (res.ok) {
-        worktreeByTentacleId.set(predictedId, res.worktreeHandle);
+        // On a re-run this OVERWRITES the entry with the winning (re-run)
+        // worktree — the one whose output replaced the weak one and the one
+        // `ref.worktree` will point at. The superseded handle is dropped from
+        // the map and its worktree stays on disk, surfaced by the escalation
+        // event on the radio (kept, never destroyed).
+        worktreeByTentacleId.set(tentacleId, res.worktreeHandle);
         return {
           ok: true,
           result: res.result,
@@ -132,7 +162,12 @@ export async function runScriptPlan(opts: RunScriptPlanOptions): Promise<RunScri
           worktree: res.worktreePath,
         };
       }
-      worktreeByTentacleId.set(predictedId, null);
+      // A FAILED quality re-run keeps the original output (core contract), so
+      // its worktree entry must survive untouched. A failed first attempt
+      // records no worktree, exactly as before.
+      if (!isRerun) {
+        worktreeByTentacleId.set(tentacleId, null);
+      }
       return { ok: false, error: res.error, durationMs: undefined, worktree: null };
     },
     mergeWorktrees: async (args) => {

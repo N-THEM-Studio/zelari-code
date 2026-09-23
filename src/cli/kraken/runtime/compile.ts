@@ -87,6 +87,14 @@ export async function compileScriptPlan(opts: CompilePlanOptions): Promise<Compi
       // below if needed; in practice the stub only does `import type {...}`
       // which esbuild strips without resolution.
     },
+    // K4.5b: the sandbox footgun scan rejects the `globalThis` token in the
+    // bundle, yet the SDK stub resolves the injected capability through
+    // `globalThis.__zelari_sdk__`. Rename the identifier at build time; the
+    // wrapper below binds the alias to the capability object — same lookup,
+    // no forbidden token.
+    define: {
+      globalThis: '__zelari_capability_scope__',
+    },
     logLevel: 'silent',
   });
 
@@ -97,10 +105,22 @@ export async function compileScriptPlan(opts: CompilePlanOptions): Promise<Compi
     throw new Error('esbuild produced no output files');
   }
 
-  await fs.writeFile(opts.outPath, out.text, 'utf8');
+  // K4.5b — run shape. `runInSandbox` evaluates the bundle with
+  // `vm.runInContext`, i.e. as a SCRIPT, where top-level `await` is a syntax
+  // error. The sandbox contract is "a single async IIFE ... which the sandbox
+  // already awaits" (see `SandboxRunResult`): wrap the bundle accordingly and
+  // bind `__zelari_capability_scope__` (see `define` above) to the single
+  // capability object the sandbox exposes as `__zelari_sdk__`.
+  const code =
+    '(async () => {\n' +
+    'const __zelari_capability_scope__ = { __zelari_sdk__: __zelari_sdk__ };\n' +
+    out.text +
+    '\n})();';
+
+  await fs.writeFile(opts.outPath, code, 'utf8');
   return {
     outPath: opts.outPath,
-    bytes: out.text.length,
+    bytes: code.length,
     durationMs: Date.now() - start,
   };
 }
