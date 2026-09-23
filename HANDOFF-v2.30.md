@@ -1,5 +1,7 @@
 # HANDOFF v2.30.0 - development from another machine
 
+> ⚠️ **SUPERSEDED / OBSOLETO (2026-09-23)** — documento storico scritto alla **v2.30.0**; il main è ora a **v2.62.0** (`0751315`). Le voci "WHAT IS MISSING" (t51–t54) e i leftover elencati sotto NON descrivono più lo stato corrente (gran parte è stata assorbita dalle release v2.38→v2.62). Per lo stato reale: `CHANGELOG.md`, `2026-09-18-kraken-reliability-hardening-plan.md`, `.zelari/plan.json`. Mantenuto solo come memoria storica cross-machine.
+
 > Written at the release of **v2.30.0** (2026-09-05). This file is the only cross-machine vehicle of the development state: the `.zelari/` vault is **gitignored** and does NOT travel with the clone. The plan tasks (`t31`, `t51-t54`) exist only on the origin machine's `.zelari/plan.json` - everything needed is inlined here.
 
 ## State at tag v2.30.0

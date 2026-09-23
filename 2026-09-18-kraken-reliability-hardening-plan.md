@@ -1,7 +1,8 @@
 # Piano Hardening Kraken — affidabilità totale e indipendenza dal modello
 
-> **Stato**: IN ESECUZIONE — W1 ✅ (8/8 slice, K1.6 defer assorbito) · W2 ✅ (5 slice + K2.6 defer formale) · W3–W5 da avviare.
-> **Consegna**: W1+W2 pushate su `origin/kraken/reliability-hardening-w1-w2` (`4bff628`+`ae33378`, `[skip ci]`, 45 file) — non ancora mergeate nel main tree locale, dove restano modifiche di lavoro.
+> **Stato**: IN ESECUZIONE — W1 ✅ (8/8 slice, K1.6 defer assorbito) · W2 ✅ (5 slice + K2.6 defer formale) · W3 ✅ salvo ricognizione K3.7 · W4–W5 in corso.
+> **Consegna**: W1+W2 pushate su `origin/kraken/reliability-hardening-w1-w2` (`4bff628`+`ae33378`, `[skip ci]`, 45 file); il contenuto risulta poi nel main tree (audit 2026-09-23: `essentialBashConfig.ts`, evento `worktree.fallback_shared_tree` presenti, albero pulito a v2.62.0 / HEAD `0751315`).
+> **Allineamento 2026-09-23**: più slice del piano erano già atterrate senza marker di stato (es. K3.2 fail-closed del ROI gate verificata in `executor.ts` `roiGate`/`roiGateErrorRadio`) — prima di implementare una slice, verificarla sul tree reale; le sezioni sotto sono lo spec, non la proof.
 > **Igiene albero**: 2026-09-19 risolte le 3 voci `DU` residue del merge parallelo automations (indice unmerged orfano, `MERGE_HEAD` assente) via `git add` — worktree hash = stage 3, zero perdite; il main tree è di nuovo commit-abile. Fix moduli browser mancanti su `origin/fix/automations-browser-selectors` (`4303852`).
 > **Baseline**: 2026-09-18, main @ `7bc3620` (v2.46.2).
 > **Fonte**: audit on-disk (4 esplorazioni parallele, ogni affermazione con evidenza file:line verificata sul tree).
