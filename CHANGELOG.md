@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **A2 tool-result truncation (head+tail)** — an over-threshold result now shows a ~50/50 head+tail window and ONE exact marker, `...N bytes truncated; complete output in <path>`, with the true omitted UTF-8 byte count and the spill path LAST on its line (Windows paths with spaces stay extractable). Below the threshold the payload stays byte-identical and the full output always lands on disk when spill is enabled.
+
+### Fixed
+
+- **Kraken tentacle model routing** — a routed cheap model rejected by the provider (HTTP 400 `Unsupported model …`) now triggers the same one-shot parent-model retry as 404/not-found. Before, `glm-5.3-flash` killed the verify tentacle in 0.5s and left the verify debt open on a green slice.
+- **`session.ended` carries the failure cause** — non-completed closes record `detail` (last fatal error message/code from the run), so `reason: 'error'` is no longer cause-less on the session spine.
+
 ## [2.61.0] - 2026-09-22
 
 ### Fixed
@@ -365,7 +374,7 @@ Desktop performance plan (phases 1-4), reconciled with the v2.46.1 input-latency
 
 - **Plan watch-thread leak** - watcher loops now terminate (explicit stop, take-over of stale slots, or 10-minute idle) instead of polling forever; threads self-deregister.
 
-## [2.46.1] - 2026-09-15
+## [2.46.1] - 2026-09-16
 
 Input-latency and model-desync fixes from the 2026-09-15 diagnosis (`.zelari/docs/2026-09-15-diagnosi-lag-input-e-desync-modelli.md`): every keystroke used to re-render the whole Desktop shell and re-parse the entire transcript, and the chat model selector never talked to the Agents settings view.
 
@@ -444,7 +453,7 @@ Companion (phone + desktop) can approve tools, pick a working folder, and wait o
 - **Gson JSON accessors on Android** — Kotlin uses explicit `getAsString()` / `getAsBoolean()` / `getAsJsonArray()` / `isJsonPrimitive()` so `assembleDebug` compiles on current Gson.
 - Companion/desktop trust and permission paths covered by new unit tests (`cli-companionFs`, `cli-companionTrust`, `cli-updaterInstallKind`); memory/prereq tests follow the Node 20 skip/lazy-import story.
 
-## [2.44.0] - 2026-09-15
+## [2.44.0] - 2026-09-14
 
 Parallel-chat isolation hardening for the single-sidecar Desktop multiplex, plus selective brand theming (one master color, two intensity variants).
 
@@ -544,7 +553,26 @@ The repeat-failure loop closes its circle and the Desktop grows a mission spine:
 
 
 
+## [2.40.0] - 2026-09-12
+
 The verification story becomes visible end to end: the Desktop card now renders the per-criterion evidence pack (criterion, status, evidence seq) the CLI already emitted, a stopped mission resumes from the TUI via /resume-mission, the composer says when the next Enter would resume it, and mission-close evidence is anchored with a real spine seq (the bare appendEvent return never reached the engine). Strict semantics unchanged: unknown stays unknown.
+
+### Added
+
+- **Evidence pack per-criterion breakdown in `VerificationStatusCard`** (Desktop, Phase 5) — criterion, status, and evidence seq next to the verdict the CLI already emitted.
+- **`/resume-mission` + desktop `autoResumeHint`** (cursor plan 2.3/2.4) — a stopped mission resumes from the TUI, and the composer says when the next Enter would resume it.
+- **Experimental ops-knowledge, mission resume and gardener surfaces** (shadow mode, `[skip ci]`).
+- **`/memory` audit in slash help and usage** (t54 follow-up), with GUIDA documenting the hidden subcommand and the v2.29 user-facing features.
+
+### Fixed
+
+- **Mission-close evidence is anchored with a real spine seq** — the `{seq}` emit wrapper replaces the bare `appendEvent` return that never reached the engine (ADR-0032 seam).
+- **Public API contract reads the version from `package.json`** instead of a literal — the 2.40.0 bump no longer false-reds `publicApi.contract.test.ts`.
+
+### Changed
+
+- **`packages/core` pins the three documented public interfaces** (t53, ADR-0037).
+- **Dogfood**: ADR-0007-style synthesis-vs-diff audit, deterministic half (t52).
 
 ## [2.39.0] - 2026-09-10
 
@@ -752,7 +780,7 @@ Alignment release: what the Desktop UI and the docs say now matches what the cod
 - **`package-lock.json` drift** — the lockfile was still at 2.30.0 (two releases shipped without regeneration); all five version fields now ride the release bump.
 - **Docs paths** — `README.md` and `docs/GUIDA.md` no longer point first-run users at the legacy `~/.tmp/zelari-code/` migration path; `apps/desktop/README.md` documents the chat persistence limits (80 conversations / 200 messages per conversation) and the permission presets.
 
-## [2.32.0] - 2026-09-07
+## [2.32.0] - 2026-09-05
 
 ### Changed
 
@@ -766,7 +794,7 @@ Alignment release: what the Desktop UI and the docs say now matches what the cod
 - **CHANGELOG integrity** — removed 14 duplicated placeholder release entries (the whole 1.12.1→2.30.0 block dated 2026-07-10 with copied bodies), repaired the corrupted 1.9.2 line (literal PowerShell `` `n `` escapes expanded to real newlines), and moved the empty `[Unreleased]` block to the top per Keep-a-Changelog.
 - **CONTRIBUTING** no longer pins a hardcoded product version (the changelog is the single source of truth) and documents the release cadence rule: max one minor per 48h, fixes batched as patches.
 
-## [2.31.0] - 2026-09-06
+## [2.31.0] - 2026-09-04
 
 The "front door" release: 2.30 stops lying about the paths it already ships, and a fresh clone gets an honest path to its first verified PASS. HANDOFF Wave 5 stays frozen: no new runtime surface, no new public API, the judge untouched (ADR-0036).
 
@@ -786,7 +814,7 @@ The "front door" release: 2.30 stops lying about the paths it already ships, and
 
 - W5 docs ride the release line: `docs/GUIDA.md`, `docs/MEMORY.md` and `docs/decisions/README.md` are now English; README documents `ZELARI_PERMISSION_PRESET` and `ZELARI_PROVENANCE`; the EVALS per-release snapshot stays honestly BLOCKED until a real provider run exists.
 
-## [2.30.0] - 2026-09-05
+## [2.30.0] - 2026-09-04
 
 Hardening waves W0–W4 on top of the 2.29.0 constitution: the evolution loop becomes measurable, eval anchors become tamper-evident, security gains provenance escalation at the choke-point, and governance gains cost budgets with HOLD and memory decay.
 
