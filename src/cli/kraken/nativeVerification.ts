@@ -52,6 +52,7 @@ import {
 } from '@zelari/core/verification';
 import { resolveAdapterForRoot } from './verificationAdapters/index.js';
 import { wrapWithVerifyCache } from './cachedShell.js';
+import { turnEnv } from '../sessionScope.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -66,7 +67,7 @@ export interface NativePackCommands {
  * every strict evaluation unless explicitly disabled. Explicit opt-out:
  * `ZELARI_VERIFY_PACK=0|off|false`.
  */
-export function nativePackEnabled(env: Env = process.env): boolean {
+export function nativePackEnabled(env: Env = turnEnv()): boolean {
   const v = env.ZELARI_VERIFY_PACK?.toLowerCase();
   if (v === '0' || v === 'off' || v === 'false') return false;
   return true;
@@ -204,7 +205,7 @@ export interface NativePackDeps {
  * legacy bridge contract remains the only strict evidence).
  */
 export async function evaluateNativePack(deps: NativePackDeps = {}): Promise<NativePackEvaluation | null> {
-  const env = deps.env ?? process.env;
+  const env = deps.env ?? turnEnv();
   if (!nativePackEnabled(env)) return null;
   const cwd = deps.cwd ?? process.cwd();
   // P1.A: ecosystem-aware resolution — adapter build plan + env overrides.

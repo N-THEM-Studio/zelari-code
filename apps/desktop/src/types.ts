@@ -203,6 +203,8 @@ export interface RunTaskArgs {
   verifierReview?: boolean;
   /** Experimental Best-of-N (sets ZELARI_EXPERIMENTAL=bon on the spawned CLI). */
   bonAlpha?: boolean;
+  /** Cross-provider verify tentacle (ZELARI_KRAKEN_CROSS_MODEL); false = stay on the chat provider. */
+  krakenCrossModel?: boolean;
   /** Host-driven Gauntlet loop (`--gauntlet` / ZELARI_GAUNTLET=1). */
   gauntletLoop?: boolean;
   /** Model override for Kraken read-only / exploration tentacles. */

@@ -1,11 +1,12 @@
 /**
- * AuthCard — OAuth (with the Anthropic 3-step stepper) + API key block
- * for one provider. Same agentClient calls as the old SettingsView;
- * feedback moves from the footer banner to per-action toasts.
+ * AuthCard — step 2 of Models & Providers: connect one provider, either by
+ * signing in with a subscription (OAuth, with the Anthropic 3-step stepper)
+ * or with an API key. Plain-language copy and ⓘ help on every action.
  */
 import { useEffect, useState } from "react";
 import { loginOAuth, logoutOAuth, refreshOAuth, setApiKey } from "../../agentClient";
 import type { DesktopProviderInfo } from "../../types";
+import { SettingHelp } from "../SettingHelp";
 import { formatExpiry } from "./modelUtils";
 import {
   BusyDot,
@@ -28,12 +29,17 @@ export function AuthCard({ provider, onRefresh }: AuthCardProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
 
   const id = provider.id;
+  const name = provider.displayName;
+  // "ChatGPT (OAuth)" → "ChatGPT": the auth hint in the display name reads
+  // badly inside "Sign in with …" / "your … subscription".
+  const brand = name.replace(/\s*\([^)]*\)\s*$/, "") || name;
   const isAnthropic = id === "anthropic";
   const oauthSupported =
     Boolean(provider.oauthSupported) ||
     id === "grok" ||
     id === "chatgpt" ||
-    id === "anthropic";
+    id === "anthropic" ||
+    id === "muse";
 
   useEffect(() => {
     setOauthUrl(null);
@@ -44,6 +50,7 @@ export function AuthCard({ provider, onRefresh }: AuthCardProps) {
 
   const signedInWithOauth = provider.hasKey && provider.authKind === "oauth";
   const expiry = formatExpiry(provider.expiresAt);
+  const expired = expiry === "expired";
 
   const openUrl = async (url: string) => {
     try {
@@ -62,13 +69,13 @@ export function AuthCard({ provider, onRefresh }: AuthCardProps) {
         setOauthUrl(r.authorizeUrl ?? null);
         setStep(2);
         if (r.authorizeUrl) await openUrl(r.authorizeUrl);
-        return r.message ?? "Sign in in the browser, then paste the code below.";
+        return r.message ?? "Finish signing in in the browser, then paste the code below.";
       }
       setOauthUrl(null);
       setOauthCode("");
       setStep(3);
       await onRefresh();
-      return r.message ?? `Signed in to ${provider.displayName}.`;
+      return r.message ?? `Signed in to ${name}.`;
     });
 
   const doRefreshToken = () =>
@@ -76,7 +83,7 @@ export function AuthCard({ provider, onRefresh }: AuthCardProps) {
       const r = await refreshOAuth({ provider: id });
       if (r.ok === false && r.error) throw new Error(r.error);
       await onRefresh();
-      return r.message ?? `Refreshed ${provider.displayName} token.`;
+      return r.message ?? `${name} session renewed.`;
     });
 
   const doLogout = () =>
@@ -87,51 +94,57 @@ export function AuthCard({ provider, onRefresh }: AuthCardProps) {
       setOauthCode("");
       setStep(1);
       await onRefresh();
-      return r.message ?? `Signed out of ${provider.displayName}.`;
+      return r.message ?? `Signed out of ${name}.`;
     });
 
   const saveKey = () =>
     void run(async () => {
       const key = apiKey.trim();
-      if (!key) throw new Error("Enter an API key.");
+      if (!key) throw new Error("Paste an API key first.");
       const r = await setApiKey({ provider: id, key });
       setApiKeyInput("");
       await onRefresh();
-      return `Key stored for ${r.provider ?? id} (${r.masked ?? "••••"}).`;
+      return `API key saved for ${r.provider ?? name} (${r.masked ?? "••••"}).`;
     });
+
+  const status = signedInWithOauth ? (
+    <StatusPill tone={expired ? "warn" : "ok"}>
+      {expired ? "Session expired — sign in again" : `Signed in${expiry ? ` · ${expiry}` : ""}`}
+    </StatusPill>
+  ) : provider.hasKey ? (
+    <StatusPill tone="ok">Connected with an API key</StatusPill>
+  ) : (
+    <StatusPill tone="warn">Not connected yet</StatusPill>
+  );
 
   return (
     <SettingsCard
-      title={`Account & keys — ${provider.displayName}`}
+      title={`2 · Connect ${brand}`}
       description={
         oauthSupported
-          ? "Subscription login (OAuth) or a plain API key. Either one is enough."
-          : "Provide an API key for this provider."
+          ? "Sign in with your subscription, or paste an API key — one of the two is enough."
+          : "Paste an API key from your provider's dashboard."
+      }
+      help={
+        <SettingHelp id="tooltip-connect" label="Connect">
+          Credentials stay on this computer, in the Zelari keystore used by the CLI. They are
+          never shown again after saving.
+        </SettingHelp>
       }
     >
-      {signedInWithOauth ? (
-        <p className="s-card-desc" style={{ marginBottom: 8 }}>
-          <StatusPill tone="ok">Signed in · OAuth{expiry ? ` · ${expiry}` : ""}</StatusPill>
-          {provider.hasRefreshToken ? (
-            <span style={{ marginLeft: 8 }}>refresh token saved</span>
-          ) : null}
-        </p>
-      ) : provider.hasKey ? (
-        <p className="s-card-desc" style={{ marginBottom: 8 }}>
-          <StatusPill tone="ok">API key set</StatusPill>
-          {oauthSupported ? (
-            <span style={{ marginLeft: 8 }}>you can still switch to OAuth below</span>
-          ) : null}
-        </p>
-      ) : (
-        <p className="s-card-desc" style={{ marginBottom: 8 }}>
-          <StatusPill tone="warn">Not configured</StatusPill>
-        </p>
-      )}
+      <p className="s-card-desc s-auth-status">{status}</p>
 
       {oauthSupported && (
         <>
-          <h4 className="settings-subhead">Subscription login (OAuth)</h4>
+          <h4 className="settings-subhead">
+            Sign in with your {brand} subscription
+            <span className="s-row-help-inline">
+              <SettingHelp id="tooltip-oauth" label="Subscription sign-in">
+                Uses the plan you already pay for (no API key needed). A browser window opens to
+                confirm; the session is renewed automatically while it lasts.
+              </SettingHelp>
+            </span>
+          </h4>
           {isAnthropic && (
             <div className="s-steps" aria-label="Anthropic sign-in steps">
               <span className={`s-step${step === 1 ? " current" : step > 1 ? " done" : ""}`}>
@@ -140,15 +153,15 @@ export function AuthCard({ provider, onRefresh }: AuthCardProps) {
               <span className={`s-step${step === 2 ? " current" : step > 2 ? " done" : ""}`}>
                 2 · Paste code
               </span>
-              <span className={`s-step${step === 3 ? " current" : ""}`}>3 · Complete</span>
+              <span className={`s-step${step === 3 ? " current" : ""}`}>3 · Done</span>
             </div>
           )}
           {isAnthropic && step === 2 && (
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
+            <div className="s-inline-form">
               <TextInput
                 value={oauthCode}
-                placeholder="Paste the code from the Anthropic page (CODE#STATE)"
-                ariaLabel="Anthropic magic-link code"
+                placeholder="Paste the code shown on the Anthropic page"
+                ariaLabel="Anthropic sign-in code"
                 onCommit={(v) => setOauthCode(v)}
               />
               <button
@@ -157,67 +170,71 @@ export function AuthCard({ provider, onRefresh }: AuthCardProps) {
                 disabled={busy || !oauthCode.trim()}
                 onClick={() => doLogin(oauthCode.trim())}
               >
-                Complete sign-in
+                Finish sign-in
               </button>
             </div>
           )}
           {oauthUrl && (
             <p className="s-oauth-link">
-              Open:{" "}
+              If the browser did not open:{" "}
               <a href={oauthUrl} target="_blank" rel="noreferrer">
                 {oauthUrl}
               </a>
             </p>
           )}
           <div className="settings-actions inline">
-            <button
-              type="button"
-              className="btn-send"
-              disabled={busy}
-              onClick={() => doLogin()}
-            >
-              {busy ? "Waiting…" : signedInWithOauth ? "Sign in again" : `Sign in with ${provider.displayName}`}
+            <button type="button" className="btn-send" disabled={busy} onClick={() => doLogin()}>
+              {busy ? "Waiting…" : signedInWithOauth ? "Sign in again" : `Sign in with ${brand}`}
             </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              disabled={busy || !provider.hasRefreshToken}
-              onClick={doRefreshToken}
-            >
-              Refresh token
-            </button>
-            <button
-              type="button"
-              className="btn-ghost"
-              disabled={busy || !provider.hasKey}
-              onClick={doLogout}
-            >
-              Sign out
-            </button>
+            {signedInWithOauth ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy || !provider.hasRefreshToken}
+                onClick={doRefreshToken}
+                title={
+                  provider.hasRefreshToken
+                    ? "Extend the current session without signing in again"
+                    : "This provider did not give a renewable session — use Sign in again"
+                }
+              >
+                Renew session
+              </button>
+            ) : null}
+            {provider.hasKey ? (
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy}
+                onClick={doLogout}
+                title="Remove the saved sign-in / key from this computer"
+              >
+                Disconnect
+              </button>
+            ) : null}
             {busy ? <BusyDot /> : null}
           </div>
         </>
       )}
 
-      <h4 className="settings-subhead">API key</h4>
-      <p className="s-card-desc" style={{ marginBottom: 8 }}>
-        Stored in the CLI keystore and never shown again. Env var: <code>{provider.envVar}</code>
-        {oauthSupported ? " — optional if you use OAuth above." : ""}
-      </p>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+      <h4 className="settings-subhead">
+        {oauthSupported ? "Or use an API key" : "API key"}
+        <span className="s-row-help-inline">
+          <SettingHelp id="tooltip-api-key" label="API key">
+            Create one in your provider's dashboard. It is stored locally and never displayed
+            again. You can also set the environment variable {provider.envVar} instead.
+          </SettingHelp>
+        </span>
+      </h4>
+      <div className="s-inline-form">
         <TextInput
           value={apiKey}
           type="password"
-          placeholder="sk-…"
-          ariaLabel={`${provider.displayName} API key`}
+          placeholder={provider.hasKey ? "Paste a new key to replace the saved one" : "Paste your API key"}
+          ariaLabel={`${name} API key`}
           onCommit={(v) => setApiKeyInput(v)}
         />
-        <button
-          type="button"
-          className="btn-send"
-          disabled={busy || !apiKey.trim()}
-          onClick={saveKey}
-        >
+        <button type="button" className="btn-send" disabled={busy || !apiKey.trim()} onClick={saveKey}>
           {provider.hasKey ? "Replace key" : "Save key"}
         </button>
       </div>

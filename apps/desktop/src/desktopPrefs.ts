@@ -37,6 +37,12 @@ export interface DesktopPrefs {
   verifierReview: VerifierReviewPreference;
   /** Experimental Best-of-N (N=3). Requires ZELARI_EXPERIMENTAL=bon on the CLI. */
   bonAlpha: boolean;
+  /**
+   * Let the verify tentacle run on a DIFFERENT provider family than the lead
+   * (independent check). On by default like the CLI; only providers with a
+   * working login are ever picked. Off = verify stays on the chat provider.
+   */
+  krakenCrossModel: boolean;
   /** Host-driven Gauntlet loop (`--gauntlet` on the CLI). */
   gauntletLoop: boolean;
 
@@ -95,6 +101,7 @@ export const DEFAULT_DESKTOP_PREFS: DesktopPrefs = {
   verifyPack: false,
   verifierReview: null,
   bonAlpha: false,
+  krakenCrossModel: true,
   gauntletLoop: false,
   inboxNotifications: true,
   permissionPreset: "standard",
@@ -236,6 +243,8 @@ export function normalizeDesktopPrefs(raw: unknown): DesktopPrefs {
     verifierReview:
       typeof r.verifierReview === "boolean" ? r.verifierReview : null,
     bonAlpha: r.bonAlpha === true,
+    // Missing → on (CLI default); only an explicit persisted `false` opts out.
+    krakenCrossModel: r.krakenCrossModel !== false,
     gauntletLoop: r.gauntletLoop === true,
     // WS2: missing → ON (CLI-aligned, like strictDone); only an explicit
     // persisted `false` opts out of Desktop notifications.

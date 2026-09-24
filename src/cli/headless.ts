@@ -218,6 +218,25 @@ export interface HeadlessOptions {
   krakenPlannerModel?: string;
   /** Kraken delegation policy (`ZELARI_KRAKEN_DELEGATION`). */
   krakenDelegation?: string;
+  /**
+   * Native criteria pack (`ZELARI_VERIFY_PACK`): run the project's own
+   * typecheck/test/build commands as strict evidence. Per turn (session env
+   * overlay) so the Desktop toggle applies to the next run, not the next
+   * sidecar restart. Absent = the process default.
+   */
+  verifyPack?: boolean;
+  /**
+   * Advisory second-opinion review (`ZELARI_VERIFIER_REVIEW`): true/false
+   * force it on/off; absent = automatic (on when a dedicated verifier model
+   * is configured).
+   */
+  verifierReview?: boolean;
+  /**
+   * Cross-provider verify tentacle (`ZELARI_KRAKEN_CROSS_MODEL`): false keeps
+   * every verify tentacle on the run's own provider. Absent = default (on,
+   * limited to providers with fresh credentials).
+   */
+  krakenCrossModel?: boolean;
 }
 
 /**

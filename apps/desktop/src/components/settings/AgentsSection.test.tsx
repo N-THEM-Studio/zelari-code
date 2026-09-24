@@ -98,7 +98,7 @@ function renderSection(
 
 const leadValue = () => screen.getByText(/^Grok \/ /).textContent;
 const saveDriftButton = () =>
-  screen.queryByRole("button", { name: "Save chat model to provider.json" });
+  screen.queryByRole("button", { name: /^Make .* the default$/ });
 
 describe("AgentsSection - Lead model follows the active chat", () => {
   it("shows the chat model, not the stale provider.json value", () => {
@@ -112,8 +112,8 @@ describe("AgentsSection - Lead model follows the active chat", () => {
   it("names both values when chat and file drift apart", () => {
     renderSection({ activeChatModel: "grok-3-fast" });
 
-    expect(document.body.textContent).toContain("The active chat uses grok-3-fast");
-    expect(document.body.textContent).toContain("provider.json still stores grok-4");
+    expect(document.body.textContent).toContain("This chat uses grok-3-fast");
+    expect(document.body.textContent).toContain("the saved default is grok-4");
     expect(saveDriftButton()).not.toBeNull();
   });
 
@@ -143,7 +143,7 @@ describe("AgentsSection - Lead model follows the active chat", () => {
 
     expect(leadValue()).toBe("Grok / grok-4");
     expect(saveDriftButton()).toBeNull();
-    expect(document.body.textContent).not.toContain("still stores");
+    expect(document.body.textContent).not.toContain("saved default is");
   });
 });
 
@@ -152,7 +152,7 @@ describe("AgentsSection - tentacle models are a separate store", () => {
     renderSection({ activeChatModel: "grok-3-fast" });
 
     expect(document.body.textContent).toContain(
-      "They do not change the model of the main chat",
+      "These never change the model of the main chat",
     );
   });
 
@@ -160,7 +160,7 @@ describe("AgentsSection - tentacle models are a separate store", () => {
     const { onPrefsChange } = renderSection({ activeChatModel: "grok-3-fast" });
 
     const explore = Array.from(document.querySelectorAll("select")).find((s) =>
-      s.closest("label")?.textContent?.includes("Explore tentacles"),
+      s.closest("label")?.textContent?.includes("Explorer"),
     ) as HTMLSelectElement;
     expect(explore).toBeTruthy();
     fireEvent.change(explore, { target: { value: "grok-3-fast" } });
@@ -169,5 +169,64 @@ describe("AgentsSection - tentacle models are a separate store", () => {
     // The chat model is untouched by a tentacle pick, and nothing is written
     // to provider.json from this card for sub-agent overrides.
     expect(setConfigMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("AgentsSection - simplified controls", () => {
+  it("drops the controls that did nothing or were duplicated elsewhere", () => {
+    renderSection();
+    const text = document.body.textContent ?? "";
+    expect(text).not.toContain("Best-of-N");
+    expect(text).not.toContain("Gauntlet");
+    expect(text).not.toContain("Strict done — Missions");
+  });
+
+  it("one proof toggle covers Kraken runs and missions", () => {
+    const { onPrefsChange } = renderSection();
+    fireEvent.click(screen.getByRole("switch", { name: "Require proof before done" }));
+    expect(onPrefsChange).toHaveBeenCalledWith({ strictDone: false, missionStrict: false });
+  });
+
+  it("project checks and cross-provider verification are plain toggles", () => {
+    const { onPrefsChange } = renderSection();
+    fireEvent.click(screen.getByRole("switch", { name: "Run the project's own checks" }));
+    expect(onPrefsChange).toHaveBeenCalledWith({ verifyPack: true });
+    fireEvent.click(screen.getByRole("switch", { name: "Verify with a different provider" }));
+    expect(onPrefsChange).toHaveBeenCalledWith({ krakenCrossModel: false });
+  });
+
+  it("delegation and permissions are described choices", () => {
+    const { onPrefsChange } = renderSection();
+    fireEvent.click(screen.getByRole("radio", { name: /Single agent/ }));
+    expect(onPrefsChange).toHaveBeenCalledWith({ krakenDelegation: "lead-only" });
+    fireEvent.click(screen.getByRole("radio", { name: /Full auto/ }));
+    expect(onPrefsChange).toHaveBeenCalledWith({ permissionPreset: "yolo" });
+  });
+
+  it("second opinion: off / chat model / a specific model saved to the CLI config", async () => {
+    const { onPrefsChange, onRefresh } = renderSection();
+    fireEvent.click(screen.getByRole("radio", { name: /On — chat model/ }));
+    expect(onPrefsChange).toHaveBeenCalledWith({ verifierReview: true });
+
+    fireEvent.click(screen.getByRole("radio", { name: /On — a specific model/ }));
+    fireEvent.change(screen.getByRole("combobox", { name: "Reviewer model" }), {
+      target: { value: "grok-3-fast" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save reviewer" }));
+    await waitFor(() =>
+      expect(setConfigMock).toHaveBeenCalledWith({ verifierProvider: "grok", verifierModel: "grok-3-fast" }),
+    );
+    await waitFor(() => expect(onRefresh).toHaveBeenCalled());
+
+    fireEvent.click(screen.getByRole("radio", { name: /^Off/ }));
+    expect(onPrefsChange).toHaveBeenCalledWith({ verifierReview: false });
+  });
+
+  it("the execution profile lives under Advanced with a friendly label", () => {
+    const { onPrefsChange } = renderSection();
+    const select = screen.getByRole("combobox", { name: "Execution profile" }) as HTMLSelectElement;
+    expect(select.selectedOptions[0]?.textContent).toBe("Standard");
+    fireEvent.change(select, { target: { value: "minimal/v1" } });
+    expect(onPrefsChange).toHaveBeenCalledWith({ profile: "minimal/v1" });
   });
 });

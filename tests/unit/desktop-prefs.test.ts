@@ -96,6 +96,7 @@ describe("normalizeDesktopPrefs", () => {
       verifyPack: true,
       verifierReview: false,
       bonAlpha: false,
+      krakenCrossModel: true,
       gauntletLoop: true,
       inboxNotifications: true,
       permissionPreset: "standard",
@@ -114,6 +115,11 @@ describe("normalizeDesktopPrefs", () => {
     });
   });
 
+  it("keeps an explicit krakenCrossModel=false (verify stays on the chat provider)", () => {
+    expect(normalizeDesktopPrefs({ krakenCrossModel: false }).krakenCrossModel).toBe(false);
+    expect(normalizeDesktopPrefs({ krakenCrossModel: "no" }).krakenCrossModel).toBe(true);
+  });
+
   it("migrates old saved prefs without changing runtime defaults", () => {
     expect(
       normalizeDesktopPrefs({
@@ -128,6 +134,7 @@ describe("normalizeDesktopPrefs", () => {
       verifyPack: false,
       verifierReview: null,
       bonAlpha: true,
+      krakenCrossModel: true,
       gauntletLoop: false,
       inboxNotifications: true,
       permissionPreset: "standard",
@@ -226,6 +233,7 @@ describe("load/saveDesktopPrefs", () => {
       verifyPack: true,
       verifierReview: true,
       bonAlpha: true,
+      krakenCrossModel: true,
       gauntletLoop: true,
       inboxNotifications: true,
       permissionPreset: "standard",

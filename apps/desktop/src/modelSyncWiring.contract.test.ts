@@ -101,7 +101,7 @@ describe("model-sync: Settings → Agents sees the live chat model", () => {
     expect(agents).toContain(
       "await setAppConfig({ provider: activeProvider, model: leadChatModel })",
     );
-    expect(agents).toContain("Save chat model to provider.json");
-    expect(agents).toContain("They do not change the model of the main chat");
+    expect(agents).toContain("Make {leadChatModel} the default");
+    expect(agents).toContain("These never change the model of the main chat");
   });
 });

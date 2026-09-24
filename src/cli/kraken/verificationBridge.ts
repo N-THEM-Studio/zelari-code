@@ -49,6 +49,7 @@ import {
   type VerificationResult,
   type VerifierReview,
 } from '@zelari/core/verification';
+import { turnEnv } from '../sessionScope.js';
 
 export { evaluateClaimReport } from '@zelari/core/verification';
 
@@ -103,7 +104,7 @@ export interface StrictDoneKnobs {
  */
 export function strictEnvOverlay(
   knobs: StrictDoneKnobs,
-  base: Record<string, string | undefined> = process.env,
+  base: Record<string, string | undefined> = turnEnv(),
 ): Record<string, string | undefined> {
   const overlay: Record<string, string | undefined> = { ...base };
   if (knobs.strictDone !== undefined) {

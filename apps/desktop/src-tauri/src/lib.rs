@@ -3052,6 +3052,10 @@ struct RunTaskArgs {
     /// Experimental Best-of-N: sets ZELARI_EXPERIMENTAL=bon on the child.
     #[serde(default)]
     bon_alpha: bool,
+    /// Cross-provider verify tentacle (`ZELARI_KRAKEN_CROSS_MODEL`). None
+    /// keeps the CLI default; false pins verify on the run's own provider.
+    #[serde(default)]
+    kraken_cross_model: Option<bool>,
     /// Host-driven Gauntlet loop (`--gauntlet` / ZELARI_GAUNTLET).
     #[serde(default)]
     gauntlet_loop: bool,
@@ -3308,9 +3312,16 @@ fn run_task_inner(
     let kraken_planner_model = args.kraken_planner_model;
     let kraken_delegation = args.kraken_delegation;
     let permission_preset = args.permission_preset;
-    // mission_strict / verify_pack / verifier_review / bon_alpha remain
-    // sidecar-spawn knobs (no run.turn field yet). Kraken tentacle routing
-    // and delegation ARE per-turn — otherwise Desktop Settings are ignored.
+    // Quality checks ride run.turn per turn (Settings → Agents → Quality
+    // checks): pinned at sidecar spawn they silently did nothing until the
+    // sidecar restarted. `strict_done` also covers missions (CLI overlay sets
+    // ZELARI_MISSION_STRICT from it), so mission_strict is not forwarded.
+    // bon_alpha stays unwired: the CLI verifier hard-disables BoN.
+    let quality = TurnQualityKnobs {
+        verify_pack: args.verify_pack,
+        verifier_review: args.verifier_review,
+        kraken_cross_model: args.kraken_cross_model,
+    };
 
     let env_ctx = RunEnvelopeCtx {
         run_id: run_id.clone(),
@@ -3349,6 +3360,7 @@ fn run_task_inner(
             kraken_planner_model.as_deref(),
             kraken_delegation.as_deref(),
             permission_preset.as_deref(),
+            &quality,
         );
 
         let (exit_code, cancelled) = match result {
@@ -3384,6 +3396,13 @@ fn run_task_inner(
     Ok(run_id)
 }
 
+/// Quality-check knobs forwarded on every run.turn (Settings → Agents).
+struct TurnQualityKnobs {
+    verify_pack: bool,
+    verifier_review: Option<bool>,
+    kraken_cross_model: Option<bool>,
+}
+
 fn run_sidecar_turn(
     app: &AppHandle,
     sidecar: &Arc<HarnessSidecar>,
@@ -3416,6 +3435,7 @@ fn run_sidecar_turn(
     kraken_planner_model: Option<&str>,
     kraken_delegation: Option<&str>,
     permission_preset: Option<&str>,
+    quality: &TurnQualityKnobs,
 ) -> Result<i32, String> {
     // Sessions carry the workspace: today's spawn used current_dir(cwd); on
     // the shared sidecar the cwd travels as session.create's workspaceRoot
@@ -3446,9 +3466,9 @@ fn run_sidecar_turn(
     //   --history-file <json>   → history     (parsed array; invalid JSON is
     //                             ignored → stateless, same as the CLI)
     //   --todos <json>          → todos       (parsed array, same fallback)
-    // Env-only knobs still pinned at sidecar spawn: bon_alpha, verify_pack,
-    // verifier_review. Kraken tentacle models, per-tentacle thinking effort
-    // and delegation ARE per-turn.
+    // Per-turn (session env overlay in the CLI): Kraken tentacle models,
+    // per-tentacle thinking effort, delegation, permission preset and the
+    // quality checks (verifyPack / verifierReview / krakenCrossModel).
     let mut input = serde_json::json!({
         "task": prompt,
         "mode": mode,
@@ -3491,6 +3511,13 @@ fn run_sidecar_turn(
     }
     if let Some(d) = kraken_delegation.map(str::trim).filter(|d| !d.is_empty()) {
         input["krakenDelegation"] = serde_json::json!(d);
+    }
+    input["verifyPack"] = serde_json::json!(quality.verify_pack);
+    if let Some(v) = quality.verifier_review {
+        input["verifierReview"] = serde_json::json!(v);
+    }
+    if let Some(v) = quality.kraken_cross_model {
+        input["krakenCrossModel"] = serde_json::json!(v);
     }
     if let Some(p) = permission_preset.map(str::trim).filter(|p| !p.is_empty()) {
         // 2.32 parity slice: allowlisted again inside the CLI

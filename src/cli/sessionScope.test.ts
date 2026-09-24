@@ -145,6 +145,28 @@ describe('concurrent chats on one sidecar — no cross-talk', () => {
   });
 });
 
+describe('quality-check knobs reach the turn (Desktop Settings → Agents)', () => {
+  it('verifyPack / verifierReview / krakenCrossModel apply per chat, never process-wide', async () => {
+    const { nativePackEnabled } = await import('./kraken/nativeVerification.js');
+    const { verifierReviewEnabled } = await import('./kraken/verifierLifecycle.js');
+    const { isKrakenCrossModelEnabled } = await import('./tools/krakenModel.js');
+    const inherit = { mode: 'inherit' } as never;
+    const [a, b] = await both(async (id) => {
+      applyKrakenTurnEnv(
+        (id === 'A'
+          ? { verifyPack: false, verifierReview: true, krakenCrossModel: false }
+          : { verifyPack: true, verifierReview: false }) as never,
+      );
+      await tick();
+      return [nativePackEnabled(), verifierReviewEnabled(inherit), isKrakenCrossModelEnabled()];
+    });
+    expect(a).toEqual([false, true, false]);
+    expect(b).toEqual([true, false, true]);
+    expect(process.env.ZELARI_VERIFY_PACK).toBeUndefined();
+    expect(process.env.ZELARI_KRAKEN_CROSS_MODEL).toBeUndefined();
+  });
+});
+
 describe('emitEvent — session-routing stamp', () => {
   it('stamps harnessSessionId on every line inside a served session, never outside', async () => {
     const lines: string[] = [];

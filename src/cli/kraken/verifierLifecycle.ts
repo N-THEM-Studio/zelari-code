@@ -43,6 +43,7 @@ import { loadVerifierModelSelection } from './verifierResolution.js';
 import { activeRisk, divergenceFromReviews, mergeVerifierVerdicts, resolveVerifierRouting } from './verifierRouting.js';
 import type { StrictBuildGateEvaluation } from './verificationBridge.js';
 import type { TaskRisk } from '@zelari/core';
+import { turnEnv } from '../sessionScope.js';
 
 type Env = Record<string, string | undefined>;
 
@@ -58,7 +59,7 @@ export interface VerifierIdentity {
  */
 export function verifierReviewEnabled(
   selection: ModelSelection = loadVerifierModelSelection(),
-  env: Env = process.env,
+  env: Env = turnEnv(),
 ): boolean {
   const v = env.ZELARI_VERIFIER_REVIEW?.toLowerCase();
   if (v === '0' || v === 'false' || v === 'off') return false;
@@ -217,7 +218,7 @@ export async function runAdvisoryVerifierReview(
   deps: VerifierReviewDeps = {},
 ): Promise<VerifierReview | null> {
   if (!evaluation.evaluation || !evaluation.results) return null;
-  const env = deps.env ?? process.env;
+  const env = deps.env ?? turnEnv();
   const selection = deps.selection ?? loadVerifierModelSelection();
   if (!verifierReviewEnabled(selection, env)) return null;
   // t21 / PW §10: LOW risk turns the LLM reviewer OFF — deterministic

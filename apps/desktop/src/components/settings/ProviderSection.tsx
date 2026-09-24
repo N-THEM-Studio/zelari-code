@@ -1,14 +1,18 @@
 /**
- * Models & Providers — provider grid with auth status, model picker,
- * custom model id and advanced endpoint. Click-to-switch autosaves.
+ * Models & Providers — a guided three-step flow: choose a provider, connect
+ * the account, pick a model. Rarely-touched connection details (base URL, API
+ * style) live in a collapsible block. Every control autosaves.
  */
 import { useEffect, useState } from "react";
 import { setAppConfig } from "../../agentClient";
 import type { DesktopConfig, DesktopProviderInfo } from "../../types";
+import { SettingHelp } from "../SettingHelp";
 import { AuthCard } from "./AuthCard";
-import { modelLabel, resolveModelId } from "./modelUtils";
+import { modelLabel } from "./modelUtils";
 import {
   BusyDot,
+  ChoiceList,
+  Collapsible,
   SelectInput,
   SettingsCard,
   SettingsRow,
@@ -24,14 +28,22 @@ export interface ProviderSectionProps {
   onActiveProviderChange: (provider: string, model: string) => void;
 }
 
-function authPill(p: DesktopProviderInfo) {
+/** Sentinel option value of the model picker that reveals the free-text field. */
+const OTHER_MODEL = "__other__";
+
+/** Providers whose whole point is a user-supplied endpoint. */
+const ENDPOINT_PROVIDERS = new Set(["openai-compatible", "custom"]);
+
+export function connectionPill(p: DesktopProviderInfo) {
   if (p.hasKey && p.authKind === "oauth") {
-    return <StatusPill tone="ok">OAuth</StatusPill>;
+    return p.expiresAt && p.expiresAt <= Date.now() ? (
+      <StatusPill tone="warn">Sign-in expired</StatusPill>
+    ) : (
+      <StatusPill tone="ok">Connected · sign-in</StatusPill>
+    );
   }
-  if (p.hasKey) {
-    return <StatusPill tone="ok">API key</StatusPill>;
-  }
-  return <StatusPill tone="warn">Not configured</StatusPill>;
+  if (p.hasKey) return <StatusPill tone="ok">Connected · API key</StatusPill>;
+  return <StatusPill tone="warn">Not connected</StatusPill>;
 }
 
 export function ProviderSection({
@@ -41,18 +53,21 @@ export function ProviderSection({
 }: ProviderSectionProps) {
   const { busy, run } = useSettingAction();
   const [pendingId, setPendingId] = useState<string | null>(null);
-  const [customModel, setCustomModel] = useState("");
+  const [typingOther, setTypingOther] = useState(false);
   const [endpointDraft, setEndpointDraft] = useState<string | null>(null);
 
   const providers = config?.providers ?? [];
   const activeId = config?.activeProviderId ?? "";
   const active = providers.find((p) => p.id === activeId) ?? null;
+  const presetModels = active?.models ?? [];
   const currentModel = active
-    ? (config?.modelByProvider[active.id] ?? active.defaultModel ?? active.models[0] ?? "")
+    ? (config?.modelByProvider[active.id] ?? active.defaultModel ?? presetModels[0] ?? "")
     : "";
+  const isCustomModel = Boolean(currentModel) && !presetModels.includes(currentModel);
+  const showOtherField = typingOther || isCustomModel || presetModels.length === 0;
 
   useEffect(() => {
-    setCustomModel("");
+    setTypingOther(false);
     setEndpointDraft(null);
     setPendingId(null);
   }, [activeId]);
@@ -67,17 +82,20 @@ export function ProviderSection({
       await setAppConfig({ provider: id, model });
       await onRefresh();
       onActiveProviderChange(id, model);
-      return `Active provider: ${p.displayName}`;
+      return `Now using ${p.displayName}`;
     }).finally(() => setPendingId(null));
   };
 
-  const saveModel = (model: string) =>
+  const saveModel = (model: string) => {
+    const m = model.trim();
+    if (!m || m === currentModel) return;
     void run(async () => {
-      await setAppConfig({ provider: activeId, model });
+      await setAppConfig({ provider: activeId, model: m });
       await onRefresh();
-      onActiveProviderChange(activeId, model);
-      return `Model: ${model}`;
+      onActiveProviderChange(activeId, m);
+      return `Model set to ${m}`;
     });
+  };
 
   const saveEndpoint = (value: string) => {
     const url = value.trim();
@@ -85,7 +103,7 @@ export function ProviderSection({
     void run(async () => {
       await setAppConfig({ provider: activeId, endpoint: url });
       await onRefresh();
-      return `Endpoint saved for ${active?.displayName ?? activeId}`;
+      return `Server address saved for ${active?.displayName ?? activeId}`;
     });
   };
 
@@ -94,14 +112,14 @@ export function ProviderSection({
       await setAppConfig({ provider: activeId, endpointClear: true });
       setEndpointDraft("");
       await onRefresh();
-      return "Endpoint cleared";
+      return "Back to the default server address";
     });
 
   const saveApiStyle = (style: "chat" | "responses") =>
     void run(async () => {
       await setAppConfig({ provider: activeId, apiStyle: style });
       await onRefresh();
-      return "API style: " + (style === "responses" ? "/responses" : "/chat/completions");
+      return style === "responses" ? "Using the Responses API" : "Using Chat Completions";
     });
 
   return (
@@ -109,19 +127,24 @@ export function ProviderSection({
       <div className="settings-section-head">
         <h2>Models &amp; Providers</h2>
         <p>
-          Which AI provider and model new chats use. Click a card to activate it — saves
-          immediately to provider.json.
+          Choose the AI service Zelari talks to, connect your account, then pick a model.
+          Changes apply from your next message.
         </p>
       </div>
 
       <SettingsCard
-        title="Active provider"
-        description="The highlighted card is used by the chat toolbar and by every new run."
+        title="1 · Choose a provider"
+        description="Click a card to use it for new messages. Every chat can still switch model from the bar above the composer."
+        help={
+          <SettingHelp id="tooltip-provider" label="Provider">
+            A provider is the company or server that runs the AI model (for example OpenAI,
+            Anthropic, xAI, a local Ollama). You can connect several and switch any time.
+          </SettingHelp>
+        }
       >
         <div className="s-provider-grid">
           {providers.map((p) => {
             const isActive = p.id === activeId;
-            const switching = pendingId === p.id;
             return (
               <button
                 key={p.id}
@@ -129,120 +152,155 @@ export function ProviderSection({
                 className={`s-provider-card${isActive ? " active" : ""}`}
                 onClick={() => switchProvider(p.id)}
                 aria-pressed={isActive}
+                title={isActive ? `${p.displayName} is in use` : `Use ${p.displayName}`}
               >
                 <span className="s-provider-name">{p.displayName}</span>
-                {authPill(p)}
+                {connectionPill(p)}
                 <span className="s-provider-model">
                   {modelLabel(config?.modelByProvider[p.id] ?? p.defaultModel)}
                 </span>
-                {switching ? <BusyDot /> : null}
+                {pendingId === p.id ? <BusyDot /> : null}
               </button>
             );
           })}
         </div>
       </SettingsCard>
 
+      {active ? <AuthCard provider={active} onRefresh={onRefresh} /> : null}
+
       <SettingsCard
-        title={`Model — ${active?.displayName ?? "…"}`}
-        description="Applies to the active provider only. Persists to CLI provider.json."
+        title={`3 · Model${active ? ` — ${active.displayName}` : ""}`}
+        description="The model new messages use with this provider."
       >
         <SettingsRow
           label="Model"
-          hint={
-            active?.thinkingCapability
-              ? "This provider supports thinking/reasoning levels."
-              : undefined
+          hint={active?.thinkingCapability ? "Supports adjustable thinking effort (set it in the chat bar)." : undefined}
+          help={
+            <SettingHelp id="tooltip-model" label="Model">
+              Bigger models are usually smarter but slower and pricier; “mini”, “flash” or “fast”
+              variants are quicker and cheaper. Pick “Other…” to type a model id that is not
+              listed (new releases, local models).
+            </SettingHelp>
           }
         >
           <SelectInput
-            value={currentModel}
+            value={showOtherField ? OTHER_MODEL : currentModel}
             ariaLabel="Model"
-            disabled={!active}
-            onChange={saveModel}
+            disabled={!active || busy}
+            onChange={(v) => {
+              if (v === OTHER_MODEL) {
+                setTypingOther(true);
+                return;
+              }
+              setTypingOther(false);
+              saveModel(v);
+            }}
           >
-            {(active?.models ?? []).map((m) => (
+            {presetModels.map((m) => (
               <option key={m} value={m}>
                 {m}
               </option>
             ))}
-            {currentModel && !(active?.models ?? []).includes(currentModel) && (
-              <option value={currentModel}>{currentModel}</option>
-            )}
+            <option value={OTHER_MODEL}>Other… (type a model id)</option>
           </SelectInput>
           {busy ? <BusyDot /> : null}
         </SettingsRow>
-        <SettingsRow
-          label="Custom model id"
-          hint="Optional — overrides the preset when non-empty (e.g. MiniMax-M2.5, local models)."
-        >
-          <TextInput
-            value={customModel}
-            placeholder="e.g. MiniMax-M2.5"
-            ariaLabel="Custom model id"
-            disabled={!active}
-            onCommit={(v) => {
-              setCustomModel(v);
-              saveModel(resolveModelId(v, currentModel));
-            }}
-          />
-        </SettingsRow>
-      </SettingsCard>
-
-      <SettingsCard
-        title="Advanced"
-        description="OpenAI-compatible base URL for local runtimes and proxies (Ollama, LM Studio, vLLM…)."
-      >
-        <SettingsRow
-          label="Base URL"
-          hint={
-            active?.baseUrl ? (
-              <>
-                Effective base: <code>{active.baseUrl}</code>
-              </>
-            ) : (
-              "Applies via customEndpoints."
-            )
-          }
-        >
-          <TextInput
-            value={endpointDraft ?? active?.endpoint ?? ""}
-            placeholder="http://127.0.0.1:11434/v1"
-            ariaLabel="Base URL"
-            disabled={!active}
-            onCommit={(v) => {
-              setEndpointDraft(v);
-              saveEndpoint(v);
-            }}
-          />
-          <button
-            type="button"
-            className="btn-ghost"
-            disabled={busy || !active?.endpoint}
-            onClick={clearEndpoint}
-          >
-            Clear
-          </button>
-        </SettingsRow>
-        {active?.apiStyle ? (
+        {showOtherField ? (
           <SettingsRow
-            label="API style"
-            hint="responses = POST {baseUrl}/responses (OpenAI Responses API). chat = POST {baseUrl}/chat/completions."
+            label="Model id"
+            hint="Exactly as the provider names it. Saved when you press Enter or leave the field."
           >
-            <SelectInput
-              value={active.apiStyle}
-              ariaLabel="API style"
-              disabled={busy}
-              onChange={(v) => saveApiStyle(v as "chat" | "responses")}
-            >
-              <option value="chat">chat (/chat/completions)</option>
-              <option value="responses">responses (/responses)</option>
-            </SelectInput>
-            {busy ? <BusyDot /> : null}
+            <TextInput
+              value={isCustomModel ? currentModel : ""}
+              placeholder="e.g. my-local-model"
+              ariaLabel="Model id"
+              disabled={!active}
+              onCommit={saveModel}
+            />
           </SettingsRow>
         ) : null}
       </SettingsCard>
 
-      {active ? <AuthCard provider={active} onRefresh={onRefresh} /> : null}
+      {active ? (
+        <SettingsCard>
+          <Collapsible
+            summary="Advanced connection settings"
+            hint="Only needed for local runtimes, proxies or self-hosted servers."
+            defaultOpen={ENDPOINT_PROVIDERS.has(active.id) || Boolean(active.endpoint)}
+          >
+            <SettingsRow
+              label="Server address"
+              hint={
+                active.baseUrl ? (
+                  <span className="s-hint-block">
+                    In use: <code>{active.baseUrl}</code>
+                  </span>
+                ) : (
+                  "Leave empty to use the provider's default."
+                )
+              }
+              help={
+                <SettingHelp id="tooltip-base-url" label="Server address">
+                  The base URL requests are sent to — e.g. http://127.0.0.1:11434/v1 for Ollama or
+                  LM Studio. Only change it if you run your own server or a proxy.
+                </SettingHelp>
+              }
+            >
+              <TextInput
+                value={endpointDraft ?? active.endpoint ?? ""}
+                placeholder="http://127.0.0.1:11434/v1"
+                ariaLabel="Server address"
+                onCommit={(v) => {
+                  setEndpointDraft(v);
+                  saveEndpoint(v);
+                }}
+              />
+              <button
+                type="button"
+                className="btn-ghost"
+                disabled={busy || !active.endpoint}
+                onClick={clearEndpoint}
+                title="Go back to the provider's default address"
+              >
+                Reset
+              </button>
+            </SettingsRow>
+            {active.apiStyle ? (
+              <SettingsRow
+                label="API format"
+                stacked
+                help={
+                  <SettingHelp id="tooltip-api-style" label="API format">
+                    How requests are shaped. Almost every provider speaks Chat Completions; pick
+                    Responses only if your server documents the OpenAI Responses API.
+                  </SettingHelp>
+                }
+              >
+                <ChoiceList
+                  name="api-style"
+                  ariaLabel="API format"
+                  value={active.apiStyle}
+                  disabled={busy}
+                  onChange={saveApiStyle}
+                  options={[
+                    {
+                      value: "chat",
+                      label: "Chat Completions",
+                      badge: "Most providers",
+                      description: "POST /chat/completions — the standard OpenAI-compatible format.",
+                    },
+                    {
+                      value: "responses",
+                      label: "Responses API",
+                      description: "POST /responses — newer OpenAI format, supported by fewer servers.",
+                    },
+                  ]}
+                />
+              </SettingsRow>
+            ) : null}
+          </Collapsible>
+        </SettingsCard>
+      ) : null}
     </>
   );
 }

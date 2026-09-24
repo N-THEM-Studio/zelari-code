@@ -317,7 +317,23 @@ export function applyKrakenTurnEnv(opts: HeadlessOptions): void {
       setTurnEnv(envKey, raw.trim());
     }
   }
+  for (const [field, envKey] of VERIFICATION_TURN_ENV) {
+    const raw = opts[field];
+    if (typeof raw === 'boolean') setTurnEnv(envKey, raw ? '1' : '0');
+  }
 }
+
+/**
+ * Boolean per-turn verification knobs (Desktop Settings → Agents → Quality
+ * checks). Same overlay as the Kraken fields above: the value applies to THIS
+ * turn only, so a Settings toggle takes effect on the next run instead of
+ * being pinned for the sidecar's lifetime.
+ */
+const VERIFICATION_TURN_ENV: Array<[keyof HeadlessOptions, string]> = [
+  ['verifyPack', 'ZELARI_VERIFY_PACK'],
+  ['verifierReview', 'ZELARI_VERIFIER_REVIEW'],
+  ['krakenCrossModel', 'ZELARI_KRAKEN_CROSS_MODEL'],
+];
 
 export async function dispatchHeadlessTurn(
   opts: HeadlessOptions,

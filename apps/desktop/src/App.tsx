@@ -3496,6 +3496,7 @@ export default function App() {
         verifyPack: prefs.verifyPack,
         verifierReview: prefs.verifierReview ?? undefined,
         bonAlpha: prefs.bonAlpha,
+        krakenCrossModel: prefs.krakenCrossModel,
         gauntletLoop: prefs.gauntletLoop,
         krakenExploreModel: prefs.krakenExploreModel || undefined,
         krakenGeneralModel: prefs.krakenGeneralModel || undefined,

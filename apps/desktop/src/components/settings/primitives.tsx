@@ -88,23 +88,113 @@ export function SettingsToastProvider({ children }: { children: ReactNode }) {
 export function SettingsCard({
   title,
   description,
+  help,
   actions,
   children,
   className = "",
 }: {
   title?: string;
   description?: ReactNode;
+  /** Optional ⓘ help next to the title (use <SettingHelp/>). */
+  help?: ReactNode;
   actions?: ReactNode;
   children: ReactNode;
   className?: string;
 }) {
   return (
     <section className={`s-card ${className}`}>
-      {title ? <h3 className="s-card-title">{title}</h3> : null}
+      {title ? (
+        <h3 className="s-card-title">
+          {title}
+          {help ? <span className="s-row-help-inline">{help}</span> : null}
+        </h3>
+      ) : null}
       {description ? <p className="s-card-desc">{description}</p> : null}
       {children}
       {actions ? <div className="s-card-actions">{actions}</div> : null}
     </section>
+  );
+}
+
+/* ---------------- Choices & disclosure ---------------- */
+
+export interface ChoiceOption<T extends string> {
+  value: T;
+  label: string;
+  /** One plain-language line under the label. */
+  description: string;
+  /** Small tag after the label, e.g. "Recommended". */
+  badge?: string;
+}
+
+/**
+ * Radio-card list: every option shows its label AND what it does, so a new
+ * user never has to decode a terse select value. Keyboard: native radios
+ * (arrow keys move within the group).
+ */
+export function ChoiceList<T extends string>({
+  name,
+  value,
+  options,
+  onChange,
+  ariaLabel,
+  disabled = false,
+}: {
+  name: string;
+  value: T;
+  options: readonly ChoiceOption<T>[];
+  onChange: (next: T) => void;
+  ariaLabel: string;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="s-choice-list" role="radiogroup" aria-label={ariaLabel}>
+      {options.map((o) => {
+        const checked = o.value === value;
+        return (
+          <label key={o.value} className={`s-choice${checked ? " active" : ""}`}>
+            <input
+              type="radio"
+              name={name}
+              value={o.value}
+              checked={checked}
+              disabled={disabled}
+              onChange={() => onChange(o.value)}
+            />
+            <span className="s-choice-body">
+              <span className="s-choice-label">
+                {o.label}
+                {o.badge ? <span className="s-choice-badge">{o.badge}</span> : null}
+              </span>
+              <span className="s-choice-desc">{o.description}</span>
+            </span>
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Collapsible block for advanced / rarely-changed settings. */
+export function Collapsible({
+  summary,
+  hint,
+  defaultOpen = false,
+  children,
+}: {
+  summary: string;
+  hint?: string;
+  defaultOpen?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <details className="s-collapsible" open={defaultOpen}>
+      <summary>
+        <span className="s-collapsible-title">{summary}</span>
+        {hint ? <span className="s-collapsible-hint">{hint}</span> : null}
+      </summary>
+      <div className="s-collapsible-body">{children}</div>
+    </details>
   );
 }
 

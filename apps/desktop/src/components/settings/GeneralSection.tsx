@@ -1,13 +1,10 @@
 /**
- * General — theme (top!), new-chat defaults, execution profile.
- * Every control autosaves through granular callbacks.
+ * General — theme (top!), new-chat defaults, notifications.
+ * Every control autosaves through granular callbacks. The execution profile
+ * moved to Agents → Advanced (it is an engine setting, not a preference).
  */
 import { useEffect, useState } from "react";
 import type { DispatchMode, WorkPhase } from "../../types";
-import {
-  EXECUTION_PROFILES,
-  type ExecutionProfile,
-} from "../../desktopPrefs";
 import { requestNotifyPermission } from "../../inboxNotify";
 import { ACCENT_PRESETS, DEFAULT_ACCENT_COLOR } from "../../theme/accent";
 import { BAFFETTI_PRESETS } from "../../theme/baffetti";
@@ -19,8 +16,6 @@ export interface GeneralSectionProps {
   defaultMode: DispatchMode;
   defaultPhase: WorkPhase;
   onDefaultsChange: (mode: DispatchMode, phase: WorkPhase) => void;
-  profile: ExecutionProfile;
-  onProfileChange: (profile: ExecutionProfile) => void;
   /** Baffetti (brand mark) master color — #rrggbb. */
   mustacheColor: string;
   onMustacheColorChange: (color: string) => void;
@@ -44,21 +39,12 @@ const MODE_OPTIONS: { value: DispatchMode; label: string }[] = [
   { value: "zelari", label: "Zelari — long-running missions" },
 ];
 
-const PROFILE_HINTS: Record<ExecutionProfile, string> = {
-  "minimal/v1": "Tools only — no sub-agents, no hooks.",
-  "kraken/v1": "Kraken lead + explore/general/verify tentacles (default).",
-  "council/v1": "Council roles and phases (Caronte, Nettuno, Lucifero…).",
-  "mission/v1": "Zelari mission loop with plan → build → verify.",
-};
-
 export function GeneralSection({
   theme,
   onThemeChange,
   defaultMode,
   defaultPhase,
   onDefaultsChange,
-  profile,
-  onProfileChange,
   mustacheColor,
   onMustacheColorChange,
   accentColor,
@@ -76,7 +62,7 @@ export function GeneralSection({
     <>
       <div className="settings-section-head">
         <h2>General</h2>
-        <p>Appearance, what new chats start with, and the execution profile.</p>
+        <p>Appearance, what new chats start with, and notifications.</p>
       </div>
 
       <SettingsCard title="Appearance" description="Dark is the default liquid-glass look.">
@@ -201,25 +187,6 @@ export function GeneralSection({
           >
             <option value="plan">Plan — design first</option>
             <option value="build">Build — implement on disk</option>
-          </SelectInput>
-        </SettingsRow>
-      </SettingsCard>
-
-      <SettingsCard
-        title="Execution profile"
-        description="Which execution seams (workspace, shell, sub-agents) the CLI wires up for runs."
-      >
-        <SettingsRow label="Profile" hint={PROFILE_HINTS[profile]}>
-          <SelectInput
-            value={profile}
-            ariaLabel="Execution profile"
-            onChange={(v) => onProfileChange(v as ExecutionProfile)}
-          >
-            {EXECUTION_PROFILES.map((p) => (
-              <option key={p} value={p}>
-                {p}
-              </option>
-            ))}
           </SelectInput>
         </SettingsRow>
       </SettingsCard>

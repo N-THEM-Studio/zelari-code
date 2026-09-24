@@ -18,6 +18,7 @@ import { promisify } from 'node:util';
 // t22: the active contract-scope seam feeds the live taskContractDigest.
 import { activeContractScope } from './contractCompiler.js';
 import type { HarnessManifest } from './completionProofAttestation.js';
+import { turnEnv } from '../sessionScope.js';
 
 const HARNESS_VERSION_FALLBACK = '2.13.0';
 /**
@@ -51,7 +52,7 @@ async function readHarnessVersion(): Promise<string> {
  * policies were layered/loaded. Constant per configuration — cheap, and
  * enough to detect cross-environment drift.
  */
-export async function harnessManifest(env: NodeJS.ProcessEnv = process.env): Promise<HarnessManifest> {
+export async function harnessManifest(env: NodeJS.ProcessEnv = turnEnv()): Promise<HarnessManifest> {
   const [{ policyPrecedenceFromEnv }, { activePolicyLoadMode }, { ZELARI_CODING_PACK_ID }] = await Promise.all([
     import('../safety/policyEngine.js'),
     import('../safety/policyLoadMode.js'),
@@ -114,7 +115,7 @@ export async function gatherGitAttestation(cwd: string = process.cwd()): Promise
  */
 export async function defaultVerificationPlanSnapshot(
   cwd: string = process.cwd(),
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
 ): Promise<unknown> {
   try {
     const { nativePackEnabled, resolvePackCommandsForRoot } = await import('./nativeVerification.js');

@@ -46,8 +46,6 @@ function props(
     defaultMode: "kraken",
     defaultPhase: "build",
     onDefaultsChange: () => {},
-    profile: "kraken/v1",
-    onProfileChange: () => {},
     mustacheColor: "#d8d8dc",
     onMustacheColorChange: () => {},
     onAccentColorChange: () => {},

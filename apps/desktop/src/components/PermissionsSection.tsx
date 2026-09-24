@@ -1,53 +1,61 @@
 /**
  * Desktop Settings → tool-permission preset (2.32 desktop parity slice).
  *
- * Before this toggle the Desktop had no way to loosen or tighten the
- * fail-closed sidecar: bash/network were silently denied after 2.32 made
- * headless honest. The preset rides run.turn as `permissionPreset` and
- * the CLI allowlists it (serve/permissionBridge.ts) — no env injection.
+ * The preset rides run.turn as `permissionPreset` and the CLI allowlists it
+ * (serve/permissionBridge.ts) — no env injection; it applies to that turn
+ * only. Rendered as described choices so a new user can tell what each level
+ * actually allows without decoding a terse select value.
  *
- * Mounted inside the Agents section; uses the same settings primitives
- * (SettingsCard/SettingsRow/SelectInput) as every other section.
+ * Mounted inside the Agents section; uses the same settings primitives as
+ * every other section.
  */
-import type { DesktopPrefs } from "../desktopPrefs";
-import { PERMISSION_PRESETS, type PermissionPreset } from "../desktopPrefs";
-import { SelectInput, SettingsCard, SettingsRow } from "./settings/primitives";
+import type { DesktopPrefs, PermissionPreset } from "../desktopPrefs";
+import { SettingHelp } from "./SettingHelp";
+import { ChoiceList, SettingsCard, type ChoiceOption } from "./settings/primitives";
 
 interface Props {
   prefs: DesktopPrefs;
   onPrefsChange: (partial: Partial<DesktopPrefs>) => void;
 }
 
-const PRESET_HELP: Record<PermissionPreset, string> = {
-  standard:
-    "Reads and writes allowed; commands and network ask in chat (Allow once / Always this session / Deny)",
-  strict:
-    "Everything that can ask, asks. Safest for untrusted repos; expect frequent blocks in headless runs",
-  yolo:
-    "Category defaults become allow. Provenance, policy.json, and ZELARI_PERMISSION_*=ask|deny still win — not a master switch",
-};
+const PRESET_OPTIONS: readonly ChoiceOption<PermissionPreset>[] = [
+  {
+    value: "standard",
+    label: "Standard",
+    badge: "Recommended",
+    description: "Reads and edits files freely; asks in chat before running commands or using the network.",
+  },
+  {
+    value: "strict",
+    label: "Ask for everything",
+    description: "Asks before any action that can ask. Safest for unfamiliar repos; expect frequent prompts.",
+  },
+  {
+    value: "yolo",
+    label: "Full auto",
+    description: "Allows every category without asking. Project policy and explicit deny rules still apply.",
+  },
+];
 
 export function PermissionsSection({ prefs, onPrefsChange }: Props) {
   return (
     <SettingsCard
       title="Tool permissions"
-      description="Applies per turn to runs from this window — set for the turn, then cleared (never sidecar-wide). Unknown presets fall back to standard — the sidecar stays fail-closed."
+      description="What Kraken may do without asking you first. Applies to runs started from this window."
+      help={
+        <SettingHelp id="tooltip-permissions" label="Tool permissions">
+          When an action needs approval, a card appears in the chat with Allow once / Always this
+          session / Deny. Rules in the project's .zelari/policy.json always win over this preset.
+        </SettingHelp>
+      }
     >
-      <SettingsRow label="Preset">
-        <SelectInput
-          value={prefs.permissionPreset}
-          ariaLabel="Permission preset"
-          onChange={(v) =>
-            onPrefsChange({ permissionPreset: v as PermissionPreset })
-          }
-        >
-          {PERMISSION_PRESETS.map((preset) => (
-            <option key={preset} value={preset}>
-              {preset} — {PRESET_HELP[preset]}
-            </option>
-          ))}
-        </SelectInput>
-      </SettingsRow>
+      <ChoiceList
+        name="permission-preset"
+        ariaLabel="Permission preset"
+        value={prefs.permissionPreset}
+        options={PRESET_OPTIONS}
+        onChange={(v) => onPrefsChange({ permissionPreset: v })}
+      />
     </SettingsCard>
   );
 }
