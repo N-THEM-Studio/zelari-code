@@ -156,10 +156,16 @@ export function buildPlanSummary(
   const userMessage = options?.userMessage?.trim();
   let scopedOpen = open;
   if (userMessage) {
+    // Scope input hygiene (2026-09-24): closed tasks' notes are HISTORICAL
+    // records, not current scope. Serializing the whole plan let a completed
+    // task's notes leak verbatim into "Out of scope / backlog" for unrelated
+    // requests (observed: t104's "dispatchCouncilPrompt (riga 1650)…" text).
+    // Phases and milestones stay: they are current-era structure.
+    const scopePlanText = JSON.stringify({ ...plan, tasks: open });
     const scope = extractTaskScope({
       userMessage,
       nfrSpec: loadNfrSpec(zelariRoot),
-      planText: JSON.stringify(plan),
+      planText: scopePlanText,
     });
     if (scope.targets.length > 0 || scope.keywords.length > 0) {
       parts.push(
