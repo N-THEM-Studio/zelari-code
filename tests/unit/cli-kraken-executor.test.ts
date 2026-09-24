@@ -2559,12 +2559,12 @@ describe('P2.B semantic ownership (ownedSymbols)', () => {
     expect(events.some((e) => e.kind === 'node_semantic_admitted')).toBe(false);
   });
 
-  it('worktree off: disjoint same-file symbols admit plainly with telemetry', async () => {
+  it('worktree off: disjoint same-file symbols are gated (K3.7) and deferred with telemetry', async () => {
     const { runTentacleFn, state } = makeRunner();
     const executor = new KrakenGraphExecutor({
       taskToolDeps: fakeTaskToolDeps,
       parentCwd: '/tmp/repo',
-      sessionId: 'sem-plain',
+      sessionId: 'sem-gated',
       runTentacleFn,
       worldModelGate: false,
       ownershipCaseFolding: true,
@@ -2574,12 +2574,16 @@ describe('P2.B semantic ownership (ownedSymbols)', () => {
     await executor.execute(
       sameFilePair(['src/auth.ts#AuthService.login'], ['src/auth.ts#TokenService.refresh']),
     );
-    expect(state.peakInFlight).toBe(2);
-    const events = readKrakenRadio('/tmp/repo', 'sem-plain');
-    const evt = events.find((e) => e.kind === 'node_semantic_admitted');
-    expect(evt).toBeDefined();
-    expect(evt?.rationaleCode).toBe('semantic-disjoint-plain');
-    expect(evt?.contestedFile).toBe('src/auth.ts');
+    // K3.7: plain semantic admission is licensed only by scheduling 'auto', so
+    // g2 stays deferred until g1 settles — never two writers in flight here.
+    expect(state.peakInFlight).toBe(1);
+    const events = readKrakenRadio('/tmp/repo', 'sem-gated');
+    // The deferral names g2, and the gate says exactly why (K3.7)…
+    const deferred = events.find((e) => e.kind === 'node_deferred' && e.description === 'g2');
+    expect(deferred).toBeDefined();
+    expect(deferred?.detail ?? '').toMatch(/K3\.7/);
+    // …and the plain semantic admission never fires outside 'auto'.
+    expect(events.some((e) => e.kind === 'node_semantic_admitted')).toBe(false);
   });
 });
 
