@@ -55,10 +55,6 @@ import { homedir } from 'node:os';
 import path from 'node:path';
 import type { PermissionAction } from './toolPermissions.js';
 import type { ToolPermission } from '@zelari/core/harness/tools/toolTypes';
-// ADR-0039 Phase 2: the deprecated `.zelari/permissions.json`, read through
-// engine A's own loader and translated into native globs for the compat layer.
-import { loadCompatPolicyLayer } from './permissionCompat.js';
-
 /** Rule effect reuses the category lattice: allow | ask | deny. */
 export type PolicyEffect = PermissionAction;
 
@@ -181,17 +177,6 @@ export interface LayeredPolicyRuleSet {
   global: PolicyRuleSet;
   /** `<root>/.zelari/policy.json` rules — repo-level refinement. */
   project: PolicyRuleSet;
-  /**
-   * ADR-0039 Phase 2 compat layer: the DEPRECATED
-   * `<root>/.zelari/permissions.json` (engine A syntax) translated into native
-   * globs by permissionCompat.ts. It keeps its OWN slot on purpose — a decision
-   * it takes must stay attributable to a translated rule, not to a
-   * `policy.json` one — and Phase 3 deletes the whole slot. Absent in every set
-   * whose tree has no such file (see loadPolicySet). Combinatorially it is a
-   * THIRD restriction source, intersected restrict-only like the other two
-   * (policyLayers.matchAgentPolicyRuleLayered).
-   */
-  compat?: PolicyRuleSet;
 }
 
 export interface PolicySet {
@@ -201,14 +186,6 @@ export interface PolicySet {
   warnings: string[];
   /** Which precedence resolved this set (read once at load time). */
   precedence: PolicyPrecedence;
-  /**
-   * ADR-0039 Phase 2 (see `LayeredPolicyRuleSet.compat`). Held ONCE per set, not
-   * per agent: `.zelari/permissions.json` has no agent dimension, so the layer
-   * applies to every agent — `agentLayersFor` merges it into whichever layers it
-   * is asked for, including the ones no `policy.json` mentions. Absent when the
-   * file is absent, rule-less, unusable, or fully untranslatable.
-   */
-  compat?: PolicyRuleSet;
 }
 
 /** The authoritative agent keys ('lead' = the main registry; the three
@@ -228,28 +205,20 @@ export function emptyPolicySet(): PolicySet {
 
 /** Raw layers for one agent; unknown/unlisted agents get the empty layers. */
 export function agentLayersFor(set: PolicySet, agent: string): LayeredPolicyRuleSet {
-  const layers = set.agents.get(agent) ?? EMPTY_POLICY_LAYERS;
-  // ADR-0039 Phase 2: the compat layer is keyed by the FILE, not by the agent,
-  // so it reaches every agent — including the ones `policy.json` never mentions
-  // (those would otherwise silently lose the file they still rely on).
-  return set.compat === undefined ? layers : { ...layers, compat: set.compat };
+  return set.agents.get(agent) ?? EMPTY_POLICY_LAYERS;
 }
 
 /**
- * COMPAT view (v1 shape): project rules, then the ADR-0039 compat layer, then
- * global rules in ONE list — first-match over this concatenation IS legacy
- * precedence. Restrict-only consumers must use agentLayersFor +
- * matchAgentPolicyRuleLayered instead.
+ * COMPAT view (v1 shape): project rules, then global rules in ONE list —
+ * first-match over this concatenation IS legacy precedence. Restrict-only
+ * consumers must use agentLayersFor + matchAgentPolicyRuleLayered instead.
  */
 export function agentRulesFor(set: PolicySet, agent: string): PolicyRuleSet {
   const l = set.agents.get(agent);
-  const compat = set.compat;
-  if (!l && !compat) return EMPTY_POLICY_RULE_SET;
-  const project = l?.project ?? EMPTY_POLICY_RULE_SET;
-  const global = l?.global ?? EMPTY_POLICY_RULE_SET;
+  if (!l) return EMPTY_POLICY_RULE_SET;
   return {
-    shell: [...project.shell, ...(compat?.shell ?? []), ...global.shell],
-    edit: [...project.edit, ...(compat?.edit ?? []), ...global.edit],
+    shell: [...l.project.shell, ...l.global.shell],
+    edit: [...l.project.edit, ...l.global.edit],
   };
 }
 
@@ -592,12 +561,6 @@ function readPolicyFile(
  * `policy-load-failed` (headless/policyGate.ts). Missing files stay empty in
  * both modes. Pass `homeDir` to override the global-file location (tests).
  *
- * ADR-0039 Phase 2 adds a THIRD, deprecated source to the same load:
- * `<root>/.zelari/permissions.json` (engine A syntax) is read through engine A's
- * loader, translated to native globs and returned as `PolicySet.compat`
- * (permissionCompat.ts owns the decision; agentLayersFor merges it into every
- * agent's layers). Its problems are warnings in BOTH modes on purpose — ADR-0039
- * §3 keeps exit 2 for an explicit strict `policy.json` load.
  */
 export function loadPolicySet(root: string, opts: LoadPolicyOptions = {}): PolicySet {
   if (isPolicyEngineDisabled()) return emptyPolicySet();
@@ -610,16 +573,6 @@ export function loadPolicySet(root: string, opts: LoadPolicyOptions = {}): Polic
     warnings,
     mode,
   );
-  // ADR-0039 Phase 2: the DEPRECATED `<root>/.zelari/permissions.json` is
-  // honored through THIS engine now — read with engine A's own loader, translated
-  // to native globs and injected as a separate `compat` layer (never merged into
-  // `project`: a decision it takes must stay attributable). Its notices travel in
-  // `warnings` for the host to print once, and nothing here throws in strict
-  // mode: strictness is a property of an EXPLICIT policy.json load (ADR-0039 §3),
-  // while a malformed user config that engine A already degrades to `ask` must
-  // not turn into an exit 2. Skipped entirely when ZELARI_POLICY=0 (above).
-  const compat = loadCompatPolicyLayer(root);
-  warnings.push(...compat.warnings);
   const agents = new Map<string, LayeredPolicyRuleSet>();
   for (const [agent, p] of project) {
     agents.set(agent, { project: p, global: EMPTY_POLICY_RULE_SET });
@@ -632,6 +585,5 @@ export function loadPolicySet(root: string, opts: LoadPolicyOptions = {}): Polic
     agents,
     warnings,
     precedence,
-    ...(compat.compat !== undefined ? { compat: compat.compat } : {}),
   };
 }

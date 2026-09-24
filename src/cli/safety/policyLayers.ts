@@ -2,9 +2,8 @@
  * Policy LAYERS (P0.A) — combination semantics for layered agent policies.
  *
  * Split out of policyEngine.ts to keep both files small. This module owns
- * the RESTRICT-ONLY half of the evaluator: each layer (global, project —
- * plus the ADR-0039 Phase 2 `compat` layer, the translated
- * `.zelari/permissions.json`) matches independently against a tool
+ * the RESTRICT-ONLY half of the evaluator: each layer (global, project)
+ * matches independently against a tool
  * invocation, and matched effects intersect most-restrictive-wins:
  *
  *      deny > ask > allow        (see intersectEffects)
@@ -51,12 +50,9 @@ export function intersectEffects(...effects: Array<PermissionAction | undefined>
  *
  * - `restrict-only` (default): each layer matches independently and the
  *   STRICTER effect wins; equal ranks surface the more specific intent, in
- *   this order — project, then the ADR-0039 `compat` layer (the deprecated
- *   `.zelari/permissions.json`, project-scoped config), then the global floor.
+ *   this order — project, then the global floor.
  * - `legacy`: v1 semantics — rules concatenated in THAT SAME order, FIRST match
- *   wins (a project match masks everything after it). The compat layer sits
- *   after the project rules for the same reason: `.zelari/permissions.json` is
- *   project-scoped config and must not outrank a `policy.json` rule.
+ *   wins (a project match masks everything after it).
  *
  * Either way the layer is purely ADDITIVE: it can make the result stricter,
  * never laxer (see intersectEffects and wrapWithPermissions in toolRegistry.ts).
@@ -71,13 +67,12 @@ export function matchAgentPolicyRuleLayered(
   root?: string,
 ): PolicyRule | null {
   if (!layers) return null;
-  const compat = layers.compat;
   if (precedence === 'legacy') {
-    // v1: ONE concatenated list — project rules, then compat, then global.
+    // v1: ONE concatenated list — project rules, then global.
     return matchAgentPolicyRule(
       {
-        shell: [...layers.project.shell, ...(compat?.shell ?? []), ...layers.global.shell],
-        edit: [...layers.project.edit, ...(compat?.edit ?? []), ...layers.global.edit],
+        shell: [...layers.project.shell, ...layers.global.shell],
+        edit: [...layers.project.edit, ...layers.global.edit],
       },
       required,
       args,
@@ -87,9 +82,8 @@ export function matchAgentPolicyRuleLayered(
   // Default restrict-only: independent matches, stricter effect wins; the first
   // candidate carrying the winning effect is the surfaced representative.
   const p = matchAgentPolicyRule(layers.project, required, args, root);
-  const c = compat ? matchAgentPolicyRule(compat, required, args, root) : null;
   const g = matchAgentPolicyRule(layers.global, required, args, root);
-  const candidates = [p, c, g].filter((rule): rule is PolicyRule => rule !== null);
+  const candidates = [p, g].filter((rule): rule is PolicyRule => rule !== null);
   if (candidates.length === 0) return null;
   const win = intersectEffects(...candidates.map((rule) => rule.effect));
   return candidates.find((rule) => rule.effect === win) ?? null;

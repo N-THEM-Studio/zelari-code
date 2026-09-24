@@ -124,7 +124,6 @@ import {
 } from './safety/policyEngine.js';
 import { activePolicyLoadMode } from './safety/policyLoadMode.js';
 import { intersectEffects, matchAgentPolicyRuleLayered } from './safety/policyLayers.js';
-import { COMPAT_WARNING_TAG } from './safety/permissionCompat.js';
 // t22: the TaskContract compiles into a NON-OVERRIDABLE restrict-only layer.
 import { matchContractCapabilityRule } from './kraken/contractCompiler.js';
 import { describeResourceClaim, matchResourceClaimLayered, resourceClaimsFor, resolveClaimsVerdict } from './safety/resourceClaims.js';
@@ -322,15 +321,6 @@ export interface CreateRegistryOptions {
   memoryService?: MemoryService;
   memoryAutoWrite?: boolean;
 }
-
-/**
- * ADR-0039 Phase 2 notices already written to stderr, keyed by their own text:
- * a session builds several registries (main + one per sub-agent), and a
- * deprecation warning is not a per-build event. Keying on the text (not a
- * boolean) means a DIFFERENT notice — another root, another file — still reaches
- * the operator.
- */
-const printedPolicyCompatNotices = new Set<string>();
 
 /**
  * Create a fresh ToolRegistry pre-populated with the 5 built-in tools,
@@ -553,17 +543,9 @@ const agentPolicySet = (() => {
     throw err;
   }
 })();
-// ADR-0039 Phase 2: `.zelari/permissions.json` is DEPRECATED but still honored —
-// loadPolicySet translated it into the `compat` layer of `agentPolicySet` above.
-// These are the notices the compat loader tagged; rule diagnostics stay in
-// `warnings` where they always were, and an absent file says nothing here. Each
-// distinct notice reaches the operator ONCE per process (a session builds several
-// registries), never per dispatch and never on the deny path.
-for (const warning of agentPolicySet.warnings) {
-  if (!warning.startsWith(COMPAT_WARNING_TAG) || printedPolicyCompatNotices.has(warning)) continue;
-  printedPolicyCompatNotices.add(warning);
-  process.stderr.write(`[policy] ${warning}\n`);
-}
+// ADR-0039 Phase 3 (P3a): the compat layer is gone — the deprecation window
+// (two minors from v2.58) closed with v2.60, so `.zelari/permissions.json` is
+// no longer translated into a policy layer. Engine A itself is next (P3b).
 const agentPolicyLayers: LayeredPolicyRuleSet = agentLayersFor(
   agentPolicySet,
   options.policyAgent ?? 'lead',

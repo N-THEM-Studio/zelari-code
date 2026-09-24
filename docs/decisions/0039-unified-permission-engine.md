@@ -7,7 +7,7 @@
 > Precedent: ADR-0035 was renumbered from a duplicate `0015` (triage 2026-09-04).
 > Content follows the promoted PREP-ADR; the decision is unchanged.
 
-- **Status:** Accepted (phased implementation - adapter-first; engine code NOT yet unified; **Phase 1 landed in t147** - one emission point + parity matrix; **Phase 2 landed** - `.zelari/permissions.json` honored through engine B via the compat layer + load-time deprecation warning, two-minor window)
+- **Status:** Accepted (phased implementation - adapter-first; engine code NOT yet unified; **Phase 1 landed in t147** - one emission point + parity matrix; **Phase 2 landed** - `.zelari/permissions.json` honored through engine B via the compat layer + load-time deprecation warning, two-minor window; **Phase 3 P3a landed (v2.62)** - compat adapter + parity matrix DELETED, window expired at v2.60: engine A removal remains as P3b)
 - **Proposed:** 2026-09-21
 - **Author:** Zelari Code (BUILD phase, on promotion of the design-vault PREP-ADR, t146)
 - **Depends on:** [ADR-0016](./0016-event-sourced-session-log.md) (event-sourced session log), [ADR-0021](./0021-session-spine-contract.md) (spine contract), [ADR-0023](./0023-deterministic-verification-completion.md) (deterministic verification); `src/cli/safety/permissionGate.ts`, `src/cli/safety/policyEngine.ts`, `src/cli/toolRegistry.ts` (restrict-only composition)
@@ -148,4 +148,11 @@ degrades to a backwards-compatibility adapter.**
       extended to it (ADR-0039 §3). Emission stays at the single Phase-1 point, and
       the layer can only add restriction (`permissionCompat.test.ts`).
 - [ ] Phase 3: remove engine A; update `docs/GUIDA.md`, `docs/TOOLS.md`,
-      `MIGRATION.md`.
+      `MIGRATION.md`. **P3a landed (v2.62)**: `permissionCompat.ts` +
+      `permissionAdapter.ts` + `permissionCompat.test.ts` +
+      `permissionParity.test.ts` deleted; `PolicySet`/`LayeredPolicyRuleSet`
+      lost the `compat` slot; `loadPolicySet` no longer reads
+      `.zelari/permissions.json`; MIGRATION.md records the removal.
+      **P3b pending**: delete `permissionGate.ts`/`permissionPolicy.ts`/
+      `permissionRules.ts` + the `/permissions add|remove|clear` session
+      surface, then update `docs/GUIDA.md` and `docs/TOOLS.md`.
