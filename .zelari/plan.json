@@ -820,11 +820,11 @@
       "id": "t149",
       "title": "ADR-0039 Phase 3: rimozione engine A a fine finestra deprecation",
       "name": "ADR-0039 Phase 3: rimozione engine A a fine finestra deprecation",
-      "status": "pending",
+      "status": "completed",
       "priority": "low",
-      "notes": "A fine finestra deprecation (≥v2.59): eliminare l'entry point engine A (valutazione diretta permissionGate nel dispatch) e la sua superficie config; portare claims multi-arg nel layer B (oggi coperti da A: apply_diff headers, observe_batch); spegnere il ciclo policyEngine→permissionCompat→permissionRules; aggiornare GUIDA.md/TOOLS.md/MIGRATION.md. ADR-0039 TODO Phase 3 aperto. Non prima di 2 minor dalla v2.58.\nP3a landed (commit 8138b80, v2.62 line): compat adapter deleted (permissionCompat/permissionAdapter + compat/parity tests, ~1200 LOC), PolicySet/LayeredPolicyRuleSet lost the compat slot, loadPolicySet ignores .zelari/permissions.json, MIGRATION.md records removal. Deprecation window verified expired (P2 in 2.58.0, window >=2.59-2.60, current 2.62.0). REMAINING for task completion: P3b = delete permissionGate/permissionPolicy/permissionRules + /permissions add|remove|clear session surface + update docs/GUIDA.md, docs/TOOLS.md.",
+      "notes": "ADR-0039 Phase 3 COMPLETATA. P3a (commit 8138b80): compat adapter + parity matrix rimossi. P3b (commit 99d64d2, finestra scaduta a v2.62): permissionPolicy.ts/permissionRules.ts/permissionPolicy.test.ts cancellati; permissionGate.ts riscritto events-only (emissioni spine deny/ask/auto-approve + payload hook, zero valutazione); verdetto engine A fuori dal dispatch toolRegistry — category defaults × engine-B layers × TaskContract è l'unico path decisionale; /permissions ridotta a list+denials (superficie session add|remove|clear rimossa; denials resta, derive-only dalla spine). Test convertiti a category-deny (permissionHooks ×4, sessionSink ×1). Gate: safety+sink+slash 21 file 215 passed/2 skipped exit 0; typecheck exit 0. Docs: MIGRATION (rimozione completa, tabella onesta \"stopped working in v2.62\"), ADR-0039 Status → Phase 3 COMPLETE. Claims multi-arg: verificati coperti da engine B resourceClaims (apply_diff headers, observe_batch fan-out) — nessun port necessario.",
       "createdAt": "2026-09-21T16:03:36.666Z",
-      "updatedAt": "2026-09-24T07:39:20.610Z",
+      "updatedAt": "2026-09-24T08:13:51.061Z",
       "files": [
         "src/cli/safety/permissionGate.ts",
         "src/cli/safety/permissionCompat.ts",
@@ -832,7 +832,8 @@
         "docs/GUIDA.md",
         "docs/TOOLS.md",
         "MIGRATION.md"
-      ]
+      ],
+      "completedAt": "2026-09-24T08:13:51.061Z"
     },
     {
       "id": "t150",
