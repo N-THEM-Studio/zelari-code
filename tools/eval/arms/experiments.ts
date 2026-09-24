@@ -21,6 +21,21 @@ export function guardAbArms(): EvalArm[] {
 }
 
 /**
+ * Token-efficiency audit (2026-09-25): the two flagged request changes, alone
+ * and together, against the default request. Ship a flag only if cost per
+ * PASSED case drops and pass rate, tool failures and model calls per case do
+ * not regress beyond noise (see the audit report's test plan).
+ */
+export function tokenEfficiencyArms(): EvalArm[] {
+  return [
+    { id: 'default', env: { ZELARI_TOOL_OFFLOAD: '', ZELARI_PROMPT_PROFILE: '' } },
+    { id: 'tool-offload', env: { ZELARI_TOOL_OFFLOAD: '1', ZELARI_PROMPT_PROFILE: '' } },
+    { id: 'lean-prompt', env: { ZELARI_TOOL_OFFLOAD: '', ZELARI_PROMPT_PROFILE: 'lean' } },
+    { id: 'offload+lean', env: { ZELARI_TOOL_OFFLOAD: '1', ZELARI_PROMPT_PROFILE: 'lean' } },
+  ];
+}
+
+/**
  * §83 — all-lead (routing cleared via '' → key removed) vs routed.
  * Model ids are inputs, never hardcoded placeholders.
  */

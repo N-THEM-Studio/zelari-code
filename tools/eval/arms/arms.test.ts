@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 import { metricsFromNdjson, zeroMetrics } from './metrics.ts';
 import { aggregateByArm, renderComparisonTable } from './reporter.ts';
 import { buildManifest, composeArmEnv, hashFixture } from './runner.ts';
-import { GUARD_AB_REPORT_METRICS, guardAbArms, modelRoutingArms } from './experiments.ts';
+import { GUARD_AB_REPORT_METRICS, guardAbArms, modelRoutingArms, tokenEfficiencyArms } from './experiments.ts';
 import { EvalArmSchema, EvalCaseSchema } from './types.ts';
 import type { ArmRunRecord } from './types.ts';
 
@@ -128,6 +128,14 @@ describe('composeArmEnv (§83)', () => {
 });
 
 describe('experiment presets (§83/§87)', () => {
+  it('tokenEfficiencyArms: default vs each flag vs both, every arm pins both keys', () => {
+    const arms = tokenEfficiencyArms();
+    expect(arms.map((a) => a.id)).toEqual(['default', 'tool-offload', 'lean-prompt', 'offload+lean']);
+    for (const arm of arms) {
+      expect(Object.keys(arm.env).sort()).toEqual(['ZELARI_PROMPT_PROFILE', 'ZELARI_TOOL_OFFLOAD']);
+    }
+  });
+
   it('guardAbArms: two valid arms, off vs on', () => {
     const arms = guardAbArms();
     expect(arms.map((a) => a.id)).toEqual(['guards-off', 'guards-on']);
