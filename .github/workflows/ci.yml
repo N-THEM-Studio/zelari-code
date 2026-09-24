@@ -233,11 +233,11 @@ jobs:
           npm run build
 
   desktop-rust:
-    name: Desktop · cargo check
+    name: Desktop · cargo check + unit tests
     needs: changes
     if: needs.changes.outputs.desktop == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -258,6 +258,12 @@ jobs:
 
       - name: cargo check (sidecar host)
         run: cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+      # Sidecar routing / run-policy / boot-handshake unit tests (lib only).
+      # Same entry point as `npm run test:desktop-rust` locally (which also
+      # handles the Windows comctl32 manifest quirk).
+      - name: cargo test (desktop lib unit tests)
+        run: node scripts/desktop-rust-tests.mjs
 
   android:
     name: Android · assembleDebug
