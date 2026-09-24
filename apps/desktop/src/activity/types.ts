@@ -50,6 +50,13 @@ export interface ActivityAgent {
   durationMs?: number;
   reason?: string;
   tokenUsage?: { input?: number; output?: number };
+  /** Tool executions the tentacle ran (agent_ended; absent when not counted). */
+  toolCalls?: number;
+  /** Tool executions that ended in error (agent_ended). */
+  toolErrors?: number;
+  /** Most tool calls failed: the report rests on a broken tool channel and
+   *  its findings are unverified, even when the tentacle "completed". */
+  toolsDegraded?: boolean;
   scope?: string[];
   worktree?: string;
   graphNodeId?: string;

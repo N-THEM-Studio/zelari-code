@@ -1926,6 +1926,13 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       reason: info.ok === false ? (info.detail ?? 'failed') : 'completed',
       ok: info.ok !== false,
       durationMs: info.durationMs ?? 0,
+      // F4 → Desktop: the activity row shows failed tool calls and flags a
+      // degraded tool channel instead of painting the tentacle a clean ✓.
+      ...(terminalMetrics.toolCalls !== undefined ? { toolCalls: terminalMetrics.toolCalls } : {}),
+      ...(terminalMetrics.toolErrors ? { toolErrors: terminalMetrics.toolErrors } : {}),
+      ...(isToolChannelDegraded(terminalMetrics.toolCalls, terminalMetrics.toolErrors)
+        ? { toolsDegraded: true }
+        : {}),
       ts: Date.now(),
     } as BrainAgentEndedEvent);
     // t159 (P2a-2): the durable metrics event. Both terminal outcomes emit
@@ -2183,6 +2190,16 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
             ? `provider ${sub.provider} (${sub.model}) unavailable — retrying with ${sub.fallback.provider}/${sub.fallback.model}`
             : `model ${sub.model} unavailable — retrying with ${sub.fallback.model}`,
         );
+        // The Desktop row shows the model that is ACTUALLY running now, not
+        // the one that failed at spawn.
+        emitActivity({
+          type: 'agent_status',
+          agentId: liveId,
+          status: 'running',
+          model: sub.fallback.model,
+          ...(sub.fallback.provider ? { provider: sub.fallback.provider } : {}),
+          ts: Date.now(),
+        } as BrainAgentStatusEvent);
         const retryConfig: AgentHarnessConfig = {
           ...config,
           model: sub.fallback.model,

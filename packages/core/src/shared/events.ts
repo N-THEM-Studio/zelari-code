@@ -113,6 +113,10 @@ export interface BrainAgentStatusEvent extends BrainEventBase {
   agentId: string;
   status: 'queued' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled';
   message?: string;
+  /** Routing changed mid-run (fallback retry): the model now serving the agent. */
+  model?: string;
+  /** Provider now serving the agent (paired with `model`). */
+  provider?: string;
 }
 
 /** A tool execution inside a tentacle (start/end, with duration on end). */
@@ -133,6 +137,12 @@ export interface BrainAgentEndedEvent extends BrainEventBase {
   reason: string;
   ok: boolean;
   durationMs: number;
+  /** Tool executions the tentacle ran (additive; absent when not counted). */
+  toolCalls?: number;
+  /** Tool executions that ended in error (additive; absent when none). */
+  toolErrors?: number;
+  /** Most tool calls failed: the report rests on a broken tool channel. */
+  toolsDegraded?: boolean;
 }
 
 // --- Message streaming ------------------------------------------------------

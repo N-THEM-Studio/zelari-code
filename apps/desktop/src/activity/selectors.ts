@@ -5,7 +5,13 @@ import type { ActivityAgent, ActivityToolEvent, RunActivityState } from "./types
 
 export function selectLead(state: RunActivityState): ActivityAgent | undefined {
   const agents = state.agentOrder.map((id) => state.agents[id]).filter(Boolean);
-  return agents.find((a) => a.role === "lead") ?? agents.find((a) => !a.parentId);
+  // Fallback: a root agent is the lead only when it actually parents someone.
+  // The CLI never spawns a "lead" row and its tentacles carry no parentId, so
+  // a bare `!parentId` match painted the FIRST TENTACLE as the lead.
+  return (
+    agents.find((a) => a.role === "lead") ??
+    agents.find((a) => !a.parentId && agents.some((b) => b.parentId === a.id))
+  );
 }
 
 export function selectTentacles(state: RunActivityState): ActivityAgent[] {

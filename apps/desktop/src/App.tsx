@@ -4108,7 +4108,10 @@ export default function App() {
                     progress={gauntletByConv[active?.id ?? ""] ?? null}
                   />
                 ) : null}
-                <KrakenActivity conversationId={active?.id} />
+                <KrakenActivity
+                  conversationId={active?.id}
+                  leadProvider={active?.provider || provider || undefined}
+                />
                 {verificationByConv[active?.id ?? ""]?.run ? (
                   <VerificationStatusCard
                     run={verificationByConv[active?.id ?? ""].run ?? null}

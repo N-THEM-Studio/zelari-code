@@ -180,12 +180,17 @@ export function activityReducer(
         status: captionCompleted ? "completed" : status ?? a.status,
         // t94: persist the phase caption (previously dropped unless failed).
         phaseMessage: message ?? a.phaseMessage,
+        // Fallback retry: the model/provider now serving the agent.
+        model: typeof ev.model === "string" && ev.model ? ev.model : a.model,
+        provider: typeof ev.provider === "string" && ev.provider ? ev.provider : a.provider,
       }),
       () => ({
         id: agentId,
         role: "general",
         status: captionCompleted ? "completed" : status ?? "running",
         phaseMessage: message,
+        ...(typeof ev.model === "string" && ev.model ? { model: ev.model } : {}),
+        ...(typeof ev.provider === "string" && ev.provider ? { provider: ev.provider } : {}),
         tools: [],
       }),
     );
@@ -258,6 +263,9 @@ export function activityReducer(
           ev.tokenUsage && typeof ev.tokenUsage === "object"
             ? (ev.tokenUsage as { input?: number; output?: number })
             : a.tokenUsage,
+        toolCalls: typeof ev.toolCalls === "number" ? ev.toolCalls : a.toolCalls,
+        toolErrors: typeof ev.toolErrors === "number" ? ev.toolErrors : a.toolErrors,
+        toolsDegraded: ev.toolsDegraded === true ? true : a.toolsDegraded,
         status:
           a.status === "failed" || a.status === "cancelled"
             ? a.status

@@ -9040,6 +9040,34 @@ kbd {
   border-left-color: var(--accent, #4b9cd3);
 }
 
+/* Degraded tool channel: the tentacle finished but most tool calls errored —
+   amber stripe + caption, so a "completed" row no longer reads as clean. */
+.kraken-act-rows .kraken-act-row.is-degraded:not(.is-lead) {
+  border-left-color: var(--warning, #d4a85a);
+}
+
+.kraken-act-degraded {
+  margin-top: 2px;
+  font-size: 0.85em;
+  color: var(--warning, #d4a85a);
+  overflow-wrap: anywhere;
+}
+
+/* Tentacle on another provider than the chat's: the chip names it and
+   stands out from the quiet same-provider model label. */
+.kraken-act-model.is-cross {
+  opacity: 1;
+  padding: 0 5px;
+  border: 1px solid color-mix(in srgb, var(--accent, #4b9cd3) 55%, transparent);
+  border-radius: 6px;
+  color: var(--accent, #4b9cd3);
+  font-size: 0.85em;
+}
+
+.kraken-act-model.is-cross::before {
+  content: none;
+}
+
 /* =========================================================================
  * 21. Follow button → IDE jump-to-bottom affordance (icon-only, right rail)
  * =========================================================================

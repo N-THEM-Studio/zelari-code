@@ -280,6 +280,46 @@ describe("verify caption terminal flip (general row, ADR-0023)", () => {
     expect(s.agents["gen-1"].status).toBe("running");
   });
 
+  it("agent_ended keeps the tool outcome and the degraded-channel flag", () => {
+    const s = reduceall(SPAWN_LEAD, SPAWN_EXPLORE, {
+      type: "agent_ended",
+      agentId: "exp-1",
+      reason: "completed",
+      ok: true,
+      durationMs: 4000,
+      toolCalls: 5,
+      toolErrors: 4,
+      toolsDegraded: true,
+      ts: 6000,
+    });
+    const a = s.agents["exp-1"];
+    expect(a.status).toBe("completed");
+    expect(a.toolCalls).toBe(5);
+    expect(a.toolErrors).toBe(4);
+    expect(a.toolsDegraded).toBe(true);
+    // Older CLIs send none of it: absent stays absent (unknown ≠ clean).
+    const legacy = reduceall(SPAWN_EXPLORE, { type: "agent_ended", agentId: "exp-1", ok: true, ts: 5 });
+    expect(legacy.agents["exp-1"].toolsDegraded).toBeUndefined();
+    expect(legacy.agents["exp-1"].toolCalls).toBeUndefined();
+  });
+
+  it("a fallback retry's agent_status moves the row to the model now running", () => {
+    const s = reduceall(
+      { ...SPAWN_EXPLORE, provider: "grok", model: "grok-4.6" },
+      {
+        type: "agent_status",
+        agentId: "exp-1",
+        status: "running",
+        message: "provider grok (grok-4.6) unavailable — retrying with openai/gpt-5.2",
+        ts: 2100,
+      },
+      { type: "agent_status", agentId: "exp-1", status: "running", model: "gpt-5.2", provider: "openai", ts: 2101 },
+      { type: "agent_status", agentId: "exp-1", status: "running", message: "reading", ts: 2200 },
+    );
+    expect(s.agents["exp-1"].model).toBe("gpt-5.2");
+    expect(s.agents["exp-1"].provider).toBe("openai");
+  });
+
   it("status stays owned by agent_status: a later 'verifying…' re-runs after completion", () => {
     const s = reduceall(
       SPAWN_GEN,
@@ -304,6 +344,21 @@ describe("activity selectors", () => {
   it("selectLead prefers role lead; tentacles exclude it", () => {
     expect(selectLead(state)?.id).toBe("lead");
     expect(selectTentacles(state).map((a) => a.id)).toEqual(["exp-1", "gen-1", "ver-1"]);
+  });
+
+  it("selectLead never promotes a flat tentacle (the CLI spawns no lead row)", () => {
+    const flat = reduceall(
+      { type: "agent_spawned", runId: "run_2", agentId: "t1", role: "explore", ts: 1 },
+      { type: "agent_spawned", runId: "run_2", agentId: "t2", role: "general", ts: 2 },
+    );
+    expect(selectLead(flat)).toBeUndefined();
+    expect(selectTentacles(flat).map((a) => a.id)).toEqual(["t1", "t2"]);
+    // A root that actually parents someone is still the lead.
+    const tree = reduceall(
+      { type: "agent_spawned", runId: "run_3", agentId: "root", role: "general", ts: 1 },
+      { type: "agent_spawned", runId: "run_3", agentId: "kid", parentAgentId: "root", role: "explore", ts: 2 },
+    );
+    expect(selectLead(tree)?.id).toBe("root");
   });
 
   it("selectStatusCounts tallies statuses", () => {

@@ -179,6 +179,50 @@ describe("KrakenActivity — presentation", () => {
     expect(document.querySelector(".kraken-act")).toBeNull();
   });
 
+  it("names the provider of a tentacle routed off the chat's provider", () => {
+    armMock();
+    render(<KrakenActivity conversationId="conv-K" leadProvider="openai" />);
+    emit(LEAD);
+    emit({ ...TENTACLE, provider: "grok" });
+    emit({ ...TENTACLE, agentId: "k-t2", title: "Same family", provider: "openai", model: "gpt-5.2", ts: 3 });
+
+    const cross = document.querySelector(".kraken-act-model.is-cross");
+    expect(cross!.textContent).toBe("grok · grok-4");
+    expect(cross!.getAttribute("title")).toContain("different provider from the chat (openai)");
+    // Same provider: the quiet model-only label, no highlight.
+    const same = screen.getByText("gpt-5.2");
+    expect(same.classList.contains("is-cross")).toBe(false);
+    expect(document.querySelectorAll(".kraken-act-model.is-cross").length).toBe(1);
+  });
+
+  it("flags a completed tentacle whose tool channel was degraded", () => {
+    armMock();
+    render(<KrakenActivity conversationId="conv-K" />);
+    emit(LEAD);
+    emit(TENTACLE);
+    emit({
+      type: "agent_ended",
+      conversationId: "conv-K",
+      runId: "run-K",
+      agentId: "k-t1",
+      reason: "completed",
+      ok: true,
+      durationMs: 1200,
+      toolCalls: 5,
+      toolErrors: 4,
+      toolsDegraded: true,
+      ts: 9,
+    });
+
+    const row = screen.getByText("Map the composer").closest(".kraken-act-row");
+    expect(row!.classList.contains("is-completed")).toBe(true);
+    expect(row!.classList.contains("is-degraded")).toBe(true);
+    expect(row!.querySelector(".kraken-act-degraded")!.textContent).toBe(
+      "⚠ Tools degraded: 4 of 5 tool calls failed — findings unverified",
+    );
+    expect(screen.getByText(/· 1 degraded$/)).toBeTruthy();
+  });
+
   it("expands the lead row on click like any tentacle (§19)", () => {
     armMock();
     render(<KrakenActivity conversationId="conv-K" />);

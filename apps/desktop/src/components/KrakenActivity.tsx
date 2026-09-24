@@ -3,7 +3,8 @@
  *
  * Live execution state of the Kraken lead and tentacles: role glyphs,
  * status, duration, model routing, worktree, current tool and recent
- * tool activity. Self-subscribes to the agent-event stream and renders
+ * tool activity, cross-provider routing and degraded tool channels.
+ * Self-subscribes to the agent-event stream and renders
  * nothing until an agent_spawned arrives (inert by default).
  *
  * Conversation scope (M2): the panel is scoped by `conversationId` — it
@@ -50,23 +51,61 @@ function ThinkingChip({ thinking }: { thinking?: string }) {
   );
 }
 
+type Agent = ReturnType<typeof useRunActivity>["agents"][string];
+
+/**
+ * Where the agent runs: the model, prefixed by its provider when that differs
+ * from the chat's (lead) provider — a tentacle routed to another family, or
+ * moved there by a fallback retry, is exactly what the user wants to notice.
+ */
+function RouteChip({ agent, leadProvider }: { agent: Agent; leadProvider?: string }) {
+  if (!agent.model) return null;
+  const cross =
+    agent.role !== "lead" &&
+    Boolean(agent.provider && leadProvider && agent.provider !== leadProvider);
+  const title = cross
+    ? `Runs on ${agent.provider} (${agent.model}) — a different provider from the chat (${leadProvider})`
+    : agent.provider
+      ? `${agent.provider} / ${agent.model}`
+      : agent.model;
+  return (
+    <span className={`kraken-act-model${cross ? " is-cross" : ""}`} title={title}>
+      {cross ? `${agent.provider} · ${agent.model}` : agent.model}
+    </span>
+  );
+}
+
+/** "3 of 5 tool calls failed" — the degraded-channel caption (P1: a report
+ *  resting on a broken tool channel is not evidence, even when it "completed"). */
+function degradedCaption(agent: Agent): string {
+  const counts =
+    agent.toolErrors !== undefined && agent.toolCalls
+      ? `${agent.toolErrors} of ${agent.toolCalls} tool calls failed`
+      : "most tool calls failed";
+  return `Tools degraded: ${counts} — findings unverified`;
+}
+
 function AgentRow({
   agent,
   expanded,
   isLead = false,
+  leadProvider,
   onToggle,
 }: {
-  agent: ReturnType<typeof useRunActivity>["agents"][string];
+  agent: Agent;
   expanded: boolean;
   /** Rows carry a status stripe (§20): same geometry for lead and tentacles,
    *  same click-to-expand — the lead stays accent via .is-lead. */
   isLead?: boolean;
+  /** The chat's provider: a tentacle on another one gets a highlighted chip. */
+  leadProvider?: string;
   onToggle: () => void;
 }) {
   const tools = selectRecentTools(agent, 8);
+  const degraded = agent.toolsDegraded === true && agent.status !== "running";
   return (
     <div
-      className={`kraken-act-row${expanded ? " is-open" : ""} is-${agent.status ?? "idle"}${isLead ? " is-lead" : ""}`}
+      className={`kraken-act-row${expanded ? " is-open" : ""} is-${agent.status ?? "idle"}${isLead ? " is-lead" : ""}${degraded ? " is-degraded" : ""}`}
       onClick={onToggle}
     >
       <div className="kraken-act-line">
@@ -86,7 +125,7 @@ function AgentRow({
                 : undefined),
           )}
         </span>
-        {agent.model ? <span className="kraken-act-model">{agent.model}</span> : null}
+        <RouteChip agent={agent} leadProvider={leadProvider} />
         <ThinkingChip thinking={agent.thinking} />
         {agent.currentTool ? (
           <span className="kraken-act-tool">· {agent.currentTool}…</span>
@@ -100,11 +139,30 @@ function AgentRow({
           {agent.reason.length > 180 ? `${agent.reason.slice(0, 177)}…` : agent.reason}
         </div>
       ) : null}
+      {degraded ? (
+        <div
+          className="kraken-act-degraded"
+          title="The tentacle finished, but most of its tool calls errored — its report may rest on reads that never happened. Check before relying on it."
+        >
+          ⚠ {degradedCaption(agent)}
+        </div>
+      ) : null}
       {expanded ? (
         <div className="kraken-act-details">
           {agent.worktree ? <div>worktree: {shortWorktree(agent.worktree)}</div> : null}
           {agent.graphNodeId ? <div>graph node: {agent.graphNodeId}</div> : null}
           {agent.scope?.length ? <div>scope: {agent.scope.join(", ")}</div> : null}
+          {agent.provider && agent.model ? (
+            <div>
+              model: {agent.provider} / {agent.model}
+            </div>
+          ) : null}
+          {agent.toolCalls !== undefined ? (
+            <div>
+              tool calls: {agent.toolCalls}
+              {agent.toolErrors ? ` (${agent.toolErrors} failed)` : ""}
+            </div>
+          ) : null}
           {agent.tokenUsage?.output ? <div>output tokens: {agent.tokenUsage.output}</div> : null}
           {tools.length ? (
             <div className="kraken-act-tools">
@@ -126,7 +184,14 @@ function AgentRow({
   );
 }
 
-export function KrakenActivity({ conversationId }: { conversationId?: string }) {
+export function KrakenActivity({
+  conversationId,
+  leadProvider,
+}: {
+  conversationId?: string;
+  /** Provider the chat (lead) runs on — tentacles on another one are highlighted. */
+  leadProvider?: string;
+}) {
   // Scope (M2): the panel renders the activity of ITS conversation only —
   // `conversationId` is both the routing key and the paint key. It does not
   // self-declare as the active chat (that made whichever run was streaming
@@ -145,6 +210,9 @@ export function KrakenActivity({ conversationId }: { conversationId?: string }) 
   const warnings = state.warnings;
   const pending = selectPendingControls(state);
   const hasAgents = state.agentOrder.length > 0;
+  const degradedCount = Object.values(state.agents).filter(
+    (a) => a.toolsDegraded === true && a.status !== "running",
+  ).length;
   const collapsed = collapsedOverride ?? (state.agentOrder.length > 4 && counts.running === 0);
 
   // 1s ticker while any agent is running (elapsed durations).
@@ -181,6 +249,7 @@ export function KrakenActivity({ conversationId }: { conversationId?: string }) 
           {settled}/{state.agentOrder.length} done
           {counts.running ? ` · ${counts.running} running` : ""}
           {counts.failed ? ` · ${counts.failed} failed` : ""}
+          {degradedCount ? ` · ${degradedCount} degraded` : ""}
           {collapsed && warnings.length ? ` · ⚠ ${warnings.length}` : ""}
         </span>
       </button>
@@ -196,6 +265,7 @@ export function KrakenActivity({ conversationId }: { conversationId?: string }) 
                   key={lead.id}
                   agent={lead}
                   isLead
+                  leadProvider={leadProvider}
                   expanded={expandedId === lead.id}
                   onToggle={() => setExpandedId(expandedId === lead.id ? null : lead.id)}
                 />
@@ -204,6 +274,7 @@ export function KrakenActivity({ conversationId }: { conversationId?: string }) 
                 <AgentRow
                   key={a.id}
                   agent={a}
+                  leadProvider={leadProvider}
                   expanded={expandedId === a.id}
                   onToggle={() => setExpandedId(expandedId === a.id ? null : a.id)}
                 />
