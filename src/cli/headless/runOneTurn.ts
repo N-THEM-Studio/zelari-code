@@ -66,6 +66,7 @@ import { recordCompactionMetrics } from '../metrics.js';
 import { flushMessageUsage, recordMessageUsage } from '../budget/messageUsage.js';
 import { withRequestComposition, type RequestComposition } from '../budget/requestComposition.js';
 import { describeResolvedShell, resolveShell } from '@zelari/core/harness/tools/builtin/shellResolver';
+import { createUseToolTool, isToolOffloadEnabled, planToolOffload, USE_TOOL_NAME } from '../tools/toolOffload.js';
 import { openHeadlessSpine, seedHeadlessModelHistory, sessionStartedEvent } from '../headlessSpine.js';
 // HarnessState inc.3: shared final-NDJSON read-model emitter (ADR-0023 lens)
 // for this host + council/mission/kraken-graph (H1 inc.2 → inc.3).
@@ -414,11 +415,25 @@ export async function runOneTurn(
   // is one process, so per-run == per-turn here).
   resetKrakenCandidates();
   resetKrakenTurnMetrics();
-  const tools: AgentToolSpec[] = toolRegistry.toOpenAITools().map((t) => ({
+  const toToolSpec = (t: ReturnType<typeof toolRegistry.toOpenAITools>[number]): AgentToolSpec => ({
     name: t.function.name,
     description: t.function.description,
     parameters: t.function.parameters as Record<string, unknown>,
-  }));
+  });
+  let tools: AgentToolSpec[] = toolRegistry.toOpenAITools().map(toToolSpec);
+  // ZELARI_TOOL_OFFLOAD=1 (flagged, token audit 2026-09): rarely used and MCP
+  // schemas leave the request; they stay reachable through `use_tool`, and a
+  // stable pointer paragraph in the system prompt names them.
+  let toolOffloadPointer = '';
+  if (isToolOffloadEnabled()) {
+    const plan = planToolOffload(tools);
+    if (plan.offloaded.length > 0) {
+      toolRegistry.register(createUseToolTool(toolRegistry, plan.offloaded) as never);
+      const useTool = toolRegistry.toOpenAITools().find((t) => t.function.name === USE_TOOL_NAME);
+      tools = useTool ? [...plan.staticTools, toToolSpec(useTool)] : tools;
+      toolOffloadPointer = useTool ? plan.pointer : '';
+    }
+  }
   const toolNames = tools.map((t) => t.name);
 
   // Header/measurement shape: `[stable, volatile]` exactly as before M2.1 —
@@ -500,7 +515,7 @@ export async function runOneTurn(
     } catch {
       /* optional */
     }
-    const rolePrompt = [headlessRole.systemPrompt, sshBlock]
+    const rolePrompt = [headlessRole.systemPrompt, sshBlock, toolOffloadPointer]
       .filter(Boolean)
       .join('\n\n');
     // Split stable (identity/tools) from volatile (workspace/RAG) so the
