@@ -65,6 +65,7 @@ import { buildOnePager } from '../memory/onePager.js';
 import { recordCompactionMetrics } from '../metrics.js';
 import { flushMessageUsage, recordMessageUsage } from '../budget/messageUsage.js';
 import { withRequestComposition, type RequestComposition } from '../budget/requestComposition.js';
+import { describeResolvedShell, resolveShell } from '@zelari/core/harness/tools/builtin/shellResolver';
 import { openHeadlessSpine, seedHeadlessModelHistory, sessionStartedEvent } from '../headlessSpine.js';
 // HarnessState inc.3: shared final-NDJSON read-model emitter (ADR-0023 lens)
 // for this host + council/mission/kraken-graph (H1 inc.2 → inc.3).
@@ -453,7 +454,8 @@ export async function runOneTurn(
       systemPrompt: [
         '# Platform',
         `platform: ${process.platform}`,
-        `shell: ${process.platform === 'win32' ? 'cmd.exe / Git Bash (auto-detected)' : '/bin/sh'}`,
+        `shell: ${resolveShell().via}`,
+        describeResolvedShell(),
         '',
         '# Working Directory',
         `You are running in: ${cwd}`,

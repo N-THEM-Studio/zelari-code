@@ -7,6 +7,7 @@
  */
 
 import { AgentHarness, type ProviderStreamFn } from '@zelari/core/harness';
+import { describeResolvedShell, resolveShell } from '@zelari/core/harness/tools/builtin/shellResolver';
 import type { AgentMessage, AgentToolSpec } from '@zelari/core/harness';
 import type { ToolRegistry } from '@zelari/core/harness/tools/registry';
 import type { BrainEvent } from '@zelari/core/events';
@@ -166,7 +167,8 @@ export async function runAgentMissionSlice(
   const rolePrompt = [
     '# Platform',
     `platform: ${process.platform}`,
-    `shell: ${process.platform === 'win32' ? 'cmd.exe / Git Bash (auto-detected)' : '/bin/sh'}`,
+    `shell: ${resolveShell().via}`,
+    describeResolvedShell(),
     '',
     '# Working Directory',
     `You are running in: ${deps.projectRoot}`,

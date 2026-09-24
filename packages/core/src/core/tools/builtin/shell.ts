@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { dirname } from 'node:path';
 import { typedOk, typedErr, type ToolDefinition } from '../toolTypes.js';
-import { resolveShell } from './shellResolver.js';
+import { describeResolvedShell, resolveShell } from './shellResolver.js';
 import { classifyCommandString, type ArgvTier } from '../../safety/argvClassifier.js';
 
 /**
@@ -107,7 +107,7 @@ export function createBashTool(spawnSeam?: BashSpawnSeam): ToolDefinition<BashAr
   return {
     name: 'bash',
     description:
-      'Run a shell command. On Windows uses Git Bash when available (POSIX semantics: ls, $VAR, && work); falls back to cmd.exe otherwise. Streams stdout/stderr. Respects timeout and cancellation. Returns exit code. ' +
+      `Run a shell command. ${describeResolvedShell()} Streams stdout/stderr. Respects timeout and cancellation. Returns exit code. ` +
       'stdin is CLOSED (non-interactive): any command that prompts for input will fail or be cancelled — always pass non-interactive flags (--yes, -y, --template), and if a scaffolder insists on prompting (e.g. create-vite in a non-empty directory), create the files manually with write_file instead.',
     permissions: ['execute'],
     sideEffect: 'local',

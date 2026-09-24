@@ -18,7 +18,7 @@ import {
 import { buildProviderStream } from "../provider/resolveStream.js";
 import { providerFailover } from "../providerFailover.js";
 import { resolveFailoverStream } from "../crossProviderFailover.js";
-import { resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
+import { describeResolvedShell, resolveShell } from "@zelari/core/harness/tools/builtin/shellResolver";
 import { PROVIDERS } from "../keyStore.js";
 import { getActiveModel } from "../providerConfig.js";
 import { createBuiltinToolRegistry } from "../toolRegistry.js";
@@ -716,13 +716,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
         // (POSIX for Git Bash, Windows-native for cmd.exe fallback).
         const resolvedShell = resolveShell();
         const isWindows = process.platform === "win32";
-        const shellGuidance = resolvedShell.isBash
-          ? `The bash tool runs commands via Git Bash / MSYS2 (${resolvedShell.shell}). Write POSIX commands: ls, grep, $VAR, &&, /c/Users/... all work.`
-          : resolvedShell.isPowerShell
-            ? `The bash tool runs commands via PowerShell (${resolvedShell.shell}). Write PowerShell syntax: ls/cat/pwd aliases work, use \`\$\{env:VAR\}\` (not %VAR%), pipe with |, && works in PS7+.`
-            : isWindows
-              ? `The bash tool runs commands via cmd.exe (Git Bash not found). Write Windows-native commands: use dir (not ls), %VAR% (not $VAR), avoid POSIX-only syntax.`
-              : `The bash tool runs commands via /bin/sh.`;
+        // Same sentence as the bash tool description and the headless prompt.
+        const shellGuidance = describeResolvedShell(resolvedShell);
         // v0.7.3: the shell has NO interactive stdin. Without this warning the
         // model retried `npm create vite` four times against the interactive
         // prompt ("Operation cancelled") and then gave up asking the user.

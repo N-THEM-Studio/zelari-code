@@ -108,6 +108,33 @@ function acceptBashPath(p: string | undefined | null): string | null {
 }
 
 /**
+ * One sentence telling the model which shell the `bash` tool really runs and
+ * what syntax that implies. The tool is named `bash` on every platform, and
+ * the prompt used to say "cmd.exe / Git Bash" even when the resolver picked
+ * PowerShell: in the 2026-09 Desktop sessions every bash call ran in
+ * PowerShell and 5.8% of them failed on POSIX-only commands (tail, head,
+ * grep, wc). Memoized resolution ⇒ the sentence is stable for the process,
+ * so it is safe in a cached prompt prefix.
+ */
+export function describeResolvedShell(resolved: ResolvedShell = resolveShell()): string {
+  if (resolved.isBash) {
+    return `The bash tool runs Git Bash / MSYS2 (${resolved.shell}): POSIX syntax (ls, grep, $VAR, &&, /c/Users/...).`;
+  }
+  if (resolved.isPowerShell) {
+    const ps7 = /pwsh(\.exe)?$/i.test(String(resolved.shell));
+    return (
+      `The bash tool runs PowerShell (${resolved.shell}), not a POSIX shell: tail, head, grep, wc and sed do not exist. ` +
+      'Use Select-Object -Last N / -First N, Select-String, Measure-Object -Line, (Get-Content f) -replace; ' +
+      `environment variables are $env:NAME${ps7 ? '; && and || chain commands.' : '; chain commands with ;.'}`
+    );
+  }
+  if (process.platform === 'win32') {
+    return 'The bash tool runs cmd.exe (no Git Bash or PowerShell found): dir instead of ls, %VAR% instead of $VAR, no POSIX-only syntax.';
+  }
+  return 'The bash tool runs /bin/sh.';
+}
+
+/**
  * Resolve the shell to use for command execution. Memoized per-process.
  *
  * Detection order on win32:
