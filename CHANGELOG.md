@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.64.0] - 2026-09-24
+
+### Added
+
+- **Desktop: Kraken activity shows routing and degraded tentacles** — each tentacle row names its provider when it differs from the chat's (cross-family routing or a fallback retry; the row follows the model actually running), and a tentacle that "completed" while most of its tool calls failed gets an amber stripe, an "N of M tool calls failed — findings unverified" caption and a `degraded` header counter. `agent_ended` carries `toolCalls` / `toolErrors` / `toolsDegraded` (additive).
+- **Desktop: readable system notices** — system messages in chat are classified (info / warning / error) and rendered as compact cards with a title, a plain-language hint and collapsible details; provider failures (HTTP 401/403/404/429/5xx, network, missing key) say what happened and what to do.
+- **`zelari-code --doctor --fix`** — `--doctor` now flags stale provider configuration (a saved model the provider does not serve, a placeholder id such as `default-grok`, `openai-compatible` silently falling back to `api.x.ai`, an expired sign-in); `--fix` repairs only what has evidence against it, after a timestamped backup of `provider.json`.
+- **CI: Desktop Rust unit tests** — `npm run test:desktop-rust` (and the CI desktop-rust job) runs the Tauri lib tests on every OS, including Windows, where the test binary now links the Common-Controls v6 manifest.
+
+### Changed
+
+- **Desktop settings simplified** — provider and agent settings are regrouped without duplicates, with inline help tooltips; quality toggles (verify pack, verifier review, cross-model tentacles) are now wired through to the turn instead of being cosmetic.
+- **System and tentacle prompts hardened** — prompt assembly keeps every module under the delegation policy and honours override semantics per module type; new instruction-priority, evidence, working-style, safety/reversibility, tool-use and output modules; tentacle prompts get shared base rules, a report shape, a runtime block and a "never fake green" rule. Model-agnostic throughout.
+
+### Fixed
+
+- **Tool-call arguments lost on Responses-API providers** (muse/ChatGPT) — SSE frames are correlated by `call_id`, item id and output index, done-channel arguments are authoritative, and a call that still arrives without arguments is reported (`tool_args_missing`) instead of silently running with `{}`. Tentacles whose tool channel mostly failed are marked degraded.
+- **Concurrent Desktop chats** — per-session state is isolated inside the shared serve-harness sidecar, every served event is stamped with its harness session, and the Desktop routes by it: chats in different projects no longer mix responses, and a second chat on the same project is no longer blocked.
+- **Unselected provider called (HTTP 404 "default grok")** — auxiliary calls (verify re-ask, weakness meter, cross-family verify, embeddings) now follow the turn's provider and skip providers without fresh credentials, instead of reading a stale persisted default.
+
 ## [2.63.1] - 2026-09-24
 
 ### Fixed
