@@ -219,6 +219,17 @@ vi.mock('@zelari/core/skills', () => ({
     priority: 5,
     content: `# Response Language — ${lang}\nReply in ${lang}.`,
   })),
+  // Cache-stable split: the stub keeps the context line empty so the trailing
+  // assertions below stay about the workspace payload only.
+  buildLanguagePolicySplit: vi.fn(() => ({
+    module: {
+      type: 'language-policy',
+      title: 'Response Language',
+      priority: 5,
+      content: '# Response Language\nReply in the user language.',
+    },
+    contextLine: '',
+  })),
   buildLanguagePolicyModuleFor: vi.fn((text: string) => {
     const lang = text.toLowerCase().includes('please') ? 'en' : 'it';
     return {

@@ -140,6 +140,10 @@ describe('runOneTurn — M2.1 cache-first request layout (ephemeral trailing con
     expect(trailing[0]!.content.startsWith('<context-update>')).toBe(true);
     expect(trailing[0]!.content.endsWith('</context-update>')).toBe(true);
     expect(trailing[0]!.content).toContain('# Project:');
+    // Token-efficiency audit: the detected response language rides the
+    // trailing context; the cached system prompt names no language.
+    expect(trailing[0]!.content).toContain('Response language for this turn:');
+    expect(wire[0]!.content).not.toMatch(/# Response Language — /);
     // …immediately before the new turn (i.e. AFTER the history).
     const trailingIdx = wire.indexOf(trailing[0]!);
     expect(trailingIdx).toBeGreaterThan(0);

@@ -370,3 +370,56 @@ export function buildLanguagePolicyModuleFor(
 ): SystemPromptModule {
   return buildLanguagePolicyModule(resolveResponseLanguage(userText, env));
 }
+
+/**
+ * Language rule for the CACHED system prompt: names no language, so it is
+ * byte-identical on every turn. The detected language travels separately,
+ * in the per-request context (see {@link buildLanguagePolicySplit}).
+ */
+export const STABLE_LANGUAGE_DIRECTIVE = `# Response Language
+
+Reply in the language of the user's latest message; the per-turn context states the language detected for it. Mixed or unclear input defaults to Italian. An explicit request for another language ("reply in English") applies for the rest of that turn.
+
+- Code, error messages, tool names, file paths and technical terms stay exactly as written.
+- Clarifying questions (ask_user or ---QUESTION--- blocks) use the same language for \`question\` and \`choices\`.
+- Working notes the user never reads (sub-agent or council notes) can stay in their working language; every answer the user reads follows this rule.`;
+
+export interface LanguagePolicySplit {
+  /** For the cached system prompt; identical across turns unless the language is pinned. */
+  module: SystemPromptModule;
+  /** One line for the per-request context; '' when `module` already names the language. */
+  contextLine: string;
+}
+
+/**
+ * Cache-layout split of the language directive (token-efficiency audit,
+ * 2026-09-25). The per-turn directive names the detected language in its
+ * FIRST line and sorts to the top of the system prompt, so every turn whose
+ * message reads as another language (12.4% of consecutive user turns in the
+ * audit: "ciao", a pasted log, a URL) rewrote the first bytes of the cached
+ * prefix and re-billed the whole conversation uncached.
+ *
+ * Split: a language-neutral rule stays in the system prompt, the detected
+ * language moves to one context line after the cache boundary. A pinned
+ * `ZELARI_RESPONSE_LANG` is already stable and keeps the full directive;
+ * `ZELARI_LANGUAGE_DIRECTIVE=system` restores the per-turn system directive.
+ */
+export function buildLanguagePolicySplit(
+  userText: string,
+  env: Record<string, string | undefined> = process.env,
+): LanguagePolicySplit {
+  const lang = resolveResponseLanguage(userText, env);
+  const pinnedRaw = env.ZELARI_RESPONSE_LANG?.trim().toLowerCase();
+  const pinned = Boolean(pinnedRaw && pinnedRaw in LANGUAGE_LABELS);
+  const legacy = (env.ZELARI_LANGUAGE_DIRECTIVE ?? '').trim().toLowerCase() === 'system';
+  if (pinned || legacy) return { module: buildLanguagePolicyModule(lang), contextLine: '' };
+  return {
+    module: {
+      type: LANGUAGE_POLICY_MODULE_TYPE,
+      title: 'Response Language',
+      priority: 5,
+      content: STABLE_LANGUAGE_DIRECTIVE,
+    },
+    contextLine: `Response language for this turn: ${LANGUAGE_LABELS[lang]} (detected from the user's latest message).`,
+  };
+}

@@ -49,6 +49,8 @@ export {
   buildLanguageDirective,
   buildLanguagePolicyModule,
   buildLanguagePolicyModuleFor,
+  buildLanguagePolicySplit,
+  STABLE_LANGUAGE_DIRECTIVE,
   LANGUAGE_POLICY_MODULE_TYPE,
 } from '../agents/languagePolicy.js';
-export type { SupportedLanguage } from '../agents/languagePolicy.js';
+export type { SupportedLanguage, LanguagePolicySplit } from '../agents/languagePolicy.js';

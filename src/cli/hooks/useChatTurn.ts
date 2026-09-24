@@ -66,6 +66,7 @@ import {
   KRAKEN_IDENTITY_MODULE,
   KRAKEN_LEAD_PLAYBOOK_MODULE,
   buildLanguagePolicyModuleFor,
+  buildLanguagePolicySplit,
 } from "@zelari/core/skills";
 import { hashStablePrompt } from "../state/fileStateStore.js";
 import {
@@ -828,7 +829,11 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
           // appended to customPromptModules alongside KRAKEN_IDENTITY_MODULE + playbook
           // — it lives in priority space (5) so it sorts BEFORE the base-identity
           // module (10): the model sets language scaffolding before reading role text.
-          const languageModule = buildLanguagePolicyModuleFor(userText);
+          // The detected language rides the per-request context, not the
+          // cached system prompt: a language change between turns no longer
+          // rewrites the prefix (buildLanguagePolicySplit).
+          const languageSplit = buildLanguagePolicySplit(userText);
+          const languageModule = languageSplit.module;
           const split = buildSystemPromptSplit(singleAgentRole, {
             tools: getAllTools(),
             toolNames: toolListNames,
@@ -847,7 +852,8 @@ export function useChatTurn(params: UseChatTurnParams): UseChatTurnResult {
               ],
               agentSkillConfigs: [],
             },
-            workspaceContext: workspaceContext || undefined,
+            workspaceContext:
+              [languageSplit.contextLine, workspaceContext].filter(Boolean).join("\n\n") || undefined,
             // Do NOT put plan text here — that was mislabeled as RAG and
             // taught models to treat design vault as retrieved knowledge.
             ragContext: undefined,
