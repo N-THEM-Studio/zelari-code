@@ -420,7 +420,7 @@ function pickRootComponent(): {
     // eslint-disable-next-line @typescript-eslint/no-require-imports
     const { runDoctor } =
       require("./utils/doctor.js") as typeof import("./utils/doctor.js");
-    void runDoctor().then((healthy) => process.exit(healthy ? 0 : 1));
+    void runDoctor({ fix: argv.includes("--fix") }).then((healthy) => process.exit(healthy ? 0 : 1));
     return { kind: "done" };
   }
   if (argv.includes("--fix-path") || argv.includes("fix-path")) {

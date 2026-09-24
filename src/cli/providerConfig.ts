@@ -350,6 +350,11 @@ export function setModelForProvider(id: ProviderName, model: string): void {
   writeProviderConfig(config);
 }
 
+/** Built-in default model of a provider (what a fresh install would use). */
+export function getBuiltinDefaultModel(id: ProviderName): string {
+  return DEFAULTS.modelByProvider[id] ?? '';
+}
+
 export function getModelForProvider(id: ProviderName): string {
   const config = getProviderConfig();
   return config.modelByProvider[id] ?? DEFAULTS.modelByProvider[id] ?? '';

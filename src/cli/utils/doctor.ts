@@ -574,17 +574,39 @@ function buildDoctorChecks(
         try {
           const { getActiveProvider } = await import("../providerConfig.js");
           const { resolveApiKey, getOAuthToken } = await import("../keyStore.js");
+          const { hasFreshCredentials } = await import("../keyStore.js");
           const active = getActiveProvider();
+          const stored = getOAuthToken(active.id);
+          // A stored-but-expired sign-in used to read "OK" here, then every
+          // call failed with HTTP 401/404 (2026-09-24 field report).
+          if (stored && !hasFreshCredentials(active.id)) {
+            return FAIL(
+              `provider ${active.id} — saved sign-in expired. Sign in again: /login ${active.id} in the app, or Desktop → Settings → Models & Providers`,
+              "warn",
+            );
+          }
           if (resolveApiKey(active.id)) {
             return OK(`provider ${active.id} — key resolved`);
           }
-          if (getOAuthToken(active.id)) {
+          if (stored) {
             return OK(`provider ${active.id} — OAuth token stored`);
           }
           return FAIL(
             `provider ${active.id} — no key or OAuth token. In the app: /login ${active.id}, or set ${active.envVar}`,
             "warn",
           );
+        } catch (err) {
+          return WARN(`provider config unreadable: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      },
+    },
+    {
+      name: "saved model",
+      run: async () => {
+        try {
+          const { findings } = await collectConfigFindings();
+          const summary = (await import("../configHealth.js")).summarizeFindings(findings);
+          return summary.ok ? OK(summary.message) : WARN(summary.message);
         } catch (err) {
           return WARN(`provider config unreadable: ${err instanceof Error ? err.message : String(err)}`);
         }
@@ -639,6 +661,68 @@ function buildDoctorChecks(
   ];
 }
 
+/**
+ * Provider-config findings: the ACTIVE provider's saved model + endpoint, plus
+ * any other provider whose saved model has evidence against it (so `--fix`
+ * also repairs a stale entry you would hit after switching provider).
+ */
+async function collectConfigFindings(): Promise<{
+  findings: import("../configHealth.js").ConfigFinding[];
+}> {
+  const { getActiveProvider, getProviderConfig, getBuiltinDefaultModel, getCustomEndpoint } =
+    await import("../providerConfig.js");
+  const { getCachedModels, getStaticFallbackModels } = await import("../modelDiscovery.js");
+  const { resolveBaseUrl } = await import("../provider/openai-compatible.js");
+  const { PROVIDERS } = await import("../keyStore.js");
+  const { checkSavedModel, checkEndpoint } = await import("../configHealth.js");
+  const cfg = getProviderConfig();
+  const active = getActiveProvider();
+  const findings: import("../configHealth.js").ConfigFinding[] = [];
+  for (const p of PROVIDERS) {
+    const id = p.id as Parameters<typeof getBuiltinDefaultModel>[0];
+    const saved = cfg.modelByProvider[id];
+    if (saved === undefined && id !== active.id) continue;
+    const cached = getCachedModels(id as never);
+    const finding = checkSavedModel({
+      provider: id,
+      model: saved ?? "",
+      discovered: cached?.models.map((m) => m.id),
+      discoveredFrom: cached?.baseUrl,
+      currentBaseUrl: resolveBaseUrl(id as Parameters<typeof resolveBaseUrl>[0]),
+      staticModels: getStaticFallbackModels(id as never).map((m) => m.id),
+      builtinDefault: getBuiltinDefaultModel(id),
+    });
+    if (id === active.id || finding.level === "warn") findings.push(finding);
+  }
+  findings.push(
+    checkEndpoint({
+      provider: active.id,
+      customEndpoint: getCustomEndpoint(active.id as Parameters<typeof getCustomEndpoint>[0]),
+      envBaseUrl: process.env.OPENAI_BASE_URL,
+    }),
+  );
+  return { findings };
+}
+
+/** `--doctor --fix`: back provider.json up, then apply every unambiguous model fix. */
+async function applyConfigFixes(): Promise<string[]> {
+  const { findings } = await collectConfigFindings();
+  const fixes = findings.flatMap((f) => (f.fix ? [f.fix] : []));
+  if (fixes.length === 0) return [];
+  const { getProviderConfigPath, setModelForProvider } = await import("../providerConfig.js");
+  const { copyFileSync, existsSync } = await import("node:fs");
+  const file = getProviderConfigPath();
+  const backup = `${file}.bak-${new Date().toISOString().replace(/[:.]/g, "-")}`;
+  if (existsSync(file)) copyFileSync(file, backup);
+  const applied: string[] = [];
+  for (const fix of fixes) {
+    setModelForProvider(fix.provider as Parameters<typeof setModelForProvider>[0], fix.to);
+    applied.push(`${fix.provider}: "${fix.from || "(none)"}" → "${fix.to}"`);
+  }
+  applied.push(`backup: ${backup}`);
+  return applied;
+}
+
 export async function collectDoctorReport(): Promise<DoctorReport> {
   const pkg = readPackageJson();
   const checks = buildDoctorChecks(pkg, pkg?.name ?? "zelari-code");
@@ -663,7 +747,21 @@ export async function collectDoctorReport(): Promise<DoctorReport> {
   return { entries, firstRed, healthy: firstRed === null };
 }
 
-export async function runDoctor(): Promise<boolean> {
+export async function runDoctor(options: { fix?: boolean } = {}): Promise<boolean> {
+  if (options.fix) {
+    try {
+      const applied = await applyConfigFixes();
+      // eslint-disable-next-line no-console
+      console.log(
+        applied.length
+          ? `Applied config fixes:\n  ${applied.join("\n  ")}\n`
+          : "No config fixes to apply.\n",
+      );
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.log(`Config fix failed: ${err instanceof Error ? err.message : String(err)}\n`);
+    }
+  }
   const pkg = readPackageJson();
   const pkgName = pkg?.name ?? "zelari-code";
   const checks = buildDoctorChecks(pkg, pkgName);
