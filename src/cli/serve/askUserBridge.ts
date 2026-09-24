@@ -55,7 +55,9 @@ export function createServeAskUserBridge(
         type: 'ask_user.settled',
         requestId,
         answer,
-        ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+        ...(entry.sessionId
+          ? { sessionId: entry.sessionId, harnessSessionId: entry.sessionId }
+          : {}),
         ...(timedOut ? { timedOut: true } : {}),
       }),
     );
@@ -81,7 +83,9 @@ export function createServeAskUserBridge(
           JSON.stringify({
             type: 'ask_user.request',
             requestId,
-            ...(sessionId ? { sessionId } : {}),
+            // Routing key (session-routing capability): the SAME harness id
+            // the Desktop routes every other line of this turn by.
+            ...(sessionId ? { sessionId, harnessSessionId: sessionId } : {}),
             question,
             choices,
             ...(req.context ? { context: req.context } : {}),

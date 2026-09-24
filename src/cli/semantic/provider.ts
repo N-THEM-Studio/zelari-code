@@ -6,7 +6,7 @@
  * into. The embedding model is configurable via ZELARI_EMBED_MODEL.
  */
 
-import { providerFromEnv } from '../provider/openai-compatible.js';
+import { providerFromEnv, supportsOpenAiEmbeddings } from '../provider/openai-compatible.js';
 import { embedTexts } from './embeddings.js';
 import type { EmbedFn } from './index.js';
 
@@ -27,8 +27,13 @@ function embedTimeoutMs(): number {
  * the `number[][] | { error }` the index expects.
  */
 export async function buildProviderEmbedFn(): Promise<EmbedFn | null> {
+  // providerFromEnv resolves the TURN's provider inside a headless/served
+  // turn (never the provider.json default, whose built-in base URL is
+  // api.x.ai). Providers without an OpenAI-style /embeddings endpoint for
+  // this credential (ChatGPT OAuth, Anthropic, muse) get null — the callers'
+  // lexical fallback — instead of a request that can only fail.
   const cfg = await providerFromEnv();
-  if (!cfg) return null;
+  if (!cfg || !supportsOpenAiEmbeddings(cfg.providerId)) return null;
   const embedCfg = {
     apiKey: cfg.apiKey,
     baseUrl: cfg.baseUrl,

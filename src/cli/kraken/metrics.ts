@@ -26,6 +26,7 @@ import {
   krakenRequiredChecks,
 } from './candidateRegistry.js';
 import { classifyKrakenChecks } from './completionGate.js';
+import { turnGlobals } from '../sessionScope.js';
 
 /** Turn-level metrics snapshot (§58 field names, stable for consumers). */
 export interface KrakenTurnMetrics {
@@ -66,7 +67,7 @@ interface MetricsGlobal {
 }
 
 function store(): MetricsStore {
-  const g = globalThis as unknown as MetricsGlobal;
+  const g = turnGlobals<MetricsGlobal>();
   g.__zelariKrakenTurnMetrics ??= {
     candidateTokens: 0,
     selectionRecorded: false,
@@ -79,7 +80,7 @@ function store(): MetricsStore {
 
 /** Reset per parent turn (call beside resetKrakenCandidates). */
 export function resetKrakenTurnMetrics(): void {
-  const g = globalThis as unknown as MetricsGlobal;
+  const g = turnGlobals<MetricsGlobal>();
   g.__zelariKrakenTurnMetrics = undefined;
 }
 

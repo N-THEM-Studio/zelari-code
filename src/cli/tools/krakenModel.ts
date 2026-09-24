@@ -20,6 +20,7 @@
 
 import type { TaskAgentKind } from './taskTool.js';
 import { appendKrakenRadio } from './krakenRadio.js';
+import { turnEnv } from '../sessionScope.js';
 
 export interface ResolveKrakenModelOpts {
   /** Provider id for discovery cache (e.g. grok, glm, openai-compatible). */
@@ -91,7 +92,7 @@ export function pickCheapModel(
   return notParent ?? cheap[0] ?? null;
 }
 
-export function isKrakenAutoModelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isKrakenAutoModelEnabled(env: NodeJS.ProcessEnv = turnEnv()): boolean {
   const v = (env.ZELARI_KRAKEN_AUTO_MODEL ?? '1').trim().toLowerCase();
   if (v === '0' || v === 'false' || v === 'no' || v === 'off') return false;
   return true;
@@ -104,7 +105,7 @@ export function isKrakenAutoModelEnabled(env: NodeJS.ProcessEnv = process.env): 
  * `resolveCrossModelVerifier` (verifierRouting) and the family branch of
  * `resolveKrakenSubModel` (production sub-agent factory).
  */
-export function isKrakenCrossModelEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+export function isKrakenCrossModelEnabled(env: NodeJS.ProcessEnv = turnEnv()): boolean {
   const v = (env.ZELARI_KRAKEN_CROSS_MODEL ?? '').trim().toLowerCase();
   return !(v === '0' || v === 'false' || v === 'no' || v === 'off');
 }
@@ -185,7 +186,7 @@ export function pickDifferentFamily(
 export function resolveCrossModelVerifier(
   builder: { provider: string; model?: string },
   candidates: readonly { provider: string; model: string }[],
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
 ): { provider: string; model: string } | null {
   if (!isKrakenCrossModelEnabled(env)) return null;
   const specific = env.ZELARI_KRAKEN_VERIFY_MODEL?.trim();
@@ -272,7 +273,7 @@ export interface KrakenModelExplanation {
 export function explainKrakenSubModel(
   agent: TaskAgentKind,
   parentModel: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
   opts: ResolveKrakenModelOpts = {},
 ): KrakenModelExplanation {
   const kindKey =
@@ -343,7 +344,7 @@ export function explainKrakenSubModel(
 export function resolveKrakenSubModel(
   agent: TaskAgentKind,
   parentModel: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
   opts: ResolveKrakenModelOpts = {},
 ): string {
   return explainKrakenSubModel(agent, parentModel, env, opts).model;
@@ -380,7 +381,7 @@ export function isUnknownModelError(message: string | undefined): boolean {
  */
 export function resolveKrakenPlannerModel(
   parentModel: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
 ): string {
   const specific = env.ZELARI_KRAKEN_PLANNER_MODEL?.trim();
   if (specific) return specific;
@@ -405,7 +406,7 @@ export function resolveKrakenPlannerModel(
 export function resolvePersonaModel(
   kind: 'spec' | 'conformance' | 'oracle' | string,
   parentModel: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
   opts: ResolveKrakenModelOpts = {},
 ): string {
   const personaKey =
@@ -477,7 +478,7 @@ export function familyCandidatesFromRegistry(
 export async function resolveKrakenSubModelAsync(
   agent: TaskAgentKind,
   parentModel: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
   opts: { provider?: string; radio?: { cwd: string; sessionId: string } } = {},
 ): Promise<string> {
   const { candidates, familyCandidates } = await loadDiscoveredModelOpts(opts.provider);
@@ -505,13 +506,61 @@ async function loadDiscoveredModelOpts(
       const ids = mod.getDiscoveredModelIds(provider as never);
       if (Array.isArray(ids)) candidates = ids;
     }
+    const { hasFreshCredentials } = await import('../keyStore.js');
     return {
       candidates,
-      familyCandidates: familyCandidatesFromRegistry(mod.loadModelsRegistry()),
+      familyCandidates: usableFamilyCandidates(
+        familyCandidatesFromRegistry(mod.loadModelsRegistry()),
+        hasFreshCredentials,
+      ),
     };
   } catch {
     return { candidates: [], familyCandidates: [] };
   }
+}
+
+/**
+ * Keep only the cross-family candidates whose provider can be called RIGHT
+ * NOW (fresh credentials, no refresh). The discovery registry remembers every
+ * provider ever discovered — including one whose login expired months ago —
+ * and the verify tentacle used to be routed there after every `general`,
+ * surfacing as a random HTTP 401/404 from a provider the user never picked.
+ * One credential check per provider, in registry order.
+ */
+export function usableFamilyCandidates(
+  candidates: readonly { provider: string; model: string }[],
+  isUsable: (providerId: string) => boolean,
+): { provider: string; model: string }[] {
+  const verdict = new Map<string, boolean>();
+  return candidates.filter((c) => {
+    let ok = verdict.get(c.provider);
+    if (ok === undefined) {
+      try {
+        ok = isUsable(c.provider);
+      } catch {
+        ok = false;
+      }
+      verdict.set(c.provider, ok);
+    }
+    return ok;
+  });
+}
+
+/**
+ * True when a tentacle routed to ANOTHER provider failed on access to that
+ * provider (expired/invalid credentials, forbidden, not-found endpoint or
+ * model, unreachable host) — the cue to retry once on the parent identity.
+ * Broader than {@link isUnknownModelError} on purpose: the lead's provider is
+ * known-good for this turn, a cross-routed one is not.
+ */
+export function isProviderAccessError(message: string | undefined): boolean {
+  if (!message) return false;
+  const m = message.toLowerCase();
+  return (
+    /http\s*(401|403|404)\b/.test(m) ||
+    /unauthori[sz]ed|forbidden|invalid[_ ]api[_ ]key|expired|invalid[_ ]token|authentication/.test(m) ||
+    /network error|enotfound|econnrefused|econnreset|etimedout/.test(m)
+  );
 }
 
 /**
@@ -524,7 +573,7 @@ async function loadDiscoveredModelOpts(
 export async function explainKrakenSubModelAsync(
   agent: TaskAgentKind,
   parentModel: string,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
   opts: { provider?: string; silent?: boolean } = {},
 ): Promise<KrakenModelExplanation> {
   const { candidates, familyCandidates } = await loadDiscoveredModelOpts(opts.provider);

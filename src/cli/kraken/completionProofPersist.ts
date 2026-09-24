@@ -30,6 +30,7 @@ import {
   type ProofAttestation,
 } from './completionProofAttestation.js';
 import type { CompletionProofPaths } from './completionProof.js';
+import { sessionLocal } from '../sessionScope.js';
 
 // ── Persistence mode ─────────────────────────────────────────────────────
 
@@ -103,16 +104,18 @@ export function resolveProofPersistenceMode(
 
 // ── Active-surface seam (registered once by the host, like policyLoadMode)
 
-let activeSurface: ProofPersistenceSurface = 'tui';
+// Per harness session in --serve-harness (concurrent chats may register
+// different surfaces); process-wide elsewhere.
+const activeSurface = sessionLocal<ProofPersistenceSurface>(() => 'tui');
 
 /** Register the host BEFORE any proof write (runHeadless pre-flight). */
 export function setActiveProofPersistenceSurface(surface: ProofPersistenceSurface): void {
-  activeSurface = surface;
+  activeSurface.set(surface);
 }
 
 /** Current registration (read-mostly; exposed for tests/diagnostics). */
 export function activeProofPersistenceSurface(): ProofPersistenceSurface {
-  return activeSurface;
+  return activeSurface.get();
 }
 
 /**
@@ -121,7 +124,7 @@ export function activeProofPersistenceSurface(): ProofPersistenceSurface {
  */
 export function activeProofPersistenceMode(env: Record<string, string | undefined> = process.env): ProofPersistenceMode {
   return resolveProofPersistenceMode(env, {
-    surface: activeSurface,
+    surface: activeSurface.get(),
     ...(typeof env.CI === 'string' ? { ci: env.CI } : {}),
   });
 }

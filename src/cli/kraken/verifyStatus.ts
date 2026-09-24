@@ -14,6 +14,7 @@
  * one (EMPTY ≠ absent).
  */
 import { strictDoneEnabled, type StrictBuildGateEvaluation } from './verificationBridge.js';
+import { turnGlobals } from '../sessionScope.js';
 
 export type VerifySessionState = 'pass' | 'repair' | 'blocked';
 
@@ -135,7 +136,7 @@ type G = { __zelariVerifyState?: StoredVerifyState };
  * chip to PASS instead of lying on RIPARA.
  */
 export function recordStrictGateEvaluation(evaluation: StrictBuildGateEvaluation): void {
-  const g = globalThis as unknown as G;
+  const g = turnGlobals<G>();
   g.__zelariVerifyState = {
     state: verifyStateFromGate(evaluation),
     at: Date.now(),
@@ -150,7 +151,7 @@ export function recordStrictGateEvaluation(evaluation: StrictBuildGateEvaluation
  * over decoration).
  */
 export function getVerifyChip(): StatusChip | null {
-  const g = globalThis as unknown as G;
+  const g = turnGlobals<G>();
   const s = g.__zelariVerifyState;
   if (!s) return null;
   return formatVerifyChip(s.state);

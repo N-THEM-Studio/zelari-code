@@ -73,6 +73,7 @@ import { existsSync, mkdirSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { randomBytes } from 'node:crypto';
+import { workspaceMutex } from '../workspace/storage.js';
 import {
   __resetKrakenWorktreeCleanupQueueForTests,
   isKrakenWorktreeCleanupBatched,
@@ -592,11 +593,27 @@ export async function commitWorktreeChanges(
 
 /**
  * Squash-merge tentacle branch into the parent repo HEAD, then optionally cleanup.
+ *
+ * Serialized per parent repo (in-process `workspaceMutex`, key
+ * `<repoRoot>:kraken-merge`): several chats on the same project share the one
+ * sidecar process, and two concurrent squash-merges would race on the git
+ * index (`index.lock`) — worse, one merge's K2.3 rollback to its `preParent`
+ * snapshot could undo the other's freshly merged work.
  */
 export async function mergeKrakenWorktree(
   handle: WorktreeHandle,
   opts: { message?: string; cleanup?: boolean; sessionId?: string } = {},
   env: NodeJS.ProcessEnv = process.env,
+): Promise<WorktreeMergeResult> {
+  return workspaceMutex.run(`${path.resolve(handle.repoRoot)}:kraken-merge`, () =>
+    mergeKrakenWorktreeExclusive(handle, opts, env),
+  );
+}
+
+async function mergeKrakenWorktreeExclusive(
+  handle: WorktreeHandle,
+  opts: { message?: string; cleanup?: boolean; sessionId?: string },
+  env: NodeJS.ProcessEnv,
 ): Promise<WorktreeMergeResult> {
   if (!handle.branch || handle.branch === 'HEAD') {
     return {

@@ -148,3 +148,19 @@ describe('tool permissions — per-session grant buckets (t61)', () => {
     expect(isSessionGranted('bash', [], 'sess-B')).toBe(true);
   });
 });
+
+describe('serve permission bridge — session-routing stamp', () => {
+  it('permission.request and .settled carry harnessSessionId (the Desktop routing key)', () => {
+    const lines: string[] = [];
+    const bridge = createServePermissionBridge((l) => lines.push(l), 60_000);
+    const pending = runWithSession('sess-R', () =>
+      bridge.onPermissionAsk({ tool: 'bash', category: 'execute' }),
+    );
+    const req = JSON.parse(lines[0]);
+    expect(req.harnessSessionId).toBe('sess-R');
+    servePermissionRespond(bridge, { requestId: req.requestId, decision: 'deny', sessionId: 'sess-R' });
+    const settled = JSON.parse(lines.find((l) => l.includes('permission.settled'))!);
+    expect(settled.harnessSessionId).toBe('sess-R');
+    return expect(pending).resolves.toBe('deny');
+  });
+});

@@ -33,6 +33,7 @@ import {
   type PolicyRuleSet,
 } from '../safety/policyEngine.js';
 import { wrapWithVerifyCache } from './cachedShell.js';
+import { sessionLocal } from '../sessionScope.js';
 
 /** Engine packId for contract-derived checks (distinct from the coding pack). */
 export const CONTRACT_CRITERIA_PACK_ID = 'task-contract/v1';
@@ -94,7 +95,9 @@ export interface ActiveContractScope {
   capabilityRules: PolicyRuleSet;
 }
 
-let activeScope: ActiveContractScope | undefined;
+// Per harness session in --serve-harness: one chat's contract must never
+// restrict (or stop restricting) another chat's tools. Process-wide elsewhere.
+const activeScope = sessionLocal<ActiveContractScope | undefined>(() => undefined);
 
 /**
  * Register the live contract of THIS mission/turn (call at turn start and
@@ -102,12 +105,12 @@ let activeScope: ActiveContractScope | undefined;
  * the new version). Pass `undefined` to clear. No-op-safe, idempotent.
  */
 export function setActiveContractScope(contract: TaskContract | undefined): void {
-  activeScope = contract ? { contract, capabilityRules: contractCapabilityLayer(contract) } : undefined;
+  activeScope.set(contract ? { contract, capabilityRules: contractCapabilityLayer(contract) } : undefined);
 }
 
 /** Current registration (undefined when the turn has no scoped contract). */
 export function activeContractScope(): ActiveContractScope | undefined {
-  return activeScope;
+  return activeScope.get();
 }
 
 /**
@@ -121,7 +124,7 @@ export function matchContractCapabilityRule(
   args: unknown,
   root?: string,
 ): PolicyRule | null {
-  return matchAgentPolicyRule(activeScope?.capabilityRules ?? EMPTY_POLICY_RULE_SET, required, args, root);
+  return matchAgentPolicyRule(activeScope.get()?.capabilityRules ?? EMPTY_POLICY_RULE_SET, required, args, root);
 }
 
 // ── Verification criteria (verificationHint → deterministic checks) ───────
@@ -175,7 +178,8 @@ export function contractCriteriaFor(contract: TaskContract, opts: { timeoutMs?: 
  * every host. Empty array when nothing is registered.
  */
 export function activeContractCriteria(opts: { timeoutMs?: number } = {}): Criterion[] {
-  return activeScope ? compileVerificationCriteria(activeScope.contract, opts) : [];
+  const scope = activeScope.get();
+  return scope ? compileVerificationCriteria(scope.contract, opts) : [];
 }
 
 // ── Evaluation (same engine discipline as the native pack) ────────────────

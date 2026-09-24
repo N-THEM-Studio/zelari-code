@@ -84,15 +84,8 @@ import {
 } from './askUserBridge.js';
 import type { AskUserHandler } from '../tools/askUser.js';
 import { sweepOrphanSpineLocks } from './spineLockSweep.js';
+import { disposeSessionScope } from '../sessionScope.js';
 import { assertCompanionFramePolicy } from '../companion/framePolicy.js';
-
-/**
- * Env key backing the per-turn permission preset. Mirrors the private
- * `PRESET_ENV` in permissionBridge.ts (which owns the allowlist); Fix D (t62)
- * saves/restores this around each turn so the preset is a finite window, not
- * sidecar-wide state.
- */
-const PRESET_ENV = 'ZELARI_PERMISSION_PRESET';
 
 export interface HarnessServerIo {
   input: Readable;
@@ -235,78 +228,74 @@ export function resolveTurnLspProvider(
 }
 
 /**
- * Real turn implementation: provider/key/stream resolution happens ONCE
- * per server (mirroring runHeadless: one process, one key), then each
- * run.turn is `dispatchHeadlessTurn` — same switch as `--headless`
- * (kraken / council / zelari / graph / gauntlet), with the session
- * workspaceRoot threaded as `opts.cwd`.
+ * Resolve the provider stream for ONE served turn from the turn's own
+ * `provider` / `model` (Desktop selector, companion), falling back to the
+ * persisted active provider exactly like one-shot `--headless`.
+ *
+ * Per turn on purpose (2026-09-24): this used to resolve ONCE per sidecar
+ * with empty options, so the long-lived Desktop sidecar ignored the per-turn
+ * provider/model entirely, kept whatever provider.json said when it booted,
+ * and reused that key forever — an expired OAuth token was never refreshed
+ * (resolveHeadlessKey refreshes near-expiry tokens) and surfaced as random
+ * HTTP 401/404 errors from a provider the user had not selected. Building an
+ * adapter is a cheap closure; the key lookup is a local store read.
+ */
+export async function resolveServedTurnStream(
+  opts: HeadlessOptions,
+): Promise<{ provider: string; model: string; stream: unknown }> {
+  const { provider, model } = resolveHeadlessProvider(opts);
+  const key = await resolveHeadlessKey(provider);
+  if ('error' in key) throw new Error(key.error);
+  const { buildProviderStream } = await import('../provider/resolveStream.js');
+  const stream = buildProviderStream({
+    providerId: provider as import('../keyStore.js').ProviderName,
+    apiKey: key.apiKey,
+    baseUrl: key.baseUrl,
+    model,
+  });
+  return { provider, model, stream };
+}
+
+/**
+ * Real turn implementation: each run.turn resolves its provider stream
+ * (resolveServedTurnStream) and runs `dispatchHeadlessTurn` — same switch as
+ * `--headless` (kraken / council / zelari / graph / gauntlet), with the
+ * session workspaceRoot threaded as `opts.cwd`.
  */
 export function createCliRunTurn(
   onPermissionAsk?: ReturnType<typeof asRegistryAskHandler>,
   onAskUser?: AskUserHandler,
 ): RunTurnFn {
-  let streamPromise: Promise<{ provider: string; model: string; stream: unknown }> | null = null;
-  const ensureStream = () => {
-    if (!streamPromise) {
-      streamPromise = (async () => {
-        const { provider, model } = resolveHeadlessProvider({} as HeadlessOptions);
-        const key = await resolveHeadlessKey(provider);
-        if ('error' in key) throw new Error(key.error);
-        const { buildProviderStream } = await import('../provider/resolveStream.js');
-        const stream = buildProviderStream({
-          providerId: provider as import('../keyStore.js').ProviderName,
-          apiKey: key.apiKey,
-          baseUrl: key.baseUrl,
-          model,
-        });
-        return { provider, model, stream };
-      })();
-      streamPromise.catch(() => {
-        streamPromise = null; // allow a retry after the key materializes
-      });
-    }
-    return streamPromise;
-  };
   return async (input, deps) => {
-    const { provider, model, stream } = await ensureStream();
     const opts = bindHarnessTurnOptions(input, deps.session.workspaceRoot);
+    const { provider, model, stream } = await resolveServedTurnStream(opts);
     // Serve ask-bridge: when the host registered a bridge, "ask" rules
     // become interactive (permission.request over NDJSON, deny-on-timeout)
     // instead of the fail-closed typedErr. runOneTurn threads this into
     // the tool registry.
     if (onPermissionAsk) opts.onPermissionAsk = onPermissionAsk;
     if (onAskUser) opts.onAskUser = onAskUser;
-    // Fix D (t62): the permission preset is a FINITE, per-turn window, not a
-    // sidecar-wide mutation. The Desktop Settings value for THIS turn is
-    // applied for the duration of the turn, and the value the process had
-    // before is restored in `finally` — so a preset never leaks into the next
-    // turn (or a later workspace's turn) on the shared child. Allowlisted
-    // inside the bridge: an unknown value changes nothing, so no arbitrary
-    // env injection rides the wire. Known race (honest): two turns running
-    // in PARALLEL on this one process with different presets still share the
-    // window; the Desktop enforces one active run per workspace, so only a
-    // host that breaks that invariant can hit it.
-    const priorPreset = process.env[PRESET_ENV];
+    // Fix D (t62) → session scope: the permission preset is a per-turn
+    // value, never a sidecar-wide mutation. Inside runWithSession it lands in
+    // THIS session's env overlay (sessionScope), so concurrent chats — same
+    // workspace or not — each run under their own preset and nothing leaks
+    // into a later turn. Allowlisted inside the bridge: an unknown value
+    // changes nothing, so no arbitrary env injection rides the wire.
     applyTurnPermissionPreset(input);
-    try {
-      // t37: thread the kernel-owned workspace LspManager into the turn so
-      // the tool registry registers the LSP tools against THAT server (its
-      // lifecycle is refcounted by the kernel per root) instead of deriving
-      // one from the shared per-root map on every dispatch.
-      const lspProvider = resolveTurnLspProvider(deps.services);
-      const exitCode = await dispatchHeadlessTurn(
-        opts,
-        provider,
-        model,
-        stream as Parameters<typeof dispatchHeadlessTurn>[3],
-        undefined,
-        lspProvider ? { lspProvider } : undefined,
-      );
-      return { exitCode };
-    } finally {
-      if (priorPreset === undefined) delete process.env[PRESET_ENV];
-      else process.env[PRESET_ENV] = priorPreset;
-    }
+    // t37: thread the kernel-owned workspace LspManager into the turn so
+    // the tool registry registers the LSP tools against THAT server (its
+    // lifecycle is refcounted by the kernel per root) instead of deriving
+    // one from the shared per-root map on every dispatch.
+    const lspProvider = resolveTurnLspProvider(deps.services);
+    const exitCode = await dispatchHeadlessTurn(
+      opts,
+      provider,
+      model,
+      stream as Parameters<typeof dispatchHeadlessTurn>[3],
+      undefined,
+      lspProvider ? { lspProvider } : undefined,
+    );
+    return { exitCode };
   };
 }
 
@@ -434,6 +423,9 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
         // die with the session — they must not leak into the next chat on
         // this workspace (pre-2.44 they survived until sidecar death).
         clearSessionPermissionGrants(session.id);
+        // Concurrent chats: the session's scoped state (phase, todos, env
+        // overlay, per-turn Kraken channels — sessionScope) dies with it.
+        disposeSessionScope(session.id);
         return { id: req.id ?? null, ok: true, result: { disposed: true } };
       }
       // t32: session-scoped steer/cancel over the SAME protocol v2 — no new
@@ -483,7 +475,7 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
               : undefined;
           const delivered = live.cancel(reason);
           if (delivered) {
-            write(JSON.stringify(controlAppliedEvent(controlId, 'cancel', 'cancel')));
+            write(JSON.stringify({ ...controlAppliedEvent(controlId, 'cancel', 'cancel'), harnessSessionId: session.id }));
           }
           return {
             id: req.id ?? null,
@@ -494,7 +486,7 @@ export function startHarnessServer(options: StartHarnessServerOptions = {}): {
         // §24: enqueue = accepted; the control_applied ack (boundary
         // turn-end) is emitted by the turn when SteeringObserver drains.
         live.queue.enqueue({ type: 'steer', id: controlId, text: text as string, ts: Date.now() });
-        write(JSON.stringify(controlAcceptedEvent(controlId, 'steer')));
+        write(JSON.stringify({ ...controlAcceptedEvent(controlId, 'steer'), harnessSessionId: session.id }));
         return {
           id: req.id ?? null,
           ok: true,

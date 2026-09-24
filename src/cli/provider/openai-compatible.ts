@@ -15,8 +15,9 @@
 
 import type { ProviderStreamFn, ProviderDelta, AgentImage, AgentMessage } from '@zelari/core/harness';
 import type { ProviderName } from '../keyStore.js';
-import { getOAuthToken, resolveApiKeyWithMeta } from '../keyStore.js';
-import { getProviderConfig, getModelForProvider, getCustomEndpoint, getThinkingForProvider } from '../providerConfig.js';
+import { PROVIDERS, getOAuthToken, resolveApiKeyWithMeta } from '../keyStore.js';
+import { getApiStyleFor, getProviderConfig, getModelForProvider, getCustomEndpoint, getThinkingForProvider } from '../providerConfig.js';
+import { turnProvider } from './turnProvider.js';
 import { translateOpenAiCompatibleThinking, type ThinkingSpec } from '../thinking.js';
 import { capabilitiesFor, type ProviderCapabilities } from './capabilities.js';
 import { formatToolArgsParseError, parseToolArgsJson } from './toolArgs.js';
@@ -1205,17 +1206,44 @@ function extraFromStored(providerId: ProviderName): Pick<OpenAICompatibleConfig,
 }
 
 export async function providerFromEnv(): Promise<OpenAICompatibleConfig | null> {
-  const providerId = resolveActiveProvider();
+  // Inside a headless/served turn the TURN's provider wins over the persisted
+  // active one (see provider/turnProvider.ts): auxiliary calls must go where
+  // the user's turn goes, never to the provider.json default.
+  const turn = turnProvider();
+  const turnId = turn && PROVIDERS.some((p) => p.id === turn.provider) ? (turn.provider as ProviderName) : undefined;
+  const providerId = turnId ?? resolveActiveProvider();
   const apiKey = await resolveApiKeyWithMeta(providerId);
   if (!apiKey) return null;
   return {
     apiKey: apiKey.apiKey,
     baseUrl: resolveBaseUrl(providerId),
-    model: getModelForProvider(providerId),
+    model: turnId && turn?.model ? turn.model : getModelForProvider(providerId),
     providerId,
     thinking: getThinkingForProvider(providerId),
     ...extraFromStored(providerId),
   };
+}
+
+/** Providers whose wire protocol is NOT OpenAI chat-completions (own adapters). */
+const NON_CHAT_COMPLETIONS_PROVIDERS: ReadonlySet<string> = new Set(['chatgpt', 'anthropic', 'muse']);
+
+/**
+ * The OpenAI-style `POST /chat/completions` URL for a resolved provider, or
+ * null when that provider speaks another protocol (ChatGPT/muse Responses,
+ * Anthropic Messages, or a provider switched to `/responses`). One-shot
+ * helpers that hand-roll a chat-completions request must skip on null —
+ * never fall back to another vendor's host with this provider's key.
+ */
+export function chatCompletionsUrlFor(cfg: Pick<OpenAICompatibleConfig, 'providerId' | 'baseUrl'>): string | null {
+  if (NON_CHAT_COMPLETIONS_PROVIDERS.has(cfg.providerId)) return null;
+  if (getApiStyleFor(cfg.providerId) === 'responses') return null;
+  const base = cfg.baseUrl?.replace(/\/$/, '') ?? '';
+  return base ? `${base}/chat/completions` : null;
+}
+
+/** True when the provider can serve OpenAI-style `/embeddings` with this credential shape. */
+export function supportsOpenAiEmbeddings(providerId: string): boolean {
+  return !NON_CHAT_COMPLETIONS_PROVIDERS.has(providerId);
 }
 
 /**

@@ -22,6 +22,7 @@
  * safety/lifecycleHooks.resolveHookFailureMode).
  */
 import type { PolicyLoadMode } from './policyEngine.js';
+import { sessionLocal } from '../sessionScope.js';
 
 /** Host that is about to load/evaluate policies. */
 export type PolicyLoadSurface = 'headless' | 'mission' | 'tui';
@@ -75,16 +76,18 @@ export function resolvePolicyLoadMode(input: ResolvePolicyLoadModeInput): Policy
 // Process-lifetime configuration (hosts register once before dispatch);
 // defaults to 'tui' because that is what imports toolRegistry directly.
 
-let activeSurface: PolicyLoadSurface = 'tui';
+// Per harness session in --serve-harness (a zelari mission chat and a kraken
+// chat run concurrently with different surfaces); process-wide elsewhere.
+const activeSurface = sessionLocal<PolicyLoadSurface>(() => 'tui');
 
 /** Register the host BEFORE building registries (runHeadless pre-flight). */
 export function setActivePolicyLoadSurface(surface: PolicyLoadSurface): void {
-  activeSurface = surface;
+  activeSurface.set(surface);
 }
 
 /** Current host registration (read-mostly; exposed for tests/diagnostics). */
 export function activePolicyLoadSurface(): PolicyLoadSurface {
-  return activeSurface;
+  return activeSurface.get();
 }
 
 /**
@@ -93,7 +96,7 @@ export function activePolicyLoadSurface(): PolicyLoadSurface {
  */
 export function activePolicyLoadMode(env: NodeJS.ProcessEnv = process.env): PolicyLoadMode {
   return resolvePolicyLoadMode({
-    surface: activeSurface,
+    surface: activeSurface.get(),
     override: env[POLICY_LOAD_MODE_ENV],
     ci: typeof env.CI === 'string' ? env.CI : undefined,
   });

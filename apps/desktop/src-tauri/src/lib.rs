@@ -39,18 +39,28 @@ const MAX_PARALLEL_RUNS: usize = 4;
 #[derive(Clone)]
 struct RunEntry {
     run_id: String,
-    /// Kept for diagnostics / future per-conversation queries.
-    #[allow(dead_code)]
+    /// Owning desktop chat (one live run per chat).
     conversation_id: String,
     /// Normalized workspace key (canonical, lowercased, forward slashes). */
     cwd: String,
+    /// Normalized mode (`kraken` / `council` / `zelari`).
+    mode: String,
     cancel: Arc<AtomicBool>,
 }
 
 /// Multi-run registry (replaces the v0.1 single-flight RunState).
-/// Policy: max ONE active run per cwd - two CLI processes writing the
-/// same tree would race on plan.json and source files - plus a global
-/// MAX_PARALLEL_RUNS cap.
+///
+/// Policy (multi-chat, 2026-09-24): several chats MAY run on the same
+/// workspace at once. All runs share ONE sidecar process, whose shared
+/// writers are serialized in-process (plan.json under the workspace mutex,
+/// Kraken worktree merges per repo) and whose per-turn state is scoped per
+/// harness session (src/cli/sessionScope.ts); same-file edits from two chats
+/// are rejected as stale by the anchored edit protocol (ADR-0033) instead of
+/// clobbering. What stays exclusive:
+///   - one live run per chat (a chat is a sequential conversation);
+///   - one `zelari` mission per workspace (`.zelari/mission-state.json` is a
+///     single per-workspace resume state);
+///   - the global MAX_PARALLEL_RUNS cap.
 struct RunRegistry {
     runs: Mutex<Vec<RunEntry>>,
 }
@@ -69,11 +79,18 @@ impl RunRegistry {
         run_id: &str,
         conversation_id: &str,
         cwd: &str,
+        mode: &str,
     ) -> Result<Arc<AtomicBool>, String> {
         let mut runs = self.runs.lock().unwrap_or_else(|e| e.into_inner());
-        if runs.iter().any(|r| r.cwd == cwd) {
+        if !conversation_id.is_empty() && runs.iter().any(|r| r.conversation_id == conversation_id) {
             return Err(
-                "Another build run is already modifying this workspace. Wait for it to finish or cancel it first."
+                "This chat already has a run in progress. Wait for it to finish, steer it, or cancel it first."
+                    .into(),
+            );
+        }
+        if mode == "zelari" && runs.iter().any(|r| r.cwd == cwd && r.mode == "zelari") {
+            return Err(
+                "A zelari mission is already running in this workspace (one mission state per folder). Wait for it to finish or cancel it first."
                     .into(),
             );
         }
@@ -87,6 +104,7 @@ impl RunRegistry {
             run_id: run_id.to_string(),
             conversation_id: conversation_id.to_string(),
             cwd: cwd.to_string(),
+            mode: mode.to_string(),
             cancel: Arc::clone(&cancel),
         });
         Ok(cancel)
@@ -3234,17 +3252,23 @@ fn run_task_inner(
     find_node().ok_or_else(|| "Node.js not found on PATH".to_string())?;
     resolve_cli_entry()?;
 
+    // Millis alone collide when two chats start in the same millisecond, and
+    // every sidecar routing table is keyed by run_id — the sequence suffix
+    // keeps concurrent runs distinct.
+    static RUN_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let run_id = format!(
-        "run-{}",
+        "run-{}-{}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_millis())
-            .unwrap_or(0)
+            .unwrap_or(0),
+        RUN_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     );
     let conversation_id = args.conversation_id.clone().unwrap_or_default();
     let cwd_norm = normalize_cwd(args.cwd.as_deref());
-    // Policy: max ONE active run per workspace (cwd) + global cap.
-    let cancel_flag = state.register(&run_id, &conversation_id, &cwd_norm)?;
+    // Policy: one run per chat, one zelari mission per workspace, global cap
+    // (several chats may share a workspace — see RunRegistry).
+    let cancel_flag = state.register(&run_id, &conversation_id, &cwd_norm, &mode)?;
 
     let _ = app.emit(
         "run-started",
@@ -3869,6 +3893,48 @@ pub fn run() {
 mod tests {
     use super::*;
     use std::io::Write;
+
+    // --- multi-chat run policy (2026-09-24) --------------------------------
+
+    #[test]
+    fn run_registry_allows_several_chats_on_one_workspace() {
+        let reg = RunRegistry::default();
+        assert!(reg.register("run-1", "chat-a", "e:/proj", "kraken").is_ok());
+        assert!(
+            reg.register("run-2", "chat-b", "e:/proj", "kraken").is_ok(),
+            "a second chat on the same folder must be able to run"
+        );
+        assert!(reg.register("run-3", "chat-c", "e:/proj", "council").is_ok());
+    }
+
+    #[test]
+    fn run_registry_keeps_one_run_per_chat() {
+        let reg = RunRegistry::default();
+        assert!(reg.register("run-1", "chat-a", "e:/proj", "kraken").is_ok());
+        assert!(reg.register("run-2", "chat-a", "e:/other", "kraken").is_err());
+        reg.remove("run-1");
+        assert!(reg.register("run-3", "chat-a", "e:/proj", "kraken").is_ok());
+    }
+
+    #[test]
+    fn run_registry_keeps_one_zelari_mission_per_workspace() {
+        let reg = RunRegistry::default();
+        assert!(reg.register("run-1", "chat-a", "e:/proj", "zelari").is_ok());
+        let err = reg.register("run-2", "chat-b", "e:/proj", "zelari").unwrap_err();
+        assert!(err.contains("mission"));
+        // A mission elsewhere, or a non-mission chat here, is fine.
+        assert!(reg.register("run-3", "chat-c", "e:/other", "zelari").is_ok());
+        assert!(reg.register("run-4", "chat-d", "e:/proj", "kraken").is_ok());
+    }
+
+    #[test]
+    fn run_registry_enforces_the_global_cap() {
+        let reg = RunRegistry::default();
+        for i in 0..MAX_PARALLEL_RUNS {
+            assert!(reg.register(&format!("run-{i}"), &format!("chat-{i}"), "e:/proj", "kraken").is_ok());
+        }
+        assert!(reg.register("run-x", "chat-x", "e:/proj", "kraken").is_err());
+    }
 
     #[test]
     fn unwrap_leaves_js_entry_alone() {

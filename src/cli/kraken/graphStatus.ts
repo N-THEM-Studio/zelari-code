@@ -25,6 +25,7 @@ import {
   type TaskNodeStatus,
   type UnresolvedFinding,
 } from '@zelari/core';
+import { turnGlobals } from '../sessionScope.js';
 
 const STATUS_ICON: Record<TaskNodeStatus, string> = {
   pending: '·',
@@ -158,7 +159,7 @@ export interface LiveGraphSummary {
 type G = { __zelariKrakenGraphLive?: LiveGraphSummary | null };
 
 function state(): G {
-  return globalThis as unknown as G;
+  return turnGlobals<G>();
 }
 
 /** Called by the executor when a graph run starts. */

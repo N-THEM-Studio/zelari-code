@@ -3997,7 +3997,7 @@ export default function App() {
               tasks={sessionTasks}
               projectTasks={projectTasks}
               mission={mission}
-              // One run per workspace (host policy): while a run holds it the
+              // One run per chat (host policy): while this chat runs the
               // button is not offered instead of steering the in-flight run.
               onResumeMission={running ? undefined : onResumeMission}
               onClear={() =>

@@ -43,6 +43,7 @@ import {
 } from '@zelari/core/harness/tools/toolTypes';
 import { appendKrakenRadio } from './krakenRadio.js';
 import { EXPLORE_PROMPT, GENERAL_PROMPT, VERIFY_PROMPT } from './taskPrompts.js';
+import { turnGlobals } from '../sessionScope.js';
 import {
   formatSubagentMetricsLine,
   formatToolDegradedGuardLine,
@@ -352,7 +353,7 @@ function sessionKey(sessionId?: string): string {
 
 /** K3.3 / F16: spawn counters of every non-legacy session. */
 function spawnCountMap(): Map<string, number> {
-  const g = globalThis as unknown as SpawnGlobal;
+  const g = turnGlobals<SpawnGlobal>();
   if (!g.__zelariTaskSpawnCountBySession) g.__zelariTaskSpawnCountBySession = new Map();
   return g.__zelariTaskSpawnCountBySession;
 }
@@ -363,7 +364,7 @@ function spawnCountMap(): Map<string, number> {
  * concurrent session in the same process from eating another one's budget.
  */
 function bumpTaskSpawnCount(sessionId?: string): number {
-  const g = globalThis as unknown as SpawnGlobal;
+  const g = turnGlobals<SpawnGlobal>();
   const key = sessionKey(sessionId);
   if (key === LEGACY_SESSION_KEY) {
     g.__zelariTaskSpawnCount = (g.__zelariTaskSpawnCount ?? 0) + 1;
@@ -379,7 +380,7 @@ function bumpTaskSpawnCount(sessionId?: string): number {
  * for an id-less caller, `__zelariGeneralVerifyDebtBySession` otherwise.
  */
 function debtStore(sessionId?: string): Map<string, VerifyDebtRecord> {
-  const g = globalThis as unknown as SpawnGlobal;
+  const g = turnGlobals<SpawnGlobal>();
   const key = sessionKey(sessionId);
   if (key === LEGACY_SESSION_KEY) {
     if (!g.__zelariGeneralVerifyDebt) g.__zelariGeneralVerifyDebt = new Map();
@@ -396,7 +397,7 @@ function debtStore(sessionId?: string): Map<string, VerifyDebtRecord> {
 
 /** K3.3 / F16: every non-legacy session bucket (aggregate gate reads). */
 function sessionDebtStores(): readonly Map<string, VerifyDebtRecord>[] {
-  const g = globalThis as unknown as SpawnGlobal;
+  const g = turnGlobals<SpawnGlobal>();
   const bySession = g.__zelariGeneralVerifyDebtBySession;
   return bySession ? [...bySession.values()] : [];
 }
@@ -420,7 +421,7 @@ function debtScopes(sessionId?: string): readonly Map<string, VerifyDebtRecord>[
  * by the unit-test seam and the headless per-turn boundary.
  */
 export function resetTaskSpawnCount(sessionId?: string): void {
-  const g = globalThis as unknown as SpawnGlobal;
+  const g = turnGlobals<SpawnGlobal>();
   if (!isSessionScoped(sessionId)) {
     g.__zelariTaskSpawnCount = 0;
     g.__zelariTaskSpawnCountBySession?.clear();
@@ -441,7 +442,7 @@ export function resetTaskSpawnCount(sessionId?: string): void {
  * by the unit-test seam and the headless per-turn boundary.
  */
 export function resetTaskVerifyObligation(sessionId?: string): void {
-  const g = globalThis as unknown as SpawnGlobal;
+  const g = turnGlobals<SpawnGlobal>();
   if (!isSessionScoped(sessionId)) {
     g.__zelariGeneralVerifyDebt = new Map();
     g.__zelariGeneralVerifyDebtBySession?.clear();
@@ -1733,7 +1734,7 @@ export function flushSubagentMetrics(): Promise<unknown> {
 export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleResult> {
   const { deps, args, agent, thoroughness, parentCwd, sessionId } = opts;
   const started = Date.now();
-  const g = globalThis as unknown as SpawnGlobal;
+  const g = turnGlobals<SpawnGlobal>();
 
   // Worktree isolation for general writers (K7). WS3 (2.39) flipped the
   // DEFAULT: unless the user opts out with ZELARI_KRAKEN_WORKTREE=0
@@ -2115,16 +2116,25 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       }));
 
     // Routed cheap model id rejected (e.g. Settings explore = glm-5.3-flash
-    // while the lead model works): retry once on the parent identity.
+    // while the lead model works): retry once on the parent identity. A
+    // tentacle routed to ANOTHER provider (cross-family verify, qualified
+    // Settings ref) also retries on access failures of that provider —
+    // expired login, 401/403/404, unreachable host — since the lead's
+    // provider is the one known to work this turn.
     if (
       !aborted &&
       !result &&
       sub.fallback &&
       sub.fallback.model !== sub.model
     ) {
-      const { isUnknownModelError } = await import('./krakenModel.js');
-      if (isUnknownModelError(error)) {
-        emitPhase(`model ${sub.model} unavailable — retrying with ${sub.fallback.model}`);
+      const { isUnknownModelError, isProviderAccessError } = await import('./krakenModel.js');
+      const crossProvider = Boolean(sub.provider && sub.fallback.provider && sub.provider !== sub.fallback.provider);
+      if (isUnknownModelError(error) || (crossProvider && isProviderAccessError(error))) {
+        emitPhase(
+          crossProvider
+            ? `provider ${sub.provider} (${sub.model}) unavailable — retrying with ${sub.fallback.provider}/${sub.fallback.model}`
+            : `model ${sub.model} unavailable — retrying with ${sub.fallback.model}`,
+        );
         const retryConfig: AgentHarnessConfig = {
           ...config,
           model: sub.fallback.model,

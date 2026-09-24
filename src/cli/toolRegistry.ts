@@ -154,6 +154,7 @@ import { typedErr } from '@zelari/core/harness/tools/toolTypes';
 import { cliToolToEnhanced, registerCustomTool } from '@zelari/core/skills';
 import type { EnhancedToolDefinition } from '@zelari/core/skills';
 import type { MemoryService } from '@zelari/core/memory';
+import { turnEnv } from './sessionScope.js';
 
 export interface BuiltinToolSummary {
   /** Tool name as registered. */
@@ -1075,7 +1076,7 @@ const warnedThinkingInputs = new Set<string>();
 export function resolveTentacleThinkingInput(
   agent: TaskAgentKind,
   taskArg: string | undefined,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
 ): string | undefined {
   const fromArg = typeof taskArg === 'string' ? taskArg.trim() : '';
   const argWins = fromArg.length > 0 && fromArg.toLowerCase() !== 'inherit';
@@ -1159,7 +1160,7 @@ export function createKrakenSubAgentContextFactory(opts: {
     // dead code actually engage — cheap auto-pick for explore/verify and the
     // cross-family verify pick (P0.6). Without a models registry both lists
     // stay empty and this resolves the parent model exactly as before.
-    const resolvedModel = await resolveKrakenSubModelAsync(agent, parentModel, process.env, {
+    const resolvedModel = await resolveKrakenSubModelAsync(agent, parentModel, turnEnv(), {
       provider: cfg.providerId,
       // K3.6 (F20): this factory is where a REAL general spawn resolves its
       // model, so it also owns the radio half of the "SUB_MODEL set but
@@ -1181,6 +1182,12 @@ export function createKrakenSubAgentContextFactory(opts: {
       if (cross) {
         effCfg = cross;
         model = ref.model;
+      } else if (PROVIDERS.some((p) => p.id === ref.provider)) {
+        // A KNOWN provider without credentials: sending "grok/grok-4" to the
+        // lead provider can only 404. Stay on the parent model instead. An
+        // unknown prefix is an exotic model id ("org/model" on an OpenRouter-
+        // style endpoint) and still goes to the lead provider unchanged.
+        model = parentModel;
       }
     }
     const subCfg = { ...effCfg, model };
@@ -1188,7 +1195,7 @@ export function createKrakenSubAgentContextFactory(opts: {
     // `thinkingByProvider[provider]` (set by providerFromEnv/providerConfigFor);
     // an override only replaces it when it VALIDATES, so a typo in an env var
     // degrades to the inherited behavior instead of failing the spawn.
-    const thinkingInput = resolveTentacleThinkingInput(agent, thinkingEffort, process.env);
+    const thinkingInput = resolveTentacleThinkingInput(agent, thinkingEffort, turnEnv());
     if (thinkingInput) subCfg.thinking = parseThinkingSpec(thinkingInput);
     const subProfile = taskAgentToProfile(agent);
     const subRoot = subCwd || root;

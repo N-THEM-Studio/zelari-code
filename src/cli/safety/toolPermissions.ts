@@ -26,6 +26,7 @@
 
 import type { ToolPermission } from '@zelari/core/harness/tools/toolTypes';
 import { getCurrentHarnessSessionId } from '../serve/sessionControl.js';
+import { turnEnv } from '../sessionScope.js';
 
 export type PermissionAction = 'allow' | 'ask' | 'deny';
 
@@ -173,7 +174,7 @@ export function parsePermissionPreset(raw: string | undefined): PermissionPreset
  * before any registry is built), default `standard`.
  */
 export function activePermissionPreset(): PermissionPreset {
-  return parsePermissionPreset(process.env.ZELARI_PERMISSION_PRESET) ?? 'standard';
+  return parsePermissionPreset(turnEnv().ZELARI_PERMISSION_PRESET) ?? 'standard';
 }
 
 /** Default policy from env + active preset (build phase). */
@@ -183,10 +184,10 @@ export function defaultPermissionPolicy(
   const presetName = activePermissionPreset();
   const preset = PERMISSION_PRESETS[presetName];
   return {
-    read: parseAction(process.env.ZELARI_PERMISSION_READ, preset.read),
-    write: parseAction(process.env.ZELARI_PERMISSION_WRITE, preset.write),
-    execute: parseAction(process.env.ZELARI_PERMISSION_EXECUTE, preset.execute),
-    network: parseAction(process.env.ZELARI_PERMISSION_NETWORK, preset.network),
+    read: parseAction(turnEnv().ZELARI_PERMISSION_READ, preset.read),
+    write: parseAction(turnEnv().ZELARI_PERMISSION_WRITE, preset.write),
+    execute: parseAction(turnEnv().ZELARI_PERMISSION_EXECUTE, preset.execute),
+    network: parseAction(turnEnv().ZELARI_PERMISSION_NETWORK, preset.network),
     ui: 'allow',
     // yolo means "go alone": residual asks auto-approve without a UI handler
     // (no more "denied timed out" piles on unattended builds). Explicit

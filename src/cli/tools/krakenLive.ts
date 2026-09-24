@@ -3,7 +3,10 @@
  *
  * Complements file radio (.zelari/radio): this is ephemeral, per process,
  * ideal for "tentacles 1 running · 2 done" chips during a parent turn.
+ * Per harness session in --serve-harness (sessionScope): a chat never counts
+ * another chat's tentacles.
  */
+import { turnGlobals } from '../sessionScope.js';
 
 export type LiveTentacleStatus = 'running' | 'done' | 'error';
 
@@ -30,20 +33,20 @@ type G = {
 };
 
 function store(): LiveTentacle[] {
-  const g = globalThis as unknown as G;
+  const g = turnGlobals<G>();
   if (!g.__zelariKrakenLive) g.__zelariKrakenLive = [];
   return g.__zelariKrakenLive;
 }
 
 function nextId(): string {
-  const g = globalThis as unknown as G;
+  const g = turnGlobals<G>();
   g.__zelariKrakenLiveSeq = (g.__zelariKrakenLiveSeq ?? 0) + 1;
   return `t${g.__zelariKrakenLiveSeq}`;
 }
 
 /** Clear finished tentacles (keep running). Call on new parent turn if desired. */
 export function resetKrakenLive(opts: { keepRunning?: boolean } = {}): void {
-  const g = globalThis as unknown as G;
+  const g = turnGlobals<G>();
   if (opts.keepRunning) {
     g.__zelariKrakenLive = store().filter((t) => t.status === 'running');
   } else {

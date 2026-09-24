@@ -49,6 +49,7 @@ import { baseJailEnv, JAIL_FULL_ENV_ENV, jailFullEnvRequested } from './jails/ba
 import { darwinBackend } from './jails/darwin.js';
 import { linuxBackend } from './jails/linux.js';
 import { win32Backend } from './jails/win32.js';
+import { turnEnv } from '../sessionScope.js';
 
 // ── Types ────────────────────────────────────────────────────────────────
 
@@ -111,7 +112,7 @@ export const OS_JAIL_ENV = 'ZELARI_OS_JAIL';
  */
 export function resolveJailMode(
   override: string | undefined,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
 ): JailMode {
   const v = override?.trim().toLowerCase();
   if (v === 'off') return 'off';
@@ -134,7 +135,7 @@ export function resolveJailMode(
 }
 
 /** Resolve the ACTIVE jail mode from env (injectable so tests never mutate process.env). */
-export function activeJailMode(env: NodeJS.ProcessEnv = process.env): JailMode {
+export function activeJailMode(env: NodeJS.ProcessEnv = turnEnv()): JailMode {
   return resolveJailMode(env[OS_JAIL_ENV], env);
 }
 

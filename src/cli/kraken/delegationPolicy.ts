@@ -1,5 +1,6 @@
 import type { SystemPromptModule } from '@zelari/core/skills';
 import type { OrchestrationStrategy } from '../orchestration/signals.js';
+import { turnEnv } from '../sessionScope.js';
 
 /**
  * Kraken Delegation Policy — when the lead should spawn tentacles.
@@ -50,7 +51,7 @@ export function isDelegationPolicy(value: unknown): value is DelegationPolicy {
 }
 
 export function resolveDelegationPolicy(
-  raw: string | undefined = process.env[KRAKEN_DELEGATION_ENV],
+  raw: string | undefined = turnEnv()[KRAKEN_DELEGATION_ENV],
 ): DelegationPolicy {
   const v = (raw ?? '').trim().toLowerCase();
   if (!v) return 'automatic';
@@ -88,7 +89,7 @@ export const STRATEGY_DELEGATION: Readonly<
  */
 export function resolveDelegationPolicyForRun(
   strategy?: OrchestrationStrategy,
-  env: NodeJS.ProcessEnv = process.env,
+  env: NodeJS.ProcessEnv = turnEnv(),
 ): DelegationPolicy {
   const raw = env[KRAKEN_DELEGATION_ENV]?.trim().toLowerCase() ?? '';
   const explicit = raw ? ALIASES[raw] : undefined;

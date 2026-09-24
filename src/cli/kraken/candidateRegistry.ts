@@ -69,6 +69,7 @@ export function isKrakenSelectionEnabled(): boolean {
 
 import type { KrakenSelectionVerdict } from './verifier.js';
 import type { KrakenCheckResult, TentacleToolTrace } from './verifyReport.js';
+import { turnGlobals } from '../sessionScope.js';
 
 type CandidateGlobal = {
   __zelariKrakenCandidates?: CandidateEntry[];
@@ -81,14 +82,14 @@ type CandidateGlobal = {
 };
 
 function store(): CandidateEntry[] {
-  const g = globalThis as unknown as CandidateGlobal;
+  const g = turnGlobals<CandidateGlobal>();
   if (!g.__zelariKrakenCandidates) g.__zelariKrakenCandidates = [];
   return g.__zelariKrakenCandidates;
 }
 
 /** Reset the per-turn candidate registry (call at each parent user turn). */
 export function resetKrakenCandidates(): void {
-  const g = globalThis as unknown as CandidateGlobal;
+  const g = turnGlobals<CandidateGlobal>();
   g.__zelariKrakenCandidates = [];
   g.__zelariKrakenSelection = null;
   g.__zelariKrakenCheckResults = null;
@@ -97,13 +98,13 @@ export function resetKrakenCandidates(): void {
 
 /** Store the kraken_select verdict for this turn (Fase 6/8 consume it). */
 export function setKrakenSelection(verdict: KrakenSelectionVerdict): void {
-  const g = globalThis as unknown as CandidateGlobal;
+  const g = turnGlobals<CandidateGlobal>();
   g.__zelariKrakenSelection = verdict;
 }
 
 /** Verdict of this turn's kraken_select call, or null when none ran. */
 export function getKrakenSelection(): KrakenSelectionVerdict | null {
-  const g = globalThis as unknown as CandidateGlobal;
+  const g = turnGlobals<CandidateGlobal>();
   return g.__zelariKrakenSelection ?? null;
 }
 
@@ -131,7 +132,7 @@ export function setKrakenCheckResults(
   results: KrakenCheckResult[],
   toolTrace?: readonly TentacleToolTrace[],
 ): void {
-  const g = globalThis as unknown as CandidateGlobal;
+  const g = turnGlobals<CandidateGlobal>();
   g.__zelariKrakenCheckResults = results;
   // 2.1 T5: keep the raw tool executions alongside the notes so the strict
   // gate can anchor evidence to real tool output instead of re-emitted notes.
@@ -143,7 +144,7 @@ export function setKrakenCheckResults(
  * no verify tentacle reported (yet).
  */
 export function getKrakenCheckResults(): KrakenCheckResult[] | null {
-  const g = globalThis as unknown as CandidateGlobal;
+  const g = turnGlobals<CandidateGlobal>();
   const results = g.__zelariKrakenCheckResults;
   return results ? [...results] : null;
 }
@@ -154,7 +155,7 @@ export function getKrakenCheckResults(): KrakenCheckResult[] | null {
  * the verification bridge to anchor EvidenceRefs to real tool output.
  */
 export function getLastVerifyToolTrace(): TentacleToolTrace[] | null {
-  const g = globalThis as unknown as CandidateGlobal;
+  const g = turnGlobals<CandidateGlobal>();
   const trace = g.__zelariVerifyToolTrace;
   return trace ? [...trace] : null;
 }
@@ -169,7 +170,7 @@ export function getLastVerifyToolTrace(): TentacleToolTrace[] | null {
  * The argument may be empty (clears the slot to null) or any bounded ring.
  */
 export function setLastVerifyToolTrace(trace: readonly TentacleToolTrace[]): void {
-  const g = globalThis as unknown as CandidateGlobal;
+  const g = turnGlobals<CandidateGlobal>();
   g.__zelariVerifyToolTrace = trace.length > 0 ? [...trace] : null;
 }
 

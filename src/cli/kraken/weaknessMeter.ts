@@ -36,8 +36,8 @@ import {
   type WeaknessMeterResponse,
   weaknessFromMeter,
 } from '@zelari/core';
-import { getProviderConfig, getModelForProvider, getCustomEndpoint } from '../providerConfig.js';
-import { resolveApiKeyWithMeta, type ProviderName } from '../keyStore.js';
+import { chatCompletionsUrlFor, providerFromEnv } from '../provider/openai-compatible.js';
+import type { ProviderName } from '../keyStore.js';
 
 /**
  * Whether the meter is enabled. The check is cheap and the result is
@@ -217,24 +217,21 @@ export function parseMeterContent(raw: string, model: string, durationMs: number
 }
 
 /**
- * Resolve the active provider configuration for the meter call. Reads
- * the same on-disk / env provider config the rest of the CLI uses so
- * the meter routes through the same channel the user already paid for.
- * Returns null when no provider / key can be resolved.
+ * The TURN's provider (providerFromEnv honors provider/turnProvider.ts, so a
+ * Desktop/headless turn is never swapped for the provider.json default) on
+ * its real `POST /chat/completions` URL — or null when that provider speaks
+ * another protocol, has no key, or no model. Never another vendor's host:
+ * this used to fall back to api.openai.com (and to use a custom BASE url as
+ * if it were the full endpoint), sending e.g. a grok token to OpenAI and
+ * failing with HTTP 401/404.
  */
-async function resolveActiveProvider(env: NodeJS.ProcessEnv): Promise<
+async function resolveActiveProvider(_env: NodeJS.ProcessEnv): Promise<
   | { providerId: ProviderName; model: string; endpoint: string; apiKey: string }
   | null
 > {
-  const cfg = await getProviderConfig();
-  if (!cfg) return null;
-  const providerId = cfg.activeProviderId;
-  const key = await resolveApiKeyWithMeta(providerId, env);
-  if (!key?.apiKey) return null;
-  const model =
-    getModelForProvider(providerId) ?? cfg.modelByProvider[providerId] ?? '';
-  const endpoint =
-    getCustomEndpoint(providerId) ??
-    `https://api.openai.com/v1/chat/completions`;
-  return { providerId, model, endpoint, apiKey: key.apiKey };
+  const cfg = await providerFromEnv();
+  if (!cfg?.apiKey || !cfg.model) return null;
+  const endpoint = chatCompletionsUrlFor(cfg);
+  if (!endpoint) return null;
+  return { providerId: cfg.providerId, model: cfg.model, endpoint, apiKey: cfg.apiKey };
 }

@@ -3,8 +3,13 @@
  * In-process only — reset on /clear|/new. Not the same as `.zelari/plan.json`
  * workspace tasks (those are multi-session durable plans).
  *
+ * Per harness session in `--serve-harness` (sessionScope): each Desktop chat
+ * sends its own todos with every turn, and concurrent chats must never see
+ * (or overwrite) each other's list. Process-wide in the TUI.
+ *
  * @since v1.21.0
  */
+import { sessionLocal } from './sessionScope.js';
 
 export type SessionTodoStatus =
   | 'pending'
@@ -18,14 +23,14 @@ export interface SessionTodo {
   status: SessionTodoStatus;
 }
 
-let todos: SessionTodo[] = [];
+const store = sessionLocal<SessionTodo[]>(() => []);
 
 export function listSessionTodos(): SessionTodo[] {
-  return todos.map((t) => ({ ...t }));
+  return store.get().map((t) => ({ ...t }));
 }
 
 export function clearSessionTodos(): void {
-  todos = [];
+  store.set([]);
 }
 
 /** A todo_write item: `content` may be omitted only to patch an existing id (merge). */
@@ -40,7 +45,7 @@ export interface SessionTodoInput {
  * todo with that id (a status-only patch needs something to patch).
  */
 export function unresolvedTodoPatches(items: readonly SessionTodoInput[]): string[] {
-  const known = new Set(todos.map((t) => t.id));
+  const known = new Set(store.get().map((t) => t.id));
   return items
     .filter((it) => !it.content?.trim())
     .map((it) => it.id?.trim() ?? '')
@@ -71,11 +76,11 @@ export function writeSessionTodos(
       }))
       .filter((t) => t.content.length > 0)
       .slice(0, 40);
-    todos = next;
+    store.set(next);
     return listSessionTodos();
   }
 
-  const byId = new Map(todos.map((t) => [t.id, t]));
+  const byId = new Map(store.get().map((t) => [t.id, t]));
   let next = 1;
   const freshId = (): string => {
     while (byId.has(`t${next}`)) next++;
@@ -88,11 +93,11 @@ export function writeSessionTodos(
     if (!content) continue;
     byId.set(id, { id, content, status: it.status ?? existing?.status ?? 'pending' });
   }
-  todos = [...byId.values()].slice(0, 40);
+  store.set([...byId.values()].slice(0, 40));
   return listSessionTodos();
 }
 
-export function formatTodosForModel(list: readonly SessionTodo[] = todos): string {
+export function formatTodosForModel(list: readonly SessionTodo[] = store.get()): string {
   if (list.length === 0) return '(no todos)';
   return list
     .map((t) => {
@@ -111,7 +116,7 @@ export function formatTodosForModel(list: readonly SessionTodo[] = todos): strin
 
 /** One-line summary for StatusBar / Desktop chip: "todos 2/5" or null if empty. */
 export function formatTodoStatusSummary(
-  list: readonly SessionTodo[] = todos,
+  list: readonly SessionTodo[] = store.get(),
 ): string | null {
   if (list.length === 0) return null;
   const done = list.filter(
@@ -124,5 +129,5 @@ export function formatTodoStatusSummary(
 
 /** Test helper. */
 export function _resetSessionTodosForTests(): void {
-  todos = [];
+  store.set([]);
 }

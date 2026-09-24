@@ -439,6 +439,76 @@ describe('taskTool K3 integration', () => {
     if (res.ok) expect(res.value.result).toContain('layout mapped');
   });
 
+  it('retries a CROSS-PROVIDER tentacle on an access failure of that provider (expired login)', async () => {
+    // 2026-09-24: cross-family verify landed on a provider whose OAuth token had
+    // expired; the auth error does not mention "model", so the old retry never
+    // fired and the user saw a raw HTTP error from a provider they never picked.
+    const models: string[] = [];
+    const tool = createTaskTool({
+      allowWorktree: false,
+      createSubAgentContext: async ({ cwd }) => ({
+        ...dummyContext,
+        cwd,
+        provider: 'grok',
+        model: 'grok-4',
+        fallback: {
+          model: 'parent-model',
+          provider: 'openai-compatible',
+          providerStream: dummyContext.providerStream,
+        },
+      }),
+      harnessFactory: (config) => {
+        models.push(config.model);
+        if (config.model === 'grok-4') {
+          return fakeHarness([
+            { type: 'error', message: 'HTTP 401: {"error":"token expired"}' } as Partial<BrainEvent>,
+          ]);
+        }
+        return fakeHarness([
+          { type: 'message_start' },
+          { type: 'message_delta', delta: 'verified on parent' } as Partial<BrainEvent>,
+          { type: 'message_end' },
+        ]);
+      },
+    });
+    const res = await tool.execute(
+      { description: 'check', prompt: 'p', agent: 'explore' },
+      { ...ctx, cwd: root, sessionId: 'cross-fallback-test' },
+    );
+    expect(models).toEqual(['grok-4', 'parent-model']);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.result).toContain('verified on parent');
+  });
+
+  it('does NOT retry a same-provider tentacle on a plain auth error', async () => {
+    const models: string[] = [];
+    const tool = createTaskTool({
+      allowWorktree: false,
+      createSubAgentContext: async ({ cwd }) => ({
+        ...dummyContext,
+        cwd,
+        provider: 'openai-compatible',
+        model: 'cheap-model',
+        fallback: {
+          model: 'parent-model',
+          provider: 'openai-compatible',
+          providerStream: dummyContext.providerStream,
+        },
+      }),
+      harnessFactory: (config) => {
+        models.push(config.model);
+        return fakeHarness([
+          { type: 'error', message: 'HTTP 401: invalid api key' } as Partial<BrainEvent>,
+        ]);
+      },
+    });
+    await tool.execute(
+      { description: 'check', prompt: 'p', agent: 'explore' },
+      { ...ctx, cwd: root, sessionId: 'same-provider-test' },
+    );
+    expect(models).toEqual(['cheap-model']);
+  });
+
   it('passes cwd into createSubAgentContext', async () => {
     let seenCwd: string | undefined;
     const tool = createTaskTool({

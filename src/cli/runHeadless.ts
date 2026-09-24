@@ -63,6 +63,8 @@ import { parseMode } from './mode.js';
 import { createStreamScrubber } from './utils/streamScrub.js';
 import { resetTaskSpawnCount, resetTaskVerifyObligation } from './tools/taskTool.js';
 import { writeSessionTodos } from './sessionTodos.js';
+import { setTurnEnv } from './sessionScope.js';
+import { setTurnProvider, turnProvider } from './provider/turnProvider.js';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -298,15 +300,21 @@ const KRAKEN_TURN_ENV: Array<[keyof HeadlessOptions, string]> = [
 
 /**
  * Publish the per-turn Kraken overrides (`ZELARI_KRAKEN_*_MODEL`,
- * `ZELARI_KRAKEN_*_THINKING`, delegation policy) to `process.env` for the
- * tentacle spawn factory. Exported for tests: the mapping is the contract
- * between `HeadlessOptions` and the spawn-side env reads.
+ * `ZELARI_KRAKEN_*_THINKING`, delegation policy) for the tentacle spawn
+ * factory. Exported for tests: the mapping is the contract between
+ * `HeadlessOptions` and the spawn-side env reads (`turnEnv()`).
+ *
+ * In `--serve-harness` the values land in the SESSION env overlay
+ * (sessionScope), never `process.env`: concurrent chats used to overwrite
+ * each other's tentacle models, and a value set by one turn stuck to every
+ * later turn of every chat. Outside a served session this writes
+ * `process.env` exactly as before (one-shot `--headless`).
  */
 export function applyKrakenTurnEnv(opts: HeadlessOptions): void {
   for (const [field, envKey] of KRAKEN_TURN_ENV) {
     const raw = opts[field];
     if (typeof raw === 'string' && raw.trim()) {
-      process.env[envKey] = raw.trim();
+      setTurnEnv(envKey, raw.trim());
     }
   }
 }
@@ -320,6 +328,27 @@ export async function dispatchHeadlessTurn(
   // t37: serve hosts pass the kernel-owned workspace LspManager here so
   // every dispatch path (kraken single / council / zelari) registers the
   // LSP tools against THAT server instead of the shared per-root manager.
+  extras?: TurnExtras,
+): Promise<number> {
+  // Auxiliary calls of this turn (embeddings, verdict re-ask, weakness meter,
+  // kraken_select identity) resolve THIS provider, never the provider.json
+  // default (provider/turnProvider.ts). Restored afterwards so nothing leaks
+  // past the turn in a long-lived process.
+  const priorTurnProvider = turnProvider();
+  setTurnProvider({ provider, model });
+  try {
+    return await dispatchHeadlessTurnBody(opts, provider, model, providerStream, oneShot, extras);
+  } finally {
+    setTurnProvider(priorTurnProvider);
+  }
+}
+
+async function dispatchHeadlessTurnBody(
+  opts: HeadlessOptions,
+  provider: string,
+  model: string,
+  providerStream: ProviderStreamFn,
+  oneShot?: { policyGateDone?: boolean },
   extras?: TurnExtras,
 ): Promise<number> {
   const cwd = resolveHeadlessCwd(opts);

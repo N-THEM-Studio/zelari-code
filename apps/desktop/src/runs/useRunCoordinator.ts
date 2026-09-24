@@ -48,7 +48,8 @@ function reducer(state: RunRegistryState, action: Action): RunRegistryState {
  * Frontend RunRegistry. Owns run lifecycle only — prompt dispatch stays in
  * App.tsx (`runTask`), which reports back via `runStarted` /
  * `runDispatchFailed`. The Rust host enforces the real concurrency policy
- * (max 1 active run per cwd, MAX_PARALLEL_RUNS global); this registry is
+ * (one run per chat, one zelari mission per cwd, MAX_PARALLEL_RUNS global —
+ * several chats may share a workspace); this registry is
  * the UI mirror used for composer state and sidebar badges.
  */
 export function useRunCoordinator() {

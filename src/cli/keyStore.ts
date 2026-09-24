@@ -236,6 +236,31 @@ export function getOAuthToken(providerId: string): StoredKey | null {
 }
 
 /**
+ * Does `providerId` hold credentials a request could use RIGHT NOW, without
+ * any network refresh? True for an env key, a stored key without expiry, or
+ * a token whose `expiresAt` is still `marginMs` in the future.
+ *
+ * Pure and synchronous on purpose: callers that ROUTE work automatically to a
+ * provider the user did not pick (cross-family verify) must neither refresh
+ * that provider's token nor call it with a dead one — an expired OAuth token
+ * there surfaced as a random HTTP 401/404 in a turn that never selected it.
+ */
+export function hasFreshCredentials(
+  providerId: string,
+  now: number = Date.now(),
+  marginMs = 60_000,
+): boolean {
+  const spec = getProviderSpec(providerId);
+  if (spec) {
+    const envKey = process.env[spec.envVar];
+    if (envKey && envKey.trim().length > 0) return true;
+  }
+  const stored = getOAuthToken(providerId);
+  if (!stored?.apiKey) return false;
+  return stored.expiresAt === undefined || stored.expiresAt - now > marginMs;
+}
+
+/**
  * Resolve a key for a provider, checking env first, then store.
  * Returns just the apiKey string — use `resolveApiKeyWithMeta` if you also
  * need `expiresAt` / `refreshToken`.

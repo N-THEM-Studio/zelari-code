@@ -6,6 +6,7 @@
 import { getModelForProvider, getProviderConfig } from '../providerConfig.js';
 import { resolveApiKeyWithMeta, type ProviderName } from '../keyStore.js';
 import { resolveBaseUrl } from '../provider/openai-compatible.js';
+import { turnEnv } from '../sessionScope.js';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const DEFAULT_MAX_TOKENS = 2048;
@@ -31,7 +32,7 @@ export async function gauntletComplete(
     throw new Error(`No base URL for provider '${provider}'`);
   }
   const model =
-    process.env.ZELARI_KRAKEN_PLANNER_MODEL?.trim() ||
+    turnEnv().ZELARI_KRAKEN_PLANNER_MODEL?.trim() ||
     opts.model ||
     getModelForProvider(provider) ||
     getProviderConfig().modelByProvider[provider] ||

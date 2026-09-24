@@ -6,6 +6,7 @@ import {
   type PermissionAskHandler,
 } from '../safety/toolPermissions.js';
 import { getCurrentHarnessSessionId } from './sessionControl.js';
+import { setTurnEnv } from '../sessionScope.js';
 
 /**
  * Serve-harness permission bridge (Pilastro B, desktop parity slice).
@@ -26,7 +27,7 @@ import { getCurrentHarnessSessionId } from './sessionControl.js';
  *
  * Also carries the per-turn preset field (2.32 B-slice): Desktop Settings
  * sends `permissionPreset` on run.turn; the allowlist below is the ONLY
- * way it reaches process.env (no arbitrary env injection over the wire).
+ * way it reaches the preset engine (no arbitrary env injection over the wire).
  */
 
 /** The only presets a host may select (mirror of toolPermissions.ts). */
@@ -37,9 +38,10 @@ const PRESET_ENV = 'ZELARI_PERMISSION_PRESET';
 
 /**
  * Apply a per-turn `permissionPreset` from a run.turn envelope to the
- * shared preset engine (env-backed). Allowlisted; anything else is
- * ignored (returns false) — the sidecar process keeps its current preset.
- * Safe under the one-active-run-per-workspace policy the Desktop enforces.
+ * preset engine (env-backed, read through `turnEnv()`). Allowlisted;
+ * anything else is ignored (returns false) — the turn keeps the sidecar's
+ * preset. Inside a served session the value lives in the SESSION env overlay
+ * (sessionScope), so concurrent chats with different presets never share it.
  */
 export function applyTurnPermissionPreset(input: unknown): boolean {
   if (!input || typeof input !== 'object') return false;
@@ -49,7 +51,7 @@ export function applyTurnPermissionPreset(input: unknown): boolean {
   if (!(SERVE_PERMISSION_PRESETS as readonly string[]).includes(value)) {
     return false;
   }
-  process.env[PRESET_ENV] = value;
+  setTurnEnv(PRESET_ENV, value);
   return true;
 }
 
@@ -133,7 +135,9 @@ export function createServePermissionBridge(
         type: 'permission.settled',
         requestId,
         decision,
-        ...(entry.sessionId ? { sessionId: entry.sessionId } : {}),
+        ...(entry.sessionId
+          ? { sessionId: entry.sessionId, harnessSessionId: entry.sessionId }
+          : {}),
         ...(timedOut ? { timedOut: true } : {}),
       }),
     );
@@ -163,7 +167,9 @@ export function createServePermissionBridge(
           JSON.stringify({
             type: 'permission.request',
             requestId,
-            ...(sessionId ? { sessionId } : {}),
+            // Routing key (session-routing capability): the SAME harness id
+            // the Desktop routes every other line of this turn by.
+            ...(sessionId ? { sessionId, harnessSessionId: sessionId } : {}),
             tool: payload.tool,
             category: payload.category,
             categories,

@@ -30,6 +30,17 @@
 //! acks) are still broadcast: duplication there is harmless. The single-sink
 //! window stays direct as before — with one run there is no cross-chat hazard.
 //!
+//! Deterministic routing (`session-routing` capability, 2026-09-24): a CLI
+//! that advertises it in its boot `protocol_info` stamps EVERY line of a
+//! served turn with `harnessSessionId` — the id session.create returned for
+//! the run. Such lines route by run_sessions (run_id → harness session) and
+//! nothing else: no spine-bind heuristic, no startup slot, so N fresh chats
+//! start in parallel and a line can never be bound to the wrong chat. The
+//! spine-bind path below stays as the fallback for older CLI builds, now
+//! binding a sole awaiting run ONLY on its `session_started` (binding on any
+//! unmapped spine id attached a sub-agent's or another chat's permission
+//! request — whose `sessionId` is the HARNESS id — to the new chat).
+//!
 //! Conversation identity (M2, cross-talk fix): the routing tables above only
 //! say WHICH RUN gets a line. The desktop also needs to know which CHAT that
 //! run belongs to, and the sidecar must never guess it from "the active
@@ -105,6 +116,16 @@ pub(crate) fn interpret_boot_line(raw: &str) -> BootLine {
         }
         _ => BootLine::Wrong(trimmed.chars().take(200).collect()),
     }
+}
+
+/// Does a boot `protocol_info` line advertise the `session-routing`
+/// capability (every served-turn line stamped with `harnessSessionId`)?
+pub(crate) fn boot_advertises_session_routing(raw: &str) -> bool {
+    serde_json::from_str::<Value>(raw.trim())
+        .ok()
+        .and_then(|v| v.get("capabilities").and_then(|c| c.as_array()).cloned())
+        .map(|caps| caps.iter().any(|c| c.as_str() == Some("session-routing")))
+        .unwrap_or(false)
 }
 
 /// The final `harness_state` NDJSON event (ADR-0023 / H1 inc.3): the typed
@@ -412,7 +433,11 @@ pub(crate) struct HarnessSidecar {
     last_harness_state: Mutex<Option<Arc<Value>>>,
     /// Startup slot: at most one fresh run between "run.turn sent" and
     /// "spine bound", so session_started binding stays deterministic.
+    /// Legacy CLIs only — unused when `session_routing` is set.
     fresh_slot: Mutex<()>,
+    /// The running CLI advertised `session-routing` on its boot line: every
+    /// turn line carries `harnessSessionId` (see the module doc).
+    session_routing: AtomicBool,
     /// W2.3 — streaming delta coalescer: batches consecutive `message_delta` /
     /// `thinking_delta` events for a (run id, delta type) into ONE event so the
     /// frontend re-renders ~1 per flush window instead of per token. See the
@@ -441,6 +466,7 @@ impl HarnessSidecar {
             harness_states: Mutex::new(HashMap::new()),
             last_harness_state: Mutex::new(None),
             fresh_slot: Mutex::new(()),
+            session_routing: AtomicBool::new(false),
             delta_coalescer: Mutex::new(DeltaCoalescer::new()),
             flusher_started: AtomicBool::new(false),
         }
@@ -1078,10 +1104,15 @@ impl HarnessSidecar {
                 .insert(run_id.to_string(), conversation_id.to_string());
         }
 
-        // Routing setup. Resumed runs know their spine id up front; fresh
-        // runs take the startup slot so their session_started binds 1:1.
+        // Routing setup. Resumed runs know their spine id up front (pre-bound
+        // for the harness-state identity lookup). Fresh runs: with
+        // `session-routing` the harness session id mapped above IS the route
+        // (every line carries it) — no slot, no awaiting, so fresh chats start
+        // in parallel; legacy CLIs take the startup slot so their
+        // session_started binds 1:1.
         let mut slot: Option<MutexGuard<'_, ()>> = None;
         let (bind_tx, bind_rx) = mpsc::channel::<()>();
+        let session_routed = self.session_routing.load(Ordering::SeqCst);
         match resume_spine.map(str::trim).filter(|s| !s.is_empty()) {
             Some(sid) => {
                 self.spine_routes
@@ -1089,6 +1120,7 @@ impl HarnessSidecar {
                     .unwrap_or_else(|e| e.into_inner())
                     .insert(sid.to_string(), run_id.to_string());
             }
+            None if session_routed => {}
             None => {
                 // Cancellable slot acquisition: serializes only the pre-spine
                 // window (MCP setup logs), never the turn itself.
@@ -1377,8 +1409,52 @@ impl HarnessSidecar {
         }
     }
 
+    /// The run whose harness session (session.create id) is `harness_id`.
+    fn run_for_harness_session(&self, harness_id: &str) -> Option<String> {
+        self.run_sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .find(|(_, sid)| sid.as_str() == harness_id)
+            .map(|(run_id, _)| run_id.clone())
+    }
+
     fn route_event(&self, event: Value) {
         self.track_ask_session(&event);
+        // `session-routing`: the stamped harness session id is authoritative.
+        // A known id routes 1:1; an unknown one (its run already settled and
+        // was cleaned up) is dropped — never re-guessed, never broadcast.
+        if let Some(harness_id) = event
+            .get("harnessSessionId")
+            .and_then(|s| s.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+        {
+            match self.run_for_harness_session(&harness_id) {
+                Some(run_id) => {
+                    // Keep the spine table warm for legacy consumers (late
+                    // unstamped lines, harness-state identity) — learned
+                    // from the run's own session_started only.
+                    if event.get("type").and_then(|t| t.as_str()) == Some("session_started") {
+                        if let Some(spine) = event
+                            .get("sessionId")
+                            .and_then(|s| s.as_str())
+                            .filter(|s| !s.is_empty())
+                        {
+                            self.spine_routes
+                                .lock()
+                                .unwrap_or_else(|e| e.into_inner())
+                                .insert(spine.to_string(), run_id.clone());
+                        }
+                    }
+                    self.send_to_run(&run_id, event);
+                }
+                None => eprintln!(
+                    "[harness-sidecar] dropping event of settled harness session {harness_id}: no live run"
+                ),
+            }
+            return;
+        }
         let spine_id = event
             .get("sessionId")
             .and_then(|s| s.as_str())
@@ -1392,7 +1468,14 @@ impl HarnessSidecar {
                 self.send_to_run(&run_id, event);
                 return;
             }
-            let sole_awaiting = {
+            // Only the run's OWN session_started may bind it: any other line
+            // with an unmapped id (a sub-agent's session, or another chat's
+            // permission.request carrying its HARNESS id) would otherwise be
+            // attached to the new chat, and that chat's real spine events
+            // dropped afterwards.
+            let is_session_started =
+                event.get("type").and_then(|t| t.as_str()) == Some("session_started");
+            let sole_awaiting = if is_session_started {
                 let mut awaiting = self
                     .awaiting_spine
                     .lock()
@@ -1402,6 +1485,8 @@ impl HarnessSidecar {
                 } else {
                     None
                 }
+            } else {
+                None
             };
             if let Some(run_id) = sole_awaiting {
                 // Deterministic bind: exactly one fresh run is in its
@@ -1676,6 +1761,8 @@ fn supervise_child(
         }
     };
     if boot.is_ok() {
+        me.session_routing
+            .store(boot_advertises_session_routing(&boot_line), Ordering::SeqCst);
         me.dispatch_line(&proc, &boot_line);
     }
     let _ = boot_tx.send(boot);
@@ -2076,6 +2163,119 @@ mod tests {
         });
         sidecar.route_event(event.clone());
         assert_eq!(rxs[0].try_recv().unwrap(), event);
+    }
+
+    // --- session-routing (2026-09-24): deterministic harness-id routing -----
+
+    /// Map run → harness session (what run_turn_full does after session.create).
+    fn map_session(sidecar: &HarnessSidecar, run: &str, harness: &str) {
+        sidecar
+            .run_sessions
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(run.to_string(), harness.to_string());
+    }
+
+    #[test]
+    fn boot_line_session_routing_capability() {
+        assert!(boot_advertises_session_routing(
+            r#"{"type":"protocol_info","version":2,"capabilities":["steer","session-routing"]}"#
+        ));
+        assert!(!boot_advertises_session_routing(
+            r#"{"type":"protocol_info","version":2,"capabilities":["steer","cancel"]}"#
+        ));
+        assert!(!boot_advertises_session_routing(r#"{"type":"protocol_info","version":2}"#));
+        assert!(!boot_advertises_session_routing("not json"));
+    }
+
+    #[test]
+    fn route_event_harness_session_id_targets_only_its_run() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        map_session(&sidecar, "run-a", "hs-a");
+        map_session(&sidecar, "run-b", "hs-b");
+        // A sub-agent line: its spine-looking sessionId is unmapped, but the
+        // harness stamp is authoritative.
+        let event = serde_json::json!({
+            "type": "tool_execution_start",
+            "sessionId": "sub-agent-xyz",
+            "harnessSessionId": "hs-b",
+        });
+        sidecar.route_event(event.clone());
+        assert_eq!(rxs[1].try_recv().unwrap(), event);
+        assert!(rxs[0].try_recv().is_err(), "the other chat must not receive it");
+    }
+
+    #[test]
+    fn route_event_permission_request_routes_by_harness_id() {
+        // The CLI stamps permission.request `sessionId` with the HARNESS id:
+        // it must reach its chat, never be dropped or bound to another one.
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        map_session(&sidecar, "run-a", "hs-a");
+        map_session(&sidecar, "run-b", "hs-b");
+        let event = serde_json::json!({
+            "type": "permission.request",
+            "requestId": "perm-7",
+            "sessionId": "hs-a",
+            "harnessSessionId": "hs-a",
+        });
+        sidecar.route_event(event.clone());
+        assert_eq!(rxs[0].try_recv().unwrap(), event);
+        assert!(rxs[1].try_recv().is_err());
+    }
+
+    #[test]
+    fn route_event_unknown_harness_session_is_dropped_not_broadcast() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        map_session(&sidecar, "run-a", "hs-a");
+        sidecar.route_event(serde_json::json!({
+            "type": "log",
+            "message": "late line of a settled run",
+            "harnessSessionId": "hs-gone",
+        }));
+        assert!(rxs[0].try_recv().is_err());
+        assert!(rxs[1].try_recv().is_err());
+    }
+
+    #[test]
+    fn route_event_harness_session_started_learns_the_spine_route() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        map_session(&sidecar, "run-a", "hs-a");
+        sidecar.route_event(serde_json::json!({
+            "type": "session_started",
+            "sessionId": "spine-a",
+            "harnessSessionId": "hs-a",
+        }));
+        assert!(rxs[0].try_recv().is_ok());
+        let routes = sidecar.spine_routes.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(routes.get("spine-a").map(String::as_str), Some("run-a"));
+    }
+
+    #[test]
+    fn legacy_sole_awaiting_run_binds_only_on_its_session_started() {
+        let (sidecar, rxs) = sidecar_with_sinks(&["run-a", "run-b"]);
+        bind(&sidecar, "spine-a", "run-a");
+        sidecar
+            .awaiting_spine
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .push("run-b".to_string());
+        // Chat A's permission ask (harness id, unstamped legacy CLI) must NOT
+        // be attached to the fresh chat B.
+        sidecar.route_event(serde_json::json!({
+            "type": "permission.request",
+            "requestId": "perm-1",
+            "sessionId": "hs-a",
+        }));
+        assert!(rxs[1].try_recv().is_err(), "never bound to the awaiting chat");
+        assert_eq!(
+            sidecar.awaiting_spine.lock().unwrap_or_else(|e| e.into_inner()).len(),
+            1,
+            "chat B is still awaiting its own session_started"
+        );
+        let started = serde_json::json!({ "type": "session_started", "sessionId": "spine-b" });
+        sidecar.route_event(started.clone());
+        assert_eq!(rxs[1].try_recv().unwrap(), started);
+        assert!(rxs[0].try_recv().is_err());
     }
 
     #[test]

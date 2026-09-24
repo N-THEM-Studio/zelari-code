@@ -27,6 +27,8 @@ import path from 'node:path';
 import type { SessionTodoStatus } from './sessionTodos.js';
 import type { PermissionAskHandler } from './safety/toolPermissions.js';
 import type { AskUserHandler } from './tools/askUser.js';
+import { getCurrentHarnessSessionId } from './serve/sessionControl.js';
+import { HARNESS_SESSION_FIELD } from './headless/protocol.js';
 
 /** Dispatch mode for headless (mirrors TUI shift+tab modes). */
 export type HeadlessMode = ChatMode; // 'kraken' | 'council' | 'zelari'
@@ -681,9 +683,20 @@ export function resolveHeadlessProvider(opts: HeadlessOptions): {
  * Emit one NDJSON line to stdout. Use process.stdout.write directly
  * to avoid the console.log trailing newline (NDJSON convention is
  * one JSON object per line, no extra whitespace).
+ *
+ * Inside a served session (`--serve-harness`, runWithSession) every object
+ * line is stamped with `harnessSessionId` (protocol capability
+ * `session-routing`): N chats share this process's stdout, and the host
+ * routes each line to its chat by that id instead of guessing from the spine
+ * `sessionId` (which is minted mid-turn and differs on sub-agent events).
  */
 export function emitEvent(event: unknown): void {
-  process.stdout.write(JSON.stringify(event) + '\n');
+  const harnessSessionId = getCurrentHarnessSessionId();
+  const line =
+    harnessSessionId && event !== null && typeof event === 'object' && !Array.isArray(event)
+      ? { ...(event as Record<string, unknown>), [HARNESS_SESSION_FIELD]: harnessSessionId }
+      : event;
+  process.stdout.write(JSON.stringify(line) + '\n');
 }
 
 export { openaiCompatibleProvider };

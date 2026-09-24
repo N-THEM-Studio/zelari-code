@@ -50,7 +50,15 @@ export const HEADLESS_PROTOCOL_CAPABILITIES = [
   'steer',
   'follow_up',
   'cancel',
+  // Every NDJSON line a served turn writes carries `harnessSessionId` (the
+  // id `session.create` returned), so a multi-chat host routes each line to
+  // its chat deterministically — no spine-bind heuristic, no pre-spine
+  // serialization. Absent on plain `--headless` (no harness session).
+  'session-routing',
 ] as const;
+
+/** Routing key stamped on every line of a served turn (`session-routing`). */
+export const HARNESS_SESSION_FIELD = 'harnessSessionId';
 
 export function protocolInfoEvent(): {
   type: 'protocol_info';
