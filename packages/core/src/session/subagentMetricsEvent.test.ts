@@ -131,6 +131,22 @@ describe('subagent.metrics — payload honesty (t159)', () => {
     });
     expect(payload).toEqual({ kind: 'explore', ok: false, degenerate: true });
   });
+
+  it('F4: records failed tool calls and the degradation flag, additive and round-trippable', () => {
+    const payload = buildSubagentMetricsPayload({
+      kind: 'explore',
+      ok: true,
+      toolCalls: 42,
+      toolErrors: 37,
+      toolsDegraded: true,
+    });
+    expect(payload).toEqual({ kind: 'explore', ok: true, toolCalls: 42, toolErrors: 37, toolsDegraded: true });
+    expect(readSubagentMetricsEvent({ ...payload })).toMatchObject({ toolErrors: 37, toolsDegraded: true });
+    // Absent / zero / junk stays absent — a clean run carries neither key.
+    const clean = buildSubagentMetricsPayload({ kind: 'explore', ok: true, toolCalls: 3, toolErrors: 0, toolsDegraded: false });
+    expect(clean).toEqual({ kind: 'explore', ok: true, toolCalls: 3 });
+    expect('toolErrors' in buildSubagentMetricsPayload({ kind: 'x', ok: true, toolErrors: -2 })).toBe(false);
+  });
 });
 
 describe('subagent.metrics — fail-open emission (t159)', () => {

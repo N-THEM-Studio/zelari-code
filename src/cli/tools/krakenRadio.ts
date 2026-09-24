@@ -106,6 +106,13 @@ export interface KrakenRadioEvent {
   worktree?: string | null;
   durationMs?: number;
   ok?: boolean;
+  /** F4: failed tool executions of a finished tentacle (only when > 0). */
+  toolErrors?: number;
+  /**
+   * F4: the tentacle ended `ok` but most of its tool calls failed — its
+   * report rests on a broken tool channel (see isToolChannelDegraded).
+   */
+  toolsDegraded?: boolean;
   /** Graph node id (node_* graph-engine events). */
   nodeId?: string;
   /**

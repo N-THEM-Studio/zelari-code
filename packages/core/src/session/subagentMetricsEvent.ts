@@ -32,9 +32,12 @@
  * mutate the tentacle it is recording.
  *
  * Data contract (envelope `kind='subagent.metrics'`; `data` as built below):
- *   {kind, ok, thoroughness?, model?, agentId?, turns?, toolCalls?, durationMs?,
- *    degenerate?, worktree?, usage?{promptTokens, completionTokens, totalTokens,
- *    cachedPromptTokens?}}
+ *   {kind, ok, thoroughness?, model?, agentId?, turns?, toolCalls?, toolErrors?,
+ *    durationMs?, degenerate?, toolsDegraded?, worktree?, usage?{promptTokens,
+ *    completionTokens, totalTokens, cachedPromptTokens?}}
+ * `toolErrors`/`toolsDegraded` (additive, F4 2026-09-24): failed tool
+ * executions and the tool-channel degradation flag — an `ok:true` tentacle
+ * whose tools mostly failed is no longer indistinguishable from a clean run.
  * `data.kind` is the TENTACLE kind (`explore`/`general`/`verify`) — the envelope
  * owns the event kind, this field owns the sub-agent kind (t159 payload spec).
  * No PII beyond the model id: no prompts, no file paths outside the worktree.
@@ -88,10 +91,14 @@ export interface SubagentMetricsEventInput {
   turns?: number;
   /** TOTAL tool executions observed (uncapped — not the ring-capped trace). */
   toolCalls?: number;
+  /** Tool executions that ended in error (uncapped, subset of `toolCalls`). */
+  toolErrors?: number;
   usage?: SubagentMetricsUsage;
   durationMs?: number;
   /** t157: the run stopped on the cross-turn degenerate-loop guard. */
   degenerate?: boolean;
+  /** F4: most tool executions failed — the report rests on a broken tool channel. */
+  toolsDegraded?: boolean;
   /** Git worktree the tentacle ran in, when it was isolated. */
   worktree?: string;
 }
@@ -105,8 +112,10 @@ export interface SubagentMetricsEventPayload {
   agentId?: string;
   turns?: number;
   toolCalls?: number;
+  toolErrors?: number;
   durationMs?: number;
   degenerate?: boolean;
+  toolsDegraded?: boolean;
   worktree?: string;
   usage?: SubagentMetricsUsage;
 }
@@ -170,6 +179,7 @@ export function buildSubagentMetricsPayload(
   const usage = usageOf(input.usage);
   const turns = count(input.turns);
   const toolCalls = count(input.toolCalls);
+  const toolErrors = count(input.toolErrors);
   const durationMs = num(input.durationMs);
   const thoroughness = str(input.thoroughness);
   const model = str(input.model);
@@ -183,9 +193,11 @@ export function buildSubagentMetricsPayload(
     ...(agentId !== undefined ? { agentId } : {}),
     ...(turns !== undefined ? { turns } : {}),
     ...(toolCalls !== undefined ? { toolCalls } : {}),
+    ...(toolErrors !== undefined && toolErrors > 0 ? { toolErrors } : {}),
     ...(usage !== undefined ? { usage } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
     ...(input.degenerate === true ? { degenerate: true } : {}),
+    ...(input.toolsDegraded === true ? { toolsDegraded: true } : {}),
     ...(worktree !== undefined ? { worktree } : {}),
   };
 }
@@ -257,6 +269,7 @@ export function readSubagentMetricsEvent(
       : undefined;
   const turns = count(data.turns);
   const toolCalls = count(data.toolCalls);
+  const toolErrors = count(data.toolErrors);
   const durationMs = num(data.durationMs);
   const thoroughness = str(data.thoroughness);
   const model = str(data.model);
@@ -271,6 +284,8 @@ export function readSubagentMetricsEvent(
     ...(agentId !== undefined ? { agentId } : {}),
     ...(turns !== undefined ? { turns } : {}),
     ...(toolCalls !== undefined ? { toolCalls } : {}),
+    ...(toolErrors !== undefined && toolErrors > 0 ? { toolErrors } : {}),
+    ...(data.toolsDegraded === true ? { toolsDegraded: true } : {}),
     ...(usage !== undefined ? { usage } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
     ...(worktree !== undefined ? { worktree } : {}),

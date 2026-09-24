@@ -5,7 +5,11 @@
  * when reported >0; tail fields appear only when known. No fabricated zeros.
  */
 import { describe, expect, it } from 'vitest';
-import { formatSubagentMetricsLine } from './subagentMetrics.js';
+import {
+  formatSubagentMetricsLine,
+  formatToolDegradedGuardLine,
+  isToolChannelDegraded,
+} from './subagentMetrics.js';
 
 describe('t156 — formatSubagentMetricsLine (P2a-1)', () => {
   it('formats provider usage with tool calls and turns', () => {
@@ -42,5 +46,35 @@ describe('t156 — formatSubagentMetricsLine (P2a-1)', () => {
     });
     expect(line).not.toContain('tool calls');
     expect(line).not.toContain('turns');
+  });
+});
+
+describe('F4 — tool-channel degradation', () => {
+  it('flags a run where most tool calls failed', () => {
+    expect(isToolChannelDegraded(5, 5)).toBe(true);
+    expect(isToolChannelDegraded(4, 2)).toBe(true);
+    expect(isToolChannelDegraded(42, 37)).toBe(true);
+  });
+
+  it('a single failure or a minority of failures is not degradation', () => {
+    expect(isToolChannelDegraded(1, 1)).toBe(false);
+    expect(isToolChannelDegraded(10, 3)).toBe(false);
+    expect(isToolChannelDegraded(5, 0)).toBe(false);
+    expect(isToolChannelDegraded(undefined, 3)).toBe(false);
+    expect(isToolChannelDegraded(3, undefined)).toBe(false);
+  });
+
+  it('footer shows failed calls only when there are some', () => {
+    const usage = { promptTokens: 1, completionTokens: 1, totalTokens: 2 };
+    expect(formatSubagentMetricsLine({ usage, toolCalls: 6, toolErrors: 4 })).toContain(
+      '6 tool calls (4 failed)',
+    );
+    expect(formatSubagentMetricsLine({ usage, toolCalls: 6, toolErrors: 0 })).not.toContain('failed');
+  });
+
+  it('guard line tells the parent to treat findings as unverified', () => {
+    const line = formatToolDegradedGuardLine(6, 4);
+    expect(line).toContain('4/6');
+    expect(line).toContain('UNVERIFIED');
   });
 });

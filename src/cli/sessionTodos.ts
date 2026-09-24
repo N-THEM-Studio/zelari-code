@@ -28,30 +28,65 @@ export function clearSessionTodos(): void {
   todos = [];
 }
 
+/** A todo_write item: `content` may be omitted only to patch an existing id (merge). */
+export interface SessionTodoInput {
+  id?: string;
+  content?: string;
+  status?: SessionTodoStatus;
+}
+
+/**
+ * Ids of merge patches that cannot be applied: no `content` and no existing
+ * todo with that id (a status-only patch needs something to patch).
+ */
+export function unresolvedTodoPatches(items: readonly SessionTodoInput[]): string[] {
+  const known = new Set(todos.map((t) => t.id));
+  return items
+    .filter((it) => !it.content?.trim())
+    .map((it) => it.id?.trim() ?? '')
+    .filter((id) => !id || !known.has(id))
+    .map((id) => id || '(no id)');
+}
+
 /**
  * Replace or merge todos. Items with matching ids update; new ids append.
  * When `merge` is false (default), the list becomes exactly `items` (after
- * normalization). When true, only listed ids are upserted; others kept.
+ * normalization; items without content are dropped). When true, only listed
+ * ids are upserted, others kept; an omitted `content`/`status` keeps the
+ * existing value (status-only patch), and id-less new items get a fresh `tN`
+ * id that never collides with an existing todo.
  */
 export function writeSessionTodos(
-  items: Array<{ id?: string; content: string; status?: SessionTodoStatus }>,
+  items: SessionTodoInput[],
   opts?: { merge?: boolean },
 ): SessionTodo[] {
   const merge = opts?.merge === true;
-  const normalized: SessionTodo[] = items.map((it, i) => ({
-    id: (it.id?.trim() || `t${i + 1}`).slice(0, 64),
-    content: it.content.trim().slice(0, 500),
-    status: it.status ?? 'pending',
-  })).filter((t) => t.content.length > 0);
 
   if (!merge) {
-    todos = normalized.slice(0, 40);
+    const next = items
+      .map((it, i) => ({
+        id: (it.id?.trim() || `t${i + 1}`).slice(0, 64),
+        content: (it.content ?? '').trim().slice(0, 500),
+        status: it.status ?? 'pending',
+      }))
+      .filter((t) => t.content.length > 0)
+      .slice(0, 40);
+    todos = next;
     return listSessionTodos();
   }
 
   const byId = new Map(todos.map((t) => [t.id, t]));
-  for (const t of normalized) {
-    byId.set(t.id, t);
+  let next = 1;
+  const freshId = (): string => {
+    while (byId.has(`t${next}`)) next++;
+    return `t${next}`;
+  };
+  for (const it of items) {
+    const id = (it.id?.trim() || freshId()).slice(0, 64);
+    const existing = byId.get(id);
+    const content = (it.content?.trim() || existing?.content || '').slice(0, 500);
+    if (!content) continue;
+    byId.set(id, { id, content, status: it.status ?? existing?.status ?? 'pending' });
   }
   todos = [...byId.values()].slice(0, 40);
   return listSessionTodos();

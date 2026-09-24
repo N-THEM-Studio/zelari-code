@@ -30,6 +30,35 @@ export interface SubagentMetricsInput {
   toolCalls?: number;
   /** Completed assistant messages in the sub-agent loop. */
   turns?: number;
+  /** Tool executions that ended in error (uncapped, subset of `toolCalls`). */
+  toolErrors?: number;
+}
+
+/** Minimum failed tool executions before a run can be called degraded. */
+export const TOOL_DEGRADED_MIN_ERRORS = 2;
+
+/**
+ * Tool-channel degradation (F4, 2026-09-24 muse incident): a tentacle whose
+ * tools mostly FAILED still ends `ok:true` (it produced a report), and the
+ * radio used to record it as a clean success. Degraded = at least
+ * {@link TOOL_DEGRADED_MIN_ERRORS} failures AND at least half of all tool
+ * executions failed. Pure counts — never text heuristics on the report.
+ */
+export function isToolChannelDegraded(toolCalls?: number, toolErrors?: number): boolean {
+  if (typeof toolCalls !== 'number' || typeof toolErrors !== 'number') return false;
+  return toolErrors >= TOOL_DEGRADED_MIN_ERRORS && toolErrors * 2 >= toolCalls;
+}
+
+/**
+ * Parent-facing guard line for a degraded run (WITHOUT leading newline):
+ * the report was produced on a broken tool channel, so its findings must not
+ * be trusted as observed evidence.
+ */
+export function formatToolDegradedGuardLine(toolCalls: number, toolErrors: number): string {
+  return (
+    `tools degraded: ${toolErrors}/${toolCalls} tool calls failed in this tentacle — ` +
+    'treat its findings as UNVERIFIED and re-check key facts before acting on them.'
+  );
 }
 
 /**
@@ -48,7 +77,13 @@ export function formatSubagentMetricsLine(input: SubagentMetricsInput): string {
     `${usage.totalTokens} total`,
   ].join(' / ');
   const tail: string[] = [];
-  if (typeof input.toolCalls === 'number') tail.push(`${input.toolCalls} tool calls`);
+  if (typeof input.toolCalls === 'number') {
+    tail.push(
+      typeof input.toolErrors === 'number' && input.toolErrors > 0
+        ? `${input.toolCalls} tool calls (${input.toolErrors} failed)`
+        : `${input.toolCalls} tool calls`,
+    );
+  }
   if (typeof input.turns === 'number') tail.push(`${input.turns} turns`);
   const head = `metrics: ${tokens} tokens`;
   return tail.length > 0 ? `${head} · ${tail.join(' · ')}` : head;

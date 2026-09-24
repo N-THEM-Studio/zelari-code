@@ -5,12 +5,14 @@
  */
 import { z } from 'zod';
 import {
+  typedErr,
   typedOk,
   type ToolDefinition,
 } from '@zelari/core/harness/tools/toolTypes';
 import {
   formatTodosForModel,
   listSessionTodos,
+  unresolvedTodoPatches,
   writeSessionTodos,
   type SessionTodoStatus,
 } from '../sessionTodos.js';
@@ -19,7 +21,12 @@ const StatusSchema = z.enum(['pending', 'in_progress', 'completed', 'cancelled']
 
 const TodoItemSchema = z.object({
   id: z.string().min(1).max(64).optional().describe('Stable id; auto-generated if omitted'),
-  content: z.string().min(1).max(500).describe('Short task description'),
+  content: z
+    .string()
+    .min(1)
+    .max(500)
+    .optional()
+    .describe('Short task description. Required, except with merge=true to patch an existing id (e.g. status only)'),
   status: StatusSchema.optional().describe('Default pending'),
 });
 
@@ -54,13 +61,29 @@ export function createTodoWriteTool(): ToolDefinition<
     timeoutMs: 5_000,
     inputSchema: WriteSchema,
     execute: async (input) => {
+      const merge = input.merge === true;
+      // `content` is optional in the schema only for merge patches: a replace
+      // needs it on every item, a patch needs an id that already exists.
+      const missing = merge
+        ? unresolvedTodoPatches(input.todos)
+        : input.todos.filter((t) => !t.content?.trim()).map((t) => t.id ?? '(no id)');
+      if (missing.length > 0) {
+        const known = listSessionTodos().map((t) => t.id);
+        return typedErr(
+          merge
+            ? `todo_write: items without content must patch an existing id; unknown: ${missing.join(', ')}. ` +
+                `Known ids: ${known.join(', ') || '(none)'}. Add content to create a new item.`
+            : `todo_write: every item needs content when merge is false (missing on: ${missing.join(', ')}). ` +
+                'Use merge=true to update only the status of existing ids.',
+        );
+      }
       const list = writeSessionTodos(
         input.todos.map((t) => ({
           id: t.id,
           content: t.content,
-          status: (t.status ?? 'pending') as SessionTodoStatus,
+          status: t.status as SessionTodoStatus | undefined,
         })),
-        { merge: input.merge === true },
+        { merge },
       );
       return typedOk({
         todos: list,

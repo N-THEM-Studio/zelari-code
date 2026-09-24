@@ -89,3 +89,50 @@ describe('todo tools', () => {
     }
   });
 });
+
+describe('todo_write merge patches (status-only updates)', () => {
+  it('merge=true patches the status of an existing id without resending content', async () => {
+    const write = createTodoWriteTool();
+    await write.execute({ todos: [{ id: 'a', content: 'Map routes', status: 'in_progress' }] }, ctx);
+    const parsed = write.inputSchema.safeParse({ todos: [{ id: 'a', status: 'completed' }], merge: true });
+    expect(parsed.success).toBe(true);
+    const r = await write.execute(parsed.success ? parsed.data : ({} as never), ctx);
+    expect(r.ok).toBe(true);
+    expect(listSessionTodos()).toEqual([{ id: 'a', content: 'Map routes', status: 'completed' }]);
+  });
+
+  it('merge=true keeps the existing status when only content changes', () => {
+    writeSessionTodos([{ id: 'a', content: 'A', status: 'in_progress' }]);
+    writeSessionTodos([{ id: 'a', content: 'A (renamed)' }], { merge: true });
+    expect(listSessionTodos()).toEqual([{ id: 'a', content: 'A (renamed)', status: 'in_progress' }]);
+  });
+
+  it('merge=true never overwrites an existing auto id with a new id-less item', () => {
+    writeSessionTodos([{ content: 'first' }, { content: 'second' }]); // t1, t2
+    writeSessionTodos([{ content: 'third' }], { merge: true });
+    expect(listSessionTodos().map((t) => `${t.id}:${t.content}`)).toEqual([
+      't1:first',
+      't2:second',
+      't3:third',
+    ]);
+  });
+
+  it('a content-less patch for an unknown id is an actionable error, not a silent no-op', async () => {
+    const write = createTodoWriteTool();
+    await write.execute({ todos: [{ id: 'a', content: 'A' }] }, ctx);
+    const r = await write.execute({ todos: [{ id: 'zz', status: 'completed' }], merge: true }, ctx);
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error).toContain('zz');
+      expect(r.error).toContain('Known ids: a');
+    }
+    expect(listSessionTodos()).toEqual([{ id: 'a', content: 'A', status: 'pending' }]);
+  });
+
+  it('replace mode still requires content on every item', async () => {
+    const write = createTodoWriteTool();
+    const r = await write.execute({ todos: [{ id: 'a', status: 'completed' }] }, ctx);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error).toContain('merge=true');
+  });
+});

@@ -43,7 +43,11 @@ import {
 } from '@zelari/core/harness/tools/toolTypes';
 import { appendKrakenRadio } from './krakenRadio.js';
 import { EXPLORE_PROMPT, GENERAL_PROMPT, VERIFY_PROMPT } from './taskPrompts.js';
-import { formatSubagentMetricsLine } from './subagentMetrics.js';
+import {
+  formatSubagentMetricsLine,
+  formatToolDegradedGuardLine,
+  isToolChannelDegraded,
+} from './subagentMetrics.js';
 import {
   createLoopGuard,
   formatDegenerateLoopStop,
@@ -1233,7 +1237,7 @@ function toolCommandHint(args: Record<string, unknown> | undefined): string | un
 export async function runSubAgent(
   harness: SubAgentHarness,
   opts: { signal?: AbortSignal; onEvent?: (ev: BrainEvent) => void } = {},
-): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[]; turns?: number; toolCalls?: number; degenerate?: DegenerateLoopStop; mutationStorm?: MutationStormStop; reportTruncated?: ReportTruncatedReason }> {
+): Promise<{ result: string; error?: string; aborted?: boolean; usage?: UsageBreakdown; toolTrace?: TentacleToolTrace[]; turns?: number; toolCalls?: number; toolErrors?: number; degenerate?: DegenerateLoopStop; mutationStorm?: MutationStormStop; reportTruncated?: ReportTruncatedReason }> {
   const { signal } = opts;
   let current = '';
   let lastCompleted = '';
@@ -1283,6 +1287,8 @@ export async function runSubAgent(
   // executions (toolTrace is ring-capped at 24 and would lie on long runs).
   let turns = 0;
   let toolCalls = 0;
+  /** F4: tool executions that ended in error (uncapped, like `toolCalls`). */
+  let toolErrors = 0;
   /** toolCallId → { tool, command } captured at tool_execution_start. */
   const pendingTools = new Map<string, { tool: string; command?: string }>();
   const toolTrace: TentacleToolTrace[] = [];
@@ -1315,6 +1321,7 @@ export async function runSubAgent(
       const started = pendingTools.get(ev.toolCallId);
       pendingTools.delete(ev.toolCallId);
       toolCalls += 1;
+      if (ev.isError) toolErrors += 1;
       toolTrace.push({
         tool: started?.tool ?? 'unknown',
         callId: ev.toolCallId,
@@ -1426,6 +1433,7 @@ export async function runSubAgent(
     ...(toolTrace.length > 0 ? { toolTrace } : {}),
     ...(turns > 0 ? { turns } : {}),
     ...(toolCalls > 0 ? { toolCalls } : {}),
+    ...(toolErrors > 0 ? { toolErrors } : {}),
     ...(degenerate ? { degenerate } : {}),
     ...(mutationStorm ? { mutationStorm } : {}),
   };
@@ -1463,6 +1471,8 @@ export interface TentacleSuccess {
    * ring-capped `toolTrace.length`, which stops at 24 entries).
    */
   toolCalls?: number;
+  /** F4: tool executions that ended in error (uncapped). Absent when none. */
+  toolErrors?: number;
   /**
    * 2.1 T5: raw tool executions captured during the run (bounded ring,
    * output excerpts). The verify-report path stores them with the check
@@ -1847,6 +1857,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     usage?: UsageBreakdown;
     turns?: number;
     toolCalls?: number;
+    toolErrors?: number;
     degenerate?: DegenerateLoopStop;
   } = {};
   const endTentacle = (id: string, info: Parameters<typeof krakenTentacleEnd>[1]) => {
@@ -1894,7 +1905,13 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
       ...(terminalMetrics.toolCalls !== undefined
         ? { toolCalls: terminalMetrics.toolCalls }
         : {}),
+      ...(terminalMetrics.toolErrors !== undefined
+        ? { toolErrors: terminalMetrics.toolErrors }
+        : {}),
       ...(terminalMetrics.degenerate ? { degenerate: true } : {}),
+      ...(isToolChannelDegraded(terminalMetrics.toolCalls, terminalMetrics.toolErrors)
+        ? { toolsDegraded: true }
+        : {}),
     });
     queueMetricsPersist(() => emitSubagentMetrics(opts.sessionEventSink, payload));
   };
@@ -2083,6 +2100,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   // parent-facing footer can report honest counts.
   let turns: number | undefined;
   let toolCalls: number | undefined;
+  let toolErrors: number | undefined;
   // t157 (P2c): the cross-turn loop guard's stop, threaded up so the failure
   // it produces is distinguishable from budget exhaustion.
   let degenerate: DegenerateLoopStop | undefined;
@@ -2090,7 +2108,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
   let mutationStorm: MutationStormStop | undefined;
   let reportTruncated: ReportTruncatedReason | undefined;
   try {
-    ({ result, error, aborted, usage, toolTrace, turns, toolCalls, degenerate, mutationStorm, reportTruncated } =
+    ({ result, error, aborted, usage, toolTrace, turns, toolCalls, toolErrors, degenerate, mutationStorm, reportTruncated } =
       await runSubAgent(harness, {
         ...(opts.signal ? { signal: opts.signal } : {}),
         onEvent: onHarnessEvent,
@@ -2128,6 +2146,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
           toolTrace = retry.toolTrace;
           turns = retry.turns;
           toolCalls = retry.toolCalls;
+          toolErrors = retry.toolErrors;
           degenerate = retry.degenerate;
           mutationStorm = retry.mutationStorm;
           reportTruncated = retry.reportTruncated;
@@ -2147,8 +2166,12 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ...(usage ? { usage } : {}),
     ...(turns !== undefined ? { turns } : {}),
     ...(toolCalls !== undefined ? { toolCalls } : {}),
+    ...(toolErrors !== undefined ? { toolErrors } : {}),
     ...(degenerate ? { degenerate } : {}),
   };
+  // F4: an `ok` run whose tools mostly failed is reported as degraded on the
+  // radio + metrics and flagged to the parent — never a clean success.
+  const toolsDegraded = isToolChannelDegraded(toolCalls, toolErrors);
   // G2 (post-mortem 2026-09-23): the structured report status derives from
   // the deterministic truncation facts only — never from the report's text.
   const reportStatus: ReportStatus = reportStatusOf(reportTruncated);
@@ -2366,6 +2389,8 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     worktree: worktree?.path ?? null,
     durationMs,
     ok: true,
+    ...(toolErrors !== undefined && toolErrors > 0 ? { toolErrors } : {}),
+    ...(toolsDegraded ? { toolsDegraded: true } : {}),
   });
 
   // t57 C1: sidecar with the FULL conclusion — the radio caps detail at 240
@@ -2451,6 +2476,7 @@ export async function runTentacle(opts: RunTentacleOptions): Promise<TentacleRes
     ...(usage ? { usage } : {}),
     ...(turns !== undefined && turns > 0 ? { turns } : {}),
     ...(toolCalls !== undefined && toolCalls > 0 ? { toolCalls } : {}),
+    ...(toolErrors !== undefined && toolErrors > 0 ? { toolErrors } : {}),
     ...(toolTrace && toolTrace.length > 0 ? { toolTrace } : {}),
     worktreePath: worktree?.path ?? null,
     worktreeHandle: worktree,
@@ -2652,9 +2678,15 @@ export function createTaskTool(
       const metricsLine = formatSubagentMetricsLine({
         ...(res.usage ? { usage: res.usage } : {}),
         ...(res.toolCalls !== undefined ? { toolCalls: res.toolCalls } : {}),
+        ...(res.toolErrors !== undefined ? { toolErrors: res.toolErrors } : {}),
         ...(res.turns !== undefined ? { turns: res.turns } : {}),
       });
       if (metricsLine) result += `\n${metricsLine}`;
+      // F4: a report built on a mostly-failing tool channel is flagged to the
+      // parent explicitly (the metrics line only appears with usage).
+      if (res.toolCalls !== undefined && isToolChannelDegraded(res.toolCalls, res.toolErrors)) {
+        result += `\n${formatToolDegradedGuardLine(res.toolCalls, res.toolErrors ?? 0)}`;
+      }
       // G2 (post-mortem 2026-09-23): a runtime-truncated report is never
       // silent — the parent gets an explicit guard line so no new spawn is
       // grounded on partial information without re-investigating first.

@@ -43,7 +43,7 @@
   ],
   "milestones": [],
   "schemaVersion": 1,
-  "counter": 173,
+  "counter": 176,
   "tasks": [
     {
       "id": "t101",
@@ -1201,6 +1201,47 @@
       "updatedAt": "2026-09-23T11:26:55.533Z",
       "files": [
         "src/cli/tools/taskPrompts.ts"
+      ]
+    },
+    {
+      "id": "t174",
+      "title": "F1+F2: muse tool-args — merge canali done nel loop Responses + frame debug opt-in",
+      "name": "F1+F2: muse tool-args — merge canali done nel loop Responses + frame debug opt-in",
+      "status": "pending",
+      "priority": "high",
+      "notes": "Accettazione: tentacolo explore su muse esegue read_file/grep_content con args corretti; streaming OpenAI a delta resta byte-identico (test regressione); ZELARI_PROVIDER_FRAME_DEBUG=1 stampa ev.type+shape args. Dettagli: .zelari/docs/2026-09-24-tentacoli-muse-tool-args-bug-diagnosi-e-piano.md (F1+F2).",
+      "createdAt": "2026-09-24T10:30:07.085Z",
+      "updatedAt": "2026-09-24T10:30:07.085Z",
+      "files": [
+        "src/cli/provider/responsesApi.ts",
+        "src/cli/provider/chatgpt.ts"
+      ]
+    },
+    {
+      "id": "t175",
+      "title": "F3: guardia tool_args_missing al flush (anti-degrado silenzioso)",
+      "name": "F3: guardia tool_args_missing al flush (anti-degrado silenzioso)",
+      "status": "pending",
+      "priority": "low",
+      "notes": "Accettazione: flush con argsJson vuoto + tool con required non-vuoto produce delta {kind:'error'} con guard code tool_args_missing (famiglia K4.1). Facoltativa rispetto a F1: eseguire solo se F1 passa tutti i test.",
+      "createdAt": "2026-09-24T10:30:07.095Z",
+      "updatedAt": "2026-09-24T10:30:07.095Z",
+      "files": [
+        "src/cli/provider/responsesApi.ts"
+      ]
+    },
+    {
+      "id": "t176",
+      "title": "Test + verify: regressioni muse-dialect e live repro tentacolo",
+      "name": "Test + verify: regressioni muse-dialect e live repro tentacolo",
+      "status": "pending",
+      "priority": "high",
+      "notes": "Accettazione: npx vitest run responsesApi.test.ts toolArgs.test.ts verde; npm run typecheck verde; tentacolo diagnostico live su muse riporta version 2.63.1 da package.json.",
+      "createdAt": "2026-09-24T10:30:07.099Z",
+      "updatedAt": "2026-09-24T10:30:07.099Z",
+      "files": [
+        "src/cli/provider/responsesApi.test.ts",
+        "src/cli/provider/toolArgs.test.ts"
       ]
     }
   ]
