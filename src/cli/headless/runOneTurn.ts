@@ -36,7 +36,7 @@ import { isKrakenMode } from '../mode.js';
 // LspManager into the turn so the tool registry stops re-deriving one from
 // the shared per-root map on every dispatch.
 import type { LspProvider } from '../lsp/manager.js';
-import { buildSystemPromptSplit, systemMessagesFromSplit, assembleRequestMessages, isTrailingContextContent, resolvePromptLayout, getAllTools, KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE, buildLanguagePolicySplit } from '@zelari/core/skills';
+import { buildSystemPromptSplit, systemMessagesFromSplit, assembleRequestMessages, isTrailingContextContent, resolvePromptLayout, getAllTools, KRAKEN_IDENTITY_MODULE, KRAKEN_LEAD_PLAYBOOK_MODULE, buildLanguagePolicySplit, resolvePromptProfile, LEAN_BUILD_PHASE_NOTE } from '@zelari/core/skills';
 import { envNumber } from '../utils/envNumber.js';
 import { createStreamScrubber } from '../utils/streamScrub.js';
 import { promises as fs } from 'node:fs';
@@ -457,6 +457,7 @@ export async function runOneTurn(
   } catch {
     languageDirectiveContent = '# Response Language\nReply in the user\'s language when possible, otherwise Italian.';
   }
+  const promptProfile = resolvePromptProfile();
   try {
     const headlessRole = {
       id: 'single',
@@ -485,7 +486,9 @@ export async function runOneTurn(
               'Plan artifacts under .zelari are allowed.',
               'When the plan is ready, tell the user to switch to BUILD to implement on disk.',
             ].join(' ')
-          : [
+          : promptProfile === 'lean'
+            ? LEAN_BUILD_PHASE_NOTE
+            : [
               'BUILD phase — IMPLEMENT ON DISK (mandatory when the user wants code/file changes).',
               'Prior chat may contain a plan or synthesis: that text is a SPEC to apply, NOT proof that files already changed.',
               'You MUST call write_file and/or edit for every file you change before saying you are done.',
@@ -532,6 +535,7 @@ export async function runOneTurn(
         tools: getAllTools(),
         toolNames,
         mode: 'kraken',
+        promptProfile,
         projectInstructions: composed.projectInstructions || undefined,
         workspaceContext: agentWorkspace || undefined,
         // Plan lives in workspaceContext as draft ops — never as RAG.

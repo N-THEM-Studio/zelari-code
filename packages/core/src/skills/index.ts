@@ -51,6 +51,14 @@ export {
   buildLanguagePolicyModuleFor,
   buildLanguagePolicySplit,
   STABLE_LANGUAGE_DIRECTIVE,
+} from '../agents/languagePolicy.js';
+export {
+  resolvePromptProfile,
+  applyLeanProfile,
+  LEAN_BUILD_PHASE_NOTE,
+  type PromptProfile,
+} from '../agents/leanPromptModules.js';
+export {
   LANGUAGE_POLICY_MODULE_TYPE,
 } from '../agents/languagePolicy.js';
 export type { SupportedLanguage, LanguagePolicySplit } from '../agents/languagePolicy.js';

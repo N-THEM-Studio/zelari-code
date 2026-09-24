@@ -1,3 +1,4 @@
+import { applyLeanProfile, type PromptProfile } from './leanPromptModules.js';
 import type {
   EnhancedToolDefinition,
   SkillDefinition,
@@ -158,6 +159,12 @@ export type BuildSystemPromptOptions = {
    * Always placed in the *volatile* section so it never busts the cache prefix.
    */
   durableStateContext?: string;
+  /**
+   * `lean` (flagged, ZELARI_PROMPT_PROFILE=lean): Kraken pack only — swaps in
+   * the lean modules and omits the `# Tools` catalog the native tool schemas
+   * already carry. See leanPromptModules.ts. Default: unchanged prompt.
+   */
+  promptProfile?: PromptProfile;
 };
 
 /**
@@ -183,14 +190,19 @@ export function buildSystemPromptSplit(
     projectInstructions,
     includeWorkspaceInPrompt = true,
     durableStateContext,
+    promptProfile = 'default',
   } = options;
   const registry = new Map(tools.map((t) => [t.name, t]));
+  const lean = promptProfile === 'lean' && (mode === 'kraken' || (mode as string) === 'agent');
 
   // 1. Base modules (filtered by conditional predicates against the agent's skills)
   const skills = computeAgentSkills(agent, aiConfig);
-  const baseModules = getBasePromptModules(mode).filter(
+  const packModules = getBasePromptModules(mode).filter(
     (m) => !m.conditional || m.conditional(skills)
   );
+  const baseModules = lean
+    ? applyLeanProfile(packModules, { hasAskUser: toolNames.includes('ask_user') })
+    : packModules;
 
   // 2. Custom user modules. v0.7.2: a custom module with the SAME `type` as a
   // base module REPLACES it (override semantics), rather than being appended.
@@ -258,9 +270,9 @@ export function buildSystemPromptSplit(
     );
   }
 
-  // 5. Tool documentation
+  // 5. Tool documentation (lean: omitted — the native tool schemas carry it)
   const toolBlock = getToolDescriptions(toolNames, registry);
-  if (toolNames.length > 0) {
+  if (toolNames.length > 0 && !lean) {
     stableParts.push(`# Tools\n\n${toolBlock}`);
   }
 
