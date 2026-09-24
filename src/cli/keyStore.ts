@@ -75,7 +75,8 @@ export function isOAuthProvider(id: string): id is ProviderName {
 
 /** True when the string looks like a vendor API key (not an OAuth paste-code). */
 export function looksLikeApiKey(key: string): boolean {
-  return /^(sk-|xai-|glm-|mm-|tp-|ttp-)/i.test(key.trim());
+  // `LLM|…` = Meta Model API key (muse), pasteable straight from the muse CLI.
+  return /^(sk-|xai-|glm-|mm-|tp-|ttp-|LLM\|)/i.test(key.trim());
 }
 
 /** Comma-separated provider ids for help / error strings. */

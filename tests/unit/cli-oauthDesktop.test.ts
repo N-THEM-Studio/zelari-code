@@ -69,4 +69,23 @@ describe('slash /login oauth providers', () => {
     expect(r.kind).toBe('login');
     expect(r.loginKey).toBe('sk-ant-secret');
   });
+
+  it('/login muse without key starts OAuth (CLI-session import or device flow)', () => {
+    const r = handleSlashCommand('/login muse', []);
+    expect(r.kind).toBe('login_oauth');
+    expect(r.provider).toBe('muse');
+  });
+
+  it('/login muse LLM|... stores a Meta Model API key (not a device flow)', () => {
+    const r = handleSlashCommand('/login muse LLM|secret', []);
+    expect(r.kind).toBe('login');
+    expect(r.loginKey).toBe('LLM|secret');
+  });
+
+  it('/login muse dca:... paste completes OAuth via mint (loginKey passed through)', () => {
+    const r = handleSlashCommand('/login muse dca:oidc-token', []);
+    expect(r.kind).toBe('login_oauth');
+    expect(r.provider).toBe('muse');
+    expect(r.loginKey).toBe('dca:oidc-token');
+  });
 });

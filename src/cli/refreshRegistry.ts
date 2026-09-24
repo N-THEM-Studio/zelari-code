@@ -27,7 +27,7 @@
 import { refreshGrokToken, DEFAULT_GROK_OAUTH_CLIENT_ID } from './grokOAuth.js';
 import { refreshChatgptToken } from './chatgptOAuth.js';
 import { refreshAnthropicToken } from './anthropicOAuth.js';
-import { refreshMuseToken } from './museOAuth.js';
+import { mintMuseModelKey, readMuseCliAuth, refreshMuseToken } from './museOAuth.js';
 import type { ProviderName } from './keyStore.js';
 
 /**
@@ -106,6 +106,21 @@ export const chatgptRefreshAdapter: RefreshImpl = async (_providerId, refreshTok
 };
 
 export const museRefreshAdapter: RefreshImpl = async (_providerId, refreshToken) => {
+  // Re-import first: on the `muse login` import path there is no client id
+  // (the refresh grant fails closed there), while the official CLI session
+  // is the source of truth for a rotated Model API key.
+  const cli = readMuseCliAuth();
+  if (cli?.apiKey) {
+    return { accessToken: cli.apiKey, ...(cli.refreshToken ? { refreshToken: cli.refreshToken } : {}) };
+  }
+  if (cli?.accessToken) {
+    const minted = await mintMuseModelKey({ accessToken: cli.accessToken });
+    return {
+      accessToken: minted.apiKey,
+      ...(minted.expiresAt !== undefined ? { expiresAt: minted.expiresAt } : {}),
+      ...(cli.refreshToken ? { refreshToken: cli.refreshToken } : {}),
+    };
+  }
   return refreshMuseToken({ refreshToken });
 };
 

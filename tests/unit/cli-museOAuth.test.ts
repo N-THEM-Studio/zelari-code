@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   mintMuseModelKey,
+  museOAuthConfigured,
   readMuseCliAuth,
   refreshMuseToken,
   requestMuseDeviceCode,
@@ -17,6 +19,29 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+/** Official `muse login` schema v1 as written on a real host. */
+const MUSE_SESSION_V1 = {
+  schema_version: 1,
+  providers: {
+    meta: {
+      access_token: 'dca:oidc-cli',
+      api_key: 'LLM|model-key-cli',
+      obtained_via: 'device_code',
+      mechanism: 'oauth',
+      api_base_url: 'https://api.meta.ai/v1',
+    },
+  },
+};
+
+const fixtureDirs: string[] = [];
+
+function writeMuseSession(auth: unknown): string {
+  const dir = mkdtempSync(join(tmpdir(), 'zelari-muse-fixture-'));
+  writeFileSync(join(dir, 'auth.json'), JSON.stringify(auth), 'utf-8');
+  fixtureDirs.push(dir);
+  return dir;
+}
+
 describe('museOAuth', () => {
   const envBackup = { ...process.env };
   beforeEach(() => {
@@ -28,6 +53,9 @@ describe('museOAuth', () => {
   });
   afterEach(() => {
     process.env = { ...envBackup };
+    while (fixtureDirs.length > 0) {
+      rmSync(fixtureDirs.pop()!, { recursive: true, force: true });
+    }
     vi.restoreAllMocks();
   });
 
@@ -169,5 +197,107 @@ describe('museOAuth', () => {
     registerDefaultRefreshImpls();
     expect(getRefreshImpl('muse')).not.toBeNull();
     expect(MuseOAuthError).toBeDefined();
+  });
+
+  // --- Official muse CLI session (schema v1) --------------------------------
+
+  it('reads the official schema v1 (providers.meta: api_key + access_token + base url)', () => {
+    const auth = readMuseCliAuth({ readFileImpl: () => JSON.stringify(MUSE_SESSION_V1) });
+    expect(auth).toMatchObject({
+      apiKey: 'LLM|model-key-cli',
+      accessToken: 'dca:oidc-cli',
+      baseUrl: 'https://api.meta.ai/v1',
+    });
+  });
+
+  it('reads a schema v1 session with only an OIDC token (no api_key)', () => {
+    const auth = readMuseCliAuth({
+      readFileImpl: () =>
+        JSON.stringify({ schema_version: 1, providers: { meta: { access_token: 'dca:x' } } }),
+    });
+    expect(auth).toMatchObject({ accessToken: 'dca:x' });
+    expect(auth?.apiKey).toBeUndefined();
+  });
+
+  it('import path: CLI api_key is used as-is with zero network calls', async () => {
+    process.env.MUSE_CONFIG_DIR = writeMuseSession(MUSE_SESSION_V1);
+    const fetchImpl = vi.fn(async () => {
+      throw new Error('network must not be used on the api_key import path');
+    });
+    const result = await runMuseOAuthFlow({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      openBrowserImpl: async () => {
+        throw new Error('browser must not open on the import path');
+      },
+    });
+    expect(result).toEqual({
+      accessToken: 'LLM|model-key-cli',
+      baseUrl: 'https://api.meta.ai/v1',
+    });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('import path: mints from the CLI access_token when api_key is absent', async () => {
+    process.env.MUSE_CONFIG_DIR = writeMuseSession({
+      schema_version: 1,
+      providers: { meta: { access_token: 'dca:only-oidc', api_base_url: 'https://api.meta.ai/v1' } },
+    });
+    const fetchImpl = vi.fn(async () => jsonResponse({ api_key: 'LLM|minted' }));
+    const result = await runMuseOAuthFlow({
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      openBrowserImpl: async () => {
+        throw new Error('browser must not open on the import path');
+      },
+    });
+    expect(result).toEqual({
+      accessToken: 'LLM|minted',
+      baseUrl: 'https://api.meta.ai/v1',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('fails closed with no_client_id when there is no CLI session and no client id', async () => {
+    await expect(
+      runMuseOAuthFlow({
+        fetchImpl: (async () => jsonResponse({})) as unknown as typeof fetch,
+        openBrowserImpl: async () => {
+          throw new Error('browser must not open');
+        },
+      }),
+    ).rejects.toMatchObject({ name: 'MuseOAuthError', code: 'no_client_id' });
+  });
+
+  it('museOAuthConfigured tracks the CLI session (not just a client id)', () => {
+    expect(museOAuthConfigured()).toBe(false);
+    process.env.MUSE_CONFIG_DIR = writeMuseSession(MUSE_SESSION_V1);
+    expect(museOAuthConfigured()).toBe(true);
+  });
+
+  // --- Refresh adapter ------------------------------------------------------
+
+  it('refresh adapter re-imports the CLI session without a client id', async () => {
+    process.env.MUSE_CONFIG_DIR = writeMuseSession(MUSE_SESSION_V1);
+    const { registerDefaultRefreshImpls, getRefreshImpl } = await import(
+      '../../src/cli/refreshRegistry.js'
+    );
+    registerDefaultRefreshImpls();
+    const impl = getRefreshImpl('muse');
+    expect(impl).not.toBeNull();
+    const res = await impl!('muse', 'rt-stored');
+    expect(res.accessToken).toBe('LLM|model-key-cli');
+    expect(res.refreshToken).toBeUndefined();
+  });
+
+  it('refresh adapter without a CLI session falls back to the refresh grant', async () => {
+    const { registerDefaultRefreshImpls, getRefreshImpl } = await import(
+      '../../src/cli/refreshRegistry.js'
+    );
+    registerDefaultRefreshImpls();
+    const impl = getRefreshImpl('muse');
+    expect(impl).not.toBeNull();
+    await expect(impl!('muse', 'rt-stored')).rejects.toMatchObject({
+      name: 'MuseOAuthError',
+      code: 'no_client_id',
+    });
   });
 });

@@ -5,6 +5,7 @@ import {
   clearApiKey,
   forceRefreshOAuth,
   getOAuthToken,
+  getProviderSpec,
   isOAuthProvider,
   maskKey,
   setOAuthToken,
@@ -13,6 +14,7 @@ import {
 import {
   getModelForProvider,
   setActiveProviderId,
+  setCustomEndpoint,
   setModelForProvider,
 } from './providerConfig.js';
 import { discoverModelsForProvider, type ProviderId } from './modelDiscovery.js';
@@ -48,6 +50,8 @@ export async function persistOAuthLogin(
     refreshToken?: string;
     accountId?: string;
     idToken?: string;
+    /** Base URL from the login session (Muse import) — becomes the custom endpoint when it differs from the provider default. */
+    baseUrl?: string;
   },
 ): Promise<void> {
   setOAuthToken(provider, {
@@ -58,6 +62,13 @@ export async function persistOAuthLogin(
     ...(token.idToken ? { idToken: token.idToken } : {}),
   });
   setActiveProviderId(provider);
+  // Keep the endpoint in sync with the login session (muse CLI api_base_url):
+  // applied BEFORE discovery so /models queries the same base chat will use.
+  const spec = getProviderSpec(provider);
+  if (token.baseUrl && spec?.baseUrl) {
+    const incoming = token.baseUrl.replace(/\/$/, '');
+    if (incoming !== spec.baseUrl.replace(/\/$/, '')) setCustomEndpoint(provider, incoming);
+  }
   if (!getModelForProvider(provider)) {
     const fallback = DEFAULT_MODELS[provider];
     if (fallback) setModelForProvider(provider, fallback);
@@ -123,6 +134,8 @@ export async function runLoginOAuth(opts: {
 
     if (provider === 'muse') {
       const token = await runMuseOAuthFlow({
+        // `--code dca:…` (OIDC token pasted from the muse CLI) → mint directly.
+        ...(opts.code?.startsWith('dca:') ? { accessToken: opts.code } : {}),
         openBrowserImpl: opts.noBrowser ? async () => undefined : undefined,
       });
       await persistOAuthLogin('muse', token);

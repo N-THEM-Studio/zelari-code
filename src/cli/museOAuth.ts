@@ -19,12 +19,15 @@
  *   MUSE_OAUTH_DEVICE_CODE_ENDPOINT, MUSE_OAUTH_TOKEN_ENDPOINT,
  *   MUSE_OAUTH_KEY_ENDPOINT, MUSE_CONFIG_DIR
  *
- * Import path: when the user already ran `muse login`, the OIDC tokens can
- * be read from `$MUSE_CONFIG_DIR/auth.json` (or `~/.config/muse/auth.json`)
- * and only step 2 (mint) runs — no client id or browser round-trip needed.
+ * Import path: when the user already ran `muse login`, the session is read
+ * from `$MUSE_CONFIG_DIR/auth.json` (or `~/.config/muse/auth.json`) — no
+ * client id or browser round-trip needed. The official CLI writes schema v1
+ * (`{ schema_version, providers: { meta: { access_token, api_key,
+ * api_base_url } } }`): `api_key` is already a Model API key and is used
+ * as-is; `access_token` (OIDC, `dca:` prefix) only ever triggers a mint.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { openBrowser } from './grokOAuth.js';
@@ -50,6 +53,8 @@ export interface MuseOAuthResult {
   expiresAt?: number;
   /** OIDC refresh token (used to mint a fresh model key on refresh). */
   refreshToken?: string;
+  /** `api_base_url` from the import session (when it differs from the default). */
+  baseUrl?: string;
 }
 
 export interface MuseDeviceAuthorization {
@@ -318,11 +323,26 @@ export async function mintMuseModelKey(options: {
   return out;
 }
 
+/** Credentials parsed from an official `muse login` session. */
+export interface MuseCliAuth {
+  /** Model API key (`LLM|…`) — usable as-is against api.meta.ai. */
+  apiKey?: string;
+  /** OIDC access token (`dca:…`) — only used to mint a model key. */
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number;
+  /** `api_base_url` declared by the muse CLI session. */
+  baseUrl?: string;
+}
+
+const pickStr = (...candidates: unknown[]): string | undefined =>
+  candidates.find((c): c is string => typeof c === 'string' && c.length > 0);
+
 /** Read tokens from an existing `muse login` session (import path). */
 export function readMuseCliAuth(options: {
   configDir?: string;
   readFileImpl?: (file: string) => string;
-} = {}): { accessToken?: string; refreshToken?: string; expiresAt?: number } | null {
+} = {}): MuseCliAuth | null {
   const dir =
     options.configDir ?? process.env.MUSE_CONFIG_DIR ?? path.join(homedir(), '.config', 'muse');
   const file = path.join(dir, 'auth.json');
@@ -334,28 +354,43 @@ export function readMuseCliAuth(options: {
   }
   try {
     const obj = JSON.parse(raw) as Record<string, unknown>;
-    const accessToken =
-      [obj.access_token, obj.accessToken, (obj.tokens as Record<string, unknown> | undefined)?.access_token]
-        .find((c): c is string => typeof c === 'string' && c.length > 0);
-    const refreshToken =
-      [obj.refresh_token, obj.refreshToken, (obj.tokens as Record<string, unknown> | undefined)?.refresh_token]
-        .find((c): c is string => typeof c === 'string' && c.length > 0);
-    if (!accessToken && !refreshToken) return null;
-    const out: { accessToken?: string; refreshToken?: string; expiresAt?: number } = {};
+    // Official schema v1 nests credentials per provider; legacy files kept
+    // them flat at the top level. Entry wins, flat keys remain the fallback.
+    const providers = obj.providers as Record<string, unknown> | undefined;
+    const entry = (providers?.meta ?? providers?.muse) as Record<string, unknown> | undefined;
+    const src: Record<string, unknown> =
+      entry && typeof entry === 'object' ? entry : obj;
+    const apiKey = pickStr(src.api_key, src.apiKey, obj.api_key);
+    const accessToken = pickStr(
+      src.access_token,
+      src.accessToken,
+      (src.tokens as Record<string, unknown> | undefined)?.access_token,
+    );
+    const refreshToken = pickStr(
+      src.refresh_token,
+      src.refreshToken,
+      (src.tokens as Record<string, unknown> | undefined)?.refresh_token,
+    );
+    const baseUrl = pickStr(src.api_base_url, src.baseUrl, obj.api_base_url);
+    if (!apiKey && !accessToken && !refreshToken) return null;
+    const out: MuseCliAuth = {};
+    if (apiKey) out.apiKey = apiKey;
     if (accessToken) out.accessToken = accessToken;
     if (refreshToken) out.refreshToken = refreshToken;
-    if (typeof obj.expires_at === 'number' && Number.isFinite(obj.expires_at)) {
-      out.expiresAt = obj.expires_at > 1e12 ? obj.expires_at : obj.expires_at * 1000;
+    if (baseUrl) out.baseUrl = baseUrl;
+    const expiresRaw =
+      typeof src.expires_at === 'number' && Number.isFinite(src.expires_at)
+        ? src.expires_at
+        : typeof obj.expires_at === 'number' && Number.isFinite(obj.expires_at)
+          ? obj.expires_at
+          : undefined;
+    if (expiresRaw !== undefined) {
+      out.expiresAt = expiresRaw > 1e12 ? expiresRaw : expiresRaw * 1000;
     }
     return out;
   } catch {
     return null;
   }
-}
-
-function hasMuseCliSession(): boolean {
-  const dir = process.env.MUSE_CONFIG_DIR ?? path.join(homedir(), '.config', 'muse');
-  return existsSync(path.join(dir, 'auth.json'));
 }
 
 export async function runMuseOAuthFlow(
@@ -367,25 +402,39 @@ export async function runMuseOAuthFlow(
     DEFAULT_MUSE_KEY_ENDPOINT;
   const fetchImpl = options.fetchImpl ?? fetch;
 
-  // Import path: an explicit OIDC token, or one from an existing
-  // `muse login` session, mints directly — no device round-trip, no client id.
+  // Import path: an explicit OIDC token, or an existing `muse login`
+  // session, skips the device round-trip — no client id needed.
   if (options.accessToken) {
     const minted = await mintMuseModelKey({ accessToken: options.accessToken, keyEndpoint, fetchImpl });
-    const storedRefresh = readMuseCliAuth()?.refreshToken;
+    const cli = readMuseCliAuth();
     return {
       accessToken: minted.apiKey,
       ...(minted.expiresAt !== undefined ? { expiresAt: minted.expiresAt } : {}),
-      ...(storedRefresh ? { refreshToken: storedRefresh } : {}),
+      ...(cli?.refreshToken ? { refreshToken: cli.refreshToken } : {}),
+      ...(cli?.baseUrl ? { baseUrl: cli.baseUrl } : {}),
     };
   }
   const cliAuth = readMuseCliAuth();
-  if (cliAuth?.accessToken) {
-    const minted = await mintMuseModelKey({ accessToken: cliAuth.accessToken, keyEndpoint, fetchImpl });
-    return {
-      accessToken: minted.apiKey,
-      ...(minted.expiresAt ?? cliAuth.expiresAt !== undefined ? { expiresAt: minted.expiresAt ?? cliAuth.expiresAt } : {}),
-      ...(cliAuth.refreshToken ? { refreshToken: cliAuth.refreshToken } : {}),
-    };
+  if (cliAuth) {
+    // Schema v1 already carries a Model API key — use it as-is, zero network.
+    if (cliAuth.apiKey) {
+      return {
+        accessToken: cliAuth.apiKey,
+        ...(cliAuth.expiresAt !== undefined ? { expiresAt: cliAuth.expiresAt } : {}),
+        ...(cliAuth.refreshToken ? { refreshToken: cliAuth.refreshToken } : {}),
+        ...(cliAuth.baseUrl ? { baseUrl: cliAuth.baseUrl } : {}),
+      };
+    }
+    if (cliAuth.accessToken) {
+      const minted = await mintMuseModelKey({ accessToken: cliAuth.accessToken, keyEndpoint, fetchImpl });
+      const expiresAt = minted.expiresAt ?? cliAuth.expiresAt;
+      return {
+        accessToken: minted.apiKey,
+        ...(expiresAt !== undefined ? { expiresAt } : {}),
+        ...(cliAuth.refreshToken ? { refreshToken: cliAuth.refreshToken } : {}),
+        ...(cliAuth.baseUrl ? { baseUrl: cliAuth.baseUrl } : {}),
+      };
+    }
   }
 
   const clientId = resolveClientId(options.clientId);
@@ -428,9 +477,10 @@ export async function runMuseOAuthFlow(
     sleepImpl: options.sleepImpl,
   });
   const minted = await mintMuseModelKey({ accessToken: token.accessToken, keyEndpoint, fetchImpl });
+  const expiresAt = minted.expiresAt ?? token.expiresAt;
   return {
     accessToken: minted.apiKey,
-    ...(minted.expiresAt ?? token.expiresAt !== undefined ? { expiresAt: minted.expiresAt ?? token.expiresAt } : {}),
+    ...(expiresAt !== undefined ? { expiresAt } : {}),
     ...(token.refreshToken ? { refreshToken: token.refreshToken } : {}),
   };
 }
@@ -500,7 +550,5 @@ export async function refreshMuseToken(options: {
 }
 
 export function museOAuthConfigured(): boolean {
-  return (
-    resolveClientId().length > 0 || hasMuseCliSession()
-  );
+  return resolveClientId().length > 0 || readMuseCliAuth() !== null;
 }

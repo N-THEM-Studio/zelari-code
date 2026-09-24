@@ -344,8 +344,19 @@ export async function handleLoginOAuth(
     }
 
     if (provider === 'muse') {
-      appendSystem(ctx.setMessages, '[login oauth] Muse device login — open the URL and enter the code…');
       const { runMuseOAuthFlow } = await import('../museOAuth.js');
+      // Pasted OIDC token (`dca:…`, copied from the muse CLI auth.json):
+      // mint a Model API key directly — no device round-trip.
+      if (pasteCode?.startsWith('dca:')) {
+        const mintedMuse = await runMuseOAuthFlow({ accessToken: pasteCode });
+        await persistOAuthLogin('muse', mintedMuse);
+        appendSystem(
+          ctx.setMessages,
+          `[login oauth] ✓ Muse authenticated (${maskKey(mintedMuse.accessToken)}). Active provider switched — try a prompt now.`,
+        );
+        return;
+      }
+      appendSystem(ctx.setMessages, '[login oauth] Muse device login — open the URL and enter the code…');
       const museToken = await runMuseOAuthFlow({
         onUserCode: (info) =>
           appendSystem(

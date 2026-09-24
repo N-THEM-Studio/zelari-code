@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Muse / Meta Code-plan login works via the official CLI session** — `readMuseCliAuth` now parses the real `muse login` schema v1 (`providers.meta.{api_key, access_token, api_base_url}`) instead of legacy flat files only, so `/login muse` on an already-logged-in host imports the stored `LLM|…` Model API key as-is (zero network) instead of failing with `no_client_id`; a `dca:…` OIDC token only ever triggers a key mint, and a non-default `api_base_url` is persisted as the provider custom endpoint before model discovery. The muse refresh adapter re-imports that session first (the import path has no client id for the refresh grant), `/login muse LLM|…` pastes store a key instead of falling into the device flow, `/login muse dca:…` mints directly, and the `expiresAt` assembly no longer relies on the broken `?? … !== undefined` precedence. Coverage: `tests/unit/cli-museOAuth.test.ts` (18 tests) + routing tests in `cli-oauthDesktop.test.ts` + opt-in live smoke (`ZELARI_MUSE_LIVE=1 npx vitest run tests/unit/cli-museOAuth.live.test.ts`) which imports the real local session, lists `/v1/models` and streams a completion through `responsesApiProvider`.
+
 ## [2.62.0] - 2026-09-23
 
 ### Added

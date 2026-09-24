@@ -1,4 +1,5 @@
 import type { CodingSkillDefinition } from '@zelari/core/skills';
+import { looksLikeApiKey } from './keyStore.js';
 import { parseMode } from './mode.js';
 import { evolutionMode, ledgerStats, readLedger } from './evolution/ledger.js';
 import { proposalSummary, readProposalStore } from './evolution/proposals.js';
@@ -305,10 +306,11 @@ export function handleSlashCommand(
           message: `[login] no key supplied — set ${provider.toUpperCase()}_API_KEY env or pass the key: /login ${provider} <key>`,
         };
       }
-      // Anthropic magic-link: paste CODE#STATE (does not look like sk-ant-...).
+      // Anthropic magic-link: paste CODE#STATE (does not look like a vendor
+      // API key — shared classifier with keyStore, covers `LLM|…` muse keys).
       if (
         (provider === 'anthropic' || provider === 'chatgpt' || provider === 'grok' || provider === 'muse') &&
-        !/^(sk-|xai-|glm-|mm-)/i.test(key)
+        !looksLikeApiKey(key)
       ) {
         return { handled: true, kind: 'login_oauth', provider, loginKey: key };
       }
