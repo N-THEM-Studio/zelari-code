@@ -681,6 +681,11 @@ All commands start with `/` and are typed in the TUI input bar.
 | `ZELARI_STATE_AUTO` | `0` (agent) | Auto-commit in agent mode (Zelari/council post-verify are on) |
 | `ZELARI_PROMPT_CACHE_TTL` | `auto` | Preference documented in `/cache stats` (`1h`/`5m`/`auto`). On the OpenAI-compat path caching is automatic server-side: real efficiency comes from the **stable prefix** (identity+tools), not from this flag. Future Anthropic markers may use it. |
 | `ZELARI_CTX_DURABLE_CHARS` | `3000` | Cap of the durable block injected into the volatile prompt |
+| `ZELARI_TOOL_OFFLOAD` | on | Rarely used tool schemas and every MCP tool stay out of the request and are reached through `use_tool`, which a "More tools" paragraph of the system prompt names (token audit 2026-09: ~12.5K tokens less per lead request). `0` sends every schema again. |
+| `ZELARI_TOOL_RESULT_FORMAT` | compact | Tool results in the model's context are compact JSON, long text fields verbatim, terminal colors removed. `json` restores the pretty JSON. Events and the session log keep the original string either way. |
+| `ZELARI_TOOL_RESULT_MODEL_CHARS` | `12000` | Past this size a tool result (read_file and task reports excepted) reaches the model as a head + tail window; the full output goes to the tool-output dir and the marker names its path. `0` disables the cap. |
+| `ZELARI_LANGUAGE_DIRECTIVE` | context | The detected reply language rides the per-turn context, so the cached system prompt stays byte-identical across turns. `system` puts the language-specific directive back in the system prompt. |
+| `ZELARI_PROMPT_PROFILE` | default | `lean` (experimental): Kraken prompt without the tool catalog the native schemas already carry, with plain rewrites of the Tool Use and Clarification sections. |
 
 **Memory vs state:** `.zelari/memory/` is recallable, versioned knowledge; `.zelari/state/` is a post-verification chain of commits. The session log stays the event-sourced history and `AGENTS.md` the curated layer. Recalled blocks are added to the turn's volatile context, not to the cacheable system prefix.
 

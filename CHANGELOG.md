@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Request composition in the metrics log** — every `kind: "message"` row records what the request was made of (system prompt, tool schemas with MCP split out, trailing context, user, assistant, tool results by tool), so cost can be split by source.
+- **`ZELARI_PROMPT_PROFILE=lean`** (experimental) — a Kraken prompt without the tool catalog the native schemas already carry, with plain rewrites of Tool Use and Clarification.
+
+### Changed
+
+- **Leaner requests: rarely used and MCP tools behind `use_tool`** — the request carries the tools real turns use (19) plus one `use_tool` dispatcher; the others and every MCP tool stay registered, are named in the system prompt and run through the same registry checks. About 12.5K tokens less per lead request; `ZELARI_TOOL_OFFLOAD=0` restores the full list.
+- **Compact tool results in the model's context** — structured results lose the JSON indentation, long text fields (bash output, file content) arrive verbatim instead of escaped, terminal colors are removed, and results past 12,000 chars reach the model as a head + tail window with the full output on disk. Events and the session log are unchanged. `ZELARI_TOOL_RESULT_FORMAT=json` restores the old format.
+
+### Fixed
+
+- **A language change busted the prompt cache** — the reply-language directive named the detected language in the first line of the system prompt, so a turn in another language (12.4% of consecutive turns) re-billed the whole conversation uncached. The system prompt now holds a language-neutral rule and the detected language rides the turn's context.
+- **The prompt described the wrong shell** — it said "cmd.exe / Git Bash" while the Desktop's bash tool ran PowerShell, and 5.8% of bash calls failed on POSIX-only commands. The tool description and the prompts now name the shell that really runs.
+- **exec_process could not start npm or npx on Windows** — they now run as `node npm-cli.js` / `npx-cli.js`, still without a shell; other `.cmd` shims are refused with the fix.
+
 ## [2.64.0] - 2026-09-24
 
 ### Added
