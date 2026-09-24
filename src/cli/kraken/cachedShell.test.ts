@@ -189,7 +189,18 @@ describe('wrapWithVerifyCache (Int2b gate cache)', () => {
       expect(a.cached).toBeUndefined();
       expect(b.cached).toBeUndefined();
     } finally {
-      rmSync(plain, { recursive: true, force: true });
+      // Windows flake (pre-existing): a just-exited `git` child can keep the cwd
+      // handle open for a few ms, making rmSync race with EPERM. Retry briefly —
+      // an environmental lock is not a product regression.
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          rmSync(plain, { recursive: true, force: true });
+          break;
+        } catch (err) {
+          if (attempt >= 10 || (err as NodeJS.ErrnoException).code !== 'EPERM') throw err;
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 20);
+        }
+      }
     }
   });
 
