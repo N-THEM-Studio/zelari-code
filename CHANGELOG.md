@@ -7,7 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.63.0] - 2026-09-24
+
+### Changed
+
+- **Permissions: engine A removed — ADR-0039 Phase 3 complete** (deprecation window closed with v2.60): the dispatch verdict now comes only from category defaults × engine-B policy layers × TaskContract. Legacy `permissions.json` rules are no longer read, `/permissions add|remove|clear` is gone (`list` and `denials` remain — denials are spine-derived), and the compat adapter + parity matrix are deleted. Multi-arg claims (`apply_diff` headers, `observe_batch` fan-out) were already covered by engine-B `resourceClaims`. Migration notes: `MIGRATION.md`.
+- **Kraken strict-done gate now emits `VerificationFailed`** — observer-only hook event with criteria + reason payload, fired from the single strict-build choke-point shared by headless and TUI paths; external notifications no longer need core-loop changes.
+
+### Added
+
+- **Kraken harness guards (post-mortem 2026-09-23)** — a tentacle that fails 4 consecutive mutations stops immediately with code `mutation_storm` instead of burning its whole budget in a retry storm; a report cut mid-stream is marked `[report-truncated]` and the next spawned `general` gets a one-shot warning banner to re-verify its briefing before mutating; an aborted/killed tentacle flushes its partial transcript sidecar (`status: interrupted`). Kill-switch for the banner gate: `ZELARI_KRAKEN_TRUNCATED_REPORT_GATE=0`.
+- **Quality escalation (opt-in)** — `ZELARI_KRAKEN_QUALITY_ESCALATION=1` gives a weak lead output exactly one re-run on the parent model (anti-loop cap 1; a failed re-run keeps the original output), wired on both the JSON-DAG and plan-script paths.
+- **Model swap runner** — `tools/eval/runModelSwap.ts` measures baseline vs candidate model (pass-rate delta, guard-code deltas per code, cost) with `execute` and `read` modes; `leadModelSwapArms` pins the lead model per arm via env diff.
+- **Verification observability (F29–F33)** — `evidence.not_anchored` and `pack_error` session-spine events, plus the `runs list` / `runs show` reader for run records.
+
 ### Fixed
+
+- **Workspace "history is not scope"** — notes of completed plan tasks and stale v0.10 NFR keywords can no longer leak into the Task scope of new turns (they were steering slices toward already-shipped features).
+- **Full tool payload on errors in summary-only policy** (K4.3/F25) and **schema repair cap with structured hint** (K4.4/F26).
+- **`cachedShell` test EPERM race on Windows** — cleanup retries `rmSync` on EPERM (AV handle race) instead of flaking.
+- **Plain semantic search admission gated to scheduling auto** (K3.7/F19).
 
 - **Muse / Meta Code-plan login works via the official CLI session** — `readMuseCliAuth` now parses the real `muse login` schema v1 (`providers.meta.{api_key, access_token, api_base_url}`) instead of legacy flat files only, so `/login muse` on an already-logged-in host imports the stored `LLM|…` Model API key as-is (zero network) instead of failing with `no_client_id`; a `dca:…` OIDC token only ever triggers a key mint, and a non-default `api_base_url` is persisted as the provider custom endpoint before model discovery. The muse refresh adapter re-imports that session first (the import path has no client id for the refresh grant), `/login muse LLM|…` pastes store a key instead of falling into the device flow, `/login muse dca:…` mints directly, and the `expiresAt` assembly no longer relies on the broken `?? … !== undefined` precedence. Coverage: `tests/unit/cli-museOAuth.test.ts` (18 tests) + routing tests in `cli-oauthDesktop.test.ts` + opt-in live smoke (`ZELARI_MUSE_LIVE=1 npx vitest run tests/unit/cli-museOAuth.live.test.ts`) which imports the real local session, lists `/v1/models` and streams a completion through `responsesApiProvider`.
 
