@@ -21,7 +21,7 @@
  * seam live.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { promises as fs, mkdirSync, writeFileSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
@@ -35,10 +35,6 @@ import {
   clearSessionPermissionGrants,
   type PermissionPolicy,
 } from './safety/toolPermissions.js';
-import {
-  clearSessionPermissionRules,
-  resetProjectPermissionRuleCache,
-} from './safety/permissionRules.js';
 import { lateSessionSink, spineSessionSink, withSessionEventSink } from './safety/sessionSink.js';
 import { createBuiltinToolRegistry } from './toolRegistry.js';
 
@@ -99,7 +95,10 @@ function spine() {
   return { appendEvent: (input: SessionEventInput) => writer.append(input) };
 }
 
-function makeRegistry(sessionEventSink?: ReturnType<typeof spineSessionSink>) {
+function makeRegistry(
+  sessionEventSink?: ReturnType<typeof spineSessionSink>,
+  policy: ReturnType<typeof allowAll> = allowAll(),
+) {
   const { registry } = createBuiltinToolRegistry({
     root,
     audit: new AuditLogger(path.join(root, 'audit.jsonl')),
@@ -109,7 +108,7 @@ function makeRegistry(sessionEventSink?: ReturnType<typeof spineSessionSink>) {
     enableSkill: false,
     diagnostics: false,
     lspProvider: null,
-    permissionPolicy: allowAll(),
+    permissionPolicy: policy,
     ...(sessionEventSink ? { sessionEventSink } : {}),
   });
   return registry;
@@ -121,8 +120,6 @@ beforeEach(async () => {
   await fs.writeFile(path.join(root, 'f.ts'), 'const hello = 1;\n', 'utf-8');
   await fs.writeFile(path.join(root, 'secrets', 'key.pem'), 'old', 'utf-8');
   writer = await SessionLogWriter.open(path.join(root, 'session'), 'ws7-slice4b-sink', 1);
-  resetProjectPermissionRuleCache();
-  clearSessionPermissionRules();
   clearSessionPermissionGrants();
 });
 
@@ -155,23 +152,17 @@ describe('WS7 slice 4b — the tool-side session sink is live under the real har
     expect(projection.issues).toEqual([]);
   });
 
-  it('a real turn: a rule DENY lands permission.denied (before the tool body)', async () => {
-    mkdirSync(path.join(root, '.zelari'), { recursive: true });
-    writeFileSync(
-      path.join(root, '.zelari', 'permissions.json'),
-      JSON.stringify({
-        version: 1,
-        rules: [{ id: 'no-secrets', effect: 'deny', tool: 'write_file', pathPrefix: 'secrets' }],
-      }),
-    );
-    resetProjectPermissionRuleCache();
-    const registry = makeRegistry(spineSessionSink(spine()));
+  it('a real turn: a category DENY lands permission.denied (before the tool body)', async () => {
+    // ADR-0039 P3b: engine A (permissions.json rules) is gone — the deny now
+    // comes from the category policy itself, and the spine event names THAT
+    // deciding layer (`default`), with no matched rule id.
+    const registry = makeRegistry(spineSessionSink(spine()), { ...allowAll(), write: 'deny' });
 
     const events = await runTurn(registry, 'write_file', { path: 'secrets/key.pem', content: 'x' });
     const end = toolEnds(events)[0];
-    // Model-visible denial naming the matched rule…
+    // Model-visible denial from the category policy…
     expect(end?.isError).toBe(true);
-    expect(String(end?.result)).toContain("rule 'no-secrets'");
+    expect(String(end?.result)).toContain('[permission]');
     // …and the file was never touched.
     expect(await fs.readFile(path.join(root, 'secrets', 'key.pem'), 'utf-8')).toBe('old');
 
@@ -180,11 +171,11 @@ describe('WS7 slice 4b — the tool-side session sink is live under the real har
     expect(denials).toHaveLength(1);
     expect(denials[0]?.data).toMatchObject({
       tool: 'write_file',
-      matchedRuleId: 'no-secrets',
-      source: 'project',
+      matchedRuleId: '',
+      source: 'default',
     });
     const projection = buildProjection(report.events, report.issues);
-    expect(projection.permissionDenials?.map((d) => d.matchedRuleId)).toEqual(['no-secrets']);
+    expect(projection.permissionDenials?.map((d) => d.matchedRuleId)).toEqual(['']);
   });
 
   it('ADDITIVE-OPTIONAL: the same turn without a sink emits nothing and is otherwise identical', async () => {

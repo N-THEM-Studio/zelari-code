@@ -14,7 +14,7 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { promises as fs, mkdirSync, writeFileSync } from 'node:fs';
+import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { LifecycleHookRunner } from '@zelari/core/harness';
@@ -22,22 +22,12 @@ import type { ToolContext } from '@zelari/core/harness/tools/toolTypes';
 import { AuditLogger } from './auditLogger.js';
 import { createBuiltinToolRegistry } from '../toolRegistry.js';
 import { clearSessionPermissionGrants, type PermissionPolicy } from './toolPermissions.js';
-import { clearSessionPermissionRules, resetProjectPermissionRuleCache } from './permissionRules.js';
 import { buildPermissionRequestHookPayload } from './permissionGate.js';
 
 let root: string;
 
 function allowAll(): PermissionPolicy {
   return { read: 'allow', write: 'allow', execute: 'allow', network: 'allow', ui: 'allow', auto: true };
-}
-
-function writePermissionsFile(content: unknown | string): void {
-  const dir = path.join(root, '.zelari');
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(
-    path.join(dir, 'permissions.json'),
-    typeof content === 'string' ? content : JSON.stringify(content, null, 2),
-  );
 }
 
 function makeCtx(): ToolContext {
@@ -116,18 +106,17 @@ async function writeFileWith(
   };
 }
 
-const denySecrets = {
-  version: 1,
-  rules: [{ id: 'no-secrets', effect: 'deny', tool: 'write_file', pathPrefix: 'secrets', note: 'never touch secrets' }],
-};
+/** ADR-0039 P3b: engine A (permissions.json rules) is gone — the deny these
+ *  tests pin now comes from the category policy itself (`default` layer). */
+function denyWrite(): PermissionPolicy {
+  return { ...allowAll(), write: 'deny' };
+}
 
 beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'zelari-ws5-hooks-'));
   await fs.mkdir(path.join(root, 'secrets'), { recursive: true });
   await fs.mkdir(path.join(root, 'docs'), { recursive: true });
   await fs.writeFile(path.join(root, 'secrets', 'key.pem'), 'old', 'utf-8');
-  resetProjectPermissionRuleCache();
-  clearSessionPermissionRules();
   clearSessionPermissionGrants();
 });
 
@@ -136,14 +125,13 @@ afterEach(async () => {
 });
 
 describe('WS5 PermissionRequest hook (registry integration)', () => {
-  it('a rule deny fires PermissionRequest{effect:deny,+rule} and the inbox Notification', async () => {
-    writePermissionsFile(denySecrets);
+  it('a category DENY fires PermissionRequest{effect:deny} and the inbox Notification', async () => {
     const { calls, runner } = fakeRunner();
-    const res = await writeFileWith(runner, 'secrets/key.pem');
+    const res = await writeFileWith(runner, 'secrets/key.pem', denyWrite());
 
     // The WS1 verdict is untouched: same deny, same named rule.
     expect(res.ok).toBe(false);
-    expect(res.error).toContain("rule 'no-secrets'");
+    expect(res.error).toContain('[permission]');
     expect(await fs.readFile(path.join(root, 'secrets', 'key.pem'), 'utf-8')).toBe('old');
 
     const request = calls.find((c) => c.event === 'PermissionRequest');
@@ -152,10 +140,8 @@ describe('WS5 PermissionRequest hook (registry integration)', () => {
       tool: 'write_file',
       categories: ['write'],
       effect: 'deny',
-      matchedRuleId: 'no-secrets',
-      source: 'project',
     });
-    expect(String(request?.payload.reason)).toContain('never touch secrets');
+    expect(request?.payload.matchedRuleId).toBeUndefined();
     expect(String(request?.payload.argsSummary)).toContain('secrets/key.pem');
     expect(request?.ctx).toMatchObject({ sessionId: 'ws5-hooks', cwd: root });
 
@@ -182,18 +168,16 @@ describe('WS5 PermissionRequest hook (registry integration)', () => {
   });
 
   it('a THROWING subscriber cannot change the verdict nor fail the dispatch', async () => {
-    writePermissionsFile(denySecrets);
     const { runner } = fakeRunner('throw');
-    const res = await writeFileWith(runner, 'secrets/key.pem');
+    const res = await writeFileWith(runner, 'secrets/key.pem', denyWrite());
     expect(res.ok).toBe(false);
-    expect(res.error).toContain("rule 'no-secrets'");
+    expect(res.error).toContain('[permission]');
   });
 
   it('a HANGING subscriber cannot stall the dispatch', async () => {
-    writePermissionsFile(denySecrets);
     const { calls, runner } = fakeRunner('hang');
     const started = Date.now();
-    const res = await writeFileWith(runner, 'secrets/key.pem');
+    const res = await writeFileWith(runner, 'secrets/key.pem', denyWrite());
     expect(res.ok).toBe(false);
     expect(calls.length).toBeGreaterThan(0);
     expect(Date.now() - started).toBeLessThan(2000);
@@ -207,10 +191,9 @@ describe('WS5 PermissionRequest hook (registry integration)', () => {
   });
 
   it('no runner configured is a silent no-op (hook surface is opt-in)', async () => {
-    writePermissionsFile(denySecrets);
-    const res = await writeFileWith(null, 'secrets/key.pem');
+    const res = await writeFileWith(null, 'secrets/key.pem', denyWrite());
     expect(res.ok).toBe(false);
-    expect(res.error).toContain("rule 'no-secrets'");
+    expect(res.error).toContain('[permission]');
   });
 });
 

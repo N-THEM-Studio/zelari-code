@@ -24,14 +24,6 @@
 import type { ChatMessage } from '../components/ChatStream.js';
 import { appendSystem } from '../hooks/messageHelpers.js';
 import { defaultPermissionPolicy } from '../safety/toolPermissions.js';
-import { PERMISSION_RULE_CATEGORIES } from '../safety/permissionPolicy.js';
-import {
-  addSessionPermissionRule,
-  listSessionPermissionRules,
-  loadProjectPermissionRules,
-  removeSessionPermissionRule,
-  clearSessionPermissionRules,
-} from '../safety/permissionRules.js';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import {
@@ -47,55 +39,9 @@ export interface PermissionsHandlerCtx {
 }
 
 export const PERMISSIONS_USAGE = [
-  '/permissions — active rules (source: default | project | session) + recent denials',
-  '/permissions add <id> <allow|ask|deny> [tool=<name|glob>] [category=read|write|execute|network|ui] [pathPrefix=<p>] [host=<h>] [note=<text>]',
-  '/permissions remove <id> — drop a session rule',
-  '/permissions clear — drop every session rule',
-  '/permissions denials — recent denials (derived from the session spine)',
+  '/permissions - category defaults + recent denials',
+  '/permissions denials - recent denials (derived from the session spine)',
 ].join('\n');
-
-const MATCHER_KEYS = ['tool', 'category', 'pathPrefix', 'host', 'note'] as const;
-
-/** `id effect tool=bash pathPrefix=docs` → the raw rule object (zod validates it). */
-function parseRuleArgs(args: readonly string[]):
-  | { ok: true; raw: Record<string, unknown> }
-  | { ok: false; error: string } {
-  const [id, effect, ...rest] = args;
-  if (!id || !effect) return { ok: false, error: 'usage: /permissions add <id> <allow|ask|deny> [matchers…]' };
-  const raw: Record<string, unknown> = { id, effect };
-  for (const token of rest) {
-    const eq = token.indexOf('=');
-    if (eq <= 0) return { ok: false, error: `unparseable argument '${token}' (expected key=value)` };
-    const key = token.slice(0, eq);
-    const value = token.slice(eq + 1);
-    if (!(MATCHER_KEYS as readonly string[]).includes(key)) {
-      return { ok: false, error: `unknown matcher '${key}' (expected ${MATCHER_KEYS.join('/')})` };
-    }
-    if (value === '') return { ok: false, error: `empty value for '${key}'` };
-    raw[key] = value;
-  }
-  return { ok: true, raw };
-}
-
-function formatRuleLine(source: string, id: string, effect: string, matchers: string, note?: string): string {
-  return `  [${source}] ${id} → ${effect}${matchers ? ` (${matchers})` : ''}${note ? ` — ${note}` : ''}`;
-}
-
-function matchersOf(rule: {
-  tool?: string;
-  category?: string;
-  pathPrefix?: string;
-  host?: string;
-}): string {
-  return [
-    rule.tool !== undefined ? `tool=${rule.tool}` : '',
-    rule.category !== undefined ? `category=${rule.category}` : '',
-    rule.pathPrefix !== undefined ? `pathPrefix=${rule.pathPrefix}` : '',
-    rule.host !== undefined ? `host=${rule.host}` : '',
-  ]
-    .filter(Boolean)
-    .join(' ');
-}
 
 export function formatPermissionDenialLine(d: PermissionDenialSummary): string {
   const when = new Date(d.at).toISOString();
@@ -128,48 +74,28 @@ export function listSessionPermissionDenials(
   }
 }
 
-/** The full `/permissions` report (pure — same input, same text). */
+/** The full `/permissions` report (pure - same input, same text). */
 export function formatPermissionsReport(cwd: string): string {
+  // ADR-0039 P3b (t149): engine A (project permissions.json + session rules) is
+  // gone - the report shows the category defaults and the spine-derived denial
+  // ledger. Rules live in engine B (.zelari/policy.json).
   const policy = defaultPermissionPolicy();
-  const project = loadProjectPermissionRules(cwd);
-  const session = listSessionPermissionRules();
   const denials = listSessionPermissionDenials(cwd, 10);
   const lines: string[] = [
-    '[permissions] local policy engine (WS1) — evaluated before every tool dispatch',
-    '  precedence: deny > ask > allow, then most specific rule, then session before project',
+    '[permissions] categories (evaluated before every tool dispatch)',
+    '  rule layer: engine B (.zelari/policy.json) - see MIGRATION.md (ADR-0039)',
     '',
     `default (5 categories, unchanged): read=${policy.read} write=${policy.write} execute=${policy.execute} network=${policy.network} ui=${policy.ui}${policy.auto ? ' auto=on' : ''}`,
-    `  editable via ZELARI_PERMISSION_<CATEGORY> / --permissions <preset> — not here`,
+    `  editable via ZELARI_PERMISSION_<CATEGORY> / --permissions <preset> - not here`,
     '',
-    `project: ${project.path}`,
+    `recent denials (${denials.length})`,
   ];
-  if (project.error !== undefined) {
-    lines.push(`  FAIL-CLOSED: ${project.error}`, '  (every unmatched tool call asks until the file is fixed)');
-  } else if (project.rules.length === 0) {
-    lines.push('  (no rules — absent or empty file)');
-  } else {
-    for (const { rule } of project.rules) {
-      lines.push(formatRuleLine('project', rule.id, rule.effect, matchersOf(rule), rule.note));
-    }
-  }
-  lines.push('', `session (${session.length} rule${session.length === 1 ? '' : 's'}, runtime-only)`);
-  if (session.length === 0) lines.push('  (none — /permissions add <id> <effect> [matchers…])');
-  else {
-    for (const { rule } of session) {
-      lines.push(formatRuleLine('session', rule.id, rule.effect, matchersOf(rule), rule.note));
-    }
-  }
-  lines.push('', `recent denials (${denials.length})`);
   if (denials.length === 0) lines.push('  (none this session)');
   else for (const d of denials) lines.push(formatPermissionDenialLine(d));
-  lines.push('', `categories: ${PERMISSION_RULE_CATEGORIES.join(', ')}`, '', PERMISSIONS_USAGE);
+  lines.push('', PERMISSIONS_USAGE);
   return lines.join('\n');
 }
 
-/**
- * `/permissions [subcommand] …`. Mirrors the /trust handler shape: it renders
- * a system message and returns the text it renders (handy for tests).
- */
 export function handlePermissions(
   ctx: PermissionsHandlerCtx,
   subcommand: string | undefined,
@@ -185,47 +111,17 @@ export function handlePermissions(
       appendSystem(ctx.setMessages, text);
       return text;
     }
-    case 'add': {
-      const parsed = parseRuleArgs(args);
-      if (!parsed.ok) {
-        appendSystem(ctx.setMessages, `[permissions] ${parsed.error}\n\n${PERMISSIONS_USAGE}`);
-        return parsed.error;
-      }
-      const res = addSessionPermissionRule(parsed.raw);
-      if (!res.ok) {
-        // Return what is rendered: the caller-facing text must carry the
-        // REJECTION verdict, not just the bare schema error.
-        const rejected = `[permissions] rejected: ${res.error}`;
-        appendSystem(ctx.setMessages, rejected);
-        return rejected;
-      }
-      const text = `[permissions] session rule '${res.rule.id}' → ${res.rule.effect}${
-        matchersOf(res.rule) ? ` (${matchersOf(res.rule)})` : ''
-      } — effective on the next dispatch (this process only, never persisted).`;
-      appendSystem(ctx.setMessages, text);
-      return text;
-    }
+    case 'add':
     case 'remove':
     case 'rm':
-    case 'delete': {
-      const id = args[0];
-      if (!id) {
-        appendSystem(ctx.setMessages, '[permissions] usage: /permissions remove <id>');
-        return '';
-      }
-      const removed = removeSessionPermissionRule(id);
-      const text = removed
-        ? `[permissions] removed session rule '${id}'.`
-        : `[permissions] no session rule '${id}' (project rules are edited in ${loadProjectPermissionRules(cwd).path}).`;
+    case 'delete':
+    case 'clear': {
+      // ADR-0039 P3b (t149): the engine-A session-rule surface is gone.
+      const text = `[permissions] '${sub}' is gone (ADR-0039 P3b): engine-A rules no longer exist. Configure engine B in .zelari/policy.json (see MIGRATION.md).`;
       appendSystem(ctx.setMessages, text);
       return text;
     }
-    case 'clear': {
-      clearSessionPermissionRules();
-      appendSystem(ctx.setMessages, '[permissions] all session rules cleared.');
-      return 'cleared';
-    }
-    case 'denials':
+    case 'denials':    case 'denials':
     case 'denied': {
       if (args[0] === '--clear') {
         // t142: derive-only - the spine is append-only, nothing to clear.

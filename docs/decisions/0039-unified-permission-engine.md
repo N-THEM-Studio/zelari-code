@@ -7,7 +7,7 @@
 > Precedent: ADR-0035 was renumbered from a duplicate `0015` (triage 2026-09-04).
 > Content follows the promoted PREP-ADR; the decision is unchanged.
 
-- **Status:** Accepted (phased implementation - adapter-first; engine code NOT yet unified; **Phase 1 landed in t147** - one emission point + parity matrix; **Phase 2 landed** - `.zelari/permissions.json` honored through engine B via the compat layer + load-time deprecation warning, two-minor window; **Phase 3 P3a landed (v2.62)** - compat adapter + parity matrix DELETED, window expired at v2.60: engine A removal remains as P3b)
+- **Status:** Accepted (phased implementation — **Phase 1 landed in t147** - one emission point + parity matrix; **Phase 2 landed** - `.zelari/permissions.json` honored through engine B via the compat layer + load-time deprecation warning, two-minor window; **Phase 3 COMPLETE (v2.62)** - P3a deleted the compat adapter + parity matrix, P3b deleted engine A itself: `permissionPolicy.ts`/`permissionRules.ts` removed, `permissionGate.ts` is events-only, the unified policy engine is the ONLY engine)
 - **Proposed:** 2026-09-21
 - **Author:** Zelari Code (BUILD phase, on promotion of the design-vault PREP-ADR, t146)
 - **Depends on:** [ADR-0016](./0016-event-sourced-session-log.md) (event-sourced session log), [ADR-0021](./0021-session-spine-contract.md) (spine contract), [ADR-0023](./0023-deterministic-verification-completion.md) (deterministic verification); `src/cli/safety/permissionGate.ts`, `src/cli/safety/policyEngine.ts`, `src/cli/toolRegistry.ts` (restrict-only composition)
@@ -147,12 +147,19 @@ degrades to a backwards-compatibility adapter.**
       warning + no layer, engine A keeps failing closed and the strict mode is NOT
       extended to it (ADR-0039 §3). Emission stays at the single Phase-1 point, and
       the layer can only add restriction (`permissionCompat.test.ts`).
-- [ ] Phase 3: remove engine A; update `docs/GUIDA.md`, `docs/TOOLS.md`,
+- [x] Phase 3: remove engine A; update `docs/GUIDA.md`, `docs/TOOLS.md`,
       `MIGRATION.md`. **P3a landed (v2.62)**: `permissionCompat.ts` +
       `permissionAdapter.ts` + `permissionCompat.test.ts` +
       `permissionParity.test.ts` deleted; `PolicySet`/`LayeredPolicyRuleSet`
       lost the `compat` slot; `loadPolicySet` no longer reads
       `.zelari/permissions.json`; MIGRATION.md records the removal.
-      **P3b pending**: delete `permissionGate.ts`/`permissionPolicy.ts`/
-      `permissionRules.ts` + the `/permissions add|remove|clear` session
-      surface, then update `docs/GUIDA.md` and `docs/TOOLS.md`.
+      **P3b landed (v2.62)**: `permissionPolicy.ts` + `permissionRules.ts` +
+      `permissionPolicy.test.ts` deleted (git rm); `permissionGate.ts` rewritten
+      events-only (deny/ask/auto-approve spine emissions + observer-hook payloads —
+      no evaluation left); the engine-A verdict is gone from the `toolRegistry`
+      dispatch — category defaults × engine-B layers × TaskContract is the ONLY
+      decision path; `/permissions` reduced to `list` + `denials` (the
+      `add|remove|clear` session-rule surface is gone; `denials` stays: it is
+      derive-only from the spine, never engine A). `docs/GUIDA.md`/`docs/TOOLS.md`
+      re-checked (grep: zero references to the removed surface); MIGRATION.md
+      records the full removal.

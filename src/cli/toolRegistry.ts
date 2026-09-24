@@ -86,17 +86,15 @@ import {
 } from './safety/toolPermissions.js';
 // v2.32 (S5): destructive-shape escalation at the same choke-point.
 import { destructiveCommandHit } from './safety/destructiveCommands.js';
-// WS1 (t133): local permission policy (allow/ask/deny rules) — evaluated
-// BEFORE dispatch, with the structured `permission.denied` spine event.
+// WS1 (t133) / ADR-0039 P3b (t149): the permission SPINE-EVENT layer of the
+// dispatch choke-point. Engine A (permissions.json + session rules) is gone:
+// the decision is the category default × engine B layers × TaskContract.
 import {
-  applyAllowRule,
   denyOriginFor,
   emitAutoApproveGranted,
   emitPermissionAsked,
   emitPermissionDenied,
   emitPermissionObserverHooks,
-  evaluateToolDispatch,
-  permissionDenialMessage,
   autoApproveOrigin,
 } from './safety/permissionGate.js';
 // WS7 slice 4 (t139): best-effort writer for the remaining decision kinds.
@@ -1349,37 +1347,18 @@ function wrapWithPermissions<I, O>(
         (input ?? {}) as Record<string, unknown>,
         root ?? process.cwd(),
       );
-      // WS1 (t133): the local permission policy (`.zelari/permissions.json` +
-      // runtime session rules) is evaluated BEFORE the call is dispatched.
-      // null = no rule configured, or no rule matched → today's category
-      // decision stands, byte-identical. An 'allow' rule promotes only a
-      // CATEGORY ask (skip the prompt) — a category deny and every other
-      // layer's ask/deny stay restrict-only. An 'ask'/'deny' rule intersects
-      // like any other restriction.
-      const policyVerdict = evaluateToolDispatch({
-        toolName: original.name,
-        required: requiredNow,
-        args: input,
-        root: root ?? process.cwd(),
-      });
-      const categoryAction =
-        policyVerdict?.decision === 'allow'
-          ? applyAllowRule(decision.action)
-          : policyVerdict?.decision === 'ask' || policyVerdict?.decision === 'deny'
-            ? mergeRuleEffect(decision.action, {
-                match: policyVerdict.matchedRuleId ?? 'permissions',
-                effect: policyVerdict.decision,
-                reason: policyVerdict.reason,
-              })
-            : decision.action;
-      let action = intersectEffects(mergeRuleEffect(categoryAction, rule), claims?.effect, contractRule?.effect);
+      // ADR-0039 P3b (t149): engine A (`.zelari/permissions.json` + session
+      // rules) is REMOVED. The decision is the category default intersected
+      // with engine B's layers (agent policy rules + resource claims) and the
+      // TaskContract — deny > ask > allow, restrict-only, as before.
+      let action = intersectEffects(mergeRuleEffect(decision.action, rule), claims?.effect, contractRule?.effect);
       // W3.1 (t46): provenance escalation at the choke-point. Write/execute
       // args that EMBED fingerprinted non-user content (web fetch, MCP output,
       // file reads — safety/provenance.ts) escalate an "allow" to "ask":
       // injected instructions can no longer sail through on category
       // defaults. Deterministic substring match, zero LLM (P2); ask/deny
       // already gated pass through; ZELARI_PROVENANCE=0 opts out entirely.
-      let actionReason = policyVerdict?.decision === 'ask' ? policyVerdict.reason : decision.reason;
+      let actionReason = decision.reason;
       if (action !== 'deny' && (requiredNow.includes('write') || requiredNow.includes('execute'))) {
         const provHit = provenanceMatchIn(JSON.stringify(input ?? {}));
         if (provHit && provenanceAppliesTo(provHit.source, requiredNow)) {
@@ -1446,7 +1425,6 @@ function wrapWithPermissions<I, O>(
             tool: original.name,
             categories: requiredNow,
             effect: action,
-            verdict: policyVerdict,
             args: input,
           },
           { sessionId: ctx.sessionId, cwd: ctx.cwd },
@@ -1466,15 +1444,13 @@ function wrapWithPermissions<I, O>(
         await emitPermissionAsked(ctx.emitSessionEvent, {
           tool: original.name,
           categories: requiredNow,
-          verdict: policyVerdict,
           args: input,
-          reason: policyVerdict?.decision === 'ask' ? policyVerdict.reason : decision.reason,
+          reason: decision.reason,
         });
       } else if (action === 'allow') {
         const origin = autoApproveOrigin({
           effect: action,
           categories: requiredNow,
-          verdict: policyVerdict,
           yoloPromoted,
         });
         if (origin) {
@@ -1499,21 +1475,14 @@ function wrapWithPermissions<I, O>(
         // `action`) and happens exactly once: both paths below return.
         await emitPermissionDenied(ctx.emitSessionEvent, {
           tool: original.name,
-          ...(policyVerdict?.decision === 'deny'
-            ? { verdict: policyVerdict }
-            : {
-                origin: denyOriginFor({
-                  rule,
-                  claimRule: claimHit,
-                  contractRule,
-                  categoryReason: actionReason || decision.reason,
-                }),
-              }),
+          origin: denyOriginFor({
+            rule,
+            claimRule: claimHit,
+            contractRule,
+            categoryReason: actionReason || decision.reason,
+          }),
           sessionId: ctx.sessionId,
         });
-        if (policyVerdict?.decision === 'deny') {
-          return typedErr(`[permission] ${permissionDenialMessage(original.name, policyVerdict)}`);
-        }
         return typedErr(`[permission] ${rulePrefix || decision.reason}`);
       }
       if (action === 'ask') {
@@ -1522,8 +1491,7 @@ function wrapWithPermissions<I, O>(
           // ask, its reason is the one that names the matched rule id and the
           // offending `.zelari/permissions.json` — surface THAT, not the bare
           // category reason, or a malformed config reads as a category ask.
-          const askReason =
-            policyVerdict?.decision === 'ask' ? policyVerdict.reason : decision.reason;
+          const askReason = decision.reason;
           return typedErr(
             `[permission] ${rulePrefix ? `${rulePrefix} ` : ''}${askReason} No interactive approval available ` +
               `(set ZELARI_AUTO=1 to auto-allow, or configure onPermissionAsk).`,

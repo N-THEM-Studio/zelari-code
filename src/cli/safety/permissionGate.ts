@@ -1,34 +1,27 @@
 /**
- * WS1 / t133 — pre-dispatch permission GATE.
+ * Permission SPINE EVENTS — the observability half of the old WS1 gate.
  *
- * The seam the tool registry calls BEFORE a tool body runs (see
- * wrapWithPermissions in toolRegistry.ts). It joins the three inputs of the
- * engine — a project config, session rules and the historical category
- * decision — and owns the two side effects of a denial:
+ * ADR-0039 P3b (t149): engine A — the `.zelari/permissions.json` +
+ * `/permissions add` rule EVALUATION — is REMOVED. What survives here is the
+ * event layer every decision flows through:
  *
- *   1. a best-effort spine event `permission.denied` through the SAME
+ *   1. `permission.denied` — best-effort spine event through the SAME
  *      SessionEventInput sink the file.* telemetry uses
  *      (ToolContext.emitSessionEvent), so a replayed session exposes it.
+ *      (t142) That event is the ONLY denial record: `/permissions` derives
+ *      its ledger from the spine projection (slashHandlers/permissions.ts) —
+ *      the old in-process RAM buffer is gone (ADR-0016/0024 derive-only).
+ *   2. `permission.asked` / `auto_approve.granted` (WS7 slice 4).
+ *   3. The WS5 observer-hook payloads (`buildPermissionRequestHookPayload`).
  *
- *   (t142) That event is now the ONLY denial record: `/permissions` derives
- *   its ledger from the spine projection (see slashHandlers/permissions.ts) —
- *   the old in-process RAM buffer is gone (ADR-0016/0024 derive-only).
+ * Decisions themselves live in toolRegistry.ts (category defaults × engine B
+ * layers × TaskContract); this module only OBSERVES them.
  *
- * Contract:
- *   - ZERO rules configured  → `evaluateToolDispatch` returns null and the
- *     registry keeps today's decision, byte-identical;
- *   - deny  → the caller blocks the dispatch with a message NAMING the rule;
- *   - ask   → the existing approval flow, untouched;
- *   - allow → only the CATEGORY default is promoted (an ask becomes an allow,
- *     skipping the prompt); a category deny or another layer's ask/deny is
- *     never relaxed — see the merge in wrapWithPermissions.
- *
- * @since v2.56.0 (WS1 / t133)
+ * @since v2.56.0 (WS1 / t133); reduced to events-only in v2.62 (ADR-0039 P3b)
  */
-import type { SessionEventInput } from '@zelari/core/session';
 import type { ToolPermission } from '@zelari/core/harness/tools/toolTypes';
 // WS5 (t137): the OBSERVER hook surface (PermissionRequest / Notification
-// subscribers). Type + one pure formatter only — the gate never gates on it.
+// subscribers). Type + one pure formatter only — events never gate on it.
 import {
   summarizeHookArgs,
   type HookContext,
@@ -37,17 +30,29 @@ import {
 } from '@zelari/core/harness';
 import { claimMatchValues, resourceClaimsFor } from './resourceClaims.js';
 import { emitDecisionEvent, type DecisionEventSink } from './decisionEmit.js';
-import { activePermissionRules } from './permissionRules.js';
-import {
-  evaluatePermissionPolicy,
-  formatPermissionDenial,
-  type PermissionRequest,
-  type PermissionVerdict,
-} from './permissionPolicy.js';
 // ADR-0039 Phase 1: a deny decided by engine B names the policy rule that did
 // it — the layer's own shape, imported as a TYPE only (no engine coupling).
 import type { PolicyRule } from './policyEngine.js';
 import type { PermissionAction } from './toolPermissions.js';
+
+// ADR-0039 P3b (t149): `permissionPolicy.ts` / `permissionRules.ts` are
+// DELETED (engine A). Only inert payload shapes remain, defined locally so
+// old spine events keep replaying with their original shape; no caller
+// produces an engine-A verdict anymore.
+/** What one dispatch touches (paths, host) — derived from the resource-claims table. */
+interface PermissionRequest {
+  toolName: string;
+  categories: readonly ToolPermission[];
+  paths?: string[];
+  host?: string;
+}
+/** Engine-A verdict shape — inert optional payload type; kept for replay only. */
+type PermissionVerdict = {
+  decision: 'allow' | 'ask' | 'deny';
+  source: string;
+  matchedRuleId?: string;
+  reason?: string;
+};
 
 /**
  * Session-spine sink shape (ToolContext.emitSessionEvent). One definition for
@@ -68,15 +73,15 @@ export interface DispatchPermissionInput {
   toolName: string;
   required: readonly ToolPermission[];
   args: unknown;
-  /** Workspace root — locates `.zelari/permissions.json` and anchors paths. */
+  /** Workspace root — anchors paths. */
   root: string;
 }
 
 /**
- * Derive what the engine looks at from ONE tool call: the declared categories
- * plus the concrete resources the invocation can touch (paths, host). Reuses
- * the resource-claims table so a path deny can never be dodged by a second
- * argument (apply_diff headers, observe_batch operations, …).
+ * Derive what the decision looks at from ONE tool call: the declared
+ * categories plus the concrete resources the invocation can touch (paths,
+ * host). Reuses the resource-claims table so a path deny can never be dodged
+ * by a second argument (apply_diff headers, observe_batch operations, …).
  */
 export function buildPermissionRequest(input: DispatchPermissionInput): PermissionRequest {
   const paths: string[] = [];
@@ -98,57 +103,6 @@ export function buildPermissionRequest(input: DispatchPermissionInput): Permissi
   };
 }
 
-/**
- * The gate's verdict for one dispatch, or null when there is NOTHING to say:
- * no rule configured (zero-rule fast path → the category decision stands) or
- * no rule matched (the engine's "> category default" step). A malformed
- * project config is never silent: it comes back as a fail-closed 'ask'.
- */
-export function evaluateToolDispatch(input: DispatchPermissionInput): PermissionVerdict | null {
-  const { rules, error } = activePermissionRules(input.root);
-  if (error !== undefined) {
-    return {
-      decision: 'ask',
-      source: 'fail-closed',
-      reason: `[permissions] ${error}`,
-    };
-  }
-  if (rules.length === 0) return null;
-  let request: PermissionRequest;
-  try {
-    request = buildPermissionRequest(input);
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    return {
-      decision: 'ask',
-      source: 'fail-closed',
-      reason: `[permissions] could not derive the resources of "${input.toolName}" (${detail}) — failing closed`,
-    };
-  }
-  const verdict = evaluatePermissionPolicy(rules, request);
-  // No rule matched ⇒ no opinion ⇒ the 5-category decision stands.
-  return verdict.source === 'fail-closed' ? null : verdict;
-}
-
-/**
- * Promote an 'ask' to 'allow' only when the CATEGORY decided the ask. A
- * category deny (env `ZELARI_PERMISSION_*`) and every other layer's ask/deny
- * (agent rules, claims, contract) are left untouched: an allow rule can skip
- * a prompt, never a restriction.
- */
-export function applyAllowRule(categoryAction: PermissionAction): PermissionAction {
-  return categoryAction === 'ask' ? 'allow' : categoryAction;
-}
-
-// t142: the denial ledger is DERIVE-ONLY — `/permissions` reads the
-// `permission.denied` events already on the session spine (see
-// slashHandlers/permissions.ts). No in-process buffer remains here.
-
-/** The denial line the user sees ("denied "write_file" — [permissions:project] rule '…'"). */
-export function permissionDenialMessage(toolName: string, verdict: PermissionVerdict): string {
-  return formatPermissionDenial(toolName, verdict);
-}
-
 export interface PermissionDeniedEmitResult {
   recorded: boolean;
   seq?: number;
@@ -166,15 +120,15 @@ function seqFrom(result: unknown): number | undefined {
 }
 
 /**
- * WS5 (t137): the OBSERVER-hook side of the gate — the two things a hook
- * subscribed to the spine learns from one dispatch decision:
+ * WS5 (t137): the OBSERVER-hook side — the two things a hook subscribed to
+ * the spine learns from one dispatch decision:
  *
  *   - `PermissionRequest` — fired for EVERY resolution to `ask` or `deny`
- *     (payload: tool, categories, effect, matched WS1 rule with source+reason,
+ *     (payload: tool, categories, effect, matched rule with source+reason,
  *     bounded argsSummary). It is NOT a second gate: the runner's observer
  *     methods return void and discard whatever the hook replies, so a slow /
  *     crashing / non-2xx subscriber can neither block the dispatch nor change
- *     the WS1 verdict (fail-open and fail-closed are untouched).
+ *     the verdict (fail-open and fail-closed are untouched).
  *   - `Notification` — fired only on `deny`, because that is exactly when the
  *     WS2 inbox (`src/cli/inboxSources.ts`) GAINS a `needs-input` item.
  *
@@ -186,7 +140,7 @@ export interface PermissionHookInput {
   categories: readonly string[];
   /** The resolved effect: a prompt (`ask`) or a block (`deny`). */
   effect: 'ask' | 'deny';
-  /** The WS1 verdict, when a rule drove the decision. */
+  /** A deciding-layer verdict, when one drove the decision. */
   verdict?: PermissionVerdict | null;
   /** Raw tool args — summarized (never echoed whole) into the payload. */
   args?: unknown;
@@ -238,15 +192,13 @@ export async function emitPermissionObserverHooks(
 }
 
 /**
- * ADR-0039 Phase 1 — the deciding layer of a deny that engine A did NOT decide.
+ * ADR-0039 Phase 1 — the deciding layer of a deny.
  *
  * `source` is a plain string on purpose: the spine payload is read as one
  * (`parsePermissionDenial` in replay.ts, `deriveOpenNeeds` in inboxSources.ts)
  * and this vocabulary is the MESSAGE convention `rulePrefix` already uses
  * (`[contract] rule '…'` / `[policy] rule '…'` / `[policy] claim '…'`) plus the
- * category decision. It is deliberately NOT narrowed to `PermissionRuleSource`
- * ('default' | 'project' | 'session' | 'fail-closed'), which describes the
- * origins of engine A's own rules.
+ * category decision.
  */
 export interface PermissionDenialOrigin {
   /** `contract` (TaskContract capability), `policy` (engine B rule OR claim), `default` (category). */
@@ -258,22 +210,22 @@ export interface PermissionDenialOrigin {
 
 export interface PermissionDeniedEmitInput {
   tool: string;
-  /** Engine-A verdict — present when a `.zelari/permissions.json` rule denied. */
+  /** Legacy engine-A verdict — inert since P3b; old events keep replaying. */
   verdict?: PermissionVerdict | null;
-  /** Deciding layer of any OTHER deny (engine B, TaskContract, category default). */
+  /** Deciding layer of the deny (engine B rule/claim, TaskContract, category default). */
   origin?: PermissionDenialOrigin | null;
   sessionId?: string;
   ts?: number;
 }
 
 /**
- * ADR-0039 Phase 1 — WHICH layer denied, for the layers that are not engine A.
+ * ADR-0039 Phase 1 — WHICH layer denied.
  *
  * Only a layer whose effect IS `deny` is eligible: naming a layer that asked
  * would make the event lie about the rule that blocked the call. Ties follow
  * the operator-facing `rulePrefix` order — a TaskContract restriction is the
- * most specific intent, then engine B's agent rule, then a resource claim — and
- * the category decision is the floor, so this never returns null.
+ * most specific intent, then engine B's agent rule, then a resource claim —
+ * and the category decision is the floor, so this never returns null.
  */
 export function denyOriginFor(input: {
   rule?: PolicyRule | null;
@@ -301,19 +253,12 @@ export function denyOriginFor(input: {
 }
 
 /**
- * The `permission.denied` payload contract, enforced BEFORE the sink is touched:
- * a line nobody can read would poison every later replay and silently drop the
- * denial from the inbox (`deriveOpenNeeds` skips an event with no `tool`). Same
- * discipline as `emitDecisionEvent` in decisionEmit.ts.
- *
- * WHY NOT `decisionPayloadError` (which that sibling uses): its table
- * (`DECISION_EVENT_PAYLOAD_SCHEMAS`) has NO `permission.denied` entry — slice 2
- * declared the kind in the vocabulary and the projection but not a schema — so
- * calling it is not even type-correct (`DecisionEventKind` excludes the kind),
- * and adding the schema means editing packages/core, outside this slice's
- * scope. Reported, not silently skipped: the guard mirrors what the readers in
- * replay.ts / inboxSources.ts actually require (`tool` names the call, `source`
- * names the decider; `reason` stays optional and free-form).
+ * The `permission.denied` payload contract, enforced BEFORE the sink is
+ * touched: a line nobody can read would poison every later replay and
+ * silently drop the denial from the inbox (`deriveOpenNeeds` skips an event
+ * with no `tool`). Reported, not silently skipped: the guard mirrors what the
+ * readers in replay.ts / inboxSources.ts actually require (`tool` names the
+ * call, `source` names the decider; `reason` stays optional and free-form).
  */
 function denialPayloadError(tool: unknown, source: unknown): string | null {
   if (typeof tool !== 'string' || tool.trim() === '') return 'tool: must be a non-empty tool name';
@@ -324,22 +269,17 @@ function denialPayloadError(tool: unknown, source: unknown): string | null {
 }
 
 /**
- * `permission.denied` (WS1/t133) — and, since ADR-0039 Phase 1, the ONE writer
- * for EVERY deny: engine A's verdict when a rule denied, else the `origin` the
- * caller resolved (engine B rule or claim, TaskContract, category default).
+ * `permission.denied` (WS1/t133) — the ONE writer for EVERY deny, whichever
+ * layer decided it (engine B rule or claim, TaskContract, category default).
  *
  * Contract:
  *   - a deny must NAME its deciding layer; with neither `verdict` nor `origin`
  *     the event is DROPPED, never written with an invented source;
  *   - best-effort: a missing sink, a throwing sink or a rejected payload
- *     returns `{recorded:false}` and NEVER propagates — recording a denial must
- *     not be able to change the denial itself;
+ *     returns `{recorded:false}` and NEVER propagates — recording a denial
+ *     must not be able to change the denial itself;
  *   - exactly ONE event per dispatch: the caller emits from the FINAL deny
  *     branch only (wrapWithPermissions in toolRegistry.ts), never twice.
- *
- * `sessionId`/`ts` stay accepted for the WS1 call shape; the envelope the sink
- * writes is what carries them today, so the payload keeps the fields replay
- * reads (`tool`, `matchedRuleId`, `source`, `reason`).
  */
 export async function emitPermissionDenied(
   sink: PermissionEventSink | undefined,
@@ -389,7 +329,7 @@ export async function emitPermissionDenied(
 
 /** Where an ALLOW came from, when it is worth recording (see `autoApproveOrigin`). */
 export interface AutoApproveOrigin {
-  /** `default` / `project` / `session` / `preset` — mirrors decisionEvents.ts. */
+  /** `default` / `preset` — mirrors decisionEvents.ts. */
   source: string;
   matchedRuleId?: string;
   reason?: string;
@@ -400,7 +340,7 @@ export interface AutoApproveOriginInput {
   effect: PermissionAction;
   /** Declared permission categories of the call (`read`, `write`, `execute`, …). */
   categories: readonly string[];
-  /** The WS1 rule verdict, when a rule drove the decision. */
+  /** Legacy engine-A allow-rule verdict — inert since P3b. */
   verdict?: PermissionVerdict | null;
   /** True when `--permissions yolo` promoted this dispatch's ask to allow. */
   yoloPromoted?: boolean;
@@ -408,17 +348,15 @@ export interface AutoApproveOriginInput {
 
 /**
  * SELECTION RULE for `auto_approve.granted` — which allows the spine records.
- * The deny side (WS1) records only RULE denials; an allow is recorded only when
- * the harness actually DECIDED something:
+ * An allow is recorded only when the harness actually DECIDED something:
  *
- *   (a) an ALLOW RULE matched (project/session rule) — the rule made the call;
- *   (b) `--permissions yolo` promoted an ask to allow — an explicit opt-in;
- *   (c) an `execute` / `network` CATEGORY default — privileged side effects.
+ *   (a) `--permissions yolo` promoted an ask to allow — an explicit opt-in;
+ *   (b) an `execute` / `network` CATEGORY default — privileged side effects.
  *
  * Every other category default (`read`, `write`, `ui`) is deliberately NOT
  * recorded: those are the bulk of all dispatches and recording them would
  * flood the spine with events that carry no decision. Returns null ⇒ nothing
- * to say (same contract as `evaluateToolDispatch`).
+ * to say.
  */
 export function autoApproveOrigin(input: AutoApproveOriginInput): AutoApproveOrigin | null {
   if (input.effect !== 'allow') return null;
@@ -441,17 +379,14 @@ export function autoApproveOrigin(input: AutoApproveOriginInput): AutoApproveOri
 }
 
 export interface PermissionAskedEmitInput extends Omit<PermissionHookInput, 'effect'> {
-  /** Reason shown to the operator — the rule's when a rule forced the ask. */
+  /** Reason shown to the operator — the deciding layer's when one forced the ask. */
   reason?: string;
 }
 
 /**
- * `permission.asked` — the gate resolved this dispatch to a PROMPT. Emitted for
- * EVERY ask, including the fail-closed one (no interactive approver attached):
- * the DECISION was "ask", whichever way it then resolved. Payload reuses the
- * WS5 hook formatter (`buildPermissionRequestHookPayload`: tool, categories,
- * effect `ask`, rule origin, bounded argsSummary) — the same fields the
- * `permission.asked` contract in decisionEvents.ts mirrors.
+ * `permission.asked` — the decision block resolved this dispatch to a PROMPT.
+ * Emitted for EVERY ask, including the fail-closed one (no interactive
+ * approver attached): the DECISION was "ask", whichever way it then resolved.
  */
 export async function emitPermissionAsked(
   sink: PermissionEventSink | undefined,
@@ -468,8 +403,8 @@ export async function emitPermissionAsked(
 }
 
 /**
- * `auto_approve.granted` — the same decision block resolved to ALLOW without a
- * prompt. The caller passes the origin `autoApproveOrigin()` selected.
+ * `auto_approve.granted` — the same decision block resolved to ALLOW without
+ * a prompt. The caller passes the origin `autoApproveOrigin()` selected.
  */
 export async function emitAutoApproveGranted(
   sink: PermissionEventSink | undefined,

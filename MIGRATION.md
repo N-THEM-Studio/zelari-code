@@ -349,32 +349,20 @@ New relational invariants live in `validateResourceAndContractEvents()`
 
 ## 2.58 — `.zelari/permissions.json` → `.zelari/policy.json` (ADR-0039 Phase 2)
 
-> **v2.62 — compat layer REMOVED (ADR-0039 Phase 3, slice P3a).** The
-> two-minor window (≥ v2.59) closed with v2.60; from v2.62 the unified policy
-> engine no longer translates `.zelari/permissions.json` — the `compat` layer
-> and its load-time deprecation notice are gone. Engine A (`permissionGate`)
-> still reads the file directly at dispatch until P3b deletes it: the file's
-> rules keep applying, but ONLY through the legacy engine. Migrate now with
-> the recipe below.
+> **v2.62 — ENGINE A REMOVED (ADR-0039 Phase 3 complete).** The two-minor
+> window (≥ v2.59) closed with v2.60. P3a removed the compat translation;
+> P3b removed engine A itself. From v2.62 `.zelari/permissions.json` is
+> **not read at all** — neither translated nor evaluated: its rules have NO
+> effect. Move them to `.zelari/policy.json` with the recipe below.
 
 `.zelari/permissions.json` (the WS1 rule file, `pathPrefix` syntax) is
-**deprecated**. It is still read and still honored — but it is now honored
-*through the unified policy engine*: its rules are translated into native
-engine-B rules and injected as a `compat` layer next to `.zelari/policy.json`
-(`src/cli/safety/permissionCompat.ts` → `policyLayers.matchAgentPolicyRuleLayered`).
-Running the CLI in a tree that has the file prints one load-time notice:
+**removed** in v2.62 (ADR-0039 Phase 3): no compat layer, no engine A, no
+load-time notice — the file is simply ignored. Rewrite its rules as
+`.zelari/policy.json` rules with the translation below.
 
-```text
-[policy] [ADR-0039 compat] <root>/.zelari/permissions.json: DEPRECATED - still honored
-through engine B via the ADR-0039 compat layer: N rule(s) translated to M engine-B glob
-rule(s) ... Removed after 2 minor releases (no earlier than v2.59 - ADR-0039 Phase 3):
-migrate to .zelari/policy.json, see MIGRATION.md.
-```
-
-**Window: two minor releases.** Nothing has to change today — the file keeps
-working for a tree that only has it, and a rule-less file says nothing at all.
-The removal happened in ADR-0039 Phase 3 (slice P3a, v2.62)
-(`docs/decisions/0039-unified-permission-engine.md`).
+**Window: closed.** The two-minor window (P2 in v2.58 → removal in v2.62) is
+over: ADR-0039 Phase 3 (P3a + P3b, v2.62) removed both the compat layer and
+engine A (`docs/decisions/0039-unified-permission-engine.md`).
 
 ### The translation
 
@@ -388,13 +376,13 @@ are emitted:
 | `{ id, effect, pathPrefix: 'secrets', note }` | `edit`: `{ match: 'secrets', effect, reason: note }` **and** `{ match: 'secrets/**', effect, reason: note }` |
 | `{ id, effect, category: 'execute', note }` | `shell`: `{ match: '*', effect, reason: note }` |
 | `{ id, effect, category: 'write', note }` | `edit`: `{ match: '*', effect, reason: note }` |
-| `{ id, effect, tool: 'bash' }` (tool-only) | **no equivalent** — A-only until Phase 3 |
-| `{ id, effect, category: 'read' \| 'network' \| 'ui' }`, `{ host: … }` | **no equivalent** — A-only until Phase 3 |
-| `{ id, effect, category: 'execute', pathPrefix: … }` | **no equivalent** (an execute tool has no path argument) — A-only until Phase 3 |
+| `{ id, effect, tool: 'bash' }` (tool-only) | **no equivalent** — stopped working in v2.62 (engine A removed) |
+| `{ id, effect, category: 'read' \| 'network' \| 'ui' }`, `{ host: … }` | **no equivalent** — stopped working in v2.62 (engine A removed) |
+| `{ id, effect, category: 'execute', pathPrefix: … }` | **no equivalent** (an execute tool has no path argument) — stopped working in v2.62 (engine A removed) |
 
-Rules with no equivalent are **not** dropped silently: the load-time notice reports
-how many (`K rule(s) have no engine-B equivalent …`), and engine A keeps enforcing
-them until Phase 3 deletes it.
+Rules with no engine-B equivalent no longer apply AT ALL: engine A enforced
+them until v2.62 removed it — from v2.62 only `.zelari/policy.json` rules
+decide.
 
 What the translation preserves:
 
