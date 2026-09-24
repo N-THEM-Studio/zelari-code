@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.63.1] - 2026-09-24
+
+### Fixed
+
+- **Release unblocked** — v2.63.0 was tagged but never published: CI, npm publish, and the Desktop release all failed because `tests/unit/cli-kraken-executor.test.ts` still expected pre-K3.7 parallel admission (`peakInFlight=2`) after `5d4478c` gated plain semantic admission to scheduling `auto`. That commit was `[skip ci]`, so the regression stayed invisible until the release push. The P2.B test now asserts the gated deferral (`peakInFlight=1`, `node_deferred` citing K3.7). No runtime change. 2.63.1 is the first publishable cut of the 2.63.0 line.
+
 ## [2.63.0] - 2026-09-24
 
 ### Changed
