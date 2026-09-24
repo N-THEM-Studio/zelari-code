@@ -128,12 +128,17 @@ describe('composeArmEnv (§83)', () => {
 });
 
 describe('experiment presets (§83/§87)', () => {
-  it('tokenEfficiencyArms: default vs each flag vs both, every arm pins both keys', () => {
+  it('tokenEfficiencyArms: pre-audit vs one change off at a time vs default vs lean, every arm pins every key', () => {
     const arms = tokenEfficiencyArms();
-    expect(arms.map((a) => a.id)).toEqual(['default', 'tool-offload', 'lean-prompt', 'offload+lean']);
+    expect(arms.map((a) => a.id)).toEqual(['pre-audit', 'no-offload', 'json-results', 'default', 'lean-prompt']);
     for (const arm of arms) {
-      expect(Object.keys(arm.env).sort()).toEqual(['ZELARI_PROMPT_PROFILE', 'ZELARI_TOOL_OFFLOAD']);
+      expect(Object.keys(arm.env).sort()).toEqual([
+        'ZELARI_PROMPT_PROFILE',
+        'ZELARI_TOOL_OFFLOAD',
+        'ZELARI_TOOL_RESULT_FORMAT',
+      ]);
     }
+    expect(arms[0]!.env).toMatchObject({ ZELARI_TOOL_OFFLOAD: '0', ZELARI_TOOL_RESULT_FORMAT: 'json' });
   });
 
   it('guardAbArms: two valid arms, off vs on', () => {
